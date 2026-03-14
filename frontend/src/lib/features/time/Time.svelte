@@ -49,6 +49,7 @@
       <nav class="space-y-1">
         {#each tabs as tab}
           {@const isTabActive = activeTab === tab.id}
+          {@const TabIcon = tab.icon}
           <button
             onclick={() => handleTabClick(tab)}
             class="w-full group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-all cursor-pointer"
@@ -56,7 +57,6 @@
             onmouseenter={(e) => { if (!isTabActive) e.currentTarget.style.cssText = 'background: var(--ds-surface-hovered); color: var(--ds-text);'; }}
             onmouseleave={(e) => { if (!isTabActive) e.currentTarget.style.cssText = 'color: var(--ds-text-subtle);'; }}
           >
-            {@const TabIcon = tab.icon}
             <TabIcon class="flex-shrink-0 -ml-1 mr-3 w-5 h-5" />
             {tab.label}
           </button>
@@ -69,8 +69,8 @@
   <div class="flex-1">
     {#each tabs as tab}
       {#if activeTab === tab.id}
+        {@const TabComponent = tab.component}
         <div class="p-6">
-          {@const TabComponent = tab.component}
           <TabComponent />
         </div>
       {/if}

@@ -274,9 +274,9 @@
 		<!-- Credentials List -->
 		<div class="space-y-3">
 			{#each credentials as credential}
+				{@const CredIcon = getCredentialIcon(credential.credential_type)}
 				<div class="flex items-center justify-between p-4 border rounded hover-bg" style="border-color: var(--ds-border);">
 					<div class="flex items-center space-x-3">
-						{@const CredIcon = getCredentialIcon(credential.credential_type)}
 						<CredIcon class="h-6 w-6" style="color: var(--ds-icon-subtle);" />
 						<div>
 							<div class="font-medium" style="color: var(--ds-text);">{credential.name}</div>

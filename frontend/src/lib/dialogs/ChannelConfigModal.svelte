@@ -346,11 +346,11 @@
   maxWidth="max-w-4xl"
 >
   {#if channel}
+    {@const ChannelTypeIcon = getChannelTypeIcon(channel.type)}
     <div class="flex flex-col h-[80vh]">
       <!-- Header -->
       <div class="px-6 py-4 border-b flex items-center justify-between" style="border-color: var(--ds-border);">
         <div class="flex items-center gap-3">
-          {@const ChannelTypeIcon = getChannelTypeIcon(channel.type)}
           <ChannelTypeIcon class="w-6 h-6" style="color: var(--ds-text);" />
           <div>
             <h3 class="text-lg font-semibold" style="color: var(--ds-text);">

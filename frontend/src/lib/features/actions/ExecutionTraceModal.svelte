@@ -102,6 +102,7 @@
     {:else}
       <div class="timeline">
         {#each steps as step, index}
+          {@const StatusIcon = getStatusIcon(step.status)}
           <div class="timeline-item">
             <!-- Timeline connector -->
             <div class="timeline-connector">
@@ -109,7 +110,6 @@
                 class="timeline-marker"
                 style="background-color: {getStatusColor(step.status)};"
               >
-                {@const StatusIcon = getStatusIcon(step.status)}
                 <StatusIcon
                   class="w-4 h-4"
                   style="color: white;"

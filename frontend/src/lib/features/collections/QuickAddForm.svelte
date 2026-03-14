@@ -103,11 +103,11 @@
                 {#if ws.avatar_url}
                   <img src={ws.avatar_url} alt="" class="w-5 h-5 rounded object-cover" />
                 {:else}
+                  {@const WsDropdownIcon = iconMap[ws.icon] || Package}
                   <div
                     class="w-5 h-5 rounded flex items-center justify-center"
                     style="background-color: {ws.color || 'var(--ds-interactive)'};"
                   >
-                    {@const WsDropdownIcon = iconMap[ws.icon] || Package}
                     <WsDropdownIcon class="w-3 h-3 text-white" />
                   </div>
                 {/if}
@@ -151,11 +151,11 @@
               title={selectedItemType?.name || 'Select type'}
             >
               {#if selectedItemType}
+                {@const SelectedTypeSmallIcon = iconMap[selectedItemType.icon] || Package}
                 <div
                   class="w-4 h-4 rounded flex items-center justify-center"
                   style="background-color: {selectedItemType.color};"
                 >
-                  {@const SelectedTypeSmallIcon = iconMap[selectedItemType.icon] || Package}
                   <SelectedTypeSmallIcon class="w-2.5 h-2.5 text-white" />
                 </div>
                 <span class="text-xs">{selectedItemType.name}</span>
@@ -172,6 +172,7 @@
               style="background-color: var(--ds-surface-raised); border-color: var(--ds-border);"
             >
               {#each formState.availableTypes as itemType}
+                {@const TypeDropdownIcon = iconMap[itemType.icon] || Package}
                 <button
                   type="button"
                   onclick={() => selectItemType(itemType.id)}
@@ -184,7 +185,6 @@
                     class="w-5 h-5 rounded flex items-center justify-center"
                     style="background-color: {itemType.color};"
                   >
-                    {@const TypeDropdownIcon = iconMap[itemType.icon] || Package}
                     <TypeDropdownIcon class="w-3 h-3 text-white" />
                   </div>
                   <span class="truncate">{itemType.name}</span>

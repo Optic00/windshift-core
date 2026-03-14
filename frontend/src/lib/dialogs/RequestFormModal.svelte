@@ -263,6 +263,7 @@
     onClose={handleClose}
   >
     <!-- Gradient Header with Integrated Stepper -->
+    {@const RequestTypeIcon = iconMap[requestType?.icon] || Package}
     <div
       class="px-8 pt-8 pb-6 text-white text-center relative"
       style="{portalStore.headerBackgroundStyle}"
@@ -279,7 +280,6 @@
       <!-- Icon -->
       <div class="flex justify-center mb-3">
         <div class="w-14 h-14 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center">
-          {@const RequestTypeIcon = iconMap[requestType?.icon] || Package}
           <RequestTypeIcon class="w-7 h-7 text-white" />
         </div>
       </div>

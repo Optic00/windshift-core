@@ -196,11 +196,11 @@
         {#if parent.itemType}
           <Tooltip content="{parent.itemType.name}">
             {#snippet children()}
-              <div 
+              {@const ParentIcon = iconMap[parent.itemType.icon] || FileText}
+              <div
                 class="w-4 h-4 rounded flex items-center justify-center text-white text-xs cursor-help"
                 style="background-color: {parent.itemType.color};"
               >
-                {@const ParentIcon = iconMap[parent.itemType.icon] || FileText}
                 <ParentIcon class="w-3 h-3" />
               </div>
             {/snippet}
@@ -335,12 +335,12 @@
                 <div class="flex items-center gap-2">
                   <!-- Item Type Icon -->
                   {#if resultItemType}
+                    {@const ResultIcon = iconMap[resultItemType.icon] || FileText}
                     <div
                       class="w-4 h-4 rounded flex items-center justify-center text-white text-xs flex-shrink-0"
                       style="background-color: {resultItemType.color};"
                       title={resultItemType.name}
                     >
-                      {@const ResultIcon = iconMap[resultItemType.icon] || FileText}
                       <ResultIcon class="w-3 h-3" />
                     </div>
                   {/if}
@@ -367,11 +367,11 @@
     {#if currentItemType}
       <Tooltip content="{currentItemType.name} ({currentHierarchyLevel?.name || 'Unknown level'})">
         {#snippet children()}
+          {@const CurrentIcon = iconMap[currentItemType.icon] || FileText}
           <div
             class="w-4 h-4 rounded flex items-center justify-center text-white text-xs cursor-help"
             style="background-color: {currentItemType.color};"
           >
-            {@const CurrentIcon = iconMap[currentItemType.icon] || FileText}
             <CurrentIcon class="w-3 h-3" />
           </div>
         {/snippet}

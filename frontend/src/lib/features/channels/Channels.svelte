@@ -515,8 +515,8 @@
         onRowClick={handleRowClick}
       >
         {#snippet name({ item })}
+          {@const ChannelIcon = getChannelTypeIcon(item.type)}
           <div class="flex items-center gap-3">
-            {@const ChannelIcon = getChannelTypeIcon(item.type)}
             <ChannelIcon class="w-4 h-4 flex-shrink-0" style="color: var(--ds-text-subtle);" />
             <div>
               <div class="font-medium" style="color: var(--ds-text);">{item.name}</div>
