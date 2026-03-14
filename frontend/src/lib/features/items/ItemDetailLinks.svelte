@@ -290,11 +290,11 @@
             <div class="flex items-center gap-3 flex-1 min-w-0">
               <!-- Item type icon -->
               {#if linkedItemTypeIcon && iconMap[linkedItemTypeIcon]}
+                {@const LinkedIcon = iconMap[linkedItemTypeIcon]}
                 <div
                   class="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
                   style="background-color: {linkedItemTypeColor || '#6b7280'}20; color: {linkedItemTypeColor || '#6b7280'};"
                 >
-                  {@const LinkedIcon = iconMap[linkedItemTypeIcon]}
                   <LinkedIcon class="w-3.5 h-3.5" />
                 </div>
               {:else}
@@ -384,11 +384,11 @@
                 {/if}
                 <!-- Item type icon -->
                 {#if childItemType}
+                  {@const ChildTypeIcon = iconMap[childItemType.icon] || FileText}
                   <div
                     class="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
                     style="background-color: {childItemType.color || '#6b7280'}20; color: {childItemType.color || '#6b7280'};"
                   >
-                    {@const ChildTypeIcon = iconMap[childItemType.icon] || FileText}
                     <ChildTypeIcon class="w-3.5 h-3.5" />
                   </div>
                 {:else}

@@ -253,12 +253,12 @@
         <p class="text-xs py-2" style="color: var(--ds-text-subtle);">{t('scm.noLinksYet')}</p>
       {:else}
         {#each links as link}
+          {@const LinkIcon = getLinkIcon(link.link_type)}
           <div
             class="flex items-start gap-2 px-2 py-2 rounded-md group transition-colors"
             style="background-color: var(--ds-surface);"
           >
             <!-- Icon -->
-            {@const LinkIcon = getLinkIcon(link.link_type)}
             <LinkIcon
               class="w-4 h-4 flex-shrink-0 mt-0.5"
               style="color: var(--ds-text-subtle);"

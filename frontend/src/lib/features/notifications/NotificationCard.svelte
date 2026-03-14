@@ -64,8 +64,8 @@
           {notification.avatar}
         </div>
       {:else}
+        {@const NotifIcon = getNotificationIcon(notification.type)}
         <div class="w-8 h-8 rounded-full flex items-center justify-center" style="background-color: var(--ds-interactive-subtle);">
-          {@const NotifIcon = getNotificationIcon(notification.type)}
           <NotifIcon class="w-4 h-4" style={getNotificationIconStyle(notification.type)} />
         </div>
       {/if}

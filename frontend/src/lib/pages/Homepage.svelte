@@ -130,6 +130,7 @@
             </div>
           {:else}
             {#each notifications as notification}
+              {@const NotifIcon = getNotificationIcon(notification.type)}
               <a
                 href={notification.action_url || '#'}
                 class="flex items-start p-3 rounded transition-colors cursor-pointer"
@@ -137,7 +138,6 @@
                 style="border: 1px solid var(--ds-border);"
               >
                 <div class="flex-shrink-0 mr-3 mt-1">
-                  {@const NotifIcon = getNotificationIcon(notification.type)}
                   <NotifIcon class="w-4 h-4" style="color: var(--ds-text-subtle);" />
                 </div>
                 <div class="flex-1 min-w-0">
@@ -386,11 +386,11 @@
             {#each recentWorkspaces as workspace}
               <ItemCard href="/workspaces/{workspace.workspace_id}" compact={true}>
                 {#snippet children()}
+                  {@const WsIcon = workspaceIconMap[workspace.icon] || Grip}
                   <div class="flex items-start justify-between gap-2 mb-1">
                     <div class="flex items-center gap-2">
                       <!-- Workspace Icon -->
                       <div class="w-6 h-6 rounded flex items-center justify-center flex-shrink-0" style="background-color: {workspace.color || '#3b82f6'};">
-                        {@const WsIcon = workspaceIconMap[workspace.icon] || Grip}
                         <WsIcon size={14} color="white" />
                       </div>
                       <div>

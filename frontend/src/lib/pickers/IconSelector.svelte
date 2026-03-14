@@ -79,6 +79,7 @@
 
 {#if compact}
   <!-- Compact Mode -->
+  {@const SelectedIcon = iconMap[selectedIcon] || Package}
   <div class="icon-selector icon-selector-compact">
     {#if resolvedLabel}
       <Label class="mb-2">{resolvedLabel}</Label>
@@ -93,7 +94,6 @@
     >
       <div class="compact-preview">
         <div class="compact-icon" style="background-color: {selectedColor}">
-          {@const SelectedIcon = iconMap[selectedIcon] || Package}
           <SelectedIcon size={16} color="white" />
         </div>
         <div class="compact-text">
@@ -130,6 +130,7 @@
           </div>
           <div class="popover-icon-grid">
             {#each filteredIcons as icon}
+              {@const IconComp = iconMap[icon]}
               <button
                 type="button"
                 class="popover-icon-option"
@@ -137,7 +138,6 @@
                 onclick={() => selectIcon(icon)}
                 title={icon}
               >
-                {@const IconComp = iconMap[icon]}
                 <IconComp size={14} />
               </button>
             {/each}
@@ -178,6 +178,7 @@
     {/if}
   </div>
 {:else}
+  {@const PreviewIcon = iconMap[selectedIcon] || Package}
   <!-- Full Mode (existing layout) -->
   <div class="icon-selector">
     <Label class="mb-2">{label}</Label>
@@ -185,7 +186,6 @@
     <!-- Preview -->
     <div class="preview-section mb-4">
       <div class="preview-icon" style="background-color: {selectedColor}">
-        {@const PreviewIcon = iconMap[selectedIcon] || Package}
         <PreviewIcon size={20} color="white" />
       </div>
       <div class="preview-text">
@@ -212,6 +212,7 @@
 
       <div class="icon-grid">
         {#each filteredIcons as icon}
+          {@const IconComp = iconMap[icon]}
           <button
             type="button"
             class="icon-option"
@@ -219,7 +220,6 @@
             onclick={() => selectIcon(icon)}
             title={icon}
           >
-            {@const IconComp = iconMap[icon]}
             <IconComp size={16} />
           </button>
         {/each}

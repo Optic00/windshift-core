@@ -151,12 +151,12 @@
       {#if item.item_type_id && itemTypes.length > 0}
         {@const itemType = itemTypes.find(type => type.id === item.item_type_id)}
         {#if itemType}
+          {@const CellTypeIcon = itemTypeIconMap[itemType.icon] || itemTypeIconMap.FileText}
           <div
             class="w-4 h-4 rounded flex items-center justify-center text-white text-xs flex-shrink-0"
             style="background-color: {itemType.color};"
             title={itemType.name}
           >
-            {@const CellTypeIcon = itemTypeIconMap[itemType.icon] || itemTypeIconMap.FileText}
             <CellTypeIcon class="w-3 h-3" />
           </div>
         {/if}

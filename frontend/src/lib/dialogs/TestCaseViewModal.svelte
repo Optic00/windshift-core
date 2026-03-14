@@ -410,13 +410,13 @@
             {:else}
               <div class="space-y-3">
                 {#each executions as execution}
+                  {@const StatusIcon = getStatusIcon(execution.status)}
                   <a
                     href={`${workspaceTestsBasePath}/runs/${execution.run_id}`}
                     class="flex items-start gap-3 rounded-xl border p-4 transition hover:shadow-sm"
                     style="border-color: var(--ds-border); background-color: var(--ds-surface);"
                   >
                     <div class="flex-shrink-0 mt-0.5">
-                      {@const StatusIcon = getStatusIcon(execution.status)}
                       <StatusIcon
                         class="w-5 h-5"
                         style={`color: ${getStatusIconColor(execution.status)};`}

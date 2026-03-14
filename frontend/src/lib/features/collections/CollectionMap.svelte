@@ -660,11 +660,11 @@ async function loadStatuses() {
                 {#if breadcrumb.level === 'root'}
                   <Home class="w-3.5 h-3.5" />
                 {:else if breadcrumb.itemType}
+                  {@const BreadcrumbIcon = iconMap[breadcrumb.itemType.icon] || FileText}
                   <div
                     class="w-4 h-4 rounded flex items-center justify-center"
                     style="background-color: {breadcrumb.itemType.color};"
                   >
-                    {@const BreadcrumbIcon = iconMap[breadcrumb.itemType.icon] || FileText}
                     <BreadcrumbIcon
                       class="w-2.5 h-2.5 text-white"
                     />
@@ -728,12 +728,12 @@ async function loadStatuses() {
                   <div class="flex items-center justify-between">
                     <div class="flex items-center gap-2">
                       {#if itemType}
+                        {@const MapItemIcon = iconMap[itemType.icon] || FileText}
                         <div
                           class="w-4 h-4 rounded flex items-center justify-center text-white text-xs flex-shrink-0"
                           style="background-color: {itemType.color};"
                           title={itemType.name}
                         >
-                          {@const MapItemIcon = iconMap[itemType.icon] || FileText}
                           <MapItemIcon class="w-3 h-3" />
                         </div>
                       {/if}
@@ -826,12 +826,12 @@ async function loadStatuses() {
                       <div class="flex items-center justify-between">
                         <div class="flex items-center gap-2">
                           {#if childItemType}
+                            {@const ChildIcon = iconMap[childItemType.icon] || FileText}
                             <div
                               class="w-4 h-4 rounded flex items-center justify-center text-white text-xs flex-shrink-0"
                               style="background-color: {childItemType.color};"
                               title={childItemType.name}
                             >
-                              {@const ChildIcon = iconMap[childItemType.icon] || FileText}
                               <ChildIcon class="w-3 h-3" />
                             </div>
                           {/if}

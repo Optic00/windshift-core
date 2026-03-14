@@ -261,11 +261,11 @@
                     <div class="flex items-center gap-2">
                       <!-- Item type icon -->
                       {#if itemTypeIcon && iconMap[itemTypeIcon]}
+                        {@const ItemTypeIconComponent = iconMap[itemTypeIcon]}
                         <div
                           class="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0"
                           style="background-color: {itemTypeColor || '#6b7280'}20; color: {itemTypeColor || '#6b7280'};"
                         >
-                          {@const ItemTypeIconComponent = iconMap[itemTypeIcon]}
                         <ItemTypeIconComponent class="w-3 h-3" />
                         </div>
                       {:else}
