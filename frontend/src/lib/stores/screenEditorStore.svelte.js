@@ -119,7 +119,7 @@ class ScreenEditorStore {
   async loadCustomFields() {
     try {
       const result = await api.customFields.getAll();
-      this.customFields = result || [];
+      this.customFields = result?.data || [];
     } catch (err) {
       console.error('Failed to load custom fields:', err);
       this.customFields = [];

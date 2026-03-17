@@ -18,6 +18,7 @@ export default {
     // Asset Picker
     selectAsset: 'Select asset',
     noTag: 'No tag',
+    showingOfTotal: 'Showing {shown} of {total} — type to search',
 
     // User/Assignee Picker
     selectUser: 'Select user',

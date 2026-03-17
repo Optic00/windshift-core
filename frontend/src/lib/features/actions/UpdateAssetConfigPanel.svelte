@@ -17,7 +17,7 @@
   // Load custom fields on mount
   onMount(async () => {
     try {
-      customFields = await api.customFields.getAll() || [];
+      customFields = (await api.customFields.getAll())?.data || [];
       // Filter to only asset type fields
       assetFields = customFields.filter(f => f.field_type === 'asset');
     } catch (error) {

@@ -77,6 +77,7 @@
     'iteration-dependencies': () => import('../features/iterations/IterationDependencies.svelte'),
     'assets': () => import('../features/assets/AssetBrowser.svelte'),
     'asset-detail': () => import('../features/assets/AssetBrowser.svelte'),
+    'asset-settings': () => import('../features/assets/AssetManager.svelte'),
     'workspace-board': () => import('../features/collections/CollectionBoard.svelte'),
     'workspace-board-config': () => import('../settings/BoardConfigurationPage.svelte'),
     'workspace-backlog': () => import('../features/collections/CollectionBacklog.svelte'),
@@ -229,6 +230,11 @@
       errorMsg: 'Failed to load Asset',
       wrapper: 'surface-full',
       getProps: (route) => ({ assetId: route.params.id })
+    },
+    'asset-settings': {
+      loadingMsg: 'Loading Asset Settings...',
+      errorMsg: 'Failed to load Asset Settings',
+      wrapper: 'surface-admin'
     },
     'workspace-board': {
       loadingMsg: 'Loading Board View...',
@@ -891,6 +897,10 @@
         </div>
       {:else if wrapper === 'surface-padded'}
         <div class="p-6" style="background-color: var(--ds-surface);">
+          {@render lazyLoadedComponent(view, routeProps)}
+        </div>
+      {:else if wrapper === 'surface-admin'}
+        <div class="px-16 py-12 flex-1 overflow-y-auto" style="background-color: var(--ds-surface);">
           {@render lazyLoadedComponent(view, routeProps)}
         </div>
       {:else}

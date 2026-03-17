@@ -86,6 +86,7 @@ export default {
     modified: 'Modified',
     owner: 'Owner',
     author: 'Author',
+    createdBy: 'Created By',
     assigned: 'Assigned',
     assignedTo: 'Assigned To',
     assignTo: 'Assign To',

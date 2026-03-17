@@ -167,7 +167,7 @@ class WorkItemFormStore {
     if (this.customFieldsLoaded) return;
     try {
       const result = await api.customFields.getAll();
-      this.allCustomFields = result || [];
+      this.allCustomFields = result?.data || [];
       this.customFieldsLoaded = true;
     } catch (error) {
       console.error('Failed to load custom fields:', error);

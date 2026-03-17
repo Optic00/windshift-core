@@ -2,7 +2,7 @@
   import { BasePicker } from '.';
   import { createAsyncLoader } from '../composables';
   import { api } from '../api.js';
-  import { onMount } from 'svelte';
+  import { untrack } from 'svelte';
   import { Box } from 'lucide-svelte';
   import { t } from '../stores/i18n.svelte.js';
 
@@ -22,24 +22,30 @@
 
   const resolvedPlaceholder = $derived(placeholder || t('pickers.selectAsset'));
 
+  let searchQuery = $state('');
+  let totalCount = $state(0);
+
   const assets = createAsyncLoader(async () => {
     if (!assetSetId) return [];
-    const result = await api.assets.getAll(assetSetId, { cql: cqlQuery || undefined });
+    const filters = { cql: cqlQuery || undefined };
+    if (searchQuery) filters.search = searchQuery;
+    const result = await api.assets.getAll(assetSetId, filters);
     // API returns { assets: [...], total, limit, offset }
+    totalCount = result?.total ?? 0;
     return result?.assets || [];
   });
 
-  onMount(() => {
-    if (assetSetId) assets.load();
-  });
-
-  // Reload if assetSetId or cqlQuery changes
+  // Reload when assetSetId, cqlQuery, or searchQuery changes
   $effect(() => {
     if (assetSetId) {
-      const _ = [assetSetId, cqlQuery];
-      assets.load();
+      const _ = [assetSetId, cqlQuery, searchQuery];
+      untrack(() => assets.load());
     }
   });
+
+  function handleSearchChange(query) {
+    searchQuery = query;
+  }
 </script>
 
 <BasePicker
@@ -53,7 +59,8 @@
   {showUnassigned}
   unassignedLabel={t('common.none')}
   class={className}
-  searchFields={['title', 'asset_tag', 'description']}
+  serverSearch
+  onSearchChange={handleSearchChange}
   getValue={(asset) => asset?.id}
   getLabel={(asset) => {
     if (!asset) return '';
@@ -78,4 +85,16 @@
       </div>
     </div>
   {/snippet}
+
+  {#snippet noResultsSnippet({ searchQuery: sq })}
+    <div class="px-4 py-4 text-center text-sm" style="color: var(--ds-text-subtle);">
+      {t('pickers.noResultsFor', { query: sq })}
+    </div>
+  {/snippet}
 </BasePicker>
+
+{#if !searchQuery && totalCount > (assets.data?.length || 0)}
+  <div class="mt-1 text-xs" style="color: var(--ds-text-subtlest);">
+    {t('pickers.showingOfTotal', { shown: assets.data?.length || 0, total: totalCount })}
+  </div>
+{/if}

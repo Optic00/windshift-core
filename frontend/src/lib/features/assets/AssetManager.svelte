@@ -11,6 +11,7 @@
   import EmptyState from '../../components/EmptyState.svelte';
   import ColorDot from '../../components/ColorDot.svelte';
   import Select from '../../components/Select.svelte';
+  import ItemPicker from '../../pickers/ItemPicker.svelte';
   import { Plus, Package, Edit, Trash2, Settings, FolderTree, Users, User, ChevronRight, ChevronDown, Folder, FolderOpen, MoreHorizontal, X } from 'lucide-svelte';
   import DropdownMenu from '../../layout/DropdownMenu.svelte';
   import FieldLayoutEditor from '../../editors/FieldLayoutEditor.svelte';
@@ -26,6 +27,8 @@
   let assetSets = $state([]);
   let selectedSetId = $state(null);
   let selectedSet = $derived(assetSets.find(s => s.id === selectedSetId));
+  let isSetAdmin = $derived(selectedSet?.user_permission === 'Administrator');
+  let canEditSet = $derived(selectedSet?.user_permission === 'Editor' || selectedSet?.user_permission === 'Administrator');
 
   // State for tabs
   let activeTab = $state('types'); // 'types', 'categories', 'permissions'
@@ -224,8 +227,8 @@
     try {
       // Load all available custom fields (excluding system default fields)
       // Note: Work item system fields (Status, Priority, etc.) don't apply to assets
-      const fields = await api.customFields.getAll();
-      const customFields = (fields || [])
+      const result = await api.customFields.getAll();
+      const customFields = (result?.data || [])
         .filter(f => !f.system_default)
         .map(f => ({
           identifier: f.id.toString(),
@@ -509,16 +512,20 @@
   <PageHeader title={t('assets.title')} icon={Package} subtitle={t('assets.subtitle')}>
     {#snippet actions()}
       <div class="flex items-center gap-2">
-        <Select
+        <ItemPicker
           bind:value={selectedSetId}
+          items={assetSets}
+          config={{
+            primary: { text: (set) => set.name + (set.is_default ? ` (${t('assets.default')})` : '') },
+            getValue: (set) => set.id,
+            getLabel: (set) => set.name + (set.is_default ? ` (${t('assets.default')})` : '')
+          }}
+          placeholder={t('assets.selectAssetSet')}
+          showUnassigned={false}
+          allowClear={false}
           class="w-48"
-        >
-          <option value={null}>{t('assets.selectAssetSet')}</option>
-          {#each assetSets as set}
-            <option value={set.id}>{set.name}{set.is_default ? ` (${t('assets.default')})` : ''}</option>
-          {/each}
-        </Select>
-        <Button variant="primary" size="sm" icon={Plus} onclick={showAddSetForm} keyboardHint="A" hotkeyConfig={{ key: toHotkeyString('assetSets', 'add'), guard: () => !showSetForm }}>
+        />
+        <Button variant="primary" size="sm" icon={Plus} onclick={showAddSetForm} keyboardHint="A" hotkeyConfig={{ key: toHotkeyString('assetSets', 'add'), guard: () => !showSetForm }} class="whitespace-nowrap">
           {t('assets.newSet')}
         </Button>
       </div>
@@ -555,16 +562,18 @@
           <p class="text-sm" style="color: var(--ds-text-subtle);">{selectedSet.description}</p>
         {/if}
       </div>
-      <DropdownMenu
-        triggerIcon={MoreHorizontal}
-        iconOnly={true}
-        showChevron={false}
-        triggerClass="p-2 rounded hover-bg"
-        items={[
-          { id: 'edit', title: t('assets.editSet'), icon: Edit, onClick: () => showEditSetForm(selectedSet) },
-          { id: 'delete', title: t('assets.deleteSet'), icon: Trash2, color: 'var(--ds-text-danger)', onClick: () => deleteSet(selectedSetId) }
-        ]}
-      />
+      {#if isSetAdmin}
+        <DropdownMenu
+          triggerIcon={MoreHorizontal}
+          iconOnly={true}
+          showChevron={false}
+          triggerClass="p-2 rounded hover-bg"
+          items={[
+            { id: 'edit', title: t('assets.editSet'), icon: Edit, onClick: () => showEditSetForm(selectedSet) },
+            { id: 'delete', title: t('assets.deleteSet'), icon: Trash2, color: 'var(--ds-text-danger)', onClick: () => deleteSet(selectedSetId) }
+          ]}
+        />
+      {/if}
     </div>
 
     <!-- Tabs -->
@@ -584,24 +593,28 @@
           <FolderTree class="w-4 h-4 inline mr-1" />
           {t('assets.categories')}
         </button>
-        <button
-          class="pb-2 px-1 border-b-2 transition-colors {activeTab === 'permissions' ? 'border-blue-500 text-blue-600' : 'border-transparent asset-tab-inactive'}"
-          onclick={() => activeTab = 'permissions'}
-        >
-          <Users class="w-4 h-4 inline mr-1" />
-          {t('assets.permissions')}
-        </button>
+        {#if isSetAdmin}
+          <button
+            class="pb-2 px-1 border-b-2 transition-colors {activeTab === 'permissions' ? 'border-blue-500 text-blue-600' : 'border-transparent asset-tab-inactive'}"
+            onclick={() => activeTab = 'permissions'}
+          >
+            <Users class="w-4 h-4 inline mr-1" />
+            {t('assets.permissions')}
+          </button>
+        {/if}
       </nav>
     </div>
 
     <!-- Types Tab -->
     {#if activeTab === 'types'}
-      <div class="mb-4 flex justify-end">
-        <Button onclick={showAddTypeForm}>
-          <Plus class="w-4 h-4 mr-1" />
-          {t('assets.newType')}
-        </Button>
-      </div>
+      {#if isSetAdmin}
+        <div class="mb-4 flex justify-end">
+          <Button onclick={showAddTypeForm}>
+            <Plus class="w-4 h-4 mr-1" />
+            {t('assets.newType')}
+          </Button>
+        </div>
+      {/if}
 
       {#snippet createTypeButton()}
         <Button onclick={showAddTypeForm}>
@@ -615,7 +628,7 @@
           icon={Settings}
           title={t('assets.noAssetTypes')}
           description={t('assets.noAssetTypesDesc')}
-          action={createTypeButton}
+          action={isSetAdmin ? createTypeButton : null}
         />
       {:else}
         <DataTable data={assetTypes} columns={typeColumns}>
@@ -634,17 +647,19 @@
             </Lozenge>
           {/snippet}
           {#snippet actions(row)}
-            <div class="flex gap-1">
-              <Button variant="ghost" size="sm" onclick={() => showFieldsForm(row)} title="Configure Fields">
-                <Settings class="w-4 h-4" />
-              </Button>
-              <Button variant="ghost" size="sm" onclick={() => showEditTypeForm(row)}>
-                <Edit class="w-4 h-4" />
-              </Button>
-              <Button variant="ghost" size="sm" onclick={() => deleteType(row.id)}>
-                <Trash2 class="w-4 h-4 text-red-500" />
-              </Button>
-            </div>
+            {#if isSetAdmin}
+              <div class="flex gap-1">
+                <Button variant="ghost" size="sm" onclick={() => showFieldsForm(row)} title="Configure Fields">
+                  <Settings class="w-4 h-4" />
+                </Button>
+                <Button variant="ghost" size="sm" onclick={() => showEditTypeForm(row)}>
+                  <Edit class="w-4 h-4" />
+                </Button>
+                <Button variant="ghost" size="sm" onclick={() => deleteType(row.id)}>
+                  <Trash2 class="w-4 h-4 text-red-500" />
+                </Button>
+              </div>
+            {/if}
           {/snippet}
         </DataTable>
       {/if}
@@ -652,12 +667,14 @@
 
     <!-- Categories Tab -->
     {#if activeTab === 'categories'}
-      <div class="mb-4 flex justify-end">
-        <Button onclick={() => showAddCategoryForm(null)}>
-          <Plus class="w-4 h-4 mr-1" />
-          {t('assets.newCategory')}
-        </Button>
-      </div>
+      {#if canEditSet}
+        <div class="mb-4 flex justify-end">
+          <Button onclick={() => showAddCategoryForm(null)}>
+            <Plus class="w-4 h-4 mr-1" />
+            {t('assets.newCategory')}
+          </Button>
+        </div>
+      {/if}
 
       {#snippet createCategoryButton()}
         <Button onclick={() => showAddCategoryForm(null)}>
@@ -671,7 +688,7 @@
           icon={FolderTree}
           title={t('assets.noCategories')}
           description={t('assets.noCategoriesDesc')}
-          action={createCategoryButton}
+          action={canEditSet ? createCategoryButton : null}
         />
       {:else}
         <div class="rounded-lg" style="border: 1px solid var(--ds-border);">
@@ -708,17 +725,19 @@
                   <span class="text-xs" style="color: var(--ds-text-subtlest);">({category.asset_count})</span>
                 {/if}
               </div>
-              <div class="flex gap-1">
-                <Button variant="ghost" size="sm" onclick={() => showAddCategoryForm(category.id)} title="Add subcategory">
-                  <Plus class="w-4 h-4" />
-                </Button>
-                <Button variant="ghost" size="sm" onclick={() => showEditCategoryForm(category)}>
-                  <Edit class="w-4 h-4" />
-                </Button>
-                <Button variant="ghost" size="sm" onclick={() => deleteCategory(category.id)}>
-                  <Trash2 class="w-4 h-4 text-red-500" />
-                </Button>
-              </div>
+              {#if canEditSet}
+                <div class="flex gap-1">
+                  <Button variant="ghost" size="sm" onclick={() => showAddCategoryForm(category.id)} title="Add subcategory">
+                    <Plus class="w-4 h-4" />
+                  </Button>
+                  <Button variant="ghost" size="sm" onclick={() => showEditCategoryForm(category)}>
+                    <Edit class="w-4 h-4" />
+                  </Button>
+                  <Button variant="ghost" size="sm" onclick={() => deleteCategory(category.id)}>
+                    <Trash2 class="w-4 h-4 text-red-500" />
+                  </Button>
+                </div>
+              {/if}
             </div>
             {#if category.has_children && expandedCategories.has(category.id) && category.children}
               {#each category.children as child}
@@ -734,7 +753,7 @@
     {/if}
 
     <!-- Permissions Tab -->
-    {#if activeTab === 'permissions'}
+    {#if activeTab === 'permissions' && isSetAdmin}
       <!-- Everyone Default Section -->
       <div class="mb-6 p-4 rounded-lg" style="background: var(--ds-surface); border: 1px solid var(--ds-border);">
         <div class="flex items-center justify-between">

@@ -62,7 +62,7 @@
   let isEditMode = $state(false);
   let isCustomizeMode = $state(false);
   let customizationCategory = $state('built-in');
-  let setupCleanups = $state([]);
+  let setupCleanups = [];
   let savePending = $state(false);
 
   // Drag state
@@ -135,15 +135,15 @@
     return completedCategoryIds.has(status.category_id);
   }
 
-  let lastLoadKey = $state(null);
+  let lastLoadKey = null;
+
+  let loadKey = $derived(workspaceId ? `${workspaceId}-${collectionId ?? 'default'}` : null);
 
   $effect(() => {
-    if (workspaceId) {
-      const currentKey = `${workspaceId}-${collectionId ?? 'default'}`;
-      if (currentKey !== lastLoadKey) {
-        lastLoadKey = currentKey;
-        loadData();
-      }
+    const key = loadKey;
+    if (key && key !== lastLoadKey) {
+      lastLoadKey = key;
+      loadData();
     }
   });
 
@@ -363,7 +363,7 @@
     }
   }
 
-  let saveTimeout = $state(null);
+  let saveTimeout = null;
   function debouncedSave() {
     clearTimeout(saveTimeout);
     saveTimeout = setTimeout(() => saveHomepageLayout(), 1000);

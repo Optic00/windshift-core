@@ -105,8 +105,8 @@
       return;
     }
     try {
-      const fields = await api.customFields.getAll();
-      customFields = (fields || []).map(field => ({
+      const result = await api.customFields.getAll();
+      customFields = (result?.data || []).map(field => ({
         id: `cf_${field.name}`,
         name: field.name,
         type: field.field_type,
