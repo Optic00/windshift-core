@@ -73,6 +73,14 @@ func (c *httpClient) ChatCompletion(ctx context.Context, req ChatCompletionReque
 		bodyMap["max_tokens"] = req.MaxTokens
 	}
 
+	// Add tools for function calling
+	if len(req.Tools) > 0 {
+		bodyMap["tools"] = req.Tools
+		if req.ToolChoice != nil {
+			bodyMap["tool_choice"] = req.ToolChoice
+		}
+	}
+
 	// Add grammar for structured output (llama.cpp)
 	if req.StructuredOutput != nil && len(req.StructuredOutput.Schema) > 0 {
 		grammar, err := JSONSchemaToGBNF(req.StructuredOutput.Schema)

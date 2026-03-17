@@ -35,6 +35,7 @@ type SetupStatus struct {
 	AdminUserCreated      bool `json:"admin_user_created"`
 	TimeTrackingEnabled   bool `json:"time_tracking_enabled"`
 	TestManagementEnabled bool `json:"test_management_enabled"`
+	AIChatEnabled         bool `json:"ai_chat_enabled"`
 }
 
 // SetupRequest represents the initial setup configuration
@@ -56,6 +57,7 @@ type SetupUser struct {
 type ModuleSettings struct {
 	TimeTrackingEnabled   bool `json:"time_tracking_enabled"`
 	TestManagementEnabled bool `json:"test_management_enabled"`
+	AIChatEnabled         bool `json:"ai_chat_enabled"`
 }
 
 // APIToken represents a bearer token for API authentication

@@ -1,6 +1,7 @@
 import { api } from '../api.js';
 
 let available = $state(false);
+let chatEnabled = $state(false);
 let loaded = $state(false);
 let loading = $state(false);
 
@@ -13,10 +14,12 @@ async function load() {
   try {
     const result = await api.ai.status();
     available = result?.available === true;
+    chatEnabled = result?.chat_enabled === true;
     loaded = true;
   } catch (error) {
     console.error('Failed to load AI status:', error);
     available = false;
+    chatEnabled = false;
     loaded = true;
   } finally {
     loading = false;
@@ -32,6 +35,12 @@ async function reload() {
 export const aiStore = {
   get available() {
     return available;
+  },
+  get chatEnabled() {
+    return chatEnabled;
+  },
+  get chatAvailable() {
+    return available && chatEnabled;
   },
   get loaded() {
     return loaded;

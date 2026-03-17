@@ -7,6 +7,7 @@
   import { moduleSettings } from '../stores/moduleSettings.js';
   import { attachmentStatus } from '../stores/attachmentStatus.svelte.js';
   import { aiStore } from '../stores/aiStore.svelte.js';
+  import { chatStore } from '../stores/chatStore.svelte.js';
   import { logbookStore } from '../stores/logbook.svelte.js';
   import { api } from '../api.js';
   import { t } from '../stores/i18n.svelte.js';
@@ -43,6 +44,7 @@
 
   let showCommandPalette = $state(false);
   let showCreateModal = $state(false);
+  let showChatPanel = $state(false);
   let createModalInitialType = $state('work-item');
   let createModalSkipNavigate = $state(false);
   let showEmailVerificationBanner = $state(false);
@@ -102,7 +104,8 @@
     'workspace-look-and-feel': () => import('../workspaces/WorkspaceLookAndFeel.svelte'),
     'personal-plan': () => import('../features/personal/PlanMyDay.svelte'),
     'logbook': () => import('../features/logbook/Logbook.svelte'),
-    'logbook-document': () => import('../features/logbook/DocumentDetail.svelte')
+    'logbook-document': () => import('../features/logbook/DocumentDetail.svelte'),
+    'chat-panel': () => import('../features/chat/ChatPanel.svelte')
   };
 
   // Preload all chunks after initial load for faster navigation
@@ -775,12 +778,16 @@
     <MainSidebar
       onShowCommandPalette={() => showCommandPalette = true}
       onShowCreateModal={showCreateDropdown}
+      onShowChatPanel={() => { showChatPanel = true; loadComponentForRoute('chat-panel'); }}
     />
   {/if}
 
   <!-- Hidden hotkey buttons for global shortcuts -->
   <Button class="sr-only" onclick={() => showCommandPalette = true} hotkeyConfig={{ key: toHotkeyString('global', 'commandPalette') }}>Command Palette</Button>
   <Button class="sr-only" onclick={showCreateDropdown} hotkeyConfig={{ key: toHotkeyString('global', 'create') }}>Create</Button>
+  {#if aiStore.chatAvailable}
+    <Button class="sr-only" onclick={() => { showChatPanel = !showChatPanel; loadComponentForRoute('chat-panel'); }} hotkeyConfig={{ key: toHotkeyString('global', 'aiChat') }}>AI Chat</Button>
+  {/if}
 
     <!-- Main Content Area with Sidebar Layout -->
     <div
@@ -978,6 +985,17 @@
 
 <!-- Floating Timer -->
 <FloatingTimer />
+
+<!-- AI Chat Panel -->
+{#if aiStore.chatAvailable && showChatPanel}
+  {@const ChatPanelComponent = getComponentForView('chat-panel')}
+  {#if ChatPanelComponent}
+    <ChatPanelComponent
+      bind:isOpen={showChatPanel}
+      onclose={() => { showChatPanel = false; chatStore.clearHistory(); }}
+    />
+  {/if}
+{/if}
 
 <!-- Toast Container -->
 <ToastContainer />

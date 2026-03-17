@@ -6,6 +6,7 @@ function createModuleSettingsStore() {
   const { subscribe, set, update } = writable({
     time_tracking_enabled: true,
     test_management_enabled: true,
+    ai_chat_enabled: true,
     loaded: false,
     loading: false,
   });
@@ -59,6 +60,7 @@ function createModuleSettingsStore() {
       set({
         time_tracking_enabled: true,
         test_management_enabled: true,
+        ai_chat_enabled: true,
         loaded: false,
         loading: false,
       });

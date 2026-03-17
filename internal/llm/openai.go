@@ -54,6 +54,14 @@ func (c *openaiClient) ChatCompletion(ctx context.Context, req ChatCompletionReq
 		bodyMap["max_tokens"] = req.MaxTokens
 	}
 
+	// Add tools for function calling
+	if len(req.Tools) > 0 {
+		bodyMap["tools"] = req.Tools
+		if req.ToolChoice != nil {
+			bodyMap["tool_choice"] = req.ToolChoice
+		}
+	}
+
 	// Add response_format for structured output
 	if req.StructuredOutput != nil && len(req.StructuredOutput.Schema) > 0 {
 		// Unmarshal schema to interface{} so it embeds correctly in the JSON

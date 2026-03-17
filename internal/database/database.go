@@ -371,6 +371,14 @@ func (db *DB) Initialize() error {
 			}
 		}
 
+		// Add ai_chat_enabled system setting if it doesn't exist
+		var aiChatCount int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM system_settings WHERE key = 'ai_chat_enabled'`).Scan(&aiChatCount); err == nil && aiChatCount == 0 {
+			if _, err := db.Exec(`INSERT INTO system_settings (key, value, value_type, description, category) VALUES ('ai_chat_enabled', 'true', 'boolean', 'Enable AI chat functionality', 'modules')`); err != nil {
+				slog.Warn("ai_chat_enabled setting migration failed", slog.String("component", "database"), slog.Any("error", err))
+			}
+		}
+
 		return nil
 	}
 
@@ -598,6 +606,7 @@ func (db *DB) initializeDefaultData() error {
 	}{
 		{"time_tracking_enabled", "true", "boolean", "Enable time tracking functionality", "modules"},
 		{"test_management_enabled", "true", "boolean", "Enable test management functionality", "modules"},
+		{"ai_chat_enabled", "true", "boolean", "Enable AI chat functionality", "modules"},
 		{"setup_completed", "false", "boolean", "Whether initial setup has been completed", "setup"},
 		{"admin_user_created", "false", "boolean", "Whether admin user has been created", "setup"},
 		{"calendar_feed_enabled", "true", "boolean", "Allow users to generate ICS calendar feed URLs", "security"},
