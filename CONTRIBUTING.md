@@ -114,6 +114,8 @@ Production builds exclude test code via build tags (`-tags="!test"`).
 
 ## Submitting a Pull Request
 
+**Important**: Pull Requests will not be accepted on Github to prevent Spam. Please submit all PRs via https://codeberg.org/realigned/windshift-core
+
 1. Push your branch and open a PR against `main`.
 2. CI will run automatically:
    - **Go**: lint + unit tests
