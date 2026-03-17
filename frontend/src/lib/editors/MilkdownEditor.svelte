@@ -825,9 +825,15 @@
   /* GFM: Tables */
   :global(.milkdown-editor .ProseMirror table) {
     border-collapse: collapse;
+    table-layout: auto;
     width: 100%;
     margin: 0.25rem 0;
     overflow: hidden;
+  }
+
+  /* Override nord theme's alternating column backgrounds */
+  :global(.milkdown-editor .ProseMirror :where(td, th):nth-child(odd)) {
+    background-color: transparent;
   }
 
   :global(.milkdown-editor .ProseMirror table th),
