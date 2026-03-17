@@ -12,8 +12,8 @@ func RegisterAssetRoutes(deps *Deps) {
 	// Asset Sets
 	api.HandleH("GET /asset-sets", auth(http.HandlerFunc(deps.Assets.Asset.GetAssetSets)))
 	api.HandleH("GET /asset-sets/{id}", auth(http.HandlerFunc(deps.Assets.Asset.GetAssetSet)))
-	api.HandleH("POST /admin/asset-sets", admin(http.HandlerFunc(deps.Assets.Asset.CreateAssetSet)))
-	api.HandleH("PUT /admin/asset-sets/{id}", admin(http.HandlerFunc(deps.Assets.Asset.UpdateAssetSet)))
+	api.HandleH("POST /asset-sets", auth(http.HandlerFunc(deps.Assets.Asset.CreateAssetSet)))
+	api.HandleH("PUT /asset-sets/{id}", auth(http.HandlerFunc(deps.Assets.Asset.UpdateAssetSet)))
 	api.HandleH("DELETE /admin/asset-sets/{id}", admin(http.HandlerFunc(deps.Assets.Asset.DeleteAssetSet)))
 
 	// Asset Roles
@@ -39,6 +39,7 @@ func RegisterAssetRoutes(deps *Deps) {
 	// Asset Links
 	api.HandleH("GET /assets/{id}/links", auth(http.HandlerFunc(deps.Assets.Asset.GetAssetLinks)))
 	api.HandleH("POST /assets/{id}/links", auth(http.HandlerFunc(deps.Assets.Asset.CreateAssetLink)))
+	api.HandleH("GET /assets/{id}/relationship-graph", auth(http.HandlerFunc(deps.Assets.Asset.GetAssetRelationshipGraph)))
 
 	// Asset Types
 	api.HandleH("GET /asset-sets/{setId}/types", auth(http.HandlerFunc(deps.Assets.Type.GetAssetTypes)))

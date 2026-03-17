@@ -92,6 +92,7 @@ const routes = {
   '/logbook/bucket/:bucketId': 'logbook',
   '/logbook/documents/:documentId': 'logbook-document',
   '/assets': 'assets',
+  '/assets/settings': 'asset-settings',
   '/assets/:id': 'asset-detail',
   '/admin': 'admin',
   '/admin/permission-sets/:id': 'admin',
@@ -137,6 +138,28 @@ function parseQuery(search) {
 // Navigate to a route
 export function navigate(path) {
   window.history.pushState({}, '', path);
+  updateRoute();
+}
+
+// Update query params without full navigation. Uses replaceState by default.
+// Pass { push: true } to add a history entry (e.g. pagination).
+// Values of null/undefined delete the param.
+export function updateQueryParams(updates, { push = false } = {}) {
+  const params = new URLSearchParams(window.location.search);
+  for (const [key, value] of Object.entries(updates)) {
+    if (value === null || value === undefined) {
+      params.delete(key);
+    } else {
+      params.set(key, String(value));
+    }
+  }
+  const qs = params.toString();
+  const path = window.location.pathname + (qs ? '?' + qs : '');
+  if (push) {
+    window.history.pushState({}, '', path);
+  } else {
+    window.history.replaceState({}, '', path);
+  }
   updateRoute();
 }
 

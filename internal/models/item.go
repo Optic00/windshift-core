@@ -308,6 +308,35 @@ type PersonalLabel struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// RelationshipGraphNode represents a node in the asset relationship graph
+type RelationshipGraphNode struct {
+	ID       string                 `json:"id"`       // Unique node key: "{type}-{entity_id}"
+	EntityID int                    `json:"entity_id"`
+	Type     string                 `json:"type"`     // "asset", "item", "test_case"
+	Title    string                 `json:"title"`
+	IsOrigin bool                   `json:"is_origin"`
+	Hop      int                    `json:"hop"`
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// RelationshipGraphEdge represents an edge in the asset relationship graph
+type RelationshipGraphEdge struct {
+	ID       string `json:"id"`
+	Source   string `json:"source"`    // Node ID of source
+	Target   string `json:"target"`    // Node ID of target
+	Label    string `json:"label"`
+	Color    string `json:"color,omitempty"`
+	EdgeType string `json:"edge_type"` // "link" or "field_reference"
+}
+
+// RelationshipGraphResponse is the response for the relationship graph endpoint
+type RelationshipGraphResponse struct {
+	Nodes      []RelationshipGraphNode `json:"nodes"`
+	Edges      []RelationshipGraphEdge `json:"edges"`
+	Truncated  bool                    `json:"truncated"`
+	TotalCount int                     `json:"total_count"`
+}
+
 // PaginatedItemsResponse represents a paginated list of items
 type PaginatedItemsResponse struct {
 	Items      []Item         `json:"items"`

@@ -3,7 +3,7 @@
   import { t } from '../../stores/i18n.svelte.js';
   import { confirm } from '../../composables/useConfirm.js';
   import { api } from '../../api.js';
-  import { navigate, currentRoute } from '../../router.js';
+  import { navigate, currentRoute, updateQueryParams } from '../../router.js';
   import Button from '../../components/Button.svelte';
   import Label from '../../components/Label.svelte';
   import PageHeader from '../../layout/PageHeader.svelte';
@@ -13,7 +13,9 @@
   import ColorDot from '../../components/ColorDot.svelte';
   import Select from '../../components/Select.svelte';
   import DataTable from '../../components/DataTable.svelte';
-  import { Plus, Package, Edit, Trash2, Box, ChevronRight, ChevronDown, Folder, FolderOpen, Search, ExternalLink, Code, Upload } from 'lucide-svelte';
+  import { Plus, Package, Edit, Trash2, Box, ChevronRight, ChevronDown, Folder, FolderOpen, Search, ExternalLink, Code, Upload, Share2, ArrowLeft, Settings } from 'lucide-svelte';
+  import { permissionStore } from '../../stores/permissions.svelte.js';
+  import AssetRelationshipGraph from './AssetRelationshipGraph.svelte';
   import AssetImportWizard from './import/AssetImportWizard.svelte';
   import AssetSubFilterBar from './AssetSubFilterBar.svelte';
   import CustomFieldRenderer from '../items/CustomFieldRenderer.svelte';
@@ -22,6 +24,10 @@
 
   // Props for detail view
   let { assetId = null } = $props();
+
+  // Direct asset detail mode (when assetId prop is set, e.g. /assets/:id)
+  let directAsset = $state(null);
+  let directAssetLoading = $state(false);
 
   // State for asset sets (only ones user has access to)
   let assetSets = $state([]);
@@ -39,6 +45,8 @@
   let showAssetForm = $state(false);
   let showImportWizard = $state(false);
   let isAdmin = $derived(selectedSet?.user_permission === 'Administrator');
+  let canEdit = $derived(selectedSet?.user_permission === 'Editor' || selectedSet?.user_permission === 'Administrator');
+  let showSettingsGear = $derived(isAdmin || permissionStore.canManageAssets);
   let editingAsset = $state(null);
   let assetFormData = $state({
     title: '',
@@ -51,6 +59,7 @@
   let selectedTypeFields = $state([]);
   let statuses = $state([]);
   let displayTypeFields = $state([]);
+  let showRelationshipGraph = $state(false);
 
   // Asset detail panel resize state
   let assetPanelWidth = $state(320);
@@ -88,6 +97,7 @@
 
   // Pagination state
   let currentPage = $derived(parseInt($currentRoute.query?.page) || 1);
+  let selectedAssetId = $derived($currentRoute.query?.asset || null);
   let totalAssets = $state(0);
   const pageSize = 25;
 
@@ -97,6 +107,29 @@
   onMount(async () => {
     await loadAssetSets();
     loading = false;
+  });
+
+  // Fetch asset directly when navigating to /assets/:id
+  $effect(() => {
+    if (assetId) {
+      directAssetLoading = true;
+      untrack(() => {
+        api.assets.get(Number(assetId)).then(async (asset) => {
+          directAsset = asset;
+          if (asset?.asset_set_id && !selectedSetId) {
+            selectedSetId = asset.asset_set_id;
+            await loadAssetSets();
+          }
+          if (asset?.asset_type_id) {
+            loadTypeFieldsForDisplay(asset.asset_type_id);
+          }
+        }).catch(err => {
+          console.error('Failed to load asset:', err);
+        }).finally(() => {
+          directAssetLoading = false;
+        });
+      });
+    }
   });
 
   async function loadAssetSets() {
@@ -112,9 +145,9 @@
     }
   }
 
-  // Load metadata when set changes
+  // Load metadata when set changes (browser mode only)
   $effect(() => {
-    if (selectedSetId) {
+    if (!assetId && selectedSetId) {
       loadAssetTypes();
       loadAssetCategories();
       loadStatuses();
@@ -213,20 +246,13 @@
 
   // Navigate to a new page via URL
   function updatePage(page) {
-    const params = new URLSearchParams(window.location.search);
-    if (page > 1) {
-      params.set('page', page);
-    } else {
-      params.delete('page');
-    }
-    const qs = params.toString();
-    navigate(`/assets${qs ? '?' + qs : ''}`);
+    updateQueryParams({ page: page > 1 ? page : null }, { push: true });
   }
 
   // Reset to page 1 when filters change (not on initial load)
   let filtersInitialized = false;
   $effect(() => {
-    if (selectedSetId) {
+    if (!assetId && selectedSetId) {
       const _ = [selectedCategoryId, activeQuery, filterBarQL];
       if (!filtersInitialized) {
         filtersInitialized = true;
@@ -242,9 +268,17 @@
 
   // Reload assets when any dependency changes (set, page, filters)
   $effect(() => {
-    if (selectedSetId) {
+    if (!assetId && selectedSetId) {
       const _ = [currentPage, selectedCategoryId, activeQuery, filterBarQL];
       untrack(() => loadAssets());
+    }
+  });
+
+  // Restore selection from URL param after assets load
+  $effect(() => {
+    if (selectedAssetId && assets.length > 0) {
+      const found = assets.find(a => a.id === selectedAssetId);
+      if (found) selectedAsset = found;
     }
   });
 
@@ -341,11 +375,31 @@
 
       if (editingAsset) {
         await api.assets.update(editingAsset.id, assetFormData);
+        showAssetForm = false;
+        if (assetId) {
+          // Refresh direct asset view
+          const refreshed = await api.assets.get(Number(assetId));
+          directAsset = refreshed;
+        } else {
+          await loadAssets();
+          const updated = assets.find(a => a.id === editingAsset.id);
+          if (updated) {
+            selectedAsset = updated;
+            updateQueryParams({ asset: updated.id });
+          }
+        }
       } else {
-        await api.assets.create(selectedSetId, assetFormData);
+        const created = await api.assets.create(selectedSetId, assetFormData);
+        showAssetForm = false;
+        if (created?.id) {
+          await loadAssets();
+          const newAsset = assets.find(a => a.id === created.id);
+          if (newAsset) {
+            selectedAsset = newAsset;
+          }
+          updateQueryParams({ asset: created.id });
+        }
       }
-      await loadAssets();
-      showAssetForm = false;
     } catch (error) {
       console.error('Failed to save asset:', error);
       alert(t('dialogs.alerts.failedToSave', { error: error.message }));
@@ -363,9 +417,14 @@
     if (confirmed) {
       try {
         await api.assets.delete(id);
+        if (assetId) {
+          navigate('/assets');
+          return;
+        }
         await loadAssets();
         if (selectedAsset?.id === id) {
           selectedAsset = null;
+          updateQueryParams({ asset: null });
         }
       } catch (error) {
         console.error('Failed to delete asset:', error);
@@ -435,16 +494,17 @@
   ];
 
   function buildAssetDropdownItems(asset) {
-    return [
-      {
+    const items = [];
+    if (canEdit) {
+      items.push({
         id: 'edit',
         type: 'regular',
         icon: Edit,
         title: 'Edit',
         hoverClass: 'hover-bg',
         onClick: () => showEditAssetForm(asset)
-      },
-      {
+      });
+      items.push({
         id: 'delete',
         type: 'regular',
         icon: Trash2,
@@ -452,11 +512,175 @@
         color: '#dc2626',
         hoverClass: 'hover:bg-red-50',
         onClick: () => deleteAsset(asset.id)
-      }
-    ];
+      });
+    }
+    return items;
   }
 </script>
 
+{#if assetId}
+  <!-- Direct asset detail view (/assets/:id) -->
+  <div class="flex min-h-screen" style="background: var(--ds-surface);">
+    <div class="flex-1 max-w-4xl mx-auto p-6">
+      {#if directAssetLoading}
+        <div class="flex items-center justify-center h-64">
+          <span style="color: var(--ds-text-subtle);">{t('common.loading')}</span>
+        </div>
+      {:else if directAsset}
+        <!-- Back button -->
+        <button
+          class="inline-flex items-center gap-1.5 mb-6 text-sm font-medium rounded-lg px-3 py-1.5 transition-colors"
+          style="color: var(--ds-text-subtle); background: transparent;"
+          onmouseenter={(e) => e.currentTarget.style.background = 'var(--ds-surface-hovered)'}
+          onmouseleave={(e) => e.currentTarget.style.background = 'transparent'}
+          onclick={() => navigate('/assets')}
+        >
+          <ArrowLeft class="w-4 h-4" />
+          {t('common.back')}
+        </button>
+
+        <!-- Header -->
+        <div class="flex items-center justify-between mb-6">
+          <h1 class="text-2xl font-semibold" style="color: var(--ds-text);">{directAsset.title}</h1>
+          <div class="flex items-center gap-2">
+            <button
+              class="p-2 rounded-lg transition-colors"
+              style="background: transparent;"
+              onmouseenter={(e) => e.currentTarget.style.background = 'var(--ds-surface-hovered)'}
+              onmouseleave={(e) => e.currentTarget.style.background = 'transparent'}
+              onclick={() => { showRelationshipGraph = true; }}
+              title="Relationship Graph"
+            >
+              <Share2 class="w-4 h-4" style="color: var(--ds-icon);" />
+            </button>
+            {#if canEdit}
+              <button
+                class="p-2 rounded-lg transition-colors"
+                style="background: transparent;"
+                onmouseenter={(e) => e.currentTarget.style.background = 'var(--ds-surface-hovered)'}
+                onmouseleave={(e) => e.currentTarget.style.background = 'transparent'}
+                onclick={() => showEditAssetForm(directAsset)}
+                title={t('common.edit')}
+              >
+                <Edit class="w-4 h-4" style="color: var(--ds-icon);" />
+              </button>
+              <button
+                class="p-2 rounded-lg transition-colors"
+                style="background: transparent; color: #dc2626;"
+                onmouseenter={(e) => e.currentTarget.style.background = 'var(--ds-surface-hovered)'}
+                onmouseleave={(e) => e.currentTarget.style.background = 'transparent'}
+                onclick={() => deleteAsset(directAsset.id)}
+                title={t('common.delete')}
+              >
+                <Trash2 class="w-4 h-4" />
+              </button>
+            {/if}
+          </div>
+        </div>
+
+        <!-- Detail content -->
+        <div class="rounded-lg p-6" style="background: var(--ds-surface-raised); border: 1px solid var(--ds-border);">
+          {#if directAsset.description}
+            <div class="mb-6">
+              <h4 class="text-xs font-medium uppercase mb-1" style="color: var(--ds-text-subtlest);">{t('common.description')}</h4>
+              <p class="text-sm" style="color: var(--ds-text);">{directAsset.description}</p>
+            </div>
+          {/if}
+          <div class="grid grid-cols-2 gap-4">
+            {#if directAsset.asset_type_name}
+              <div>
+                <h4 class="text-xs font-medium uppercase mb-1" style="color: var(--ds-text-subtlest);">{t('common.type')}</h4>
+                <span class="inline-flex items-center gap-1" style="color: var(--ds-text);">
+                  <ColorDot color={directAsset.asset_type_color || '#6b7280'} />
+                  {directAsset.asset_type_name}
+                </span>
+              </div>
+            {/if}
+            {#if directAsset.category_name}
+              <div>
+                <h4 class="text-xs font-medium uppercase mb-1" style="color: var(--ds-text-subtlest);">{t('common.category')}</h4>
+                <span class="inline-flex items-center gap-1" style="color: var(--ds-text);">
+                  <Folder class="w-4 h-4 text-yellow-500" />
+                  {directAsset.category_name}
+                </span>
+              </div>
+            {/if}
+            {#if directAsset.status_name}
+              <div>
+                <h4 class="text-xs font-medium uppercase mb-1" style="color: var(--ds-text-subtlest);">{t('common.status')}</h4>
+                <span class="inline-flex items-center gap-1.5" style="color: var(--ds-text);">
+                  <span class="w-2 h-2 rounded-full" style="background-color: {directAsset.status_color || '#6b7280'};"></span>
+                  {directAsset.status_name}
+                </span>
+              </div>
+            {/if}
+            {#if directAsset.asset_tag}
+              <div>
+                <h4 class="text-xs font-medium uppercase mb-1" style="color: var(--ds-text-subtlest);">Asset Tag</h4>
+                <span class="text-sm font-mono" style="color: var(--ds-text);">{directAsset.asset_tag}</span>
+              </div>
+            {/if}
+            {#if directAsset.creator_name}
+              <div>
+                <h4 class="text-xs font-medium uppercase mb-1" style="color: var(--ds-text-subtlest);">{t('common.createdBy')}</h4>
+                <span class="text-sm" style="color: var(--ds-text);">{directAsset.creator_name}</span>
+              </div>
+            {/if}
+            <div>
+              <h4 class="text-xs font-medium uppercase mb-1" style="color: var(--ds-text-subtlest);">{t('common.created')}</h4>
+              <span class="text-sm" style="color: var(--ds-text);">{formatDateSimple(directAsset.created_at)}</span>
+            </div>
+            <div>
+              <h4 class="text-xs font-medium uppercase mb-1" style="color: var(--ds-text-subtlest);">{t('common.updated')}</h4>
+              <span class="text-sm" style="color: var(--ds-text);">{formatDateSimple(directAsset.updated_at)}</span>
+            </div>
+            {#if directAsset.linked_item_count > 0}
+              <div>
+                <h4 class="text-xs font-medium uppercase mb-1" style="color: var(--ds-text-subtlest);">Linked Items</h4>
+                <span class="text-sm" style="color: var(--ds-text);">{directAsset.linked_item_count}</span>
+              </div>
+            {/if}
+          </div>
+          {#if directAsset.custom_field_values && Object.keys(directAsset.custom_field_values).length > 0}
+            <div class="border-t pt-4 mt-4" style="border-color: var(--ds-border);">
+              <h4 class="text-xs font-medium uppercase mb-3" style="color: var(--ds-text-subtlest);">Custom Fields</h4>
+              {#each Object.entries(directAsset.custom_field_values) as [fieldId, value]}
+                {@const fieldDef = displayTypeFields.find(f => String(f.custom_field_id) === String(fieldId))}
+                {#if fieldDef && value !== null && value !== ''}
+                  <div class="mb-3">
+                    <h4 class="text-xs font-medium uppercase mb-1" style="color: var(--ds-text-subtlest);">{fieldDef.field_name}</h4>
+                    <CustomFieldRenderer
+                      field={{
+                        id: fieldDef.custom_field_id,
+                        name: fieldDef.field_name,
+                        field_type: fieldDef.field_type,
+                        options: fieldDef.field_options
+                      }}
+                      value={value}
+                      readonly={true}
+                      noPadding={true}
+                    />
+                  </div>
+                {/if}
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {:else}
+        <EmptyState
+          icon={Package}
+          title="Asset not found"
+          description="The asset you're looking for doesn't exist or you don't have access to it."
+        />
+      {/if}
+    </div>
+  </div>
+
+  <!-- Relationship Graph for direct view -->
+  {#if directAsset}
+    <AssetRelationshipGraph bind:isOpen={showRelationshipGraph} assetId={directAsset.id} />
+  {/if}
+{:else}
 <div class="flex h-full min-h-screen" style="background: var(--ds-surface);">
   <!-- Left sidebar: Category tree -->
   <div class="w-64 flex flex-col" style="border-right: 1px solid var(--ds-border); background: var(--ds-surface-raised);">
@@ -586,10 +810,21 @@
             Import
           </Button>
         {/if}
-        <Button onclick={showAddAssetForm} class="whitespace-nowrap" keyboardHint="A" hotkeyConfig={{ key: toHotkeyString('assets', 'upload'), guard: () => !!(selectedSetId && !showAssetForm) }}>
-          <Plus class="w-4 h-4 mr-1" />
-          {t('common.create')}
-        </Button>
+        {#if canEdit}
+          <Button onclick={showAddAssetForm} class="whitespace-nowrap" keyboardHint="A" hotkeyConfig={{ key: toHotkeyString('assets', 'upload'), guard: () => !!(selectedSetId && !showAssetForm) }}>
+            <Plus class="w-4 h-4 mr-1" />
+            {t('common.create')}
+          </Button>
+        {/if}
+      {/if}
+      {#if showSettingsGear}
+        <button
+          onclick={() => navigate('/assets/settings')}
+          class="p-2 rounded-lg transition-colors hover:bg-[var(--ds-background-input)]"
+          title="Asset Settings"
+        >
+          <Settings class="w-4 h-4" style="color: var(--ds-icon);" />
+        </button>
       {/if}
     </div>
 
@@ -617,7 +852,7 @@
           icon={Box}
           title={t('common.noItems')}
           description={activeQuery || selectedCategoryId ? t('common.noItems') : t('common.noItems')}
-          action={selectedSetId && !activeQuery && !selectedCategoryId ? createAssetAction : null}
+          action={selectedSetId && canEdit && !activeQuery && !selectedCategoryId ? createAssetAction : null}
         />
       {:else}
         <DataTable
@@ -627,7 +862,7 @@
           emptyMessage={t('common.noItems')}
           emptyIcon={Box}
           actionItems={buildAssetDropdownItems}
-          onRowClick={(asset) => selectedAsset = asset}
+          onRowClick={(asset) => { selectedAsset = asset; updateQueryParams({ asset: asset.id }); }}
           pagination={true}
           {pageSize}
           {currentPage}
@@ -685,15 +920,39 @@
       ></div>
       <div class="p-4 flex items-center justify-between" style="border-bottom: 1px solid var(--ds-border);">
         <h2 class="font-semibold truncate" style="color: var(--ds-text);">{selectedAsset.title}</h2>
-        <button
-          class="p-1 rounded"
-          style="background: transparent;"
-          onmouseenter={(e) => e.currentTarget.style.background = 'var(--ds-surface-hovered)'}
-          onmouseleave={(e) => e.currentTarget.style.background = 'transparent'}
-          onclick={() => selectedAsset = null}
-        >
-          <ChevronRight class="w-4 h-4" style="color: var(--ds-icon);" />
-        </button>
+        <div class="flex items-center gap-1">
+          <button
+            class="p-1 rounded"
+            style="background: transparent;"
+            onmouseenter={(e) => e.currentTarget.style.background = 'var(--ds-surface-hovered)'}
+            onmouseleave={(e) => e.currentTarget.style.background = 'transparent'}
+            onclick={() => { showRelationshipGraph = true; }}
+            title="Relationship Graph"
+          >
+            <Share2 class="w-4 h-4" style="color: var(--ds-icon);" />
+          </button>
+          {#if canEdit}
+            <button
+              class="p-1 rounded"
+              style="background: transparent;"
+              onmouseenter={(e) => e.currentTarget.style.background = 'var(--ds-surface-hovered)'}
+              onmouseleave={(e) => e.currentTarget.style.background = 'transparent'}
+              onclick={() => showEditAssetForm(selectedAsset)}
+              title={t('common.edit')}
+            >
+              <Edit class="w-4 h-4" style="color: var(--ds-icon);" />
+            </button>
+          {/if}
+          <button
+            class="p-1 rounded"
+            style="background: transparent;"
+            onmouseenter={(e) => e.currentTarget.style.background = 'var(--ds-surface-hovered)'}
+            onmouseleave={(e) => e.currentTarget.style.background = 'transparent'}
+            onclick={() => { selectedAsset = null; updateQueryParams({ asset: null }); }}
+          >
+            <ChevronRight class="w-4 h-4" style="color: var(--ds-icon);" />
+          </button>
+        </div>
       </div>
       <div class="flex-1 overflow-auto p-4">
         {#if selectedAsset.description}
@@ -703,12 +962,12 @@
           </div>
         {/if}
         <div class="space-y-3">
-          {#if selectedAsset.type_name}
+          {#if selectedAsset.asset_type_name}
             <div>
               <h4 class="text-xs font-medium uppercase mb-1" style="color: var(--ds-text-subtlest);">{t('common.type')}</h4>
               <span class="inline-flex items-center gap-1" style="color: var(--ds-text);">
-                <ColorDot color={selectedAsset.type_color || '#6b7280'} />
-                {selectedAsset.type_name}
+                <ColorDot color={selectedAsset.asset_type_color || '#6b7280'} />
+                {selectedAsset.asset_type_name}
               </span>
             </div>
           {/if}
@@ -785,6 +1044,7 @@
     </div>
   {/if}
 </div>
+{/if}
 
 <!-- Asset Form Modal -->
 <Modal isOpen={showAssetForm} onclose={() => showAssetForm = false} onSubmit={handleAssetSubmit}>
@@ -852,7 +1112,7 @@
                   id: field.custom_field_id,
                   name: field.field_name,
                   field_type: field.field_type,
-                  options: field.field_options
+                  options: field.options
                 }}
                 value={assetFormData.custom_field_values[field.custom_field_id]}
                 readonly={false}
@@ -878,5 +1138,10 @@
     setId={selectedSetId}
     onComplete={() => { loadAssets(); }}
   />
+{/if}
+
+<!-- Relationship Graph (browser mode) -->
+{#if selectedAsset}
+  <AssetRelationshipGraph bind:isOpen={showRelationshipGraph} assetId={selectedAsset.id} />
 {/if}
 

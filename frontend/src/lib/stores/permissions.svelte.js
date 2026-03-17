@@ -10,6 +10,7 @@ export const isSystemAdmin = derived(authStore, ($authStore) => {
 function createPermissionStore() {
   const permissions = writable([]);
   const userPermissions = writable(new Set());
+  const userPermissionKeys = writable(new Set());
   const loading = writable(false);
   const error = writable(null);
   const hasAssetSets = writable(false);
@@ -79,6 +80,15 @@ function createPermissionStore() {
     }
   );
 
+  const canManageAssets = derived(
+    [authStore, userPermissionKeys],
+    ([$authStore, $keys]) => {
+      if (!$authStore.currentUser) return false;
+      if ($authStore.currentUser.is_system_admin) return true;
+      return $keys.has('asset.manage');
+    }
+  );
+
   // Create a combined derived store for easy subscription
   const combined = derived(
     [
@@ -92,6 +102,7 @@ function createPermissionStore() {
       canAccessAssets,
       canAccessPortalHub,
       canAccessLogbook,
+      canManageAssets,
     ],
     ([
       $permissions,
@@ -104,6 +115,7 @@ function createPermissionStore() {
       $canAccessAssets,
       $canAccessPortalHub,
       $canAccessLogbook,
+      $canManageAssets,
     ]) => ({
       permissions: $permissions,
       userPermissions: $userPermissions,
@@ -115,6 +127,7 @@ function createPermissionStore() {
       canAccessAssets: $canAccessAssets,
       canAccessPortalHub: $canAccessPortalHub,
       canAccessLogbook: $canAccessLogbook,
+      canManageAssets: $canManageAssets,
     })
   );
 
@@ -159,6 +172,12 @@ function createPermissionStore() {
       return value;
     },
 
+    get canManageAssets() {
+      let value;
+      canManageAssets.subscribe((v) => (value = v))();
+      return value;
+    },
+
     // Set whether asset sets exist
     setHasAssetSets(value) {
       hasAssetSets.set(value);
@@ -178,6 +197,7 @@ function createPermissionStore() {
     async loadUserPermissions(userId) {
       if (!userId) {
         userPermissions.set(new Set());
+        userPermissionKeys.set(new Set());
         loading.set(false);
         error.set(null);
         return;
@@ -188,11 +208,16 @@ function createPermissionStore() {
 
       try {
         const response = await api.permissions.getUserPermissions(userId);
-        const globalPermissionIds = new Set(
-          (response.global_permissions || []).map((p) => p.permission_id)
+        const globalPerms = response.global_permissions || [];
+        const globalPermissionIds = new Set(globalPerms.map((p) => p.permission_id));
+        const globalPermKeys = new Set(
+          globalPerms
+            .filter((p) => p.permission?.permission_key)
+            .map((p) => p.permission.permission_key)
         );
 
         userPermissions.set(globalPermissionIds);
+        userPermissionKeys.set(globalPermKeys);
         loading.set(false);
         error.set(null);
       } catch (err) {
@@ -200,6 +225,7 @@ function createPermissionStore() {
         // Don't treat permission loading failures as critical errors
         // Clear permissions and continue to avoid blocking the UI
         userPermissions.set(new Set());
+        userPermissionKeys.set(new Set());
         loading.set(false);
         error.set(null); // Set to null to avoid error states blocking UI
       }
@@ -234,6 +260,7 @@ function createPermissionStore() {
     clear() {
       permissions.set([]);
       userPermissions.set(new Set());
+      userPermissionKeys.set(new Set());
       loading.set(false);
       error.set(null);
     },

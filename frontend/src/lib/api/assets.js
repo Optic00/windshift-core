@@ -4,12 +4,12 @@ export const assetSets = {
   getAll: () => fetchAPI('/asset-sets'),
   get: (id) => fetchAPI(`/asset-sets/${id}`),
   create: (data) =>
-    fetchAPI('/admin/asset-sets', {
+    fetchAPI('/asset-sets', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
   update: (id, data) =>
-    fetchAPI(`/admin/asset-sets/${id}`, {
+    fetchAPI(`/asset-sets/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data),
     }),
@@ -143,6 +143,7 @@ export const assets = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
+  getRelationshipGraph: (id) => fetchAPI(`/assets/${id}/relationship-graph`),
 };
 
 export const itemLinkedAssets = {

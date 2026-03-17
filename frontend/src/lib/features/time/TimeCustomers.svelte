@@ -35,7 +35,7 @@
 
   async function loadCustomFields() {
     try {
-      customFields = await api.customFields.getAll();
+      customFields = (await api.customFields.getAll())?.data || [];
       // Filter fields that apply to customer organisations
       customerOrgFields = customFields.filter(f => f.applies_to_customer_organisations);
     } catch (err) {

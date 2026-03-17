@@ -71,6 +71,15 @@ class TimeEntryStore {
   async init() {
     this.loading = true;
     try {
+      // Set default date range to current month BEFORE loading worklogs
+      const now = new Date();
+      this.filters.date_from = new Date(now.getFullYear(), now.getMonth(), 1)
+        .toISOString()
+        .split('T')[0];
+      this.filters.date_to = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+        .toISOString()
+        .split('T')[0];
+
       await Promise.all([
         this.loadWorklogs(),
         this.loadCustomers(),
@@ -83,18 +92,6 @@ class TimeEntryStore {
       if (this.customers.length === 0 && this.projects.length === 0) {
         this.showOnboarding = true;
       }
-
-      // Set default date range to current month
-      const now = new Date();
-      this.filters.date_from = new Date(now.getFullYear(), now.getMonth(), 1)
-        .toISOString()
-        .split('T')[0];
-      this.filters.date_to = new Date(now.getFullYear(), now.getMonth() + 1, 0)
-        .toISOString()
-        .split('T')[0];
-
-      // Reload worklogs with date filter
-      await this.loadWorklogs();
     } finally {
       this.loading = false;
     }

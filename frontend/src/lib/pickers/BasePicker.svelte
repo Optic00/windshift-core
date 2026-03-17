@@ -43,6 +43,10 @@
     allowCreate = false,
     onCreate = null,
 
+    // Server-side search
+    serverSearch = false,
+    onSearchChange = null,
+
     // Event callbacks (Svelte 5 pattern)
     onSelect = () => {},
     onCancel = () => {},
@@ -73,8 +77,25 @@
     }
   });
 
+  // Debounced server-side search
+  let debounceTimer;
+  $effect(() => {
+    if (!serverSearch || !onSearchChange) return;
+    const query = $inputValue;
+    const touched = $touchedInput;
+    clearTimeout(debounceTimer);
+    if (!touched) return;
+    debounceTimer = setTimeout(() => {
+      onSearchChange(query || '');
+    }, 300);
+    return () => clearTimeout(debounceTimer);
+  });
+
   // Filter items based on search input
   const filteredItems = $derived.by(() => {
+    // Server-side search: items are already filtered by the server
+    if (serverSearch) return items;
+
     if (!$touchedInput || !$inputValue) {
       return items;
     }

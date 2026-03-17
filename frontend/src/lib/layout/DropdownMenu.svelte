@@ -51,12 +51,12 @@
       if (onOpen) onOpen();
       tick().then(() => {
         if (searchInputElement) {
-          searchInputElement.focus();
+          searchInputElement.focus({ preventScroll: true });
         } else {
           const container = document.querySelector('[data-menu-container]');
           if (container) {
             const firstItem = container.querySelector('button[data-menu-item]');
-            if (firstItem) firstItem.focus();
+            if (firstItem) firstItem.focus({ preventScroll: true });
           }
         }
       });

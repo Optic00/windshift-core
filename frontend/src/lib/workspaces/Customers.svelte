@@ -142,7 +142,7 @@
 
   async function loadCustomFields() {
     try {
-      customFields = await api.customFields.getAll();
+      customFields = (await api.customFields.getAll())?.data || [];
       portalCustomerFields = customFields.filter(f => f.applies_to_portal_customers);
     } catch (err) {
       console.error('Failed to load custom fields:', err);

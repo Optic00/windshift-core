@@ -167,7 +167,7 @@ class ItemDetailStore {
       }
 
       this.workspace = workspaceData;
-      this.customFieldDefinitions = customFieldsData || [];
+      this.customFieldDefinitions = customFieldsData?.data || [];
 
       // Filter milestones by workspace restrictions
       let allMilestones = milestonesData || [];

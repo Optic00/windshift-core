@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -260,4 +261,585 @@ func (h *AssetHandler) CreateAssetLink(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(response)
+}
+
+// GetAssetRelationshipGraph returns a graph of relationships for an asset via BFS up to 2 hops.
+func (h *AssetHandler) GetAssetRelationshipGraph(w http.ResponseWriter, r *http.Request) {
+	currentUser := utils.GetCurrentUser(r)
+	if currentUser == nil {
+		respondUnauthorized(w, r)
+		return
+	}
+
+	assetID, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		respondInvalidID(w, r, "id")
+		return
+	}
+
+	// Verify asset exists and user can view it
+	var originSetID int
+	var originTitle string
+	err = h.db.QueryRow("SELECT set_id, title FROM assets WHERE id = ?", assetID).Scan(&originSetID, &originTitle)
+	if err == sql.ErrNoRows {
+		respondNotFound(w, r, "asset")
+		return
+	}
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+
+	canView, err := h.canViewSet(currentUser.ID, originSetID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	if !canView {
+		respondForbidden(w, r)
+		return
+	}
+
+	// Build accessible workspace IDs for item permission filtering
+	accessibleWS, err := GetAccessibleWorkspaceIDs(&models.User{ID: currentUser.ID}, h.db, h.permissionService)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	wsSet := make(map[int]bool, len(accessibleWS))
+	for _, id := range accessibleWS {
+		wsSet[id] = true
+	}
+
+	// Cache for asset set view permissions
+	setViewCache := map[int]bool{originSetID: true}
+	canViewCached := func(setID int) bool {
+		if v, ok := setViewCache[setID]; ok {
+			return v
+		}
+		ok, err := h.canViewSet(currentUser.ID, setID)
+		if err != nil {
+			ok = false
+		}
+		setViewCache[setID] = ok
+		return ok
+	}
+
+	const maxNodes = 100
+	const maxHops = 2
+
+	type nodeKey = string // "{type}-{id}"
+	makeKey := func(entityType string, entityID int) string {
+		return fmt.Sprintf("%s-%d", entityType, entityID)
+	}
+
+	visited := map[nodeKey]bool{}
+	nodeMap := map[nodeKey]*models.RelationshipGraphNode{}
+	var edges []models.RelationshipGraphEdge
+	edgeIDCounter := 0
+	truncated := false
+
+	// Edge deduplication to prevent duplicates from circular custom field references
+	edgeSeen := map[string]bool{}
+	addEdge := func(source, target, label, edgeType, color string) {
+		ek := source + ":" + target + ":" + label + ":" + edgeType
+		if edgeSeen[ek] {
+			return
+		}
+		edgeSeen[ek] = true
+		edgeIDCounter++
+		edges = append(edges, models.RelationshipGraphEdge{
+			ID:       fmt.Sprintf("e%d", edgeIDCounter),
+			Source:   source,
+			Target:   target,
+			Label:    label,
+			Color:    color,
+			EdgeType: edgeType,
+		})
+	}
+
+	// BFS queue entry
+	type bfsEntry struct {
+		key        nodeKey
+		entityType string
+		entityID   int
+		hop        int
+	}
+
+	queue := []bfsEntry{{
+		key:        makeKey("asset", assetID),
+		entityType: "asset",
+		entityID:   assetID,
+		hop:        0,
+	}}
+	visited[queue[0].key] = true
+	nodeMap[queue[0].key] = &models.RelationshipGraphNode{
+		ID:       queue[0].key,
+		EntityID: assetID,
+		Type:     "asset",
+		Title:    originTitle,
+		IsOrigin: true,
+		Hop:      0,
+	}
+
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+
+		if current.hop >= maxHops {
+			continue
+		}
+
+		// Find neighbors via item_links (outgoing)
+		outRows, err := h.db.Query(`
+			SELECT il.id, il.target_type, il.target_id,
+			       lt.forward_label, lt.color,
+			       CASE
+			           WHEN il.target_type = 'item' THEN (SELECT title FROM items WHERE id = il.target_id)
+			           WHEN il.target_type = 'asset' THEN (SELECT title FROM assets WHERE id = il.target_id)
+			           WHEN il.target_type = 'test_case' THEN (SELECT title FROM test_cases WHERE id = il.target_id)
+			           ELSE ''
+			       END as target_title
+			FROM item_links il
+			JOIN link_types lt ON il.link_type_id = lt.id
+			WHERE il.source_type = ? AND il.source_id = ?
+		`, current.entityType, current.entityID)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return
+		}
+
+		type linkNeighbor struct {
+			linkID     int
+			entityType string
+			entityID   int
+			label      string
+			color      string
+			title      string
+		}
+		var neighbors []linkNeighbor
+
+		for outRows.Next() {
+			var n linkNeighbor
+			if err := outRows.Scan(&n.linkID, &n.entityType, &n.entityID, &n.label, &n.color, &n.title); err != nil {
+				_ = outRows.Close()
+				respondInternalError(w, r, err)
+				return
+			}
+			neighbors = append(neighbors, n)
+		}
+		_ = outRows.Close()
+
+		// Find neighbors via item_links (incoming)
+		inRows, err := h.db.Query(`
+			SELECT il.id, il.source_type, il.source_id,
+			       lt.reverse_label, lt.color,
+			       CASE
+			           WHEN il.source_type = 'item' THEN (SELECT title FROM items WHERE id = il.source_id)
+			           WHEN il.source_type = 'asset' THEN (SELECT title FROM assets WHERE id = il.source_id)
+			           WHEN il.source_type = 'test_case' THEN (SELECT title FROM test_cases WHERE id = il.source_id)
+			           ELSE ''
+			       END as source_title
+			FROM item_links il
+			JOIN link_types lt ON il.link_type_id = lt.id
+			WHERE il.target_type = ? AND il.target_id = ?
+		`, current.entityType, current.entityID)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return
+		}
+
+		for inRows.Next() {
+			var n linkNeighbor
+			if err := inRows.Scan(&n.linkID, &n.entityType, &n.entityID, &n.label, &n.color, &n.title); err != nil {
+				_ = inRows.Close()
+				respondInternalError(w, r, err)
+				return
+			}
+			neighbors = append(neighbors, n)
+		}
+		_ = inRows.Close()
+
+		// Process link neighbors
+		for _, n := range neighbors {
+			nKey := makeKey(n.entityType, n.entityID)
+
+			// Permission check
+			if !h.canAccessEntity(n.entityType, n.entityID, wsSet, canViewCached) {
+				continue
+			}
+
+			if !visited[nKey] {
+				if len(nodeMap) >= maxNodes {
+					truncated = true
+					continue
+				}
+				visited[nKey] = true
+				nodeMap[nKey] = &models.RelationshipGraphNode{
+					ID:       nKey,
+					EntityID: n.entityID,
+					Type:     n.entityType,
+					Title:    n.title,
+					Hop:      current.hop + 1,
+				}
+				queue = append(queue, bfsEntry{
+					key:        nKey,
+					entityType: n.entityType,
+					entityID:   n.entityID,
+					hop:        current.hop + 1,
+				})
+			}
+
+			addEdge(current.key, nKey, n.label, "link", n.color)
+		}
+
+		// Find custom field references (items/assets with field_type="asset" pointing to current entity)
+		// Only relevant when current entity is an asset
+		if current.entityType == "asset" {
+			fieldRefNeighbors := h.findCustomFieldReferences(current.entityID, wsSet, canViewCached)
+			for _, fr := range fieldRefNeighbors {
+				nKey := makeKey(fr.entityType, fr.entityID)
+
+				if !visited[nKey] {
+					if len(nodeMap) >= maxNodes {
+						truncated = true
+						continue
+					}
+					visited[nKey] = true
+					nodeMap[nKey] = &models.RelationshipGraphNode{
+						ID:       nKey,
+						EntityID: fr.entityID,
+						Type:     fr.entityType,
+						Title:    fr.title,
+						Hop:      current.hop + 1,
+					}
+					queue = append(queue, bfsEntry{
+						key:        nKey,
+						entityType: fr.entityType,
+						entityID:   fr.entityID,
+						hop:        current.hop + 1,
+					})
+				}
+
+				addEdge(nKey, current.key, "Field: "+fr.fieldName, "field_reference", "")
+			}
+
+			// Outgoing custom field references (this asset's own fields pointing to other assets)
+			outgoingRefs := h.findOutgoingCustomFieldReferences(current.entityID, canViewCached)
+			for _, fr := range outgoingRefs {
+				nKey := makeKey(fr.entityType, fr.entityID)
+
+				if !visited[nKey] {
+					if len(nodeMap) >= maxNodes {
+						truncated = true
+						continue
+					}
+					visited[nKey] = true
+					nodeMap[nKey] = &models.RelationshipGraphNode{
+						ID:       nKey,
+						EntityID: fr.entityID,
+						Type:     fr.entityType,
+						Title:    fr.title,
+						Hop:      current.hop + 1,
+					}
+					queue = append(queue, bfsEntry{
+						key:        nKey,
+						entityType: fr.entityType,
+						entityID:   fr.entityID,
+						hop:        current.hop + 1,
+					})
+				}
+
+				addEdge(current.key, nKey, "Field: "+fr.fieldName, "field_reference", "")
+			}
+		}
+	}
+
+	// Collect nodes
+	nodes := make([]models.RelationshipGraphNode, 0, len(nodeMap))
+	for _, n := range nodeMap {
+		// Enrich metadata
+		n.Metadata = h.getEntityMetadata(n.Type, n.EntityID)
+		nodes = append(nodes, *n)
+	}
+
+	respondJSONOK(w, models.RelationshipGraphResponse{
+		Nodes:      nodes,
+		Edges:      edges,
+		Truncated:  truncated,
+		TotalCount: len(nodes),
+	})
+}
+
+// canAccessEntity checks if the user can view an entity based on its type.
+func (h *AssetHandler) canAccessEntity(entityType string, entityID int, wsSet map[int]bool, canViewSet func(int) bool) bool {
+	switch entityType {
+	case "item":
+		var wsID int
+		err := h.db.QueryRow("SELECT workspace_id FROM items WHERE id = ?", entityID).Scan(&wsID)
+		if err != nil {
+			return false
+		}
+		return wsSet[wsID]
+	case "asset":
+		var setID int
+		err := h.db.QueryRow("SELECT set_id FROM assets WHERE id = ?", entityID).Scan(&setID)
+		if err != nil {
+			return false
+		}
+		return canViewSet(setID)
+	case "test_case":
+		// Test cases use workspace permissions
+		var wsID int
+		err := h.db.QueryRow("SELECT workspace_id FROM test_cases WHERE id = ?", entityID).Scan(&wsID)
+		if err != nil {
+			return false
+		}
+		return wsSet[wsID]
+	}
+	return false
+}
+
+type fieldRefResult struct {
+	entityType string
+	entityID   int
+	title      string
+	fieldName  string
+}
+
+// findCustomFieldReferences finds items and assets whose custom_field_values reference the given asset ID
+// via custom fields with field_type='asset'.
+func (h *AssetHandler) findCustomFieldReferences(assetID int, wsSet map[int]bool, canViewSet func(int) bool) []fieldRefResult {
+	var results []fieldRefResult
+
+	// Get all asset-type custom fields
+	fieldRows, err := h.db.Query(`
+		SELECT id, name FROM custom_field_definitions WHERE field_type = 'asset'
+	`)
+	if err != nil {
+		return results
+	}
+	defer func() { _ = fieldRows.Close() }()
+
+	type fieldInfo struct {
+		id   int
+		name string
+	}
+	var fields []fieldInfo
+	for fieldRows.Next() {
+		var f fieldInfo
+		if err := fieldRows.Scan(&f.id, &f.name); err != nil {
+			continue
+		}
+		fields = append(fields, f)
+	}
+
+	assetIDStr := strconv.Itoa(assetID)
+
+	for _, f := range fields {
+		fieldKey := strconv.Itoa(f.id)
+		// Check items: value could be plain int or {"id": N}
+		itemRows, err := h.db.Query(fmt.Sprintf(`
+			SELECT i.id, i.title, i.workspace_id
+			FROM items i
+			WHERE (
+				CAST(NULLIF(i.custom_field_values,'') ->> '$."%s"' AS TEXT) = ?
+				OR CAST(NULLIF(i.custom_field_values,'') ->> '$."%s".id' AS TEXT) = ?
+			)
+		`, fieldKey, fieldKey), assetIDStr, assetIDStr)
+		if err != nil {
+			continue
+		}
+		for itemRows.Next() {
+			var id int
+			var title string
+			var wsID int
+			if err := itemRows.Scan(&id, &title, &wsID); err != nil {
+				continue
+			}
+			if wsSet[wsID] {
+				results = append(results, fieldRefResult{
+					entityType: "item",
+					entityID:   id,
+					title:      title,
+					fieldName:  f.name,
+				})
+			}
+		}
+		_ = itemRows.Close()
+
+		// Check assets: same pattern
+		assetRows, err := h.db.Query(fmt.Sprintf(`
+			SELECT a.id, a.title, a.set_id
+			FROM assets a
+			WHERE (
+				CAST(NULLIF(a.custom_field_values,'') ->> '$."%s"' AS TEXT) = ?
+				OR CAST(NULLIF(a.custom_field_values,'') ->> '$."%s".id' AS TEXT) = ?
+			)
+		`, fieldKey, fieldKey), assetIDStr, assetIDStr)
+		if err != nil {
+			continue
+		}
+		for assetRows.Next() {
+			var id int
+			var title string
+			var setID int
+			if err := assetRows.Scan(&id, &title, &setID); err != nil {
+				continue
+			}
+			if id == assetID {
+				continue // Skip self
+			}
+			if canViewSet(setID) {
+				results = append(results, fieldRefResult{
+					entityType: "asset",
+					entityID:   id,
+					title:      title,
+					fieldName:  f.name,
+				})
+			}
+		}
+		_ = assetRows.Close()
+	}
+
+	return results
+}
+
+// findOutgoingCustomFieldReferences finds assets referenced by the given asset's own custom_field_values
+// via custom fields with field_type='asset'.
+func (h *AssetHandler) findOutgoingCustomFieldReferences(assetID int, canViewSet func(int) bool) []fieldRefResult {
+	var results []fieldRefResult
+
+	// Get the asset's custom_field_values JSON
+	var cfvRaw sql.NullString
+	err := h.db.QueryRow("SELECT custom_field_values FROM assets WHERE id = ?", assetID).Scan(&cfvRaw)
+	if err != nil || !cfvRaw.Valid || cfvRaw.String == "" {
+		return results
+	}
+
+	var cfv map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(cfvRaw.String), &cfv); err != nil {
+		return results
+	}
+
+	// Get all asset-type custom field definitions
+	fieldRows, err := h.db.Query("SELECT id, name FROM custom_field_definitions WHERE field_type = 'asset'")
+	if err != nil {
+		return results
+	}
+	defer func() { _ = fieldRows.Close() }()
+
+	type fieldInfo struct {
+		id   int
+		name string
+	}
+	var fields []fieldInfo
+	for fieldRows.Next() {
+		var f fieldInfo
+		if err := fieldRows.Scan(&f.id, &f.name); err != nil {
+			continue
+		}
+		fields = append(fields, f)
+	}
+
+	for _, f := range fields {
+		fieldKey := strconv.Itoa(f.id)
+		raw, ok := cfv[fieldKey]
+		if !ok {
+			continue
+		}
+
+		// Try plain int first
+		var refID int
+		if err := json.Unmarshal(raw, &refID); err != nil {
+			// Try {"id": N} object format
+			var obj struct {
+				ID int `json:"id"`
+			}
+			if err := json.Unmarshal(raw, &obj); err != nil || obj.ID == 0 {
+				continue
+			}
+			refID = obj.ID
+		}
+
+		if refID == 0 || refID == assetID {
+			continue
+		}
+
+		// Look up the target asset
+		var title string
+		var setID int
+		err := h.db.QueryRow("SELECT title, set_id FROM assets WHERE id = ?", refID).Scan(&title, &setID)
+		if err != nil {
+			continue
+		}
+		if !canViewSet(setID) {
+			continue
+		}
+
+		results = append(results, fieldRefResult{
+			entityType: "asset",
+			entityID:   refID,
+			title:      title,
+			fieldName:  f.name,
+		})
+	}
+
+	return results
+}
+
+// getEntityMetadata returns metadata for a graph node based on its entity type.
+func (h *AssetHandler) getEntityMetadata(entityType string, entityID int) map[string]interface{} {
+	meta := map[string]interface{}{}
+	switch entityType {
+	case "item":
+		var wsKey, statusName string
+		var wsItemNum, wsID int
+		err := h.db.QueryRow(`
+			SELECT w.key, i.workspace_item_number, i.workspace_id, COALESCE(s.name, '')
+			FROM items i
+			JOIN workspaces w ON i.workspace_id = w.id
+			LEFT JOIN statuses s ON i.status_id = s.id
+			WHERE i.id = ?
+		`, entityID).Scan(&wsKey, &wsItemNum, &wsID, &statusName)
+		if err == nil {
+			meta["display_key"] = fmt.Sprintf("%s-%d", wsKey, wsItemNum)
+			meta["workspace_id"] = wsID
+			if statusName != "" {
+				meta["status"] = statusName
+			}
+		}
+	case "asset":
+		var statusName, typeName string
+		var setID int
+		err := h.db.QueryRow(`
+			SELECT a.set_id, COALESCE(s.name, ''), COALESCE(at.name, '')
+			FROM assets a
+			LEFT JOIN asset_statuses s ON a.status_id = s.id
+			LEFT JOIN asset_types at ON a.asset_type_id = at.id
+			WHERE a.id = ?
+		`, entityID).Scan(&setID, &statusName, &typeName)
+		if err == nil {
+			meta["set_id"] = setID
+			if statusName != "" {
+				meta["status"] = statusName
+			}
+			if typeName != "" {
+				meta["asset_type"] = typeName
+			}
+		}
+	case "test_case":
+		var wsKey string
+		var wsID int
+		err := h.db.QueryRow(`
+			SELECT tc.workspace_id, w.key FROM test_cases tc
+			JOIN workspaces w ON tc.workspace_id = w.id
+			WHERE tc.id = ?
+		`, entityID).Scan(&wsID, &wsKey)
+		if err == nil {
+			meta["workspace_id"] = wsID
+			meta["workspace_key"] = wsKey
+		}
+	}
+	return meta
 }

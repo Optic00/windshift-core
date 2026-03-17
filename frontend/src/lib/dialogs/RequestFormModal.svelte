@@ -89,7 +89,7 @@
       if (portalSlug) {
         customFieldDefinitions = await api.portal.getCustomFields(portalSlug) || [];
       } else {
-        customFieldDefinitions = await api.customFields.getAll() || [];
+        customFieldDefinitions = (await api.customFields.getAll())?.data || [];
       }
 
       // Initialize custom field values (for both custom and virtual fields)
