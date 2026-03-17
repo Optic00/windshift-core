@@ -19,6 +19,12 @@ export const ai = {
     ),
   acceptDependencies: (iterationId, suggestions) =>
     post(`/ai/iterations/${iterationId}/accept-dependencies`, { suggestions }),
+  chat: (message, connectionId, history) =>
+    post('/ai/chat', {
+      message,
+      ...(connectionId ? { connection_id: connectionId } : {}),
+      ...(history?.length ? { history } : {}),
+    }),
 };
 
 export const llmConnections = {

@@ -2,6 +2,7 @@
   import { currentRoute, navigate, isWorkspaceRoute } from '../router.js';
   import { permissionStore, uiStore, workspacesStore } from '../stores';
   import { t } from '../stores/i18n.svelte.js';
+  import { aiStore } from '../stores/aiStore.svelte.js';
   import { getShortcutDisplay } from '../utils/keyboardShortcuts.js';
   import { workspaceIconMap } from '../utils/icons.js';
   import DropdownMenu from './DropdownMenu.svelte';
@@ -12,12 +13,13 @@
   import {
     Search, Settings, Plus, Grip, Clock, Calendar, LifeBuoy,
     Milestone, Library, Package, Users, PanelLeftOpen, PanelLeftClose,
-    BookOpen
+    BookOpen, MessageSquare
   } from 'lucide-svelte';
 
   let {
     onShowCommandPalette = () => {},
-    onShowCreateModal = () => {}
+    onShowCreateModal = () => {},
+    onShowChatPanel = () => {}
   } = $props();
 
   let workspaceSearchQuery = $state('');
@@ -200,6 +202,15 @@
         expanded={$uiStore.navExpanded}
         tooltipSuffix=" ({getShortcutDisplay('global', 'commandPalette')} or Space Space)"
       />
+      {#if aiStore.chatAvailable}
+        <NavLink
+          icon={MessageSquare}
+          label="AI Chat"
+          onclick={onShowChatPanel}
+          expanded={$uiStore.navExpanded}
+          tooltipSuffix=" ({getShortcutDisplay('global', 'aiChat')})"
+        />
+      {/if}
     </div>
   </div>
 

@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
+	"log/slog"
 	"net/http"
 
 	"windshift/internal/database"
@@ -171,9 +173,9 @@ func (h *LLMConnectionHandler) TestConnection(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if err := h.manager.TestConnection(id); err != nil {
+		slog.Warn("LLM connection test failed", slog.Int("connection_id", id), slog.Any("error", err))
 		respondJSON(w, http.StatusBadGateway, map[string]string{
-			"error":   "connection_test_failed",
-			"message": err.Error(),
+			"error": fmt.Sprintf("Connection test failed: %s", err.Error()),
 		})
 		return
 	}

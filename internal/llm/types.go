@@ -13,6 +13,36 @@ type Message struct {
 	Role        string       `json:"role"`
 	Content     string       `json:"content"`
 	Attachments []Attachment `json:"attachments,omitempty"`
+	// Tool calling fields
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"` // for role="tool" messages
+	Name       string     `json:"name,omitempty"`         // function name for role="tool" messages
+}
+
+// ToolDefinition describes a tool the LLM can call.
+type ToolDefinition struct {
+	Type     string       `json:"type"` // "function"
+	Function FunctionDef  `json:"function"`
+}
+
+// FunctionDef describes a callable function.
+type FunctionDef struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Parameters  json.RawMessage `json:"parameters"`
+}
+
+// ToolCall represents an LLM's request to call a tool.
+type ToolCall struct {
+	ID       string       `json:"id"`
+	Type     string       `json:"type"` // "function"
+	Function FunctionCall `json:"function"`
+}
+
+// FunctionCall contains the function name and arguments from a tool call.
+type FunctionCall struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
 }
 
 // StructuredOutputConfig configures structured output constraints.
@@ -30,6 +60,9 @@ type ChatCompletionRequest struct {
 	Temperature      float64                 `json:"temperature,omitempty"`
 	MaxTokens        int                     `json:"max_tokens,omitempty"`
 	StructuredOutput *StructuredOutputConfig `json:"structured_output,omitempty"`
+	// Tool calling fields
+	Tools      []ToolDefinition `json:"tools,omitempty"`
+	ToolChoice interface{}      `json:"tool_choice,omitempty"` // "auto", "none", or {"type":"function","function":{"name":"..."}}
 }
 
 // ChatCompletionResponse is the response from /v1/chat/completions.

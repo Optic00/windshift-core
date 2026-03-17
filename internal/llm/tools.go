@@ -1,0 +1,119 @@
+package llm
+
+import "encoding/json"
+
+// BuiltinTools returns the tool definitions available to the agentic chat.
+func BuiltinTools() []ToolDefinition {
+	return []ToolDefinition{
+		{
+			Type: "function",
+			Function: FunctionDef{
+				Name:        "list_workspaces",
+				Description: "List all workspaces the user has access to. Returns workspace ID, name, key, and description.",
+				Parameters:  json.RawMessage(`{"type":"object","properties":{}}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDef{
+				Name:        "get_workspace",
+				Description: "Get details of a specific workspace by its ID.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"workspace_id": {"type": "integer", "description": "The workspace ID"}
+					},
+					"required": ["workspace_id"]
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDef{
+				Name:        "list_items",
+				Description: "List items (tasks, issues, etc.) in one or all workspaces. Returns item key, title, status, priority, assignee, due date, milestone, and iteration.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"workspace_id": {"type": "integer", "description": "Workspace ID. If omitted, queries all accessible workspaces."},
+						"status": {"type": "string", "description": "Filter by status name (optional)"},
+						"assignee_id": {"type": "integer", "description": "Filter by assignee user ID (optional)"},
+						"limit": {"type": "integer", "description": "Max items to return (default 20, max 50)"},
+						"filter": {"type": "string", "description": "CQL filter expression for advanced filtering. Supported fields: status, priority, assignee, creator, due_date, created, updated, label, milestone, milestonename, iteration, iterationname, project, itemtype, cf_<name>, custom.<name>. Operators: =, !=, <, <=, >, >=, ~ (contains), IN, NOT IN. Logical: AND, OR, NOT. Functions: currentUser(), now(), startOfDay(), endOfDay(). Examples: 'status = \"Open\" AND milestonename = \"v2.0\"', 'priority IN (\"high\", \"critical\") AND cf_team ~ \"platform\"', 'assignee = currentUser() AND due_date < now()'. Use list_custom_fields to discover available custom field names."}
+					}
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDef{
+				Name:        "get_item",
+				Description: "Get details of a specific item by its numeric ID or item key (e.g. 'PROJ-42').",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"item_id": {"type": "integer", "description": "The item numeric ID"},
+						"item_key": {"type": "string", "description": "The item key like PROJ-42"}
+					}
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDef{
+				Name:        "list_milestones",
+				Description: "List milestones. Returns ID, name, status, target_date, category, and workspace info.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"workspace_id": {"type": "integer", "description": "Filter to a specific workspace (optional)"},
+						"status": {"type": "string", "description": "Filter by status: planning, in-progress, completed, cancelled (optional)"},
+						"include_global": {"type": "boolean", "description": "Include cross-workspace milestones (default true)"}
+					}
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDef{
+				Name:        "list_iterations",
+				Description: "List iterations (sprints, PIs, releases). Returns ID, name, status, start_date, end_date, type, and workspace info.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"workspace_id": {"type": "integer", "description": "Filter to a specific workspace (optional)"},
+						"status": {"type": "string", "description": "Filter by status: planned, active, completed, cancelled (optional)"},
+						"include_global": {"type": "boolean", "description": "Include cross-workspace iterations (default true)"}
+					}
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDef{
+				Name:        "list_custom_fields",
+				Description: "List available custom field definitions. Use this to discover what custom fields exist before filtering items with cf_<name> in the filter parameter of list_items.",
+				Parameters:  json.RawMessage(`{"type":"object","properties":{}}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDef{
+				Name:        "search_items",
+				Description: "Search for items by text query across accessible workspaces. Searches title and description.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"query": {"type": "string", "description": "Search text"},
+						"workspace_ids": {
+							"type": "array",
+							"items": {"type": "integer"},
+							"description": "Optional list of workspace IDs to search in. If empty, searches all accessible workspaces."
+						}
+					},
+					"required": ["query"]
+				}`),
+			},
+		},
+	}
+}

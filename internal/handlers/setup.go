@@ -219,9 +219,16 @@ func (h *SetupHandler) GetModuleSettings(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	aiChat, err := h.getSettingBool("ai_chat_enabled")
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+
 	settings := models.ModuleSettings{
 		TimeTrackingEnabled:   timeTracking,
 		TestManagementEnabled: testManagement,
+		AIChatEnabled:         aiChat,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -250,6 +257,7 @@ func (h *SetupHandler) UpdateModuleSettings(w http.ResponseWriter, r *http.Reque
 	}{
 		{"time_tracking_enabled", true}, // Always enabled
 		{"test_management_enabled", settings.TestManagementEnabled},
+		{"ai_chat_enabled", settings.AIChatEnabled},
 	}
 
 	tx, err := h.DB.Begin()
@@ -288,6 +296,7 @@ func (h *SetupHandler) UpdateModuleSettings(w http.ResponseWriter, r *http.Reque
 		Details: map[string]interface{}{
 			"time_tracking_enabled":   settings.TimeTrackingEnabled,
 			"test_management_enabled": settings.TestManagementEnabled,
+			"ai_chat_enabled":         settings.AIChatEnabled,
 		},
 		Success: true,
 	})
@@ -325,10 +334,16 @@ func (h *SetupHandler) getSetupStatus() (models.SetupStatus, error) {
 		return status, err
 	}
 
+	aiChatEnabled, err := h.getSettingBool("ai_chat_enabled")
+	if err != nil {
+		return status, err
+	}
+
 	status.SetupCompleted = setupCompleted
 	status.AdminUserCreated = adminUserCreated
 	status.TimeTrackingEnabled = timeTrackingEnabled
 	status.TestManagementEnabled = testManagementEnabled
+	status.AIChatEnabled = aiChatEnabled
 
 	return status, nil
 }

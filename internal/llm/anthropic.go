@@ -40,9 +40,15 @@ type anthropicMessage struct {
 }
 
 type anthropicContentBlock struct {
-	Type   string           `json:"type"`             // "text" or "document"
-	Text   string           `json:"text,omitempty"`   // for type="text"
-	Source *anthropicSource `json:"source,omitempty"` // for type="document"
+	Type        string           `json:"type"`                   // "text", "document", "tool_use", "tool_result"
+	Text        string           `json:"text,omitempty"`         // for type="text"
+	Source      *anthropicSource `json:"source,omitempty"`       // for type="document"
+	ID          string           `json:"id,omitempty"`           // for type="tool_use"
+	Name        string           `json:"name,omitempty"`         // for type="tool_use"
+	Input       json.RawMessage  `json:"input,omitempty"`        // for type="tool_use"
+	ToolUseID   string           `json:"tool_use_id,omitempty"`  // for type="tool_result"
+	Content     interface{}      `json:"content,omitempty"`      // for type="tool_result" (string or blocks)
+	IsError     *bool            `json:"is_error,omitempty"`     // for type="tool_result"
 }
 
 type anthropicSource struct {
@@ -63,12 +69,13 @@ type anthropicChoice struct {
 }
 
 type anthropicResponse struct {
-	ID      string             `json:"id"`
-	Type    string             `json:"type"`
-	Role    string             `json:"role"`
-	Content []anthropicContent `json:"content"`
-	Model   string             `json:"model"`
-	Usage   anthropicUsage     `json:"usage"`
+	ID         string             `json:"id"`
+	Type       string             `json:"type"`
+	Role       string             `json:"role"`
+	Content    []anthropicContent `json:"content"`
+	Model      string             `json:"model"`
+	StopReason string             `json:"stop_reason"`
+	Usage      anthropicUsage     `json:"usage"`
 }
 
 type anthropicContent struct {
@@ -99,12 +106,53 @@ func newAnthropicClient(baseURL, model, apiKey string, timeout time.Duration) *a
 }
 
 func (c *anthropicClient) ChatCompletion(ctx context.Context, req ChatCompletionRequest) (*ChatCompletionResponse, error) {
-	// Extract system message from the messages array
+	// Extract system message and convert messages to Anthropic format
 	var systemPrompt string
 	var messages []anthropicMessage
+	// Collect consecutive tool result messages to merge into a single "user" message
+	var pendingToolResults []anthropicContentBlock
+	flushToolResults := func() {
+		if len(pendingToolResults) > 0 {
+			messages = append(messages, anthropicMessage{Role: "user", Content: pendingToolResults})
+			pendingToolResults = nil
+		}
+	}
 	for _, msg := range req.Messages {
 		if msg.Role == "system" {
 			systemPrompt = msg.Content
+			continue
+		}
+		// Convert role="tool" messages to Anthropic tool_result blocks
+		if msg.Role == "tool" {
+			pendingToolResults = append(pendingToolResults, anthropicContentBlock{
+				Type:      "tool_result",
+				ToolUseID: msg.ToolCallID,
+				Content:   msg.Content,
+			})
+			continue
+		}
+		flushToolResults()
+		// Convert assistant messages with tool_calls to Anthropic content blocks
+		if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
+			var blocks []anthropicContentBlock
+			if msg.Content != "" {
+				blocks = append(blocks, anthropicContentBlock{Type: "text", Text: msg.Content})
+			}
+			for _, tc := range msg.ToolCalls {
+				var input json.RawMessage
+				if tc.Function.Arguments != "" {
+					input = json.RawMessage(tc.Function.Arguments)
+				} else {
+					input = json.RawMessage("{}")
+				}
+				blocks = append(blocks, anthropicContentBlock{
+					Type:  "tool_use",
+					ID:    tc.ID,
+					Name:  tc.Function.Name,
+					Input: input,
+				})
+			}
+			messages = append(messages, anthropicMessage{Role: "assistant", Content: blocks})
 			continue
 		}
 		if len(msg.Attachments) > 0 {
@@ -123,6 +171,7 @@ func (c *anthropicClient) ChatCompletion(ctx context.Context, req ChatCompletion
 			messages = append(messages, anthropicMessage{Role: msg.Role, Content: msg.Content})
 		}
 	}
+	flushToolResults()
 
 	maxTokens := req.MaxTokens
 	if maxTokens == 0 {
@@ -137,7 +186,29 @@ func (c *anthropicClient) ChatCompletion(ctx context.Context, req ChatCompletion
 		Temperature: req.Temperature,
 	}
 
-	// Add tool for structured output
+	// Add real tools for function calling
+	if len(req.Tools) > 0 {
+		for _, t := range req.Tools {
+			anthropicReq.Tools = append(anthropicReq.Tools, anthropicTool{
+				Name:        t.Function.Name,
+				Description: t.Function.Description,
+				InputSchema: t.Function.Parameters,
+			})
+		}
+		if req.ToolChoice != nil {
+			if s, ok := req.ToolChoice.(string); ok {
+				switch s {
+				case "auto":
+					anthropicReq.ToolChoice = &anthropicChoice{Type: "auto"}
+				case "none":
+					// Anthropic doesn't have "none" — omit tools instead
+					anthropicReq.Tools = nil
+				}
+			}
+		}
+	}
+
+	// Add tool for structured output (overrides real tools if both set)
 	useToolOutput := false
 	if req.StructuredOutput != nil && len(req.StructuredOutput.Schema) > 0 {
 		toolName := req.StructuredOutput.SchemaName
@@ -190,19 +261,43 @@ func (c *anthropicClient) ChatCompletion(ctx context.Context, req ChatCompletion
 
 	// Convert Anthropic response to standard format
 	var content string
+	var toolCalls []ToolCall
 	for _, c := range result.Content {
 		if c.Type == "text" {
 			content += c.Text
 		} else if c.Type == "tool_use" && useToolOutput {
 			// Extract JSON from tool input for structured output
 			content = string(c.Input)
+		} else if c.Type == "tool_use" && !useToolOutput {
+			// Real tool call from function calling
+			toolCalls = append(toolCalls, ToolCall{
+				ID:   c.ID,
+				Type: "function",
+				Function: FunctionCall{
+					Name:      c.Name,
+					Arguments: string(c.Input),
+				},
+			})
 		}
 	}
 
+	finishReason := "stop"
+	if result.StopReason == "tool_use" && !useToolOutput {
+		finishReason = "tool_calls"
+	}
+
 	return &ChatCompletionResponse{
-		ID:      result.ID,
-		Object:  "chat.completion",
-		Choices: []Choice{{Index: 0, Message: Message{Role: "assistant", Content: content}, FinishReason: "stop"}},
+		ID:     result.ID,
+		Object: "chat.completion",
+		Choices: []Choice{{
+			Index: 0,
+			Message: Message{
+				Role:      "assistant",
+				Content:   content,
+				ToolCalls: toolCalls,
+			},
+			FinishReason: finishReason,
+		}},
 		Usage: Usage{
 			PromptTokens:     result.Usage.InputTokens,
 			CompletionTokens: result.Usage.OutputTokens,

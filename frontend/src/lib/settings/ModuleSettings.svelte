@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { CheckSquare, Save, AlertCircle, Puzzle, Upload, RefreshCw, Trash2, ToggleLeft, ToggleRight, Package } from 'lucide-svelte';
+  import { CheckSquare, Save, AlertCircle, Puzzle, Upload, RefreshCw, Trash2, ToggleLeft, ToggleRight, Package, MessageSquare } from 'lucide-svelte';
   import { moduleSettings } from '../stores/moduleSettings.js';
   import Toggle from '../components/Toggle.svelte';
   import Button from '../components/Button.svelte';
@@ -27,6 +27,7 @@
 
   // Local toggle state
   let testManagementEnabled = $state(false);
+  let aiChatEnabled = $state(false);
   let initialLoad = $state(true);
 
   // Plugin system state (from server startup flag)
@@ -36,6 +37,7 @@
   $effect(() => {
     if ($moduleSettings.loaded && initialLoad) {
       testManagementEnabled = $moduleSettings.test_management_enabled;
+      aiChatEnabled = $moduleSettings.ai_chat_enabled;
       initialLoad = false;
     }
   });
@@ -206,7 +208,8 @@
     try {
       const newSettings = {
         time_tracking_enabled: true, // Always enabled
-        test_management_enabled: testManagementEnabled
+        test_management_enabled: testManagementEnabled,
+        ai_chat_enabled: aiChatEnabled,
       };
 
       await moduleSettings.update(newSettings);
@@ -233,7 +236,8 @@
 
       const newSettings = {
         time_tracking_enabled: true, // Always enabled
-        test_management_enabled: testManagementEnabled
+        test_management_enabled: testManagementEnabled,
+        ai_chat_enabled: aiChatEnabled,
       };
 
       await moduleSettings.update(newSettings);
@@ -292,8 +296,27 @@
         </div>
 
       </div>
+
+      <!-- AI Chat Module -->
+      <div class="border rounded p-6" style="background-color: var(--ds-surface-raised); border-color: var(--ds-border);">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <MessageSquare class="w-5 h-5" style="color: var(--ds-text-subtle);" />
+            <div>
+              <h3 class="text-lg font-medium" style="color: var(--ds-text);">AI Chat</h3>
+              <p class="text-sm mt-1" style="color: var(--ds-text-subtle);">
+                Allow users to query workspaces and items via AI-powered chat
+              </p>
+            </div>
+          </div>
+          <Toggle
+            bind:checked={aiChatEnabled}
+            onchange={autoSave}
+          />
+        </div>
+      </div>
     </div>
-    
+
     <!-- Plugin Management Section -->
     <div class="mt-8">
       <h2 class="text-xl font-semibold mb-4 flex items-center gap-2" style="color: var(--ds-text);">

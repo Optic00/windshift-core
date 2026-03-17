@@ -251,7 +251,18 @@ Schedule tasks across the full workday, not all at the same time. Use only item 
 func (h *AIHandler) Status(w http.ResponseWriter, r *http.Request) {
 	client, err := h.llmManager.Resolve(0)
 	available := err == nil && client != nil && client.Available()
-	respondJSONOK(w, map[string]bool{"available": available})
+
+	// Check ai_chat_enabled module setting
+	chatEnabled := false
+	var val string
+	if dbErr := h.db.QueryRow("SELECT value FROM system_settings WHERE key = ?", "ai_chat_enabled").Scan(&val); dbErr == nil {
+		chatEnabled = strings.EqualFold(val, "true")
+	}
+
+	respondJSONOK(w, map[string]interface{}{
+		"available":    available,
+		"chat_enabled": chatEnabled,
+	})
 }
 
 // --- Item AI Actions ---
@@ -1542,4 +1553,103 @@ func (h *AIHandler) AcceptDependencies(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSONOK(w, AcceptDependenciesResponse{Created: created, Skipped: skipped})
+}
+
+// ChatMessage represents a single message in conversation history.
+type ChatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// ChatRequest is the request body for the agentic chat endpoint.
+type ChatRequest struct {
+	Message      string        `json:"message"`
+	ConnectionID int           `json:"connection_id,omitempty"`
+	History      []ChatMessage `json:"history,omitempty"`
+}
+
+// ChatResponse is the response from the agentic chat endpoint.
+type ChatResponse struct {
+	Answer     string              `json:"answer"`
+	ToolCalls  []llm.ToolCallRecord `json:"tool_calls,omitempty"`
+	Iterations int                 `json:"iterations"`
+}
+
+// Chat handles agentic chat where the LLM can query workspaces and items via tool calls.
+func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
+	user := utils.GetCurrentUser(r)
+	if user == nil {
+		respondUnauthorized(w, r)
+		return
+	}
+
+	var req ChatRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+	if strings.TrimSpace(req.Message) == "" {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "message is required"})
+		return
+	}
+
+	// Resolve LLM client
+	llmClient, err := h.llmManager.Resolve(req.ConnectionID)
+	if err != nil {
+		respondInternalError(w, r, fmt.Errorf("failed to resolve LLM connection: %w", err))
+		return
+	}
+	if !llmClient.Available() {
+		respondJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "AI service is not available"})
+		return
+	}
+
+	// Pre-compute accessible workspace IDs (immutable for the duration of this request)
+	accessibleWSIDs, err := GetAccessibleWorkspaceIDs(user, h.db, h.permService)
+	if err != nil {
+		respondInternalError(w, r, fmt.Errorf("failed to get accessible workspaces: %w", err))
+		return
+	}
+
+	// Build tool executor
+	executor := NewToolExecutor(h.db, accessibleWSIDs)
+
+	systemPrompt := fmt.Sprintf(
+		"You are a helpful assistant for Windshift, a project management tool. "+
+			"You can look up workspaces and items to answer the user's questions. "+
+			"Use the available tools to find information before answering. "+
+			"Be concise and factual. If you cannot find the requested information, say so.\n\n"+
+			"The current user is %s (user ID: %d). "+
+			"When the user asks about \"my items\", \"assigned to me\", or similar, "+
+			"use the list_items tool with assignee_id=%d. "+
+			"You can omit workspace_id to search across all workspaces at once.\n\n"+
+		"You can also look up milestones and iterations (sprints) and filter items using CQL query expressions including custom fields. Use list_custom_fields to discover available custom fields.",
+		user.FullName, user.ID, user.ID,
+	)
+
+	// Convert client history to LLM messages (only user/assistant roles allowed)
+	var history []llm.Message
+	for _, h := range req.History {
+		if h.Role == "user" || h.Role == "assistant" {
+			history = append(history, llm.Message{Role: h.Role, Content: h.Content})
+		}
+	}
+
+	result, err := llm.RunAgent(r.Context(), llmClient, llm.AgentConfig{
+		SystemPrompt: systemPrompt,
+		Tools:        llm.BuiltinTools(),
+		MaxTokens:    2048,
+		Temperature:  0.1,
+	}, req.Message, executor.Execute, history)
+	if err != nil {
+		slog.Error("agent chat failed", slog.Any("error", err))
+		respondJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "AI service error"})
+		return
+	}
+
+	respondJSONOK(w, ChatResponse{
+		Answer:     result.Answer,
+		ToolCalls:  result.ToolCalls,
+		Iterations: result.Iterations,
+	})
 }

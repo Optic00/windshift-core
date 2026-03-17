@@ -21,7 +21,7 @@
   let editingConnection = $state(null);
   let deletingConnection = $state(null);
   let testResult = $state(null);
-  let testLoading = $state(false);
+  let testingConnectionId = $state(null);
   let saving = $state(false);
 
   // Form state
@@ -146,7 +146,7 @@
   }
 
   async function testConnection(id) {
-    testLoading = true;
+    testingConnectionId = id;
     testResult = null;
     try {
       await api.llmConnections.test(id);
@@ -154,9 +154,9 @@
       successToast('Connection test passed');
     } catch (err) {
       testResult = { success: false, message: err.message || 'Connection test failed' };
-      errorToast('Connection test failed');
+      errorToast(err.message || 'Connection test failed');
     } finally {
-      testLoading = false;
+      testingConnectionId = null;
     }
   }
 
@@ -228,9 +228,14 @@
                     class="p-1.5 rounded hover:opacity-80"
                     style="color: var(--ds-text-subtle);"
                     title="Test connection"
+                    disabled={testingConnectionId === conn.id}
                     onclick={() => testConnection(conn.id)}
                   >
-                    <TestTube size={14} />
+                    {#if testingConnectionId === conn.id}
+                      <Spinner size="sm" />
+                    {:else}
+                      <TestTube size={14} />
+                    {/if}
                   </button>
                   <button
                     class="p-1.5 rounded hover:opacity-80"
@@ -283,7 +288,7 @@
 
       {#if editingConnection}
         <div class="flex items-center gap-2 pt-2 border-t" style="border-color: var(--ds-border);">
-          <Button variant="secondary" onclick={() => testConnection(editingConnection.id)} loading={testLoading} icon={TestTube}>
+          <Button variant="secondary" onclick={() => testConnection(editingConnection.id)} loading={testingConnectionId === editingConnection?.id} icon={TestTube}>
             Test Connection
           </Button>
           {#if testResult}

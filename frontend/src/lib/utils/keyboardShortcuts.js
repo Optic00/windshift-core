@@ -25,6 +25,7 @@ const shortcuts = {
   global: {
     commandPalette: { key: 'k', modifierKey: true },
     create: { key: 'c' },
+    aiChat: { key: 'j', modifierKey: true },
   },
   modal: {
     submit: { key: 'Enter', modifierKey: true },
