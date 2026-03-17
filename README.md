@@ -47,6 +47,8 @@ Download the Windshift binaries from https://windshift.sh/download - you can fin
 
 ## Help wanted
 
+**Important**: If you are viewing this on Github, this repository is a push mirror for https://codeberg.org/realigned/windshift-core. Code contributions can only be made on Codeberg.
+
 If you would like to contribute to this project, we are looking for help in the following areas:
 
 #### Early bug reports 
