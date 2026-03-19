@@ -90,7 +90,7 @@ func (h *AIHandler) PlanMyDay(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build filter: include items assigned to user OR items in their personal workspace(s)
-	statusFilter := "NOT EXISTS (SELECT 1 FROM status_categories sc WHERE sc.id = st.category_id AND sc.is_completed = 1) OR i.status_id IS NULL"
+	statusFilter := "NOT EXISTS (SELECT 1 FROM status_categories sc WHERE sc.id = st.category_id AND COALESCE(sc.is_completed, FALSE) = TRUE) OR i.status_id IS NULL"
 	qlArgs := []interface{}{user.ID}
 	ownershipFilter := "i.assignee_id = ?"
 
@@ -542,14 +542,14 @@ func (h *AIHandler) FindSimilarItems(w http.ResponseWriter, r *http.Request) {
 
 	// Load candidate items: last 100 open items in same workspace (excluding current)
 	candidateRows, err := h.db.Query(
-		`SELECT i.id, CONCAT(w.key, '-', i.workspace_item_number) as item_key, i.title,
+		`SELECT i.id, w.key || '-' || CAST(i.workspace_item_number AS TEXT) as item_key, i.title,
 		        COALESCE(s.name, '') as status_name, COALESCE(i.description, '') as description
 		 FROM items i
 		 JOIN workspaces w ON i.workspace_id = w.id
 		 LEFT JOIN statuses s ON i.status_id = s.id
 		 LEFT JOIN status_categories sc ON s.category_id = sc.id
 		 WHERE i.workspace_id = ? AND i.id != ?
-		   AND (sc.is_completed IS NULL OR sc.is_completed = 0)
+		   AND COALESCE(sc.is_completed, FALSE) = FALSE
 		 ORDER BY i.created_at DESC LIMIT 100`, item.WorkspaceID, itemID)
 	if err != nil {
 		respondInternalError(w, r, fmt.Errorf("failed to query candidate items: %w", err))
