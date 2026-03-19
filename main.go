@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -113,6 +112,7 @@ func main() {
 	var tlsCertPath string
 	var tlsKeyPath string
 	var disablePlugins bool
+	var pluginDir string
 	var enableAdminFallback bool
 	var llmProvidersFile string
 	flag.StringVar(&port, "port", "8080", "Port to run the HTTP server on")
@@ -208,30 +208,12 @@ func main() {
 		allowedHosts = envAllowedHosts
 	}
 
-	// Parse BASE_URL to derive allowed-hosts and allowed-port
+	// Read BASE_URL from env if not set via flag
 	if baseURL == "" {
 		baseURL = os.Getenv("BASE_URL")
 	}
 	if baseURL == "" {
 		baseURL = os.Getenv("PUBLIC_URL")
-	}
-	if baseURL != "" {
-		parsedURL, err := url.Parse(baseURL)
-		if err == nil {
-			if allowedHosts == "" {
-				allowedHosts = parsedURL.Hostname()
-			}
-			if allowedPort == "" {
-				switch {
-				case parsedURL.Port() != "":
-					allowedPort = parsedURL.Port()
-				case parsedURL.Scheme == "https":
-					allowedPort = "443"
-				default:
-					allowedPort = "80"
-				}
-			}
-		}
 	}
 
 	// SSH environment variables
@@ -246,16 +228,27 @@ func main() {
 	}
 
 	// Proxy environment variables
+	// Track whether proxy was explicitly set (flag or env) for auto-detection logic
+	useProxyExplicit := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "use-proxy" {
+			useProxyExplicit = true
+		}
+	})
 	if os.Getenv("USE_PROXY") == "true" {
 		useProxy = true
+		useProxyExplicit = true
 	}
 	if envAdditionalProxies := os.Getenv("ADDITIONAL_PROXIES"); envAdditionalProxies != "" {
 		additionalProxies = envAdditionalProxies
 	}
 
-	// Plugin system environment variable
+	// Plugin system environment variables
 	if os.Getenv("DISABLE_PLUGINS") == "true" {
 		disablePlugins = true
+	}
+	if envPluginDir := os.Getenv("PLUGIN_DIR"); envPluginDir != "" {
+		pluginDir = envPluginDir
 	}
 
 	// Admin fallback environment variable
@@ -300,20 +293,6 @@ func main() {
 		}
 	}
 
-	// Validate additional proxies requires use-proxy
-	if additionalProxies != "" && !useProxy {
-		slog.Warn("--additional-proxies ignored: --use-proxy not enabled")
-	}
-
-	// Log proxy mode status
-	if useProxy {
-		slog.Info("Proxy mode enabled: trusting X-Forwarded-Proto from private IPs")
-		slog.Warn("⚠️  Ensure this server is NOT directly accessible from the internet")
-		if additionalProxies != "" {
-			slog.Info("Additional trusted proxies configured", "proxies", additionalProxies)
-		}
-	}
-
 	// Setup signal handling for graceful shutdown
 	shutdownChan := make(chan os.Signal, 1)
 	signal.Notify(shutdownChan, os.Interrupt, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
@@ -328,12 +307,14 @@ func main() {
 		AllowedHosts:              allowedHosts,
 		AllowedPort:               allowedPort,
 		UseProxy:                  useProxy,
+		UseProxyExplicit:          useProxyExplicit,
 		AdditionalProxies:         additionalProxies,
 		MaxReadConns:              maxReadConns,
 		MaxWriteConns:             maxWriteConns,
 		TLSCertPath:               tlsCertPath,
 		TLSKeyPath:                tlsKeyPath,
 		DisablePlugins:            disablePlugins,
+		PluginDir:                 pluginDir,
 		EnableAdminFallback:       enableAdminFallback,
 		BaseURL:                   baseURL,
 		LLMEndpoint:               llmEndpoint,
@@ -346,6 +327,19 @@ func main() {
 		NotificationBatchSize:     notificationBatchSize,
 		NotificationSyncInterval:  notificationSyncInterval,
 	}
+
+	// Resolve security configuration: auto-detect proxy, derive CORS hosts/ports, validate
+	resolved, err := server.ResolveSecurityConfig(cfg)
+	if err != nil {
+		slog.Error("security configuration error", "error", err)
+		os.Exit(1)
+	}
+	resolved.LogDiagnostics()
+
+	// Apply resolved values back to config
+	cfg.UseProxy = resolved.UseProxy
+	cfg.AllowedHosts = resolved.AllowedHosts
+	cfg.AllowedPort = resolved.AllowedPort
 
 	// Create and start the server
 	srv, err := server.New(cfg)
@@ -416,16 +410,8 @@ func main() {
 	}
 
 	// Log startup info
-	enableHTTPS := tlsCertPath != "" && tlsKeyPath != ""
-	if enableHTTPS {
-		if enableSSH {
-			slog.Info("SSH TUI available", "command", "ssh "+sshHost+" -p "+sshPort)
-		}
-	} else {
-		slog.Warn("⚠️  Running without HTTPS - credentials will be transmitted in plaintext. Use --tls-cert and --tls-key for production.")
-		if enableSSH {
-			slog.Info("SSH TUI available", "command", "ssh "+sshHost+" -p "+sshPort)
-		}
+	if enableSSH {
+		slog.Info("SSH TUI available", "command", "ssh "+sshHost+" -p "+sshPort)
 	}
 
 	// Wait for shutdown signal

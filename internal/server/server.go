@@ -58,6 +58,8 @@ type Config struct {
 	AllowedPort string
 	// UseProxy enables proxy mode (trust X-Forwarded-Proto from private IPs)
 	UseProxy bool
+	// UseProxyExplicit indicates the user explicitly set USE_PROXY (vs. zero-value false)
+	UseProxyExplicit bool
 	// AdditionalProxies is a comma-separated list of additional proxy IPs to trust
 	AdditionalProxies string
 	// MaxReadConns is the maximum number of read connections
@@ -70,6 +72,8 @@ type Config struct {
 	TLSKeyPath string
 	// DisablePlugins disables the plugin system
 	DisablePlugins bool
+	// PluginDir is the directory for plugins (defaults to "plugins" if empty)
+	PluginDir string
 	// EnableAdminFallback enables admin password fallback for restrictive auth policies
 	EnableAdminFallback bool
 	// BaseURL is the external URL for the server (used for email links, etc.)
@@ -127,6 +131,7 @@ type Server struct {
 	recurrenceScheduler   *scheduler.RecurrenceScheduler
 	actionService         *services.ActionService
 	emailScheduler        *scheduler.EmailScheduler
+	briefingScheduler     *scheduler.BriefingScheduler
 	activityTracker       *services.ActivityTracker
 	tokenTracker          *services.TokenTracker
 	scmSyncStopChan       chan struct{}
@@ -717,11 +722,16 @@ func (s *Server) initialize() error {
 		var pluginOpts []plugins.Option
 		pluginOpts = append(pluginOpts, plugins.WithDatabase(s.db), plugins.WithSCMService(scmSyncService))
 
+		pluginDir := cfg.PluginDir
+		if pluginDir == "" {
+			pluginDir = "plugins"
+		}
+
 		if pluginDirsEnv := os.Getenv("PLUGIN_DIRS"); pluginDirsEnv != "" {
 			var additionalDirs []string
 			for _, dir := range strings.Split(pluginDirsEnv, ",") {
 				dir = strings.TrimSpace(dir)
-				if dir != "" && dir != "plugins" {
+				if dir != "" && dir != pluginDir {
 					additionalDirs = append(additionalDirs, dir)
 				}
 			}
@@ -731,7 +741,7 @@ func (s *Server) initialize() error {
 			}
 		}
 
-		s.pluginManager = plugins.NewManager("plugins", pluginOpts...)
+		s.pluginManager = plugins.NewManager(pluginDir, pluginOpts...)
 		slog.Info("initializing plugin system")
 		if err := s.pluginManager.LoadPlugins(); err != nil {
 			slog.Warn("failed to load plugins", "error", err)
@@ -794,7 +804,11 @@ func (s *Server) initialize() error {
 	}
 	llmManager := llm.NewConnectionManager(s.db, scmProviderHandler.GetEncryption(), fallbackLLMClient)
 	llmConnHandler := handlers.NewLLMConnectionHandler(s.db, llmManager)
-	aiHandler := handlers.NewAIHandler(s.db, llmManager, permService)
+	aiHandler := handlers.NewAIHandler(s.db, llmManager, permService, timePermissionService)
+
+	// Briefing scheduler (generates daily briefings for all users)
+	s.briefingScheduler = scheduler.NewBriefingScheduler(s.db, llmManager, permService, timePermissionService)
+	s.briefingScheduler.Start()
 
 	// Logbook reverse proxy (optional sidecar)
 	if cfg.LogbookEndpoint != "" {
@@ -1148,6 +1162,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.emailScheduler != nil {
 		slog.Info("stopping email scheduler")
 		s.emailScheduler.Stop()
+	}
+
+	if s.briefingScheduler != nil {
+		slog.Info("stopping briefing scheduler")
+		s.briefingScheduler.Stop()
 	}
 
 	if s.notificationService != nil {

@@ -2,6 +2,7 @@ package server
 
 import (
 	"database/sql"
+	"encoding/json"
 	"log/slog"
 	"net"
 	"net/http"
@@ -55,6 +56,23 @@ func checkSetupStatusWithRetry(db database.Database, maxRetries int, initialDela
 	return false, nil
 }
 
+// corsErrorResponse writes a structured JSON error for CORS failures,
+// matching the restapi.ErrorResponse shape the frontend already parses.
+func corsErrorResponse(w http.ResponseWriter, status int, message, code string, details map[string]string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	resp := struct {
+		Error   string            `json:"error"`
+		Code    string            `json:"code"`
+		Details map[string]string `json:"details,omitempty"`
+	}{
+		Error:   message,
+		Code:    code,
+		Details: details,
+	}
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
 func createCORSMiddleware(allowedHosts, serverPort string, disableCSRF, useProxy bool) func(http.Handler) http.Handler {
 	var origins []string
 
@@ -74,15 +92,6 @@ func createCORSMiddleware(allowedHosts, serverPort string, disableCSRF, useProxy
 			}
 
 			origins = append(origins, "https://"+host)
-
-			// Only add http:// origins when NOT behind a trusted proxy
-			// The jub0bs/cors library rejects insecure origins with credentialed requests
-			if !useProxy {
-				if serverPort != "80" && serverPort != "443" {
-					origins = append(origins, "http://"+host+":"+serverPort)
-				}
-				origins = append(origins, "http://"+host)
-			}
 		}
 	}
 
@@ -90,7 +99,15 @@ func createCORSMiddleware(allowedHosts, serverPort string, disableCSRF, useProxy
 		return func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if origin := r.Header.Get("Origin"); origin != "" {
-					http.Error(w, "CORS: Origin not allowed. Configure --allowed-hosts for cross-origin requests.", http.StatusForbidden)
+					slog.Warn("CORS request rejected: no origins configured",
+						"origin", origin,
+						"hint", "Set BASE_URL to your server's public URL")
+					corsErrorResponse(w, http.StatusForbidden,
+						"Origin not allowed", "CORS_ORIGIN_NOT_ALLOWED",
+						map[string]string{
+							"origin": origin,
+							"hint":   "Set BASE_URL to your server's public URL (e.g. BASE_URL=https://myapp.example.com)",
+						})
 					return
 				}
 				next.ServeHTTP(w, r)
@@ -112,7 +129,11 @@ func createCORSMiddleware(allowedHosts, serverPort string, disableCSRF, useProxy
 		return func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if origin := r.Header.Get("Origin"); origin != "" {
-					http.Error(w, "CORS configuration error", http.StatusInternalServerError)
+					corsErrorResponse(w, http.StatusInternalServerError,
+						"CORS configuration error", "CORS_CONFIG_ERROR",
+						map[string]string{
+							"hint": "Check server logs for details. Common cause: malformed hostname in BASE_URL or ALLOWED_HOSTS.",
+						})
 					return
 				}
 				next.ServeHTTP(w, r)
@@ -120,7 +141,23 @@ func createCORSMiddleware(allowedHosts, serverPort string, disableCSRF, useProxy
 		}
 	}
 
-	return corsMw.Wrap
+	// Wrap the CORS middleware to log rejected origins
+	innerWrap := corsMw.Wrap
+	return func(next http.Handler) http.Handler {
+		wrapped := innerWrap(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := r.Header.Get("Origin")
+			wrapped.ServeHTTP(w, r)
+			// If there was an Origin header but no Access-Control-Allow-Origin in the response,
+			// the CORS library rejected it
+			if origin != "" && w.Header().Get("Access-Control-Allow-Origin") == "" {
+				slog.Warn("CORS request rejected: origin not in allowed list",
+					"origin", origin,
+					"allowed_origins", origins,
+					"hint", "If this origin should be allowed, update BASE_URL or ALLOWED_HOSTS")
+			}
+		})
+	}
 }
 
 func createSecurityHeaders(enableHTTPS, useProxy bool, additionalProxies []net.IP) func(http.Handler) http.Handler {
