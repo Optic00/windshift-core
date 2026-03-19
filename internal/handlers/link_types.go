@@ -12,6 +12,30 @@ import (
 	"windshift/internal/utils"
 )
 
+// scanAllowedEntityTypes reads the allowed_entity_types JSON column into a []string slice.
+func scanAllowedEntityTypes(raw sql.NullString) []string {
+	if !raw.Valid || raw.String == "" {
+		return nil
+	}
+	var types []string
+	if err := json.Unmarshal([]byte(raw.String), &types); err != nil {
+		return nil
+	}
+	return types
+}
+
+// marshalAllowedEntityTypes converts a []string slice to a JSON string suitable for SQL, or nil.
+func marshalAllowedEntityTypes(types []string) interface{} {
+	if len(types) == 0 {
+		return nil
+	}
+	b, err := json.Marshal(types)
+	if err != nil {
+		return nil
+	}
+	return string(b)
+}
+
 type LinkTypeHandler struct {
 	db database.Database
 }
@@ -25,7 +49,7 @@ func (h *LinkTypeHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 	includeInactive := r.URL.Query().Get("include_inactive") == "true"
 
 	query := `
-		SELECT id, name, description, forward_label, reverse_label, color, is_system, active, created_at, updated_at
+		SELECT id, name, description, forward_label, reverse_label, color, is_system, active, allowed_entity_types, created_at, updated_at
 		FROM link_types
 	`
 	if !includeInactive {
@@ -43,12 +67,14 @@ func (h *LinkTypeHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 	var linkTypes []models.LinkType
 	for rows.Next() {
 		var lt models.LinkType
+		var aetRaw sql.NullString
 		err := rows.Scan(&lt.ID, &lt.Name, &lt.Description, &lt.ForwardLabel, &lt.ReverseLabel,
-			&lt.Color, &lt.IsSystem, &lt.Active, &lt.CreatedAt, &lt.UpdatedAt)
+			&lt.Color, &lt.IsSystem, &lt.Active, &aetRaw, &lt.CreatedAt, &lt.UpdatedAt)
 		if err != nil {
 			respondInternalError(w, r, err)
 			return
 		}
+		lt.AllowedEntityTypes = scanAllowedEntityTypes(aetRaw)
 		linkTypes = append(linkTypes, lt)
 	}
 
@@ -62,12 +88,13 @@ func (h *LinkTypeHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var lt models.LinkType
+	var aetRaw sql.NullString
 	err := h.db.QueryRow(`
-		SELECT id, name, description, forward_label, reverse_label, color, is_system, active, created_at, updated_at
-		FROM link_types 
+		SELECT id, name, description, forward_label, reverse_label, color, is_system, active, allowed_entity_types, created_at, updated_at
+		FROM link_types
 		WHERE id = ?
 	`, id).Scan(&lt.ID, &lt.Name, &lt.Description, &lt.ForwardLabel, &lt.ReverseLabel,
-		&lt.Color, &lt.IsSystem, &lt.Active, &lt.CreatedAt, &lt.UpdatedAt)
+		&lt.Color, &lt.IsSystem, &lt.Active, &aetRaw, &lt.CreatedAt, &lt.UpdatedAt)
 
 	if err == sql.ErrNoRows {
 		respondNotFound(w, r, "link_type")
@@ -77,6 +104,7 @@ func (h *LinkTypeHandler) Get(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+	lt.AllowedEntityTypes = scanAllowedEntityTypes(aetRaw)
 
 	respondJSONOK(w, lt)
 }
@@ -102,9 +130,9 @@ func (h *LinkTypeHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	var id int64
 	err := h.db.QueryRow(`
-		INSERT INTO link_types (name, description, forward_label, reverse_label, color, is_system, active, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
-	`, lt.Name, lt.Description, lt.ForwardLabel, lt.ReverseLabel, lt.Color, false, true, now, now).Scan(&id)
+		INSERT INTO link_types (name, description, forward_label, reverse_label, color, is_system, active, allowed_entity_types, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+	`, lt.Name, lt.Description, lt.ForwardLabel, lt.ReverseLabel, lt.Color, false, true, marshalAllowedEntityTypes(lt.AllowedEntityTypes), now, now).Scan(&id)
 
 	if err != nil {
 		respondInternalError(w, r, err)
@@ -157,9 +185,9 @@ func (h *LinkTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	_, err := h.db.ExecWrite(`
 		UPDATE link_types
-		SET name = ?, description = ?, forward_label = ?, reverse_label = ?, color = ?, active = ?, updated_at = ?
+		SET name = ?, description = ?, forward_label = ?, reverse_label = ?, color = ?, active = ?, allowed_entity_types = ?, updated_at = ?
 		WHERE id = ?
-	`, lt.Name, lt.Description, lt.ForwardLabel, lt.ReverseLabel, lt.Color, lt.Active, now, id)
+	`, lt.Name, lt.Description, lt.ForwardLabel, lt.ReverseLabel, lt.Color, lt.Active, marshalAllowedEntityTypes(lt.AllowedEntityTypes), now, id)
 
 	if err != nil {
 		respondInternalError(w, r, err)

@@ -255,9 +255,20 @@ func (h *CustomFieldHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate field type
-	if cf.FieldType != "text" && cf.FieldType != "textarea" && cf.FieldType != "select" && cf.FieldType != "multiselect" && cf.FieldType != "number" && cf.FieldType != "milestone" && cf.FieldType != "date" && cf.FieldType != "user" && cf.FieldType != "iteration" && cf.FieldType != "asset" && cf.FieldType != "portalcustomer" && cf.FieldType != "customerorganisation" {
+	if cf.FieldType != "text" && cf.FieldType != "textarea" && cf.FieldType != "select" && cf.FieldType != "multiselect" && cf.FieldType != "number" && cf.FieldType != "milestone" && cf.FieldType != "date" && cf.FieldType != "user" && cf.FieldType != "iteration" && cf.FieldType != "asset" && cf.FieldType != "portalcustomer" && cf.FieldType != "customerorganisation" && cf.FieldType != "linking" {
 		respondValidationError(w, r, "Invalid field type")
 		return
+	}
+
+	// Validate options for linking fields
+	var linkingOpts *linkingFieldOptions
+	if cf.FieldType == "linking" {
+		var linkErr error
+		linkingOpts, linkErr = h.validateLinkingOptions(cf.Options)
+		if linkErr != nil {
+			respondValidationError(w, r, linkErr.Error())
+			return
+		}
 	}
 
 	// Validate options for asset fields
@@ -290,7 +301,7 @@ func (h *CustomFieldHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate options JSON if provided (for select/multiselect fields only)
-	if cf.Options != "" && cf.FieldType != "asset" && cf.FieldType != "portalcustomer" && cf.FieldType != "customerorganisation" {
+	if cf.Options != "" && cf.FieldType != "asset" && cf.FieldType != "portalcustomer" && cf.FieldType != "customerorganisation" && cf.FieldType != "linking" {
 		var testOptions []string
 		if err := json.Unmarshal([]byte(cf.Options), &testOptions); err != nil {
 			respondValidationError(w, r, "Invalid options JSON format")
@@ -316,6 +327,25 @@ func (h *CustomFieldHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
+	}
+
+	// Auto-create mirror field for linking fields if mirror_name is provided
+	if cf.FieldType == "linking" && linkingOpts != nil && linkingOpts.MirrorName != "" {
+		mirrorID, mirrorErr := h.createMirrorField(int(id), linkingOpts, now)
+		if mirrorErr != nil {
+			respondInternalError(w, r, mirrorErr)
+			return
+		}
+		// Update primary field options to include mirror_field_id
+		var primaryOpts map[string]interface{}
+		if err := json.Unmarshal([]byte(cf.Options), &primaryOpts); err == nil {
+			delete(primaryOpts, "mirror_name")
+			delete(primaryOpts, "mirror_allowed_item_type_ids")
+			primaryOpts["mirror_field_id"] = mirrorID
+			if updatedJSON, err := json.Marshal(primaryOpts); err == nil {
+				_, _ = h.db.ExecWrite("UPDATE custom_field_definitions SET options = ? WHERE id = ?", string(updatedJSON), id)
+			}
+		}
 	}
 
 	// Return the created custom field
@@ -424,9 +454,17 @@ func (h *CustomFieldHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate field type
-	if cf.FieldType != "text" && cf.FieldType != "textarea" && cf.FieldType != "select" && cf.FieldType != "multiselect" && cf.FieldType != "number" && cf.FieldType != "milestone" && cf.FieldType != "date" && cf.FieldType != "user" && cf.FieldType != "iteration" && cf.FieldType != "asset" && cf.FieldType != "portalcustomer" && cf.FieldType != "customerorganisation" {
+	if cf.FieldType != "text" && cf.FieldType != "textarea" && cf.FieldType != "select" && cf.FieldType != "multiselect" && cf.FieldType != "number" && cf.FieldType != "milestone" && cf.FieldType != "date" && cf.FieldType != "user" && cf.FieldType != "iteration" && cf.FieldType != "asset" && cf.FieldType != "portalcustomer" && cf.FieldType != "customerorganisation" && cf.FieldType != "linking" {
 		respondValidationError(w, r, "Invalid field type")
 		return
+	}
+
+	// Validate options for linking fields
+	if cf.FieldType == "linking" {
+		if _, linkErr := h.validateLinkingOptions(cf.Options); linkErr != nil {
+			respondValidationError(w, r, linkErr.Error())
+			return
+		}
 	}
 
 	// Validate options for asset fields
@@ -446,7 +484,7 @@ func (h *CustomFieldHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate options JSON if provided (for select/multiselect fields)
-	if cf.Options != "" && cf.FieldType != "asset" && cf.FieldType != "portalcustomer" && cf.FieldType != "customerorganisation" {
+	if cf.Options != "" && cf.FieldType != "asset" && cf.FieldType != "portalcustomer" && cf.FieldType != "customerorganisation" && cf.FieldType != "linking" {
 		var testOptions []string
 		if err = json.Unmarshal([]byte(cf.Options), &testOptions); err != nil {
 			respondValidationError(w, r, "Invalid options JSON format")
@@ -612,6 +650,11 @@ func (h *CustomFieldHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	if systemDefault {
 		respondForbidden(w, r)
 		return
+	}
+
+	// Handle linking field cascade: delete mirror or clear mirror_field_id from primary
+	if fieldType == "linking" {
+		h.handleLinkingFieldDelete(id)
 	}
 
 	// Drop any database indexes before deleting the field
@@ -845,4 +888,132 @@ func (h *CustomFieldHandler) buildCreateIndexSQL(fieldID int, fieldType, targetT
 	}
 	return fmt.Sprintf(`CREATE INDEX %s ON %s(CAST(NULLIF(custom_field_values,'') ->> '$.\"%s\"' AS %s))`,
 		indexName, targetTable, fieldIDStr, castType)
+}
+
+// linkingFieldOptions holds parsed options for linking custom fields
+type linkingFieldOptions struct {
+	LinkTypeID               int      `json:"link_type_id"`
+	AllowedItemTypeIDs       []int    `json:"allowed_item_type_ids"`
+	AllowedEntityTypes       []string `json:"allowed_entity_types"`
+	Multi                    bool     `json:"multi"`
+	MirrorName               string   `json:"mirror_name"`
+	MirrorAllowedItemTypeIDs []int    `json:"mirror_allowed_item_type_ids"`
+	MirrorOfFieldID          int      `json:"mirror_of_field_id"`
+	MirrorFieldID            int      `json:"mirror_field_id"`
+}
+
+// validateLinkingOptions validates options for a linking field type
+func (h *CustomFieldHandler) validateLinkingOptions(optionsJSON string) (*linkingFieldOptions, error) {
+	if optionsJSON == "" {
+		return nil, fmt.Errorf("linking fields require options with link_type_id")
+	}
+	var opts linkingFieldOptions
+	if err := json.Unmarshal([]byte(optionsJSON), &opts); err != nil {
+		return nil, fmt.Errorf("invalid linking options format")
+	}
+	// Mirror fields store mirror_of_field_id instead of link_type_id at the top level
+	if opts.MirrorOfFieldID > 0 {
+		return &opts, nil
+	}
+	if opts.LinkTypeID == 0 {
+		return nil, fmt.Errorf("linking fields require link_type_id in options")
+	}
+	// Validate link type exists and is active, and fetch its allowed_entity_types
+	var active bool
+	var ltAetRaw sql.NullString
+	if err := h.db.QueryRow("SELECT active, allowed_entity_types FROM link_types WHERE id = ?", opts.LinkTypeID).Scan(&active, &ltAetRaw); err != nil {
+		return nil, fmt.Errorf("link type not found")
+	}
+	if !active {
+		return nil, fmt.Errorf("link type is not active")
+	}
+	// Validate allowed entity types
+	for _, et := range opts.AllowedEntityTypes {
+		if et != "item" && et != "test_case" && et != "asset" {
+			return nil, fmt.Errorf("invalid entity type: %s", et)
+		}
+	}
+	// If the link type declares allowed_entity_types, validate the field's entity types are a subset
+	if ltAetRaw.Valid && ltAetRaw.String != "" {
+		var ltAllowed []string
+		if err := json.Unmarshal([]byte(ltAetRaw.String), &ltAllowed); err == nil && len(ltAllowed) > 0 {
+			allowedSet := make(map[string]bool, len(ltAllowed))
+			for _, a := range ltAllowed {
+				allowedSet[a] = true
+			}
+			for _, et := range opts.AllowedEntityTypes {
+				if !allowedSet[et] {
+					// Fetch link type name for a clear error message
+					var ltName string
+					_ = h.db.QueryRow("SELECT name FROM link_types WHERE id = ?", opts.LinkTypeID).Scan(&ltName)
+					return nil, fmt.Errorf("link type '%s' only supports entity types: %s", ltName, strings.Join(ltAllowed, ", "))
+				}
+			}
+		}
+	}
+	return &opts, nil
+}
+
+// createMirrorField creates a mirror linking field for the given primary field
+func (h *CustomFieldHandler) createMirrorField(primaryID int, opts *linkingFieldOptions, now time.Time) (int64, error) {
+	mirrorOpts := map[string]interface{}{
+		"mirror_of_field_id": primaryID,
+		"link_type_id":       opts.LinkTypeID,
+		"multi":              opts.Multi,
+	}
+	if len(opts.MirrorAllowedItemTypeIDs) > 0 {
+		mirrorOpts["allowed_item_type_ids"] = opts.MirrorAllowedItemTypeIDs
+	}
+	if len(opts.AllowedEntityTypes) > 0 {
+		mirrorOpts["allowed_entity_types"] = opts.AllowedEntityTypes
+	}
+
+	mirrorOptsJSON, err := json.Marshal(mirrorOpts)
+	if err != nil {
+		return 0, fmt.Errorf("failed to marshal mirror options: %w", err)
+	}
+
+	var mirrorID int64
+	//nolint:misspell // database uses British spelling
+	err = h.db.QueryRow(`
+		INSERT INTO custom_field_definitions (name, field_type, description, required, options, display_order,
+		                                       applies_to_portal_customers, applies_to_customer_organisations,
+		                                       created_at, updated_at)
+		VALUES (?, 'linking', '', 0, ?, 0, 0, 0, ?, ?) RETURNING id
+	`, opts.MirrorName, string(mirrorOptsJSON), now, now).Scan(&mirrorID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to create mirror field: %w", err)
+	}
+
+	return mirrorID, nil
+}
+
+// handleLinkingFieldDelete handles cascade deletion of mirror fields when a linking field is deleted
+func (h *CustomFieldHandler) handleLinkingFieldDelete(fieldID int) {
+	var optionsJSON sql.NullString
+	if err := h.db.QueryRow("SELECT options FROM custom_field_definitions WHERE id = ?", fieldID).Scan(&optionsJSON); err != nil || !optionsJSON.Valid {
+		return
+	}
+
+	var opts linkingFieldOptions
+	if err := json.Unmarshal([]byte(optionsJSON.String), &opts); err != nil {
+		return
+	}
+
+	if opts.MirrorFieldID > 0 {
+		// This is a primary field - delete its mirror
+		_, _ = h.db.ExecWrite("DELETE FROM custom_field_definitions WHERE id = ?", opts.MirrorFieldID)
+	} else if opts.MirrorOfFieldID > 0 {
+		// This is a mirror field - clear mirror_field_id from primary
+		var primaryOptsJSON sql.NullString
+		if err := h.db.QueryRow("SELECT options FROM custom_field_definitions WHERE id = ?", opts.MirrorOfFieldID).Scan(&primaryOptsJSON); err == nil && primaryOptsJSON.Valid {
+			var primaryOpts map[string]interface{}
+			if err := json.Unmarshal([]byte(primaryOptsJSON.String), &primaryOpts); err == nil {
+				delete(primaryOpts, "mirror_field_id")
+				if updatedJSON, err := json.Marshal(primaryOpts); err == nil {
+					_, _ = h.db.ExecWrite("UPDATE custom_field_definitions SET options = ? WHERE id = ?", string(updatedJSON), opts.MirrorOfFieldID)
+				}
+			}
+		}
+	}
 }

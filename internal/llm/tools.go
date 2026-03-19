@@ -115,5 +115,68 @@ func BuiltinTools() []ToolDefinition {
 				}`),
 			},
 		},
+		{
+			Type: "function",
+			Function: FunctionDef{
+				Name:        "list_time_projects",
+				Description: "List time tracking projects the user has access to. Returns project ID, name, status, customer name, category, and description.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"status": {"type": "string", "description": "Filter by project status, e.g. 'Active', 'Archived' (optional)"}
+					}
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDef{
+				Name:        "list_worklogs",
+				Description: "List the current user's time tracking worklogs. Returns worklog ID, project name, customer, description, date, duration in minutes, and linked item key if visible.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"date_from": {"type": "string", "description": "Start date filter in YYYY-MM-DD format (optional)"},
+						"date_to": {"type": "string", "description": "End date filter in YYYY-MM-DD format (optional)"},
+						"project_id": {"type": "integer", "description": "Filter by time project ID (optional)"}
+					}
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDef{
+				Name:        "list_recent_activity",
+				Description: "List recent changes and comments across accessible workspaces. Useful for understanding what happened recently, such as 'what changed yesterday?'.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"since_date": {"type": "string", "description": "Start date in YYYY-MM-DD format (defaults to yesterday)"},
+						"workspace_id": {"type": "integer", "description": "Filter to a specific workspace (optional)"},
+						"limit": {"type": "integer", "description": "Max items to return (default 50, max 100)"}
+					}
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDef{
+				Name:        "log_time",
+				Description: "Log a time entry on a time tracking project. Requires project_id, description, and date. Provide either duration (e.g. '2h', '30m', '1h30m', '1d') OR start_time and end_time (HH:MM format). Optionally link to an item by item_id.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"project_id": {"type": "integer", "description": "The time project ID to log time on"},
+						"description": {"type": "string", "description": "Description of the work done"},
+						"date": {"type": "string", "description": "Date of the worklog in YYYY-MM-DD format"},
+						"duration": {"type": "string", "description": "Duration string like '2h', '30m', '1h30m', '1d' (1d = 8h). Required if start_time/end_time not provided."},
+						"start_time": {"type": "string", "description": "Start time in HH:MM format. Must be used together with end_time."},
+						"end_time": {"type": "string", "description": "End time in HH:MM format. Must be used together with start_time."},
+						"item_id": {"type": "integer", "description": "Optional item ID to link this worklog to"}
+					},
+					"required": ["project_id", "description", "date"]
+				}`),
+			},
+		},
 	}
 }

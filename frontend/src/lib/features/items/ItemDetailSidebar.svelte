@@ -707,7 +707,18 @@
             {@const currentValue = isEditing ? editCustomFieldValues[screenField.field_identifier] : storedValue}
             {#if fieldDef}
               <div class="mb-3">
-                {#if isEditing}
+                {#if fieldDef.field_type === 'linking'}
+                  <div class="px-2 py-1.5">
+                    <Text variant="subtle" size="sm" class="mb-1">{fieldDef.name}</Text>
+                    <CustomFieldRenderer
+                      field={fieldDef}
+                      value={currentValue}
+                      readonly={!canEdit}
+                      disabled={!canEdit}
+                      itemId={item?.id}
+                    />
+                  </div>
+                {:else if isEditing}
                   <CustomFieldRenderer
                     field={fieldDef}
                     value={currentValue}
@@ -715,6 +726,7 @@
                     disabled={!canEdit}
                     {milestones}
                     {iterations}
+                    itemId={item?.id}
                     required={screenField.is_required}
                     onChange={(val) => {
                       editCustomFieldValues[screenField.field_identifier] = val;

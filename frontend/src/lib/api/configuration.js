@@ -226,6 +226,7 @@ export const linkTypes = {
 
 export const links = {
   getForItem: (type, id) => fetchAPI(`/${type}/${id}/links`),
+  getFieldLinks: (itemId, fieldId) => fetchAPI(`/items/${itemId}/field-links/${fieldId}`),
   create: (data) =>
     fetchAPI('/links', {
       method: 'POST',
@@ -235,11 +236,12 @@ export const links = {
     fetchAPI(`/links/${id}`, {
       method: 'DELETE',
     }),
-  search: (query, type = '', limit = 20) => {
+  search: (query, type = '', limit = 20, itemTypeIds = []) => {
     const params = new URLSearchParams();
     if (query) params.append('q', query);
     if (type) params.append('type', type);
     if (limit !== 20) params.append('limit', limit.toString());
+    if (itemTypeIds.length > 0) params.append('item_type_ids', itemTypeIds.join(','));
     return fetchAPI(`/links/search?${params.toString()}`);
   },
 };

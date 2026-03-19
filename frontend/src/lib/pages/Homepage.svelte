@@ -10,6 +10,7 @@
   import { Clock, Eye, Edit, MessageSquare, Bookmark, Bell, Briefcase, Calendar, Target, Search, Grip, Info, CheckCircle, AlertCircle, XCircle } from 'lucide-svelte';
   import { workspaceIconMap } from '../utils/icons.js';
   import { useEventListener } from 'runed';
+  import DailyBriefing from '../features/dashboard/DailyBriefing.svelte';
 
   // Use store values with aliases for easier template access
   let greeting = $derived(homepageStore.greeting);
@@ -116,6 +117,9 @@
   <div class="grid grid-cols-1 lg:grid-cols-3 gap-5 mt-5">
     <!-- Main Content (Left 2/3) -->
     <div class="lg:col-span-2 space-y-5">
+      <!-- Daily Briefing -->
+      <DailyBriefing />
+
       <!-- What's New / Updates -->
       <div class="rounded-lg border hover-lift homepage-card" style="background-color: var(--ds-surface-raised); border-color: var(--ds-border);">
         <div class="px-4 py-3 border-b flex items-center" style="border-color: var(--ds-border);">

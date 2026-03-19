@@ -43,8 +43,9 @@ const (
 	ErrCodeRateLimited = "RATE_LIMITED"
 
 	// Server errors
-	ErrCodeInternalError      = "INTERNAL_ERROR"
-	ErrCodeServiceUnavailable = "SERVICE_UNAVAILABLE"
+	ErrCodeInternalError        = "INTERNAL_ERROR"
+	ErrCodeServiceUnavailable   = "SERVICE_UNAVAILABLE"
+	ErrCodeConnectionTestFailed = "CONNECTION_TEST_FAILED"
 )
 
 // ErrorResponse represents a structured API error response

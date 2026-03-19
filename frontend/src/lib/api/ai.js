@@ -25,6 +25,7 @@ export const ai = {
       ...(connectionId ? { connection_id: connectionId } : {}),
       ...(history?.length ? { history } : {}),
     }),
+  dailyBriefing: () => get('/ai/daily-briefing'),
 };
 
 export const llmConnections = {

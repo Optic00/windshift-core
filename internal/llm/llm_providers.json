@@ -21,6 +21,18 @@
       ]
     },
     {
+      "type": "gemini",
+      "name": "Google Gemini",
+      "api_format": "openai",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "chat_path": "/chat/completions",
+      "models": [
+        {"id": "gemini-3.1-pro-preview", "name": "Gemini 3.1 Pro", "max_tokens": 8192},
+        {"id": "gemini-3.1-flash-lite-preview", "name": "Gemini 3.1 Flash Lite", "max_tokens": 8192},
+        {"id": "gemini-3-flash-preview", "name": "Gemini 3 Flash", "max_tokens": 8192}
+      ]
+    },
+    {
       "type": "zai",
       "name": "Z.AI",
       "api_format": "openai",

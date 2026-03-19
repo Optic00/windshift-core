@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -18,17 +19,19 @@ import (
 
 // AIHandler handles AI-powered endpoints.
 type AIHandler struct {
-	db          database.Database
-	llmManager  *llm.ConnectionManager
-	permService *services.PermissionService
+	db              database.Database
+	llmManager      *llm.ConnectionManager
+	permService     *services.PermissionService
+	timePermService *services.TimePermissionService
 }
 
 // NewAIHandler creates a new AI handler.
-func NewAIHandler(db database.Database, llmManager *llm.ConnectionManager, permService *services.PermissionService) *AIHandler {
+func NewAIHandler(db database.Database, llmManager *llm.ConnectionManager, permService *services.PermissionService, timePermService *services.TimePermissionService) *AIHandler {
 	return &AIHandler{
-		db:          db,
-		llmManager:  llmManager,
-		permService: permService,
+		db:              db,
+		llmManager:      llmManager,
+		permService:     permService,
+		timePermService: timePermService,
 	}
 }
 
@@ -186,23 +189,13 @@ Schedule tasks across the full workday, not all at the same time. Use only item 
 	}
 
 	// Resolve LLM client (optionally from connection_id query param)
-	var connectionID int
-	if cidStr := r.URL.Query().Get("connection_id"); cidStr != "" {
-		fmt.Sscan(cidStr, &connectionID) //nolint:errcheck,gosec // connection ID parsing is best-effort
-	}
-
-	llmClient, err := h.llmManager.Resolve(connectionID)
-	if err != nil {
-		respondInternalError(w, r, fmt.Errorf("failed to resolve LLM connection: %w", err))
-		return
-	}
-
-	if !llmClient.Available() {
-		respondServiceUnavailable(w, r, "AI features are not available. LLM service is not configured.")
+	llmClient := requireLLMClient(w, r, h.llmManager, parseConnectionIDParam(r))
+	if llmClient == nil {
 		return
 	}
 
 	// Call the LLM with structured output
+	extendWriteDeadline(w, 130*time.Second)
 	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
 	defer cancel()
 
@@ -219,8 +212,7 @@ Schedule tasks across the full workday, not all at the same time. Use only item 
 		},
 	})
 	if err != nil {
-		slog.Error("LLM chat completion failed", slog.Any("error", err))
-		respondServiceUnavailable(w, r, "AI service is temporarily unavailable. Please try again later.")
+		respondLLMError(w, r, err)
 		return
 	}
 
@@ -335,13 +327,8 @@ func (h *AIHandler) CatchMeUp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve LLM client
-	llmClient, err := h.llmManager.Resolve(0)
-	if err != nil {
-		respondInternalError(w, r, fmt.Errorf("failed to resolve LLM connection: %w", err))
-		return
-	}
-	if !llmClient.Available() {
-		respondServiceUnavailable(w, r, "AI features are not available. LLM service is not configured.")
+	llmClient := requireLLMClient(w, r, h.llmManager, 0)
+	if llmClient == nil {
 		return
 	}
 
@@ -485,6 +472,7 @@ Be concise and factual. Focus on what someone needs to know to understand the cu
 
 	userPrompt := fmt.Sprintf("Please catch me up on this work item:\n\n%s", strings.Join(contextLines, "\n"))
 
+	extendWriteDeadline(w, 130*time.Second)
 	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
 	defer cancel()
 
@@ -496,8 +484,7 @@ Be concise and factual. Focus on what someone needs to know to understand the cu
 		Temperature: 0.5,
 	})
 	if err != nil {
-		slog.Error("LLM chat completion failed", slog.Any("error", err))
-		respondServiceUnavailable(w, r, "AI service is temporarily unavailable. Please try again later.")
+		respondLLMError(w, r, err)
 		return
 	}
 
@@ -546,13 +533,8 @@ func (h *AIHandler) FindSimilarItems(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve LLM client
-	llmClient, err := h.llmManager.Resolve(0)
-	if err != nil {
-		respondInternalError(w, r, fmt.Errorf("failed to resolve LLM connection: %w", err))
-		return
-	}
-	if !llmClient.Available() {
-		respondServiceUnavailable(w, r, "AI features are not available. LLM service is not configured.")
+	llmClient := requireLLMClient(w, r, h.llmManager, 0)
+	if llmClient == nil {
 		return
 	}
 
@@ -628,6 +610,7 @@ Candidate items in the same workspace:
 
 Find similar items.`, itemKey, item.Title, currentDesc, strings.Join(candidateLines, "\n"))
 
+	extendWriteDeadline(w, 130*time.Second)
 	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
 	defer cancel()
 
@@ -644,8 +627,7 @@ Find similar items.`, itemKey, item.Title, currentDesc, strings.Join(candidateLi
 		},
 	})
 	if err != nil {
-		slog.Error("LLM chat completion failed", slog.Any("error", err))
-		respondServiceUnavailable(w, r, "AI service is temporarily unavailable. Please try again later.")
+		respondLLMError(w, r, err)
 		return
 	}
 
@@ -703,13 +685,8 @@ func (h *AIHandler) DecomposeItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve LLM client
-	llmClient, err := h.llmManager.Resolve(0)
-	if err != nil {
-		respondInternalError(w, r, fmt.Errorf("failed to resolve LLM connection: %w", err))
-		return
-	}
-	if !llmClient.Available() {
-		respondServiceUnavailable(w, r, "AI features are not available. LLM service is not configured.")
+	llmClient := requireLLMClient(w, r, h.llmManager, 0)
+	if llmClient == nil {
 		return
 	}
 
@@ -775,6 +752,7 @@ Suggest 3-8 meaningful, actionable sub-tasks. Don't create trivially small tasks
 
 	userPrompt := fmt.Sprintf("Break this work item into sub-tasks:\n\n%s", strings.Join(contextParts, "\n"))
 
+	extendWriteDeadline(w, 130*time.Second)
 	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
 	defer cancel()
 
@@ -791,8 +769,7 @@ Suggest 3-8 meaningful, actionable sub-tasks. Don't create trivially small tasks
 		},
 	})
 	if err != nil {
-		slog.Error("LLM chat completion failed", slog.Any("error", err))
-		respondServiceUnavailable(w, r, "AI service is temporarily unavailable. Please try again later.")
+		respondLLMError(w, r, err)
 		return
 	}
 
@@ -854,18 +831,8 @@ func (h *AIHandler) GenerateReleaseNotes(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Resolve LLM client
-	var connectionID int
-	if cidStr := r.URL.Query().Get("connection_id"); cidStr != "" {
-		fmt.Sscan(cidStr, &connectionID) //nolint:errcheck,gosec // connection ID parsing is best-effort
-	}
-
-	llmClient, err := h.llmManager.Resolve(connectionID)
-	if err != nil {
-		respondInternalError(w, r, fmt.Errorf("failed to resolve LLM connection: %w", err))
-		return
-	}
-	if !llmClient.Available() {
-		respondServiceUnavailable(w, r, "AI features are not available. LLM service is not configured.")
+	llmClient := requireLLMClient(w, r, h.llmManager, parseConnectionIDParam(r))
+	if llmClient == nil {
 		return
 	}
 
@@ -933,6 +900,7 @@ Return ONLY the markdown text — no JSON, no code block fences, no preamble.`
 
 	userPrompt := fmt.Sprintf("Generate release notes for this milestone:\n\n%s", strings.Join(contextLines, "\n"))
 
+	extendWriteDeadline(w, 130*time.Second)
 	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
 	defer cancel()
 
@@ -944,12 +912,11 @@ Return ONLY the markdown text — no JSON, no code block fences, no preamble.`
 		Temperature: 0.7,
 	})
 	if err != nil {
-		slog.Error("LLM chat completion failed", slog.Any("error", err))
-		respondServiceUnavailable(w, r, "AI service is temporarily unavailable. Please try again later.")
+		respondLLMError(w, r, err)
 		return
 	}
 	if len(resp.Choices) == 0 {
-		respondServiceUnavailable(w, r, "AI service is temporarily unavailable. Please try again later.")
+		respondServiceUnavailable(w, r, "AI service returned no response.")
 		return
 	}
 
@@ -1349,22 +1316,13 @@ Return a JSON object with:
 	}
 
 	// Resolve LLM client
-	var connectionID int
-	if cidStr := r.URL.Query().Get("connection_id"); cidStr != "" {
-		fmt.Sscan(cidStr, &connectionID) //nolint:errcheck,gosec // best-effort parse, zero-value fallback is fine
-	}
-
-	llmClient, err := h.llmManager.Resolve(connectionID)
-	if err != nil {
-		respondInternalError(w, r, fmt.Errorf("failed to resolve LLM connection: %w", err))
-		return
-	}
-	if !llmClient.Available() {
-		respondServiceUnavailable(w, r, "AI features are not available. LLM service is not configured.")
+	llmClient := requireLLMClient(w, r, h.llmManager, parseConnectionIDParam(r))
+	if llmClient == nil {
 		return
 	}
 
 	// Call LLM
+	extendWriteDeadline(w, 130*time.Second)
 	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
 	defer cancel()
 
@@ -1381,8 +1339,7 @@ Return a JSON object with:
 		},
 	})
 	if err != nil {
-		slog.Error("LLM chat completion failed", slog.Any("error", err))
-		respondServiceUnavailable(w, r, "AI service is temporarily unavailable. Please try again later.")
+		respondLLMError(w, r, err)
 		return
 	}
 
@@ -1585,22 +1542,17 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 
 	var req ChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		respondBadRequest(w, r, "invalid request body")
 		return
 	}
 	if strings.TrimSpace(req.Message) == "" {
-		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "message is required"})
+		respondBadRequest(w, r, "message is required")
 		return
 	}
 
 	// Resolve LLM client
-	llmClient, err := h.llmManager.Resolve(req.ConnectionID)
-	if err != nil {
-		respondInternalError(w, r, fmt.Errorf("failed to resolve LLM connection: %w", err))
-		return
-	}
-	if !llmClient.Available() {
-		respondJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "AI service is not available"})
+	llmClient := requireLLMClient(w, r, h.llmManager, req.ConnectionID)
+	if llmClient == nil {
 		return
 	}
 
@@ -1612,7 +1564,7 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build tool executor
-	executor := NewToolExecutor(h.db, accessibleWSIDs)
+	executor := NewToolExecutor(h.db, accessibleWSIDs, user.ID, h.timePermService)
 
 	systemPrompt := fmt.Sprintf(
 		"You are a helpful assistant for Windshift, a project management tool. "+
@@ -1623,7 +1575,9 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 			"When the user asks about \"my items\", \"assigned to me\", or similar, "+
 			"use the list_items tool with assignee_id=%d. "+
 			"You can omit workspace_id to search across all workspaces at once.\n\n"+
-		"You can also look up milestones and iterations (sprints) and filter items using CQL query expressions including custom fields. Use list_custom_fields to discover available custom fields.",
+		"You can also look up milestones and iterations (sprints) and filter items using CQL query expressions including custom fields. Use list_custom_fields to discover available custom fields.\n\n"+
+			"You can also manage time tracking: list time projects with list_time_projects, view worklogs with list_worklogs, and log time with log_time. "+
+			"When logging time, first use list_time_projects to find the correct project_id.",
 		user.FullName, user.ID, user.ID,
 	)
 
@@ -1642,8 +1596,7 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		Temperature:  0.1,
 	}, req.Message, executor.Execute, history)
 	if err != nil {
-		slog.Error("agent chat failed", slog.Any("error", err))
-		respondJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "AI service error"})
+		respondLLMError(w, r, err)
 		return
 	}
 
@@ -1651,5 +1604,87 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		Answer:     result.Answer,
 		ToolCalls:  result.ToolCalls,
 		Iterations: result.Iterations,
+	})
+}
+
+// GetDailyBriefing returns the most recent successful daily briefing for the current user.
+func (h *AIHandler) GetDailyBriefing(w http.ResponseWriter, r *http.Request) {
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+
+	var id int
+	var content, date, updatedAtStr string
+	err := h.db.QueryRow(
+		`SELECT id, content, date, updated_at FROM daily_briefings WHERE user_id = ? AND error IS NULL ORDER BY date DESC LIMIT 1`,
+		user.ID,
+	).Scan(&id, &content, &date, &updatedAtStr)
+
+	if err != nil {
+		slog.Warn("GetDailyBriefing: no briefing found", slog.Int("user_id", user.ID), slog.Any("error", err))
+		respondJSONOK(w, map[string]interface{}{"content": ""})
+		return
+	}
+
+	generatedAt := updatedAtStr
+	if t, parseErr := time.Parse("2006-01-02 15:04:05", updatedAtStr); parseErr == nil {
+		generatedAt = t.Format(time.RFC3339)
+	}
+
+	slog.Info("GetDailyBriefing: returning briefing",
+		slog.Int("user_id", user.ID),
+		slog.Int("id", id),
+		slog.String("date", date),
+		slog.String("updated_at_str", updatedAtStr),
+		slog.String("generated_at", generatedAt),
+		slog.Int("content_len", len(content)),
+	)
+
+	// Extract and resolve item key references from content
+	itemKeyRe := regexp.MustCompile(`[A-Z]{2,10}-\d+`)
+	keys := itemKeyRe.FindAllString(content, -1)
+
+	references := map[string]interface{}{}
+	if len(keys) > 0 {
+		seen := map[string]bool{}
+		var unique []interface{}
+		var placeholders []string
+		for _, k := range keys {
+			if !seen[k] {
+				seen[k] = true
+				unique = append(unique, k)
+				placeholders = append(placeholders, "?")
+			}
+		}
+
+		rows, qErr := h.db.Query(
+			`SELECT w.key || '-' || CAST(i.workspace_item_number AS TEXT) as item_key, i.id, i.workspace_id
+			 FROM items i
+			 JOIN workspaces w ON i.workspace_id = w.id
+			 WHERE w.key || '-' || CAST(i.workspace_item_number AS TEXT) IN (`+strings.Join(placeholders, ",")+`)`,
+			unique...,
+		)
+		if qErr == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var itemKey string
+				var itemID, workspaceID int
+				if scanErr := rows.Scan(&itemKey, &itemID, &workspaceID); scanErr == nil {
+					references[itemKey] = map[string]interface{}{
+						"item_id":      itemID,
+						"workspace_id": workspaceID,
+					}
+				}
+			}
+		}
+	}
+
+	respondJSONOK(w, map[string]interface{}{
+		"id":           id,
+		"content":      content,
+		"date":         date,
+		"generated_at": generatedAt,
+		"references":   references,
 	})
 }

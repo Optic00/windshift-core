@@ -323,6 +323,11 @@
               >
                 {linkedItemTitle}
               </LinkComponent>
+              {#if link.custom_field_name}
+                <span class="text-xs flex-shrink-0 px-1.5 py-0.5 rounded" style="color: var(--ds-text-subtle); background: var(--ds-background-neutral);">
+                  via {link.custom_field_name}
+                </span>
+              {/if}
             </div>
             <!-- Right side: status badge + delete button -->
             <div class="flex items-center gap-2 flex-shrink-0">

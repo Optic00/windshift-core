@@ -196,22 +196,24 @@ type LinkType struct {
 	ForwardLabel string    `json:"forward_label"`
 	ReverseLabel string    `json:"reverse_label"`
 	Color        string    `json:"color"`
-	IsSystem     bool      `json:"is_system"`
-	Active       bool      `json:"active"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	IsSystem           bool      `json:"is_system"`
+	Active             bool      `json:"active"`
+	AllowedEntityTypes []string  `json:"allowed_entity_types"` // nil = all types allowed; e.g. ["item","test_case"]
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 // ItemLink represents a link between two items or test cases
 type ItemLink struct {
-	ID         int       `json:"id"`
-	LinkTypeID int       `json:"link_type_id"`
-	SourceType string    `json:"source_type"` // "item" or "test_case"
-	SourceID   int       `json:"source_id"`
-	TargetType string    `json:"target_type"` // "item" or "test_case"
-	TargetID   int       `json:"target_id"`
-	CreatedBy  *int      `json:"created_by"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID            int       `json:"id"`
+	LinkTypeID    int       `json:"link_type_id"`
+	SourceType    string    `json:"source_type"` // "item" or "test_case"
+	SourceID      int       `json:"source_id"`
+	TargetType    string    `json:"target_type"` // "item" or "test_case"
+	TargetID      int       `json:"target_id"`
+	CreatedBy     *int      `json:"created_by"`
+	CustomFieldID *int      `json:"custom_field_id,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
 	// Joined fields for API responses
 	LinkTypeName         string `json:"link_type_name,omitempty"`
 	LinkTypeColor        string `json:"link_type_color,omitempty"`
@@ -238,6 +240,8 @@ type ItemLink struct {
 	TargetItemTypeColor string `json:"target_item_type_color,omitempty"`
 	TargetWorkspaceKey  string `json:"target_workspace_key,omitempty"`
 	TargetWorkspaceID   *int   `json:"target_workspace_id,omitempty"`
+	// Custom field link metadata
+	CustomFieldName string `json:"custom_field_name,omitempty"`
 }
 
 // LinkableItem represents an item that can be linked (work item, test case, or asset)
@@ -251,6 +255,8 @@ type LinkableItem struct {
 	WorkspaceName string `json:"workspace_name,omitempty"`
 	Status        string `json:"status,omitempty"`
 	Priority      string `json:"priority,omitempty"`
+	ItemTypeID    *int   `json:"item_type_id,omitempty"`
+	ItemTypeName  string `json:"item_type_name,omitempty"`
 	// For assets
 	AssetSetID        *int   `json:"asset_set_id,omitempty"`
 	AssetSetName      string `json:"asset_set_name,omitempty"`

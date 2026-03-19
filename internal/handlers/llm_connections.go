@@ -9,6 +9,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/llm"
 	"windshift/internal/logger"
+	"windshift/internal/restapi"
 	"windshift/internal/utils"
 )
 
@@ -174,9 +175,8 @@ func (h *LLMConnectionHandler) TestConnection(w http.ResponseWriter, r *http.Req
 	}
 	if err := h.manager.TestConnection(id); err != nil {
 		slog.Warn("LLM connection test failed", slog.Int("connection_id", id), slog.Any("error", err))
-		respondJSON(w, http.StatusBadGateway, map[string]string{
-			"error": fmt.Sprintf("Connection test failed: %s", err.Error()),
-		})
+		respondError(w, r, restapi.NewAPIError(http.StatusBadGateway, restapi.ErrCodeConnectionTestFailed,
+			fmt.Sprintf("Connection test failed: %s", err.Error())))
 		return
 	}
 	respondJSONOK(w, map[string]string{"status": "ok"})

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"windshift/internal/database"
@@ -79,14 +80,15 @@ func (h *ItemLinkHandler) GetLinksForItem(w http.ResponseWriter, r *http.Request
 		internalType = "test_case"
 	}
 
-	// Get outgoing links (where this item is the source)
-	outgoingLinks, err := h.getLinksWhere("source_type = ? AND source_id = ?", internalType, id)
+	// Get outgoing links (where this item is the source), excluding field-managed links
+	outgoingLinks, err := h.getLinksWhere("source_type = ? AND source_id = ? AND il.custom_field_id IS NULL", internalType, id)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
 
 	// Get incoming links (where this item is the target)
+	// Include field-managed links in incoming so they appear annotated with field name
 	incomingLinks, err := h.getLinksWhere("target_type = ? AND target_id = ?", internalType, id)
 	if err != nil {
 		respondInternalError(w, r, err)
@@ -203,15 +205,25 @@ func (h *ItemLinkHandler) CreateLink(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Handle custom field linking logic
+	if link.CustomFieldID != nil {
+		fieldErr := h.validateAndPrepareFieldLink(&link)
+		if fieldErr != nil {
+			respondValidationError(w, r, fieldErr.Error())
+			return
+		}
+	}
+
 	// Create link via service (handles link type validation + insert)
 	linkSvc := services.NewItemLinkService(h.db)
 	id, err := linkSvc.CreateLink(services.CreateItemLinkParams{
-		LinkTypeID: link.LinkTypeID,
-		SourceType: link.SourceType,
-		SourceID:   link.SourceID,
-		TargetType: link.TargetType,
-		TargetID:   link.TargetID,
-		CreatedBy:  &createdBy,
+		LinkTypeID:    link.LinkTypeID,
+		SourceType:    link.SourceType,
+		SourceID:      link.SourceID,
+		TargetType:    link.TargetType,
+		TargetID:      link.TargetID,
+		CreatedBy:     &createdBy,
+		CustomFieldID: link.CustomFieldID,
 	})
 	if err != nil {
 		respondInternalError(w, r, err)
@@ -531,11 +543,21 @@ func (h *ItemLinkHandler) SearchLinkableItems(w http.ResponseWriter, r *http.Req
 		}
 	}
 
+	// Parse optional item_type_ids filter
+	var itemTypeIDFilter []int
+	if itemTypeIDsStr := r.URL.Query().Get("item_type_ids"); itemTypeIDsStr != "" {
+		for _, idStr := range strings.Split(itemTypeIDsStr, ",") {
+			if id, err := strconv.Atoi(strings.TrimSpace(idStr)); err == nil && id > 0 {
+				itemTypeIDFilter = append(itemTypeIDFilter, id)
+			}
+		}
+	}
+
 	var items []models.LinkableItem
 
 	// Search work items
 	if itemType == "" || itemType == "item" {
-		workItems, err := h.searchWorkItems(query, limit, accessibleWorkspaceIDs)
+		workItems, err := h.searchWorkItems(query, limit, accessibleWorkspaceIDs, itemTypeIDFilter)
 		if err != nil {
 			respondInternalError(w, r, err)
 			return
@@ -592,7 +614,9 @@ func (h *ItemLinkHandler) getLinksWhere(whereClause string, args ...interface{})
 		       COALESCE(tit.icon, '') as target_item_type_icon,
 		       COALESCE(tit.color, '') as target_item_type_color,
 		       COALESCE(tw.key, '') as target_workspace_key,
-		       ti.workspace_id as target_workspace_id
+		       ti.workspace_id as target_workspace_id,
+		       il.custom_field_id,
+		       COALESCE(cfd.name, '') as custom_field_name
 		FROM item_links il
 		JOIN link_types lt ON il.link_type_id = lt.id
 		LEFT JOIN items si ON il.source_type = 'item' AND il.source_id = si.id
@@ -608,6 +632,7 @@ func (h *ItemLinkHandler) getLinksWhere(whereClause string, args ...interface{})
 		LEFT JOIN item_types tit ON ti.item_type_id = tit.id
 		LEFT JOIN workspaces sw ON si.workspace_id = sw.id
 		LEFT JOIN workspaces tw ON ti.workspace_id = tw.id
+		LEFT JOIN custom_field_definitions cfd ON il.custom_field_id = cfd.id
 		WHERE ` + whereClause + `
 		ORDER BY lt.name, il.created_at DESC
 	`
@@ -630,7 +655,8 @@ func (h *ItemLinkHandler) getLinksWhere(whereClause string, args ...interface{})
 			&link.SourceWorkspaceKey, &link.SourceWorkspaceID,
 			&link.TargetStatusID, &link.TargetStatusName,
 			&link.TargetItemTypeID, &link.TargetItemTypeName, &link.TargetItemTypeIcon, &link.TargetItemTypeColor,
-			&link.TargetWorkspaceKey, &link.TargetWorkspaceID)
+			&link.TargetWorkspaceKey, &link.TargetWorkspaceID,
+			&link.CustomFieldID, &link.CustomFieldName)
 		if err != nil {
 			return nil, err
 		}
@@ -651,12 +677,25 @@ func (h *ItemLinkHandler) getLinkByID(id int) (*models.ItemLink, error) {
 	return &links[0], nil
 }
 
-func (h *ItemLinkHandler) searchWorkItems(query string, limit int, accessibleWorkspaceIDs []int) ([]models.LinkableItem, error) {
+func (h *ItemLinkHandler) searchWorkItems(query string, limit int, accessibleWorkspaceIDs []int, itemTypeIDs ...[]int) ([]models.LinkableItem, error) {
 	if len(accessibleWorkspaceIDs) == 0 {
 		return []models.LinkableItem{}, nil
 	}
 
 	placeholders, wsArgs := BuildWorkspaceIDPlaceholders(accessibleWorkspaceIDs)
+
+	// Build optional item type filter
+	itemTypeFilter := ""
+	var itemTypeArgs []interface{}
+	if len(itemTypeIDs) > 0 && len(itemTypeIDs[0]) > 0 {
+		itPlaceholders := make([]string, len(itemTypeIDs[0]))
+		for i, id := range itemTypeIDs[0] {
+			itPlaceholders[i] = "?"
+			itemTypeArgs = append(itemTypeArgs, id)
+		}
+		itemTypeFilter = fmt.Sprintf(" AND i.item_type_id IN (%s)", strings.Join(itPlaceholders, ","))
+	}
+
 	sqlQuery := fmt.Sprintf(`
 		SELECT
 			i.id,
@@ -665,21 +704,25 @@ func (h *ItemLinkHandler) searchWorkItems(query string, limit int, accessibleWor
 			i.workspace_id,
 			w.name AS workspace_name,
 			COALESCE(s.name, '') AS status_name,
-			COALESCE(p.name, '') AS priority_name
+			COALESCE(p.name, '') AS priority_name,
+			i.item_type_id,
+			COALESCE(it.name, '') AS item_type_name
 		FROM items i
 		LEFT JOIN workspaces w ON i.workspace_id = w.id
 		LEFT JOIN statuses s ON i.status_id = s.id
 		LEFT JOIN priorities p ON i.priority_id = p.id
+		LEFT JOIN item_types it ON i.item_type_id = it.id
 		WHERE (i.title LIKE ? OR i.description LIKE ?)
-		  AND i.workspace_id IN (%s)
+		  AND i.workspace_id IN (%s)%s
 		ORDER BY i.title
 		LIMIT ?
-	`, placeholders)
+	`, placeholders, itemTypeFilter)
 
 	searchTerm := "%" + query + "%"
-	args := make([]interface{}, 0, 3+len(wsArgs))
+	args := make([]interface{}, 0, 3+len(wsArgs)+len(itemTypeArgs))
 	args = append(args, searchTerm, searchTerm)
 	args = append(args, wsArgs...)
+	args = append(args, itemTypeArgs...)
 	args = append(args, limit)
 	rows, err := h.db.Query(sqlQuery, args...)
 	if err != nil {
@@ -695,6 +738,8 @@ func (h *ItemLinkHandler) searchWorkItems(query string, limit int, accessibleWor
 		var workspaceName sql.NullString
 		var statusName sql.NullString
 		var priorityName sql.NullString
+		var itemTypeID sql.NullInt64
+		var itemTypeName sql.NullString
 
 		err := rows.Scan(
 			&item.ID,
@@ -704,6 +749,8 @@ func (h *ItemLinkHandler) searchWorkItems(query string, limit int, accessibleWor
 			&workspaceName,
 			&statusName,
 			&priorityName,
+			&itemTypeID,
+			&itemTypeName,
 		)
 		if err != nil {
 			return nil, err
@@ -714,6 +761,8 @@ func (h *ItemLinkHandler) searchWorkItems(query string, limit int, accessibleWor
 		item.WorkspaceName = workspaceName.String
 		item.Status = statusName.String
 		item.Priority = priorityName.String
+		item.ItemTypeID = utils.NullInt64ToPtr(itemTypeID)
+		item.ItemTypeName = itemTypeName.String
 
 		item.Type = "item"
 		items = append(items, item)
@@ -804,4 +853,166 @@ func (h *ItemLinkHandler) searchAssets(query string, limit int) ([]models.Linkab
 
 func isValidLinkType(linkType string) bool {
 	return linkType == "item" || linkType == "test_case" || linkType == "asset"
+}
+
+// GetFieldLinks returns links managed by a specific custom field for a given item
+func (h *ItemLinkHandler) GetFieldLinks(w http.ResponseWriter, r *http.Request) {
+	itemID, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		respondInvalidID(w, r, "id")
+		return
+	}
+
+	fieldID, err := strconv.Atoi(r.PathValue("fieldId"))
+	if err != nil {
+		respondInvalidID(w, r, "fieldId")
+		return
+	}
+
+	if !CheckItemPermission(w, r, h.db, h.permissionService, itemID, models.PermissionItemView) {
+		return
+	}
+
+	// Get field options to determine if this is a primary or mirror field
+	var optionsJSON sql.NullString
+	var fieldType string
+	err = h.db.QueryRow("SELECT field_type, options FROM custom_field_definitions WHERE id = ?", fieldID).Scan(&fieldType, &optionsJSON)
+	if err == sql.ErrNoRows {
+		respondNotFound(w, r, "custom_field")
+		return
+	}
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	if fieldType != "linking" {
+		respondValidationError(w, r, "Field is not a linking type")
+		return
+	}
+
+	var opts struct {
+		MirrorOfFieldID int `json:"mirror_of_field_id"`
+	}
+	if optionsJSON.Valid {
+		_ = json.Unmarshal([]byte(optionsJSON.String), &opts)
+	}
+
+	var links []models.ItemLink
+	if opts.MirrorOfFieldID > 0 {
+		// Mirror field: links are stored with custom_field_id = primary, target_id = this item
+		links, err = h.getLinksWhere("il.custom_field_id = ? AND il.target_type = 'item' AND il.target_id = ?", opts.MirrorOfFieldID, itemID)
+	} else {
+		// Primary field: links are stored with custom_field_id = this field, source_id = this item
+		links, err = h.getLinksWhere("il.custom_field_id = ? AND il.source_type = 'item' AND il.source_id = ?", fieldID, itemID)
+	}
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+
+	// Filter by accessible workspaces
+	user := utils.GetCurrentUser(r)
+	if user != nil {
+		accessibleKeys, _ := GetAccessibleWorkspaceKeys(user, h.db, h.permissionService)
+		links = filterLinksByAccessibleWorkspaces(links, accessibleKeys)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(links)
+}
+
+// validateAndPrepareFieldLink validates custom field linking constraints and prepares the link
+func (h *ItemLinkHandler) validateAndPrepareFieldLink(link *models.ItemLink) error {
+	fieldID := *link.CustomFieldID
+
+	// Get field definition
+	var optionsJSON sql.NullString
+	var fieldType string
+	err := h.db.QueryRow("SELECT field_type, options FROM custom_field_definitions WHERE id = ?", fieldID).Scan(&fieldType, &optionsJSON)
+	if err != nil {
+		return fmt.Errorf("custom field not found")
+	}
+	if fieldType != "linking" {
+		return fmt.Errorf("field is not a linking type")
+	}
+
+	if !optionsJSON.Valid {
+		return fmt.Errorf("field has no options configured")
+	}
+
+	var opts struct {
+		LinkTypeID         int      `json:"link_type_id"`
+		AllowedItemTypeIDs []int    `json:"allowed_item_type_ids"`
+		AllowedEntityTypes []string `json:"allowed_entity_types"`
+		Multi              bool     `json:"multi"`
+		MirrorOfFieldID    int      `json:"mirror_of_field_id"`
+		MirrorFieldID      int      `json:"mirror_field_id"`
+	}
+	if err := json.Unmarshal([]byte(optionsJSON.String), &opts); err != nil {
+		return fmt.Errorf("invalid field options")
+	}
+
+	isMirror := opts.MirrorOfFieldID > 0
+
+	if isMirror {
+		// Mirror field: resolve to primary field, swap source/target
+		link.SourceType, link.TargetType = link.TargetType, link.SourceType
+		link.SourceID, link.TargetID = link.TargetID, link.SourceID
+		primaryID := opts.MirrorOfFieldID
+		link.CustomFieldID = &primaryID
+
+		// Get primary field options for validation
+		var primaryOptsJSON sql.NullString
+		if err := h.db.QueryRow("SELECT options FROM custom_field_definitions WHERE id = ?", primaryID).Scan(&primaryOptsJSON); err != nil {
+			return fmt.Errorf("primary field not found")
+		}
+		if primaryOptsJSON.Valid {
+			_ = json.Unmarshal([]byte(primaryOptsJSON.String), &opts)
+		}
+	}
+
+	// Validate link type matches
+	if link.LinkTypeID != 0 && link.LinkTypeID != opts.LinkTypeID {
+		return fmt.Errorf("link type does not match field configuration")
+	}
+	link.LinkTypeID = opts.LinkTypeID
+
+	// Validate target entity type
+	if len(opts.AllowedEntityTypes) > 0 {
+		allowed := false
+		for _, et := range opts.AllowedEntityTypes {
+			if et == link.TargetType {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return fmt.Errorf("target entity type not allowed for this field")
+		}
+	}
+
+	// Validate target item type
+	if len(opts.AllowedItemTypeIDs) > 0 && link.TargetType == "item" {
+		var targetItemTypeID int
+		if err := h.db.QueryRow("SELECT item_type_id FROM items WHERE id = ?", link.TargetID).Scan(&targetItemTypeID); err == nil {
+			allowed := false
+			for _, id := range opts.AllowedItemTypeIDs {
+				if id == targetItemTypeID {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				return fmt.Errorf("target item type not allowed for this field")
+			}
+		}
+	}
+
+	// Enforce single-value constraint
+	if !opts.Multi {
+		_, _ = h.db.ExecWrite("DELETE FROM item_links WHERE custom_field_id = ? AND source_type = ? AND source_id = ?",
+			*link.CustomFieldID, link.SourceType, link.SourceID)
+	}
+
+	return nil
 }
