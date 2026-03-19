@@ -11,6 +11,7 @@ func RegisterAIRoutes(deps *Deps) {
 	// AI feature endpoints (user) - rate limited to protect expensive LLM calls
 	api.HandleH("GET /ai/status", auth(http.HandlerFunc(deps.AI.AI.Status)))
 	api.HandleH("POST /ai/chat", auth(deps.AIRateLimiter.Limit(http.HandlerFunc(deps.AI.AI.Chat))))
+	api.HandleH("GET /ai/daily-briefing", auth(http.HandlerFunc(deps.AI.AI.GetDailyBriefing)))
 	api.HandleH("GET /ai/plan-my-day", auth(deps.AIRateLimiter.Limit(http.HandlerFunc(deps.AI.AI.PlanMyDay))))
 	api.HandleH("POST /ai/items/{id}/catch-me-up", auth(deps.AIRateLimiter.Limit(http.HandlerFunc(deps.AI.AI.CatchMeUp))))
 	api.HandleH("POST /ai/items/{id}/find-similar", auth(deps.AIRateLimiter.Limit(http.HandlerFunc(deps.AI.AI.FindSimilarItems))))

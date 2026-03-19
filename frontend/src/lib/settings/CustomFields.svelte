@@ -2,7 +2,7 @@
   import { onMount, untrack } from 'svelte';
   import { api } from '../api.js';
   import { currentRoute, navigate } from '../router.js';
-  import { Plus, Edit, Trash2, MoreHorizontal, Circle, Database, Settings, Type, AlignLeft, ChevronDownCircle, ListChecks, Hash, Calendar, User, Repeat, Flag, Box, Globe, Building2 } from 'lucide-svelte';
+  import { Plus, Edit, Trash2, MoreHorizontal, Circle, Database, Settings, Type, AlignLeft, ChevronDownCircle, ListChecks, Hash, Calendar, User, Repeat, Flag, Box, Globe, Building2, Link2 } from 'lucide-svelte';
   import Button from '../components/Button.svelte';
   import Input from '../components/Input.svelte';
   import Select from '../components/Select.svelte';
@@ -22,6 +22,13 @@
   import { t } from '../stores/i18n.svelte.js';
   import { confirm } from '../composables/useConfirm.js';
   import { formatDateSimple } from '../utils/dateFormatter.js';
+  import BasePicker from '../pickers/BasePicker.svelte';
+
+  const entityTypeOptions = [
+    { id: 'item', name: 'Items' },
+    { id: 'test_case', name: 'Test Cases' },
+    { id: 'asset', name: 'Assets' }
+  ];
 
   let customFields = $state([]);
   let indexCounts = $state({ items: { current: 0, max: 20 }, assets: { current: 0, max: 20 } });
@@ -65,7 +72,8 @@
     { value: 'milestone', label: 'Milestone', icon: Flag, iconColor: '#C9A84C' },
     { value: 'asset', label: 'Asset', icon: Box, iconColor: '#7B8A9E' },
     { value: 'portalcustomer', label: 'Portal Customer', icon: Globe, iconColor: '#E07BAF' },
-    { value: 'customerorganisation', label: 'Customer Organisation', icon: Building2, iconColor: '#8B7EC8' }
+    { value: 'customerorganisation', label: 'Customer Organisation', icon: Building2, iconColor: '#8B7EC8' },
+    { value: 'linking', label: 'Linking', icon: Link2, iconColor: '#3B82F6' }
   ];
 
   const selectedFieldType = $derived(fieldTypes.find(ft => ft.value === formData.field_type));
@@ -74,6 +82,29 @@
   let assetSetId = $state(null);
   let assetQlQuery = $state('');
   let assetSets = $state([]);
+
+  // Linking field configuration
+  let linkingLinkTypeId = $state(null);
+  let linkingAllowedItemTypeIds = $state([]);
+  let linkingAllowedEntityTypes = $state(['item']);
+  let linkingMulti = $state(true);
+  let linkingMirrorName = $state('');
+  let linkingMirrorAllowedItemTypeIds = $state([]);
+  let linkTypes = $state([]);
+  let itemTypes = $state([]);
+
+  // When a link type is selected, auto-populate entity types if the link type constrains them
+  const selectedLinkType = $derived(linkTypes.find(l => l.id == linkingLinkTypeId));
+  const linkTypeConstrainsEntities = $derived(selectedLinkType?.allowed_entity_types?.length > 0);
+
+  $effect(() => {
+    if (linkingLinkTypeId) {
+      const lt = linkTypes.find(l => l.id == linkingLinkTypeId);
+      if (lt?.allowed_entity_types?.length > 0) {
+        linkingAllowedEntityTypes = [...lt.allowed_entity_types];
+      }
+    }
+  });
 
   onMount(async () => {
     await loadCustomFields();
@@ -84,6 +115,20 @@
     } catch (error) {
       console.error('Failed to load asset sets:', error);
       assetSets = [];
+    }
+
+    // Load link types and item types for linking field type
+    try {
+      linkTypes = await api.linkTypes.getAll() || [];
+    } catch (error) {
+      console.error('Failed to load link types:', error);
+      linkTypes = [];
+    }
+    try {
+      itemTypes = await api.itemTypes.getAll() || [];
+    } catch (error) {
+      console.error('Failed to load item types:', error);
+      itemTypes = [];
     }
   });
 
@@ -186,6 +231,31 @@
       assetQlQuery = '';
     }
 
+    // Parse linking field config
+    if (field.field_type === 'linking' && field.options) {
+      try {
+        const config = JSON.parse(field.options);
+        linkingLinkTypeId = config.link_type_id || null;
+        linkingAllowedItemTypeIds = config.allowed_item_type_ids || [];
+        linkingAllowedEntityTypes = config.allowed_entity_types || ['item'];
+        linkingMulti = config.multi !== false;
+        linkingMirrorName = '';
+        linkingMirrorAllowedItemTypeIds = [];
+      } catch (e) {
+        linkingLinkTypeId = null;
+        linkingAllowedItemTypeIds = [];
+        linkingAllowedEntityTypes = ['item'];
+        linkingMulti = true;
+      }
+    } else {
+      linkingLinkTypeId = null;
+      linkingAllowedItemTypeIds = [];
+      linkingAllowedEntityTypes = ['item'];
+      linkingMulti = true;
+      linkingMirrorName = '';
+      linkingMirrorAllowedItemTypeIds = [];
+    }
+
     // Load indexing state
     indexedItems = field.indexed?.items || false;
     indexedAssets = field.indexed?.assets || false;
@@ -206,6 +276,12 @@
     assetQlQuery = '';
     indexedItems = false;
     indexedAssets = false;
+    linkingLinkTypeId = null;
+    linkingAllowedItemTypeIds = [];
+    linkingAllowedEntityTypes = ['item'];
+    linkingMulti = true;
+    linkingMirrorName = '';
+    linkingMirrorAllowedItemTypeIds = [];
   }
 
   function cancelForm() {
@@ -247,6 +323,22 @@
       }
       config.asset_set_id = assetSetId;
       config.ql_query = assetQlQuery || '';
+    } else if (formData.field_type === 'linking') {
+      if (!linkingLinkTypeId) {
+        throw new Error('Linking fields require a link type');
+      }
+      config.link_type_id = parseInt(linkingLinkTypeId);
+      config.allowed_entity_types = linkingAllowedEntityTypes;
+      config.multi = linkingMulti;
+      if (linkingAllowedItemTypeIds.length > 0) {
+        config.allowed_item_type_ids = linkingAllowedItemTypeIds.map(Number);
+      }
+      if (linkingMirrorName.trim()) {
+        config.mirror_name = linkingMirrorName.trim();
+        if (linkingMirrorAllowedItemTypeIds.length > 0) {
+          config.mirror_allowed_item_type_ids = linkingMirrorAllowedItemTypeIds.map(Number);
+        }
+      }
     }
 
     return config;
@@ -275,6 +367,22 @@
           asset_set_id: processedConfig.asset_set_id,
           ql_query: processedConfig.ql_query
         });
+      } else if (formData.field_type === 'linking') {
+        const linkOpts = {
+          link_type_id: processedConfig.link_type_id,
+          allowed_entity_types: processedConfig.allowed_entity_types,
+          multi: processedConfig.multi
+        };
+        if (processedConfig.allowed_item_type_ids) {
+          linkOpts.allowed_item_type_ids = processedConfig.allowed_item_type_ids;
+        }
+        if (processedConfig.mirror_name) {
+          linkOpts.mirror_name = processedConfig.mirror_name;
+          if (processedConfig.mirror_allowed_item_type_ids) {
+            linkOpts.mirror_allowed_item_type_ids = processedConfig.mirror_allowed_item_type_ids;
+          }
+        }
+        data.options = JSON.stringify(linkOpts);
       }
 
       if (editingField) {
@@ -351,7 +459,9 @@
   const isAssetField = $derived(formData.field_type === 'asset');
   const isPortalCustomerField = $derived(formData.field_type === 'portalcustomer');
   const isCustomerOrganisationField = $derived(formData.field_type === 'customerorganisation');
-  const hideAppliesToSection = $derived(formData.field_type === 'portalcustomer' || formData.field_type === 'customerorganisation');
+  const isLinkingField = $derived(formData.field_type === 'linking');
+  const isLinkingMirror = $derived(isLinkingField && editingField && (() => { try { const o = JSON.parse(editingField.options || '{}'); return !!o.mirror_of_field_id; } catch { return false; } })());
+  const hideAppliesToSection = $derived(formData.field_type === 'portalcustomer' || formData.field_type === 'customerorganisation' || formData.field_type === 'linking');
 
   // Reactive statement to trigger re-calculation when screens data changes
   const screensLoaded = $derived(screens && screens.length > 0);
@@ -483,6 +593,14 @@
             const options = JSON.parse(field.options);
             if (Array.isArray(options)) {
               return `${options.length} options`;
+            } else if (field.field_type === 'linking' && options.link_type_id) {
+              const lt = linkTypes.find(l => l.id === options.link_type_id);
+              const ltName = lt ? lt.name : `Type #${options.link_type_id}`;
+              const parts = [ltName];
+              if (options.multi === false) parts.push('single');
+              if (options.mirror_field_id) parts.push('mirrored');
+              if (options.mirror_of_field_id) parts.push('mirror');
+              return parts.join(', ');
             } else if (field.field_type === 'asset' && options.asset_set_id) {
               const set = assetSets.find(s => s.id === options.asset_set_id);
               const setName = set ? set.name : `Set #${options.asset_set_id}`;
@@ -701,6 +819,91 @@
         </div>
       {/if}
 
+      {#if isLinkingField}
+        <div class="mt-6 space-y-4">
+          {#if isLinkingMirror}
+            <p class="text-sm p-3 rounded" style="color: var(--ds-text); background: var(--ds-surface); border: 1px solid var(--ds-border);">
+              This is a mirror field. Configuration is managed through its primary field.
+            </p>
+          {:else}
+            <div>
+              <Label for="linking-link-type" required class="mb-2">Link Type</Label>
+              <Select id="linking-link-type" bind:value={linkingLinkTypeId} required>
+                <option value={null}>Select link type...</option>
+                {#each linkTypes.filter(lt => lt.active !== false) as lt}
+                  <option value={lt.id}>{lt.name} ({lt.forward_label} / {lt.reverse_label})</option>
+                {/each}
+              </Select>
+            </div>
+
+            <div>
+              <Label class="mb-2">Allowed Entity Types</Label>
+              <BasePicker
+                bind:value={linkingAllowedEntityTypes}
+                items={entityTypeOptions}
+                multiple={true}
+                placeholder="Select entity types..."
+                getValue={(item) => item.id}
+                getLabel={(item) => item.name}
+                disabled={linkTypeConstrainsEntities}
+              />
+              <p class="text-xs mt-1" style="color: var(--ds-text-subtle);">
+                {linkTypeConstrainsEntities ? 'Constrained by link type' : 'Choose which entity types can be linked'}
+              </p>
+            </div>
+
+            {#if linkingAllowedEntityTypes.includes('item')}
+              <div>
+                <Label class="mb-2">Allowed Item Types (optional)</Label>
+                <BasePicker
+                  bind:value={linkingAllowedItemTypeIds}
+                  items={itemTypes}
+                  multiple={true}
+                  placeholder="All item types"
+                  getValue={(item) => item.id}
+                  getLabel={(item) => item.name}
+                />
+                <p class="text-xs mt-1" style="color: var(--ds-text-subtle);">Leave empty to allow all item types</p>
+              </div>
+            {/if}
+
+            <div class="flex items-center gap-4">
+              <Toggle
+                bind:checked={linkingMulti}
+                label="Allow multiple values"
+                size="small"
+              />
+            </div>
+
+            <div class="p-4 rounded-lg" style="background: var(--ds-surface); border: 1px solid var(--ds-border);">
+              <Label for="linking-mirror-name" class="mb-2">Mirror Field Name (optional)</Label>
+              <Input
+                id="linking-mirror-name"
+                bind:value={linkingMirrorName}
+                placeholder='e.g., "Blocks" (reverse of "Blocked By")'
+              />
+              <p class="text-xs mt-1" style="color: var(--ds-text-subtle);">
+                Creates a reverse field that shows the other side of the relationship. Leave empty for no mirror.
+              </p>
+
+              {#if linkingMirrorName.trim() && linkingAllowedEntityTypes.includes('item')}
+                <div class="mt-3">
+                  <Label class="mb-2">Mirror Allowed Item Types (optional)</Label>
+                  <BasePicker
+                    bind:value={linkingMirrorAllowedItemTypeIds}
+                    items={itemTypes}
+                    multiple={true}
+                    placeholder="All item types"
+                    getValue={(item) => item.id}
+                    getLabel={(item) => item.name}
+                  />
+                </div>
+              {/if}
+            </div>
+          {/if}
+        </div>
+      {/if}
+
       {#if showIndexingSection}
         <div class="mt-6 p-4 rounded-lg" style="background: var(--ds-surface); border: 1px solid var(--ds-border);">
           <Label class="mb-3">Database Indexing</Label>
@@ -738,7 +941,7 @@
     onCancel={cancelForm}
     onConfirm={saveField}
     confirmLabel={editingField ? t('common.update') : t('common.create')}
-    disabled={!formData.field_name.trim() || (needsOptions && !optionsText.trim()) || (isAssetField && !assetSetId)}
+    disabled={!formData.field_name.trim() || (needsOptions && !optionsText.trim()) || (isAssetField && !assetSetId) || (isLinkingField && !isLinkingMirror && !linkingLinkTypeId)}
   />
 </Modal>
 

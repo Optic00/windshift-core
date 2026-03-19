@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"windshift/internal/cql"
 	"windshift/internal/database"
@@ -18,13 +19,17 @@ import (
 type ToolExecutor struct {
 	db                     database.Database
 	accessibleWorkspaceIDs []int
+	userID                 int
+	timePermService        *services.TimePermissionService
 }
 
 // NewToolExecutor creates a tool executor scoped to the given user's accessible workspaces.
-func NewToolExecutor(db database.Database, accessibleWorkspaceIDs []int) *ToolExecutor {
+func NewToolExecutor(db database.Database, accessibleWorkspaceIDs []int, userID int, timePermService *services.TimePermissionService) *ToolExecutor {
 	return &ToolExecutor{
 		db:                     db,
 		accessibleWorkspaceIDs: accessibleWorkspaceIDs,
+		userID:                 userID,
+		timePermService:        timePermService,
 	}
 }
 
@@ -47,6 +52,14 @@ func (e *ToolExecutor) Execute(_ context.Context, name string, arguments string)
 		return e.listIterations(arguments)
 	case "list_custom_fields":
 		return e.listCustomFields()
+	case "list_time_projects":
+		return e.listTimeProjects(arguments)
+	case "list_worklogs":
+		return e.listWorklogs(arguments)
+	case "list_recent_activity":
+		return e.listRecentActivity(arguments)
+	case "log_time":
+		return e.logTime(arguments)
 	default:
 		return `{"error": "unknown tool"}`, nil
 	}
@@ -646,5 +659,440 @@ func (e *ToolExecutor) listCustomFields() (string, error) {
 	}
 
 	b, _ := json.Marshal(map[string]interface{}{"custom_fields": fields})
+	return string(b), nil
+}
+
+// listTimeProjects returns time tracking projects the user has access to.
+func (e *ToolExecutor) listTimeProjects(arguments string) (string, error) {
+	var args struct {
+		Status string `json:"status"`
+	}
+	if arguments != "" {
+		_ = json.Unmarshal([]byte(arguments), &args)
+	}
+
+	// Get accessible project IDs for the user
+	accessibleIDs, err := e.timePermService.GetAccessibleProjects(e.userID)
+	if err != nil {
+		return `{"error": "failed to check project access"}`, nil
+	}
+	// accessibleIDs == nil means all projects are accessible
+	// empty slice means no access
+	if accessibleIDs != nil && len(accessibleIDs) == 0 {
+		return `{"projects": []}`, nil
+	}
+
+	query := `SELECT tp.id, tp.name, tp.status, COALESCE(tp.description, ''),
+		COALESCE(co.name, ''), COALESCE(tpc.name, '')
+		FROM time_projects tp
+		LEFT JOIN customer_organisations co ON tp.customer_id = co.id
+		LEFT JOIN time_project_categories tpc ON tp.category_id = tpc.id
+		WHERE 1=1`
+
+	var queryArgs []interface{}
+
+	if accessibleIDs != nil {
+		placeholders := make([]string, len(accessibleIDs))
+		for i, id := range accessibleIDs {
+			placeholders[i] = "?"
+			queryArgs = append(queryArgs, id)
+		}
+		query += fmt.Sprintf(" AND tp.id IN (%s)", strings.Join(placeholders, ","))
+	}
+
+	if args.Status != "" {
+		query += " AND tp.status = ?"
+		queryArgs = append(queryArgs, args.Status)
+	}
+
+	query += " ORDER BY tp.name"
+
+	rows, err := e.db.Query(query, queryArgs...)
+	if err != nil {
+		return `{"error": "failed to list time projects"}`, nil
+	}
+	defer func() { _ = rows.Close() }()
+
+	type project struct {
+		ID           int    `json:"id"`
+		Name         string `json:"name"`
+		Status       string `json:"status"`
+		Description  string `json:"description,omitempty"`
+		CustomerName string `json:"customer_name,omitempty"`
+		CategoryName string `json:"category_name,omitempty"`
+	}
+	var projects []project
+	for rows.Next() {
+		var p project
+		if err := rows.Scan(&p.ID, &p.Name, &p.Status, &p.Description, &p.CustomerName, &p.CategoryName); err != nil {
+			continue
+		}
+		projects = append(projects, p)
+	}
+	if projects == nil {
+		projects = []project{}
+	}
+
+	b, _ := json.Marshal(map[string]interface{}{"projects": projects})
+	return string(b), nil
+}
+
+// listWorklogs returns the current user's worklogs with optional filters.
+func (e *ToolExecutor) listWorklogs(arguments string) (string, error) {
+	var args struct {
+		DateFrom  string `json:"date_from"`
+		DateTo    string `json:"date_to"`
+		ProjectID int    `json:"project_id"`
+	}
+	if arguments != "" {
+		_ = json.Unmarshal([]byte(arguments), &args)
+	}
+
+	query := `SELECT tw.id, tp.name, COALESCE(co.name, ''), tw.description, tw.date,
+		tw.duration_minutes, COALESCE(tw.item_id, 0),
+		COALESCE(i.workspace_item_number, 0), COALESCE(w.key, ''), COALESCE(i.workspace_id, 0)
+		FROM time_worklogs tw
+		JOIN time_projects tp ON tw.project_id = tp.id
+		LEFT JOIN customer_organisations co ON tw.customer_id = co.id
+		LEFT JOIN items i ON tw.item_id = i.id
+		LEFT JOIN workspaces w ON i.workspace_id = w.id
+		WHERE tw.user_id = ?`
+
+	queryArgs := []interface{}{e.userID}
+
+	if args.DateFrom != "" {
+		dateFrom, err := time.Parse("2006-01-02", args.DateFrom)
+		if err != nil {
+			return `{"error": "invalid date_from format, use YYYY-MM-DD"}`, nil
+		}
+		query += " AND tw.date >= ?"
+		queryArgs = append(queryArgs, dateFrom.Unix())
+	}
+
+	if args.DateTo != "" {
+		dateTo, err := time.Parse("2006-01-02", args.DateTo)
+		if err != nil {
+			return `{"error": "invalid date_to format, use YYYY-MM-DD"}`, nil
+		}
+		// End of day
+		query += " AND tw.date <= ?"
+		queryArgs = append(queryArgs, dateTo.Add(24*time.Hour-time.Second).Unix())
+	}
+
+	if args.ProjectID > 0 {
+		query += " AND tw.project_id = ?"
+		queryArgs = append(queryArgs, args.ProjectID)
+	}
+
+	query += " ORDER BY tw.date DESC LIMIT 50"
+
+	rows, err := e.db.Query(query, queryArgs...)
+	if err != nil {
+		return `{"error": "failed to list worklogs"}`, nil
+	}
+	defer func() { _ = rows.Close() }()
+
+	type worklog struct {
+		ID              int    `json:"id"`
+		ProjectName     string `json:"project_name"`
+		CustomerName    string `json:"customer_name,omitempty"`
+		Description     string `json:"description"`
+		Date            string `json:"date"`
+		DurationMinutes int    `json:"duration_minutes"`
+		ItemKey         string `json:"item_key,omitempty"`
+	}
+	var worklogs []worklog
+	for rows.Next() {
+		var wl worklog
+		var dateUnix int64
+		var itemID, itemNumber, wsID int
+		var wsKey string
+		if err := rows.Scan(&wl.ID, &wl.ProjectName, &wl.CustomerName, &wl.Description,
+			&dateUnix, &wl.DurationMinutes, &itemID, &itemNumber, &wsKey, &wsID); err != nil {
+			continue
+		}
+		wl.Date = time.Unix(dateUnix, 0).Format("2006-01-02")
+		// Only include item key if user has workspace access
+		if itemID > 0 && wsKey != "" && e.hasWorkspaceAccess(wsID) {
+			wl.ItemKey = fmt.Sprintf("%s-%d", wsKey, itemNumber)
+		}
+		worklogs = append(worklogs, wl)
+	}
+	if worklogs == nil {
+		worklogs = []worklog{}
+	}
+
+	b, _ := json.Marshal(map[string]interface{}{"worklogs": worklogs})
+	return string(b), nil
+}
+
+// logTime creates a new time worklog entry.
+func (e *ToolExecutor) logTime(arguments string) (string, error) {
+	var args struct {
+		ProjectID   int    `json:"project_id"`
+		Description string `json:"description"`
+		Date        string `json:"date"`
+		Duration    string `json:"duration"`
+		StartTime   string `json:"start_time"`
+		EndTime     string `json:"end_time"`
+		ItemID      int    `json:"item_id"`
+	}
+	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+		return `{"error": "invalid arguments"}`, nil
+	}
+	if args.ProjectID == 0 || args.Description == "" || args.Date == "" {
+		return `{"error": "project_id, description, and date are required"}`, nil
+	}
+
+	// Check permission
+	canBook, err := e.timePermService.CanBookTimeOnProject(e.userID, args.ProjectID)
+	if err != nil {
+		return `{"error": "failed to check booking permission"}`, nil
+	}
+	if !canBook {
+		return `{"error": "you do not have permission to log time on this project"}`, nil
+	}
+
+	// Validate project exists and is active
+	var projectName, projectStatus string
+	var customerID sql.NullInt64
+	err = e.db.QueryRow(
+		"SELECT name, status, customer_id FROM time_projects WHERE id = ?", args.ProjectID,
+	).Scan(&projectName, &projectStatus, &customerID)
+	if err != nil {
+		return `{"error": "project not found"}`, nil
+	}
+	if projectStatus != "Active" {
+		return fmt.Sprintf(`{"error": "project %q is not active (status: %s)"}`, projectName, projectStatus), nil
+	}
+
+	// Parse date
+	date, err := time.Parse("2006-01-02", args.Date)
+	if err != nil {
+		return `{"error": "invalid date format, use YYYY-MM-DD"}`, nil
+	}
+
+	var durationMins int
+	var startTimeUnix, endTimeUnix int64
+
+	if args.Duration != "" {
+		// Parse duration string
+		dur, err := ParseDuration(args.Duration)
+		if err != nil {
+			return fmt.Sprintf(`{"error": "invalid duration: %s"}`, err.Error()), nil
+		}
+		durationMins = int(dur.Minutes())
+		// Set start/end to beginning of day with computed end
+		startTimeUnix = date.Unix()
+		endTimeUnix = date.Add(dur).Unix()
+	} else if args.StartTime != "" && args.EndTime != "" {
+		// Parse HH:MM times
+		startParts := strings.SplitN(args.StartTime, ":", 2)
+		endParts := strings.SplitN(args.EndTime, ":", 2)
+		if len(startParts) != 2 || len(endParts) != 2 {
+			return `{"error": "start_time and end_time must be in HH:MM format"}`, nil
+		}
+		startH, err1 := strconv.Atoi(startParts[0])
+		startM, err2 := strconv.Atoi(startParts[1])
+		endH, err3 := strconv.Atoi(endParts[0])
+		endM, err4 := strconv.Atoi(endParts[1])
+		if err1 != nil || err2 != nil || err3 != nil || err4 != nil {
+			return `{"error": "start_time and end_time must be in HH:MM format"}`, nil
+		}
+		startT := date.Add(time.Duration(startH)*time.Hour + time.Duration(startM)*time.Minute)
+		endT := date.Add(time.Duration(endH)*time.Hour + time.Duration(endM)*time.Minute)
+		if !endT.After(startT) {
+			return `{"error": "end_time must be after start_time"}`, nil
+		}
+		durationMins = int(endT.Sub(startT).Minutes())
+		startTimeUnix = startT.Unix()
+		endTimeUnix = endT.Unix()
+	} else {
+		return `{"error": "provide either duration or both start_time and end_time"}`, nil
+	}
+
+	if durationMins <= 0 {
+		return `{"error": "duration must be positive"}`, nil
+	}
+
+	// If item_id provided, verify it exists and user has workspace access
+	var itemIDVal interface{} = nil
+	if args.ItemID > 0 {
+		var wsID int
+		err := e.db.QueryRow("SELECT workspace_id FROM items WHERE id = ?", args.ItemID).Scan(&wsID)
+		if err != nil {
+			return `{"error": "item not found"}`, nil
+		}
+		if !e.hasWorkspaceAccess(wsID) {
+			return `{"error": "item not found"}`, nil
+		}
+		itemIDVal = args.ItemID
+	}
+
+	// Resolve customer_id from project
+	var custID interface{} = nil
+	if customerID.Valid {
+		custID = customerID.Int64
+	}
+
+	now := time.Now().Unix()
+	dateUnix := date.Unix()
+
+	var id int64
+	err = e.db.QueryRow(`
+		INSERT INTO time_worklogs (project_id, customer_id, user_id, item_id, description, date, start_time, end_time, duration_minutes, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+	`, args.ProjectID, custID, e.userID, itemIDVal, args.Description, dateUnix, startTimeUnix, endTimeUnix, durationMins, now, now).Scan(&id)
+	if err != nil {
+		return `{"error": "failed to create worklog"}`, nil
+	}
+
+	result := map[string]interface{}{
+		"id":               id,
+		"project_name":     projectName,
+		"date":             args.Date,
+		"duration_minutes": durationMins,
+		"description":      args.Description,
+		"message":          "Time logged successfully",
+	}
+	b, _ := json.Marshal(result)
+	return string(b), nil
+}
+
+// listRecentActivity returns recent item changes and comments across accessible workspaces.
+func (e *ToolExecutor) listRecentActivity(arguments string) (string, error) {
+	var args struct {
+		SinceDate   string `json:"since_date"`
+		WorkspaceID int    `json:"workspace_id"`
+		Limit       int    `json:"limit"`
+	}
+	if arguments != "" {
+		_ = json.Unmarshal([]byte(arguments), &args)
+	}
+
+	// Default to yesterday
+	sinceDate := args.SinceDate
+	if sinceDate == "" {
+		sinceDate = time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+	}
+	if _, err := time.Parse("2006-01-02", sinceDate); err != nil {
+		return `{"error": "invalid since_date format, use YYYY-MM-DD"}`, nil
+	}
+
+	limit := args.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	// Determine workspace scope
+	var wsIDs []int
+	if args.WorkspaceID > 0 {
+		if !e.hasWorkspaceAccess(args.WorkspaceID) {
+			return `{"error": "workspace not found"}`, nil
+		}
+		wsIDs = []int{args.WorkspaceID}
+	} else {
+		wsIDs = e.accessibleWorkspaceIDs
+	}
+
+	if len(wsIDs) == 0 {
+		return `{"changes": [], "comments": []}`, nil
+	}
+
+	placeholders := make([]string, len(wsIDs))
+	wsArgs := make([]interface{}, len(wsIDs))
+	for i, id := range wsIDs {
+		placeholders[i] = "?"
+		wsArgs[i] = id
+	}
+	wsIn := strings.Join(placeholders, ",")
+
+	// Query 1: Recent item_history changes
+	changeQuery := fmt.Sprintf(`SELECT ih.field_name, COALESCE(ih.old_value, ''), COALESCE(ih.new_value, ''), ih.changed_at,
+		w.key || '-' || CAST(i.workspace_item_number AS TEXT) as item_key, i.title,
+		COALESCE(u.first_name || ' ' || u.last_name, 'Unknown') as changed_by
+		FROM item_history ih
+		JOIN items i ON ih.item_id = i.id
+		JOIN workspaces w ON i.workspace_id = w.id
+		LEFT JOIN users u ON ih.user_id = u.id
+		WHERE i.workspace_id IN (%s) AND ih.changed_at >= ?
+		ORDER BY ih.changed_at DESC LIMIT ?`, wsIn)
+
+	changeArgs := append(wsArgs, sinceDate, limit)
+	rows, err := e.db.Query(changeQuery, changeArgs...)
+	if err != nil {
+		return `{"error": "failed to query recent changes"}`, nil
+	}
+	defer func() { _ = rows.Close() }()
+
+	type change struct {
+		FieldName string `json:"field"`
+		OldValue  string `json:"old_value,omitempty"`
+		NewValue  string `json:"new_value,omitempty"`
+		ChangedAt string `json:"changed_at"`
+		ItemKey   string `json:"item_key"`
+		ItemTitle string `json:"item_title"`
+		ChangedBy string `json:"changed_by"`
+	}
+	var changes []change
+	for rows.Next() {
+		var c change
+		var changedAt time.Time
+		if err := rows.Scan(&c.FieldName, &c.OldValue, &c.NewValue, &changedAt, &c.ItemKey, &c.ItemTitle, &c.ChangedBy); err != nil {
+			continue
+		}
+		c.ChangedAt = changedAt.Format(time.RFC3339)
+		changes = append(changes, c)
+	}
+	if changes == nil {
+		changes = []change{}
+	}
+
+	// Query 2: Recent comments
+	commentQuery := fmt.Sprintf(`SELECT c.content, c.created_at,
+		w.key || '-' || CAST(i.workspace_item_number AS TEXT) as item_key, i.title,
+		COALESCE(u.first_name || ' ' || u.last_name, 'Unknown') as author
+		FROM comments c
+		JOIN items i ON c.item_id = i.id
+		JOIN workspaces w ON i.workspace_id = w.id
+		LEFT JOIN users u ON c.author_id = u.id
+		WHERE i.workspace_id IN (%s) AND c.created_at >= ? AND c.is_private = false
+		ORDER BY c.created_at DESC LIMIT ?`, wsIn)
+
+	commentArgs := append(append([]interface{}{}, wsArgs...), sinceDate, 30)
+	cRows, err := e.db.Query(commentQuery, commentArgs...)
+	if err != nil {
+		return `{"error": "failed to query recent comments"}`, nil
+	}
+	defer func() { _ = cRows.Close() }()
+
+	type comment struct {
+		Content   string `json:"content"`
+		CreatedAt string `json:"created_at"`
+		ItemKey   string `json:"item_key"`
+		ItemTitle string `json:"item_title"`
+		Author    string `json:"author"`
+	}
+	var comments []comment
+	for cRows.Next() {
+		var cm comment
+		var createdAt time.Time
+		if err := cRows.Scan(&cm.Content, &createdAt, &cm.ItemKey, &cm.ItemTitle, &cm.Author); err != nil {
+			continue
+		}
+		cm.CreatedAt = createdAt.Format(time.RFC3339)
+		if len(cm.Content) > 200 {
+			cm.Content = cm.Content[:200] + "..."
+		}
+		comments = append(comments, cm)
+	}
+	if comments == nil {
+		comments = []comment{}
+	}
+
+	b, _ := json.Marshal(map[string]interface{}{"changes": changes, "comments": comments})
 	return string(b), nil
 }

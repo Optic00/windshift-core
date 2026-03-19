@@ -6,7 +6,8 @@
   import BasePicker from '../../pickers/BasePicker.svelte';
   import PortalCustomerPicker from '../../pickers/PortalCustomerPicker.svelte';
   import CustomerOrganisationPicker from '../../pickers/CustomerOrganisationPicker.svelte';
-  import { Box, Globe, Building2, Calendar, User, Target } from 'lucide-svelte';
+  import LinkingFieldPicker from '../../pickers/LinkingFieldPicker.svelte';
+  import { Box, Globe, Building2, Calendar, User, Target, Link2 } from 'lucide-svelte';
   import ColorDot from '../../components/ColorDot.svelte';
   import { api } from '../../api.js';
   import { t } from '../../stores/i18n.svelte.js';
@@ -59,7 +60,7 @@
     field, value = '', onChange = () => {}, milestones = [], iterations = [],
     isDarkMode = false, required = false, readonly = true, disabled = false,
     onStartEdit = null, onCancel = null, showSelectedInTrigger = true, autoOpenPickers = true,
-    noPadding = false
+    noPadding = false, itemId = null
   } = $props();
 
   const isRequired = $derived(required || field.required || field.is_required);
@@ -377,6 +378,19 @@
               <Building2 class="w-4 h-4" style="color: var(--ds-text-subtle);" />
               <span style="color: var(--ds-text);">{renderDisplayValue()}</span>
             </div>
+          {:else if field.field_type === 'linking'}
+            <div class="flex items-center gap-1">
+              <Link2 class="w-4 h-4" style="color: var(--ds-text-subtle);" />
+              <span style="color: var(--ds-text);">
+                {#if Array.isArray(value) && value.length > 0}
+                  {value.length} linked
+                {:else if value && typeof value === 'object'}
+                  1 linked
+                {:else}
+                  —
+                {/if}
+              </span>
+            </div>
           {:else if field.field_type === 'combobox'}
             <div class="flex items-center gap-1 flex-wrap">
               {#each getComboboxLabels(value) as labelName}
@@ -498,6 +512,14 @@
           } : null);
         }}
         onCancel={() => onCancel?.()}
+      />
+    {:else if field.field_type === 'linking'}
+      <LinkingFieldPicker
+        fieldId={field.id}
+        {itemId}
+        fieldOptions={field.options}
+        {readonly}
+        {disabled}
       />
     {:else if field.field_type === 'combobox'}
       <PersonalLabelCombobox

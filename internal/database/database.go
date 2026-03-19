@@ -107,6 +107,9 @@ var llmSchema string
 //go:embed schema/ldap.sql
 var ldapSchema string
 
+//go:embed schema/daily_briefings.sql
+var dailyBriefingsSchema string
+
 // DB wraps a sql.DB connection with a dedicated write connection
 type DB struct {
 	*sql.DB
@@ -379,11 +382,39 @@ func (db *DB) Initialize() error {
 			}
 		}
 
+		// Create daily_briefings table if it doesn't exist (for existing databases)
+		if _, err := db.Exec(dailyBriefingsSchema); err != nil {
+			slog.Warn("daily_briefings migration failed", slog.String("component", "database"), slog.Any("error", err))
+		}
+
+		// Add allowed_entity_types column to link_types
+		var aetColCount int
+		if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('link_types') WHERE name='allowed_entity_types'").Scan(&aetColCount); err == nil && aetColCount == 0 {
+			if _, err := db.Exec("ALTER TABLE link_types ADD COLUMN allowed_entity_types TEXT DEFAULT NULL"); err != nil {
+				slog.Warn("link_types allowed_entity_types migration failed", slog.String("component", "database"), slog.Any("error", err))
+			}
+		}
+		// Seed allowed_entity_types for the "Tests" system link type
+		if _, err := db.Exec(`UPDATE link_types SET allowed_entity_types = '["item","test_case"]' WHERE name = 'Tests' AND is_system = true AND allowed_entity_types IS NULL`); err != nil {
+			slog.Warn("link_types Tests allowed_entity_types seed failed", slog.String("component", "database"), slog.Any("error", err))
+		}
+
+		// Add custom_field_id column to item_links (for linking custom field type)
+		var cfColCount int
+		if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('item_links') WHERE name='custom_field_id'").Scan(&cfColCount); err == nil && cfColCount == 0 {
+			if _, err := db.Exec("ALTER TABLE item_links ADD COLUMN custom_field_id INTEGER REFERENCES custom_field_definitions(id) ON DELETE CASCADE"); err != nil {
+				slog.Warn("item_links custom_field_id migration failed", slog.String("component", "database"), slog.Any("error", err))
+			}
+			if _, err := db.Exec("CREATE INDEX IF NOT EXISTS idx_item_links_custom_field ON item_links(custom_field_id)"); err != nil {
+				slog.Warn("item_links custom_field_id index creation failed", slog.String("component", "database"), slog.Any("error", err))
+			}
+		}
+
 		return nil
 	}
 
 	// Database needs full initialization
-	schema := coreSchema + itemsSchema + requestTypeSchema + usersSchema + testsSchema + workspaceSchema + configWorkflowsSchema + timeTrackingSchema + channelsSchema + portalSchema + portalAuthSchema + milestonesSchema + iterationsSchema + contentSchema + mentionsSchema + notificationsSchema + permissionsSchema + systemSchema + userPreferencesSchema + webauthnSchema + ssoSchema + scmSchema + assetsSchema + recurringTasksSchema + jiraImportSchema + actionsSchema + emailSchema + assetReportsSchema + labelsSchema + llmSchema + ldapSchema
+	schema := coreSchema + itemsSchema + requestTypeSchema + usersSchema + testsSchema + workspaceSchema + configWorkflowsSchema + timeTrackingSchema + channelsSchema + portalSchema + portalAuthSchema + milestonesSchema + iterationsSchema + contentSchema + mentionsSchema + notificationsSchema + permissionsSchema + systemSchema + userPreferencesSchema + webauthnSchema + ssoSchema + scmSchema + assetsSchema + recurringTasksSchema + jiraImportSchema + actionsSchema + emailSchema + assetReportsSchema + labelsSchema + llmSchema + ldapSchema + dailyBriefingsSchema
 
 	if _, err := db.Exec(schema); err != nil {
 		return fmt.Errorf("failed to initialize database schema: %w", err)
@@ -570,26 +601,27 @@ func (db *DB) initializeDefaultData() error {
 
 	// 9. Create default link types
 	linkTypes := []struct {
-		name         string
-		description  string
-		forwardLabel string
-		reverseLabel string
-		color        string
-		isSystem     bool
+		name               string
+		description        string
+		forwardLabel       string
+		reverseLabel       string
+		color              string
+		isSystem           bool
+		allowedEntityTypes *string // JSON array or nil
 	}{
-		{"Tests", "Test case tests work item", "tests", "tested by", "#10b981", true},
-		{"Implements", "Work item implements another work item", "implements", "implemented by", "#3b82f6", true},
-		{"Depends On", "Work item depends on another work item", "depends on", "blocks", "#f59e0b", true},
-		{"Relates To", "General bidirectional relationship", "relates to", "relates to", "#6b7280", true},
-		{"Links To", "General directional link", "links to", "linked from", "#64748b", true},
-		{"Duplicates", "Work item is a duplicate of another", "duplicates", "duplicated by", "#ef4444", true},
-		{"Child Of", "Alternative hierarchy relationship", "child of", "parent of", "#8b5cf6", true},
+		{"Tests", "Test case tests work item", "tests", "tested by", "#10b981", true, strPtr(`["item","test_case"]`)},
+		{"Implements", "Work item implements another work item", "implements", "implemented by", "#3b82f6", true, nil},
+		{"Depends On", "Work item depends on another work item", "depends on", "blocks", "#f59e0b", true, nil},
+		{"Relates To", "General bidirectional relationship", "relates to", "relates to", "#6b7280", true, nil},
+		{"Links To", "General directional link", "links to", "linked from", "#64748b", true, nil},
+		{"Duplicates", "Work item is a duplicate of another", "duplicates", "duplicated by", "#ef4444", true, nil},
+		{"Child Of", "Alternative hierarchy relationship", "child of", "parent of", "#8b5cf6", true, nil},
 	}
 
 	for _, linkType := range linkTypes {
 		_, err = tx.Exec(
-			"INSERT INTO link_types (name, description, forward_label, reverse_label, color, is_system) VALUES (?, ?, ?, ?, ?, ?)",
-			linkType.name, linkType.description, linkType.forwardLabel, linkType.reverseLabel, linkType.color, linkType.isSystem,
+			"INSERT INTO link_types (name, description, forward_label, reverse_label, color, is_system, allowed_entity_types) VALUES (?, ?, ?, ?, ?, ?, ?)",
+			linkType.name, linkType.description, linkType.forwardLabel, linkType.reverseLabel, linkType.color, linkType.isSystem, linkType.allowedEntityTypes,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to create link type %s: %w", linkType.name, err)
@@ -945,3 +977,5 @@ func NewDatabase(driver, connectionString string, readConns, writeConns int) (Da
 		return nil, fmt.Errorf("unsupported database driver: %s", driver)
 	}
 }
+
+func strPtr(s string) *string { return &s }

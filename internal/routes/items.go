@@ -90,6 +90,7 @@ func RegisterItemRoutes(deps *Deps) {
 	api.HandleH("DELETE /links/{id}", auth(http.HandlerFunc(deps.Items.ItemLink.DeleteLink)))
 	api.HandleH("GET /links/search", auth(http.HandlerFunc(deps.Items.ItemLink.SearchLinkableItems)))
 	api.HandleH("GET /items/{id}/links", auth(http.HandlerFunc(deps.Items.ItemLink.GetLinksForItem)))
+	api.HandleH("GET /items/{id}/field-links/{fieldId}", auth(http.HandlerFunc(deps.Items.ItemLink.GetFieldLinks)))
 	api.HandleH("GET /items/{id}/linked-assets", auth(http.HandlerFunc(deps.Items.ItemLink.GetLinkedAssets)))
 
 	// Get worklogs by item

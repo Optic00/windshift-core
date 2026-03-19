@@ -481,7 +481,7 @@
             onRowClick={(item) => openItem(item.id)}
             class="rounded-t-none border border-t-0 shadow-sm overflow-hidden"
           >
-            {#snippet name({ item })}
+            {#snippet name(item)}
               <div class="flex items-center gap-2 min-w-0">
                 <button
                   onclick={(e) => { e.stopPropagation(); openItem(item.id); }}
@@ -497,7 +497,7 @@
               </div>
             {/snippet}
 
-            {#snippet status({ item })}
+            {#snippet status(item)}
               <!-- svelte-ignore a11y_click_events_have_key_events -->
               <!-- svelte-ignore a11y_no_static_element_interactions -->
               <div onclick={(e) => e.stopPropagation()}>
@@ -527,7 +527,7 @@
               </div>
             {/snippet}
 
-            {#snippet date({ item })}
+            {#snippet date(item)}
               <div class="flex items-center gap-1 text-sm whitespace-nowrap" style="color: var(--ds-text-subtle);">
                 <Calendar class="w-4 h-4" />
                 {formatDate(item.created_at) || '-'}

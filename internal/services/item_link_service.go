@@ -20,12 +20,13 @@ func NewItemLinkService(db database.Database) *ItemLinkService {
 
 // CreateItemLinkParams contains the parameters for creating an item link.
 type CreateItemLinkParams struct {
-	LinkTypeID int
-	SourceType string
-	SourceID   int
-	TargetType string
-	TargetID   int
-	CreatedBy  *int
+	LinkTypeID    int
+	SourceType    string
+	SourceID      int
+	TargetType    string
+	TargetID      int
+	CreatedBy     *int
+	CustomFieldID *int
 }
 
 // CreateLink validates and inserts a new item link.
@@ -47,11 +48,11 @@ func (s *ItemLinkService) CreateLink(params CreateItemLinkParams) (int64, error)
 	// Insert with ON CONFLICT DO NOTHING to handle duplicates gracefully
 	var linkID int64
 	err = s.db.QueryRow(`
-		INSERT INTO item_links (link_type_id, source_type, source_id, target_type, target_id, created_by, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		INSERT INTO item_links (link_type_id, source_type, source_id, target_type, target_id, created_by, custom_field_id, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		ON CONFLICT DO NOTHING
 		RETURNING id
-	`, params.LinkTypeID, params.SourceType, params.SourceID, params.TargetType, params.TargetID, params.CreatedBy).Scan(&linkID)
+	`, params.LinkTypeID, params.SourceType, params.SourceID, params.TargetType, params.TargetID, params.CreatedBy, params.CustomFieldID).Scan(&linkID)
 	if err == sql.ErrNoRows {
 		// Duplicate — ON CONFLICT DO NOTHING returns no row
 		return 0, nil

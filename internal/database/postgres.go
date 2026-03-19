@@ -110,6 +110,9 @@ var ldapSchemaPostgres string
 //go:embed schema/email_postgres.sql
 var emailSchemaPostgres string
 
+//go:embed schema/daily_briefings_postgres.sql
+var dailyBriefingsSchemaPostgres string
+
 // PostgresDB implements the Database interface for PostgreSQL
 type PostgresDB struct {
 	db  *sql.DB
@@ -403,6 +406,14 @@ func (p *PostgresDB) Initialize() error {
 			}
 		}
 
+		// Create daily_briefings table if it doesn't exist (for existing databases)
+		dailyBriefingsContent := strings.TrimSpace(dailyBriefingsSchemaPostgres)
+		if dailyBriefingsContent != "" {
+			if _, err = p.db.Exec(dailyBriefingsContent); err != nil {
+				slog.Warn("daily_briefings postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
+			}
+		}
+
 		// Drop workspace_everyone_roles table (permissions now derived from role assignments)
 		if _, err = p.db.Exec(`DROP TABLE IF EXISTS workspace_everyone_roles`); err != nil {
 			slog.Warn("workspace_everyone_roles drop failed", slog.String("component", "database"), slog.Any("error", err))
@@ -444,6 +455,29 @@ func (p *PostgresDB) Initialize() error {
 		if err = p.db.QueryRow(`SELECT COUNT(*) FROM system_settings WHERE key = 'ai_chat_enabled'`).Scan(&aiChatCount); err == nil && aiChatCount == 0 {
 			if _, err = p.db.Exec(`INSERT INTO system_settings (key, value, value_type, description, category) VALUES ('ai_chat_enabled', 'true', 'boolean', 'Enable AI chat functionality', 'modules')`); err != nil {
 				slog.Warn("ai_chat_enabled setting postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
+			}
+		}
+
+		// Add allowed_entity_types column to link_types
+		var aetColCount int
+		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='link_types' AND column_name='allowed_entity_types'`).Scan(&aetColCount); err == nil && aetColCount == 0 {
+			if _, err = p.db.Exec(`ALTER TABLE link_types ADD COLUMN allowed_entity_types TEXT DEFAULT NULL`); err != nil {
+				slog.Warn("link_types allowed_entity_types postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
+			}
+		}
+		// Seed allowed_entity_types for the "Tests" system link type
+		if _, err = p.db.Exec(`UPDATE link_types SET allowed_entity_types = '["item","test_case"]' WHERE name = 'Tests' AND is_system = true AND allowed_entity_types IS NULL`); err != nil {
+			slog.Warn("link_types Tests allowed_entity_types seed failed", slog.String("component", "database"), slog.Any("error", err))
+		}
+
+		// Add custom_field_id column to item_links (for linking custom field type)
+		var cfColCount int
+		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='item_links' AND column_name='custom_field_id'`).Scan(&cfColCount); err == nil && cfColCount == 0 {
+			if _, err = p.db.Exec(`ALTER TABLE item_links ADD COLUMN custom_field_id INTEGER REFERENCES custom_field_definitions(id) ON DELETE CASCADE`); err != nil {
+				slog.Warn("item_links custom_field_id postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
+			}
+			if _, err = p.db.Exec(`CREATE INDEX IF NOT EXISTS idx_item_links_custom_field ON item_links(custom_field_id)`); err != nil {
+				slog.Warn("item_links custom_field_id index postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
 			}
 		}
 
@@ -534,6 +568,7 @@ func (p *PostgresDB) getPostgresSchemaFiles() []schemaFile {
 		{"labels_postgres.sql", labelsSchemaPostgres},
 		{"llm_postgres.sql", llmSchemaPostgres},
 		{"ldap_postgres.sql", ldapSchemaPostgres},
+		{"daily_briefings_postgres.sql", dailyBriefingsSchemaPostgres},
 	}
 }
 
@@ -708,26 +743,27 @@ func (p *PostgresDB) initializePostgresDefaultData() error {
 
 	// 9. Create default link types
 	linkTypes := []struct {
-		name         string
-		description  string
-		forwardLabel string
-		reverseLabel string
-		color        string
-		isSystem     bool
+		name               string
+		description        string
+		forwardLabel       string
+		reverseLabel       string
+		color              string
+		isSystem           bool
+		allowedEntityTypes *string // JSON array or nil
 	}{
-		{"Tests", "Test case tests work item", "tests", "tested by", "#10b981", true},
-		{"Implements", "Work item implements another work item", "implements", "implemented by", "#3b82f6", true},
-		{"Depends On", "Work item depends on another work item", "depends on", "blocks", "#f59e0b", true},
-		{"Relates To", "General bidirectional relationship", "relates to", "relates to", "#6b7280", true},
-		{"Links To", "General directional link", "links to", "linked from", "#64748b", true},
-		{"Duplicates", "Work item is a duplicate of another", "duplicates", "duplicated by", "#ef4444", true},
-		{"Child Of", "Alternative hierarchy relationship", "child of", "parent of", "#8b5cf6", true},
+		{"Tests", "Test case tests work item", "tests", "tested by", "#10b981", true, strPtr(`["item","test_case"]`)},
+		{"Implements", "Work item implements another work item", "implements", "implemented by", "#3b82f6", true, nil},
+		{"Depends On", "Work item depends on another work item", "depends on", "blocks", "#f59e0b", true, nil},
+		{"Relates To", "General bidirectional relationship", "relates to", "relates to", "#6b7280", true, nil},
+		{"Links To", "General directional link", "links to", "linked from", "#64748b", true, nil},
+		{"Duplicates", "Work item is a duplicate of another", "duplicates", "duplicated by", "#ef4444", true, nil},
+		{"Child Of", "Alternative hierarchy relationship", "child of", "parent of", "#8b5cf6", true, nil},
 	}
 
 	for _, linkType := range linkTypes {
 		_, err = tx.Exec(
-			"INSERT INTO link_types (name, description, forward_label, reverse_label, color, is_system) VALUES ($1, $2, $3, $4, $5, $6)",
-			linkType.name, linkType.description, linkType.forwardLabel, linkType.reverseLabel, linkType.color, linkType.isSystem,
+			"INSERT INTO link_types (name, description, forward_label, reverse_label, color, is_system, allowed_entity_types) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+			linkType.name, linkType.description, linkType.forwardLabel, linkType.reverseLabel, linkType.color, linkType.isSystem, linkType.allowedEntityTypes,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to create link type %s: %w", linkType.name, err)

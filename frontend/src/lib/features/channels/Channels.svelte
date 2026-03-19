@@ -514,7 +514,7 @@
         actionItems={getChannelActionItems}
         onRowClick={handleRowClick}
       >
-        {#snippet name({ item })}
+        {#snippet name(item)}
           {@const ChannelIcon = getChannelTypeIcon(item.type)}
           <div class="flex items-center gap-3">
             <ChannelIcon class="w-4 h-4 flex-shrink-0" style="color: var(--ds-text-subtle);" />
@@ -527,11 +527,11 @@
           </div>
         {/snippet}
 
-        {#snippet type({ item })}
+        {#snippet type(item)}
           <span class="capitalize" style="color: var(--ds-text);">{item.type}</span>
         {/snippet}
 
-        {#snippet status({ item })}
+        {#snippet status(item)}
           <div class="flex items-center gap-2">
             <Lozenge
               color={getChannelStatusColor(getChannelStatus(item))}
