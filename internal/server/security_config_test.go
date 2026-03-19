@@ -89,6 +89,11 @@ func TestResolveSecurityConfig(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "BASE_URL without scheme - error",
+			cfg:     Config{BaseURL: "//example.com"},
+			wantErr: true,
+		},
+		{
 			name: "scheme mismatch - http BASE_URL with TLS",
 			cfg: Config{
 				BaseURL:     "http://example.com",

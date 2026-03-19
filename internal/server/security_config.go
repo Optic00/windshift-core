@@ -77,7 +77,7 @@ func ResolveSecurityConfig(cfg Config) (*ResolvedSecurityConfig, error) {
 	if cfg.BaseURL != "" {
 		var err error
 		parsedURL, err = url.Parse(cfg.BaseURL)
-		if err != nil || parsedURL.Host == "" {
+		if err != nil || parsedURL.Host == "" || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
 			r.addDiag(DiagError, "INVALID_BASE_URL",
 				fmt.Sprintf("BASE_URL %q could not be parsed as a valid URL.", cfg.BaseURL),
 				"Use a full URL like https://myapp.example.com or http://localhost:8080")

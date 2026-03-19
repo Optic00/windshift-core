@@ -69,31 +69,39 @@ func (bs *BriefingScheduler) Stop() {
 }
 
 func (bs *BriefingScheduler) schedulerLoop() {
-	// Run immediately on start
-	bs.generateAllBriefings()
+	bs.safeGenerateAllBriefings()
 
 	for {
 		select {
 		case <-bs.ticker.C:
-			bs.generateAllBriefings()
+			bs.safeGenerateAllBriefings()
 		case <-bs.stopChan:
 			return
 		}
 	}
 }
 
+func (bs *BriefingScheduler) safeGenerateAllBriefings() {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("briefing: panic in generateAllBriefings", slog.Any("panic", r))
+		}
+	}()
+	bs.generateAllBriefings()
+}
+
 func (bs *BriefingScheduler) generateAllBriefings() {
 	// Check ai_chat_enabled system setting
 	var val string
 	if err := bs.db.QueryRow("SELECT value FROM system_settings WHERE key = ?", "ai_chat_enabled").Scan(&val); err != nil || !strings.EqualFold(val, "true") {
-		slog.Debug("Briefing generation skipped: AI not enabled", slog.String("component", "scheduler"))
+		slog.Info("briefing: generation skipped, AI not enabled")
 		return
 	}
 
 	// Check LLM availability
 	llmClient, err := bs.llmManager.Resolve(0)
 	if err != nil || llmClient == nil || !llmClient.Available() {
-		slog.Debug("Briefing generation skipped: AI not available", slog.String("component", "scheduler"))
+		slog.Info("briefing: generation skipped, AI not available", slog.Any("error", err))
 		return
 	}
 
@@ -147,7 +155,8 @@ func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, userI
 	// Skip if today's briefing already exists (successful)
 	var exists int
 	if err := bs.db.QueryRow("SELECT 1 FROM daily_briefings WHERE user_id = ? AND date = ? AND error IS NULL", userID, today).Scan(&exists); err == nil {
-		return // Already generated today
+		slog.Debug("briefing: already generated today", slog.Int("user_id", userID))
+		return
 	}
 
 	start := time.Now()
@@ -155,7 +164,12 @@ func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, userI
 	// Get accessible workspace IDs (inline to avoid import cycle with handlers)
 	accessibleWSIDs, err := bs.getAccessibleWorkspaceIDs(userID)
 	if err != nil || len(accessibleWSIDs) == 0 {
-		return // No workspaces accessible
+		slog.Info("briefing: no accessible workspaces",
+			slog.Int("user_id", userID),
+			slog.Int("workspaces", len(accessibleWSIDs)),
+			slog.Any("error", err),
+		)
+		return
 	}
 
 	placeholders := make([]string, len(accessibleWSIDs))
@@ -181,7 +195,9 @@ func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, userI
 		ORDER BY ih.changed_at DESC LIMIT 50`, wsIn)
 	changeArgs := append(append([]interface{}{}, wsArgs...), yesterday)
 	changeRows, err := bs.db.Query(changeQuery, changeArgs...)
-	if err == nil {
+	if err != nil {
+		slog.Warn("briefing: changes query failed", slog.Int("user_id", userID), slog.Any("error", err))
+	} else {
 		defer func() { _ = changeRows.Close() }()
 		for changeRows.Next() {
 			var field, oldVal, newVal, itemKey, title, changedBy string
@@ -208,7 +224,9 @@ func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, userI
 		ORDER BY c.created_at DESC LIMIT 30`, wsIn)
 	commentArgs := append(append([]interface{}{}, wsArgs...), yesterday)
 	commentRows, err := bs.db.Query(commentQuery, commentArgs...)
-	if err == nil {
+	if err != nil {
+		slog.Warn("briefing: comments query failed", slog.Int("user_id", userID), slog.Any("error", err))
+	} else {
 		defer func() { _ = commentRows.Close() }()
 		for commentRows.Next() {
 			var content, itemKey, title, author string
@@ -224,7 +242,9 @@ func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, userI
 	// Gather context: assigned open items
 	personalWSIDs := []int{}
 	pwsRows, err := bs.db.Query("SELECT id FROM workspaces WHERE is_personal = true AND owner_id = ? AND active = true", userID)
-	if err == nil {
+	if err != nil {
+		slog.Warn("briefing: personal workspaces query failed", slog.Int("user_id", userID), slog.Any("error", err))
+	} else {
 		defer func() { _ = pwsRows.Close() }()
 		for pwsRows.Next() {
 			var id int
@@ -243,7 +263,7 @@ func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, userI
 		LEFT JOIN priorities p ON i.priority_id = p.id
 		LEFT JOIN status_categories sc ON st.category_id = sc.id
 		WHERE i.workspace_id IN (%s) AND (i.assignee_id = ?%s)
-		AND (sc.is_completed != 1 OR sc.is_completed IS NULL)
+		AND COALESCE(sc.is_completed, FALSE) = FALSE
 		ORDER BY i.due_date ASC NULLS LAST LIMIT 50`, wsIn, func() string {
 		if len(personalWSIDs) > 0 {
 			pph := make([]string, len(personalWSIDs))
@@ -259,7 +279,9 @@ func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, userI
 		itemArgs = append(itemArgs, pid)
 	}
 	itemRows, err := bs.db.Query(itemQuery, itemArgs...)
-	if err == nil {
+	if err != nil {
+		slog.Warn("briefing: items query failed", slog.Int("user_id", userID), slog.Any("error", err))
+	} else {
 		defer func() { _ = itemRows.Close() }()
 		for itemRows.Next() {
 			var wsKey string
@@ -292,7 +314,9 @@ func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, userI
 			WHERE tw.user_id = ? AND tw.date >= ? AND tw.date < ?
 			ORDER BY tw.date DESC`,
 			userID, yesterdayTime.Unix(), todayTime.Unix())
-		if err == nil {
+		if err != nil {
+			slog.Warn("briefing: worklogs query failed", slog.Int("user_id", userID), slog.Any("error", err))
+		} else {
 			defer func() { _ = wlRows.Close() }()
 			for wlRows.Next() {
 				var desc, projectName string
@@ -319,8 +343,17 @@ func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, userI
 		contextParts = append(contextParts, "### Yesterday's Worklogs\n"+strings.Join(worklogLines, "\n"))
 	}
 
+	slog.Info("briefing: context gathered",
+		slog.Int("user_id", userID),
+		slog.Int("changes", len(activityLines)),
+		slog.Int("comments", len(commentLines)),
+		slog.Int("items", len(itemLines)),
+		slog.Int("worklogs", len(worklogLines)),
+	)
+
 	if len(contextParts) == 0 {
-		// Nothing to brief about
+		slog.Info("briefing: no context found", slog.Int("user_id", userID))
+		bs.storeBriefing(userID, today, "", time.Since(start).Milliseconds(), "")
 		return
 	}
 
@@ -377,8 +410,11 @@ If there's little activity, keep it brief.`
 	content := resp.Choices[0].Message.Content
 	bs.storeBriefing(userID, today, content, durationMs, "")
 
-	slog.Debug("briefing generated", slog.String("component", "scheduler"),
-		slog.Int("user_id", userID), slog.Int64("duration_ms", durationMs))
+	slog.Info("briefing: generated",
+		slog.Int("user_id", userID),
+		slog.Int("content_len", len(content)),
+		slog.Int64("duration_ms", durationMs),
+	)
 }
 
 // getAccessibleWorkspaceIDs returns IDs of active workspaces the user can view.
