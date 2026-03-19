@@ -18,7 +18,11 @@ let driftWarningShown = false;
  * @returns {Error} Enhanced error object with code, details, etc.
  */
 function createApiError(response, responseText) {
-  const error = new Error(responseText || `Request failed: ${response.statusText}`);
+  let fallbackMessage = `Request failed: ${response.statusText}`;
+  if (!responseText && (response.status === 502 || response.status === 504)) {
+    fallbackMessage = 'The server took too long to respond. The AI service may be overloaded — please try again.';
+  }
+  const error = new Error(responseText || fallbackMessage);
 
   // Try to parse structured error from response
   try {
@@ -45,11 +49,22 @@ export async function fetchAPI(endpoint, options = {}) {
     ...options.headers,
   };
 
-  const response = await fetch(`${API_BASE}${endpoint}`, {
-    ...options,
-    credentials: 'same-origin', // Include cookies for session auth
-    headers,
-  });
+  let response;
+  try {
+    response = await fetch(`${API_BASE}${endpoint}`, {
+      ...options,
+      credentials: 'same-origin', // Include cookies for session auth
+      headers,
+    });
+  } catch (err) {
+    // Network errors (including CORS blocks) surface as TypeError
+    const corsError = new Error(
+      'Unable to connect to the server. This may be a CORS configuration issue — check that the server\'s BASE_URL matches the URL you\'re accessing it from.'
+    );
+    corsError.status = 0;
+    corsError.code = 'NETWORK_ERROR';
+    throw corsError;
+  }
 
   // Track server-vs-client clock offset from the Date header
   updateOffset(response.headers.get('Date'));
