@@ -24,6 +24,7 @@ services:
       - LOG_LEVEL=info
       - LOG_FORMAT=json
       - DISABLE_PLUGINS=${DISABLE_PLUGINS:-false}
+      - PLUGIN_DIR=/data/plugins
       - ENABLE_ADMIN_FALLBACK=${ENABLE_ADMIN_FALLBACK:-false}
       # Temp directories for SQLite in scratch containers
       - TMPDIR=/tmp
