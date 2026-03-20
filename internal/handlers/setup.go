@@ -9,6 +9,7 @@ import (
 
 	"windshift/internal/auth"
 	"windshift/internal/database"
+	"windshift/internal/llm"
 	"windshift/internal/logger"
 	"windshift/internal/middleware"
 	"windshift/internal/models"
@@ -219,16 +220,9 @@ func (h *SetupHandler) GetModuleSettings(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	aiChat, err := h.getSettingBool("ai_chat_enabled")
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-
 	settings := models.ModuleSettings{
 		TimeTrackingEnabled:   timeTracking,
 		TestManagementEnabled: testManagement,
-		AIChatEnabled:         aiChat,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -257,7 +251,6 @@ func (h *SetupHandler) UpdateModuleSettings(w http.ResponseWriter, r *http.Reque
 	}{
 		{"time_tracking_enabled", true}, // Always enabled
 		{"test_management_enabled", settings.TestManagementEnabled},
-		{"ai_chat_enabled", settings.AIChatEnabled},
 	}
 
 	tx, err := h.DB.Begin()
@@ -296,7 +289,6 @@ func (h *SetupHandler) UpdateModuleSettings(w http.ResponseWriter, r *http.Reque
 		Details: map[string]interface{}{
 			"time_tracking_enabled":   settings.TimeTrackingEnabled,
 			"test_management_enabled": settings.TestManagementEnabled,
-			"ai_chat_enabled":         settings.AIChatEnabled,
 		},
 		Success: true,
 	})
@@ -306,6 +298,111 @@ func (h *SetupHandler) UpdateModuleSettings(w http.ResponseWriter, r *http.Reque
 		"success":  true,
 		"message":  "Module settings updated successfully",
 		"settings": settings,
+	})
+}
+
+// GetAIFeaturesConfig returns the per-feature AI configuration plus available connections.
+func (h *SetupHandler) GetAIFeaturesConfig(w http.ResponseWriter, r *http.Request) {
+	cfg, err := llm.LoadAIFeaturesConfig(h.DB)
+	if err != nil {
+		respondInternalError(w, r, fmt.Errorf("failed to load AI features config: %w", err))
+		return
+	}
+
+	// Also return the available (enabled) connections so the frontend can populate dropdowns.
+	type connInfo struct {
+		ID   int    `json:"id"`
+		Name string `json:"name"`
+	}
+	rows, err := h.DB.Query(`SELECT id, name FROM llm_connections WHERE is_enabled = true ORDER BY is_default DESC, name ASC`)
+	var connections []connInfo
+	if err == nil {
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var c connInfo
+			if err := rows.Scan(&c.ID, &c.Name); err == nil {
+				connections = append(connections, c)
+			}
+		}
+	}
+	if connections == nil {
+		connections = []connInfo{}
+	}
+
+	respondJSONOK(w, map[string]interface{}{
+		"config":      cfg,
+		"connections": connections,
+	})
+}
+
+// UpdateAIFeaturesConfig validates and saves the per-feature AI configuration.
+func (h *SetupHandler) UpdateAIFeaturesConfig(w http.ResponseWriter, r *http.Request) {
+	var cfg models.AIFeaturesConfig
+	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+		respondBadRequest(w, r, "Invalid request body")
+		return
+	}
+
+	validModes := map[models.AIFeatureMode]bool{
+		models.AIFeatureModeDefault:  true,
+		models.AIFeatureModeSpecific: true,
+		models.AIFeatureModeDisabled: true,
+	}
+
+	for key, fc := range cfg {
+		if !validModes[fc.Mode] {
+			respondBadRequest(w, r, fmt.Sprintf("Invalid mode %q for feature %q", fc.Mode, key))
+			return
+		}
+		if fc.Mode == models.AIFeatureModeSpecific && fc.ConnectionID <= 0 {
+			respondBadRequest(w, r, fmt.Sprintf("Feature %q requires a connection_id when mode is 'specific'", key))
+			return
+		}
+		if fc.Mode == models.AIFeatureModeSpecific {
+			var exists int
+			if err := h.DB.QueryRow(`SELECT 1 FROM llm_connections WHERE id = ? AND is_enabled = true`, fc.ConnectionID).Scan(&exists); err != nil {
+				respondBadRequest(w, r, fmt.Sprintf("Connection %d does not exist or is disabled (feature %q)", fc.ConnectionID, key))
+				return
+			}
+		}
+	}
+
+	// Validate schedule field
+	for key, fc := range cfg {
+		if key == "daily_briefing" {
+			if fc.Schedule != "" && fc.Schedule != "daily" && fc.Schedule != "every_6h" {
+				respondBadRequest(w, r, fmt.Sprintf("Invalid schedule %q for feature %q; must be \"daily\" or \"every_6h\"", fc.Schedule, key))
+				return
+			}
+		} else if fc.Schedule != "" {
+			respondBadRequest(w, r, fmt.Sprintf("Schedule is not supported for feature %q", key))
+			return
+		}
+	}
+
+	if err := llm.SaveAIFeaturesConfig(h.DB, cfg); err != nil {
+		respondInternalError(w, r, fmt.Errorf("failed to save AI features config: %w", err))
+		return
+	}
+
+	// Log audit event
+	user, ok := r.Context().Value(middleware.ContextKeyUser).(*models.User)
+	if ok {
+		_ = logger.LogAudit(h.DB, logger.AuditEvent{
+			UserID:       user.ID,
+			Username:     user.Username,
+			IPAddress:    h.getClientIP(r),
+			UserAgent:    r.UserAgent(),
+			ActionType:   logger.ActionModuleEnable,
+			ResourceType: logger.ResourceModule,
+			ResourceName: "AI Features Config",
+			Success:      true,
+		})
+	}
+
+	respondJSONOK(w, map[string]interface{}{
+		"success": true,
+		"config":  cfg,
 	})
 }
 
@@ -334,16 +431,10 @@ func (h *SetupHandler) getSetupStatus() (models.SetupStatus, error) {
 		return status, err
 	}
 
-	aiChatEnabled, err := h.getSettingBool("ai_chat_enabled")
-	if err != nil {
-		return status, err
-	}
-
 	status.SetupCompleted = setupCompleted
 	status.AdminUserCreated = adminUserCreated
 	status.TimeTrackingEnabled = timeTrackingEnabled
 	status.TestManagementEnabled = testManagementEnabled
-	status.AIChatEnabled = aiChatEnabled
 
 	return status, nil
 }

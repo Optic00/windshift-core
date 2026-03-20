@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS item_links (
 	target_type TEXT NOT NULL,
 	target_id INTEGER NOT NULL,
 	created_by INTEGER,
+	custom_field_id INTEGER REFERENCES custom_field_definitions(id) ON DELETE CASCADE,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	FOREIGN KEY (link_type_id) REFERENCES link_types(id) ON DELETE CASCADE,
 	FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
@@ -105,3 +106,4 @@ CREATE INDEX IF NOT EXISTS idx_item_links_source ON item_links(source_type, sour
 CREATE INDEX IF NOT EXISTS idx_item_links_target ON item_links(target_type, target_id);
 CREATE INDEX IF NOT EXISTS idx_item_links_type ON item_links(link_type_id);
 CREATE INDEX IF NOT EXISTS idx_item_links_created_by ON item_links(created_by);
+CREATE INDEX IF NOT EXISTS idx_item_links_custom_field ON item_links(custom_field_id);

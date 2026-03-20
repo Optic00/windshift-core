@@ -50,8 +50,10 @@ type Item struct {
 	PriorityColor   string `json:"priority_color,omitempty"`
 	ParentTitle     string `json:"parent_title,omitempty"`
 	StatusName      string `json:"status_name,omitempty"` // Name from statuses table (joined field)
-	MilestoneName   string `json:"milestone_name,omitempty"`
-	IterationName   string `json:"iteration_name,omitempty"`
+	MilestoneName       string `json:"milestone_name,omitempty"`
+	MilestoneTargetDate string `json:"milestone_target_date,omitempty"`
+	IterationName       string `json:"iteration_name,omitempty"`
+	IterationEndDate    string `json:"iteration_end_date,omitempty"`
 	ProjectName     string `json:"project_name,omitempty"`      // Name of assigned project
 	TimeProjectName string `json:"time_project_name,omitempty"` // Name of time project
 	// Effective project (computed from inheritance)

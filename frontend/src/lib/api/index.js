@@ -2,7 +2,7 @@
 
 import { actions } from './actions.js';
 import { securitySettings, setup, system, themes } from './admin.js';
-import { ai, llmConnections, llmProviders } from './ai.js';
+import { ai, aiFeatures, llmConnections, llmProviders } from './ai.js';
 import {
   assetCategories,
   assetRoles,
@@ -336,6 +336,9 @@ export const api = {
 
   // AI features
   ai,
+
+  // AI features config (admin)
+  aiFeatures,
 
   // LLM connection management (admin)
   llmConnections,

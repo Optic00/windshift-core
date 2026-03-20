@@ -73,7 +73,7 @@ func corsErrorResponse(w http.ResponseWriter, status int, message, code string, 
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-func createCORSMiddleware(allowedHosts, serverPort string, disableCSRF, useProxy bool) func(http.Handler) http.Handler {
+func createCORSMiddleware(allowedHosts, serverPort, scheme string, disableCSRF, useProxy bool) func(http.Handler) http.Handler {
 	var origins []string
 
 	if disableCSRF {
@@ -91,7 +91,15 @@ func createCORSMiddleware(allowedHosts, serverPort string, disableCSRF, useProxy
 				continue
 			}
 
-			origins = append(origins, "https://"+host)
+			s := scheme
+			if s == "" {
+				s = "https"
+			}
+			origin := s + "://" + host
+			if serverPort != "" && !isDefaultPort(s, serverPort) {
+				origin += ":" + serverPort
+			}
+			origins = append(origins, origin)
 		}
 	}
 
@@ -123,6 +131,8 @@ func createCORSMiddleware(allowedHosts, serverPort string, disableCSRF, useProxy
 		MaxAgeInSeconds: 86400,
 	}
 
+	slog.Info("CORS middleware configured", "allowed_origins", origins)
+
 	corsMw, err := cors.NewMiddleware(cfg)
 	if err != nil {
 		slog.Error("Failed to create CORS middleware", "error", err)
@@ -141,23 +151,11 @@ func createCORSMiddleware(allowedHosts, serverPort string, disableCSRF, useProxy
 		}
 	}
 
-	// Wrap the CORS middleware to log rejected origins
-	innerWrap := corsMw.Wrap
-	return func(next http.Handler) http.Handler {
-		wrapped := innerWrap(next)
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			origin := r.Header.Get("Origin")
-			wrapped.ServeHTTP(w, r)
-			// If there was an Origin header but no Access-Control-Allow-Origin in the response,
-			// the CORS library rejected it
-			if origin != "" && w.Header().Get("Access-Control-Allow-Origin") == "" {
-				slog.Warn("CORS request rejected: origin not in allowed list",
-					"origin", origin,
-					"allowed_origins", origins,
-					"hint", "If this origin should be allowed, update BASE_URL or ALLOWED_HOSTS")
-			}
-		})
-	}
+	return corsMw.Wrap
+}
+
+func isDefaultPort(scheme, port string) bool {
+	return (scheme == "https" && port == "443") || (scheme == "http" && port == "80")
 }
 
 func createSecurityHeaders(enableHTTPS, useProxy bool, additionalProxies []net.IP) func(http.Handler) http.Handler {

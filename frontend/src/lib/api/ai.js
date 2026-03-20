@@ -28,6 +28,11 @@ export const ai = {
   dailyBriefing: () => get('/ai/daily-briefing'),
 };
 
+export const aiFeatures = {
+  getConfig: () => get('/admin/ai-features'),
+  updateConfig: (data) => put('/admin/ai-features', data),
+};
+
 export const llmConnections = {
   getAll: () => get('/admin/llm-connections'),
   get: (id) => get(`/admin/llm-connections/${id}`),

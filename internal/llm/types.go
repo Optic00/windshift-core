@@ -2,6 +2,41 @@ package llm
 
 import "encoding/json"
 
+// unmarshalExtras parses data into a raw map and removes the specified known keys,
+// returning only the unknown fields.
+func unmarshalExtras(data []byte, knownKeys ...string) (map[string]json.RawMessage, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	for _, k := range knownKeys {
+		delete(raw, k)
+	}
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	return raw, nil
+}
+
+// marshalWithExtras marshals base and merges extra fields into the resulting JSON object.
+func marshalWithExtras(base interface{}, extra map[string]json.RawMessage) ([]byte, error) {
+	data, err := json.Marshal(base)
+	if err != nil {
+		return nil, err
+	}
+	if len(extra) == 0 {
+		return data, nil
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, err
+	}
+	for k, v := range extra {
+		m[k] = v
+	}
+	return json.Marshal(m)
+}
+
 // Attachment holds a base64-encoded file to include in a message (e.g. a PDF for Anthropic document blocks).
 type Attachment struct {
 	MimeType string `json:"mime_type"`
@@ -33,10 +68,31 @@ type FunctionDef struct {
 }
 
 // ToolCall represents an LLM's request to call a tool.
+// Custom JSON marshal/unmarshal preserves unknown fields (e.g. Gemini's
+// thought_signature) so they survive the round-trip through conversation history.
 type ToolCall struct {
 	ID       string       `json:"id"`
 	Type     string       `json:"type"` // "function"
 	Function FunctionCall `json:"function"`
+	Extra    map[string]json.RawMessage `json:"-"` // unknown fields preserved for round-trip
+}
+
+func (tc *ToolCall) UnmarshalJSON(data []byte) error {
+	type Alias ToolCall
+	if err := json.Unmarshal(data, (*Alias)(tc)); err != nil {
+		return err
+	}
+	extra, err := unmarshalExtras(data, "id", "type", "function")
+	if err != nil {
+		return err
+	}
+	tc.Extra = extra
+	return nil
+}
+
+func (tc ToolCall) MarshalJSON() ([]byte, error) {
+	type Alias ToolCall
+	return marshalWithExtras(Alias(tc), tc.Extra)
 }
 
 // FunctionCall contains the function name and arguments from a tool call.

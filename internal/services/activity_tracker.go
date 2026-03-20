@@ -534,11 +534,11 @@ func (at *ActivityTracker) flushWorkspaceVisitBatch(visits []WorkspaceVisit) err
 			VALUES (?, ?, ?, ?, ?)
 			ON CONFLICT(user_id, workspace_id) DO UPDATE SET
 				last_visited_at = CASE WHEN excluded.last_visited_at > user_workspace_visits.last_visited_at THEN excluded.last_visited_at ELSE user_workspace_visits.last_visited_at END,
-				visit_count = visit_count + ?,
+				visit_count = user_workspace_visits.visit_count + excluded.visit_count,
 				expires_at = ?,
 				updated_at = CURRENT_TIMESTAMP
 		`, visit.UserID, visit.WorkspaceID, visit.VisitedAt, visit.VisitCount, expiresAt,
-			visit.VisitCount, expiresAt)
+			expiresAt)
 		if err != nil {
 			return fmt.Errorf("flush workspace visit: %w", err)
 		}
@@ -581,11 +581,11 @@ func (at *ActivityTracker) flushItemActivityBatch(activities []ItemActivity) err
 			VALUES (?, ?, ?, ?, ?, ?)
 			ON CONFLICT(user_id, item_id, activity_type) DO UPDATE SET
 				last_activity_at = CASE WHEN excluded.last_activity_at > user_item_activities.last_activity_at THEN excluded.last_activity_at ELSE user_item_activities.last_activity_at END,
-				activity_count = activity_count + ?,
+				activity_count = user_item_activities.activity_count + excluded.activity_count,
 				expires_at = ?,
 				updated_at = CURRENT_TIMESTAMP
 		`, activity.UserID, activity.ItemID, activity.ActivityType, activity.ActivityAt, activity.ActivityCount, expiresAt,
-			activity.ActivityCount, expiresAt)
+			expiresAt)
 		if err != nil {
 			return fmt.Errorf("flush item activity: %w", err)
 		}

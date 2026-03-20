@@ -24,7 +24,7 @@
   import SSOSettings from '../settings/SSOSettings.svelte';
   import SCMProviderManager from '../settings/SCMProviderManager.svelte';
   import SecuritySettings from '../settings/SecuritySettings.svelte';
-  import LLMConnectionManager from '../settings/LLMConnectionManager.svelte';
+  import AIContainer from '../settings/AIContainer.svelte';
   import AssetManager from '../features/assets/AssetManager.svelte';
   import Channels from '../features/channels/Channels.svelte';
   import PermissionSetEdit from '../settings/PermissionSetEdit.svelte';
@@ -544,9 +544,9 @@
     <SCMProviderManager />
   {/if}
 
-  <!-- LLM Connections Tab -->
+  <!-- AI Connections Tab (with sub-tabs for Connections + Features) -->
   {#if activeTab === 'llm-connections'}
-    <LLMConnectionManager />
+    <AIContainer />
   {/if}
 
   <!-- System Import Tab -->

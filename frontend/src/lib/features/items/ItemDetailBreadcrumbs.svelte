@@ -150,28 +150,14 @@
 </script>
 
 <!-- Breadcrumb Navigation -->
-<div class="group flex items-center gap-2 text-sm mb-6" style="color: var(--ds-text-subtle);">
-  <button
-    onclick={() => navigate('/workspaces')}
-    class="transition-colors hover:underline"
-  >
-    {t('workspaces.title')}
-  </button>
-  <span>/</span>
+<div class="group flex items-center gap-2 text-sm mb-6 min-w-0 overflow-hidden flex-nowrap" style="color: var(--ds-text-subtle);">
   <button
     onclick={() => navigate(`/workspaces/${workspaceId}`)}
-    class="transition-colors hover:underline"
+    class="transition-colors hover:underline flex-shrink-0"
   >
     {workspace.name}
   </button>
-  <span>/</span>
-  <button
-    onclick={() => navigate(`/workspaces/${workspaceId}/collections/default/list`)}
-    class="transition-colors hover:underline"
-  >
-    {t('items.workItems')}
-  </button>
-  <span>/</span>
+  <span class="flex-shrink-0">/</span>
   <!-- Related Work Item link (for personal tasks) -->
   {#if workspace?.is_personal && item.related_work_item_id}
     <div class="flex items-center gap-1.5">
@@ -187,12 +173,12 @@
         <span class="truncate max-w-48">{item.related_work_item_title}</span>
       </button>
     </div>
-    <span>/</span>
+    <span class="flex-shrink-0">/</span>
   {/if}
   <!-- Parent Hierarchy in breadcrumb -->
   {#if parentHierarchy.length > 0}
     {#each parentHierarchy as parent}
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-2 min-w-0">
         {#if parent.itemType}
           <Tooltip content="{parent.itemType.name}">
             {#snippet children()}
@@ -208,13 +194,13 @@
         {/if}
         <button
           onclick={() => navigate(`/workspaces/${parent.workspace_id}/items/${parent.id}`)}
-          class="transition-colors hover:underline"
+          class="transition-colors hover:underline truncate max-w-24"
           title={t('items.goTo', { title: parent.title })}
         >
           {parent.title}
         </button>
       </div>
-      <span>/</span>
+      <span class="flex-shrink-0">/</span>
     {/each}
   {:else if !item.parent_id && !(workspace?.is_personal && item.related_work_item_id)}
     <!-- Show placeholder for "no parent" scenario (not shown for personal tasks with linked work items) -->
@@ -226,7 +212,7 @@
     >
       {t('items.noParent')}
     </button>
-    <span>/</span>
+    <span class="flex-shrink-0">/</span>
   {/if}
 
   <!-- Edit Parent Button (hidden for personal tasks with linked work items) -->

@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { api } from '../../api.js';
-  import { attachmentStatus } from '../../stores';
+  import { attachmentStatus, workspacesStore } from '../../stores';
   import Modal from '../../dialogs/Modal.svelte';
   import Comments from '../items/Comments.svelte';
   import ItemDetailDescription from '../items/ItemDetailDescription.svelte';
@@ -325,7 +325,12 @@
   }
 
   function openFullDetails() {
-    navigate(`/personal/items/${itemId}`);
+    const personalWsId = $workspacesStore.personalWorkspace?.id;
+    if (workspaceId && workspaceId !== personalWsId) {
+      navigate(`/workspaces/${workspaceId}/items/${itemId}`);
+    } else {
+      navigate(`/personal/items/${itemId}`);
+    }
   }
 
 </script>

@@ -10,6 +10,7 @@
   import { authStore, workspacesStore } from '../../stores';
   import { getStatusStyleFromStatuses } from '../../utils/statusColors.js';
   import { t } from '../../stores/i18n.svelte.js';
+  import { navigate } from '../../router.js';
   import { formatDateWithOptions } from '../../utils/dateFormatter.js';
   import Checkbox from '../../components/Checkbox.svelte';
 
@@ -234,8 +235,12 @@
     return statusObj?.name || 'Open';
   }
 
-  // Open work item in modal
+  // Open work item in modal (personal) or navigate to full detail (workspace)
   function openWorkItem(workItem) {
+    if (!workItem.is_personal) {
+      navigate(`/workspaces/${workItem.workspace_id}/items/${workItem.id}`);
+      return;
+    }
     selectedItemId = workItem.id;
     selectedWorkspaceId = workItem.workspace_id;
     showItemModal = true;

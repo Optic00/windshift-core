@@ -11,6 +11,7 @@ import (
 
 	"windshift/internal/cql"
 	"windshift/internal/database"
+	"windshift/internal/models"
 	"windshift/internal/services"
 )
 
@@ -21,15 +22,17 @@ type ToolExecutor struct {
 	accessibleWorkspaceIDs []int
 	userID                 int
 	timePermService        *services.TimePermissionService
+	permService            *services.PermissionService
 }
 
 // NewToolExecutor creates a tool executor scoped to the given user's accessible workspaces.
-func NewToolExecutor(db database.Database, accessibleWorkspaceIDs []int, userID int, timePermService *services.TimePermissionService) *ToolExecutor {
+func NewToolExecutor(db database.Database, accessibleWorkspaceIDs []int, userID int, timePermService *services.TimePermissionService, permService *services.PermissionService) *ToolExecutor {
 	return &ToolExecutor{
 		db:                     db,
 		accessibleWorkspaceIDs: accessibleWorkspaceIDs,
 		userID:                 userID,
 		timePermService:        timePermService,
+		permService:            permService,
 	}
 }
 
@@ -58,6 +61,8 @@ func (e *ToolExecutor) Execute(_ context.Context, name string, arguments string)
 		return e.listWorklogs(arguments)
 	case "list_recent_activity":
 		return e.listRecentActivity(arguments)
+	case "update_item":
+		return e.updateItem(arguments)
 	case "log_time":
 		return e.logTime(arguments)
 	default:
@@ -252,31 +257,35 @@ func (e *ToolExecutor) listItems(arguments string) (string, error) {
 	}
 
 	type itemSummary struct {
-		ID            int    `json:"id"`
-		Key           string `json:"key"`
-		Title         string `json:"title"`
-		Status        string `json:"status,omitempty"`
-		Priority      string `json:"priority,omitempty"`
-		Assignee      string `json:"assignee,omitempty"`
-		DueDate       string `json:"due_date,omitempty"`
-		Type          string `json:"type,omitempty"`
-		MilestoneName string `json:"milestone_name,omitempty"`
-		IterationName string `json:"iteration_name,omitempty"`
-		WorkspaceID   int    `json:"workspace_id"`
+		ID                  int    `json:"id"`
+		Key                 string `json:"key"`
+		Title               string `json:"title"`
+		Status              string `json:"status,omitempty"`
+		Priority            string `json:"priority,omitempty"`
+		Assignee            string `json:"assignee,omitempty"`
+		DueDate             string `json:"due_date,omitempty"`
+		Type                string `json:"type,omitempty"`
+		MilestoneName       string `json:"milestone_name,omitempty"`
+		MilestoneTargetDate string `json:"milestone_target_date,omitempty"`
+		IterationName       string `json:"iteration_name,omitempty"`
+		IterationEndDate    string `json:"iteration_end_date,omitempty"`
+		WorkspaceID         int    `json:"workspace_id"`
 	}
 	results := make([]itemSummary, 0, len(items))
 	for _, item := range items {
 		s := itemSummary{
-			ID:            item.ID,
-			Key:           fmt.Sprintf("%s-%d", item.WorkspaceKey, item.WorkspaceItemNumber),
-			Title:         item.Title,
-			Status:        item.StatusName,
-			Priority:      item.PriorityName,
-			Assignee:      item.AssigneeName,
-			Type:          item.ItemTypeName,
-			MilestoneName: item.MilestoneName,
-			IterationName: item.IterationName,
-			WorkspaceID:   item.WorkspaceID,
+			ID:                  item.ID,
+			Key:                 fmt.Sprintf("%s-%d", item.WorkspaceKey, item.WorkspaceItemNumber),
+			Title:               item.Title,
+			Status:              item.StatusName,
+			Priority:            item.PriorityName,
+			Assignee:            item.AssigneeName,
+			Type:                item.ItemTypeName,
+			MilestoneName:       item.MilestoneName,
+			MilestoneTargetDate: item.MilestoneTargetDate,
+			IterationName:       item.IterationName,
+			IterationEndDate:    item.IterationEndDate,
+			WorkspaceID:         item.WorkspaceID,
 		}
 		if item.DueDate != nil {
 			s.DueDate = item.DueDate.Format("2006-01-02")
@@ -340,32 +349,40 @@ func (e *ToolExecutor) getItem(arguments string) (string, error) {
 	}
 
 	type itemDetail struct {
-		ID          int      `json:"id"`
-		Key         string   `json:"key"`
-		Title       string   `json:"title"`
-		Description string   `json:"description,omitempty"`
-		Status      string   `json:"status,omitempty"`
-		Priority    string   `json:"priority,omitempty"`
-		Assignee    string   `json:"assignee,omitempty"`
-		Creator     string   `json:"creator,omitempty"`
-		DueDate     string   `json:"due_date,omitempty"`
-		Type        string   `json:"type,omitempty"`
-		Workspace   string   `json:"workspace"`
-		WorkspaceID int      `json:"workspace_id"`
-		Labels      []string `json:"labels,omitempty"`
+		ID                  int      `json:"id"`
+		Key                 string   `json:"key"`
+		Title               string   `json:"title"`
+		Description         string   `json:"description,omitempty"`
+		Status              string   `json:"status,omitempty"`
+		Priority            string   `json:"priority,omitempty"`
+		Assignee            string   `json:"assignee,omitempty"`
+		Creator             string   `json:"creator,omitempty"`
+		DueDate             string   `json:"due_date,omitempty"`
+		Type                string   `json:"type,omitempty"`
+		MilestoneName       string   `json:"milestone_name,omitempty"`
+		MilestoneTargetDate string   `json:"milestone_target_date,omitempty"`
+		IterationName       string   `json:"iteration_name,omitempty"`
+		IterationEndDate    string   `json:"iteration_end_date,omitempty"`
+		Workspace           string   `json:"workspace"`
+		WorkspaceID         int      `json:"workspace_id"`
+		Labels              []string `json:"labels,omitempty"`
 	}
 
 	d := itemDetail{
-		ID:          item.ID,
-		Key:         fmt.Sprintf("%s-%d", item.WorkspaceKey, item.WorkspaceItemNumber),
-		Title:       item.Title,
-		Status:      item.StatusName,
-		Priority:    item.PriorityName,
-		Assignee:    item.AssigneeName,
-		Creator:     item.CreatorName,
-		Type:        item.ItemTypeName,
-		Workspace:   item.WorkspaceName,
-		WorkspaceID: wsID,
+		ID:                  item.ID,
+		Key:                 fmt.Sprintf("%s-%d", item.WorkspaceKey, item.WorkspaceItemNumber),
+		Title:               item.Title,
+		Status:              item.StatusName,
+		Priority:            item.PriorityName,
+		Assignee:            item.AssigneeName,
+		Creator:             item.CreatorName,
+		Type:                item.ItemTypeName,
+		MilestoneName:       item.MilestoneName,
+		MilestoneTargetDate: item.MilestoneTargetDate,
+		IterationName:       item.IterationName,
+		IterationEndDate:    item.IterationEndDate,
+		Workspace:           item.WorkspaceName,
+		WorkspaceID:         wsID,
 	}
 	if item.Description != "" {
 		desc := item.Description
@@ -1095,4 +1112,329 @@ func (e *ToolExecutor) listRecentActivity(arguments string) (string, error) {
 
 	b, _ := json.Marshal(map[string]interface{}{"changes": changes, "comments": comments})
 	return string(b), nil
+}
+
+// updateItem updates an item's fields with name-based resolution support.
+func (e *ToolExecutor) updateItem(arguments string) (string, error) {
+	// Parse into raw map first to distinguish null from absent fields
+	var rawArgs map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(arguments), &rawArgs); err != nil {
+		return `{"error": "invalid arguments"}`, nil
+	}
+
+	var args struct {
+		ItemID            int                    `json:"item_id"`
+		ItemKey           string                 `json:"item_key"`
+		Title             *string                `json:"title"`
+		Description       *string                `json:"description"`
+		StatusID          *int                   `json:"status_id"`
+		StatusName        *string                `json:"status_name"`
+		PriorityID        *int                   `json:"priority_id"`
+		PriorityName      *string                `json:"priority_name"`
+		AssigneeID        *int                   `json:"assignee_id"`
+		AssigneeName      *string                `json:"assignee_name"`
+		DueDate           *string                `json:"due_date"`
+		MilestoneName     *string                `json:"milestone_name"`
+		IterationName     *string                `json:"iteration_name"`
+		CustomFieldValues map[string]interface{} `json:"custom_field_values"`
+	}
+	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+		return `{"error": "invalid arguments"}`, nil
+	}
+
+	// Helper: check if a raw field is explicitly null
+	isExplicitNull := func(key string) bool {
+		raw, ok := rawArgs[key]
+		return ok && string(raw) == "null"
+	}
+	// Helper: check if a raw field is present (null or otherwise)
+	hasField := func(key string) bool {
+		_, ok := rawArgs[key]
+		return ok
+	}
+
+	// Resolve item ID (same pattern as getItem)
+	crudSvc := services.NewItemCRUDService(e.db)
+	var itemID int
+
+	if args.ItemID > 0 {
+		itemID = args.ItemID
+	} else if args.ItemKey != "" {
+		parts := strings.SplitN(strings.ToUpper(args.ItemKey), "-", 2)
+		if len(parts) != 2 {
+			return `{"error": "invalid item key format, expected KEY-NUMBER"}`, nil
+		}
+		num, err := strconv.Atoi(parts[1])
+		if err != nil {
+			return `{"error": "invalid item key format, expected KEY-NUMBER"}`, nil
+		}
+		err = e.db.QueryRow(
+			"SELECT i.id FROM items i JOIN workspaces w ON i.workspace_id = w.id WHERE UPPER(w.key) = ? AND i.workspace_item_number = ?",
+			parts[0], num,
+		).Scan(&itemID)
+		if err != nil {
+			return `{"error": "item not found"}`, nil
+		}
+	} else {
+		return `{"error": "must provide item_id or item_key"}`, nil
+	}
+
+	// Check workspace access
+	wsID, err := crudSvc.GetWorkspaceID(itemID)
+	if err != nil {
+		return `{"error": "item not found"}`, nil
+	}
+	if !e.hasWorkspaceAccess(wsID) {
+		return `{"error": "item not found"}`, nil
+	}
+
+	// Check edit permission
+	canEdit, err := e.permService.HasWorkspacePermission(e.userID, wsID, models.PermissionItemEdit)
+	if err != nil {
+		return `{"error": "failed to check permissions"}`, nil
+	}
+	if !canEdit {
+		return `{"error": "you do not have permission to edit items in this workspace"}`, nil
+	}
+
+	// Build update data map, resolving names to IDs where needed
+	updateData := make(map[string]interface{})
+	var changed []string
+
+	if args.Title != nil {
+		updateData["title"] = *args.Title
+		changed = append(changed, "title")
+	}
+	if args.Description != nil {
+		updateData["description"] = *args.Description
+		changed = append(changed, "description")
+	}
+
+	// Status: prefer status_id, fall back to status_name
+	if args.StatusID != nil {
+		updateData["status_id"] = *args.StatusID
+		changed = append(changed, "status")
+	} else if args.StatusName != nil {
+		id, err := e.resolveStatusName(*args.StatusName, wsID)
+		if err != nil {
+			return fmt.Sprintf(`{"error": "could not resolve status name %q: %s"}`, *args.StatusName, err.Error()), nil
+		}
+		updateData["status_id"] = id
+		changed = append(changed, "status")
+	}
+
+	// Priority: prefer priority_id, fall back to priority_name
+	if args.PriorityID != nil {
+		updateData["priority_id"] = *args.PriorityID
+		changed = append(changed, "priority")
+	} else if args.PriorityName != nil {
+		id, err := e.resolvePriorityName(*args.PriorityName)
+		if err != nil {
+			return fmt.Sprintf(`{"error": "could not resolve priority name %q: %s"}`, *args.PriorityName, err.Error()), nil
+		}
+		updateData["priority_id"] = id
+		changed = append(changed, "priority")
+	}
+
+	// Assignee: prefer assignee_id, fall back to assignee_name; null clears
+	if isExplicitNull("assignee_id") {
+		updateData["assignee_id"] = nil
+		changed = append(changed, "assignee")
+	} else if args.AssigneeID != nil {
+		updateData["assignee_id"] = *args.AssigneeID
+		changed = append(changed, "assignee")
+	} else if args.AssigneeName != nil {
+		id, err := e.resolveAssigneeName(*args.AssigneeName)
+		if err != nil {
+			return fmt.Sprintf(`{"error": "could not resolve assignee name %q: %s"}`, *args.AssigneeName, err.Error()), nil
+		}
+		updateData["assignee_id"] = id
+		changed = append(changed, "assignee")
+	}
+
+	// Due date: null clears, string sets
+	if hasField("due_date") {
+		if isExplicitNull("due_date") {
+			updateData["due_date"] = nil
+			changed = append(changed, "due_date")
+		} else if args.DueDate != nil {
+			if _, err := time.Parse("2006-01-02", *args.DueDate); err != nil {
+				return `{"error": "invalid due_date format, use YYYY-MM-DD"}`, nil
+			}
+			updateData["due_date"] = *args.DueDate
+			changed = append(changed, "due_date")
+		}
+	}
+
+	// Milestone: null clears, prefer milestone_id, fall back to milestone_name
+	if isExplicitNull("milestone_id") {
+		updateData["milestone_id"] = nil
+		changed = append(changed, "milestone")
+	} else if hasField("milestone_id") {
+		var mid int
+		if err := json.Unmarshal(rawArgs["milestone_id"], &mid); err == nil {
+			updateData["milestone_id"] = mid
+			changed = append(changed, "milestone")
+		}
+	} else if args.MilestoneName != nil {
+		id, err := e.resolveMilestoneName(*args.MilestoneName, wsID)
+		if err != nil {
+			return fmt.Sprintf(`{"error": "could not resolve milestone name %q: %s"}`, *args.MilestoneName, err.Error()), nil
+		}
+		updateData["milestone_id"] = id
+		changed = append(changed, "milestone")
+	}
+
+	// Iteration: null clears, prefer iteration_id, fall back to iteration_name
+	if isExplicitNull("iteration_id") {
+		updateData["iteration_id"] = nil
+		changed = append(changed, "iteration")
+	} else if hasField("iteration_id") {
+		var iid int
+		if err := json.Unmarshal(rawArgs["iteration_id"], &iid); err == nil {
+			updateData["iteration_id"] = iid
+			changed = append(changed, "iteration")
+		}
+	} else if args.IterationName != nil {
+		id, err := e.resolveIterationName(*args.IterationName, wsID)
+		if err != nil {
+			return fmt.Sprintf(`{"error": "could not resolve iteration name %q: %s"}`, *args.IterationName, err.Error()), nil
+		}
+		updateData["iteration_id"] = id
+		changed = append(changed, "iteration")
+	}
+
+	// Project: null clears
+	if isExplicitNull("project_id") {
+		updateData["project_id"] = nil
+		changed = append(changed, "project")
+	} else if hasField("project_id") {
+		var pid int
+		if err := json.Unmarshal(rawArgs["project_id"], &pid); err == nil {
+			updateData["project_id"] = pid
+			changed = append(changed, "project")
+		}
+	}
+
+	// Parent: null clears
+	if isExplicitNull("parent_id") {
+		updateData["parent_id"] = nil
+		changed = append(changed, "parent")
+	} else if hasField("parent_id") {
+		var pid int
+		if err := json.Unmarshal(rawArgs["parent_id"], &pid); err == nil {
+			updateData["parent_id"] = pid
+			changed = append(changed, "parent")
+		}
+	}
+
+	if args.CustomFieldValues != nil {
+		updateData["custom_field_values"] = args.CustomFieldValues
+		changed = append(changed, "custom_fields")
+	}
+
+	if len(updateData) == 0 {
+		return `{"error": "no fields to update"}`, nil
+	}
+
+	// Perform the update
+	updateSvc := services.NewItemUpdateService(e.db)
+	result, err := updateSvc.UpdateItem(services.UpdateItemRequest{
+		ItemID:     itemID,
+		UpdateData: updateData,
+		UserID:     e.userID,
+	})
+	if err != nil {
+		return fmt.Sprintf(`{"error": "update failed: %s"}`, err.Error()), nil
+	}
+
+	// Build response
+	item := result.Item
+	resp := map[string]interface{}{
+		"message":        "Item updated successfully",
+		"item_id":        item.ID,
+		"key":            fmt.Sprintf("%s-%d", item.WorkspaceKey, item.WorkspaceItemNumber),
+		"title":          item.Title,
+		"changed_fields": changed,
+	}
+	if item.StatusName != "" {
+		resp["status"] = item.StatusName
+	}
+	if item.PriorityName != "" {
+		resp["priority"] = item.PriorityName
+	}
+	if item.AssigneeName != "" {
+		resp["assignee"] = item.AssigneeName
+	}
+	if item.MilestoneName != "" {
+		resp["milestone"] = item.MilestoneName
+	}
+
+	b, _ := json.Marshal(resp)
+	return string(b), nil
+}
+
+// resolveStatusName resolves a status name to its ID within a workspace.
+func (e *ToolExecutor) resolveStatusName(name string, workspaceID int) (int, error) {
+	var id int
+	err := e.db.QueryRow(
+		"SELECT id FROM statuses WHERE LOWER(name) = LOWER(?) AND workspace_id = ?",
+		name, workspaceID,
+	).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("status not found in this workspace")
+	}
+	return id, nil
+}
+
+// resolvePriorityName resolves a priority name to its ID.
+func (e *ToolExecutor) resolvePriorityName(name string) (int, error) {
+	var id int
+	err := e.db.QueryRow(
+		"SELECT id FROM priorities WHERE LOWER(name) = LOWER(?)",
+		name,
+	).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("priority not found")
+	}
+	return id, nil
+}
+
+// resolveAssigneeName resolves a user's full name to their user ID.
+func (e *ToolExecutor) resolveAssigneeName(name string) (int, error) {
+	var id int
+	err := e.db.QueryRow(
+		"SELECT id FROM users WHERE LOWER(first_name || ' ' || last_name) = LOWER(?)",
+		name,
+	).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("user not found")
+	}
+	return id, nil
+}
+
+// resolveMilestoneName resolves a milestone name to its ID (workspace-scoped or global).
+func (e *ToolExecutor) resolveMilestoneName(name string, workspaceID int) (int, error) {
+	var id int
+	err := e.db.QueryRow(
+		"SELECT id FROM milestones WHERE LOWER(name) = LOWER(?) AND (workspace_id = ? OR is_global = true) ORDER BY CASE WHEN workspace_id = ? THEN 0 ELSE 1 END LIMIT 1",
+		name, workspaceID, workspaceID,
+	).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("milestone not found")
+	}
+	return id, nil
+}
+
+// resolveIterationName resolves an iteration name to its ID (workspace-scoped or global).
+func (e *ToolExecutor) resolveIterationName(name string, workspaceID int) (int, error) {
+	var id int
+	err := e.db.QueryRow(
+		"SELECT id FROM iterations WHERE LOWER(name) = LOWER(?) AND (workspace_id = ? OR is_global = true) ORDER BY CASE WHEN workspace_id = ? THEN 0 ELSE 1 END LIMIT 1",
+		name, workspaceID, workspaceID,
+	).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("iteration not found")
+	}
+	return id, nil
 }

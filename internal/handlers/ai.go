@@ -142,9 +142,25 @@ func (h *AIHandler) PlanMyDay(w http.ResponseWriter, r *http.Request) {
 		}
 		if item.DueDate != nil {
 			line += fmt.Sprintf(" | Due: %s", item.DueDate.Format("2006-01-02"))
+		} else {
+			line += " | Due: none"
 		}
 		if item.StatusName != "" {
 			line += fmt.Sprintf(" | Status: %s", item.StatusName)
+		}
+		if item.MilestoneName != "" {
+			ms := fmt.Sprintf(" | Milestone: %s", item.MilestoneName)
+			if item.MilestoneTargetDate != "" {
+				ms += fmt.Sprintf(" (target: %s)", item.MilestoneTargetDate)
+			}
+			line += ms
+		}
+		if item.IterationName != "" {
+			it := fmt.Sprintf(" | Iteration: %s", item.IterationName)
+			if item.IterationEndDate != "" {
+				it += fmt.Sprintf(" (ends: %s)", item.IterationEndDate)
+			}
+			line += it
 		}
 		desc := item.Description
 		if len(desc) > 120 {
@@ -167,13 +183,14 @@ func (h *AIHandler) PlanMyDay(w http.ResponseWriter, r *http.Request) {
 		now = now.In(loc)
 	}
 
-	systemPrompt := `You are a work planning assistant. Given a list of work items assigned to a user, suggest a prioritized schedule for today. Consider due dates, priorities, and logical task ordering.
+	systemPrompt := `You are a work planning assistant. Given a list of work items assigned to a user, suggest a prioritized schedule for today. Consider due dates, priorities, milestone target dates, iteration end dates, and logical task ordering.
 
 Return a JSON object with:
 - activities: array of objects with time (HH:MM format), duration_minutes, item_key (exact key from provided list), title, and reason
 - summary: a short overview of the planned day
 
-Schedule tasks across the full workday, not all at the same time. Use only item keys from the provided list.`
+Schedule tasks across the full workday, not all at the same time. Use only item keys from the provided list.
+Only reference dates explicitly provided in the item data. Never invent or assume dates.`
 
 	userPrompt := fmt.Sprintf("Today is %s (%s timezone). Here are my open work items:\n\n%s\n\nPlease plan my day.",
 		now.Format("Monday, January 2, 2006"), timezone, strings.Join(itemLines, "\n"))
@@ -189,7 +206,7 @@ Schedule tasks across the full workday, not all at the same time. Use only item 
 	}
 
 	// Resolve LLM client (optionally from connection_id query param)
-	llmClient := requireLLMClient(w, r, h.llmManager, parseConnectionIDParam(r))
+	llmClient := requireLLMClientForFeature(w, r, h.llmManager, h.db, "plan_my_day", parseConnectionIDParam(r))
 	if llmClient == nil {
 		return
 	}
@@ -244,16 +261,33 @@ func (h *AIHandler) Status(w http.ResponseWriter, r *http.Request) {
 	client, err := h.llmManager.Resolve(0)
 	available := err == nil && client != nil && client.Available()
 
-	// Check ai_chat_enabled module setting
-	chatEnabled := false
-	var val string
-	if dbErr := h.db.QueryRow("SELECT value FROM system_settings WHERE key = ?", "ai_chat_enabled").Scan(&val); dbErr == nil {
-		chatEnabled = strings.EqualFold(val, "true")
+	// Load per-feature config
+	cfg, _ := llm.LoadAIFeaturesConfig(h.db)
+	featureKeys := []string{"ai_chat", "daily_briefing", "plan_my_day", "catch_me_up", "find_similar", "decompose", "release_notes", "dependency_analysis"}
+	type featureStatus struct {
+		Enabled bool   `json:"enabled"`
+		Mode    string `json:"mode"`
 	}
+	features := make(map[string]featureStatus, len(featureKeys))
+	for _, key := range featureKeys {
+		fc, ok := cfg[key]
+		if !ok {
+			features[key] = featureStatus{Enabled: true, Mode: string(models.AIFeatureModeDefault)}
+		} else {
+			features[key] = featureStatus{
+				Enabled: fc.Mode != models.AIFeatureModeDisabled,
+				Mode:    string(fc.Mode),
+			}
+		}
+	}
+
+	// chat_enabled derived from per-feature config for backward compatibility
+	chatEnabled := features["ai_chat"].Enabled
 
 	respondJSONOK(w, map[string]interface{}{
 		"available":    available,
 		"chat_enabled": chatEnabled,
+		"features":     features,
 	})
 }
 
@@ -327,7 +361,7 @@ func (h *AIHandler) CatchMeUp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve LLM client
-	llmClient := requireLLMClient(w, r, h.llmManager, 0)
+	llmClient := requireLLMClientForFeature(w, r, h.llmManager, h.db, "catch_me_up", 0)
 	if llmClient == nil {
 		return
 	}
@@ -533,7 +567,7 @@ func (h *AIHandler) FindSimilarItems(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve LLM client
-	llmClient := requireLLMClient(w, r, h.llmManager, 0)
+	llmClient := requireLLMClientForFeature(w, r, h.llmManager, h.db, "find_similar", 0)
 	if llmClient == nil {
 		return
 	}
@@ -685,7 +719,7 @@ func (h *AIHandler) DecomposeItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve LLM client
-	llmClient := requireLLMClient(w, r, h.llmManager, 0)
+	llmClient := requireLLMClientForFeature(w, r, h.llmManager, h.db, "decompose", 0)
 	if llmClient == nil {
 		return
 	}
@@ -831,7 +865,7 @@ func (h *AIHandler) GenerateReleaseNotes(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Resolve LLM client
-	llmClient := requireLLMClient(w, r, h.llmManager, parseConnectionIDParam(r))
+	llmClient := requireLLMClientForFeature(w, r, h.llmManager, h.db, "release_notes", parseConnectionIDParam(r))
 	if llmClient == nil {
 		return
 	}
@@ -1316,7 +1350,7 @@ Return a JSON object with:
 	}
 
 	// Resolve LLM client
-	llmClient := requireLLMClient(w, r, h.llmManager, parseConnectionIDParam(r))
+	llmClient := requireLLMClientForFeature(w, r, h.llmManager, h.db, "dependency_analysis", parseConnectionIDParam(r))
 	if llmClient == nil {
 		return
 	}
@@ -1550,8 +1584,8 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve LLM client
-	llmClient := requireLLMClient(w, r, h.llmManager, req.ConnectionID)
+	// Resolve LLM client (Chat allows user to override connection via the UI selector)
+	llmClient := requireLLMClientForFeature(w, r, h.llmManager, h.db, "ai_chat", req.ConnectionID)
 	if llmClient == nil {
 		return
 	}
@@ -1564,21 +1598,41 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build tool executor
-	executor := NewToolExecutor(h.db, accessibleWSIDs, user.ID, h.timePermService)
+	executor := NewToolExecutor(h.db, accessibleWSIDs, user.ID, h.timePermService, h.permService)
+
+	// Determine current date in user's timezone
+	chatTimezone := user.Timezone
+	if chatTimezone == "" {
+		chatTimezone = "UTC"
+	}
+	chatNow := time.Now()
+	if chatLoc, locErr := time.LoadLocation(chatTimezone); locErr == nil {
+		chatNow = chatNow.In(chatLoc)
+	}
 
 	systemPrompt := fmt.Sprintf(
 		"You are a helpful assistant for Windshift, a project management tool. "+
 			"You can look up workspaces and items to answer the user's questions. "+
 			"Use the available tools to find information before answering. "+
 			"Be concise and factual. If you cannot find the requested information, say so.\n\n"+
+			"Today's date is %s.\n\n"+
 			"The current user is %s (user ID: %d). "+
 			"When the user asks about \"my items\", \"assigned to me\", or similar, "+
 			"use the list_items tool with assignee_id=%d. "+
 			"You can omit workspace_id to search across all workspaces at once.\n\n"+
-		"You can also look up milestones and iterations (sprints) and filter items using CQL query expressions including custom fields. Use list_custom_fields to discover available custom fields.\n\n"+
+			"You can also look up milestones and iterations (sprints) and filter items using CQL query expressions including custom fields. Use list_custom_fields to discover available custom fields.\n\n"+
+			"You can update items with the update_item tool: change status, priority, assignee, due date, milestone, iteration, and more. "+
+			"You can pass names instead of IDs (e.g. status_name=\"Done\", assignee_name=\"John Doe\") and they will be resolved automatically. "+
+			"Always confirm what was changed in your response.\n\n"+
 			"You can also manage time tracking: list time projects with list_time_projects, view worklogs with list_worklogs, and log time with log_time. "+
-			"When logging time, first use list_time_projects to find the correct project_id.",
-		user.FullName, user.ID, user.ID,
+			"When logging time, first use list_time_projects to find the correct project_id.\n\n"+
+			"EFFICIENCY: list_items already returns due dates, milestone target dates, and iteration end dates for each item. "+
+			"One list_items call is usually sufficient to answer questions about deadlines or what is due soon. "+
+			"Do NOT call get_item for items already returned by list_items. "+
+			"Only use list_milestones or list_iterations when the user asks about those entities directly. "+
+			"Answer as soon as you have enough information.\n\n"+
+			"Only state facts returned by the tools. Never invent or assume dates, statuses, or other item fields.",
+		chatNow.Format("2006-01-02"), user.FullName, user.ID, user.ID,
 	)
 
 	// Convert client history to LLM messages (only user/assistant roles allowed)
@@ -1590,10 +1644,11 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := llm.RunAgent(r.Context(), llmClient, llm.AgentConfig{
-		SystemPrompt: systemPrompt,
-		Tools:        llm.BuiltinTools(),
-		MaxTokens:    2048,
-		Temperature:  0.1,
+		SystemPrompt:  systemPrompt,
+		Tools:         llm.BuiltinTools(),
+		MaxTokens:     2048,
+		Temperature:   0.1,
+		MaxIterations: 6,
 	}, req.Message, executor.Execute, history)
 	if err != nil {
 		respondLLMError(w, r, err)

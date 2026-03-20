@@ -3,12 +3,18 @@ package llm
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"windshift/internal/database"
+	"windshift/internal/models"
 	"windshift/internal/sso"
 )
+
+// ErrFeatureDisabled is returned when an AI feature has been disabled by admin.
+var ErrFeatureDisabled = errors.New("this AI feature is disabled by your administrator")
 
 // ConnectionInfo represents an LLM connection without sensitive fields.
 type ConnectionInfo struct {
@@ -305,4 +311,51 @@ func (m *ConnectionManager) TestConnection(id int) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	return client.Health(ctx)
+}
+
+// LoadAIFeaturesConfig reads the per-feature AI configuration from system_settings.
+func LoadAIFeaturesConfig(db database.Database) (models.AIFeaturesConfig, error) {
+	var value string
+	err := db.QueryRow(`SELECT value FROM system_settings WHERE key = 'ai_feature_config'`).Scan(&value)
+	if err == sql.ErrNoRows {
+		return models.AIFeaturesConfig{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to load AI features config: %w", err)
+	}
+	var cfg models.AIFeaturesConfig
+	if err := json.Unmarshal([]byte(value), &cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse AI features config: %w", err)
+	}
+	return cfg, nil
+}
+
+// SaveAIFeaturesConfig persists the per-feature AI configuration to system_settings.
+func SaveAIFeaturesConfig(db database.Database, cfg models.AIFeaturesConfig) error {
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal AI features config: %w", err)
+	}
+	_, err = db.Exec(
+		`UPDATE system_settings SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = 'ai_feature_config'`,
+		string(data),
+	)
+	return err
+}
+
+// ResolveForFeature resolves an LLM client respecting per-feature configuration.
+func (m *ConnectionManager) ResolveForFeature(featureKey string, db database.Database) (Client, error) {
+	cfg, err := LoadAIFeaturesConfig(db)
+	if err != nil {
+		return nil, err
+	}
+	fc, ok := cfg[featureKey]
+	if !ok || fc.Mode == models.AIFeatureModeDefault {
+		return m.Resolve(0)
+	}
+	if fc.Mode == models.AIFeatureModeDisabled {
+		return nil, ErrFeatureDisabled
+	}
+	// specific
+	return m.Resolve(fc.ConnectionID)
 }

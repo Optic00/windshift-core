@@ -1,18 +1,14 @@
 <script>
   import { onMount } from 'svelte';
+  import { slide } from 'svelte/transition';
   import { api } from '../../api.js';
-  import { Plus, Check, X, Trash2, ChevronDown, MoreHorizontal, Calendar, Edit, ClipboardList } from 'lucide-svelte';
-  import DropdownMenu from '../../layout/DropdownMenu.svelte';
-  import Card from '../../components/Card.svelte';
-  import DataTable from '../../components/DataTable.svelte';
-  import ItemPicker from '../../pickers/ItemPicker.svelte';
+  import { Plus, Check, X, Trash2, ChevronDown, ChevronRight } from 'lucide-svelte';
+  import WorkItemRow from './WorkItemRow.svelte';
   import DeleteItemDialog from '../../dialogs/DeleteItemDialog.svelte';
-  import { navigate } from '../../router.js';
   import ItemDetail from '../items/ItemDetail.svelte';
   import PersonalTaskDetail from '../personal/PersonalTaskDetail.svelte';
-  import { getStatusStyleFromStatuses, getTextColorForBackground } from '../../utils/statusColors.js';
+  import { getStatusCategory } from '../../utils/statusColors.js';
   import { authStore } from '../../stores';
-  import { formatDate } from '../../utils/dateFormatter.js';
   import { t } from '../../stores/i18n.svelte.js';
   import Checkbox from '../../components/Checkbox.svelte';
 
@@ -22,7 +18,6 @@
   let assignedWork = $state([]);
   let statuses = $state([]);
   let statusCategories = $state([]);
-  let statusesByWorkspace = $state(new Map());
   let loading = $state(true);
   let newTodoTitle = $state('');
   let isAddingTodo = $state(false);
@@ -34,32 +29,46 @@
   let itemToDelete = $state(null);
   let isPersonalDelete = $state(true);
 
-  // Status configuration for ItemPicker
-  const statusConfig = {
-    icon: {
-      type: 'color-dot',
-      source: (item) => item.categoryColor || '#9CA3AF',
-      size: 'w-2 h-2'
-    },
-    primary: {
-      text: (item) => item.label
-    },
-    searchFields: ['label', 'value'],
-    getValue: (item) => item.id,
-    getLabel: (item) => item.label
-  };
+  // Collapsible section state with localStorage persistence
+  const COLLAPSED_KEY = `todo-collapsed-${workspaceId}`;
+  let personalCollapsed = $state(false);
+  let assignedCollapsed = $state(false);
 
-  // Transform statuses for ItemPicker
-  let statusOptions = $derived(statuses.map(status => ({
-    id: status.id,
-    label: status.name,
-    value: status.name,
-    categoryColor: status.category_color
-  })));
+  function loadCollapsedState() {
+    try {
+      const saved = localStorage.getItem(COLLAPSED_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        personalCollapsed = parsed.personal ?? false;
+        assignedCollapsed = parsed.assigned ?? false;
+      }
+    } catch { /* ignore */ }
+  }
 
-  onMount(async () => {
-    await Promise.all([loadStatuses(), loadStatusCategories(), loadPersonalTodos(), loadAssignedWork()]);
-    loading = false;
+  function persistCollapsedState() {
+    try {
+      localStorage.setItem(COLLAPSED_KEY, JSON.stringify({
+        personal: personalCollapsed,
+        assigned: assignedCollapsed
+      }));
+    } catch { /* ignore */ }
+  }
+
+  function togglePersonalCollapsed() {
+    personalCollapsed = !personalCollapsed;
+    persistCollapsedState();
+  }
+
+  function toggleAssignedCollapsed() {
+    assignedCollapsed = !assignedCollapsed;
+    persistCollapsedState();
+  }
+
+  onMount(() => {
+    loadCollapsedState();
+    Promise.all([loadStatuses(), loadStatusCategories(), loadPersonalTodos(), loadAssignedWork()]).then(() => {
+      loading = false;
+    });
   });
 
   async function loadStatuses() {
@@ -82,7 +91,7 @@
 
   async function loadPersonalTodos() {
     try {
-      const filters = { 
+      const filters = {
         workspace_id: workspaceId,
         limit: 100
       };
@@ -96,10 +105,8 @@
 
   async function loadAssignedWork() {
     try {
-      // Get the current authenticated user's ID
       const user = authStore.currentUser;
       if (!user || !user.id) {
-        console.warn('No authenticated user found for loading assigned work');
         assignedWork = [];
         return;
       }
@@ -110,8 +117,6 @@
       };
       const response = await api.items.getAll(filters);
       let allAssigned = response?.items || response || [];
-
-      // Filter out items from personal workspace to avoid duplicates
       assignedWork = allAssigned.filter(item => item.workspace_id !== parseInt(workspaceId));
     } catch (error) {
       console.error('Failed to load assigned work:', error);
@@ -122,7 +127,6 @@
   function startAddingTodo() {
     isAddingTodo = true;
     newTodoTitle = '';
-    // Focus the input after DOM update
     setTimeout(() => {
       document.getElementById('new-todo-input')?.focus();
     }, 10);
@@ -135,18 +139,17 @@
 
   async function saveTodo() {
     if (!newTodoTitle.trim()) return;
-    
+
     try {
-      // Find default status (should be "Open")
       const defaultStatus = statuses.find(s => s.is_default) || statuses.find(s => s.name.toLowerCase() === 'open') || statuses[0];
-      
+
       const todoData = {
         title: newTodoTitle.trim(),
         description: '',
         workspace_id: parseInt(workspaceId),
         status_id: defaultStatus?.id || 1
       };
-      
+
       await api.items.create(todoData);
       await loadPersonalTodos();
       cancelAddingTodo();
@@ -159,7 +162,7 @@
   async function changeItemStatus(item, newStatusId, isPersonal = true) {
     try {
       await api.items.update(item.id, { status_id: newStatusId });
-      
+
       if (isPersonal) {
         await loadPersonalTodos();
       } else {
@@ -170,82 +173,6 @@
     }
   }
 
-  function getStatusesForWorkspace(workspaceId) {
-    // For now, return all statuses since we don't have workspace-specific status configuration
-    // In a real system, this would filter based on workspace configuration
-    return statuses;
-  }
-
-  function getStatusName(statusId) {
-    const statusObj = statuses.find(s => s.id === statusId);
-    return statusObj?.name || 'Open';
-  }
-
-  function getStatusById(statusId) {
-    return statuses.find(s => s.id === statusId);
-  }
-
-  function getStatusCategory(statusName) {
-    const status = statuses.find(s => s.name.toLowerCase() === statusName?.toLowerCase());
-    return statusCategories.find(c => c.id === status?.category_id);
-  }
-
-
-  // Column definitions for assigned work DataTable
-  let assignedWorkColumns = $derived([
-    {
-      key: 'title',
-      label: t('common.title'),
-      width: '40%',
-      slot: 'name'
-    },
-    {
-      key: 'workspace_name',
-      label: t('workspaces.workspace'),
-      width: '20%'
-    },
-    {
-      key: 'status',
-      label: t('common.status'),
-      width: '15%',
-      slot: 'status'
-    },
-    {
-      key: 'created_at',
-      label: t('common.created'),
-      width: '15%',
-      slot: 'date'
-    },
-    {
-      key: 'actions',
-      label: t('common.actions'),
-      width: '10%'
-    }
-  ]);
-
-  function buildItemActions(item) {
-    return [
-      {
-        id: 'edit',
-        type: 'regular',
-        icon: Edit,
-        title: t('common.edit'),
-        onClick: () => openItem(item.id)
-      },
-      { type: 'divider' },
-      {
-        id: 'delete',
-        type: 'regular',
-        icon: Trash2,
-        title: t('common.delete'),
-        color: '#dc2626',
-        hoverClass: 'hover:bg-red-50 hover:text-red-700',
-        onClick: () => deleteTodo(item, false)
-      }
-    ];
-  }
-
-  // Personal task helpers
   function isPersonalTaskCompleted(todo) {
     const status = statuses.find(s => s.id === todo.status_id);
     return status?.category_name === 'Done' || status?.name.toLowerCase().includes('complete') || status?.name.toLowerCase().includes('done');
@@ -254,21 +181,19 @@
   async function togglePersonalTask(todo) {
     try {
       let targetStatusId;
-      
+
       if (isPersonalTaskCompleted(todo)) {
-        // If completed, move to "Open" or first non-done status
-        const openStatus = statuses.find(s => s.name.toLowerCase() === 'open') || 
-                          statuses.find(s => s.category_name !== 'Done') || 
+        const openStatus = statuses.find(s => s.name.toLowerCase() === 'open') ||
+                          statuses.find(s => s.category_name !== 'Done') ||
                           statuses[0];
         targetStatusId = openStatus.id;
       } else {
-        // If not completed, move to "Done" or first done status
         const doneStatus = statuses.find(s => s.category_name === 'Done') ||
                           statuses.find(s => s.name.toLowerCase().includes('done')) ||
                           statuses.find(s => s.name.toLowerCase().includes('complete'));
         targetStatusId = doneStatus?.id;
       }
-      
+
       if (targetStatusId) {
         await changeItemStatus(todo, targetStatusId, true);
       }
@@ -297,23 +222,18 @@
   }
 
   function getWorkspaceIdForItem(itemId) {
-    // Check if it's a personal todo
     const personalTodo = personalTodos.find(todo => todo.id === itemId);
     if (personalTodo) {
-      // Use the workspace_id from the item itself, not the current workspaceId
       return personalTodo.workspace_id || parseInt(workspaceId);
     }
-    
-    // Check if it's an assigned work item
+
     const assignedItem = assignedWork.find(item => item.id === itemId);
     if (assignedItem) {
-      return assignedItem.workspace_id; // Use the item's workspace ID
+      return assignedItem.workspace_id;
     }
-    
-    // Fallback to current workspace (ensure it's a number)
+
     return parseInt(workspaceId);
   }
-
 
   function deleteTodo(todo, isPersonal = true) {
     itemToDelete = todo;
@@ -322,7 +242,6 @@
   }
 
   async function handleDeleteComplete(result) {
-    // Reload the appropriate list after deletion
     if (isPersonalDelete) {
       await loadPersonalTodos();
     } else {
@@ -342,198 +261,191 @@
       cancelAddingTodo();
     }
   }
+
+  let personalRemaining = $derived(personalTodos.filter(todo => {
+    const status = statuses.find(s => s.id === todo.status_id);
+    return status?.category_name !== 'Done';
+  }).length);
 </script>
 
 <div style="background-color: var(--ds-surface);">
   <div class="p-6">
     {#if loading}
-      <Card rounded="xl" shadow padding="loose" class="text-center">
-        <div class="animate-pulse" style="color: var(--ds-text-subtle);">{t('todo.loadingTasks')}</div>
-      </Card>
+      <div class="text-center py-12 animate-pulse" style="color: var(--ds-text-subtle);">{t('todo.loadingTasks')}</div>
     {:else}
-      <div class="flex flex-col gap-6 max-w-4xl">
-        <!-- Personal Tasks -->
-        <Card shadow padding="none" class="overflow-hidden">
-          <!-- Header -->
-          <div class="px-5 py-4 border-b flex items-center" style="border-color: var(--ds-border);">
-            <h2 class="text-lg font-semibold" style="color: var(--ds-text);">{t('todo.myPersonalTasks')}</h2>
-          </div>
+      <div class="flex flex-col gap-4">
+        <!-- Personal Tasks Section -->
+        <div>
+          <button
+            class="w-full flex items-center gap-2 px-3 py-2 rounded-lg transition-colors select-none section-header"
+            onclick={togglePersonalCollapsed}
+          >
+            <span class="flex-shrink-0" style="color: var(--ds-text-subtle);">
+              {#if personalCollapsed}
+                <ChevronRight class="w-4 h-4" />
+              {:else}
+                <ChevronDown class="w-4 h-4" />
+              {/if}
+            </span>
+            <span class="font-semibold text-sm" style="color: var(--ds-text);">{t('todo.myPersonalTasks')}</span>
+            <span class="ml-auto text-xs px-2 py-0.5 rounded-full" style="background-color: var(--ds-surface-raised); color: var(--ds-text-subtle);">
+              {personalTodos.length} {personalTodos.length === 1 ? 'item' : 'items'}
+            </span>
+          </button>
 
-          <!-- Content -->
-          <div class="p-5">
-            <!-- Add Todo Section -->
-            <div class="mb-4">
-              {#if isAddingTodo}
-                <div class="flex items-center gap-3 p-3 border rounded" style="border-color: var(--ds-interactive); background-color: var(--ds-background-selected);">
-                  <input
-                    id="new-todo-input"
-                    type="text"
-                    bind:value={newTodoTitle}
-                    onkeydown={handleKeydown}
-                    placeholder={t('todo.whatNeedsToBeDone')}
-                    class="flex-1 px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                    style="background-color: var(--ds-background-input); color: var(--ds-text); border-color: var(--ds-border);"
-                  />
+          {#if !personalCollapsed}
+            <div transition:slide={{ duration: 200 }} class="mt-1">
+              <!-- Add Todo -->
+              <div class="mb-2 px-1">
+                {#if isAddingTodo}
+                  <div class="flex items-center gap-3 p-3 border rounded-lg" style="border-color: var(--ds-interactive); background-color: var(--ds-background-selected);">
+                    <input
+                      id="new-todo-input"
+                      type="text"
+                      bind:value={newTodoTitle}
+                      onkeydown={handleKeydown}
+                      placeholder={t('todo.whatNeedsToBeDone')}
+                      class="flex-1 px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      style="background-color: var(--ds-background-input); color: var(--ds-text); border-color: var(--ds-border);"
+                    />
+                    <button
+                      onclick={saveTodo}
+                      disabled={!newTodoTitle.trim()}
+                      class="p-2 text-green-600 hover:text-green-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed add-btn"
+                    >
+                      <Check class="w-5 h-5" />
+                    </button>
+                    <button
+                      onclick={cancelAddingTodo}
+                      class="p-2 rounded transition-colors cancel-btn"
+                      style="color: var(--ds-text-subtle);"
+                    >
+                      <X class="w-5 h-5" />
+                    </button>
+                  </div>
+                {:else}
                   <button
-                    onclick={saveTodo}
-                    disabled={!newTodoTitle.trim()}
-                    class="p-2 text-green-600 hover:text-green-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed add-btn"
+                    onclick={startAddingTodo}
+                    class="w-full flex items-center gap-3 p-3 border-2 border-dashed rounded-lg transition-colors add-task-btn"
+                    style="border-color: var(--ds-border); color: var(--ds-text-subtle);"
                   >
-                    <Check class="w-5 h-5" />
+                    <Plus class="w-5 h-5" />
+                    {t('todo.addPersonalTask')}
                   </button>
-                  <button
-                    onclick={cancelAddingTodo}
-                    class="p-2 rounded transition-colors cancel-btn"
-                    style="color: var(--ds-text-subtle);"
-                  >
-                    <X class="w-5 h-5" />
-                  </button>
+                {/if}
+              </div>
+
+              <!-- Personal Todo List -->
+              {#if personalTodos.length === 0}
+                <div class="text-center py-8" style="color: var(--ds-text-subtle);">
+                  <div class="text-sm font-medium mb-1">{t('todo.noPersonalTasks')}</div>
+                  <div class="text-xs">{t('todo.addFirstTask')}</div>
                 </div>
               {:else}
-                <button
-                  onclick={startAddingTodo}
-                  class="w-full flex items-center gap-3 p-3 border-2 border-dashed rounded transition-colors add-task-btn"
-                  style="border-color: var(--ds-border); color: var(--ds-text-subtle);"
-                >
-                  <Plus class="w-5 h-5" />
-                  {t('todo.addPersonalTask')}
-                </button>
-              {/if}
-            </div>
-
-            <!-- Personal Todo List -->
-            {#if personalTodos.length === 0}
-              <div class="text-center py-8" style="color: var(--ds-text-subtle);">
-                <div class="text-sm font-medium mb-1">{t('todo.noPersonalTasks')}</div>
-                <div class="text-xs">{t('todo.addFirstTask')}</div>
-              </div>
-            {:else}
-              <div class="space-y-2">
-                {#each personalTodos as todo (todo.id)}
-                  <div class="group flex items-center gap-3 p-3 border rounded transition-colors todo-row" style="border-color: var(--ds-border);">
-                    <!-- Simple Checkbox -->
-                    <Checkbox
-                      checked={isPersonalTaskCompleted(todo)}
-                      onchange={() => togglePersonalTask(todo)}
-                      size="small"
-                    />
-
-                    <!-- Todo Content with Key -->
-                    <button
-                      type="button"
-                      class="appearance-none bg-transparent border-none font-[inherit] text-[inherit] text-left w-full p-0 m-0 cursor-pointer flex-1 min-w-0 flex items-center gap-2"
+                <div class="flex flex-col gap-1 px-1">
+                  {#each personalTodos as todo (todo.id)}
+                    <WorkItemRow
+                      item={todo}
+                      {statuses}
+                      {statusCategories}
+                      showIcon={false}
+                      showStatus={false}
                       onclick={() => openItem(todo.id)}
                     >
-                      <span
-                        class="text-xs font-mono px-1.5 py-0.5 rounded whitespace-nowrap flex-shrink-0 transition-colors item-key"
-                        style="color: var(--ds-text-subtle); background-color: var(--ds-surface);"
-                      >
-                        {todo.workspace_key || 'WORK'}-{todo.id}
-                      </span>
-                      <span class="flex-1 min-w-0 font-medium" style="color: {isPersonalTaskCompleted(todo) ? 'var(--ds-text-subtle)' : 'var(--ds-text)'}; {isPersonalTaskCompleted(todo) ? 'text-decoration: line-through;' : ''}">
-                        {todo.title}
-                      </span>
-                    </button>
+                      {#snippet leading()}
+                        <!-- svelte-ignore a11y_click_events_have_key_events -->
+                        <!-- svelte-ignore a11y_no_static_element_interactions -->
+                        <div onclick={(e) => e.stopPropagation()}>
+                          <Checkbox
+                            checked={isPersonalTaskCompleted(todo)}
+                            onchange={() => togglePersonalTask(todo)}
+                            size="small"
+                          />
+                        </div>
+                      {/snippet}
+                      {#snippet trailing()}
+                        <!-- svelte-ignore a11y_click_events_have_key_events -->
+                        <!-- svelte-ignore a11y_no_static_element_interactions -->
+                        <div class="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" onclick={(e) => e.stopPropagation()}>
+                          <button
+                            onclick={() => deleteTodo(todo, true)}
+                            class="p-1 text-red-500 hover:text-red-700 rounded transition-colors delete-btn"
+                          >
+                            <Trash2 class="w-4 h-4" />
+                          </button>
+                        </div>
+                      {/snippet}
+                    </WorkItemRow>
+                  {/each}
+                </div>
 
-                    <!-- Actions -->
-                    <div class="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button
-                        onclick={() => deleteTodo(todo, true)}
-                        class="p-1 text-red-500 hover:text-red-700 rounded transition-colors delete-btn"
-                      >
-                        <Trash2 class="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                {/each}
-              </div>
+                <!-- Summary -->
+                <div class="mt-3 pt-2 border-t text-xs text-center mx-1" style="border-color: var(--ds-border); color: var(--ds-text-subtle);">
+                  {t('todo.ofPersonalTasksRemaining', {
+                    count: personalRemaining,
+                    total: personalTodos.length
+                  })}
+                </div>
+              {/if}
+            </div>
+          {/if}
+        </div>
 
-              <!-- Personal Tasks Summary -->
-              <div class="mt-4 pt-3 border-t text-xs text-center" style="border-color: var(--ds-border); color: var(--ds-text-subtle);">
-                {t('todo.ofPersonalTasksRemaining', {
-                  count: personalTodos.filter(t => {
-                    const status = statuses.find(s => s.id === t.status_id);
-                    return status?.category_name !== 'Done';
-                  }).length,
-                  total: personalTodos.length
-                })}
-              </div>
-            {/if}
-          </div>
-        </Card>
-
-        <!-- Assigned Work Items -->
+        <!-- Assigned to Me Section -->
         <div>
-          <!-- Header -->
-          <div class="px-5 py-4 border border-b-0 rounded-t flex items-center" style="background-color: var(--ds-surface-raised); border-color: var(--ds-border);">
-            <h2 class="text-lg font-semibold" style="color: var(--ds-text);">{t('todo.assignedToMe')}</h2>
-          </div>
-
-          <!-- DataTable -->
-          <DataTable
-            columns={assignedWorkColumns}
-            data={assignedWork}
-            keyField="id"
-            emptyIcon={ClipboardList}
-            emptyMessage={t('todo.noAssignedWork')}
-            emptyDescription={t('todo.assignedItemsWillAppear')}
-            actionItems={buildItemActions}
-            onRowClick={(item) => openItem(item.id)}
-            class="rounded-t-none border border-t-0 shadow-sm overflow-hidden"
+          <button
+            class="w-full flex items-center gap-2 px-3 py-2 rounded-lg transition-colors select-none section-header"
+            onclick={toggleAssignedCollapsed}
           >
-            {#snippet name(item)}
-              <div class="flex items-center gap-2 min-w-0">
-                <button
-                  onclick={(e) => { e.stopPropagation(); openItem(item.id); }}
-                  class="text-xs font-mono px-1.5 py-0.5 rounded whitespace-nowrap flex-shrink-0 transition-colors cursor-pointer item-key"
-                  style="color: var(--ds-text-subtle); background-color: var(--ds-surface);"
-                  title={t('items.clickToViewDetails')}
-                >
-                  {item.workspace_key || 'WORK'}-{item.id}
-                </button>
-                <span class="font-medium truncate" style="color: var(--ds-text);">
-                  {item.title}
-                </span>
-              </div>
-            {/snippet}
+            <span class="flex-shrink-0" style="color: var(--ds-text-subtle);">
+              {#if assignedCollapsed}
+                <ChevronRight class="w-4 h-4" />
+              {:else}
+                <ChevronDown class="w-4 h-4" />
+              {/if}
+            </span>
+            <span class="font-semibold text-sm" style="color: var(--ds-text);">{t('todo.assignedToMe')}</span>
+            <span class="ml-auto text-xs px-2 py-0.5 rounded-full" style="background-color: var(--ds-surface-raised); color: var(--ds-text-subtle);">
+              {assignedWork.length} {assignedWork.length === 1 ? 'item' : 'items'}
+            </span>
+          </button>
 
-            {#snippet status(item)}
-              <!-- svelte-ignore a11y_click_events_have_key_events -->
-              <!-- svelte-ignore a11y_no_static_element_interactions -->
-              <div onclick={(e) => e.stopPropagation()}>
-              {#each [getStatusCategory(getStatusName(item.status_id))] as statusCategory}
-                <ItemPicker
-                  value={item.status_id ?? null}
-                  items={statusOptions}
-                  config={statusConfig}
-                  placeholder={t('common.select')}
-                  showUnassigned={false}
-                  onSelect={async (selectedStatus) => {
-                    if (selectedStatus?.id && selectedStatus.id !== item.status_id) {
-                      await changeItemStatus(item, selectedStatus.id, false);
-                    }
-                  }}
-                >
-                  {#snippet children()}
-                    <span
-                      class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium cursor-pointer transition-colors max-w-full truncate"
-                      style={statusCategory && statusCategory.color ? `background-color: ${statusCategory.color}; color: ${getTextColorForBackground(statusCategory.color)};` : getStatusStyleFromStatuses(getStatusName(item.status_id), statuses)}
+          {#if !assignedCollapsed}
+            <div transition:slide={{ duration: 200 }} class="mt-1">
+              {#if assignedWork.length === 0}
+                <div class="text-center py-8" style="color: var(--ds-text-subtle);">
+                  <div class="text-sm font-medium mb-1">{t('todo.noAssignedWork')}</div>
+                  <div class="text-xs">{t('todo.assignedItemsWillAppear')}</div>
+                </div>
+              {:else}
+                <div class="flex flex-col gap-1 px-1">
+                  {#each assignedWork as item (item.id)}
+                    <WorkItemRow
+                      {item}
+                      {statuses}
+                      {statusCategories}
+                      showWorkspace={true}
+                      showStatus={true}
+                      onclick={() => openItem(item.id)}
                     >
-                      {getStatusName(item.status_id)}
-                    </span>
-                  {/snippet}
-                </ItemPicker>
-              {/each}
-              </div>
-            {/snippet}
-
-            {#snippet date(item)}
-              <div class="flex items-center gap-1 text-sm whitespace-nowrap" style="color: var(--ds-text-subtle);">
-                <Calendar class="w-4 h-4" />
-                {formatDate(item.created_at) || '-'}
-              </div>
-            {/snippet}
-          </DataTable>
+                      {#snippet trailing()}
+                        <!-- svelte-ignore a11y_click_events_have_key_events -->
+                        <!-- svelte-ignore a11y_no_static_element_interactions -->
+                        <div class="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity" onclick={(e) => e.stopPropagation()}>
+                          <button
+                            onclick={() => deleteTodo(item, false)}
+                            class="p-1 text-red-500 hover:text-red-700 rounded transition-colors delete-btn"
+                          >
+                            <Trash2 class="w-4 h-4" />
+                          </button>
+                        </div>
+                      {/snippet}
+                    </WorkItemRow>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          {/if}
         </div>
       </div>
     {/if}
@@ -569,6 +481,14 @@
 />
 
 <style>
+  .section-header:hover {
+    background-color: rgba(0, 0, 0, 0.05);
+  }
+
+  :global(.dark) .section-header:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+  }
+
   .add-btn:hover {
     background-color: rgba(22, 163, 74, 0.1);
   }
@@ -582,17 +502,7 @@
     color: var(--ds-interactive) !important;
   }
 
-  .todo-row:hover {
-    background-color: var(--ds-surface);
-  }
-
-  .item-key:hover {
-    background-color: var(--ds-surface) !important;
-    color: var(--ds-text) !important;
-  }
-
   .delete-btn:hover {
     background-color: rgba(239, 68, 68, 0.1);
   }
 </style>
-
