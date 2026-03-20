@@ -6,8 +6,9 @@
       "api_format": "anthropic",
       "base_url": "https://api.anthropic.com",
       "models": [
-        {"id": "claude-sonnet-4-20250514", "name": "Claude Sonnet 4", "max_tokens": 8192},
-        {"id": "claude-haiku-3-5-20241022", "name": "Claude 3.5 Haiku", "max_tokens": 8192}
+        {"id": "claude-opus-4-6", "name": "Claude Opus 4.6", "max_tokens": 8192},
+        {"id": "claude-sonnet-4-6", "name": "Claude Sonnet 4.6", "max_tokens": 8192},
+        {"id": "claude-haiku-4-5-20251001", "name": "Claude Haiku 4.5", "max_tokens": 8192}
       ]
     },
     {

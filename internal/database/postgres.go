@@ -458,6 +458,19 @@ func (p *PostgresDB) Initialize() error {
 			}
 		}
 
+		// Add ai_feature_config system setting if it doesn't exist
+		var aiFeatureConfigCount int
+		if err = p.db.QueryRow(`SELECT COUNT(*) FROM system_settings WHERE key = 'ai_feature_config'`).Scan(&aiFeatureConfigCount); err == nil && aiFeatureConfigCount == 0 {
+			defaultCfg := `{}`
+			var aiChatVal string
+			if err = p.db.QueryRow(`SELECT value FROM system_settings WHERE key = 'ai_chat_enabled'`).Scan(&aiChatVal); err == nil && strings.EqualFold(aiChatVal, "false") {
+				defaultCfg = `{"ai_chat":{"mode":"disabled","connection_id":0}}`
+			}
+			if _, err = p.db.Exec(`INSERT INTO system_settings (key, value, value_type, description, category) VALUES ($1, $2, $3, $4, $5)`, "ai_feature_config", defaultCfg, "json", "Per-feature AI LLM configuration", "ai"); err != nil {
+				slog.Warn("ai_feature_config setting postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
+			}
+		}
+
 		// Add allowed_entity_types column to link_types
 		var aetColCount int
 		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='link_types' AND column_name='allowed_entity_types'`).Scan(&aetColCount); err == nil && aetColCount == 0 {
@@ -781,6 +794,7 @@ func (p *PostgresDB) initializePostgresDefaultData() error {
 		{"time_tracking_enabled", "true", "boolean", "Enable time tracking functionality", "modules"},
 		{"test_management_enabled", "true", "boolean", "Enable test management functionality", "modules"},
 		{"ai_chat_enabled", "true", "boolean", "Enable AI chat functionality", "modules"},
+		{"ai_feature_config", "{}", "json", "Per-feature AI LLM configuration", "ai"},
 		{"setup_completed", "false", "boolean", "Whether initial setup has been completed", "setup"},
 		{"admin_user_created", "false", "boolean", "Whether admin user has been created", "setup"},
 		{"calendar_feed_enabled", "true", "boolean", "Allow users to generate ICS calendar feed URLs", "security"},

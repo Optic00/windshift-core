@@ -47,6 +47,10 @@ func RegisterMiscRoutes(deps *Deps) {
 	api.HandleH("GET /setup/modules", auth(http.HandlerFunc(deps.Admin.Setup.GetModuleSettings)))
 	api.HandleH("PUT /setup/modules", admin(http.HandlerFunc(deps.Admin.Setup.UpdateModuleSettings)))
 
+	// AI features config (admin)
+	api.HandleH("GET /admin/ai-features", admin(http.HandlerFunc(deps.Admin.Setup.GetAIFeaturesConfig)))
+	api.HandleH("PUT /admin/ai-features", admin(http.HandlerFunc(deps.Admin.Setup.UpdateAIFeaturesConfig)))
+
 	// System endpoints
 	api.HandleH("POST /shutdown", admin(http.HandlerFunc(deps.Admin.System.Shutdown)))
 }

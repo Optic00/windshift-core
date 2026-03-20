@@ -24,10 +24,10 @@ func (h *HierarchyService) GetAncestors(itemID int) ([]models.Item, error) {
 	query := `
 		WITH RECURSIVE ancestors AS (
 			-- Base case: get the item itself
-			SELECT i.id, i.workspace_id, i.item_type_id, i.title, i.description, i.is_task,
+			SELECT i.id, i.workspace_id, i.workspace_item_number, i.item_type_id, i.title, i.description, i.is_task,
 			       i.milestone_id, i.assignee_id, i.creator_id, i.custom_field_values, i.parent_id,
 			       i.created_at, i.updated_at,
-			       w.name as workspace_name, it.name as item_type_name, it.color as item_type_color, it.icon as item_type_icon,
+			       w.name as workspace_name, w.key as workspace_key, it.name as item_type_name, it.color as item_type_color, it.icon as item_type_icon,
 			       0 as level
 			FROM items i
 			JOIN workspaces w ON i.workspace_id = w.id
@@ -37,20 +37,20 @@ func (h *HierarchyService) GetAncestors(itemID int) ([]models.Item, error) {
 			UNION ALL
 
 			-- Recursive case: get parent of current item
-			SELECT p.id, p.workspace_id, p.item_type_id, p.title, p.description, p.is_task,
+			SELECT p.id, p.workspace_id, p.workspace_item_number, p.item_type_id, p.title, p.description, p.is_task,
 			       p.milestone_id, p.assignee_id, p.creator_id, p.custom_field_values, p.parent_id,
 			       p.created_at, p.updated_at,
-			       w.name as workspace_name, it.name as item_type_name, it.color as item_type_color, it.icon as item_type_icon,
+			       w.name as workspace_name, w.key as workspace_key, it.name as item_type_name, it.color as item_type_color, it.icon as item_type_icon,
 			       a.level + 1 as level
 			FROM items p
 			JOIN workspaces w ON p.workspace_id = w.id
 			LEFT JOIN item_types it ON p.item_type_id = it.id
 			JOIN ancestors a ON p.id = a.parent_id
 		)
-		SELECT id, workspace_id, item_type_id, title, description, is_task,
+		SELECT id, workspace_id, workspace_item_number, item_type_id, title, description, is_task,
 		       milestone_id, assignee_id, creator_id, custom_field_values, parent_id,
 		       created_at, updated_at,
-		       workspace_name, item_type_name, item_type_color, item_type_icon, level
+		       workspace_name, workspace_key, item_type_name, item_type_color, item_type_icon, level
 		FROM ancestors
 		WHERE id != ? -- Exclude the original item
 		ORDER BY level DESC -- Root first, then down to direct parent
@@ -68,14 +68,14 @@ func (h *HierarchyService) GetAncestors(itemID int) ([]models.Item, error) {
 		var itemTypeID, milestoneID, assigneeID, creatorID sql.NullInt64
 		var customFieldValuesJSON sql.NullString
 		var parentID sql.NullInt64
-		var workspaceName, itemTypeName, itemTypeColor, itemTypeIcon sql.NullString
+		var workspaceName, workspaceKey, itemTypeName, itemTypeColor, itemTypeIcon sql.NullString
 		var level int
 
 		err := rows.Scan(
-			&item.ID, &item.WorkspaceID, &itemTypeID, &item.Title, &item.Description, &item.IsTask,
+			&item.ID, &item.WorkspaceID, &item.WorkspaceItemNumber, &itemTypeID, &item.Title, &item.Description, &item.IsTask,
 			&milestoneID, &assigneeID, &creatorID, &customFieldValuesJSON, &parentID,
 			&item.CreatedAt, &item.UpdatedAt,
-			&workspaceName, &itemTypeName, &itemTypeColor, &itemTypeIcon, &level,
+			&workspaceName, &workspaceKey, &itemTypeName, &itemTypeColor, &itemTypeIcon, &level,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan ancestor: %w", err)
@@ -105,6 +105,9 @@ func (h *HierarchyService) GetAncestors(itemID int) ([]models.Item, error) {
 		if workspaceName.Valid {
 			item.WorkspaceName = workspaceName.String
 		}
+		if workspaceKey.Valid {
+			item.WorkspaceKey = workspaceKey.String
+		}
 		if itemTypeName.Valid {
 			item.ItemTypeName = itemTypeName.String
 		}
@@ -126,10 +129,10 @@ func (h *HierarchyService) GetDescendants(itemID, maxDepth int) ([]models.Item, 
 	query := `
 		WITH RECURSIVE descendants AS (
 			-- Base case: get direct children
-			SELECT i.id, i.workspace_id, i.item_type_id, i.title, i.description, i.is_task,
+			SELECT i.id, i.workspace_id, i.workspace_item_number, i.item_type_id, i.title, i.description, i.is_task,
 			       i.milestone_id, i.assignee_id, i.creator_id, i.custom_field_values, i.parent_id,
 			       i.created_at, i.updated_at,
-			       w.name as workspace_name, it.name as item_type_name,
+			       w.name as workspace_name, w.key as workspace_key, it.name as item_type_name,
 			       1 as depth
 			FROM items i
 			JOIN workspaces w ON i.workspace_id = w.id
@@ -139,10 +142,10 @@ func (h *HierarchyService) GetDescendants(itemID, maxDepth int) ([]models.Item, 
 			UNION ALL
 
 			-- Recursive case: get children of descendants
-			SELECT i.id, i.workspace_id, i.item_type_id, i.title, i.description, i.is_task,
+			SELECT i.id, i.workspace_id, i.workspace_item_number, i.item_type_id, i.title, i.description, i.is_task,
 			       i.milestone_id, i.assignee_id, i.creator_id, i.custom_field_values, i.parent_id,
 			       i.created_at, i.updated_at,
-			       w.name as workspace_name, it.name as item_type_name,
+			       w.name as workspace_name, w.key as workspace_key, it.name as item_type_name,
 			       d.depth + 1 as depth
 			FROM items i
 			JOIN workspaces w ON i.workspace_id = w.id
@@ -150,10 +153,10 @@ func (h *HierarchyService) GetDescendants(itemID, maxDepth int) ([]models.Item, 
 			JOIN descendants d ON i.parent_id = d.id
 			WHERE d.depth < ?
 		)
-		SELECT id, workspace_id, item_type_id, title, description, is_task,
+		SELECT id, workspace_id, workspace_item_number, item_type_id, title, description, is_task,
 		       milestone_id, assignee_id, creator_id, custom_field_values, parent_id,
 		       created_at, updated_at,
-		       workspace_name, item_type_name, depth
+		       workspace_name, workspace_key, item_type_name, depth
 		FROM descendants
 		ORDER BY depth ASC, created_at ASC
 	`
@@ -175,14 +178,14 @@ func (h *HierarchyService) GetDescendants(itemID, maxDepth int) ([]models.Item, 
 		var itemTypeID, milestoneID, assigneeID, creatorID sql.NullInt64
 		var customFieldValuesJSON sql.NullString
 		var parentID sql.NullInt64
-		var workspaceName, itemTypeName sql.NullString
+		var workspaceName, workspaceKey, itemTypeName sql.NullString
 		var depth int
 
 		err := rows.Scan(
-			&item.ID, &item.WorkspaceID, &itemTypeID, &item.Title, &item.Description, &item.IsTask,
+			&item.ID, &item.WorkspaceID, &item.WorkspaceItemNumber, &itemTypeID, &item.Title, &item.Description, &item.IsTask,
 			&milestoneID, &assigneeID, &creatorID, &customFieldValuesJSON, &parentID,
 			&item.CreatedAt, &item.UpdatedAt,
-			&workspaceName, &itemTypeName, &depth,
+			&workspaceName, &workspaceKey, &itemTypeName, &depth,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan descendant: %w", err)
@@ -211,6 +214,9 @@ func (h *HierarchyService) GetDescendants(itemID, maxDepth int) ([]models.Item, 
 		}
 		if workspaceName.Valid {
 			item.WorkspaceName = workspaceName.String
+		}
+		if workspaceKey.Valid {
+			item.WorkspaceKey = workspaceKey.String
 		}
 		if itemTypeName.Valid {
 			item.ItemTypeName = itemTypeName.String
@@ -258,10 +264,10 @@ func (h *HierarchyService) CountDescendants(itemID int) (int, error) {
 // GetChildren returns direct children of an item
 func (h *HierarchyService) GetChildren(itemID int) ([]models.Item, error) {
 	query := `
-		SELECT i.id, i.workspace_id, i.item_type_id, i.title, i.description, i.is_task,
+		SELECT i.id, i.workspace_id, i.workspace_item_number, i.item_type_id, i.title, i.description, i.is_task,
 		       i.milestone_id, i.assignee_id, i.creator_id, i.custom_field_values, i.parent_id,
 		       i.created_at, i.updated_at,
-		       w.name as workspace_name, it.name as item_type_name
+		       w.name as workspace_name, w.key as workspace_key, it.name as item_type_name
 		FROM items i
 		JOIN workspaces w ON i.workspace_id = w.id
 		LEFT JOIN item_types it ON i.item_type_id = it.id
@@ -281,13 +287,13 @@ func (h *HierarchyService) GetChildren(itemID int) ([]models.Item, error) {
 		var itemTypeID, milestoneID, assigneeID, creatorID sql.NullInt64
 		var customFieldValuesJSON sql.NullString
 		var parentID sql.NullInt64
-		var workspaceName, itemTypeName sql.NullString
+		var workspaceName, workspaceKey, itemTypeName sql.NullString
 
 		err := rows.Scan(
-			&item.ID, &item.WorkspaceID, &itemTypeID, &item.Title, &item.Description, &item.IsTask,
+			&item.ID, &item.WorkspaceID, &item.WorkspaceItemNumber, &itemTypeID, &item.Title, &item.Description, &item.IsTask,
 			&milestoneID, &assigneeID, &creatorID, &customFieldValuesJSON, &parentID,
 			&item.CreatedAt, &item.UpdatedAt,
-			&workspaceName, &itemTypeName,
+			&workspaceName, &workspaceKey, &itemTypeName,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan child: %w", err)
@@ -316,6 +322,9 @@ func (h *HierarchyService) GetChildren(itemID int) ([]models.Item, error) {
 		}
 		if workspaceName.Valid {
 			item.WorkspaceName = workspaceName.String
+		}
+		if workspaceKey.Valid {
+			item.WorkspaceKey = workspaceKey.String
 		}
 		if itemTypeName.Valid {
 			item.ItemTypeName = itemTypeName.String
@@ -348,10 +357,10 @@ func (h *HierarchyService) GetRoot(itemID int) (*models.Item, error) {
 			FROM items i
 			JOIN path_to_root p ON i.id = p.parent_id
 		)
-		SELECT i.id, i.workspace_id, i.item_type_id, i.title, i.description, i.is_task,
+		SELECT i.id, i.workspace_id, i.workspace_item_number, i.item_type_id, i.title, i.description, i.is_task,
 		       i.milestone_id, i.assignee_id, i.creator_id, i.custom_field_values, i.parent_id,
 		       i.created_at, i.updated_at,
-		       w.name as workspace_name, it.name as item_type_name
+		       w.name as workspace_name, w.key as workspace_key, it.name as item_type_name
 		FROM items i
 		JOIN workspaces w ON i.workspace_id = w.id
 		LEFT JOIN item_types it ON i.item_type_id = it.id
@@ -362,13 +371,13 @@ func (h *HierarchyService) GetRoot(itemID int) (*models.Item, error) {
 	var itemTypeID, milestoneID, assigneeID, creatorID sql.NullInt64
 	var customFieldValuesJSON sql.NullString
 	var parentID sql.NullInt64
-	var workspaceName, itemTypeName sql.NullString
+	var workspaceName, workspaceKey, itemTypeName sql.NullString
 
 	err := h.db.QueryRow(query, itemID).Scan(
-		&item.ID, &item.WorkspaceID, &itemTypeID, &item.Title, &item.Description, &item.IsTask,
+		&item.ID, &item.WorkspaceID, &item.WorkspaceItemNumber, &itemTypeID, &item.Title, &item.Description, &item.IsTask,
 		&milestoneID, &assigneeID, &creatorID, &customFieldValuesJSON, &parentID,
 		&item.CreatedAt, &item.UpdatedAt,
-		&workspaceName, &itemTypeName,
+		&workspaceName, &workspaceKey, &itemTypeName,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil // No root found (shouldn't happen in a well-formed hierarchy)
@@ -400,6 +409,9 @@ func (h *HierarchyService) GetRoot(itemID int) (*models.Item, error) {
 	}
 	if workspaceName.Valid {
 		item.WorkspaceName = workspaceName.String
+	}
+	if workspaceKey.Valid {
+		item.WorkspaceKey = workspaceKey.String
 	}
 	if itemTypeName.Valid {
 		item.ItemTypeName = itemTypeName.String

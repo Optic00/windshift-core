@@ -92,6 +92,26 @@ function extractItemKeys(toolCalls) {
   }
 }
 
+function retryLastMessage() {
+  if (loading) return;
+  // Remove the last assistant error message
+  const lastMsg = messages[messages.length - 1];
+  if (!lastMsg || !lastMsg.error) return;
+  const withoutError = messages.slice(0, -1);
+  // Find the last user message to re-send
+  let userText = '';
+  for (let i = withoutError.length - 1; i >= 0; i--) {
+    if (withoutError[i].role === 'user') {
+      userText = withoutError[i].content;
+      break;
+    }
+  }
+  if (!userText) return;
+  // Remove both the error and the user message, then re-send
+  messages = withoutError.slice(0, -1);
+  sendMessage(userText);
+}
+
 function clearHistory() {
   messages = [];
   error = '';
@@ -111,6 +131,7 @@ export const chatStore = {
   show,
   hide,
   sendMessage,
+  retryLastMessage,
   clearHistory,
   loadConnections,
 };

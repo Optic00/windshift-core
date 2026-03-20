@@ -203,7 +203,7 @@
     // Load iterations for sprint filter
     if (workspaceId) {
       try {
-        const iters = await api.iterations.getAll({ workspace_id: workspaceId, include_global: true });
+        const iters = await api.iterations.getAll({ workspace_id: workspaceId, include_global: !workspace?.is_personal });
         allIterations = iters || [];
       } catch (error) {
         console.error('Failed to load iterations:', error);

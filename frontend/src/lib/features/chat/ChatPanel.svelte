@@ -1,6 +1,6 @@
 <script>
   import { fly } from 'svelte/transition';
-  import { MessageSquare, X, Loader2, Send, ChevronDown } from 'lucide-svelte';
+  import { MessageSquare, X, Loader2, Send, ChevronDown, RefreshCw } from 'lucide-svelte';
   import { useEventListener } from 'runed';
   import MilkdownEditor from '../../editors/LazyMilkdownEditor.svelte';
   import { chatStore } from '../../stores/chatStore.svelte.js';
@@ -283,6 +283,18 @@
               <div class="max-w-full rounded-lg px-3 py-2 text-sm" style="background-color: var(--ds-surface-sunken); color: var(--ds-text);">
                 {#if msg.error}
                   <p class="text-sm" style="color: var(--ds-text-danger);">{msg.error}</p>
+                  {#if msg === chatStore.messages[chatStore.messages.length - 1] && !chatStore.loading}
+                    <button
+                      onclick={() => chatStore.retryLastMessage()}
+                      class="mt-1.5 flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors"
+                      style="color: var(--ds-text-subtle); background-color: var(--ds-surface);"
+                      onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'}
+                      onmouseleave={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-surface)'}
+                    >
+                      <RefreshCw class="w-3 h-3" />
+                      Retry
+                    </button>
+                  {/if}
                 {:else}
                   <div class="chat-message-content">
                     <MilkdownEditor content={preprocessItemKeys(msg.content)} readonly={true} showToolbar={false} compact={true} />

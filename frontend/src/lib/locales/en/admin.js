@@ -89,6 +89,10 @@ export default {
         description: 'Configure inbound and outbound channels, portals, and webhooks',
       },
       assets: { title: 'Assets', description: 'Manage asset sets, types, categories, and assets' },
+      aiFeatures: {
+        title: 'AI Features',
+        description: 'Configure which AI features are enabled and their LLM connections',
+      },
       llmConnections: {
         title: 'AI Connections',
         description: 'Configure AI model providers for intelligent features',
@@ -641,6 +645,34 @@ export default {
       by: 'By',
       settingsSavedSuccess: 'Module settings saved successfully!',
       failedToSave: 'Failed to save module settings. Please try again.',
+    },
+
+    // AI Features Settings
+    aiFeatures: {
+      title: 'AI Features',
+      subtitle: 'Configure which AI features are enabled and assign specific LLM connections',
+      loading: 'Loading AI feature configuration...',
+      saveSuccess: 'AI features configuration saved',
+      saveFailed: 'Failed to save AI features configuration',
+      loadFailed: 'Failed to load AI features configuration',
+      noConnections: 'No LLM connections configured. Add connections in AI Connections first.',
+      modeDefault: 'Use default',
+      modeSpecific: 'Use specific connection',
+      modeDisabled: 'Disabled',
+      selectConnection: 'Select connection...',
+      scheduleLabel: 'Generation frequency',
+      scheduleDaily: 'Once per day',
+      scheduleEvery6h: 'Every 6 hours',
+      features: {
+        ai_chat: { name: 'AI Chat', description: 'Interactive chat with workspace-aware AI assistant' },
+        daily_briefing: { name: 'Daily Briefing', description: 'Automated daily summaries with configurable generation frequency' },
+        plan_my_day: { name: 'Plan My Day', description: 'AI-powered daily task planning and prioritization' },
+        catch_me_up: { name: 'Catch Me Up', description: 'Get a summary of recent activity on a work item' },
+        find_similar: { name: 'Find Similar', description: 'Find similar work items using AI analysis' },
+        decompose: { name: 'Decompose', description: 'Break down work items into smaller sub-tasks' },
+        release_notes: { name: 'Release Notes', description: 'Generate release notes from milestone progress' },
+        dependency_analysis: { name: 'Dependency Analysis', description: 'Analyze and suggest dependencies between items' },
+      },
     },
 
     // Workspace Roles

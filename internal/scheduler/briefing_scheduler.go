@@ -91,18 +91,21 @@ func (bs *BriefingScheduler) safeGenerateAllBriefings() {
 }
 
 func (bs *BriefingScheduler) generateAllBriefings() {
-	// Check ai_chat_enabled system setting
-	var val string
-	if err := bs.db.QueryRow("SELECT value FROM system_settings WHERE key = ?", "ai_chat_enabled").Scan(&val); err != nil || !strings.EqualFold(val, "true") {
-		slog.Info("briefing: generation skipped, AI not enabled")
+	// Check per-feature config for daily_briefing
+	llmClient, err := bs.llmManager.ResolveForFeature("daily_briefing", bs.db)
+	if err != nil {
+		slog.Info("briefing: generation skipped", slog.Any("reason", err))
+		return
+	}
+	if llmClient == nil || !llmClient.Available() {
+		slog.Info("briefing: generation skipped, AI not available")
 		return
 	}
 
-	// Check LLM availability
-	llmClient, err := bs.llmManager.Resolve(0)
-	if err != nil || llmClient == nil || !llmClient.Available() {
-		slog.Info("briefing: generation skipped, AI not available", slog.Any("error", err))
-		return
+	// Check schedule: "every_6h" allows regeneration on the same day
+	regenerate := false
+	if cfg, err := llm.LoadAIFeaturesConfig(bs.db); err == nil {
+		regenerate = cfg["daily_briefing"].Schedule == "every_6h"
 	}
 
 	// Get active users – empty-context filtering happens in generateBriefingForUser
@@ -141,7 +144,7 @@ func (bs *BriefingScheduler) generateAllBriefings() {
 					slog.Error("panic in briefing generation", slog.Int("user_id", u.ID), slog.Any("panic", r))
 				}
 			}()
-			bs.generateBriefingForUser(llmClient, u.ID, u.FirstName, u.LastName, u.Timezone)
+			bs.generateBriefingForUser(llmClient, u.ID, u.FirstName, u.LastName, u.Timezone, regenerate)
 		}()
 		if i < len(users)-1 {
 			time.Sleep(3 * time.Second)
@@ -149,14 +152,16 @@ func (bs *BriefingScheduler) generateAllBriefings() {
 	}
 }
 
-func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, userID int, firstName, lastName, timezone string) {
+func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, userID int, firstName, lastName, timezone string, regenerate bool) {
 	today := time.Now().Format("2006-01-02")
 
-	// Skip if today's briefing already exists (successful)
-	var exists int
-	if err := bs.db.QueryRow("SELECT 1 FROM daily_briefings WHERE user_id = ? AND date = ? AND error IS NULL", userID, today).Scan(&exists); err == nil {
-		slog.Debug("briefing: already generated today", slog.Int("user_id", userID))
-		return
+	// Skip if today's briefing already exists (successful), unless regeneration is enabled
+	if !regenerate {
+		var exists int
+		if err := bs.db.QueryRow("SELECT 1 FROM daily_briefings WHERE user_id = ? AND date = ? AND error IS NULL", userID, today).Scan(&exists); err == nil {
+			slog.Debug("briefing: already generated today", slog.Int("user_id", userID))
+			return
+		}
 	}
 
 	start := time.Now()
@@ -256,11 +261,15 @@ func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, userI
 
 	var itemLines []string
 	itemQuery := fmt.Sprintf(`SELECT w.key, i.workspace_item_number, i.title,
-		COALESCE(st.name, ''), COALESCE(p.name, ''), COALESCE(CAST(i.due_date AS TEXT), '')
+		COALESCE(st.name, ''), COALESCE(p.name, ''), COALESCE(CAST(i.due_date AS TEXT), ''),
+		COALESCE(m.name, ''), COALESCE(CAST(m.target_date AS TEXT), ''),
+		COALESCE(iter.name, ''), COALESCE(CAST(iter.end_date AS TEXT), '')
 		FROM items i
 		JOIN workspaces w ON i.workspace_id = w.id
 		LEFT JOIN statuses st ON i.status_id = st.id
 		LEFT JOIN priorities p ON i.priority_id = p.id
+		LEFT JOIN milestones m ON i.milestone_id = m.id
+		LEFT JOIN iterations iter ON i.iteration_id = iter.id
 		LEFT JOIN status_categories sc ON st.category_id = sc.id
 		WHERE i.workspace_id IN (%s) AND (i.assignee_id = ?%s)
 		AND COALESCE(sc.is_completed, FALSE) = FALSE
@@ -287,16 +296,33 @@ func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, userI
 			var wsKey string
 			var itemNum int
 			var title, status, priority, dueDate string
-			if err := itemRows.Scan(&wsKey, &itemNum, &title, &status, &priority, &dueDate); err == nil {
+			var milestoneName, milestoneTargetDate, iterationName, iterationEndDate string
+			if err := itemRows.Scan(&wsKey, &itemNum, &title, &status, &priority, &dueDate, &milestoneName, &milestoneTargetDate, &iterationName, &iterationEndDate); err == nil {
 				line := fmt.Sprintf("- [%s-%d] %s", wsKey, itemNum, title)
 				if priority != "" {
 					line += fmt.Sprintf(" | Priority: %s", priority)
 				}
 				if dueDate != "" {
 					line += fmt.Sprintf(" | Due: %s", dueDate)
+				} else {
+					line += " | Due: none"
 				}
 				if status != "" {
 					line += fmt.Sprintf(" | Status: %s", status)
+				}
+				if milestoneName != "" {
+					ms := fmt.Sprintf(" | Milestone: %s", milestoneName)
+					if milestoneTargetDate != "" {
+						ms += fmt.Sprintf(" (target: %s)", milestoneTargetDate)
+					}
+					line += ms
+				}
+				if iterationName != "" {
+					it := fmt.Sprintf(" | Iteration: %s", iterationName)
+					if iterationEndDate != "" {
+						it += fmt.Sprintf(" (ends: %s)", iterationEndDate)
+					}
+					line += it
 				}
 				itemLines = append(itemLines, line)
 			}
@@ -366,13 +392,14 @@ Group by item, highlight important updates. Mention who made key changes.
 
 ## Today's Focus
 Based on the user's assigned items, suggest what to prioritize today.
-Consider: due dates, priority, items with recent activity, blockers.
+Consider: due dates, priority, milestone target dates, iteration end dates, items with recent activity, blockers.
 
 ## Upcoming Deadlines
-List items due within the next 7 days.
+List items due within the next 7 days. Also include items whose milestone target date or iteration end date falls within the next 7 days.
 
 Be concise and actionable. Use item keys (like PROJ-42).
-If there's little activity, keep it brief.`
+If there's little activity, keep it brief.
+Only reference dates explicitly provided in the item data. Never invent or assume dates.`
 
 	loc, err := time.LoadLocation(timezone)
 	if err != nil {

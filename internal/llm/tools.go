@@ -161,6 +161,36 @@ func BuiltinTools() []ToolDefinition {
 		{
 			Type: "function",
 			Function: FunctionDef{
+				Name:        "update_item",
+				Description: "Update an item's fields. Identify the item by item_id or item_key. For status, priority, milestone, iteration, and assignee you can pass either the numeric _id or a _name which will be resolved automatically. Pass null to clear optional fields like due_date, milestone, iteration, project, or parent.",
+				Parameters: json.RawMessage(`{
+					"type": "object",
+					"properties": {
+						"item_id": {"type": "integer", "description": "The item numeric ID"},
+						"item_key": {"type": "string", "description": "The item key like PROJ-42"},
+						"title": {"type": "string", "description": "New title for the item"},
+						"description": {"type": "string", "description": "New description for the item"},
+						"status_id": {"type": "integer", "description": "Status ID to set"},
+						"status_name": {"type": "string", "description": "Status name to resolve (e.g. 'Done', 'In Progress')"},
+						"priority_id": {"type": "integer", "description": "Priority ID to set"},
+						"priority_name": {"type": "string", "description": "Priority name to resolve (e.g. 'High', 'Critical')"},
+						"assignee_id": {"type": "integer", "description": "Assignee user ID to set"},
+						"assignee_name": {"type": "string", "description": "Assignee full name to resolve (e.g. 'John Doe')"},
+						"due_date": {"type": ["string", "null"], "description": "Due date in YYYY-MM-DD format, or null to clear"},
+						"milestone_id": {"type": ["integer", "null"], "description": "Milestone ID to set, or null to clear"},
+						"milestone_name": {"type": "string", "description": "Milestone name to resolve (e.g. 'v2.0')"},
+						"iteration_id": {"type": ["integer", "null"], "description": "Iteration ID to set, or null to clear"},
+						"iteration_name": {"type": "string", "description": "Iteration name to resolve (e.g. 'Sprint 3')"},
+						"project_id": {"type": ["integer", "null"], "description": "Time project ID to set, or null to clear"},
+						"parent_id": {"type": ["integer", "null"], "description": "Parent item ID to set, or null to clear"},
+						"custom_field_values": {"type": "object", "description": "Custom field values as key-value pairs"}
+					}
+				}`),
+			},
+		},
+		{
+			Type: "function",
+			Function: FunctionDef{
 				Name:        "log_time",
 				Description: "Log a time entry on a time tracking project. Requires project_id, description, and date. Provide either duration (e.g. '2h', '30m', '1h30m', '1d') OR start_time and end_time (HH:MM format). Optionally link to an item by item_id.",
 				Parameters: json.RawMessage(`{

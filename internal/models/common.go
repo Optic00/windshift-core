@@ -35,8 +35,26 @@ type SetupStatus struct {
 	AdminUserCreated      bool `json:"admin_user_created"`
 	TimeTrackingEnabled   bool `json:"time_tracking_enabled"`
 	TestManagementEnabled bool `json:"test_management_enabled"`
-	AIChatEnabled         bool `json:"ai_chat_enabled"`
 }
+
+// AIFeatureMode controls how a feature resolves its LLM connection.
+type AIFeatureMode string
+
+const (
+	AIFeatureModeDefault  AIFeatureMode = "default"
+	AIFeatureModeSpecific AIFeatureMode = "specific"
+	AIFeatureModeDisabled AIFeatureMode = "disabled"
+)
+
+// AIFeatureConfig is the per-feature LLM configuration.
+type AIFeatureConfig struct {
+	Mode         AIFeatureMode `json:"mode"`
+	ConnectionID int           `json:"connection_id"`
+	Schedule     string        `json:"schedule,omitempty"` // "daily" (default) or "every_6h" — only meaningful for daily_briefing
+}
+
+// AIFeaturesConfig maps feature keys to their configuration.
+type AIFeaturesConfig map[string]AIFeatureConfig
 
 // SetupRequest represents the initial setup configuration
 type SetupRequest struct {
@@ -57,7 +75,6 @@ type SetupUser struct {
 type ModuleSettings struct {
 	TimeTrackingEnabled   bool `json:"time_tracking_enabled"`
 	TestManagementEnabled bool `json:"test_management_enabled"`
-	AIChatEnabled         bool `json:"ai_chat_enabled"`
 }
 
 // APIToken represents a bearer token for API authentication

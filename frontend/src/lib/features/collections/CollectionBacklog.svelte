@@ -163,7 +163,7 @@
       try {
         const iters = await api.iterations.getAll({
           workspace_id: workspaceId,
-          include_global: true,
+          include_global: !workspace?.is_personal,
         });
         allIterations = iters || [];
       } catch (error) {

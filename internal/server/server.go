@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -834,7 +835,14 @@ func (s *Server) initialize() error {
 	}
 
 	// Build API middleware chain
-	corsMiddleware := createCORSMiddleware(cfg.AllowedHosts, effectivePort, cfg.DisableCSRF, cfg.UseProxy)
+	// Derive scheme from BASE_URL for CORS origin construction
+	corsScheme := ""
+	if cfg.BaseURL != "" {
+		if parsed, err := url.Parse(cfg.BaseURL); err == nil {
+			corsScheme = parsed.Scheme
+		}
+	}
+	corsMiddleware := createCORSMiddleware(cfg.AllowedHosts, effectivePort, corsScheme, cfg.DisableCSRF, cfg.UseProxy)
 	apiMiddleware := router.MiddlewareChain{corsMiddleware, authMiddleware.OptionalAuth}
 
 	if !cfg.DisableCSRF {
