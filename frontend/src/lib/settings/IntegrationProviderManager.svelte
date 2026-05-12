@@ -19,6 +19,7 @@
 
 	const providerTypes = [
 		{ value: 'notion', label: 'Notion' },
+		{ value: 'todoist', label: 'Todoist' },
 	];
 
 	let providers = $state([]);

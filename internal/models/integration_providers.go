@@ -6,7 +6,8 @@ import "time"
 type IntegrationProviderType string
 
 const (
-	IntegrationProviderNotion IntegrationProviderType = "notion"
+	IntegrationProviderNotion  IntegrationProviderType = "notion"
+	IntegrationProviderTodoist IntegrationProviderType = "todoist"
 	// Future: IntegrationProviderConfluence, IntegrationProviderGoogleDocs
 )
 
