@@ -1610,6 +1610,68 @@ func miscMigrations() []Migration {
 			SQLite:        "ALTER TABLE notifications ADD COLUMN seen_at DATETIME",
 			Postgres:      "ALTER TABLE notifications ADD COLUMN seen_at TIMESTAMP",
 		},
+		// Milestone-from-tag automation: stable upsert key on milestones,
+		// per-repo glob filters, and the tag/branch idempotency ledger.
+		{
+			Version:       "col_milestones_external_key",
+			Name:          "milestones.external_key",
+			CheckSQLite:   sqliteColumnCheck("milestones", "external_key"),
+			CheckPostgres: pgColumnCheck("milestones", "external_key"),
+			SQLite:        "ALTER TABLE milestones ADD COLUMN external_key TEXT",
+			Postgres:      "ALTER TABLE milestones ADD COLUMN external_key TEXT",
+		},
+		{
+			Version:       "idx_uq_milestones_workspace_external_key",
+			Name:          "uq_milestones_workspace_external_key (partial unique)",
+			CheckSQLite:   sqliteIndexCheck("uq_milestones_workspace_external_key"),
+			CheckPostgres: pgIndexCheck("uq_milestones_workspace_external_key"),
+			SQLite:        "CREATE UNIQUE INDEX IF NOT EXISTS uq_milestones_workspace_external_key ON milestones(workspace_id, external_key) WHERE external_key IS NOT NULL",
+			Postgres:      "CREATE UNIQUE INDEX IF NOT EXISTS uq_milestones_workspace_external_key ON milestones(workspace_id, external_key) WHERE external_key IS NOT NULL",
+		},
+		{
+			Version:       "col_workspace_repositories_milestone_tag_pattern",
+			Name:          "workspace_repositories.milestone_tag_pattern",
+			CheckSQLite:   sqliteColumnCheck("workspace_repositories", "milestone_tag_pattern"),
+			CheckPostgres: pgColumnCheck("workspace_repositories", "milestone_tag_pattern"),
+			SQLite:        "ALTER TABLE workspace_repositories ADD COLUMN milestone_tag_pattern TEXT NOT NULL DEFAULT 'v*'",
+			Postgres:      "ALTER TABLE workspace_repositories ADD COLUMN milestone_tag_pattern TEXT NOT NULL DEFAULT 'v*'",
+		},
+		{
+			Version:       "col_workspace_repositories_milestone_branch_pattern",
+			Name:          "workspace_repositories.milestone_branch_pattern",
+			CheckSQLite:   sqliteColumnCheck("workspace_repositories", "milestone_branch_pattern"),
+			CheckPostgres: pgColumnCheck("workspace_repositories", "milestone_branch_pattern"),
+			SQLite:        "ALTER TABLE workspace_repositories ADD COLUMN milestone_branch_pattern TEXT NOT NULL DEFAULT 'release/*'",
+			Postgres:      "ALTER TABLE workspace_repositories ADD COLUMN milestone_branch_pattern TEXT NOT NULL DEFAULT 'release/*'",
+		},
+		{
+			Version:       "inline_scm_processed_refs",
+			Name:          "scm_processed_refs (tag/branch idempotency ledger)",
+			CheckSQLite:   sqliteTableCheck("scm_processed_refs"),
+			CheckPostgres: pgTableCheck("scm_processed_refs"),
+			SQLite: `
+				CREATE TABLE IF NOT EXISTS scm_processed_refs (
+					workspace_repository_id INTEGER NOT NULL,
+					ref_type                TEXT NOT NULL,
+					ref_name                TEXT NOT NULL,
+					sha                     TEXT,
+					processed_at            DATETIME DEFAULT CURRENT_TIMESTAMP,
+					PRIMARY KEY (workspace_repository_id, ref_type, ref_name),
+					FOREIGN KEY (workspace_repository_id) REFERENCES workspace_repositories(id) ON DELETE CASCADE
+				);
+			`,
+			Postgres: `
+				CREATE TABLE IF NOT EXISTS scm_processed_refs (
+					workspace_repository_id INTEGER NOT NULL,
+					ref_type                TEXT NOT NULL,
+					ref_name                TEXT NOT NULL,
+					sha                     TEXT,
+					processed_at            TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+					PRIMARY KEY (workspace_repository_id, ref_type, ref_name),
+					FOREIGN KEY (workspace_repository_id) REFERENCES workspace_repositories(id) ON DELETE CASCADE
+				);
+			`,
+		},
 	}
 }
 
