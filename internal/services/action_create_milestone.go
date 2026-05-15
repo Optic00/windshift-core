@@ -1,12 +1,46 @@
 package services
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 
 	"windshift/internal/models"
 )
+
+// MilestoneCommitAttacher resolves "what shipped between two refs" and
+// attaches the referenced items to the milestone. Pulled out as an
+// interface so the executor doesn't import the scm package — the real
+// implementation lives at the wiring layer and combines
+// scm.SyncService.resolveProvider, scm.RefProvider.CompareCommits,
+// scm.ItemKeyDetector, and repository.MilestoneAttachRepository.
+//
+// Implementations should be idempotent: a re-run with the same args
+// must not duplicate item_milestones rows. The existing
+// scm_processed_commits ledger is the natural place to track this.
+type MilestoneCommitAttacher interface {
+	AttachCommitIssues(ctx context.Context, in MilestoneCommitAttachInput) (MilestoneCommitAttachResult, error)
+}
+
+// MilestoneCommitAttachInput names exactly what the executor knows. It
+// stays primitive so the interface adds no scm-package types to the
+// services-package surface.
+type MilestoneCommitAttachInput struct {
+	WorkspaceID     int
+	WorkspaceRepoID int
+	MilestoneID     int
+	BaseRef         string
+	HeadRef         string
+}
+
+// MilestoneCommitAttachResult is the summary the executor records in
+// stepResult.Output. AttachedItemIDs is informational; the source of
+// truth is item_milestones rows the attacher wrote.
+type MilestoneCommitAttachResult struct {
+	CommitsScanned  int
+	AttachedItemIDs []int
+}
 
 // CreateMilestoneNodeConfig is the JSON shape stored in
 // actions.action_nodes.node_config for `create_milestone` nodes. All
@@ -39,23 +73,44 @@ type CreateMilestoneNodeConfig struct {
 	CategoryID *int `json:"category_id,omitempty"`
 	// Description, if non-empty, is rendered + applied on insert only.
 	DescriptionTemplate string `json:"description_template,omitempty"`
+	// AttachCommitIssues, when true on a tag event, walks the commits
+	// since ref.prev_name and attaches each detected item key to the
+	// milestone. Requires a MilestoneCommitAttacher on the executor;
+	// without one the attempt is recorded as a non-fatal warning in
+	// stepResult.Output. Defaults to true so the user-visible behavior
+	// matches the "what shipped" mental model.
+	AttachCommitIssues *bool `json:"attach_commit_issues,omitempty"`
 }
 
 // CreateMilestoneExecutor implements the create_milestone node type. It
 // owns only the narrow deps it actually needs (PlanningService for
-// milestone CRUD, NodeAPI for substitution + chained event emission);
+// milestone CRUD, NodeAPI for substitution + chained event emission,
+// optional MilestoneCommitAttacher for the "since prev tag" attachment);
 // no implicit coupling to the wider ActionService.
 type CreateMilestoneExecutor struct {
 	planning *PlanningService
 	api      NodeAPI
+	attacher MilestoneCommitAttacher // optional
 }
 
 // NewCreateMilestoneExecutor returns an executor ready to register with
-// ActionService. Both deps are required; passing nil for either leaves
-// the executor in a state where Execute will return a configuration
-// error rather than panicking, so a partial DI wiring is debuggable.
+// ActionService. PlanningService + NodeAPI are required; attacher is
+// optional — without it tag events skip the commit-issue attachment
+// step with a warning in stepResult.Output. Passing nil for the
+// required deps leaves the executor in a state where Execute returns a
+// configuration error rather than panicking, so a partial DI wiring is
+// debuggable.
 func NewCreateMilestoneExecutor(planning *PlanningService, api NodeAPI) *CreateMilestoneExecutor {
 	return &CreateMilestoneExecutor{planning: planning, api: api}
+}
+
+// WithCommitAttacher wires the optional commit-issue attacher.
+// Returns the executor so the call chains at registration time:
+//
+//	as.RegisterNodeExecutor(NewCreateMilestoneExecutor(p, as).WithCommitAttacher(att))
+func (e *CreateMilestoneExecutor) WithCommitAttacher(att MilestoneCommitAttacher) *CreateMilestoneExecutor {
+	e.attacher = att
+	return e
 }
 
 // NodeType pins the node-type dispatch key.
@@ -186,7 +241,57 @@ func (e *CreateMilestoneExecutor) Execute(node *models.ActionNode, ctx *models.E
 		}
 	}
 
+	// Commit-issue attachment ("which items shipped in this release").
+	// Default-true and gated on tag events because the prev_tag range
+	// is only meaningful when a new tag is the head.
+	attachIssues := true
+	if config.AttachCommitIssues != nil {
+		attachIssues = *config.AttachCommitIssues
+	}
+	if isTagEvent && attachIssues {
+		e.runCommitIssueAttach(ctx, milestoneID, stepResult)
+	}
+
 	return nil
+}
+
+// runCommitIssueAttach is non-fatal: any failure is recorded in
+// stepResult.Output and the executor returns success, because the
+// milestone upsert (the user's primary intent) already succeeded.
+func (e *CreateMilestoneExecutor) runCommitIssueAttach(ctx *models.ExecutionContext, milestoneID int, stepResult *models.StepResult) {
+	if e.attacher == nil {
+		stepResult.Output["attach_commit_issues_skipped"] = "no MilestoneCommitAttacher wired"
+		return
+	}
+	prevRef, _ := ctx.Variables["new_ref.prev_name"].(string)
+	headRef, _ := ctx.Variables["new_ref.name"].(string)
+	if prevRef == "" || headRef == "" {
+		stepResult.Output["attach_commit_issues_skipped"] = "missing prev_name or ref.name (first tag in repo?)"
+		return
+	}
+	repoIDRaw, ok := ctx.Variables["new_repo.workspace_repository_id"]
+	if !ok {
+		stepResult.Output["attach_commit_issues_skipped"] = "missing repo.workspace_repository_id on event"
+		return
+	}
+	repoID, ok := coerceInt(repoIDRaw)
+	if !ok || repoID <= 0 {
+		stepResult.Output["attach_commit_issues_skipped"] = "non-integer repo.workspace_repository_id"
+		return
+	}
+	result, err := e.attacher.AttachCommitIssues(context.Background(), MilestoneCommitAttachInput{
+		WorkspaceID:     ctx.Event.WorkspaceID,
+		WorkspaceRepoID: repoID,
+		MilestoneID:     milestoneID,
+		BaseRef:         prevRef,
+		HeadRef:         headRef,
+	})
+	if err != nil {
+		stepResult.Output["attach_commit_issues_error"] = err.Error()
+		return
+	}
+	stepResult.Output["commits_scanned"] = result.CommitsScanned
+	stepResult.Output["attached_item_ids"] = result.AttachedItemIDs
 }
 
 // attachRelease pulls SCM details from the event payload and writes the

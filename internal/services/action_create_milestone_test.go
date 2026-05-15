@@ -1,7 +1,9 @@
 package services
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -9,6 +11,20 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/models"
 )
+
+// fakeCommitAttacher records its inputs and returns a canned result so
+// tests can assert what the executor passed without standing up a real
+// SCM provider or the ItemKeyDetector chain.
+type fakeCommitAttacher struct {
+	calls  []MilestoneCommitAttachInput
+	result MilestoneCommitAttachResult
+	err    error
+}
+
+func (f *fakeCommitAttacher) AttachCommitIssues(_ context.Context, in MilestoneCommitAttachInput) (MilestoneCommitAttachResult, error) {
+	f.calls = append(f.calls, in)
+	return f.result, f.err
+}
 
 // stubNodeAPI is the minimal NodeAPI used by executor tests. Substitute
 // here uses the real ActionService implementation by delegating to a
@@ -91,11 +107,12 @@ func branchEvent(workspaceID int, short string) *models.ActionEvent {
 		EventType:   models.ActionTriggerSCMReleaseBranchCreated,
 		WorkspaceID: workspaceID,
 		NewValues: map[string]interface{}{
-			"ref.name":       "release/" + short,
-			"ref.short":      short,
-			"ref.sha":        "branchsha",
-			"ref.type":       "branch",
-			"repo.full_name": "octo/demo",
+			"ref.name":                     "release/" + short,
+			"ref.short":                    short,
+			"ref.sha":                      "branchsha",
+			"ref.type":                     "branch",
+			"repo.full_name":               "octo/demo",
+			"repo.workspace_repository_id": 1,
 		},
 	}
 }
@@ -105,12 +122,13 @@ func tagEvent(workspaceID int, tagName, short, prev string) *models.ActionEvent 
 		EventType:   models.ActionTriggerSCMTagCreated,
 		WorkspaceID: workspaceID,
 		NewValues: map[string]interface{}{
-			"ref.name":       tagName,
-			"ref.short":      short,
-			"ref.sha":        "tagsha",
-			"ref.type":       "tag",
-			"ref.prev_name":  prev,
-			"repo.full_name": "octo/demo",
+			"ref.name":                     tagName,
+			"ref.short":                    short,
+			"ref.sha":                      "tagsha",
+			"ref.type":                     "tag",
+			"ref.prev_name":                prev,
+			"repo.full_name":               "octo/demo",
+			"repo.workspace_repository_id": 1,
 		},
 	}
 }
@@ -283,6 +301,114 @@ func TestCreateMilestone_EmptyUpsertKey_Fails(t *testing.T) {
 	err := exec.Execute(node, buildCtx(branchEvent(1, "")), step)
 	if err == nil {
 		t.Fatal("expected error for empty upsert_key, got nil")
+	}
+}
+
+func TestCreateMilestone_AttachCommitIssues_CallsAttacher(t *testing.T) {
+	db := newCreateMilestoneTestDB(t)
+	att := &fakeCommitAttacher{
+		result: MilestoneCommitAttachResult{
+			CommitsScanned:  4,
+			AttachedItemIDs: []int{11, 22},
+		},
+	}
+	exec := NewCreateMilestoneExecutor(NewPlanningService(db), &stubNodeAPI{}).WithCommitAttacher(att)
+
+	step := runExecutor(t, exec, CreateMilestoneNodeConfig{
+		NameTemplate:      "Release {{ref.short}}",
+		UpsertKeyTemplate: "{{ref.short}}",
+	}, tagEvent(1, "v1.2", "1.2", "v1.1"))
+
+	if len(att.calls) != 1 {
+		t.Fatalf("attacher called %d times, want 1", len(att.calls))
+	}
+	got := att.calls[0]
+	if got.WorkspaceID != 1 || got.WorkspaceRepoID != 1 {
+		t.Fatalf("attacher input ws=%d repo=%d, want 1/1", got.WorkspaceID, got.WorkspaceRepoID)
+	}
+	if got.BaseRef != "v1.1" || got.HeadRef != "v1.2" {
+		t.Fatalf("attacher refs base=%q head=%q, want v1.1/v1.2", got.BaseRef, got.HeadRef)
+	}
+	if step.Output["commits_scanned"] != 4 {
+		t.Fatalf("commits_scanned = %v, want 4", step.Output["commits_scanned"])
+	}
+	ids, _ := step.Output["attached_item_ids"].([]int)
+	if len(ids) != 2 || ids[0] != 11 || ids[1] != 22 {
+		t.Fatalf("attached_item_ids = %v, want [11 22]", step.Output["attached_item_ids"])
+	}
+}
+
+func TestCreateMilestone_AttachCommitIssues_SkipsOnFirstTag(t *testing.T) {
+	db := newCreateMilestoneTestDB(t)
+	att := &fakeCommitAttacher{}
+	exec := NewCreateMilestoneExecutor(NewPlanningService(db), &stubNodeAPI{}).WithCommitAttacher(att)
+
+	// prev empty == first matching tag in repo; attacher must not be called.
+	step := runExecutor(t, exec, CreateMilestoneNodeConfig{
+		NameTemplate:      "Release {{ref.short}}",
+		UpsertKeyTemplate: "{{ref.short}}",
+	}, tagEvent(1, "v1.0", "1.0", ""))
+
+	if len(att.calls) != 0 {
+		t.Fatalf("attacher called %d times on first-tag, want 0", len(att.calls))
+	}
+	if step.Output["attach_commit_issues_skipped"] == nil {
+		t.Fatalf("expected attach_commit_issues_skipped in output, got %v", step.Output)
+	}
+}
+
+func TestCreateMilestone_AttachCommitIssues_DisabledByConfig(t *testing.T) {
+	db := newCreateMilestoneTestDB(t)
+	att := &fakeCommitAttacher{result: MilestoneCommitAttachResult{CommitsScanned: 7}}
+	exec := NewCreateMilestoneExecutor(NewPlanningService(db), &stubNodeAPI{}).WithCommitAttacher(att)
+
+	off := false
+	runExecutor(t, exec, CreateMilestoneNodeConfig{
+		NameTemplate:       "Release {{ref.short}}",
+		UpsertKeyTemplate:  "{{ref.short}}",
+		AttachCommitIssues: &off,
+	}, tagEvent(1, "v1.2", "1.2", "v1.1"))
+
+	if len(att.calls) != 0 {
+		t.Fatalf("attacher called %d times when disabled, want 0", len(att.calls))
+	}
+}
+
+func TestCreateMilestone_AttachCommitIssues_AttacherErrorIsNonFatal(t *testing.T) {
+	db := newCreateMilestoneTestDB(t)
+	att := &fakeCommitAttacher{err: errors.New("rate limited")}
+	exec := NewCreateMilestoneExecutor(NewPlanningService(db), &stubNodeAPI{}).WithCommitAttacher(att)
+
+	step := runExecutor(t, exec, CreateMilestoneNodeConfig{
+		NameTemplate:      "Release {{ref.short}}",
+		UpsertKeyTemplate: "{{ref.short}}",
+	}, tagEvent(1, "v1.2", "1.2", "v1.1"))
+
+	if step.Output["attach_commit_issues_error"] == nil {
+		t.Fatalf("expected error recorded in output, got %v", step.Output)
+	}
+	// Milestone must still have been upserted.
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM milestones WHERE workspace_id = 1 AND external_key = '1.2'`).Scan(&n); err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("milestone not upserted despite attacher error: rows=%d", n)
+	}
+}
+
+func TestCreateMilestone_AttachCommitIssues_NoAttacherRecordsSkip(t *testing.T) {
+	db := newCreateMilestoneTestDB(t)
+	// No .WithCommitAttacher — attacher field stays nil.
+	exec := NewCreateMilestoneExecutor(NewPlanningService(db), &stubNodeAPI{})
+
+	step := runExecutor(t, exec, CreateMilestoneNodeConfig{
+		NameTemplate:      "Release {{ref.short}}",
+		UpsertKeyTemplate: "{{ref.short}}",
+	}, tagEvent(1, "v1.2", "1.2", "v1.1"))
+
+	if step.Output["attach_commit_issues_skipped"] == nil {
+		t.Fatalf("expected skip note when no attacher wired, got %v", step.Output)
 	}
 }
 
