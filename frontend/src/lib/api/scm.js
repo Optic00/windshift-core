@@ -94,6 +94,14 @@ export const workspaceSCM = {
       method: 'DELETE',
     }),
 
+  // Update per-repo automation settings (milestone tag/branch globs).
+  // Pass only the fields you want to change.
+  updateRepo: (repoId, data) =>
+    fetchAPI(`/workspace-repositories/${repoId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+
   // Trigger manual sync for a repository
   syncRepo: (repoId) =>
     fetchAPI(`/workspace-repositories/${repoId}/sync`, {

@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { api } from '../api.js';
   import Button from '../components/Button.svelte';
-  import { GitMerge, Plus, Trash2, ExternalLink, ChevronDown, ChevronRight, Loader2, Check, X, KeyRound, AlertTriangle } from '@lucide/svelte';
+  import { GitMerge, Plus, Trash2, ExternalLink, ChevronDown, ChevronRight, Loader2, Check, X, KeyRound, AlertTriangle, Settings } from '@lucide/svelte';
   import RepositorySelector from '../pickers/RepositorySelector.svelte';
   import { successToast, errorToast } from '../stores/toasts.svelte.js';
   import { t } from '../stores/i18n.svelte.js';
@@ -23,6 +23,43 @@
   // Modal state
   let showRepoSelector = $state(false);
   let selectedConnection = $state(null);
+
+  // Repo automation settings (per-repo glob patterns) inline editor.
+  // Keyed by repo id; null means "not currently open."
+  let editingRepoSettings = $state(null);
+
+  function openRepoSettings(repo) {
+    editingRepoSettings = {
+      id: repo.id,
+      milestone_tag_pattern: repo.milestone_tag_pattern || 'v*',
+      milestone_branch_pattern: repo.milestone_branch_pattern || 'release/*'
+    };
+  }
+  function closeRepoSettings() {
+    editingRepoSettings = null;
+  }
+  async function saveRepoSettings(connId) {
+    if (!editingRepoSettings) return;
+    try {
+      const updated = await api.workspaceSCM.updateRepo(editingRepoSettings.id, {
+        milestone_tag_pattern: editingRepoSettings.milestone_tag_pattern,
+        milestone_branch_pattern: editingRepoSettings.milestone_branch_pattern
+      });
+      // Patch the local list in place so the row reflects the new
+      // values without a full refetch.
+      const list = linkedRepos[connId] || [];
+      const idx = list.findIndex((r) => r.id === updated.id);
+      if (idx >= 0) {
+        list[idx] = updated;
+        linkedRepos[connId] = [...list];
+      }
+      successToast('Repository settings saved');
+      closeRepoSettings();
+    } catch (err) {
+      console.error(err);
+      errorToast('Failed to save repository settings');
+    }
+  }
 
 
   onMount(async () => {
@@ -402,34 +439,80 @@
                 {:else}
                   <div class="space-y-2">
                     {#each linkedRepos[conn.id] as repo}
-                      <div
-                        class="flex items-center justify-between px-3 py-2 rounded-md"
-                        style="background-color: var(--ds-surface);"
-                      >
-                        <div class="flex items-center gap-2">
-                          <span class="font-mono text-sm" style="color: var(--ds-text);">{repo.repository_name}</span>
-                          <span class="text-xs px-1.5 py-0.5 rounded" style="background-color: var(--ds-background-neutral); color: var(--ds-text-subtle);">
-                            {repo.default_branch}
-                          </span>
+                      <div class="rounded-md" style="background-color: var(--ds-surface);">
+                        <div class="flex items-center justify-between px-3 py-2">
+                          <div class="flex items-center gap-2">
+                            <span class="font-mono text-sm" style="color: var(--ds-text);">{repo.repository_name}</span>
+                            <span class="text-xs px-1.5 py-0.5 rounded" style="background-color: var(--ds-background-neutral); color: var(--ds-text-subtle);">
+                              {repo.default_branch}
+                            </span>
+                            <span class="text-xs px-1.5 py-0.5 rounded font-mono" title="Tag pattern" style="background-color: var(--ds-background-neutral); color: var(--ds-text-subtle);">
+                              tags: {repo.milestone_tag_pattern || 'v*'}
+                            </span>
+                            <span class="text-xs px-1.5 py-0.5 rounded font-mono" title="Branch pattern" style="background-color: var(--ds-background-neutral); color: var(--ds-text-subtle);">
+                              branches: {repo.milestone_branch_pattern || 'release/*'}
+                            </span>
+                          </div>
+                          <div class="flex items-center gap-2">
+                            <button
+                              class="p-1 rounded hover:bg-opacity-50"
+                              style="color: var(--ds-text-subtle);"
+                              title="Repository settings"
+                              onclick={() => editingRepoSettings?.id === repo.id ? closeRepoSettings() : openRepoSettings(repo)}
+                            >
+                              <Settings class="w-4 h-4" />
+                            </button>
+                            <a
+                              href={repo.repository_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              class="p-1 rounded hover:bg-opacity-50"
+                              style="color: var(--ds-text-subtle);"
+                            >
+                              <ExternalLink class="w-4 h-4" />
+                            </a>
+                            <button
+                              class="p-1 rounded hover:bg-opacity-50"
+                              style="color: var(--ds-text-danger);"
+                              onclick={() => unlinkRepo(conn.id, repo)}
+                            >
+                              <X class="w-4 h-4" />
+                            </button>
+                          </div>
                         </div>
-                        <div class="flex items-center gap-2">
-                          <a
-                            href={repo.repository_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            class="p-1 rounded hover:bg-opacity-50"
-                            style="color: var(--ds-text-subtle);"
-                          >
-                            <ExternalLink class="w-4 h-4" />
-                          </a>
-                          <button
-                            class="p-1 rounded hover:bg-opacity-50"
-                            style="color: var(--ds-text-danger);"
-                            onclick={() => unlinkRepo(conn.id, repo)}
-                          >
-                            <X class="w-4 h-4" />
-                          </button>
-                        </div>
+                        {#if editingRepoSettings?.id === repo.id}
+                          <div class="px-3 py-3 border-t" style="border-color: var(--ds-border);">
+                            <p class="text-xs mb-3" style="color: var(--ds-text-subtle);">
+                              Globs the milestone-from-tag automation uses for this repo. Tags matching the tag pattern trigger a milestone promote; branches matching the branch pattern create a planning milestone.
+                            </p>
+                            <div class="grid grid-cols-2 gap-3">
+                              <div>
+                                <label for="ws-scm-tag-pattern-{repo.id}" class="block text-xs font-medium mb-1">Tag pattern</label>
+                                <input
+                                  id="ws-scm-tag-pattern-{repo.id}"
+                                  type="text"
+                                  class="w-full px-2 py-1 border rounded text-sm font-mono"
+                                  bind:value={editingRepoSettings.milestone_tag_pattern}
+                                  placeholder="v*"
+                                />
+                              </div>
+                              <div>
+                                <label for="ws-scm-branch-pattern-{repo.id}" class="block text-xs font-medium mb-1">Branch pattern</label>
+                                <input
+                                  id="ws-scm-branch-pattern-{repo.id}"
+                                  type="text"
+                                  class="w-full px-2 py-1 border rounded text-sm font-mono"
+                                  bind:value={editingRepoSettings.milestone_branch_pattern}
+                                  placeholder="release/*"
+                                />
+                              </div>
+                            </div>
+                            <div class="flex justify-end gap-2 mt-3">
+                              <Button size="sm" variant="ghost" onclick={closeRepoSettings}>Cancel</Button>
+                              <Button size="sm" variant="primary" onclick={() => saveRepoSettings(conn.id)}>Save</Button>
+                            </div>
+                          </div>
+                        {/if}
                       </div>
                     {/each}
                   </div>

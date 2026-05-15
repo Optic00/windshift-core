@@ -60,9 +60,20 @@ type WorkspaceRepositoryResponse struct {
 	RepositoryURL            string     `json:"repository_url"`
 	DefaultBranch            string     `json:"default_branch"`
 	IsActive                 bool       `json:"is_active"`
+	MilestoneTagPattern      string     `json:"milestone_tag_pattern"`
+	MilestoneBranchPattern   string     `json:"milestone_branch_pattern"`
 	LastSyncedAt             *time.Time `json:"last_synced_at,omitempty"`
 	CreatedAt                time.Time  `json:"created_at"`
 	UpdatedAt                time.Time  `json:"updated_at"`
+}
+
+// UpdateWorkspaceRepositoryRequest is the body of the per-repo PATCH used
+// by the workspace settings UI to set the milestone-from-tag globs.
+// Only the milestone_* fields are mutable in v1; other columns are
+// managed by the link/unlink flow.
+type UpdateWorkspaceRepositoryRequest struct {
+	MilestoneTagPattern    *string `json:"milestone_tag_pattern,omitempty"`
+	MilestoneBranchPattern *string `json:"milestone_branch_pattern,omitempty"`
 }
 
 // CreateWorkspaceSCMConnectionRequest represents a request to create a connection
@@ -572,7 +583,8 @@ func (h *SCMWorkspaceHandler) GetLinkedRepositories(w http.ResponseWriter, r *ht
 	rows, err := h.db.Query(`
 		SELECT id, workspace_scm_connection_id, repository_external_id,
 			   repository_name, repository_url, default_branch,
-			   is_active, last_synced_at, created_at, updated_at
+			   is_active, milestone_tag_pattern, milestone_branch_pattern,
+			   last_synced_at, created_at, updated_at
 		FROM workspace_repositories
 		WHERE workspace_scm_connection_id = ?
 		ORDER BY repository_name
@@ -591,7 +603,8 @@ func (h *SCMWorkspaceHandler) GetLinkedRepositories(w http.ResponseWriter, r *ht
 		err := rows.Scan(
 			&repo.ID, &repo.WorkspaceSCMConnectionID, &repo.RepositoryExternalID,
 			&repo.RepositoryName, &repo.RepositoryURL, &repo.DefaultBranch,
-			&repo.IsActive, &lastSyncedAt, &repo.CreatedAt, &repo.UpdatedAt,
+			&repo.IsActive, &repo.MilestoneTagPattern, &repo.MilestoneBranchPattern,
+			&lastSyncedAt, &repo.CreatedAt, &repo.UpdatedAt,
 		)
 		if err != nil {
 			slog.Error("failed to scan repository", slog.String("component", "scm"), slog.Any("error", err))
@@ -686,12 +699,14 @@ func (h *SCMWorkspaceHandler) LinkRepository(w http.ResponseWriter, r *http.Requ
 	err = h.db.QueryRow(`
 		SELECT id, workspace_scm_connection_id, repository_external_id,
 			   repository_name, repository_url, default_branch,
-			   is_active, last_synced_at, created_at, updated_at
+			   is_active, milestone_tag_pattern, milestone_branch_pattern,
+			   last_synced_at, created_at, updated_at
 		FROM workspace_repositories WHERE id = ?
 	`, id).Scan(
 		&repo.ID, &repo.WorkspaceSCMConnectionID, &repo.RepositoryExternalID,
 		&repo.RepositoryName, &repo.RepositoryURL, &repo.DefaultBranch,
-		&repo.IsActive, &lastSyncedAt, &repo.CreatedAt, &repo.UpdatedAt,
+		&repo.IsActive, &repo.MilestoneTagPattern, &repo.MilestoneBranchPattern,
+		&lastSyncedAt, &repo.CreatedAt, &repo.UpdatedAt,
 	)
 	if err != nil {
 		respondInternalError(w, r, err)
@@ -745,6 +760,100 @@ func (h *SCMWorkspaceHandler) UnlinkRepository(w http.ResponseWriter, r *http.Re
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// UpdateRepository sets the per-repo automation patterns (milestone
+// tag/branch globs). Workspace admin only. Body fields are optional —
+// nil leaves the column unchanged so the UI can patch one field at a
+// time. Empty string is rejected to prevent accidentally disabling
+// detection by saving a blank pattern.
+func (h *SCMWorkspaceHandler) UpdateRepository(w http.ResponseWriter, r *http.Request) {
+	repoID, ok := requireIDParam(w, r, "repoId")
+	if !ok {
+		return
+	}
+
+	var workspaceID int
+	if err := h.db.QueryRow(`
+		SELECT wsc.workspace_id FROM workspace_repositories wr
+		JOIN workspace_scm_connections wsc ON wsc.id = wr.workspace_scm_connection_id
+		WHERE wr.id = ?
+	`, repoID).Scan(&workspaceID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondNotFound(w, r, "repository")
+		} else {
+			respondInternalError(w, r, err)
+		}
+		return
+	}
+
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+	if !RequireWorkspacePermission(w, r, user.ID, workspaceID, models.PermissionWorkspaceAdmin, h.permissionService) {
+		return
+	}
+
+	req, ok := decodeJSON[UpdateWorkspaceRepositoryRequest](w, r)
+	if !ok {
+		return
+	}
+
+	// Build a dynamic UPDATE so unset fields aren't overwritten. Reject
+	// empty strings explicitly — they would disable detection silently.
+	sets := []string{"updated_at = CURRENT_TIMESTAMP"}
+	args := []any{}
+	if req.MilestoneTagPattern != nil {
+		if *req.MilestoneTagPattern == "" {
+			respondValidationError(w, r, "milestone_tag_pattern must not be empty")
+			return
+		}
+		sets = append(sets, "milestone_tag_pattern = ?")
+		args = append(args, *req.MilestoneTagPattern)
+	}
+	if req.MilestoneBranchPattern != nil {
+		if *req.MilestoneBranchPattern == "" {
+			respondValidationError(w, r, "milestone_branch_pattern must not be empty")
+			return
+		}
+		sets = append(sets, "milestone_branch_pattern = ?")
+		args = append(args, *req.MilestoneBranchPattern)
+	}
+	if len(args) == 0 {
+		respondValidationError(w, r, "no fields to update")
+		return
+	}
+	args = append(args, repoID)
+
+	query := "UPDATE workspace_repositories SET " + strings.Join(sets, ", ") + " WHERE id = ?"
+	if _, err := h.db.Exec(query, args...); err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+
+	var repo WorkspaceRepositoryResponse
+	var lastSyncedAt sql.NullTime
+	err := h.db.QueryRow(`
+		SELECT id, workspace_scm_connection_id, repository_external_id,
+			   repository_name, repository_url, default_branch,
+			   is_active, milestone_tag_pattern, milestone_branch_pattern,
+			   last_synced_at, created_at, updated_at
+		FROM workspace_repositories WHERE id = ?
+	`, repoID).Scan(
+		&repo.ID, &repo.WorkspaceSCMConnectionID, &repo.RepositoryExternalID,
+		&repo.RepositoryName, &repo.RepositoryURL, &repo.DefaultBranch,
+		&repo.IsActive, &repo.MilestoneTagPattern, &repo.MilestoneBranchPattern,
+		&lastSyncedAt, &repo.CreatedAt, &repo.UpdatedAt,
+	)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	if lastSyncedAt.Valid {
+		repo.LastSyncedAt = &lastSyncedAt.Time
+	}
+	respondJSONOK(w, repo)
 }
 
 // GetAvailableSCMProviders returns all enabled SCM providers for connecting to a workspace
