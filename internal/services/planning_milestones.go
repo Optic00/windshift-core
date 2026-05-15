@@ -29,7 +29,7 @@ type milestoneScanner interface {
 // into a MilestoneResult. The column order must match the standard milestone query.
 func scanMilestoneRow(sc milestoneScanner) (MilestoneResult, error) {
 	var m MilestoneResult
-	var description, targetDate, categoryName, categoryColor, workspaceName sql.NullString
+	var description, targetDate, categoryName, categoryColor, workspaceName, externalKey sql.NullString
 	var categoryID, workspaceID sql.NullInt64
 	// Release columns
 	var mrID, mrCreatedBy, mrSCMConnectionID sql.NullInt64
@@ -40,6 +40,7 @@ func scanMilestoneRow(sc milestoneScanner) (MilestoneResult, error) {
 
 	err := sc.Scan(&m.ID, &m.Name, &description, &targetDate, &m.Status, &categoryID,
 		&categoryName, &categoryColor, &m.IsGlobal, &workspaceID, &workspaceName,
+		&externalKey,
 		&mrID, &mrTagName, &mrName, &mrBody, &mrIsDraft, &mrIsPrerelease,
 		&mrTargetCommitish, &mrSCMConnectionID, &mrSCMRepository,
 		&mrSCMReleaseID, &mrSCMReleaseURL, &mrCreatedBy, &mrCreatedAt,
@@ -53,6 +54,10 @@ func scanMilestoneRow(sc milestoneScanner) (MilestoneResult, error) {
 	m.CategoryName = categoryName.String
 	m.CategoryColor = categoryColor.String
 	m.WorkspaceName = workspaceName.String
+	if externalKey.Valid {
+		ek := externalKey.String
+		m.ExternalKey = &ek
+	}
 	if categoryID.Valid {
 		id := int(categoryID.Int64)
 		m.CategoryID = &id
@@ -118,6 +123,7 @@ type MilestoneResult struct {
 	IsGlobal      bool
 	WorkspaceID   *int
 	WorkspaceName string
+	ExternalKey   *string
 	LatestRelease *MilestoneReleaseResult
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
@@ -139,6 +145,7 @@ func (s *PlanningService) ListMilestones(params MilestoneListParams) ([]Mileston
 		SELECT m.id, m.name, m.description, m.target_date, m.status, m.category_id,
 		       mc.name as category_name, mc.color as category_color,
 		       m.is_global, m.workspace_id, w.name as workspace_name,
+		       m.external_key,
 		       mr.id, mr.tag_name, mr.name, mr.body, mr.is_draft, mr.is_prerelease,
 		       mr.target_commitish, mr.scm_connection_id, mr.scm_repository,
 		       mr.scm_release_id, mr.scm_release_url, mr.created_by, mr.created_at,
@@ -226,6 +233,7 @@ func (s *PlanningService) GetMilestone(id int) (*MilestoneResult, error) {
 		SELECT m.id, m.name, m.description, m.target_date, m.status, m.category_id,
 		       mc.name as category_name, mc.color as category_color,
 		       m.is_global, m.workspace_id, w.name as workspace_name,
+		       m.external_key,
 		       mr.id, mr.tag_name, mr.name, mr.body, mr.is_draft, mr.is_prerelease,
 		       mr.target_commitish, mr.scm_connection_id, mr.scm_repository,
 		       mr.scm_release_id, mr.scm_release_url, mr.created_by, mr.created_at,
