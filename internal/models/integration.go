@@ -776,6 +776,11 @@ const (
 	// (descendants, direct children, ancestors, or linked items) and re-runs
 	// the downstream subgraph once per emitted item with ctx.Item swapped.
 	ActionNodeRelatedItems ActionNodeType = "related_items"
+	// ActionNodeCreateMilestone upserts a workspace milestone keyed by
+	// external_key, optionally promoting status and attaching a release
+	// row on scm_tag_created events. Registered via the node-executor
+	// registry rather than the legacy switch in action_service.go.
+	ActionNodeCreateMilestone ActionNodeType = "create_milestone"
 )
 
 // IsIterator reports whether this node type fans out — i.e. the engine must

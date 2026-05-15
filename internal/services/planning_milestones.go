@@ -316,6 +316,9 @@ func (s *PlanningService) GetSCMConnectionWorkspaceID(connectionID int) (int, er
 }
 
 // CreateMilestoneParams contains parameters for creating a milestone.
+// ExternalKey is a stable upsert key used by automation (e.g. the
+// create_milestone action's `{{ref.short}}`); a non-empty value is unique
+// per workspace (see uq_milestones_workspace_external_key).
 type CreateMilestoneParams struct {
 	Name        string
 	Description string
@@ -324,6 +327,7 @@ type CreateMilestoneParams struct {
 	CategoryID  *int
 	IsGlobal    bool
 	WorkspaceID *int
+	ExternalKey *string
 }
 
 // CreateMilestone creates a new milestone.
@@ -335,14 +339,81 @@ func (s *PlanningService) CreateMilestone(params CreateMilestoneParams) (*Milest
 
 	var id int64
 	err := s.db.QueryRow(`
-		INSERT INTO milestones (name, description, target_date, status, category_id, is_global, workspace_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id
-	`, params.Name, params.Description, params.TargetDate, status, params.CategoryID, params.IsGlobal, params.WorkspaceID).Scan(&id)
+		INSERT INTO milestones (name, description, target_date, status, category_id, is_global, workspace_id, external_key)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+	`, params.Name, params.Description, params.TargetDate, status, params.CategoryID, params.IsGlobal, params.WorkspaceID, params.ExternalKey).Scan(&id)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create milestone: %w", err)
 	}
 
 	return s.GetMilestone(int(id))
+}
+
+// FindMilestoneByExternalKey returns the milestone with the given
+// (workspace_id, external_key). Returns (nil, nil) when no row matches —
+// the executor treats that as "create a new one." Errors are reserved
+// for actual DB failures.
+func (s *PlanningService) FindMilestoneByExternalKey(workspaceID int, externalKey string) (*MilestoneResult, error) {
+	if externalKey == "" {
+		return nil, nil
+	}
+	var id int
+	err := s.db.QueryRow(`
+		SELECT id FROM milestones
+		WHERE workspace_id = ? AND external_key = ?
+	`, workspaceID, externalKey).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to find milestone by external_key: %w", err)
+	}
+	return s.GetMilestone(id)
+}
+
+// SetMilestoneStatus updates only the status column on a milestone scoped
+// to the given workspace. Used by automation to promote a "planning"
+// milestone to "in-progress" or "completed" without disturbing the other
+// fields. Returns a "not found" error when no row matches the scope.
+func (s *PlanningService) SetMilestoneStatus(milestoneID, workspaceID int, status string) error {
+	res, err := s.db.ExecWrite(`
+		UPDATE milestones
+		SET status = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND workspace_id = ?
+	`, status, milestoneID, workspaceID)
+	if err != nil {
+		return fmt.Errorf("failed to set milestone status: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to read update result: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("milestone not found in workspace: %d", milestoneID)
+	}
+	return nil
+}
+
+// AttachRelease inserts a milestone_releases row without flipping the
+// parent milestone's status. The standalone ReleaseMilestone (above) sets
+// status to 'completed' atomically with the insert; AttachRelease is the
+// version automation uses when it wants to keep status under explicit
+// control (e.g. "tag promotes branch milestone to in-progress, not
+// completed").
+func (s *PlanningService) AttachRelease(params ReleaseMilestoneParams) error {
+	_, err := s.db.ExecWrite(`
+		INSERT INTO milestone_releases (
+			milestone_id, tag_name, name, body, is_draft, is_prerelease,
+			target_commitish, scm_connection_id, scm_repository, scm_release_id,
+			scm_release_url, created_by
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, params.ID, params.TagName, params.Name, params.Body, params.IsDraft, params.IsPrerelease,
+		params.TargetCommitish, params.SCMConnectionID, params.SCMRepository, params.SCMReleaseID,
+		params.SCMReleaseURL, params.CreatedBy)
+	if err != nil {
+		return fmt.Errorf("failed to insert milestone release: %w", err)
+	}
+	return nil
 }
 
 // UpdateMilestoneParams contains parameters for updating a milestone.
