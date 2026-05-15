@@ -11,12 +11,19 @@ import (
 
 // fakeProvider is a minimal Provider implementation used to drive
 // pagination tests without any database or network dependency. Only the
-// methods exercised by iteratePullRequests are populated; the rest panic
-// to surface accidental calls.
+// methods exercised by tests are populated; the rest panic to surface
+// accidental calls. fakeProvider also satisfies RefProvider so the
+// tag/release-branch sync paths can be exercised in isolation.
 type fakeProvider struct {
-	pages       [][]PullRequest
+	pages        [][]PullRequest
 	pageRequests []int // recorded Page values from each ListPullRequests call
-	branches    []Branch
+	branches     []Branch
+
+	// RefProvider state.
+	tags          []Tag                // returned by ListTags, filtered by since
+	compareByPair map[[2]string][]Commit // key = [base, head]
+	tagSinceCalls []time.Time          // recorded `since` values from ListTags
+	compareCalls  [][2]string          // recorded [base, head] pairs
 }
 
 func (f *fakeProvider) GetType() models.SCMProviderType { return models.SCMProviderTypeGitHub }
@@ -59,6 +66,38 @@ func (f *fakeProvider) RegisterWebhook(_ context.Context, _, _ string, _ Webhook
 func (f *fakeProvider) DeleteWebhook(_ context.Context, _, _, _ string) error {
 	panic("DeleteWebhook not implemented for fakeProvider")
 }
+
+// ListTags + CompareCommits implement RefProvider for tests of the
+// tag/release-branch sync path. Both honor the recorded-input fields so
+// tests can assert on what arguments the sync layer passed through.
+func (f *fakeProvider) ListTags(_ context.Context, _, _ string, since time.Time) ([]Tag, error) {
+	f.tagSinceCalls = append(f.tagSinceCalls, since)
+	if since.IsZero() {
+		out := make([]Tag, len(f.tags))
+		copy(out, f.tags)
+		return out, nil
+	}
+	var out []Tag
+	for _, t := range f.tags {
+		if t.CreatedAt.IsZero() || !t.CreatedAt.Before(since) {
+			out = append(out, t)
+		}
+	}
+	return out, nil
+}
+func (f *fakeProvider) CompareCommits(_ context.Context, _, _, base, head string) ([]Commit, error) {
+	f.compareCalls = append(f.compareCalls, [2]string{base, head})
+	if f.compareByPair == nil {
+		return nil, nil
+	}
+	commits := f.compareByPair[[2]string{base, head}]
+	out := make([]Commit, len(commits))
+	copy(out, commits)
+	return out, nil
+}
+
+// Compile-time check that fakeProvider implements RefProvider.
+var _ RefProvider = (*fakeProvider)(nil)
 
 // makePRs builds n PullRequests with UpdatedAt walking back one hour per
 // step from start. Useful for exercising the cutoff branch.

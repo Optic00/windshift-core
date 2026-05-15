@@ -168,6 +168,16 @@ type Branch struct {
 	Protected bool   `json:"protected"`
 }
 
+// Tag represents a git tag (lightweight or annotated) from an SCM provider.
+// CreatedAt is the tagger date when available, else the underlying commit's
+// committer date — providers fall back rather than leaving this zero so
+// `since` filtering works consistently.
+type Tag struct {
+	Name      string    `json:"name"`
+	SHA       string    `json:"sha"` // target commit SHA
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // User represents a user from an SCM provider
 type User struct {
 	ID        string `json:"id"`
@@ -266,6 +276,25 @@ type ReleaseProvider interface {
 	Provider
 	CreateRelease(ctx context.Context, owner, repo string, opts CreateReleaseOptions) (*Release, error)
 	ListReleases(ctx context.Context, owner, repo string) ([]Release, error)
+}
+
+// RefProvider is an optional interface for providers that expose git refs
+// (tags + range-compare) needed by the milestone-from-tag automation.
+// SyncService feature-detects this with a type assertion and skips the
+// tag/release-branch sync paths if the provider does not implement it.
+type RefProvider interface {
+	Provider
+
+	// ListTags returns tags whose target commit was created at or after
+	// `since`. Implementations may return all tags and let the caller
+	// filter when the provider has no native cutoff API; the contract is
+	// that no tag *newer than* `since` is ever dropped.
+	ListTags(ctx context.Context, owner, repo string, since time.Time) ([]Tag, error)
+
+	// CompareCommits returns the commits reachable from `head` but not
+	// from `base`, in chronological order (oldest first). Used to list
+	// "what shipped" between two tags.
+	CompareCommits(ctx context.Context, owner, repo, base, head string) ([]Commit, error)
 }
 
 // GitHubAppProvider extends Provider for GitHub App specific functionality

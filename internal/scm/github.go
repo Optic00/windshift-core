@@ -21,6 +21,16 @@ import (
 	"windshift/internal/models"
 )
 
+// Compile-time check that GitHubProvider implements the optional
+// interfaces it claims. Dropping a method on any of these here surfaces
+// as a build error rather than a runtime type-assertion miss.
+var (
+	_ Provider        = (*GitHubProvider)(nil)
+	_ ReleaseProvider = (*GitHubProvider)(nil)
+	_ RefProvider     = (*GitHubProvider)(nil)
+	_ IssueProvider   = (*GitHubProvider)(nil)
+)
+
 // GitHubProvider implements the Provider interface for GitHub
 type GitHubProvider struct {
 	baseProvider
@@ -599,6 +609,99 @@ func (g *GitHubProvider) ListBranches(ctx context.Context, owner, repo string) (
 		}
 	}
 	return branches, nil
+}
+
+// ListTags lists tags for a repository, paginated. Returns tags whose
+// target commit's committer date is at or after `since`. GitHub's
+// /tags endpoint returns lightweight summaries; we fetch each tag's
+// commit to obtain the date, capped at maxTags to keep the work bounded.
+func (g *GitHubProvider) ListTags(ctx context.Context, owner, repo string, since time.Time) ([]Tag, error) {
+	if err := g.ensureInstallationToken(ctx); err != nil {
+		return nil, err
+	}
+
+	const perPage = 100
+	const maxTags = 500
+
+	type ghTag struct {
+		Name   string `json:"name"`
+		Commit struct {
+			SHA string `json:"sha"`
+		} `json:"commit"`
+	}
+
+	var tags []Tag
+	for page := 1; ; page++ {
+		reqURL := fmt.Sprintf("%s/repos/%s/%s/tags?page=%d&per_page=%d",
+			g.baseURL, owner, repo, page, perPage)
+
+		var ghTags []ghTag
+		if err := g.doJSON(ctx, "GET", reqURL, http.NoBody, http.StatusOK, &ghTags); err != nil {
+			return nil, err
+		}
+		for _, t := range ghTags {
+			created, err := g.tagCommitDate(ctx, owner, repo, t.Commit.SHA)
+			if err != nil {
+				return nil, err
+			}
+			if !since.IsZero() && created.Before(since) {
+				continue
+			}
+			tags = append(tags, Tag{Name: t.Name, SHA: t.Commit.SHA, CreatedAt: created})
+			if len(tags) >= maxTags {
+				return tags, nil
+			}
+		}
+		if len(ghTags) < perPage {
+			break
+		}
+	}
+	return tags, nil
+}
+
+func (g *GitHubProvider) tagCommitDate(ctx context.Context, owner, repo, sha string) (time.Time, error) {
+	c, err := g.GetCommit(ctx, owner, repo, sha)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return c.CreatedAt, nil
+}
+
+// CompareCommits returns the commits reachable from `head` but not from
+// `base`. Paginates GitHub's /compare endpoint via per_page; capped at
+// maxCompareCommits to bound work.
+func (g *GitHubProvider) CompareCommits(ctx context.Context, owner, repo, base, head string) ([]Commit, error) {
+	if err := g.ensureInstallationToken(ctx); err != nil {
+		return nil, err
+	}
+
+	const perPage = 100
+	const maxCompareCommits = 500
+
+	type ghCompare struct {
+		Commits []githubCommit `json:"commits"`
+	}
+
+	var out []Commit
+	for page := 1; ; page++ {
+		reqURL := fmt.Sprintf("%s/repos/%s/%s/compare/%s...%s?page=%d&per_page=%d",
+			g.baseURL, owner, repo, base, head, page, perPage)
+
+		var resp ghCompare
+		if err := g.doJSON(ctx, "GET", reqURL, http.NoBody, http.StatusOK, &resp); err != nil {
+			return nil, err
+		}
+		for _, c := range resp.Commits {
+			out = append(out, c.toCommit())
+			if len(out) >= maxCompareCommits {
+				return out, nil
+			}
+		}
+		if len(resp.Commits) < perPage {
+			break
+		}
+	}
+	return out, nil
 }
 
 // RegisterWebhook registers a webhook for repository events
