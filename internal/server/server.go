@@ -721,6 +721,22 @@ func (s *Server) initialize() error {
 		repository.NewItemRepository(s.db),
 	)
 	scmSyncService.SetApprovalService(approvalService)
+
+	// Wire the SCM-driven milestone automation:
+	//  1) sync emits ActionEvents for new tags / release branches,
+	//  2) the create_milestone node executor consumes them and upserts
+	//     by external_key (with optional release attach + commit-issue
+	//     attachment via the scm.MilestoneAttacher adapter).
+	scmSyncService.SetActionEvents(s.actionService)
+	milestoneAttacher := scm.NewMilestoneAttacher(
+		scmSyncService,
+		repository.NewMilestoneAttachRepository(s.db),
+	)
+	s.actionService.RegisterNodeExecutor(
+		services.NewCreateMilestoneExecutor(services.NewPlanningService(s.db), s.actionService).
+			WithCommitAttacher(milestoneAttacher),
+	)
+
 	go s.runSCMRepoSync(scmSyncService)
 	go s.runSCMLinkRefresh(scmSyncService)
 	go s.runSCMOAuthStateCleanup()
