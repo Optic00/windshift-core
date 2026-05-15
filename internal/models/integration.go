@@ -738,6 +738,14 @@ const (
 	ActionTriggerItemUpdated      ActionTriggerType = "item_updated"
 	ActionTriggerItemLinked       ActionTriggerType = "item_linked"
 	ActionTriggerManual           ActionTriggerType = "manual"
+
+	// SCM-driven triggers emitted by the repo-sync loop when a new git ref
+	// matching the per-repository pattern is observed. Payload (in
+	// ActionEvent.NewValues) carries: ref.name, ref.short, ref.sha,
+	// ref.type, repo.owner, repo.name, repo.full_name, repo.workspace_repository_id,
+	// and (tags only) ref.prev_name for "what shipped" range queries.
+	ActionTriggerSCMTagCreated           ActionTriggerType = "scm_tag_created"
+	ActionTriggerSCMReleaseBranchCreated ActionTriggerType = "scm_release_branch_created"
 )
 
 // ActionNodeType defines the type of action node

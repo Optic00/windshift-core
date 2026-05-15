@@ -40,6 +40,15 @@ const (
 	syncPerConnectionConcurrency = 4
 )
 
+// ActionEventEmitter is the dependency SyncService uses to surface
+// SCM-triggered events (tag created, release-branch created) to the
+// action engine. ActionService implements this; tests use a fake.
+// Decoupled via interface so the scm package does not import services
+// (which would close a layering cycle).
+type ActionEventEmitter interface {
+	EmitActionEvent(*models.ActionEvent)
+}
+
 // SyncService handles periodic synchronization of SCM repositories
 // to detect PRs, branches, and commits linked to work items
 type SyncService struct {
@@ -64,6 +73,12 @@ type SyncService struct {
 	conditionService  *services.ConditionService
 	approvalService   *services.ApprovalService
 	itemRepo          *repository.ItemRepository
+
+	// Optional: when wired, the tag / release-branch sync paths emit
+	// ActionEvents for the action engine to dispatch. Nil means the
+	// detection still happens (and the idempotency ledger fills) but
+	// nothing downstream consumes the events.
+	actionEvents ActionEventEmitter
 }
 
 // NewSyncService creates a new SCM sync service
@@ -96,6 +111,14 @@ func (s *SyncService) SetSmartCommitServices(
 // transitions are gated by approvals.
 func (s *SyncService) SetApprovalService(ap *services.ApprovalService) {
 	s.approvalService = ap
+}
+
+// SetActionEvents wires the action event emitter so that newly observed
+// matching tags / release branches surface as ActionEvents. Without it,
+// the sync still runs but emits nothing; this lets callers that only
+// need link sync continue without depending on the action engine.
+func (s *SyncService) SetActionEvents(e ActionEventEmitter) {
+	s.actionEvents = e
 }
 
 // resolveProvider creates an SCM provider for a connection by resolving credentials,
@@ -301,6 +324,16 @@ func (s *SyncService) syncRepository(ctx context.Context, provider Provider, rep
 	// Sync branches
 	if err := s.syncBranches(ctx, provider, owner, repo, repoID, workspaceID, workspaceKey, itemKeyPattern); err != nil {
 		slog.Error("Failed to sync branches", slog.String("component", "scm"), slog.String("repository", repositoryName), slog.Any("error", err))
+	}
+
+	// Sync release branches (emits scm_release_branch_created events).
+	if err := s.syncReleaseBranches(ctx, provider, owner, repo, repoID, workspaceID); err != nil {
+		slog.Error("Failed to sync release branches", slog.String("component", "scm"), slog.String("repository", repositoryName), slog.Any("error", err))
+	}
+
+	// Sync tags / releases (emits scm_tag_created events).
+	if err := s.syncTagsAndReleases(ctx, provider, owner, repo, repoID, workspaceID); err != nil {
+		slog.Error("Failed to sync tags", slog.String("component", "scm"), slog.String("repository", repositoryName), slog.Any("error", err))
 	}
 
 	// Update last_synced_at
