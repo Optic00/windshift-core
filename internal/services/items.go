@@ -11,6 +11,11 @@ import (
 	"windshift/internal/database"
 )
 
+// ErrMissingItemType is returned by CreateItem when the caller did not
+// supply an item_type_id and no workspace or global default could be
+// resolved. The handler maps this to a 400 instead of a 500.
+var ErrMissingItemType = errors.New("item_type_id is required: workspace has no default item type configured")
+
 // mapTextStatusToID maps legacy text status values to status IDs
 // Returns nil if the status cannot be mapped
 // Default status IDs from database setup:
@@ -139,6 +144,10 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 		if err == nil && defaultItemTypeID != 0 {
 			params.ItemTypeID = &defaultItemTypeID
 		}
+	}
+
+	if params.ItemTypeID == nil {
+		return 0, ErrMissingItemType
 	}
 
 	now := time.Now()

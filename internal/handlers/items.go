@@ -566,6 +566,10 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 		CustomFieldValuesJSON: customFieldValuesJSON,
 	})
 	if err != nil {
+		if errors.Is(err, services.ErrMissingItemType) {
+			respondValidationError(w, r, err.Error())
+			return
+		}
 		slog.Error("failed to create item", slog.Any("error", err))
 		respondInternalError(w, r, err)
 		return

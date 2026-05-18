@@ -480,6 +480,10 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 		CustomFieldValuesJSON: customFieldValuesJSON,
 	})
 	if err != nil {
+		if errors.Is(err, services.ErrMissingItemType) {
+			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, err.Error()))
+			return
+		}
 		h.RespondInternalError(w, r)
 		return
 	}
