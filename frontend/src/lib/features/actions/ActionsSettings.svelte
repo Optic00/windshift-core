@@ -5,7 +5,7 @@
   import { successToast, errorToast } from '../../stores/toasts.svelte.js';
   import { statusCategoriesStore } from '../../stores/statusCategories.svelte.js';
   import { workspacePermissions } from '../../stores';
-  import { activeActionEditor } from '../../stores/activeActionEditor.svelte.js';
+  import { navigate } from '../../router.js';
   import ActionsManager from './ActionsManager.svelte';
   import ActionFlowEditor from './ActionFlowEditor.svelte';
   import ActionLogs from './ActionLogs.svelte';
@@ -14,7 +14,7 @@
   import Button from '../../components/Button.svelte';
   import { ShieldAlert } from '@lucide/svelte';
 
-  let { workspaceId } = $props();
+  let { workspaceId, actionId = 0 } = $props();
 
   // Permission check
   let canManageActions = $derived(workspacePermissions.canManageActions(workspaceId));
@@ -27,13 +27,32 @@
   let showCreateModal = $state(false);
   let showTemplatePicker = $state(false);
 
-  // Mirror the currently-edited action's id into a shared store so the AI
-  // chat panel can include it as request context. Cleared when we leave
-  // the editor or unmount the page entirely.
+  // URL is the source of truth for which action is being edited, so the id is
+  // recoverable on refresh / share and visible to the AI chat context builder.
+  // Sync editingAction from the route param.
   $effect(() => {
-    activeActionEditor.set(editingAction?.id ?? 0);
+    const id = Number(actionId) || 0;
+    if (id === 0) {
+      editingAction = null;
+      return;
+    }
+    if (editingAction?.id === id) return;
+    let cancelled = false;
+    api
+      .get(`/workspaces/${workspaceId}/actions/${id}`)
+      .then((full) => {
+        if (!cancelled) editingAction = full;
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error('Failed to load action details:', err);
+        errorToast(t('errors.failedToLoad'));
+        navigate(`/workspaces/${workspaceId}/actions`, { replace: true });
+      });
+    return () => {
+      cancelled = true;
+    };
   });
-  $effect(() => () => activeActionEditor.set(0));
 
   // New action form data
   let newActionName = $state('');
@@ -47,15 +66,10 @@
     showTemplatePicker = false;
     successToast(t('common.created'));
     await loadActions();
-    // Open the freshly created action in the editor. The list endpoint omits
-    // nodes/edges, so fetch the full action by id (same as handleEdit).
+    // Open the freshly created action in the editor. The URL effect will fetch
+    // and hydrate editingAction once the route updates.
     if (result?.action_id) {
-      try {
-        editingAction = await api.get(`/workspaces/${workspaceId}/actions/${result.action_id}`);
-      } catch (error) {
-        console.error('Failed to load created action:', error);
-        errorToast(t('errors.failedToLoad'));
-      }
+      navigate(`/workspaces/${workspaceId}/actions/${result.action_id}`);
     }
   }
 
@@ -104,24 +118,17 @@
       });
 
       showCreateModal = false;
-      editingAction = newAction;
       successToast(t('common.created'));
       await loadActions();
+      navigate(`/workspaces/${workspaceId}/actions/${newAction.id}`);
     } catch (error) {
       console.error('Failed to create action:', error);
       errorToast(t('errors.failedToCreate'));
     }
   }
 
-  async function handleEdit(action) {
-    try {
-      // Fetch full action with nodes and edges
-      const fullAction = await api.get(`/workspaces/${workspaceId}/actions/${action.id}`);
-      editingAction = fullAction;
-    } catch (error) {
-      console.error('Failed to load action details:', error);
-      errorToast(t('errors.failedToLoad'));
-    }
+  function handleEdit(action) {
+    navigate(`/workspaces/${workspaceId}/actions/${action.id}`);
   }
 
   async function handleToggle(action) {
@@ -157,9 +164,9 @@
   async function handleSaveAction(updatedAction) {
     try {
       await api.put(`/workspaces/${workspaceId}/actions/${updatedAction.id}`, updatedAction);
-      editingAction = null;
       await loadActions();
       successToast(t('common.saved'));
+      navigate(`/workspaces/${workspaceId}/actions`);
     } catch (error) {
       console.error('Failed to save action:', error);
       errorToast(t('errors.failedToSave'));
@@ -168,7 +175,7 @@
   }
 
   function handleCancelEdit() {
-    editingAction = null;
+    navigate(`/workspaces/${workspaceId}/actions`);
   }
 </script>
 

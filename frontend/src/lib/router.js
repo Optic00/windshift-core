@@ -33,6 +33,7 @@ const routes = {
   '/workspaces/:id/settings/issue-sync': 'workspace-settings-issue-sync',
   '/workspaces/:id/settings/danger': 'workspace-settings-danger',
   '/workspaces/:id/actions': 'workspace-actions',
+  '/workspaces/:id/actions/:actionId': 'workspace-actions',
   '/workspaces/:id/items/:itemId': 'item-detail',
   '/workspaces/:id/collections/:collectionId/items/:itemId': 'item-detail',
   // Routes without collection (show all workspace items)

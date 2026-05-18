@@ -218,6 +218,7 @@
       />
       {#if aiStore.chatAvailable}
         <NavLink
+          id="chat-toggle-button"
           icon={IconMessage}
           label="AI Chat"
           onclick={onShowChatPanel}

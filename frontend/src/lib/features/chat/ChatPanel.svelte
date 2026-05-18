@@ -5,7 +5,6 @@
   import MilkdownEditor from '../../editors/LazyMilkdownEditor.svelte';
   import ChatToolTrace from './ChatToolTrace.svelte';
   import { chatStore } from '../../stores/chatStore.svelte.js';
-  import { activeActionEditor } from '../../stores/activeActionEditor.svelte.js';
   import { navigate, currentRoute } from '../../router.js';
   import Select from '../../components/Select.svelte';
   import EmptyState from '../../components/EmptyState.svelte';
@@ -154,7 +153,7 @@
     const ctx = { view: route.view };
     const wsId = Number(route.params?.id);
     if (wsId) ctx.workspace_id = wsId;
-    const actionId = activeActionEditor.id;
+    const actionId = Number(route.params?.actionId);
     if (actionId) ctx.action_id = actionId;
     return ctx;
   }

@@ -405,7 +405,10 @@
       loadingMsg: 'Loading Actions...',
       errorMsg: 'Failed to load Actions',
       wrapper: 'none',
-      getProps: (route) => ({ workspaceId: route.params.id })
+      getProps: (route) => ({
+        workspaceId: route.params.id,
+        actionId: Number(route.params.actionId) || 0,
+      })
     },
     'workspace-analytics': {
       loadingMsg: 'Loading Analytics...',
