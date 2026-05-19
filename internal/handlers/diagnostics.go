@@ -10,6 +10,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/services"
 	"windshift/internal/utils"
 )
 
@@ -22,6 +23,7 @@ type DiagnosticsHandler struct {
 	actionRepo       *repository.ActionRepository
 	deliveryRepo     *repository.WebhookDeliveryRepository
 	schedulerRunRepo *repository.SchedulerRunRepository
+	fracIndexRepo    *repository.FracIndexRepository
 	auditor          *logger.Auditor
 }
 
@@ -30,14 +32,67 @@ func NewDiagnosticsHandler(
 	actionRepo *repository.ActionRepository,
 	deliveryRepo *repository.WebhookDeliveryRepository,
 	schedulerRunRepo *repository.SchedulerRunRepository,
+	fracIndexRepo *repository.FracIndexRepository,
 	auditor *logger.Auditor,
 ) *DiagnosticsHandler {
 	return &DiagnosticsHandler{
 		actionRepo:       actionRepo,
 		deliveryRepo:     deliveryRepo,
 		schedulerRunRepo: schedulerRunRepo,
+		fracIndexRepo:    fracIndexRepo,
 		auditor:          auditor,
 	}
+}
+
+// GetFracIndexState returns a snapshot of persisted items.frac_index state
+// for the admin diagnostics panel. "healthy" is false when the column
+// collation diverges from byte ordering or when the next key the generator
+// would produce already exists in the table.
+//
+// GET /api/admin/diagnostics/frac-index
+func (h *DiagnosticsHandler) GetFracIndexState(w http.ResponseWriter, r *http.Request) {
+	dbState, err := h.fracIndexRepo.GetDBStats()
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+
+	// Compute what the next append would produce so the panel can flag
+	// in-flight collisions even though the in-process generator no longer
+	// caches a predicted key.
+	predicted, perr := nextAppendKey(dbState.ByteMax)
+	if perr != nil {
+		respondInternalError(w, r, perr)
+		return
+	}
+	if predicted != "" {
+		p := predicted
+		dbState.PredictedNext = &p
+		collision, cerr := h.fracIndexRepo.ProbePredictedKey(predicted)
+		if cerr != nil {
+			respondInternalError(w, r, cerr)
+			return
+		}
+		dbState.PredictedCollision = collision
+	}
+
+	healthy := !dbState.CollationMismatch && dbState.PredictedCollision == nil
+	respondJSONOK(w, map[string]any{
+		"db":      dbState,
+		"healthy": healthy,
+	})
+}
+
+// nextAppendKey mirrors GenerateFracIndexForNewItem's "append after current max"
+// step without taking a row lock: it just runs KeyBetween over the supplied
+// byte-wise max. Empty when there are no rows (the generator would seed with
+// KeyBetween("", "") in that case, which is fine to surface).
+func nextAppendKey(byteMax *string) (string, error) {
+	last := ""
+	if byteMax != nil {
+		last = *byteMax
+	}
+	return services.KeyBetween(last, "")
 }
 
 // GetActionLogs returns recent cross-workspace action execution logs.
