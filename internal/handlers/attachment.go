@@ -889,11 +889,10 @@ func (h *AttachmentHandler) Download(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Debug("found attachment", slog.String("component", "attachments"), slog.String("original_filename", attachment.OriginalFilename), slog.String("path", attachment.FilePath))
 
-	// Authorize based on entity type. test_result attachments resolve to a
-	// workspace via test_runs and require test.view in that workspace; item
-	// attachments use the long-standing item-permission check (with approval-
-	// pool fallback for item.view). Other entity types preserve the prior
-	// behavior so this change is non-invasive.
+	// Authorize per entity_type. Before WI-46 the default branch treated a
+	// non-NULL item_id as a work-item id and ran CheckItemPermissionAsActor
+	// on it, which was wrong for branding rows whose item_id was actually
+	// the workspace/portal/hub id. Now every type is explicit.
 	switch entityType.String {
 	case "test_result":
 		if attachment.ItemID == nil {
@@ -903,12 +902,32 @@ func (h *AttachmentHandler) Download(w http.ResponseWriter, r *http.Request) {
 		if !h.authorizeTestResultAttachmentAccess(w, r, *attachment.ItemID) {
 			return
 		}
-	default:
+	case "item", "":
+		// Empty entity_type covers legacy rows inserted before the column
+		// existed; they're all item attachments.
 		if attachment.ItemID != nil {
 			if !CheckItemPermissionAsActor(w, r, repository.NewItemRepository(h.db), h.permissionService, h.approvalService, *attachment.ItemID, models.PermissionItemView) {
 				return
 			}
 		}
+	case "avatar",
+		"workspace_avatar", "workspace_background",
+		"team_avatar", "customer_avatar":
+		// Branding / profile assets are non-secret and rendered widely.
+		// The route is auth-gated so portal customer sessions can't reach
+		// this code.
+		if _, ok := RequireAuth(w, r); !ok {
+			return
+		}
+	case "portal_background", "portal_logo", "hub_logo":
+		// Canonical access route is /api/portal-assets/{id}; refuse to
+		// serve portal/hub branding through the cookie-auth path so there
+		// is exactly one place that gates them.
+		respondNotFound(w, r, "attachment")
+		return
+	default:
+		respondNotFound(w, r, "attachment")
+		return
 	}
 
 	// Validate file path is within attachment directory (prevent path traversal)
@@ -1084,8 +1103,7 @@ func (h *AttachmentHandler) Thumbnail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Authorize same as Download — test_result via workspace lookup, items via
-	// the existing item-permission check with approval-pool fallback.
+	// Authorize per entity_type — mirrors Download. See WI-46 commit notes.
 	switch thumbEntityType.String {
 	case "test_result":
 		if !thumbItemID.Valid {
@@ -1095,12 +1113,24 @@ func (h *AttachmentHandler) Thumbnail(w http.ResponseWriter, r *http.Request) {
 		if !h.authorizeTestResultAttachmentAccess(w, r, int(thumbItemID.Int64)) {
 			return
 		}
-	default:
+	case "item", "":
 		if thumbItemID.Valid {
 			if !CheckItemPermissionAsActor(w, r, repository.NewItemRepository(h.db), h.permissionService, h.approvalService, int(thumbItemID.Int64), models.PermissionItemView) {
 				return
 			}
 		}
+	case "avatar",
+		"workspace_avatar", "workspace_background",
+		"team_avatar", "customer_avatar":
+		if _, ok := RequireAuth(w, r); !ok {
+			return
+		}
+	case "portal_background", "portal_logo", "hub_logo":
+		respondNotFound(w, r, "attachment")
+		return
+	default:
+		respondNotFound(w, r, "attachment")
+		return
 	}
 
 	if !hasThumbnail || thumbnailPath == "" {
