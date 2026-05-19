@@ -35,6 +35,7 @@
   ];
 
   let credentials = $state([]);
+  let workspaces = $state([]);
   let loading = $state(true);
   let showCreateModal = $state(false);
   let showEditModal = $state(false);
@@ -51,6 +52,8 @@
     secret: '',
     is_enabled: true,
     secret_metadata: '',
+    applies_to_all_workspaces: true,
+    workspace_ids: [],
   });
 
   function resetForm() {
@@ -60,22 +63,46 @@
       secret: '',
       is_enabled: true,
       secret_metadata: '',
+      applies_to_all_workspaces: true,
+      workspace_ids: [],
     };
   }
 
+  function toggleWorkspaceScope(workspaceId) {
+    const id = Number(workspaceId);
+    if (form.workspace_ids.includes(id)) {
+      form.workspace_ids = form.workspace_ids.filter((w) => w !== id);
+    } else {
+      form.workspace_ids = [...form.workspace_ids, id];
+    }
+  }
+
+  function workspaceScopeInvalid() {
+    return !form.applies_to_all_workspaces && form.workspace_ids.length === 0;
+  }
+
   async function loadCredentials() {
-    loading = true;
     try {
       credentials = (await api.actionCredentials.getAllGlobal()) || [];
     } catch (err) {
       console.error('Failed to load action credentials:', err);
       errorToast(err.message || 'Failed to load action credentials');
-    } finally {
-      loading = false;
     }
   }
 
-  onMount(loadCredentials);
+  async function loadWorkspaces() {
+    try {
+      workspaces = (await api.workspaces.getAll()) || [];
+    } catch (err) {
+      console.error('Failed to load workspaces:', err);
+    }
+  }
+
+  onMount(async () => {
+    loading = true;
+    await Promise.all([loadCredentials(), loadWorkspaces()]);
+    loading = false;
+  });
 
   function openCreate() {
     resetForm();
@@ -91,6 +118,8 @@
       secret: '',
       is_enabled: cred.is_enabled,
       secret_metadata: cred.secret_metadata || '',
+      applies_to_all_workspaces: cred.applies_to_all_workspaces ?? true,
+      workspace_ids: Array.isArray(cred.workspace_ids) ? [...cred.workspace_ids] : [],
     };
     showEditModal = true;
   }
@@ -117,6 +146,10 @@
       errorToast('Name and secret are required');
       return;
     }
+    if (workspaceScopeInvalid()) {
+      errorToast('Select at least one workspace, or switch to "Available in all workspaces"');
+      return;
+    }
     saving = true;
     try {
       const created = await api.actionCredentials.createGlobal({
@@ -125,6 +158,8 @@
         secret: form.secret,
         is_enabled: form.is_enabled,
         secret_metadata: form.secret_metadata || '',
+        applies_to_all_workspaces: form.applies_to_all_workspaces,
+        workspace_ids: form.applies_to_all_workspaces ? [] : form.workspace_ids,
       });
       successToast(`Credential created (${created.secret_prefix || 'masked'})`);
       closeAndClearSecret();
@@ -138,12 +173,18 @@
 
   async function handleUpdate() {
     if (!editing) return;
+    if (workspaceScopeInvalid()) {
+      errorToast('Select at least one workspace, or switch to "Available in all workspaces"');
+      return;
+    }
     saving = true;
     try {
       await api.actionCredentials.updateGlobal(editing.id, {
         name: form.name,
         is_enabled: form.is_enabled,
         secret_metadata: form.secret_metadata,
+        applies_to_all_workspaces: form.applies_to_all_workspaces,
+        workspace_ids: form.applies_to_all_workspaces ? [] : form.workspace_ids,
       });
       successToast('Credential updated');
       closeAndClearSecret();
@@ -191,9 +232,18 @@
     { key: 'name', label: 'Name' },
     { key: 'type', label: 'Type' },
     { key: 'prefix', label: 'Secret' },
+    { key: 'scope', label: 'Scope' },
     { key: 'status', label: 'Status' },
     { key: 'actions', label: '', align: 'right' },
   ];
+
+  function workspaceNames(ids) {
+    if (!Array.isArray(ids) || ids.length === 0) return '';
+    return ids
+      .map((id) => workspaces.find((w) => w.id === id)?.name)
+      .filter(Boolean)
+      .join(', ');
+  }
 </script>
 
 <div class="space-y-4">
@@ -253,6 +303,15 @@
           <span class="text-xs italic" style="color: var(--ds-text-danger);">no secret</span>
         {/if}
       {/snippet}
+      {#snippet scope(cred)}
+        {#if cred.applies_to_all_workspaces}
+          <Lozenge appearance="success" size="sm">All workspaces</Lozenge>
+        {:else}
+          <span class="text-xs" style="color: var(--ds-text-subtle);" title={workspaceNames(cred.workspace_ids)}>
+            {(cred.workspace_ids || []).length} workspace{(cred.workspace_ids || []).length === 1 ? '' : 's'}
+          </span>
+        {/if}
+      {/snippet}
       {#snippet status(cred)}
         {#if cred.is_enabled}
           <div class="flex items-center gap-1">
@@ -298,9 +357,60 @@
   {/if}
 </div>
 
+{#snippet scopeFields()}
+  <div class="space-y-2 pt-2 border-t" style="border-color: var(--ds-border);">
+    <div class="block text-xs font-medium" style="color: var(--ds-text-subtle);">Workspace scope</div>
+    <label class="flex items-start gap-2 text-sm cursor-pointer" style="color: var(--ds-text);">
+      <input
+        type="radio"
+        name="cred-scope"
+        checked={form.applies_to_all_workspaces}
+        onchange={() => { form.applies_to_all_workspaces = true; }}
+        class="mt-0.5"
+      />
+      <div>
+        <div>Available in all workspaces</div>
+        <div class="text-xs" style="color: var(--ds-text-subtle);">Any workspace can resolve this credential.</div>
+      </div>
+    </label>
+    <label class="flex items-start gap-2 text-sm cursor-pointer" style="color: var(--ds-text);">
+      <input
+        type="radio"
+        name="cred-scope"
+        checked={!form.applies_to_all_workspaces}
+        onchange={() => { form.applies_to_all_workspaces = false; }}
+        class="mt-0.5"
+      />
+      <div>
+        <div>Restrict to specific workspaces</div>
+        <div class="text-xs" style="color: var(--ds-text-subtle);">Only the workspaces selected below can resolve this credential.</div>
+      </div>
+    </label>
+
+    {#if !form.applies_to_all_workspaces}
+      <div class="ml-6 mt-1 max-h-40 overflow-auto rounded-md border p-2" style="border-color: var(--ds-border); background: var(--ds-surface);">
+        {#if workspaces.length === 0}
+          <p class="text-xs" style="color: var(--ds-text-subtle);">No workspaces available.</p>
+        {:else}
+          {#each workspaces as ws}
+            <label class="flex items-center gap-2 text-sm py-1 cursor-pointer" style="color: var(--ds-text);">
+              <input
+                type="checkbox"
+                checked={form.workspace_ids.includes(ws.id)}
+                onchange={() => toggleWorkspaceScope(ws.id)}
+              />
+              {ws.name}
+            </label>
+          {/each}
+        {/if}
+      </div>
+    {/if}
+  </div>
+{/snippet}
+
 <!-- Create modal -->
 {#if showCreateModal}
-  <Modal isOpen={true} onclose={closeAndClearSecret} onSubmit={handleCreate} submitDisabled={saving || !form.name || !form.secret}>
+  <Modal isOpen={true} onclose={closeAndClearSecret} onSubmit={handleCreate} submitDisabled={saving || !form.name || !form.secret || workspaceScopeInvalid()}>
     {#snippet children(submitHint)}
       <ModalHeader title="Add credential" onclose={closeAndClearSecret} />
       <div class="p-4 space-y-4">
@@ -353,13 +463,14 @@
           <input type="checkbox" bind:checked={form.is_enabled} />
           <span class="text-sm" style="color: var(--ds-text);">Enabled</span>
         </label>
+        {@render scopeFields()}
         <div class="flex justify-end gap-2 pt-2 border-t" style="border-color: var(--ds-border);">
           <Button variant="secondary" onclick={closeAndClearSecret} keyboardHint="Esc">Cancel</Button>
           <Button
             variant="primary"
             onclick={handleCreate}
             loading={saving}
-            disabled={saving || !form.name || !form.secret}
+            disabled={saving || !form.name || !form.secret || workspaceScopeInvalid()}
             keyboardHint={submitHint}
           >
             Create
@@ -372,7 +483,7 @@
 
 <!-- Edit (metadata only) modal -->
 {#if showEditModal && editing}
-  <Modal isOpen={true} onclose={closeAndClearSecret} onSubmit={handleUpdate} submitDisabled={saving || !form.name}>
+  <Modal isOpen={true} onclose={closeAndClearSecret} onSubmit={handleUpdate} submitDisabled={saving || !form.name || workspaceScopeInvalid()}>
     {#snippet children(submitHint)}
       <ModalHeader title="Edit credential" onclose={closeAndClearSecret} />
       <div class="p-4 space-y-4">
@@ -405,9 +516,10 @@
           <input type="checkbox" bind:checked={form.is_enabled} />
           <span class="text-sm" style="color: var(--ds-text);">Enabled</span>
         </label>
+        {@render scopeFields()}
         <div class="flex justify-end gap-2 pt-2 border-t" style="border-color: var(--ds-border);">
           <Button variant="secondary" onclick={closeAndClearSecret} keyboardHint="Esc">Cancel</Button>
-          <Button variant="primary" onclick={handleUpdate} loading={saving} disabled={saving} keyboardHint={submitHint}>
+          <Button variant="primary" onclick={handleUpdate} loading={saving} disabled={saving || workspaceScopeInvalid()} keyboardHint={submitHint}>
             Save
           </Button>
         </div>

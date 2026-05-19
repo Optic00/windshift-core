@@ -70,7 +70,8 @@ export const actionCapabilities = {
 // capabilities. The plaintext secret travels only on create/rotate; every
 // response is the sanitized DTO (has_secret + prefix; no ciphertext).
 export const actionCredentials = {
-  // Global (workspace_id IS NULL) credentials — system-admin only.
+  // Admin view — system-admin only. The create/update body chooses scope via
+  // applies_to_all_workspaces + workspace_ids; the list returns every row.
   getAllGlobal: () => get('/admin/action-credentials'),
   createGlobal: (data) => post('/admin/action-credentials', data),
   updateGlobal: (id, data) => put(`/admin/action-credentials/${id}`, data),
@@ -78,8 +79,8 @@ export const actionCredentials = {
   deleteGlobal: (id) => del(`/admin/action-credentials/${id}`),
 
   // Workspace-scoped credentials — gated by action.credential.manage. The
-  // list endpoint also returns globals (workspace_id null) so a single call
-  // populates the credential picker.
+  // list returns credentials usable in the workspace (those that apply to all
+  // workspaces, plus those scoped to this one).
   getForWorkspace: (workspaceId) => get(`/workspaces/${workspaceId}/action-credentials`),
   createForWorkspace: (workspaceId, data) =>
     post(`/workspaces/${workspaceId}/action-credentials`, data),
