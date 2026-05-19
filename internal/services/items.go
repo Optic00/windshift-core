@@ -294,7 +294,7 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 	// re-reads MAX(frac_index) from the DB.
 	var itemID int64
 	for attempt := 0; attempt < fracIndexMaxRetries; attempt++ {
-		fracIndex, gerr := GenerateFracIndexForNewItem(db, params.WorkspaceID, params.ParentID)
+		fracIndex, gerr := GenerateFracIndexForNewItem(db)
 		if gerr != nil {
 			return 0, fmt.Errorf("failed to generate frac_index: %w", gerr)
 		}

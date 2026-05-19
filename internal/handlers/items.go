@@ -1340,7 +1340,7 @@ func (h *ItemHandler) Copy(w http.ResponseWriter, r *http.Request) {
 	copyTitle := utils.SanitizeTitle(fmt.Sprintf("COPY - %s", originalItem.Title))
 
 	// Generate frac_index for the copy
-	newFracIndex, err := services.GenerateFracIndexForNewItem(h.db, originalItem.WorkspaceID, originalItem.ParentID)
+	newFracIndex, err := services.GenerateFracIndexForNewItem(h.db)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return

@@ -335,7 +335,7 @@ func decrementInt(x string) (string, error) {
 // The entire read-compute-store is serialized under a mutex so that two concurrent
 // creators cannot derive the same key from the same cached value.
 // Note: frac_index is globally unique across all workspaces to allow cross-instance ranking.
-func GenerateFracIndexForNewItem(db database.Database, workspaceID int, parentID *int) (string, error) {
+func GenerateFracIndexForNewItem(db database.Database) (string, error) {
 	fracIndexCacheMutex.Lock()
 	defer fracIndexCacheMutex.Unlock()
 
