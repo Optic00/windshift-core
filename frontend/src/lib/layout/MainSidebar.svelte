@@ -11,13 +11,11 @@
   import UserAvatar from '../components/UserAvatar.svelte';
   import NotificationTray from '../features/notifications/NotificationTray.svelte';
   import {
-    IconSearch, IconSettings, IconPlus, IconGridDots, IconClock, IconCalendar, IconUserScan, IconLifebuoy,
-    IconFlag, IconFolders, IconPackage, IconUsers, IconPhoneCheck, IconLayoutSidebarLeftExpand, IconLayoutSidebarLeftCollapse,
-    IconBook, IconMessage, IconTerminal2,
-
-    IconFolderSearch
-
+    IconSearch, IconSettings, IconPlus, IconGridDots, IconUserScan,
+    IconFolders, IconLayoutSidebarLeftExpand, IconLayoutSidebarLeftCollapse,
+    IconMessage, IconTerminal2,
   } from '@tabler/icons-svelte-runes';
+  import { mainNavItems, bottomNavItems } from '../navigation/mainNavigation.js';
 
   let {
     onShowCommandPalette = () => {},
@@ -115,24 +113,7 @@
     return items;
   });
 
-  // Navigation items data
-  const mainNavItems = [
-    { id: 'collections', icon: IconFolderSearch, labelKey: 'nav.collections', href: '/collections', activeViews: ['collections-list'] },
-    { id: 'time', icon: IconClock, labelKey: 'nav.timeAndProjects', href: '/time', activeViews: ['time'] },
-    { id: 'milestones', icon: IconFlag, labelKey: 'nav.milestones', href: '/milestones', activeViews: ['milestones', 'milestone-detail'] },
-    { id: 'iterations', icon: IconCalendar, labelKey: 'nav.iterations', href: '/iterations', activeViews: ['iterations', 'iteration-detail'] },
-    { id: 'logbook', icon: IconBook, labelKey: 'nav.knowledgeBase', href: '/logbook', activeViews: ['logbook', 'logbook-document'], permission: 'canAccessLogbook' },
-    { id: 'assets', icon: IconPackage, labelKey: 'nav.assets', href: '/assets', activeViews: ['assets', 'asset-detail'], permission: 'canAccessAssets' },
-    { id: 'portal-hub', icon: IconLifebuoy, labelKey: 'nav.portalHub', href: '/channels', activeViews: ['hub', 'hub-inbox', 'channels'], permission: 'canAccessPortalHub' },
-    { id: 'customers', icon: IconUsers, labelKey: 'nav.customers', href: '/customers', activeViews: ['customers'], permission: 'canAccessCustomers' },
-    { id: 'teams', icon: IconPhoneCheck, labelKey: 'nav.teams', href: '/teams', activeViews: ['teams-list', 'team-detail'] }
-  ];
-
-  const bottomNavItems = [
-    { id: 'admin', icon: IconSettings, labelKey: 'nav.admin', href: '/admin', activeViews: ['admin'], permission: 'canAccessAdmin' }
-  ];
-
-  // Filter nav items based on permissions
+  // Filter nav items based on permissions (registry: navigation/mainNavigation.js)
   const filteredMainNav = $derived(
     mainNavItems.filter(item => !item.permission || $permissionStore[item.permission])
   );
