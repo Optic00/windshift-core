@@ -72,7 +72,11 @@
     };
   }
 
+  const submitDisabled = $derived(!formData.name || !formData.forward_label || !formData.reverse_label);
+
   async function handleSubmit() {
+    if (submitDisabled) return;
+
     try {
       if (editingLinkType) {
         await api.linkTypes.update(editingLinkType.id, formData);
@@ -216,7 +220,14 @@
   {/snippet}
 </PageHeader>
 
-<Modal isOpen={showForm} onclose={() => showForm = false} maxWidth="max-w-2xl">
+<Modal
+  isOpen={showForm}
+  onclose={() => showForm = false}
+  onSubmit={handleSubmit}
+  submitDisabled={submitDisabled}
+  maxWidth="max-w-2xl"
+>
+  {#snippet children(submitHint)}
   <!-- Modal header -->
   <ModalHeader title={editingLinkType ? t('settings.linkTypes.editLinkType') : t('settings.linkTypes.addLinkType')} showCloseButton={false} />
 
@@ -290,8 +301,11 @@
     onCancel={() => showForm = false}
     onConfirm={handleSubmit}
     confirmLabel={editingLinkType ? t('common.update') : t('common.create')}
-    disabled={!formData.name || !formData.forward_label || !formData.reverse_label}
+    disabled={submitDisabled}
+    showKeyboardHint={true}
+    confirmKeyboardHint={submitHint}
   />
+  {/snippet}
 </Modal>
 
 <DataTable

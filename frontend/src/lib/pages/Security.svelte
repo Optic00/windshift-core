@@ -25,6 +25,7 @@
 		prepareCredentialCreationOptions,
 		processCredentialCreationResponse
 	} from '../utils/webauthn-utils.js';
+	import { toHotkeyString } from '../utils/keyboardShortcuts.js';
 
 	// Bind to store values
 	let user = $derived(securityStore.user);
@@ -317,6 +318,7 @@
 					icon={Plus}
 					size="medium"
 					keyboardHint="A"
+					hotkeyConfig={{ key: toHotkeyString('security', 'addCredential'), guard: () => !showAddCredential && !showAddToken && !showChangePassword }}
 				>
 					{t('common.add')}
 				</Button>
@@ -382,6 +384,7 @@
 					icon={Plus}
 					size="medium"
 					keyboardHint="T"
+					hotkeyConfig={{ key: toHotkeyString('security', 'createToken'), guard: () => !showAddCredential && !showAddToken && !showChangePassword }}
 				>
 					{t('security.createToken')}
 				</Button>

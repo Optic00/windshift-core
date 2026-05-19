@@ -1,0 +1,684 @@
+{
+  "version": 1,
+  "violations": [
+    {
+      "signature": "src/lib/dialogs/AddSCMLinkModal.svelte:dialog-footer-confirm-without-keyboard-hint:<DialogFooter onCancel={close} onConfirm={submit} confirmLabel={t('scm.linkResource')} loading={submitting} loadingLabel={t('scm.linking')} disabled={loading || repositories.length === 0 || !selectedRepoId || !externalId",
+      "count": 1,
+      "file": "src/lib/dialogs/AddSCMLinkModal.svelte",
+      "rule": "dialog-footer-confirm-without-keyboard-hint",
+      "message": "DialogFooter has a confirm action without visible keyboard hints."
+    },
+    {
+      "signature": "src/lib/dialogs/AddSCMLinkModal.svelte:modal-confirm-without-submit-shortcut:<Modal isOpen={true} maxWidth=\"max-w-md\" onclose={close}>",
+      "count": 1,
+      "file": "src/lib/dialogs/AddSCMLinkModal.svelte",
+      "rule": "modal-confirm-without-submit-shortcut",
+      "message": "Modal contains a confirming DialogFooter but does not pass onSubmit, so Enter/Cmd+Enter will not submit."
+    },
+    {
+      "signature": "src/lib/dialogs/AIConfirmModal.svelte:modal-backdrop-confirm-without-shortcut:<ModalBackdrop bind:show opacity={0.4} blur={4} align=\"top\" paddingTop=\"pt-8\" scrollable onclose={close} ariaLabelledBy=\"ai-confirm-title\">",
+      "count": 1,
+      "file": "src/lib/dialogs/AIConfirmModal.svelte",
+      "rule": "modal-backdrop-confirm-without-shortcut",
+      "message": "ModalBackdrop contains a primary action but no obvious submit shortcut handling."
+    },
+    {
+      "signature": "src/lib/dialogs/ChannelConfigModal.svelte:dialog-footer-confirm-without-keyboard-hint:<DialogFooter onCancel={handleClose} onConfirm={handleSaveAll} cancelLabel={t('common.close')} confirmLabel={t('channel.saveChanges')} disabled={loading || configParseFailed} />",
+      "count": 1,
+      "file": "src/lib/dialogs/ChannelConfigModal.svelte",
+      "rule": "dialog-footer-confirm-without-keyboard-hint",
+      "message": "DialogFooter has a confirm action without visible keyboard hints."
+    },
+    {
+      "signature": "src/lib/dialogs/ChannelConfigModal.svelte:modal-confirm-without-submit-shortcut:<Modal {isOpen} onclose={handleClose} maxWidth=\"max-w-4xl\" >",
+      "count": 1,
+      "file": "src/lib/dialogs/ChannelConfigModal.svelte",
+      "rule": "modal-confirm-without-submit-shortcut",
+      "message": "Modal contains a confirming DialogFooter but does not pass onSubmit, so Enter/Cmd+Enter will not submit."
+    },
+    {
+      "signature": "src/lib/dialogs/CompleteSprintDialog.svelte:modal-backdrop-confirm-without-shortcut:<ModalBackdrop bind:show onclose={cancel} ariaLabelledBy=\"complete-sprint-title\" zIndex={70}>",
+      "count": 1,
+      "file": "src/lib/dialogs/CompleteSprintDialog.svelte",
+      "rule": "modal-backdrop-confirm-without-shortcut",
+      "message": "ModalBackdrop contains a primary action but no obvious submit shortcut handling."
+    },
+    {
+      "signature": "src/lib/dialogs/CreateBranchModal.svelte:dialog-footer-confirm-without-keyboard-hint:<DialogFooter onCancel={close} onConfirm={submit} confirmLabel={t('scm.createBranch')} loading={submitting} loadingLabel={t('scm.creating')} disabled={loading || repositories.length === 0 || !selectedRepoId || !branchNam",
+      "count": 1,
+      "file": "src/lib/dialogs/CreateBranchModal.svelte",
+      "rule": "dialog-footer-confirm-without-keyboard-hint",
+      "message": "DialogFooter has a confirm action without visible keyboard hints."
+    },
+    {
+      "signature": "src/lib/dialogs/CreateBranchModal.svelte:modal-confirm-without-submit-shortcut:<Modal isOpen={true} maxWidth=\"max-w-md\" onclose={close}>",
+      "count": 1,
+      "file": "src/lib/dialogs/CreateBranchModal.svelte",
+      "rule": "modal-confirm-without-submit-shortcut",
+      "message": "Modal contains a confirming DialogFooter but does not pass onSubmit, so Enter/Cmd+Enter will not submit."
+    },
+    {
+      "signature": "src/lib/dialogs/CreateModal.svelte:modal-backdrop-confirm-without-shortcut:<ModalBackdrop bind:show={isOpen} opacity={0.4} align=\"top\" paddingTop=\"pt-16\" scrollable zIndex={60} onclose={close}>",
+      "count": 1,
+      "file": "src/lib/dialogs/CreateModal.svelte",
+      "rule": "modal-backdrop-confirm-without-shortcut",
+      "message": "ModalBackdrop contains a primary action but no obvious submit shortcut handling."
+    },
+    {
+      "signature": "src/lib/dialogs/CreatePRFromBranchModal.svelte:dialog-footer-confirm-without-keyboard-hint:<DialogFooter onCancel={close} onConfirm={submit} confirmLabel={t('scm.createPR')} loading={submitting} loadingLabel={t('scm.creating')} />",
+      "count": 1,
+      "file": "src/lib/dialogs/CreatePRFromBranchModal.svelte",
+      "rule": "dialog-footer-confirm-without-keyboard-hint",
+      "message": "DialogFooter has a confirm action without visible keyboard hints."
+    },
+    {
+      "signature": "src/lib/dialogs/CreatePRFromBranchModal.svelte:modal-confirm-without-submit-shortcut:<Modal isOpen={true} maxWidth=\"max-w-md\" onclose={close}>",
+      "count": 1,
+      "file": "src/lib/dialogs/CreatePRFromBranchModal.svelte",
+      "rule": "modal-confirm-without-submit-shortcut",
+      "message": "Modal contains a confirming DialogFooter but does not pass onSubmit, so Enter/Cmd+Enter will not submit."
+    },
+    {
+      "signature": "src/lib/dialogs/RequestTypeFieldsBuilder.svelte:add-create-button-without-shortcut:<Button onclick={addVirtualField} variant=\"primary\" size=\"medium\" class=\"flex-1\"> {t('requestTypeFields.addVirtualField')}",
+      "count": 1,
+      "file": "src/lib/dialogs/RequestTypeFieldsBuilder.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/features/actions/ActionsManager.svelte:add-create-button-without-shortcut:<Button variant=\"primary\" icon={Plus} keyboardHint={getShortcutDisplay('actions', 'add')} onclick={handleCreate} > {t('actions.createFirst')}",
+      "count": 1,
+      "file": "src/lib/features/actions/ActionsManager.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/features/actions/shared/GenericActionListManager.svelte:add-create-button-without-shortcut:<Button variant=\"primary\" size=\"small\" onclick={oncreate}> <Plus size={14} /> New Action",
+      "count": 1,
+      "file": "src/lib/features/actions/shared/GenericActionListManager.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/features/assets/AssetBrowser.svelte:add-create-button-without-shortcut:<Button onclick={showAddAssetForm}> <IconPlus class=\"w-4 h-4 mr-1\" /> Create Asset",
+      "count": 1,
+      "file": "src/lib/features/assets/AssetBrowser.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/features/assets/AssetManager.svelte:add-create-button-without-shortcut:<Button variant=\"ghost\" size=\"sm\" onclick={() => showAddCategoryForm(category.id)} title=\"Add subcategory\"> <IconPlus class=\"w-4 h-4\" />",
+      "count": 1,
+      "file": "src/lib/features/assets/AssetManager.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/features/assets/AssetSubFilterBar.svelte:add-create-button-without-shortcut:<Button variant=\"ghost\" size=\"sm\" icon={IconPlus} onclick={addFilter}> {t('common.addFilter') || 'Add filter'}",
+      "count": 1,
+      "file": "src/lib/features/assets/AssetSubFilterBar.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/features/assets/import/AssetImportWizard.svelte:dialog-footer-confirm-without-keyboard-hint:<DialogFooter showCancel={false} confirmLabel={confirmLabel} loading={isLoading} disabled={isDisabled} onConfirm={confirmLabel ? handleNext : null} >",
+      "count": 1,
+      "file": "src/lib/features/assets/import/AssetImportWizard.svelte",
+      "rule": "dialog-footer-confirm-without-keyboard-hint",
+      "message": "DialogFooter has a confirm action without visible keyboard hints."
+    },
+    {
+      "signature": "src/lib/features/assets/import/AssetImportWizard.svelte:modal-confirm-without-submit-shortcut:<Modal bind:isOpen maxWidth=\"max-w-4xl\" onclose={handleClose}>",
+      "count": 1,
+      "file": "src/lib/features/assets/import/AssetImportWizard.svelte",
+      "rule": "modal-confirm-without-submit-shortcut",
+      "message": "Modal contains a confirming DialogFooter but does not pass onSubmit, so Enter/Cmd+Enter will not submit."
+    },
+    {
+      "signature": "src/lib/features/assets/import/UploadStep.svelte:add-create-button-without-shortcut:<Button variant=\"ghost\" size=\"small\" onclick={() => assetImportStore.toggleCreateType()}> <IconPlus class=\"w-4 h-4\" /> Create New Type",
+      "count": 1,
+      "file": "src/lib/features/assets/import/UploadStep.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/features/assets/import/UploadStep.svelte:add-create-button-without-shortcut:<Button variant=\"primary\" size=\"small\" disabled={!ct.name || ct.isCreating} loading={ct.isCreating} onclick={() => assetImportStore.createTypeFromImport()} > Create Type",
+      "count": 1,
+      "file": "src/lib/features/assets/import/UploadStep.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/features/channels/ChannelWebhookConfig.svelte:add-create-button-without-shortcut:<Button type=\"button\" variant=\"ghost\" size=\"small\" onclick={addWebhookHeader}> {t('channel.addHeader')}",
+      "count": 1,
+      "file": "src/lib/features/channels/ChannelWebhookConfig.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/features/channels/FormBuilder.svelte:add-create-button-without-shortcut:<Button onclick={onCreateForm} variant=\"primary\" size=\"small\" icon={IconPlus}> {t('forms.createForm')}",
+      "count": 2,
+      "file": "src/lib/features/channels/FormBuilder.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/features/collections/Collections.svelte:dialog-footer-confirm-without-keyboard-hint:<DialogFooter onCancel={closeAssociateWorkspaceModal} onConfirm={handleAssociateWorkspaceSave} confirmLabel={t('collections.saveAssociation')} disabled={workspaceAssociationSaving} loading={workspaceAssociationSaving} />",
+      "count": 1,
+      "file": "src/lib/features/collections/Collections.svelte",
+      "rule": "dialog-footer-confirm-without-keyboard-hint",
+      "message": "DialogFooter has a confirm action without visible keyboard hints."
+    },
+    {
+      "signature": "src/lib/features/collections/Collections.svelte:modal-confirm-without-submit-shortcut:<Modal isOpen={showWorkspaceAssociationModal} onclose={closeAssociateWorkspaceModal} maxWidth=\"max-w-2xl\">",
+      "count": 1,
+      "file": "src/lib/features/collections/Collections.svelte",
+      "rule": "modal-confirm-without-submit-shortcut",
+      "message": "Modal contains a confirming DialogFooter but does not pass onSubmit, so Enter/Cmd+Enter will not submit."
+    },
+    {
+      "signature": "src/lib/features/collections/SubFilterBar.svelte:add-create-button-without-shortcut:<Button variant=\"ghost\" size=\"sm\" icon={Plus} onclick={addFilter}> {t('common.addFilter') || 'Add filter'}",
+      "count": 1,
+      "file": "src/lib/features/collections/SubFilterBar.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/features/items/Comments.svelte:add-create-button-without-shortcut:<Button variant=\"primary\" size=\"small\" onclick={submitComment} disabled={isSubmitting || !newCommentContent.trim()} keyboardHint={getDisplayString(submitShortcut)} > {isSubmitting ? t('comments.posting') : t('comments.co",
+      "count": 1,
+      "file": "src/lib/features/items/Comments.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/features/items/WorkItemFilterPanel.svelte:add-create-button-without-shortcut:<Button variant=\"ghost\" size=\"sm\" icon={Plus} onclick={addDynamicFilter} class=\"w-full justify-start\" > {t('collections.addFieldFilter')}",
+      "count": 1,
+      "file": "src/lib/features/items/WorkItemFilterPanel.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/features/iterations/Iterations.svelte:add-create-button-without-shortcut:<Button variant=\"primary\" size=\"medium\" icon={IconPlus} keyboardHint=\"A\" onclick={startCreate} dataTestid=\"iteration-create-button\"> {t('iterations.createIteration')}",
+      "count": 1,
+      "file": "src/lib/features/iterations/Iterations.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/features/labels/PersonalLabelManager.svelte:add-create-button-without-shortcut:<Button variant=\"primary\" size=\"small\" icon={Plus} onclick={openCreate} > {t('users.labels.new') || 'New label'}",
+      "count": 1,
+      "file": "src/lib/features/labels/PersonalLabelManager.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/features/logbook/BucketNavigation.svelte:add-create-button-without-shortcut:<Button variant=\"default\" icon={Plus} onclick={() => showCreateForm = true} class=\"w-full justify-center\" > {t('logbook.createBucket')}",
+      "count": 1,
+      "file": "src/lib/features/logbook/BucketNavigation.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/features/logbook/DocumentList.svelte:add-create-button-without-shortcut:<Button variant=\"primary\" onclick={createNote} disabled={!noteFormData.title.trim()} > {t('common.create')}",
+      "count": 1,
+      "file": "src/lib/features/logbook/DocumentList.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/features/milestones/Milestones.svelte:add-create-button-without-shortcut:<Button variant=\"primary\" icon={Plus} onclick={startCreate} keyboardHint=\"A\"> {t('milestones.addMilestone')}",
+      "count": 1,
+      "file": "src/lib/features/milestones/Milestones.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/features/personal/PlanMyDay.svelte:add-create-button-without-shortcut:<Button variant=\"primary\" onclick={addToCalendar} loading={scheduling} icon={CalendarPlus}> {#if scheduling} Adding to Calendar... {:else} Add to Calendar {/if}",
+      "count": 1,
+      "file": "src/lib/features/personal/PlanMyDay.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/jira-import/JiraImportWizard.svelte:dialog-footer-confirm-without-keyboard-hint:<DialogFooter showCancel={false} confirmLabel={getConfirmLabel()} loading={connection.isConnecting || isAnalyzing || isContinueLoading || isLoadingSavedConnection} disabled={ connection.isConnecting || isAnalyzing || isC",
+      "count": 1,
+      "file": "src/lib/jira-import/JiraImportWizard.svelte",
+      "rule": "dialog-footer-confirm-without-keyboard-hint",
+      "message": "DialogFooter has a confirm action without visible keyboard hints."
+    },
+    {
+      "signature": "src/lib/jira-import/JiraImportWizard.svelte:modal-confirm-without-submit-shortcut:<Modal bind:isOpen maxWidth=\"max-w-4xl\" onclose={handleClose}>",
+      "count": 1,
+      "file": "src/lib/jira-import/JiraImportWizard.svelte",
+      "rule": "modal-confirm-without-submit-shortcut",
+      "message": "Modal contains a confirming DialogFooter but does not pass onSubmit, so Enter/Cmd+Enter will not submit."
+    },
+    {
+      "signature": "src/lib/jira-import/SystemImportPage.svelte:add-create-button-without-shortcut:<Button variant=\"primary\" onclick={() => openWizard()} keyboardHint={getShortcutDisplay('systemImport', 'add')} hotkeyConfig={{ key: toHotkeyString('systemImport', 'add'), guard: () => !showWizard }}> <Plus size={16} cla",
+      "count": 1,
+      "file": "src/lib/jira-import/SystemImportPage.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/pages/DashboardOnboarding.svelte:add-create-button-without-shortcut:<Button variant=\"primary\" size=\"small\" keyboardHint=\"I\" onclick={createWorkItem} > {t('onboarding.createWorkItemBtn')}",
+      "count": 1,
+      "file": "src/lib/pages/DashboardOnboarding.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/pages/DashboardOnboarding.svelte:add-create-button-without-shortcut:<Button variant=\"primary\" size=\"small\" keyboardHint=\"W\" onclick={createWorkspace} > {t('onboarding.createWorkspaceBtn')}",
+      "count": 1,
+      "file": "src/lib/pages/DashboardOnboarding.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/pages/Homepage.svelte:add-create-button-without-shortcut:<Button variant=\"primary\" size=\"small\" icon={Plus} onclick={addSection}> Add Section",
+      "count": 1,
+      "file": "src/lib/pages/Homepage.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/pages/MainApp.svelte:add-create-button-without-shortcut:<Button class=\"sr-only\" onclick={showCreateDropdown} hotkeyConfig={{ key: toHotkeyString('global', 'create') }}>Create",
+      "count": 1,
+      "file": "src/lib/pages/MainApp.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/pages/Screens.svelte:dialog-footer-confirm-without-keyboard-hint:<DialogFooter onCancel={cancelForm} onConfirm={saveScreen} confirmLabel={editingScreen ? t('screensPage.updateScreen') : t('screensPage.createScreen')} disabled={!formData.name.trim()} />",
+      "count": 1,
+      "file": "src/lib/pages/Screens.svelte",
+      "rule": "dialog-footer-confirm-without-keyboard-hint",
+      "message": "DialogFooter has a confirm action without visible keyboard hints."
+    },
+    {
+      "signature": "src/lib/pages/Screens.svelte:modal-confirm-without-submit-shortcut:<Modal isOpen={showCreateForm} onclose={cancelForm} maxWidth=\"max-w-lg\">",
+      "count": 1,
+      "file": "src/lib/pages/Screens.svelte",
+      "rule": "modal-confirm-without-submit-shortcut",
+      "message": "Modal contains a confirming DialogFooter but does not pass onSubmit, so Enter/Cmd+Enter will not submit."
+    },
+    {
+      "signature": "src/lib/pages/Security.svelte:dialog-footer-confirm-without-keyboard-hint:<DialogFooter cancelLabel={t('common.cancel')} confirmLabel={t('auth.changePassword')} onCancel={cancelChangePassword} onConfirm={handleChangePassword} disabled={changePasswordLoading || !changePasswordData.current_passw",
+      "count": 1,
+      "file": "src/lib/pages/Security.svelte",
+      "rule": "dialog-footer-confirm-without-keyboard-hint",
+      "message": "DialogFooter has a confirm action without visible keyboard hints."
+    },
+    {
+      "signature": "src/lib/pages/Security.svelte:modal-confirm-without-submit-shortcut:<Modal isOpen={showChangePassword} onclose={cancelChangePassword} maxWidth=\"max-w-md\">",
+      "count": 1,
+      "file": "src/lib/pages/Security.svelte",
+      "rule": "modal-confirm-without-submit-shortcut",
+      "message": "Modal contains a confirming DialogFooter but does not pass onSubmit, so Enter/Cmd+Enter will not submit."
+    },
+    {
+      "signature": "src/lib/pages/UserProfile.svelte:add-create-button-without-shortcut:<Button variant=\"primary\" icon={Plus} onclick={() => mintAgentToken(agent.id)} disabled={agentMintState[agent.id].minting || !agentMintState[agent.id].name.trim()} loading={agentMintState[agent.id].minting} > {t('securit",
+      "count": 1,
+      "file": "src/lib/pages/UserProfile.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/pages/UserProfile.svelte:add-create-button-without-shortcut:<Button variant=\"primary\" onclick={handleCreateAgent} disabled={creatingAgent} loading={creatingAgent} > {creatingAgent ? 'Creating…' : 'Create agent'}",
+      "count": 1,
+      "file": "src/lib/pages/UserProfile.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/portal/PortalMyRequests.svelte:add-create-button-without-shortcut:<Button variant=\"primary\" onclick={() => portalStore.addComment()} disabled={!portalStore.newCommentContent.trim() || portalStore.addingComment} loading={portalStore.addingComment} > Add Comment",
+      "count": 1,
+      "file": "src/lib/portal/PortalMyRequests.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/portal/PortalProfile.svelte:add-create-button-without-shortcut:<Button variant=\"primary\" icon={Plus} onclick={openAddModal} disabled={loadingCredentials} dataTestid=\"portal-add-passkey\" > {t('portal.addPasskey') || 'Add a passkey'}",
+      "count": 1,
+      "file": "src/lib/portal/PortalProfile.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/settings/ApprovalSetManager.svelte:add-create-button-without-shortcut:<Button variant=\"primary\" icon={Plus} onclick={startCreating}> {t('approvalSets.createFirst')}",
+      "count": 1,
+      "file": "src/lib/settings/ApprovalSetManager.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/settings/AttachmentSettings.svelte:add-create-button-without-shortcut:<Button variant=\"default\" icon={Plus} onclick={addMimeType} disabled={!newMimeType.trim() || saving} > {t('common.add')}",
+      "count": 1,
+      "file": "src/lib/settings/AttachmentSettings.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/settings/BoardConfigurationPage.svelte:add-create-button-without-shortcut:<Button variant=\"default\" size=\"small\" icon={Plus} onclick={addColumn}> {t('settings.boardConfig.addColumn')}",
+      "count": 1,
+      "file": "src/lib/settings/BoardConfigurationPage.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/settings/BoardConfigurationPage.svelte:add-create-button-without-shortcut:<Button variant=\"default\" size=\"small\" onclick={addColumn}> <Plus class=\"w-4 h-4 mr-1\" /> {t('settings.boardConfig.addColumn')}",
+      "count": 1,
+      "file": "src/lib/settings/BoardConfigurationPage.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/settings/CapabilityManager.svelte:add-create-button-without-shortcut:<Button variant=\"primary\" onclick={openCreate} icon={Plus}> {t('settings.actionCapabilities.addCapability')}",
+      "count": 1,
+      "file": "src/lib/settings/CapabilityManager.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/settings/CapabilityManager.svelte:add-create-button-without-shortcut:<Button variant=\"secondary\" onclick={openCreate} icon={Plus}> {t('settings.actionCapabilities.addFirst')}",
+      "count": 1,
+      "file": "src/lib/settings/CapabilityManager.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/settings/ChannelManagersTab.svelte:add-create-button-without-shortcut:<Button onclick={toggleAddManager} variant=\"primary\" size=\"medium\" icon={Plus} > {t('settings.channelManagers.addManager')}",
+      "count": 1,
+      "file": "src/lib/settings/ChannelManagersTab.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/settings/ConditionSetDetail.svelte:add-create-button-without-shortcut:<Button variant=\"ghost\" size=\"small\" icon={Plus} onclick={() => addCondition(tc.transition_id)} > {t('conditionSets.addCondition')}",
+      "count": 1,
+      "file": "src/lib/settings/ConditionSetDetail.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/settings/ConditionSetDetail.svelte:add-create-button-without-shortcut:<Button variant=\"ghost\" size=\"small\" icon={Plus} onclick={() => addConditionsToTransition(trans.id)} > {t('conditionSets.addConditions')}",
+      "count": 1,
+      "file": "src/lib/settings/ConditionSetDetail.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/settings/ConditionSetManager.svelte:add-create-button-without-shortcut:<Button variant=\"primary\" icon={Plus} onclick={startCreating}> {t('conditionSets.createFirst')}",
+      "count": 1,
+      "file": "src/lib/settings/ConditionSetManager.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/settings/ConfigurationSetManager.svelte:add-create-button-without-shortcut:<Button variant=\"primary\" icon={Plus} onclick={startCreating}> {t('settings.configSets.createFirst')}",
+      "count": 1,
+      "file": "src/lib/settings/ConfigurationSetManager.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/settings/CustomFields.svelte:dialog-footer-confirm-without-keyboard-hint:<DialogFooter onCancel={cancelForm} onConfirm={saveField} confirmLabel={editingField ? t('common.update') : t('common.create')} disabled={!formData.field_name.trim() || (needsOptions && optionItems.filter(i =>",
+      "count": 1,
+      "file": "src/lib/settings/CustomFields.svelte",
+      "rule": "dialog-footer-confirm-without-keyboard-hint",
+      "message": "DialogFooter has a confirm action without visible keyboard hints."
+    },
+    {
+      "signature": "src/lib/settings/CustomFields.svelte:modal-confirm-without-submit-shortcut:<Modal isOpen={showCreateForm} onclose={cancelForm} maxWidth=\"max-w-2xl\">",
+      "count": 1,
+      "file": "src/lib/settings/CustomFields.svelte",
+      "rule": "modal-confirm-without-submit-shortcut",
+      "message": "Modal contains a confirming DialogFooter but does not pass onSubmit, so Enter/Cmd+Enter will not submit."
+    },
+    {
+      "signature": "src/lib/settings/GroupManager.svelte:add-create-button-without-shortcut:<Button variant=\"primary\" icon={Plus} onclick={() => { resetForm(); showCreateForm = true; }} keyboardHint=\"A\" hotkeyConfig={{ key: toHotkeyString('groups', 'add'), guard: () => !showCreateForm }} > {t('settings.groups.a",
+      "count": 1,
+      "file": "src/lib/settings/GroupManager.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/settings/GroupManager.svelte:dialog-footer-confirm-without-keyboard-hint:<DialogFooter confirmLabel={editingGroup ? t('settings.groups.updateGroup') : t('settings.groups.createGroup')} onCancel={resetForm} onConfirm={saveGroup} />",
+      "count": 1,
+      "file": "src/lib/settings/GroupManager.svelte",
+      "rule": "dialog-footer-confirm-without-keyboard-hint",
+      "message": "DialogFooter has a confirm action without visible keyboard hints."
+    },
+    {
+      "signature": "src/lib/settings/GroupManager.svelte:dialog-footer-confirm-without-keyboard-hint:<DialogFooter showCancel={false} confirmLabel={t('common.close')} variant=\"secondary\" onConfirm={closeMemberModal} />",
+      "count": 1,
+      "file": "src/lib/settings/GroupManager.svelte",
+      "rule": "dialog-footer-confirm-without-keyboard-hint",
+      "message": "DialogFooter has a confirm action without visible keyboard hints."
+    },
+    {
+      "signature": "src/lib/settings/GroupManager.svelte:modal-confirm-without-submit-shortcut:<Modal isOpen={showCreateForm} onclose={resetForm} maxWidth=\"max-w-lg\">",
+      "count": 1,
+      "file": "src/lib/settings/GroupManager.svelte",
+      "rule": "modal-confirm-without-submit-shortcut",
+      "message": "Modal contains a confirming DialogFooter but does not pass onSubmit, so Enter/Cmd+Enter will not submit."
+    },
+    {
+      "signature": "src/lib/settings/GroupManager.svelte:modal-confirm-without-submit-shortcut:<Modal isOpen={showMemberModal && selectedGroup} onclose={closeMemberModal} maxWidth=\"max-w-2xl\">",
+      "count": 1,
+      "file": "src/lib/settings/GroupManager.svelte",
+      "rule": "modal-confirm-without-submit-shortcut",
+      "message": "Modal contains a confirming DialogFooter but does not pass onSubmit, so Enter/Cmd+Enter will not submit."
+    },
+    {
+      "signature": "src/lib/settings/IssueSyncSettings.svelte:add-create-button-without-shortcut:<Button size=\"sm\" onclick={addAssigneeMapping} disabled={!newAssigneeGH || !newAssigneeWS}> <Plus class=\"w-4 h-4\" />",
+      "count": 1,
+      "file": "src/lib/settings/IssueSyncSettings.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/settings/IssueSyncSettings.svelte:add-create-button-without-shortcut:<Button size=\"sm\" onclick={addFilterLabel}> <Plus class=\"w-4 h-4\" />",
+      "count": 1,
+      "file": "src/lib/settings/IssueSyncSettings.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/settings/ItemTypeManager.svelte:dialog-footer-confirm-without-keyboard-hint:<DialogFooter onCancel={cancelEdit} onConfirm={saveItemType} confirmLabel={editingId ? t('common.update') : t('common.create')} />",
+      "count": 1,
+      "file": "src/lib/settings/ItemTypeManager.svelte",
+      "rule": "dialog-footer-confirm-without-keyboard-hint",
+      "message": "DialogFooter has a confirm action without visible keyboard hints."
+    },
+    {
+      "signature": "src/lib/settings/ItemTypeManager.svelte:modal-confirm-without-submit-shortcut:<Modal isOpen={showCreateForm} onclose={cancelEdit} maxWidth=\"max-w-2xl\">",
+      "count": 1,
+      "file": "src/lib/settings/ItemTypeManager.svelte",
+      "rule": "modal-confirm-without-submit-shortcut",
+      "message": "Modal contains a confirming DialogFooter but does not pass onSubmit, so Enter/Cmd+Enter will not submit."
+    },
+    {
+      "signature": "src/lib/settings/LLMConnectionManager.svelte:add-create-button-without-shortcut:<Button variant=\"primary\" onclick={openCreate} icon={Plus}> Add Connection",
+      "count": 1,
+      "file": "src/lib/settings/LLMConnectionManager.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/settings/LLMConnectionManager.svelte:add-create-button-without-shortcut:<Button variant=\"secondary\" onclick={openCreate} icon={Plus}> Add your first connection",
+      "count": 1,
+      "file": "src/lib/settings/LLMConnectionManager.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/settings/NotificationSettings.svelte:dialog-footer-confirm-without-keyboard-hint:<DialogFooter onCancel={closeModals} onConfirm={handleSubmit} confirmLabel={editingSetting ? t('settings.notifications.updateSetting') : t('settings.notifications.createSetting')} />",
+      "count": 1,
+      "file": "src/lib/settings/NotificationSettings.svelte",
+      "rule": "dialog-footer-confirm-without-keyboard-hint",
+      "message": "DialogFooter has a confirm action without visible keyboard hints."
+    },
+    {
+      "signature": "src/lib/settings/NotificationSettings.svelte:modal-confirm-without-submit-shortcut:<Modal isOpen={showCreateModal || showEditModal} onclose={closeModals} maxWidth=\"max-w-4xl\">",
+      "count": 1,
+      "file": "src/lib/settings/NotificationSettings.svelte",
+      "rule": "modal-confirm-without-submit-shortcut",
+      "message": "Modal contains a confirming DialogFooter but does not pass onSubmit, so Enter/Cmd+Enter will not submit."
+    },
+    {
+      "signature": "src/lib/settings/PermissionManager.svelte:add-create-button-without-shortcut:<Button variant=\"default\" size=\"small\" icon={Plus} onclick={() => openAssignModal(item)}> {t('settings.permissions.assign')}",
+      "count": 1,
+      "file": "src/lib/settings/PermissionManager.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/settings/PermissionSetManager.svelte:add-create-button-without-shortcut:<Button variant=\"primary\" onclick={createPermissionSet} keyboardHint=\"↵\"> {t('common.create')}",
+      "count": 1,
+      "file": "src/lib/settings/PermissionSetManager.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/settings/SCMProviderManager.svelte:add-create-button-without-shortcut:<Button variant=\"primary\" icon={Plus} onclick={openCreateModal} keyboardHint=\"A\"> {t('settings.scmProviders.addProvider')}",
+      "count": 1,
+      "file": "src/lib/settings/SCMProviderManager.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/settings/ThemeManager.svelte:add-create-button-without-shortcut:<Button variant=\"primary\" icon={Plus} onclick={() => showCreateForm = !showCreateForm} keyboardHint=\"A\" hotkeyConfig={{ key: toHotkeyString('themes', 'add'), guard: () => !showCreateForm }} > {t('common.create')}",
+      "count": 1,
+      "file": "src/lib/settings/ThemeManager.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/settings/ThemeManager.svelte:add-create-button-without-shortcut:<Button variant=\"primary\" icon={Plus} onclick={() => showCreateForm = true}> {t('common.create')}",
+      "count": 1,
+      "file": "src/lib/settings/ThemeManager.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/settings/UserManager.svelte:add-create-button-without-shortcut:<Button variant=\"primary\" icon={Plus} onclick={() => { resetForm(); showCreateForm = true; }} keyboardHint=\"A\" hotkeyConfig={{ key: toHotkeyString('users', 'add'), guard: () => !showCreateForm }} > {t('users.addUser')}",
+      "count": 1,
+      "file": "src/lib/settings/UserManager.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/settings/UserManager.svelte:dialog-footer-confirm-without-keyboard-hint:<DialogFooter confirmLabel={editingUser ? t('common.update') : (isInviteMode ? t('auth.inviteUser') : t('common.create'))} onCancel={resetForm} onConfirm={saveUser} />",
+      "count": 1,
+      "file": "src/lib/settings/UserManager.svelte",
+      "rule": "dialog-footer-confirm-without-keyboard-hint",
+      "message": "DialogFooter has a confirm action without visible keyboard hints."
+    },
+    {
+      "signature": "src/lib/settings/UserManager.svelte:dialog-footer-confirm-without-keyboard-hint:<DialogFooter confirmLabel={mintedToken ? t('common.done') : 'Mint token'} onCancel={closeTokenModal} onConfirm={mintedToken ? closeTokenModal : createTokenForUser} confirmDisabled={creatingToken} />",
+      "count": 1,
+      "file": "src/lib/settings/UserManager.svelte",
+      "rule": "dialog-footer-confirm-without-keyboard-hint",
+      "message": "DialogFooter has a confirm action without visible keyboard hints."
+    },
+    {
+      "signature": "src/lib/settings/UserManager.svelte:dialog-footer-confirm-without-keyboard-hint:<DialogFooter confirmLabel={t('auth.resetPassword')} disabled={!generateRandomPassword && !newPassword.trim()} onCancel={closePasswordResetModal} onConfirm={performPasswordReset} />",
+      "count": 1,
+      "file": "src/lib/settings/UserManager.svelte",
+      "rule": "dialog-footer-confirm-without-keyboard-hint",
+      "message": "DialogFooter has a confirm action without visible keyboard hints."
+    },
+    {
+      "signature": "src/lib/settings/UserManager.svelte:dialog-footer-confirm-without-keyboard-hint:<DialogFooter showCancel={false} confirmLabel={t('common.done')} onConfirm={closeInviteResultModal} />",
+      "count": 1,
+      "file": "src/lib/settings/UserManager.svelte",
+      "rule": "dialog-footer-confirm-without-keyboard-hint",
+      "message": "DialogFooter has a confirm action without visible keyboard hints."
+    },
+    {
+      "signature": "src/lib/settings/UserManager.svelte:dialog-footer-confirm-without-keyboard-hint:<DialogFooter showCancel={false} confirmLabel={t('common.done')} onConfirm={closePasswordResultModal} />",
+      "count": 1,
+      "file": "src/lib/settings/UserManager.svelte",
+      "rule": "dialog-footer-confirm-without-keyboard-hint",
+      "message": "DialogFooter has a confirm action without visible keyboard hints."
+    },
+    {
+      "signature": "src/lib/settings/UserManager.svelte:modal-confirm-without-submit-shortcut:<Modal isOpen={showCreateForm} onclose={resetForm} maxWidth=\"max-w-2xl\">",
+      "count": 1,
+      "file": "src/lib/settings/UserManager.svelte",
+      "rule": "modal-confirm-without-submit-shortcut",
+      "message": "Modal contains a confirming DialogFooter but does not pass onSubmit, so Enter/Cmd+Enter will not submit."
+    },
+    {
+      "signature": "src/lib/settings/UserManager.svelte:modal-confirm-without-submit-shortcut:<Modal isOpen={showInviteResultModal} onclose={closeInviteResultModal} maxWidth=\"max-w-md\">",
+      "count": 1,
+      "file": "src/lib/settings/UserManager.svelte",
+      "rule": "modal-confirm-without-submit-shortcut",
+      "message": "Modal contains a confirming DialogFooter but does not pass onSubmit, so Enter/Cmd+Enter will not submit."
+    },
+    {
+      "signature": "src/lib/settings/UserManager.svelte:modal-confirm-without-submit-shortcut:<Modal isOpen={showPasswordResetModal} onclose={closePasswordResetModal} maxWidth=\"max-w-md\">",
+      "count": 1,
+      "file": "src/lib/settings/UserManager.svelte",
+      "rule": "modal-confirm-without-submit-shortcut",
+      "message": "Modal contains a confirming DialogFooter but does not pass onSubmit, so Enter/Cmd+Enter will not submit."
+    },
+    {
+      "signature": "src/lib/settings/UserManager.svelte:modal-confirm-without-submit-shortcut:<Modal isOpen={showPasswordResultModal} onclose={closePasswordResultModal} maxWidth=\"max-w-md\">",
+      "count": 1,
+      "file": "src/lib/settings/UserManager.svelte",
+      "rule": "modal-confirm-without-submit-shortcut",
+      "message": "Modal contains a confirming DialogFooter but does not pass onSubmit, so Enter/Cmd+Enter will not submit."
+    },
+    {
+      "signature": "src/lib/settings/UserManager.svelte:modal-confirm-without-submit-shortcut:<Modal isOpen={showTokenModal} onclose={closeTokenModal} maxWidth=\"max-w-md\">",
+      "count": 1,
+      "file": "src/lib/settings/UserManager.svelte",
+      "rule": "modal-confirm-without-submit-shortcut",
+      "message": "Modal contains a confirming DialogFooter but does not pass onSubmit, so Enter/Cmd+Enter will not submit."
+    },
+    {
+      "signature": "src/lib/teams/LayerEditor.svelte:add-create-button-without-shortcut:<Button variant=\"ghost\" size=\"sm\" icon={IconPlus} onclick={startCreate} dataTestid=\"layer-add\" > {t('teams.oncall.addLayer')}",
+      "count": 1,
+      "file": "src/lib/teams/LayerEditor.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/teams/OnCallTab.svelte:add-create-button-without-shortcut:<Button variant=\"ghost\" size=\"sm\" icon={IconPlus} onclick={() => openOverrideEditor(schedule.id)} dataTestid=\"override-create\" > {t('teams.oncall.addOverride')}",
+      "count": 1,
+      "file": "src/lib/teams/OnCallTab.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/workspaces/CustomerOrganisationNavigation.svelte:add-create-button-without-shortcut:<Button variant=\"default\" icon={Plus} onclick={onManageOrgs} class=\"w-full justify-center\"> {t('workspaces.customers.manageOrganisations')}",
+      "count": 1,
+      "file": "src/lib/workspaces/CustomerOrganisationNavigation.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/workspaces/WorkspaceMembers.svelte:add-create-button-without-shortcut:<Button variant=\"primary\" size=\"medium\" onclick={() => showModal = true} keyboardHint=\"A\" hotkeyConfig={{ key: toHotkeyString('workspaceMembers', 'addMember'), guard: () => !showModal }}> <UserPlus class=\"w-4 h-4 mr-2\" /",
+      "count": 1,
+      "file": "src/lib/workspaces/WorkspaceMembers.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/workspaces/WorkspaceSCMSettings.svelte:add-create-button-without-shortcut:<Button size=\"sm\" variant=\"secondary\" icon={Plus} onclick={() => openRepoSelector(conn)}> Link Repositories",
+      "count": 1,
+      "file": "src/lib/workspaces/WorkspaceSCMSettings.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    },
+    {
+      "signature": "src/lib/workspaces/WorkspaceWelcome.svelte:add-create-button-without-shortcut:<Button variant=\"primary\" size=\"small\" icon={Plus} onclick={addSection} > Add Section",
+      "count": 1,
+      "file": "src/lib/workspaces/WorkspaceWelcome.svelte",
+      "rule": "add-create-button-without-shortcut",
+      "message": "Likely Add/Create/New button is missing a visible keyboard hint and hotkeyConfig."
+    }
+  ]
+}

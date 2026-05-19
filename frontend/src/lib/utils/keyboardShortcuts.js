@@ -209,6 +209,10 @@ const shortcuts = {
   actionCredentials: {
     add: { key: 'a' },
   },
+  security: {
+    addCredential: { key: 'a' },
+    createToken: { key: 't' },
+  },
   // Item detail
   itemDetail: {
     startTimer: { key: 'a', modifierKey: true },
