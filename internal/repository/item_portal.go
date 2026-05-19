@@ -199,14 +199,21 @@ type OrganisationTicket struct {
 }
 
 // ListOrganisationTickets returns all tickets raised by portal customers
-// belonging to the given customer_organisation_id, restricted to the given
-// workspace IDs. Returns an empty slice if workspaceIDs is empty.
+// belonging to the given customer_organisation_id. When workspaceIDs is nil
+// the result is not workspace-scoped — the caller has already established
+// that org-level ACLs authorize reading every ticket in the org. When
+// workspaceIDs is non-nil but empty, no tickets match.
 func (r *ItemRepository) ListOrganisationTickets(orgID int, workspaceIDs []int) ([]OrganisationTicket, error) {
-	if len(workspaceIDs) == 0 {
-		return []OrganisationTicket{}, nil
+	args := []interface{}{orgID}
+	workspaceClause := ""
+	if workspaceIDs != nil {
+		if len(workspaceIDs) == 0 {
+			return []OrganisationTicket{}, nil
+		}
+		placeholders, wsArgs := inPlaceholders(workspaceIDs)
+		workspaceClause = "  AND i.workspace_id IN (" + placeholders + ")\n"
+		args = append(args, wsArgs...)
 	}
-	placeholders, wsArgs := inPlaceholders(workspaceIDs)
-	args := append([]interface{}{orgID}, wsArgs...)
 
 	query := `
 		SELECT i.id, i.workspace_id, i.workspace_item_number, i.title, i.created_at,
@@ -219,8 +226,7 @@ func (r *ItemRepository) ListOrganisationTickets(orgID int, workspaceIDs []int) 
 		LEFT JOIN statuses s ON i.status_id = s.id
 		LEFT JOIN status_categories sc ON s.category_id = sc.id
 		WHERE pc.customer_organisation_id = ?
-		  AND i.workspace_id IN (` + placeholders + `)
-		ORDER BY i.created_at DESC`
+` + workspaceClause + `		ORDER BY i.created_at DESC`
 
 	rows, err := r.db.Query(query, args...)
 	if err != nil {

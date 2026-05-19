@@ -713,10 +713,16 @@ func (h *PortalCustomersHandler) GetOrganisationTickets(w http.ResponseWriter, r
 		}
 	}
 
-	wsIDs, err := GetAccessibleWorkspaceIDs(user, h.db, h.permService)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
+	// Org ACL is the gate; do not intersect with workspace permissions.
+	// Workspace access is still computed so we can scrub workspace_name /
+	// workspace_key for tickets whose workspace the caller can't view —
+	// org membership authorises the ticket itself, but should not double as
+	// "knows the entire workspace catalog".
+	wsAccess := map[int]struct{}{}
+	if wsIDs, err := GetAccessibleWorkspaceIDs(user, h.db, h.permService); err == nil {
+		for _, id := range wsIDs {
+			wsAccess[id] = struct{}{}
+		}
 	}
 
 	type OrgTicket struct {
@@ -733,12 +739,7 @@ func (h *PortalCustomersHandler) GetOrganisationTickets(w http.ResponseWriter, r
 		CreatorContactEmail string `json:"creator_contact_email"`
 	}
 
-	if len(wsIDs) == 0 {
-		respondJSONOK(w, []OrgTicket{})
-		return
-	}
-
-	rows, err := repository.NewItemRepository(h.db).ListOrganisationTickets(orgID, wsIDs)
+	rows, err := repository.NewItemRepository(h.db).ListOrganisationTickets(orgID, nil)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -746,14 +747,18 @@ func (h *PortalCustomersHandler) GetOrganisationTickets(w http.ResponseWriter, r
 
 	tickets := make([]OrgTicket, len(rows))
 	for i, t := range rows {
+		name, key := t.WorkspaceName, t.WorkspaceKey
+		if _, ok := wsAccess[t.WorkspaceID]; !ok {
+			name, key = "", ""
+		}
 		tickets[i] = OrgTicket{
 			ID:                  t.ID,
 			WorkspaceID:         t.WorkspaceID,
 			WorkspaceItemNumber: t.WorkspaceItemNumber,
 			Title:               t.Title,
 			CreatedAt:           t.CreatedAt,
-			WorkspaceName:       t.WorkspaceName,
-			WorkspaceKey:        t.WorkspaceKey,
+			WorkspaceName:       name,
+			WorkspaceKey:        key,
 			StatusName:          t.StatusName,
 			StatusColor:         t.StatusColor,
 			CreatorContactName:  t.CreatorContactName,
