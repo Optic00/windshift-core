@@ -1,8 +1,8 @@
 <script>
   import { onMount } from 'svelte';
-  import { IconPlus as Plus, IconSquareCheck as CheckSquare, IconCalendar as Calendar, IconHome as Home, IconLayoutKanban as SquareKanban, IconList as List, IconMapPin as MapPin, IconSettings as Settings, IconBook as BookOpen, IconPackage as Package, IconChevronDown as ChevronDown, IconChevronRight, IconFileCheck as FileCheck, IconFileStack as FileStack, IconPlayerPlay as Play, IconChartBar as BarChart3, IconListTree as ListTree, IconFlag as Milestone, IconGripVertical as Grip, IconBolt as Zap, IconPalette as Palette, IconSparkles as Sparkles, IconPencil as Pencil, IconLayoutRows as Rows_3, IconTrendingUp as TrendingUp } from '@tabler/icons-svelte-runes';
-  import { GanttChart } from '@lucide/svelte';
+  import { IconPlus as Plus, IconSquareCheck as CheckSquare, IconCalendar as Calendar, IconHome as Home, IconSettings as Settings, IconBook as BookOpen, IconChevronDown as ChevronDown, IconChevronRight, IconGripVertical as Grip, IconPalette as Palette, IconSparkles as Sparkles, IconPencil as Pencil } from '@tabler/icons-svelte-runes';
   import { workspaceIconMap } from '../utils/icons.js';
+  import { workspaceViewItems, workspaceOnlyViews, testNavigationItems } from '../navigation/workspaceNavigation.js';
   import { navigate, currentRoute } from '../router.js';
   import { currentWorkspace, workspacePermissions } from '../stores';
   import { moduleSettings } from '../stores/moduleSettings.js';
@@ -72,21 +72,7 @@
   let workspaceToolsExpanded = $state(true);
   let lastCollectionId = undefined; // Plain variable to prevent infinite loop in $effect
 
-  const workspaceViewItems = [
-    { id: 'backlog', label: 'Backlog', icon: Rows_3, tooltip: 'Backlog view for unfinished items' },
-    { id: 'board', label: 'Board', icon: SquareKanban, tooltip: 'Kanban board view with columns' },
-    { id: 'list', label: 'List', icon: List, tooltip: 'Detailed list view with all fields' },
-    { id: 'tree', label: 'Tree', icon: ListTree, tooltip: 'Hierarchical tree view for nested items' },
-    { id: 'map', label: 'Map', icon: MapPin, tooltip: 'Visual map view for spatial organization' },
-    { id: 'roadmap', label: 'Roadmap', icon: GanttChart, tooltip: 'Timeline view with date ranges and dependencies' }
-  ];
-
-  const workspaceOnlyViews = [
-    { id: 'iterations', label: 'Iterations', icon: Calendar, tooltip: 'Manage sprints, PIs, and other iteration cycles' },
-    { id: 'milestones', label: 'Milestones', icon: Milestone, tooltip: 'Manage workspace milestones and releases' },
-    { id: 'analytics', label: 'Analytics', icon: TrendingUp, tooltip: 'Velocity, cycle time, and forecasting' },
-    { id: 'actions', label: 'Actions', icon: Zap, tooltip: 'Automate workflows and triggers' }
-  ];
+  // Workspace view registries live in navigation/workspaceNavigation.js
   const workspaceOnlyViewIds = new Set(workspaceOnlyViews.map(view => view.id));
   const workspaceTestViewIds = new Set([
     'test-cases',
@@ -101,13 +87,6 @@
     'test-execution',
     'test-reports'
   ]);
-  const testNavigationItems = [
-    { id: 'test-cases', label: 'Test Cases', icon: FileCheck, tooltip: 'Manage test cases and steps', activeViews: ['test-cases', 'test-case-detail', 'test-steps'] },
-    { id: 'test-sets', label: 'Test Plans', icon: Package, tooltip: 'Organize plans and suites', activeViews: ['test-sets', 'test-set-detail'] },
-    { id: 'test-templates', label: 'Templates', icon: FileStack, tooltip: 'Template runs and shared steps', activeViews: ['test-templates', 'test-template-detail'] },
-    { id: 'test-runs', label: 'Test Runs', icon: Play, tooltip: 'Schedule and execute runs', activeViews: ['test-runs', 'test-run-detail', 'test-execution'] },
-    { id: 'test-reports', label: 'Reports', icon: BarChart3, tooltip: 'Review execution results', activeViews: ['test-reports'] }
-  ];
   const activeTestNavId = $derived.by(() => getActiveTestNavId($currentRoute));
   const defaultCollectionView = workspaceViewItems[0]?.id || 'backlog';
 
