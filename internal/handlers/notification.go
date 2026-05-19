@@ -482,7 +482,6 @@ func (nh *NotificationHandler) GetNotifications(w http.ResponseWriter, r *http.R
 		return
 	}
 	userID := user.ID
-	slog.Debug("loading notifications", slog.String("component", "notifications"), slog.Int("user_id", userID), slog.String("username", user.Username))
 
 	// Parse pagination parameters
 	limitStr := r.URL.Query().Get("limit")
@@ -510,7 +509,6 @@ func (nh *NotificationHandler) GetNotifications(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	slog.Debug("successfully retrieved notifications", slog.String("component", "notifications"), slog.Int("user_id", userID), slog.Int("count", len(notifications)), slog.Int("limit", limit), slog.Int("offset", offset))
 	respondJSONOK(w, notifications)
 }
 
