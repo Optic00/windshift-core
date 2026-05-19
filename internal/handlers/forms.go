@@ -233,7 +233,12 @@ func (h *FormHandler) GetCustomFields(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	customFields, err := h.portalService.GetCustomFieldsForChannel(ctx, result.channel.ID)
+	// Public-form endpoint has no authenticated viewer — visibility filtering
+	// (a portal-only construct) does not apply. Treat as admin so request
+	// types' field metadata still resolves; any visibility restrictions on
+	// form-channel request types should keep them off the form channel
+	// entirely, not be enforced at the field-listing layer here.
+	customFields, err := h.portalService.GetCustomFieldsForChannel(ctx, result.channel.ID, nil, nil, true)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return

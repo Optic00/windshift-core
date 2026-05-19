@@ -572,8 +572,13 @@ func (h *PortalHandler) GetCustomFields(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Get custom fields used by this channel's request types
-	fields, err := h.portalService.GetCustomFieldsForChannel(ctx, portalResult.channel.ID)
+	// Resolve visibility context so we only return custom fields for request
+	// types / asset reports the caller is allowed to see. Without this the
+	// endpoint leaks field names, descriptions, and option vocabularies for
+	// hidden request types — same gate GetRequestTypes / GetAssetReports use.
+	vc := h.getPortalVisibilityContext(ctx, r, portalResult.channel.ID)
+
+	fields, err := h.portalService.GetCustomFieldsForChannel(ctx, portalResult.channel.ID, vc.userGroupIDs, vc.customerOrgID, vc.isAdmin)
 	if err != nil {
 		slog.Error("failed to get custom fields for channel", slog.String("component", "portal"), slog.Int("channel_id", portalResult.channel.ID), slog.Any("error", err))
 		respondInternalError(w, r, err)

@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -529,35 +530,40 @@ func (s *PortalService) ValidateRequestTypeBelongsToChannel(ctx context.Context,
 	return exists, err
 }
 
-// GetCustomFieldsForChannel returns custom field definitions used by request types
-// OR form-mode asset reports in this channel.
-func (s *PortalService) GetCustomFieldsForChannel(ctx context.Context, channelID int) ([]models.CustomFieldDefinition, error) {
-	//nolint:misspell // database uses British spelling
-	query := `
-		SELECT DISTINCT cfd.id, cfd.name, cfd.field_type, cfd.description,
+// GetCustomFieldsForChannel returns custom field definitions used by the portal
+// request types and form-mode asset reports the caller can see.
+//
+// Visibility: when isAdmin is false, request types and asset reports are
+// filtered by IsVisibleTo(userGroupIDs, customerOrgID) before their custom
+// field references are collected. Without this filter the endpoint leaks
+// field names, descriptions, and option vocabularies for request types /
+// reports that are hidden from the caller via visibility_group_ids /
+// visibility_org_ids — the same gate enforced by GetRequestTypes and
+// GetAssetReports.
+func (s *PortalService) GetCustomFieldsForChannel(ctx context.Context, channelID int, userGroupIDs []int, customerOrgID *int, isAdmin bool) ([]models.CustomFieldDefinition, error) {
+	cfIDs, err := s.collectVisibleChannelCustomFieldIDs(ctx, channelID, userGroupIDs, customerOrgID, isAdmin)
+	if err != nil {
+		return nil, err
+	}
+	if len(cfIDs) == 0 {
+		return []models.CustomFieldDefinition{}, nil
+	}
+	placeholders := make([]string, 0, len(cfIDs))
+	args := make([]interface{}, 0, len(cfIDs))
+	for id := range cfIDs {
+		placeholders = append(placeholders, "?")
+		args = append(args, id)
+	}
+	query := fmt.Sprintf(`
+		SELECT cfd.id, cfd.name, cfd.field_type, cfd.description,
 		       cfd.required, cfd.options, cfd.display_order, cfd.system_default,
 		       cfd.applies_to_portal_customers, cfd.applies_to_customer_organisations,
 		       cfd.created_at, cfd.updated_at
 		FROM custom_field_definitions cfd
-		WHERE cfd.id IN (
-		    SELECT CAST(rtf.field_identifier AS INTEGER)
-		    FROM request_type_fields rtf
-		    JOIN request_types rt ON rtf.request_type_id = rt.id
-		    WHERE rt.channel_id = ?
-		      AND rt.is_active = true
-		      AND rtf.field_type = 'custom'
-		    UNION
-		    SELECT CAST(arf.field_identifier AS INTEGER)
-		    FROM asset_report_fields arf
-		    JOIN asset_reports ar ON arf.asset_report_id = ar.id
-		    WHERE ar.channel_id = ?
-		      AND ar.is_active = true
-		      AND ar.run_mode = 'form'
-		      AND arf.field_type = 'custom'
-		)
-		ORDER BY cfd.display_order, cfd.name`
+		WHERE cfd.id IN (%s)
+		ORDER BY cfd.display_order, cfd.name`, strings.Join(placeholders, ","))
 
-	rows, err := s.db.QueryContext(ctx, query, channelID, channelID)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch custom fields for channel: %w", err)
 	}
@@ -593,4 +599,142 @@ func (s *PortalService) GetCustomFieldsForChannel(ctx context.Context, channelID
 	}
 
 	return fields, nil
+}
+
+// collectVisibleChannelCustomFieldIDs returns the set of custom-field IDs
+// referenced by request types and form-mode asset reports in the channel
+// after applying portal visibility rules. Admins skip the IsVisibleTo gate.
+func (s *PortalService) collectVisibleChannelCustomFieldIDs(ctx context.Context, channelID int, userGroupIDs []int, customerOrgID *int, isAdmin bool) (map[int]struct{}, error) {
+	cfIDs := make(map[int]struct{})
+
+	// Visible request types → their custom-typed configured fields.
+	rtRows, err := s.db.QueryContext(ctx, `
+		SELECT rt.id, rt.visibility_group_ids, rt.visibility_org_ids
+		FROM request_types rt
+		WHERE rt.channel_id = ? AND rt.is_active = true
+	`, channelID)
+	if err != nil {
+		return nil, fmt.Errorf("list channel request types: %w", err)
+	}
+	var visibleRTIDs []int
+	func() {
+		defer rtRows.Close()
+		for rtRows.Next() {
+			var id int
+			var groups, orgs sql.NullString
+			if err := rtRows.Scan(&id, &groups, &orgs); err != nil {
+				continue
+			}
+			if isAdmin || portalRowVisible(groups, orgs, userGroupIDs, customerOrgID) {
+				visibleRTIDs = append(visibleRTIDs, id)
+			}
+		}
+	}()
+	if err := rtRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate channel request types: %w", err)
+	}
+	if len(visibleRTIDs) > 0 {
+		if err := s.collectCustomFieldIDsFor(ctx, cfIDs, `
+			SELECT CAST(rtf.field_identifier AS INTEGER)
+			FROM request_type_fields rtf
+			WHERE rtf.field_type = 'custom' AND rtf.request_type_id IN (%s)
+		`, visibleRTIDs); err != nil {
+			return nil, err
+		}
+	}
+
+	// Visible form-mode asset reports → their custom-typed configured fields.
+	arRows, err := s.db.QueryContext(ctx, `
+		SELECT ar.id, ar.visibility_group_ids, ar.visibility_org_ids
+		FROM asset_reports ar
+		WHERE ar.channel_id = ? AND ar.is_active = true AND ar.run_mode = 'form'
+	`, channelID)
+	if err != nil {
+		return nil, fmt.Errorf("list channel asset reports: %w", err)
+	}
+	var visibleARIDs []int
+	func() {
+		defer arRows.Close()
+		for arRows.Next() {
+			var id int
+			var groups, orgs sql.NullString
+			if err := arRows.Scan(&id, &groups, &orgs); err != nil {
+				continue
+			}
+			if isAdmin || portalRowVisible(groups, orgs, userGroupIDs, customerOrgID) {
+				visibleARIDs = append(visibleARIDs, id)
+			}
+		}
+	}()
+	if err := arRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate channel asset reports: %w", err)
+	}
+	if len(visibleARIDs) > 0 {
+		if err := s.collectCustomFieldIDsFor(ctx, cfIDs, `
+			SELECT CAST(arf.field_identifier AS INTEGER)
+			FROM asset_report_fields arf
+			WHERE arf.field_type = 'custom' AND arf.asset_report_id IN (%s)
+		`, visibleARIDs); err != nil {
+			return nil, err
+		}
+	}
+
+	return cfIDs, nil
+}
+
+// collectCustomFieldIDsFor expands the %s placeholder with len(parentIDs)
+// '?' tokens and adds the scanned integer IDs into out (maps are reference
+// types so the caller observes the mutation).
+func (s *PortalService) collectCustomFieldIDsFor(ctx context.Context, out map[int]struct{}, queryTpl string, parentIDs []int) error {
+	placeholders := make([]string, 0, len(parentIDs))
+	args := make([]interface{}, 0, len(parentIDs))
+	for _, id := range parentIDs {
+		placeholders = append(placeholders, "?")
+		args = append(args, id)
+	}
+	q := fmt.Sprintf(queryTpl, strings.Join(placeholders, ","))
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return fmt.Errorf("collect custom field ids: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			continue
+		}
+		out[id] = struct{}{}
+	}
+	return rows.Err()
+}
+
+// portalRowVisible mirrors models.RequestType.IsVisibleTo / AssetReport.IsVisibleTo
+// against the JSON-encoded visibility columns. Returns true when no
+// restrictions are set or when the caller matches any allowed group/org.
+func portalRowVisible(groupsCol, orgsCol sql.NullString, userGroupIDs []int, customerOrgID *int) bool {
+	var allowGroups, allowOrgs []int
+	if groupsCol.Valid && groupsCol.String != "" {
+		_ = json.Unmarshal([]byte(groupsCol.String), &allowGroups)
+	}
+	if orgsCol.Valid && orgsCol.String != "" {
+		_ = json.Unmarshal([]byte(orgsCol.String), &allowOrgs)
+	}
+	if len(allowGroups) == 0 && len(allowOrgs) == 0 {
+		return true
+	}
+	for _, gid := range allowGroups {
+		for _, ug := range userGroupIDs {
+			if gid == ug {
+				return true
+			}
+		}
+	}
+	if customerOrgID != nil {
+		for _, oid := range allowOrgs {
+			if oid == *customerOrgID {
+				return true
+			}
+		}
+	}
+	return false
 }
