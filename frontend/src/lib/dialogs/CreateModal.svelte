@@ -11,6 +11,7 @@
   import ChipPicker from '../pickers/ChipPicker.svelte';
   import { getShortcut, matchesShortcut, getDisplayString } from '../utils/keyboardShortcuts.js';
   import { errorToast } from '../stores/toasts.svelte.js';
+  import { showCreatedItemToast } from '../utils/createdItemToast.js';
 
   // Import form components
   import WorkItemForm from '../forms/WorkItemForm.svelte';
@@ -188,8 +189,11 @@
 
         // When creating a child issue, stay on the parent so the user can see the new
         // child appear in the children list rather than being navigated away.
-        if (!formData.parent_id && shouldNavigateAfterCreate($currentRoute.view)) {
+        const shouldNavigate = !formData.parent_id && shouldNavigateAfterCreate($currentRoute.view);
+        if (shouldNavigate) {
           navigate(`/workspaces/${formData.workspace_id}/items/${result.id}`);
+        } else if (!formData.parent_id) {
+          showCreatedItemToast(result);
         }
         close();
       } else if (selectedType === 'milestone') {

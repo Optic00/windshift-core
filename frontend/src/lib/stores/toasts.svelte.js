@@ -34,6 +34,8 @@ export const toasts = {
  * @param {boolean} [options.showCloseButton=true] - Show close button
  * @param {boolean} [options.clickable=false] - Whether the toast is clickable
  * @param {Function} [options.onClick] - Callback when toast is clicked (only if clickable)
+ * @param {string} [options.actionLabel] - Optional inline action label
+ * @param {string} [options.keyboardHint] - Optional keyboard shortcut hint for the action
  * @returns {number} Toast ID
  */
 export function addToast(options) {
@@ -47,6 +49,8 @@ export function addToast(options) {
     showCloseButton: options.showCloseButton ?? true,
     clickable: options.clickable ?? false,
     onClick: options.onClick || null,
+    actionLabel: options.actionLabel || '',
+    keyboardHint: options.keyboardHint || '',
     createdAt: Date.now(),
   };
 

@@ -28,6 +28,7 @@
   import { getVisibleColor, hexToRgb } from '../../utils/colorUtils.js';
   import { formatDateShort } from '../../utils/dateFormatter.js';
   import { resolveOptionLabel } from '../../utils/optionUtils.js';
+  import { showCreatedItemToast } from '../../utils/createdItemToast.js';
 
   // Props
   let { workspaceId, collectionId = null } = $props();
@@ -201,11 +202,10 @@
       setTimeout(() => setupDragAndDrop(), 100);
 
       // Toast feedback
+      showCreatedItemToast(fullItem);
       const total = collectionStore.itemsPagination?.total ?? 0;
       if (total > collectionStore.items.length) {
-        warningToast('Item created but the board has more items than can be displayed. Use "Load More" to see all items.');
-      } else {
-        successToast('Item created');
+        warningToast('The board has more items than can be displayed. Use "Load More" to see all items.');
       }
 
       cancelQuickAdd(columnId);

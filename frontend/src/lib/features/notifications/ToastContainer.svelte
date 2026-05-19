@@ -139,6 +139,18 @@
                 {toast.message}
               </div>
             {/if}
+            {#if toast.actionLabel || toast.keyboardHint}
+              <div class="mt-2 flex items-center gap-2 text-xs font-medium" style="color: var(--ds-text);">
+                {#if toast.actionLabel}
+                  <span>{toast.actionLabel}</span>
+                {/if}
+                {#if toast.keyboardHint}
+                  <kbd class="px-1.5 py-0.5 rounded border text-[10px] leading-none" style="border-color: var(--ds-border); background-color: var(--ds-background-neutral); color: var(--ds-text-subtle);">
+                    {toast.keyboardHint}
+                  </kbd>
+                {/if}
+              </div>
+            {/if}
           </div>
 
           {#if toast.showCloseButton}
