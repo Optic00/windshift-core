@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Guardrail for the handler boundary rule: production HTTP handlers must not
 # import database/sql or call database query/exec/transaction methods directly.
-# Existing files can be grandfathered in docs/architecture/handler-db-access-allowlist.txt.
+# Existing files can be grandfathered in scripts/.handler-db-access-allowlist.
 
 set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
 
-ALLOWLIST="docs/architecture/handler-db-access-allowlist.txt"
+ALLOWLIST="scripts/.handler-db-access-allowlist"
 [[ -f "$ALLOWLIST" ]] || touch "$ALLOWLIST"
 
 # Match direct DB methods while avoiding URL query parsing (`r.URL.Query()`).

@@ -52,7 +52,7 @@ jobs:
 
       - name: Run handler DB access guard
         # Blocks new direct database access in production handlers.
-        # Existing handler offenders are recorded in docs/architecture/handler-db-access-allowlist.txt.
+        # Existing handler offenders are recorded in scripts/.handler-db-access-allowlist.
         run: bash scripts/check-handler-db-access.sh
 
   deadcode:

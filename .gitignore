@@ -149,6 +149,7 @@ scripts/*
 !scripts/report-handler-db-access.sh
 !scripts/audit_coverage_inventory.py
 !scripts/.layering-baseline
+!scripts/.handler-db-access-allowlist
 !scripts/openapi-convert/
 !scripts/openapi-convert/**
 .golangci-report.json
