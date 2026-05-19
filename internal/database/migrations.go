@@ -132,6 +132,95 @@ var Catalog = []Migration{
 			CREATE INDEX IF NOT EXISTS idx_notification_templates_active ON notification_templates(is_active);
 		`,
 	},
+	{
+		// Commit 90edd5a reshaped action_credentials: dropped workspace_id (+ its
+		// FK and idx_action_credentials_workspace), added applies_to_all_workspaces,
+		// and introduced the action_credential_workspaces join table. Schema files
+		// use CREATE TABLE IF NOT EXISTS, so existing installs never picked up the
+		// column rename and the admin /api/admin/action-credentials handler dies
+		// with `column "applies_to_all_workspaces" does not exist`.
+		//
+		// Backfill: rows with workspace_id set become applies_to_all_workspaces=false
+		// with a join-table row; rows with workspace_id IS NULL keep the column
+		// default of true (global). Postgres can drop the legacy column inline.
+		// SQLite rejects DROP COLUMN on a FK-bearing column, so we table-rebuild
+		// the same way as the notification_templates entry above.
+		Version:       "20260519_action_credentials_workspace_scope",
+		Name:          "Reshape action_credentials to applies_to_all_workspaces + join table",
+		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('action_credentials') WHERE name='applies_to_all_workspaces'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_name='action_credentials' AND column_name='applies_to_all_workspaces'",
+		Postgres: `
+			CREATE TABLE IF NOT EXISTS action_credential_workspaces (
+				credential_id INTEGER NOT NULL,
+				workspace_id INTEGER NOT NULL,
+				PRIMARY KEY (credential_id, workspace_id),
+				FOREIGN KEY (credential_id) REFERENCES action_credentials(id) ON DELETE CASCADE,
+				FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+			);
+			CREATE INDEX IF NOT EXISTS idx_action_credential_workspaces_workspace ON action_credential_workspaces(workspace_id);
+
+			ALTER TABLE action_credentials ADD COLUMN applies_to_all_workspaces BOOLEAN NOT NULL DEFAULT true;
+
+			INSERT INTO action_credential_workspaces (credential_id, workspace_id)
+				SELECT id, workspace_id FROM action_credentials WHERE workspace_id IS NOT NULL;
+			UPDATE action_credentials SET applies_to_all_workspaces = false WHERE workspace_id IS NOT NULL;
+
+			DROP INDEX IF EXISTS idx_action_credentials_workspace;
+			ALTER TABLE action_credentials DROP COLUMN workspace_id;
+		`,
+		SQLite: `
+			-- Stash the legacy workspace_id mappings before the rebuild — we can't
+			-- create the action_credential_workspaces join table up-front because
+			-- its ON DELETE CASCADE FK would wipe the backfill rows when we DROP
+			-- the legacy action_credentials table below.
+			CREATE TEMP TABLE _cred_ws_backfill AS
+				SELECT id AS credential_id, workspace_id
+				FROM action_credentials
+				WHERE workspace_id IS NOT NULL;
+
+			CREATE TABLE action_credentials_new (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				name TEXT NOT NULL,
+				credential_type TEXT NOT NULL,
+				applies_to_all_workspaces BOOLEAN NOT NULL DEFAULT 1,
+				created_by INTEGER,
+				encrypted_secret TEXT NOT NULL,
+				secret_prefix TEXT,
+				secret_metadata TEXT,
+				is_enabled BOOLEAN DEFAULT 1,
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+			);
+			INSERT INTO action_credentials_new
+				(id, name, credential_type, applies_to_all_workspaces, created_by,
+				 encrypted_secret, secret_prefix, secret_metadata, is_enabled,
+				 created_at, updated_at)
+			SELECT id, name, credential_type,
+				   CASE WHEN workspace_id IS NULL THEN 1 ELSE 0 END,
+				   created_by, encrypted_secret, secret_prefix, secret_metadata,
+				   is_enabled, created_at, updated_at
+			FROM action_credentials;
+
+			DROP INDEX IF EXISTS idx_action_credentials_workspace;
+			DROP TABLE action_credentials;
+			ALTER TABLE action_credentials_new RENAME TO action_credentials;
+			CREATE INDEX IF NOT EXISTS idx_action_credentials_enabled ON action_credentials(is_enabled);
+
+			CREATE TABLE IF NOT EXISTS action_credential_workspaces (
+				credential_id INTEGER NOT NULL,
+				workspace_id INTEGER NOT NULL,
+				PRIMARY KEY (credential_id, workspace_id),
+				FOREIGN KEY (credential_id) REFERENCES action_credentials(id) ON DELETE CASCADE,
+				FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+			);
+			CREATE INDEX IF NOT EXISTS idx_action_credential_workspaces_workspace ON action_credential_workspaces(workspace_id);
+
+			INSERT INTO action_credential_workspaces (credential_id, workspace_id)
+				SELECT credential_id, workspace_id FROM _cred_ws_backfill;
+			DROP TABLE _cred_ws_backfill;
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {
