@@ -759,23 +759,19 @@ func (h *ActionsHandler) validateHTTPAuthRefs(w http.ResponseWriter, r *http.Req
 			return false
 		}
 		if appliesToAllWorkspaces {
-			if cred.WorkspaceID != nil {
-				respondValidationError(w, r, fmt.Sprintf("%s references workspace-scoped credential %d, but the capability applies to all workspaces — use a global credential", where, credentialID))
+			if !cred.AppliesToAllWorkspaces {
+				respondValidationError(w, r, fmt.Sprintf("%s references workspace-scoped credential %d, but the capability applies to all workspaces — use a credential that applies to all workspaces too", where, credentialID))
 				return false
 			}
 			return true
 		}
-		// Workspace-scoped capability: global creds OR a cred scoped to one of
-		// the listed workspaces are allowed.
-		if cred.WorkspaceID == nil {
+		// Workspace-scoped capability: every workspace it runs in must also be
+		// in the credential's allowlist, otherwise the capability would fail to
+		// resolve in some of them.
+		if services.CanCapabilityReference(cred, capabilityWorkspaceIDs) {
 			return true
 		}
-		for _, ws := range capabilityWorkspaceIDs {
-			if ws == *cred.WorkspaceID {
-				return true
-			}
-		}
-		respondValidationError(w, r, fmt.Sprintf("%s references credential %d scoped to workspace %d, which is not in the capability's workspace allowlist", where, credentialID, *cred.WorkspaceID))
+		respondValidationError(w, r, fmt.Sprintf("%s references credential %d whose workspace allowlist does not cover every workspace the capability runs in", where, credentialID))
 		return false
 	}
 

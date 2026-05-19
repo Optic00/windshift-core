@@ -13,10 +13,13 @@ import (
 
 // ActionCredentialsHandler exposes CRUD for action credentials.
 //
-//   - Global credentials (workspace_id IS NULL) are managed under /admin/...
-//     and require system-admin (gated at the route level).
-//   - Workspace-scoped credentials are managed under /workspaces/{id}/... and
-//     require PermissionActionCredentialManage in that workspace.
+//   - Global credentials (applies_to_all_workspaces=true) and credentials
+//     scoped to a workspace allowlist are managed under /admin/... and require
+//     system-admin (gated at the route level).
+//   - Single-workspace credentials may also be managed under
+//     /workspaces/{id}/... and require PermissionActionCredentialManage in
+//     that workspace; that path pins the allowlist to the path workspace and
+//     ignores scope fields in the request body.
 //
 // The plaintext secret travels only on POST create and POST rotate; every
 // response uses the sanitized DTO so ciphertext and plaintext never leave
@@ -39,10 +42,10 @@ func NewActionCredentialsHandler(db database.Database, permissionService *servic
 	}
 }
 
-// ListGlobal returns all global (workspace_id IS NULL) credentials.
+// ListGlobal returns all credentials visible to the system-admin admin view.
 // System-admin only (enforced at the route layer).
 func (h *ActionCredentialsHandler) ListGlobal(w http.ResponseWriter, r *http.Request) {
-	creds, err := h.service.ListGlobal()
+	creds, err := h.service.ListAll()
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -50,8 +53,9 @@ func (h *ActionCredentialsHandler) ListGlobal(w http.ResponseWriter, r *http.Req
 	respondJSONOK(w, sanitizeList(creds))
 }
 
-// ListForWorkspace returns credentials usable in this workspace: rows whose
-// workspace_id matches PLUS every global credential.
+// ListForWorkspace returns credentials usable in this workspace: rows that
+// apply to all workspaces, plus rows scoped to this workspace via the join
+// table.
 func (h *ActionCredentialsHandler) ListForWorkspace(w http.ResponseWriter, r *http.Request) {
 	workspaceID, ok := requireWorkspaceIDParam(w, r, h.keyCache, "workspaceId")
 	if !ok {
@@ -68,7 +72,9 @@ func (h *ActionCredentialsHandler) ListForWorkspace(w http.ResponseWriter, r *ht
 	respondJSONOK(w, sanitizeList(creds))
 }
 
-// CreateGlobal creates a workspace_id IS NULL credential. System-admin only.
+// CreateGlobal creates a credential from the system-admin view. The request
+// chooses whether the credential applies to all workspaces or is restricted
+// to a workspace allowlist.
 func (h *ActionCredentialsHandler) CreateGlobal(w http.ResponseWriter, r *http.Request) {
 	currentUser, ok := RequireAuth(w, r)
 	if !ok {
@@ -78,8 +84,6 @@ func (h *ActionCredentialsHandler) CreateGlobal(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
-	// Globals never carry a workspace_id; the path enforces that.
-	req.WorkspaceID = nil
 	created, err := h.service.Create(req, &currentUser.ID)
 	if err != nil {
 		respondValidationError(w, r, err.Error())
@@ -89,8 +93,8 @@ func (h *ActionCredentialsHandler) CreateGlobal(w http.ResponseWriter, r *http.R
 	respondJSONCreated(w, created.Sanitize())
 }
 
-// CreateForWorkspace creates a workspace-scoped credential. Requires
-// PermissionActionCredentialManage in the workspace.
+// CreateForWorkspace creates a credential pinned to a single workspace.
+// Requires PermissionActionCredentialManage in that workspace.
 func (h *ActionCredentialsHandler) CreateForWorkspace(w http.ResponseWriter, r *http.Request) {
 	workspaceID, ok := requireWorkspaceIDParam(w, r, h.keyCache, "workspaceId")
 	if !ok {
@@ -107,9 +111,11 @@ func (h *ActionCredentialsHandler) CreateForWorkspace(w http.ResponseWriter, r *
 	if !ok {
 		return
 	}
-	// Path scope wins — clients can't smuggle a global credential through a
-	// workspace endpoint.
-	req.WorkspaceID = &workspaceID
+	// Path scope wins — clients can't smuggle a global credential or extra
+	// workspaces through a workspace endpoint.
+	appliesAll := false
+	req.AppliesToAllWorkspaces = &appliesAll
+	req.WorkspaceIDs = []int{workspaceID}
 	created, err := h.service.Create(req, &currentUser.ID)
 	if err != nil {
 		respondValidationError(w, r, err.Error())
@@ -119,7 +125,7 @@ func (h *ActionCredentialsHandler) CreateForWorkspace(w http.ResponseWriter, r *
 	respondJSONCreated(w, created.Sanitize())
 }
 
-// UpdateGlobal updates metadata on a global credential. System-admin only.
+// UpdateGlobal updates metadata + scope on any credential. System-admin only.
 func (h *ActionCredentialsHandler) UpdateGlobal(w http.ResponseWriter, r *http.Request) {
 	credentialID, ok := requireIDParam(w, r, "credentialId")
 	if !ok {
@@ -134,23 +140,21 @@ func (h *ActionCredentialsHandler) UpdateGlobal(w http.ResponseWriter, r *http.R
 		respondInternalError(w, r, err)
 		return
 	}
-	if cred.WorkspaceID != nil {
-		respondNotFound(w, r, "action_credential") // global path can't see workspace creds
-		return
-	}
-	h.handleUpdate(w, r, cred)
+	h.handleUpdate(w, r, cred, true)
 }
 
-// UpdateForWorkspace updates metadata on a workspace-scoped credential.
+// UpdateForWorkspace updates metadata on a credential scoped to this workspace.
+// Scope fields in the request body are ignored — the workspace path cannot
+// widen a credential's reach.
 func (h *ActionCredentialsHandler) UpdateForWorkspace(w http.ResponseWriter, r *http.Request) {
 	cred, ok := h.requireWorkspaceCredential(w, r)
 	if !ok {
 		return
 	}
-	h.handleUpdate(w, r, cred)
+	h.handleUpdate(w, r, cred, false)
 }
 
-func (h *ActionCredentialsHandler) handleUpdate(w http.ResponseWriter, r *http.Request, cred *models.ActionCredential) {
+func (h *ActionCredentialsHandler) handleUpdate(w http.ResponseWriter, r *http.Request, cred *models.ActionCredential, allowScopeChange bool) {
 	currentUser, ok := RequireAuth(w, r)
 	if !ok {
 		return
@@ -158,6 +162,10 @@ func (h *ActionCredentialsHandler) handleUpdate(w http.ResponseWriter, r *http.R
 	req, ok := decodeJSON[models.UpdateActionCredentialRequest](w, r)
 	if !ok {
 		return
+	}
+	if !allowScopeChange {
+		req.AppliesToAllWorkspaces = nil
+		req.WorkspaceIDs = nil
 	}
 	updated, err := h.service.UpdateMetadata(cred.ID, req)
 	if err != nil {
@@ -172,7 +180,7 @@ func (h *ActionCredentialsHandler) handleUpdate(w http.ResponseWriter, r *http.R
 	respondJSONOK(w, updated.Sanitize())
 }
 
-// RotateGlobal replaces the secret on a global credential. System-admin only.
+// RotateGlobal replaces the secret on any credential. System-admin only.
 func (h *ActionCredentialsHandler) RotateGlobal(w http.ResponseWriter, r *http.Request) {
 	credentialID, ok := requireIDParam(w, r, "credentialId")
 	if !ok {
@@ -185,10 +193,6 @@ func (h *ActionCredentialsHandler) RotateGlobal(w http.ResponseWriter, r *http.R
 	}
 	if err != nil {
 		respondInternalError(w, r, err)
-		return
-	}
-	if cred.WorkspaceID != nil {
-		respondNotFound(w, r, "action_credential")
 		return
 	}
 	h.handleRotate(w, r, cred)
@@ -225,7 +229,7 @@ func (h *ActionCredentialsHandler) handleRotate(w http.ResponseWriter, r *http.R
 	respondJSONOK(w, rotated.Sanitize())
 }
 
-// DeleteGlobal deletes a global credential.
+// DeleteGlobal deletes any credential. System-admin only.
 func (h *ActionCredentialsHandler) DeleteGlobal(w http.ResponseWriter, r *http.Request) {
 	credentialID, ok := requireIDParam(w, r, "credentialId")
 	if !ok {
@@ -238,10 +242,6 @@ func (h *ActionCredentialsHandler) DeleteGlobal(w http.ResponseWriter, r *http.R
 	}
 	if err != nil {
 		respondInternalError(w, r, err)
-		return
-	}
-	if cred.WorkspaceID != nil {
-		respondNotFound(w, r, "action_credential")
 		return
 	}
 	h.handleDelete(w, r, cred)
@@ -300,10 +300,11 @@ func (h *ActionCredentialsHandler) requireWorkspaceCredential(w http.ResponseWri
 		respondInternalError(w, r, err)
 		return nil, false
 	}
-	// Workspace path may only see credentials scoped to that workspace.
-	// Globals are managed via /admin/... — surface as not-found here to
-	// avoid leaking the global pool's row IDs.
-	if cred.WorkspaceID == nil || *cred.WorkspaceID != workspaceID {
+	// Workspace path may only see credentials that are pinned to this
+	// workspace (and nothing else). Credentials that apply to all workspaces,
+	// or that are shared across multiple workspaces, are managed via the
+	// admin path — surface as not-found here to avoid leaking those rows.
+	if cred.AppliesToAllWorkspaces || len(cred.WorkspaceIDs) != 1 || cred.WorkspaceIDs[0] != workspaceID {
 		respondNotFound(w, r, "action_credential")
 		return nil, false
 	}
@@ -343,8 +344,8 @@ func (h *ActionCredentialsHandler) auditCredential(r *http.Request, user *models
 		return
 	}
 	scope := "global"
-	if cred.WorkspaceID != nil {
-		scope = "workspace"
+	if !cred.AppliesToAllWorkspaces {
+		scope = "scoped"
 	}
 	// Details intentionally hold only non-sensitive metadata. The audit
 	// pipeline's sanitizeAuditDetails additionally redacts any key that
@@ -352,7 +353,7 @@ func (h *ActionCredentialsHandler) auditCredential(r *http.Request, user *models
 	logAuditWithDetails(h.db, r, user, action, logger.ResourceActionCredential, &cred.ID, cred.Name, map[string]interface{}{
 		"credential_type": cred.CredentialType,
 		"scope":           scope,
-		"workspace_id":    cred.WorkspaceID,
+		"workspace_ids":   cred.WorkspaceIDs,
 		"is_enabled":      cred.IsEnabled,
 		"has_secret":      cred.EncryptedSecret != "",
 	})

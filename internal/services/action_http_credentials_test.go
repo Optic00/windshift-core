@@ -146,10 +146,12 @@ func TestBuildHTTPHeadersWithCredentials_DropsLegacyInlineSensitiveDefault(t *te
 
 func TestBuildHTTPHeadersWithCredentials_ScopeMismatchFails(t *testing.T) {
 	as, credSvc := newTestActionRuntime(t)
-	ws := 5
+	appliesAll := false
 	cred, _ := credSvc.Create(models.CreateActionCredentialRequest{
 		Name: "alpha-only", CredentialType: models.CredentialBearerToken,
-		Secret: "alpha-only-1234567890", WorkspaceID: &ws,
+		Secret:                 "alpha-only-1234567890",
+		AppliesToAllWorkspaces: &appliesAll,
+		WorkspaceIDs:           []int{5},
 	}, ptrInt(10))
 
 	httpCfg := &models.HTTPClientConfig{
@@ -185,7 +187,7 @@ func newTestActionRuntime(t *testing.T) (*ActionService, *ActionCredentialServic
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			name TEXT NOT NULL,
 			credential_type TEXT NOT NULL,
-			workspace_id INTEGER REFERENCES workspaces(id) ON DELETE CASCADE,
+			applies_to_all_workspaces BOOLEAN NOT NULL DEFAULT 1,
 			created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
 			encrypted_secret TEXT NOT NULL,
 			secret_prefix TEXT,
@@ -193,6 +195,11 @@ func newTestActionRuntime(t *testing.T) (*ActionService, *ActionCredentialServic
 			is_enabled BOOLEAN DEFAULT 1,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE TABLE action_credential_workspaces (
+			credential_id INTEGER NOT NULL REFERENCES action_credentials(id) ON DELETE CASCADE,
+			workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+			PRIMARY KEY (credential_id, workspace_id)
 		);
 		INSERT INTO workspaces (id, name) VALUES (5, 'alpha'), (6, 'beta');
 		INSERT INTO users (id) VALUES (10);

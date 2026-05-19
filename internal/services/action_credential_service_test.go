@@ -27,7 +27,7 @@ func newTestCredentialService(t *testing.T) (*ActionCredentialService, database.
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			name TEXT NOT NULL,
 			credential_type TEXT NOT NULL,
-			workspace_id INTEGER REFERENCES workspaces(id) ON DELETE CASCADE,
+			applies_to_all_workspaces BOOLEAN NOT NULL DEFAULT 1,
 			created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
 			encrypted_secret TEXT NOT NULL,
 			secret_prefix TEXT,
@@ -36,7 +36,12 @@ func newTestCredentialService(t *testing.T) (*ActionCredentialService, database.
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
-		INSERT INTO workspaces (id, name) VALUES (1, 'alpha'), (2, 'beta');
+		CREATE TABLE action_credential_workspaces (
+			credential_id INTEGER NOT NULL REFERENCES action_credentials(id) ON DELETE CASCADE,
+			workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+			PRIMARY KEY (credential_id, workspace_id)
+		);
+		INSERT INTO workspaces (id, name) VALUES (1, 'alpha'), (2, 'beta'), (3, 'gamma');
 		INSERT INTO users (id) VALUES (10);
 	`); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -64,11 +69,49 @@ func TestActionCredentialService_CreateEncryptsAndStripsPlaintext(t *testing.T) 
 	if created.SecretPrefix != "ghp_…" {
 		t.Errorf("SecretPrefix = %q, want %q", created.SecretPrefix, "ghp_…")
 	}
+	if !created.AppliesToAllWorkspaces {
+		t.Errorf("defaults to applies-to-all when scope not specified")
+	}
 
 	// Sanitized form must not have any way to recover plaintext or ciphertext.
 	sanitized := created.Sanitize()
 	if !sanitized.HasSecret {
 		t.Errorf("HasSecret should be true")
+	}
+}
+
+func TestActionCredentialService_CreateScoped(t *testing.T) {
+	svc, _ := newTestCredentialService(t)
+	appliesAll := false
+	created, err := svc.Create(models.CreateActionCredentialRequest{
+		Name:                   "alpha+beta",
+		CredentialType:         models.CredentialBearerToken,
+		Secret:                 "scoped-secret-1234567890",
+		AppliesToAllWorkspaces: &appliesAll,
+		WorkspaceIDs:           []int{1, 2, 1}, // dedupe should drop the repeat
+	}, ptrInt(10))
+	if err != nil {
+		t.Fatalf("create scoped: %v", err)
+	}
+	if created.AppliesToAllWorkspaces {
+		t.Errorf("AppliesToAllWorkspaces should be false")
+	}
+	if len(created.WorkspaceIDs) != 2 {
+		t.Errorf("WorkspaceIDs = %v, want 2 deduped IDs", created.WorkspaceIDs)
+	}
+}
+
+func TestActionCredentialService_CreateScopedRequiresWorkspaceIDs(t *testing.T) {
+	svc, _ := newTestCredentialService(t)
+	appliesAll := false
+	_, err := svc.Create(models.CreateActionCredentialRequest{
+		Name:                   "missing-ids",
+		CredentialType:         models.CredentialBearerToken,
+		Secret:                 "secret-value-1234567890",
+		AppliesToAllWorkspaces: &appliesAll,
+	}, ptrInt(10))
+	if err == nil {
+		t.Fatalf("expected error when scope is false and workspace_ids is empty")
 	}
 }
 
@@ -95,12 +138,13 @@ func TestActionCredentialService_ResolveDecrypts(t *testing.T) {
 
 func TestActionCredentialService_Resolve_ScopeMismatch(t *testing.T) {
 	svc, _ := newTestCredentialService(t)
-	ws := 1
+	appliesAll := false
 	created, err := svc.Create(models.CreateActionCredentialRequest{
-		Name:           "alpha-only",
-		CredentialType: models.CredentialBearerToken,
-		Secret:         "alpha-secret-1234567890",
-		WorkspaceID:    &ws,
+		Name:                   "alpha-only",
+		CredentialType:         models.CredentialBearerToken,
+		Secret:                 "alpha-secret-1234567890",
+		AppliesToAllWorkspaces: &appliesAll,
+		WorkspaceIDs:           []int{1},
 	}, ptrInt(10))
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -157,6 +201,63 @@ func TestActionCredentialService_Rotate(t *testing.T) {
 	}
 }
 
+func TestActionCredentialService_UpdateMetadata_ScopeTransitions(t *testing.T) {
+	svc, _ := newTestCredentialService(t)
+	created, err := svc.Create(models.CreateActionCredentialRequest{
+		Name:           "transition",
+		CredentialType: models.CredentialBearerToken,
+		Secret:         "scoped-secret-1234567890",
+	}, ptrInt(10))
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// Flip from applies-to-all to scoped(1,2). Both workspaces should resolve.
+	appliesAll := false
+	wsIDs := []int{1, 2}
+	if _, err := svc.UpdateMetadata(created.ID, models.UpdateActionCredentialRequest{
+		AppliesToAllWorkspaces: &appliesAll,
+		WorkspaceIDs:           &wsIDs,
+	}); err != nil {
+		t.Fatalf("update to scoped: %v", err)
+	}
+	if _, _, err := svc.Resolve(context.Background(), created.ID, 1); err != nil {
+		t.Errorf("ws1 resolve after scope change: %v", err)
+	}
+	if _, _, err := svc.Resolve(context.Background(), created.ID, 3); !errors.Is(err, ErrCredentialScopeMismatch) {
+		t.Errorf("ws3 should be blocked, got %v", err)
+	}
+
+	// Flip back to applies-to-all. Every workspace should resolve again.
+	appliesAll2 := true
+	if _, err := svc.UpdateMetadata(created.ID, models.UpdateActionCredentialRequest{
+		AppliesToAllWorkspaces: &appliesAll2,
+	}); err != nil {
+		t.Fatalf("update to applies-all: %v", err)
+	}
+	if _, _, err := svc.Resolve(context.Background(), created.ID, 3); err != nil {
+		t.Errorf("ws3 resolve after flip back to applies-all: %v", err)
+	}
+}
+
+func TestActionCredentialService_UpdateMetadata_ScopedRequiresIDs(t *testing.T) {
+	svc, _ := newTestCredentialService(t)
+	created, _ := svc.Create(models.CreateActionCredentialRequest{
+		Name:           "needs-ids",
+		CredentialType: models.CredentialBearerToken,
+		Secret:         "secret-value-1234567890",
+	}, ptrInt(10))
+
+	appliesAll := false
+	empty := []int{}
+	if _, err := svc.UpdateMetadata(created.ID, models.UpdateActionCredentialRequest{
+		AppliesToAllWorkspaces: &appliesAll,
+		WorkspaceIDs:           &empty,
+	}); err == nil {
+		t.Fatalf("expected error when flipping scoped with empty workspace_ids")
+	}
+}
+
 func TestActionCredentialService_RejectsInvalidType(t *testing.T) {
 	svc, _ := newTestCredentialService(t)
 	_, err := svc.Create(models.CreateActionCredentialRequest{
@@ -185,23 +286,36 @@ func TestActionCredentialService_RejectsSensitiveMetadataKeys(t *testing.T) {
 }
 
 func TestCanCapabilityReference(t *testing.T) {
-	global := &models.ActionCredential{}
-	scoped := &models.ActionCredential{WorkspaceID: ptrInt(1)}
+	global := &models.ActionCredential{AppliesToAllWorkspaces: true}
+	scopedAlpha := &models.ActionCredential{WorkspaceIDs: []int{1}}
+	scopedAlphaBeta := &models.ActionCredential{WorkspaceIDs: []int{1, 2}}
 
+	// Global credential is always usable.
 	if !CanCapabilityReference(global, nil) {
-		t.Error("global capability should be allowed to reference global credential")
-	}
-	if CanCapabilityReference(scoped, nil) {
-		t.Error("global capability must NOT reference workspace credential")
+		t.Error("applies-to-all capability should reference applies-to-all credential")
 	}
 	if !CanCapabilityReference(global, []int{2, 3}) {
-		t.Error("scoped capability should always be able to reference global credential")
+		t.Error("scoped capability should always be able to reference applies-to-all credential")
 	}
-	if !CanCapabilityReference(scoped, []int{1, 2}) {
-		t.Error("scoped capability covering workspace 1 should accept credential scoped to workspace 1")
+
+	// Capability that applies-to-all needs a credential that applies-to-all.
+	if CanCapabilityReference(scopedAlpha, nil) {
+		t.Error("applies-to-all capability must NOT reference workspace-restricted credential")
 	}
-	if CanCapabilityReference(scoped, []int{2, 3}) {
-		t.Error("scoped capability not covering workspace 1 must reject credential scoped to workspace 1")
+
+	// Superset semantics: every workspace the capability runs in must be in
+	// the credential's allowlist.
+	if CanCapabilityReference(scopedAlpha, []int{1, 2}) {
+		t.Error("alpha-only credential must NOT be allowed for capability covering {1,2}")
+	}
+	if !CanCapabilityReference(scopedAlphaBeta, []int{1, 2}) {
+		t.Error("{1,2} credential should be allowed for capability covering {1,2}")
+	}
+	if !CanCapabilityReference(scopedAlphaBeta, []int{1}) {
+		t.Error("{1,2} credential should be allowed for capability covering {1}")
+	}
+	if CanCapabilityReference(scopedAlphaBeta, []int{1, 3}) {
+		t.Error("{1,2} credential must NOT cover capability covering {1,3}")
 	}
 }
 

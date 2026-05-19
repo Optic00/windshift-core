@@ -118,15 +118,15 @@ CREATE INDEX IF NOT EXISTS idx_action_capability_workspaces_workspace ON action_
 
 -- Action credentials: encrypted API tokens / API keys / basic-auth pairs that
 -- HTTP capabilities reference instead of embedding plaintext in JSON config.
--- workspace_id NULL = global credential (system-admin only). workspace_id set
--- = workspace-scoped credential (requires action.credential.manage in that
--- workspace). The secret is never returned to clients; the API exposes only
--- metadata (name, type, prefix, has_secret).
+-- Scope mirrors action_capabilities: applies_to_all_workspaces=true makes the
+-- credential usable everywhere; false restricts it to workspaces listed in the
+-- action_credential_workspaces join table. The secret is never returned to
+-- clients; the API exposes only metadata (name, type, prefix, has_secret).
 CREATE TABLE IF NOT EXISTS action_credentials (
 	id SERIAL PRIMARY KEY,
 	name TEXT NOT NULL,
 	credential_type TEXT NOT NULL,   -- bearer_token, api_key, basic_auth, custom_header
-	workspace_id INTEGER,            -- NULL = global
+	applies_to_all_workspaces BOOLEAN NOT NULL DEFAULT true,
 	created_by INTEGER,
 	encrypted_secret TEXT NOT NULL,  -- AES-GCM ciphertext (label-bound HKDF key)
 	secret_prefix TEXT,              -- non-sensitive fingerprint (first 4 chars + "…")
@@ -134,9 +134,19 @@ CREATE TABLE IF NOT EXISTS action_credentials (
 	is_enabled BOOLEAN DEFAULT true,
 	created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 	updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-	FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
 	FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_action_credentials_workspace ON action_credentials(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_action_credentials_enabled ON action_credentials(is_enabled);
+
+-- Per-workspace scope for credentials that don't apply to all workspaces.
+-- Only consulted when action_credentials.applies_to_all_workspaces = false.
+CREATE TABLE IF NOT EXISTS action_credential_workspaces (
+	credential_id INTEGER NOT NULL,
+	workspace_id INTEGER NOT NULL,
+	PRIMARY KEY (credential_id, workspace_id),
+	FOREIGN KEY (credential_id) REFERENCES action_credentials(id) ON DELETE CASCADE,
+	FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_action_credential_workspaces_workspace ON action_credential_workspaces(workspace_id);

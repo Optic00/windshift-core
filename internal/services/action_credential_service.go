@@ -66,6 +66,17 @@ func (s *ActionCredentialService) Create(req models.CreateActionCredentialReques
 	if err := validateSecretMetadata(req.SecretMetadata); err != nil {
 		return nil, err
 	}
+	appliesAll := true
+	if req.AppliesToAllWorkspaces != nil {
+		appliesAll = *req.AppliesToAllWorkspaces
+	}
+	workspaceIDs := dedupeWorkspaceIDs(req.WorkspaceIDs)
+	if !appliesAll && len(workspaceIDs) == 0 {
+		return nil, errors.New("workspace_ids must contain at least one workspace when applies_to_all_workspaces is false")
+	}
+	if appliesAll {
+		workspaceIDs = nil
+	}
 
 	ciphertext, err := s.encryption.Encrypt(req.Secret)
 	if err != nil {
@@ -78,23 +89,33 @@ func (s *ActionCredentialService) Create(req models.CreateActionCredentialReques
 	}
 
 	c := &models.ActionCredential{
-		Name:            req.Name,
-		CredentialType:  req.CredentialType,
-		WorkspaceID:     req.WorkspaceID,
-		CreatedBy:       createdBy,
-		EncryptedSecret: ciphertext,
-		SecretPrefix:    models.SecretPrefixFor(req.Secret),
-		SecretMetadata:  req.SecretMetadata,
-		IsEnabled:       enabled,
+		Name:                   req.Name,
+		CredentialType:         req.CredentialType,
+		AppliesToAllWorkspaces: appliesAll,
+		CreatedBy:              createdBy,
+		EncryptedSecret:        ciphertext,
+		SecretPrefix:           models.SecretPrefixFor(req.Secret),
+		SecretMetadata:         req.SecretMetadata,
+		IsEnabled:              enabled,
 	}
 	if _, err := s.repo.CreateActionCredential(c); err != nil {
 		return nil, err
+	}
+	if !appliesAll {
+		if err := s.repo.SetCredentialWorkspaces(c.ID, workspaceIDs); err != nil {
+			return nil, err
+		}
+		c.WorkspaceIDs = workspaceIDs
 	}
 	return c, nil
 }
 
 // UpdateMetadata applies metadata-only changes. The plaintext secret is never
-// accepted on this path — callers must use Rotate.
+// accepted on this path — callers must use Rotate. Scope fields are honored
+// when present; passing AppliesToAllWorkspaces=true clears the workspace
+// allowlist, passing false with WorkspaceIDs replaces it. Workspace-scoped
+// callers should leave both nil so the credential's reach cannot be widened
+// from a workspace permission.
 func (s *ActionCredentialService) UpdateMetadata(id int, req models.UpdateActionCredentialRequest) (*models.ActionCredential, error) {
 	c, err := s.repo.GetActionCredentialByID(id)
 	if err != nil {
@@ -115,8 +136,38 @@ func (s *ActionCredentialService) UpdateMetadata(id int, req models.UpdateAction
 	if req.IsEnabled != nil {
 		c.IsEnabled = *req.IsEnabled
 	}
+
+	// Compute the next scope. If the request doesn't touch scope, keep the
+	// existing values. If it does, validate the combo before persisting.
+	nextAppliesAll := c.AppliesToAllWorkspaces
+	if req.AppliesToAllWorkspaces != nil {
+		nextAppliesAll = *req.AppliesToAllWorkspaces
+	}
+	var nextWorkspaceIDs []int
+	scopeTouched := req.AppliesToAllWorkspaces != nil || req.WorkspaceIDs != nil
+	if scopeTouched {
+		if req.WorkspaceIDs != nil {
+			nextWorkspaceIDs = dedupeWorkspaceIDs(*req.WorkspaceIDs)
+		} else {
+			nextWorkspaceIDs = append([]int(nil), c.WorkspaceIDs...)
+		}
+		if !nextAppliesAll && len(nextWorkspaceIDs) == 0 {
+			return nil, errors.New("workspace_ids must contain at least one workspace when applies_to_all_workspaces is false")
+		}
+		if nextAppliesAll {
+			nextWorkspaceIDs = nil
+		}
+		c.AppliesToAllWorkspaces = nextAppliesAll
+	}
+
 	if err := s.repo.UpdateActionCredentialMetadata(c); err != nil {
 		return nil, err
+	}
+	if scopeTouched {
+		if err := s.repo.SetCredentialWorkspaces(c.ID, nextWorkspaceIDs); err != nil {
+			return nil, err
+		}
+		c.WorkspaceIDs = nextWorkspaceIDs
 	}
 	return c, nil
 }
@@ -154,14 +205,15 @@ func (s *ActionCredentialService) Get(id int) (*models.ActionCredential, error) 
 	return s.repo.GetActionCredentialByID(id)
 }
 
-// ListForWorkspace returns credentials available to the given workspace,
-// always including globals. The execution engine uses this to validate that
-// a credential reference is in-scope.
+// ListForWorkspace returns credentials usable in the given workspace: those
+// that apply to all workspaces, plus those scoped to it via the join table.
+// The execution engine uses this to validate that a credential reference is
+// in-scope.
 func (s *ActionCredentialService) ListForWorkspace(workspaceID int) ([]*models.ActionCredential, error) {
-	return s.repo.ListActionCredentialsForWorkspace(workspaceID, true)
+	return s.repo.ListActionCredentialsForWorkspace(workspaceID)
 }
 
-// ListGlobal returns global (workspace_id IS NULL) credentials only.
+// ListGlobal returns credentials that apply to all workspaces.
 func (s *ActionCredentialService) ListGlobal() ([]*models.ActionCredential, error) {
 	return s.repo.ListActionCredentialsGlobal()
 }
@@ -173,8 +225,8 @@ func (s *ActionCredentialService) ListAll() ([]*models.ActionCredential, error) 
 
 // Resolve loads a credential and returns the plaintext secret, but only if
 // the credential is enabled and in scope for the request:
-//   - global credentials (workspace_id IS NULL) are usable everywhere
-//   - workspace-scoped credentials may only be resolved from the same workspace
+//   - credentials that apply to all workspaces are usable everywhere
+//   - otherwise, only workspaces in the credential's allowlist may resolve it
 //
 // The plaintext is returned in-band but must not be logged or returned in any
 // response body. Resolve is the only path that decrypts.
@@ -186,8 +238,14 @@ func (s *ActionCredentialService) Resolve(_ context.Context, credentialID, works
 	if !c.IsEnabled {
 		return "", c, ErrCredentialDisabled
 	}
-	if c.WorkspaceID != nil && *c.WorkspaceID != workspaceID {
-		return "", c, ErrCredentialScopeMismatch
+	if !c.AppliesToAllWorkspaces {
+		ok, err := s.repo.IsCredentialScopedToWorkspace(c.ID, workspaceID)
+		if err != nil {
+			return "", c, err
+		}
+		if !ok {
+			return "", c, ErrCredentialScopeMismatch
+		}
 	}
 	plaintext, err := s.encryption.Decrypt(c.EncryptedSecret)
 	if err != nil {
@@ -199,20 +257,54 @@ func (s *ActionCredentialService) Resolve(_ context.Context, credentialID, works
 // CanCapabilityReference returns whether a given capability scope is allowed
 // to reference a credential of the given scope. Used by capability validation.
 //
-//   - capabilityWorkspaceIDs == nil  ⇒ capability applies to all workspaces;
-//     only global credentials are referenceable.
-//   - capabilityWorkspaceIDs set     ⇒ capability is scoped to those workspaces;
-//     global OR a credential scoped to one of those workspaces is allowed.
+//   - credential applies to all workspaces ⇒ always allowed.
+//   - capability applies to all workspaces (capabilityWorkspaceIDs == nil) but
+//     credential is restricted ⇒ disallowed: the capability would fail in any
+//     workspace not in the credential's allowlist.
+//   - both scoped ⇒ the credential's workspace set must be a superset of the
+//     capability's, otherwise the capability would fail to resolve in some of
+//     the workspaces it runs in.
 func CanCapabilityReference(credential *models.ActionCredential, capabilityWorkspaceIDs []int) bool {
-	if credential.WorkspaceID == nil {
+	if credential.AppliesToAllWorkspaces {
 		return true
 	}
+	if len(capabilityWorkspaceIDs) == 0 {
+		return false
+	}
+	allowed := make(map[int]struct{}, len(credential.WorkspaceIDs))
+	for _, ws := range credential.WorkspaceIDs {
+		allowed[ws] = struct{}{}
+	}
 	for _, ws := range capabilityWorkspaceIDs {
-		if ws == *credential.WorkspaceID {
-			return true
+		if _, ok := allowed[ws]; !ok {
+			return false
 		}
 	}
-	return false
+	return true
+}
+
+// dedupeWorkspaceIDs removes duplicates and zero/negative IDs while preserving
+// the input order. Returns nil for an empty/all-invalid input.
+func dedupeWorkspaceIDs(ids []int) []int {
+	if len(ids) == 0 {
+		return nil
+	}
+	seen := make(map[int]struct{}, len(ids))
+	out := make([]int, 0, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // validateSecretMetadata rejects metadata that's not parsable JSON or that

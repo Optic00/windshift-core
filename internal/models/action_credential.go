@@ -30,32 +30,39 @@ const (
 // EncryptedSecret is intentionally hidden from JSON; the API returns the
 // sanitized form instead.
 type ActionCredential struct {
-	ID              int                  `json:"id"`
-	Name            string               `json:"name"`
-	CredentialType  ActionCredentialType `json:"credential_type"`
-	WorkspaceID     *int                 `json:"workspace_id,omitempty"`
-	CreatedBy       *int                 `json:"created_by,omitempty"`
-	EncryptedSecret string               `json:"-"` // never returned
-	SecretPrefix    string               `json:"secret_prefix,omitempty"`
-	SecretMetadata  string               `json:"secret_metadata,omitempty"` // JSON; must not contain plaintext secrets
-	IsEnabled       bool                 `json:"is_enabled"`
-	CreatedAt       time.Time            `json:"created_at"`
-	UpdatedAt       time.Time            `json:"updated_at"`
+	ID             int                  `json:"id"`
+	Name           string               `json:"name"`
+	CredentialType ActionCredentialType `json:"credential_type"`
+	// AppliesToAllWorkspaces gates whether every workspace can resolve this
+	// credential. When false, only workspaces listed in WorkspaceIDs (the
+	// action_credential_workspaces join table) may use it.
+	AppliesToAllWorkspaces bool `json:"applies_to_all_workspaces"`
+	// WorkspaceIDs is populated by the read path from the join table. Only
+	// meaningful when AppliesToAllWorkspaces is false.
+	WorkspaceIDs    []int     `json:"workspace_ids,omitempty"`
+	CreatedBy       *int      `json:"created_by,omitempty"`
+	EncryptedSecret string    `json:"-"` // never returned
+	SecretPrefix    string    `json:"secret_prefix,omitempty"`
+	SecretMetadata  string    `json:"secret_metadata,omitempty"` // JSON; must not contain plaintext secrets
+	IsEnabled       bool      `json:"is_enabled"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // Sanitize returns a redacted view safe for any client response.
 func (c *ActionCredential) Sanitize() ActionCredentialSanitized {
 	return ActionCredentialSanitized{
-		ID:             c.ID,
-		Name:           c.Name,
-		CredentialType: c.CredentialType,
-		WorkspaceID:    c.WorkspaceID,
-		HasSecret:      c.EncryptedSecret != "",
-		SecretPrefix:   c.SecretPrefix,
-		SecretMetadata: c.SecretMetadata,
-		IsEnabled:      c.IsEnabled,
-		CreatedAt:      c.CreatedAt,
-		UpdatedAt:      c.UpdatedAt,
+		ID:                     c.ID,
+		Name:                   c.Name,
+		CredentialType:         c.CredentialType,
+		AppliesToAllWorkspaces: c.AppliesToAllWorkspaces,
+		WorkspaceIDs:           c.WorkspaceIDs,
+		HasSecret:              c.EncryptedSecret != "",
+		SecretPrefix:           c.SecretPrefix,
+		SecretMetadata:         c.SecretMetadata,
+		IsEnabled:              c.IsEnabled,
+		CreatedAt:              c.CreatedAt,
+		UpdatedAt:              c.UpdatedAt,
 	}
 }
 
@@ -63,16 +70,17 @@ func (c *ActionCredential) Sanitize() ActionCredentialSanitized {
 // secret_prefix let the UI render a masked indicator without ever seeing the
 // ciphertext or plaintext.
 type ActionCredentialSanitized struct {
-	ID             int                  `json:"id"`
-	Name           string               `json:"name"`
-	CredentialType ActionCredentialType `json:"credential_type"`
-	WorkspaceID    *int                 `json:"workspace_id,omitempty"`
-	HasSecret      bool                 `json:"has_secret"`
-	SecretPrefix   string               `json:"secret_prefix,omitempty"`
-	SecretMetadata string               `json:"secret_metadata,omitempty"`
-	IsEnabled      bool                 `json:"is_enabled"`
-	CreatedAt      time.Time            `json:"created_at"`
-	UpdatedAt      time.Time            `json:"updated_at"`
+	ID                     int                  `json:"id"`
+	Name                   string               `json:"name"`
+	CredentialType         ActionCredentialType `json:"credential_type"`
+	AppliesToAllWorkspaces bool                 `json:"applies_to_all_workspaces"`
+	WorkspaceIDs           []int                `json:"workspace_ids,omitempty"`
+	HasSecret              bool                 `json:"has_secret"`
+	SecretPrefix           string               `json:"secret_prefix,omitempty"`
+	SecretMetadata         string               `json:"secret_metadata,omitempty"`
+	IsEnabled              bool                 `json:"is_enabled"`
+	CreatedAt              time.Time            `json:"created_at"`
+	UpdatedAt              time.Time            `json:"updated_at"`
 }
 
 // CreateActionCredentialRequest is the body for credential creation. The
@@ -82,17 +90,25 @@ type CreateActionCredentialRequest struct {
 	Name           string               `json:"name"`
 	CredentialType ActionCredentialType `json:"credential_type"`
 	Secret         string               `json:"secret"`
-	WorkspaceID    *int                 `json:"workspace_id,omitempty"`
-	SecretMetadata string               `json:"secret_metadata,omitempty"`
-	IsEnabled      *bool                `json:"is_enabled,omitempty"`
+	// AppliesToAllWorkspaces defaults to true when nil. The workspace-scoped
+	// create endpoint forces it to false and pins WorkspaceIDs to the path
+	// workspace; clients cannot smuggle a global credential through that path.
+	AppliesToAllWorkspaces *bool  `json:"applies_to_all_workspaces,omitempty"`
+	WorkspaceIDs           []int  `json:"workspace_ids,omitempty"`
+	SecretMetadata         string `json:"secret_metadata,omitempty"`
+	IsEnabled              *bool  `json:"is_enabled,omitempty"`
 }
 
 // UpdateActionCredentialRequest patches credential metadata. The plaintext
-// secret cannot be set through this endpoint — use the rotate endpoint.
+// secret cannot be set through this endpoint — use the rotate endpoint. Scope
+// fields are only honored by the global admin path; the workspace-scoped path
+// ignores them so a workspace admin can't widen a credential's reach.
 type UpdateActionCredentialRequest struct {
-	Name           *string `json:"name,omitempty"`
-	SecretMetadata *string `json:"secret_metadata,omitempty"`
-	IsEnabled      *bool   `json:"is_enabled,omitempty"`
+	Name                   *string `json:"name,omitempty"`
+	SecretMetadata         *string `json:"secret_metadata,omitempty"`
+	IsEnabled              *bool   `json:"is_enabled,omitempty"`
+	AppliesToAllWorkspaces *bool   `json:"applies_to_all_workspaces,omitempty"`
+	WorkspaceIDs           *[]int  `json:"workspace_ids,omitempty"`
 }
 
 // RotateActionCredentialRequest carries only the new secret value.
