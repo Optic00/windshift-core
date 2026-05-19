@@ -417,6 +417,9 @@ func (p *PostgresDB) Close() error {
 }
 
 // Initialize sets up the database schema
+// FIXME(human-review): This Postgres startup path is a very large migration/bootstrap
+// god function and mirrors substantial logic in database.go. Split bootstrap,
+// idempotent migrations, legacy shims, and default data into reviewable units.
 func (p *PostgresDB) Initialize() error {
 	// Bootstrap the schema_migrations registry before any other DDL runs.
 	// Idempotent; works against fresh, existing, and partially-migrated DBs.

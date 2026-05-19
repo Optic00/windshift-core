@@ -809,6 +809,8 @@
     margin: 0.25rem 0;
     border: 1px solid var(--ds-border);
     font-size: 0.875rem;
+    color: var(--shiki-light);
+    background-color: var(--shiki-light-bg);
   }
 
   :global(.milkdown-editor .ProseMirror pre.shiki code) {
@@ -817,8 +819,16 @@
     font-family: ui-monospace, monospace;
   }
 
-  :global(html[data-color-mode='dark'] .shiki),
-  :global(html[data-color-mode='dark'] .shiki span) {
+  :global(.milkdown-editor .ProseMirror pre.shiki span) {
+    color: var(--shiki-light);
+    background-color: var(--shiki-light-bg);
+    font-style: var(--shiki-light-font-style);
+    font-weight: var(--shiki-light-font-weight);
+    text-decoration: var(--shiki-light-text-decoration);
+  }
+
+  :global(html[data-color-mode='dark'] .milkdown-editor .ProseMirror pre.shiki),
+  :global(html[data-color-mode='dark'] .milkdown-editor .ProseMirror pre.shiki span) {
     color: var(--shiki-dark) !important;
     background-color: var(--shiki-dark-bg) !important;
     font-style: var(--shiki-dark-font-style) !important;
@@ -1004,11 +1014,15 @@
   :global(.milkdown-image-block .image-wrapper) {
     position: relative;
     display: inline-block;
+    max-width: 100%;
   }
 
-  :global(.milkdown-image-block .image-wrapper img) {
+  :global(.milkdown-image-block .image-wrapper img),
+  :global(.milkdown-editor .ProseMirror img) {
     display: block;
     max-width: 100%;
+    height: auto;
+    object-fit: contain;
     border-radius: 4px;
   }
 

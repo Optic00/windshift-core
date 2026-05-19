@@ -923,7 +923,102 @@ func (as *ActionService) executeSetField(node *models.ActionNode, ctx *models.Ex
 	if config.Target == "custom_field" {
 		return as.executeSetFieldCustom(ctx, stepResult, config, value)
 	}
+	if config.FieldName == "milestone_ids" || config.FieldName == "milestone_id" {
+		return as.executeSetFieldMilestones(ctx, stepResult, config, value)
+	}
 	return as.executeSetFieldColumn(ctx, stepResult, config, value)
+}
+
+func (as *ActionService) executeSetFieldMilestones(ctx *models.ExecutionContext, stepResult *models.StepResult, config models.SetFieldNodeConfig, value string) error {
+	if err := as.authorizeWorkspaceMutation(ctx.EffectiveActorID, ctx.Event.WorkspaceID, models.PermissionItemEdit); err != nil {
+		return err
+	}
+
+	ids, err := parseActionMilestoneIDs(value)
+	if err != nil {
+		return fmt.Errorf("set_field milestones: %w", err)
+	}
+
+	updateService := NewItemUpdateService(as.db).WithPermissionService(as.permissionService)
+	result, err := updateService.UpdateItem(UpdateItemRequest{
+		ItemID:     ctx.Event.ItemID,
+		UpdateData: map[string]interface{}{"milestone_ids": ids},
+		UserID:     ctx.EffectiveActorID,
+	})
+	if err != nil {
+		return err
+	}
+
+	oldValue := ""
+	newValue := ""
+	for _, change := range result.FieldChanges {
+		if change.FieldName == "milestones" {
+			oldValue = change.OldValue
+			newValue = change.NewValue
+			break
+		}
+	}
+	if newValue == "" {
+		newValue = joinIntsCSV(ids)
+	}
+
+	stepResult.Output = map[string]interface{}{
+		"field_name": "milestones",
+		"old_value":  oldValue,
+		"new_value":  newValue,
+	}
+
+	as.EmitActionEvent(&models.ActionEvent{
+		EventType:         models.ActionTriggerItemUpdated,
+		WorkspaceID:       ctx.Event.WorkspaceID,
+		ItemID:            ctx.Event.ItemID,
+		ActorUserID:       ctx.EffectiveActorID,
+		OldValues:         map[string]interface{}{"milestones": oldValue},
+		NewValues:         map[string]interface{}{"milestones": newValue},
+		TriggeredByAction: true,
+		ExecutionChainID:  ctx.ChainID,
+		CascadeDepth:      ctx.Event.CascadeDepth + 1,
+	})
+
+	return nil
+}
+
+func parseActionMilestoneIDs(value string) ([]int, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return []int{}, nil
+	}
+
+	var raw []interface{}
+	if err := json.Unmarshal([]byte(trimmed), &raw); err == nil {
+		ids := make([]int, 0, len(raw))
+		for _, v := range raw {
+			switch x := v.(type) {
+			case float64:
+				ids = append(ids, int(x))
+			case string:
+				id, err := strconv.Atoi(strings.TrimSpace(x))
+				if err != nil {
+					return nil, fmt.Errorf("invalid milestone id %q", x)
+				}
+				ids = append(ids, id)
+			default:
+				return nil, fmt.Errorf("invalid milestone id value %v", v)
+			}
+		}
+		return ids, nil
+	}
+
+	parts := strings.Split(trimmed, ",")
+	ids := make([]int, 0, len(parts))
+	for _, part := range parts {
+		id, err := strconv.Atoi(strings.TrimSpace(part))
+		if err != nil {
+			return nil, fmt.Errorf("invalid milestone id %q", part)
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
 func (as *ActionService) executeSetFieldColumn(ctx *models.ExecutionContext, stepResult *models.StepResult, config models.SetFieldNodeConfig, value string) error {

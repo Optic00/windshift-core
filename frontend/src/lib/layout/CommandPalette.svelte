@@ -78,6 +78,44 @@
     return workspaceId ? `/workspaces/${workspaceId}/tests` : '/workspaces';
   }
 
+  const WORKSPACE_CONTEXT_VIEWS = new Set([
+    'workspace-detail',
+    'workspace-overview',
+    'workspace-board',
+    'workspace-backlog',
+    'workspace-list',
+    'workspace-tree',
+    'workspace-map',
+    'workspace-roadmap',
+    'workspace-settings',
+    'workspace-settings-general',
+    'workspace-settings-categories',
+    'workspace-settings-members',
+    'workspace-settings-configuration',
+    'workspace-settings-source-control',
+    'workspace-settings-issue-sync',
+    'workspace-settings-recurrence',
+    'workspace-settings-danger',
+    'workspace-look-and-feel',
+    'workspace-actions',
+    'item-detail',
+  ]);
+
+  const COLLECTION_CONTEXT_VIEWS = new Set([
+    'workspace-board',
+    'workspace-backlog',
+    'workspace-list',
+    'workspace-tree',
+    'workspace-map',
+    'workspace-roadmap',
+    'workspace-overview',
+  ]);
+
+  function workspaceViewUrl(workspaceId, view, collectionId = null) {
+    const collectionPrefix = collectionId ? `/collections/${collectionId}` : '';
+    return `/workspaces/${workspaceId}${collectionPrefix}/${view}`;
+  }
+
   // Define navigation commands
   function getBaseCommands() {
     const workspaceId = $currentRoute.params?.id;
@@ -187,24 +225,106 @@
   // Workspace context commands (only show when in a workspace)
   function createWorkspaceContextCommands() {
     const currentWorkspaceId = $currentRoute.params?.id;
+    const currentCollectionId = $currentRoute.params?.collectionId;
+    const currentView = $currentRoute.view;
     const ctxCommands = [];
 
-    if (currentWorkspaceId && ['workspace-detail', 'workspace-settings', 'workspace-board', 'workspace-list', 'workspace-tree', 'workspace-map', 'item-detail'].includes($currentRoute.view)) {
-      // Find current workspace name
-      const currentWorkspace = workspaces.find(w => w.id === parseInt(currentWorkspaceId));
-      const workspaceName = currentWorkspace ? currentWorkspace.name : 'Current Workspace';
+    if (!currentWorkspaceId || !WORKSPACE_CONTEXT_VIEWS.has(currentView)) return ctxCommands;
 
-      ctxCommands.push({
+    const currentWorkspace = workspaces.find(w => w.id === parseInt(currentWorkspaceId));
+    const workspaceName = currentWorkspace ? currentWorkspace.name : 'Current Workspace';
+    const collectionSuffix = currentCollectionId ? ' in this collection' : '';
+
+    ctxCommands.push(
+      {
         id: 'workspace-overview',
-        label: t('commandPalette.commands.workspaceOverview.label', { name: workspaceName }),
-        description: t('commandPalette.commands.workspaceOverview.description'),
+        label: `${workspaceName} Overview`,
+        description: currentCollectionId ? 'Open this collection overview' : 'Open workspace overview',
         keywords: ['overview', 'dashboard', 'workspace', 'stats', 'charts', workspaceName.toLowerCase(), 'o'],
         type: 'workspace-context',
-        url: `/workspaces/${currentWorkspaceId}`
+        url: currentCollectionId
+          ? workspaceViewUrl(currentWorkspaceId, 'overview', currentCollectionId)
+          : `/workspaces/${currentWorkspaceId}`,
+      },
+      {
+        id: 'workspace-board-view',
+        label: `Open ${workspaceName} Board`,
+        description: `Switch to board view${collectionSuffix}`,
+        keywords: ['board', 'kanban', 'columns', 'cards', 'workspace', workspaceName.toLowerCase(), 'b'],
+        type: 'workspace-context',
+        url: workspaceViewUrl(currentWorkspaceId, 'board', currentCollectionId),
+      },
+      {
+        id: 'workspace-backlog-view',
+        label: `Open ${workspaceName} Backlog`,
+        description: `Switch to backlog view${collectionSuffix}`,
+        keywords: ['backlog', 'triage', 'planning', 'workspace', workspaceName.toLowerCase(), 'bl'],
+        type: 'workspace-context',
+        url: workspaceViewUrl(currentWorkspaceId, 'backlog', currentCollectionId),
+      },
+      {
+        id: 'workspace-list-view',
+        label: `Open ${workspaceName} List`,
+        description: `Switch to list view${collectionSuffix}`,
+        keywords: ['list', 'table', 'rows', 'workspace', workspaceName.toLowerCase(), 'l'],
+        type: 'workspace-context',
+        url: workspaceViewUrl(currentWorkspaceId, 'list', currentCollectionId),
+      },
+      {
+        id: 'workspace-tree-view',
+        label: `Open ${workspaceName} Tree`,
+        description: `Switch to hierarchy tree view${collectionSuffix}`,
+        keywords: ['tree', 'hierarchy', 'parent', 'child', 'workspace', workspaceName.toLowerCase(), 'tr'],
+        type: 'workspace-context',
+        url: workspaceViewUrl(currentWorkspaceId, 'tree', currentCollectionId),
+      },
+      {
+        id: 'workspace-map-view',
+        label: `Open ${workspaceName} Map`,
+        description: `Switch to dependency map view${collectionSuffix}`,
+        keywords: ['map', 'dependencies', 'graph', 'workspace', workspaceName.toLowerCase(), 'm'],
+        type: 'workspace-context',
+        url: workspaceViewUrl(currentWorkspaceId, 'map', currentCollectionId),
+      },
+      {
+        id: 'workspace-roadmap-view',
+        label: `Open ${workspaceName} Roadmap`,
+        description: `Switch to roadmap view${collectionSuffix}`,
+        keywords: ['roadmap', 'timeline', 'plan', 'workspace', workspaceName.toLowerCase(), 'r'],
+        type: 'workspace-context',
+        url: workspaceViewUrl(currentWorkspaceId, 'roadmap', currentCollectionId),
+      },
+      {
+        id: 'workspace-settings-view',
+        label: `Open ${workspaceName} Settings`,
+        description: 'Configure this workspace',
+        keywords: ['settings', 'configuration', 'workspace', workspaceName.toLowerCase(), 'ws'],
+        type: 'workspace-context',
+        url: `/workspaces/${currentWorkspaceId}/settings/general`,
+      },
+    );
+
+    if (currentCollectionId && COLLECTION_CONTEXT_VIEWS.has(currentView)) {
+      ctxCommands.push({
+        id: 'collection-configure-board',
+        label: 'Configure Collection Board',
+        description: 'Open board configuration for this collection',
+        keywords: ['configure', 'configuration', 'board', 'columns', 'collection', 'view'],
+        type: 'workspace-context',
+        url: workspaceViewUrl(currentWorkspaceId, 'board/configure', currentCollectionId),
+      });
+    } else {
+      ctxCommands.push({
+        id: 'workspace-configure-board',
+        label: `Configure ${workspaceName} Board`,
+        description: 'Open board configuration for this workspace',
+        keywords: ['configure', 'configuration', 'board', 'columns', 'workspace', workspaceName.toLowerCase()],
+        type: 'workspace-context',
+        url: `/workspaces/${currentWorkspaceId}/board/configure`,
       });
     }
 
-    return ctxCommands;
+    return ctxCommands.filter((cmd) => cmd.url !== `${$currentRoute.path}${window.location.search}`);
   }
 
   // Work item commands from search results

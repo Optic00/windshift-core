@@ -22,6 +22,14 @@ const FIELD_MAP = {
 
 const STRING_FIELDS = new Set(['title', 'description']);
 
+const RELATED_ITEM_FIELDS = {
+  status: ['status_id', 'status_name', 'status_color', 'status_category_id'],
+  priority: ['priority_id', 'priority_name', 'priority_color'],
+  iteration: ['iteration_id', 'iteration_name', 'iteration_end_date'],
+  assignee: ['assignee_id', 'assignee_name', 'assignee_email'],
+  project: ['project_id', 'project_name', 'inherit_project'],
+};
+
 const DEFAULT_EDITING_STATE = {
   title: { active: false, value: '' },
   description: { active: false, value: '' },
@@ -291,6 +299,45 @@ class ItemDetailStore {
         this.loadingLinks = false;
         this.transitioning = false;
       }
+    }
+  }
+
+  /**
+   * Lightweight background refresh for an already-open item detail view.
+   * Unlike loadItem(), this only fetches the item record and merges it into
+   * current state so agent-driven status/comment-adjacent updates appear
+   * without clobbering any field the local user is actively editing.
+   */
+  async refreshCurrentItem() {
+    if (!this.itemId || this.loading || this.saving) return;
+
+    try {
+      const nextItem = await api.items.get(this.itemId);
+      if (!nextItem || String(nextItem.id) !== String(this.itemId)) return;
+
+      const previousStatusID = this.item?.status_id;
+      const previousItemTypeID = this.item?.item_type_id;
+      const previousParentID = this.item?.parent_id;
+
+      this.item = this.#mergeItemPreservingActiveEdits(this.item, nextItem);
+      this.#syncInactiveEditingFromItem();
+
+      if (previousStatusID !== this.item.status_id) {
+        await this.#loadAvailableStatusTransitions();
+      }
+      if (previousItemTypeID !== this.item.item_type_id) {
+        await this.#loadItemTypeData();
+        await this.#loadWorkspaceScreenFields();
+      }
+      if (previousParentID !== this.item.parent_id) {
+        if (this.item.parent_id) {
+          await this.#loadParentHierarchy();
+        } else {
+          this.parentHierarchy = [];
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to refresh item detail:', err);
     }
   }
 
@@ -798,6 +845,62 @@ class ItemDetailStore {
       }
       this.editing[field].value = this.item[FIELD_MAP[field]];
     }
+  }
+
+  #syncInactiveEditingFromItem() {
+    if (!this.item) return;
+    for (const [editKey, itemKey] of Object.entries(FIELD_MAP)) {
+      if (this.editing[editKey]?.active) continue;
+      if (editKey === 'milestone') {
+        this.editing[editKey].value = (this.item.milestones || []).map((m) => m.id);
+        continue;
+      }
+      this.editing[editKey].value = STRING_FIELDS.has(editKey)
+        ? this.item[itemKey] || ''
+        : this.item[itemKey];
+    }
+
+    const nextCustomValues = { ...(this.item.custom_field_values || {}) };
+    for (const fieldId of Object.keys(this.editing.customFields.active || {})) {
+      if (this.editing.customFields.active[fieldId]) {
+        nextCustomValues[fieldId] = this.editing.customFields.values[fieldId];
+      }
+    }
+    this.editing.customFields.values = nextCustomValues;
+    this.editing = { ...this.editing };
+  }
+
+  #mergeItemPreservingActiveEdits(current, next) {
+    if (!current) return next;
+    const merged = { ...current, ...next };
+
+    for (const [editKey, itemKey] of Object.entries(FIELD_MAP)) {
+      if (!this.editing[editKey]?.active) continue;
+
+      if (editKey === 'milestone') {
+        merged.milestones = current.milestones;
+        continue;
+      }
+
+      merged[itemKey] = current[itemKey];
+      for (const relatedKey of RELATED_ITEM_FIELDS[editKey] || []) {
+        if (relatedKey in current) merged[relatedKey] = current[relatedKey];
+      }
+    }
+
+    const activeCustomFields = Object.keys(this.editing.customFields.active || {}).filter(
+      (fieldId) => this.editing.customFields.active[fieldId]
+    );
+    if (activeCustomFields.length > 0) {
+      merged.custom_field_values = { ...(next.custom_field_values || {}) };
+      for (const fieldId of activeCustomFields) {
+        if (current.custom_field_values && fieldId in current.custom_field_values) {
+          merged.custom_field_values[fieldId] = current.custom_field_values[fieldId];
+        }
+      }
+    }
+
+    return merged;
   }
 
   // === Watch Actions ===

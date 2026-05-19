@@ -13,7 +13,7 @@
       <div class="field-info">
         <span class="field-name">{data.config.field_display_name || data.config.field_name}</span>
         <span class="field-arrow">&rarr;</span>
-        <span class="field-value">{data.config.value || '...'}</span>
+        <span class="field-value">{data.config.value_display_name || data.config.value || '...'}</span>
       </div>
     {:else}
       <div class="placeholder">{t('actions.config.selectField')}</div>

@@ -12,6 +12,7 @@
   import { addToast, successToast, errorToast } from '../../stores/toasts.svelte.js';
   import { timerStore } from '../../stores/timerStore.svelte.js';
   import { useItemAttachments } from '../../composables/useItemAttachments.svelte.js';
+  import { useWorkItemPoller } from '../../composables/useWorkItemPoller.svelte.js';
   import {
     registerContextCommands,
     unregisterContextCommands,
@@ -58,6 +59,9 @@ import Button from '../../components/Button.svelte';
   // Bind to store values using $derived
   let item = $derived(itemDetailStore.item);
   let workspace = $derived(itemDetailStore.workspace);
+
+  // Keep the open issue detail in sync with agent/background changes.
+  useWorkItemPoller(() => itemDetailStore.refreshCurrentItem());
 
   // Modal state
   let modalElement = $state(null);

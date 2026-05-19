@@ -118,6 +118,9 @@ func (h *AttachmentHandler) IsEnabled() bool {
 
 // Upload handles file upload to an item
 func (h *AttachmentHandler) Upload(w http.ResponseWriter, r *http.Request) {
+	// FIXME(human-review): This handler mixes entity resolution, permissions, validation,
+	// filesystem writes, thumbnailing, DB writes, and response shaping in one very large
+	// method. Split by entity type / storage concern once the auth rules below are clarified.
 	slog.Debug("upload request received", slog.String("component", "attachments"))
 
 	if !h.IsEnabled() {
@@ -185,6 +188,10 @@ func (h *AttachmentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	isHubLogo := entityType == "hub_logo"
 	isImageEntityType := isAvatar || isWorkspaceAvatar || isTeamAvatar || isCustomerAvatar || isWorkspaceBackground || isPortalBackground || isPortalLogo || isHubLogo
 
+	// FIXME(human-review): Image-entity uploads skip the entity existence and permission
+	// checks below. Any authenticated user can create workspace/team/customer/portal/hub
+	// image assets (portal/hub are returned on public URLs). Verify target ownership/admin
+	// permission or split these into explicit, authorized upload endpoints.
 	// Validate entity_id is provided (except for avatars, backgrounds, and logos)
 	if entityIDStr == "" && !isImageEntityType {
 		slog.Debug("missing entity_id in form", slog.String("component", "attachments"))

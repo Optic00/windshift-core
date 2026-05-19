@@ -4,6 +4,7 @@
   import { toHotkeyString, getShortcutDisplay } from '../../utils/keyboardShortcuts.js';
   import { api } from '../../api.js';
   import FieldSelector from '../../pickers/FieldSelector.svelte';
+  import MilestoneCombobox from '../../pickers/MilestoneCombobox.svelte';
   import TriggerNode from './nodes/TriggerNode.svelte';
   import SetFieldNode from './nodes/SetFieldNode.svelte';
   import SetStatusNode from './nodes/SetStatusNode.svelte';
@@ -39,6 +40,7 @@
   } = $props();
 
   let showPlaceholderModal = $state(false);
+  let milestones = $state([]);
 
   // Actor override: null means the action runs under the triggering user's
   // permissions. Only users with the global action.set_actor permission can
@@ -194,12 +196,23 @@
     }
   }
 
+  async function loadMilestones() {
+    if (!action?.workspace_id) return;
+    try {
+      milestones = await api.milestones.getAll({ workspace_id: action.workspace_id, include_global: true }) || [];
+    } catch (err) {
+      console.error('Failed to load milestones for action editor', err);
+      milestones = [];
+    }
+  }
+
   onMount(() => {
     if (action?.workspace_id) {
       loadCatalog();
       loadCapabilities('docker_environment');
       loadCapabilities('http_client');
       loadCapabilities('llm_connection');
+      loadMilestones();
     }
 
     // Live-reload: when the AI chat lands a create_action / update_action
@@ -264,7 +277,42 @@
       return { id: backendName, name: backendName.slice(3) };
     }
     const fieldId = backendNameToFieldId[backendName];
+    if (fieldId === 'milestone') {
+      return { id: fieldId, name: t('common.milestone', 'Milestone'), type: 'enum' };
+    }
     return fieldId ? { id: fieldId, name: fieldId } : { id: backendName, name: backendName };
+  }
+
+  function isMilestoneSetField(config) {
+    return config?.field_name === 'milestone_ids' || config?.field_name === 'milestone_id';
+  }
+
+  function getSetFieldMilestoneIDs(config) {
+    const value = config?.value;
+    if (Array.isArray(value)) return value.map((id) => parseInt(id, 10)).filter(Boolean);
+    if (typeof value === 'number') return [value];
+    if (typeof value !== 'string' || value.trim() === '') return [];
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) return parsed.map((id) => parseInt(id, 10)).filter(Boolean);
+      const parsedID = parseInt(parsed, 10);
+      return parsedID ? [parsedID] : [];
+    } catch {
+      return value.split(',').map((id) => parseInt(id.trim(), 10)).filter(Boolean);
+    }
+  }
+
+  function updateSetFieldMilestones(nodeId, ids) {
+    const safeIDs = Array.isArray(ids) ? ids : [];
+    actionFlowStore.updateNodeConfig(nodeId, {
+      field_name: 'milestone_ids',
+      field_display_name: t('common.milestone', 'Milestone'),
+      value: JSON.stringify(safeIDs),
+      value_display_name: safeIDs
+        .map((id) => milestones.find((m) => m.id === id)?.name)
+        .filter(Boolean)
+        .join(', '),
+    });
   }
 </script>
 
@@ -405,9 +453,20 @@
       <div>
         <label for="config-set-field-name" class="block text-xs font-medium mb-1">{t('actions.config.fieldName')}</label>
         <FieldSelector
-          selectedField={selectedNode.data?.config?.field_name ? { id: selectedNode.data.config.field_name, name: selectedNode.data.config.field_name } : null}
-          onSelect={(field) => store.updateNodeConfig(selectedNode.id, { field_name: field.id })}
-          onClear={() => store.updateNodeConfig(selectedNode.id, { field_name: '' })}
+          selectedField={selectedNode.data?.config?.field_name ? getFieldSelectorValue(selectedNode.data.config) : null}
+          onSelect={(field) => {
+            const fieldName = field.id === 'milestone' ? 'milestone_ids' : field.id;
+            const updates = {
+              field_name: fieldName,
+              field_display_name: field.name,
+              value_display_name: '',
+            };
+            if (fieldName === 'milestone_ids') {
+              updates.value = '[]';
+            }
+            store.updateNodeConfig(selectedNode.id, updates);
+          }}
+          onClear={() => store.updateNodeConfig(selectedNode.id, { field_name: '', field_display_name: '', value: '', value_display_name: '' })}
         />
       </div>
       <div>
@@ -421,14 +480,27 @@
             <HelpCircle class="w-3.5 h-3.5" />
           </button>
         </div>
-        <input
-          id="config-set-field-value"
-          type="text"
-          class="w-full px-3 py-2 border rounded-md text-sm config-input"
-          value={selectedNode.data?.config?.value || ''}
-          oninput={(e) => store.updateNodeConfig(selectedNode.id, { value: e.currentTarget.value })}
-          placeholder="{'{{'}item.creator_id{'}}'}"
-        />
+        {#if isMilestoneSetField(selectedNode.data?.config)}
+          <MilestoneCombobox
+            value={getSetFieldMilestoneIDs(selectedNode.data?.config)}
+            workspaceId={action?.workspace_id}
+            multiple={true}
+            placeholder={t('pickers.selectMilestones', 'Select milestones')}
+            onSelect={({ ids }) => updateSetFieldMilestones(selectedNode.id, ids)}
+          />
+          <p class="text-xs mt-1 sidebar-hints">
+            {t('actions.config.milestonePickerHint', 'Stores milestone IDs for the action; names are shown only for editing.')}
+          </p>
+        {:else}
+          <input
+            id="config-set-field-value"
+            type="text"
+            class="w-full px-3 py-2 border rounded-md text-sm config-input"
+            value={selectedNode.data?.config?.value || ''}
+            oninput={(e) => store.updateNodeConfig(selectedNode.id, { value: e.currentTarget.value, value_display_name: '' })}
+            placeholder="{'{{'}item.creator_id{'}}'}"
+          />
+        {/if}
       </div>
     {:else if selectedNode.type === 'add_comment'}
       <div>

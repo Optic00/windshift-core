@@ -275,6 +275,9 @@ func (db *DB) Close() error {
 // Initialize creates the schema on a fresh database and runs idempotent
 // migrations on an existing one. Safe to call on every startup.
 // last review: ser, 280426
+// FIXME(human-review): This SQLite startup path is a very large migration/bootstrap
+// god function and mirrors substantial logic in postgres.go. Split bootstrap,
+// idempotent migrations, legacy shims, and default data into reviewable units.
 func (db *DB) Initialize() error {
 	// Bootstrap the schema_migrations registry before any other DDL runs.
 	// Idempotent; works against fresh, existing, and partially-migrated DBs.

@@ -47,6 +47,18 @@
     return d.toISOString().replace('T', ' ').replace(/\..*Z$/, ' UTC');
   }
 
+  function fmtRelative(iso) {
+    if (!iso) return '—';
+    const ms = Date.now() - new Date(iso).getTime();
+    if (ms < 0) return 'just now';
+    const sec = Math.round(ms / 1000);
+    if (sec < 60) return `${sec}s ago`;
+    const min = Math.floor(sec / 60);
+    if (min < 60) return `${min}m ${sec % 60}s ago`;
+    const hr = Math.floor(min / 60);
+    return `${hr}h ${min % 60}m ago`;
+  }
+
   const healthy = $derived(view.data?.healthy === true);
   const cache = $derived(view.data?.cache ?? null);
   const db = $derived(view.data?.db ?? null);
@@ -166,6 +178,26 @@
         />
         <StatCard icon={IconCircleCheck} label="Cache hits" value={fmtVal(cache?.hits)} color="green" />
         <StatCard icon={IconRefresh} label="Cache misses / hit rate" value={`${fmtVal(cache?.misses)} · ${hitRate()}`} color="purple" />
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-4">
+        <StatCard
+          icon={IconRefresh}
+          label="Reconcile drift count"
+          value={fmtVal(cache?.reconcile_drift)}
+          color={(cache?.reconcile_drift ?? 0) > 0 ? 'orange' : 'green'}
+        />
+        <StatCard
+          icon={IconCircleCheck}
+          label="Reconcile no-op count"
+          value={fmtVal(cache?.reconcile_no_op)}
+          color="green"
+        />
+        <StatCard
+          icon={IconRefresh}
+          label="Last reconcile"
+          value={cache?.last_reconcile_at ? fmtRelative(cache.last_reconcile_at) : 'never'}
+          color={cache?.last_reconcile_at ? 'blue' : 'orange'}
+        />
       </div>
       {#if cache?.next_error}
         <p class="text-sm mt-2" style="color: var(--ds-accent-red);">

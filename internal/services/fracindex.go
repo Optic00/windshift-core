@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/lib/pq"
 
@@ -54,6 +55,13 @@ var (
 	fracIndexCacheMutex sync.Mutex   // protects cache initialization
 	fracIndexCacheHits  int64        // counter for monitoring
 	fracIndexCacheMiss  int64        // counter for monitoring
+
+	// Reconciliation telemetry. A drift count that keeps climbing is the
+	// signal that some non-generator path is writing frac_index — the
+	// admin diagnostics panel surfaces the running total and last tick.
+	fracIndexReconcileDrift int64
+	fracIndexReconcileNoOp  int64
+	fracIndexLastReconcile  atomic.Value // stores time.Time; zero value = never reconciled
 )
 
 // KeyBetween returns a key that sorts lexicographically between a and b.
@@ -431,11 +439,14 @@ func UpdateItemFracIndex(db database.Database, itemID int, fracIndex string) err
 // FracIndexCacheStats describes the in-process generator cache for the admin
 // diagnostics panel. It is a read-only snapshot.
 type FracIndexCacheStats struct {
-	Cached      *string `json:"cached"`                  // current cached "last" key; nil if uninitialized
-	NextWouldBe *string `json:"next_would_be,omitempty"` // KeyBetween(cached, "") preview
-	NextError   string  `json:"next_error,omitempty"`
-	Hits        int64   `json:"hits"`
-	Misses      int64   `json:"misses"`
+	Cached          *string    `json:"cached"`                  // current cached "last" key; nil if uninitialized
+	NextWouldBe     *string    `json:"next_would_be,omitempty"` // KeyBetween(cached, "") preview
+	NextError       string     `json:"next_error,omitempty"`
+	Hits            int64      `json:"hits"`
+	Misses          int64      `json:"misses"`
+	ReconcileDrift  int64      `json:"reconcile_drift"`             // times reconciliation found cache != DB max
+	ReconcileNoOp   int64      `json:"reconcile_no_op"`             // times reconciliation found everything aligned
+	LastReconcileAt *time.Time `json:"last_reconcile_at,omitempty"` // nil if reconciliation has never run
 }
 
 // GetFracIndexCacheStats returns a snapshot of the generator cache state.
@@ -453,9 +464,17 @@ func GetFracIndexCacheStats() FracIndexCacheStats {
 		}
 	}
 	out := FracIndexCacheStats{
-		Cached: cached,
-		Hits:   atomic.LoadInt64(&fracIndexCacheHits),
-		Misses: atomic.LoadInt64(&fracIndexCacheMiss),
+		Cached:         cached,
+		Hits:           atomic.LoadInt64(&fracIndexCacheHits),
+		Misses:         atomic.LoadInt64(&fracIndexCacheMiss),
+		ReconcileDrift: atomic.LoadInt64(&fracIndexReconcileDrift),
+		ReconcileNoOp:  atomic.LoadInt64(&fracIndexReconcileNoOp),
+	}
+	if v := fracIndexLastReconcile.Load(); v != nil {
+		if t, ok := v.(time.Time); ok && !t.IsZero() {
+			ts := t
+			out.LastReconcileAt = &ts
+		}
 	}
 	if cached != nil {
 		next, err := KeyBetween(*cached, "")
@@ -466,4 +485,75 @@ func GetFracIndexCacheStats() FracIndexCacheStats {
 		}
 	}
 	return out
+}
+
+// ReconcileFracIndexCache re-reads MAX(frac_index) from the DB and aligns
+// the in-memory cache. Drift in either direction (cache stale or cache
+// ahead) is treated the same: assign cache to db_max so subsequent
+// generates extend monotonically from reality.
+//
+// Designed to be called by a background goroutine at a coarse cadence
+// (the production deployment runs it every 60s). The success path of
+// item creation is unaffected; reconciliation only protects against
+// cache-DB drift introduced by non-generator writers or rolled-back
+// inserts that left cache "ahead" of reality.
+//
+// Returns (drifted, err) so callers/tests can branch on what happened.
+func ReconcileFracIndexCache(db database.Database) (bool, error) {
+	fracIndexCacheMutex.Lock()
+	defer fracIndexCacheMutex.Unlock()
+
+	var dbMax sql.NullString
+	err := db.QueryRow(`
+		SELECT frac_index FROM items
+		WHERE frac_index IS NOT NULL
+		ORDER BY frac_index DESC
+		LIMIT 1
+	`).Scan(&dbMax)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, fmt.Errorf("reconcile frac_index cache: %w", err)
+	}
+
+	// Mark "we ran" even if we don't find drift, so the diagnostic panel
+	// can show the loop is alive.
+	fracIndexLastReconcile.Store(time.Now())
+
+	var cachedStr *string
+	if v := fracIndexCache.Load(); v != nil {
+		if s, ok := v.(*string); ok && s != nil {
+			cachedStr = s
+		}
+	}
+
+	// Compare cache (may be nil) against db_max (may be NULL).
+	switch {
+	case cachedStr == nil && !dbMax.Valid:
+		// Both empty — no drift possible.
+		atomic.AddInt64(&fracIndexReconcileNoOp, 1)
+		return false, nil
+	case cachedStr != nil && dbMax.Valid && *cachedStr == dbMax.String:
+		// Aligned.
+		atomic.AddInt64(&fracIndexReconcileNoOp, 1)
+		return false, nil
+	}
+
+	// Drift detected — reset the cache to match DB reality.
+	oldVal := "<nil>"
+	if cachedStr != nil {
+		oldVal = *cachedStr
+	}
+	newVal := "<nil>"
+	if dbMax.Valid {
+		v := dbMax.String
+		fracIndexCache.Store(&v)
+		newVal = v
+	} else {
+		fracIndexCache.Store((*string)(nil))
+	}
+	atomic.AddInt64(&fracIndexReconcileDrift, 1)
+	slog.Info("frac_index cache reconciled",
+		slog.String("component", "fracindex"),
+		slog.String("old", oldVal),
+		slog.String("new", newVal))
+	return true, nil
 }

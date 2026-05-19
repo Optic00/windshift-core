@@ -56,6 +56,7 @@ func (h *HierarchyService) WouldCreateCycleTx(tx database.Tx, ancestorCandidateI
 	})
 }
 
+// last review: ser, 190526, NOTE: Comments are lacking
 func walkForCycle(ancestorCandidateID, newParentID int, getParent func(int) (*int, error)) (bool, error) {
 	current := newParentID
 	for i := 0; i < maxHierarchyDepth; i++ {
@@ -132,6 +133,7 @@ func (h *HierarchyService) GetAncestors(itemID int) ([]models.Item, error) {
 		var workspaceName, workspaceKey, itemTypeName, itemTypeColor, itemTypeIcon sql.NullString
 		var level int
 
+		// last review: ser, 190526, FIXME: this is problematic, we need to centralize this scan, whenever the item fields change this needs to be modified
 		err := rows.Scan(
 			&item.ID, &item.WorkspaceID, &item.WorkspaceItemNumber, &itemTypeID, &item.Title, &item.Description, &item.IsTask,
 			&assigneeID, &creatorID, &customFieldValuesJSON, &parentID,

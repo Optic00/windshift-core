@@ -74,7 +74,6 @@
       // Don't return — still load data so the component isn't stuck in loading state
     }
 
-    // Load all required data
     const loadPromises = [loadWorkspace(), loadTimeProjectCategories()];
     if ($moduleSettings.time_tracking_enabled) {
       loadPromises.push(loadTimeProjects());
@@ -97,6 +96,7 @@
           default_view: workspace.default_view || 'board',
           internal_comments_enabled: workspace.internal_comments_enabled || false
         };
+        selectedTimeProjectCategories = workspace.time_project_categories || [];
       }
     } catch (error) {
       console.error('Failed to load workspace:', error);
@@ -115,9 +115,6 @@
   async function loadTimeProjectCategories() {
     try {
       timeProjectCategories = await api.time.projectCategories.getAll() || [];
-      if (workspace?.time_project_categories) {
-        selectedTimeProjectCategories = workspace.time_project_categories;
-      }
     } catch (error) {
       console.error('Failed to load time project categories:', error);
       timeProjectCategories = [];

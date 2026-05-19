@@ -45,6 +45,9 @@
     await loadChannel();
   });
 
+  // FIXME(human-review): This page duplicates most of FormChannelPage.svelte
+  // (config parsing, basic info save, status toggle, header/tabs). Extract a shared
+  // channel-admin shell/save helper before adding more channel types.
   function parseChannelConfig(config) {
     if (!config) return {};
     if (typeof config === 'string') {

@@ -59,29 +59,30 @@ type Server struct {
 	listener   net.Listener
 
 	// Services that need cleanup
-	ldapHandler               *handlers.LDAPHandler
-	notificationManager       *handlers.NotificationManager
-	notificationService       *services.NotificationService
-	notificationScheduler     *scheduler.NotificationScheduler
-	recurrenceScheduler       *scheduler.RecurrenceScheduler
-	cfvCleanupScheduler       *scheduler.CFVCleanupScheduler
-	workflowService           *services.WorkflowService
-	actionService             *services.ActionService
-	assetActionService        *services.AssetActionService
-	approvalEscalationSweeper *services.ApprovalEscalationSweeper
-	emailScheduler            *scheduler.EmailScheduler
-	emailTrackingRetention    *scheduler.EmailTrackingRetentionSweeper
-	briefingScheduler         *scheduler.BriefingScheduler
-	pluginScheduleScheduler   *scheduler.PluginScheduleScheduler
-	activityTracker           *services.ActivityTracker
-	tokenTracker              *services.TokenTracker
-	scmSyncStopChan           chan struct{}
-	issueSyncStopChan         chan struct{}
-	magicLinkStopChan         chan struct{}
-	cleanupStopChan           chan struct{}
-	jiraHostStopChan          chan struct{}
-	cleanupTicker             *time.Ticker
-	pluginManager             *plugins.Manager
+	ldapHandler                *handlers.LDAPHandler
+	notificationManager        *handlers.NotificationManager
+	notificationService        *services.NotificationService
+	notificationScheduler      *scheduler.NotificationScheduler
+	recurrenceScheduler        *scheduler.RecurrenceScheduler
+	cfvCleanupScheduler        *scheduler.CFVCleanupScheduler
+	workflowService            *services.WorkflowService
+	actionService              *services.ActionService
+	assetActionService         *services.AssetActionService
+	approvalEscalationSweeper  *services.ApprovalEscalationSweeper
+	emailScheduler             *scheduler.EmailScheduler
+	emailTrackingRetention     *scheduler.EmailTrackingRetentionSweeper
+	briefingScheduler          *scheduler.BriefingScheduler
+	pluginScheduleScheduler    *scheduler.PluginScheduleScheduler
+	activityTracker            *services.ActivityTracker
+	tokenTracker               *services.TokenTracker
+	scmSyncStopChan            chan struct{}
+	issueSyncStopChan          chan struct{}
+	magicLinkStopChan          chan struct{}
+	cleanupStopChan            chan struct{}
+	jiraHostStopChan           chan struct{}
+	fracIndexReconcileStopChan chan struct{}
+	cleanupTicker              *time.Ticker
+	pluginManager              *plugins.Manager
 
 	// Rate limiters that need cleanup
 	loginRateLimiter    *middleware.RateLimiter
@@ -110,12 +111,13 @@ type Server struct {
 // It initializes all services and handlers but does not start listening.
 func New(cfg Config) (*Server, error) {
 	s := &Server{
-		config:            cfg,
-		scmSyncStopChan:   make(chan struct{}),
-		issueSyncStopChan: make(chan struct{}),
-		magicLinkStopChan: make(chan struct{}),
-		cleanupStopChan:   make(chan struct{}),
-		jiraHostStopChan:  make(chan struct{}),
+		config:                     cfg,
+		scmSyncStopChan:            make(chan struct{}),
+		issueSyncStopChan:          make(chan struct{}),
+		magicLinkStopChan:          make(chan struct{}),
+		cleanupStopChan:            make(chan struct{}),
+		jiraHostStopChan:           make(chan struct{}),
+		fracIndexReconcileStopChan: make(chan struct{}),
 	}
 
 	if err := s.initialize(); err != nil {
@@ -128,6 +130,9 @@ func New(cfg Config) (*Server, error) {
 
 // initialize sets up all services and handlers.
 func (s *Server) initialize() error {
+	// FIXME(human-review): This 1k+ line method wires database, services, routes,
+	// schedulers, plugins, and shutdown state. Split into focused builders plus a
+	// scheduler/lifecycle registry so start/stop wiring cannot drift silently.
 	cfg := s.config
 
 	// Suppress all logging in silent mode (for testing)
@@ -654,6 +659,12 @@ func (s *Server) initialize() error {
 
 	// Start magic link cleanup scheduler
 	go s.runMagicLinkCleanup(magicLinkService)
+
+	// Start frac_index cache reconciliation scheduler. Keeps the
+	// in-memory generator cache aligned with the DB max so drift from
+	// non-generator writers (or rolled-back inserts that left the cache
+	// "ahead") self-heals within one tick.
+	go s.runFracIndexReconcile()
 
 	// Webhook sender
 	webhookSender := webhook.NewWebhookSender(s.db)
@@ -1387,6 +1398,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	safeClose(s.jiraHostStopChan)
 	s.jiraHostStopChan = nil
 
+	safeClose(s.fracIndexReconcileStopChan)
+	s.fracIndexReconcileStopChan = nil
+
 	if s.notificationScheduler != nil {
 		slog.Info("stopping notification scheduler")
 		s.notificationScheduler.Stop()
@@ -1595,6 +1609,28 @@ func (s *Server) runMagicLinkCleanup(magicLinkService *services.MagicLinkService
 			}
 		case <-s.magicLinkStopChan:
 			slog.Info("magic link cleanup scheduler stopped")
+			return
+		}
+	}
+}
+
+// runFracIndexReconcile re-reads MAX(frac_index) from the DB every minute
+// and aligns the generator's in-memory cache. The retry-on-conflict path
+// in CreateItem / UpdateFracIndex is the safety net; this loop is the
+// proactive prevention — drift from non-generator writers self-heals
+// within one tick instead of waiting for a collision.
+func (s *Server) runFracIndexReconcile() {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+	slog.Info("frac_index reconciliation scheduler started (1-minute interval)")
+	for {
+		select {
+		case <-ticker.C:
+			if _, err := services.ReconcileFracIndexCache(s.db); err != nil {
+				slog.Error("frac_index reconciliation error", "error", err)
+			}
+		case <-s.fracIndexReconcileStopChan:
+			slog.Info("frac_index reconciliation scheduler stopped")
 			return
 		}
 	}
