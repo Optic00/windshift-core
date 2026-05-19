@@ -161,7 +161,7 @@
             status: 'not_run',
             actual_result: '',
             notes: '',
-            defect_id: null
+            item_id: null
           };
         }
       });
@@ -170,18 +170,25 @@
 
   async function loadExistingResults() {
     try {
-      // Load step results from the database
+      // Load step results from the database. Backend keys the response by
+      // `${testCaseID}_${stepID}` so the same step in two different test
+      // cases stays distinct; we remap to local step.id keys here (mirrors
+      // TestRunDetail.svelte). Reading `item_id` (not `defect_id`) matches
+      // the field the backend emits.
       const existingStepResults = await api.tests.testRuns.getStepResults(workspaceId, runId);
 
-      // Merge existing results with initialized results
-      Object.keys(existingStepResults).forEach(stepId => {
-        const existingResult = existingStepResults[stepId];
-        stepResults[stepId] = {
-          status: existingResult.status || 'not_run',
-          actual_result: existingResult.actual_result || '',
-          notes: existingResult.notes || '',
-          defect_id: existingResult.defect_id || null
-        };
+      testCases.forEach(testCase => {
+        (testCase.test_steps || []).forEach(step => {
+          const compositeKey = `${testCase.id}_${step.id}`;
+          const existingResult = existingStepResults[compositeKey];
+          if (!existingResult) return;
+          stepResults[step.id] = {
+            status: existingResult.status || 'not_run',
+            actual_result: existingResult.actual_result || '',
+            notes: existingResult.notes || '',
+            item_id: existingResult.item_id ?? null
+          };
+        });
       });
 
       // Trigger reactivity
@@ -317,19 +324,21 @@
       [stepId]: { ...stepResults[stepId], status }
     };
     
-    // Save to backend
+    // Save to backend. Always send the current item_id so a previously
+    // linked defect/item isn't cleared by a follow-up status change — the
+    // backend overwrites items.item_id with whatever this payload carries.
     try {
       const resultData = stepResults[stepId];
       await api.tests.testRuns.updateStepResult(workspaceId, runId, stepId, {
         status: status,
         actual_result: resultData.actual_result || '',
         notes: resultData.notes || '',
-        defect_id: resultData.defect_id || null
+        item_id: resultData.item_id ?? null
       });
     } catch (error) {
       console.error('Failed to save step result:', error);
     }
-    
+
     // Auto-advance to next step on pass/skip (but not fail/blocked so user can create defects)
     if (status === 'passed' || status === 'skipped') {
       setTimeout(() => nextStep(), 500);
@@ -343,14 +352,14 @@
       [stepId]: { ...stepResults[stepId], [field]: value }
     };
 
-    // Save to backend
+    // Save to backend, preserving any previously linked item_id.
     try {
       const resultData = stepResults[stepId];
       await api.tests.testRuns.updateStepResult(workspaceId, runId, stepId, {
         status: resultData.status || 'not_run',
         actual_result: resultData.actual_result || '',
         notes: resultData.notes || '',
-        defect_id: resultData.defect_id || null
+        item_id: resultData.item_id ?? null
       });
     } catch (error) {
       console.error('Failed to save step result:', error);
