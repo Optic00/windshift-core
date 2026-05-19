@@ -70,5 +70,8 @@ export const BUCKET_LABELS = Object.freeze({
   [BUCKET.SYSTEM]: 'System',
 });
 
-export const PER_BUCKET_CAP = 5;
-export const TOTAL_CAP = 15;
+// Per-bucket cap is set so empty-query palette renders all workspace views
+// (up to ~12) and global nav items (up to ~10). Total cap keeps the list
+// scannable without burying admin / system commands.
+export const PER_BUCKET_CAP = 8;
+export const TOTAL_CAP = 20;

@@ -301,10 +301,12 @@ export const adminGroups = [
 
 /**
  * Resolve labels/descriptions using a t() function. Returns a new structure
- * with .label and .description filled in.
+ * with .label and .description filled in. Return type is `any[]` because
+ * downstream code merges plugin-provided items that carry additional fields
+ * (isPlugin, pluginData) outside this registry's schema.
  *
  * @param {(key:string, fallback?:string) => string} t
- * @returns {Array<{id:string,label:string,icon:any,items:Array<{id:string,label:string,description:string,icon:any}>}>}
+ * @returns {any[]}
  */
 export function resolveAdminGroups(t) {
   return adminGroups.map((g) => ({
