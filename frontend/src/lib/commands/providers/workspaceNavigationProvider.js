@@ -7,43 +7,21 @@ import { workspacePermissions } from '../../stores';
 import { BUCKET } from '../buckets.js';
 import { createCommand } from '../types.js';
 
-const WORKSPACE_CONTEXT_VIEWS = new Set([
-  'workspace-detail',
-  'workspace-overview',
-  'workspace-board',
-  'workspace-backlog',
-  'workspace-list',
-  'workspace-tree',
-  'workspace-map',
-  'workspace-roadmap',
-  'workspace-settings',
-  'workspace-settings-general',
-  'workspace-settings-categories',
-  'workspace-settings-members',
-  'workspace-settings-configuration',
-  'workspace-settings-source-control',
-  'workspace-settings-issue-sync',
-  'workspace-settings-recurrence',
-  'workspace-settings-danger',
-  'workspace-look-and-feel',
-  'workspace-actions',
-  'item-detail',
-]);
-
 function buildViewUrl(workspaceId, view, collectionId) {
   const prefix = collectionId ? `/collections/${collectionId}` : '';
   return `/workspaces/${workspaceId}${prefix}/${view}`;
 }
 
 /**
- * Workspace view navigation. Only emits when the user is inside a workspace
- * context. Phase 0 audit fix: removes the `dashboard` keyword from the
- * overview command so it stops polluting `board` searches.
+ * Workspace view navigation. Emits whenever the user is inside a workspace
+ * (workspaceId set) — including iterations/milestones/analytics/test pages,
+ * which the previous WORKSPACE_CONTEXT_VIEWS gate silently excluded. Phase 0
+ * audit fix: removes the `dashboard` keyword from the overview command so
+ * it stops polluting `board` searches.
  */
 export function workspaceNavigationProvider(ctx) {
   const { workspaceId, workspace, collectionId, route, modules } = ctx;
   if (!workspaceId) return [];
-  if (!WORKSPACE_CONTEXT_VIEWS.has(route?.view)) return [];
 
   const name = workspace?.name || 'Workspace';
   const collectionSuffix = collectionId ? ' in this collection' : '';

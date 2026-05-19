@@ -65,6 +65,10 @@ export default {
         title: 'SCM Providers',
         description: 'Configure GitHub, GitLab, Gitea, and Bitbucket integrations',
       },
+      integrationProviders: {
+        title: 'Integrations',
+        description: 'Manage outbound integrations Windshift connects to and inbound apps that authorize via OAuth.',
+      },
       systemImport: { title: 'System Import', description: 'Import data from external systems' },
       linkTypes: { title: 'Link Types', description: 'Manage link types between items' },
       attachments: { title: 'Attachments', description: 'Manage attachment settings' },
