@@ -1,4 +1,4 @@
-package handlers
+package services
 
 import (
 	"encoding/json"
@@ -79,11 +79,11 @@ type windshiftExportWorklog struct {
 	Started          string `json:"started"`
 }
 
-// writeWindshiftExport assembles a deterministic snapshot of everything imported
+// WriteWindshiftExport assembles a deterministic snapshot of everything imported
 // under jobID and writes it to <dir>/windshift_export.json. Always filters from
 // jira_import_id_mappings WHERE job_id = ? so a partial re-import on the same
 // workspace cannot leak rows from a prior completed job.
-func writeWindshiftExport(db database.Database, jobID, dir string) error {
+func WriteWindshiftExport(db database.Database, jobID, dir string) error {
 	exp := windshiftExport{
 		JobID:         jobID,
 		GeneratedAt:   time.Now().UTC().Format(time.RFC3339),
@@ -232,17 +232,17 @@ func loadItemRow(db database.Database, itemID int, jiraKey string) (windshiftExp
 
 	out := windshiftExportItem{
 		Title:            title,
-		Description:      deref(description),
-		StatusName:       deref(statusName),
-		ItemTypeName:     deref(typeName),
-		PriorityName:     deref(priority),
-		AssigneeUsername: deref(assignee),
-		ReporterUsername: deref(reporter),
-		CreatorUsername:  deref(creator),
+		Description:      derefString(description),
+		StatusName:       derefString(statusName),
+		ItemTypeName:     derefString(typeName),
+		PriorityName:     derefString(priority),
+		AssigneeUsername: derefString(assignee),
+		ReporterUsername: derefString(reporter),
+		CreatorUsername:  derefString(creator),
 		StoryPoints:      storyPts,
-		DueDate:          deref(dueDate),
-		CreatedAt:        deref(created),
-		UpdatedAt:        deref(updated),
+		DueDate:          derefString(dueDate),
+		CreatedAt:        derefString(created),
+		UpdatedAt:        derefString(updated),
 		CustomFields:     map[string]json.RawMessage{},
 	}
 	if cfValues != nil && *cfValues != "" {
@@ -405,7 +405,7 @@ func loadItemLinks(db database.Database, itemID int, idToKey map[int]string) []w
 	return out
 }
 
-func deref(s *string) string {
+func derefString(s *string) string {
 	if s == nil {
 		return ""
 	}

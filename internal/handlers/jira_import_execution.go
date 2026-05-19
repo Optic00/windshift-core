@@ -62,7 +62,7 @@ func (h *JiraImportHandler) executeImport(jobID string, req StartImportRequest) 
 				if err := rc.saveToFile(captureDir); err != nil {
 					slog.Error("Failed to save captured payloads", slog.String("component", "jira"), slog.Any("error", err))
 				}
-				if err := writeWindshiftExport(h.db, jobID, captureDir); err != nil {
+				if err := services.WriteWindshiftExport(h.db, jobID, captureDir); err != nil {
 					slog.Error("Failed to save windshift export", slog.String("component", "jira"), slog.Any("error", err))
 				}
 			}()
