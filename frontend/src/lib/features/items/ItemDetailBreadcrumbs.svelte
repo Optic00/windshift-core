@@ -14,14 +14,17 @@
   item,
   iconMap,
   workspaceId,
+  itemTypes: providedItemTypes = [],
   onnavigate = null,
   onparentChanged = null,
-  oncopyKey = null
+  oncopyKey = null,
+  onitemtypechange = null
 } = $props();
   
   // We need access to item types to filter by hierarchy level
   let itemTypes = $state([]);
   let validParentHierarchyLevel = $state(null);
+  let showItemTypeSelector = $state(false);
   
   // Parent editing state
   let showParentSelector = $state(false);
@@ -35,9 +38,34 @@
     onnavigate?.(path);
   }
 
+  let effectiveItemTypes = $derived(providedItemTypes?.length ? providedItemTypes : itemTypes);
+
   function getItemTypeInfo(itemTypeId) {
-    if (!itemTypeId || !itemTypes.length) return null;
-    return itemTypes.find(type => type.id === itemTypeId);
+    if (!itemTypeId || !effectiveItemTypes.length) return null;
+    return effectiveItemTypes.find(type => type.id === itemTypeId);
+  }
+
+  async function openItemTypeSelector() {
+    showItemTypeSelector = true;
+    if (effectiveItemTypes.length > 0) return;
+    try {
+      itemTypes = await api.itemTypes.getAll();
+    } catch (error) {
+      console.error('Failed to load item types:', error);
+    }
+  }
+
+  function closeItemTypeSelector() {
+    showItemTypeSelector = false;
+  }
+
+  function selectItemType(type) {
+    if (!type || type.id === item.item_type_id) {
+      closeItemTypeSelector();
+      return;
+    }
+    closeItemTypeSelector();
+    onitemtypechange?.(type);
   }
 
   async function openParentSelector() {
@@ -355,17 +383,60 @@
   {/if}
   <div class="flex items-center gap-2 min-w-0 flex-1" style="color: var(--ds-text);">
     {#if currentItemType}
-      <Tooltip content="{currentItemType.name} ({currentHierarchyLevel?.name || 'Unknown level'})">
-        {#snippet children()}
-          {@const CurrentIcon = iconMap[currentItemType.icon] || FileText}
+      <div class="relative flex-shrink-0">
+        <Tooltip content="{currentItemType.name} ({currentHierarchyLevel?.name || 'Unknown level'}) — click to change">
+          {#snippet children()}
+            {@const CurrentIcon = iconMap[currentItemType.icon] || FileText}
+            <button
+              type="button"
+              onclick={openItemTypeSelector}
+              class="w-4 h-4 rounded flex items-center justify-center text-white text-xs cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500"
+              style="background-color: {currentItemType.color};"
+              title="Change item type"
+            >
+              <CurrentIcon class="w-3 h-3" />
+            </button>
+          {/snippet}
+        </Tooltip>
+
+        {#if showItemTypeSelector}
           <div
-            class="w-4 h-4 rounded flex items-center justify-center text-white text-xs cursor-help"
-            style="background-color: {currentItemType.color};"
+            class="absolute left-0 top-6 w-64 rounded shadow-lg border z-50"
+            style="background-color: var(--ds-surface-raised); border-color: var(--ds-border); backdrop-filter: blur(8px);"
           >
-            <CurrentIcon class="w-3 h-3" />
+            <div class="flex items-center justify-between p-3 border-b" style="border-color: var(--ds-border);">
+              <h3 class="font-medium" style="color: var(--ds-text);">Change item type</h3>
+              <button
+                type="button"
+                onclick={closeItemTypeSelector}
+                class="w-6 h-6 rounded transition-colors flex items-center justify-center"
+                style="color: var(--ds-text-subtle);"
+              >
+                <X class="w-4 h-4" />
+              </button>
+            </div>
+            <div class="max-h-72 overflow-y-auto py-1">
+              {#each effectiveItemTypes as type (type.id)}
+                {@const TypeIcon = iconMap[type.icon] || FileText}
+                <button
+                  type="button"
+                  onclick={() => selectItemType(type)}
+                  disabled={type.id === item.item_type_id}
+                  class="w-full px-3 py-2 text-left flex items-center gap-2 disabled:opacity-50"
+                >
+                  <span
+                    class="w-4 h-4 rounded flex items-center justify-center text-white text-xs flex-shrink-0"
+                    style="background-color: {type.color};"
+                  >
+                    <TypeIcon class="w-3 h-3" />
+                  </span>
+                  <span class="text-sm truncate" style="color: var(--ds-text);">{type.name}</span>
+                </button>
+              {/each}
+            </div>
           </div>
-        {/snippet}
-      </Tooltip>
+        {/if}
+      </div>
     {/if}
     <Tooltip content={t('items.clickToCopyKey')}>
       {#snippet children()}

@@ -712,6 +712,10 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 		respondValidationError(w, r, "status_id may not be set via item update; use POST /items/{id}/transition")
 		return
 	}
+	if _, hasItemType := updateData["item_type_id"]; hasItemType {
+		respondValidationError(w, r, "item_type_id may not be set via item update; use POST /items/{id}/change-type")
+		return
+	}
 
 	// Track item edit activity
 	if h.activityTracker != nil {

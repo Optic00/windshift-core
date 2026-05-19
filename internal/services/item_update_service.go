@@ -77,6 +77,12 @@ func (s *ItemUpdateService) UpdateItem(req UpdateItemRequest) (*UpdateItemResult
 			Message: "must be changed via the transition endpoint, not item update",
 		}
 	}
+	if _, hasItemType := req.UpdateData["item_type_id"]; hasItemType {
+		return nil, &validation.ValidationError{
+			Field:   "item_type_id",
+			Message: "must be changed via the item type change endpoint, not item update",
+		}
+	}
 
 	// Start transaction first so the read-modify-write is atomic
 	tx, err := s.db.Begin()

@@ -22,6 +22,8 @@ func RegisterItemRoutes(deps *Deps) {
 	api.HandleH("POST /items/{id}/reparent-children", auth(http.HandlerFunc(deps.Items.Item.ReparentChildren)))
 	api.HandleH("POST /items/{id}/copy", auth(http.HandlerFunc(deps.Items.Item.Copy)))
 	api.HandleH("GET /items/{id}/available-status-transitions", auth(http.HandlerFunc(deps.Items.Item.GetAvailableStatusTransitions)))
+	api.HandleH("GET /items/{id}/type-change-analysis", auth(http.HandlerFunc(deps.Items.Item.AnalyzeTypeChange)))
+	api.HandleH("POST /items/{id}/change-type", auth(http.HandlerFunc(deps.Items.Item.ChangeType)))
 	api.HandleH("POST /items/{id}/transition", auth(http.HandlerFunc(deps.Items.Item.Transition)))
 	api.HandleH("GET /items/{id}/history", auth(http.HandlerFunc(deps.Items.Item.GetItemHistory)))
 

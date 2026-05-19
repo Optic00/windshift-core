@@ -72,6 +72,14 @@ import Button from '../../components/Button.svelte';
   let recurrenceEditorRef = $state(null);
   let recurrenceSaving = $state(false);
 
+  // Item type change state
+  let showTypeChangeModal = $state(false);
+  let typeChangeAnalysis = $state(null);
+  let typeChangeTarget = $state(null);
+  let selectedTypeChangeStatusId = $state(null);
+  let changingItemType = $state(false);
+  let typeChangeError = $state(null);
+
   let availableSubIssueTypes = $derived(itemDetailStore.availableSubIssueTypes);
 
   // Track itemId changes for reactivity
@@ -588,6 +596,69 @@ import Button from '../../components/Button.svelte';
     }
   }
 
+  async function handleItemTypeChange(targetType) {
+    if (!targetType || !item || targetType.id === item.item_type_id) return;
+    typeChangeError = null;
+    typeChangeTarget = targetType;
+
+    try {
+      changingItemType = true;
+      const analysis = await api.items.analyzeTypeChange(item.id, targetType.id);
+      if (analysis?.requires_migration) {
+        typeChangeAnalysis = analysis;
+        selectedTypeChangeStatusId = analysis.suggested_status_id || null;
+        showTypeChangeModal = true;
+        return;
+      }
+      await executeItemTypeChange(targetType.id, null);
+    } catch (error) {
+      console.error('Failed to analyze item type change:', error);
+      errorToast(error.message || String(error));
+    } finally {
+      changingItemType = false;
+    }
+  }
+
+  async function executeItemTypeChange(targetItemTypeId = null, targetStatusId = null) {
+    if (!item) return;
+    const itemTypeId = targetItemTypeId || typeChangeTarget?.id;
+    if (!itemTypeId) return;
+
+    try {
+      changingItemType = true;
+      typeChangeError = null;
+      const updated = await api.items.changeType(item.id, {
+        target_item_type_id: itemTypeId,
+        ...(targetStatusId ? { target_status_id: targetStatusId } : {})
+      });
+      itemDetailStore.item = { ...itemDetailStore.item, ...updated };
+      itemDetailStore.hasChanges = true;
+      showTypeChangeModal = false;
+      typeChangeAnalysis = null;
+      typeChangeTarget = null;
+      selectedTypeChangeStatusId = null;
+      await itemDetailStore.loadItem(workspaceId, item.id);
+      successToast('Item type changed');
+    } catch (error) {
+      console.error('Failed to change item type:', error);
+      typeChangeError = error.message || String(error);
+      if (!showTypeChangeModal) {
+        errorToast(typeChangeError);
+      }
+    } finally {
+      changingItemType = false;
+    }
+  }
+
+  function closeTypeChangeModal() {
+    if (changingItemType) return;
+    showTypeChangeModal = false;
+    typeChangeAnalysis = null;
+    typeChangeTarget = null;
+    selectedTypeChangeStatusId = null;
+    typeChangeError = null;
+  }
+
   function handleDeleteItem() {
     itemDetailStore.openDeleteDialog();
   }
@@ -1086,6 +1157,7 @@ import Button from '../../components/Button.svelte';
     oneditWorklog={handleEditWorklog}
     ondeleteWorklog={handleDeleteWorklog}
     onparentChanged={handleParentChanged}
+    onitemtypechange={handleItemTypeChange}
     onattachmentUpload={attachmentManager.handleUpload}
     onattachmentUploadFiles={attachmentManager.uploadFiles}
     onattachmentDelete={attachmentManager.handleDelete}
@@ -1214,6 +1286,58 @@ import Button from '../../components/Button.svelte';
   />
 {/if}
 {/if}
+
+{#if showTypeChangeModal && typeChangeAnalysis}
+  <Modal isOpen={showTypeChangeModal} maxWidth="max-w-lg" onclose={closeTypeChangeModal}>
+    <div class="p-6 space-y-5" style="background-color: var(--ds-surface); color: var(--ds-text);">
+      <div>
+        <h2 class="text-lg font-semibold">Map status for item type change</h2>
+        <p class="text-sm mt-1" style="color: var(--ds-text-subtle);">
+          Changing from {typeChangeAnalysis.current_item_type_name || 'current type'} to {typeChangeAnalysis.target_item_type_name} requires choosing a status in the target workflow.
+        </p>
+      </div>
+
+      {#if typeChangeError}
+        <div class="rounded border px-3 py-2 text-sm" style="border-color: var(--ds-border-danger); color: var(--ds-text-danger); background-color: var(--ds-background-danger);">
+          {typeChangeError}
+        </div>
+      {/if}
+
+      <div class="rounded p-3" style="background-color: var(--ds-surface-raised);">
+        <div class="text-sm mb-2" style="color: var(--ds-text-subtle);">
+          Current status: <span class="font-medium" style="color: var(--ds-text);">{typeChangeAnalysis.current_status_name || 'None'}</span>
+        </div>
+        <label class="block text-sm font-medium mb-1" for="type-change-status">Target status</label>
+        <select
+          id="type-change-status"
+          bind:value={selectedTypeChangeStatusId}
+          class="w-full px-3 py-2 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
+        >
+          <option value={null}>Select target status…</option>
+          {#each typeChangeAnalysis.available_statuses || [] as status (status.id)}
+            <option value={status.id}>{status.name}</option>
+          {/each}
+        </select>
+        <p class="text-xs mt-2" style="color: var(--ds-text-subtle);">
+          The change is blocked if the selected status would bypass a condition-gated transition or an approval-bound status.
+        </p>
+      </div>
+
+      <div class="flex justify-end gap-2 pt-2">
+        <Button variant="secondary" onclick={closeTypeChangeModal} disabled={changingItemType}>Cancel</Button>
+        <Button
+          variant="primary"
+          onclick={() => executeItemTypeChange(typeChangeAnalysis.target_item_type_id, selectedTypeChangeStatusId ? Number(selectedTypeChangeStatusId) : null)}
+          disabled={!selectedTypeChangeStatusId || changingItemType}
+        >
+          {changingItemType ? 'Changing…' : 'Change item type'}
+        </Button>
+      </div>
+    </div>
+  </Modal>
+{/if}
+
 
 <!-- Delete Item Dialog -->
 <DeleteItemDialog

@@ -111,6 +111,7 @@
     onsetupRecurrence = null,
     oneditRecurrence = null,
     onapprovalsChanged = null,
+    onitemtypechange = null,
   } = $props();
 
   // Lazy-load DiagramModal with background preload (Excalidraw is ~1.2MB)
@@ -378,6 +379,8 @@
             onnavigate={handleNavigate}
             onparentChanged={handleParentChanged}
             oncopyKey={handleCopyKey}
+            {itemTypes}
+            onitemtypechange={(type) => onitemtypechange?.(type)}
           />
           
           <ItemDetailHeader

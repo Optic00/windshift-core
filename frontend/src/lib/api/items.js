@@ -76,6 +76,13 @@ export const items = {
   // Get available status transitions for a specific item based on workflow configuration
   getAvailableStatusTransitions: (itemId) =>
     fetchAPI(`/items/${itemId}/available-status-transitions`),
+  analyzeTypeChange: (itemId, targetItemTypeId) =>
+    fetchAPI(`/items/${itemId}/type-change-analysis?target_item_type_id=${targetItemTypeId}`),
+  changeType: (itemId, data) =>
+    fetchAPI(`/items/${itemId}/change-type`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
   // Get history of changes for an item
   getHistory: (itemId) => fetchAPI(`/items/${itemId}/history`),
 
