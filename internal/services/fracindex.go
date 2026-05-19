@@ -7,9 +7,6 @@ import (
 	"log/slog"
 	"math"
 	"strings"
-	"sync"
-	"sync/atomic"
-	"time"
 
 	"github.com/lib/pq"
 
@@ -17,10 +14,9 @@ import (
 )
 
 // fracIndexMaxRetries caps the number of unique-violation retries on the
-// item INSERT / reorder UPDATE paths. The retry path only fires when the
-// in-memory cache has drifted from the DB max (or, on Postgres, when the
-// column collation differs from the algorithm's byte ordering — see the
-// admin diagnostics frac-index panel for live detection).
+// item INSERT / reorder UPDATE paths. The retry path only fires when a
+// concurrent writer wins the race on idx_items_frac_index between two
+// transactions that read the same neighbor keys before either committed.
 const fracIndexMaxRetries = 5
 
 // IsFracIndexUniqueViolation reports whether err is specifically a
@@ -47,22 +43,6 @@ func IsFracIndexUniqueViolation(err error) bool {
 const base62Digits = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 const smallestInt = "A00000000000000000000000000"
 const zero = "a0"
-
-// fracIndexCache provides in-memory caching for the last frac_index to avoid
-// expensive global table scans on every item creation.
-var (
-	fracIndexCache      atomic.Value // stores *string (last known frac_index)
-	fracIndexCacheMutex sync.Mutex   // protects cache initialization
-	fracIndexCacheHits  int64        // counter for monitoring
-	fracIndexCacheMiss  int64        // counter for monitoring
-
-	// Reconciliation telemetry. A drift count that keeps climbing is the
-	// signal that some non-generator path is writing frac_index — the
-	// admin diagnostics panel surfaces the running total and last tick.
-	fracIndexReconcileDrift int64
-	fracIndexReconcileNoOp  int64
-	fracIndexLastReconcile  atomic.Value // stores time.Time; zero value = never reconciled
-)
 
 // KeyBetween returns a key that sorts lexicographically between a and b.
 // Either a or b can be empty strings. If a is empty it indicates smallest key,
@@ -338,222 +318,107 @@ func decrementInt(x string) (string, error) {
 
 // ===== Integration functions for the windshift application =====
 
-// GenerateFracIndexForNewItem generates a fractional index for a new item at the end of a list.
-// It uses an in-memory cache to avoid expensive global table scans on every insert.
-// The entire read-compute-store is serialized under a mutex so that two concurrent
-// creators cannot derive the same key from the same cached value.
-// Note: frac_index is globally unique across all workspaces to allow cross-instance ranking.
-func GenerateFracIndexForNewItem(db database.Database) (string, error) {
-	fracIndexCacheMutex.Lock()
-	defer fracIndexCacheMutex.Unlock()
-
-	// Try cached value first
-	if cached := fracIndexCache.Load(); cached != nil {
-		lastIndex, _ := cached.(*string)
-		if lastIndex != nil {
-			newIndex, err := KeyBetween(*lastIndex, "")
-			if err == nil {
-				fracIndexCache.Store(&newIndex)
-				atomic.AddInt64(&fracIndexCacheHits, 1)
-				return newIndex, nil
-			}
-			slog.Warn("KeyBetween failed for cached value, falling back to DB",
-				slog.String("component", "fracindex"),
-				slog.String("cached_value", *lastIndex),
-				slog.Any("error", err))
-		}
-	}
-
-	atomic.AddInt64(&fracIndexCacheMiss, 1)
-
-	// Query to get the last item's frac_index globally
-	var lastIndex *string
-	query := `
-		SELECT frac_index
+// GenerateFracIndexForNewItem returns the next frac_index for an append
+// (new item at the end of the global ordering). It reads MAX(frac_index)
+// inside the caller's transaction, optionally locking that row on Postgres
+// via FOR UPDATE so two concurrent appends serialize on the current max.
+// SQLite ignores the clause; its global writer lock already serializes
+// writing transactions.
+//
+// Callers must (a) be inside a transaction whose subsequent INSERT writes
+// the returned key, and (b) retry the whole transaction on
+// IsFracIndexUniqueViolation — the lock prevents most collisions but not
+// all (e.g. a non-generator writer running concurrently).
+func GenerateFracIndexForNewItem(tx database.Tx, driverName string) (string, error) {
+	q := `SELECT frac_index
 		FROM items
 		WHERE frac_index IS NOT NULL
 		ORDER BY frac_index DESC
-		LIMIT 1
-	`
-
-	err := db.QueryRow(query).Scan(&lastIndex)
+		LIMIT 1`
+	if driverName == "postgres" {
+		q += " FOR UPDATE"
+	}
+	var last sql.NullString
+	err := tx.QueryRow(q).Scan(&last)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return "", fmt.Errorf("failed to get last frac_index: %w", err)
+		return "", fmt.Errorf("read max frac_index: %w", err)
 	}
-
-	var newIndex string
-	if lastIndex == nil {
-		newIndex, err = KeyBetween("", "")
-	} else {
-		newIndex, err = KeyBetween(*lastIndex, "")
+	if !last.Valid {
+		return KeyBetween("", "")
 	}
-	if err != nil {
-		return "", fmt.Errorf("failed to generate frac_index: %w", err)
-	}
-
-	fracIndexCache.Store(&newIndex)
-	return newIndex, nil
+	return KeyBetween(last.String, "")
 }
 
-// MaybeAdvanceFracIndexCache updates the cache when newIndex is lexicographically
-// greater than the currently cached value. This must be called by any code path
-// that persists a frac_index outside of GenerateFracIndexForNewItem (notably the
-// reorder endpoint), otherwise the cache can lag behind the true maximum and
-// subsequent calls to GenerateFracIndexForNewItem would produce duplicate keys.
-func MaybeAdvanceFracIndexCache(newIndex string) {
-	if newIndex == "" {
-		return
-	}
-	fracIndexCacheMutex.Lock()
-	defer fracIndexCacheMutex.Unlock()
-	if cached := fracIndexCache.Load(); cached != nil {
-		lastIndex, _ := cached.(*string)
-		if lastIndex != nil && newIndex <= *lastIndex {
-			return
-		}
-	}
-	fracIndexCache.Store(&newIndex)
-}
-
-// InvalidateFracIndexCache clears the cache (useful for testing or after bulk deletes)
-// deadcode-keep: called by core-tests/internal/services/fracindex_test.go and tests/helpers.go
-func InvalidateFracIndexCache() {
-	fracIndexCache.Store((*string)(nil))
-}
-
-// UpdateItemFracIndex updates the frac_index of an item and advances the
-// generator cache so subsequent creates don't reuse the persisted key.
-// Callers must NOT skip this function and write frac_index by hand — the
-// cache coherence guarantee depends on every external persist going through
-// here.
-func UpdateItemFracIndex(db database.Database, itemID int, fracIndex string) error {
-	query := "UPDATE items SET frac_index = ? WHERE id = ?"
-	_, err := db.Exec(query, fracIndex, itemID)
-	if err != nil {
-		return fmt.Errorf("failed to update frac_index: %w", err)
-	}
-	MaybeAdvanceFracIndexCache(fracIndex)
-	return nil
-}
-
-// FracIndexCacheStats describes the in-process generator cache for the admin
-// diagnostics panel. It is a read-only snapshot.
-type FracIndexCacheStats struct {
-	Cached          *string    `json:"cached"`                  // current cached "last" key; nil if uninitialized
-	NextWouldBe     *string    `json:"next_would_be,omitempty"` // KeyBetween(cached, "") preview
-	NextError       string     `json:"next_error,omitempty"`
-	Hits            int64      `json:"hits"`
-	Misses          int64      `json:"misses"`
-	ReconcileDrift  int64      `json:"reconcile_drift"`             // times reconciliation found cache != DB max
-	ReconcileNoOp   int64      `json:"reconcile_no_op"`             // times reconciliation found everything aligned
-	LastReconcileAt *time.Time `json:"last_reconcile_at,omitempty"` // nil if reconciliation has never run
-}
-
-// GetFracIndexCacheStats returns a snapshot of the generator cache state.
-// It briefly takes the cache mutex; contention is negligible because
-// readers are diagnostic-only.
-func GetFracIndexCacheStats() FracIndexCacheStats {
-	fracIndexCacheMutex.Lock()
-	defer fracIndexCacheMutex.Unlock()
-
-	var cached *string
-	if v := fracIndexCache.Load(); v != nil {
-		if s, ok := v.(*string); ok && s != nil {
-			c := *s
-			cached = &c
-		}
-	}
-	out := FracIndexCacheStats{
-		Cached:         cached,
-		Hits:           atomic.LoadInt64(&fracIndexCacheHits),
-		Misses:         atomic.LoadInt64(&fracIndexCacheMiss),
-		ReconcileDrift: atomic.LoadInt64(&fracIndexReconcileDrift),
-		ReconcileNoOp:  atomic.LoadInt64(&fracIndexReconcileNoOp),
-	}
-	if v := fracIndexLastReconcile.Load(); v != nil {
-		if t, ok := v.(time.Time); ok && !t.IsZero() {
-			ts := t
-			out.LastReconcileAt = &ts
-		}
-	}
-	if cached != nil {
-		next, err := KeyBetween(*cached, "")
-		if err != nil {
-			out.NextError = err.Error()
-		} else {
-			out.NextWouldBe = &next
-		}
-	}
-	return out
-}
-
-// ReconcileFracIndexCache re-reads MAX(frac_index) from the DB and aligns
-// the in-memory cache. Drift in either direction (cache stale or cache
-// ahead) is treated the same: assign cache to db_max so subsequent
-// generates extend monotonically from reality.
+// MoveItemBetween updates an item's frac_index to a value between the
+// frac_index of its prev and next neighbors. It reads the neighbor
+// frac_indexes inside a transaction (with FOR UPDATE on Postgres so
+// concurrent moves involving the same neighbors block at the DB rather
+// than racing on idx_items_frac_index), computes KeyBetween in Go, and
+// writes the UPDATE — all atomically. The unique-violation retry is the
+// backstop for cases the locks don't cover (non-generator writers, brief
+// partitions). Each retry re-reads the neighbors so a concurrent reorder
+// that moved them is naturally accounted for.
 //
-// Designed to be called by a background goroutine at a coarse cadence
-// (the production deployment runs it every 60s). The success path of
-// item creation is unaffected; reconciliation only protects against
-// cache-DB drift introduced by non-generator writers or rolled-back
-// inserts that left cache "ahead" of reality.
-//
-// Returns (drifted, err) so callers/tests can branch on what happened.
-func ReconcileFracIndexCache(db database.Database) (bool, error) {
-	fracIndexCacheMutex.Lock()
-	defer fracIndexCacheMutex.Unlock()
-
-	var dbMax sql.NullString
-	err := db.QueryRow(`
-		SELECT frac_index FROM items
-		WHERE frac_index IS NOT NULL
-		ORDER BY frac_index DESC
-		LIMIT 1
-	`).Scan(&dbMax)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return false, fmt.Errorf("reconcile frac_index cache: %w", err)
-	}
-
-	// Mark "we ran" even if we don't find drift, so the diagnostic panel
-	// can show the loop is alive.
-	fracIndexLastReconcile.Store(time.Now())
-
-	var cachedStr *string
-	if v := fracIndexCache.Load(); v != nil {
-		if s, ok := v.(*string); ok && s != nil {
-			cachedStr = s
+// prevID / nextID may be nil to indicate "start of list" / "end of list".
+func MoveItemBetween(db database.Database, itemID int, prevID, nextID *int) (string, error) {
+	driver := db.GetDriverName()
+	var lastErr error
+	for attempt := 0; attempt < fracIndexMaxRetries; attempt++ {
+		key, err := database.WithTxResult(db, func(tx database.Tx) (string, error) {
+			prev, perr := readFracIndexForUpdate(tx, prevID, driver)
+			if perr != nil {
+				return "", perr
+			}
+			next, nerr := readFracIndexForUpdate(tx, nextID, driver)
+			if nerr != nil {
+				return "", nerr
+			}
+			newKey, kerr := KeyBetween(prev, next)
+			if kerr != nil {
+				return "", fmt.Errorf("compute key between %q and %q: %w", prev, next, kerr)
+			}
+			if _, eerr := tx.Exec("UPDATE items SET frac_index = ? WHERE id = ?", newKey, itemID); eerr != nil {
+				return "", eerr
+			}
+			return newKey, nil
+		})
+		if err == nil {
+			return key, nil
 		}
+		if !IsFracIndexUniqueViolation(err) {
+			return "", err
+		}
+		lastErr = err
+		slog.Warn("frac_index unique violation on move, retrying",
+			slog.Int("attempt", attempt+1),
+			slog.Int("item_id", itemID),
+			slog.String("component", "fracindex"))
 	}
+	return "", fmt.Errorf("move item %d failed after %d frac_index retries: %w", itemID, fracIndexMaxRetries, lastErr)
+}
 
-	// Compare cache (may be nil) against db_max (may be NULL).
-	switch {
-	case cachedStr == nil && !dbMax.Valid:
-		// Both empty — no drift possible.
-		atomic.AddInt64(&fracIndexReconcileNoOp, 1)
-		return false, nil
-	case cachedStr != nil && dbMax.Valid && *cachedStr == dbMax.String:
-		// Aligned.
-		atomic.AddInt64(&fracIndexReconcileNoOp, 1)
-		return false, nil
+// readFracIndexForUpdate reads the frac_index of a neighbor row. On Postgres
+// it appends FOR UPDATE so the row is locked for the duration of the tx;
+// on SQLite the global writer lock already serializes the read-compute-write
+// cycle, so the clause is omitted (SQLite's parser would reject it).
+// A nil id returns "" — the caller's signal for "no neighbor on this side".
+func readFracIndexForUpdate(tx database.Tx, id *int, driver string) (string, error) {
+	if id == nil {
+		return "", nil
 	}
-
-	// Drift detected — reset the cache to match DB reality.
-	oldVal := "<nil>"
-	if cachedStr != nil {
-		oldVal = *cachedStr
+	q := "SELECT frac_index FROM items WHERE id = ?"
+	if driver == "postgres" {
+		q += " FOR UPDATE"
 	}
-	newVal := "<nil>"
-	if dbMax.Valid {
-		v := dbMax.String
-		fracIndexCache.Store(&v)
-		newVal = v
-	} else {
-		fracIndexCache.Store((*string)(nil))
+	var k sql.NullString
+	if err := tx.QueryRow(q, *id).Scan(&k); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", fmt.Errorf("neighbor %d not found", *id)
+		}
+		return "", fmt.Errorf("read neighbor %d: %w", *id, err)
 	}
-	atomic.AddInt64(&fracIndexReconcileDrift, 1)
-	slog.Info("frac_index cache reconciled",
-		slog.String("component", "fracindex"),
-		slog.String("old", oldVal),
-		slog.String("new", newVal))
-	return true, nil
+	if !k.Valid {
+		return "", fmt.Errorf("neighbor %d has null frac_index", *id)
+	}
+	return k.String, nil
 }

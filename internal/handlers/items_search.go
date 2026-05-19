@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -212,87 +211,65 @@ func (h *ItemHandler) UpdateFracIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Compute and persist with catch-only retry on idx_items_frac_index
-	// unique violations. On conflict the cache is invalidated and prev/next
-	// are re-fetched (they may have shifted under us), then KeyBetween +
-	// UPDATE are reissued. The success path takes one iteration.
+	// Pre-flight: resolve neighbor frac_indexes for the 409-on-missing
+	// behavior (the frontend relies on this to distinguish "neighbor
+	// deleted" from a generic failure) and short-circuit when the
+	// current position is already strictly between prev and next.
+	// The real atomic move is delegated to services.MoveItemBetween,
+	// which re-reads the neighbors inside its own tx with FOR UPDATE
+	// (Postgres) and retries on idx_items_frac_index violations.
 	itemRepo := repository.NewItemRepository(h.db)
 
-	const reorderMaxAttempts = 5
-	var lastErr error
-	for attempt := 0; attempt < reorderMaxAttempts; attempt++ {
-		var prevFracIndex, nextFracIndex string
-
-		// Look up frac_index values from item IDs directly (trust the caller's prev/next selection).
-		// If a neighbor ID is provided but cannot be resolved (deleted, or frac_index is NULL),
-		// fail with 409 so the frontend reloads — silently falling back to "" would place the
-		// item at the global start, contradicting the user's intent.
-		if fracIndexRequest.PrevItemID != nil {
-			frac, ferr := itemRepo.GetFracIndex(*fracIndexRequest.PrevItemID)
-			if ferr != nil || frac == nil {
-				respondConflict(w, r, "previous neighbor is no longer available; please refresh")
-				return
-			}
-			prevFracIndex = *frac
-		}
-		if fracIndexRequest.NextItemID != nil {
-			frac, ferr := itemRepo.GetFracIndex(*fracIndexRequest.NextItemID)
-			if ferr != nil || frac == nil {
-				respondConflict(w, r, "next neighbor is no longer available; please refresh")
-				return
-			}
-			nextFracIndex = *frac
-		}
-
-		// Defensive check: if prev and next have the same frac_index, skip update
-		if prevFracIndex != "" && nextFracIndex != "" && prevFracIndex == nextFracIndex {
-			h.Get(w, r)
+	var prevFracIndex, nextFracIndex string
+	if fracIndexRequest.PrevItemID != nil {
+		frac, ferr := itemRepo.GetFracIndex(*fracIndexRequest.PrevItemID)
+		if ferr != nil || frac == nil {
+			respondConflict(w, r, "previous neighbor is no longer available; please refresh")
 			return
 		}
-
-		// Get the current item's frac_index to check if update is needed
-		currentFrac, ferr := itemRepo.GetFracIndex(id)
-		if ferr != nil {
-			respondInternalError(w, r, ferr)
+		prevFracIndex = *frac
+	}
+	if fracIndexRequest.NextItemID != nil {
+		frac, ferr := itemRepo.GetFracIndex(*fracIndexRequest.NextItemID)
+		if ferr != nil || frac == nil {
+			respondConflict(w, r, "next neighbor is no longer available; please refresh")
 			return
 		}
-		if currentFrac != nil {
-			current := *currentFrac
-			isAfterPrev := prevFracIndex == "" || current > prevFracIndex
-			isBeforeNext := nextFracIndex == "" || current < nextFracIndex
-			if isAfterPrev && isBeforeNext {
-				h.Get(w, r)
-				return
-			}
-		}
+		nextFracIndex = *frac
+	}
 
-		newFracIndex, kerr := services.KeyBetween(prevFracIndex, nextFracIndex)
-		if kerr != nil {
-			respondInternalError(w, r, kerr)
-			return
-		}
-
-		// UpdateItemFracIndex also advances the generator cache on success.
-		if uerr := services.UpdateItemFracIndex(h.db, id, newFracIndex); uerr != nil {
-			if services.IsFracIndexUniqueViolation(uerr) {
-				slog.Warn("frac_index unique violation on reorder, retrying",
-					slog.Int("attempt", attempt+1),
-					slog.String("frac_index", newFracIndex),
-					slog.String("component", "fracindex"))
-				services.InvalidateFracIndexCache()
-				lastErr = uerr
-				continue
-			}
-			respondInternalError(w, r, uerr)
-			return
-		}
-
-		// Return the updated item
+	// Defensive check: if prev and next have the same frac_index there's no room between.
+	if prevFracIndex != "" && nextFracIndex != "" && prevFracIndex == nextFracIndex {
 		h.Get(w, r)
 		return
 	}
 
-	respondInternalError(w, r, fmt.Errorf("failed to reorder after %d frac_index retries: %w", reorderMaxAttempts, lastErr))
+	// Short-circuit: if the item is already strictly between prev and next, no write needed.
+	currentFrac, ferr := itemRepo.GetFracIndex(id)
+	if ferr != nil {
+		respondInternalError(w, r, ferr)
+		return
+	}
+	if currentFrac != nil {
+		current := *currentFrac
+		isAfterPrev := prevFracIndex == "" || current > prevFracIndex
+		isBeforeNext := nextFracIndex == "" || current < nextFracIndex
+		if isAfterPrev && isBeforeNext {
+			h.Get(w, r)
+			return
+		}
+	}
+
+	if _, err := services.MoveItemBetween(h.db, id, fracIndexRequest.PrevItemID, fracIndexRequest.NextItemID); err != nil {
+		if services.IsFracIndexUniqueViolation(err) {
+			respondConflict(w, r, "could not reorder; please refresh and try again")
+			return
+		}
+		respondInternalError(w, r, err)
+		return
+	}
+
+	h.Get(w, r)
 }
 
 // GetBacklogItems returns items whose statuses are not marked as completed for a workspace

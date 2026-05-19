@@ -1339,65 +1339,88 @@ func (h *ItemHandler) Copy(w http.ResponseWriter, r *http.Request) {
 	// Create copy title
 	copyTitle := utils.SanitizeTitle(fmt.Sprintf("COPY - %s", originalItem.Title))
 
-	// Generate frac_index for the copy
-	newFracIndex, err := services.GenerateFracIndexForNewItem(h.db)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
+	// Run the copy as one atomic transaction: read MAX(frac_index)
+	// (locked on Postgres), compute the next key, INSERT the copy,
+	// carry milestones over, commit. Retry the whole tx on a
+	// frac_index unique-violation (concurrent writer beat us to the
+	// generated key); each retry re-reads MAX inside the new tx, so
+	// no cache is needed.
+	driverName := h.db.GetDriverName()
+	const maxRetries = 5
+	var copiedItemID int
+	var newItem *models.Item
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		copiedItemID, newItem, lastErr = func() (int, *models.Item, error) {
+			tx, err := h.db.Begin()
+			if err != nil {
+				return 0, nil, err
+			}
+			defer func() { _ = tx.Rollback() }()
 
-	// Create the copy in a transaction
-	tx, err := h.db.Begin()
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	defer func() { _ = tx.Rollback() }()
+			newFracIndex, err := services.GenerateFracIndexForNewItem(tx, driverName)
+			if err != nil {
+				return 0, nil, err
+			}
 
-	nextNum, err := repo.GetNextWorkspaceItemNumber(tx, originalItem.WorkspaceID)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
+			nextNum, err := repo.GetNextWorkspaceItemNumber(tx, originalItem.WorkspaceID)
+			if err != nil {
+				return 0, nil, err
+			}
 
-	newItem := &models.Item{
-		WorkspaceID:         originalItem.WorkspaceID,
-		WorkspaceItemNumber: nextNum,
-		ItemTypeID:          originalItem.ItemTypeID,
-		Title:               copyTitle,
-		Description:         originalItem.Description,
-		StatusID:            originalItem.StatusID,
-		PriorityID:          originalItem.PriorityID,
-		DueDate:             originalItem.DueDate,
-		StartDate:           originalItem.StartDate,
-		EndDate:             originalItem.EndDate,
-		AssigneeID:          originalItem.AssigneeID,
-		CreatorID:           &user.ID,
-		ParentID:            originalItem.ParentID,
-		TimeProjectID:       originalItem.TimeProjectID,
-		CustomFieldValues:   originalItem.CustomFieldValues,
-		FracIndex:           &newFracIndex,
-	}
+			item := &models.Item{
+				WorkspaceID:         originalItem.WorkspaceID,
+				WorkspaceItemNumber: nextNum,
+				ItemTypeID:          originalItem.ItemTypeID,
+				Title:               copyTitle,
+				Description:         originalItem.Description,
+				StatusID:            originalItem.StatusID,
+				PriorityID:          originalItem.PriorityID,
+				DueDate:             originalItem.DueDate,
+				StartDate:           originalItem.StartDate,
+				EndDate:             originalItem.EndDate,
+				AssigneeID:          originalItem.AssigneeID,
+				CreatorID:           &user.ID,
+				ParentID:            originalItem.ParentID,
+				TimeProjectID:       originalItem.TimeProjectID,
+				CustomFieldValues:   originalItem.CustomFieldValues,
+				FracIndex:           &newFracIndex,
+			}
 
-	copiedItemID, err := repo.Create(tx, newItem)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
+			id, err := repo.Create(tx, item)
+			if err != nil {
+				return 0, nil, err
+			}
 
-	// Carry the source item's milestones over to the copy.
-	now := time.Now()
-	if _, err := tx.Exec(`
-		INSERT INTO item_milestones (item_id, milestone_id, created_at)
-		SELECT ?, milestone_id, ? FROM item_milestones WHERE item_id = ?
-	`, copiedItemID, now, originalItem.ID); err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
+			now := time.Now()
+			if _, err := tx.Exec(`
+				INSERT INTO item_milestones (item_id, milestone_id, created_at)
+				SELECT ?, milestone_id, ? FROM item_milestones WHERE item_id = ?
+			`, id, now, originalItem.ID); err != nil {
+				return 0, nil, err
+			}
 
-	if err := tx.Commit(); err != nil {
-		respondInternalError(w, r, err)
-		return
+			if err := tx.Commit(); err != nil {
+				return 0, nil, err
+			}
+			return id, item, nil
+		}()
+
+		if lastErr == nil {
+			break
+		}
+		if !services.IsFracIndexUniqueViolation(lastErr) {
+			respondInternalError(w, r, lastErr)
+			return
+		}
+		slog.Warn("frac_index unique violation on copy, retrying",
+			slog.Int("attempt", attempt+1),
+			slog.Int("source_item_id", originalItem.ID),
+			slog.String("component", "fracindex"))
+		if attempt == maxRetries-1 {
+			respondInternalError(w, r, fmt.Errorf("copy item %d failed after %d frac_index retries: %w", originalItem.ID, maxRetries, lastErr))
+			return
+		}
 	}
 
 	// Record item creation history for the copied item

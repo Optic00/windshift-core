@@ -202,16 +202,25 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 		}
 	}
 
-	// runInsertTx executes the per-attempt portion of CreateItem with a fresh
-	// frac_index. Hoisted into a closure so the retry loop can re-issue the
-	// whole transaction (number-gen + INSERT + milestone attach) without
-	// re-running the upstream item-type / status / priority resolution.
-	runInsertTx := func(fracIndex string) (int64, error) {
+	// runInsertTx executes the per-attempt portion of CreateItem inside a
+	// single transaction: read MAX(frac_index) (locked on Postgres),
+	// compute the next key, INSERT the item, attach milestones. Hoisted
+	// into a closure so the retry loop can re-issue the whole transaction
+	// without re-running the upstream item-type / status / priority
+	// resolution. Both the MAX read and the INSERT share the same tx
+	// snapshot, so no cache is needed.
+	driverName := db.GetDriverName()
+	runInsertTx := func() (int64, string, error) {
 		tx, err := db.Begin()
 		if err != nil {
-			return 0, fmt.Errorf("failed to start transaction: %w", err)
+			return 0, "", fmt.Errorf("failed to start transaction: %w", err)
 		}
 		defer func() { _ = tx.Rollback() }()
+
+		fracIndex, err := GenerateFracIndexForNewItem(tx, driverName)
+		if err != nil {
+			return 0, "", fmt.Errorf("failed to generate frac_index: %w", err)
+		}
 
 		// Get next workspace-specific item number (within transaction to prevent race conditions)
 		var nextWorkspaceItemNumber int
@@ -220,7 +229,7 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 			FROM items
 			WHERE workspace_id = ?
 		`, params.WorkspaceID).Scan(&nextWorkspaceItemNumber); err != nil {
-			return 0, fmt.Errorf("failed to generate workspace item number: %w", err)
+			return 0, "", fmt.Errorf("failed to generate workspace item number: %w", err)
 		}
 
 		// Insert item with all fields
@@ -267,7 +276,7 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 			createdAt,
 			updatedAt,
 		).Scan(&itemID); err != nil {
-			return 0, fmt.Errorf("failed to insert item: %w", err)
+			return 0, "", fmt.Errorf("failed to insert item: %w", err)
 		}
 
 		// Attach milestones inside the same transaction so a milestone-validation
@@ -277,28 +286,23 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 				"INSERT INTO item_milestones (item_id, milestone_id, created_at) VALUES (?, ?, ?)",
 				itemID, mID, now,
 			); err != nil {
-				return 0, fmt.Errorf("failed to attach milestone %d to new item: %w", mID, err)
+				return 0, "", fmt.Errorf("failed to attach milestone %d to new item: %w", mID, err)
 			}
 		}
 
 		if err := tx.Commit(); err != nil {
-			return 0, fmt.Errorf("failed to commit transaction: %w", err)
+			return 0, "", fmt.Errorf("failed to commit transaction: %w", err)
 		}
-		return itemID, nil
+		return itemID, fracIndex, nil
 	}
 
 	// Catch-only retry on idx_items_frac_index unique violation. The success
-	// path takes one iteration; the loop body only spins when the cache has
-	// drifted from the DB max (poisoning, or column-collation mismatch). On
-	// each conflict the cache is invalidated so the next Generate call
-	// re-reads MAX(frac_index) from the DB.
+	// path takes one iteration. Each iteration runs a fresh transaction;
+	// MAX(frac_index) is re-read inside that tx, so concurrent writers'
+	// commits are picked up automatically — no cache to invalidate.
 	var itemID int64
 	for attempt := 0; attempt < fracIndexMaxRetries; attempt++ {
-		fracIndex, gerr := GenerateFracIndexForNewItem(db)
-		if gerr != nil {
-			return 0, fmt.Errorf("failed to generate frac_index: %w", gerr)
-		}
-		id, ierr := runInsertTx(fracIndex)
+		id, fracIndex, ierr := runInsertTx()
 		if ierr == nil {
 			itemID = id
 			break
@@ -310,7 +314,6 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 			slog.Int("attempt", attempt+1),
 			slog.String("frac_index", fracIndex),
 			slog.String("component", "fracindex"))
-		InvalidateFracIndexCache()
 		if attempt == fracIndexMaxRetries-1 {
 			return 0, fmt.Errorf("failed to insert item after %d frac_index retries: %w", fracIndexMaxRetries, ierr)
 		}

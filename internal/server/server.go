@@ -79,10 +79,9 @@ type Server struct {
 	issueSyncStopChan          chan struct{}
 	magicLinkStopChan          chan struct{}
 	cleanupStopChan            chan struct{}
-	jiraHostStopChan           chan struct{}
-	fracIndexReconcileStopChan chan struct{}
-	cleanupTicker              *time.Ticker
-	pluginManager              *plugins.Manager
+	jiraHostStopChan chan struct{}
+	cleanupTicker    *time.Ticker
+	pluginManager    *plugins.Manager
 
 	// Rate limiters that need cleanup
 	loginRateLimiter    *middleware.RateLimiter
@@ -112,12 +111,11 @@ type Server struct {
 func New(cfg Config) (*Server, error) {
 	s := &Server{
 		config:                     cfg,
-		scmSyncStopChan:            make(chan struct{}),
-		issueSyncStopChan:          make(chan struct{}),
-		magicLinkStopChan:          make(chan struct{}),
-		cleanupStopChan:            make(chan struct{}),
-		jiraHostStopChan:           make(chan struct{}),
-		fracIndexReconcileStopChan: make(chan struct{}),
+		scmSyncStopChan:   make(chan struct{}),
+		issueSyncStopChan: make(chan struct{}),
+		magicLinkStopChan: make(chan struct{}),
+		cleanupStopChan:   make(chan struct{}),
+		jiraHostStopChan:  make(chan struct{}),
 	}
 
 	if err := s.initialize(); err != nil {
@@ -660,12 +658,6 @@ func (s *Server) initialize() error {
 	// Start magic link cleanup scheduler
 	go s.runMagicLinkCleanup(magicLinkService)
 
-	// Start frac_index cache reconciliation scheduler. Keeps the
-	// in-memory generator cache aligned with the DB max so drift from
-	// non-generator writers (or rolled-back inserts that left the cache
-	// "ahead") self-heals within one tick.
-	go s.runFracIndexReconcile()
-
 	// Webhook sender
 	webhookSender := webhook.NewWebhookSender(s.db)
 
@@ -1095,7 +1087,6 @@ func (s *Server) initialize() error {
 				repository.NewActionRepository(s.db),
 				repository.NewWebhookDeliveryRepository(s.db),
 				repository.NewSchedulerRunRepository(s.db),
-				repository.NewFracIndexRepository(s.db),
 				logger.NewAuditor(s.db),
 			),
 		},
@@ -1398,9 +1389,6 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	safeClose(s.jiraHostStopChan)
 	s.jiraHostStopChan = nil
 
-	safeClose(s.fracIndexReconcileStopChan)
-	s.fracIndexReconcileStopChan = nil
-
 	if s.notificationScheduler != nil {
 		slog.Info("stopping notification scheduler")
 		s.notificationScheduler.Stop()
@@ -1609,28 +1597,6 @@ func (s *Server) runMagicLinkCleanup(magicLinkService *services.MagicLinkService
 			}
 		case <-s.magicLinkStopChan:
 			slog.Info("magic link cleanup scheduler stopped")
-			return
-		}
-	}
-}
-
-// runFracIndexReconcile re-reads MAX(frac_index) from the DB every minute
-// and aligns the generator's in-memory cache. The retry-on-conflict path
-// in CreateItem / UpdateFracIndex is the safety net; this loop is the
-// proactive prevention — drift from non-generator writers self-heals
-// within one tick instead of waiting for a collision.
-func (s *Server) runFracIndexReconcile() {
-	ticker := time.NewTicker(1 * time.Minute)
-	defer ticker.Stop()
-	slog.Info("frac_index reconciliation scheduler started (1-minute interval)")
-	for {
-		select {
-		case <-ticker.C:
-			if _, err := services.ReconcileFracIndexCache(s.db); err != nil {
-				slog.Error("frac_index reconciliation error", "error", err)
-			}
-		case <-s.fracIndexReconcileStopChan:
-			slog.Info("frac_index reconciliation scheduler stopped")
 			return
 		}
 	}
