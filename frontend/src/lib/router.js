@@ -81,7 +81,6 @@ const routes = {
   '/admin/channels/:id/portal': 'admin',
   '/customers': 'customers',
   '/customers/contacts/:contactId': 'customer-contact-detail',
-  '/dashboard': 'dashboard',
   '/time': 'time',
   '/time/customers': 'time',
   '/time/projects': 'time',
