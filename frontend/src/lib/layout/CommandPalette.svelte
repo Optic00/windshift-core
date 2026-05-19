@@ -11,6 +11,9 @@
   import { errorToast, warningToast, infoToast } from '../stores/toasts.svelte.js';
   import { confirm } from '../composables/useConfirm.js';
   import ModalBackdrop from '../components/ModalBackdrop.svelte';
+  import { scoreCommand, compareCommands } from '../commands/score.js';
+  import { BUCKET_LABELS, PER_BUCKET_CAP, TOTAL_CAP } from '../commands/buckets.js';
+  import { deriveLegacyBucket } from '../commands/types.js';
 
   let {
     isOpen = $bindable(false),
@@ -376,50 +379,31 @@
 
 
 
-  // Fuzzy search function
-  function fuzzyMatch(text, search) {
-    const searchLower = search.toLowerCase();
-    const textLower = text.toLowerCase();
+  // Score, sort by (bucket, score, insertion), then cap per-bucket and overall.
+  // Each command gets a `bucket` derived from its legacy `type` until providers
+  // land in Phase 3 and assign buckets explicitly.
+  function rankCommands(query, commandsList) {
+    const annotated = commandsList.map((cmd, i) => {
+      const label = cmd.label ?? '';
+      const description = cmd.description ?? '';
+      const keywords = cmd.keywords ?? [];
+      const score = query.trim() ? scoreCommand(query, { label, description, keywords }) : 1;
+      return { ...cmd, bucket: deriveLegacyBucket(cmd), _score: score, _seq: i };
+    });
 
-    // Exact match gets highest score
-    if (textLower.includes(searchLower)) {
-      return 100;
+    const filtered = query.trim() ? annotated.filter((c) => c._score > 0) : annotated;
+    filtered.sort(compareCommands(query));
+
+    const counts = new Map();
+    const out = [];
+    for (const c of filtered) {
+      if (out.length >= TOTAL_CAP) break;
+      const n = counts.get(c.bucket) || 0;
+      if (n >= PER_BUCKET_CAP) continue;
+      counts.set(c.bucket, n + 1);
+      out.push(c);
     }
-
-    // Fuzzy match - check if all search characters appear in order
-    let searchIndex = 0;
-    let score = 0;
-
-    for (let i = 0; i < textLower.length && searchIndex < searchLower.length; i++) {
-      if (textLower[i] === searchLower[searchIndex]) {
-        score += 10;
-        searchIndex++;
-      }
-    }
-
-    // Return score if all characters were found
-    return searchIndex === searchLower.length ? score : 0;
-  }
-
-  function searchCommands(query, commandsList = commands) {
-    if (!query.trim()) return commandsList;
-
-    const results = commandsList.map(cmd => {
-      // Search in label, keywords, and description
-      const labelScore = fuzzyMatch(cmd.label, query);
-      const keywordScore = cmd.keywords.length > 0 ? Math.max(...cmd.keywords.map(k => fuzzyMatch(k, query))) : 0;
-      const descScore = fuzzyMatch(cmd.description, query);
-
-      const maxScore = Math.max(labelScore, keywordScore, descScore);
-
-      return {
-        ...cmd,
-        score: maxScore
-      };
-    }).filter(cmd => cmd.score > 0)
-      .sort((a, b) => b.score - a.score);
-
-    return results;
+    return out;
   }
 
   // Create combobox without portal
@@ -448,9 +432,9 @@
     }
   });
 
-  // Update filtered commands based on input and commands array, limit to 4 items
-  // Make explicit dependency on commands to ensure reactivity when workItems change
-  let filteredCommands = $derived(searchCommands($inputValue, commands).slice(0, 4));
+  // Filtered + bucket-grouped + capped. Caps live in commands/buckets.js
+  // (PER_BUCKET_CAP=5, TOTAL_CAP=15).
+  let filteredCommands = $derived(rankCommands($inputValue, commands));
 
   let userInteracted = $state(false);
 
@@ -666,6 +650,19 @@
     background-color: var(--ds-background-neutral-hovered);
   }
 
+  /* Bucket section header — small caps, sticky-ish, separates groups */
+  .bucket-header {
+    padding: 0.5rem 1rem 0.25rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-top: 1px solid;
+  }
+  .bucket-header:first-child {
+    border-top: none;
+  }
+
 
   .kbd {
     background-color: var(--ds-surface);
@@ -719,31 +716,29 @@
                 {t('commandPalette.noCommandsFound')}
               </div>
             {:else}
-              <div class="max-h-80 overflow-y-auto">
-                {#each filteredCommands as command}
+              <div class="max-h-96 overflow-y-auto">
+                {#each filteredCommands as command, i}
+                  {#if i === 0 || filteredCommands[i - 1].bucket !== command.bucket}
+                    <div class="bucket-header" style="color: var(--ds-text-subtle); background-color: var(--ds-surface); border-color: var(--ds-border);">
+                      {BUCKET_LABELS[command.bucket] || ''}
+                    </div>
+                  {/if}
                   <div
                     use:melt={$option({ value: command.id, label: command.label })}
                     onclick={() => executeCommand(command)}
-                    class="w-full text-left p-4 transition-colors cursor-pointer command-option"
+                    class="w-full text-left px-4 py-2.5 transition-colors cursor-pointer command-option"
                   >
-                    <div class="flex items-center justify-between">
-                      <div class="flex-1">
-                        <div class="flex items-center gap-2">
-                          <div class="font-medium" style="color: var(--ds-text);">{command.label}</div>
-                          {#if command._isContextCommand}
-                            <span class="px-1.5 py-0.5 text-xs rounded font-medium" style="background-color: var(--ds-accent-blue-subtler); color: var(--ds-accent-blue);">
-                              {t('commandPalette.context')}
-                            </span>
-                          {/if}
-                        </div>
-                        <div class="text-sm mt-1" style="color: var(--ds-text-subtle);">{command.description}</div>
-                      </div>
-                      <div class="text-xs ml-4 flex-shrink-0" style="color: var(--ds-text-subtlest);">
-                        {#if command.keywords && command.keywords.length > 0}
-                          {command.keywords.slice(0, 3).join(', ')}{#if command.keywords.length > 3}...{/if}
-                        {/if}
-                      </div>
+                    <div class="flex items-center gap-2">
+                      <div class="font-medium" style="color: var(--ds-text);">{command.label}</div>
+                      {#if command._isContextCommand}
+                        <span class="px-1.5 py-0.5 text-xs rounded font-medium" style="background-color: var(--ds-accent-blue-subtler); color: var(--ds-accent-blue);">
+                          {t('commandPalette.context')}
+                        </span>
+                      {/if}
                     </div>
+                    {#if command.description}
+                      <div class="text-sm mt-0.5" style="color: var(--ds-text-subtle);">{command.description}</div>
+                    {/if}
                   </div>
                 {/each}
               </div>
