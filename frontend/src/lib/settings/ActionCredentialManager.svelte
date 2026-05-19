@@ -25,6 +25,7 @@
   import DataTable from '../components/DataTable.svelte';
   import { successToast, errorToast } from '../stores/toasts.svelte.js';
   import { confirm } from '../composables/useConfirm.js';
+  import { toHotkeyString } from '../utils/keyboardShortcuts.js';
 
   const CREDENTIAL_TYPES = [
     { value: 'bearer_token', label: 'Bearer token' },
@@ -201,7 +202,15 @@
     subtitle="Encrypted API tokens that HTTP capabilities reference instead of storing tokens inline. Secret values are write-only — once entered, they cannot be read back."
   >
     {#snippet actions()}
-      <Button variant="primary" onclick={openCreate} icon={Plus}>Add credential</Button>
+      <Button
+        variant="primary"
+        onclick={openCreate}
+        icon={Plus}
+        keyboardHint="A"
+        hotkeyConfig={{ key: toHotkeyString('actionCredentials', 'add') }}
+      >
+        Add credential
+      </Button>
     {/snippet}
   </PageHeader>
 
@@ -213,7 +222,15 @@
       style="border-color: var(--ds-border); background: var(--ds-surface-raised);"
     >
       <p class="text-sm" style="color: var(--ds-text-subtle);">No credentials yet.</p>
-      <Button variant="secondary" onclick={openCreate} icon={Plus}>Add the first credential</Button>
+      <Button
+        variant="secondary"
+        onclick={openCreate}
+        icon={Plus}
+        keyboardHint="A"
+        hotkeyConfig={{ key: toHotkeyString('actionCredentials', 'add') }}
+      >
+        Add the first credential
+      </Button>
     </div>
   {:else}
     <DataTable {columns} data={credentials} keyField="id">

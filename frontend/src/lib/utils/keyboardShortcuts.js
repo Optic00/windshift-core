@@ -206,6 +206,9 @@ const shortcuts = {
     save: { key: 'Enter', modifierKey: true },
     cancel: { key: 'Escape' },
   },
+  actionCredentials: {
+    add: { key: 'a' },
+  },
   // Item detail
   itemDetail: {
     startTimer: { key: 'a', modifierKey: true },
