@@ -341,7 +341,7 @@ func loadItemAttachments(db database.Database, jobID, jiraKey string, itemID int
 		       COALESCE(a.file_size, 0),
 		       COALESCE(u.username, '')
 		FROM jira_import_id_mappings m
-		JOIN attachments a ON a.id = m.windshift_id AND a.item_id = ?
+		JOIN attachments a ON a.id = m.windshift_id AND a.item_id = ? AND a.entity_type = 'item'
 		LEFT JOIN users u ON u.id = a.uploaded_by
 		WHERE m.job_id = ? AND m.entity_type = 'attachment' AND m.jira_key = ?
 	`, itemID, jobID, jiraKey)

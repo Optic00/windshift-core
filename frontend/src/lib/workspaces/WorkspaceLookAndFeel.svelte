@@ -158,7 +158,8 @@
     try {
       const uploadFormData = new FormData();
       uploadFormData.append('file', file);
-      uploadFormData.append('item_id', workspaceId.toString());
+      uploadFormData.append('entity_id', workspaceId.toString());
+      uploadFormData.append('entity_type', 'workspace_avatar');
       uploadFormData.append('category', 'workspace_avatar');
 
       const uploadResult = await api.attachments.upload(uploadFormData);
@@ -242,7 +243,8 @@
     try {
       const uploadFormData = new FormData();
       uploadFormData.append('file', file);
-      uploadFormData.append('item_id', workspaceId.toString());
+      uploadFormData.append('entity_id', workspaceId.toString());
+      uploadFormData.append('entity_type', 'workspace_background');
       uploadFormData.append('category', 'workspace_background');
 
       const uploadResult = await api.attachments.upload(uploadFormData);

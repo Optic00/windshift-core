@@ -1617,6 +1617,20 @@ func miscMigrations() []Migration {
 			SQLite:        "ALTER TABLE notifications ADD COLUMN seen_at DATETIME",
 			Postgres:      "ALTER TABLE notifications ADD COLUMN seen_at TIMESTAMPTZ",
 		},
+		{
+			// WI-46: branding attachments (workspace/portal/hub backgrounds
+			// and logos) historically stored the *owner* id (workspace_id,
+			// portal_id, hub_id) in attachments.item_id. The items-scoped
+			// list query filters by item_id only and so leaked those rows
+			// onto unrelated work items whose numeric id collided with the
+			// owner id. CreateRecord now writes NULL for these entity_types;
+			// this migration nulls the existing rows so the symptom clears
+			// without a manual SQL fix-up.
+			Version:  "wi46_null_branding_attachment_item_id",
+			Name:     "WI-46 null item_id for workspace/portal/hub branding attachments",
+			SQLite:   "UPDATE attachments SET item_id = NULL WHERE entity_type IN ('workspace_background','portal_background','portal_logo','hub_logo') AND item_id IS NOT NULL",
+			Postgres: "UPDATE attachments SET item_id = NULL WHERE entity_type IN ('workspace_background','portal_background','portal_logo','hub_logo') AND item_id IS NOT NULL",
+		},
 	}
 }
 

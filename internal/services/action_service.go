@@ -924,12 +924,12 @@ func (as *ActionService) executeSetField(node *models.ActionNode, ctx *models.Ex
 		return as.executeSetFieldCustom(ctx, stepResult, config, value)
 	}
 	if config.FieldName == "milestone_ids" || config.FieldName == "milestone_id" {
-		return as.executeSetFieldMilestones(ctx, stepResult, config, value)
+		return as.executeSetFieldMilestones(ctx, stepResult, value)
 	}
 	return as.executeSetFieldColumn(ctx, stepResult, config, value)
 }
 
-func (as *ActionService) executeSetFieldMilestones(ctx *models.ExecutionContext, stepResult *models.StepResult, config models.SetFieldNodeConfig, value string) error {
+func (as *ActionService) executeSetFieldMilestones(ctx *models.ExecutionContext, stepResult *models.StepResult, value string) error {
 	if err := as.authorizeWorkspaceMutation(ctx.EffectiveActorID, ctx.Event.WorkspaceID, models.PermissionItemEdit); err != nil {
 		return err
 	}

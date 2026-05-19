@@ -116,6 +116,195 @@ func (h *AttachmentHandler) IsEnabled() bool {
 	return h.attachmentPath != ""
 }
 
+// authorizeUploadEntity verifies the upload target exists and the caller
+// can modify it. Returns true if the upload may proceed; otherwise it has
+// already written the response and the caller must return immediately.
+//
+// All failures respond with 404 (no existence disclosure) per the repo's
+// item-permission invariant. The route itself is already auth-gated, so
+// every branch can assume an authenticated session.
+func (h *AttachmentHandler) authorizeUploadEntity(w http.ResponseWriter, r *http.Request, entityType string, entityID int) bool {
+	switch entityType {
+	case "item":
+		exists, err := repository.NewItemRepository(h.db).Exists(entityID)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return false
+		}
+		if !exists {
+			respondNotFound(w, r, "item")
+			return false
+		}
+		canModify, err := h.checkItemAttachmentPermission(r, entityID)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return false
+		}
+		if !canModify {
+			respondNotFound(w, r, "item")
+			return false
+		}
+		return true
+
+	case "test_case":
+		var exists bool
+		if err := h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM test_cases WHERE id = ?)", entityID).Scan(&exists); err != nil {
+			respondInternalError(w, r, err)
+			return false
+		}
+		if !exists {
+			respondNotFound(w, r, "test_case")
+			return false
+		}
+		return true
+
+	case "test_result":
+		// Resolve workspace via test_results -> test_runs and gate on test.execute.
+		var wsID int
+		err := h.db.QueryRow(`
+			SELECT run.workspace_id
+			FROM test_results tr
+			JOIN test_runs run ON tr.run_id = run.id
+			WHERE tr.id = ?
+		`, entityID).Scan(&wsID)
+		if errors.Is(err, sql.ErrNoRows) {
+			respondNotFound(w, r, "test_result")
+			return false
+		}
+		if err != nil {
+			respondInternalError(w, r, err)
+			return false
+		}
+		user, ok := RequireAuth(w, r)
+		if !ok {
+			return false
+		}
+		allowed, err := h.permissionService.HasWorkspacePermission(user.ID, wsID, models.PermissionTestExecute)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return false
+		}
+		if !allowed {
+			respondNotFound(w, r, "test_result")
+			return false
+		}
+		return true
+
+	case "workspace_avatar", "workspace_background":
+		// entity_id is the workspace id. Require workspace.admin on it. See WI-46.
+		var exists bool
+		if err := h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = ?)", entityID).Scan(&exists); err != nil {
+			respondInternalError(w, r, err)
+			return false
+		}
+		if !exists {
+			respondNotFound(w, r, "workspace")
+			return false
+		}
+		user, ok := RequireAuth(w, r)
+		if !ok {
+			return false
+		}
+		allowed, err := h.permissionService.HasWorkspacePermission(user.ID, entityID, models.PermissionWorkspaceAdmin)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return false
+		}
+		if !allowed {
+			respondNotFound(w, r, "workspace")
+			return false
+		}
+		return true
+
+	case "team_avatar":
+		// entity_id is the team id. Mirror canManageTeam in teams.go:
+		// teams.manage global perm OR team admin role on this team.
+		var exists bool
+		if err := h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM teams WHERE id = ?)", entityID).Scan(&exists); err != nil {
+			respondInternalError(w, r, err)
+			return false
+		}
+		if !exists {
+			respondNotFound(w, r, "team")
+			return false
+		}
+		user, ok := RequireAuth(w, r)
+		if !ok {
+			return false
+		}
+		hasPerm, err := h.permissionService.HasGlobalPermission(user.ID, models.PermissionTeamsManage)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return false
+		}
+		if hasPerm {
+			return true
+		}
+		var isAdmin bool
+		if err := h.db.QueryRow(`
+			SELECT EXISTS(SELECT 1 FROM team_members
+			              WHERE team_id = ? AND user_id = ? AND role = 'admin')
+		`, entityID, user.ID).Scan(&isAdmin); err != nil {
+			respondInternalError(w, r, err)
+			return false
+		}
+		if !isAdmin {
+			respondNotFound(w, r, "team")
+			return false
+		}
+		return true
+
+	case "customer_avatar":
+		// customer_organisations are global (no workspace_id); gate on the
+		// global customers.manage permission.
+		var exists bool
+		if err := h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM customer_organisations WHERE id = ?)", entityID).Scan(&exists); err != nil {
+			respondInternalError(w, r, err)
+			return false
+		}
+		if !exists {
+			respondNotFound(w, r, "customer")
+			return false
+		}
+		user, ok := RequireAuth(w, r)
+		if !ok {
+			return false
+		}
+		hasPerm, err := h.permissionService.HasGlobalPermission(user.ID, models.PermissionCustomersManage)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return false
+		}
+		if !hasPerm {
+			respondNotFound(w, r, "customer")
+			return false
+		}
+		return true
+
+	case "portal_background", "portal_logo", "hub_logo":
+		// Global branding referenced by URL from per-channel/per-hub config
+		// records. The /channels/{id}/config endpoint enforces resource-level
+		// authz on the bind step; the upload itself just needs an
+		// authenticated internal session (the auth middleware on the route
+		// already blocks portal customer sessions).
+		if _, ok := RequireAuth(w, r); !ok {
+			return false
+		}
+		return true
+
+	case "avatar":
+		// User's own profile picture. Auth-gated at the route.
+		if _, ok := RequireAuth(w, r); !ok {
+			return false
+		}
+		return true
+
+	default:
+		respondValidationError(w, r, "Unknown entity type")
+		return false
+	}
+}
+
 // Upload handles file upload to an item
 func (h *AttachmentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	// FIXME(human-review): This handler mixes entity resolution, permissions, validation,
@@ -188,12 +377,15 @@ func (h *AttachmentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	isHubLogo := entityType == "hub_logo"
 	isImageEntityType := isAvatar || isWorkspaceAvatar || isTeamAvatar || isCustomerAvatar || isWorkspaceBackground || isPortalBackground || isPortalLogo || isHubLogo
 
-	// FIXME(human-review): Image-entity uploads skip the entity existence and permission
-	// checks below. Any authenticated user can create workspace/team/customer/portal/hub
-	// image assets (portal/hub are returned on public URLs). Verify target ownership/admin
-	// permission or split these into explicit, authorized upload endpoints.
-	// Validate entity_id is provided (except for avatars, backgrounds, and logos)
-	if entityIDStr == "" && !isImageEntityType {
+	// entity_id is required for every entity type that has an owner row
+	// (item, test_case, test_result, workspace/team/customer scoped image
+	// assets). The truly global branding uploads — user avatar and the
+	// portal/hub assets — are referenced by URL and need no owner id here.
+	entityIDRequired := entityType != "avatar" &&
+		entityType != "portal_background" &&
+		entityType != "portal_logo" &&
+		entityType != "hub_logo"
+	if entityIDStr == "" && entityIDRequired {
 		slog.Debug("missing entity_id in form", slog.String("component", "attachments"))
 		respondValidationError(w, r, "entity_id is required")
 		return
@@ -210,86 +402,8 @@ func (h *AttachmentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Debug("uploading to entity", slog.String("component", "attachments"), slog.String("entity_type", entityType), slog.Int("entity_id", entityID))
 
-	// Verify entity exists based on type
-	if !isAvatar && !isWorkspaceAvatar && !isTeamAvatar && !isCustomerAvatar && !isWorkspaceBackground && !isPortalBackground && !isPortalLogo && !isHubLogo {
-		var exists bool
-
-		switch entityType {
-		case "item":
-			exists, err = repository.NewItemRepository(h.db).Exists(entityID)
-		case "test_case":
-			err = h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM test_cases WHERE id = ?)", entityID).Scan(&exists)
-		case "test_result":
-			// Resolve workspace via test_results -> test_runs in one shot so we can
-			// gate the upload on the caller's test.execute permission for that workspace.
-			var wsID int
-			err = h.db.QueryRow(`
-				SELECT run.workspace_id
-				FROM test_results tr
-				JOIN test_runs run ON tr.run_id = run.id
-				WHERE tr.id = ?
-			`, entityID).Scan(&wsID)
-			if errors.Is(err, sql.ErrNoRows) {
-				respondNotFound(w, r, "test_result")
-				return
-			}
-			if err != nil {
-				respondInternalError(w, r, err)
-				return
-			}
-			user, authOK := RequireAuth(w, r)
-			if !authOK {
-				return
-			}
-			var allowed bool
-			allowed, err = h.permissionService.HasWorkspacePermission(user.ID, wsID, models.PermissionTestExecute)
-			if err != nil {
-				respondInternalError(w, r, err)
-				return
-			}
-			if !allowed {
-				// 404, not 403 — matches the repo's item-permission invariant
-				// (don't disclose existence of resources the caller can't access).
-				respondNotFound(w, r, "test_result")
-				return
-			}
-			exists = true
-		default:
-			slog.Debug("unknown entity type", slog.String("component", "attachments"), slog.String("entity_type", entityType))
-			respondValidationError(w, r, "Unknown entity type")
-			return
-		}
-
-		slog.Debug("verifying entity exists", slog.String("component", "attachments"), slog.String("entity_type", entityType), slog.Int("entity_id", entityID))
-		if err != nil {
-			slog.Error("database error checking entity existence", slog.String("component", "attachments"), slog.Any("error", err))
-			respondInternalError(w, r, err)
-			return
-		}
-		if !exists {
-			slog.Debug("entity not found", slog.String("component", "attachments"), slog.String("entity_type", entityType), slog.Int("entity_id", entityID))
-			respondNotFound(w, r, entityType)
-			return
-		}
-		slog.Debug("entity exists", slog.String("component", "attachments"), slog.String("entity_type", entityType), slog.Int("entity_id", entityID))
-
-		// Check permission for item attachments
-		if entityType == "item" {
-			var canModify bool
-			canModify, err = h.checkItemAttachmentPermission(r, entityID)
-			if err != nil {
-				slog.Error("failed to check attachment permission", slog.String("component", "attachments"), slog.Any("error", err))
-				respondInternalError(w, r, err)
-				return
-			}
-			if !canModify {
-				slog.Debug("user lacks permission to upload attachment to item", slog.String("component", "attachments"), slog.Int("entity_id", entityID))
-				respondNotFound(w, r, "item")
-				return
-			}
-		}
-	} else {
-		slog.Debug("skipping entity existence check for avatar upload", slog.String("component", "attachments"))
+	if !h.authorizeUploadEntity(w, r, entityType, entityID) {
+		return
 	}
 
 	// Get file from form
@@ -664,7 +778,7 @@ func (h *AttachmentHandler) GetByItem(w http.ResponseWriter, r *http.Request) {
 	// Get total count first
 	var totalCount int
 	err = h.db.QueryRow(`
-		SELECT COUNT(*) FROM attachments WHERE item_id = ?
+		SELECT COUNT(*) FROM attachments WHERE item_id = ? AND entity_type = 'item'
 	`, itemID).Scan(&totalCount)
 
 	if err != nil {
@@ -679,7 +793,7 @@ func (h *AttachmentHandler) GetByItem(w http.ResponseWriter, r *http.Request) {
 		       u.first_name || ' ' || u.last_name as uploader_name, u.email as uploader_email
 		FROM attachments a
 		LEFT JOIN users u ON a.uploaded_by = u.id
-		WHERE a.item_id = ?
+		WHERE a.item_id = ? AND a.entity_type = 'item'
 		ORDER BY a.created_at DESC
 		LIMIT ? OFFSET ?
 	`, itemID, limit, offset)
@@ -778,11 +892,10 @@ func (h *AttachmentHandler) Download(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Debug("found attachment", slog.String("component", "attachments"), slog.String("original_filename", attachment.OriginalFilename), slog.String("path", attachment.FilePath))
 
-	// Authorize based on entity type. test_result attachments resolve to a
-	// workspace via test_runs and require test.view in that workspace; item
-	// attachments use the long-standing item-permission check (with approval-
-	// pool fallback for item.view). Other entity types preserve the prior
-	// behavior so this change is non-invasive.
+	// Authorize per entity_type. Before WI-46 the default branch treated a
+	// non-NULL item_id as a work-item id and ran CheckItemPermissionAsActor
+	// on it, which was wrong for branding rows whose item_id was actually
+	// the workspace/portal/hub id. Now every type is explicit.
 	switch entityType.String {
 	case "test_result":
 		if attachment.ItemID == nil {
@@ -792,12 +905,32 @@ func (h *AttachmentHandler) Download(w http.ResponseWriter, r *http.Request) {
 		if !h.authorizeTestResultAttachmentAccess(w, r, *attachment.ItemID) {
 			return
 		}
-	default:
+	case "item", "":
+		// Empty entity_type covers legacy rows inserted before the column
+		// existed; they're all item attachments.
 		if attachment.ItemID != nil {
 			if !CheckItemPermissionAsActor(w, r, repository.NewItemRepository(h.db), h.permissionService, h.approvalService, *attachment.ItemID, models.PermissionItemView) {
 				return
 			}
 		}
+	case "avatar",
+		"workspace_avatar", "workspace_background",
+		"team_avatar", "customer_avatar":
+		// Branding / profile assets are non-secret and rendered widely.
+		// The route is auth-gated so portal customer sessions can't reach
+		// this code.
+		if _, ok := RequireAuth(w, r); !ok {
+			return
+		}
+	case "portal_background", "portal_logo", "hub_logo":
+		// Canonical access route is /api/portal-assets/{id}; refuse to
+		// serve portal/hub branding through the cookie-auth path so there
+		// is exactly one place that gates them.
+		respondNotFound(w, r, "attachment")
+		return
+	default:
+		respondNotFound(w, r, "attachment")
+		return
 	}
 
 	// Validate file path is within attachment directory (prevent path traversal)
@@ -973,8 +1106,7 @@ func (h *AttachmentHandler) Thumbnail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Authorize same as Download — test_result via workspace lookup, items via
-	// the existing item-permission check with approval-pool fallback.
+	// Authorize per entity_type — mirrors Download. See WI-46 commit notes.
 	switch thumbEntityType.String {
 	case "test_result":
 		if !thumbItemID.Valid {
@@ -984,12 +1116,24 @@ func (h *AttachmentHandler) Thumbnail(w http.ResponseWriter, r *http.Request) {
 		if !h.authorizeTestResultAttachmentAccess(w, r, int(thumbItemID.Int64)) {
 			return
 		}
-	default:
+	case "item", "":
 		if thumbItemID.Valid {
 			if !CheckItemPermissionAsActor(w, r, repository.NewItemRepository(h.db), h.permissionService, h.approvalService, int(thumbItemID.Int64), models.PermissionItemView) {
 				return
 			}
 		}
+	case "avatar",
+		"workspace_avatar", "workspace_background",
+		"team_avatar", "customer_avatar":
+		if _, ok := RequireAuth(w, r); !ok {
+			return
+		}
+	case "portal_background", "portal_logo", "hub_logo":
+		respondNotFound(w, r, "attachment")
+		return
+	default:
+		respondNotFound(w, r, "attachment")
+		return
 	}
 
 	if !hasThumbnail || thumbnailPath == "" {
