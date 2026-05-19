@@ -45,21 +45,10 @@
   import PluginModalContainer from '../layout/PluginModalContainer.svelte';
   import LinkComponent from '../components/Link.svelte';
   import SidebarHeader from '../layout/SidebarHeader.svelte';
-  import {
-    IconDatabase, IconLayout, IconHierarchy2, IconFileText, IconAlertCircle, IconSettings,
-    IconGitBranch, IconArrowsShuffle,
-    IconSparkles, IconGitMerge, IconCloudDownload, IconLink, IconPaperclip, IconPuzzle, IconPalette,
-    IconUsers, IconUserStar, IconShield, IconRosetteDiscountCheck, IconKey, IconShieldLock, IconLayoutGrid,
-    IconLifebuoy, IconBell, IconMail,
-    IconPackage,
-    IconStack2, IconSettings2, IconPlug, IconUserCheck, IconMessage,
-    IconSearch, IconX, IconBolt,
-
-    IconBarrierBlock, IconRubberStamp,
-    IconActivity,
-  } from '@tabler/icons-svelte-runes';
+  import { IconFileText, IconPuzzle, IconSearch, IconX } from '@tabler/icons-svelte-runes';
   import { useEventListener } from 'runed';
   import PermissionGuard from '../layout/PermissionGuard.svelte';
+  import { resolveAdminGroups } from '../admin/adminNavigation.js';
 
   const ADMIN_DETAIL_ROUTES = [
     { prefix: '/admin/permission-sets/',    tabId: 'permissions',         component: PermissionSetEdit },
@@ -93,89 +82,8 @@
   let navButtons = $state([]);
   let focusedIndex = $state(-1);
 
-  // Define admin navigation groups
-  const adminGroups = $derived([
-    {
-      id: 'content-structure',
-      label: t('settings.adminGroups.contentStructure'),
-      icon: IconStack2,
-      items: [
-        { id: 'custom-fields', label: t('settings.adminItems.customFields.title'), icon: IconDatabase, description: t('settings.adminItems.customFields.description') },
-        { id: 'screens', label: t('settings.adminItems.screens.title'), icon: IconLayout, description: t('settings.adminItems.screens.description') },
-        { id: 'hierarchy-levels', label: t('settings.adminItems.hierarchyLevels.title'), icon: IconHierarchy2, description: t('settings.adminItems.hierarchyLevels.description') },
-        { id: 'item-types', label: t('settings.adminItems.itemTypes.title'), icon: IconFileText, description: t('settings.adminItems.itemTypes.description') },
-        { id: 'priorities', label: t('settings.adminItems.priorities.title'), icon: IconAlertCircle, description: t('settings.adminItems.priorities.description') },
-        { id: 'configuration-sets', label: t('settings.adminItems.configurationSets.title'), icon: IconSettings, description: t('settings.adminItems.configurationSets.description') },
-      ]
-    },
-    {
-      id: 'workflow-process',
-      label: t('settings.adminGroups.workflowProcess'),
-      icon: IconSettings2,
-      items: [
-        { id: 'statuses', label: t('settings.adminItems.statuses.title'), icon: IconGitBranch, description: t('settings.adminItems.statuses.description') },
-        { id: 'workflows', label: t('settings.adminItems.workflows.title'), icon: IconArrowsShuffle, description: t('settings.adminItems.workflows.description') },
-        { id: 'condition-sets', label: t('settings.adminItems.conditionSets.title'), icon: IconBarrierBlock, description: t('settings.adminItems.conditionSets.description') },
-        { id: 'approval-sets', label: t('settings.adminItems.approvalSets.title'), icon: IconRubberStamp, description: t('settings.adminItems.approvalSets.description') },
-      ]
-    },
-    {
-      id: 'integration-links',
-      label: t('settings.adminGroups.integrationLinks'),
-      icon: IconPlug,
-      items: [
-        { id: 'llm-connections', label: t('settings.adminItems.llmConnections.title'), icon: IconSparkles, description: t('settings.adminItems.llmConnections.description') },
-        { id: 'action-capabilities', label: t('settings.adminItems.actionCapabilities.title'), icon: IconBolt, description: t('settings.adminItems.actionCapabilities.description') },
-        { id: 'scm-providers', label: t('settings.adminItems.scmProviders.title'), icon: IconGitMerge, description: t('settings.adminItems.scmProviders.description') },
-        { id: 'integration-providers', label: 'Integrations', icon: IconPlug, description: 'Manage outbound integrations Windshift connects to and inbound apps that authorize via OAuth.' },
-        { id: 'system-import', label: t('settings.adminItems.systemImport.title'), icon: IconCloudDownload, description: t('settings.adminItems.systemImport.description') },
-        { id: 'link-types', label: t('settings.adminItems.linkTypes.title'), icon: IconLink, description: t('settings.adminItems.linkTypes.description') },
-        { id: 'attachments', label: t('settings.adminItems.attachments.title'), icon: IconPaperclip, description: t('settings.adminItems.attachments.description') },
-        { id: 'modules', label: t('settings.adminItems.modules.title'), icon: IconPuzzle, description: t('settings.adminItems.modules.description') },
-        { id: 'themes', label: t('settings.adminItems.themes.title'), icon: IconPalette, description: t('settings.adminItems.themes.description') },
-      ]
-    },
-    {
-      id: 'users-access',
-      label: t('settings.adminGroups.usersAccess'),
-      icon: IconUserCheck,
-      items: [
-        { id: 'users', label: t('settings.adminItems.users.title'), icon: IconUsers, description: t('settings.adminItems.users.description') },
-        { id: 'groups', label: t('settings.adminItems.groups.title'), icon: IconUserStar, description: t('settings.adminItems.groups.description') },
-        { id: 'permissions', label: t('settings.adminItems.permissions.title'), icon: IconShield, description: t('settings.adminItems.permissions.description') },
-        { id: 'workspace-roles', label: t('settings.adminItems.workspaceRoles.title'), icon: IconRosetteDiscountCheck, description: t('settings.adminItems.workspaceRoles.description') },
-        { id: 'sso', label: t('settings.adminItems.sso.title'), icon: IconKey, description: t('settings.adminItems.sso.description') },
-        { id: 'security', label: t('settings.adminItems.security.title'), icon: IconShieldLock, description: t('settings.adminItems.security.description') },
-        { id: 'workspaces', label: t('settings.adminItems.workspaces.title'), icon: IconLayoutGrid, description: t('settings.adminItems.workspaces.description') },
-      ]
-    },
-    {
-      id: 'communication',
-      label: t('settings.adminGroups.communication'),
-      icon: IconMessage,
-      items: [
-        { id: 'channels', label: t('settings.adminItems.channels.title', 'Channels'), icon: IconLifebuoy, description: t('settings.adminItems.channels.description', 'Configure inbound and outbound channels, portals, and webhooks') },
-        { id: 'notification-settings', label: t('settings.adminItems.notificationSettings.title'), icon: IconBell, description: t('settings.adminItems.notificationSettings.description') },
-        { id: 'email-templates', label: t('settings.adminItems.emailTemplates.title', 'Email Templates'), icon: IconMail, description: t('settings.adminItems.emailTemplates.description', 'Customize the subject and body of transactional emails') },
-      ]
-    },
-    {
-      id: 'asset-management',
-      label: t('settings.adminGroups.assetManagement'),
-      icon: IconPackage,
-      items: [
-        { id: 'assets', label: t('settings.adminItems.assets.title'), icon: IconPackage, description: t('settings.adminItems.assets.description') },
-      ]
-    },
-    {
-      id: 'system',
-      label: t('settings.adminGroups.system'),
-      icon: IconActivity,
-      items: [
-        { id: 'diagnostics', label: t('settings.adminItems.diagnostics.title'), icon: IconActivity, description: t('settings.adminItems.diagnostics.description') },
-      ]
-    },
-  ]);
+  // Admin navigation groups live in admin/adminNavigation.js
+  const adminGroups = $derived(resolveAdminGroups(t));
 
   // Merge plugin extensions into admin groups
   const adminGroupsWithPlugins = $derived.by(() => {
