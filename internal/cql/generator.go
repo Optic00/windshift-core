@@ -11,13 +11,14 @@ import (
 
 // SQLGenerator converts QL AST to SQL WHERE clause
 type SQLGenerator struct {
-	workspaceMap       map[string]int // Maps workspace names/keys to IDs
-	aliasPrefix        string         // Prefix for table aliases ("" for outer, "inner_" for inner queries)
-	entityType         EntityType     // Type of entity being queried (item or asset)
-	setMap             map[string]int // Maps asset set names to IDs (for asset queries)
-	dbDriver           string         // Database driver name ("sqlite" or "postgres")
-	customFieldMap     CustomFieldMap // Maps lowercase custom field name to {ID, Kind} for the entity being queried
-	itemCustomFieldMap CustomFieldMap // Item-side custom field map, used by inner item queries inside asset linkedOf()
+	workspaceMap          map[string]int // Maps workspace names/keys to IDs
+	aliasPrefix           string         // Prefix for table aliases ("" for outer, "inner_" for inner queries)
+	entityType            EntityType     // Type of entity being queried (item or asset)
+	setMap                map[string]int // Maps asset set names to IDs (for asset queries)
+	dbDriver              string         // Database driver name ("sqlite" or "postgres")
+	customFieldMap        CustomFieldMap // Maps lowercase custom field name to {ID, Kind} for the entity being queried
+	itemCustomFieldMap    CustomFieldMap // Item-side custom field map, used by inner item queries inside asset linkedOf()
+	legacyNameKeyFallback bool           // Also read legacy custom_field_values keyed by field name
 }
 
 // NewSQLGenerator creates a new SQL generator for outer queries (work items).
@@ -59,6 +60,14 @@ func NewAssetSQLGenerator(setMap map[string]int, assetCustomFieldMap, itemCustom
 		customFieldMap:     assetCustomFieldMap,
 		itemCustomFieldMap: itemCustomFieldMap,
 	}
+}
+
+// EnableLegacyCustomFieldNameFallback makes mapped cf_<name> lookups prefer the
+// canonical numeric key but fall back to the field-name key. Keep this disabled
+// for low-level generator tests and index-shape checks; enable it at API
+// evaluator boundaries to support older/name-keyed custom_field_values rows.
+func (g *SQLGenerator) EnableLegacyCustomFieldNameFallback() {
+	g.legacyNameKeyFallback = true
 }
 
 // jsonExtract returns the DB-appropriate expression for extracting a field from a JSON column.
@@ -856,6 +865,7 @@ func (g *SQLGenerator) generateFunction(node *ASTNode) (sql string, args []inter
 		}
 
 		innerGenerator := NewInnerSQLGenerator(g.workspaceMap, g.customFieldMap, g.dbDriver)
+		innerGenerator.legacyNameKeyFallback = g.legacyNameKeyFallback
 		innerSQL, innerArgs, err := innerGenerator.GenerateSQL(innerAST)
 		if err != nil {
 			return "", nil, fmt.Errorf("childrenOf() inner query SQL generation error: %w", err)
@@ -935,6 +945,7 @@ func (g *SQLGenerator) generateItemLinkedOf(node *ASTNode) (sql string, args []i
 	}
 
 	innerGenerator := NewInnerSQLGenerator(g.workspaceMap, g.customFieldMap, g.dbDriver)
+	innerGenerator.legacyNameKeyFallback = g.legacyNameKeyFallback
 	innerSQL, innerArgs, err := innerGenerator.GenerateSQL(innerAST)
 	if err != nil {
 		return "", nil, fmt.Errorf("linkedOf() inner query SQL generation error: %w", err)
@@ -1031,6 +1042,7 @@ func (g *SQLGenerator) generateAssetLinkedOf(node *ASTNode) (sql string, args []
 	// asset evaluator's caller — required for cf_<name> inside linkedOf() to
 	// resolve to the numeric JSON key used in items.custom_field_values.
 	innerGenerator := NewInnerSQLGenerator(g.workspaceMap, g.itemCustomFieldMap, g.dbDriver)
+	innerGenerator.legacyNameKeyFallback = g.legacyNameKeyFallback
 	innerSQL, innerArgs, err := innerGenerator.GenerateSQL(innerAST)
 	if err != nil {
 		return "", nil, fmt.Errorf("linkedOf() inner query SQL generation error: %w", err)
@@ -1115,7 +1127,18 @@ func (g *SQLGenerator) mapFieldName(fieldName string) (expr string, args []inter
 func (g *SQLGenerator) extractCustomFieldScalar(column, customFieldName string) (sql string, args []interface{}) {
 	if g.customFieldMap != nil {
 		if info, ok := g.customFieldMap[strings.ToLower(customFieldName)]; ok {
-			return g.jsonExtractLiteralKey(column, info.ID)
+			idSQL, idArgs := g.jsonExtractLiteralKey(column, info.ID)
+			if !g.legacyNameKeyFallback {
+				return idSQL, idArgs
+			}
+			nameSQL, nameArgs := g.jsonExtract(column, customFieldName)
+			// Prefer the canonical numeric-key storage used by current writes, but
+			// keep the legacy name-key fallback so older rows (and API clients that
+			// still submit name-keyed custom_field_values) remain queryable via
+			// cf_<name>/custom.<name>.
+			args := append([]interface{}{}, idArgs...)
+			args = append(args, nameArgs...)
+			return fmt.Sprintf("COALESCE(%s, %s)", idSQL, nameSQL), args
 		}
 	}
 	return g.jsonExtract(column, customFieldName)
