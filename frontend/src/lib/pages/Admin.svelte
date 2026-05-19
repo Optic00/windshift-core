@@ -49,6 +49,7 @@
   import { useEventListener } from 'runed';
   import PermissionGuard from '../layout/PermissionGuard.svelte';
   import { resolveAdminGroups } from '../admin/adminNavigation.js';
+  import { isTypingInField } from '../utils/keyboardShortcuts.js';
 
   const ADMIN_DETAIL_ROUTES = [
     { prefix: '/admin/permission-sets/',    tabId: 'permissions',         component: PermissionSetEdit },
@@ -211,11 +212,12 @@
 
   // Global keyboard shortcut handler
   function handleGlobalKeydown(event) {
-    // Focus search on '/' key (unless already in an input)
-    if (event.key === '/' && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
-      event.preventDefault();
-      searchInput?.focus();
-    }
+    // Focus search on '/' key, but never steal printable input from forms/editors
+    // or modal dialogs (e.g. the global create dialog opened over admin pages).
+    if (event.key !== '/' || isTypingInField(event) || document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+
+    event.preventDefault();
+    searchInput?.focus();
   }
 
   function handleTabClick(tabId) {
