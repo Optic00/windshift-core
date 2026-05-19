@@ -147,11 +147,19 @@ func (s *AttachmentService) DeleteRecord(attachmentID int) (int64, error) {
 
 // CreateRecord inserts a new attachment row and returns the new attachment ID.
 func (s *AttachmentService) CreateRecord(params CreateAttachmentParams) (int64, error) {
-	// For avatars, item_id should be NULL
+	// item_id is polymorphic by entity_type. For non-item entity types the
+	// real "owner" lives on a different table (workspaces, teams, customers,
+	// portals, hubs, users) and must be stored as NULL here — otherwise a
+	// numeric collision with a real item id can leak the row via the
+	// items-scoped GetByItem query. See WI-46.
 	var itemID interface{}
-	if params.EntityType == "avatar" || params.EntityType == "workspace_avatar" || params.EntityType == "team_avatar" || params.EntityType == "customer_avatar" {
+	switch params.EntityType {
+	case "avatar",
+		"workspace_avatar", "workspace_background",
+		"team_avatar", "customer_avatar",
+		"portal_background", "portal_logo", "hub_logo":
 		itemID = nil
-	} else {
+	default:
 		itemID = params.ItemID
 	}
 
