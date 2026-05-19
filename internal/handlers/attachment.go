@@ -657,7 +657,7 @@ func (h *AttachmentHandler) GetByItem(w http.ResponseWriter, r *http.Request) {
 	// Get total count first
 	var totalCount int
 	err = h.db.QueryRow(`
-		SELECT COUNT(*) FROM attachments WHERE item_id = ?
+		SELECT COUNT(*) FROM attachments WHERE item_id = ? AND entity_type = 'item'
 	`, itemID).Scan(&totalCount)
 
 	if err != nil {
@@ -672,7 +672,7 @@ func (h *AttachmentHandler) GetByItem(w http.ResponseWriter, r *http.Request) {
 		       u.first_name || ' ' || u.last_name as uploader_name, u.email as uploader_email
 		FROM attachments a
 		LEFT JOIN users u ON a.uploaded_by = u.id
-		WHERE a.item_id = ?
+		WHERE a.item_id = ? AND a.entity_type = 'item'
 		ORDER BY a.created_at DESC
 		LIMIT ? OFFSET ?
 	`, itemID, limit, offset)
