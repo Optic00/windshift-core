@@ -5,10 +5,35 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"reflect"
+	"strings"
 	"time"
 
 	"windshift/internal/database"
 )
+
+// isBlankSubmittedField reports whether a value submitted in a portal/form
+// payload should be treated as "no value" by required-field validation. JSON
+// unmarshalling produces []interface{} / map[string]interface{} for empty
+// arrays and objects respectively, and the old `== nil || == ""` check let
+// those slip through, allowing required multiselect/object fields to be
+// satisfied by `[]` or `{}`. Scalars `false` and `0` (and `0.0`) are NOT
+// blank — they're legitimate values.
+func isBlankSubmittedField(value interface{}) bool {
+	if value == nil {
+		return true
+	}
+	if s, ok := value.(string); ok {
+		return strings.TrimSpace(s) == ""
+	}
+	rv := reflect.ValueOf(value)
+	switch rv.Kind() {
+	case reflect.Slice, reflect.Array, reflect.Map:
+		return rv.Len() == 0
+	default:
+		return false
+	}
+}
 
 // requestTypeValidationResult contains the result of request type field validation
 type requestTypeValidationResult struct {
@@ -46,6 +71,7 @@ func validateAndSeparateFields(ctx context.Context, db database.Database, reques
 	result.itemTypeID = &itemTypeID
 
 	virtualFieldIDs := make(map[string]bool)
+	configuredCustomFieldIDs := make(map[string]bool)
 	rows, err := db.QueryContext(ctx, `SELECT field_identifier, field_type, is_required FROM request_type_fields WHERE request_type_id = ? ORDER BY display_order`, *requestTypeID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load request type fields: %w", err)
@@ -59,8 +85,11 @@ func validateAndSeparateFields(ctx context.Context, db database.Database, reques
 			continue
 		}
 
-		if fieldType == "virtual" {
+		switch fieldType {
+		case "virtual":
 			virtualFieldIDs[fieldID] = true
+		case "custom":
+			configuredCustomFieldIDs[fieldID] = true
 		}
 
 		// Title is always required when shown on the form, regardless of the
@@ -81,7 +110,7 @@ func validateAndSeparateFields(ctx context.Context, db database.Database, reques
 					return nil, fmt.Errorf("description is required")
 				}
 			case "custom", "virtual":
-				if customFields == nil || customFields[fieldID] == nil || customFields[fieldID] == "" {
+				if customFields == nil || isBlankSubmittedField(customFields[fieldID]) {
 					return nil, fmt.Errorf("field %s is required", fieldID)
 				}
 			}
@@ -91,19 +120,18 @@ func validateAndSeparateFields(ctx context.Context, db database.Database, reques
 		return nil, fmt.Errorf("iterate request type fields: %w", err)
 	}
 
-	if len(virtualFieldIDs) > 0 && customFields != nil {
-		result.virtualFieldValues = make(map[string]interface{})
-		result.customFieldValues = make(map[string]interface{})
-
-		for fieldID, value := range customFields {
-			if virtualFieldIDs[fieldID] {
-				result.virtualFieldValues[fieldID] = value
-			} else {
-				result.customFieldValues[fieldID] = value
-			}
+	// Partition submitted fields. Keys that are neither configured custom fields
+	// nor virtual fields are dropped silently — a 400 would act as an oracle
+	// telling probers which field IDs exist on the request type.
+	result.virtualFieldValues = make(map[string]interface{})
+	result.customFieldValues = make(map[string]interface{})
+	for fieldID, value := range customFields {
+		switch {
+		case virtualFieldIDs[fieldID]:
+			result.virtualFieldValues[fieldID] = value
+		case configuredCustomFieldIDs[fieldID]:
+			result.customFieldValues[fieldID] = value
 		}
-	} else {
-		result.customFieldValues = customFields
 	}
 
 	return result, nil
