@@ -103,6 +103,12 @@ type ActionService struct {
 	// Shared execution chain store for cross-application cascade loop prevention
 	chainStore *ExecutionChainStore
 
+	// Pluggable node-executor registry. New ActionNodeTypes register their
+	// implementations here at startup; executeNode consults the registry
+	// before falling through to the legacy switch. See action_node_executor.go.
+	nodeExecMu    sync.RWMutex
+	nodeExecutors map[models.ActionNodeType]NodeExecutor
+
 	// Statistics
 	eventsProcessed int64
 	actionsExecuted int64
@@ -875,8 +881,13 @@ func (as *ActionService) canExecuteNode(nodeID int, edges []models.ActionEdge, e
 	return hasIncomingEdge || len(edges) == 0
 }
 
-// executeNode executes a single node
+// executeNode executes a single node. Registered NodeExecutors take
+// precedence over the legacy switch so new node types can ship without
+// touching this function.
 func (as *ActionService) executeNode(node *models.ActionNode, ctx *models.ExecutionContext, stepResult *models.StepResult) error {
+	if exec, ok := as.lookupNodeExecutor(node.NodeType); ok {
+		return exec.Execute(node, ctx, stepResult)
+	}
 	switch node.NodeType {
 	case models.ActionNodeSetField:
 		return as.executeSetField(node, ctx, stepResult)
@@ -1688,6 +1699,14 @@ func (as *ActionService) substituteVariables(template string, ctx *models.Execut
 					case "id":
 						return strconv.Itoa(ctx.Actor.ID)
 					}
+				}
+			case "ref", "repo", "commits":
+				// SCM trigger payload — emitted by SyncService into
+				// ActionEvent.NewValues with dotted keys like "ref.short".
+				// The event init code prefixes NewValues keys with "new_"
+				// when populating ctx.Variables, so look up there.
+				if val, ok := ctx.Variables["new_"+varName]; ok {
+					return fmt.Sprintf("%v", val)
 				}
 			}
 		}

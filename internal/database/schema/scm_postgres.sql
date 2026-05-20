@@ -109,6 +109,8 @@ CREATE TABLE IF NOT EXISTS workspace_repositories (
 	default_branch TEXT DEFAULT 'main',
 	is_active BOOLEAN DEFAULT TRUE,
 	last_synced_at TIMESTAMPTZ,
+	milestone_tag_pattern TEXT NOT NULL DEFAULT 'v*',           -- Glob of tags that trigger the milestone-from-tag action
+	milestone_branch_pattern TEXT NOT NULL DEFAULT 'release/*', -- Glob of branches that trigger the planning-milestone action
 	created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 	updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 	FOREIGN KEY (workspace_scm_connection_id) REFERENCES workspace_scm_connections(id) ON DELETE CASCADE,
@@ -153,6 +155,17 @@ CREATE TABLE IF NOT EXISTS scm_processed_commits (
 	processed_at            TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 	actions_applied         INTEGER NOT NULL DEFAULT 0,
 	PRIMARY KEY (commit_sha, workspace_repository_id),
+	FOREIGN KEY (workspace_repository_id) REFERENCES workspace_repositories(id) ON DELETE CASCADE
+);
+
+-- SCM Processed Refs (idempotency ledger for tag / release-branch sync events)
+CREATE TABLE IF NOT EXISTS scm_processed_refs (
+	workspace_repository_id INTEGER NOT NULL,
+	ref_type                TEXT NOT NULL,  -- 'tag' | 'branch'
+	ref_name                TEXT NOT NULL,
+	sha                     TEXT,
+	processed_at            TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	PRIMARY KEY (workspace_repository_id, ref_type, ref_name),
 	FOREIGN KEY (workspace_repository_id) REFERENCES workspace_repositories(id) ON DELETE CASCADE
 );
 

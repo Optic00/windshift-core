@@ -500,6 +500,7 @@ func (h *MilestoneHandler) milestoneResultToModel(r *services.MilestoneResult, u
 		IsGlobal:      r.IsGlobal,
 		WorkspaceID:   r.WorkspaceID,
 		WorkspaceName: r.WorkspaceName,
+		ExternalKey:   r.ExternalKey,
 		CreatedAt:     r.CreatedAt,
 		UpdatedAt:     r.UpdatedAt,
 	}

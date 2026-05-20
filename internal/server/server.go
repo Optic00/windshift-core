@@ -738,6 +738,22 @@ func (s *Server) initialize() error {
 		repository.NewItemRepository(s.db),
 	)
 	scmSyncService.SetApprovalService(approvalService)
+
+	// Wire the SCM-driven milestone automation:
+	//  1) sync emits ActionEvents for new tags / release branches,
+	//  2) the create_milestone node executor consumes them and upserts
+	//     by external_key (with optional release attach + commit-issue
+	//     attachment via the scm.MilestoneAttacher adapter).
+	scmSyncService.SetActionEvents(s.actionService)
+	milestoneAttacher := scm.NewMilestoneAttacher(
+		scmSyncService,
+		repository.NewMilestoneAttachRepository(s.db),
+	)
+	s.actionService.RegisterNodeExecutor(
+		services.NewCreateMilestoneExecutor(services.NewPlanningService(s.db), s.actionService).
+			WithCommitAttacher(milestoneAttacher),
+	)
+
 	go s.runSCMRepoSync(scmSyncService)
 	go s.runSCMLinkRefresh(scmSyncService)
 	go s.runSCMOAuthStateCleanup()
@@ -1171,6 +1187,17 @@ func (s *Server) initialize() error {
 		},
 	}
 	routes.RegisterAll(routeDeps)
+
+	// Test-only endpoint: gated on WINDSHIFT_E2E_TEST_HOOKS=1. Lets the
+	// Playwright suite inject a synthetic SCM ref ActionEvent — same
+	// payload shape the sync layer emits — so the create_milestone
+	// action chain can be exercised end-to-end without standing up a
+	// real GitHub or pushing real refs. Production never sets this env.
+	if os.Getenv("WINDSHIFT_E2E_TEST_HOOKS") == "1" {
+		mux.Handle("POST /api/test/scm/setup-mock-repo", handlers.NewTestSetupMockRepo(s.db))
+		mux.Handle("POST /api/test/scm/inject-ref", handlers.NewTestSCMInjectRef(s.db, s.actionService))
+		slog.Warn("WINDSHIFT_E2E_TEST_HOOKS enabled — test hook routes are mounted; never enable in production")
+	}
 
 	// Register plugin routes
 	if pluginRouter != nil {

@@ -57,6 +57,7 @@ func RegisterSCMRoutes(deps *Deps) {
 	api.HandleH("GET /workspaces/{id}/scm-connections/{connId}/repositories", auth(wsView(http.HandlerFunc(deps.SCM.Workspace.GetLinkedRepositories))))
 	api.HandleH("POST /workspaces/{id}/scm-connections/{connId}/repositories", auth(wsAdmin(http.HandlerFunc(deps.SCM.Workspace.LinkRepository))))
 	api.HandleH("DELETE /workspace-repositories/{repoId}", auth(http.HandlerFunc(deps.SCM.Workspace.UnlinkRepository)))
+	api.HandleH("PATCH /workspace-repositories/{repoId}", auth(http.HandlerFunc(deps.SCM.Workspace.UpdateRepository)))
 
 	// Workspace SCM connection auth endpoints
 	api.HandleH("POST /workspaces/{id}/scm-connections/{connId}/auth/start", auth(wsAdmin(http.HandlerFunc(deps.SCM.Workspace.StartWorkspaceOAuth))))

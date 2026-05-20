@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { Pencil, RefreshCw, MessageSquare, Bell, HelpCircle, Database, PlusSquare, Box, Globe, Sparkles, Bot } from '@lucide/svelte';
+  import { Pencil, RefreshCw, MessageSquare, Bell, HelpCircle, Database, PlusSquare, Box, Globe, Sparkles, Bot, Milestone } from '@lucide/svelte';
   import { toHotkeyString, getShortcutDisplay } from '../../utils/keyboardShortcuts.js';
   import { api } from '../../api.js';
   import FieldSelector from '../../pickers/FieldSelector.svelte';
@@ -19,6 +19,8 @@
   import HTTPRequestNode from './nodes/HTTPRequestNode.svelte';
   import AIExtractNode from './nodes/AIExtractNode.svelte';
   import AIAgentNode from './nodes/AIAgentNode.svelte';
+  import CreateMilestoneNode from './nodes/CreateMilestoneNode.svelte';
+  import CreateMilestoneConfigPanel from './CreateMilestoneConfigPanel.svelte';
   import UpdateAssetConfigPanel from './UpdateAssetConfigPanel.svelte';
   import CreateAssetConfigPanel from './CreateAssetConfigPanel.svelte';
   import PlaceholderReferenceModal from './PlaceholderReferenceModal.svelte';
@@ -64,6 +66,7 @@
     http_request: HTTPRequestNode,
     ai_extract: AIExtractNode,
     ai_agent: AIAgentNode,
+    create_milestone: CreateMilestoneNode,
   };
 
   // Mirror each node's accentColor in the minimap so the overview reflects
@@ -83,6 +86,7 @@
     http_request: 'cyan',
     ai_extract: 'purple',
     ai_agent: 'magenta',
+    create_milestone: 'green',
   };
 
   function minimapNodeColor(node) {
@@ -117,6 +121,7 @@
     transition_item: RefreshCw,
     related_items: RefreshCw,
     round_robin_assign: Bell,
+    create_milestone: Milestone,
   };
 
   // i18n keys for node types. When a type isn't in this map, the palette
@@ -611,6 +616,8 @@
       <UpdateAssetConfigPanel {selectedNode} bind:showPlaceholderModal />
     {:else if selectedNode.type === 'create_asset'}
       <CreateAssetConfigPanel {selectedNode} bind:showPlaceholderModal />
+    {:else if selectedNode.type === 'create_milestone'}
+      <CreateMilestoneConfigPanel {selectedNode} bind:showPlaceholderModal />
     {:else if selectedNode.type === 'container_run'}
       <div>
         <label for="config-container-cap" class="block text-xs font-medium mb-1">{t('actions.config.dockerCapability')}</label>

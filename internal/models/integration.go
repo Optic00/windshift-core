@@ -739,6 +739,14 @@ const (
 	ActionTriggerItemUpdated      ActionTriggerType = "item_updated"
 	ActionTriggerItemLinked       ActionTriggerType = "item_linked"
 	ActionTriggerManual           ActionTriggerType = "manual"
+
+	// SCM-driven triggers emitted by the repo-sync loop when a new git ref
+	// matching the per-repository pattern is observed. Payload (in
+	// ActionEvent.NewValues) carries: ref.name, ref.short, ref.sha,
+	// ref.type, repo.owner, repo.name, repo.full_name, repo.workspace_repository_id,
+	// and (tags only) ref.prev_name for "what shipped" range queries.
+	ActionTriggerSCMTagCreated           ActionTriggerType = "scm_tag_created"
+	ActionTriggerSCMReleaseBranchCreated ActionTriggerType = "scm_release_branch_created"
 )
 
 // ActionNodeType defines the type of action node
@@ -769,6 +777,11 @@ const (
 	// (descendants, direct children, ancestors, or linked items) and re-runs
 	// the downstream subgraph once per emitted item with ctx.Item swapped.
 	ActionNodeRelatedItems ActionNodeType = "related_items"
+	// ActionNodeCreateMilestone upserts a workspace milestone keyed by
+	// external_key, optionally promoting status and attaching a release
+	// row on scm_tag_created events. Registered via the node-executor
+	// registry rather than the legacy switch in action_service.go.
+	ActionNodeCreateMilestone ActionNodeType = "create_milestone"
 )
 
 // IsIterator reports whether this node type fans out — i.e. the engine must

@@ -42,7 +42,9 @@
       'status_transition': t('actions.trigger.statusTransition'),
       'item_created': t('actions.trigger.itemCreated'),
       'item_updated': t('actions.trigger.itemUpdated'),
-      'item_linked': t('actions.trigger.itemLinked')
+      'item_linked': t('actions.trigger.itemLinked'),
+      'scm_tag_created': 'SCM: Tag created',
+      'scm_release_branch_created': 'SCM: Release branch created'
     };
     return labels[triggerType] || triggerType;
   }

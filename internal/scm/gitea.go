@@ -14,6 +14,14 @@ import (
 	"windshift/internal/models"
 )
 
+// Compile-time check that GiteaProvider implements the optional
+// interfaces it claims. See GitHubProvider for the same pattern.
+var (
+	_ Provider        = (*GiteaProvider)(nil)
+	_ ReleaseProvider = (*GiteaProvider)(nil)
+	_ RefProvider     = (*GiteaProvider)(nil)
+)
+
 // GiteaProvider implements the Provider interface for Gitea/Forgejo
 type GiteaProvider struct {
 	baseProvider
@@ -353,6 +361,79 @@ func (g *GiteaProvider) ListReleases(ctx context.Context, owner, repo string) ([
 		releases = append(releases, r.toRelease())
 	}
 	return releases, nil
+}
+
+// ListTags lists tags for a repository, paginated up to maxTags.
+// Filters by `since` against each tag's commit date.
+func (g *GiteaProvider) ListTags(ctx context.Context, owner, repo string, since time.Time) ([]Tag, error) {
+	const perPage = 50
+	const maxTags = 500
+
+	type giteaTag struct {
+		Name   string `json:"name"`
+		Commit struct {
+			SHA     string    `json:"sha"`
+			Created time.Time `json:"created"`
+		} `json:"commit"`
+	}
+
+	var tags []Tag
+	for page := 1; ; page++ {
+		reqURL := g.apiURL(fmt.Sprintf("/repos/%s/%s/tags?page=%d&limit=%d",
+			url.PathEscape(owner), url.PathEscape(repo), page, perPage))
+
+		var raw []giteaTag
+		if err := g.doJSON(ctx, "GET", reqURL, http.NoBody, http.StatusOK, &raw); err != nil {
+			return nil, err
+		}
+		for _, t := range raw {
+			created := t.Commit.Created
+			if created.IsZero() {
+				if c, err := g.GetCommit(ctx, owner, repo, t.Commit.SHA); err == nil {
+					created = c.CreatedAt
+				}
+			}
+			if !since.IsZero() && created.Before(since) {
+				continue
+			}
+			tags = append(tags, Tag{Name: t.Name, SHA: t.Commit.SHA, CreatedAt: created})
+			if len(tags) >= maxTags {
+				return tags, nil
+			}
+		}
+		if len(raw) < perPage {
+			break
+		}
+	}
+	return tags, nil
+}
+
+// CompareCommits returns commits reachable from `head` but not `base`,
+// using Gitea's /compare endpoint. Capped at maxCompareCommits.
+func (g *GiteaProvider) CompareCommits(ctx context.Context, owner, repo, base, head string) ([]Commit, error) {
+	const maxCompareCommits = 500
+
+	type giteaCompare struct {
+		Commits []giteaCommit `json:"commits"`
+	}
+
+	reqURL := g.apiURL(fmt.Sprintf("/repos/%s/%s/compare/%s...%s",
+		url.PathEscape(owner), url.PathEscape(repo),
+		url.PathEscape(base), url.PathEscape(head)))
+
+	var resp giteaCompare
+	if err := g.doJSON(ctx, "GET", reqURL, http.NoBody, http.StatusOK, &resp); err != nil {
+		return nil, err
+	}
+
+	out := make([]Commit, 0, len(resp.Commits))
+	for _, c := range resp.Commits {
+		out = append(out, c.toCommit())
+		if len(out) >= maxCompareCommits {
+			break
+		}
+	}
+	return out, nil
 }
 
 // RegisterWebhook registers a webhook for repository events

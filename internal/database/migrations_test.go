@@ -146,6 +146,59 @@ func TestCatalog_FreshInstallStampsEveryEntry(t *testing.T) {
 	}
 }
 
+// TestMigration_ExternalKey_UniquePerWorkspace verifies the partial-unique
+// invariant that `create_milestone`'s upsert logic relies on: two
+// workspaces can share an external_key (e.g. both have a "2.0" milestone)
+// but a single workspace cannot. NULLs are unconstrained.
+func TestMigration_ExternalKey_UniquePerWorkspace(t *testing.T) {
+	dsn := fmt.Sprintf("file:%s/extkey.db?mode=memory&cache=shared", t.TempDir())
+	db, err := NewSQLiteDBWithPoolSizes(dsn, 4, 1)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	if err := db.Initialize(); err != nil {
+		t.Fatalf("initialize fresh db: %v", err)
+	}
+
+	// Two workspaces.
+	for i, key := range []string{"alpha", "beta"} {
+		if _, err := db.Exec(
+			`INSERT INTO workspaces(id, name, key, active) VALUES (?, ?, ?, 1)`,
+			i+1, "ws-"+key, key,
+		); err != nil {
+			t.Fatalf("insert workspace %s: %v", key, err)
+		}
+	}
+
+	// Same external_key in two different workspaces — allowed.
+	for _, wsID := range []int{1, 2} {
+		if _, err := db.Exec(
+			`INSERT INTO milestones(name, is_global, workspace_id, external_key) VALUES (?, 0, ?, '2.0')`,
+			fmt.Sprintf("Release 2.0 (ws %d)", wsID), wsID,
+		); err != nil {
+			t.Fatalf("insert milestone for ws %d: %v", wsID, err)
+		}
+	}
+
+	// Same external_key twice in the same workspace — must fail.
+	if _, err := db.Exec(
+		`INSERT INTO milestones(name, is_global, workspace_id, external_key) VALUES ('Dupe', 0, 1, '2.0')`,
+	); err == nil {
+		t.Fatal("expected unique-constraint failure on duplicate external_key within workspace, got nil")
+	}
+
+	// NULL external_keys must not collide with each other.
+	for i := 0; i < 3; i++ {
+		if _, err := db.Exec(
+			`INSERT INTO milestones(name, is_global, workspace_id, external_key) VALUES (?, 0, 1, NULL)`,
+			fmt.Sprintf("Unkeyed %d", i),
+		); err != nil {
+			t.Fatalf("insert NULL-key milestone: %v", err)
+		}
+	}
+}
+
 func TestRunPendingMigrations_AbortsOnFailingMigration(t *testing.T) {
 	db := openTestDB(t)
 

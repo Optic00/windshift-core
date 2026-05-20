@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS milestones (
 	category_id INTEGER,
 	is_global INTEGER NOT NULL DEFAULT 1,  -- 1=global, 0=workspace-specific
 	workspace_id INTEGER,  -- NULL if global, workspace reference if local
+	external_key TEXT,     -- Stable upsert key for automation (e.g. tag short-name "2.0"). Unique per workspace when set.
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	FOREIGN KEY (category_id) REFERENCES milestone_categories(id) ON DELETE SET NULL,
@@ -61,3 +62,7 @@ CREATE INDEX IF NOT EXISTS idx_milestones_is_global ON milestones(is_global);
 CREATE INDEX IF NOT EXISTS idx_milestone_releases_milestone_id ON milestone_releases(milestone_id);
 CREATE INDEX IF NOT EXISTS idx_item_milestones_item_id ON item_milestones(item_id);
 CREATE INDEX IF NOT EXISTS idx_item_milestones_milestone_id ON item_milestones(milestone_id);
+-- Partial unique index: one external_key per workspace, but NULLs are unconstrained.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_milestones_workspace_external_key
+	ON milestones(workspace_id, external_key)
+	WHERE external_key IS NOT NULL;
