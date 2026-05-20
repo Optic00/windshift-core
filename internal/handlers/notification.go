@@ -51,6 +51,8 @@ type NotificationManager struct {
 	batcher    *services.WriteBatcher[notificationWrite]
 	syncTicker *time.Ticker
 	stopChan   chan struct{}
+	stopOnce   sync.Once
+	wg         sync.WaitGroup
 	mu         sync.RWMutex
 }
 
@@ -94,6 +96,7 @@ func NewNotificationManager(db database.Database, nmCfg NotificationManagerConfi
 	manager.batcher.Start()
 
 	// Start periodic sync goroutine (consistency check, reconciles temp IDs)
+	manager.wg.Add(1)
 	go manager.periodicSync()
 
 	return manager, nil
@@ -354,6 +357,7 @@ func (nm *NotificationManager) loadNotificationsFromDB(userID, limit, offset int
 
 // periodicSync runs periodically to sync any remaining dirty cache entries to database (consistency check)
 func (nm *NotificationManager) periodicSync() {
+	defer nm.wg.Done()
 	for {
 		select {
 		case <-nm.syncTicker.C:
@@ -463,11 +467,14 @@ func (nm *NotificationManager) flushNotificationBatch(items []notificationWrite)
 
 // Stop stops the notification manager
 func (nm *NotificationManager) Stop() {
-	nm.syncTicker.Stop()
-	close(nm.stopChan)
-	nm.batcher.Stop()        // Flush remaining batched writes
-	nm.syncCacheToDatabase() // Final consistency sync
-	_ = nm.cache.Close()
+	nm.stopOnce.Do(func() {
+		nm.syncTicker.Stop()
+		close(nm.stopChan)
+		nm.wg.Wait()
+		nm.batcher.Stop()        // Flush remaining batched writes
+		nm.syncCacheToDatabase() // Final consistency sync
+		_ = nm.cache.Close()
+	})
 }
 
 // HTTP Handlers

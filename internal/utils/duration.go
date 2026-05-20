@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -24,7 +25,7 @@ func ParseDuration(input string) (time.Duration, error) {
 		if err != nil {
 			return 0, fmt.Errorf("invalid day format: %s", input)
 		}
-		return time.Duration(days * 8 * float64(time.Hour)), nil
+		return durationFromFloat(days, 8*time.Hour, input)
 	}
 
 	re := regexp.MustCompile(`(?:(\d+(?:\.\d+)?)h)?(?:(\d+(?:\.\d+)?)m)?`)
@@ -39,17 +40,49 @@ func ParseDuration(input string) (time.Duration, error) {
 		if err != nil {
 			return 0, fmt.Errorf("invalid hour format: %s", matches[1])
 		}
-		total += time.Duration(hours * float64(time.Hour))
+		d, err := durationFromFloat(hours, time.Hour, matches[1]+"h")
+		if err != nil {
+			return 0, err
+		}
+		total, err = addDuration(total, d, input)
+		if err != nil {
+			return 0, err
+		}
 	}
 	if matches[2] != "" {
 		minutes, err := strconv.ParseFloat(matches[2], 64)
 		if err != nil {
 			return 0, fmt.Errorf("invalid minute format: %s", matches[2])
 		}
-		total += time.Duration(minutes * float64(time.Minute))
+		d, err := durationFromFloat(minutes, time.Minute, matches[2]+"m")
+		if err != nil {
+			return 0, err
+		}
+		total, err = addDuration(total, d, input)
+		if err != nil {
+			return 0, err
+		}
 	}
 	if total == 0 {
 		return 0, fmt.Errorf("no time duration found in: %s", input)
 	}
 	return total, nil
+}
+
+func addDuration(a, b time.Duration, input string) (time.Duration, error) {
+	if (b > 0 && a > time.Duration(1<<63-1)-b) || (b < 0 && a < time.Duration(-1<<63)-b) {
+		return 0, fmt.Errorf("duration out of range: %s", input)
+	}
+	return a + b, nil
+}
+
+func durationFromFloat(value float64, unit time.Duration, input string) (time.Duration, error) {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0, fmt.Errorf("duration out of range: %s", input)
+	}
+	limit := float64(1<<63-1) / float64(unit)
+	if value > limit || value < -limit {
+		return 0, fmt.Errorf("duration out of range: %s", input)
+	}
+	return time.Duration(value * float64(unit)), nil
 }

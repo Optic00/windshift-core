@@ -401,6 +401,10 @@ func parseExtendedDuration(s string) (time.Duration, error) {
 		if err != nil {
 			return 0, err
 		}
+		const maxDays = int64(1<<63-1) / int64(24*time.Hour)
+		if int64(n) > maxDays || int64(n) < -maxDays {
+			return 0, fmt.Errorf("duration out of range: %s", s)
+		}
 		return time.Duration(n) * 24 * time.Hour, nil
 	}
 	return time.ParseDuration(s)

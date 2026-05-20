@@ -149,6 +149,10 @@ func (s *EmailTrackingRetentionSweeper) collectInboundEmailChannels(ctx context.
 // anchors (rows whose message_id is referenced by a more recent in_reply_to).
 // Returns the number of rows deleted.
 func (s *EmailTrackingRetentionSweeper) sweepChannel(ctx context.Context, channelID, retentionDays int) (int64, error) {
+	const maxDays = int64(1<<63-1) / int64(24*time.Hour)
+	if int64(retentionDays) > maxDays || int64(retentionDays) < -maxDays {
+		return 0, fmt.Errorf("retention days out of range: %d", retentionDays)
+	}
 	cutoff := time.Now().Add(-time.Duration(retentionDays) * 24 * time.Hour)
 	res, err := s.db.ExecContext(ctx, `
 		DELETE FROM email_message_tracking

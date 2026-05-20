@@ -24,9 +24,11 @@ type WriteBatcher[T any] struct {
 	buffer []T
 
 	// Lifecycle
-	flushTicker *time.Ticker
-	stopCh      chan struct{}
-	wg          sync.WaitGroup
+	flushTicker           *time.Ticker
+	stopCh                chan struct{}
+	stopOnce              sync.Once
+	wg                    sync.WaitGroup
+	thresholdFlushRunning int32
 
 	// Stats
 	itemsBuffered int64
@@ -77,27 +79,29 @@ func (wb *WriteBatcher[T]) Start() {
 
 // Stop gracefully stops the batcher, flushing any remaining items
 func (wb *WriteBatcher[T]) Stop() {
-	close(wb.stopCh)
-	if wb.flushTicker != nil {
-		wb.flushTicker.Stop()
-	}
-	wb.wg.Wait()
+	wb.stopOnce.Do(func() {
+		close(wb.stopCh)
+		if wb.flushTicker != nil {
+			wb.flushTicker.Stop()
+		}
+		wb.wg.Wait()
 
-	// Final flush of remaining items
-	if err := wb.Flush(); err != nil {
-		slog.Error("write batcher final flush failed",
+		// Final flush of remaining items
+		if err := wb.Flush(); err != nil {
+			slog.Error("write batcher final flush failed",
+				"name", wb.config.Name,
+				"error", err,
+			)
+		}
+
+		slog.Info("write batcher stopped",
 			"name", wb.config.Name,
-			"error", err,
+			"total_items_buffered", atomic.LoadInt64(&wb.itemsBuffered),
+			"total_items_flushed", atomic.LoadInt64(&wb.itemsFlushed),
+			"total_flushes", atomic.LoadInt64(&wb.flushCount),
+			"flush_errors", atomic.LoadInt64(&wb.flushErrors),
 		)
-	}
-
-	slog.Info("write batcher stopped",
-		"name", wb.config.Name,
-		"total_items_buffered", atomic.LoadInt64(&wb.itemsBuffered),
-		"total_items_flushed", atomic.LoadInt64(&wb.itemsFlushed),
-		"total_flushes", atomic.LoadInt64(&wb.flushCount),
-		"flush_errors", atomic.LoadInt64(&wb.flushErrors),
-	)
+	})
 }
 
 // Add queues an item for batched writing.
@@ -110,9 +114,12 @@ func (wb *WriteBatcher[T]) Add(item T) {
 
 	atomic.AddInt64(&wb.itemsBuffered, 1)
 
-	// Trigger immediate flush if buffer is full
-	if bufferLen >= wb.config.MaxBatchSize {
+	// Trigger immediate flush if buffer is full. Only one threshold-triggered
+	// flush may be in flight at a time; periodic/final Flush calls still run
+	// normally and are serialized by wb.mu when swapping the buffer.
+	if wb.config.MaxBatchSize > 0 && bufferLen >= wb.config.MaxBatchSize && atomic.CompareAndSwapInt32(&wb.thresholdFlushRunning, 0, 1) {
 		go func() {
+			defer atomic.StoreInt32(&wb.thresholdFlushRunning, 0)
 			if err := wb.Flush(); err != nil {
 				slog.Error("write batcher threshold flush failed",
 					"name", wb.config.Name,
