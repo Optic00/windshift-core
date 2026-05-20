@@ -98,6 +98,10 @@ func (s *TestCaseService) Create(workspaceID int, req TestCaseCreateRequest) (*m
 		return nil, fmt.Errorf("estimated duration cannot be negative")
 	}
 
+	if err := s.validateFolderInWorkspace(workspaceID, req.FolderID); err != nil {
+		return nil, err
+	}
+
 	// Get max sort order
 	maxSortOrder, err := s.repo.GetMaxSortOrder(workspaceID, req.FolderID)
 	if err != nil {
@@ -160,6 +164,10 @@ func (s *TestCaseService) Update(id, workspaceID int, req TestCaseUpdateRequest)
 		return nil, fmt.Errorf("estimated duration cannot be negative")
 	}
 
+	if err := s.validateFolderInWorkspace(workspaceID, req.FolderID); err != nil {
+		return nil, err
+	}
+
 	tc := &models.TestCase{
 		ID:                id,
 		WorkspaceID:       workspaceID,
@@ -190,6 +198,10 @@ func (s *TestCaseService) Delete(id, workspaceID int) error {
 
 // Move moves a test case to a different folder
 func (s *TestCaseService) Move(id, workspaceID int, folderID *int, sortOrder int) error {
+	if err := s.validateFolderInWorkspace(workspaceID, folderID); err != nil {
+		return err
+	}
+
 	return database.WithTx(s.db, func(tx database.Tx) error {
 		return s.repo.Move(tx, id, workspaceID, folderID, sortOrder)
 	})
@@ -205,6 +217,25 @@ func (s *TestCaseService) Reorder(workspaceID int, testCaseIDs []int) error {
 // Exists checks if a test case exists in a workspace
 func (s *TestCaseService) Exists(id, workspaceID int) (bool, error) {
 	return s.repo.Exists(id, workspaceID)
+}
+
+func (s *TestCaseService) validateFolderInWorkspace(workspaceID int, folderID *int) error {
+	if folderID == nil {
+		return nil
+	}
+
+	var exists bool
+	if err := s.db.QueryRow(
+		"SELECT EXISTS(SELECT 1 FROM test_folders WHERE id = ? AND workspace_id = ?)",
+		*folderID,
+		workspaceID,
+	).Scan(&exists); err != nil {
+		return fmt.Errorf("failed to validate test folder: %w", err)
+	}
+	if !exists {
+		return repository.ErrNotFound
+	}
+	return nil
 }
 
 // Test Step methods

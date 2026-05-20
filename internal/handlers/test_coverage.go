@@ -28,24 +28,20 @@ func (h *TestCoverageHandler) GetConfig(w http.ResponseWriter, r *http.Request) 
 	id := r.PathValue("id")
 	repo := h.repo
 
+	workspaceID, collectionID, ok := h.requireCoverageScopeAccess(w, r, id, models.PermissionTestView)
+	if !ok {
+		return
+	}
+
 	var (
 		config *models.TestCoverageConfiguration
 		err    error
 	)
 
-	if id == "default" {
-		workspaceID, ok := parseWorkspaceIDQuery(w, r)
-		if !ok {
-			return
-		}
+	if collectionID == nil {
 		config, err = repo.FindConfigForWorkspace(workspaceID)
 	} else {
-		collectionID, parseErr := strconv.Atoi(id)
-		if parseErr != nil {
-			respondInvalidID(w, r, "collectionId")
-			return
-		}
-		config, err = repo.FindConfigForCollection(collectionID)
+		config, err = repo.FindConfigForCollection(*collectionID)
 	}
 
 	if errors.Is(err, repository.ErrNotFound) {
@@ -70,25 +66,20 @@ func (h *TestCoverageHandler) CreateConfig(w http.ResponseWriter, r *http.Reques
 	}
 
 	repo := h.repo
+	workspaceID, collectionID, ok := h.requireCoverageScopeAccess(w, r, id, models.PermissionTestManage)
+	if !ok {
+		return
+	}
 
 	var (
 		config *models.TestCoverageConfiguration
 		err    error
 	)
 
-	if id == "default" {
-		workspaceID, ok := parseWorkspaceIDQuery(w, r)
-		if !ok {
-			return
-		}
+	if collectionID == nil {
 		config, err = repo.CreateConfigForWorkspace(workspaceID, req.RequirementItemTypeIDs)
 	} else {
-		collectionID, parseErr := strconv.Atoi(id)
-		if parseErr != nil {
-			respondInvalidID(w, r, "collectionId")
-			return
-		}
-		config, err = repo.CreateConfigForCollection(collectionID, req.RequirementItemTypeIDs)
+		config, err = repo.CreateConfigForCollection(*collectionID, req.RequirementItemTypeIDs)
 	}
 
 	if err != nil {
@@ -108,6 +99,10 @@ func (h *TestCoverageHandler) UpdateConfig(w http.ResponseWriter, r *http.Reques
 
 	req, ok := decodeJSON[models.TestCoverageConfigRequest](w, r)
 	if !ok {
+		return
+	}
+
+	if _, _, ok := h.requireConfigScopeAccess(w, r, r.PathValue("collectionId"), configID, models.PermissionTestManage); !ok {
 		return
 	}
 
@@ -131,7 +126,15 @@ func (h *TestCoverageHandler) DeleteConfig(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	if _, _, ok := h.requireConfigScopeAccess(w, r, r.PathValue("collectionId"), configID, models.PermissionTestManage); !ok {
+		return
+	}
+
 	if err := h.repo.DeleteConfig(configID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			respondNotFound(w, r, "test_coverage_configuration")
+			return
+		}
 		respondInternalError(w, r, err)
 		return
 	}
@@ -143,6 +146,10 @@ func (h *TestCoverageHandler) DeleteConfig(w http.ResponseWriter, r *http.Reques
 func (h *TestCoverageHandler) GetSummary(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	repo := h.repo
+
+	if _, _, ok := h.requireCoverageScopeAccess(w, r, id, models.PermissionTestView); !ok {
+		return
+	}
 
 	typeIDs, workspaceID, err := h.getRequirementTypeIDs(repo, id, r.URL.Query().Get("workspace_id"))
 	if err != nil {
@@ -172,6 +179,10 @@ func (h *TestCoverageHandler) GetSummary(w http.ResponseWriter, r *http.Request)
 func (h *TestCoverageHandler) GetRequirements(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	repo := h.repo
+
+	if _, _, ok := h.requireCoverageScopeAccess(w, r, id, models.PermissionTestView); !ok {
+		return
+	}
 
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	if page < 1 {
@@ -256,6 +267,117 @@ func (h *TestCoverageHandler) GetRequirements(w http.ResponseWriter, r *http.Req
 		},
 		Summary: buildCoverageSummary(summaryTotal, summaryCovered),
 	})
+}
+
+func (h *TestCoverageHandler) requireCoverageScopeAccess(w http.ResponseWriter, r *http.Request, id, permission string) (workspaceID int, collectionID *int, ok bool) {
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return 0, nil, false
+	}
+	if h.permissionService == nil {
+		respondNotFound(w, r, "test_coverage_configuration")
+		return 0, nil, false
+	}
+
+	if id == "default" {
+		workspaceID, ok = parseWorkspaceIDQuery(w, r)
+		if !ok {
+			return 0, nil, false
+		}
+	} else {
+		parsedID, err := strconv.Atoi(id)
+		if err != nil {
+			respondInvalidID(w, r, "collectionId")
+			return 0, nil, false
+		}
+		workspaceID, err = h.repo.GetCollectionWorkspaceID(parsedID)
+		if errors.Is(err, repository.ErrNotFound) {
+			respondNotFound(w, r, "collection")
+			return 0, nil, false
+		}
+		if err != nil {
+			respondInternalError(w, r, err)
+			return 0, nil, false
+		}
+		collectionID = &parsedID
+	}
+
+	allowed, err := h.permissionService.HasWorkspacePermission(user.ID, workspaceID, permission)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return 0, nil, false
+	}
+	if !allowed {
+		respondNotFound(w, r, "test_coverage_configuration")
+		return 0, nil, false
+	}
+	return workspaceID, collectionID, true
+}
+
+func (h *TestCoverageHandler) requireConfigScopeAccess(w http.ResponseWriter, r *http.Request, pathID string, configID int, permission string) (workspaceID int, collectionID *int, ok bool) {
+	if pathID != "default" {
+		workspaceID, collectionID, ok = h.requireCoverageScopeAccess(w, r, pathID, permission)
+		if !ok || !h.requireConfigInScope(w, r, configID, workspaceID, collectionID) {
+			return 0, nil, false
+		}
+		return workspaceID, collectionID, true
+	}
+
+	config, err := h.repo.FindConfigByID(configID)
+	if errors.Is(err, repository.ErrNotFound) {
+		respondNotFound(w, r, "test_coverage_configuration")
+		return 0, nil, false
+	}
+	if err != nil {
+		respondInternalError(w, r, err)
+		return 0, nil, false
+	}
+	if config.CollectionID != nil || config.WorkspaceID == nil {
+		respondNotFound(w, r, "test_coverage_configuration")
+		return 0, nil, false
+	}
+
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return 0, nil, false
+	}
+	if h.permissionService == nil {
+		respondNotFound(w, r, "test_coverage_configuration")
+		return 0, nil, false
+	}
+	allowed, err := h.permissionService.HasWorkspacePermission(user.ID, *config.WorkspaceID, permission)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return 0, nil, false
+	}
+	if !allowed {
+		respondNotFound(w, r, "test_coverage_configuration")
+		return 0, nil, false
+	}
+	return *config.WorkspaceID, nil, true
+}
+
+func (h *TestCoverageHandler) requireConfigInScope(w http.ResponseWriter, r *http.Request, configID, workspaceID int, collectionID *int) bool {
+	config, err := h.repo.FindConfigByID(configID)
+	if errors.Is(err, repository.ErrNotFound) {
+		respondNotFound(w, r, "test_coverage_configuration")
+		return false
+	}
+	if err != nil {
+		respondInternalError(w, r, err)
+		return false
+	}
+
+	if collectionID == nil {
+		if config.CollectionID == nil && config.WorkspaceID != nil && *config.WorkspaceID == workspaceID {
+			return true
+		}
+	} else if config.CollectionID != nil && *config.CollectionID == *collectionID {
+		return true
+	}
+
+	respondNotFound(w, r, "test_coverage_configuration")
+	return false
 }
 
 func (h *TestCoverageHandler) getRequirementTypeIDs(repo *repository.TestCoverageRepository, id, workspaceIDStr string) (typeIDs []int, workspaceID int, err error) {

@@ -61,10 +61,15 @@ func (h *PersonalLabelHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 	case "null", "0":
 		query += "user_id IS NULL"
 	default:
-		// Explicit user_id: that user's labels OR shared labels.
+		// Explicit user_id may only target the caller. Other users' personal
+		// labels are private; shared labels are available via user_id=null/0.
 		id, err := strconv.Atoi(userIDParam)
 		if err != nil {
 			respondValidationError(w, r, "Invalid user_id")
+			return
+		}
+		if id != user.ID {
+			respondNotFound(w, r, "Personal label")
 			return
 		}
 		query += "(user_id = ? OR user_id IS NULL)"
@@ -159,8 +164,17 @@ func (h *PersonalLabelHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+
 	label, ok := h.loadPersonalLabel(w, r, id)
 	if !ok {
+		return
+	}
+	if label.UserID != nil && *label.UserID != user.ID {
+		respondNotFound(w, r, "Personal label")
 		return
 	}
 

@@ -211,6 +211,7 @@ func (h *SCMProviderHandler) UpdateProviderAllowedWorkspaces(w http.ResponseWrit
 		respondInternalError(w, r, err)
 		return
 	}
+	defer func() { _ = tx.Rollback() }()
 
 	// Delete all existing entries for this provider
 	_, err = tx.Exec("DELETE FROM scm_provider_workspace_allowlist WHERE provider_id = ?", providerID)

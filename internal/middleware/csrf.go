@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -128,10 +129,11 @@ func handleCSRFError(w http.ResponseWriter, r *http.Request, message string) {
 	if strings.HasPrefix(r.URL.Path, "/api/") {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte(`{"error": "` + message + `", "code": "CSRF_ERROR"}`))
+		_, _ = w.Write([]byte(`{"error":` + strconv.Quote(message) + `,"code":"CSRF_ERROR"}`))
 		return
 	}
 
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusForbidden)
 	_, _ = w.Write([]byte(message))
 }
