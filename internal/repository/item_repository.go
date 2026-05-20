@@ -1487,7 +1487,8 @@ func (r *ItemRepository) GetHistoryWithApprovals(itemID int) ([]models.ItemHisto
 		SELECT
 			ih.id, ih.item_id, ih.user_id, ih.changed_at, ih.field_name, ih.old_value, ih.new_value,
 			COALESCE(u.first_name || ' ' || u.last_name, u.username, '') as user_name,
-			COALESCE(u.email, '') as user_email
+			COALESCE(u.email, '') as user_email,
+			COALESCE(u.is_agent, FALSE) AS is_agent
 		FROM item_history ih
 		LEFT JOIN users u ON ih.user_id = u.id
 		WHERE ih.item_id = ?
@@ -1501,7 +1502,8 @@ func (r *ItemRepository) GetHistoryWithApprovals(itemID int) ([]models.ItemHisto
 			NULL AS old_value,
 			d.comment AS new_value,
 			COALESCE(u.first_name || ' ' || u.last_name, u.username, 'System') AS user_name,
-			COALESCE(u.email, '') AS user_email
+			COALESCE(u.email, '') AS user_email,
+			COALESCE(u.is_agent, FALSE) AS is_agent
 		FROM approval_decisions d
 		JOIN approval_requests ar ON ar.id = d.approval_request_id
 		LEFT JOIN users u ON u.id = d.actor_user_id
@@ -1518,7 +1520,7 @@ func (r *ItemRepository) GetHistoryWithApprovals(itemID int) ([]models.ItemHisto
 	history := []models.ItemHistory{}
 	for rows.Next() {
 		var entry models.ItemHistory
-		if err := rows.Scan(&entry.ID, &entry.ItemID, &entry.UserID, &entry.ChangedAt, &entry.FieldName, &entry.OldValue, &entry.NewValue, &entry.UserName, &entry.UserEmail); err != nil {
+		if err := rows.Scan(&entry.ID, &entry.ItemID, &entry.UserID, &entry.ChangedAt, &entry.FieldName, &entry.OldValue, &entry.NewValue, &entry.UserName, &entry.UserEmail, &entry.IsAgent); err != nil {
 			return nil, err
 		}
 		history = append(history, entry)

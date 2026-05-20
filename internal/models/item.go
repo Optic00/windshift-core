@@ -98,6 +98,7 @@ type ItemHistory struct {
 	// Joined fields for API responses
 	UserName  string `json:"user_name,omitempty"`  // Full name of user who made the change
 	UserEmail string `json:"user_email,omitempty"` // Email of user who made the change
+	IsAgent   bool   `json:"is_agent"`             // Whether the user is an AI agent
 	// Resolved values for display (when value is an ID)
 	ResolvedOldValue *string `json:"resolved_old_value,omitempty"` // Human-readable version of old_value
 	ResolvedNewValue *string `json:"resolved_new_value,omitempty"` // Human-readable version of new_value
