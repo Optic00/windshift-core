@@ -102,7 +102,7 @@ func (h *TestCoverageHandler) UpdateConfig(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if _, _, ok := h.requireConfigScopeAccess(w, r, r.PathValue("collectionId"), configID, models.PermissionTestManage); !ok {
+	if !h.requireConfigScopeAccess(w, r, r.PathValue("collectionId"), configID, models.PermissionTestManage) {
 		return
 	}
 
@@ -126,7 +126,7 @@ func (h *TestCoverageHandler) DeleteConfig(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if _, _, ok := h.requireConfigScopeAccess(w, r, r.PathValue("collectionId"), configID, models.PermissionTestManage); !ok {
+	if !h.requireConfigScopeAccess(w, r, r.PathValue("collectionId"), configID, models.PermissionTestManage) {
 		return
 	}
 
@@ -314,47 +314,44 @@ func (h *TestCoverageHandler) requireCoverageScopeAccess(w http.ResponseWriter, 
 	return workspaceID, collectionID, true
 }
 
-func (h *TestCoverageHandler) requireConfigScopeAccess(w http.ResponseWriter, r *http.Request, pathID string, configID int, permission string) (workspaceID int, collectionID *int, ok bool) {
+func (h *TestCoverageHandler) requireConfigScopeAccess(w http.ResponseWriter, r *http.Request, pathID string, configID int, permission string) bool {
 	if pathID != "default" {
-		workspaceID, collectionID, ok = h.requireCoverageScopeAccess(w, r, pathID, permission)
-		if !ok || !h.requireConfigInScope(w, r, configID, workspaceID, collectionID) {
-			return 0, nil, false
-		}
-		return workspaceID, collectionID, true
+		workspaceID, collectionID, ok := h.requireCoverageScopeAccess(w, r, pathID, permission)
+		return ok && h.requireConfigInScope(w, r, configID, workspaceID, collectionID)
 	}
 
 	config, err := h.repo.FindConfigByID(configID)
 	if errors.Is(err, repository.ErrNotFound) {
 		respondNotFound(w, r, "test_coverage_configuration")
-		return 0, nil, false
+		return false
 	}
 	if err != nil {
 		respondInternalError(w, r, err)
-		return 0, nil, false
+		return false
 	}
 	if config.CollectionID != nil || config.WorkspaceID == nil {
 		respondNotFound(w, r, "test_coverage_configuration")
-		return 0, nil, false
+		return false
 	}
 
 	user, ok := RequireAuth(w, r)
 	if !ok {
-		return 0, nil, false
+		return false
 	}
 	if h.permissionService == nil {
 		respondNotFound(w, r, "test_coverage_configuration")
-		return 0, nil, false
+		return false
 	}
 	allowed, err := h.permissionService.HasWorkspacePermission(user.ID, *config.WorkspaceID, permission)
 	if err != nil {
 		respondInternalError(w, r, err)
-		return 0, nil, false
+		return false
 	}
 	if !allowed {
 		respondNotFound(w, r, "test_coverage_configuration")
-		return 0, nil, false
+		return false
 	}
-	return *config.WorkspaceID, nil, true
+	return true
 }
 
 func (h *TestCoverageHandler) requireConfigInScope(w http.ResponseWriter, r *http.Request, configID, workspaceID int, collectionID *int) bool {

@@ -1038,7 +1038,7 @@ func (h *AttachmentHandler) Download(w http.ResponseWriter, r *http.Request) {
 
 	// Open file
 	slog.Debug("opening file", slog.String("component", "attachments"), slog.String("file_path", resolvedFilePath))
-	file, err := os.Open(resolvedFilePath)
+	file, err := os.Open(resolvedFilePath) //nolint:gosec // resolvedFilePath is confined by resolveStoredAttachmentPath.
 	if err != nil {
 		slog.Error("failed to open file", slog.String("component", "attachments"), slog.Any("error", err))
 		respondInternalError(w, r, fmt.Errorf("failed to open file: %w", err))

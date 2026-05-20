@@ -88,11 +88,11 @@ func (g *SQLGenerator) jsonExtract(column, field string) (expr string, args []in
 // comes from a trusted DB scan (custom_field_definitions.id), never user input.
 // Inlining lets the Postgres planner match the per-field expression indexes
 // created in handlers/custom_fields.go (idx_cf_items_<id>).
-func (g *SQLGenerator) jsonExtractLiteralKey(column string, fieldID int) (expr string, args []interface{}) {
+func (g *SQLGenerator) jsonExtractLiteralKey(column string, fieldID int) string {
 	if g.dbDriver == "postgres" {
-		return fmt.Sprintf("%s->>'%d'", column, fieldID), nil
+		return fmt.Sprintf("%s->>'%d'", column, fieldID)
 	}
-	return fmt.Sprintf(`NULLIF(%s, '') ->> '$."%d"'`, column, fieldID), nil
+	return fmt.Sprintf(`NULLIF(%s, '') ->> '$."%d"'`, column, fieldID)
 }
 
 // GenerateSQL converts a QL AST to SQL WHERE clause
@@ -1131,18 +1131,16 @@ func (g *SQLGenerator) mapFieldName(fieldName string) (expr string, args []inter
 func (g *SQLGenerator) extractCustomFieldScalar(column, customFieldName string) (sql string, args []interface{}) {
 	if g.customFieldMap != nil {
 		if info, ok := g.customFieldMap[strings.ToLower(customFieldName)]; ok {
-			idSQL, idArgs := g.jsonExtractLiteralKey(column, info.ID)
+			idSQL := g.jsonExtractLiteralKey(column, info.ID)
 			if !g.legacyNameKeyFallback {
-				return idSQL, idArgs
+				return idSQL, nil
 			}
 			nameSQL, nameArgs := g.jsonExtract(column, customFieldName)
 			// Prefer the canonical numeric-key storage used by current writes, but
 			// keep the legacy name-key fallback so older rows (and API clients that
 			// still submit name-keyed custom_field_values) remain queryable via
 			// cf_<name>/custom.<name>.
-			args := append([]interface{}{}, idArgs...)
-			args = append(args, nameArgs...)
-			return fmt.Sprintf("COALESCE(%s, %s)", idSQL, nameSQL), args
+			return fmt.Sprintf("COALESCE(%s, %s)", idSQL, nameSQL), nameArgs
 		}
 	}
 	return g.jsonExtract(column, customFieldName)
@@ -1347,8 +1345,8 @@ func (g *SQLGenerator) referenceExtractExpressionsForKey(column, key string) (di
 		nested = fmt.Sprintf("%s->'%s'->>'id'", column, key)
 		return direct, nested
 	}
-	direct = fmt.Sprintf(`NULLIF(%s, '') ->> '$."%s"'`, column, key)
-	nested = fmt.Sprintf(`NULLIF(%s, '') ->> '$."%s".id'`, column, key)
+	direct = fmt.Sprintf(`NULLIF(%s, '') ->> '$.%q'`, column, key)
+	nested = fmt.Sprintf(`NULLIF(%s, '') ->> '$.%q.id'`, column, key)
 	return direct, nested
 }
 
@@ -1415,7 +1413,7 @@ func (g *SQLGenerator) multiselectExistsExpressionForKey(column, key string, pla
 		)
 	}
 	return fmt.Sprintf(
-		`EXISTS (SELECT 1 FROM json_each(%s, '$."%s"') WHERE CAST(value AS TEXT) IN (%s))`,
+		`EXISTS (SELECT 1 FROM json_each(%s, '$.%q') WHERE CAST(value AS TEXT) IN (%s))`,
 		column, key, values,
 	)
 }
@@ -1425,7 +1423,7 @@ func (g *SQLGenerator) multiselectAnyValueExpressionForKey(column, key string) s
 	if g.dbDriver == "postgres" {
 		return fmt.Sprintf("EXISTS (SELECT 1 FROM jsonb_array_elements_text(%s->'%s'))", column, key)
 	}
-	return fmt.Sprintf(`EXISTS (SELECT 1 FROM json_each(%s, '$."%s"'))`, column, key)
+	return fmt.Sprintf(`EXISTS (SELECT 1 FROM json_each(%s, '$.%q'))`, column, key)
 }
 
 // generateMultiselectCustomFieldComparison handles =/!=/~/IN/NOT IN on a
@@ -1629,8 +1627,7 @@ func (g *SQLGenerator) mapAssetFieldName(fieldName string) (expr string, args []
 
 	// cfid_<id>: stable numeric form, resolves directly to the JSON key.
 	if id, ok := customFieldIDFromIdentifier(fieldName); ok {
-		sql, args := g.jsonExtractLiteralKey(prefix+"a.custom_field_values", id)
-		return sql, args, nil
+		return g.jsonExtractLiteralKey(prefix+"a.custom_field_values", id), nil, nil
 	}
 
 	// Check for custom field syntax: cf_fieldname or custom.fieldname
@@ -1718,8 +1715,7 @@ func (g *SQLGenerator) mapItemFieldName(fieldName string) (expr string, args []i
 
 	// cfid_<id>: stable numeric form, resolves directly to the JSON key.
 	if id, ok := customFieldIDFromIdentifier(fieldName); ok {
-		sql, args := g.jsonExtractLiteralKey(prefix+"i.custom_field_values", id)
-		return sql, args, nil
+		return g.jsonExtractLiteralKey(prefix+"i.custom_field_values", id), nil, nil
 	}
 
 	// Check for custom field syntax: cf_fieldname or custom.fieldname
