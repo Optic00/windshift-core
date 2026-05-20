@@ -1,5 +1,5 @@
 import { api } from '../api.js';
-import { actionMutations } from './actionMutations.svelte.js';
+import { agentRuns } from './agentRuns.svelte.js';
 
 let open = $state(false);
 let messages = $state([]);
@@ -62,7 +62,7 @@ async function sendMessage(text, context) {
     };
     messages = [...messages, assistantMsg];
     extractItemKeys(assistantMsg.toolCalls);
-    notifyActionMutations(assistantMsg.toolCalls);
+    agentRuns.emit();
   } catch (err) {
     error = err.message || 'Failed to get a response';
     const errorMsg = {
@@ -97,24 +97,6 @@ function extractItemKeys(toolCalls) {
   }
   if (Object.keys(newEntries).length > 0) {
     itemKeyMap = { ...itemKeyMap, ...newEntries };
-  }
-}
-
-// Scan tool calls in a chat response for action mutations (create_action,
-// update_action) and emit the affected action ids onto the actionMutations
-// bus, so an open editor can live-reload.
-function notifyActionMutations(toolCalls) {
-  if (!Array.isArray(toolCalls)) return;
-  for (const tc of toolCalls) {
-    if (tc.name !== 'create_action' && tc.name !== 'update_action') continue;
-    if (!tc.result) continue;
-    let parsed;
-    try {
-      parsed = JSON.parse(tc.result);
-    } catch {
-      continue;
-    }
-    if (parsed?.id) actionMutations.emit(parsed.id);
   }
 }
 

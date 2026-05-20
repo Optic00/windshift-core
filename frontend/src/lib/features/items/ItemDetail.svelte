@@ -13,6 +13,7 @@
   import { timerStore } from '../../stores/timerStore.svelte.js';
   import { useItemAttachments } from '../../composables/useItemAttachments.svelte.js';
   import { useWorkItemPoller } from '../../composables/useWorkItemPoller.svelte.js';
+  import { agentRuns } from '../../stores/agentRuns.svelte.js';
   import {
     registerContextCommands,
     unregisterContextCommands,
@@ -62,6 +63,14 @@ import Button from '../../components/Button.svelte';
 
   // Keep the open issue detail in sync with agent/background changes.
   useWorkItemPoller(() => itemDetailStore.refreshCurrentItem());
+
+  // Instant refresh after the AI chat agent completes a run — don't make
+  // the user wait up to 30s for the next poll tick to see the agent's effects.
+  $effect(() => agentRuns.subscribe(() => {
+    itemDetailStore.refreshCurrentItem().catch((err) => {
+      console.error('Failed to refresh item after agent run:', err);
+    });
+  }));
 
   // Modal state
   let modalElement = $state(null);

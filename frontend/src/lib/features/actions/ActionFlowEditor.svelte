@@ -29,7 +29,7 @@
   import UserPicker from '../../pickers/UserPicker.svelte';
   import { actionFlowStore } from '../../stores/actionFlowStore.svelte.js';
   import { permissionStore } from '../../stores';
-  import { actionMutations } from '../../stores/actionMutations.svelte.js';
+  import { agentRuns } from '../../stores/agentRuns.svelte.js';
   import { infoToast } from '../../stores/toasts.svelte.js';
 
   let {
@@ -215,17 +215,17 @@
       loadMilestones();
     }
 
-    // Live-reload: when the AI chat lands a create_action / update_action
-    // for the action we currently have open, refetch and rehydrate so the
-    // canvas reflects the agent's changes immediately.
-    const unsub = actionMutations.subscribe(async (mutatedId) => {
-      if (!action?.id || mutatedId !== action.id) return;
+    // Live-reload after every AI chat agent run, regardless of tool calls:
+    // any agent activity may have touched this action indirectly, so refetch
+    // and rehydrate to reflect the latest server state.
+    const unsub = agentRuns.subscribe(async () => {
+      if (!action?.id) return;
       try {
         const fresh = await api.get(`/workspaces/${action.workspace_id}/actions/${action.id}`);
         actionFlowStore.init(fresh);
         infoToast(t('actions.aiUpdated', 'Action updated by AI'));
       } catch (err) {
-        console.error('Failed to reload action after AI mutation:', err);
+        console.error('Failed to reload action after agent run:', err);
       }
     });
     return unsub;

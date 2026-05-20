@@ -25,6 +25,7 @@
   import DropdownMenu from '../../layout/DropdownMenu.svelte';
   import { backlogStore, workspaceDataStore, statusTransitionStore } from '../../stores/index.js';
   import { useWorkItemPoller } from '../../composables/useWorkItemPoller.svelte.js';
+  import { agentRuns } from '../../stores/agentRuns.svelte.js';
   import { getVisibleColor, hexToRgb } from '../../utils/colorUtils.js';
   import { formatDateShort } from '../../utils/dateFormatter.js';
   import { resolveOptionLabel } from '../../utils/optionUtils.js';
@@ -281,6 +282,12 @@
 
   // Adaptive polling for board items
   const poller = useWorkItemPoller(() => reloadCollection());
+
+  // Instant refresh after an AI chat agent run — surfaces tool-call effects
+  // (created items, status transitions, etc.) without waiting for the poll.
+  $effect(() => agentRuns.subscribe(() => {
+    reloadCollection();
+  }));
 
   // Sprint filter derived values
   let activeLocalSprint = $derived(allIterations.find(i => !i.is_global && i.status === 'active'));
