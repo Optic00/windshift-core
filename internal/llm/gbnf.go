@@ -117,22 +117,16 @@ func (g *gbnfGenerator) generateRule(name string, s *jsonSchema) string {
 }
 
 func (g *gbnfGenerator) generateEnum(values []interface{}) string {
-	var parts []string
+	parts := make([]string, 0, len(values))
 	for _, v := range values {
-		switch val := v.(type) {
-		case string:
-			parts = append(parts, fmt.Sprintf(`"\"%s\""`, val))
-		case float64:
-			parts = append(parts, fmt.Sprintf(`"%v"`, val))
-		case bool:
-			if val {
-				parts = append(parts, `"true"`)
-			} else {
-				parts = append(parts, `"false"`)
-			}
-		case nil:
-			parts = append(parts, `"null"`)
+		encoded, err := json.Marshal(v)
+		if err != nil {
+			continue
 		}
+		parts = append(parts, grammarStringLiteral(string(encoded)))
+	}
+	if len(parts) == 0 {
+		return "null"
 	}
 	return strings.Join(parts, " | ")
 }
@@ -142,48 +136,91 @@ func (g *gbnfGenerator) generateObject(name string, s *jsonSchema) string {
 		return `"{" ws "}"`
 	}
 
-	// Determine which properties to include
-	props := make([]string, 0, len(s.Properties))
-	requiredSet := make(map[string]bool)
+	requiredSet := make(map[string]bool, len(s.Required))
 	for _, r := range s.Required {
 		requiredSet[r] = true
 	}
 
-	// Sort property names for deterministic output
-	var propNames []string
+	// Sort property names for deterministic output.
+	propNames := make([]string, 0, len(s.Properties))
 	for propName := range s.Properties {
 		propNames = append(propNames, propName)
 	}
 	sort.Strings(propNames)
 
-	// If additionalProperties is false, only include defined properties
-	// For GBNF we always only include defined properties
-	// For simplicity, include all defined properties
-	// (In a full implementation, we'd handle optional vs required differently)
-	props = append(props, propNames...)
-
-	if len(props) == 0 {
-		return `"{" ws "}"`
-	}
-
-	// Generate rules for each property's value
-	var propRules []string
-	for _, propName := range props {
+	// Generate rules for each property's value.
+	propRules := make(map[string]string, len(propNames))
+	for _, propName := range propNames {
 		propSchema := s.Properties[propName]
 		valueName := g.uniqueName(name + "_" + propName)
 		valueRule := g.generateRule(valueName, propSchema)
 		g.addRule(valueName, valueRule)
 
-		propRules = append(propRules, fmt.Sprintf(`"\"%s\"" ws ":" ws %s`, propName, valueName))
+		propRules[propName] = fmt.Sprintf(`%s ws ":" ws %s`, jsonStringGrammarLiteral(propName), valueName)
 	}
 
-	// Build the object rule with comma separators
-	if len(propRules) == 1 {
-		return fmt.Sprintf(`"{" ws %s ws "}"`, propRules[0])
+	body := renderObjectPropertySequence(propNames, propRules, requiredSet, 0, false)
+	if body == "" {
+		return `"{" ws "}"`
+	}
+	return fmt.Sprintf(`"{" ws %s ws "}"`, body)
+}
+
+func renderObjectPropertySequence(propNames []string, propRules map[string]string, requiredSet map[string]bool, index int, emitted bool) string {
+	if index >= len(propNames) {
+		return ""
 	}
 
-	// Multiple properties: join with comma
-	return fmt.Sprintf(`"{" ws %s ws "}"`, strings.Join(propRules, ` ws "," ws `))
+	propName := propNames[index]
+	prefix := ""
+	if emitted {
+		prefix = ` ws "," ws `
+	}
+	take := prefix + propRules[propName]
+	if rest := renderObjectPropertySequence(propNames, propRules, requiredSet, index+1, true); rest != "" {
+		take += rest
+	}
+	if requiredSet[propName] {
+		return take
+	}
+
+	skip := renderObjectPropertySequence(propNames, propRules, requiredSet, index+1, emitted)
+	if skip == "" {
+		return fmt.Sprintf(`(%s)?`, take)
+	}
+	return fmt.Sprintf(`(%s | %s)`, skip, take)
+}
+
+func jsonStringGrammarLiteral(value string) string {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		encoded = []byte(`""`)
+	}
+	return grammarStringLiteral(string(encoded))
+}
+
+func grammarStringLiteral(value string) string {
+	var b strings.Builder
+	b.Grow(len(value) + 2)
+	b.WriteByte('"')
+	for _, r := range value {
+		switch r {
+		case '\\':
+			b.WriteString(`\\`)
+		case '"':
+			b.WriteString(`\"`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\r':
+			b.WriteString(`\r`)
+		case '\t':
+			b.WriteString(`\t`)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
 }
 
 func (g *gbnfGenerator) generateArray(name string, s *jsonSchema) string {

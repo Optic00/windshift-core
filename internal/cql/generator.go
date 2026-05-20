@@ -144,12 +144,7 @@ func (g *SQLGenerator) generateNullCheck(node *ASTNode) (sql string, args []inte
 				// Multiselect IS NULL/NOT NULL is a "field has at least one
 				// element" check — no bound value needed, so use a SELECT 1
 				// over the array iterator with no WHERE clause.
-				var expr string
-				if g.dbDriver == "postgres" {
-					expr = fmt.Sprintf("EXISTS (SELECT 1 FROM jsonb_array_elements_text(%s->'%d'))", column, info.ID)
-				} else {
-					expr = fmt.Sprintf(`EXISTS (SELECT 1 FROM json_each(%s, '$."%d"'))`, column, info.ID)
-				}
+				expr := g.multiselectAnyValueExpression(column, info)
 				if negated {
 					return expr, nil, nil
 				}
@@ -166,11 +161,20 @@ func (g *SQLGenerator) generateNullCheck(node *ASTNode) (sql string, args []inte
 				return "NOT " + expr, nil, nil
 			case CFKindReference:
 				column := g.customFieldColumn()
-				direct, nested := g.referenceExtractExpressions(column, info.ID)
+				directExprs, nestedExprs := g.referenceExtractExpressionsForInfo(column, info)
+				allExprs := append(append([]string{}, directExprs...), nestedExprs...)
 				if negated {
-					return fmt.Sprintf("(%s IS NOT NULL OR %s IS NOT NULL)", direct, nested), nil, nil
+					clauses := make([]string, 0, len(allExprs))
+					for _, expr := range allExprs {
+						clauses = append(clauses, fmt.Sprintf("%s IS NOT NULL", expr))
+					}
+					return "(" + strings.Join(clauses, " OR ") + ")", nil, nil
 				}
-				return fmt.Sprintf("(%s IS NULL AND %s IS NULL)", direct, nested), nil, nil
+				clauses := make([]string, 0, len(allExprs))
+				for _, expr := range allExprs {
+					clauses = append(clauses, fmt.Sprintf("%s IS NULL", expr))
+				}
+				return "(" + strings.Join(clauses, " AND ") + ")", nil, nil
 			}
 		}
 	}
@@ -1220,6 +1224,7 @@ func (g *SQLGenerator) lookupCustomFieldInfo(identifier string) (CustomFieldInfo
 	if !ok {
 		return CustomFieldInfo{}, false
 	}
+	info.LegacyName = name
 	return info, true
 }
 
@@ -1247,28 +1252,33 @@ func (g *SQLGenerator) generateReferenceCustomFieldComparison(node *ASTNode, inf
 		return "", nil, err
 	}
 	column := g.customFieldColumn()
-	directExpr, nestedExpr := g.referenceExtractExpressions(column, info.ID)
+	directExprs, nestedExprs := g.referenceExtractExpressionsForInfo(column, info)
+	allExprs := append(append([]string{}, nestedExprs...), directExprs...)
 
 	switch node.Operator {
 	case "=":
-		args := append([]interface{}{}, rightArgs...)
-		args = append(args, rightArgs...)
-		return fmt.Sprintf("(%s = %s OR %s = %s)", directExpr, rightSQL, nestedExpr, rightSQL), args, nil
+		clauses := make([]string, 0, len(allExprs))
+		args := make([]interface{}, 0, len(allExprs)*len(rightArgs))
+		for _, expr := range allExprs {
+			clauses = append(clauses, fmt.Sprintf("%s = %s", expr, rightSQL))
+			args = append(args, rightArgs...)
+		}
+		return "(" + strings.Join(clauses, " OR ") + ")", args, nil
 	case "!=", "<>":
-		// Pick the more specific form (nested.id if it's an object, else the
-		// direct scalar) and compare. The naive (direct != ? AND nested != ?)
-		// drops rows where nested is NULL: `true AND NULL` is NULL, filtered
-		// out. COALESCE collapses the dual storage into a single effective ID
-		// and preserves "missing field doesn't match !=" semantics for free
-		// (COALESCE of two NULLs is NULL).
-		return fmt.Sprintf("COALESCE(%s, %s) != %s", nestedExpr, directExpr, rightSQL), rightArgs, nil
+		// Pick the most specific available form (nested.id if it's an object,
+		// direct scalar otherwise, with legacy name-keyed storage as fallback)
+		// and compare. The naive (direct != ? AND nested != ?) drops rows where
+		// nested is NULL: `true AND NULL` is NULL, filtered out. COALESCE
+		// collapses the dual/legacy storage into a single effective ID and
+		// preserves "missing field doesn't match !=" semantics for free.
+		return fmt.Sprintf("COALESCE(%s) != %s", strings.Join(allExprs, ", "), rightSQL), rightArgs, nil
 	case "~":
 		// LIKE on object JSON is misleading; restrict to the direct scalar form.
 		if len(rightArgs) != 1 {
 			return "", nil, errors.New("~ on reference custom field requires a single string value")
 		}
 		escaped := escapeLikePattern(rightArgs[0])
-		return fmt.Sprintf("(%s LIKE '%%' || ? || '%%' ESCAPE '\\')", directExpr), []interface{}{escaped}, nil
+		return fmt.Sprintf("(COALESCE(%s) LIKE '%%' || ? || '%%' ESCAPE '\\')", strings.Join(directExprs, ", ")), []interface{}{escaped}, nil
 	default:
 		return "", nil, fmt.Errorf("operator %q is not supported on reference custom fields", node.Operator)
 	}
@@ -1290,34 +1300,64 @@ func (g *SQLGenerator) generateReferenceCustomFieldInExpression(node *ASTNode, i
 	}
 	placeholderList := strings.Join(placeholders, ", ")
 	column := g.customFieldColumn()
-	directExpr, nestedExpr := g.referenceExtractExpressions(column, info.ID)
+	directExprs, nestedExprs := g.referenceExtractExpressionsForInfo(column, info)
+	allExprs := append(append([]string{}, nestedExprs...), directExprs...)
 
 	if strings.EqualFold(node.Operator, "NOT IN") {
-		// COALESCE collapses dual storage (scalar 7 vs {"id":7,...}) into one
-		// effective ID, avoiding the `true AND NULL = NULL` row-drop trap of
-		// the naive (direct NOT IN ... AND nested NOT IN ...) form.
-		return fmt.Sprintf("COALESCE(%s, %s) NOT IN (%s)", nestedExpr, directExpr, placeholderList), values, nil
+		// COALESCE collapses dual storage (scalar 7 vs {"id":7,...}) plus
+		// legacy name-keyed storage into one effective ID, avoiding the
+		// `true AND NULL = NULL` row-drop trap of the naive
+		// (direct NOT IN ... AND nested NOT IN ...) form.
+		return fmt.Sprintf("COALESCE(%s) NOT IN (%s)", strings.Join(allExprs, ", "), placeholderList), values, nil
 	}
-	// For IN keep the OR form: matches if EITHER storage form is in the list.
-	// IN doesn't suffer the NULL-and-true bug, and OR lets both legacy scalar
-	// and object-backed rows match.
-	args = make([]interface{}, 0, len(values)*2)
-	args = append(args, values...)
-	args = append(args, values...)
-	return fmt.Sprintf("(%s IN (%s) OR %s IN (%s))", directExpr, placeholderList, nestedExpr, placeholderList), args, nil
+	// For IN keep the OR form: matches if ANY storage form is in the list.
+	// IN doesn't suffer the NULL-and-true bug, and OR lets legacy scalar,
+	// numeric-keyed scalar, and object-backed rows match.
+	clauses := make([]string, 0, len(allExprs))
+	args = make([]interface{}, 0, len(values)*len(allExprs))
+	for _, expr := range allExprs {
+		clauses = append(clauses, fmt.Sprintf("%s IN (%s)", expr, placeholderList))
+		args = append(args, values...)
+	}
+	return "(" + strings.Join(clauses, " OR ") + ")", args, nil
 }
 
 // referenceExtractExpressions returns the SQL expressions to read the direct
 // scalar value and the nested .id from a reference custom-field JSON value.
 func (g *SQLGenerator) referenceExtractExpressions(column string, fieldID int) (direct, nested string) {
+	return g.referenceExtractExpressionsForKey(column, fmt.Sprintf("%d", fieldID))
+}
+
+func (g *SQLGenerator) referenceExtractExpressionsForInfo(column string, info CustomFieldInfo) (directExprs, nestedExprs []string) {
+	direct, nested := g.referenceExtractExpressions(column, info.ID)
+	directExprs = append(directExprs, direct)
+	nestedExprs = append(nestedExprs, nested)
+	if legacyNameKeyFallbackEnabled(g, info) {
+		legacyDirect, legacyNested := g.referenceExtractExpressionsForKey(column, info.LegacyName)
+		directExprs = append(directExprs, legacyDirect)
+		nestedExprs = append(nestedExprs, legacyNested)
+	}
+	return directExprs, nestedExprs
+}
+
+func (g *SQLGenerator) referenceExtractExpressionsForKey(column, key string) (direct, nested string) {
+	key = sqlStringLiteralKey(key)
 	if g.dbDriver == "postgres" {
-		direct = fmt.Sprintf("%s->>'%d'", column, fieldID)
-		nested = fmt.Sprintf("%s->'%d'->>'id'", column, fieldID)
+		direct = fmt.Sprintf("%s->>'%s'", column, key)
+		nested = fmt.Sprintf("%s->'%s'->>'id'", column, key)
 		return direct, nested
 	}
-	direct = fmt.Sprintf(`NULLIF(%s, '') ->> '$."%d"'`, column, fieldID)
-	nested = fmt.Sprintf(`NULLIF(%s, '') ->> '$."%d".id'`, column, fieldID)
+	direct = fmt.Sprintf(`NULLIF(%s, '') ->> '$."%s"'`, column, key)
+	nested = fmt.Sprintf(`NULLIF(%s, '') ->> '$."%s".id'`, column, key)
 	return direct, nested
+}
+
+func legacyNameKeyFallbackEnabled(g *SQLGenerator, info CustomFieldInfo) bool {
+	return g.legacyNameKeyFallback && info.LegacyName != "" && validCustomFieldNameRegex.MatchString(info.LegacyName)
+}
+
+func sqlStringLiteralKey(key string) string {
+	return strings.ReplaceAll(key, `'`, `''`)
 }
 
 // multiselectExistsExpression returns an EXISTS subquery that yields a row when
@@ -1325,18 +1365,67 @@ func (g *SQLGenerator) referenceExtractExpressions(column string, fieldID int) (
 // values. SQLite uses json_each over the JSON path; Postgres uses
 // jsonb_array_elements_text. Values are compared as TEXT so integer option IDs
 // (the common case) and string option IDs both round-trip.
-func (g *SQLGenerator) multiselectExistsExpression(column string, fieldID int, placeholders []string) string {
+func (g *SQLGenerator) multiselectExistsExpression(column string, info CustomFieldInfo, placeholders []string) string {
+	exprs := []string{g.multiselectExistsExpressionForKey(column, fmt.Sprintf("%d", info.ID), placeholders)}
+	if legacyNameKeyFallbackEnabled(g, info) {
+		exprs = append(exprs, g.multiselectExistsExpressionForKey(column, info.LegacyName, placeholders))
+	}
+	if len(exprs) == 1 {
+		return exprs[0]
+	}
+	return "(" + strings.Join(exprs, " OR ") + ")"
+}
+
+func (g *SQLGenerator) multiselectAnyValueExpression(column string, info CustomFieldInfo) string {
+	exprs := []string{g.multiselectAnyValueExpressionForKey(column, fmt.Sprintf("%d", info.ID))}
+	if legacyNameKeyFallbackEnabled(g, info) {
+		exprs = append(exprs, g.multiselectAnyValueExpressionForKey(column, info.LegacyName))
+	}
+	if len(exprs) == 1 {
+		return exprs[0]
+	}
+	return "(" + strings.Join(exprs, " OR ") + ")"
+}
+
+func multiselectStorageKeyCount(g *SQLGenerator, info CustomFieldInfo) int {
+	if legacyNameKeyFallbackEnabled(g, info) {
+		return 2
+	}
+	return 1
+}
+
+func repeatArgs(args []interface{}, copies int) []interface{} {
+	if copies <= 1 || len(args) == 0 {
+		return args
+	}
+	out := make([]interface{}, 0, len(args)*copies)
+	for range copies {
+		out = append(out, args...)
+	}
+	return out
+}
+
+func (g *SQLGenerator) multiselectExistsExpressionForKey(column, key string, placeholders []string) string {
+	key = sqlStringLiteralKey(key)
 	values := strings.Join(placeholders, ", ")
 	if g.dbDriver == "postgres" {
 		return fmt.Sprintf(
-			"EXISTS (SELECT 1 FROM jsonb_array_elements_text(%s->'%d') v WHERE v IN (%s))",
-			column, fieldID, values,
+			"EXISTS (SELECT 1 FROM jsonb_array_elements_text(%s->'%s') v WHERE v IN (%s))",
+			column, key, values,
 		)
 	}
 	return fmt.Sprintf(
-		`EXISTS (SELECT 1 FROM json_each(%s, '$."%d"') WHERE CAST(value AS TEXT) IN (%s))`,
-		column, fieldID, values,
+		`EXISTS (SELECT 1 FROM json_each(%s, '$."%s"') WHERE CAST(value AS TEXT) IN (%s))`,
+		column, key, values,
 	)
+}
+
+func (g *SQLGenerator) multiselectAnyValueExpressionForKey(column, key string) string {
+	key = sqlStringLiteralKey(key)
+	if g.dbDriver == "postgres" {
+		return fmt.Sprintf("EXISTS (SELECT 1 FROM jsonb_array_elements_text(%s->'%s'))", column, key)
+	}
+	return fmt.Sprintf(`EXISTS (SELECT 1 FROM json_each(%s, '$."%s"'))`, column, key)
 }
 
 // generateMultiselectCustomFieldComparison handles =/!=/~/IN/NOT IN on a
@@ -1355,13 +1444,14 @@ func (g *SQLGenerator) generateMultiselectCustomFieldComparison(node *ASTNode, i
 		textArgs[i] = multiselectValueAsText(a)
 	}
 	column := g.customFieldColumn()
-	expr := g.multiselectExistsExpression(column, info.ID, []string{"?"})
+	expr := g.multiselectExistsExpression(column, info, []string{"?"})
+	storageArgs := repeatArgs(textArgs, multiselectStorageKeyCount(g, info))
 
 	switch node.Operator {
 	case "=", "~":
-		return expr, textArgs, nil
+		return expr, storageArgs, nil
 	case "!=", "<>":
-		return "NOT " + expr, textArgs, nil
+		return "NOT " + expr, storageArgs, nil
 	default:
 		return "", nil, fmt.Errorf("operator %q is not supported on multiselect custom fields", node.Operator)
 	}
@@ -1380,11 +1470,12 @@ func (g *SQLGenerator) generateMultiselectCustomFieldInExpression(node *ASTNode,
 		args = append(args, multiselectValueAsText(g.convertLiteral(v)))
 	}
 	column := g.customFieldColumn()
-	expr := g.multiselectExistsExpression(column, info.ID, placeholders)
+	expr := g.multiselectExistsExpression(column, info, placeholders)
+	storageArgs := repeatArgs(args, multiselectStorageKeyCount(g, info))
 	if strings.EqualFold(node.Operator, "NOT IN") {
-		return "NOT " + expr, args, nil
+		return "NOT " + expr, storageArgs, nil
 	}
-	return expr, args, nil
+	return expr, storageArgs, nil
 }
 
 // linkingSubquery builds the EXISTS-subquery body for linking custom fields.

@@ -42,6 +42,10 @@ const (
 type CustomFieldInfo struct {
 	ID   int
 	Kind CustomFieldKind
+	// LegacyName is populated for name-based lookups (cf_<name> / custom.<name>)
+	// so evaluator-level compatibility fallback can also inspect old JSON rows
+	// keyed by the field name. Empty for cfid_<id> lookups.
+	LegacyName string
 	// FieldType is the lowercase field_type string from the DB (e.g. "date",
 	// "number", "text"). The generator uses this to match the per-field
 	// Postgres expression indexes created in handlers/custom_fields.go —
