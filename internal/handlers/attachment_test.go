@@ -6,6 +6,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 
 	"windshift/internal/contextkeys"
@@ -109,6 +110,48 @@ func newMultipartFieldsRequest(t *testing.T, method, target string, fields map[s
 	req := httptest.NewRequest(method, target, &body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	return req
+}
+
+func TestResolveStoredAttachmentPath_RelativeRootPrefixedUploadPath(t *testing.T) {
+	h := &AttachmentHandler{attachmentPath: filepath.Join("data", "e2e-attachment-path-test")}
+
+	resolved, err := h.resolveStoredAttachmentPath(filepath.Join(h.attachmentPath, "items", "123", "file.txt"))
+	if err != nil {
+		t.Fatalf("resolve root-prefixed relative path: %v", err)
+	}
+
+	want, err := filepath.Abs(filepath.Join(h.attachmentPath, "items", "123", "file.txt"))
+	if err != nil {
+		t.Fatalf("abs want: %v", err)
+	}
+	if resolved != want {
+		t.Fatalf("resolved path = %q, want %q", resolved, want)
+	}
+}
+
+func TestResolveStoredAttachmentPath_RelativePathUnderRoot(t *testing.T) {
+	h := &AttachmentHandler{attachmentPath: filepath.Join("data", "e2e-attachment-path-test")}
+
+	resolved, err := h.resolveStoredAttachmentPath(filepath.Join("items", "123", "file.txt"))
+	if err != nil {
+		t.Fatalf("resolve relative path: %v", err)
+	}
+
+	want, err := filepath.Abs(filepath.Join(h.attachmentPath, "items", "123", "file.txt"))
+	if err != nil {
+		t.Fatalf("abs want: %v", err)
+	}
+	if resolved != want {
+		t.Fatalf("resolved path = %q, want %q", resolved, want)
+	}
+}
+
+func TestResolveStoredAttachmentPath_RejectsTraversal(t *testing.T) {
+	h := &AttachmentHandler{attachmentPath: filepath.Join("data", "e2e-attachment-path-test")}
+
+	if _, err := h.resolveStoredAttachmentPath(filepath.Join("..", "outside.txt")); err == nil {
+		t.Fatal("expected traversal path to be rejected")
+	}
 }
 
 func insertAttachment(t *testing.T, db database.Database, entityType string, itemID *int, uploadedBy *int) int {

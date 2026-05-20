@@ -46,6 +46,79 @@ type Migration struct {
 // this Catalog in subsequent commits.
 var Catalog = []Migration{
 	{
+		Version:       "20260520_item_change_log",
+		Name:          "Create item change log for collection delta polling",
+		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='item_change_log'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='item_change_log'",
+		SQLite: `
+			CREATE TABLE IF NOT EXISTS item_change_log (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				item_id INTEGER NOT NULL,
+				workspace_id INTEGER NOT NULL,
+				change_type TEXT NOT NULL CHECK (change_type IN ('upsert', 'delete')),
+				changed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			);
+			CREATE INDEX IF NOT EXISTS idx_item_change_log_workspace_id ON item_change_log(workspace_id, id);
+			CREATE INDEX IF NOT EXISTS idx_item_change_log_item_id ON item_change_log(item_id, id);
+			CREATE TRIGGER IF NOT EXISTS trg_items_change_insert AFTER INSERT ON items
+			BEGIN
+				INSERT INTO item_change_log(item_id, workspace_id, change_type) VALUES (NEW.id, NEW.workspace_id, 'upsert');
+			END;
+			CREATE TRIGGER IF NOT EXISTS trg_items_change_update AFTER UPDATE ON items
+			BEGIN
+				INSERT INTO item_change_log(item_id, workspace_id, change_type)
+				SELECT OLD.id, OLD.workspace_id, 'delete' WHERE OLD.workspace_id <> NEW.workspace_id;
+				INSERT INTO item_change_log(item_id, workspace_id, change_type) VALUES (NEW.id, NEW.workspace_id, 'upsert');
+			END;
+			CREATE TRIGGER IF NOT EXISTS trg_items_change_delete BEFORE DELETE ON items
+			BEGIN
+				INSERT INTO item_change_log(item_id, workspace_id, change_type) VALUES (OLD.id, OLD.workspace_id, 'delete');
+			END;
+			CREATE TRIGGER IF NOT EXISTS trg_collections_change_update AFTER UPDATE OF ql_query, filter_state, workspace_id ON collections
+			BEGIN
+				INSERT INTO item_change_log(item_id, workspace_id, change_type) VALUES (0, COALESCE(NEW.workspace_id, OLD.workspace_id, 0), 'upsert');
+			END;
+		`,
+		Postgres: `
+			CREATE TABLE IF NOT EXISTS item_change_log (
+				id BIGSERIAL PRIMARY KEY,
+				item_id INTEGER NOT NULL,
+				workspace_id INTEGER NOT NULL,
+				change_type TEXT NOT NULL CHECK (change_type IN ('upsert', 'delete')),
+				changed_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+			);
+			CREATE INDEX IF NOT EXISTS idx_item_change_log_workspace_id ON item_change_log(workspace_id, id);
+			CREATE INDEX IF NOT EXISTS idx_item_change_log_item_id ON item_change_log(item_id, id);
+			CREATE OR REPLACE FUNCTION log_item_change() RETURNS trigger AS $$
+			BEGIN
+				IF TG_OP = 'DELETE' THEN
+					INSERT INTO item_change_log(item_id, workspace_id, change_type) VALUES (OLD.id, OLD.workspace_id, 'delete');
+					RETURN OLD;
+				END IF;
+				IF TG_OP = 'UPDATE' AND OLD.workspace_id <> NEW.workspace_id THEN
+					INSERT INTO item_change_log(item_id, workspace_id, change_type) VALUES (OLD.id, OLD.workspace_id, 'delete');
+				END IF;
+				INSERT INTO item_change_log(item_id, workspace_id, change_type) VALUES (NEW.id, NEW.workspace_id, 'upsert');
+				RETURN NEW;
+			END;
+			$$ LANGUAGE plpgsql;
+			CREATE OR REPLACE FUNCTION log_collection_change() RETURNS trigger AS $$
+			BEGIN
+				INSERT INTO item_change_log(item_id, workspace_id, change_type) VALUES (0, COALESCE(NEW.workspace_id, OLD.workspace_id, 0), 'upsert');
+				RETURN NEW;
+			END;
+			$$ LANGUAGE plpgsql;
+			DROP TRIGGER IF EXISTS trg_items_change_insert ON items;
+			DROP TRIGGER IF EXISTS trg_items_change_update ON items;
+			DROP TRIGGER IF EXISTS trg_items_change_delete ON items;
+			DROP TRIGGER IF EXISTS trg_collections_change_update ON collections;
+			CREATE TRIGGER trg_items_change_insert AFTER INSERT ON items FOR EACH ROW EXECUTE FUNCTION log_item_change();
+			CREATE TRIGGER trg_items_change_update AFTER UPDATE ON items FOR EACH ROW EXECUTE FUNCTION log_item_change();
+			CREATE TRIGGER trg_items_change_delete BEFORE DELETE ON items FOR EACH ROW EXECUTE FUNCTION log_item_change();
+			CREATE TRIGGER trg_collections_change_update AFTER UPDATE OF ql_query, filter_state, workspace_id ON collections FOR EACH ROW EXECUTE FUNCTION log_collection_change();
+		`,
+	},
+	{
 		Version: "20260514_email_message_tracking_dedup_key",
 		Name:    "Add dedup_key to email_message_tracking",
 		// Idempotency check: column already present means the migration ran

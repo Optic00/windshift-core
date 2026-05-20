@@ -119,6 +119,7 @@ export default {
     searching: '搜索中...',
     noNotificationPersonalTask: '个人任务不发送通知',
     selectMilestone: '选择里程碑',
+    selectMilestones: '选择里程碑',
     noMilestone: '无里程碑',
     milestones: '里程碑',
     noMilestonesFound: '未找到里程碑',

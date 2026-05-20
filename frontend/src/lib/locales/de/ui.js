@@ -188,6 +188,7 @@ export default {
     searching: 'Suche...',
     noNotificationPersonalTask: 'Persönliche Aufgaben senden keine Benachrichtigungen',
     selectMilestone: 'Meilenstein auswählen',
+    selectMilestones: 'Meilensteine auswählen',
     noMilestone: 'Kein Meilenstein',
     milestones: 'Meilensteine',
     noMilestonesFound: 'Keine Meilensteine gefunden',

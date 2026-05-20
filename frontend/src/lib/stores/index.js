@@ -32,7 +32,12 @@ export { capabilitiesStore } from './capabilities.svelte.js';
 // Methods: collectionStore.loadMoreItems(), collectionStore.loadMoreBacklog(), collectionStore.setItemsPage(page, limit)
 // Also: reloadCollection() to trigger a re-fetch, collectionData for backward compatibility
 // Class-based store with server-side pagination support
-export { collectionData, collectionStore, reloadCollection } from './collectionContext.js';
+export {
+  collectionData,
+  collectionStore,
+  refreshCollectionDeltas,
+  reloadCollection,
+} from './collectionContext.js';
 // Homepage store
 // Access via: homepageStore.recentWorkspaces, homepageStore.notifications,
 // homepageStore.loadDashboardData(), homepageStore.isOnboarding, etc.

@@ -3,7 +3,7 @@
   import { useEventListener } from 'runed';
   import { api } from '../../api.js';
   import { t } from '../../stores/i18n.svelte.js';
-  import { collectionStore, reloadCollection } from '../../stores/collectionContext.js';
+  import { collectionStore, refreshCollectionDeltas, reloadCollection } from '../../stores/collectionContext.js';
   import { useGradientStyles, loadWorkspaceGradient } from '../../stores/workspaceGradient.svelte.js';
   import { List, Plus } from '@lucide/svelte';
   import EmptyState from '../../components/EmptyState.svelte';
@@ -188,8 +188,8 @@
     backlogStore.setCount(workspaceId, collectionStore.backlogPagination?.total ?? collectionStore.backlogItems.length);
   });
 
-  // Adaptive polling for backlog items
-  const poller = useWorkItemPoller(() => reloadCollection());
+  // Adaptive polling for backlog items: use cheap deltas, falling back to full refresh only when needed.
+  const poller = useWorkItemPoller(() => refreshCollectionDeltas());
 
   function openItem(itemId, event) {
     // Don't open item if we're dragging

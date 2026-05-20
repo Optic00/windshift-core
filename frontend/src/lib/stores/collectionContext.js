@@ -2,6 +2,7 @@
 export {
   collectionData,
   collectionStore,
+  refreshCollectionDeltas,
   refreshCollectionItem,
   reloadCollection,
 } from './collectionContext.svelte.js';

@@ -189,6 +189,7 @@ export default {
     searching: 'Pesquisando...',
     noNotificationPersonalTask: 'Tarefas pessoais não enviam notificações',
     selectMilestone: 'Selecionar marco',
+    selectMilestones: 'Selecionar marcos',
     noMilestone: 'Sem marco',
     milestones: 'Marcos',
     noMilestonesFound: 'Nenhum marco encontrado',

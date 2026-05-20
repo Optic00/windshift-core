@@ -1,7 +1,9 @@
 import { api } from '../api.js';
 import {
   fetchCollectionBacklog,
+  fetchCollectionItemChanges,
   fetchCollectionItems,
+  fetchItemsById,
 } from '../features/collections/collectionService.js';
 import { currentRoute, GLOBAL_COLLECTION_VIEWS } from '../router.js';
 import { calcHasMore } from '../utils/paginationUtils.js';
@@ -51,6 +53,7 @@ class CollectionStore {
   #wsId = null;
   #colId = null;
   #loadId = 0;
+  #changesWatermark = null;
   #previousRouteKey = null;
   #unsubscribe = null;
 
@@ -102,6 +105,7 @@ class CollectionStore {
       this.#sortBy = null;
       this.#sortDirection = null;
       this.sortableFields = [];
+      this.#changesWatermark = null;
     }
     this.#wsId = wsId;
     this.#colId = colId;
@@ -110,6 +114,9 @@ class CollectionStore {
     this.loading = true;
 
     try {
+      await this.#primeChangesWatermark();
+      if (loadId !== this.#loadId) return; // stale
+
       const [itemsResult, backlogResult] = await Promise.all([
         fetchCollectionItems(wsId, colId, {
           page: 1,
@@ -256,6 +263,9 @@ class CollectionStore {
     const backlogLimit = Math.max(DEFAULT_PAGE_SIZE, this.backlogItems.length);
 
     try {
+      await this.#primeChangesWatermark();
+      if (loadId !== this.#loadId) return;
+
       const [itemsResult, backlogResult] = await Promise.all([
         fetchCollectionItems(this.#wsId, this.#colId, {
           page: 1,
@@ -340,12 +350,107 @@ class CollectionStore {
   async refreshItem(itemId) {
     try {
       const updated = await api.items.get(itemId);
-      const idx = this.items.findIndex((i) => i.id === itemId);
-      if (idx !== -1) this.items[idx] = updated;
-      const bIdx = this.backlogItems.findIndex((i) => i.id === itemId);
-      if (bIdx !== -1) this.backlogItems[bIdx] = updated;
+      this.#applyUpdatedItem(updated);
     } catch (e) {
       console.error('[collectionStore] refreshItem failed:', e);
+    }
+  }
+
+  /**
+   * Poll for cheap deltas and patch loaded rows by ID. Falls back to a full
+   * refresh when the delta implies structural uncertainty (new visible item,
+   * server-side sort, or backlog membership changes).
+   */
+  async refreshDeltas() {
+    if ((!this.#wsId && !this.#colId) || this.loading) return;
+    if (this.#changesWatermark === null) {
+      await this.#primeChangesWatermark();
+      return;
+    }
+
+    try {
+      const changes = await fetchCollectionItemChanges(this.#wsId, this.#colId, {
+        since: this.#changesWatermark,
+        sub_ql: this.subFilterQL || undefined,
+      });
+      this.#changesWatermark = changes?.watermark ?? this.#changesWatermark;
+
+      if (changes?.requires_full_reload) {
+        await this.refresh();
+        return;
+      }
+
+      const removedIds = new Set(changes?.removed_item_ids ?? []);
+      if (removedIds.size > 0) {
+        this.#removeItemsById(removedIds);
+      }
+
+      const changedIds = [...new Set(changes?.changed_item_ids ?? [])].filter(
+        (id) => !removedIds.has(id)
+      );
+      if (changedIds.length === 0) return;
+
+      const loadedMainIds = new Set(this.items.map((item) => item.id));
+      const loadedBacklogIds = new Set(this.backlogItems.map((item) => item.id));
+      const loadedChangedIds = changedIds.filter(
+        (id) => loadedMainIds.has(id) || loadedBacklogIds.has(id)
+      );
+
+      const hasNewVisibleItem = loadedChangedIds.length !== changedIds.length;
+      const touchesBacklog = loadedChangedIds.some((id) => loadedBacklogIds.has(id));
+      if (hasNewVisibleItem || touchesBacklog || this.#sortBy || this.#sortDirection) {
+        await this.refresh();
+        return;
+      }
+
+      const updatedItems = await fetchItemsById(loadedChangedIds);
+      for (const updated of updatedItems) {
+        this.#applyUpdatedItem(updated);
+      }
+      // Nudge consumers that depend on array identity while preserving item
+      // object identity for rows/cards that were patched in place.
+      this.items = [...this.items];
+      this.backlogItems = [...this.backlogItems];
+    } catch (error) {
+      console.error('[collectionStore] Delta refresh failed:', error);
+    }
+  }
+
+  async #primeChangesWatermark() {
+    const changes = await fetchCollectionItemChanges(this.#wsId, this.#colId, {
+      sub_ql: this.subFilterQL || undefined,
+    });
+    this.#changesWatermark = changes?.watermark ?? 0;
+  }
+
+  #applyUpdatedItem(updated) {
+    const idx = this.items.findIndex((i) => i.id === updated.id);
+    if (idx !== -1) Object.assign(this.items[idx], updated);
+    const bIdx = this.backlogItems.findIndex((i) => i.id === updated.id);
+    if (bIdx !== -1) Object.assign(this.backlogItems[bIdx], updated);
+  }
+
+  #removeItemsById(ids) {
+    const beforeItems = this.items.length;
+    const beforeBacklog = this.backlogItems.length;
+    this.items = this.items.filter((item) => !ids.has(item.id));
+    this.backlogItems = this.backlogItems.filter((item) => !ids.has(item.id));
+
+    const removedItems = beforeItems - this.items.length;
+    const removedBacklog = beforeBacklog - this.backlogItems.length;
+    if (removedItems > 0 && this.itemsPagination) {
+      this.itemsPagination = {
+        ...this.itemsPagination,
+        total: Math.max(0, (this.itemsPagination.total ?? 0) - removedItems),
+      };
+      this.itemsHasMore = calcHasMore(this.itemsPagination);
+    }
+    if (removedBacklog > 0 && this.backlogPagination) {
+      this.backlogPagination = {
+        ...this.backlogPagination,
+        total: Math.max(0, (this.backlogPagination.total ?? 0) - removedBacklog),
+      };
+      this.backlogHasMore = calcHasMore(this.backlogPagination);
     }
   }
 
@@ -368,6 +473,11 @@ export const collectionStore = new CollectionStore();
 /** Trigger a background refresh preserving current pagination */
 export function reloadCollection() {
   collectionStore.refresh();
+}
+
+/** Poll for cheap collection deltas and patch loaded items when safe */
+export function refreshCollectionDeltas() {
+  return collectionStore.refreshDeltas();
 }
 
 /** Refresh a single item in the store without reloading the entire collection */

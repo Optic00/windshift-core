@@ -6,6 +6,8 @@ export const items = {
     return fetchAPI(`/items${buildQueryString(filters)}`);
   },
   get: (id) => fetchAPI(`/items/${id}`),
+  getMany: (ids = []) => Promise.all([...new Set(ids)].map((id) => fetchAPI(`/items/${id}`))),
+  getChanges: (filters = {}) => fetchAPI(`/items/changes${buildQueryString(filters)}`),
   create: (data) =>
     fetchAPI('/items', {
       method: 'POST',

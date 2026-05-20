@@ -152,6 +152,7 @@ export default {
 
     // Milestone Combobox
     selectMilestone: 'Select milestone',
+    selectMilestones: 'Select milestones',
     noMilestone: 'No milestone',
     milestones: 'Milestones',
     noMilestonesFound: 'No milestones found',

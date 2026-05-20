@@ -73,6 +73,35 @@ export async function fetchCollectionBacklog(
 }
 
 /**
+ * Fetches cheap item deltas for the current workspace/collection view.
+ * @param {string|number|null} workspaceId
+ * @param {string|number|null} collectionId
+ * @param {{ since?: number|string, sub_ql?: string }} [options]
+ */
+export async function fetchCollectionItemChanges(
+  workspaceId,
+  collectionId,
+  { since, sub_ql } = {}
+) {
+  const filters = {};
+  if (workspaceId) filters.workspace_id = workspaceId;
+  if (collectionId) filters.collection_id = collectionId;
+  if (since !== undefined && since !== null) filters.since = since;
+  if (sub_ql) filters.sub_ql = sub_ql;
+  return api.items.getChanges(filters);
+}
+
+/**
+ * Fetches a set of items by ID. This is intentionally a client helper rather
+ * than a full collection reload so live updates can patch only loaded rows.
+ * @param {Array<number>} ids
+ */
+export async function fetchItemsById(ids) {
+  if (!ids?.length) return [];
+  return api.items.getMany(ids);
+}
+
+/**
  * Fetches a collection by ID (always fresh from server).
  * @param {string|number} collectionId - The collection ID
  * @returns {Promise<Object|null>} The collection object or null if not found

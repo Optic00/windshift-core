@@ -4,7 +4,7 @@
   import { t } from '../../stores/i18n.svelte.js';
   import { api } from '../../api.js';
   import { navigate } from '../../router.js';
-  import { collectionStore, reloadCollection } from '../../stores/collectionContext.js';
+  import { collectionStore, refreshCollectionDeltas, reloadCollection } from '../../stores/collectionContext.js';
   import { useGradientStyles, loadWorkspaceGradient } from '../../stores/workspaceGradient.svelte.js';
   import QuickAddForm from './QuickAddForm.svelte';
   import { getCollection, checkItemVisibility } from './collectionService.js';
@@ -280,8 +280,8 @@
     }
   }
 
-  // Adaptive polling for board items
-  const poller = useWorkItemPoller(() => reloadCollection());
+  // Adaptive polling for board items: use cheap deltas, falling back to full refresh only when needed.
+  const poller = useWorkItemPoller(() => refreshCollectionDeltas());
 
   // Instant refresh after an AI chat agent run — surfaces tool-call effects
   // (created items, status transitions, etc.) without waiting for the poll.

@@ -191,6 +191,7 @@ export default {
     searching: 'Buscando...',
     noNotificationPersonalTask: 'Las tareas personales no envían notificaciones',
     selectMilestone: 'Seleccionar hito',
+    selectMilestones: 'Seleccionar hitos',
     noMilestone: 'Sin hito',
     milestones: 'Hitos',
     noMilestonesFound: 'No se encontraron hitos',

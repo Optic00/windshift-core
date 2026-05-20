@@ -211,48 +211,6 @@ Examples:
 	},
 }
 
-var milestoneDeleteCmd = &cobra.Command{
-	Use:   "delete <id>",
-	Short: "Delete a milestone",
-	Long: `Delete a milestone.
-
-Examples:
-  ws milestone delete 5`,
-	Args: cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := NewClient()
-		if err != nil {
-			return err
-		}
-
-		wsID, err := resolveRequiredWorkspace(client)
-		if err != nil {
-			return err
-		}
-
-		milestoneID, err := client.ResolveMilestoneID(args[0], &wsID)
-		if err != nil {
-			return fmt.Errorf("failed to resolve milestone: %w", err)
-		}
-
-		if err := client.DeleteMilestoneInWorkspace(wsID, milestoneID); err != nil {
-			return fmt.Errorf("failed to delete milestone: %w", err)
-		}
-
-		switch outputFormat {
-		case "table":
-			_, _ = fmt.Fprintf(stdout, "Deleted milestone %d\n", milestoneID)
-		case "json":
-			NewOutput().Print(map[string]interface{}{
-				"deleted":      true,
-				"milestone_id": milestoneID,
-			})
-		}
-
-		return nil
-	},
-}
-
 // Flags for milestone commands
 var (
 	milestoneStatusFilter string
@@ -276,7 +234,6 @@ func init() {
 	milestoneCmd.AddCommand(milestoneGetCmd)
 	milestoneCmd.AddCommand(milestoneCreateCmd)
 	milestoneCmd.AddCommand(milestoneUpdateCmd)
-	milestoneCmd.AddCommand(milestoneDeleteCmd)
 
 	// List filters
 	milestoneListCmd.Flags().StringVarP(&milestoneStatusFilter, "status", "s", "", "filter by status (planning, in-progress, completed, canceled)")

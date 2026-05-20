@@ -330,7 +330,7 @@
         multiple={true}
         value={itemMsIds}
         workspaceId={item.workspace_id}
-        placeholder="Set milestones"
+        placeholder={t('pickers.selectMilestones')}
         onSelect={async ({ ids }) => {
           await handleItemUpdate('milestone_ids', ids);
         }}

@@ -191,6 +191,7 @@ export default {
     searching: 'جارٍ البحث...',
     noNotificationPersonalTask: 'المهام الشخصية لا ترسل إشعارات',
     selectMilestone: 'اختيار معلم',
+    selectMilestones: 'اختيار المعالم',
     noMilestone: 'بدون معلم',
     milestones: 'المعالم',
     noMilestonesFound: 'لم يتم العثور على معالم',

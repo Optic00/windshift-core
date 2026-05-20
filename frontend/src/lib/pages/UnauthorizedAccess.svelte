@@ -57,7 +57,7 @@
             variant="primary"
             fullWidth={true}
             icon={Home}
-            onclick={() => navigate('/dashboard')}
+            onclick={() => navigate('/')}
           >
             {t('dashboard.title')}
           </Button>
