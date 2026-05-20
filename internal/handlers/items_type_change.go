@@ -176,11 +176,11 @@ func (h *ItemHandler) ChangeType(w http.ResponseWriter, r *http.Request) {
 		h.eventCoordinator.EmitItemUpdated(originalItem, updatedItem, statusChanged, false, user.ID, history, user.Username)
 	}
 	if h.issueSyncService != nil && statusChanged && updatedItem.StatusID != nil {
-		go func(statusID int) {
-			ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
+		go func(ctx context.Context, statusID int) {
+			ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
 			h.issueSyncService.PushStatusToGitHub(ctx, updatedItem.ID, statusID)
-		}(*updatedItem.StatusID)
+		}(r.Context(), *updatedItem.StatusID)
 	}
 
 	respondJSONOK(w, updatedItem)

@@ -275,11 +275,11 @@ func (h *CommentHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 
 	// Push comment to GitHub if issue sync is configured
 	if h.issueSyncService != nil && !reqBody.IsPrivate {
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		go func(ctx context.Context) {
+			ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
 			h.issueSyncService.PushCommentToGitHub(ctx, itemID, int(commentID), authorID, reqBody.Content)
-		}()
+		}(r.Context())
 	}
 
 	// Fetch the created comment with author details for response
@@ -479,11 +479,11 @@ func (h *CommentHandler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 
 	// Push comment edit to GitHub if issue sync is configured
 	if h.issueSyncService != nil && !comment.IsPrivate {
-		go func() {
-			syncCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		go func(reqCtx context.Context) {
+			syncCtx, cancel := context.WithTimeout(reqCtx, 30*time.Second)
 			defer cancel()
 			h.issueSyncService.PushCommentUpdateToGitHub(syncCtx, commentID, ctx.AuthorID, reqBody.Content)
-		}()
+		}(r.Context())
 	}
 
 	respondJSONOK(w, comment)

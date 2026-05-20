@@ -69,6 +69,10 @@ func (s *ApprovalService) SetEventCoordinator(ec *EventCoordinator) {
 	s.eventCoordinator = ec
 }
 
+func approvalServiceBackgroundContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), 30*time.Second)
+}
+
 // ----------------------------------------------------------------------------
 // Resolution: which approval-set-status applies to an item?
 // ----------------------------------------------------------------------------
@@ -76,8 +80,7 @@ func (s *ApprovalService) SetEventCoordinator(ec *EventCoordinator) {
 // GetApprovalSetIDForItem mirrors ConditionService.GetConditionSetIDForItem:
 // item-type override → workspace config-set default → global default.
 // Returns (nil, nil) for personal workspaces or when no approval set is configured.
-func (s *ApprovalService) GetApprovalSetIDForItem(workspaceID int, itemTypeID *int) (*int, error) {
-	ctx := context.Background()
+func (s *ApprovalService) GetApprovalSetIDForItem(ctx context.Context, workspaceID int, itemTypeID *int) (*int, error) {
 	isPersonal, err := s.templateRepo.IsWorkspacePersonal(ctx, workspaceID)
 	if err != nil {
 		return nil, err
@@ -90,15 +93,15 @@ func (s *ApprovalService) GetApprovalSetIDForItem(workspaceID int, itemTypeID *i
 
 // GetApprovalSetStatusForItem returns the approval_set_status (template row)
 // that applies to an item entering statusID, or nil if no approval gates the entry.
-func (s *ApprovalService) GetApprovalSetStatusForItem(workspaceID int, itemTypeID *int, statusID int) (*models.ApprovalSetStatus, error) {
-	approvalSetID, err := s.GetApprovalSetIDForItem(workspaceID, itemTypeID)
+func (s *ApprovalService) GetApprovalSetStatusForItem(ctx context.Context, workspaceID int, itemTypeID *int, statusID int) (*models.ApprovalSetStatus, error) {
+	approvalSetID, err := s.GetApprovalSetIDForItem(ctx, workspaceID, itemTypeID)
 	if err != nil {
 		return nil, err
 	}
 	if approvalSetID == nil {
 		return nil, nil
 	}
-	return s.templateRepo.FindActiveStatusBySetAndStatus(context.Background(), *approvalSetID, statusID)
+	return s.templateRepo.FindActiveStatusBySetAndStatus(ctx, *approvalSetID, statusID)
 }
 
 // ----------------------------------------------------------------------------
@@ -114,7 +117,7 @@ func (s *ApprovalService) RequestApproval(ctx context.Context, itemID, statusID,
 	if err != nil {
 		return nil, fmt.Errorf("load item: %w", err)
 	}
-	ass, err := s.GetApprovalSetStatusForItem(item.WorkspaceID, item.ItemTypeID, statusID)
+	ass, err := s.GetApprovalSetStatusForItem(ctx, item.WorkspaceID, item.ItemTypeID, statusID)
 	if err != nil {
 		return nil, fmt.Errorf("resolve approval set: %w", err)
 	}
@@ -1041,7 +1044,9 @@ func (s *ApprovalService) RefreshApprovers(ctx context.Context, stepInstanceID, 
 // deny_transition_id of an in-flight pending approval on this item. Returns
 // nil if not gated.
 func (s *ApprovalService) IsTransitionGatedByApproval(itemID, fromStatusID, toStatusID int) (*int, error) {
-	return s.runtimeRepo.FindGatedRequestForTransition(context.Background(), itemID, fromStatusID, toStatusID)
+	ctx, cancel := approvalServiceBackgroundContext()
+	defer cancel()
+	return s.runtimeRepo.FindGatedRequestForTransition(ctx, itemID, fromStatusID, toStatusID)
 }
 
 // PendingApprovalSummary is the compact view returned alongside available
@@ -1059,7 +1064,9 @@ type PendingApprovalSummary struct {
 // summary of the pending request. Returns (nil, nil, nil) when no approval is
 // pending.
 func (s *ApprovalService) GetGatedTransitionsForItem(itemID, userID int) ([]int, *PendingApprovalSummary, error) {
-	view, err := s.runtimeRepo.FindGatedTransitionsForItem(context.Background(), itemID, userID)
+	ctx, cancel := approvalServiceBackgroundContext()
+	defer cancel()
+	view, err := s.runtimeRepo.FindGatedTransitionsForItem(ctx, itemID, userID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1082,7 +1089,7 @@ func (s *ApprovalService) MaybeOpenForStatusEntry(ctx context.Context, itemID, s
 	if err != nil {
 		return nil, err
 	}
-	ass, err := s.GetApprovalSetStatusForItem(item.WorkspaceID, item.ItemTypeID, statusID)
+	ass, err := s.GetApprovalSetStatusForItem(ctx, item.WorkspaceID, item.ItemTypeID, statusID)
 	if err != nil {
 		return nil, err
 	}
@@ -1098,7 +1105,9 @@ func (s *ApprovalService) MaybeOpenForStatusEntry(ctx context.Context, itemID, s
 
 // GetPendingForItem returns the single pending approval request for an item, or nil.
 func (s *ApprovalService) GetPendingForItem(itemID int) (*models.ApprovalRequest, error) {
-	id, err := s.runtimeRepo.FindPendingRequestIDForItem(context.Background(), itemID)
+	ctx, cancel := approvalServiceBackgroundContext()
+	defer cancel()
+	id, err := s.runtimeRepo.FindPendingRequestIDForItem(ctx, itemID)
 	if err != nil {
 		return nil, err
 	}
@@ -1110,7 +1119,9 @@ func (s *ApprovalService) GetPendingForItem(itemID int) (*models.ApprovalRequest
 
 // GetTimelineForItem returns all approval requests for an item, ordered by created_at.
 func (s *ApprovalService) GetTimelineForItem(itemID int) ([]*models.ApprovalRequest, error) {
-	ids, err := s.runtimeRepo.FindRequestIDsForItem(context.Background(), itemID)
+	ctx, cancel := approvalServiceBackgroundContext()
+	defer cancel()
+	ids, err := s.runtimeRepo.FindRequestIDsForItem(ctx, itemID)
 	if err != nil {
 		return nil, err
 	}
@@ -1137,13 +1148,17 @@ func (s *ApprovalService) GetForUser(userID int, status string) ([]*models.Appro
 // when the step closes (is_active flipped to 0) or the request is no longer
 // pending, the user immediately loses approver-derived access.
 func (s *ApprovalService) UserHasActivePoolMembershipOnItem(userID, itemID int) (bool, error) {
-	return s.runtimeRepo.ActorHasActivePoolMembershipOnItem(context.Background(), "user_id", userID, itemID)
+	ctx, cancel := approvalServiceBackgroundContext()
+	defer cancel()
+	return s.runtimeRepo.ActorHasActivePoolMembershipOnItem(ctx, "user_id", userID, itemID)
 }
 
 // PortalCustomerHasActivePoolMembershipOnItem is the portal-customer counterpart
 // to UserHasActivePoolMembershipOnItem.
 func (s *ApprovalService) PortalCustomerHasActivePoolMembershipOnItem(customerID, itemID int) (bool, error) {
-	return s.runtimeRepo.ActorHasActivePoolMembershipOnItem(context.Background(), "portal_customer_id", customerID, itemID)
+	ctx, cancel := approvalServiceBackgroundContext()
+	defer cancel()
+	return s.runtimeRepo.ActorHasActivePoolMembershipOnItem(ctx, "portal_customer_id", customerID, itemID)
 }
 
 // GetForPortalCustomer is the customer-flavored counterpart to GetForUser.
@@ -1153,7 +1168,9 @@ func (s *ApprovalService) GetForPortalCustomer(customerID int, status string) ([
 }
 
 func (s *ApprovalService) getForActor(actorColumn string, actorID int, status string) ([]*models.ApprovalRequest, error) {
-	ids, err := s.runtimeRepo.FindRequestIDsForActor(context.Background(), actorColumn, actorID, status)
+	ctx, cancel := approvalServiceBackgroundContext()
+	defer cancel()
+	ids, err := s.runtimeRepo.FindRequestIDsForActor(ctx, actorColumn, actorID, status)
 	if err != nil {
 		return nil, err
 	}
@@ -1170,7 +1187,9 @@ func (s *ApprovalService) getForActor(actorColumn string, actorID int, status st
 
 // GetRequest loads a request with its step instances, approvers, and decisions.
 func (s *ApprovalService) GetRequest(requestID int) (*models.ApprovalRequest, error) {
-	req, err := s.runtimeRepo.FindFullRequestByID(context.Background(), requestID)
+	ctx, cancel := approvalServiceBackgroundContext()
+	defer cancel()
+	req, err := s.runtimeRepo.FindFullRequestByID(ctx, requestID)
 	if errors.Is(err, repository.ErrNotFound) {
 		return nil, sql.ErrNoRows
 	}

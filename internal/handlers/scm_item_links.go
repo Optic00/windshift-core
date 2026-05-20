@@ -194,13 +194,13 @@ func (h *SCMItemLinksHandler) GetItemSCMLinks(w http.ResponseWriter, r *http.Req
 	// Fire background refresh for OAuth PR links if the user is authenticated
 	if hasOAuthPRLinks {
 		if user := utils.GetCurrentUser(r); user != nil {
-			go func() {
-				bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			go func(ctx context.Context) {
+				bgCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 				defer cancel()
 				if err := h.syncService.RefreshOAuthLinksForItem(bgCtx, itemID, user.ID); err != nil {
 					slog.Warn("Background OAuth link refresh failed", slog.String("component", "scm_item_links"), slog.Int("item_id", itemID), slog.Any("error", err))
 				}
-			}()
+			}(r.Context())
 		}
 	}
 }

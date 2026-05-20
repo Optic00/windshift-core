@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"windshift/internal/jira"
 	"windshift/internal/models"
@@ -19,7 +20,8 @@ import (
 
 // executeImport runs the actual import process in the background
 func (h *JiraImportHandler) executeImport(jobID string, req StartImportRequest) {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
+	defer cancel()
 
 	// Update job status to running
 	h.updateJobStatus(jobID, "running", "initializing", nil, "")
@@ -73,16 +75,14 @@ func (h *JiraImportHandler) executeImport(jobID string, req StartImportRequest) 
 	if createdBy.Valid {
 		createdByID = int(createdBy.Int64)
 	}
-	h.executeImportWithClient(jobID, req, client, createdByID)
+	h.executeImportWithClient(ctx, jobID, req, client, createdByID)
 }
 
 // executeImportWithClient runs the import using the provided Jira client.
 // Extracted from executeImport to allow testing with a mock client.
 // createdByUserID is the ID of the user who initiated the import (0 if unknown),
 // used to grant workspace admin access on imported workspaces.
-func (h *JiraImportHandler) executeImportWithClient(jobID string, req StartImportRequest, client jira.Client, createdByUserID int) {
-	ctx := context.Background()
-
+func (h *JiraImportHandler) executeImportWithClient(ctx context.Context, jobID string, req StartImportRequest, client jira.Client, createdByUserID int) {
 	progress := &ImportProgress{
 		Phase:         "initializing",
 		TotalProjects: len(req.ProjectKeys),

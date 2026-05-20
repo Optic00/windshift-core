@@ -59,29 +59,29 @@ type Server struct {
 	listener   net.Listener
 
 	// Services that need cleanup
-	ldapHandler                *handlers.LDAPHandler
-	notificationManager        *handlers.NotificationManager
-	notificationService        *services.NotificationService
-	notificationScheduler      *scheduler.NotificationScheduler
-	recurrenceScheduler        *scheduler.RecurrenceScheduler
-	cfvCleanupScheduler        *scheduler.CFVCleanupScheduler
-	workflowService            *services.WorkflowService
-	actionService              *services.ActionService
-	assetActionService         *services.AssetActionService
-	approvalEscalationSweeper  *services.ApprovalEscalationSweeper
-	emailScheduler             *scheduler.EmailScheduler
-	emailTrackingRetention     *scheduler.EmailTrackingRetentionSweeper
-	briefingScheduler          *scheduler.BriefingScheduler
-	pluginScheduleScheduler    *scheduler.PluginScheduleScheduler
-	activityTracker            *services.ActivityTracker
-	tokenTracker               *services.TokenTracker
-	scmSyncStopChan            chan struct{}
-	issueSyncStopChan          chan struct{}
-	magicLinkStopChan          chan struct{}
-	cleanupStopChan            chan struct{}
-	jiraHostStopChan chan struct{}
-	cleanupTicker    *time.Ticker
-	pluginManager    *plugins.Manager
+	ldapHandler               *handlers.LDAPHandler
+	notificationManager       *handlers.NotificationManager
+	notificationService       *services.NotificationService
+	notificationScheduler     *scheduler.NotificationScheduler
+	recurrenceScheduler       *scheduler.RecurrenceScheduler
+	cfvCleanupScheduler       *scheduler.CFVCleanupScheduler
+	workflowService           *services.WorkflowService
+	actionService             *services.ActionService
+	assetActionService        *services.AssetActionService
+	approvalEscalationSweeper *services.ApprovalEscalationSweeper
+	emailScheduler            *scheduler.EmailScheduler
+	emailTrackingRetention    *scheduler.EmailTrackingRetentionSweeper
+	briefingScheduler         *scheduler.BriefingScheduler
+	pluginScheduleScheduler   *scheduler.PluginScheduleScheduler
+	activityTracker           *services.ActivityTracker
+	tokenTracker              *services.TokenTracker
+	scmSyncStopChan           chan struct{}
+	issueSyncStopChan         chan struct{}
+	magicLinkStopChan         chan struct{}
+	cleanupStopChan           chan struct{}
+	jiraHostStopChan          chan struct{}
+	cleanupTicker             *time.Ticker
+	pluginManager             *plugins.Manager
 
 	// Rate limiters that need cleanup
 	loginRateLimiter    *middleware.RateLimiter
@@ -110,7 +110,7 @@ type Server struct {
 // It initializes all services and handlers but does not start listening.
 func New(cfg Config) (*Server, error) {
 	s := &Server{
-		config:                     cfg,
+		config:            cfg,
 		scmSyncStopChan:   make(chan struct{}),
 		issueSyncStopChan: make(chan struct{}),
 		magicLinkStopChan: make(chan struct{}),
@@ -843,12 +843,13 @@ func (s *Server) initialize() error {
 		webhookSender.SetPluginDispatcher(webhookDispatcher)
 
 		// Register plugin webhooks
-		ctx := context.Background()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		for _, plugin := range s.pluginManager.ListPlugins() {
 			if err := s.pluginManager.RegisterPluginWebhooks(ctx, s.db, plugin); err != nil {
 				slog.Warn("failed to register plugin webhooks", "plugin", plugin.Manifest.Name, "error", err)
 			}
 		}
+		cancel()
 
 		pluginRouter = plugins.NewRouter(s.pluginManager)
 
