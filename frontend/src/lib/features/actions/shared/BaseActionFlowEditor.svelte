@@ -104,7 +104,7 @@
 
   const flowOptions = {
     connectionMode: ConnectionMode.Loose,
-    attributionPosition: 'bottom-left',
+    attributionPosition: /** @type {import('@xyflow/svelte').PanelPosition} */ ('bottom-left'),
     defaultViewport: { x: 0, y: 0, zoom: 0.7 },
     fitViewOptions: { maxZoom: 1, padding: 0.1 },
     minZoom: 0.2,
@@ -121,41 +121,35 @@
     flowStore.setEdges(addEdge(newEdge, flowStore.edges));
   }
 
-  function handleNodesChange(event) {
-    const changes = event.detail;
-    changes.forEach(change => {
-      if (change.type === 'remove') {
-        const node = flowStore.nodes.find(n => n.id === change.id);
-        if (node?.type === 'trigger') {
-          nodes = flowStore.nodes;
-          return;
-        }
-        flowStore.removeNode(change.id);
-        return;
+  function syncLocalFlowFromStore() {
+    const localNodes = nodes;
+    nodes = flowStore.nodes.map(storeNode => {
+      const localNode = localNodes.find(n => n.id === storeNode.id);
+      if (localNode) {
+        return { ...storeNode, position: localNode.position };
       }
-
-      if (change.type === 'position' && !change.dragging) {
-        const node = nodes.find(n => n.id === change.id);
-        if (node?.position) {
-          flowStore.updateNodePosition(change.id, node.position);
-        }
-      }
+      return storeNode;
     });
+    edges = flowStore.edges;
   }
 
-  function handleEdgesChange(event) {
-    const changes = event.detail;
-    const edgesToRemove = changes.filter(c => c.type === 'remove').map(c => c.id);
-    if (edgesToRemove.length > 0) {
-      flowStore.removeEdges(edgesToRemove);
+  function handleDelete({ nodes: deletedNodes = [], edges: deletedEdges = [] } = {}) {
+    deletedNodes.forEach(node => {
+      if (node.type !== 'trigger') {
+        flowStore.removeNode(node.id);
+      }
+    });
+
+    const edgeIds = deletedEdges.map(edge => edge.id);
+    if (edgeIds.length > 0) {
+      flowStore.removeEdges(edgeIds);
     }
+
+    syncLocalFlowFromStore();
   }
 
   function handleReconnectStart() { isReconnecting = true; }
   function handleReconnectEnd() { isReconnecting = false; }
-
-  /** @type {any} */
-  const legacyEditorChangeHandlers = { onnodeschange: handleNodesChange, onedgeschange: handleEdgesChange };
 
   function handleReconnect(oldEdge, newConnection) {
     flowStore.updateEdge(oldEdge.id, {
@@ -295,7 +289,7 @@
       {edgeTypes}
       onconnect={handleConnect}
       onnodeclick={handleNodeClick}
-      {...legacyEditorChangeHandlers}
+      ondelete={handleDelete}
       onreconnectstart={handleReconnectStart}
       onreconnectend={handleReconnectEnd}
       onreconnect={handleReconnect}

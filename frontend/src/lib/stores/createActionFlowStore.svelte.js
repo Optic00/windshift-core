@@ -110,6 +110,7 @@ export function createActionFlowStore({
           id: `node-${node.id}`,
           type: node.node_type,
           position: { x: node.position_x, y: node.position_y },
+          deletable: node.node_type !== 'trigger',
           data: {
             nodeId: node.id,
             config: parseConfig(node.node_config),
@@ -122,6 +123,7 @@ export function createActionFlowStore({
             id: 'node-trigger',
             type: 'trigger',
             position: { x: 100, y: 200 },
+            deletable: false,
             data: {
               triggerType: action.trigger_type,
               config: parseConfig(action.trigger_config),
