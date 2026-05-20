@@ -51,6 +51,7 @@ export default {
       createAsset: 'Criar Ativo',
       relatedItems: 'Para cada item relacionado',
       transitionItem: 'Transicionar item',
+      roundRobinAssign: 'Atribuir em rodízio',
     },
 
     aiUpdated: 'Ação atualizada pela IA',

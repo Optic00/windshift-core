@@ -49,6 +49,7 @@ export default {
       createAsset: 'Asset erstellen',
       relatedItems: 'Für jedes verwandte Element',
       transitionItem: 'Element überführen',
+      roundRobinAssign: 'Round-Robin zuweisen',
     },
 
     aiUpdated: 'Aktion durch KI aktualisiert',

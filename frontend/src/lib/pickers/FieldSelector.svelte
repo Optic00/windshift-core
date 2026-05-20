@@ -110,6 +110,7 @@
       const result = await api.customFields.getAll();
       customFields = (result?.data || []).map(field => ({
         id: `cf_${field.name}`,
+        customFieldId: field.id,
         name: field.name,
         type: field.field_type,
         description: field.description || t('pickers.customFieldDesc', { name: field.name }),

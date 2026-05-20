@@ -987,6 +987,11 @@ type SetFieldNodeConfig struct {
 	FieldName     string `json:"field_name"`
 	CustomFieldID int    `json:"custom_field_id,omitempty"`
 	Value         string `json:"value"` // Can contain {{variable}} templates
+	// DisplayName fields are UI-only hints stored with editor-authored nodes.
+	// Executors ignore them, but the catalog schema must accept them so saving
+	// an edited visual flow does not fail validation.
+	FieldDisplayName string `json:"field_display_name,omitempty"`
+	ValueDisplayName string `json:"value_display_name,omitempty"`
 }
 
 // SetStatusNodeConfig configures a set_status node
@@ -1073,10 +1078,14 @@ type AddCommentNodeConfig struct {
 
 // NotifyUserNodeConfig configures a notify_user node
 type NotifyUserNodeConfig struct {
-	Recipients  []string `json:"recipients"` // "assignee", "creator", or specific user IDs
-	Message     string   `json:"message"`    // Can contain {{variable}} templates
-	Title       string   `json:"title,omitempty"`
-	IncludeLink bool     `json:"include_link"` // Include link to item
+	Recipients []string `json:"recipients,omitempty"` // "assignee", "creator", or specific user IDs
+	// RecipientType is a UI convenience field used by the visual editor. When
+	// Recipients is empty, executors treat "assignee"/"creator" as a single
+	// recipient token. The persisted source of truth remains Recipients.
+	RecipientType string `json:"recipient_type,omitempty"`
+	Message       string `json:"message"` // Can contain {{variable}} templates
+	Title         string `json:"title,omitempty"`
+	IncludeLink   bool   `json:"include_link"` // Include link to item
 }
 
 // ConditionNodeConfig configures a condition node

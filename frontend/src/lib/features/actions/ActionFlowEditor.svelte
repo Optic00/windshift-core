@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { Pencil, RefreshCw, MessageSquare, Bell, HelpCircle, Database, PlusSquare, Box, Globe, Sparkles, Bot, Milestone } from '@lucide/svelte';
+  import { Pencil, RefreshCw, MessageSquare, Bell, HelpCircle, Database, PlusSquare, Box, Globe, Sparkles, Bot, Milestone, UsersRound } from '@lucide/svelte';
   import { toHotkeyString, getShortcutDisplay } from '../../utils/keyboardShortcuts.js';
   import { api } from '../../api.js';
   import FieldSelector from '../../pickers/FieldSelector.svelte';
@@ -15,6 +15,7 @@
   import CreateAssetNode from './nodes/CreateAssetNode.svelte';
   import RelatedItemsNode from './nodes/RelatedItemsNode.svelte';
   import TransitionItemNode from './nodes/TransitionItemNode.svelte';
+  import RoundRobinAssignNode from './nodes/RoundRobinAssignNode.svelte';
   import ContainerRunNode from './nodes/ContainerRunNode.svelte';
   import HTTPRequestNode from './nodes/HTTPRequestNode.svelte';
   import AIExtractNode from './nodes/AIExtractNode.svelte';
@@ -43,6 +44,7 @@
 
   let showPlaceholderModal = $state(false);
   let milestones = $state([]);
+  let teams = $state([]);
 
   // Actor override: null means the action runs under the triggering user's
   // permissions. Only users with the global action.set_actor permission can
@@ -62,6 +64,7 @@
     create_asset: CreateAssetNode,
     related_items: RelatedItemsNode,
     transition_item: TransitionItemNode,
+    round_robin_assign: RoundRobinAssignNode,
     container_run: ContainerRunNode,
     http_request: HTTPRequestNode,
     ai_extract: AIExtractNode,
@@ -82,6 +85,7 @@
     create_asset: 'green',
     related_items: 'indigo',
     transition_item: 'teal',
+    round_robin_assign: 'magenta',
     container_run: 'blue',
     http_request: 'cyan',
     ai_extract: 'purple',
@@ -120,7 +124,7 @@
     ai_agent: Bot,
     transition_item: RefreshCw,
     related_items: RefreshCw,
-    round_robin_assign: Bell,
+    round_robin_assign: UsersRound,
     create_milestone: Milestone,
   };
 
@@ -139,6 +143,9 @@
     container_run: 'actions.nodes.containerRun',
     ai_extract: 'actions.nodes.aiExtract',
     ai_agent: 'actions.nodes.aiAgent',
+    transition_item: 'actions.nodes.transitionItem',
+    related_items: 'actions.nodes.relatedItems',
+    round_robin_assign: 'actions.nodes.roundRobinAssign',
   };
 
   // nodePalette is built from the catalog response on mount. Trigger nodes
@@ -211,6 +218,15 @@
     }
   }
 
+  async function loadTeams() {
+    try {
+      teams = await api.teams.getAll() || [];
+    } catch (err) {
+      console.error('Failed to load teams for action editor', err);
+      teams = [];
+    }
+  }
+
   onMount(() => {
     if (action?.workspace_id) {
       loadCatalog();
@@ -218,6 +234,7 @@
       loadCapabilities('http_client');
       loadCapabilities('llm_connection');
       loadMilestones();
+      loadTeams();
     }
 
     // Live-reload after every AI chat agent run, regardless of tool calls:
@@ -276,16 +293,56 @@
   );
 
   function getFieldSelectorValue(config) {
+    if (config?.target === 'custom_field' && config?.custom_field_id) {
+      return {
+        id: `cf_${config.custom_field_id}`,
+        customFieldId: config.custom_field_id,
+        name: config.field_display_name || `Custom field ${config.custom_field_id}`,
+        isCustom: true,
+      };
+    }
     const backendName = config?.field_name;
     if (!backendName) return null;
+    if (backendName.startsWith('custom_field_')) {
+      const customFieldId = parseInt(backendName.slice('custom_field_'.length), 10);
+      return { id: `cf_${customFieldId}`, customFieldId, name: config.field_display_name || backendName, isCustom: true };
+    }
     if (backendName.startsWith('cf_')) {
-      return { id: backendName, name: backendName.slice(3) };
+      return { id: backendName, name: backendName.slice(3), isCustom: true };
     }
     const fieldId = backendNameToFieldId[backendName];
     if (fieldId === 'milestone') {
       return { id: fieldId, name: t('common.milestone', 'Milestone'), type: 'enum' };
     }
     return fieldId ? { id: fieldId, name: fieldId } : { id: backendName, name: backendName };
+  }
+
+  function backendFieldName(field) {
+    if (!field) return '';
+    if (field.customFieldId) return `custom_field_${field.customFieldId}`;
+    return fieldIdToBackendName[field.id] || field.id;
+  }
+
+  function setFieldConfigForSelection(field) {
+    if (field.customFieldId) {
+      return {
+        target: 'custom_field',
+        custom_field_id: field.customFieldId,
+        field_name: '',
+        field_display_name: field.name,
+        value_display_name: '',
+      };
+    }
+    const fieldName = field.id === 'milestone' ? 'milestone_ids' : backendFieldName(field);
+    const updates = {
+      target: 'column',
+      custom_field_id: 0,
+      field_name: fieldName,
+      field_display_name: field.name,
+      value_display_name: '',
+    };
+    if (fieldName === 'milestone_ids') updates.value = '[]';
+    return updates;
   }
 
   function isMilestoneSetField(config) {
@@ -317,6 +374,14 @@
         .map((id) => milestones.find((m) => m.id === id)?.name)
         .filter(Boolean)
         .join(', '),
+    });
+  }
+
+  function updateRoundRobinTeam(nodeId, teamId) {
+    const parsedTeamId = teamId ? parseInt(teamId, 10) : 0;
+    actionFlowStore.updateNodeConfig(nodeId, {
+      team_id: parsedTeamId,
+      team_name: teams.find((team) => team.id === parsedTeamId)?.name || '',
     });
   }
 </script>
@@ -424,8 +489,7 @@
           placeholder={t('actions.config.anyField')}
           selectedField={getFieldSelectorValue(selectedNode.data?.config)}
           onSelect={(field) => {
-            const backendName = field.id.startsWith('cf_') ? field.id : (fieldIdToBackendName[field.id] || field.id);
-            store.updateNodeConfig(selectedNode.id, { field_name: backendName });
+            store.updateNodeConfig(selectedNode.id, { field_name: backendFieldName(field) });
           }}
           onClear={() => store.updateNodeConfig(selectedNode.id, { field_name: '' })}
         />
@@ -458,20 +522,11 @@
       <div>
         <label for="config-set-field-name" class="block text-xs font-medium mb-1">{t('actions.config.fieldName')}</label>
         <FieldSelector
-          selectedField={selectedNode.data?.config?.field_name ? getFieldSelectorValue(selectedNode.data.config) : null}
+          selectedField={getFieldSelectorValue(selectedNode.data?.config)}
           onSelect={(field) => {
-            const fieldName = field.id === 'milestone' ? 'milestone_ids' : field.id;
-            const updates = {
-              field_name: fieldName,
-              field_display_name: field.name,
-              value_display_name: '',
-            };
-            if (fieldName === 'milestone_ids') {
-              updates.value = '[]';
-            }
-            store.updateNodeConfig(selectedNode.id, updates);
+            store.updateNodeConfig(selectedNode.id, setFieldConfigForSelection(field));
           }}
-          onClear={() => store.updateNodeConfig(selectedNode.id, { field_name: '', field_display_name: '', value: '', value_display_name: '' })}
+          onClear={() => store.updateNodeConfig(selectedNode.id, { target: 'column', custom_field_id: 0, field_name: '', field_display_name: '', value: '', value_display_name: '' })}
         />
       </div>
       <div>
@@ -538,8 +593,8 @@
       <div>
         <label for="config-condition-field" class="block text-xs font-medium mb-1">{t('actions.config.fieldToCheck')}</label>
         <FieldSelector
-          selectedField={selectedNode.data?.config?.field_name ? { id: selectedNode.data.config.field_name, name: selectedNode.data.config.field_name } : null}
-          onSelect={(field) => store.updateNodeConfig(selectedNode.id, { field_name: field.id })}
+          selectedField={getFieldSelectorValue(selectedNode.data?.config)}
+          onSelect={(field) => store.updateNodeConfig(selectedNode.id, { field_name: backendFieldName(field) })}
           onClear={() => store.updateNodeConfig(selectedNode.id, { field_name: '' })}
         />
       </div>
@@ -581,8 +636,8 @@
             { value: 'creator', label: t('actions.recipients.creator') },
             { value: 'specific', label: t('actions.recipients.specific') }
           ]}
-          value={selectedNode.data?.config?.recipient_type || 'assignee'}
-          onchange={(v) => store.updateNodeConfig(selectedNode.id, { recipient_type: v })}
+          value={selectedNode.data?.config?.recipient_type || selectedNode.data?.config?.recipients?.[0] || 'assignee'}
+          onchange={(v) => store.updateNodeConfig(selectedNode.id, { recipient_type: v, recipients: v === 'specific' ? [] : [v] })}
           size="small"
         />
       </div>
@@ -618,6 +673,97 @@
       <CreateAssetConfigPanel {selectedNode} bind:showPlaceholderModal />
     {:else if selectedNode.type === 'create_milestone'}
       <CreateMilestoneConfigPanel {selectedNode} bind:showPlaceholderModal />
+    {:else if selectedNode.type === 'related_items'}
+      <div>
+        <label for="config-related-relation" class="block text-xs font-medium mb-1">Relation</label>
+        <Select
+          id="config-related-relation"
+          options={[
+            { value: 'descendants', label: 'Descendants' },
+            { value: 'direct_children', label: 'Direct children' },
+            { value: 'ancestors', label: 'Ancestors' },
+            { value: 'linked', label: 'Linked items' },
+          ]}
+          value={selectedNode.data?.config?.relation || 'descendants'}
+          onchange={(v) => store.updateNodeConfig(selectedNode.id, { relation: v })}
+          size="small"
+        />
+      </div>
+      <Checkbox
+        checked={selectedNode.data?.config?.cross_workspace || false}
+        onchange={(checked) => store.updateNodeConfig(selectedNode.id, { cross_workspace: checked })}
+        label="Cross workspace"
+        size="small"
+      />
+    {:else if selectedNode.type === 'round_robin_assign'}
+      <div>
+        <label for="config-round-robin-team" class="block text-xs font-medium mb-1">Team</label>
+        <Select
+          id="config-round-robin-team"
+          options={[{ value: '', label: 'Select team' }, ...teams.map(team => ({ value: team.id, label: team.name }))]}
+          value={selectedNode.data?.config?.team_id || ''}
+          onchange={(v) => updateRoundRobinTeam(selectedNode.id, v)}
+          size="small"
+        />
+      </div>
+      <Checkbox
+        checked={selectedNode.data?.config?.skip_on_leave_members ?? true}
+        onchange={(checked) => store.updateNodeConfig(selectedNode.id, { skip_on_leave_members: checked })}
+        label="Skip members on leave"
+        size="small"
+      />
+      <Checkbox
+        checked={selectedNode.data?.config?.use_leave_substitutes ?? true}
+        onchange={(checked) => store.updateNodeConfig(selectedNode.id, { use_leave_substitutes: checked })}
+        label="Use leave substitutes"
+        size="small"
+      />
+    {:else if selectedNode.type === 'transition_item'}
+      {@const target = selectedNode.data?.config?.target || { mode: 'matching_terminal' }}
+      <div>
+        <label for="config-transition-mode" class="block text-xs font-medium mb-1">Transition target</label>
+        <Select
+          id="config-transition-mode"
+          options={[
+            { value: 'matching_terminal', label: 'Match trigger terminal category' },
+            { value: 'explicit', label: 'Explicit status' },
+            { value: 'category_name', label: 'Terminal by category name' },
+          ]}
+          value={target.mode || 'matching_terminal'}
+          onchange={(v) => store.updateNodeConfig(selectedNode.id, { target: { ...target, mode: v } })}
+          size="small"
+        />
+      </div>
+      {#if (target.mode || 'matching_terminal') === 'explicit'}
+        <div>
+          <label for="config-transition-status" class="block text-xs font-medium mb-1">{t('actions.config.targetStatus')}</label>
+          <Select
+            id="config-transition-status"
+            options={[{ value: '', label: t('actions.config.selectStatus') }, ...statuses.map(s => ({ value: s.id, label: s.name }))]}
+            value={target.status_id || ''}
+            onchange={(v) => store.updateNodeConfig(selectedNode.id, { target: { ...target, status_id: v ? parseInt(v) : 0 } })}
+            size="small"
+          />
+        </div>
+      {:else if target.mode === 'category_name'}
+        <div>
+          <label for="config-transition-category" class="block text-xs font-medium mb-1">Category name</label>
+          <input
+            id="config-transition-category"
+            type="text"
+            class="w-full px-3 py-2 border rounded-md text-sm config-input"
+            value={target.category_name || ''}
+            oninput={(e) => store.updateNodeConfig(selectedNode.id, { target: { ...target, category_name: e.currentTarget.value } })}
+            placeholder="Done"
+          />
+        </div>
+      {/if}
+      <Checkbox
+        checked={selectedNode.data?.config?.skip_if_already_matching ?? true}
+        onchange={(checked) => store.updateNodeConfig(selectedNode.id, { skip_if_already_matching: checked })}
+        label="Skip if already matching"
+        size="small"
+      />
     {:else if selectedNode.type === 'container_run'}
       <div>
         <label for="config-container-cap" class="block text-xs font-medium mb-1">{t('actions.config.dockerCapability')}</label>
@@ -658,7 +804,7 @@
           id="config-http-cap"
           options={capabilityOptions('http_client')}
           value={selectedNode.data?.config?.capability_id ? String(selectedNode.data.config.capability_id) : ''}
-          onchange={(v) => store.updateNodeConfig(selectedNode.id, { capability_id: v ? parseInt(v) : null })}
+          onchange={(v) => store.updateNodeConfig(selectedNode.id, { capability_id: v ? parseInt(v) : undefined })}
           size="small"
         />
       </div>

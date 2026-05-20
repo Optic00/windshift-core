@@ -55,6 +55,7 @@ export default {
       aiAgent: 'AI Agent',
       relatedItems: 'For each related item',
       transitionItem: 'Transition item',
+      roundRobinAssign: 'Round-robin assign',
     },
 
     // Toast shown when the AI chat updates the open action via update_action.

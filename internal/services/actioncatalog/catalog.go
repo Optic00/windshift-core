@@ -150,10 +150,24 @@ func Build() (*Catalog, error) {
 	}); err != nil {
 		return nil, err
 	}
-	if err := registerTrigger[emptyConfig](c, triggerSpec{
+	if err := registerTrigger[models.ActionTriggerConfig](c, triggerSpec{
 		Type:        models.ActionTriggerManual,
 		Label:       "Manual",
 		Description: "Action does not auto-fire — it must be invoked explicitly via the execute endpoint. Useful for human-in-the-loop or scripted automations.",
+	}); err != nil {
+		return nil, err
+	}
+	if err := registerTrigger[models.ActionTriggerConfig](c, triggerSpec{
+		Type:        models.ActionTriggerSCMTagCreated,
+		Label:       "SCM: tag created",
+		Description: "Fires when a synced source-control repository discovers a new tag/release ref.",
+	}); err != nil {
+		return nil, err
+	}
+	if err := registerTrigger[models.ActionTriggerConfig](c, triggerSpec{
+		Type:        models.ActionTriggerSCMReleaseBranchCreated,
+		Label:       "SCM: release branch created",
+		Description: "Fires when a synced source-control repository discovers a new release branch ref.",
 	}); err != nil {
 		return nil, err
 	}
@@ -162,10 +176,10 @@ func Build() (*Catalog, error) {
 	// Order here is the order the frontend palette shows. Trigger is
 	// implicit (created by the editor when a new action is built) but
 	// still registered so introspection clients see the complete set.
-	if err := registerNode[emptyConfig](c, nodeSpec{
+	if err := registerNode[models.ActionTriggerConfig](c, nodeSpec{
 		Type:        models.ActionNodeTrigger,
 		Label:       "Trigger",
-		Description: "Entry point of the action graph — emitted by the system when the action's trigger fires.",
+		Description: "Entry point of the action graph — emitted by the system when the action's trigger fires. Its config mirrors the action trigger_config so editors can store trigger filters on the visual trigger node.",
 		Category:    CategoryFlow,
 	}); err != nil {
 		return nil, err
@@ -227,7 +241,7 @@ func Build() (*Catalog, error) {
 	}); err != nil {
 		return nil, err
 	}
-	if err := registerNode[emptyConfig](c, nodeSpec{
+	if err := registerNode[models.RoundRobinAssignNodeConfig](c, nodeSpec{
 		Type:        models.ActionNodeRoundRobinAssign,
 		Label:       "Round-robin assign",
 		Description: "Pick the next assignee from a team rotation and apply it to the current item.",
@@ -283,6 +297,14 @@ func Build() (*Catalog, error) {
 	}); err != nil {
 		return nil, err
 	}
+	if err := registerNode[createMilestoneNodeConfig](c, nodeSpec{
+		Type:        models.ActionNodeCreateMilestone,
+		Label:       "Create milestone",
+		Description: "Upsert a workspace milestone from SCM branch/tag events, optionally promoting status and attaching release information.",
+		Category:    CategoryMutation,
+	}); err != nil {
+		return nil, err
+	}
 
 	// Drift detector: every ActionNodeType constant must be registered.
 	// AllActionNodeTypes is the authoritative list (kept next to the
@@ -302,10 +324,18 @@ func Build() (*Catalog, error) {
 	return c, nil
 }
 
-// emptyConfig is the schema source for node types whose config is
-// effectively `{}` (trigger, manual, round_robin_assign). Using a dedicated
-// type keeps the generic API uniform.
-type emptyConfig struct{}
+// createMilestoneNodeConfig mirrors services.CreateMilestoneNodeConfig without
+// importing the parent services package into the catalog subpackage.
+type createMilestoneNodeConfig struct {
+	NameTemplate        string `json:"name_template,omitempty"`
+	UpsertKeyTemplate   string `json:"upsert_key_template"`
+	StatusOnBranch      string `json:"status_on_branch,omitempty"`
+	StatusOnTag         string `json:"status_on_tag,omitempty"`
+	AttachReleaseOnTag  *bool  `json:"attach_release_on_tag,omitempty"`
+	CategoryID          *int   `json:"category_id,omitempty"`
+	DescriptionTemplate string `json:"description_template,omitempty"`
+	AttachCommitIssues  *bool  `json:"attach_commit_issues,omitempty"`
+}
 
 type nodeSpec struct {
 	Type        models.ActionNodeType
@@ -422,6 +452,7 @@ var AllActionNodeTypes = []models.ActionNodeType{
 	models.ActionNodeHTTPRequest,
 	models.ActionNodeTransitionItem,
 	models.ActionNodeRelatedItems,
+	models.ActionNodeCreateMilestone,
 }
 
 // AllActionTriggerTypes is the trigger counterpart of AllActionNodeTypes.
@@ -431,4 +462,6 @@ var AllActionTriggerTypes = []models.ActionTriggerType{
 	models.ActionTriggerItemUpdated,
 	models.ActionTriggerItemLinked,
 	models.ActionTriggerManual,
+	models.ActionTriggerSCMTagCreated,
+	models.ActionTriggerSCMReleaseBranchCreated,
 }

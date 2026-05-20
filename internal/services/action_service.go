@@ -846,6 +846,10 @@ func (as *ActionService) topologicalSort(nodes []models.ActionNode, edges []mode
 
 // canExecuteNode checks if a node can be executed based on incoming edges
 func (as *ActionService) canExecuteNode(nodeID int, edges []models.ActionEdge, executedNodes map[int]bool, ctx *models.ExecutionContext) bool {
+	return as.canExecuteNodeWithResults(nodeID, edges, executedNodes, ctx.StepResults, len(edges) == 0)
+}
+
+func (as *ActionService) canExecuteNodeWithResults(nodeID int, edges []models.ActionEdge, executedNodes map[int]bool, stepResults []models.StepResult, allowRoot bool) bool {
 	hasIncomingEdge := false
 	for _, edge := range edges {
 		if edge.TargetNodeID == nodeID {
@@ -856,29 +860,33 @@ func (as *ActionService) canExecuteNode(nodeID int, edges []models.ActionEdge, e
 				return false
 			}
 
-			// For condition edges, check the edge type matches the condition result
+			// For condition edges, check the edge type matches the condition result.
 			if edge.EdgeType == "true" || edge.EdgeType == "false" {
-				// Find the condition result in step results
-				for _, result := range ctx.StepResults {
-					if result.NodeID == edge.SourceNodeID {
-						condResult, ok := result.Output["condition_result"].(bool)
-						if !ok {
-							return false
-						}
-						if edge.EdgeType == "true" && !condResult {
-							return false
-						}
-						if edge.EdgeType == "false" && condResult {
-							return false
-						}
+				foundConditionResult := false
+				for _, result := range stepResults {
+					if result.NodeID != edge.SourceNodeID {
+						continue
 					}
+					foundConditionResult = true
+					condResult, ok := result.Output["condition_result"].(bool)
+					if !ok {
+						return false
+					}
+					if edge.EdgeType == "true" && !condResult {
+						return false
+					}
+					if edge.EdgeType == "false" && condResult {
+						return false
+					}
+				}
+				if !foundConditionResult {
+					return false
 				}
 			}
 		}
 	}
 
-	// If no incoming edges, it's a root node (trigger) - always can execute
-	return hasIncomingEdge || len(edges) == 0
+	return hasIncomingEdge || allowRoot
 }
 
 // executeNode executes a single node. Registered NodeExecutors take
@@ -920,6 +928,118 @@ func (as *ActionService) executeNode(node *models.ActionNode, ctx *models.Execut
 	}
 }
 
+func currentActionItemID(ctx *models.ExecutionContext) int {
+	if ctx != nil && ctx.Item != nil {
+		return ctx.Item.ID
+	}
+	if ctx != nil && ctx.Event != nil {
+		return ctx.Event.ItemID
+	}
+	return 0
+}
+
+func currentActionWorkspaceID(ctx *models.ExecutionContext) int {
+	if ctx != nil && ctx.Item != nil {
+		return ctx.Item.WorkspaceID
+	}
+	if ctx != nil && ctx.Event != nil {
+		return ctx.Event.WorkspaceID
+	}
+	return 0
+}
+
+func derefIntPtr(p *int) interface{} {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+func derefFloatPtr(p *float64) interface{} {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+func derefTimePtr(p *time.Time) interface{} {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+func (as *ActionService) currentItemFieldValue(ctx *models.ExecutionContext, fieldName string) interface{} {
+	if ctx == nil {
+		return nil
+	}
+	itemID := currentActionItemID(ctx)
+	if ctx.Item != nil {
+		switch fieldName {
+		case "id", "item_id":
+			return ctx.Item.ID
+		case "workspace_id":
+			return ctx.Item.WorkspaceID
+		}
+		if strings.HasPrefix(fieldName, "custom_field_") {
+			customFieldID, err := strconv.Atoi(strings.TrimPrefix(fieldName, "custom_field_"))
+			if err == nil && customFieldID > 0 {
+				if val, readErr := as.itemRepo.GetItemCustomFieldValue(itemID, customFieldID); readErr == nil {
+					return val
+				}
+			}
+			if ctx.Item.CustomFieldValues != nil {
+				return ctx.Item.CustomFieldValues[strings.TrimPrefix(fieldName, "custom_field_")]
+			}
+		}
+	}
+	if itemID != 0 && repository.IsAllowedItemColumn(fieldName) {
+		var val interface{}
+		if err := as.db.QueryRow(`SELECT `+fieldName+` FROM items WHERE id = ?`, itemID).Scan(&val); err == nil {
+			return val
+		}
+	}
+	if ctx.Item != nil {
+		switch fieldName {
+		case "title":
+			return ctx.Item.Title
+		case "description":
+			return ctx.Item.Description
+		case "status_id":
+			return derefIntPtr(ctx.Item.StatusID)
+		case "priority_id":
+			return derefIntPtr(ctx.Item.PriorityID)
+		case "assignee_id":
+			return derefIntPtr(ctx.Item.AssigneeID)
+		case "creator_id":
+			return derefIntPtr(ctx.Item.CreatorID)
+		case "item_type_id":
+			return derefIntPtr(ctx.Item.ItemTypeID)
+		case "iteration_id":
+			return derefIntPtr(ctx.Item.IterationID)
+		case "project_id":
+			return derefIntPtr(ctx.Item.ProjectID)
+		case "parent_id":
+			return derefIntPtr(ctx.Item.ParentID)
+		case "story_points":
+			return derefFloatPtr(ctx.Item.StoryPoints)
+		case "due_date":
+			return derefTimePtr(ctx.Item.DueDate)
+		case "start_date":
+			return derefTimePtr(ctx.Item.StartDate)
+		case "end_date":
+			return derefTimePtr(ctx.Item.EndDate)
+		}
+	}
+	if val, ok := ctx.Variables[fieldName]; ok {
+		return val
+	}
+	if val, ok := ctx.Variables["new_"+fieldName]; ok {
+		return val
+	}
+	return nil
+}
+
 // executeSetField executes a set_field node. It dispatches to either the
 // items-table column path or the custom-field path based on config.Target
 // (absent/empty == column, for backward compatibility with pre-target configs).
@@ -941,7 +1061,9 @@ func (as *ActionService) executeSetField(node *models.ActionNode, ctx *models.Ex
 }
 
 func (as *ActionService) executeSetFieldMilestones(ctx *models.ExecutionContext, stepResult *models.StepResult, value string) error {
-	if err := as.authorizeWorkspaceMutation(ctx.EffectiveActorID, ctx.Event.WorkspaceID, models.PermissionItemEdit); err != nil {
+	itemID := currentActionItemID(ctx)
+	workspaceID := currentActionWorkspaceID(ctx)
+	if err := as.authorizeWorkspaceMutation(ctx.EffectiveActorID, workspaceID, models.PermissionItemEdit); err != nil {
 		return err
 	}
 
@@ -952,7 +1074,7 @@ func (as *ActionService) executeSetFieldMilestones(ctx *models.ExecutionContext,
 
 	updateService := NewItemUpdateService(as.db).WithPermissionService(as.permissionService)
 	result, err := updateService.UpdateItem(UpdateItemRequest{
-		ItemID:     ctx.Event.ItemID,
+		ItemID:     itemID,
 		UpdateData: map[string]interface{}{"milestone_ids": ids},
 		UserID:     ctx.EffectiveActorID,
 	})
@@ -981,8 +1103,8 @@ func (as *ActionService) executeSetFieldMilestones(ctx *models.ExecutionContext,
 
 	as.EmitActionEvent(&models.ActionEvent{
 		EventType:         models.ActionTriggerItemUpdated,
-		WorkspaceID:       ctx.Event.WorkspaceID,
-		ItemID:            ctx.Event.ItemID,
+		WorkspaceID:       workspaceID,
+		ItemID:            itemID,
 		ActorUserID:       ctx.EffectiveActorID,
 		OldValues:         map[string]interface{}{"milestones": oldValue},
 		NewValues:         map[string]interface{}{"milestones": newValue},
@@ -1033,6 +1155,8 @@ func parseActionMilestoneIDs(value string) ([]int, error) {
 }
 
 func (as *ActionService) executeSetFieldColumn(ctx *models.ExecutionContext, stepResult *models.StepResult, config models.SetFieldNodeConfig, value string) error {
+	itemID := currentActionItemID(ctx)
+	workspaceID := currentActionWorkspaceID(ctx)
 	// Reject field names that aren't part of the items-table allowlist —
 	// config.FieldName is attacker-controlled (workspace admin writes node config),
 	// and it's interpolated into the SELECT below.
@@ -1040,19 +1164,19 @@ func (as *ActionService) executeSetFieldColumn(ctx *models.ExecutionContext, ste
 		return fmt.Errorf("set_field: field %q is not a writable item column", config.FieldName)
 	}
 
-	if err := as.authorizeWorkspaceMutation(ctx.EffectiveActorID, ctx.Event.WorkspaceID, models.PermissionItemEdit); err != nil {
+	if err := as.authorizeWorkspaceMutation(ctx.EffectiveActorID, workspaceID, models.PermissionItemEdit); err != nil {
 		return err
 	}
 
 	// Get current field value for event emission (best effort).
 	// Safe to concatenate config.FieldName because it was just validated against the allowlist.
 	var oldValue interface{}
-	row := as.db.QueryRow(`SELECT `+config.FieldName+` FROM items WHERE id = ?`, ctx.Event.ItemID)
+	row := as.db.QueryRow(`SELECT `+config.FieldName+` FROM items WHERE id = ?`, itemID)
 	if err := row.Scan(&oldValue); err != nil {
 		slog.Debug("failed to get current field value for cascade event",
 			slog.String("component", "actions"),
 			slog.String("field_name", config.FieldName),
-			slog.Int("item_id", ctx.Event.ItemID),
+			slog.Int("item_id", itemID),
 			slog.Any("error", err),
 		)
 	}
@@ -1062,7 +1186,7 @@ func (as *ActionService) executeSetFieldColumn(ctx *models.ExecutionContext, ste
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := as.itemRepo.UpdateFields(tx, ctx.Event.ItemID, map[string]interface{}{
+	if err := as.itemRepo.UpdateFields(tx, itemID, map[string]interface{}{
 		config.FieldName: value,
 	}); err != nil {
 		return err
@@ -1079,8 +1203,8 @@ func (as *ActionService) executeSetFieldColumn(ctx *models.ExecutionContext, ste
 
 	as.EmitActionEvent(&models.ActionEvent{
 		EventType:         models.ActionTriggerItemUpdated,
-		WorkspaceID:       ctx.Event.WorkspaceID,
-		ItemID:            ctx.Event.ItemID,
+		WorkspaceID:       workspaceID,
+		ItemID:            itemID,
 		ActorUserID:       ctx.EffectiveActorID,
 		OldValues:         map[string]interface{}{config.FieldName: oldValue},
 		NewValues:         map[string]interface{}{config.FieldName: value},
@@ -1097,16 +1221,18 @@ func (as *ActionService) executeSetFieldCustom(ctx *models.ExecutionContext, ste
 		return fmt.Errorf("set_field: custom_field target requires a positive custom_field_id")
 	}
 
-	if err := as.authorizeWorkspaceMutation(ctx.EffectiveActorID, ctx.Event.WorkspaceID, models.PermissionItemEdit); err != nil {
+	itemID := currentActionItemID(ctx)
+	workspaceID := currentActionWorkspaceID(ctx)
+	if err := as.authorizeWorkspaceMutation(ctx.EffectiveActorID, workspaceID, models.PermissionItemEdit); err != nil {
 		return err
 	}
 
-	oldValue, err := as.itemRepo.GetItemCustomFieldValue(ctx.Event.ItemID, config.CustomFieldID)
+	oldValue, err := as.itemRepo.GetItemCustomFieldValue(itemID, config.CustomFieldID)
 	if err != nil {
 		slog.Debug("failed to get current custom field value for cascade event",
 			slog.String("component", "actions"),
 			slog.Int("custom_field_id", config.CustomFieldID),
-			slog.Int("item_id", ctx.Event.ItemID),
+			slog.Int("item_id", itemID),
 			slog.Any("error", err),
 		)
 	}
@@ -1116,7 +1242,7 @@ func (as *ActionService) executeSetFieldCustom(ctx *models.ExecutionContext, ste
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := as.itemRepo.SetItemCustomFieldValue(tx, ctx.Event.ItemID, config.CustomFieldID, value); err != nil {
+	if err := as.itemRepo.SetItemCustomFieldValue(tx, itemID, config.CustomFieldID, value); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -1133,8 +1259,8 @@ func (as *ActionService) executeSetFieldCustom(ctx *models.ExecutionContext, ste
 
 	as.EmitActionEvent(&models.ActionEvent{
 		EventType:         models.ActionTriggerItemUpdated,
-		WorkspaceID:       ctx.Event.WorkspaceID,
-		ItemID:            ctx.Event.ItemID,
+		WorkspaceID:       workspaceID,
+		ItemID:            itemID,
 		ActorUserID:       ctx.EffectiveActorID,
 		OldValues:         map[string]interface{}{key: oldValue},
 		NewValues:         map[string]interface{}{key: value},
@@ -1158,13 +1284,15 @@ func (as *ActionService) executeSetStatus(node *models.ActionNode, ctx *models.E
 		return fmt.Errorf("failed to parse set_status config: %w", err)
 	}
 
-	if err := as.authorizeWorkspaceMutation(ctx.EffectiveActorID, ctx.Event.WorkspaceID, models.PermissionItemEdit); err != nil {
+	itemID := currentActionItemID(ctx)
+	workspaceID := currentActionWorkspaceID(ctx)
+	if err := as.authorizeWorkspaceMutation(ctx.EffectiveActorID, workspaceID, models.PermissionItemEdit); err != nil {
 		return err
 	}
 
 	workflowService := NewWorkflowService(as.db)
 	result, err := workflowService.PerformTransition(context.Background(), PerformTransitionRequest{
-		ItemID:      ctx.Event.ItemID,
+		ItemID:      itemID,
 		ToStatusID:  config.StatusID,
 		ActorUserID: ctx.EffectiveActorID,
 		// Automations skip conditions — empty modes enforces only workflow validity.
@@ -1174,7 +1302,7 @@ func (as *ActionService) executeSetStatus(node *models.ActionNode, ctx *models.E
 		if rej := IsTransitionRejection(err); rej != nil {
 			slog.Warn("set_status action rejected by workflow",
 				slog.String("component", "actions"),
-				slog.Int("item_id", ctx.Event.ItemID),
+				slog.Int("item_id", itemID),
 				slog.Int("to_status_id", config.StatusID),
 				slog.String("reason", rej.Code),
 				slog.String("message", rej.Message),
@@ -1204,8 +1332,8 @@ func (as *ActionService) executeSetStatus(node *models.ActionNode, ctx *models.E
 	if !result.NoOp {
 		as.EmitActionEvent(&models.ActionEvent{
 			EventType:         models.ActionTriggerStatusTransition,
-			WorkspaceID:       ctx.Event.WorkspaceID,
-			ItemID:            ctx.Event.ItemID,
+			WorkspaceID:       workspaceID,
+			ItemID:            itemID,
 			ActorUserID:       ctx.EffectiveActorID,
 			OldValues:         map[string]interface{}{"status_id": oldStatusID},
 			NewValues:         map[string]interface{}{"status_id": newStatusID},
@@ -1469,7 +1597,9 @@ func (as *ActionService) executeAddComment(node *models.ActionNode, ctx *models.
 		return fmt.Errorf("failed to parse add_comment config: %w", err)
 	}
 
-	if err := as.authorizeWorkspaceMutation(ctx.EffectiveActorID, ctx.Event.WorkspaceID, models.PermissionItemComment); err != nil {
+	itemID := currentActionItemID(ctx)
+	workspaceID := currentActionWorkspaceID(ctx)
+	if err := as.authorizeWorkspaceMutation(ctx.EffectiveActorID, workspaceID, models.PermissionItemComment); err != nil {
 		return err
 	}
 
@@ -1481,7 +1611,7 @@ func (as *ActionService) executeAddComment(node *models.ActionNode, ctx *models.
 	content := as.substituteVariables(config.Content, ctx)
 
 	result, err := as.commentService.Create(CreateCommentParams{
-		ItemID:      ctx.Event.ItemID,
+		ItemID:      itemID,
 		AuthorID:    ctx.EffectiveActorID,
 		Content:     content,
 		IsPrivate:   config.IsPrivate,
@@ -1516,8 +1646,12 @@ func (as *ActionService) executeNotifyUser(node *models.ActionNode, ctx *models.
 	// Determine recipient user IDs. The context's variable map may or may
 	// not contain assignee/creator — for status_transition / cascade events
 	// it often doesn't — so fall back to the item row.
+	recipients := config.Recipients
+	if len(recipients) == 0 && config.RecipientType != "" {
+		recipients = []string{config.RecipientType}
+	}
 	userIDs := []int{}
-	for _, recipient := range config.Recipients {
+	for _, recipient := range recipients {
 		switch recipient {
 		case "assignee":
 			if id := as.lookupItemUserField(ctx, "assignee_id", "new_assignee_id"); id != 0 {
@@ -1544,8 +1678,8 @@ func (as *ActionService) executeNotifyUser(node *models.ActionNode, ctx *models.
 	// check: notifications do not mutate workspace state.
 	err := as.notificationService.NotifyUsers(
 		userIDs,
-		ctx.Event.WorkspaceID,
-		ctx.Event.ItemID,
+		currentActionWorkspaceID(ctx),
+		currentActionItemID(ctx),
 		ctx.EffectiveActorID,
 		"action",
 		title,
@@ -1570,17 +1704,28 @@ func (as *ActionService) executeNotifyUser(node *models.ActionNode, ctx *models.
 // preferring the execution context's variable map and falling back to a direct
 // DB read of the item. Returns 0 when the field is absent or NULL.
 func (as *ActionService) lookupItemUserField(ctx *models.ExecutionContext, column, varName string) int {
+	if repository.IsAllowedItemColumn(column) {
+		var nid sql.NullInt64
+		if err := as.db.QueryRow(`SELECT `+column+` FROM items WHERE id = ?`, currentActionItemID(ctx)).Scan(&nid); err == nil && nid.Valid {
+			return int(nid.Int64)
+		}
+	}
+	if ctx.Item != nil {
+		switch column {
+		case "assignee_id":
+			if ctx.Item.AssigneeID != nil {
+				return *ctx.Item.AssigneeID
+			}
+		case "creator_id":
+			if ctx.Item.CreatorID != nil {
+				return *ctx.Item.CreatorID
+			}
+		}
+	}
 	if id := utils.InterfaceToIntPtr(ctx.Variables[varName]); id != nil {
 		return *id
 	}
-	if !repository.IsAllowedItemColumn(column) {
-		return 0
-	}
-	var nid sql.NullInt64
-	if err := as.db.QueryRow(`SELECT `+column+` FROM items WHERE id = ?`, ctx.Event.ItemID).Scan(&nid); err != nil || !nid.Valid {
-		return 0
-	}
-	return int(nid.Int64)
+	return 0
 }
 
 // executeCondition executes a condition node
@@ -1590,11 +1735,9 @@ func (as *ActionService) executeCondition(node *models.ActionNode, ctx *models.E
 		return fmt.Errorf("failed to parse condition config: %w", err)
 	}
 
-	// Get the field value from context
-	fieldValue := ctx.Variables[config.FieldName]
-	if fieldValue == nil {
-		fieldValue = ctx.Variables["new_"+config.FieldName]
-	}
+	// Get the field value from the current item (iterator-aware), falling
+	// back to event variables for trigger-level conditions.
+	fieldValue := as.currentItemFieldValue(ctx, config.FieldName)
 
 	// Evaluate the condition
 	result := as.evaluateCondition(fieldValue, config.Operator, config.Value)
@@ -1678,7 +1821,7 @@ func (as *ActionService) substituteVariables(template string, ctx *models.Execut
 		if len(parts) == 2 {
 			switch parts[0] {
 			case "item":
-				if val, ok := ctx.Variables["new_"+parts[1]]; ok {
+				if val := as.currentItemFieldValue(ctx, parts[1]); val != nil {
 					return fmt.Sprintf("%v", val)
 				}
 			case "trigger":
@@ -1818,9 +1961,10 @@ func (as *ActionService) executeUpdateAsset(node *models.ActionNode, ctx *models
 		return nil
 	}
 
+	itemID := currentActionItemID(ctx)
 	// Get the item's custom_field_values to find the asset reference
 	var customFieldValuesJSON sql.NullString
-	err := as.db.QueryRow(`SELECT custom_field_values FROM items WHERE id = ?`, ctx.Event.ItemID).Scan(&customFieldValuesJSON)
+	err := as.db.QueryRow(`SELECT custom_field_values FROM items WHERE id = ?`, itemID).Scan(&customFieldValuesJSON)
 	if err != nil {
 		return fmt.Errorf("failed to get item custom_field_values: %w", err)
 	}
@@ -1927,8 +2071,8 @@ func (as *ActionService) executeUpdateAsset(node *models.ActionNode, ctx *models
 			// Substitute variables in the template
 			sourceValue = as.substituteVariables(mapping.SourceValue, ctx)
 		case "item_field":
-			// Get value from item's custom fields or context
-			if val, ok := ctx.Variables["new_"+mapping.SourceValue]; ok {
+			// Get value from the current item, then its custom fields.
+			if val := as.currentItemFieldValue(ctx, mapping.SourceValue); val != nil {
 				sourceValue = val
 			} else if val, ok := customFieldValues[mapping.SourceValue]; ok {
 				sourceValue = val
@@ -1973,7 +2117,7 @@ func (as *ActionService) executeUpdateAsset(node *models.ActionNode, ctx *models
 	slog.Debug("updated asset via action",
 		slog.String("component", "actions"),
 		slog.Int("asset_id", assetID),
-		slog.Int("item_id", ctx.Event.ItemID),
+		slog.Int("item_id", itemID),
 		slog.Any("mappings", len(config.FieldMappings)),
 	)
 
@@ -2024,9 +2168,10 @@ func (as *ActionService) executeCreateAsset(node *models.ActionNode, ctx *models
 	description := as.substituteVariables(config.Description, ctx)
 	assetTag := as.substituteVariables(config.AssetTag, ctx)
 
+	itemID := currentActionItemID(ctx)
 	// Get item's custom field values for field mapping
 	var customFieldValuesJSON sql.NullString
-	err := as.db.QueryRow(`SELECT custom_field_values FROM items WHERE id = ?`, ctx.Event.ItemID).Scan(&customFieldValuesJSON)
+	err := as.db.QueryRow(`SELECT custom_field_values FROM items WHERE id = ?`, itemID).Scan(&customFieldValuesJSON)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("failed to get item custom_field_values: %w", err)
 	}
@@ -2049,7 +2194,7 @@ func (as *ActionService) executeCreateAsset(node *models.ActionNode, ctx *models
 		case "variable":
 			sourceValue = as.substituteVariables(mapping.SourceValue, ctx)
 		case "item_field":
-			if val, ok := ctx.Variables["new_"+mapping.SourceValue]; ok {
+			if val := as.currentItemFieldValue(ctx, mapping.SourceValue); val != nil {
 				sourceValue = val
 			} else if val, ok := itemCustomFields[mapping.SourceValue]; ok {
 				sourceValue = val
@@ -2111,7 +2256,7 @@ func (as *ActionService) executeCreateAsset(node *models.ActionNode, ctx *models
 	slog.Debug("created asset via action",
 		slog.String("component", "actions"),
 		slog.Int64("asset_id", assetID),
-		slog.Int("item_id", ctx.Event.ItemID),
+		slog.Int("item_id", itemID),
 		slog.String("title", title),
 	)
 
@@ -2147,13 +2292,15 @@ func (as *ActionService) executeRoundRobinAssign(node *models.ActionNode, ctx *m
 		return fmt.Errorf("team_id is required for round_robin_assign")
 	}
 
-	if err := as.authorizeWorkspaceMutation(ctx.EffectiveActorID, ctx.Event.WorkspaceID, models.PermissionItemEdit); err != nil {
+	itemID := currentActionItemID(ctx)
+	workspaceID := currentActionWorkspaceID(ctx)
+	if err := as.authorizeWorkspaceMutation(ctx.EffectiveActorID, workspaceID, models.PermissionItemEdit); err != nil {
 		return err
 	}
 
 	// Get current assignee for event emission
 	var oldAssigneeID sql.NullInt64
-	_ = as.db.QueryRow(`SELECT assignee_id FROM items WHERE id = ?`, ctx.Event.ItemID).Scan(&oldAssigneeID)
+	_ = as.db.QueryRow(`SELECT assignee_id FROM items WHERE id = ?`, itemID).Scan(&oldAssigneeID)
 
 	// Get next assignee via round-robin
 	assigneeID, err := as.teamService.GetNextRoundRobinAssignee(node.ID, config.TeamID, config.SkipOnLeaveMembers, config.UseLeaveSubstitutes)
@@ -2167,7 +2314,7 @@ func (as *ActionService) executeRoundRobinAssign(node *models.ActionNode, ctx *m
 		return fmt.Errorf("begin tx: %w", txErr)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if txErr = as.itemRepo.UpdateFields(tx, ctx.Event.ItemID, map[string]interface{}{
+	if txErr = as.itemRepo.UpdateFields(tx, itemID, map[string]interface{}{
 		"assignee_id": assigneeID,
 	}); txErr != nil {
 		return fmt.Errorf("failed to update item assignee: %w", txErr)
@@ -2192,8 +2339,8 @@ func (as *ActionService) executeRoundRobinAssign(node *models.ActionNode, ctx *m
 	// Emit cascade event
 	as.EmitActionEvent(&models.ActionEvent{
 		EventType:         models.ActionTriggerItemUpdated,
-		WorkspaceID:       ctx.Event.WorkspaceID,
-		ItemID:            ctx.Event.ItemID,
+		WorkspaceID:       workspaceID,
+		ItemID:            itemID,
 		ActorUserID:       ctx.EffectiveActorID,
 		OldValues:         map[string]interface{}{"assignee_id": oldVal},
 		NewValues:         map[string]interface{}{"assignee_id": assigneeID},

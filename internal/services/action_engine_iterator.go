@@ -172,9 +172,10 @@ func (as *ActionService) runBodyOnce(
 	var results []models.StepResult
 
 	for _, n := range sorted {
-		// Reuse the outer canExecuteNode logic so condition-edge gating still
-		// works inside iterator bodies.
-		if !as.canExecuteNode(n.ID, bodyEdges, executed, ctx) {
+		// Reuse the outer canExecuteNode logic with this body's local step
+		// results. Entry nodes have no incoming edge after the iterator->body
+		// edge is stripped, so allow roots within the body subgraph.
+		if !as.canExecuteNodeWithResults(n.ID, bodyEdges, executed, results, true) {
 			continue
 		}
 

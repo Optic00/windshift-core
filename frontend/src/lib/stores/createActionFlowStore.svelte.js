@@ -39,6 +39,22 @@ export function createActionFlowStore({
     return nodeConfigDefaults[nodeType] ? { ...nodeConfigDefaults[nodeType] } : {};
   }
 
+  function normalizeNodeConfig(nodeType, config) {
+    const normalized = { ...(config || {}) };
+
+    if (nodeType === 'notify_user' && normalized.recipient_type && !normalized.recipients?.length) {
+      normalized.recipients = [normalized.recipient_type];
+    }
+
+    // Optional capability on http_request should be omitted when cleared;
+    // JSON null fails the server schema because the field is int-or-absent.
+    if (nodeType === 'http_request' && normalized.capability_id == null) {
+      delete normalized.capability_id;
+    }
+
+    return normalized;
+  }
+
   const store = {
     get nodes() {
       return nodes;
@@ -106,17 +122,23 @@ export function createActionFlowStore({
       triggerType = action.trigger_type || defaultTrigger;
 
       if (action.nodes && action.nodes.length > 0) {
-        nodes = action.nodes.map((node) => ({
-          id: `node-${node.id}`,
-          type: node.node_type,
-          position: { x: node.position_x, y: node.position_y },
-          deletable: node.node_type !== 'trigger',
-          data: {
-            nodeId: node.id,
-            config: parseConfig(node.node_config),
-            ...(includeStatuses ? { statuses: initStatuses } : {}),
-          },
-        }));
+        nodes = action.nodes.map((node) => {
+          const isTrigger = node.node_type === 'trigger';
+          return {
+            id: `node-${node.id}`,
+            type: node.node_type,
+            position: { x: node.position_x, y: node.position_y },
+            deletable: !isTrigger,
+            data: {
+              nodeId: node.id,
+              ...(isTrigger ? { triggerType: action.trigger_type } : {}),
+              config: isTrigger
+                ? parseConfig(action.trigger_config)
+                : parseConfig(node.node_config),
+              ...(includeStatuses ? { statuses: initStatuses } : {}),
+            },
+          };
+        });
       } else {
         nodes = [
           {
@@ -288,15 +310,35 @@ export function createActionFlowStore({
     },
 
     toApiFormat(baseAction = _action) {
+      const trigger = store.triggerNode;
+      const triggerConfig = trigger?.data?.config
+        ? JSON.stringify(normalizeNodeConfig('trigger', trigger.data.config))
+        : baseAction?.trigger_config;
+
       const nodeIdMap = {};
-      const actionNodes = nodes.map((node, index) => {
-        const nodeId = node.data?.nodeId || index + 1;
+      const usedNodeIds = new Set(
+        nodes.map((node) => node.data?.nodeId).filter((id) => Number.isInteger(id) && id > 0)
+      );
+      let nextNodeId = 1;
+      function allocateNodeId() {
+        while (usedNodeIds.has(nextNodeId)) nextNodeId += 1;
+        const id = nextNodeId;
+        usedNodeIds.add(id);
+        nextNodeId += 1;
+        return id;
+      }
+      const actionNodes = nodes.map((node) => {
+        const nodeId = node.data?.nodeId || allocateNodeId();
         nodeIdMap[node.id] = nodeId;
+        const config =
+          node.type === 'trigger'
+            ? normalizeNodeConfig('trigger', parseConfig(triggerConfig))
+            : normalizeNodeConfig(node.type, node.data?.config || {});
         return {
           id: nodeId,
           action_id: baseAction?.id,
           node_type: node.type,
-          node_config: JSON.stringify(node.data?.config || {}),
+          node_config: JSON.stringify(config),
           position_x: node.position.x,
           position_y: node.position.y,
         };
@@ -311,11 +353,6 @@ export function createActionFlowStore({
         source_handle: edge.sourceHandle,
         target_handle: edge.targetHandle,
       }));
-
-      const trigger = store.triggerNode;
-      const triggerConfig = trigger?.data?.config
-        ? JSON.stringify(trigger.data.config)
-        : baseAction?.trigger_config;
 
       return {
         ...baseAction,

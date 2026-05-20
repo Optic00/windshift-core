@@ -53,6 +53,7 @@ func TestNodeTypeCatalogCoverage(t *testing.T) {
 		models.ActionNodeHTTPRequest,
 		models.ActionNodeTransitionItem,
 		models.ActionNodeRelatedItems,
+		models.ActionNodeCreateMilestone,
 	}
 
 	got := map[models.ActionNodeType]bool{}
@@ -81,6 +82,8 @@ func TestTriggerTypeCatalogCoverage(t *testing.T) {
 		models.ActionTriggerItemUpdated,
 		models.ActionTriggerItemLinked,
 		models.ActionTriggerManual,
+		models.ActionTriggerSCMTagCreated,
+		models.ActionTriggerSCMReleaseBranchCreated,
 	}
 
 	cat := actioncatalog.Default()
@@ -116,13 +119,14 @@ func TestNodeConfigSchemaRoundTrip(t *testing.T) {
 		{models.ActionNodeCondition, models.ConditionNodeConfig{FieldName: "status_id", Operator: "eq", Value: "1"}},
 		{models.ActionNodeUpdateAsset, models.UpdateAssetNodeConfig{SourceFieldID: "cf_1", AssetSetID: 1, AssetTypeID: 1}},
 		{models.ActionNodeCreateAsset, models.CreateAssetNodeConfig{AssetSetID: 1, AssetTypeID: 1, Title: "x"}},
-		{models.ActionNodeRoundRobinAssign, map[string]any{}},
+		{models.ActionNodeRoundRobinAssign, models.RoundRobinAssignNodeConfig{TeamID: 1, SkipOnLeaveMembers: true, UseLeaveSubstitutes: true}},
 		{models.ActionNodeAIExtract, models.AIExtractNodeConfig{Prompt: "x", InputField: "i", OutputField: "o", CapabilityID: 1}},
 		{models.ActionNodeAIAgent, models.AIAgentNodeConfig{Prompt: "x", OutputField: "o", CapabilityID: 1}},
 		{models.ActionNodeContainerRun, models.ContainerRunNodeConfig{CapabilityID: 1, OutputField: "o", TimeoutSecs: 60}},
 		{models.ActionNodeHTTPRequest, models.HTTPRequestNodeConfig{Method: "GET", URLTemplate: "https://x", OutputField: "o"}},
 		{models.ActionNodeTransitionItem, models.TransitionItemNodeConfig{}},
 		{models.ActionNodeRelatedItems, models.RelatedItemsNodeConfig{Relation: "descendants"}},
+		{models.ActionNodeCreateMilestone, map[string]any{"upsert_key_template": "{{ref.short}}"}},
 	}
 
 	for _, c := range cases {
@@ -158,6 +162,89 @@ func TestNodeConfigSchemaRoundTrip(t *testing.T) {
 
 // TestValidateRejectsBrokenShapes covers the negative cases: unknown
 // trigger, unknown node type, invalid JSON config, dangling edge.
+func TestValidateAcceptsEditorAuthoredShapes(t *testing.T) {
+	cat := actioncatalog.Default()
+	trigger := models.ActionNode{ID: 1, NodeType: models.ActionNodeTrigger, NodeConfig: `{}`}
+	edge := models.ActionEdge{SourceNodeID: 1, TargetNodeID: 2, EdgeType: "default"}
+
+	cases := []struct {
+		name          string
+		triggerType   models.ActionTriggerType
+		triggerConfig string
+		node          models.ActionNode
+	}{
+		{
+			name:          "set_field display props from UI",
+			triggerType:   models.ActionTriggerManual,
+			triggerConfig: `{}`,
+			node: models.ActionNode{ID: 2, NodeType: models.ActionNodeSetField,
+				NodeConfig: `{"field_name":"description","field_display_name":"Description","value":"x","value_display_name":"X"}`},
+		},
+		{
+			name:          "notify_user recipient_type from UI",
+			triggerType:   models.ActionTriggerManual,
+			triggerConfig: `{}`,
+			node: models.ActionNode{ID: 2, NodeType: models.ActionNodeNotifyUser,
+				NodeConfig: `{"recipient_type":"assignee","recipients":[],"message":"hi","include_link":true}`},
+		},
+		{
+			name:          "related_items palette default",
+			triggerType:   models.ActionTriggerManual,
+			triggerConfig: `{}`,
+			node:          models.ActionNode{ID: 2, NodeType: models.ActionNodeRelatedItems, NodeConfig: `{"relation":"descendants","cross_workspace":false}`},
+		},
+		{
+			name:          "transition_item palette default",
+			triggerType:   models.ActionTriggerManual,
+			triggerConfig: `{}`,
+			node:          models.ActionNode{ID: 2, NodeType: models.ActionNodeTransitionItem, NodeConfig: `{"target":{"mode":"matching_terminal"},"skip_if_already_matching":true}`},
+		},
+		{
+			name:          "round_robin runtime config",
+			triggerType:   models.ActionTriggerManual,
+			triggerConfig: `{}`,
+			node: models.ActionNode{ID: 2, NodeType: models.ActionNodeRoundRobinAssign,
+				NodeConfig: `{"team_id":1,"skip_on_leave_members":true,"use_leave_substitutes":true}`},
+		},
+		{
+			name:          "create_milestone SCM template config",
+			triggerType:   models.ActionTriggerSCMTagCreated,
+			triggerConfig: `{}`,
+			node: models.ActionNode{ID: 2, NodeType: models.ActionNodeCreateMilestone,
+				NodeConfig: `{"name_template":"Release {{ref.short}}","upsert_key_template":"{{ref.short}}","status_on_branch":"planning","status_on_tag":"in-progress","attach_release_on_tag":true,"attach_commit_issues":true}`},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			errs := actioncatalog.Validate(cat, actioncatalog.ActionDefinition{
+				Name:          "x",
+				TriggerType:   c.triggerType,
+				TriggerConfig: c.triggerConfig,
+				Nodes:         []models.ActionNode{trigger, c.node},
+				Edges:         []models.ActionEdge{edge},
+			}, 0, nil)
+			if len(errs) != 0 {
+				t.Fatalf("expected editor-authored shape to validate, got %v", errs)
+			}
+		})
+	}
+
+	t.Run("manual trigger accepts cascade flag", func(t *testing.T) {
+		errs := actioncatalog.Validate(cat, actioncatalog.ActionDefinition{
+			Name:          "x",
+			TriggerType:   models.ActionTriggerManual,
+			TriggerConfig: `{"respond_to_cascades":true}`,
+			Nodes: []models.ActionNode{
+				{ID: 1, NodeType: models.ActionNodeTrigger, NodeConfig: `{"respond_to_cascades":true}`},
+			},
+		}, 0, nil)
+		if len(errs) != 0 {
+			t.Fatalf("expected manual cascade flag to validate, got %v", errs)
+		}
+	})
+}
+
 func TestValidateRejectsBrokenShapes(t *testing.T) {
 	cat := actioncatalog.Default()
 
@@ -368,5 +455,19 @@ func TestValidateRejectsBrokenShapes(t *testing.T) {
 			t.Errorf("expected trigger_config path; got %v", errs)
 		}
 	})
-}
 
+	t.Run("trigger node accepts status transition filters", func(t *testing.T) {
+		def := actioncatalog.ActionDefinition{
+			Name:          "x",
+			TriggerType:   models.ActionTriggerStatusTransition,
+			TriggerConfig: `{"to_status_id": 3}`,
+			Nodes: []models.ActionNode{
+				{ID: 1, NodeType: models.ActionNodeTrigger, NodeConfig: `{"to_status_id": 3}`},
+			},
+		}
+		errs := actioncatalog.Validate(cat, def, 0, nil)
+		if len(errs) != 0 {
+			t.Fatalf("expected trigger node status filter to validate, got %v", errs)
+		}
+	})
+}

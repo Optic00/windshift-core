@@ -50,6 +50,7 @@ export default {
       createAsset: 'إنشاء أصل',
       relatedItems: 'لكل عنصر مرتبط',
       transitionItem: 'نقل العنصر',
+      roundRobinAssign: 'تعيين بالتناوب',
     },
 
     aiUpdated: 'تم تحديث الإجراء بواسطة الذكاء الاصطناعي',
