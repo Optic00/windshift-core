@@ -14,13 +14,13 @@ export const toasts = {
   },
   subscribe(fn) {
     // Simple subscription for compatibility
-    $effect.root(() => {
+    const dispose = $effect.root(() => {
       $effect(() => {
         fn(toastsState);
       });
     });
     fn(toastsState);
-    return () => {};
+    return dispose;
   },
 };
 
@@ -34,6 +34,7 @@ export const toasts = {
  * @param {boolean} [options.showCloseButton=true] - Show close button
  * @param {boolean} [options.clickable=false] - Whether the toast is clickable
  * @param {Function} [options.onClick] - Callback when toast is clicked (only if clickable)
+ * @param {Function} [options.onDismiss] - Callback when toast is removed for any reason
  * @param {string} [options.actionLabel] - Optional inline action label
  * @param {string} [options.keyboardHint] - Optional keyboard shortcut hint for the action
  * @returns {number} Toast ID
@@ -49,6 +50,7 @@ export function addToast(options) {
     showCloseButton: options.showCloseButton ?? true,
     clickable: options.clickable ?? false,
     onClick: options.onClick || null,
+    onDismiss: options.onDismiss || null,
     actionLabel: options.actionLabel || '',
     keyboardHint: options.keyboardHint || '',
     createdAt: Date.now(),
@@ -65,7 +67,15 @@ export function addToast(options) {
  * @param {number} id - Toast ID to remove
  */
 export function removeToast(id) {
-  toastsState = toastsState.filter((toast) => toast.id !== id);
+  const toast = toastsState.find((entry) => entry.id === id);
+  toastsState = toastsState.filter((entry) => entry.id !== id);
+  if (toast?.onDismiss) {
+    try {
+      toast.onDismiss();
+    } catch (err) {
+      console.error('toast onDismiss callback threw:', err);
+    }
+  }
 }
 
 /**

@@ -674,6 +674,8 @@
 
   // Listen for create modal events and workspace refresh from other components
   onMount(() => {
+    const pendingTimeouts = new Set();
+
     function handleShowCreateModal(event) {
       const detail = event.detail || {};
 
@@ -689,11 +691,13 @@
           ? parseInt(detail.workspaceId, 10)
           : detail.workspaceId;
 
-        setTimeout(() => {
+        const timeoutId = setTimeout(() => {
+          pendingTimeouts.delete(timeoutId);
           window.dispatchEvent(new CustomEvent('set-create-workspace', {
             detail: { workspaceId }
           }));
         }, detail.type ? 250 : 200);
+        pendingTimeouts.add(timeoutId);
       }
     }
 
@@ -714,6 +718,8 @@
       window.removeEventListener('show-create-modal', handleShowCreateModal);
       window.removeEventListener('refresh-workspaces', handleRefreshWorkspaces);
       window.removeEventListener('refresh-workspace-data', handleRefreshWorkspaceData);
+      for (const id of pendingTimeouts) clearTimeout(id);
+      pendingTimeouts.clear();
     };
   });
 

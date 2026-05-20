@@ -75,6 +75,7 @@ function createAuthStore() {
 
         // Handle policy-related responses
         if (response.sso_required) {
+          clearStores(user, session);
           isAuthenticated.set(false);
           loading.set(false);
           error.set(response.policy_message || 'SSO login required');
@@ -87,14 +88,14 @@ function createAuthStore() {
         }
 
         if (response.success) {
-          user.set(response.user);
+          // Get session details before marking the store authenticated so a
+          // follow-up failure cannot leave user/isAuthenticated inconsistent.
+          const sessionResponse = await api.auth.getCurrentUser();
+          user.set(sessionResponse.user || response.user);
+          session.set(sessionResponse.session);
           isAuthenticated.set(true);
           loading.set(false);
           error.set(null);
-
-          // Get session details
-          const sessionResponse = await api.auth.getCurrentUser();
-          session.set(sessionResponse.session);
 
           // Return enrollment status if required
           return {
@@ -103,6 +104,7 @@ function createAuthStore() {
             policy_message: response.policy_message,
           };
         } else {
+          clearStores(user, session);
           isAuthenticated.set(false);
           loading.set(false);
           error.set(response.message || 'Login failed');
@@ -111,6 +113,7 @@ function createAuthStore() {
       } catch (err) {
         // Check if error response contains policy info
         if (err.sso_required) {
+          clearStores(user, session);
           isAuthenticated.set(false);
           loading.set(false);
           error.set(err.policy_message || 'SSO login required');
@@ -121,6 +124,7 @@ function createAuthStore() {
           };
         }
 
+        clearStores(user, session);
         isAuthenticated.set(false);
         loading.set(false);
         error.set(err.message || 'Login failed');

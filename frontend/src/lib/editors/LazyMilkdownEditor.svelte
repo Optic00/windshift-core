@@ -5,7 +5,7 @@
   let {
     content = $bindable(''), placeholder = '', readonly = false,
     showToolbar = false, hideToolbarUntilFocus = false, itemId = null, entityType = null,
-    entityId = null, onImageInsert = null, isPersonalWorkspace = false, compact = false,
+    entityId = null, onImageInsert = null, onContentChange = null, isPersonalWorkspace = false, compact = false,
     customUploadFn = null, downloadUrlBase = '/api/attachments'
   } = $props();
 
@@ -93,6 +93,7 @@
     {entityType}
     {entityId}
     {onImageInsert}
+    {onContentChange}
     {isPersonalWorkspace}
     {compact}
     {customUploadFn}

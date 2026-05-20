@@ -13,6 +13,7 @@ class TimerStore {
 
   // === Private Interval Refs ===
   #timerInterval = null;
+  #timerStartTimeUTC = null;
   #syncInterval = null;
 
   // === Derived Values ===
@@ -61,11 +62,23 @@ class TimerStore {
    * Start the timer interval to update duration every second
    */
   #startTimerInterval(startTimeUTC) {
-    if (this.#timerInterval) return; // Already running
+    const startTime = Number(startTimeUTC);
+    if (!Number.isFinite(startTime)) {
+      this.duration = 0;
+      return;
+    }
+
+    if (this.#timerInterval && this.#timerStartTimeUTC === startTime) return; // Already running for this timer
+
+    if (this.#timerInterval) {
+      clearInterval(this.#timerInterval);
+      this.#timerInterval = null;
+    }
+    this.#timerStartTimeUTC = startTime;
 
     const updateDuration = () => {
       const now = Math.floor(Date.now() / 1000);
-      this.duration = Math.max(0, now - startTimeUTC);
+      this.duration = Math.max(0, now - startTime);
     };
 
     // Update immediately
@@ -83,6 +96,7 @@ class TimerStore {
       clearInterval(this.#timerInterval);
       this.#timerInterval = null;
     }
+    this.#timerStartTimeUTC = null;
     this.duration = 0;
   }
 

@@ -6,6 +6,13 @@
 import { api } from '../api.js';
 import { formatDateWithOptions } from '../utils/dateFormatter.js';
 
+function formatLocalDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 class TimeEntryStore {
   // === Data ===
   worklogs = $state([]);
@@ -73,12 +80,8 @@ class TimeEntryStore {
     try {
       // Set default date range to current month BEFORE loading worklogs
       const now = new Date();
-      this.filters.date_from = new Date(now.getFullYear(), now.getMonth(), 1)
-        .toISOString()
-        .split('T')[0];
-      this.filters.date_to = new Date(now.getFullYear(), now.getMonth() + 1, 0)
-        .toISOString()
-        .split('T')[0];
+      this.filters.date_from = formatLocalDate(new Date(now.getFullYear(), now.getMonth(), 1));
+      this.filters.date_to = formatLocalDate(new Date(now.getFullYear(), now.getMonth() + 1, 0));
 
       await Promise.all([
         this.loadWorklogs(),

@@ -102,6 +102,26 @@ describe('authStore', () => {
       expect(state.loading).toBe(false);
     });
 
+    it('should clear auth state if session fetch fails after successful login', async () => {
+      authStore.setAuthData({ id: 'old-user' }, { id: 'old-session' });
+      api.auth.login.mockResolvedValueOnce({
+        success: true,
+        user: { id: '1', username: 'testuser' },
+      });
+      api.auth.getCurrentUser.mockRejectedValueOnce(new Error('Session fetch failed'));
+
+      const result = await authStore.login({ username: 'testuser', password: 'password123' });
+
+      expect(result.success).toBe(false);
+      expect(result.message).toBe('Session fetch failed');
+      const state = get(authStore);
+      expect(state.isAuthenticated).toBe(false);
+      expect(state.user).toBeNull();
+      expect(state.session).toBeNull();
+      expect(state.loading).toBe(false);
+      expect(state.error).toBe('Session fetch failed');
+    });
+
     it('should handle login API errors', async () => {
       api.auth.login.mockRejectedValueOnce(new Error('Network error'));
 

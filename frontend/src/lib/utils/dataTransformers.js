@@ -191,12 +191,23 @@ export const positionPersistence = {
       });
 
     const storageKey = `workflow_${workflowId}_positions`;
-    localStorage.setItem(storageKey, JSON.stringify(positions));
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(positions));
+    } catch (error) {
+      // Safari private mode and quota-exhausted storage throw — drop the save.
+      console.warn('Failed to persist workflow positions:', error);
+    }
   },
 
   load(workflowId) {
     const storageKey = `workflow_${workflowId}_positions`;
-    const stored = localStorage.getItem(storageKey);
+    let stored = null;
+    try {
+      stored = localStorage.getItem(storageKey);
+    } catch (error) {
+      console.warn('Failed to read stored workflow positions:', error);
+      return {};
+    }
 
     if (stored) {
       try {

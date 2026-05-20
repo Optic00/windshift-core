@@ -42,7 +42,7 @@ export function showCreatedItemToast(item, options = {}) {
   };
 
   const closeAndOpen = () => {
-    cleanup();
+    // removeToast fires onDismiss which runs cleanup — no need to call it here.
     if (toastId !== null) removeToast(toastId);
     openItem();
   };
@@ -69,6 +69,7 @@ export function showCreatedItemToast(item, options = {}) {
     actionLabel: 'Open item',
     keyboardHint: 'O',
     onClick: closeAndOpen,
+    onDismiss: cleanup,
   });
 
   return toastId;

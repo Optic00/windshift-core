@@ -17,7 +17,8 @@
     return;
   }
 
-  const origin = script.src.replace(/\/forms\/widget\.js.*$/, '');
+  const baseURL = script.src.replace(/\/forms\/widget\.js.*$/, '');
+  const expectedOrigin = new URL(baseURL, window.location.href).origin;
 
   const init = () => {
     const target = document.getElementById(targetId);
@@ -27,7 +28,7 @@
     }
 
     const iframe = document.createElement('iframe');
-    iframe.src = `${origin}/forms/${encodeURIComponent(slug)}?embed=true`;
+    iframe.src = `${baseURL}/forms/${encodeURIComponent(slug)}?embed=true`;
     iframe.style.width = '100%';
     iframe.style.border = 'none';
     iframe.style.minHeight = '400px';
@@ -38,7 +39,7 @@
 
     // Listen for resize messages from the embedded form
     window.addEventListener('message', (event) => {
-      if (event.source !== iframe.contentWindow) return;
+      if (event.source !== iframe.contentWindow || event.origin !== expectedOrigin) return;
       try {
         const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
         if (data.type === 'ws-form-resize' && data.height) {

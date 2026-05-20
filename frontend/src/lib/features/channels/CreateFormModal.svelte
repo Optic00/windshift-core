@@ -79,10 +79,16 @@
       if (defaultCs) configSetId = defaultCs.id;
     }
     const filters = configSetId ? { configuration_set_id: configSetId } : {};
+    const requestedWsId = wsId;
     api.itemTypes.getAll(filters).then(types => {
+      // Out-of-order responses: if workspace_id changed while the request was
+      // in flight, drop this result so a slower earlier fetch can't clobber a
+      // faster later one.
+      if (formData.workspace_id !== requestedWsId) return;
       itemTypes = types;
       formData.item_type_id = null;
     }).catch(err => {
+      if (formData.workspace_id !== requestedWsId) return;
       console.error('Failed to load item types:', err);
       itemTypes = [];
     });

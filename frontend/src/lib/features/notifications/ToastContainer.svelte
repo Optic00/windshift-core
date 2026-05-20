@@ -157,7 +157,10 @@
             <button
               class="flex-shrink-0 transition-colors duration-150 p-2 mt-1 mr-1"
               style="color: var(--ds-text-subtle);"
-              onclick={() => handleClose(toast.id)}
+              onclick={(event) => {
+                event.stopPropagation();
+                handleClose(toast.id);
+              }}
               aria-label={t('notifications.closeToast')}
             >
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

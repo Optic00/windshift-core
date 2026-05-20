@@ -192,7 +192,7 @@
         const shouldNavigate = !formData.parent_id && shouldNavigateAfterCreate($currentRoute.view);
         if (shouldNavigate) {
           navigate(`/workspaces/${formData.workspace_id}/items/${result.id}`);
-        } else if (!formData.parent_id) {
+        } else {
           showCreatedItemToast(result);
         }
         close();

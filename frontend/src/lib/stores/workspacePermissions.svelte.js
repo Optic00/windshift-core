@@ -3,6 +3,12 @@
 import { api } from '../api.js';
 import { authStore } from './auth.svelte.js';
 
+function normalizeWorkspaceId(workspaceId) {
+  if (workspaceId === null || workspaceId === undefined || workspaceId === '') return workspaceId;
+  const numericId = Number(workspaceId);
+  return Number.isFinite(numericId) ? numericId : workspaceId;
+}
+
 class WorkspacePermissionStore {
   // Map<workspaceId, Set<permissionKey>>
   permissions = $state(new Map());
@@ -30,7 +36,7 @@ class WorkspacePermissionStore {
       // Parse workspace permissions into Map<workspaceId, Set<permissionKey>>
       const wsPerms = new Map();
       for (const wp of response.workspace_permissions || []) {
-        const wsId = wp.workspace_id;
+        const wsId = normalizeWorkspaceId(wp.workspace_id);
         if (!wsPerms.has(wsId)) {
           wsPerms.set(wsId, new Set());
         }
@@ -50,7 +56,7 @@ class WorkspacePermissionStore {
   // Check if user has permission in a workspace
   hasPermission(workspaceId, permissionKey) {
     if (this.isSystemAdmin) return true;
-    return this.permissions.get(workspaceId)?.has(permissionKey) ?? false;
+    return this.permissions.get(normalizeWorkspaceId(workspaceId))?.has(permissionKey) ?? false;
   }
 
   // Item permissions
@@ -104,13 +110,13 @@ class WorkspacePermissionStore {
   // Get all permission keys for a workspace (useful for debugging)
   getWorkspacePermissions(workspaceId) {
     if (this.isSystemAdmin) return new Set(['*']); // System admin has all
-    return this.permissions.get(workspaceId) || new Set();
+    return this.permissions.get(normalizeWorkspaceId(workspaceId)) || new Set();
   }
 
   // Check if user has any permissions in a workspace
   hasAnyPermission(workspaceId) {
     if (this.isSystemAdmin) return true;
-    const perms = this.permissions.get(workspaceId);
+    const perms = this.permissions.get(normalizeWorkspaceId(workspaceId));
     return perms && perms.size > 0;
   }
 
