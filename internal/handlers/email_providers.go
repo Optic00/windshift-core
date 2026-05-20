@@ -174,7 +174,10 @@ func (h *EmailProviderHandler) CreateEmailProvider(w http.ResponseWriter, r *htt
 
 	// Check uniqueness before insert
 	var slugExists bool
-	_ = h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM email_providers WHERE slug = ?)", req.Slug).Scan(&slugExists)
+	if err := h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM email_providers WHERE slug = ?)", req.Slug).Scan(&slugExists); err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
 	if slugExists {
 		respondConflict(w, r, "A provider with this slug already exists")
 		return
@@ -528,7 +531,10 @@ func (h *EmailProviderHandler) EmailOAuthCallback(w http.ResponseWriter, r *http
 // updateChannelProviderID updates the email_provider_id in channel config
 func (h *EmailProviderHandler) updateChannelProviderID(channelID, providerID int) {
 	var configJSON string
-	_ = h.db.QueryRow(`SELECT config FROM channels WHERE id = ?`, channelID).Scan(&configJSON)
+	if err := h.db.QueryRow(`SELECT config FROM channels WHERE id = ?`, channelID).Scan(&configJSON); err != nil {
+		slog.Warn("failed to load channel config for provider update", slog.String("component", "email_providers"), slog.Int("channel_id", channelID), slog.Any("error", err))
+		return
+	}
 
 	var config models.ChannelConfig
 	if configJSON != "" {

@@ -126,6 +126,10 @@ func (h *TestRunTemplateHandler) Update(w http.ResponseWriter, r *http.Request) 
 	}
 
 	updatedAt, err := h.repo.Update(id, workspaceID, &template)
+	if errors.Is(err, repository.ErrNotFound) {
+		respondNotFound(w, r, "test_run_template")
+		return
+	}
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -151,6 +155,10 @@ func (h *TestRunTemplateHandler) Delete(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := h.repo.Delete(id, workspaceID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			respondNotFound(w, r, "test_run_template")
+			return
+		}
 		respondInternalError(w, r, err)
 		return
 	}

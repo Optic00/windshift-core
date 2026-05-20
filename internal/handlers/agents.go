@@ -109,12 +109,16 @@ func (h *AgentHandler) CreateOwnedAgent(ownerID int, isAdmin bool, req CreateAge
 	}
 
 	var emailExists bool
-	_ = h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE email = ?)", email).Scan(&emailExists)
+	if err := h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE email = ?)", email).Scan(&emailExists); err != nil {
+		return nil, err
+	}
 	if emailExists {
 		return nil, ErrAgentEmailTaken
 	}
 	var usernameExists bool
-	_ = h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE username = ?)", req.Username).Scan(&usernameExists)
+	if err := h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE username = ?)", req.Username).Scan(&usernameExists); err != nil {
+		return nil, err
+	}
 	if usernameExists {
 		return nil, ErrAgentUsernameTaken
 	}
@@ -199,12 +203,16 @@ func (h *AgentHandler) CreateOAuthAgent(ownerID, oauthClientID int, req CreateAg
 	}
 
 	var emailExists bool
-	_ = h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE email = ?)", email).Scan(&emailExists)
+	if err := h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE email = ?)", email).Scan(&emailExists); err != nil {
+		return nil, err
+	}
 	if emailExists {
 		return nil, ErrAgentEmailTaken
 	}
 	var usernameExists bool
-	_ = h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE username = ?)", req.Username).Scan(&usernameExists)
+	if err := h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE username = ?)", req.Username).Scan(&usernameExists); err != nil {
+		return nil, err
+	}
 	if usernameExists {
 		return nil, ErrAgentUsernameTaken
 	}

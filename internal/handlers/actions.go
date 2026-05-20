@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -517,6 +519,10 @@ func (h *ActionsHandler) ToggleAction(w http.ResponseWriter, r *http.Request) {
 		IsEnabled bool `json:"is_enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if !errors.Is(err, io.EOF) {
+			respondBadRequest(w, r, "Invalid JSON request body")
+			return
+		}
 		// If no body, toggle the current state
 		req.IsEnabled = !action.IsEnabled
 	}

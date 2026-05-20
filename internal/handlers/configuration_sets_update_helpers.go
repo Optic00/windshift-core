@@ -62,7 +62,10 @@ func (h *ConfigurationSetHandler) respondIntraSetWorkflowConflictIfNeeded(
 	}
 
 	var configSetName string
-	_ = h.db.QueryRow(`SELECT name FROM configuration_sets WHERE id = ?`, configSetID).Scan(&configSetName)
+	if err := h.db.QueryRow(`SELECT name FROM configuration_sets WHERE id = ?`, configSetID).Scan(&configSetName); err != nil {
+		respondInternalError(w, r, err)
+		return true
+	}
 
 	itemRepo := repository.NewItemRepository(h.db)
 	totalItems := 0
@@ -146,8 +149,14 @@ func (h *ConfigurationSetHandler) respondMigrationConflictIfNeeded(
 	}
 
 	var sourceConfigSetName, targetConfigSetName string
-	_ = h.db.QueryRow(`SELECT name FROM configuration_sets WHERE id = ?`, sourceConfigSetID).Scan(&sourceConfigSetName)
-	_ = h.db.QueryRow(`SELECT name FROM configuration_sets WHERE id = ?`, targetConfigSetID).Scan(&targetConfigSetName)
+	if err := h.db.QueryRow(`SELECT name FROM configuration_sets WHERE id = ?`, sourceConfigSetID).Scan(&sourceConfigSetName); err != nil {
+		respondInternalError(w, r, err)
+		return true
+	}
+	if err := h.db.QueryRow(`SELECT name FROM configuration_sets WHERE id = ?`, targetConfigSetID).Scan(&targetConfigSetName); err != nil {
+		respondInternalError(w, r, err)
+		return true
+	}
 
 	totalItems, _ := repository.NewItemRepository(h.db).CountByField("workspace_id", workspaceID)
 

@@ -405,7 +405,9 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 			item.EffectiveProjectID = effectiveProjectID
 			item.ProjectInheritanceMode = projectInheritanceMode
 			var epName sql.NullString
-			_ = h.db.QueryRow("SELECT name FROM time_projects WHERE id = ?", *effectiveProjectID).Scan(&epName)
+			if err := h.db.QueryRow("SELECT name FROM time_projects WHERE id = ?", *effectiveProjectID).Scan(&epName); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				slog.Warn("failed to load effective project name", slog.Int("project_id", *effectiveProjectID), slog.Any("error", err))
+			}
 			item.EffectiveProjectName = epName.String
 		}
 	}
@@ -774,7 +776,9 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 		if h.notificationService != nil {
 			var statusName string
 			if result.StatusChanged && updatedItem.StatusID != nil {
-				_ = h.db.QueryRow("SELECT name FROM statuses WHERE id = ?", *updatedItem.StatusID).Scan(&statusName)
+				if err := h.db.QueryRow("SELECT name FROM statuses WHERE id = ?", *updatedItem.StatusID).Scan(&statusName); err != nil && !errors.Is(err, sql.ErrNoRows) {
+					slog.Warn("failed to load status name", slog.Int("status_id", *updatedItem.StatusID), slog.Any("error", err))
+				}
 			}
 			itemKey := fmt.Sprintf("%s-%d", updatedItem.WorkspaceKey, updatedItem.WorkspaceItemNumber)
 
@@ -881,11 +885,11 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	// Push status change to GitHub if issue sync is configured
 	if h.issueSyncService != nil && result.StatusChanged && updatedItem.StatusID != nil {
-		go func() {
-			ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 30*time.Second)
+		go func(ctx context.Context) {
+			ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
 			h.issueSyncService.PushStatusToGitHub(ctx, updatedItem.ID, *updatedItem.StatusID)
-		}()
+		}(r.Context())
 	}
 
 	// Process @mentions in description if it changed
@@ -1065,7 +1069,10 @@ func (h *ItemHandler) GetDeleteInfo(w http.ResponseWriter, r *http.Request) {
 	// Get hierarchy level for the item type (needed for filtering reparent candidates)
 	var hierarchyLevel sql.NullInt64
 	if item.ItemTypeID != nil {
-		_ = h.db.QueryRow("SELECT hierarchy_level FROM item_types WHERE id = ?", *item.ItemTypeID).Scan(&hierarchyLevel)
+		if err := h.db.QueryRow("SELECT hierarchy_level FROM item_types WHERE id = ?", *item.ItemTypeID).Scan(&hierarchyLevel); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			respondInternalError(w, r, err)
+			return
+		}
 	}
 
 	response := map[string]interface{}{

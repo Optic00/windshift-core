@@ -86,6 +86,18 @@ func (h *TestSetHandler) decodeTestSetWrite(w http.ResponseWriter, r *http.Reque
 	set.Name = utils.SanitizeTitle(set.Name)
 	set.Description = utils.SanitizeCommentContent(set.Description)
 
+	if set.MilestoneID != nil {
+		exists, err := h.repo.MilestoneUsableInWorkspace(*set.MilestoneID, workspaceID)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return 0, nil, models.TestSet{}, false
+		}
+		if !exists {
+			respondValidationError(w, r, "Milestone not found in workspace")
+			return 0, nil, models.TestSet{}, false
+		}
+	}
+
 	return workspaceID, user, set, true
 }
 
@@ -125,6 +137,10 @@ func (h *TestSetHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	updatedAt, err := h.repo.Update(id, workspaceID, &set)
+	if errors.Is(err, repository.ErrNotFound) {
+		respondNotFound(w, r, "test_set")
+		return
+	}
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -157,6 +173,10 @@ func (h *TestSetHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.repo.Delete(id, workspaceID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			respondNotFound(w, r, "test_set")
+			return
+		}
 		respondInternalError(w, r, err)
 		return
 	}

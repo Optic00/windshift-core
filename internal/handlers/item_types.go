@@ -267,7 +267,10 @@ func (h *ItemTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	// Check uniqueness before update
 	var nameExists bool
-	_ = h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM item_types WHERE name = ? AND id != ?)", it.Name, id).Scan(&nameExists)
+	if err := h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM item_types WHERE name = ? AND id != ?)", it.Name, id).Scan(&nameExists); err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
 	if nameExists {
 		respondConflict(w, r, "Item type with this name already exists")
 		return

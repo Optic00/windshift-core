@@ -199,10 +199,15 @@ func (h *PriorityHandler) validatePriority(w http.ResponseWriter, r *http.Reques
 	}
 
 	var nameExists bool
+	var err error
 	if excludeID > 0 {
-		_ = h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM priorities WHERE name = ? AND id != ?)", p.Name, excludeID).Scan(&nameExists)
+		err = h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM priorities WHERE name = ? AND id != ?)", p.Name, excludeID).Scan(&nameExists)
 	} else {
-		_ = h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM priorities WHERE name = ?)", p.Name).Scan(&nameExists)
+		err = h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM priorities WHERE name = ?)", p.Name).Scan(&nameExists)
+	}
+	if err != nil {
+		respondInternalError(w, r, err)
+		return false
 	}
 	if nameExists {
 		respondConflict(w, r, "Priority with this name already exists")

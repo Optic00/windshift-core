@@ -228,7 +228,10 @@ func (h *PortalHandler) ExecuteAssetReport(w http.ResponseWriter, r *http.Reques
 	}
 	if portalCustomerID != nil {
 		var userID sql.NullInt64
-		_ = h.db.QueryRowContext(ctx, `SELECT user_id FROM portal_customers WHERE id = ?`, *portalCustomerID).Scan(&userID)
+		if err := h.db.QueryRowContext(ctx, `SELECT user_id FROM portal_customers WHERE id = ?`, *portalCustomerID).Scan(&userID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			respondInternalError(w, r, err)
+			return
+		}
 		if userID.Valid {
 			uid := int(userID.Int64)
 			fnCtx.UserID = &uid

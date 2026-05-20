@@ -216,7 +216,10 @@ func (h *GroupHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// Check uniqueness before insert
 	var nameExists bool
-	_ = h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM groups WHERE name = ?)", req.Name).Scan(&nameExists)
+	if err := h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM groups WHERE name = ?)", req.Name).Scan(&nameExists); err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
 	if nameExists {
 		respondConflict(w, r, "Group name already exists")
 		return
@@ -317,7 +320,10 @@ func (h *GroupHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	// Check uniqueness before update
 	var nameExists bool
-	_ = h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM groups WHERE name = ? AND id != ?)", req.Name, id).Scan(&nameExists)
+	if err := h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM groups WHERE name = ? AND id != ?)", req.Name, id).Scan(&nameExists); err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
 	if nameExists {
 		respondConflict(w, r, "Group name already exists")
 		return
