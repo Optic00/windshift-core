@@ -242,7 +242,7 @@ func CheckItemPermissionAsActor(w http.ResponseWriter, r *http.Request, itemRepo
 		return true
 	}
 	if permission == models.PermissionItemView && approvalService != nil {
-		inPool, perr := approvalService.UserHasActivePoolMembershipOnItem(user.ID, itemID)
+		inPool, perr := approvalService.UserHasActivePoolMembershipOnItem(user.ID, itemID, nil)
 		if perr == nil && inPool {
 			return true
 		}
@@ -273,7 +273,7 @@ func userCanViewItemAsActor(userID, itemID, workspaceID int,
 	if approvalService == nil {
 		return false, nil
 	}
-	return approvalService.UserHasActivePoolMembershipOnItem(userID, itemID)
+	return approvalService.UserHasActivePoolMembershipOnItem(userID, itemID, nil)
 }
 
 // GetAccessibleWorkspaceIDs returns IDs of active workspaces the user can view.

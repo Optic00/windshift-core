@@ -1180,7 +1180,7 @@ func TestApproval_UserHasActivePoolMembershipOnItem(t *testing.T) {
 	})
 
 	// Before request creation: no membership.
-	got, err := env.approvalService.UserHasActivePoolMembershipOnItem(env.approver1, env.itemID)
+	got, err := env.approvalService.UserHasActivePoolMembershipOnItem(env.approver1, env.itemID, nil)
 	if err != nil {
 		t.Fatalf("pre-request membership: %v", err)
 	}
@@ -1194,7 +1194,7 @@ func TestApproval_UserHasActivePoolMembershipOnItem(t *testing.T) {
 	}
 
 	// Request is pending, step active, approver1 in pool → true.
-	got, err = env.approvalService.UserHasActivePoolMembershipOnItem(env.approver1, env.itemID)
+	got, err = env.approvalService.UserHasActivePoolMembershipOnItem(env.approver1, env.itemID, nil)
 	if err != nil {
 		t.Fatalf("active membership: %v", err)
 	}
@@ -1203,7 +1203,7 @@ func TestApproval_UserHasActivePoolMembershipOnItem(t *testing.T) {
 	}
 
 	// approver2 is NOT in the pool → false even though request is pending.
-	got, err = env.approvalService.UserHasActivePoolMembershipOnItem(env.approver2, env.itemID)
+	got, err = env.approvalService.UserHasActivePoolMembershipOnItem(env.approver2, env.itemID, nil)
 	if err != nil {
 		t.Fatalf("non-member membership: %v", err)
 	}
@@ -1212,7 +1212,7 @@ func TestApproval_UserHasActivePoolMembershipOnItem(t *testing.T) {
 	}
 
 	// requestor is the triggerer, not an approver → false.
-	got, err = env.approvalService.UserHasActivePoolMembershipOnItem(env.requestor, env.itemID)
+	got, err = env.approvalService.UserHasActivePoolMembershipOnItem(env.requestor, env.itemID, nil)
 	if err != nil {
 		t.Fatalf("requestor membership: %v", err)
 	}
@@ -1224,7 +1224,7 @@ func TestApproval_UserHasActivePoolMembershipOnItem(t *testing.T) {
 	if _, _, err := env.approvalService.Decide(context.Background(), req.ID, env.approver1, models.ApprovalDecisionApprove, "", DecideOptions{}); err != nil {
 		t.Fatalf("Decide: %v", err)
 	}
-	got, err = env.approvalService.UserHasActivePoolMembershipOnItem(env.approver1, env.itemID)
+	got, err = env.approvalService.UserHasActivePoolMembershipOnItem(env.approver1, env.itemID, nil)
 	if err != nil {
 		t.Fatalf("post-decide membership: %v", err)
 	}
@@ -1271,7 +1271,7 @@ func TestApproval_PortalCustomerHasActivePoolMembershipOnItem(t *testing.T) {
 	}
 
 	// Customer is in the active pool while the request is pending.
-	got, err := env.approvalService.PortalCustomerHasActivePoolMembershipOnItem(customerID, env.itemID)
+	got, err := env.approvalService.PortalCustomerHasActivePoolMembershipOnItem(customerID, env.itemID, nil)
 	if err != nil {
 		t.Fatalf("active membership: %v", err)
 	}
@@ -1285,7 +1285,7 @@ func TestApproval_PortalCustomerHasActivePoolMembershipOnItem(t *testing.T) {
 		t.Fatalf("insert stranger customer: %v", err)
 	}
 	stranger64, _ := res2.LastInsertId()
-	got, err = env.approvalService.PortalCustomerHasActivePoolMembershipOnItem(int(stranger64), env.itemID)
+	got, err = env.approvalService.PortalCustomerHasActivePoolMembershipOnItem(int(stranger64), env.itemID, nil)
 	if err != nil {
 		t.Fatalf("stranger membership: %v", err)
 	}
@@ -1297,11 +1297,70 @@ func TestApproval_PortalCustomerHasActivePoolMembershipOnItem(t *testing.T) {
 	if _, _, err := env.approvalService.DecideAsCustomer(context.Background(), req.ID, customerID, models.ApprovalDecisionApprove, "", DecideOptions{}); err != nil {
 		t.Fatalf("DecideAsCustomer: %v", err)
 	}
-	got, err = env.approvalService.PortalCustomerHasActivePoolMembershipOnItem(customerID, env.itemID)
+	got, err = env.approvalService.PortalCustomerHasActivePoolMembershipOnItem(customerID, env.itemID, nil)
 	if err != nil {
 		t.Fatalf("post-decide membership: %v", err)
 	}
 	if got {
 		t.Fatal("expected customer to lose membership after the request closed")
+	}
+}
+
+// Active-pool membership must be scoped to the portal channel when callers
+// pass a non-nil channelID. An approver on an item in channel A must not pass
+// the membership check when the lookup is scoped to channel B — otherwise a
+// portal can leak request detail across portal-channel boundaries to anyone
+// who is an active approver on the underlying item via a different channel.
+func TestApproval_ActivePoolMembership_ScopedToChannel(t *testing.T) {
+	env := newApprovalTestEnv(t)
+	env.createApprovalSet(approvalSetSpec{
+		steps: []approvalStepSpec{userStep(0, "First", env.approver1)},
+	})
+	if _, err := env.approvalService.RequestApproval(context.Background(), env.itemID, env.statusReviewID, env.statusOpenID, env.requestor); err != nil {
+		t.Fatalf("RequestApproval: %v", err)
+	}
+
+	// Two distinct portal channels. Place the item in channel A.
+	res, err := env.db.Exec(`INSERT INTO channels (name, type, direction, status) VALUES ('Portal A', 'portal', 'inbound', 'enabled')`)
+	if err != nil {
+		t.Fatalf("insert channel A: %v", err)
+	}
+	chA64, _ := res.LastInsertId()
+	channelA := int(chA64)
+	res, err = env.db.Exec(`INSERT INTO channels (name, type, direction, status) VALUES ('Portal B', 'portal', 'inbound', 'enabled')`)
+	if err != nil {
+		t.Fatalf("insert channel B: %v", err)
+	}
+	chB64, _ := res.LastInsertId()
+	channelB := int(chB64)
+	if _, err := env.db.Exec(`UPDATE items SET channel_id = ? WHERE id = ?`, channelA, env.itemID); err != nil {
+		t.Fatalf("set item channel: %v", err)
+	}
+
+	// Matching channel: approver passes.
+	got, err := env.approvalService.UserHasActivePoolMembershipOnItem(env.approver1, env.itemID, &channelA)
+	if err != nil {
+		t.Fatalf("channelA membership: %v", err)
+	}
+	if !got {
+		t.Fatal("approver1 should pass when scoped to the item's channel")
+	}
+
+	// Cross-channel lookup: approver must fail.
+	got, err = env.approvalService.UserHasActivePoolMembershipOnItem(env.approver1, env.itemID, &channelB)
+	if err != nil {
+		t.Fatalf("channelB membership: %v", err)
+	}
+	if got {
+		t.Fatal("approver1 must not pass when scoped to a different channel (cross-portal leak)")
+	}
+
+	// nil channel: back-compat — no channel filter, approver still passes.
+	got, err = env.approvalService.UserHasActivePoolMembershipOnItem(env.approver1, env.itemID, nil)
+	if err != nil {
+		t.Fatalf("nil-channel membership: %v", err)
+	}
+	if !got {
+		t.Fatal("nil channelID must preserve the unscoped behaviour for internal callers")
 	}
 }

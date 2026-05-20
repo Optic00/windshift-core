@@ -1147,18 +1147,22 @@ func (s *ApprovalService) GetForUser(userID int, status string) ([]*models.Appro
 // for itemID. This is the gate used by approver-derived item-view access:
 // when the step closes (is_active flipped to 0) or the request is no longer
 // pending, the user immediately loses approver-derived access.
-func (s *ApprovalService) UserHasActivePoolMembershipOnItem(userID, itemID int) (bool, error) {
+//
+// channelID is optional. Non-nil restricts the lookup to items in that channel,
+// preventing approver-derived access from leaking across portal channels.
+// Internal (non-portal) callers pass nil.
+func (s *ApprovalService) UserHasActivePoolMembershipOnItem(userID, itemID int, channelID *int) (bool, error) {
 	ctx, cancel := approvalServiceBackgroundContext()
 	defer cancel()
-	return s.runtimeRepo.ActorHasActivePoolMembershipOnItem(ctx, "user_id", userID, itemID)
+	return s.runtimeRepo.ActorHasActivePoolMembershipOnItem(ctx, "user_id", userID, itemID, channelID)
 }
 
 // PortalCustomerHasActivePoolMembershipOnItem is the portal-customer counterpart
-// to UserHasActivePoolMembershipOnItem.
-func (s *ApprovalService) PortalCustomerHasActivePoolMembershipOnItem(customerID, itemID int) (bool, error) {
+// to UserHasActivePoolMembershipOnItem. channelID semantics match.
+func (s *ApprovalService) PortalCustomerHasActivePoolMembershipOnItem(customerID, itemID int, channelID *int) (bool, error) {
 	ctx, cancel := approvalServiceBackgroundContext()
 	defer cancel()
-	return s.runtimeRepo.ActorHasActivePoolMembershipOnItem(ctx, "portal_customer_id", customerID, itemID)
+	return s.runtimeRepo.ActorHasActivePoolMembershipOnItem(ctx, "portal_customer_id", customerID, itemID, channelID)
 }
 
 // GetForPortalCustomer is the customer-flavored counterpart to GetForUser.

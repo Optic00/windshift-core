@@ -184,20 +184,32 @@ func (r *ApprovalRepository) FindRequestIDsForActor(ctx context.Context, actorCo
 // ActorHasActivePoolMembershipOnItem reports whether the actor is in an
 // active-approver row of a pending step on a pending request for the item.
 // Powers approver-derived item-view access on the permission service.
-func (r *ApprovalRepository) ActorHasActivePoolMembershipOnItem(ctx context.Context, actorColumn string, actorID, itemID int) (bool, error) {
+//
+// channelID is optional. When non-nil the item must belong to that channel —
+// used by portal flows where approver-derived access must not leak across
+// portal-channel boundaries. Internal (non-portal) callers pass nil.
+func (r *ApprovalRepository) ActorHasActivePoolMembershipOnItem(ctx context.Context, actorColumn string, actorID, itemID int, channelID *int) (bool, error) {
 	if actorColumn != "user_id" && actorColumn != "portal_customer_id" {
 		return false, fmt.Errorf("invalid actor column %q", actorColumn)
 	}
+	channelJoin := ""
+	args := []interface{}{}
+	if channelID != nil {
+		channelJoin = "JOIN items i ON i.id = ar.item_id AND i.channel_id = ?"
+		args = append(args, *channelID)
+	}
+	args = append(args, itemID, actorID)
 	q := fmt.Sprintf(`
 		SELECT 1
 		FROM approval_requests ar
 		JOIN approval_step_instances asi ON asi.approval_request_id = ar.id AND asi.status = 'pending'
 		JOIN approval_step_approvers asa ON asa.approval_step_instance_id = asi.id AND asa.is_active = true
+		%s
 		WHERE ar.item_id = ? AND ar.status = 'pending' AND asa.%s = ?
 		LIMIT 1
-	`, actorColumn)
+	`, channelJoin, actorColumn)
 	var one int
-	err := r.db.QueryRowContext(ctx, q, itemID, actorID).Scan(&one)
+	err := r.db.QueryRowContext(ctx, q, args...).Scan(&one)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
