@@ -28,13 +28,24 @@ type ModelInfo struct {
 }
 
 // ProviderInfo describes a known LLM provider and its available models.
+//
+// When ModelsEndpoint is set, the provider supports a `/models`-style catalog
+// that the admin can refresh on demand; the static Models slice then acts as
+// a seed (typically empty) and the live picker reads from the cache table.
 type ProviderInfo struct {
-	Type      ProviderType `json:"type"`
-	Name      string       `json:"name"`
-	APIFormat string       `json:"api_format"`
-	ChatPath  string       `json:"chat_path,omitempty"`
-	BaseURL   string       `json:"base_url"`
-	Models    []ModelInfo  `json:"models"`
+	Type           ProviderType `json:"type"`
+	Name           string       `json:"name"`
+	APIFormat      string       `json:"api_format"`
+	ChatPath       string       `json:"chat_path,omitempty"`
+	BaseURL        string       `json:"base_url"`
+	ModelsEndpoint string       `json:"models_endpoint,omitempty"`
+	Models         []ModelInfo  `json:"models"`
+}
+
+// HasDynamicModels reports whether the provider exposes a `/models` catalog
+// that we can refresh into the cache.
+func (p *ProviderInfo) HasDynamicModels() bool {
+	return p != nil && p.ModelsEndpoint != ""
 }
 
 // providersFile is the JSON structure for the providers file.

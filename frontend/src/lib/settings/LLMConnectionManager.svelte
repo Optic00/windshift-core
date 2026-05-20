@@ -13,6 +13,7 @@
   import DataTable from '../components/DataTable.svelte';
   import { successToast, errorToast } from '../stores/toasts.svelte.js';
   import Select from '../components/Select.svelte';
+  import BasePicker from '../pickers/BasePicker.svelte';
   import { confirm } from '../composables/useConfirm.js';
 
   let connections = $state([]);
@@ -58,6 +59,42 @@
     selectedProvider?.models || []
   );
   const isLocalProvider = $derived(form.provider_type === 'local');
+  const isDynamicProvider = $derived(!!selectedProvider?.models_endpoint);
+  const cachedModels = $derived(selectedProvider?.cached_models || []);
+  const lastRefreshedAt = $derived(selectedProvider?.last_refreshed_at || null);
+  const lastRefreshError = $derived(selectedProvider?.last_error || '');
+  let refreshingModels = $state(false);
+
+  function formatLastRefreshed(iso) {
+    if (!iso) return 'Never refreshed';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return 'Never refreshed';
+    const diffMs = Date.now() - d.getTime();
+    const mins = Math.round(diffMs / 60000);
+    if (mins < 1) return 'Refreshed just now';
+    if (mins < 60) return `Refreshed ${mins} min ago`;
+    const hours = Math.round(mins / 60);
+    if (hours < 24) return `Refreshed ${hours}h ago`;
+    const days = Math.round(hours / 24);
+    return `Refreshed ${days}d ago`;
+  }
+
+  async function refreshModels() {
+    if (!selectedProvider || !isDynamicProvider) return;
+    refreshingModels = true;
+    try {
+      const result = await api.llmProviders.refreshModels(selectedProvider.type);
+      successToast(`Fetched ${result.models?.length ?? 0} models from ${selectedProvider.name}`);
+      await loadProviders();
+    } catch (err) {
+      const msg = err?.message || 'Failed to refresh models';
+      errorToast(msg);
+      // Backend already recorded the failure in the cache; reload so last_error surfaces.
+      await loadProviders();
+    } finally {
+      refreshingModels = false;
+    }
+  }
 
   async function loadConnections() {
     try {
@@ -404,6 +441,38 @@
         class="w-full px-3 py-2 text-sm rounded-md border"
         style="border-color: var(--ds-border); background: var(--ds-surface); color: var(--ds-text);"
       />
+    {:else if isDynamicProvider}
+      <div class="space-y-2">
+        <BasePicker
+          id="llm-connection-model"
+          bind:value={form.model}
+          items={cachedModels}
+          loading={refreshingModels}
+          placeholder={cachedModels.length ? 'Search models or type an ID...' : 'Type a model ID (or click Refresh)'}
+          searchFields={['id', 'name']}
+          getValue={(m) => m.id}
+          getLabel={(m) => m.name || m.id}
+          allowCreate={true}
+          onCreate={(query) => { form.model = query.trim(); }}
+        />
+        <div class="flex items-center justify-between text-xs" style="color: var(--ds-text-subtle);">
+          <span>
+            {#if lastRefreshError}
+              <span style="color: var(--ds-text-danger);">Last attempt failed: {lastRefreshError}</span>
+            {:else}
+              {formatLastRefreshed(lastRefreshedAt)}{cachedModels.length ? ` · ${cachedModels.length} cached` : ''}
+            {/if}
+          </span>
+          <Button variant="ghost" size="small" onclick={refreshModels} disabled={refreshingModels}>
+            {refreshingModels ? 'Refreshing…' : 'Refresh'}
+          </Button>
+        </div>
+        {#if !cachedModels.length && !lastRefreshError}
+          <div class="text-xs" style="color: var(--ds-text-subtle);">
+            No cached models. Click Refresh to fetch from {selectedProvider?.name}, or type a model ID above to use it without browsing.
+          </div>
+        {/if}
+      </div>
     {:else}
       <Select
         id="llm-connection-model"

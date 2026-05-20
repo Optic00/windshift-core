@@ -45,6 +45,15 @@
       ]
     },
     {
+      "type": "openrouter",
+      "name": "OpenRouter",
+      "api_format": "openai",
+      "base_url": "https://openrouter.ai/api/v1",
+      "chat_path": "/chat/completions",
+      "models_endpoint": "/models",
+      "models": []
+    },
+    {
       "type": "local",
       "name": "Local / Custom",
       "api_format": "openai",

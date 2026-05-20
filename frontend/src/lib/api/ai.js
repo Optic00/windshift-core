@@ -50,6 +50,7 @@ export const llmConnections = {
 export const llmProviders = {
   getProviders: () => get('/llm/providers'),
   getEnabled: () => get('/llm/connections'),
+  refreshModels: (type) => post(`/admin/llm/providers/${encodeURIComponent(type)}/refresh-models`),
 };
 
 export const actionCapabilities = {

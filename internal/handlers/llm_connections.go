@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"windshift/internal/llm"
 	"windshift/internal/logger"
@@ -13,13 +14,15 @@ import (
 
 // LLMConnectionHandler handles admin CRUD for LLM connections and user queries.
 type LLMConnectionHandler struct {
-	manager *llm.ConnectionManager
-	auditor *logger.Auditor
+	manager   *llm.ConnectionManager
+	auditor   *logger.Auditor
+	cache     *llm.ModelCache
+	refresher *llm.ModelRefresher
 }
 
 // NewLLMConnectionHandler creates a new LLM connection handler.
-func NewLLMConnectionHandler(manager *llm.ConnectionManager, auditor *logger.Auditor) *LLMConnectionHandler {
-	return &LLMConnectionHandler{manager: manager, auditor: auditor}
+func NewLLMConnectionHandler(manager *llm.ConnectionManager, auditor *logger.Auditor, cache *llm.ModelCache, refresher *llm.ModelRefresher) *LLMConnectionHandler {
+	return &LLMConnectionHandler{manager: manager, auditor: auditor, cache: cache, refresher: refresher}
 }
 
 // ListConnections returns all LLM connections (admin).
@@ -153,9 +156,79 @@ func (h *LLMConnectionHandler) TestConnection(w http.ResponseWriter, r *http.Req
 	respondJSONOK(w, map[string]string{"status": "ok"})
 }
 
-// GetProviders returns the hardcoded list of known LLM providers (user).
+// providerResponse is the wire shape returned by GetProviders. It extends
+// ProviderInfo with the cached model list + refresh state for providers that
+// expose a /models endpoint, so the frontend can render the searchable
+// picker + "Last refreshed" indicator from a single round trip.
+type providerResponse struct {
+	llm.ProviderInfo
+	CachedModels    []llm.ModelInfo `json:"cached_models,omitempty"`
+	LastRefreshedAt *time.Time      `json:"last_refreshed_at,omitempty"`
+	LastError       string          `json:"last_error,omitempty"`
+}
+
+// GetProviders returns the catalog of known LLM providers (user). For
+// dynamic-models providers the response also embeds the cached models +
+// refresh metadata.
 func (h *LLMConnectionHandler) GetProviders(w http.ResponseWriter, _ *http.Request) {
-	respondJSONOK(w, llm.KnownProviders())
+	providers := llm.KnownProviders()
+	out := make([]providerResponse, 0, len(providers))
+	for _, p := range providers {
+		entry := providerResponse{ProviderInfo: p}
+		if p.HasDynamicModels() && h.cache != nil {
+			cached, err := h.cache.Get(p.Type)
+			if err != nil {
+				slog.Warn("read model cache", slog.String("provider", string(p.Type)), slog.Any("error", err))
+			} else {
+				entry.CachedModels = cached.Models
+				entry.LastRefreshedAt = cached.LastRefreshedAt
+				entry.LastError = cached.LastError
+			}
+		}
+		out = append(out, entry)
+	}
+	respondJSONOK(w, out)
+}
+
+// RefreshProviderModels triggers a network fetch of a dynamic-models provider's
+// catalog and writes it to the cache. Admin-only. The response carries the
+// fresh list on success; on failure the error is surfaced to the caller AND
+// recorded in the cache so the UI can render "Last attempt failed: …".
+func (h *LLMConnectionHandler) RefreshProviderModels(w http.ResponseWriter, r *http.Request) {
+	providerType := llm.ProviderType(r.PathValue("type"))
+	provider := llm.GetProvider(providerType)
+	if provider == nil {
+		respondNotFound(w, r, "provider")
+		return
+	}
+	if !provider.HasDynamicModels() {
+		respondBadRequest(w, r, fmt.Sprintf("provider %q does not support dynamic model refresh", providerType))
+		return
+	}
+	if h.refresher == nil {
+		respondInternalError(w, r, fmt.Errorf("model refresher not configured"))
+		return
+	}
+
+	// No API key for the catalog fetch — OpenRouter's /models is unauthenticated.
+	// If a future provider requires it, plumb a key from an existing connection here.
+	models, err := h.refresher.Refresh(r.Context(), *provider, "")
+	if err != nil {
+		slog.Warn("LLM model refresh failed", slog.String("provider", string(providerType)), slog.Any("error", err))
+		respondError(w, r, restapi.NewAPIError(http.StatusBadGateway, restapi.ErrCodeConnectionTestFailed,
+			fmt.Sprintf("Refresh failed: %s", err.Error())))
+		return
+	}
+
+	currentUser := utils.GetCurrentUser(r)
+	if currentUser != nil {
+		h.auditor.Log(r, currentUser, logger.ActionLLMConnectionUpdate, logger.ResourceLLMConnection, nil, string(providerType))
+	}
+	respondJSONOK(w, map[string]interface{}{
+		"provider_type":     providerType,
+		"models":            models,
+		"last_refreshed_at": time.Now(),
+	})
 }
 
 // GetEnabledConnections returns all enabled connections (user).

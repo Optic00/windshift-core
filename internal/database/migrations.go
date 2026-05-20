@@ -355,6 +355,26 @@ var Catalog = []Migration{
 			DROP TABLE _cred_ws_backfill;
 		`,
 	},
+	{
+		Version:       "20260520_llm_provider_model_cache",
+		Name:          "Add llm_provider_model_cache for dynamic model lists",
+		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='llm_provider_model_cache'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='llm_provider_model_cache'",
+		SQLite: `CREATE TABLE llm_provider_model_cache (
+			provider_type     TEXT PRIMARY KEY,
+			models_json       TEXT NOT NULL,
+			last_refreshed_at DATETIME,
+			last_error        TEXT,
+			updated_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		Postgres: `CREATE TABLE llm_provider_model_cache (
+			provider_type     TEXT PRIMARY KEY,
+			models_json       TEXT NOT NULL,
+			last_refreshed_at TIMESTAMPTZ,
+			last_error        TEXT,
+			updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		)`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {

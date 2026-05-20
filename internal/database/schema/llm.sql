@@ -12,3 +12,11 @@ CREATE TABLE IF NOT EXISTS llm_connections (
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS llm_provider_model_cache (
+    provider_type     TEXT PRIMARY KEY,
+    models_json       TEXT NOT NULL,
+    last_refreshed_at DATETIME,
+    last_error        TEXT,
+    updated_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

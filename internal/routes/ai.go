@@ -32,4 +32,5 @@ func RegisterAIRoutes(deps *Deps) {
 	api.HandleH("PUT /admin/llm-connections/{id}", admin(http.HandlerFunc(deps.AI.LLMConnection.UpdateConnection)))
 	api.HandleH("DELETE /admin/llm-connections/{id}", admin(http.HandlerFunc(deps.AI.LLMConnection.DeleteConnection)))
 	api.HandleH("POST /admin/llm-connections/{id}/test", admin(http.HandlerFunc(deps.AI.LLMConnection.TestConnection)))
+	api.HandleH("POST /admin/llm/providers/{type}/refresh-models", admin(http.HandlerFunc(deps.AI.LLMConnection.RefreshProviderModels)))
 }
