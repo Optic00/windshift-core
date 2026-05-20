@@ -688,11 +688,11 @@ func workspaceLookupMap(db database.Database) map[string]int {
 	return out
 }
 
-func resolveStatusName(db database.Database, name string, workspaceID int) (int, error) {
+func resolveStatusName(db database.Database, name string, _ int) (int, error) {
 	var id int
-	err := db.QueryRow("SELECT id FROM statuses WHERE LOWER(name) = LOWER(?) AND workspace_id = ?", name, workspaceID).Scan(&id)
+	err := db.QueryRow("SELECT id FROM statuses WHERE LOWER(name) = LOWER(?)", name).Scan(&id)
 	if err != nil {
-		return 0, fmt.Errorf("status not found in this workspace")
+		return 0, fmt.Errorf("status not found")
 	}
 	return id, nil
 }

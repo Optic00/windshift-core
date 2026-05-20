@@ -124,6 +124,16 @@
   function handleNodesChange(event) {
     const changes = event.detail;
     changes.forEach(change => {
+      if (change.type === 'remove') {
+        const node = flowStore.nodes.find(n => n.id === change.id);
+        if (node?.type === 'trigger') {
+          nodes = flowStore.nodes;
+          return;
+        }
+        flowStore.removeNode(change.id);
+        return;
+      }
+
       if (change.type === 'position' && !change.dragging) {
         const node = nodes.find(n => n.id === change.id);
         if (node?.position) {
