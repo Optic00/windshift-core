@@ -74,6 +74,8 @@ export default {
     inviteSent: 'Einladung gesendet',
     activateUser: 'Benutzer aktivieren',
     deactivateUser: 'Benutzer deaktivieren',
+    activeLabel: 'Aktiv',
+    activeHint: 'Inaktive Benutzer können sich nicht anmelden. Sie können das Konto später über das Zeilenmenü aktivieren.',
     confirmDelete: 'Möchten Sie {name} wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden.',
     confirmActivate: 'Möchten Sie {name} wirklich aktivieren? Der Benutzer kann dann auf das System zugreifen.',
     confirmDeactivate: 'Möchten Sie {name} wirklich deaktivieren? Der Benutzer kann nicht mehr auf das System zugreifen.',

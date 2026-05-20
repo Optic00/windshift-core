@@ -49,7 +49,7 @@
 		first_name: '',
 		last_name: '',
 		password: '',
-		is_active: true,
+		is_active: false,
 		is_agent: false
 	});
 
@@ -312,7 +312,7 @@
 			first_name: '',
 			last_name: '',
 			password: '',
-			is_active: true,
+			is_active: false,
 			is_agent: false
 		};
 		editingUser = null;
@@ -516,6 +516,14 @@
 							bind:checked={formData.is_agent}
 							label="Service user (agent)"
 							hint="Agents are non-human identities that authenticate via API tokens only — they cannot log in interactively. This flag is permanent and cannot be changed later."
+						/>
+					</div>
+
+					<div class="flex items-start gap-3 p-3 rounded border" data-testid="create-user-active-row" style="border-color: var(--ds-border); background-color: var(--ds-background-neutral);">
+						<Checkbox
+							bind:checked={formData.is_active}
+							label={t('users.activeLabel')}
+							hint={t('users.activeHint')}
 						/>
 					</div>
 				{/if}

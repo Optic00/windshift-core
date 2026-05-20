@@ -87,6 +87,8 @@ export default {
     cannotDeleteSelf: 'Você não pode excluir sua própria conta',
     activateUser: 'Ativar Usuário',
     deactivateUser: 'Desativar Usuário',
+    activeLabel: 'Ativo',
+    activeHint: 'Usuários inativos não podem entrar. Você pode ativar a conta depois pelo menu da linha.',
     confirmDelete: 'Tem certeza de que deseja excluir {name}? Esta ação não pode ser desfeita.',
     confirmActivate: 'Tem certeza de que deseja ativar {name}? A pessoa poderá acessar o sistema.',
     confirmDeactivate: 'Tem certeza de que deseja desativar {name}? A pessoa não poderá mais acessar o sistema.',

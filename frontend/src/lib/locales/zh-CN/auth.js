@@ -78,6 +78,8 @@ export default {
     cannotDeleteSelf: '不能删除自己的账户',
     activateUser: '激活用户',
     deactivateUser: '停用用户',
+    activeLabel: '激活',
+    activeHint: '未激活的用户无法登录。您稍后可以从行菜单启用该账户。',
     confirmDelete: '确定要删除 {name} 吗？此操作无法撤销。',
     confirmActivate: '确定要激活 {name} 吗？该用户将可以访问系统。',
     confirmDeactivate: '确定要停用 {name} 吗？该用户将无法再访问系统。',

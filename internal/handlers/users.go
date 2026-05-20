@@ -30,11 +30,10 @@ type UserHandler struct {
 
 // CreateUserRequest represents the request payload for creating a user.
 //
-// Note: is_active is intentionally not accepted from the client. Newly
-// created users are always inserted as inactive and need to be explicitly
-// activated (POST /users/{id}/activate) or to complete the invitation flow.
-// Accepting it from JSON would let an admin (or anyone who later reuses
-// this struct) skip the activation gate.
+// is_active is optional and defaults to false when omitted, so admins still
+// get the activation gate by default; the create dialog exposes it as an
+// explicit opt-in so the resulting state is visible at create time instead
+// of surprising the admin after the fact.
 type CreateUserRequest struct {
 	Email     string `json:"email" validate:"required,email,max=255"`
 	Username  string `json:"username" validate:"required,min=3,max=32"`
@@ -42,6 +41,7 @@ type CreateUserRequest struct {
 	LastName  string `json:"last_name" validate:"required,max=50"`
 	AvatarURL string `json:"avatar_url,omitempty"`
 	Password  string `json:"password,omitempty"` // Plaintext password, will be hashed
+	IsActive  *bool  `json:"is_active,omitempty"`
 	IsAgent   bool   `json:"is_agent,omitempty"` // If true, create as agent user (no password, no interactive login)
 }
 
@@ -219,6 +219,7 @@ func (h *UserHandler) Create(w http.ResponseWriter, r *http.Request) {
 		AvatarURL:             req.AvatarURL,
 		PasswordHash:          passwordHash,
 		RequiresPasswordReset: !req.IsAgent && req.Password == "",
+		IsActive:              req.IsActive != nil && *req.IsActive,
 		IsAgent:               req.IsAgent,
 		EmailVerified:         true,
 	})

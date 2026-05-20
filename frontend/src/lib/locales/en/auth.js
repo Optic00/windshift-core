@@ -88,6 +88,8 @@ export default {
     cannotDeleteSelf: 'You cannot delete your own account',
     activateUser: 'Activate User',
     deactivateUser: 'Deactivate User',
+    activeLabel: 'Active',
+    activeHint: 'Inactive users cannot sign in. You can enable the account later from the row menu.',
     confirmDelete: 'Are you sure you want to delete {name}? This action cannot be undone.',
     confirmActivate:
       'Are you sure you want to activate {name}? They will be able to access the system.',

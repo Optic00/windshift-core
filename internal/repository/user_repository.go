@@ -266,6 +266,8 @@ func (r *UserRepository) uniqueCheck(column, value string, excludeID int) (bool,
 
 // CreateUserParams carries the fields needed to insert a new user.
 // PasswordHash is optional (agent users and invited users have none).
+// IsActive is honored as-is; callers default it to false to preserve the
+// "require explicit activation" gate unless the admin opts in at create time.
 type CreateUserParams struct {
 	Email                 string
 	Username              string
@@ -274,19 +276,20 @@ type CreateUserParams struct {
 	AvatarURL             string
 	PasswordHash          *string
 	RequiresPasswordReset bool
+	IsActive              bool
 	IsAgent               bool
 	EmailVerified         bool
 }
 
-// Create inserts a new user with is_active=false. Returns ErrDuplicateEntry
-// when the unique (email/username) constraint trips.
+// Create inserts a new user with the supplied is_active value. Returns
+// ErrDuplicateEntry when the unique (email/username) constraint trips.
 func (r *UserRepository) Create(p CreateUserParams) (int64, error) {
 	now := time.Now()
 	var id int64
 	err := r.db.QueryRow(`
 		INSERT INTO users (email, username, first_name, last_name, is_active, avatar_url, password_hash, requires_password_reset, is_agent, email_verified, created_at, updated_at)
-		VALUES (?, ?, ?, ?, false, ?, ?, ?, ?, ?, ?, ?) RETURNING id
-	`, p.Email, p.Username, p.FirstName, p.LastName,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+	`, p.Email, p.Username, p.FirstName, p.LastName, p.IsActive,
 		nullableUserString(p.AvatarURL), nullableUserPtrString(p.PasswordHash),
 		p.RequiresPasswordReset, p.IsAgent, p.EmailVerified, now, now,
 	).Scan(&id)
