@@ -324,7 +324,10 @@ func (c *cloudClient) setHeaders(req *http.Request) {
 // need the upstream message (deprecated auth scheme, SSO required, account
 // locked, etc.) rather than a bare sentinel error.
 func (c *cloudClient) handleErrorResponse(resp *http.Response) error {
-	body, _ := io.ReadAll(resp.Body) //nolint:errcheck // best-effort read for error message
+	body, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return fmt.Errorf("failed to read Jira error response body: %w", readErr)
+	}
 	snippet := truncateBody(body)
 
 	switch resp.StatusCode {

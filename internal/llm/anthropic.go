@@ -250,7 +250,10 @@ func (c *anthropicClient) ChatCompletion(ctx context.Context, req ChatCompletion
 		return nil, ErrServiceNotReady
 	}
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body) //nolint:errcheck // best-effort read for error message
+		respBody, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, fmt.Errorf("%w: status %d; failed to read response body: %v", ErrAPIError, resp.StatusCode, readErr)
+		}
 		return nil, fmt.Errorf("%w: status %d - %s", ErrAPIError, resp.StatusCode, string(respBody))
 	}
 

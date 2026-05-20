@@ -89,7 +89,10 @@ func (g *GiteaProvider) setAuthHeader(req *http.Request) {
 
 // handleErrorResponse handles non-success HTTP responses
 func (g *GiteaProvider) handleErrorResponse(resp *http.Response) error {
-	body, _ := io.ReadAll(resp.Body) //nolint:errcheck // best-effort read for error message
+	body, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return fmt.Errorf("%w: failed to read response body: %v", ErrProviderError, readErr)
+	}
 	bodyStr := string(body)
 
 	switch resp.StatusCode {
@@ -644,7 +647,10 @@ func (g *GiteaProvider) performTokenRequest(ctx context.Context, params url.Valu
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return nil, fmt.Errorf("%w: failed to read response body: %v", ErrProviderError, readErr)
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusBadRequest && bytes.Contains(body, []byte(`"invalid_grant"`)) {

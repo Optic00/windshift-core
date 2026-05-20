@@ -153,7 +153,10 @@ func (g *GitHubProvider) ListAppInstallations(ctx context.Context) ([]GitHubAppI
 		return nil, ErrInvalidCredentials
 	}
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, fmt.Errorf("%w: status %d; failed to read response body: %v", ErrProviderError, resp.StatusCode, readErr)
+		}
 		return nil, fmt.Errorf("%w: status %d - %s", ErrProviderError, resp.StatusCode, string(body))
 	}
 
@@ -206,7 +209,10 @@ func (g *GitHubProvider) GetInstallationAccessToken(ctx context.Context, install
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return "", nil, fmt.Errorf("%w: status %d; failed to read response body: %v", ErrProviderError, resp.StatusCode, readErr)
+		}
 		return "", nil, fmt.Errorf("%w: status %d - %s", ErrProviderError, resp.StatusCode, string(body))
 	}
 
@@ -921,7 +927,10 @@ func (g *GitHubProvider) ExchangeCode(ctx context.Context, code, redirectURI str
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, fmt.Errorf("%w: failed to read response body: %v", ErrProviderError, readErr)
+		}
 		return nil, fmt.Errorf("%w: %s", ErrProviderError, string(body))
 	}
 
@@ -997,7 +1006,10 @@ func (g *GitHubProvider) RevokeToken(ctx context.Context, accessToken string) er
 		// 204: revoked. 404: already gone or never existed — treat as success.
 		return nil
 	default:
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return fmt.Errorf("%w: github revoke status %d; failed to read response body: %v", ErrProviderError, resp.StatusCode, readErr)
+		}
 		return fmt.Errorf("%w: github revoke status %d - %s", ErrProviderError, resp.StatusCode, string(respBody))
 	}
 }
@@ -1034,7 +1046,10 @@ func (g *GitHubProvider) setAuthHeader(req *http.Request) {
 }
 
 func (g *GitHubProvider) handleErrorResponse(resp *http.Response) error {
-	body, _ := io.ReadAll(resp.Body)
+	body, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return fmt.Errorf("%w: failed to read response body: %v", ErrProviderError, readErr)
+	}
 	bodyStr := string(body)
 
 	switch resp.StatusCode {

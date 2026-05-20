@@ -63,7 +63,10 @@ func (c *dataCenterClient) setHeaders(req *http.Request) {
 // (DC's own auth quirks are even more varied: PAT vs Basic, reverse proxies
 // stripping headers, captcha lockouts).
 func (c *dataCenterClient) handleErrorResponse(resp *http.Response) error {
-	body, _ := io.ReadAll(resp.Body) //nolint:errcheck // best-effort read for error message
+	body, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return fmt.Errorf("failed to read Jira error response body: %w", readErr)
+	}
 	snippet := truncateBody(body)
 
 	switch resp.StatusCode {

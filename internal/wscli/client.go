@@ -556,7 +556,10 @@ func (c *Client) DownloadAttachment(id int, w io.Writer) (string, error) {
 	}
 
 	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return "", fmt.Errorf("API error (status %d); failed to read response body: %w", resp.StatusCode, readErr)
+		}
 		var apiErr APIError
 		if jerr := json.Unmarshal(body, &apiErr); jerr == nil && (apiErr.Code != "" || apiErr.Message != "") {
 			return "", &apiErr

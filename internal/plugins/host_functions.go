@@ -144,7 +144,11 @@ func (m *Manager) httpFetchHostFunction(ctx context.Context, plugin *extism.Curr
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(resp.Body)
+	body, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		m.writeHostResponse(plugin, stack, HTTPFetchResponse{Status: http.StatusBadGateway, Body: []byte(readErr.Error())})
+		return
+	}
 	headers := make(map[string]string)
 	for k, vals := range resp.Header {
 		if len(vals) > 0 {

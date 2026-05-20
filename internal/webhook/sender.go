@@ -459,7 +459,10 @@ func (w *WebhookSender) sendWebhook(webhook WebhookConfig, event string, item *m
 		w.recordDelivery(ctx, delivery)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
 
 	delivery.ResponseStatusCode = &resp.StatusCode
 
@@ -607,7 +610,10 @@ func (w *WebhookSender) SendTestWebhook(ctx context.Context, config *models.Chan
 	if err != nil {
 		return false, fmt.Sprintf("Failed to send webhook: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}()
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return true, fmt.Sprintf("Test webhook sent successfully (status: %d)", resp.StatusCode)

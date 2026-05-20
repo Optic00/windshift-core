@@ -52,7 +52,10 @@ func (c *APIClient) doGet(path string, result interface{}) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return fmt.Errorf("API error: %s; failed to read response body: %w", resp.Status, readErr)
+		}
 		return fmt.Errorf("API error: %s - %s", resp.Status, string(body))
 	}
 
@@ -83,7 +86,10 @@ func (c *APIClient) doMutate(method, path string, body interface{}) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return fmt.Errorf("API error: %s; failed to read response body: %w", resp.Status, readErr)
+		}
 		return fmt.Errorf("API error: %s - %s", resp.Status, string(body))
 	}
 

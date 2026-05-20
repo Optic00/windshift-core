@@ -189,7 +189,10 @@ func exchangeCode(instanceURL, code, state string) (*cliAuthResult, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != 200 {
-		b, _ := io.ReadAll(resp.Body)
+		b, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return nil, fmt.Errorf("exchange failed (status %d); failed to read response body: %w", resp.StatusCode, readErr)
+		}
 		return nil, fmt.Errorf("exchange failed (status %d): %s", resp.StatusCode, strings.TrimSpace(string(b)))
 	}
 	var r cliExchangeResponse
