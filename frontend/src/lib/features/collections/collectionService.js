@@ -46,9 +46,13 @@ export async function fetchCollectionItems(
  * Fetches backlog items for a collection.
  * @param {string|number} workspaceId
  * @param {string|number|null} collectionId
- * @param {{ page?: number, limit?: number }} [options]
+ * @param {{ page?: number, limit?: number, sub_ql?: string }} [options]
  */
-export async function fetchCollectionBacklog(workspaceId, collectionId, { page, limit } = {}) {
+export async function fetchCollectionBacklog(
+  workspaceId,
+  collectionId,
+  { page, limit, sub_ql } = {}
+) {
   let collectionName = 'Default';
 
   if (collectionId) {
@@ -61,6 +65,7 @@ export async function fetchCollectionBacklog(workspaceId, collectionId, { page, 
   const response = await api.items.getBacklog(workspaceId, null, collectionId || null, {
     page,
     limit,
+    sub_ql,
   });
   const items = response?.items ?? (Array.isArray(response) ? response : []);
   const pagination = response?.pagination ?? null;

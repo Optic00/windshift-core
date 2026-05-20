@@ -46,7 +46,7 @@
   // Centralized gradient styling
   const styles = useGradientStyles();
 
-  // On mount, request a large page to get full hierarchy
+  // On mount, request the same page size used by collection store filter reloads.
   onMount(async () => {
     // Load test case toggle preference from localStorage
     const saved = localStorage.getItem('collectionTree_showTestCases');
@@ -57,8 +57,8 @@
     if (workspaceId) {
       await loadWorkspaceGradient(workspaceId);
     }
-    // Request a large page for tree (needs full hierarchy)
-    await collectionStore.setItemsPage(1, 500);
+    // Keep this aligned with the collection store default page size.
+    await collectionStore.setItemsPage(1, 250);
     await loadData();
   });
 

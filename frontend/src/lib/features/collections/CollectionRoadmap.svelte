@@ -594,11 +594,16 @@
   // Save roadmap config
   async function saveConfig() {
     const payload = {
+      columns: boardConfig?.columns || [],
+      backlog_status_ids: boardConfig?.backlog_status_ids || [],
+      list_columns: boardConfig?.list_columns || [],
+      card_fields: boardConfig?.card_fields || [],
       roadmap_config: {
         start_field_id: roadmapConfig.start_field_id,
         end_field_id: roadmapConfig.end_field_id,
         dependency_link_type_id: roadmapConfig.dependency_link_type_id ? Number(roadmapConfig.dependency_link_type_id) : null,
       },
+      show_rightmost_column_last_50: Boolean(boardConfig?.show_rightmost_column_last_50),
     };
 
     try {
@@ -875,7 +880,8 @@
     } else {
       await workspaceDataStore.initializeGlobal();
     }
-    await collectionStore.setItemsPage(1, 500);
+    // Keep this aligned with the collection store default page size.
+    await collectionStore.setItemsPage(1, 250);
     await Promise.all([loadConfig(), loadReferenceData()]);
     loading = false;
   });

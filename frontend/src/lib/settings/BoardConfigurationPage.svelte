@@ -34,6 +34,7 @@
   let activeTab = $state('columns');
   let backlogStatusIDs = $state([]);
   let cardFields = $state([]);
+  let showRightmostColumnLast50 = $state(false);
   let customFieldDefinitions = $state([]);
 
   // DnD state
@@ -160,6 +161,7 @@
           ? boardConfig.backlog_status_ids
           : statuses.filter(s => !s.is_default && !s.is_completed).map(s => s.id);
         cardFields = boardConfig.card_fields || [];
+        showRightmostColumnLast50 = Boolean(boardConfig.show_rightmost_column_last_50);
       } catch (error) {
         if (error.status !== 404) {
           console.error('Failed to load board configuration:', error);
@@ -167,6 +169,7 @@
         columns = [];
         backlogStatusIDs = statuses.filter(s => !s.is_default && !s.is_completed).map(s => s.id);
         cardFields = [];
+        showRightmostColumnLast50 = false;
       }
 
       try {
@@ -480,6 +483,13 @@
     hasChanges = true;
   }
 
+  // --- Board display options ---
+
+  function setShowRightmostColumnLast50(value) {
+    showRightmostColumnLast50 = value;
+    hasChanges = true;
+  }
+
   // --- Card Fields ---
 
   const systemFieldOptions = CARD_SELECTABLE_FIELDS.map(f => ({
@@ -546,12 +556,15 @@
           status_ids: col.status_ids
         })),
         backlog_status_ids: backlogStatusIDs,
+        list_columns: boardConfig?.list_columns || [],
+        roadmap_config: boardConfig?.roadmap_config || null,
         card_fields: cardFields.map((f, i) => ({
           field_identifier: f.field_identifier,
           field_type: f.field_type,
           display_order: i,
           width: 0
-        }))
+        })),
+        show_rightmost_column_last_50: showRightmostColumnLast50
       };
 
       if (boardConfig && boardConfig.id) {
@@ -588,6 +601,7 @@
         columns = [];
         backlogStatusIDs = [];
         cardFields = [];
+        showRightmostColumnLast50 = false;
         hasChanges = false;
         goToBoard();
       } catch (error) {
@@ -598,6 +612,7 @@
       columns = [];
       backlogStatusIDs = [];
       cardFields = [];
+      showRightmostColumnLast50 = false;
       hasChanges = false;
     }
   }
@@ -687,6 +702,22 @@
 
         <!-- Columns Tab -->
         {#if activeTab === 'columns'}
+        <div class="mt-4 rounded border p-4" style="background-color: var(--ds-surface-raised); border-color: var(--ds-border);">
+          <label class="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              class="mt-1 h-4 w-4 rounded"
+              checked={showRightmostColumnLast50}
+              onchange={(e) => setShowRightmostColumnLast50(e.currentTarget.checked)}
+              disabled={!canConfigure}
+            />
+            <span>
+              <span class="block text-sm font-medium" style="color: var(--ds-text);">Show only the latest 50 items in the rightmost column</span>
+              <span class="block text-xs mt-1" style="color: var(--ds-text-subtle);">Useful for high-volume Done columns while keeping the rest of the board complete.</span>
+            </span>
+          </label>
+        </div>
+
         <div class="grid grid-cols-1 lg:grid-cols-6 gap-3 mt-4 mb-6">
           <!-- Left Panel: Available Statuses -->
           <div class="lg:col-span-2 rounded-xl p-3 border" style="background-color: var(--ds-surface); border-color: var(--ds-border);">
@@ -1040,7 +1071,7 @@
             <Button
               variant="primary"
               onclick={saveConfiguration}
-              disabled={!canConfigure || saving || (activeTab === 'columns' && columns.length === 0)}
+              disabled={!canConfigure || saving}
               loading={saving}
               title={!canConfigure ? t('workspace.accessDeniedDescription') : ''}
             >

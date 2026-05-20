@@ -245,6 +245,7 @@ CREATE TABLE IF NOT EXISTS board_configurations (
 	list_columns TEXT, -- JSON array of list column configurations
 	roadmap_config TEXT, -- JSON object with roadmap view settings
 	card_fields TEXT, -- JSON array of card field configurations
+	show_rightmost_column_last_50 BOOLEAN DEFAULT false,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,

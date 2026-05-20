@@ -69,8 +69,8 @@
     if (workspaceId) {
       await loadWorkspaceGradient(workspaceId);
     }
-    // Request a large page for map (needs all items for spatial layout)
-    await collectionStore.setItemsPage(1, 500);
+    // Align with the collection store default page size so filter reloads keep the same scope.
+    await collectionStore.setItemsPage(1, 250);
     await loadAllData();
   });
 

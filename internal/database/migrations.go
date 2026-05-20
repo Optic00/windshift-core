@@ -88,6 +88,140 @@ var Catalog = []Migration{
 		Postgres:      `ALTER TABLE webhook_deliveries ADD COLUMN response_preview TEXT`,
 	},
 	{
+		Version:       "20260520_board_config_rightmost_column_limit",
+		Name:          "Add rightmost board column display limit setting",
+		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('board_configurations') WHERE name='show_rightmost_column_last_50'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='board_configurations' AND column_name='show_rightmost_column_last_50'",
+		SQLite:        `ALTER TABLE board_configurations ADD COLUMN show_rightmost_column_last_50 BOOLEAN DEFAULT false`,
+		Postgres:      `ALTER TABLE board_configurations ADD COLUMN show_rightmost_column_last_50 BOOLEAN DEFAULT false`,
+	},
+	{
+		Version: "20260520_time_tracking_permission_tables",
+		Name:    "Create time tracking and customer organisation permission tables",
+		CheckSQLite: `SELECT CASE WHEN
+			EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='time_project_managers')
+			AND EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='time_project_members')
+			AND EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='customer_organisation_managers')
+			AND EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='customer_organisation_members')
+			THEN 1 ELSE 0 END`,
+		CheckPostgres: `SELECT CASE WHEN
+			EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='time_project_managers')
+			AND EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='time_project_members')
+			AND EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='customer_organisation_managers')
+			AND EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='customer_organisation_members')
+			THEN 1 ELSE 0 END`,
+		SQLite: `
+			CREATE TABLE IF NOT EXISTS time_project_managers (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				project_id INTEGER NOT NULL,
+				manager_type TEXT NOT NULL CHECK (manager_type IN ('user', 'group')),
+				manager_id INTEGER NOT NULL,
+				granted_by INTEGER,
+				granted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (project_id) REFERENCES time_projects(id) ON DELETE CASCADE,
+				FOREIGN KEY (granted_by) REFERENCES users(id) ON DELETE SET NULL,
+				UNIQUE(project_id, manager_type, manager_id)
+			);
+
+			CREATE TABLE IF NOT EXISTS time_project_members (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				project_id INTEGER NOT NULL,
+				member_type TEXT NOT NULL CHECK (member_type IN ('user', 'group')),
+				member_id INTEGER NOT NULL,
+				granted_by INTEGER,
+				granted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (project_id) REFERENCES time_projects(id) ON DELETE CASCADE,
+				FOREIGN KEY (granted_by) REFERENCES users(id) ON DELETE SET NULL,
+				UNIQUE(project_id, member_type, member_id)
+			);
+
+			CREATE INDEX IF NOT EXISTS idx_time_project_managers_project ON time_project_managers(project_id);
+			CREATE INDEX IF NOT EXISTS idx_time_project_members_project ON time_project_members(project_id);
+
+			CREATE TABLE IF NOT EXISTS customer_organisation_managers (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				customer_organisation_id INTEGER NOT NULL,
+				manager_type TEXT NOT NULL CHECK (manager_type IN ('user', 'group')),
+				manager_id INTEGER NOT NULL,
+				granted_by INTEGER,
+				granted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (customer_organisation_id) REFERENCES customer_organisations(id) ON DELETE CASCADE,
+				FOREIGN KEY (granted_by) REFERENCES users(id) ON DELETE SET NULL,
+				UNIQUE(customer_organisation_id, manager_type, manager_id)
+			);
+
+			CREATE TABLE IF NOT EXISTS customer_organisation_members (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				customer_organisation_id INTEGER NOT NULL,
+				member_type TEXT NOT NULL CHECK (member_type IN ('user', 'group')),
+				member_id INTEGER NOT NULL,
+				granted_by INTEGER,
+				granted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (customer_organisation_id) REFERENCES customer_organisations(id) ON DELETE CASCADE,
+				FOREIGN KEY (granted_by) REFERENCES users(id) ON DELETE SET NULL,
+				UNIQUE(customer_organisation_id, member_type, member_id)
+			);
+
+			CREATE INDEX IF NOT EXISTS idx_customer_organisation_managers_org ON customer_organisation_managers(customer_organisation_id);
+			CREATE INDEX IF NOT EXISTS idx_customer_organisation_members_org ON customer_organisation_members(customer_organisation_id);
+		`,
+		Postgres: `
+			CREATE TABLE IF NOT EXISTS time_project_managers (
+				id SERIAL PRIMARY KEY,
+				project_id INTEGER NOT NULL,
+				manager_type TEXT NOT NULL CHECK (manager_type IN ('user', 'group')),
+				manager_id INTEGER NOT NULL,
+				granted_by INTEGER,
+				granted_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (project_id) REFERENCES time_projects(id) ON DELETE CASCADE,
+				FOREIGN KEY (granted_by) REFERENCES users(id) ON DELETE SET NULL,
+				UNIQUE(project_id, manager_type, manager_id)
+			);
+
+			CREATE TABLE IF NOT EXISTS time_project_members (
+				id SERIAL PRIMARY KEY,
+				project_id INTEGER NOT NULL,
+				member_type TEXT NOT NULL CHECK (member_type IN ('user', 'group')),
+				member_id INTEGER NOT NULL,
+				granted_by INTEGER,
+				granted_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (project_id) REFERENCES time_projects(id) ON DELETE CASCADE,
+				FOREIGN KEY (granted_by) REFERENCES users(id) ON DELETE SET NULL,
+				UNIQUE(project_id, member_type, member_id)
+			);
+
+			CREATE INDEX IF NOT EXISTS idx_time_project_managers_project ON time_project_managers(project_id);
+			CREATE INDEX IF NOT EXISTS idx_time_project_members_project ON time_project_members(project_id);
+
+			CREATE TABLE IF NOT EXISTS customer_organisation_managers (
+				id SERIAL PRIMARY KEY,
+				customer_organisation_id INTEGER NOT NULL,
+				manager_type TEXT NOT NULL CHECK (manager_type IN ('user', 'group')),
+				manager_id INTEGER NOT NULL,
+				granted_by INTEGER,
+				granted_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (customer_organisation_id) REFERENCES customer_organisations(id) ON DELETE CASCADE,
+				FOREIGN KEY (granted_by) REFERENCES users(id) ON DELETE SET NULL,
+				UNIQUE(customer_organisation_id, manager_type, manager_id)
+			);
+
+			CREATE TABLE IF NOT EXISTS customer_organisation_members (
+				id SERIAL PRIMARY KEY,
+				customer_organisation_id INTEGER NOT NULL,
+				member_type TEXT NOT NULL CHECK (member_type IN ('user', 'group')),
+				member_id INTEGER NOT NULL,
+				granted_by INTEGER,
+				granted_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (customer_organisation_id) REFERENCES customer_organisations(id) ON DELETE CASCADE,
+				FOREIGN KEY (granted_by) REFERENCES users(id) ON DELETE SET NULL,
+				UNIQUE(customer_organisation_id, member_type, member_id)
+			);
+
+			CREATE INDEX IF NOT EXISTS idx_customer_organisation_managers_org ON customer_organisation_managers(customer_organisation_id);
+			CREATE INDEX IF NOT EXISTS idx_customer_organisation_members_org ON customer_organisation_members(customer_organisation_id);
+		`,
+	},
+	{
 		// Legacy SQLite installs declared notification_templates with
 		// `template_type TEXT NOT NULL` and `content TEXT NOT NULL`. The
 		// modernized seed in emailutil.SeedTemplates doesn't supply

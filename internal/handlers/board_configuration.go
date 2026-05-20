@@ -179,11 +179,11 @@ func (h *BoardConfigurationHandler) GetByCollection(w http.ResponseWriter, r *ht
 		var collectionID, wsID sql.NullInt64
 		var backlogStatusIDsJSON, listColumnsJSON, cardFieldsJSON, roadmapConfigJSON sql.NullString
 		err = h.db.QueryRow(`
-			SELECT id, collection_id, workspace_id, backlog_status_ids, list_columns, card_fields, roadmap_config, created_at, updated_at
+			SELECT id, collection_id, workspace_id, backlog_status_ids, list_columns, card_fields, roadmap_config, show_rightmost_column_last_50, created_at, updated_at
 			FROM board_configurations
 			WHERE workspace_id = ?`,
 			workspaceID,
-		).Scan(&config.ID, &collectionID, &wsID, &backlogStatusIDsJSON, &listColumnsJSON, &cardFieldsJSON, &roadmapConfigJSON, &config.CreatedAt, &config.UpdatedAt)
+		).Scan(&config.ID, &collectionID, &wsID, &backlogStatusIDsJSON, &listColumnsJSON, &cardFieldsJSON, &roadmapConfigJSON, &config.ShowRightmostColumnLast50, &config.CreatedAt, &config.UpdatedAt)
 
 		// Every workspace logically has a default board configuration even when
 		// no row has been persisted yet — return an empty config scoped to the
@@ -219,11 +219,11 @@ func (h *BoardConfigurationHandler) GetByCollection(w http.ResponseWriter, r *ht
 		var collID, wsID sql.NullInt64
 		var backlogStatusIDsJSON, listColumnsJSON, cardFieldsJSON, roadmapConfigJSON sql.NullString
 		err = h.db.QueryRow(`
-			SELECT id, collection_id, workspace_id, backlog_status_ids, list_columns, card_fields, roadmap_config, created_at, updated_at
+			SELECT id, collection_id, workspace_id, backlog_status_ids, list_columns, card_fields, roadmap_config, show_rightmost_column_last_50, created_at, updated_at
 			FROM board_configurations
 			WHERE collection_id = ?`,
 			collectionID,
-		).Scan(&config.ID, &collID, &wsID, &backlogStatusIDsJSON, &listColumnsJSON, &cardFieldsJSON, &roadmapConfigJSON, &config.CreatedAt, &config.UpdatedAt)
+		).Scan(&config.ID, &collID, &wsID, &backlogStatusIDsJSON, &listColumnsJSON, &cardFieldsJSON, &roadmapConfigJSON, &config.ShowRightmostColumnLast50, &config.CreatedAt, &config.UpdatedAt)
 
 		if collID.Valid {
 			cid := int(collID.Int64)
@@ -306,9 +306,9 @@ func (h *BoardConfigurationHandler) CreateForCollection(w http.ResponseWriter, r
 
 		// Create workspace board configuration
 		err = tx.QueryRow(`
-			INSERT INTO board_configurations (workspace_id, backlog_status_ids, list_columns, card_fields, roadmap_config, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-			wsID, configBytes.BacklogStatusIDs, configBytes.ListColumns, configBytes.CardFields, configBytes.RoadmapConfig, time.Now(), time.Now(),
+			INSERT INTO board_configurations (workspace_id, backlog_status_ids, list_columns, card_fields, roadmap_config, show_rightmost_column_last_50, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+			wsID, configBytes.BacklogStatusIDs, configBytes.ListColumns, configBytes.CardFields, configBytes.RoadmapConfig, req.ShowRightmostColumnLast50, time.Now(), time.Now(),
 		).Scan(&configID)
 	} else {
 		// Collection-level configuration
@@ -324,9 +324,9 @@ func (h *BoardConfigurationHandler) CreateForCollection(w http.ResponseWriter, r
 		collectionID = &collID
 
 		err = tx.QueryRow(`
-			INSERT INTO board_configurations (collection_id, backlog_status_ids, list_columns, card_fields, roadmap_config, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-			collID, configBytes.BacklogStatusIDs, configBytes.ListColumns, configBytes.CardFields, configBytes.RoadmapConfig, time.Now(), time.Now(),
+			INSERT INTO board_configurations (collection_id, backlog_status_ids, list_columns, card_fields, roadmap_config, show_rightmost_column_last_50, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+			collID, configBytes.BacklogStatusIDs, configBytes.ListColumns, configBytes.CardFields, configBytes.RoadmapConfig, req.ShowRightmostColumnLast50, time.Now(), time.Now(),
 		).Scan(&configID)
 	}
 
@@ -349,13 +349,14 @@ func (h *BoardConfigurationHandler) CreateForCollection(w http.ResponseWriter, r
 
 	// Return the created configuration
 	config := models.BoardConfiguration{
-		ID:           int(configID),
-		CollectionID: collectionID,
-		WorkspaceID:  workspaceID,
-		ListColumns:  req.ListColumns,
-		CardFields:   req.CardFields,
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
+		ID:                        int(configID),
+		CollectionID:              collectionID,
+		WorkspaceID:               workspaceID,
+		ListColumns:               req.ListColumns,
+		CardFields:                req.CardFields,
+		ShowRightmostColumnLast50: req.ShowRightmostColumnLast50,
+		CreatedAt:                 time.Now(),
+		UpdatedAt:                 time.Now(),
 	}
 	columns, _ := h.getColumnsWithStatuses(int(configID))
 	config.Columns = columns
@@ -400,9 +401,9 @@ func (h *BoardConfigurationHandler) UpdateForCollection(w http.ResponseWriter, r
 	// Update the configuration
 	_, err = tx.Exec(`
 		UPDATE board_configurations
-		SET backlog_status_ids = ?, list_columns = ?, card_fields = ?, roadmap_config = ?, updated_at = ?
+		SET backlog_status_ids = ?, list_columns = ?, card_fields = ?, roadmap_config = ?, show_rightmost_column_last_50 = ?, updated_at = ?
 		WHERE id = ?`,
-		configBytes.BacklogStatusIDs, configBytes.ListColumns, configBytes.CardFields, configBytes.RoadmapConfig, time.Now(), configID,
+		configBytes.BacklogStatusIDs, configBytes.ListColumns, configBytes.CardFields, configBytes.RoadmapConfig, req.ShowRightmostColumnLast50, time.Now(), configID,
 	)
 	if err != nil {
 		respondInternalError(w, r, err)
@@ -531,11 +532,11 @@ func (h *BoardConfigurationHandler) UpdateForCollection(w http.ResponseWriter, r
 	var collID, wsID sql.NullInt64
 	var backlogStatusIDsJSON, listColumnsJSON, cardFieldsJSON, roadmapConfigJSON sql.NullString
 	err = h.db.QueryRow(`
-		SELECT id, collection_id, workspace_id, backlog_status_ids, list_columns, card_fields, roadmap_config, created_at, updated_at
+		SELECT id, collection_id, workspace_id, backlog_status_ids, list_columns, card_fields, roadmap_config, show_rightmost_column_last_50, created_at, updated_at
 		FROM board_configurations
 		WHERE id = ?`,
 		configID,
-	).Scan(&config.ID, &collID, &wsID, &backlogStatusIDsJSON, &listColumnsJSON, &cardFieldsJSON, &roadmapConfigJSON, &config.CreatedAt, &config.UpdatedAt)
+	).Scan(&config.ID, &collID, &wsID, &backlogStatusIDsJSON, &listColumnsJSON, &cardFieldsJSON, &roadmapConfigJSON, &config.ShowRightmostColumnLast50, &config.CreatedAt, &config.UpdatedAt)
 
 	if err != nil {
 		respondInternalError(w, r, err)

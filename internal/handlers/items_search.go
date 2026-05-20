@@ -322,6 +322,7 @@ func (h *ItemHandler) GetBacklogItems(w http.ResponseWriter, r *http.Request) {
 	}
 
 	qlQuery := r.URL.Query().Get("ql")
+	subQLQuery := r.URL.Query().Get("sub_ql")
 
 	// Parse pagination parameters
 	page := 1
@@ -350,6 +351,7 @@ func (h *ItemHandler) GetBacklogItems(w http.ResponseWriter, r *http.Request) {
 		WorkspaceID:  wsID,
 		CollectionID: collectionID,
 		QLQuery:      qlQuery,
+		SubQLQuery:   subQLQuery,
 		WorkspaceIDs: accessibleWorkspaceIDs,
 		UserID:       user.ID,
 		Pagination:   services.PaginationParams{Limit: limit, Offset: offset, Page: page},

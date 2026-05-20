@@ -54,7 +54,7 @@ export const items = {
     workspaceId,
     ql = null,
     collectionId = null,
-    /** @type {any} */ { page, limit } = {}
+    /** @type {any} */ { page, limit, sub_ql } = {}
   ) => {
     const params = new URLSearchParams();
     if (collectionId) {
@@ -63,6 +63,7 @@ export const items = {
       params.append('workspace_id', workspaceId);
     }
     if (ql) params.append('ql', ql);
+    if (sub_ql) params.append('sub_ql', sub_ql);
     if (page) params.append('page', page);
     if (limit) params.append('limit', limit);
     return fetchAPI(`/items/backlog?${params}`);

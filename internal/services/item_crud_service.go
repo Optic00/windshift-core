@@ -358,6 +358,7 @@ type BacklogParams struct {
 	WorkspaceID  int    // 0 if not specified (collection-only query)
 	CollectionID int    // 0 if not specified
 	QLQuery      string // Direct QL query, overrides collection
+	SubQLQuery   string // Sub-filter QL query (ANDed with collection/direct QL)
 	WorkspaceIDs []int  // Accessible workspace IDs for security filtering
 	UserID       int    // Authenticated user ID for currentUser() resolution
 	Pagination   PaginationParams
@@ -386,6 +387,15 @@ func (s *ItemCRUDService) GetBacklogItems(params BacklogParams) ([]models.Item, 
 	qlQuery, collectionResolved, err := s.resolveCollectionQL(params.QLQuery, params.CollectionID)
 	if err != nil {
 		return nil, 0, err
+	}
+
+	// Combine with sub-filter QL if provided
+	if subQL := strings.TrimSpace(params.SubQLQuery); subQL != "" {
+		if qlQuery != "" {
+			qlQuery = "(" + qlQuery + ") AND (" + subQL + ")"
+		} else {
+			qlQuery = subQL
+		}
 	}
 
 	// Evaluate QL query into SQL

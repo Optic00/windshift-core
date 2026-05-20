@@ -45,6 +45,8 @@
   let projects = $derived(workspaceDataStore.projects);
   let customFieldDefinitions = $derived(workspaceDataStore.customFieldDefinitions);
 
+  const RIGHTMOST_COLUMN_LIMIT = 50;
+
   // Dynamic view-specific state — derived directly from central store
   let items = $derived(collectionStore.items);
   let transitions = $state([]);
@@ -376,10 +378,30 @@
     }));
   });
 
+  let validColumns = $derived(displayColumns.filter(col => col.status_ids?.length > 0));
+
+  function shouldLimitRightmostColumn(columnIndex, columnsForBoard = validColumns) {
+    return Boolean(boardConfig?.show_rightmost_column_last_50 && columnIndex === columnsForBoard.length - 1);
+  }
+
+  function itemRecencyValue(item) {
+    return new Date(item.updated_at || item.created_at || 0).getTime() || 0;
+  }
+
+  function getDisplayItemsByColumn(column, columnIndex, columnsForBoard = validColumns) {
+    const columnItems = getItemsByColumn(column);
+    return shouldLimitRightmostColumn(columnIndex, columnsForBoard)
+      ? columnItems
+          .slice()
+          .sort((a, b) => itemRecencyValue(b) - itemRecencyValue(a) || b.id - a.id)
+          .slice(0, RIGHTMOST_COLUMN_LIMIT)
+      : columnItems;
+  }
+
   // Calculate total visible items across all display columns
   let totalVisibleItems = $derived.by(() => {
-    return displayColumns.reduce((total, column) => {
-      return total + getItemsByColumn(column).length;
+    return validColumns.reduce((total, column, columnIndex) => {
+      return total + getDisplayItemsByColumn(column, columnIndex, validColumns).length;
     }, 0);
   });
 
@@ -914,11 +936,12 @@
         </div>
       {:else}
         <!-- Board Columns -->
-        {@const validColumns = displayColumns.filter(col => col.status_ids?.length > 0)}
         <div class="grid gap-6" data-testid="board-view" style="grid-template-columns: repeat({validColumns.length}, minmax(300px, 1fr));">
-          {#each validColumns as column (column.id)}
-            {@const columnItems = getItemsByColumn(column)}
-            {@const isOverWip = column.wip_limit && columnItems.length > column.wip_limit}
+          {#each validColumns as column, columnIndex (column.id)}
+            {@const allColumnItems = getItemsByColumn(column)}
+            {@const columnItems = getDisplayItemsByColumn(column, columnIndex, validColumns)}
+            {@const hiddenColumnItemCount = allColumnItems.length - columnItems.length}
+            {@const isOverWip = column.wip_limit && allColumnItems.length > column.wip_limit}
             <div
               class="rounded border shadow-sm transition-colors"
               style="{styles.columnStyle(12)}"
@@ -941,13 +964,19 @@
                   </button>
                 </div>
                 <div class="flex items-center justify-between">
-                  <span class="text-sm" style={styles.glassSubtleTextStyle}>{columnItems.length} {t('items.item')}</span>
+                  <span class="text-sm" style={styles.glassSubtleTextStyle}>
+                    {#if hiddenColumnItemCount > 0}
+                      {columnItems.length} of {allColumnItems.length} {t('items.item')}
+                    {:else}
+                      {allColumnItems.length} {t('items.item')}
+                    {/if}
+                  </span>
                   {#if column.wip_limit}
                     <span class="text-xs px-2 py-0.5 rounded"
                           style={isOverWip
                             ? 'background-color: var(--ds-danger-subtle); color: var(--ds-text-danger);'
                             : 'background-color: var(--ds-background-neutral, #091e420f); color: var(--ds-text-subtle, #6b778c);'}>
-                      WIP: {columnItems.length}/{column.wip_limit}
+                      WIP: {allColumnItems.length}/{column.wip_limit}
                     </span>
                   {/if}
                 </div>
@@ -973,6 +1002,11 @@
                     <p class="text-sm">{t('items.noItems')}</p>
                   </div>
                 {:else}
+                  {#if hiddenColumnItemCount > 0}
+                    <p class="text-xs mb-3" style={styles.glassSubtleTextStyle}>
+                      Showing latest {RIGHTMOST_COLUMN_LIMIT} of {allColumnItems.length} items in this column.
+                    </p>
+                  {/if}
                   <div class="space-y-1">
                     {#each columnItems as item, index (item.id)}
                       {@const itemStatus = statuses.find(s => s.name.toLowerCase().replace(/ /g, '_') === item.status)}

@@ -299,6 +299,7 @@ CREATE TABLE IF NOT EXISTS board_configurations (
 	list_columns TEXT,
 	roadmap_config TEXT,
 	card_fields TEXT,
+	show_rightmost_column_last_50 BOOLEAN DEFAULT false,
 	created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 	updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );

@@ -181,7 +181,10 @@
       const configData = {
         columns: boardConfig?.columns || [],
         backlog_status_ids: boardConfig?.backlog_status_ids || [],
-        list_columns: newColumns
+        list_columns: newColumns,
+        card_fields: boardConfig?.card_fields || [],
+        roadmap_config: boardConfig?.roadmap_config || null,
+        show_rightmost_column_last_50: Boolean(boardConfig?.show_rightmost_column_last_50)
       };
 
       if (boardConfig?.id) {

@@ -117,7 +117,11 @@ class CollectionStore {
           sub_ql: this.subFilterQL || undefined,
           ...this.#sortOptions(),
         }),
-        fetchCollectionBacklog(wsId, colId, { page: 1, limit: DEFAULT_PAGE_SIZE }),
+        fetchCollectionBacklog(wsId, colId, {
+          page: 1,
+          limit: DEFAULT_PAGE_SIZE,
+          sub_ql: this.subFilterQL || undefined,
+        }),
       ]);
 
       if (loadId !== this.#loadId) return; // stale
@@ -186,6 +190,7 @@ class CollectionStore {
       const result = await fetchCollectionBacklog(this.#wsId, this.#colId, {
         page: nextPage,
         limit: this.backlogPagination?.limit ?? DEFAULT_PAGE_SIZE,
+        sub_ql: this.subFilterQL || undefined,
       });
 
       this.backlogItems = [...this.backlogItems, ...result.items];
@@ -258,7 +263,11 @@ class CollectionStore {
           sub_ql: this.subFilterQL || undefined,
           ...this.#sortOptions(),
         }),
-        fetchCollectionBacklog(this.#wsId, this.#colId, { page: 1, limit: backlogLimit }),
+        fetchCollectionBacklog(this.#wsId, this.#colId, {
+          page: 1,
+          limit: backlogLimit,
+          sub_ql: this.subFilterQL || undefined,
+        }),
       ]);
       if (loadId !== this.#loadId) return;
 
