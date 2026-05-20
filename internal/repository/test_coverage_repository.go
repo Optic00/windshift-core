@@ -65,12 +65,32 @@ func (r *TestCoverageRepository) FindConfigForCollection(collectionID int) (*mod
 
 // FindConfigByID returns the coverage configuration by its primary key.
 func (r *TestCoverageRepository) FindConfigByID(configID int) (*models.TestCoverageConfiguration, error) {
-	return r.scanConfig(r.db.QueryRow(`
+	config, err := r.scanConfig(r.db.QueryRow(`
 		SELECT id, collection_id, workspace_id, requirement_item_type_ids, created_at, updated_at
 		FROM test_coverage_configurations
 		WHERE id = ?`,
 		configID,
 	))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return config, err
+}
+
+// GetCollectionWorkspaceID returns the non-null workspace owning a collection.
+func (r *TestCoverageRepository) GetCollectionWorkspaceID(collectionID int) (int, error) {
+	var workspaceID sql.NullInt64
+	err := r.db.QueryRow(`SELECT workspace_id FROM collections WHERE id = ?`, collectionID).Scan(&workspaceID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("failed to resolve collection workspace: %w", err)
+	}
+	if !workspaceID.Valid {
+		return 0, ErrNotFound
+	}
+	return int(workspaceID.Int64), nil
 }
 
 // CreateConfigForWorkspace inserts a workspace-scoped coverage configuration and returns the new row.
@@ -154,9 +174,12 @@ func (r *TestCoverageRepository) UpdateConfig(configID int, typeIDs []int) (*mod
 
 // DeleteConfig removes a coverage configuration by ID.
 func (r *TestCoverageRepository) DeleteConfig(configID int) error {
-	_, err := r.db.ExecWrite(`DELETE FROM test_coverage_configurations WHERE id = ?`, configID)
+	result, err := r.db.ExecWrite(`DELETE FROM test_coverage_configurations WHERE id = ?`, configID)
 	if err != nil {
 		return fmt.Errorf("failed to delete coverage config: %w", err)
+	}
+	if rows, _ := result.RowsAffected(); rows == 0 {
+		return ErrNotFound
 	}
 	return nil
 }

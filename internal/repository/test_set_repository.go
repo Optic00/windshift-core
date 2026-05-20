@@ -34,7 +34,7 @@ func (r *TestSetRepository) FindAllWithStats(workspaceID int) ([]models.TestSet,
 			run_stats.last_run_status,
 			run_stats.last_run_date
 		FROM test_sets ts
-		LEFT JOIN milestones m ON ts.milestone_id = m.id
+		LEFT JOIN milestones m ON ts.milestone_id = m.id AND (COALESCE(m.is_global, FALSE) = TRUE OR m.workspace_id = ts.workspace_id)
 		LEFT JOIN (
 			SELECT set_id, COUNT(*) as count
 			FROM set_test_cases
@@ -119,7 +119,7 @@ func (r *TestSetRepository) FindByID(id, workspaceID int) (*models.TestSet, erro
 		SELECT ts.id, ts.workspace_id, ts.name, ts.description, ts.milestone_id, ts.created_at, ts.updated_at,
 		       m.name as milestone_name
 		FROM test_sets ts
-		LEFT JOIN milestones m ON ts.milestone_id = m.id
+		LEFT JOIN milestones m ON ts.milestone_id = m.id AND (COALESCE(m.is_global, FALSE) = TRUE OR m.workspace_id = ts.workspace_id)
 		WHERE ts.id = ? AND ts.workspace_id = ?
 	`, id, workspaceID).Scan(&set.ID, &set.WorkspaceID, &set.Name, &set.Description, &set.MilestoneID, &set.CreatedAt, &set.UpdatedAt, &milestoneName)
 
@@ -134,6 +134,20 @@ func (r *TestSetRepository) FindByID(id, workspaceID int) (*models.TestSet, erro
 		set.MilestoneName = milestoneName.String
 	}
 	return &set, nil
+}
+
+// MilestoneUsableInWorkspace reports whether a milestone is global or belongs to workspaceID.
+func (r *TestSetRepository) MilestoneUsableInWorkspace(milestoneID, workspaceID int) (bool, error) {
+	var count int
+	err := r.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM milestones
+		WHERE id = ? AND (COALESCE(is_global, FALSE) = TRUE OR workspace_id = ?)
+	`, milestoneID, workspaceID).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("failed to validate milestone workspace: %w", err)
+	}
+	return count > 0, nil
 }
 
 // Create inserts a new test set and returns its id and timestamps.
@@ -153,7 +167,7 @@ func (r *TestSetRepository) Create(workspaceID int, set *models.TestSet) (id int
 // Update updates an existing test set and returns the new updated_at timestamp.
 func (r *TestSetRepository) Update(id, workspaceID int, set *models.TestSet) (time.Time, error) {
 	now := time.Now()
-	_, err := r.db.ExecWrite(`
+	result, err := r.db.ExecWrite(`
 		UPDATE test_sets
 		SET name = ?, description = ?, milestone_id = ?, updated_at = ?
 		WHERE id = ? AND workspace_id = ?
@@ -161,14 +175,20 @@ func (r *TestSetRepository) Update(id, workspaceID int, set *models.TestSet) (ti
 	if err != nil {
 		return time.Time{}, fmt.Errorf("failed to update test set: %w", err)
 	}
+	if rows, _ := result.RowsAffected(); rows == 0 {
+		return time.Time{}, ErrNotFound
+	}
 	return now, nil
 }
 
 // Delete removes a test set.
 func (r *TestSetRepository) Delete(id, workspaceID int) error {
-	_, err := r.db.ExecWrite(`DELETE FROM test_sets WHERE id = ? AND workspace_id = ?`, id, workspaceID)
+	result, err := r.db.ExecWrite(`DELETE FROM test_sets WHERE id = ? AND workspace_id = ?`, id, workspaceID)
 	if err != nil {
 		return fmt.Errorf("failed to delete test set: %w", err)
+	}
+	if rows, _ := result.RowsAffected(); rows == 0 {
+		return ErrNotFound
 	}
 	return nil
 }

@@ -120,7 +120,7 @@ func (r *TestRunTemplateRepository) Create(workspaceID int, template *models.Tes
 // Update applies new values to a template and returns the new updated_at timestamp.
 func (r *TestRunTemplateRepository) Update(id, workspaceID int, template *models.TestRunTemplate) (time.Time, error) {
 	now := time.Now()
-	_, err := r.db.ExecWrite(`
+	result, err := r.db.ExecWrite(`
 		UPDATE test_run_templates
 		SET set_id = ?, name = ?, description = ?, updated_at = ?
 		WHERE id = ? AND workspace_id = ?
@@ -128,17 +128,23 @@ func (r *TestRunTemplateRepository) Update(id, workspaceID int, template *models
 	if err != nil {
 		return time.Time{}, fmt.Errorf("failed to update test run template: %w", err)
 	}
+	if rows, _ := result.RowsAffected(); rows == 0 {
+		return time.Time{}, ErrNotFound
+	}
 	return now, nil
 }
 
 // Delete removes a template.
 func (r *TestRunTemplateRepository) Delete(id, workspaceID int) error {
-	_, err := r.db.ExecWrite(
+	result, err := r.db.ExecWrite(
 		"DELETE FROM test_run_templates WHERE id = ? AND workspace_id = ?",
 		id, workspaceID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to delete test run template: %w", err)
+	}
+	if rows, _ := result.RowsAffected(); rows == 0 {
+		return ErrNotFound
 	}
 	return nil
 }
