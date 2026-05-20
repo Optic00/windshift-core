@@ -783,13 +783,16 @@ func (h *PortalHandler) DownloadPortalAttachment(w http.ResponseWriter, r *http.
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	// Get attachment info including category
-	var filePath, mimeType, originalFilename, category string
+	// Get attachment info including category/entity_type. Both must identify a
+	// public portal asset; category alone is caller-controlled on upload and must
+	// not be enough to publish an item/test attachment.
+	var filePath, mimeType, originalFilename, category, entityType string
 	var fileSize int64
 	err = h.db.QueryRowContext(ctx, `
-		SELECT file_path, mime_type, original_filename, file_size, COALESCE(category, '') as category
+		SELECT file_path, mime_type, original_filename, file_size,
+		       COALESCE(category, '') as category, COALESCE(entity_type, '') as entity_type
 		FROM attachments WHERE id = ?
-	`, attachmentID).Scan(&filePath, &mimeType, &originalFilename, &fileSize, &category)
+	`, attachmentID).Scan(&filePath, &mimeType, &originalFilename, &fileSize, &category, &entityType)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Attachment not found"))
@@ -802,13 +805,13 @@ func (h *PortalHandler) DownloadPortalAttachment(w http.ResponseWriter, r *http.
 	}
 
 	// Security check: Only allow portal branding attachments (logos, backgrounds)
-	allowedCategories := map[string]bool{
+	allowedPortalAssetTypes := map[string]bool{
 		"portal_logo":       true,
 		"portal_background": true,
 		"hub_logo":          true,
 	}
 
-	if !allowedCategories[category] {
+	if !allowedPortalAssetTypes[entityType] || category != entityType {
 		// Return 404 to prevent enumeration of non-portal attachments
 		respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Attachment not found"))
 		return

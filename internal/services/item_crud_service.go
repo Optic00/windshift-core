@@ -583,7 +583,7 @@ func (s *ItemCRUDService) GetAttachments(itemID int) ([]models.Attachment, error
 		       u.first_name || ' ' || u.last_name as uploader_name, u.email as uploader_email
 		FROM attachments a
 		LEFT JOIN users u ON a.uploaded_by = u.id
-		WHERE a.item_id = ?
+		WHERE a.item_id = ? AND COALESCE(a.entity_type, 'item') = 'item'
 		ORDER BY a.created_at DESC
 	`, itemID)
 	if err != nil {

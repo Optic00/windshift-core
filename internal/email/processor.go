@@ -649,15 +649,14 @@ func (p *Processor) handleAttachments(ctx context.Context, attachments []Attachm
 			continue
 		}
 
-		// Relative path for DB record
-		relPath := filepath.Join("items", fmt.Sprintf("%d", itemID), uniqueFilename)
-
-		// Create attachment record
+		// Create attachment record. Store the absolute path used for the write;
+		// download handlers also tolerate older relative rows by resolving them
+		// against attachmentPath.
 		now := time.Now()
 		_, err := p.db.ExecContext(ctx, `
 			INSERT INTO attachments (item_id, filename, original_filename, file_path, mime_type, file_size, created_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?)
-		`, itemID, uniqueFilename, att.Filename, relPath, att.ContentType, att.Size, now)
+		`, itemID, uniqueFilename, att.Filename, filePath, att.ContentType, att.Size, now)
 		if err != nil {
 			slog.Error("failed to create attachment record, deleting orphaned file",
 				"error", err, "filename", att.Filename, "path", filePath)

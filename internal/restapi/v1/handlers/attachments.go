@@ -39,6 +39,32 @@ func NewAttachmentHandler(db database.Database, permissionService *services.Perm
 	}
 }
 
+var errV1AttachmentPathOutsideRoot = errors.New("attachment path is outside configured storage root")
+
+func (h *AttachmentHandler) resolveStoredAttachmentPath(storedPath string) (string, error) {
+	if h.attachmentPath == "" {
+		return "", errV1AttachmentPathOutsideRoot
+	}
+
+	candidate := storedPath
+	if !filepath.IsAbs(candidate) {
+		candidate = filepath.Join(h.attachmentPath, candidate)
+	}
+
+	absPath, err := filepath.Abs(candidate)
+	if err != nil {
+		return "", err
+	}
+	absBase, err := filepath.Abs(h.attachmentPath)
+	if err != nil {
+		return "", err
+	}
+	if absPath != absBase && !strings.HasPrefix(absPath, absBase+string(os.PathSeparator)) {
+		return "", errV1AttachmentPathOutsideRoot
+	}
+	return absPath, nil
+}
+
 // Download handles GET /rest/api/v1/attachments/{id}/download
 //
 // @Summary      Download an attachment's binary contents
@@ -121,24 +147,16 @@ func (h *AttachmentHandler) Download(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Path traversal guard: the resolved file path must live under the
-	// configured attachment directory. Mirrors the legacy handler's check.
-	absPath, err := filepath.Abs(filePath)
+	// configured attachment directory. Relative rows from older email ingestion
+	// are resolved against that root before the guard is applied.
+	resolvedFilePath, err := h.resolveStoredAttachmentPath(filePath)
 	if err != nil {
-		restapi.RespondError(w, r, restapi.ErrInternalError)
-		return
-	}
-	absBase, err := filepath.Abs(h.attachmentPath)
-	if err != nil {
-		restapi.RespondError(w, r, restapi.ErrInternalError)
-		return
-	}
-	if !strings.HasPrefix(absPath, absBase+string(os.PathSeparator)) {
-		slog.Warn("attachment path traversal blocked", slog.String("component", "v1/attachments"), slog.Int("attachment_id", attachmentID))
+		slog.Warn("attachment path traversal blocked", slog.String("component", "v1/attachments"), slog.Int("attachment_id", attachmentID), slog.String("file_path", filePath))
 		restapi.RespondError(w, r, restapi.ErrItemNotFound)
 		return
 	}
 
-	file, err := os.Open(absPath) //nolint:gosec // path was just validated against the configured base
+	file, err := os.Open(resolvedFilePath) //nolint:gosec // path was just validated against the configured base
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			restapi.RespondError(w, r, restapi.ErrItemNotFound)
@@ -162,5 +180,115 @@ func (h *AttachmentHandler) Download(w http.ResponseWriter, r *http.Request) {
 
 	if _, err := io.Copy(w, file); err != nil {
 		slog.Error("failed to stream attachment", slog.String("component", "v1/attachments"), slog.Any("error", err))
+	}
+}
+
+// Thumbnail handles GET /rest/api/v1/attachments/{id}/thumbnail
+//
+// @Summary      Download an attachment thumbnail
+// @Tags         items
+// @Produce      image/jpeg
+// @Security     BearerAuth
+// @Param        id   path      int  true  "Attachment ID"
+// @Success      200  {file}    binary
+// @Failure      401  {object}  handlers.ErrorResponse
+// @Failure      403  {object}  handlers.ErrorResponse  "Token lacks the items:read scope"
+// @Failure      404  {object}  handlers.ErrorResponse  "Attachment not found, has no thumbnail, or is not visible to caller"
+// @Failure      500  {object}  handlers.ErrorResponse
+// @Router       /attachments/{id}/thumbnail [get]
+func (h *AttachmentHandler) Thumbnail(w http.ResponseWriter, r *http.Request) {
+	if h.attachmentPath == "" {
+		restapi.RespondError(w, r, restapi.NewAPIError(http.StatusServiceUnavailable, restapi.ErrCodeServiceUnavailable, "Attachments are not enabled on this server"))
+		return
+	}
+
+	user, ok := h.RequireAuth(w, r)
+	if !ok {
+		return
+	}
+
+	attachmentID, ok := h.ParsePathID(w, r, "id", "attachment ID")
+	if !ok {
+		return
+	}
+
+	var (
+		itemID        sql.NullInt64
+		entityType    sql.NullString
+		hasThumbnail  bool
+		thumbnailPath sql.NullString
+	)
+	err := h.DB.QueryRow(`
+		SELECT item_id, entity_type, has_thumbnail, thumbnail_path
+		FROM attachments WHERE id = ?
+	`, attachmentID).Scan(&itemID, &entityType, &hasThumbnail, &thumbnailPath)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			restapi.RespondError(w, r, restapi.ErrItemNotFound)
+			return
+		}
+		slog.Error("attachment thumbnail lookup failed", slog.String("component", "v1/attachments"), slog.Any("error", err))
+		restapi.RespondError(w, r, restapi.ErrInternalError)
+		return
+	}
+
+	if entityType.Valid && entityType.String != "" && entityType.String != "item" {
+		restapi.RespondError(w, r, restapi.ErrItemNotFound)
+		return
+	}
+	if !itemID.Valid || !hasThumbnail || !thumbnailPath.Valid || thumbnailPath.String == "" {
+		restapi.RespondError(w, r, restapi.ErrItemNotFound)
+		return
+	}
+
+	workspaceID, err := repository.NewItemRepository(h.DB).GetWorkspaceID(int(itemID.Int64))
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			restapi.RespondError(w, r, restapi.ErrItemNotFound)
+			return
+		}
+		restapi.RespondError(w, r, restapi.ErrInternalError)
+		return
+	}
+
+	canView, err := h.Perms.CanViewWorkspace(user.ID, workspaceID)
+	if err != nil || !canView {
+		restapi.RespondError(w, r, restapi.ErrItemNotFound)
+		return
+	}
+
+	resolvedThumbnailPath, err := h.resolveStoredAttachmentPath(thumbnailPath.String)
+	if err != nil {
+		slog.Warn("attachment thumbnail path traversal blocked", slog.String("component", "v1/attachments"), slog.Int("attachment_id", attachmentID), slog.String("thumbnail_path", thumbnailPath.String))
+		restapi.RespondError(w, r, restapi.ErrItemNotFound)
+		return
+	}
+
+	file, err := os.Open(resolvedThumbnailPath) //nolint:gosec // path was just validated against the configured base
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			restapi.RespondError(w, r, restapi.ErrItemNotFound)
+			return
+		}
+		slog.Error("failed to open attachment thumbnail", slog.String("component", "v1/attachments"), slog.Any("error", err))
+		restapi.RespondError(w, r, restapi.ErrInternalError)
+		return
+	}
+	defer func() { _ = file.Close() }()
+
+	fileInfo, err := file.Stat()
+	if err != nil {
+		restapi.RespondError(w, r, restapi.ErrInternalError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Content-Length", strconv.FormatInt(fileInfo.Size(), 10))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Cache-Control", "public, max-age=31536000")
+
+	if _, err := io.Copy(w, file); err != nil {
+		slog.Error("failed to stream attachment thumbnail", slog.String("component", "v1/attachments"), slog.Any("error", err))
 	}
 }

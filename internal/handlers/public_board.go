@@ -668,21 +668,24 @@ func (h *PublicBoardHandler) DownloadAttachment(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Fetch attachment
+	// Fetch attachment. Public boards may only expose item attachments; other
+	// attachment rows also store their scoped entity in item_id for legacy
+	// reasons, so entity_type must be checked before treating item_id as an item.
 	var itemID sql.NullInt64
+	var entityType sql.NullString
 	var filePath, mimeType, originalFilename string
 	var fileSize int64
 	err = h.db.QueryRow(`
-		SELECT item_id, file_path, mime_type, original_filename, file_size
+		SELECT item_id, COALESCE(entity_type, 'item'), file_path, mime_type, original_filename, file_size
 		FROM attachments WHERE id = ?
-	`, attachmentID).Scan(&itemID, &filePath, &mimeType, &originalFilename, &fileSize)
+	`, attachmentID).Scan(&itemID, &entityType, &filePath, &mimeType, &originalFilename, &fileSize)
 	if err != nil {
 		respondNotFound(w, r, "attachment")
 		return
 	}
 
-	// Attachment must belong to an item
-	if !itemID.Valid {
+	// Attachment must be a work-item attachment.
+	if !itemID.Valid || (entityType.String != "" && entityType.String != "item") {
 		respondNotFound(w, r, "attachment")
 		return
 	}
@@ -722,8 +725,12 @@ func (h *PublicBoardHandler) DownloadAttachment(w http.ResponseWriter, r *http.R
 	}
 	defer func() { _ = root.Close() }()
 
-	relPath, err := filepath.Rel(h.attachmentPath, filePath)
-	if err != nil || strings.HasPrefix(relPath, "..") {
+	storedPath := filePath
+	if !filepath.IsAbs(storedPath) {
+		storedPath = filepath.Join(h.attachmentPath, storedPath)
+	}
+	relPath, err := filepath.Rel(h.attachmentPath, storedPath)
+	if err != nil || strings.HasPrefix(relPath, "..") || filepath.IsAbs(relPath) {
 		respondNotFound(w, r, "attachment")
 		return
 	}
@@ -760,7 +767,8 @@ func (h *PublicBoardHandler) itemBelongsToCollection(itemID, collectionID int) (
 	items, _, err := crudService.ListWithQL(services.ListWithQLParams{
 		CollectionID: collectionID,
 		WorkspaceIDs: scopedWorkspaceIDs,
-		Pagination:   services.PaginationParams{Limit: 500},
+		Filters:      services.ItemFilters{ItemID: &itemID},
+		Pagination:   services.PaginationParams{Limit: 1},
 		SortBy:       "created_at",
 		SortAsc:      false,
 	})
@@ -768,12 +776,7 @@ func (h *PublicBoardHandler) itemBelongsToCollection(itemID, collectionID int) (
 		return false, err
 	}
 
-	for _, item := range items {
-		if item.ID == itemID {
-			return true, nil
-		}
-	}
-	return false, nil
+	return len(items) > 0, nil
 }
 
 func itoa(n int) string {

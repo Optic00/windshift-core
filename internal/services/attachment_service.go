@@ -94,6 +94,7 @@ type AttachmentDetails struct {
 	ItemID           *int
 	OriginalFilename string
 	EntityType       string
+	UploadedBy       *int
 }
 
 // GetAttachmentDetails returns attachment details needed for deletion.
@@ -103,11 +104,12 @@ func (s *AttachmentService) GetAttachmentDetails(attachmentID int) (*AttachmentD
 	var itemID sql.NullInt64
 	var originalFilename string
 	var entityType string
+	var uploadedBy sql.NullInt64
 
 	err := s.db.QueryRow(`
-		SELECT file_path, item_id, original_filename, COALESCE(entity_type, 'item')
+		SELECT file_path, item_id, original_filename, COALESCE(entity_type, 'item'), uploaded_by
 		FROM attachments WHERE id = ?
-	`, attachmentID).Scan(&filePath, &itemID, &originalFilename, &entityType)
+	`, attachmentID).Scan(&filePath, &itemID, &originalFilename, &entityType, &uploadedBy)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, repository.ErrNotFound
@@ -124,6 +126,10 @@ func (s *AttachmentService) GetAttachmentDetails(attachmentID int) (*AttachmentD
 	if itemID.Valid {
 		id := int(itemID.Int64)
 		details.ItemID = &id
+	}
+	if uploadedBy.Valid {
+		uid := int(uploadedBy.Int64)
+		details.UploadedBy = &uid
 	}
 
 	return details, nil

@@ -22,7 +22,6 @@ import (
 
 	"windshift/internal/database"
 	"windshift/internal/logger"
-	"windshift/internal/middleware"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/services"
@@ -30,6 +29,8 @@ import (
 
 	"golang.org/x/image/draw"
 )
+
+var errAttachmentPathOutsideRoot = errors.New("attachment path is outside configured storage root")
 
 type AttachmentHandler struct {
 	db                database.Database
@@ -55,12 +56,53 @@ func (h *AttachmentHandler) SetApprovalService(ap *services.ApprovalService) {
 	h.approvalService = ap
 }
 
+// authorizeTestCaseAttachmentAccess writes a 404 response and returns false
+// when the caller cannot access attachments scoped to the given test_case
+// (either the row is gone or the user lacks the requested test permission on
+// its workspace). Mirrors the 404-not-403 invariant used for item attachments
+// to avoid disclosing existence of resources outside the caller's reach.
+func (h *AttachmentHandler) authorizeTestCaseAttachmentAccess(w http.ResponseWriter, r *http.Request, testCaseID int, permission string) bool {
+	var wsID int
+	err := h.db.QueryRow(`
+		SELECT workspace_id
+		FROM test_cases
+		WHERE id = ?
+	`, testCaseID).Scan(&wsID)
+	if errors.Is(err, sql.ErrNoRows) {
+		respondNotFound(w, r, "attachment")
+		return false
+	}
+	if err != nil {
+		respondInternalError(w, r, err)
+		return false
+	}
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return false
+	}
+	if h.permissionService == nil {
+		slog.Error("permission service unavailable, denying test case attachment access", slog.String("component", "attachments"))
+		respondNotFound(w, r, "attachment")
+		return false
+	}
+	allowed, err := h.permissionService.HasWorkspacePermission(user.ID, wsID, permission)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return false
+	}
+	if !allowed {
+		respondNotFound(w, r, "attachment")
+		return false
+	}
+	return true
+}
+
 // authorizeTestResultAttachmentAccess writes a 404 response and returns false
-// when the caller cannot read attachments scoped to the given test_result
-// (either the row is gone or the user lacks test.view on its workspace).
-// Mirrors the 404-not-403 invariant used for item attachments to avoid
-// disclosing existence of resources outside the caller's reach.
-func (h *AttachmentHandler) authorizeTestResultAttachmentAccess(w http.ResponseWriter, r *http.Request, testResultID int) bool {
+// when the caller lacks the requested permission on the test_result's
+// workspace. Read paths pass PermissionTestView; the delete path passes
+// PermissionTestExecute so that the privilege required to remove a result
+// attachment matches the privilege required to upload it.
+func (h *AttachmentHandler) authorizeTestResultAttachmentAccess(w http.ResponseWriter, r *http.Request, testResultID int, permission string) bool {
 	var wsID int
 	err := h.db.QueryRow(`
 		SELECT run.workspace_id
@@ -80,7 +122,12 @@ func (h *AttachmentHandler) authorizeTestResultAttachmentAccess(w http.ResponseW
 	if !ok {
 		return false
 	}
-	allowed, err := h.permissionService.HasWorkspacePermission(user.ID, wsID, models.PermissionTestView)
+	if h.permissionService == nil {
+		slog.Error("permission service unavailable, denying test result attachment access", slog.String("component", "attachments"))
+		respondNotFound(w, r, "attachment")
+		return false
+	}
+	allowed, err := h.permissionService.HasWorkspacePermission(user.ID, wsID, permission)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return false
@@ -92,28 +139,47 @@ func (h *AttachmentHandler) authorizeTestResultAttachmentAccess(w http.ResponseW
 	return true
 }
 
-// checkItemAttachmentPermission checks if the user can modify attachments on an item
-// Internal users need item.edit permission in the workspace
-// Portal customers can only modify attachments on items they created
+// checkItemAttachmentPermission checks if the user can modify attachments on an item.
+// Requires item.edit permission in the item's workspace. The route is gated by
+// AuthMiddleware.RequireAuth (internal users only), so portal customer sessions
+// never reach here; if portal-customer attachment access is ever enabled it must
+// land on a separate, portal-scoped surface rather than be threaded through this
+// polymorphic handler.
 func (h *AttachmentHandler) checkItemAttachmentPermission(r *http.Request, itemID int) (bool, error) {
-	// Get user ID if internal user
-	var userID *int
-	if user := utils.GetCurrentUser(r); user != nil {
-		userID = &user.ID
+	user := utils.GetCurrentUser(r)
+	if user == nil {
+		return false, nil
 	}
-
-	// Get portal customer ID if portal customer
-	var portalCustomerID *int
-	if pcID, ok := r.Context().Value(middleware.ContextKeyPortalCustomerID).(int); ok {
-		portalCustomerID = &pcID
-	}
-
-	return h.attachmentService.CanModifyItemAttachment(userID, portalCustomerID, itemID)
+	return h.attachmentService.CanModifyItemAttachment(&user.ID, nil, itemID)
 }
 
 // IsEnabled checks if attachments are enabled (attachment path is set)
 func (h *AttachmentHandler) IsEnabled() bool {
 	return h.attachmentPath != ""
+}
+
+func (h *AttachmentHandler) resolveStoredAttachmentPath(storedPath string) (string, error) {
+	if h.attachmentPath == "" {
+		return "", errAttachmentPathOutsideRoot
+	}
+
+	candidate := storedPath
+	if !filepath.IsAbs(candidate) {
+		candidate = filepath.Join(h.attachmentPath, candidate)
+	}
+
+	absPath, err := filepath.Abs(candidate)
+	if err != nil {
+		return "", err
+	}
+	absBasePath, err := filepath.Abs(h.attachmentPath)
+	if err != nil {
+		return "", err
+	}
+	if absPath != absBasePath && !strings.HasPrefix(absPath, absBasePath+string(os.PathSeparator)) {
+		return "", errAttachmentPathOutsideRoot
+	}
+	return absPath, nil
 }
 
 // authorizeUploadEntity verifies the upload target exists and the caller
@@ -147,16 +213,7 @@ func (h *AttachmentHandler) authorizeUploadEntity(w http.ResponseWriter, r *http
 		return true
 
 	case "test_case":
-		var exists bool
-		if err := h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM test_cases WHERE id = ?)", entityID).Scan(&exists); err != nil {
-			respondInternalError(w, r, err)
-			return false
-		}
-		if !exists {
-			respondNotFound(w, r, "test_case")
-			return false
-		}
-		return true
+		return h.authorizeTestCaseAttachmentAccess(w, r, entityID, models.PermissionTestManage)
 
 	case "test_result":
 		// Resolve workspace via test_results -> test_runs and gate on test.execute.
@@ -376,6 +433,17 @@ func (h *AttachmentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	isPortalLogo := entityType == "portal_logo"
 	isHubLogo := entityType == "hub_logo"
 	isImageEntityType := isAvatar || isWorkspaceAvatar || isTeamAvatar || isCustomerAvatar || isWorkspaceBackground || isPortalBackground || isPortalLogo || isHubLogo
+
+	// category is an older image-asset discriminator used by /api/portal-assets.
+	// Keep it in lockstep with entity_type so callers cannot make an item/test
+	// attachment public by tagging it as portal_logo/portal_background.
+	if category != "" && category != entityType {
+		respondValidationError(w, r, "category must match entity_type")
+		return
+	}
+	if category == "" && isImageEntityType {
+		category = entityType
+	}
 
 	// entity_id is required for every entity type that has an owner row
 	// (item, test_case, test_result, workspace/team/customer scoped image
@@ -897,21 +965,33 @@ func (h *AttachmentHandler) Download(w http.ResponseWriter, r *http.Request) {
 	// on it, which was wrong for branding rows whose item_id was actually
 	// the workspace/portal/hub id. Now every type is explicit.
 	switch entityType.String {
+	case "test_case":
+		if attachment.ItemID == nil {
+			respondNotFound(w, r, "attachment")
+			return
+		}
+		if !h.authorizeTestCaseAttachmentAccess(w, r, *attachment.ItemID, models.PermissionTestView) {
+			return
+		}
 	case "test_result":
 		if attachment.ItemID == nil {
 			respondNotFound(w, r, "attachment")
 			return
 		}
-		if !h.authorizeTestResultAttachmentAccess(w, r, *attachment.ItemID) {
+		if !h.authorizeTestResultAttachmentAccess(w, r, *attachment.ItemID, models.PermissionTestView) {
 			return
 		}
 	case "item", "":
 		// Empty entity_type covers legacy rows inserted before the column
-		// existed; they're all item attachments.
-		if attachment.ItemID != nil {
-			if !CheckItemPermissionAsActor(w, r, repository.NewItemRepository(h.db), h.permissionService, h.approvalService, *attachment.ItemID, models.PermissionItemView) {
-				return
-			}
+		// existed; they're all item attachments. Item-typed rows must have
+		// a non-NULL item_id per WI-46; a NULL here means a corrupt or
+		// invariant-violating row and must not be served.
+		if attachment.ItemID == nil {
+			respondNotFound(w, r, "attachment")
+			return
+		}
+		if !CheckItemPermissionAsActor(w, r, repository.NewItemRepository(h.db), h.permissionService, h.approvalService, *attachment.ItemID, models.PermissionItemView) {
+			return
 		}
 	case "avatar",
 		"workspace_avatar", "workspace_background",
@@ -933,31 +1013,32 @@ func (h *AttachmentHandler) Download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate file path is within attachment directory (prevent path traversal)
-	absPath, err := filepath.Abs(attachment.FilePath)
+	// Validate file path is within attachment directory (prevent path traversal).
+	// Email ingestion stores relative paths; resolve those against the same root
+	// before applying the guard so item attachments remain downloadable.
+	resolvedFilePath, err := h.resolveStoredAttachmentPath(attachment.FilePath)
 	if err != nil {
+		if errors.Is(err, errAttachmentPathOutsideRoot) {
+			slog.Warn("path traversal attempt detected", slog.String("component", "attachments"), slog.String("file_path", attachment.FilePath))
+			respondBadRequest(w, r, "Invalid file path")
+			return
+		}
 		slog.Error("failed to resolve file path", slog.String("component", "attachments"), slog.Any("error", err))
-		respondBadRequest(w, r, "Invalid file path")
-		return
-	}
-	absBasePath, _ := filepath.Abs(h.attachmentPath)
-	if !strings.HasPrefix(absPath, absBasePath+string(os.PathSeparator)) {
-		slog.Warn("path traversal attempt detected", slog.String("component", "attachments"), slog.String("file_path", attachment.FilePath))
 		respondBadRequest(w, r, "Invalid file path")
 		return
 	}
 
 	// Check if file exists
-	slog.Debug("checking if file exists", slog.String("component", "attachments"), slog.String("file_path", attachment.FilePath))
-	if _, err = os.Stat(attachment.FilePath); os.IsNotExist(err) {
-		slog.Debug("file not found on disk", slog.String("component", "attachments"), slog.String("file_path", attachment.FilePath))
+	slog.Debug("checking if file exists", slog.String("component", "attachments"), slog.String("file_path", resolvedFilePath))
+	if _, err = os.Stat(resolvedFilePath); os.IsNotExist(err) {
+		slog.Debug("file not found on disk", slog.String("component", "attachments"), slog.String("file_path", resolvedFilePath))
 		respondNotFound(w, r, "file")
 		return
 	}
 
 	// Open file
-	slog.Debug("opening file", slog.String("component", "attachments"), slog.String("file_path", attachment.FilePath))
-	file, err := os.Open(attachment.FilePath)
+	slog.Debug("opening file", slog.String("component", "attachments"), slog.String("file_path", resolvedFilePath))
+	file, err := os.Open(resolvedFilePath)
 	if err != nil {
 		slog.Error("failed to open file", slog.String("component", "attachments"), slog.Any("error", err))
 		respondInternalError(w, r, fmt.Errorf("failed to open file: %w", err))
@@ -1024,8 +1105,21 @@ func (h *AttachmentHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check permission for item attachments
-	if details.EntityType == "item" && details.ItemID != nil {
+	// Authorize per entity_type. Every branch decides explicitly; a NULL
+	// item_id on an item-like row is treated as 404 (the WI-46 invariant
+	// should make this unreachable). Branding/avatar attachments are
+	// refused via this endpoint — their lifecycle is owned by the parent
+	// entity (workspace/team/customer/portal/hub update flows already
+	// orphan the old URL when a new asset is uploaded). The lone exception
+	// is "avatar" (user profile picture), which we allow the original
+	// uploader to delete since there's no parent record beyond the
+	// users.avatar_url string pointer.
+	switch details.EntityType {
+	case "item", "":
+		if details.ItemID == nil {
+			respondNotFound(w, r, "attachment")
+			return
+		}
 		var canModify bool
 		canModify, err = h.checkItemAttachmentPermission(r, *details.ItemID)
 		if err != nil {
@@ -1038,10 +1132,43 @@ func (h *AttachmentHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			respondNotFound(w, r, "item")
 			return
 		}
+	case "test_case":
+		if details.ItemID == nil {
+			respondNotFound(w, r, "attachment")
+			return
+		}
+		if !h.authorizeTestCaseAttachmentAccess(w, r, *details.ItemID, models.PermissionTestManage) {
+			return
+		}
+	case "test_result":
+		if details.ItemID == nil {
+			respondNotFound(w, r, "attachment")
+			return
+		}
+		if !h.authorizeTestResultAttachmentAccess(w, r, *details.ItemID, models.PermissionTestExecute) {
+			return
+		}
+	case "avatar":
+		user, authed := RequireAuth(w, r)
+		if !authed {
+			return
+		}
+		if details.UploadedBy == nil || *details.UploadedBy != user.ID {
+			respondNotFound(w, r, "attachment")
+			return
+		}
+	default:
+		// workspace_avatar, workspace_background, team_avatar,
+		// customer_avatar, portal_background, portal_logo, hub_logo, and
+		// any unknown entity_type. Refuse — the parent entity owns the
+		// lifecycle. Unknown types likewise default-deny so a future
+		// entity_type can't accidentally land in a permissive branch.
+		respondNotFound(w, r, "attachment")
+		return
 	}
 
-	// Record history if attachment is associated with an item
-	if details.ItemID != nil && userID != nil {
+	// Record history if attachment is associated with a work item.
+	if details.ItemID != nil && userID != nil && (details.EntityType == "item" || details.EntityType == "") {
 		if err = h.recordAttachmentHistory(*details.ItemID, userID, "attachment_deleted", &details.OriginalFilename, 0, details.OriginalFilename); err != nil {
 			slog.Warn("failed to record attachment deletion history", slog.String("component", "attachments"), slog.Any("error", err))
 			// Don't fail the whole operation if history recording fails
@@ -1069,9 +1196,13 @@ func (h *AttachmentHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Delete physical file
-	if err := os.Remove(details.FilePath); err != nil && !os.IsNotExist(err) { //nolint:gosec // G703: path from DB record
-		// Log warning but don't fail the request if file removal fails
-		slog.Warn("failed to delete attachment file", slog.String("component", "attachments"), slog.String("file_path", details.FilePath), slog.Any("error", err))
+	if resolvedFilePath, pathErr := h.resolveStoredAttachmentPath(details.FilePath); pathErr == nil {
+		if err := os.Remove(resolvedFilePath); err != nil && !os.IsNotExist(err) { //nolint:gosec // path validated against attachment root
+			// Log warning but don't fail the request if file removal fails
+			slog.Warn("failed to delete attachment file", slog.String("component", "attachments"), slog.String("file_path", resolvedFilePath), slog.Any("error", err))
+		}
+	} else {
+		slog.Warn("refusing to delete attachment file outside storage root", slog.String("component", "attachments"), slog.String("file_path", details.FilePath), slog.Any("error", pathErr))
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -1108,19 +1239,29 @@ func (h *AttachmentHandler) Thumbnail(w http.ResponseWriter, r *http.Request) {
 
 	// Authorize per entity_type — mirrors Download. See WI-46 commit notes.
 	switch thumbEntityType.String {
+	case "test_case":
+		if !thumbItemID.Valid {
+			respondNotFound(w, r, "attachment")
+			return
+		}
+		if !h.authorizeTestCaseAttachmentAccess(w, r, int(thumbItemID.Int64), models.PermissionTestView) {
+			return
+		}
 	case "test_result":
 		if !thumbItemID.Valid {
 			respondNotFound(w, r, "attachment")
 			return
 		}
-		if !h.authorizeTestResultAttachmentAccess(w, r, int(thumbItemID.Int64)) {
+		if !h.authorizeTestResultAttachmentAccess(w, r, int(thumbItemID.Int64), models.PermissionTestView) {
 			return
 		}
 	case "item", "":
-		if thumbItemID.Valid {
-			if !CheckItemPermissionAsActor(w, r, repository.NewItemRepository(h.db), h.permissionService, h.approvalService, int(thumbItemID.Int64), models.PermissionItemView) {
-				return
-			}
+		if !thumbItemID.Valid {
+			respondNotFound(w, r, "attachment")
+			return
+		}
+		if !CheckItemPermissionAsActor(w, r, repository.NewItemRepository(h.db), h.permissionService, h.approvalService, int(thumbItemID.Int64), models.PermissionItemView) {
+			return
 		}
 	case "avatar",
 		"workspace_avatar", "workspace_background",
@@ -1141,14 +1282,20 @@ func (h *AttachmentHandler) Thumbnail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	resolvedThumbnailPath, err := h.resolveStoredAttachmentPath(thumbnailPath)
+	if err != nil {
+		respondNotFound(w, r, "thumbnail")
+		return
+	}
+
 	// Check if thumbnail file exists
-	if _, err = os.Stat(thumbnailPath); os.IsNotExist(err) {
+	if _, err = os.Stat(resolvedThumbnailPath); os.IsNotExist(err) {
 		respondNotFound(w, r, "thumbnail")
 		return
 	}
 
 	// Open thumbnail file
-	file, err := os.Open(thumbnailPath) //nolint:gosec // G304 — thumbnailPath from DB (UUID-based storage path)
+	file, err := os.Open(resolvedThumbnailPath) //nolint:gosec // path validated against attachment root
 	if err != nil {
 		respondInternalError(w, r, fmt.Errorf("failed to open thumbnail: %w", err))
 		return
