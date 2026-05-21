@@ -5,13 +5,13 @@
   import Button from '../../components/Button.svelte';
   import Select from '../../components/Select.svelte';
   import DataTable from '../../components/DataTable.svelte';
-  import EmptyState from '../../components/EmptyState.svelte';
   import UserPicker from '../../pickers/UserPicker.svelte';
   import GroupPicker from '../../pickers/GroupPicker.svelte';
   import RolePicker from '../../pickers/RolePicker.svelte';
   import { IconShield as Shield } from '@tabler/icons-svelte-runes';
   import { api } from '../../api.js';
   import { confirm } from '../../composables/useConfirm.js';
+  import { t } from '../../stores/i18n.svelte.js';
 
   /**
    * Page permissions dialog. Shows the inherit_permissions flag, the
@@ -36,23 +36,24 @@
   let newPrincipalId = $state(null);
   let newLevel = $state('view');
 
-  const principalTypeOptions = [
-    { value: 'user', label: 'User' },
-    { value: 'group', label: 'Group' },
-    { value: 'role', label: 'Role' },
-  ];
+  // $derived so option/column labels follow live locale changes.
+  const principalTypeOptions = $derived([
+    { value: 'user', label: t('pages.permsPrincipalUser') },
+    { value: 'group', label: t('pages.permsPrincipalGroup') },
+    { value: 'role', label: t('pages.permsPrincipalRole') },
+  ]);
 
-  const levelOptions = [
-    { value: 'view', label: 'View' },
-    { value: 'edit', label: 'Edit' },
-    { value: 'admin', label: 'Admin' },
-  ];
+  const levelOptions = $derived([
+    { value: 'view', label: t('pages.permsLevelView') },
+    { value: 'edit', label: t('pages.permsLevelEdit') },
+    { value: 'admin', label: t('pages.permsLevelAdmin') },
+  ]);
 
-  const aclColumns = [
-    { key: 'principal', label: 'Principal', slot: 'principal' },
-    { key: 'permission_level', label: 'Level', slot: 'level' },
+  const aclColumns = $derived([
+    { key: 'principal', label: t('pages.permsColumnPrincipal'), slot: 'principal' },
+    { key: 'permission_level', label: t('pages.permsColumnLevel'), slot: 'level' },
     { key: 'remove', label: '', slot: 'remove', width: '6rem', align: 'text-right' },
-  ];
+  ]);
 
   // Reset the principal selection when the type changes — a user id makes
   // no sense once the user has switched to picking a group or role.
@@ -79,7 +80,7 @@
     try {
       data = await api.pages.getPermissions(workspaceId, pageId);
     } catch (err) {
-      error = err?.message || 'Failed to load permissions';
+      error = err?.message || t('pages.permsErrorLoad');
     } finally {
       loading = false;
     }
@@ -96,7 +97,7 @@
       await load();
       onUpdated?.();
     } catch (err) {
-      error = err?.message || 'Failed to update inheritance';
+      error = err?.message || t('pages.permsErrorInherit');
     } finally {
       saving = false;
     }
@@ -105,7 +106,7 @@
   async function addGrant() {
     if (!isAdmin) return;
     if (typeof newPrincipalId !== 'number' || newPrincipalId <= 0) {
-      error = 'Pick a principal before adding the grant';
+      error = t('pages.permsErrorNoPrincipal');
       return;
     }
     saving = true;
@@ -120,7 +121,7 @@
       await load();
       onUpdated?.();
     } catch (err) {
-      error = err?.message || 'Failed to add permission';
+      error = err?.message || t('pages.permsErrorGrant');
     } finally {
       saving = false;
     }
@@ -129,10 +130,10 @@
   async function revoke(permissionId) {
     if (!isAdmin) return;
     const ok = await confirm({
-      title: 'Remove permission?',
-      message: 'This grant will be removed from the page. You can re-add it later.',
-      confirmText: 'Remove',
-      cancelText: 'Cancel',
+      title: t('pages.permsRemoveTitle'),
+      message: t('pages.permsRemoveMessage'),
+      confirmText: t('pages.permsRemoveConfirm'),
+      cancelText: t('pages.permsRemoveCancel'),
       variant: 'danger',
     });
     if (!ok) return;
@@ -143,7 +144,7 @@
       await load();
       onUpdated?.();
     } catch (err) {
-      error = err?.message || 'Failed to revoke';
+      error = err?.message || t('pages.permsErrorRevoke');
     } finally {
       saving = false;
     }
@@ -152,8 +153,12 @@
 
 <Modal bind:isOpen maxWidth="max-w-2xl">
   <ModalHeader
-    title="Page permissions"
-    subtitle={data ? `Your effective access: ${data.effective_level || 'none'}` : ''}
+    title={t('pages.permsTitle')}
+    subtitle={data
+      ? t('pages.permsEffectiveAccess', {
+          level: data.effective_level || t('pages.permsEffectiveAccessNone'),
+        })
+      : ''}
     onClose={() => (isOpen = false)}
   />
   <div class="dialog">
@@ -162,7 +167,7 @@
     {/if}
 
     {#if loading || !data}
-      <p class="status">Loading…</p>
+      <p class="status">{t('pages.permsLoading')}</p>
     {:else}
       <section class="inheritance">
         <label class="inheritance-toggle">
@@ -173,21 +178,19 @@
             disabled={!isAdmin || saving}
             onchange={toggleInheritance}
           />
-          <span>Inherit permissions from ancestors</span>
+          <span>{t('pages.permsInheritLabel')}</span>
         </label>
-        <p class="hint">
-          When inheritance is on and no explicit grants exist, workspace role permissions decide. Breaking inheritance with no grants restricts the page to admins.
-        </p>
+        <p class="hint">{t('pages.permsInheritHint')}</p>
       </section>
 
       <section class="acl">
-        <h3>Explicit grants</h3>
+        <h3>{t('pages.permsExplicitGrants')}</h3>
         <DataTable
           columns={aclColumns}
           data={data.acl}
           keyField="id"
-          emptyMessage="No explicit grants on this page."
-          emptyDescription="Inheritance and workspace roles still apply."
+          emptyMessage={t('pages.permsEmptyGrantsTitle')}
+          emptyDescription={t('pages.permsEmptyGrantsDescription')}
           emptyIcon={Shield}
           rowAttrs={() => ({ 'data-testid': 'page-acl-row' })}
         >
@@ -205,7 +208,7 @@
                 onclick={() => revoke(row.id)}
                 disabled={saving}
               >
-                Remove
+                {t('pages.permsRemove')}
               </Button>
             {/if}
           {/snippet}
@@ -231,19 +234,19 @@
                 <UserPicker
                   bind:value={newPrincipalId}
                   {workspaceId}
-                  placeholder="Pick a user"
+                  placeholder={t('pages.permsPickUser')}
                   disabled={saving}
                 />
               {:else if newPrincipalType === 'group'}
                 <GroupPicker
                   bind:value={newPrincipalId}
-                  placeholder="Pick a group"
+                  placeholder={t('pages.permsPickGroup')}
                   disabled={saving}
                 />
               {:else}
                 <RolePicker
                   bind:value={newPrincipalId}
-                  placeholder="Pick a role"
+                  placeholder={t('pages.permsPickRole')}
                   disabled={saving}
                 />
               {/if}
@@ -261,7 +264,7 @@
               size="small"
               disabled={saving || typeof newPrincipalId !== 'number' || newPrincipalId <= 0}
             >
-              Add
+              {t('pages.permsAdd')}
             </Button>
           </form>
         {/if}
@@ -269,7 +272,7 @@
     {/if}
   </div>
   <DialogFooter
-    cancelLabel="Close"
+    cancelLabel={t('pages.permsClose')}
     cancelTestid="page-perms-close"
     onCancel={() => (isOpen = false)}
   />

@@ -4,6 +4,7 @@
   import DialogFooter from '../../dialogs/DialogFooter.svelte';
   import BasePicker from '../../pickers/BasePicker.svelte';
   import { api } from '../../api.js';
+  import { t } from '../../stores/i18n.svelte.js';
 
   /**
    * "Move to…" dialog for reparenting a page. Computes valid destinations
@@ -65,7 +66,7 @@
         return true;
       });
     } catch (err) {
-      error = err?.message || 'Failed to load pages';
+      error = err?.message || t('pages.errorLoadTree');
     } finally {
       loading = false;
     }
@@ -92,7 +93,7 @@
       isOpen = false;
       onMoved?.();
     } catch (err) {
-      error = err?.message || 'Move failed';
+      error = err?.message || t('pages.errorMove');
     } finally {
       saving = false;
     }
@@ -101,8 +102,8 @@
 
 <Modal bind:isOpen maxWidth="max-w-lg">
   <ModalHeader
-    title={`Move "${page?.title || ''}"`}
-    subtitle="Pick a new parent. Pages under the current page are hidden because they would create a cycle."
+    title={t('pages.moveTitle', { title: page?.title || '' })}
+    subtitle={t('pages.moveSubtitle')}
     onClose={() => (isOpen = false)}
   />
   <div class="dialog">
@@ -115,9 +116,9 @@
       bind:value={pickedParentId}
       items={candidates}
       {loading}
-      placeholder="Search pages…"
+      placeholder={t('pages.moveSearchPlaceholder')}
       showUnassigned={rootAvailable}
-      unassignedLabel="Workspace root"
+      unassignedLabel={t('pages.moveRoot')}
       searchFields={['title', 'path']}
       getValue={(p) => p.id}
       getLabel={(p) => p.title}
@@ -134,8 +135,10 @@
     </BasePicker>
   </div>
   <DialogFooter
-    cancelLabel="Cancel"
-    confirmLabel="Move"
+    cancelLabel={t('pages.moveCancel')}
+    confirmLabel={t('pages.moveButton')}
+    confirmTestid="page-move-confirm"
+    cancelTestid="page-move-cancel"
     confirmDisabled={!selectionMade}
     loading={saving}
     onCancel={() => (isOpen = false)}

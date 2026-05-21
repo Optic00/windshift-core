@@ -11,6 +11,7 @@
   import EmptyState from '../../components/EmptyState.svelte';
   import { IconBook as Book } from '@tabler/icons-svelte-runes';
   import { confirm } from '../../composables/useConfirm.js';
+  import { t } from '../../stores/i18n.svelte.js';
 
   /**
    * Workspace knowledge-pages view: left tree + right Markdown editor.
@@ -83,7 +84,7 @@
       // lays each subtree out contiguously under its parent.
       pages = flattenDepthFirst(resp.tree || []);
     } catch (err) {
-      error = err?.message || 'Failed to load pages';
+      error = err?.message || t('pages.errorLoadTree');
     } finally {
       loadingTree = false;
     }
@@ -109,7 +110,7 @@
       draftContent = selectedPage.content;
       dirty = false;
     } catch (err) {
-      error = err?.message || 'Failed to load page';
+      error = err?.message || t('pages.errorLoadPage');
       selectedPage = null;
     } finally {
       loadingPage = false;
@@ -119,10 +120,10 @@
   async function selectPage(id) {
     if (dirty) {
       const ok = await confirm({
-        title: 'Discard unsaved changes?',
-        message: 'You have unsaved changes on the current page. They will be lost if you switch.',
-        confirmText: 'Discard',
-        cancelText: 'Keep editing',
+        title: t('pages.discardTitle'),
+        message: t('pages.discardMessage'),
+        confirmText: t('pages.discardConfirm'),
+        cancelText: t('pages.discardCancel'),
         variant: 'danger',
       });
       if (!ok) return;
@@ -145,7 +146,7 @@
       dirty = false;
       await loadTree();
     } catch (err) {
-      error = err?.message || 'Failed to save';
+      error = err?.message || t('pages.errorSave');
     } finally {
       saving = false;
     }
@@ -165,7 +166,7 @@
       await loadTree();
       navigate(`/workspaces/${workspaceId}/pages/${page.id}`);
     } catch (err) {
-      error = err?.message || 'Failed to create page';
+      error = err?.message || t('pages.errorCreate');
     } finally {
       creating = false;
     }
@@ -174,10 +175,10 @@
   async function archivePage() {
     if (!selectedPage) return;
     const ok = await confirm({
-      title: `Archive "${selectedPage.title}"?`,
-      message: 'This archives the page and every child page. Phase 1 has no undo for this action.',
-      confirmText: 'Archive',
-      cancelText: 'Cancel',
+      title: t('pages.archiveTitle', { title: selectedPage.title }),
+      message: t('pages.archiveMessage'),
+      confirmText: t('pages.archiveConfirm'),
+      cancelText: t('common.cancel'),
       variant: 'danger',
     });
     if (!ok) return;
@@ -187,7 +188,7 @@
       await loadTree();
       navigate(`/workspaces/${workspaceId}/pages`);
     } catch (err) {
-      error = err?.message || 'Failed to archive';
+      error = err?.message || t('pages.errorArchive');
     }
   }
 
@@ -244,7 +245,7 @@
 <div class="pages-view">
   <aside class="page-tree">
     <header class="tree-header">
-      <h2>Pages</h2>
+      <h2>{t('pages.treeHeading')}</h2>
       <form
         class="new-page-form"
         onsubmit={(e) => {
@@ -255,7 +256,9 @@
         <Input
           id="page-new-title"
           size="small"
-          placeholder={selectedPage ? `Child of ${selectedPage.title}` : 'New root page'}
+          placeholder={selectedPage
+            ? t('pages.newPagePlaceholderChild', { parent: selectedPage.title })
+            : t('pages.newPagePlaceholderRoot')}
           bind:value={newTitle}
           disabled={creating}
         />
@@ -265,19 +268,19 @@
           size="small"
           disabled={creating || !newTitle.trim()}
         >
-          New
+          {t('pages.newPageButton')}
         </Button>
       </form>
     </header>
 
     {#if loadingTree}
-      <p class="status">Loading…</p>
+      <p class="status">{t('pages.treeLoading')}</p>
     {:else if pages.length === 0}
       <div class="tree-empty">
         <EmptyState
           icon={Book}
-          title="No pages yet"
-          description="Type a title above and press New to create the first page."
+          title={t('pages.treeEmptyTitle')}
+          description={t('pages.treeEmptyDescription')}
         />
       </div>
     {:else}
@@ -309,11 +312,11 @@
 
     {#if !selectedPage && !loadingPage}
       <div class="empty-page">
-        <h1>Knowledge Pages</h1>
-        <p>Select a page from the tree, or create one to get started.</p>
+        <h1>{t('pages.emptyPaneTitle')}</h1>
+        <p>{t('pages.emptyPaneDescription')}</p>
       </div>
     {:else if loadingPage}
-      <p class="status">Loading page…</p>
+      <p class="status">{t('pages.pageLoading')}</p>
     {:else if selectedPage}
       <div class="toolbar">
         <input
@@ -322,7 +325,7 @@
           type="text"
           value={draftTitle}
           oninput={onTitleInput}
-          placeholder="Untitled"
+          placeholder={t('pages.titlePlaceholder')}
         />
         <div class="actions">
           <Button
@@ -333,7 +336,7 @@
             disabled={!dirty || saving}
             loading={saving}
           >
-            Save
+            {t('pages.save')}
           </Button>
           <Button
             id="page-move-button"
@@ -341,7 +344,7 @@
             onclick={() => (moveDialogOpen = true)}
             disabled={saving}
           >
-            Move
+            {t('pages.move')}
           </Button>
           <Button
             id="page-permissions-button"
@@ -349,7 +352,7 @@
             onclick={() => (permsDialogOpen = true)}
             disabled={saving}
           >
-            Permissions
+            {t('pages.permissions')}
           </Button>
           <Button
             id="page-archive-button"
@@ -358,7 +361,7 @@
             onclick={archivePage}
             disabled={saving}
           >
-            Archive
+            {t('pages.archive')}
           </Button>
         </div>
       </div>
@@ -366,7 +369,7 @@
         <div class="editor-frame" data-testid="page-editor">
           <LazyMilkdownEditor
             bind:content={draftContent}
-            placeholder="Start writing…"
+            placeholder={t('pages.editorPlaceholder')}
             showToolbar={true}
             entityType="page"
             entityId={selectedPage.id}
@@ -374,8 +377,8 @@
           />
         </div>
         {#if headings.length > 0}
-          <aside class="toc" data-testid="page-toc" aria-label="Table of contents">
-            <h3>On this page</h3>
+          <aside class="toc" data-testid="page-toc" aria-label={t('pages.tocAriaLabel')}>
+            <h3>{t('pages.tocHeading')}</h3>
             <ul>
               {#each headings as heading (heading.line)}
                 <li
