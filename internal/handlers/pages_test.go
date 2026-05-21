@@ -273,6 +273,120 @@ func TestPageHandler_Permissions_ReturnsEffectiveLevel(t *testing.T) {
 	}
 }
 
+func TestPageHandler_GrantPermission_RejectsEditor(t *testing.T) {
+	h, db, _ := newPageHandler(t)
+	const userID = 1
+	seedNegativeTestUser(t, db, userID)
+	seedNegativeTestUser(t, db, 999)
+	seedWorkspaceWithRole(t, db, 1, userID, "Editor")
+	// Editor lacks page.admin, so ACL writes must 404.
+
+	page, err := h.service.Create(userID, services.CreatePageInput{WorkspaceID: 1, Title: "P"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	body := map[string]interface{}{
+		"principal_type":   "user",
+		"principal_id":     999,
+		"permission_level": "view",
+	}
+	req := authedRequest(http.MethodPost, "/workspaces/1/pages/"+strconv.Itoa(page.ID)+"/permissions", userID, body)
+	setPath(req, map[string]string{"workspaceId": "1", "pageId": strconv.Itoa(page.ID)})
+	rr := httptest.NewRecorder()
+	h.GrantPermission(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("editor grant: want 404, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestPageHandler_GrantPermission_AdminAllowed(t *testing.T) {
+	h, db, _ := newPageHandler(t)
+	const userID = 1
+	seedNegativeTestUser(t, db, userID)
+	seedNegativeTestUser(t, db, 999)
+	seedWorkspaceWithRole(t, db, 1, userID, "Administrator")
+
+	page, err := h.service.Create(userID, services.CreatePageInput{WorkspaceID: 1, Title: "P"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	body := map[string]interface{}{
+		"principal_type":   "user",
+		"principal_id":     999,
+		"permission_level": "edit",
+	}
+	req := authedRequest(http.MethodPost, "/workspaces/1/pages/"+strconv.Itoa(page.ID)+"/permissions", userID, body)
+	setPath(req, map[string]string{"workspaceId": "1", "pageId": strconv.Itoa(page.ID)})
+	rr := httptest.NewRecorder()
+	h.GrantPermission(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("admin grant: want 201, got %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	acl, _ := h.service.ListOwnACL(page.ID)
+	if len(acl) != 1 || acl[0].PrincipalID != 999 {
+		t.Errorf("expected acl with principal_id=999, got %+v", acl)
+	}
+}
+
+func TestPageHandler_SetInheritance_RejectsEditor(t *testing.T) {
+	h, db, _ := newPageHandler(t)
+	const userID = 1
+	seedNegativeTestUser(t, db, userID)
+	seedNegativeTestUser(t, db, 999)
+	seedWorkspaceWithRole(t, db, 1, userID, "Editor")
+
+	page, err := h.service.Create(userID, services.CreatePageInput{WorkspaceID: 1, Title: "P"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	body := map[string]interface{}{"inherit_permissions": false}
+	req := authedRequest(http.MethodPatch, "/workspaces/1/pages/"+strconv.Itoa(page.ID)+"/inheritance", userID, body)
+	setPath(req, map[string]string{"workspaceId": "1", "pageId": strconv.Itoa(page.ID)})
+	rr := httptest.NewRecorder()
+	h.SetInheritance(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("editor break inheritance: want 404, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	after, _ := h.service.GetByID(page.ID)
+	if !after.InheritPermissions {
+		t.Error("page inheritance flag should not have flipped on editor's failed attempt")
+	}
+}
+
+func TestPageHandler_RevokePermission_404OnCrossPageRow(t *testing.T) {
+	h, db, _ := newPageHandler(t)
+	const userID = 1
+	seedNegativeTestUser(t, db, userID)
+	seedNegativeTestUser(t, db, 999)
+	seedWorkspaceWithRole(t, db, 1, userID, "Administrator")
+
+	a, _ := h.service.Create(userID, services.CreatePageInput{WorkspaceID: 1, Title: "A"})
+	b, _ := h.service.Create(userID, services.CreatePageInput{WorkspaceID: 1, Title: "B"})
+	rowOnA, err := h.service.GrantPermission(userID, a.ID, "user", 999, "view")
+	if err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+
+	req := authedRequest(http.MethodDelete,
+		"/workspaces/1/pages/"+strconv.Itoa(b.ID)+"/permissions/"+strconv.Itoa(rowOnA.ID),
+		userID, nil)
+	setPath(req, map[string]string{
+		"workspaceId":  "1",
+		"pageId":       strconv.Itoa(b.ID),
+		"permissionId": strconv.Itoa(rowOnA.ID),
+	})
+	rr := httptest.NewRecorder()
+	h.RevokePermission(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("cross-page revoke: want 404, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	acl, _ := h.service.ListOwnACL(a.ID)
+	if len(acl) != 1 {
+		t.Errorf("row should remain on page A, got %d", len(acl))
+	}
+}
+
 // Ensure JSON encoding stays stable across the handler boundary so the
 // frontend can rely on these fields. A pure structural check.
 func TestPageHandler_GetTree_JSONShape(t *testing.T) {

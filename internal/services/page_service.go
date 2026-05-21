@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 	"unicode"
 
 	"windshift/internal/database"
@@ -524,6 +525,146 @@ func (s *PageService) ListChildren(workspaceID int, parentID *int) ([]models.Pag
 // Phase 2 dialog will use this plus a separate inheritance-walk endpoint.
 func (s *PageService) ListOwnACL(pageID int) ([]models.PagePermission, error) {
 	return s.pages.ListACLForPage(pageID)
+}
+
+// --- ACL writes (Phase 2) ---
+
+// ErrPageInvalidPrincipal is returned when a Grant call names a principal
+// type the data model doesn't accept (anything outside user/group/role).
+var ErrPageInvalidPrincipal = errors.New("invalid principal_type")
+
+// ErrPageInvalidLevel is returned when a Grant call names a permission
+// level the data model doesn't accept.
+var ErrPageInvalidLevel = errors.New("invalid permission_level")
+
+// ErrPagePermissionDuplicate is returned when the (page, principal, level)
+// tuple already exists. The caller can ignore this as a no-op or surface
+// it to the user.
+var ErrPagePermissionDuplicate = errors.New("permission already granted")
+
+// GrantPermission attaches an ACL row to a page. Writes a 'permissions'
+// revision so the audit trail captures the change. Returns the persisted
+// row.
+func (s *PageService) GrantPermission(actorID, pageID int, principalType string, principalID int, level string) (*models.PagePermission, error) {
+	if !isValidPrincipalType(principalType) {
+		return nil, ErrPageInvalidPrincipal
+	}
+	if !isValidPermissionLevel(level) {
+		return nil, ErrPageInvalidLevel
+	}
+
+	return database.WithTxResult(s.db, func(tx database.Tx) (*models.PagePermission, error) {
+		page, err := s.pages.GetByIDTx(tx, pageID)
+		if err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				return nil, ErrPageNotFound
+			}
+			return nil, err
+		}
+
+		actor := actorID
+		insert := models.PagePermission{
+			PageID:          pageID,
+			PrincipalType:   principalType,
+			PrincipalID:     principalID,
+			PermissionLevel: level,
+			GrantedBy:       &actor,
+		}
+		id, err := s.pages.GrantPermissionTx(tx, insert)
+		if err != nil {
+			if errors.Is(err, repository.ErrDuplicateEntry) {
+				return nil, ErrPagePermissionDuplicate
+			}
+			return nil, err
+		}
+
+		if _, err := s.writeRevisionTx(tx, page, actorID, models.PageRevisionChangeTypePermissions, "granted "+level+" to "+principalType); err != nil {
+			return nil, err
+		}
+
+		// Synthesize the persisted row from the insert input rather than
+		// re-querying — re-reading through the read pool while the write
+		// tx still holds the row deadlocks under SQLite's single-writer
+		// model. granted_at is filled in by the DB; we surface the request
+		// time which is close enough for the audit echo back to the
+		// caller. Clients that need the canonical timestamp can re-fetch.
+		insert.ID = id
+		insert.GrantedAt = time.Now().UTC()
+		return &insert, nil
+	})
+}
+
+// RevokePermission removes a single ACL row from a page. The repository
+// enforces the (permissionID, pageID) pairing so callers can't revoke a
+// row belonging to a different page even if they construct a request by
+// hand.
+func (s *PageService) RevokePermission(actorID, pageID, permissionID int) error {
+	return database.WithTx(s.db, func(tx database.Tx) error {
+		page, err := s.pages.GetByIDTx(tx, pageID)
+		if err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				return ErrPageNotFound
+			}
+			return err
+		}
+		if err := s.pages.RevokePermissionTx(tx, pageID, permissionID); err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				return ErrPageNotFound
+			}
+			return err
+		}
+		_, err = s.writeRevisionTx(tx, page, actorID, models.PageRevisionChangeTypePermissions, "revoked permission")
+		return err
+	})
+}
+
+// SetInheritPermissions flips the inherit_permissions flag on a page and
+// records a 'permissions' revision. Toggling has no UI cascade in Phase 2
+// — descendants always inherit through the walker until they themselves
+// flip the flag.
+func (s *PageService) SetInheritPermissions(actorID, pageID int, inherit bool) (*models.Page, error) {
+	return database.WithTxResult(s.db, func(tx database.Tx) (*models.Page, error) {
+		page, err := s.pages.GetByIDTx(tx, pageID)
+		if err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				return nil, ErrPageNotFound
+			}
+			return nil, err
+		}
+		if page.InheritPermissions == inherit {
+			// No-op; return the current page without writing a revision so
+			// the audit trail isn't polluted with churn from idempotent UI
+			// calls.
+			return page, nil
+		}
+		if err := s.pages.SetInheritPermissionsTx(tx, pageID, inherit, actorID); err != nil {
+			return nil, err
+		}
+		updated, err := s.pages.GetByIDTx(tx, pageID)
+		if err != nil {
+			return nil, err
+		}
+		summary := "broke permission inheritance"
+		if inherit {
+			summary = "restored permission inheritance"
+		}
+		if _, err := s.writeRevisionTx(tx, updated, actorID, models.PageRevisionChangeTypePermissions, summary); err != nil {
+			return nil, err
+		}
+		return updated, nil
+	})
+}
+
+func isValidPrincipalType(t string) bool {
+	return t == models.PagePrincipalTypeUser ||
+		t == models.PagePrincipalTypeGroup ||
+		t == models.PagePrincipalTypeRole
+}
+
+func isValidPermissionLevel(l string) bool {
+	return l == models.PagePermissionLevelView ||
+		l == models.PagePermissionLevelEdit ||
+		l == models.PagePermissionLevelAdmin
 }
 
 // --- helpers ---

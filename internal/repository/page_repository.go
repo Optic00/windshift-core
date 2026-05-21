@@ -547,6 +547,82 @@ func (r *PageRepository) ListRevisions(pageID, limit, offset int) ([]models.Page
 
 // --- ACL ---
 
+// GrantPermissionTx inserts an ACL row inside an existing tx. Returns the
+// new id. ErrDuplicateEntry on a duplicate (page, principal, level) row.
+func (r *PageRepository) GrantPermissionTx(tx database.Tx, in models.PagePermission) (int, error) {
+	var id int
+	err := tx.QueryRow(`
+		INSERT INTO page_permissions (page_id, principal_type, principal_id, permission_level, granted_by)
+		VALUES (?, ?, ?, ?, ?)
+		RETURNING id
+	`, in.PageID, in.PrincipalType, in.PrincipalID, in.PermissionLevel, nullInt(in.GrantedBy)).Scan(&id)
+	if err != nil {
+		if isUniqueConstraintError(err) {
+			return 0, ErrDuplicateEntry
+		}
+		return 0, fmt.Errorf("grant page permission: %w", err)
+	}
+	return id, nil
+}
+
+// RevokePermissionTx deletes an ACL row by id, but only if it belongs to
+// the named page (so cross-page revoke attempts are caught here even if a
+// caller composes a request maliciously).
+func (r *PageRepository) RevokePermissionTx(tx database.Tx, pageID, permissionID int) error {
+	res, err := tx.Exec(`DELETE FROM page_permissions WHERE id = ? AND page_id = ?`, permissionID, pageID)
+	if err != nil {
+		return fmt.Errorf("revoke page permission: %w", err)
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetInheritPermissionsTx flips the inherit_permissions flag on a page.
+// Updates updated_at/updated_by so the audit trail stays accurate.
+func (r *PageRepository) SetInheritPermissionsTx(tx database.Tx, pageID int, inherit bool, updatedBy int) error {
+	res, err := tx.Exec(`
+		UPDATE pages
+		SET inherit_permissions = ?,
+		    updated_by = ?,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, inherit, updatedBy, pageID)
+	if err != nil {
+		return fmt.Errorf("set inherit_permissions: %w", err)
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// GetPagePermissionByID loads a single ACL row. Returns ErrNotFound when
+// no row matches. Used by the handler to verify (and 404) a revoke target
+// before involving the service layer.
+func (r *PageRepository) GetPagePermissionByID(id int) (*models.PagePermission, error) {
+	row := r.db.QueryRow(`
+		SELECT id, page_id, principal_type, principal_id, permission_level, granted_by, granted_at
+		FROM page_permissions WHERE id = ?
+	`, id)
+	var p models.PagePermission
+	var grantedBy sql.NullInt64
+	if err := row.Scan(&p.ID, &p.PageID, &p.PrincipalType, &p.PrincipalID, &p.PermissionLevel, &grantedBy, &p.GrantedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("get page permission %d: %w", id, err)
+	}
+	if grantedBy.Valid {
+		v := int(grantedBy.Int64)
+		p.GrantedBy = &v
+	}
+	return &p, nil
+}
+
 // ListACLForPage returns the rows stored directly against this page (no
 // inheritance). The Phase 2 ACL UI will fetch inherited rows separately so
 // admins can see exactly what's set vs. inherited.

@@ -111,6 +111,16 @@ type movePageRequest struct {
 	ParentID *int `json:"parent_id"`
 }
 
+type grantPagePermissionRequest struct {
+	PrincipalType   string `json:"principal_type"`
+	PrincipalID     int    `json:"principal_id"`
+	PermissionLevel string `json:"permission_level"`
+}
+
+type setInheritanceRequest struct {
+	InheritPermissions bool `json:"inherit_permissions"`
+}
+
 // --- endpoints ---
 
 // GetTree returns every page in the workspace that the user can view,
@@ -428,6 +438,82 @@ func (h *PageHandler) GetPermissions(w http.ResponseWriter, r *http.Request) {
 		EffectiveLevel:     effective,
 		ACL:                acl,
 	})
+}
+
+// GrantPermission attaches an ACL row to a page. Requires page.admin on
+// the target page (system.admin / workspace.admin also satisfy via the
+// evaluator).
+func (h *PageHandler) GrantPermission(w http.ResponseWriter, r *http.Request) {
+	_, pageID, user, ok := h.requireWorkspacePageAuth(w, r, services.PageOpAdmin)
+	if !ok {
+		return
+	}
+	req, ok := decodeJSON[grantPagePermissionRequest](w, r)
+	if !ok {
+		return
+	}
+	if req.PrincipalType == "" || req.PrincipalID == 0 || req.PermissionLevel == "" {
+		respondValidationError(w, r, "principal_type, principal_id, and permission_level are required")
+		return
+	}
+
+	row, err := h.service.GrantPermission(user.ID, pageID, req.PrincipalType, req.PrincipalID, req.PermissionLevel)
+	if err != nil {
+		switch {
+		case errors.Is(err, services.ErrPageInvalidPrincipal):
+			respondValidationError(w, r, "principal_type must be user, group, or role")
+			return
+		case errors.Is(err, services.ErrPageInvalidLevel):
+			respondValidationError(w, r, "permission_level must be view, edit, or admin")
+			return
+		case errors.Is(err, services.ErrPagePermissionDuplicate):
+			respondConflict(w, r, "permission already granted")
+			return
+		}
+		h.respondServiceError(w, r, err)
+		return
+	}
+	h.auditor.Log(r, user, "grant_permission", "page", &pageID, "")
+	respondJSONCreated(w, row)
+}
+
+// RevokePermission deletes a single ACL row from a page. {permissionId}
+// must belong to {pageId}; cross-page revoke attempts return 404.
+func (h *PageHandler) RevokePermission(w http.ResponseWriter, r *http.Request) {
+	_, pageID, user, ok := h.requireWorkspacePageAuth(w, r, services.PageOpAdmin)
+	if !ok {
+		return
+	}
+	permissionID, ok := requireIDParam(w, r, "permissionId")
+	if !ok {
+		return
+	}
+	if err := h.service.RevokePermission(user.ID, pageID, permissionID); err != nil {
+		h.respondServiceError(w, r, err)
+		return
+	}
+	h.auditor.Log(r, user, "revoke_permission", "page", &pageID, "")
+	respondJSONOK(w, map[string]bool{"revoked": true})
+}
+
+// SetInheritance flips the inherit_permissions flag on a page. Breaking
+// inheritance is the mechanism the ACL UI uses to restrict a subtree.
+func (h *PageHandler) SetInheritance(w http.ResponseWriter, r *http.Request) {
+	_, pageID, user, ok := h.requireWorkspacePageAuth(w, r, services.PageOpAdmin)
+	if !ok {
+		return
+	}
+	req, ok := decodeJSON[setInheritanceRequest](w, r)
+	if !ok {
+		return
+	}
+	page, err := h.service.SetInheritPermissions(user.ID, pageID, req.InheritPermissions)
+	if err != nil {
+		h.respondServiceError(w, r, err)
+		return
+	}
+	h.auditor.Log(r, user, "set_inheritance", "page", &pageID, "")
+	respondJSONOK(w, page)
 }
 
 // --- helpers ---

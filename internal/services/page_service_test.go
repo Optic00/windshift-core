@@ -65,6 +65,16 @@ func newPagesTestDB(t *testing.T) database.Database {
 			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(page_id, revision_number)
 		)`,
+		`CREATE TABLE page_permissions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			page_id INTEGER NOT NULL,
+			principal_type TEXT NOT NULL,
+			principal_id INTEGER NOT NULL,
+			permission_level TEXT NOT NULL,
+			granted_by INTEGER,
+			granted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(page_id, principal_type, principal_id, permission_level)
+		)`,
 		`CREATE TABLE page_chunks (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			page_id INTEGER NOT NULL,
@@ -531,6 +541,132 @@ func TestChunkPageMarkdown_SplitsOversizeSections(t *testing.T) {
 		if len(s.Content) > pageChunkMaxBytes+pageChunkMinBytes {
 			t.Errorf("chunk exceeds max+min slack: %d bytes", len(s.Content))
 		}
+	}
+}
+
+func TestPageService_GrantPermission_PersistsAndRecordsRevision(t *testing.T) {
+	db := newPagesTestDB(t)
+	s := NewPageService(db)
+	page, err := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "T", Content: "c"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	row, err := s.GrantPermission(1, page.ID, "user", 2, "edit")
+	if err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	if row.PageID != page.ID || row.PrincipalID != 2 || row.PermissionLevel != "edit" {
+		t.Errorf("granted row mismatch: %+v", row)
+	}
+
+	// Audit revision should record the change.
+	revs, _ := s.ListRevisions(page.ID, 0, 0)
+	found := false
+	for _, r := range revs {
+		if r.ChangeType == "permissions" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a 'permissions' revision after grant; got revs=%+v", revs)
+	}
+}
+
+func TestPageService_GrantPermission_RejectsBadPrincipalAndLevel(t *testing.T) {
+	db := newPagesTestDB(t)
+	s := NewPageService(db)
+	page, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "T"})
+
+	if _, err := s.GrantPermission(1, page.ID, "team", 5, "edit"); !errors.Is(err, ErrPageInvalidPrincipal) {
+		t.Errorf("bad principal: want ErrPageInvalidPrincipal, got %v", err)
+	}
+	if _, err := s.GrantPermission(1, page.ID, "user", 5, "owner"); !errors.Is(err, ErrPageInvalidLevel) {
+		t.Errorf("bad level: want ErrPageInvalidLevel, got %v", err)
+	}
+}
+
+func TestPageService_GrantPermission_DuplicateReturnsError(t *testing.T) {
+	db := newPagesTestDB(t)
+	s := NewPageService(db)
+	page, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "T"})
+
+	if _, err := s.GrantPermission(1, page.ID, "user", 2, "edit"); err != nil {
+		t.Fatalf("first grant: %v", err)
+	}
+	if _, err := s.GrantPermission(1, page.ID, "user", 2, "edit"); !errors.Is(err, ErrPagePermissionDuplicate) {
+		t.Errorf("duplicate grant: want ErrPagePermissionDuplicate, got %v", err)
+	}
+}
+
+func TestPageService_RevokePermission_RemovesRow(t *testing.T) {
+	db := newPagesTestDB(t)
+	s := NewPageService(db)
+	page, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "T"})
+	row, _ := s.GrantPermission(1, page.ID, "user", 2, "edit")
+
+	if err := s.RevokePermission(1, page.ID, row.ID); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	acl, _ := s.ListOwnACL(page.ID)
+	if len(acl) != 0 {
+		t.Errorf("expected empty ACL after revoke, got %d", len(acl))
+	}
+}
+
+func TestPageService_RevokePermission_RejectsCrossPageID(t *testing.T) {
+	db := newPagesTestDB(t)
+	s := NewPageService(db)
+	a, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "A"})
+	b, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "B"})
+	rowA, _ := s.GrantPermission(1, a.ID, "user", 2, "edit")
+
+	if err := s.RevokePermission(1, b.ID, rowA.ID); !errors.Is(err, ErrPageNotFound) {
+		t.Errorf("cross-page revoke: want ErrPageNotFound, got %v", err)
+	}
+	// The row should still exist under page A.
+	acl, _ := s.ListOwnACL(a.ID)
+	if len(acl) != 1 {
+		t.Errorf("row should remain on page A, got %d", len(acl))
+	}
+}
+
+func TestPageService_SetInheritPermissions_TogglesAndRecords(t *testing.T) {
+	db := newPagesTestDB(t)
+	s := NewPageService(db)
+	page, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "T"})
+	if !page.InheritPermissions {
+		t.Fatal("page should inherit by default")
+	}
+
+	updated, err := s.SetInheritPermissions(1, page.ID, false)
+	if err != nil {
+		t.Fatalf("set inherit=false: %v", err)
+	}
+	if updated.InheritPermissions {
+		t.Error("expected inherit_permissions=false after flip")
+	}
+
+	// Revision recorded with change_type=permissions.
+	revs, _ := s.ListRevisions(page.ID, 0, 0)
+	if len(revs) == 0 || revs[0].ChangeType != "permissions" {
+		t.Errorf("expected newest revision to be 'permissions', got %+v", revs)
+	}
+}
+
+func TestPageService_SetInheritPermissions_NoopWhenUnchanged(t *testing.T) {
+	db := newPagesTestDB(t)
+	s := NewPageService(db)
+	page, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "T"})
+
+	// Already inherit=true; calling with true should be a no-op.
+	before, _ := s.ListRevisions(page.ID, 0, 0)
+	if _, err := s.SetInheritPermissions(1, page.ID, true); err != nil {
+		t.Fatalf("noop set: %v", err)
+	}
+	after, _ := s.ListRevisions(page.ID, 0, 0)
+	if len(after) != len(before) {
+		t.Errorf("no-op set inheritance should not add a revision; before=%d after=%d", len(before), len(after))
 	}
 }
 

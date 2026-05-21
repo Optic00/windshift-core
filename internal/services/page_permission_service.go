@@ -111,6 +111,14 @@ func (s *PagePermissionService) Can(userID, workspaceID, pageID int, op string) 
 		return s.matchesACL(userID, workspaceID, acl, op)
 	}
 
+	// Inheritance broken with no explicit grants → admin-only. The admin
+	// checks above already returned true for system.admin / workspace.admin
+	// / page.admin, so reaching here on a deny-by-default page means the
+	// caller cannot pass.
+	if !page.InheritPermissions {
+		return false, nil
+	}
+
 	// Open page: fall back to workspace-scoped page.* permissions.
 	return s.perm.HasWorkspacePermission(userID, workspaceID, workspacePermKeyForOp(op))
 }
