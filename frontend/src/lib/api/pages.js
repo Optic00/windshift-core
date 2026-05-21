@@ -62,6 +62,30 @@ export const pages = {
   getPermissions: (workspaceId, pageId) =>
     fetchAPI(`/workspaces/${workspaceId}/pages/${pageId}/permissions`),
 
+  /** Grant a new ACL row on a page. Requires page.admin on the target. */
+  grantPermission: (workspaceId, pageId, { principalType, principalId, permissionLevel }) =>
+    fetchAPI(`/workspaces/${workspaceId}/pages/${pageId}/permissions`, {
+      method: 'POST',
+      body: JSON.stringify({
+        principal_type: principalType,
+        principal_id: principalId,
+        permission_level: permissionLevel,
+      }),
+    }),
+
+  /** Revoke a single ACL row. The row must belong to the named page. */
+  revokePermission: (workspaceId, pageId, permissionId) =>
+    fetchAPI(`/workspaces/${workspaceId}/pages/${pageId}/permissions/${permissionId}`, {
+      method: 'DELETE',
+    }),
+
+  /** Toggle the inherit_permissions flag on a page. */
+  setInheritance: (workspaceId, pageId, inheritPermissions) =>
+    fetchAPI(`/workspaces/${workspaceId}/pages/${pageId}/inheritance`, {
+      method: 'PATCH',
+      body: JSON.stringify({ inherit_permissions: inheritPermissions }),
+    }),
+
   /** Unified knowledge search across pages (and future sources). */
   searchKnowledge: (workspaceId, query, { limit = 25 } = {}) =>
     fetchAPI(`/workspaces/${workspaceId}/knowledge/search${buildQueryString({ q: query, limit })}`),

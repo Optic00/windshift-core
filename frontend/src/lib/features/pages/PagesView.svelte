@@ -3,6 +3,7 @@
   import { api } from '../../api.js';
   import { navigate } from '../../router.js';
   import LazyMilkdownEditor from '../../editors/LazyMilkdownEditor.svelte';
+  import PagePermissionsDialog from './PagePermissionsDialog.svelte';
 
   /**
    * Workspace knowledge-pages view: left tree + right Markdown editor.
@@ -25,6 +26,7 @@
   let error = $state('');
   let creating = $state(false);
   let newTitle = $state('');
+  let permsDialogOpen = $state(false);
 
   onMount(async () => {
     await loadTree();
@@ -222,6 +224,14 @@
             {saving ? 'Saving…' : 'Save'}
           </button>
           <button
+            id="page-permissions-button"
+            type="button"
+            onclick={() => (permsDialogOpen = true)}
+            disabled={saving}
+          >
+            Permissions
+          </button>
+          <button
             id="page-archive-button"
             type="button"
             class="danger"
@@ -245,6 +255,15 @@
     {/if}
   </main>
 </div>
+
+{#if selectedPage}
+  <PagePermissionsDialog
+    bind:isOpen={permsDialogOpen}
+    {workspaceId}
+    pageId={selectedPage.id}
+    onUpdated={loadTree}
+  />
+{/if}
 
 <style>
   .pages-view {
