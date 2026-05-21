@@ -1,6 +1,8 @@
 <script>
   import { tick } from 'svelte';
   import Modal from '../../dialogs/Modal.svelte';
+  import ModalHeader from '../../dialogs/ModalHeader.svelte';
+  import DialogFooter from '../../dialogs/DialogFooter.svelte';
   import { api } from '../../api.js';
 
   /**
@@ -87,12 +89,12 @@
 </script>
 
 <Modal bind:isOpen maxWidth="max-w-lg">
+  <ModalHeader
+    title={`Move "${page?.title || ''}"`}
+    subtitle="Choose a new parent. Pages under the current page are hidden because they would create a cycle."
+    onClose={() => (isOpen = false)}
+  />
   <div class="dialog">
-    <header>
-      <h2>Move "{page?.title || ''}"</h2>
-      <p class="hint">Choose a new parent. Pages under the current page are hidden because they would create a cycle.</p>
-    </header>
-
     {#if error}
       <div class="error" role="alert">{error}</div>
     {/if}
@@ -138,11 +140,11 @@
         {/each}
       </ul>
     {/if}
-
-    <footer>
-      <button type="button" onclick={() => (isOpen = false)}>Cancel</button>
-    </footer>
   </div>
+  <DialogFooter
+    cancelLabel="Cancel"
+    onCancel={() => (isOpen = false)}
+  />
 </Modal>
 
 <style>
@@ -151,18 +153,6 @@
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
-  }
-
-  h2 {
-    margin: 0;
-    font-size: 1.0625rem;
-    font-weight: 600;
-  }
-
-  .hint {
-    margin: 0.25rem 0 0 0;
-    font-size: 0.8125rem;
-    color: var(--ds-text-subtle, #6b7280);
   }
 
   .filter {
@@ -210,23 +200,6 @@
     font-size: 0.75rem;
     color: var(--ds-text-subtle, #6b7280);
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  }
-
-  footer {
-    display: flex;
-    justify-content: flex-end;
-    border-top: 1px solid var(--ds-border, #e5e7eb);
-    padding-top: 0.5rem;
-  }
-
-  footer button {
-    padding: 0.375rem 0.75rem;
-    font-size: 0.875rem;
-    border: 1px solid var(--ds-border, #d1d5db);
-    border-radius: 0.25rem;
-    background: var(--ds-surface-raised, #fff);
-    color: var(--ds-text, #111);
-    cursor: pointer;
   }
 
   .error {

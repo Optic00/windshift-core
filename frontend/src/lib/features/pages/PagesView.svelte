@@ -6,6 +6,8 @@
   import PagePermissionsDialog from './PagePermissionsDialog.svelte';
   import PageMoveDialog from './PageMoveDialog.svelte';
   import { parseMarkdownHeadings, slugify } from './markdownToc.js';
+  import Button from '../../components/Button.svelte';
+  import Input from '../../components/Input.svelte';
 
   /**
    * Workspace knowledge-pages view: left tree + right Markdown editor.
@@ -231,16 +233,21 @@
           createPage();
         }}
       >
-        <input
+        <Input
           id="page-new-title"
-          type="text"
+          size="small"
           placeholder={selectedPage ? `Child of ${selectedPage.title}` : 'New root page'}
           bind:value={newTitle}
           disabled={creating}
         />
-        <button id="page-create-button" type="submit" disabled={creating || !newTitle.trim()}>
+        <Button
+          id="page-create-button"
+          type="submit"
+          size="small"
+          disabled={creating || !newTitle.trim()}
+        >
           New
-        </button>
+        </Button>
       </form>
     </header>
 
@@ -293,39 +300,41 @@
           placeholder="Untitled"
         />
         <div class="actions">
-          <button
+          <Button
             id="page-save-button"
-            type="button"
+            variant="primary"
+            size="small"
             onclick={savePage}
             disabled={!dirty || saving}
+            loading={saving}
           >
-            {saving ? 'Saving…' : 'Save'}
-          </button>
-          <button
+            Save
+          </Button>
+          <Button
             id="page-move-button"
-            type="button"
+            size="small"
             onclick={() => (moveDialogOpen = true)}
             disabled={saving}
           >
             Move
-          </button>
-          <button
+          </Button>
+          <Button
             id="page-permissions-button"
-            type="button"
+            size="small"
             onclick={() => (permsDialogOpen = true)}
             disabled={saving}
           >
             Permissions
-          </button>
-          <button
+          </Button>
+          <Button
             id="page-archive-button"
-            type="button"
-            class="danger"
+            variant="danger"
+            size="small"
             onclick={archivePage}
             disabled={saving}
           >
             Archive
-          </button>
+          </Button>
         </div>
       </div>
       <div class="editor-row">
@@ -414,26 +423,7 @@
   .new-page-form {
     display: flex;
     gap: 0.25rem;
-  }
-
-  .new-page-form input {
-    flex: 1;
-    padding: 0.25rem 0.5rem;
-    font-size: 0.875rem;
-    border: 1px solid var(--ds-border, #d1d5db);
-    border-radius: 0.25rem;
-    background: var(--ds-background-input, #fff);
-    color: var(--ds-text, #111);
-  }
-
-  .new-page-form button {
-    padding: 0.25rem 0.75rem;
-    font-size: 0.875rem;
-    border: 1px solid var(--ds-border, #d1d5db);
-    border-radius: 0.25rem;
-    background: var(--ds-surface-raised, #fff);
-    color: var(--ds-text, #111);
-    cursor: pointer;
+    align-items: center;
   }
 
   .tree {
@@ -495,25 +485,6 @@
   .actions {
     display: flex;
     gap: 0.5rem;
-  }
-
-  .actions button {
-    padding: 0.375rem 0.75rem;
-    border: 1px solid var(--ds-border, #d1d5db);
-    border-radius: 0.25rem;
-    background: var(--ds-surface-raised, #fff);
-    color: var(--ds-text, #111);
-    font-size: 0.875rem;
-    cursor: pointer;
-  }
-
-  .actions button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .actions button.danger {
-    color: var(--ds-text-danger, #b91c1c);
   }
 
   .editor-row {

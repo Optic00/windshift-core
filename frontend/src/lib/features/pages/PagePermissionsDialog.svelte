@@ -1,5 +1,7 @@
 <script>
   import Modal from '../../dialogs/Modal.svelte';
+  import ModalHeader from '../../dialogs/ModalHeader.svelte';
+  import DialogFooter from '../../dialogs/DialogFooter.svelte';
   import { api } from '../../api.js';
 
   /**
@@ -114,16 +116,12 @@
 </script>
 
 <Modal bind:isOpen maxWidth="max-w-2xl">
+  <ModalHeader
+    title="Page permissions"
+    subtitle={data ? `Your effective access: ${data.effective_level || 'none'}` : ''}
+    onClose={() => (isOpen = false)}
+  />
   <div class="dialog">
-    <header class="dialog-header">
-      <h2 id="page-permissions-title">Page permissions</h2>
-      <p class="hint">
-        {#if data}
-          Your effective access: <strong>{data.effective_level || 'none'}</strong>
-        {/if}
-      </p>
-    </header>
-
     {#if error}
       <div class="error" role="alert">{error}</div>
     {/if}
@@ -214,13 +212,12 @@
         {/if}
       </section>
     {/if}
-
-    <footer class="dialog-footer">
-      <button id="page-perms-close" type="button" onclick={() => (isOpen = false)}>
-        Close
-      </button>
-    </footer>
   </div>
+  <DialogFooter
+    cancelLabel="Close"
+    cancelTestid="page-perms-close"
+    onCancel={() => (isOpen = false)}
+  />
 </Modal>
 
 <style>
@@ -229,18 +226,6 @@
     display: flex;
     flex-direction: column;
     gap: 1rem;
-  }
-
-  .dialog-header h2 {
-    margin: 0;
-    font-size: 1.125rem;
-    font-weight: 600;
-  }
-
-  .hint {
-    margin: 0.25rem 0 0 0;
-    font-size: 0.8125rem;
-    color: var(--ds-text-subtle, #6b7280);
   }
 
   .inheritance {
@@ -313,23 +298,6 @@
   }
 
   .add-grant button {
-    padding: 0.375rem 0.75rem;
-    font-size: 0.875rem;
-    border: 1px solid var(--ds-border, #d1d5db);
-    border-radius: 0.25rem;
-    background: var(--ds-surface-raised, #fff);
-    color: var(--ds-text, #111);
-    cursor: pointer;
-  }
-
-  .dialog-footer {
-    display: flex;
-    justify-content: flex-end;
-    border-top: 1px solid var(--ds-border, #e5e7eb);
-    padding-top: 0.75rem;
-  }
-
-  .dialog-footer button {
     padding: 0.375rem 0.75rem;
     font-size: 0.875rem;
     border: 1px solid var(--ds-border, #d1d5db);
