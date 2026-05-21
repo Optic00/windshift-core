@@ -843,3 +843,68 @@ func (c *Client) ResolveItemID(keyOrID string) (int, error) {
 
 	return 0, fmt.Errorf("item not found: %s", keyOrID)
 }
+
+// ============================================
+// Pages API Methods
+// ============================================
+
+// ListPages returns every page in the workspace the caller can view,
+// sorted depth-first by the server.
+func (c *Client) ListPages(workspaceID int) ([]Page, error) {
+	var resp PageListResponse
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/workspaces/%d/pages", workspaceID), &resp); err != nil {
+		return nil, err
+	}
+	return resp.Items, nil
+}
+
+// GetPage fetches a single page by id.
+func (c *Client) GetPage(workspaceID, pageID int) (*Page, error) {
+	var page Page
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/workspaces/%d/pages/%d", workspaceID, pageID), &page); err != nil {
+		return nil, err
+	}
+	return &page, nil
+}
+
+// CreatePage creates a new page under the given workspace.
+func (c *Client) CreatePage(workspaceID int, req PageCreateRequest) (*Page, error) {
+	var page Page
+	if err := c.POST(fmt.Sprintf("/rest/api/v1/workspaces/%d/pages", workspaceID), req, &page); err != nil {
+		return nil, err
+	}
+	return &page, nil
+}
+
+// UpdatePage applies a partial update to a page. Pass nil for fields
+// that should remain unchanged.
+func (c *Client) UpdatePage(workspaceID, pageID int, req PageUpdateRequest) (*Page, error) {
+	var page Page
+	if err := c.PUT(fmt.Sprintf("/rest/api/v1/workspaces/%d/pages/%d", workspaceID, pageID), req, &page); err != nil {
+		return nil, err
+	}
+	return &page, nil
+}
+
+// MovePage reparents a page. Pass parentID=nil to move to the workspace root.
+func (c *Client) MovePage(workspaceID, pageID int, parentID *int) (*Page, error) {
+	var page Page
+	if err := c.POST(fmt.Sprintf("/rest/api/v1/workspaces/%d/pages/%d/move", workspaceID, pageID), PageMoveRequest{ParentID: parentID}, &page); err != nil {
+		return nil, err
+	}
+	return &page, nil
+}
+
+// ArchivePage soft-deletes a page and its entire subtree.
+func (c *Client) ArchivePage(workspaceID, pageID int) error {
+	return c.DELETE(fmt.Sprintf("/rest/api/v1/workspaces/%d/pages/%d", workspaceID, pageID))
+}
+
+// GetPageHistory returns revisions for a page newest-first.
+func (c *Client) GetPageHistory(workspaceID, pageID int) ([]PageRevision, error) {
+	var resp PageHistoryResponse
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/workspaces/%d/pages/%d/history", workspaceID, pageID), &resp); err != nil {
+		return nil, err
+	}
+	return resp.Items, nil
+}
