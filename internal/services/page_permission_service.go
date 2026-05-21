@@ -334,8 +334,15 @@ func (s *PagePermissionService) matchesACL(userID, workspaceID int, acl []models
 	return false, nil
 }
 
+// userGroupIDs returns the user's active group memberships. Mirrors the
+// is_active filter applied by PermissionService.buildUserPermissionCache
+// — inactive groups must not satisfy ACL grants targeted at "group N".
 func (s *PagePermissionService) userGroupIDs(userID int) ([]int, error) {
-	rows, err := s.db.Query("SELECT group_id FROM group_members WHERE user_id = ?", userID)
+	rows, err := s.db.Query(`
+		SELECT gm.group_id FROM group_members gm
+		JOIN groups g ON g.id = gm.group_id
+		WHERE gm.user_id = ? AND g.is_active = 1
+	`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("load user groups: %w", err)
 	}
@@ -351,11 +358,22 @@ func (s *PagePermissionService) userGroupIDs(userID int) ([]int, error) {
 	return out, rows.Err()
 }
 
+// userWorkspaceRoleIDs returns every role the user effectively holds in
+// the workspace, from BOTH direct user→role assignments and indirect
+// group→role assignments (i.e. role granted to a group the user is a
+// member of). Without the group arm, an ACL row that grants a role would
+// fail to match a user who reaches that role only via their group — a
+// silent divergence from PermissionService's cache build.
 func (s *PagePermissionService) userWorkspaceRoleIDs(userID, workspaceID int) ([]int, error) {
 	rows, err := s.db.Query(`
 		SELECT role_id FROM user_workspace_roles
 		WHERE user_id = ? AND workspace_id = ?
-	`, userID, workspaceID)
+		UNION
+		SELECT gwr.role_id FROM group_workspace_roles gwr
+		JOIN group_members gm ON gm.group_id = gwr.group_id
+		JOIN groups g ON g.id = gwr.group_id
+		WHERE gm.user_id = ? AND gwr.workspace_id = ? AND g.is_active = 1
+	`, userID, workspaceID, userID, workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("load user workspace roles: %w", err)
 	}

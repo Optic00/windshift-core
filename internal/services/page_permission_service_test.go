@@ -181,6 +181,100 @@ func TestPagePermission_ACLGrantRequiresWorkspaceMembership(t *testing.T) {
 	}
 }
 
+// Bug-hunt-2 #3 (group is_active): a grant targeting a now-inactive
+// group must not match its members. Mirrors how
+// PermissionService.buildUserPermissionCache filters group_members by
+// groups.is_active.
+func TestPagePermission_InactiveGroupGrantDoesNotMatch(t *testing.T) {
+	env := newPagePermTestEnv(t)
+	page, _ := env.pages.Create(env.users["alice"], CreatePageInput{WorkspaceID: 1, Title: "Restricted"})
+	if _, err := env.pages.SetInheritPermissions(env.users["bob"], page.ID, false); err != nil {
+		t.Fatalf("break inheritance: %v", err)
+	}
+
+	// Create an ACTIVE group, add alice, grant the group view on the page.
+	var groupID int
+	if err := env.db.QueryRow(
+		`INSERT INTO groups (name, is_active, created_by) VALUES ('eng', 1, ?) RETURNING id`,
+		env.users["bob"],
+	).Scan(&groupID); err != nil {
+		t.Fatalf("seed group: %v", err)
+	}
+	if _, err := env.db.Exec(
+		`INSERT INTO group_members (group_id, user_id, added_by) VALUES (?, ?, ?)`,
+		groupID, env.users["alice"], env.users["bob"],
+	); err != nil {
+		t.Fatalf("seed group member: %v", err)
+	}
+	if _, err := env.pages.GrantPermission(env.users["bob"], page.ID, "group", groupID, "view"); err != nil {
+		t.Fatalf("grant group: %v", err)
+	}
+
+	// Pre-condition: alice can see the page via her group membership.
+	can, err := env.auth.Can(env.users["alice"], 1, page.ID, PageOpView)
+	if err != nil || !can {
+		t.Fatalf("alice should view via active group: can=%v err=%v", can, err)
+	}
+
+	// Deactivate the group. Alice's grant must NO LONGER match.
+	if _, err := env.db.Exec(`UPDATE groups SET is_active = 0 WHERE id = ?`, groupID); err != nil {
+		t.Fatalf("deactivate: %v", err)
+	}
+	can, err = env.auth.Can(env.users["alice"], 1, page.ID, PageOpView)
+	if err != nil {
+		t.Fatalf("alice can after deactivate: %v", err)
+	}
+	if can {
+		t.Error("inactive group should not satisfy a group ACL grant")
+	}
+}
+
+// Bug-hunt-2 #3 (group→role): a user who reaches a workspace role only
+// via a group grant must still match a role-typed ACL row referencing
+// that role. Previously userWorkspaceRoleIDs only consulted direct
+// user_workspace_roles and missed indirect role membership.
+func TestPagePermission_RoleGrantViaGroupMatches(t *testing.T) {
+	env := newPagePermTestEnv(t)
+	page, _ := env.pages.Create(env.users["alice"], CreatePageInput{WorkspaceID: 1, Title: "Restricted"})
+	if _, err := env.pages.SetInheritPermissions(env.users["bob"], page.ID, false); err != nil {
+		t.Fatalf("break inheritance: %v", err)
+	}
+
+	// Create a group, put carol in it, and grant that group the Viewer
+	// workspace role. carol now reaches the Viewer role via the group
+	// rather than via user_workspace_roles.
+	var groupID int
+	if err := env.db.QueryRow(
+		`INSERT INTO groups (name, is_active, created_by) VALUES ('docs', 1, ?) RETURNING id`,
+		env.users["bob"],
+	).Scan(&groupID); err != nil {
+		t.Fatalf("seed group: %v", err)
+	}
+	if _, err := env.db.Exec(
+		`INSERT INTO group_members (group_id, user_id, added_by) VALUES (?, ?, ?)`,
+		groupID, env.users["carol"], env.users["bob"],
+	); err != nil {
+		t.Fatalf("seed group member: %v", err)
+	}
+	if _, err := env.db.Exec(
+		`INSERT INTO group_workspace_roles (group_id, workspace_id, role_id, granted_by) VALUES (?, 1, ?, ?)`,
+		groupID, env.roleID["Viewer"], env.users["bob"],
+	); err != nil {
+		t.Fatalf("seed group role: %v", err)
+	}
+
+	// Grant the Viewer role view on the page.
+	if _, err := env.pages.GrantPermission(env.users["bob"], page.ID, "role", env.roleID["Viewer"], "view"); err != nil {
+		t.Fatalf("grant role: %v", err)
+	}
+
+	// carol must match the role-typed ACL grant via her group→role link.
+	can, err := env.auth.Can(env.users["carol"], 1, page.ID, PageOpView)
+	if err != nil || !can {
+		t.Errorf("carol should match role-typed ACL via group→role: can=%v err=%v", can, err)
+	}
+}
+
 // Bug-hunt-2 #2b: GrantPermission validates principal existence at write
 // time so stale grants don't sit in the audit log forever.
 func TestPagePermission_GrantPermissionRejectsUnknownPrincipal(t *testing.T) {
