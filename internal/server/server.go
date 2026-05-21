@@ -820,6 +820,7 @@ func (s *Server) initialize() error {
 		slog.Info("attachments enabled", "path", cfg.AttachmentPath)
 		attachmentHandler = handlers.NewAttachmentHandler(s.db, cfg.AttachmentPath, permService)
 		attachmentHandler.SetApprovalService(approvalService)
+		attachmentHandler.SetPagePermissionService(pagePermissionService)
 		attachmentSettingsService := services.NewAttachmentSettingsService(s.db)
 		if err := attachmentSettingsService.Initialize(cfg.AttachmentPath); err != nil {
 			slog.Warn("failed to initialize attachment settings", "error", err)
