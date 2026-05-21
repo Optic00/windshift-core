@@ -512,21 +512,41 @@
     flex-direction: column;
   }
 
-  /* The embedded MilkdownEditor ships its own border + 150px
-     min-height that paint as a small card. Inside the pages surface
-     we strip the card and stretch every wrapper in the chain so the
-     ProseMirror surface fills the whole page-pane. The selectors are
-     scoped to `.editor-frame` so other consumers of MilkdownEditor
-     (inline editors, item descriptions) keep their boxed look. */
+  /* The embedded MilkdownEditor ships its own border + tinted card +
+     150px min-height that paint as a small box. Inside the pages
+     surface we strip the card and stretch every wrapper in the chain
+     so the ProseMirror surface fills the whole page-pane.
+     ----------------------------------------------------------------
+     Specificity note: MilkdownEditor's scoped CSS produces selectors
+     like `.milkdown-toolbar.svelte-HASH` (specificity 0,2,0). A plain
+     `.editor-frame .milkdown-toolbar` ties at 0,2,0 and loses on
+     source order because the dynamically-imported MilkdownEditor
+     bundle is appended to <head> AFTER PagesView's stylesheet. Every
+     override below chains through `.milkdown-wrapper` (or doubles the
+     `.editor-frame` class) to lift specificity above the scoped
+     originals; without that, the cascade tie silently restores the
+     bordered card. Scope stays inside `.editor-frame` so inline
+     editors and item descriptions keep their boxed look. */
   :global(.editor-frame .milkdown-wrapper) {
     flex: 1;
     display: flex;
     flex-direction: column;
     min-height: 0;
+    /* Flatten the wrapper's own rounded card so the editor disappears
+       into the page background regardless of focus state. */
+    border-radius: 0;
+    overflow: visible;
   }
 
-  :global(.editor-frame .milkdown-editor),
-  :global(.editor-frame .milkdown-editor.has-toolbar) {
+  /* Kill the 2px blue focus halo MilkdownEditor draws on the wrapper
+     for inline contexts. Doubled class bumps specificity above the
+     scoped `.milkdown-wrapper:focus-within.svelte-HASH` (0,3,0). */
+  :global(.editor-frame.editor-frame .milkdown-wrapper:focus-within) {
+    box-shadow: none;
+  }
+
+  :global(.editor-frame .milkdown-wrapper .milkdown-editor),
+  :global(.editor-frame .milkdown-wrapper .milkdown-editor.has-toolbar) {
     flex: 1;
     display: flex;
     flex-direction: column;
@@ -536,15 +556,17 @@
     overflow: visible;
   }
 
-  :global(.editor-frame .milkdown-toolbar) {
+  /* Confluence-style toolbar: floats on the page background with a
+     single hairline beneath it instead of being a tinted card top. */
+  :global(.editor-frame .milkdown-wrapper .milkdown-toolbar) {
     border: none;
     border-radius: 0;
     background: transparent;
-    padding-left: 0;
-    padding-right: 0;
+    padding: 0 0 0.375rem 0;
+    border-bottom: 1px solid var(--ds-border);
   }
 
-  :global(.editor-frame .milkdown-editor .milkdown) {
+  :global(.editor-frame .milkdown-wrapper .milkdown-editor .milkdown) {
     flex: 1;
     min-height: 0;
     padding: 0;
@@ -554,7 +576,7 @@
 
   /* ProseMirror itself must grow so the entire empty column is
      clickable + focusable, not just the first text node. */
-  :global(.editor-frame .milkdown-editor .ProseMirror) {
+  :global(.editor-frame .milkdown-wrapper .milkdown-editor .ProseMirror) {
     flex: 1;
     min-height: 50vh;
     outline: none;
