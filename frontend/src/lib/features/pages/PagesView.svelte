@@ -70,12 +70,29 @@
     error = '';
     try {
       const resp = await api.pages.getTree(workspaceId);
-      pages = resp.pages || [];
+      // The API returns both a flat `pages` list (depth-ASC ordered) and
+      // a nested `tree`. Rendering the flat list directly groups all
+      // roots before any descendants — "A, B, A child, B child" —
+      // instead of the depth-first tree the user expects. Flatten the
+      // nested shape depth-first so the existing indent-by-depth render
+      // lays each subtree out contiguously under its parent.
+      pages = flattenDepthFirst(resp.tree || []);
     } catch (err) {
       error = err?.message || 'Failed to load pages';
     } finally {
       loadingTree = false;
     }
+  }
+
+  function flattenDepthFirst(nodes) {
+    const out = [];
+    for (const node of nodes) {
+      out.push(node);
+      if (node.children?.length) {
+        out.push(...flattenDepthFirst(node.children));
+      }
+    }
+    return out;
   }
 
   async function loadPage(id) {
@@ -405,7 +422,7 @@
     font-size: 0.875rem;
     border: 1px solid var(--ds-border, #d1d5db);
     border-radius: 0.25rem;
-    background: var(--ds-background, #fff);
+    background: var(--ds-background-input, #fff);
     color: var(--ds-text, #111);
   }
 
@@ -414,7 +431,8 @@
     font-size: 0.875rem;
     border: 1px solid var(--ds-border, #d1d5db);
     border-radius: 0.25rem;
-    background: var(--ds-background, #fff);
+    background: var(--ds-surface-raised, #fff);
+    color: var(--ds-text, #111);
     cursor: pointer;
   }
 
@@ -441,7 +459,7 @@
   }
 
   .tree-item button.active {
-    background: var(--ds-background-selected, #e0f2fe);
+    background: var(--ds-surface-selected, #e3f2fd);
     font-weight: 500;
   }
 
@@ -483,7 +501,8 @@
     padding: 0.375rem 0.75rem;
     border: 1px solid var(--ds-border, #d1d5db);
     border-radius: 0.25rem;
-    background: var(--ds-background, #fff);
+    background: var(--ds-surface-raised, #fff);
+    color: var(--ds-text, #111);
     font-size: 0.875rem;
     cursor: pointer;
   }
@@ -569,7 +588,7 @@
 
   .error {
     padding: 0.75rem 1rem;
-    background: var(--ds-background-danger, #fef2f2);
+    background: var(--ds-status-danger-bg, #fef2f2);
     color: var(--ds-text-danger, #b91c1c);
     border-radius: 0.25rem;
     font-size: 0.875rem;

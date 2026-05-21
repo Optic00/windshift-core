@@ -308,7 +308,8 @@
     font-size: 0.875rem;
     border: 1px solid var(--ds-border, #d1d5db);
     border-radius: 0.25rem;
-    background: var(--ds-background, #fff);
+    background: var(--ds-background-input, #fff);
+    color: var(--ds-text, #111);
   }
 
   .add-grant button {
@@ -316,7 +317,8 @@
     font-size: 0.875rem;
     border: 1px solid var(--ds-border, #d1d5db);
     border-radius: 0.25rem;
-    background: var(--ds-background, #fff);
+    background: var(--ds-surface-raised, #fff);
+    color: var(--ds-text, #111);
     cursor: pointer;
   }
 
@@ -332,13 +334,14 @@
     font-size: 0.875rem;
     border: 1px solid var(--ds-border, #d1d5db);
     border-radius: 0.25rem;
-    background: var(--ds-background, #fff);
+    background: var(--ds-surface-raised, #fff);
+    color: var(--ds-text, #111);
     cursor: pointer;
   }
 
   .error {
     padding: 0.625rem 0.875rem;
-    background: var(--ds-background-danger, #fef2f2);
+    background: var(--ds-status-danger-bg, #fef2f2);
     color: var(--ds-text-danger, #b91c1c);
     border-radius: 0.25rem;
     font-size: 0.875rem;
