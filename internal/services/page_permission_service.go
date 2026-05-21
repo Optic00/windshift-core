@@ -60,17 +60,53 @@ func (s *PagePermissionService) HasWorkspacePermissionFor(userID, workspaceID in
 // workspace. workspaceID must match the page's workspace; cross-workspace
 // calls return false (rather than ErrPageNotFound) so handlers can map to
 // 404 without leaking page existence.
+//
+// Archived pages have a separate policy: mutations (edit, admin) always
+// return false, and view is granted only to system.admin or
+// workspace.admin. Live pages flow through the normal admin / ACL / role
+// fallback chain.
 func (s *PagePermissionService) Can(userID, workspaceID, pageID int, op string) (bool, error) {
 	if !isValidPageOp(op) {
 		return false, fmt.Errorf("invalid page op %q", op)
 	}
-
 	if userID == 0 {
 		return false, nil
 	}
 
-	if isAdmin, err := s.perm.IsSystemAdmin(userID); err != nil {
+	// Load the page first so the archived check can run before any admin
+	// short-circuit. Cross-workspace and not-found are both 404-equivalent.
+	page, err := s.pages.GetByID(pageID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return false, nil
+		}
 		return false, err
+	}
+	if page.WorkspaceID != workspaceID {
+		return false, nil
+	}
+
+	if page.ArchivedAt != nil {
+		// Mutations on archived pages always 404. The page is frozen until
+		// an explicit unarchive op (not implemented yet) restores it; this
+		// keeps Restore, Update, Move, and ACL writes from changing
+		// archived rows.
+		if op != PageOpView {
+			return false, nil
+		}
+		// View on archived pages is admin-only: system.admin or workspace
+		// admin. Page-level ACL grants do NOT apply to archived pages —
+		// they're frozen from the user's perspective.
+		if isAdmin, ierr := s.perm.IsSystemAdmin(userID); ierr != nil {
+			return false, ierr
+		} else if isAdmin {
+			return true, nil
+		}
+		return s.perm.HasWorkspacePermission(userID, workspaceID, models.PermissionWorkspaceAdmin)
+	}
+
+	if isAdmin, ierr := s.perm.IsSystemAdmin(userID); ierr != nil {
+		return false, ierr
 	} else if isAdmin {
 		return true, nil
 	}
@@ -85,17 +121,6 @@ func (s *PagePermissionService) Can(userID, workspaceID, pageID int, op string) 
 	}
 	if hasWsAdmin || hasPageAdmin {
 		return true, nil
-	}
-
-	page, err := s.pages.GetByID(pageID)
-	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			return false, nil
-		}
-		return false, err
-	}
-	if page.WorkspaceID != workspaceID {
-		return false, nil
 	}
 
 	acl, err := s.collectEffectiveACL(page)

@@ -173,6 +173,80 @@ func TestPagePermission_RoleGrant_OnRestrictedPage(t *testing.T) {
 	}
 }
 
+func TestPagePermission_ArchivedPage_MutationsDeniedForEveryone(t *testing.T) {
+	env := newPagePermTestEnv(t)
+	page, _ := env.pages.Create(env.users["alice"], CreatePageInput{WorkspaceID: 1, Title: "Doomed"})
+	if err := env.pages.Archive(env.users["bob"], page.ID); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+
+	for _, caller := range []string{"alice", "bob"} {
+		for _, op := range []string{PageOpEdit, PageOpAdmin} {
+			can, err := env.auth.Can(env.users[caller], 1, page.ID, op)
+			if err != nil {
+				t.Fatalf("can %s %s: %v", caller, op, err)
+			}
+			if can {
+				t.Errorf("%s should NOT be able to %s an archived page (caller has workspace role)", caller, op)
+			}
+		}
+	}
+}
+
+func TestPagePermission_ArchivedPage_ViewAllowedForWorkspaceAdminOnly(t *testing.T) {
+	env := newPagePermTestEnv(t)
+	page, _ := env.pages.Create(env.users["alice"], CreatePageInput{WorkspaceID: 1, Title: "Frozen"})
+	if err := env.pages.Archive(env.users["bob"], page.ID); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+
+	// Workspace admin (bob) can still view archived pages.
+	can, err := env.auth.Can(env.users["bob"], 1, page.ID, PageOpView)
+	if err != nil || !can {
+		t.Errorf("workspace admin must still view archived page: can=%v err=%v", can, err)
+	}
+
+	// Editor (alice) gets 404.
+	can, err = env.auth.Can(env.users["alice"], 1, page.ID, PageOpView)
+	if err != nil {
+		t.Fatalf("alice can: %v", err)
+	}
+	if can {
+		t.Error("editor must NOT view archived page")
+	}
+
+	// Phantom (viewer) gets 404.
+	can, err = env.auth.Can(env.users["phantom"], 1, page.ID, PageOpView)
+	if err != nil {
+		t.Fatalf("phantom can: %v", err)
+	}
+	if can {
+		t.Error("viewer must NOT view archived page")
+	}
+}
+
+func TestPagePermission_ArchivedPage_AclGrantDoesNotOverride(t *testing.T) {
+	env := newPagePermTestEnv(t)
+	page, _ := env.pages.Create(env.users["alice"], CreatePageInput{WorkspaceID: 1, Title: "Sealed"})
+	// Pre-archive: grant alice explicit view on the page.
+	if _, err := env.pages.GrantPermission(env.users["bob"], page.ID, "user", env.users["alice"], "view"); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	if err := env.pages.Archive(env.users["bob"], page.ID); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+
+	// Alice's explicit grant must NOT let her see an archived page —
+	// archive policy supersedes per-page ACL for non-admins.
+	can, err := env.auth.Can(env.users["alice"], 1, page.ID, PageOpView)
+	if err != nil {
+		t.Fatalf("can: %v", err)
+	}
+	if can {
+		t.Error("explicit ACL grant must not override archive policy")
+	}
+}
+
 func TestPagePermission_InheritedACLFromAncestor(t *testing.T) {
 	env := newPagePermTestEnv(t)
 	parent, _ := env.pages.Create(env.users["alice"], CreatePageInput{WorkspaceID: 1, Title: "P"})
