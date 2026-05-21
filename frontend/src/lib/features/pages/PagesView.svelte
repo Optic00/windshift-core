@@ -523,16 +523,6 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
-    /* MilkdownEditor's wrapper ships a 0.375rem radius + overflow:hidden
-       and a 2px blue box-shadow on :focus-within (its own card affordance
-       for inline contexts). On the page surface we want it to disappear
-       into the page background, so flatten the radius and kill the halo. */
-    border-radius: 0;
-    overflow: visible;
-  }
-
-  :global(.editor-frame .milkdown-wrapper:focus-within) {
-    box-shadow: none;
   }
 
   :global(.editor-frame .milkdown-editor),
@@ -546,14 +536,12 @@
     overflow: visible;
   }
 
-  /* Confluence-style toolbar: floats on the page background with a
-     single hairline beneath it instead of being a tinted card top. */
   :global(.editor-frame .milkdown-toolbar) {
     border: none;
     border-radius: 0;
     background: transparent;
-    padding: 0 0 0.375rem 0;
-    border-bottom: 1px solid var(--ds-border);
+    padding-left: 0;
+    padding-right: 0;
   }
 
   :global(.editor-frame .milkdown-editor .milkdown) {
