@@ -520,6 +520,13 @@ func (s *PageService) ListChildren(workspaceID int, parentID *int) ([]models.Pag
 	return s.pages.ListChildren(workspaceID, parentID)
 }
 
+// ListDescendants returns every descendant of pageID up to the global
+// hierarchy depth cap. Used by the archive handler to verify admin
+// access on the whole subtree before triggering the cascade.
+func (s *PageService) ListDescendants(pageID int) ([]models.Page, error) {
+	return s.pages.GetDescendants(pageID, 0)
+}
+
 // ListOwnACL returns the ACL rows stored directly against a page (no
 // inheritance). Used by the read-only permissions endpoint in Phase 1; the
 // Phase 2 dialog will use this plus a separate inheritance-walk endpoint.

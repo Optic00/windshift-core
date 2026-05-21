@@ -279,6 +279,13 @@ func (h *PageHandler) Update(w http.ResponseWriter, r *http.Request) {
 // required at the workspace level AND the user must be able to admin the
 // page subtree to prevent restricted descendants from being silently
 // archived by an otherwise-eligible editor.
+//
+// Bug-hunt finding #3 fix: the previous version checked PageOpAdmin only
+// on the root page, but Archive cascades via materialized path. We now
+// enumerate the whole subtree and re-check PageOpAdmin on every
+// descendant before triggering the cascade. A denied descendant blocks
+// the whole archive — admins must restructure (move or grant) before
+// archiving from above.
 func (h *PageHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	workspaceID, pageID, user, ok := h.requireWorkspacePageAuth(w, r, services.PageOpAdmin)
 	if !ok {
@@ -293,6 +300,26 @@ func (h *PageHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	if !hasDelete {
 		respondNotFound(w, r, "Page")
 		return
+	}
+
+	descendants, err := h.service.ListDescendants(pageID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	for _, d := range descendants {
+		can, cerr := h.pageAuth.Can(user.ID, workspaceID, d.ID, services.PageOpAdmin)
+		if cerr != nil {
+			respondInternalError(w, r, cerr)
+			return
+		}
+		if !can {
+			// A restricted descendant blocks the whole archive. 404 keeps
+			// existence-not-leaked — caller learns "no" without learning
+			// which descendant denied.
+			respondNotFound(w, r, "Page")
+			return
+		}
 	}
 
 	if err := h.service.Archive(user.ID, pageID); err != nil {

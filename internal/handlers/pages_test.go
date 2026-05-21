@@ -167,6 +167,73 @@ func TestPageHandler_Create_AllowsEditor(t *testing.T) {
 	}
 }
 
+func TestPageHandler_Delete_RejectsWhenDescendantRestrictsAdmin(t *testing.T) {
+	// Bug-hunt finding #3: handler previously checked page.admin only on
+	// the root, so a user with admin on the root could archive a subtree
+	// containing pages they couldn't admin individually.
+	//
+	// Setup: editor gets page.delete (workspace-wide) but NOT page.admin.
+	// We grant the editor an explicit page.admin via ACL on the root, so
+	// they pass the root admin check, but we then break inheritance on
+	// the child without granting them admin — they must NOT be able to
+	// archive the subtree.
+	h, db, _ := newPageHandler(t)
+	const userID = 1
+	seedNegativeTestUser(t, db, userID)
+	seedNegativeTestUser(t, db, 999)
+	seedWorkspaceWithRole(t, db, 1, userID, "Editor")
+
+	// Editor needs page.delete to reach the subtree-admin check at all.
+	// We deliberately do NOT grant page.admin at the workspace level —
+	// otherwise the workspace role short-circuits Can() and the per-page
+	// ACL on child becomes irrelevant.
+	var deleteID, editorRoleID int
+	if err := db.QueryRow(`SELECT id FROM permissions WHERE permission_key='page.delete'`).Scan(&deleteID); err != nil {
+		t.Fatalf("perm delete: %v", err)
+	}
+	if err := db.QueryRow(`SELECT id FROM workspace_roles WHERE name='Editor'`).Scan(&editorRoleID); err != nil {
+		t.Fatalf("editor role: %v", err)
+	}
+	if _, err := db.Exec(`INSERT OR IGNORE INTO role_permissions (role_id, permission_id) VALUES (?, ?)`, editorRoleID, deleteID); err != nil {
+		t.Fatalf("grant editor page.delete: %v", err)
+	}
+
+	parent, err := h.service.Create(userID, services.CreatePageInput{WorkspaceID: 1, Title: "Parent"})
+	if err != nil {
+		t.Fatalf("parent: %v", err)
+	}
+	// Grant the editor explicit page.admin on the parent via ACL so the
+	// root admin check passes.
+	if _, err := h.service.GrantPermission(userID, parent.ID, "user", userID, "admin"); err != nil {
+		t.Fatalf("grant root admin: %v", err)
+	}
+	child, err := h.service.Create(userID, services.CreatePageInput{WorkspaceID: 1, ParentID: &parent.ID, Title: "Child"})
+	if err != nil {
+		t.Fatalf("child: %v", err)
+	}
+	// Break child inheritance — child now has its own ACL (empty), so
+	// the editor's grant on the parent does NOT propagate. Child is
+	// admin-only with no admin grant for our editor.
+	if _, err := h.service.SetInheritPermissions(userID, child.ID, false); err != nil {
+		t.Fatalf("break child inheritance: %v", err)
+	}
+
+	req := authedRequest(http.MethodDelete, "/workspaces/1/pages/"+strconv.Itoa(parent.ID), userID, nil)
+	setPath(req, map[string]string{"workspaceId": "1", "pageId": strconv.Itoa(parent.ID)})
+	rr := httptest.NewRecorder()
+	h.Delete(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("subtree archive should be refused when a descendant denies: want 404, got %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	// Parent must still be live.
+	got, _ := h.service.GetByID(parent.ID)
+	if got.ArchivedAt != nil {
+		t.Error("parent should NOT have been archived when descendant denied admin")
+	}
+}
+
 func TestPageHandler_Delete_RequiresPageDelete(t *testing.T) {
 	h, db, _ := newPageHandler(t)
 	const userID = 1

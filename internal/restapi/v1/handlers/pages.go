@@ -241,7 +241,9 @@ func (h *PageHandler) Move(w http.ResponseWriter, r *http.Request) {
 
 // Archive soft-deletes a page and its subtree. Requires pages:delete
 // scope at the route layer plus page.admin on the page AND workspace
-// page.delete (the cookie-auth handler enforces the same rule).
+// page.delete. To prevent restricted descendants from being silently
+// archived, we re-check PageOpAdmin on every descendant before
+// cascading; see bug-hunt finding #3.
 func (h *PageHandler) Archive(w http.ResponseWriter, r *http.Request) {
 	wsID, pageID, user, ok := h.requireWorkspacePageAdmin(w, r)
 	if !ok {
@@ -255,6 +257,22 @@ func (h *PageHandler) Archive(w http.ResponseWriter, r *http.Request) {
 	if !hasDelete {
 		h.RespondNotFound(w, r)
 		return
+	}
+	descendants, err := h.service.ListDescendants(pageID)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	for _, d := range descendants {
+		can, cerr := h.pageAuth.Can(user.ID, wsID, d.ID, services.PageOpAdmin)
+		if cerr != nil {
+			h.RespondInternalError(w, r)
+			return
+		}
+		if !can {
+			h.RespondNotFound(w, r)
+			return
+		}
 	}
 	if err := h.service.Archive(user.ID, pageID); err != nil {
 		h.respondPageServiceError(w, r, err)
