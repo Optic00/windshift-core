@@ -1,0 +1,125 @@
+package models
+
+import "time"
+
+// Page is a workspace knowledge (wiki) page authored in Markdown.
+// Pages form a per-workspace tree via parent_id. Permission evaluation
+// uses the per-page ACL (page_permissions) with workspace-role fallback.
+type Page struct {
+	ID                 int        `json:"id" db:"id"`
+	WorkspaceID        int        `json:"workspace_id" db:"workspace_id"`
+	ParentID           *int       `json:"parent_id" db:"parent_id"`
+	Title              string     `json:"title" db:"title"`
+	Slug               string     `json:"slug" db:"slug"`
+	Content            string     `json:"content" db:"content"`
+	ContentHash        string     `json:"content_hash" db:"content_hash"`
+	Excerpt            string     `json:"excerpt" db:"excerpt"`
+	CreatedBy          int        `json:"created_by" db:"created_by"`
+	UpdatedBy          *int       `json:"updated_by" db:"updated_by"`
+	ArchivedBy         *int       `json:"archived_by" db:"archived_by"`
+	IsHome             bool       `json:"is_home" db:"is_home"`
+	InheritPermissions bool       `json:"inherit_permissions" db:"inherit_permissions"`
+	Rank               *string    `json:"rank" db:"rank"`
+	FracIndex          *string    `json:"frac_index" db:"frac_index"`
+	Path               string     `json:"path" db:"path"`
+	Depth              int        `json:"depth" db:"depth"`
+	CreatedAt          time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at" db:"updated_at"`
+	ArchivedAt         *time.Time `json:"archived_at" db:"archived_at"`
+}
+
+// PageNode is a tree-rendering projection of Page with computed children.
+// Used by the page tree API; not persisted directly.
+type PageNode struct {
+	Page
+	Children []*PageNode `json:"children,omitempty"`
+}
+
+// PageRevision is an immutable snapshot of a page produced on every
+// content/title/parent/permission-impacting edit and on restore.
+type PageRevision struct {
+	ID             int       `json:"id" db:"id"`
+	PageID         int       `json:"page_id" db:"page_id"`
+	RevisionNumber int       `json:"revision_number" db:"revision_number"`
+	Title          string    `json:"title" db:"title"`
+	Slug           string    `json:"slug" db:"slug"`
+	Content        string    `json:"content" db:"content"`
+	ContentHash    string    `json:"content_hash" db:"content_hash"`
+	Excerpt        string    `json:"excerpt" db:"excerpt"`
+	ParentID       *int      `json:"parent_id" db:"parent_id"`
+	Path           string    `json:"path" db:"path"`
+	Depth          int       `json:"depth" db:"depth"`
+	ChangeSummary  string    `json:"change_summary" db:"change_summary"`
+	ChangeType     string    `json:"change_type" db:"change_type"`
+	CreatedBy      int       `json:"created_by" db:"created_by"`
+	CreatedAt      time.Time `json:"created_at" db:"created_at"`
+}
+
+// PageRevisionChangeType enumerates valid values for PageRevision.ChangeType.
+// Matches the CHECK constraint in pages.sql / pages_postgres.sql.
+const (
+	PageRevisionChangeTypeCreate      = "create"
+	PageRevisionChangeTypeEdit        = "edit"
+	PageRevisionChangeTypeMove        = "move"
+	PageRevisionChangeTypePermissions = "permissions"
+	PageRevisionChangeTypeRestore     = "restore"
+	PageRevisionChangeTypeArchive     = "archive"
+)
+
+// PagePermission is a grant-only ACL row attached to a page. Phase 1 supports
+// only grants; deny semantics are deferred to a later phase.
+type PagePermission struct {
+	ID              int       `json:"id" db:"id"`
+	PageID          int       `json:"page_id" db:"page_id"`
+	PrincipalType   string    `json:"principal_type" db:"principal_type"`
+	PrincipalID     int       `json:"principal_id" db:"principal_id"`
+	PermissionLevel string    `json:"permission_level" db:"permission_level"`
+	GrantedBy       *int      `json:"granted_by" db:"granted_by"`
+	GrantedAt       time.Time `json:"granted_at" db:"granted_at"`
+}
+
+// PagePrincipalType enumerates valid values for PagePermission.PrincipalType.
+const (
+	PagePrincipalTypeUser  = "user"
+	PagePrincipalTypeGroup = "group"
+	PagePrincipalTypeRole  = "role"
+)
+
+// PagePermissionLevel enumerates valid values for PagePermission.PermissionLevel.
+const (
+	PagePermissionLevelView  = "view"
+	PagePermissionLevelEdit  = "edit"
+	PagePermissionLevelAdmin = "admin"
+)
+
+// PageAttachment links uploaded files (image/file embedded via Milkdown)
+// to a page. Phase 1 ships the table; upload wiring lands in Phase 3.
+type PageAttachment struct {
+	ID               int       `json:"id" db:"id"`
+	PageID           int       `json:"page_id" db:"page_id"`
+	WorkspaceID      int       `json:"workspace_id" db:"workspace_id"`
+	Filename         string    `json:"filename" db:"filename"`
+	OriginalFilename string    `json:"original_filename" db:"original_filename"`
+	FilePath         string    `json:"file_path" db:"file_path"`
+	MimeType         string    `json:"mime_type" db:"mime_type"`
+	FileSize         int64     `json:"file_size" db:"file_size"`
+	UploadedBy       *int      `json:"uploaded_by" db:"uploaded_by"`
+	CreatedAt        time.Time `json:"created_at" db:"created_at"`
+}
+
+// PageChunk is a search/RAG chunk derived from the current page content,
+// rebuilt within the same transaction as any content change.
+type PageChunk struct {
+	ID             int       `json:"id" db:"id"`
+	PageID         int       `json:"page_id" db:"page_id"`
+	WorkspaceID    int       `json:"workspace_id" db:"workspace_id"`
+	RevisionNumber int       `json:"revision_number" db:"revision_number"`
+	Position       int       `json:"position" db:"position"`
+	HeadingPath    string    `json:"heading_path" db:"heading_path"`
+	Content        string    `json:"content" db:"content"`
+	TokenCount     int       `json:"token_count" db:"token_count"`
+	ByteStart      int       `json:"byte_start" db:"byte_start"`
+	ByteEnd        int       `json:"byte_end" db:"byte_end"`
+	ContentHash    string    `json:"content_hash" db:"content_hash"`
+	CreatedAt      time.Time `json:"created_at" db:"created_at"`
+}
