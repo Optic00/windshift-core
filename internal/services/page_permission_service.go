@@ -166,14 +166,36 @@ func (s *PagePermissionService) ListVisiblePageIDs(userID, workspaceID int, page
 // collectEffectiveACL walks from the page upward through its ancestors
 // (using the materialized path), gathering every page_permissions row
 // until inherit_permissions = false breaks the chain or we reach the root.
-// Order doesn't matter for grant-only ACLs.
+// The walk is closest-ancestor-first; the breaking ancestor's own ACL is
+// included before the chain stops.
 func (s *PagePermissionService) collectEffectiveACL(page *models.Page) ([]models.PagePermission, error) {
 	// Always include the page's own ACL rows.
 	ids := []int{page.ID}
 
 	if page.InheritPermissions {
-		// path is materialized "/a/b/c/" — split out ancestor IDs.
-		ids = append(ids, splitPathIDs(page.Path)...)
+		ancestorIDs := splitPathIDs(page.Path)
+		if len(ancestorIDs) > 0 {
+			// Load the inherit_permissions flag for every ancestor in one
+			// query, then walk closest-to-furthest in memory so we can
+			// stop at the first ancestor that breaks inheritance.
+			ancestorInherit, err := s.loadAncestorInheritFlags(ancestorIDs)
+			if err != nil {
+				return nil, err
+			}
+			// path is "/a/b/c/" listing ancestors root-first; walk in
+			// reverse so the closest parent is considered first.
+			for i := len(ancestorIDs) - 1; i >= 0; i-- {
+				aid := ancestorIDs[i]
+				ids = append(ids, aid)
+				// If the ancestor row is missing (deleted concurrently)
+				// or breaks inheritance, stop walking further up. The
+				// missing-row case is fail-closed: don't pretend to
+				// inherit through a gap in the chain.
+				if inherits, ok := ancestorInherit[aid]; !ok || !inherits {
+					break
+				}
+			}
+		}
 	}
 
 	if len(ids) == 0 {
@@ -214,6 +236,45 @@ func (s *PagePermissionService) collectEffectiveACL(page *models.Page) ([]models
 			}
 		}
 		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// loadAncestorInheritFlags fetches the inherit_permissions column for the
+// given page ids in a single query. Returns a map keyed by page id so
+// collectEffectiveACL can decide whether to keep walking the chain.
+// Missing ids are absent from the result (collectEffectiveACL treats that
+// as "stop", fail-closed).
+func (s *PagePermissionService) loadAncestorInheritFlags(ids []int) (map[int]bool, error) {
+	if len(ids) == 0 {
+		return map[int]bool{}, nil
+	}
+	args := make([]interface{}, len(ids))
+	placeholders := ""
+	for i, id := range ids {
+		args[i] = id
+		if i > 0 {
+			placeholders += ", "
+		}
+		placeholders += "?"
+	}
+	rows, err := s.db.Query(
+		"SELECT id, inherit_permissions FROM pages WHERE id IN ("+placeholders+")",
+		args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("load ancestor inherit flags: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make(map[int]bool, len(ids))
+	for rows.Next() {
+		var id int
+		var inherit bool
+		if err := rows.Scan(&id, &inherit); err != nil {
+			return nil, fmt.Errorf("scan ancestor row: %w", err)
+		}
+		out[id] = inherit
 	}
 	return out, rows.Err()
 }
