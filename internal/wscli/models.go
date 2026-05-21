@@ -556,11 +556,12 @@ type PageCreateRequest struct {
 }
 
 // PageUpdateRequest is the body for PUT /workspaces/:id/pages/:pageId.
-// All fields are pointers so callers can leave them unchanged.
+// All fields are pointers so callers can leave them unchanged. There is
+// no inherit_permissions field — that toggle is an admin-only operation
+// with its own endpoint and would not be accepted by the server here.
 type PageUpdateRequest struct {
-	Title              *string `json:"title,omitempty"`
-	Content            *string `json:"content,omitempty"`
-	InheritPermissions *bool   `json:"inherit_permissions,omitempty"`
+	Title   *string `json:"title,omitempty"`
+	Content *string `json:"content,omitempty"`
 }
 
 // PageMoveRequest is the body for POST /workspaces/:id/pages/:pageId/move.

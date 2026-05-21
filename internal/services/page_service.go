@@ -146,19 +146,22 @@ func (s *PageService) GetByID(id int) (*models.Page, error) {
 	return page, nil
 }
 
-// UpdatePageInput is the request shape for Update.
+// UpdatePageInput is the request shape for Update. InheritPermissions is
+// intentionally absent: inheritance changes go through SetInheritPermissions
+// (PageOpAdmin) — accepting it here would let an editor flip the flag via
+// a normal title/content save, bypassing the admin gate.
 type UpdatePageInput struct {
-	ID                 int
-	Title              string
-	Content            string
-	InheritPermissions bool
-	Rank               *string
-	FracIndex          *string
+	ID        int
+	Title     string
+	Content   string
+	Rank      *string
+	FracIndex *string
 }
 
-// Update overwrites a page's title/content/inheritance and recomputes the
-// derived columns. Move (parent change) and Archive are separate calls so
-// the audit trail and handler authorization paths stay distinct.
+// Update overwrites a page's title/content and recomputes the derived
+// columns. Inheritance, parent (Move), and archive each have their own
+// admin-gated call so the audit trail and handler authorization paths
+// stay distinct.
 func (s *PageService) Update(actorID int, in UpdatePageInput) (*models.Page, error) {
 	title := utils.SanitizeTitle(in.Title)
 	if title == "" {
@@ -196,7 +199,7 @@ func (s *PageService) Update(actorID int, in UpdatePageInput) (*models.Page, err
 			Content:            content,
 			ContentHash:        hash,
 			Excerpt:            excerpt,
-			InheritPermissions: in.InheritPermissions,
+			InheritPermissions: existing.InheritPermissions,
 			Rank:               in.Rank,
 			FracIndex:          in.FracIndex,
 			UpdatedBy:          actorID,

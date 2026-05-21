@@ -107,7 +107,6 @@
       const updated = await api.pages.updatePage(workspaceId, selectedPage.id, {
         title: draftTitle,
         content: draftContent,
-        inheritPermissions: selectedPage.inherit_permissions,
       });
       selectedPage = updated;
       draftTitle = updated.title;

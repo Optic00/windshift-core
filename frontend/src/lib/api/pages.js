@@ -20,15 +20,16 @@ export const pages = {
       body: JSON.stringify({ title, content, parent_id: parentId, is_home: isHome }),
     }),
 
-  /** Update title/content/inheritance on a page. */
-  updatePage: (workspaceId, pageId, { title, content, inheritPermissions = true }) =>
+  /**
+   * Update title/content on a page. Inheritance has its own admin-gated
+   * endpoint (setInheritance below) — do not send the flag here; the
+   * server rejects it as an unknown field shape and an editor without
+   * admin would otherwise be able to flip inheritance via a normal save.
+   */
+  updatePage: (workspaceId, pageId, { title, content }) =>
     fetchAPI(`/workspaces/${workspaceId}/pages/${pageId}`, {
       method: 'PUT',
-      body: JSON.stringify({
-        title,
-        content,
-        inherit_permissions: inheritPermissions,
-      }),
+      body: JSON.stringify({ title, content }),
     }),
 
   /** Archive a page (and every descendant). */

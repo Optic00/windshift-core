@@ -41,10 +41,14 @@ type pageCreateRequest struct {
 	IsHome   bool   `json:"is_home,omitempty"`
 }
 
+// pageUpdateRequest is a partial-update payload: only fields supplied get
+// touched. inherit_permissions is deliberately absent — inheritance
+// changes have their own admin-gated PATCH /inheritance endpoint (not
+// yet on v1; the cookie surface has it). Allowing it here would let an
+// editor flip the flag via a normal save.
 type pageUpdateRequest struct {
-	Title              *string `json:"title,omitempty"`
-	Content            *string `json:"content,omitempty"`
-	InheritPermissions *bool   `json:"inherit_permissions,omitempty"`
+	Title   *string `json:"title,omitempty"`
+	Content *string `json:"content,omitempty"`
 }
 
 type pageMoveRequest struct {
@@ -185,19 +189,15 @@ func (h *PageHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	in := services.UpdatePageInput{
-		ID:                 pageID,
-		Title:              existing.Title,
-		Content:            existing.Content,
-		InheritPermissions: existing.InheritPermissions,
+		ID:      pageID,
+		Title:   existing.Title,
+		Content: existing.Content,
 	}
 	if req.Title != nil {
 		in.Title = *req.Title
 	}
 	if req.Content != nil {
 		in.Content = *req.Content
-	}
-	if req.InheritPermissions != nil {
-		in.InheritPermissions = *req.InheritPermissions
 	}
 
 	updated, err := h.service.Update(user.ID, in)

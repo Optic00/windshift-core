@@ -203,10 +203,9 @@ func TestPageService_Update_TitleChangeRetargetsSlug(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	updated, err := s.Update(2, UpdatePageInput{
-		ID:                 page.ID,
-		Title:              "Brand New",
-		Content:            "body",
-		InheritPermissions: true,
+		ID:      page.ID,
+		Title:   "Brand New",
+		Content: "body",
 	})
 	if err != nil {
 		t.Fatalf("update: %v", err)
@@ -216,6 +215,36 @@ func TestPageService_Update_TitleChangeRetargetsSlug(t *testing.T) {
 	}
 	if updated.UpdatedBy == nil || *updated.UpdatedBy != 2 {
 		t.Errorf("updated_by: want 2, got %v", updated.UpdatedBy)
+	}
+}
+
+// Bug-hunt-2 #1: regular Update must not be a vector for flipping
+// inherit_permissions. UpdatePageInput no longer carries the field, so
+// the service always preserves the existing flag — confirm with a
+// page that has inherit=false from the start.
+func TestPageService_Update_PreservesInheritPermissions(t *testing.T) {
+	db := newPagesTestDB(t)
+	s := NewPageService(db)
+	page, err := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "Locked"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// Break inheritance through the admin path so we can assert Update
+	// preserves the broken state.
+	if _, err := s.SetInheritPermissions(1, page.ID, false); err != nil {
+		t.Fatalf("set inherit=false: %v", err)
+	}
+
+	updated, err := s.Update(1, UpdatePageInput{
+		ID:      page.ID,
+		Title:   "Locked",
+		Content: "fresh body",
+	})
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if updated.InheritPermissions {
+		t.Error("Update must not flip inherit_permissions back to true")
 	}
 }
 

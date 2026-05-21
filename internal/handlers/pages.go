@@ -101,10 +101,13 @@ type createPageRequest struct {
 	IsHome   bool   `json:"is_home"`
 }
 
+// updatePageRequest covers only title + content. Inheritance toggles go
+// through PATCH /inheritance (PageOpAdmin) — accepting the field here
+// would let editors break inheritance via a normal save, and Go's zero
+// value would set it to false whenever clients omitted it.
 type updatePageRequest struct {
-	Title              string `json:"title"`
-	Content            string `json:"content"`
-	InheritPermissions bool   `json:"inherit_permissions"`
+	Title   string `json:"title"`
+	Content string `json:"content"`
 }
 
 type movePageRequest struct {
@@ -262,10 +265,9 @@ func (h *PageHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	updated, err := h.service.Update(user.ID, services.UpdatePageInput{
-		ID:                 pageID,
-		Title:              req.Title,
-		Content:            req.Content,
-		InheritPermissions: req.InheritPermissions,
+		ID:      pageID,
+		Title:   req.Title,
+		Content: req.Content,
 	})
 	if err != nil {
 		h.respondServiceError(w, r, err)
