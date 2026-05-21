@@ -7,7 +7,12 @@
   import PageMoveDialog from './PageMoveDialog.svelte';
   import { parseMarkdownHeadings, slugify } from './markdownToc.js';
   import DropdownMenu from '../../layout/DropdownMenu.svelte';
-  import { IconBook as Book, IconDots as Dots } from '@tabler/icons-svelte-runes';
+  import {
+    IconBook as Book,
+    IconDots as Dots,
+    IconPencil as Pencil,
+    IconEye as Eye,
+  } from '@tabler/icons-svelte-runes';
   import { confirm } from '../../composables/useConfirm.js';
   import { t } from '../../stores/i18n.svelte.js';
   import { pagesTreeRefresh } from './pagesTreeRefresh.svelte.js';
@@ -45,6 +50,13 @@
   let saveStatus = $state('idle');
   let saveTimer = null;
 
+  // 'edit' (default) shows the formatting toolbar + lets the user type.
+  // 'read' renders the body read-only, hides the toolbar (via
+  // MilkdownEditor's own derivation on `readonly`), and surfaces the
+  // table of contents on the right. Resets to 'edit' when the route
+  // changes — writing-first default matches Confluence/Notion.
+  let mode = $state('edit');
+
   let headings = $derived(parseMarkdownHeadings(draftContent));
 
   onMount(async () => {
@@ -72,6 +84,7 @@
     if (pageId === selectedId) return;
     if (dirty) flushSave();
     selectedId = pageId;
+    mode = 'edit';
     if (pageId) {
       loadPage(pageId);
     } else {
@@ -312,7 +325,7 @@
           placeholder={t('pages.titlePlaceholder')}
         />
         <div class="actions">
-          {#if statusLabel}
+          {#if statusLabel && mode === 'edit'}
             <span
               class="save-status"
               class:save-status--error={saveStatus === 'error'}
@@ -322,6 +335,35 @@
               {statusLabel}
             </span>
           {/if}
+          <div
+            class="mode-toggle"
+            role="group"
+            aria-label={t('pages.modeAria')}
+            data-testid="page-mode-toggle"
+          >
+            <button
+              type="button"
+              class="mode-toggle__btn"
+              class:active={mode === 'edit'}
+              aria-pressed={mode === 'edit'}
+              onclick={() => (mode = 'edit')}
+              data-testid="page-mode-edit"
+            >
+              <Pencil size={14} />
+              <span>{t('pages.modeEdit')}</span>
+            </button>
+            <button
+              type="button"
+              class="mode-toggle__btn"
+              class:active={mode === 'read'}
+              aria-pressed={mode === 'read'}
+              onclick={() => (mode = 'read')}
+              data-testid="page-mode-read"
+            >
+              <Eye size={14} />
+              <span>{t('pages.modeRead')}</span>
+            </button>
+          </div>
           <DropdownMenu
             triggerIcon={Dots}
             items={toolbarMenuItems}
@@ -339,12 +381,13 @@
             bind:content={draftContent}
             placeholder={t('pages.editorPlaceholder')}
             showToolbar={true}
+            readonly={mode === 'read'}
             entityType="page"
             entityId={selectedPage.id}
             onContentChange={onContentInput}
           />
         </div>
-        {#if headings.length > 0}
+        {#if mode === 'read' && headings.length > 0}
           <aside class="toc" data-testid="page-toc" aria-label={t('pages.tocAriaLabel')}>
             <h3>{t('pages.tocHeading')}</h3>
             <ul>
@@ -403,9 +446,13 @@
     width: 100%;
     /* No max-width — use the full pane. The right-hand TOC column
        takes its own 220px slot in the editor-row, so the editor still
-       has a natural right margin when headings exist. */
+       has a natural right margin when headings exist.
+       No horizontal padding either — that pad is pushed onto each
+       content child below so the toolbar's bottom border can run
+       edge-to-edge across the pane while the icons + body content
+       remain visually inset. */
     margin: 0 auto;
-    padding: 0 3rem;
+    padding: 0;
     display: flex;
     flex-direction: column;
     gap: 1rem;
@@ -438,6 +485,7 @@
     display: flex;
     gap: 1rem;
     align-items: center;
+    padding: 0 3rem;
   }
 
   .title-input {
@@ -471,6 +519,42 @@
     color: var(--ds-text-danger);
   }
 
+  /* Segmented Edit | Read toggle. Two buttons sharing a 1px border;
+     active button uses --ds-surface-selected to read as pressed.
+     Tab-able via Tab; aria-pressed tells screen readers which is on. */
+  .mode-toggle {
+    display: inline-flex;
+    border: 1px solid var(--ds-border);
+    border-radius: 0.25rem;
+    overflow: hidden;
+  }
+
+  .mode-toggle__btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.25rem 0.5rem;
+    background: transparent;
+    border: none;
+    color: var(--ds-text-subtle);
+    font-size: 0.75rem;
+    cursor: pointer;
+  }
+
+  .mode-toggle__btn + .mode-toggle__btn {
+    border-left: 1px solid var(--ds-border);
+  }
+
+  .mode-toggle__btn:hover {
+    background: var(--ds-background-neutral-hovered);
+    color: var(--ds-text);
+  }
+
+  .mode-toggle__btn.active {
+    background: var(--ds-surface-selected);
+    color: var(--ds-text);
+  }
+
   :global(.toolbar-kebab) {
     display: inline-flex;
     align-items: center;
@@ -499,6 +583,10 @@
     gap: 2rem;
     flex: 1;
     min-height: 0;
+    /* Right inset only — the toolbar's bottom divider must hit the
+       left wall flush, but the TOC (or the editor when no TOC) should
+       stay 3rem off the right edge. */
+    padding-right: 3rem;
   }
 
   /* Frameless editor: no border, no rounded corners, no background —
@@ -559,21 +647,26 @@
   }
 
   /* Confluence-style toolbar: floats on the page background with a
-     single hairline beneath it instead of being a tinted card top. */
+     single hairline beneath it instead of being a tinted card top.
+     The 3rem left inset matches the title above and the body below;
+     the bottom border spans the full toolbar width (= full
+     .editor-frame width), so the hairline visually extends edge-to-
+     edge of the pane while the icons stay inset. */
   :global(.editor-frame .milkdown-wrapper .milkdown-toolbar) {
     border: none;
     border-radius: 0;
     background: transparent;
-    padding: 0 0 0.375rem 0;
+    padding: 0 3rem 0.375rem 3rem;
     border-bottom: 1px solid var(--ds-border);
   }
 
   :global(.editor-frame .milkdown-wrapper .milkdown-editor .milkdown) {
     flex: 1;
     min-height: 0;
-    /* Breathing room between the toolbar's divider and the first
-       paragraph; otherwise the body sits flush against the hairline. */
-    padding: 1.5rem 0 0 0;
+    /* Top: breathing room below the toolbar divider.
+       Left/right: keeps the prose inset 3rem so it aligns with the
+       title above (the toolbar divider's left edge runs further out). */
+    padding: 1.5rem 3rem 0 3rem;
     display: flex;
     flex-direction: column;
   }

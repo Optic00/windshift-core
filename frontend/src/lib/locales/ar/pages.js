@@ -47,6 +47,11 @@ export default {
     statusUnsaved: 'Unsaved',
     statusError: 'Save failed',
 
+    // Segmented Edit / Read mode toggle
+    modeEdit: 'Edit',
+    modeRead: 'Read',
+    modeAria: 'View mode',
+
     // Error fallbacks
     errorLoadTree: 'Failed to load pages',
     errorLoadPage: 'Failed to load page',

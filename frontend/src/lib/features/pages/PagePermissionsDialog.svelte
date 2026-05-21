@@ -78,7 +78,12 @@
     loading = true;
     error = '';
     try {
-      data = await api.pages.getPermissions(workspaceId, pageId);
+      const resp = await api.pages.getPermissions(workspaceId, pageId);
+      // The Go handler returns `acl: nil` when there are no grants —
+      // serialized as JSON `null` — and DataTable does `data.length`
+      // unconditionally, which crashes on null. Normalize at the
+      // boundary so every downstream consumer can assume an array.
+      data = { ...resp, acl: resp?.acl ?? [] };
     } catch (err) {
       error = err?.message || t('pages.permsErrorLoad');
     } finally {

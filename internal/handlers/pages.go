@@ -462,6 +462,12 @@ func (h *PageHandler) GetPermissions(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+	// Make sure the client always sees an array — a nil slice would
+	// serialize as JSON `null`, which the frontend DataTable can't
+	// handle (it does `data.length` unconditionally).
+	if acl == nil {
+		acl = []models.PagePermission{}
+	}
 
 	respondJSONOK(w, pageEffectivePermissionsResponse{
 		PageID:             page.ID,
