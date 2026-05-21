@@ -1,12 +1,11 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { api } from '../../api.js';
   import { navigate } from '../../router.js';
   import LazyMilkdownEditor from '../../editors/LazyMilkdownEditor.svelte';
   import PagePermissionsDialog from './PagePermissionsDialog.svelte';
   import PageMoveDialog from './PageMoveDialog.svelte';
   import { parseMarkdownHeadings, slugify } from './markdownToc.js';
-  import Button from '../../components/Button.svelte';
   import DropdownMenu from '../../layout/DropdownMenu.svelte';
   import { IconBook as Book, IconDots as Dots } from '@tabler/icons-svelte-runes';
   import { confirm } from '../../composables/useConfirm.js';
@@ -18,9 +17,16 @@
    * Workspace knowledge-pages view: right pane only (the tree + new-page
    * + actions live in PagesNavSidebar, which replaces the workspace
    * sidebar while the user is on a /pages route). Owns the title +
-   * Markdown editor + the toolbar's Save button and ... menu.
+   * Markdown editor and the toolbar's `...` menu. Saves auto-flush on
+   * a short debounce — there is no explicit Save button.
    */
   let { workspaceId, pageId = null } = $props();
+
+  // Wait this long after the last keystroke before pushing the save.
+  // 1.2s is long enough to coalesce a burst of typing into a single
+  // request but short enough that a user who alt-tabs mid-sentence
+  // won't lose noticeable work.
+  const AUTOSAVE_DEBOUNCE_MS = 1200;
 
   let selectedId = $state(null);
   let selectedPage = $state(null);
@@ -28,11 +34,16 @@
   let draftContent = $state('');
   let dirty = $state(false);
   let loadingPage = $state(false);
-  let saving = $state(false);
   let error = $state('');
   let permsDialogOpen = $state(false);
   let moveDialogOpen = $state(false);
   let titleInputEl = $state(null);
+
+  // 'idle' = nothing to save; 'pending' = waiting for the debounce
+  // timer; 'saving' = request in flight; 'saved' = last write
+  // succeeded; 'error' = last write failed.
+  let saveStatus = $state('idle');
+  let saveTimer = null;
 
   let headings = $derived(parseMarkdownHeadings(draftContent));
 
@@ -43,10 +54,23 @@
     }
   });
 
-  // Sync to route changes — navigating to a different page id loads it;
-  // navigating back to the bare /pages route clears the selection.
+  onDestroy(() => {
+    // Don't leave a dangling timer. We deliberately do NOT flush here:
+    // onDestroy fires during navigation away from the whole view, and
+    // an in-flight save against the old workspace id would race with
+    // the new view's setup. The route-change effect handles the
+    // in-app flush; for tab close the user already saw "Saved" or
+    // accepts the (small) loss within the debounce window.
+    if (saveTimer) clearTimeout(saveTimer);
+  });
+
+  // Sync to route changes — navigating to a different page id loads
+  // it; navigating back to the bare /pages clears the selection.
+  // Flush any pending edits to the old page first so the user doesn't
+  // lose mid-debounce work when jumping between pages.
   $effect(() => {
     if (pageId === selectedId) return;
+    if (dirty) flushSave();
     selectedId = pageId;
     if (pageId) {
       loadPage(pageId);
@@ -55,11 +79,12 @@
       draftTitle = '';
       draftContent = '';
       dirty = false;
+      saveStatus = 'idle';
     }
   });
 
-  // Honor a focus-title request from the sidebar (after + creates a new
-  // page or "Rename" is picked from the kebab). Watch the tick so
+  // Honor a focus-title request from the sidebar (after + creates a
+  // new page or "Rename" is picked from the kebab). Watch the tick so
   // repeated requests for the same page still re-focus.
   $effect(() => {
     pagesFocusTitle.tick;
@@ -79,6 +104,7 @@
       draftTitle = selectedPage.title;
       draftContent = selectedPage.content;
       dirty = false;
+      saveStatus = 'idle';
     } catch (err) {
       error = err?.message || t('pages.errorLoadPage');
       selectedPage = null;
@@ -87,24 +113,51 @@
     }
   }
 
-  async function savePage() {
+  function scheduleAutoSave() {
     if (!selectedPage) return;
-    saving = true;
+    saveStatus = 'pending';
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      flushSave();
+    }, AUTOSAVE_DEBOUNCE_MS);
+  }
+
+  /**
+   * Push the current draft to the server immediately. Captures the
+   * page id + draft contents up front so a concurrent navigation
+   * (which would reassign selectedPage to a different row) cannot let
+   * the response overwrite the wrong page's local state.
+   */
+  async function flushSave() {
+    if (!selectedPage || !dirty) return;
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    const targetId = selectedPage.id;
+    const titleSnap = draftTitle;
+    const contentSnap = draftContent;
+    saveStatus = 'saving';
     error = '';
     try {
-      const updated = await api.pages.updatePage(workspaceId, selectedPage.id, {
-        title: draftTitle,
-        content: draftContent,
+      const updated = await api.pages.updatePage(workspaceId, targetId, {
+        title: titleSnap,
+        content: contentSnap,
       });
-      selectedPage = updated;
-      draftTitle = updated.title;
-      draftContent = updated.content;
-      dirty = false;
+      // Only fold the response back into local state if we're still on
+      // the same page; a fast-switching user has already moved on.
+      if (selectedPage?.id === targetId) {
+        selectedPage = updated;
+        draftTitle = updated.title;
+        draftContent = updated.content;
+        dirty = false;
+        saveStatus = 'saved';
+      }
       pagesTreeRefresh.bump();
     } catch (err) {
+      saveStatus = 'error';
       error = err?.message || t('pages.errorSave');
-    } finally {
-      saving = false;
     }
   }
 
@@ -120,7 +173,14 @@
     if (!ok) return;
     try {
       await api.pages.archivePage(workspaceId, selectedPage.id);
+      // Drop any pending autosave for a page that no longer exists.
+      if (saveTimer) {
+        clearTimeout(saveTimer);
+        saveTimer = null;
+      }
       selectedPage = null;
+      dirty = false;
+      saveStatus = 'idle';
       pagesTreeRefresh.bump();
       navigate(`/workspaces/${workspaceId}/pages`);
     } catch (err) {
@@ -129,30 +189,30 @@
   }
 
   function onContentInput(value) {
+    if (!selectedPage) return;
     draftContent = value;
-    if (selectedPage && (value !== selectedPage.content || draftTitle !== selectedPage.title)) {
+    if (value !== selectedPage.content || draftTitle !== selectedPage.title) {
       dirty = true;
+      scheduleAutoSave();
     }
   }
 
   function onTitleInput(event) {
+    if (!selectedPage) return;
     draftTitle = event.target.value;
-    if (selectedPage && draftTitle !== selectedPage.title) dirty = true;
-  }
-
-  function onTitleBlur() {
-    // Persist title on blur when changed — saves a click for the common
-    // "rename and click away" interaction without surprising users on
-    // pure-content edits (those still need the Save button).
-    if (selectedPage && dirty && draftTitle !== selectedPage.title) {
-      savePage();
+    if (draftTitle !== selectedPage.title) {
+      dirty = true;
+      scheduleAutoSave();
     }
   }
 
   function onTitleKeydown(event) {
     if (event.key === 'Enter') {
+      // Move focus into the body so the user can start typing right
+      // away after committing the title.
       event.preventDefault();
-      event.currentTarget.blur();
+      const editor = document.querySelector('.editor-frame .ProseMirror');
+      if (editor instanceof HTMLElement) editor.focus();
     }
   }
 
@@ -179,9 +239,24 @@
     },
   ]);
 
-  // TOC click → find the matching heading in the rendered ProseMirror DOM
-  // and scrollIntoView. Match by text slug so the lookup works even though
-  // Milkdown doesn't stamp heading IDs onto the DOM.
+  let statusLabel = $derived.by(() => {
+    switch (saveStatus) {
+      case 'saving':
+        return t('pages.statusSaving');
+      case 'pending':
+        return t('pages.statusUnsaved');
+      case 'saved':
+        return t('pages.statusSaved');
+      case 'error':
+        return t('pages.statusError');
+      default:
+        return '';
+    }
+  });
+
+  // TOC click → find the matching heading in the rendered ProseMirror
+  // DOM and scrollIntoView. Match by text slug so the lookup works
+  // even though Milkdown doesn't stamp heading IDs onto the DOM.
   function scrollToHeading(heading) {
     const root = document.querySelector('.editor-frame .ProseMirror');
     if (!root) return;
@@ -224,73 +299,74 @@
   {:else if loadingPage}
     <p class="status">{t('pages.pageLoading')}</p>
   {:else if selectedPage}
-    <div class="toolbar">
-      <input
-        id="page-title-input"
-        bind:this={titleInputEl}
-        class="title-input"
-        type="text"
-        value={draftTitle}
-        oninput={onTitleInput}
-        onblur={onTitleBlur}
-        onkeydown={onTitleKeydown}
-        placeholder={t('pages.titlePlaceholder')}
-      />
-      <div class="actions">
-        <Button
-          id="page-save-button"
-          variant="primary"
-          size="small"
-          onclick={savePage}
-          disabled={!dirty || saving}
-          loading={saving}
-        >
-          {t('pages.save')}
-        </Button>
-        <DropdownMenu
-          triggerIcon={Dots}
-          items={toolbarMenuItems}
-          showChevron={false}
-          iconOnly={true}
-          placement="bottom-end"
-          triggerClass="toolbar-kebab"
-          triggerTestid="page-toolbar-kebab"
+    <div class="page-frame">
+      <div class="toolbar">
+        <input
+          id="page-title-input"
+          bind:this={titleInputEl}
+          class="title-input"
+          type="text"
+          value={draftTitle}
+          oninput={onTitleInput}
+          onkeydown={onTitleKeydown}
+          placeholder={t('pages.titlePlaceholder')}
         />
+        <div class="actions">
+          {#if statusLabel}
+            <span
+              class="save-status"
+              class:save-status--error={saveStatus === 'error'}
+              data-testid="page-save-status"
+              data-status={saveStatus}
+            >
+              {statusLabel}
+            </span>
+          {/if}
+          <DropdownMenu
+            triggerIcon={Dots}
+            items={toolbarMenuItems}
+            showChevron={false}
+            iconOnly={true}
+            placement="bottom-end"
+            triggerClass="toolbar-kebab"
+            triggerTestid="page-toolbar-kebab"
+          />
+        </div>
       </div>
-    </div>
-    <div class="editor-row">
-      <div class="editor-frame" data-testid="page-editor">
-        <LazyMilkdownEditor
-          bind:content={draftContent}
-          placeholder={t('pages.editorPlaceholder')}
-          showToolbar={true}
-          entityType="page"
-          entityId={selectedPage.id}
-          onContentChange={onContentInput}
-        />
-      </div>
-      {#if headings.length > 0}
-        <aside class="toc" data-testid="page-toc" aria-label={t('pages.tocAriaLabel')}>
-          <h3>{t('pages.tocHeading')}</h3>
-          <ul>
-            {#each headings as heading (heading.line)}
-              <li
-                class="toc-item"
-                data-testid="page-toc-entry"
-                style="padding-left: {(heading.level - 1) * 0.75}rem"
-              >
-                <button
-                  type="button"
-                  onclick={() => scrollToHeading(heading)}
-                  title={heading.text}
+      <div class="editor-row">
+        <div class="editor-frame" data-testid="page-editor">
+          <LazyMilkdownEditor
+            bind:content={draftContent}
+            placeholder={t('pages.editorPlaceholder')}
+            showToolbar={true}
+            entityType="page"
+            entityId={selectedPage.id}
+            onContentChange={onContentInput}
+          />
+        </div>
+        {#if headings.length > 0}
+          <aside class="toc" data-testid="page-toc" aria-label={t('pages.tocAriaLabel')}>
+            <h3>{t('pages.tocHeading')}</h3>
+            <ul>
+              {#each headings as heading (heading.line)}
+                <li
+                  class="toc-item"
+                  data-testid="page-toc-entry"
+                  style="padding-left: {(heading.level - 1) * 0.75}rem"
                 >
-                  {heading.text}
-                </button>
-              </li>
-            {/each}
-          </ul>
-        </aside>
-      {/if}
+                  <button
+                    type="button"
+                    onclick={() => scrollToHeading(heading)}
+                    title={heading.text}
+                  >
+                    {heading.text}
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          </aside>
+        {/if}
+      </div>
     </div>
   {/if}
 </main>
@@ -317,10 +393,21 @@
   .page-pane {
     height: 100%;
     overflow-y: auto;
-    padding: 1.5rem 2rem;
+    padding: 1.5rem 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .page-frame {
+    width: 100%;
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 0 3rem;
     display: flex;
     flex-direction: column;
     gap: 1rem;
+    flex: 1;
     min-height: 0;
   }
 
@@ -330,7 +417,9 @@
     flex-direction: column;
     align-items: flex-start;
     gap: 0.5rem;
-    padding: 2rem 0;
+    padding: 2rem 3rem;
+    max-width: 880px;
+    margin: 0 auto;
   }
 
   .empty-page h1 {
@@ -351,18 +440,33 @@
 
   .title-input {
     flex: 1;
-    font-size: 1.5rem;
-    font-weight: 600;
+    font-size: 2rem;
+    font-weight: 700;
+    line-height: 1.2;
     background: transparent;
     border: none;
     color: var(--ds-text);
     outline: none;
+    padding: 0;
   }
 
   .actions {
     display: flex;
     gap: 0.5rem;
     align-items: center;
+  }
+
+  .save-status {
+    font-size: 0.75rem;
+    color: var(--ds-text-subtle);
+    /* Reserve space so the kebab doesn't jitter as the label
+       transitions between Saving… / Saved / Unsaved. */
+    min-width: 4rem;
+    text-align: right;
+  }
+
+  .save-status--error {
+    color: var(--ds-text-danger);
   }
 
   :global(.toolbar-kebab) {
@@ -372,8 +476,8 @@
     width: 2rem;
     height: 2rem;
     border-radius: 0.25rem;
-    border: 1px solid var(--ds-border);
-    background: var(--ds-surface);
+    border: none;
+    background: transparent;
     color: var(--ds-text-subtle);
     cursor: pointer;
   }
@@ -386,17 +490,20 @@
   .editor-row {
     display: grid;
     grid-template-columns: 1fr 220px;
-    gap: 1.5rem;
+    gap: 2rem;
     flex: 1;
     min-height: 0;
   }
 
+  /* Frameless editor: no border, no rounded corners, no background —
+     the Markdown content sits flush with the page like Docmost. */
   .editor-frame {
     flex: 1;
-    min-height: 300px;
-    border: 1px solid var(--ds-border);
-    border-radius: 0.375rem;
-    overflow: hidden;
+    min-height: 60vh;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    overflow: visible;
   }
 
   .toc {
@@ -405,8 +512,8 @@
     align-self: start;
     max-height: calc(100vh - 8rem);
     overflow-y: auto;
-    border-left: 1px solid var(--ds-border);
     padding-left: 1rem;
+    border-left: 1px solid var(--ds-border);
     font-size: 0.8125rem;
   }
 
@@ -454,6 +561,8 @@
   }
 
   .error {
+    margin: 0 auto 1rem;
+    max-width: 880px;
     padding: 0.75rem 1rem;
     background: var(--ds-status-danger-bg);
     color: var(--ds-text-danger);
@@ -464,6 +573,8 @@
   .status {
     color: var(--ds-text-subtle);
     font-size: 0.875rem;
-    padding: 1rem;
+    padding: 1rem 3rem;
+    max-width: 880px;
+    margin: 0 auto;
   }
 </style>

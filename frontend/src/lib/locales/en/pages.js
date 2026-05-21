@@ -39,6 +39,12 @@ export default {
     permissions: 'Permissions',
     archive: 'Archive',
 
+    // Auto-save status indicator next to the toolbar kebab
+    statusSaving: 'Saving…',
+    statusSaved: 'Saved',
+    statusUnsaved: 'Unsaved',
+    statusError: 'Save failed',
+
     // Error fallbacks
     errorLoadTree: 'Failed to load pages',
     errorLoadPage: 'Failed to load page',
