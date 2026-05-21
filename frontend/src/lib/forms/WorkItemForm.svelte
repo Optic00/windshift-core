@@ -198,6 +198,8 @@
       showToolbar={false}
       readonly={false}
       itemId={null}
+      deferImageUploads={true}
+      onDeferredImageUpload={(image) => store.addPendingDescriptionImage(image)}
     />
   </div>
 

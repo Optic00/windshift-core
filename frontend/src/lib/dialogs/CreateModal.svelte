@@ -165,6 +165,33 @@
     }
   }
 
+  async function uploadPendingDescriptionImages(itemId, description) {
+    if (workItemFormStore.pendingDescriptionImages.length === 0) {
+      return description;
+    }
+
+    let updatedDescription = description || '';
+    for (const image of workItemFormStore.pendingDescriptionImages) {
+      if (!updatedDescription.includes(image.url)) continue;
+
+      const uploadFormData = new FormData();
+      uploadFormData.append('file', image.file);
+      uploadFormData.append('entity_type', 'item');
+      uploadFormData.append('entity_id', String(itemId));
+
+      const uploadResult = await api.attachments.upload(uploadFormData);
+      const attachmentId = uploadResult?.attachment?.id;
+      if (!attachmentId) {
+        throw new Error('Image upload failed');
+      }
+
+      const downloadUrl = `/api/attachments/${attachmentId}/download`;
+      updatedDescription = updatedDescription.split(image.url).join(downloadUrl);
+    }
+
+    return updatedDescription;
+  }
+
   async function handleSubmit() {
     try {
       if (selectedType === 'work-item') {
@@ -180,7 +207,13 @@
           return;
         }
 
-        const result = await api.items.create(formData);
+        let result = await api.items.create(formData);
+        const originalDescription = formData.description || '';
+        const updatedDescription = await uploadPendingDescriptionImages(result.id, originalDescription);
+        if (updatedDescription !== originalDescription) {
+          result = await api.items.update(result.id, { description: updatedDescription });
+          formData.description = updatedDescription;
+        }
 
         window.dispatchEvent(new CustomEvent('refresh-work-items', {
           detail: { itemId: result.id, parentId: formData.parent_id ?? null }

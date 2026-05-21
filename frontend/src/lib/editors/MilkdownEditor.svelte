@@ -25,7 +25,8 @@
     content = $bindable(''), placeholder = '', readonly = false,
     showToolbar = false, hideToolbarUntilFocus = false, itemId = null, entityType = null,
     entityId = null, onImageInsert = null, onContentChange = null, isPersonalWorkspace = false, compact = false,
-    customUploadFn = null, downloadUrlBase = '/api/attachments'
+    customUploadFn = null, downloadUrlBase = '/api/attachments', deferImageUploads = false,
+    onDeferredImageUpload = null
   } = $props();
 
   const effectivePlaceholder = $derived(placeholder || t('editors.enterText'));
@@ -279,6 +280,22 @@
     const results = await Promise.all(
       images.map(async (image) => {
         try {
+          if (deferImageUploads && !effectiveEntityId && !customUploadFn) {
+            const src = URL.createObjectURL(image);
+            onDeferredImageUpload?.({ file: image, url: src });
+            const node = schema?.nodes?.image?.createAndFill({
+              src,
+              alt: image.name,
+            }) || null;
+
+            return {
+              node,
+              attachment: null,
+              src,
+              alt: image.name,
+            };
+          }
+
           const formData = new FormData();
           formData.append('file', image);
 

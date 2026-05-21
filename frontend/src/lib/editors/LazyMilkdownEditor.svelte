@@ -6,7 +6,8 @@
     content = $bindable(''), placeholder = '', readonly = false,
     showToolbar = false, hideToolbarUntilFocus = false, itemId = null, entityType = null,
     entityId = null, onImageInsert = null, onContentChange = null, isPersonalWorkspace = false, compact = false,
-    customUploadFn = null, downloadUrlBase = '/api/attachments'
+    customUploadFn = null, downloadUrlBase = '/api/attachments', deferImageUploads = false,
+    onDeferredImageUpload = null
   } = $props();
 
   let MilkdownEditor = $state(null);
@@ -98,6 +99,8 @@
     {compact}
     {customUploadFn}
     {downloadUrlBase}
+    {deferImageUploads}
+    {onDeferredImageUpload}
   />
 {:else}
   <!-- Skeleton placeholder while loading -->

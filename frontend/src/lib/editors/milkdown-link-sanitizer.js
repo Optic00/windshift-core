@@ -5,6 +5,7 @@ import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import { $prose } from '@milkdown/kit/utils';
 
 const SAFE_URL_SCHEMES = /^(https?:|mailto:|tel:|#|\/)/i;
+const SAFE_IMAGE_URL_SCHEMES = /^(https?:|blob:|#|\/)/i;
 
 /**
  * Check whether a URL is safe to navigate to.
@@ -13,7 +14,7 @@ const SAFE_URL_SCHEMES = /^(https?:|mailto:|tel:|#|\/)/i;
  * @param {string} url
  * @returns {boolean}
  */
-export function isSafeUrl(url) {
+function isSafeUrlWithSchemes(url, safeSchemes) {
   if (!url) return true;
   const trimmed = url.trim();
   if (trimmed === '') return true;
@@ -22,7 +23,15 @@ export function isSafeUrl(url) {
   if (trimmed.startsWith('//')) return false;
   // Relative URLs (no scheme) are safe
   if (!trimmed.includes(':')) return true;
-  return SAFE_URL_SCHEMES.test(trimmed);
+  return safeSchemes.test(trimmed);
+}
+
+export function isSafeUrl(url) {
+  return isSafeUrlWithSchemes(url, SAFE_URL_SCHEMES);
+}
+
+export function isSafeImageUrl(url) {
+  return isSafeUrlWithSchemes(url, SAFE_IMAGE_URL_SCHEMES);
 }
 
 const linkSanitizerPluginKey = new PluginKey('link-sanitizer');
@@ -55,7 +64,7 @@ export const linkSanitizerPlugin = $prose(() => {
         });
       }
       // Sanitize image nodes
-      if (node.type.name === 'image' && node.attrs.src && !isSafeUrl(node.attrs.src)) {
+      if (node.type.name === 'image' && node.attrs.src && !isSafeImageUrl(node.attrs.src)) {
         tr.setNodeMarkup(pos, undefined, { ...node.attrs, src: '#unsafe-link-removed' });
         changed = true;
       }

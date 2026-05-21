@@ -31,6 +31,7 @@ class WorkItemFormStore {
   });
   customFieldValues = $state({});
   validationErrors = $state([]);
+  pendingDescriptionImages = $state([]);
 
   // === Selection Context ===
   selectedWorkspace = $state(null);
@@ -535,6 +536,30 @@ class WorkItemFormStore {
     }
   }
 
+  // === Deferred Description Image Uploads ===
+
+  /**
+   * Track an image inserted before the item exists so it can be uploaded after creation.
+   */
+  addPendingDescriptionImage(image) {
+    if (!image?.file || !image?.url) return;
+    this.pendingDescriptionImages = [...this.pendingDescriptionImages, image];
+  }
+
+  /**
+   * Clear tracked pending images and optionally revoke their local preview URLs.
+   */
+  clearPendingDescriptionImages(revokeUrls = true) {
+    if (revokeUrls && typeof URL !== 'undefined') {
+      this.pendingDescriptionImages.forEach((image) => {
+        if (image?.url?.startsWith('blob:')) {
+          URL.revokeObjectURL(image.url);
+        }
+      });
+    }
+    this.pendingDescriptionImages = [];
+  }
+
   // === Validation ===
 
   /**
@@ -617,6 +642,7 @@ class WorkItemFormStore {
     };
     this.customFieldValues = {};
     this.validationErrors = [];
+    this.clearPendingDescriptionImages();
     this.selectedWorkspace = null;
     this.parentItem = null;
     this.restrictedItemTypes = null;

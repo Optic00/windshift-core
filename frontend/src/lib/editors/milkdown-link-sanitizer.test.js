@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isSafeUrl } from './milkdown-link-sanitizer.js';
+import { isSafeImageUrl, isSafeUrl } from './milkdown-link-sanitizer.js';
 
 describe('isSafeUrl', () => {
   describe('safe URLs', () => {
@@ -73,5 +73,21 @@ describe('isSafeUrl', () => {
     it('blocks protocol-relative URLs with leading whitespace', () => {
       expect(isSafeUrl('  //evil.com')).toBe(false);
     });
+
+    it('blocks blob URLs for regular links', () => {
+      expect(isSafeUrl('blob:https://example.com/local-preview')).toBe(false);
+    });
+  });
+});
+
+describe('isSafeImageUrl', () => {
+  it('allows blob URLs for local image previews', () => {
+    expect(isSafeImageUrl('blob:https://example.com/local-preview')).toBe(true);
+  });
+
+  it('still blocks dangerous image URLs', () => {
+    expect(isSafeImageUrl('javascript:alert(1)')).toBe(false);
+    expect(isSafeImageUrl('data:image/svg+xml,<svg onload=alert(1)>')).toBe(false);
+    expect(isSafeImageUrl('//evil.com/path')).toBe(false);
   });
 });
