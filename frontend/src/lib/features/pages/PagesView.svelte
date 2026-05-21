@@ -164,6 +164,18 @@
       });
       newTitle = '';
       await loadTree();
+      // Promote the just-created page into selectedPage/draft state
+      // *before* navigate(). The route effect (selectedId !== pageId)
+      // would otherwise fire a redundant loadPage(), and — more
+      // importantly — anyone who calls createPage again right after
+      // navigation (e.g. creating a child) would see a stale or null
+      // selectedPage during the gap between navigate() and loadPage()
+      // resolving. Setting selectedId here keeps the effect a no-op.
+      selectedPage = page;
+      selectedId = page.id;
+      draftTitle = page.title;
+      draftContent = page.content;
+      dirty = false;
       navigate(`/workspaces/${workspaceId}/pages/${page.id}`);
     } catch (err) {
       error = err?.message || t('pages.errorCreate');
