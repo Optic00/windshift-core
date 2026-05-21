@@ -17,7 +17,12 @@
   let { workspaceId, pageId = null } = $props();
 
   let pages = $state([]);
-  let selectedId = $state(pageId);
+  // selectedId mirrors the route's pageId rather than being an
+  // independently mutable $state — Svelte's compiler warns that
+  // `$state(pageId)` only captures the initial prop, and the effect
+  // below would never react to navigations back to the bare /pages
+  // route without this.
+  let selectedId = $state(null);
   let selectedPage = $state(null);
   let draftTitle = $state('');
   let draftContent = $state('');
@@ -37,13 +42,26 @@
 
   onMount(async () => {
     await loadTree();
-    if (pageId) await loadPage(pageId);
+    if (pageId) {
+      selectedId = pageId;
+      await loadPage(pageId);
+    }
   });
 
+  // React to route changes in both directions: navigating to a different
+  // page id loads it; navigating back to the bare /pages clears the
+  // selection so a stale page doesn't keep rendering. Previously the
+  // effect only branched on a truthy pageId.
   $effect(() => {
-    if (pageId && pageId !== selectedId) {
-      selectedId = pageId;
+    if (pageId === selectedId) return;
+    selectedId = pageId;
+    if (pageId) {
       loadPage(pageId);
+    } else {
+      selectedPage = null;
+      draftTitle = '';
+      draftContent = '';
+      dirty = false;
     }
   });
 

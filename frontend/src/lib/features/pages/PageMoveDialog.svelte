@@ -1,4 +1,5 @@
 <script>
+  import { tick } from 'svelte';
   import Modal from '../../dialogs/Modal.svelte';
   import { api } from '../../api.js';
 
@@ -23,6 +24,8 @@
   let loading = $state(false);
   let saving = $state(false);
   let error = $state('');
+  /** @type {HTMLInputElement | null} */
+  let filterEl = $state(null);
 
   $effect(() => {
     if (isOpen && page) {

@@ -1,11 +1,13 @@
 package services
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"windshift/internal/database"
+	"windshift/internal/repository"
 )
 
 // pagePermTestEnv spins up a fully-initialized DB with gated workspace 1
@@ -295,6 +297,53 @@ func TestPagePermission_AncestorBreaksInheritance_HidesRootGrantFromChild(t *tes
 	can, err = env.auth.Can(env.users["carol"], 1, child.ID, PageOpView)
 	if err != nil || !can {
 		t.Errorf("middle grant should cascade to child: can=%v err=%v", can, err)
+	}
+}
+
+// TestPageRepository_RootSlugUniqueness exercises bug-hunt finding #4
+// directly against the repository, bypassing the service's
+// pickAvailableSlug so the partial unique index has to be the layer that
+// rejects the collision. Uses the existing pagePermTestEnv fixture so
+// users + workspaces + roles come from the standard schema initialization
+// rather than ad-hoc INSERTs.
+func TestPageRepository_RootSlugUniqueness(t *testing.T) {
+	env := newPagePermTestEnv(t)
+	repo := repository.NewPageRepository(env.db)
+
+	insert := func(slug, title string) error {
+		return database.WithTx(env.db, func(tx database.Tx) error {
+			_, err := repo.CreateTx(tx, repository.CreateInput{
+				WorkspaceID:        1,
+				ParentID:           nil,
+				Title:              title,
+				Slug:               slug,
+				CreatedBy:          env.users["alice"],
+				InheritPermissions: true,
+				Path:               "/",
+				Depth:              0,
+			})
+			return err
+		})
+	}
+
+	if err := insert("guide", "Guide"); err != nil {
+		t.Fatalf("first root insert: %v", err)
+	}
+	// Second root with the SAME slug must fail. UNIQUE(workspace_id,
+	// parent_id, slug) is bypassed by NULL parents, so this would
+	// silently succeed without the partial index.
+	if err := insert("guide", "Guide v2"); !errors.Is(err, repository.ErrDuplicateEntry) {
+		t.Errorf("duplicate root slug: want ErrDuplicateEntry, got %v", err)
+	}
+
+	// Once the first row is archived, the partial index releases the
+	// slug (index predicate excludes archived rows), so the next insert
+	// must succeed.
+	if _, err := env.db.Exec(`UPDATE pages SET archived_at = CURRENT_TIMESTAMP WHERE slug = 'guide'`); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	if err := insert("guide", "Guide v3"); err != nil {
+		t.Errorf("after archive, reusing the slug should succeed, got %v", err)
 	}
 }
 

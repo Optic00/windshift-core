@@ -108,49 +108,6 @@ func TestPagesSchemaSeedsOnFreshInstall(t *testing.T) {
 	}
 }
 
-// TestPagesSchemaRootSlugUniqueness exercises bug-hunt finding #4 — the
-// composite UNIQUE(workspace_id, parent_id, slug) constraint does not
-// fire for two NULL-parent rows because NULL != NULL in both SQLite and
-// Postgres. The partial unique index plugs that gap for non-archived
-// root pages.
-func TestPagesSchemaRootSlugUniqueness(t *testing.T) {
-	dsn := fmt.Sprintf("file:%s/test.db?mode=memory&cache=shared", t.TempDir())
-	db, err := NewSQLiteDBWithPoolSizes(dsn, 4, 1)
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-	if err := db.Initialize(); err != nil {
-		t.Fatalf("initialize: %v", err)
-	}
-
-	// Seed a workspace + user so FK constraints are happy.
-	if _, err := db.Exec(`INSERT INTO users (id, email, username, first_name, last_name, password_hash, is_active) VALUES (1, 'a@a', 'alice', 'A', 'A', 'h', 1)`); err != nil {
-		t.Fatalf("seed user: %v", err)
-	}
-	if _, err := db.Exec(`INSERT INTO workspaces (id, name, key, active) VALUES (1, 'WS', 'WS1', 1)`); err != nil {
-		t.Fatalf("seed workspace: %v", err)
-	}
-
-	// First root page with slug "guide".
-	if _, err := db.Exec(`INSERT INTO pages (workspace_id, parent_id, title, slug, created_by) VALUES (1, NULL, 'Guide', 'guide', 1)`); err != nil {
-		t.Fatalf("first root: %v", err)
-	}
-	// Second root page with the SAME slug — must fail.
-	if _, err := db.Exec(`INSERT INTO pages (workspace_id, parent_id, title, slug, created_by) VALUES (1, NULL, 'Guide v2', 'guide', 1)`); err == nil {
-		t.Error("expected duplicate root slug to be rejected by partial unique index")
-	}
-
-	// Archiving the first row should free the slug because the partial
-	// index excludes archived rows.
-	if _, err := db.Exec(`UPDATE pages SET archived_at = CURRENT_TIMESTAMP WHERE slug = 'guide'`); err != nil {
-		t.Fatalf("archive first: %v", err)
-	}
-	if _, err := db.Exec(`INSERT INTO pages (workspace_id, parent_id, title, slug, created_by) VALUES (1, NULL, 'Guide v2', 'guide', 1)`); err != nil {
-		t.Errorf("after archive, new root with same slug should succeed, got: %v", err)
-	}
-}
-
 // TestPagesSchemaCleanupDropsLegacyArtifacts simulates an upgrade from an
 // install that ran the original Slice 1 schema (page_attachments +
 // page_chunk_embeddings + vector knowledge.* settings) and verifies the
