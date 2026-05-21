@@ -545,6 +545,39 @@ func (r *PageRepository) ListRevisions(pageID, limit, offset int) ([]models.Page
 	return out, rows.Err()
 }
 
+// --- ACL ---
+
+// ListACLForPage returns the rows stored directly against this page (no
+// inheritance). The Phase 2 ACL UI will fetch inherited rows separately so
+// admins can see exactly what's set vs. inherited.
+func (r *PageRepository) ListACLForPage(pageID int) ([]models.PagePermission, error) {
+	rows, err := r.db.Query(`
+		SELECT id, page_id, principal_type, principal_id, permission_level, granted_by, granted_at
+		FROM page_permissions
+		WHERE page_id = ?
+		ORDER BY id
+	`, pageID)
+	if err != nil {
+		return nil, fmt.Errorf("list page ACL: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []models.PagePermission
+	for rows.Next() {
+		var p models.PagePermission
+		var grantedBy sql.NullInt64
+		if err := rows.Scan(&p.ID, &p.PageID, &p.PrincipalType, &p.PrincipalID, &p.PermissionLevel, &grantedBy, &p.GrantedAt); err != nil {
+			return nil, fmt.Errorf("scan ACL row: %w", err)
+		}
+		if grantedBy.Valid {
+			v := int(grantedBy.Int64)
+			p.GrantedBy = &v
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 // --- chunks ---
 
 const pageChunkColumns = `id, page_id, workspace_id, revision_number, position, heading_path,

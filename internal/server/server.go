@@ -506,6 +506,11 @@ func (s *Server) initialize() error {
 	// Label handler
 	labelHandler := handlers.NewLabelHandler(repository.NewLabelRepository(s.db), repository.NewItemRepository(s.db), permService, logger.NewAuditor(s.db))
 
+	// Knowledge pages handler (workspace-scoped wiki).
+	pageService := services.NewPageService(s.db)
+	pagePermissionService := services.NewPagePermissionService(s.db, permService)
+	pageHandler := handlers.NewPageHandler(pageService, pagePermissionService, logger.NewAuditor(s.db))
+
 	// Recurrence handler
 	recurrenceHandler := handlers.NewRecurrenceHandler(s.db, s.recurrenceScheduler, permService)
 
@@ -1184,6 +1189,9 @@ func (s *Server) initialize() error {
 			Provider:  integrationProviderHandler,
 			OAuth:     integrationOAuthHandler,
 			ItemLinks: integrationItemLinksHandler,
+		},
+		Pages: routes.PageHandlers{
+			Page: pageHandler,
 		},
 	}
 	routes.RegisterAll(routeDeps)

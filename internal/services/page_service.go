@@ -519,6 +519,13 @@ func (s *PageService) ListChildren(workspaceID int, parentID *int) ([]models.Pag
 	return s.pages.ListChildren(workspaceID, parentID)
 }
 
+// ListOwnACL returns the ACL rows stored directly against a page (no
+// inheritance). Used by the read-only permissions endpoint in Phase 1; the
+// Phase 2 dialog will use this plus a separate inheritance-walk endpoint.
+func (s *PageService) ListOwnACL(pageID int) ([]models.PagePermission, error) {
+	return s.pages.ListACLForPage(pageID)
+}
+
 // --- helpers ---
 
 func (s *PageService) resolveParent(tx database.Tx, workspaceID int, parentID *int) (resolvedParentID *int, childPath string, parentDepth int, err error) {

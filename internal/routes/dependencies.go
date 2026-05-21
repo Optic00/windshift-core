@@ -66,6 +66,7 @@ type Deps struct {
 	Misc         MiscHandlers
 	Teams        TeamHandlers
 	Integrations IntegrationHandlers
+	Pages        PageHandlers
 }
 
 // AuthHandlers groups authentication-related handlers.
@@ -240,6 +241,11 @@ type TeamHandlers struct {
 	Team   *handlers.TeamHandler
 	Leave  *handlers.LeaveHandler
 	OnCall *handlers.OnCallHandler
+}
+
+// PageHandlers groups workspace knowledge-page handlers.
+type PageHandlers struct {
+	Page *handlers.PageHandler
 }
 
 // MiscHandlers groups miscellaneous handlers.
