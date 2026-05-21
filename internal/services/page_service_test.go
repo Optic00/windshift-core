@@ -3,6 +3,7 @@ package services
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -308,7 +309,7 @@ func TestPageService_Move_RejectsWhenSubtreeWouldOverflowDepth(t *testing.T) {
 	// Moving `a` (whose subtree has max-offset 3) under deepLeaf would
 	// land its `d` descendant at depth 28+3=31 (>= MaxPageDepth=30).
 	// The move must refuse.
-	if _, err := s.Move(1, a.ID, &deepLeaf.ID); !errors.Is(err, ErrPageDepthExceeded) {
+	if _, err := s.Move(1, a.ID, &deepLeaf.ID, nil, nil); !errors.Is(err, ErrPageDepthExceeded) {
 		t.Errorf("subtree depth overflow: want ErrPageDepthExceeded, got %v", err)
 	}
 }
@@ -338,7 +339,7 @@ func TestPageService_Move_SurfacesSlugConflictAsErrPageSlugConflict(t *testing.T
 	// Move childB under parentA — both children would now sit under
 	// parentA with the same slug, hitting the UNIQUE constraint at the
 	// repo. Service must translate to ErrPageSlugConflict.
-	if _, err := s.Move(1, childB.ID, &parentA.ID); !errors.Is(err, ErrPageSlugConflict) {
+	if _, err := s.Move(1, childB.ID, &parentA.ID, nil, nil); !errors.Is(err, ErrPageSlugConflict) {
 		t.Errorf("slug collision on move: want ErrPageSlugConflict, got %v", err)
 	}
 }
@@ -350,7 +351,7 @@ func TestPageService_Move_RejectsSelf(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if _, err := s.Move(1, page.ID, &page.ID); !errors.Is(err, ErrPageCycle) {
+	if _, err := s.Move(1, page.ID, &page.ID, nil, nil); !errors.Is(err, ErrPageCycle) {
 		t.Errorf("self-move: want ErrPageCycle, got %v", err)
 	}
 }
@@ -363,7 +364,7 @@ func TestPageService_Move_RejectsCycle(t *testing.T) {
 	c, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, ParentID: &b.ID, Title: "C"})
 
 	// Moving A under C (its grandchild) would create a cycle.
-	if _, err := s.Move(1, a.ID, &c.ID); !errors.Is(err, ErrPageCycle) {
+	if _, err := s.Move(1, a.ID, &c.ID, nil, nil); !errors.Is(err, ErrPageCycle) {
 		t.Errorf("want ErrPageCycle, got %v", err)
 	}
 }
@@ -377,7 +378,7 @@ func TestPageService_Move_UpdatesDescendantPaths(t *testing.T) {
 	otherRoot, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "OtherRoot"})
 
 	// Move B under otherRoot. c (descendant of b) should follow.
-	if _, err := s.Move(1, b.ID, &otherRoot.ID); err != nil {
+	if _, err := s.Move(1, b.ID, &otherRoot.ID, nil, nil); err != nil {
 		t.Fatalf("move: %v", err)
 	}
 
@@ -403,6 +404,102 @@ func TestPageService_Move_UpdatesDescendantPaths(t *testing.T) {
 	aAfter, _ := s.GetByID(a.ID)
 	if aAfter.Path != "/" || aAfter.Depth != 0 {
 		t.Errorf("a should be unchanged, got path=%q depth=%d", aAfter.Path, aAfter.Depth)
+	}
+}
+
+// Move with prev/next sibling IDs assigns a frac_index that puts the moved
+// page between the named neighbors in display order, backfilling NULL keys
+// for the rest of the sibling group on first use.
+func TestPageService_Move_ReordersBetweenSiblings(t *testing.T) {
+	db := newPagesTestDB(t)
+	s := NewPageService(db)
+
+	// Three root pages in title order: A, B, C — all have NULL frac_index.
+	a, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "A"})
+	b, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "B"})
+	c, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "C"})
+
+	// Move C between A and B: prev=A, next=B.
+	if _, err := s.Move(1, c.ID, nil, &a.ID, &b.ID); err != nil {
+		t.Fatalf("reorder C between A and B: %v", err)
+	}
+
+	roots, err := s.ListChildren(1, nil)
+	if err != nil {
+		t.Fatalf("list root children: %v", err)
+	}
+	gotOrder := []int{}
+	for _, p := range roots {
+		gotOrder = append(gotOrder, p.ID)
+	}
+	wantOrder := []int{a.ID, c.ID, b.ID}
+	if !reflect.DeepEqual(gotOrder, wantOrder) {
+		t.Errorf("display order after reorder: got %v, want %v", gotOrder, wantOrder)
+	}
+
+	// All three siblings must have non-NULL frac_index now (backfill ran).
+	for _, p := range roots {
+		if p.FracIndex == nil || *p.FracIndex == "" {
+			t.Errorf("page %d should have frac_index after backfill, got nil/empty", p.ID)
+		}
+	}
+}
+
+// Move with sibling IDs but cross-parent: page becomes a child of newParent
+// and lands between the named siblings.
+func TestPageService_Move_ReparentsAndReordersInOnePass(t *testing.T) {
+	db := newPagesTestDB(t)
+	s := NewPageService(db)
+
+	root, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "Root"})
+	x, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, ParentID: &root.ID, Title: "X"})
+	y, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, ParentID: &root.ID, Title: "Y"})
+	visitor, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "Visitor"})
+
+	// Move Visitor under Root, between X and Y.
+	if _, err := s.Move(1, visitor.ID, &root.ID, &x.ID, &y.ID); err != nil {
+		t.Fatalf("reparent + reorder: %v", err)
+	}
+
+	kids, err := s.ListChildren(1, &root.ID)
+	if err != nil {
+		t.Fatalf("list root children: %v", err)
+	}
+	got := []int{}
+	for _, k := range kids {
+		got = append(got, k.ID)
+	}
+	want := []int{x.ID, visitor.ID, y.ID}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("children after reparent: got %v, want %v", got, want)
+	}
+}
+
+// Move at the start of the list (prev=nil, next=first sibling) places the
+// moved page before all current siblings.
+func TestPageService_Move_PlacesAtListStart(t *testing.T) {
+	db := newPagesTestDB(t)
+	s := NewPageService(db)
+
+	a, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "A"})
+	b, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "B"})
+
+	// Move B before A: prev=nil, next=A.
+	if _, err := s.Move(1, b.ID, nil, nil, &a.ID); err != nil {
+		t.Fatalf("move B to start: %v", err)
+	}
+
+	roots, err := s.ListChildren(1, nil)
+	if err != nil {
+		t.Fatalf("list roots: %v", err)
+	}
+	got := []int{}
+	for _, p := range roots {
+		got = append(got, p.ID)
+	}
+	want := []int{b.ID, a.ID}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("order after move-to-start: got %v, want %v", got, want)
 	}
 }
 

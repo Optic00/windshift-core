@@ -111,7 +111,9 @@ type updatePageRequest struct {
 }
 
 type movePageRequest struct {
-	ParentID *int `json:"parent_id"`
+	ParentID      *int `json:"parent_id"`
+	PrevSiblingID *int `json:"prev_sibling_id,omitempty"`
+	NextSiblingID *int `json:"next_sibling_id,omitempty"`
 }
 
 type grantPagePermissionRequest struct {
@@ -356,7 +358,7 @@ func (h *PageHandler) Move(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	moved, err := h.service.Move(user.ID, pageID, req.ParentID)
+	moved, err := h.service.Move(user.ID, pageID, req.ParentID, req.PrevSiblingID, req.NextSiblingID)
 	if err != nil {
 		h.respondServiceError(w, r, err)
 		return

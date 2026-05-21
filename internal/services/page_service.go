@@ -229,7 +229,12 @@ func (s *PageService) Update(actorID int, in UpdatePageInput) (*models.Page, err
 // Move reparents a page to a new parent. Cycle detection and depth check
 // run inside the transaction; descendants' paths/depths are updated in the
 // same pass so the tree stays consistent.
-func (s *PageService) Move(actorID, pageID int, newParentID *int) (*models.Page, error) {
+//
+// prevSiblingID / nextSiblingID position the moved page within its new
+// parent's children. Either may be nil to mean "start of list" / "end of
+// list"; when both are nil the existing append-by-natural-order behavior
+// is preserved (no frac_index write).
+func (s *PageService) Move(actorID, pageID int, newParentID, prevSiblingID, nextSiblingID *int) (*models.Page, error) {
 	return database.WithTxResult(s.db, func(tx database.Tx) (*models.Page, error) {
 		page, err := s.pages.GetByIDTx(tx, pageID)
 		if err != nil {
@@ -291,7 +296,15 @@ func (s *PageService) Move(actorID, pageID int, newParentID *int) (*models.Page,
 			}
 		}
 
-		if err := s.pages.MoveTx(tx, pageID, newParentID, newPath, newDepth, actorID); err != nil {
+		// Compute the moved page's new frac_index when the caller supplied
+		// sibling positioning. Backfills NULL keys for the new parent's
+		// children so KeyBetween has well-defined neighbors to bisect.
+		newFracIndex, err := s.resolveSiblingFracIndex(tx, page.WorkspaceID, newParentID, pageID, prevSiblingID, nextSiblingID, actorID)
+		if err != nil {
+			return nil, err
+		}
+
+		if err := s.pages.MoveTx(tx, pageID, newParentID, newPath, newDepth, actorID, newFracIndex); err != nil {
 			if errors.Is(err, repository.ErrNotFound) {
 				return nil, ErrPageNotFound
 			}
@@ -765,6 +778,111 @@ func (s *PageService) resolveParent(tx database.Tx, workspaceID int, parentID *i
 	}
 	parentPath := parent.Path + fmt.Sprintf("%d/", parent.ID)
 	return &parent.ID, parentPath, parent.Depth, nil
+}
+
+// resolveSiblingFracIndex computes the frac_index the moved page should
+// receive given prev/next sibling IDs that bracket the drop position. Returns
+// nil (no frac_index write) when the caller didn't supply positioning — that
+// preserves the legacy append-by-natural-order semantics. When neighbors
+// have NULL frac_index (pages predating drag-and-drop), they are backfilled
+// with monotonically-increasing keys in their current display order before
+// KeyBetween is consulted, so subsequent reorders against the same group
+// have well-defined endpoints.
+func (s *PageService) resolveSiblingFracIndex(
+	tx database.Tx,
+	workspaceID int,
+	newParentID *int,
+	movedPageID int,
+	prevSiblingID, nextSiblingID *int,
+	actorID int,
+) (*string, error) {
+	if prevSiblingID == nil && nextSiblingID == nil {
+		return nil, nil
+	}
+
+	siblings, err := s.pages.ListChildrenTx(tx, workspaceID, newParentID)
+	if err != nil {
+		return nil, fmt.Errorf("list new parent children: %w", err)
+	}
+
+	// A neighbor pointed at the page being moved is meaningless — it
+	// cannot be its own anchor. Treat as nil so KeyBetween still runs.
+	if prevSiblingID != nil && *prevSiblingID == movedPageID {
+		prevSiblingID = nil
+	}
+	if nextSiblingID != nil && *nextSiblingID == movedPageID {
+		nextSiblingID = nil
+	}
+
+	siblingByID := make(map[int]*models.Page, len(siblings))
+	for i := range siblings {
+		if siblings[i].ID == movedPageID {
+			continue
+		}
+		siblingByID[siblings[i].ID] = &siblings[i]
+	}
+	for _, id := range []*int{prevSiblingID, nextSiblingID} {
+		if id == nil {
+			continue
+		}
+		if _, ok := siblingByID[*id]; !ok {
+			return nil, fmt.Errorf("sibling %d is not a child of the target parent", *id)
+		}
+	}
+
+	needsBackfill := false
+	for _, id := range []*int{prevSiblingID, nextSiblingID} {
+		if id == nil {
+			continue
+		}
+		sib := siblingByID[*id]
+		if sib.FracIndex == nil || *sib.FracIndex == "" {
+			needsBackfill = true
+			break
+		}
+	}
+
+	if needsBackfill {
+		// Re-sequence ALL siblings (overwriting any existing frac_index
+		// values too) in their current display order. Mixed NULL +
+		// non-NULL groups can interleave in ways that would collide with
+		// freshly minted keys, so a full rewrite is the only safe option.
+		var lastKey string
+		for i := range siblings {
+			if siblings[i].ID == movedPageID {
+				continue
+			}
+			fresh, kerr := KeyBetween(lastKey, "")
+			if kerr != nil {
+				return nil, fmt.Errorf("backfill frac_index for sibling %d: %w", siblings[i].ID, kerr)
+			}
+			if err := s.pages.SetFracIndexTx(tx, siblings[i].ID, fresh, actorID); err != nil {
+				return nil, fmt.Errorf("persist backfilled frac_index for sibling %d: %w", siblings[i].ID, err)
+			}
+			siblings[i].FracIndex = &fresh
+			siblingByID[siblings[i].ID] = &siblings[i]
+			lastKey = fresh
+		}
+	}
+
+	prevKey := ""
+	if prevSiblingID != nil {
+		if p := siblingByID[*prevSiblingID].FracIndex; p != nil {
+			prevKey = *p
+		}
+	}
+	nextKey := ""
+	if nextSiblingID != nil {
+		if n := siblingByID[*nextSiblingID].FracIndex; n != nil {
+			nextKey = *n
+		}
+	}
+
+	newKey, err := KeyBetween(prevKey, nextKey)
+	if err != nil {
+		return nil, fmt.Errorf("compute frac_index between %q and %q: %w", prevKey, nextKey, err)
+	}
+	return &newKey, nil
 }
 
 // pickAvailableSlug returns a slug that does not collide with another
