@@ -84,6 +84,7 @@ func RegisterRoutes(deps restapi.Deps) {
 	collectionHandler := handlers.NewCollectionHandler(db, permissionService)
 	actionHandler := handlers.NewActionHandler(db, permissionService, deps.ActionService)
 	attachmentHandler := handlers.NewAttachmentHandler(db, permissionService, deps.AttachmentPath)
+	pageHandler := handlers.NewPageHandler(db, permissionService)
 
 	// Create authenticated route group with middleware chain:
 	// RequestID -> RequireAuth -> RateLimiter
@@ -237,6 +238,20 @@ func RegisterRoutes(deps restapi.Deps) {
 	v1.HandleWithMiddleware("POST /workspaces/{id}/actions/validate", actionHandler.ValidateAction, bearerAuth.RequirePermission("actions:read"), router.RequireNumericID)
 	v1.HandleWithMiddleware("GET /workspaces/{id}/actions/{actionId}", actionHandler.GetAction, bearerAuth.RequirePermission("actions:read"), router.RequireNumericID)
 	v1.HandleWithMiddleware("PUT /workspaces/{id}/actions/{actionId}", actionHandler.UpdateAction, bearerAuth.RequirePermission("actions:write"), router.RequireNumericID)
+
+	// ============================================
+	// Pages (workspace knowledge / wiki). Per-page ACL is enforced in the
+	// handler via PagePermissionService; the route layer gates on the
+	// pages:* token scopes so a token scoped to a different surface can't
+	// drive page CRUD even if its bearer-user has the workspace role.
+	// ============================================
+	v1.HandleWithMiddleware("GET /workspaces/{id}/pages", pageHandler.List, bearerAuth.RequirePermission("pages:read"), router.RequireNumericID)
+	v1.HandleWithMiddleware("POST /workspaces/{id}/pages", pageHandler.Create, bearerAuth.RequirePermission("pages:write"), router.RequireNumericID)
+	v1.HandleWithMiddleware("GET /workspaces/{id}/pages/{pageId}", pageHandler.Get, bearerAuth.RequirePermission("pages:read"), router.RequireNumericID)
+	v1.HandleWithMiddleware("PUT /workspaces/{id}/pages/{pageId}", pageHandler.Update, bearerAuth.RequirePermission("pages:write"), router.RequireNumericID)
+	v1.HandleWithMiddleware("DELETE /workspaces/{id}/pages/{pageId}", pageHandler.Archive, bearerAuth.RequirePermission("pages:delete"), router.RequireNumericID)
+	v1.HandleWithMiddleware("POST /workspaces/{id}/pages/{pageId}/move", pageHandler.Move, bearerAuth.RequirePermission("pages:write"), router.RequireNumericID)
+	v1.HandleWithMiddleware("GET /workspaces/{id}/pages/{pageId}/history", pageHandler.GetHistory, bearerAuth.RequirePermission("pages:read"), router.RequireNumericID)
 
 	// ============================================
 	// Search
