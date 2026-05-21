@@ -123,16 +123,7 @@
       getValue={(p) => p.id}
       getLabel={(p) => p.title}
       onSelect={onPick}
-    >
-      {#snippet itemSnippet({ item: candidate })}
-        <div class="flex flex-col min-w-0">
-          <span class="font-medium truncate">{candidate.title}</span>
-          <span class="path-hint truncate" style="color: var(--ds-text-subtle);">
-            {candidate.path || '/'}
-          </span>
-        </div>
-      {/snippet}
-    </BasePicker>
+    />
   </div>
   <DialogFooter
     cancelLabel={t('pages.moveCancel')}
@@ -152,11 +143,6 @@
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
-  }
-
-  .path-hint {
-    font-size: 0.75rem;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   }
 
   .error {
