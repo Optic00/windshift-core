@@ -55,6 +55,18 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ matrix.image.name }}
 
+      - name: Compute build metadata
+        id: build_meta
+        shell: bash
+        run: |
+          version="dev"
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            version="$GITHUB_REF_NAME"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "commit=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+
       - name: Build and push by digest
         id: build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6.19.2
@@ -66,6 +78,11 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.image.short }}-${{ matrix.platform.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image.short }}-${{ matrix.platform.arch }}
+          build-args: |
+            VERSION=${{ steps.build_meta.outputs.version }}
+            RELEASE_NAME=
+            COMMIT=${{ steps.build_meta.outputs.commit }}
+            BUILD_DATE=${{ steps.build_meta.outputs.date }}
           outputs: ${{ github.event_name != 'pull_request' && format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', format('{0}/{1}', env.REGISTRY, matrix.image.name)) || 'type=docker' }}
 
       - name: Export digest

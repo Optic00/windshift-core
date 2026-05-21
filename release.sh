@@ -289,7 +289,7 @@ build_binary() {
     local git_commit=$(git rev-parse --short HEAD)
     local build_date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
     local pkg="windshift/internal/version"
-    local ldflags="-s -w -X ${pkg}.Version=${version_clean} -X ${pkg}.Commit=${git_commit} -X ${pkg}.Date=${build_date} -X ${pkg}.ReleaseName=${RELEASE_NAME}"
+    local ldflags="-s -w -X ${pkg}.Version=${version_clean} -X ${pkg}.Commit=${git_commit} -X ${pkg}.Date=${build_date} -X '${pkg}.ReleaseName=${RELEASE_NAME}'"
 
     if go build -ldflags "$ldflags" -o "$output_path" .; then
         local size=$(ls -lh "$output_path" | awk '{print $5}')
@@ -678,7 +678,7 @@ build_docker() {
 
     docker buildx build \
         --platform "$DOCKER_PLATFORMS" \
-        --build-arg VERSION="${VERSION#v}" \
+        --build-arg VERSION="${VERSION}" \
         --build-arg RELEASE_NAME="$RELEASE_NAME" \
         --build-arg COMMIT="$git_commit" \
         --build-arg BUILD_DATE="$build_date" \

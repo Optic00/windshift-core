@@ -11,9 +11,16 @@ COPY frontend/package*.json ./
 # Install dependencies (npm ci is faster and more reliable for CI)
 RUN npm ci
 
+# Build-time version metadata for the static UI. These are passed by
+# release.sh / CI so the About page and footer do not fall back to "dev".
+ARG VERSION=dev
+ARG RELEASE_NAME=""
+
 # Copy frontend source and build
 COPY frontend/ ./
-RUN npm run build
+RUN VITE_APP_VERSION_CODE="${VERSION}" \
+    VITE_APP_VERSION_NAME="${RELEASE_NAME}" \
+    npm run build
 
 # Stage 2: Build Go binary
 FROM golang:1.26.3-alpine AS builder
@@ -45,10 +52,10 @@ COPY --from=frontend-builder /build/dist ./frontend/dist
 # ldflags into windshift/internal/version so /api/version reports it.
 RUN CGO_ENABLED=0 \
     go build -ldflags "-s -w \
-      -X windshift/internal/version.Version=${VERSION} \
+      -X windshift/internal/version.Version=${VERSION#v} \
       -X windshift/internal/version.Commit=${COMMIT} \
       -X windshift/internal/version.Date=${BUILD_DATE} \
-      -X windshift/internal/version.ReleaseName=${RELEASE_NAME}" \
+      -X 'windshift/internal/version.ReleaseName=${RELEASE_NAME}'" \
     -o windshift main.go
 
 # Create data directory with placeholder file for proper volume initialization
