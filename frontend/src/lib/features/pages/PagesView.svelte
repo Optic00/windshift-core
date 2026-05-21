@@ -583,10 +583,9 @@
     gap: 2rem;
     flex: 1;
     min-height: 0;
-    /* Right inset only — the toolbar's bottom divider must hit the
-       left wall flush, but the TOC (or the editor when no TOC) should
-       stay 3rem off the right edge. */
-    padding-right: 3rem;
+    /* No horizontal padding — the toolbar's bottom divider must hit
+       both walls flush. The TOC carries its own right margin (below)
+       so it doesn't kiss the right edge when present. */
   }
 
   /* Frameless editor: no border, no rounded corners, no background —
@@ -687,6 +686,10 @@
     max-height: calc(100vh - 8rem);
     overflow-y: auto;
     padding-left: 1rem;
+    /* Inset from the pane's right wall. Carried here (instead of on
+       .editor-row) so the editor's toolbar divider can run flush to
+       the right edge in Edit mode when the TOC isn't shown. */
+    margin-right: 3rem;
     border-left: 1px solid var(--ds-border);
     font-size: 0.8125rem;
   }
