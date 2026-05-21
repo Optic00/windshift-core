@@ -137,19 +137,64 @@ func TestPagePermission_InheritFalse_WithACL_GrantsAccess(t *testing.T) {
 		t.Fatalf("break inheritance: %v", err)
 	}
 
-	// Without ACL, carol can't see it. Add a user grant for carol.
-	if _, err := env.pages.GrantPermission(env.users["bob"], page.ID, "user", env.users["carol"], "view"); err != nil {
+	// phantom is a workspace Viewer (has workspace.page.view via role). On
+	// a restricted page they'd be denied without an explicit ACL row, so
+	// granting them direct view should unlock view-only access.
+	if _, err := env.pages.GrantPermission(env.users["bob"], page.ID, "user", env.users["phantom"], "view"); err != nil {
 		t.Fatalf("grant: %v", err)
 	}
-	can, err := env.auth.Can(env.users["carol"], 1, page.ID, PageOpView)
+	can, err := env.auth.Can(env.users["phantom"], 1, page.ID, PageOpView)
 	if err != nil || !can {
-		t.Errorf("carol with explicit user grant must view: can=%v err=%v", can, err)
+		t.Errorf("phantom with explicit user grant must view: can=%v err=%v", can, err)
 	}
 
 	// Edit still denied — only view granted.
-	can, err = env.auth.Can(env.users["carol"], 1, page.ID, PageOpEdit)
+	can, err = env.auth.Can(env.users["phantom"], 1, page.ID, PageOpEdit)
 	if err != nil || can {
-		t.Errorf("carol with view-only grant must NOT edit: can=%v err=%v", can, err)
+		t.Errorf("phantom with view-only grant must NOT edit: can=%v err=%v", can, err)
+	}
+}
+
+// Bug-hunt-2 #2: an ACL match must require workspace membership (i.e.
+// workspace.page.view) — granting an explicit role on a page to a user
+// who isn't even a workspace member must not give them access.
+func TestPagePermission_ACLGrantRequiresWorkspaceMembership(t *testing.T) {
+	env := newPagePermTestEnv(t)
+	page, _ := env.pages.Create(env.users["alice"], CreatePageInput{WorkspaceID: 1, Title: "Restricted"})
+	if _, err := env.pages.SetInheritPermissions(env.users["bob"], page.ID, false); err != nil {
+		t.Fatalf("break inheritance: %v", err)
+	}
+	// carol has NO workspace role assigned (true outsider). An explicit
+	// ACL grant on the page must not synthesize workspace membership.
+	if _, err := env.pages.GrantPermission(env.users["bob"], page.ID, "user", env.users["carol"], "edit"); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+
+	for _, op := range []string{PageOpView, PageOpEdit} {
+		can, err := env.auth.Can(env.users["carol"], 1, page.ID, op)
+		if err != nil {
+			t.Fatalf("carol can %s: %v", op, err)
+		}
+		if can {
+			t.Errorf("carol (no workspace role) must NOT %s a restricted page even with an ACL row", op)
+		}
+	}
+}
+
+// Bug-hunt-2 #2b: GrantPermission validates principal existence at write
+// time so stale grants don't sit in the audit log forever.
+func TestPagePermission_GrantPermissionRejectsUnknownPrincipal(t *testing.T) {
+	env := newPagePermTestEnv(t)
+	page, _ := env.pages.Create(env.users["alice"], CreatePageInput{WorkspaceID: 1, Title: "Doc"})
+
+	if _, err := env.pages.GrantPermission(env.users["bob"], page.ID, "user", 999999, "view"); !errors.Is(err, ErrPageGrantPrincipalNotFound) {
+		t.Errorf("unknown user: want ErrPageGrantPrincipalNotFound, got %v", err)
+	}
+	if _, err := env.pages.GrantPermission(env.users["bob"], page.ID, "group", 999999, "view"); !errors.Is(err, ErrPageGrantPrincipalNotFound) {
+		t.Errorf("unknown group: want ErrPageGrantPrincipalNotFound, got %v", err)
+	}
+	if _, err := env.pages.GrantPermission(env.users["bob"], page.ID, "role", 999999, "view"); !errors.Is(err, ErrPageGrantPrincipalNotFound) {
+		t.Errorf("unknown role: want ErrPageGrantPrincipalNotFound, got %v", err)
 	}
 }
 
@@ -254,49 +299,62 @@ func TestPagePermission_AncestorBreaksInheritance_HidesRootGrantFromChild(t *tes
 	// when the current page had inherit_permissions=true, regardless of
 	// whether an intermediate ancestor broke inheritance.
 	//
-	// Setup: root grants the outsider carol (who has no workspace role) a
-	// direct view permission. Middle page breaks inheritance with no
-	// grants. Child inherits. carol must NOT reach the child via root's
-	// grant — the chain has to stop at middle.
+	// Setup: root grants phantom (a workspace Viewer) view access. Middle
+	// breaks inheritance AND grants alice view. Child inherits — its
+	// effective ACL with the chain-breaker working is [alice→view]
+	// (middle only), so phantom is denied on child. Without the fix, the
+	// walk would also include root's [phantom→view], and phantom would
+	// leak through.
+	//
+	// All three subjects have workspace page.view (alice=Editor,
+	// phantom=Viewer) so they pass the ACL-membership floor; the test
+	// turns on whether the ACL set contains them.
 	env := newPagePermTestEnv(t)
 	root, _ := env.pages.Create(env.users["alice"], CreatePageInput{WorkspaceID: 1, Title: "Root"})
-	if _, err := env.pages.GrantPermission(env.users["bob"], root.ID, "user", env.users["carol"], "view"); err != nil {
-		t.Fatalf("grant on root: %v", err)
+	if _, err := env.pages.SetInheritPermissions(env.users["bob"], root.ID, false); err != nil {
+		t.Fatalf("break root inheritance: %v", err)
+	}
+	if _, err := env.pages.GrantPermission(env.users["bob"], root.ID, "user", env.users["phantom"], "view"); err != nil {
+		t.Fatalf("grant phantom on root: %v", err)
 	}
 	middle, _ := env.pages.Create(env.users["alice"], CreatePageInput{WorkspaceID: 1, ParentID: &root.ID, Title: "Middle"})
 	if _, err := env.pages.SetInheritPermissions(env.users["bob"], middle.ID, false); err != nil {
 		t.Fatalf("break middle inheritance: %v", err)
 	}
+	if _, err := env.pages.GrantPermission(env.users["bob"], middle.ID, "user", env.users["alice"], "view"); err != nil {
+		t.Fatalf("grant alice on middle: %v", err)
+	}
 	child, _ := env.pages.Create(env.users["alice"], CreatePageInput{WorkspaceID: 1, ParentID: &middle.ID, Title: "Child"})
 
-	// Pre-condition: carol can see root via her explicit grant.
-	can, err := env.auth.Can(env.users["carol"], 1, root.ID, PageOpView)
+	// Pre-condition: phantom can see root via the direct grant + Viewer
+	// membership.
+	can, err := env.auth.Can(env.users["phantom"], 1, root.ID, PageOpView)
 	if err != nil || !can {
-		t.Fatalf("carol should see root via direct grant: can=%v err=%v", can, err)
+		t.Fatalf("phantom should see root via direct grant: can=%v err=%v", can, err)
+	}
+	// Pre-condition: alice can see middle via the direct grant.
+	can, err = env.auth.Can(env.users["alice"], 1, middle.ID, PageOpView)
+	if err != nil || !can {
+		t.Fatalf("alice should see middle via direct grant: can=%v err=%v", can, err)
 	}
 
 	// Bug: without the chain-breaker fix, the walk includes root's ACL
-	// when evaluating child, and carol's root grant leaks into child.
-	// Post-fix: the walk stops at middle (inherit=false), so child sees
-	// only middle's ACL (empty) and middle has no grant for carol.
-	// With an empty effective ACL on a restricted parent, carol — who
-	// has no workspace role — is denied.
-	can, err = env.auth.Can(env.users["carol"], 1, child.ID, PageOpView)
+	// when evaluating child and phantom's root grant leaks through.
+	// Post-fix: the walk stops at middle (inherit=false), so child's
+	// effective ACL is middle's only ([alice→view]); phantom is denied.
+	can, err = env.auth.Can(env.users["phantom"], 1, child.ID, PageOpView)
 	if err != nil {
-		t.Fatalf("carol can: %v", err)
+		t.Fatalf("phantom can: %v", err)
 	}
 	if can {
-		t.Error("inheritance break at middle must hide root grant from child for an outsider")
+		t.Error("inheritance break at middle must hide root grant from child")
 	}
 
-	// Sanity: if we now grant carol on middle, she sees child through
-	// middle (because child inherits from middle).
-	if _, err := env.pages.GrantPermission(env.users["bob"], middle.ID, "user", env.users["carol"], "view"); err != nil {
-		t.Fatalf("grant on middle: %v", err)
-	}
-	can, err = env.auth.Can(env.users["carol"], 1, child.ID, PageOpView)
+	// Sanity: alice still sees child because middle's grant carries
+	// through to child via inheritance.
+	can, err = env.auth.Can(env.users["alice"], 1, child.ID, PageOpView)
 	if err != nil || !can {
-		t.Errorf("middle grant should cascade to child: can=%v err=%v", can, err)
+		t.Errorf("alice should inherit middle's grant on child: can=%v err=%v", can, err)
 	}
 }
 

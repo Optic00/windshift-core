@@ -552,6 +552,13 @@ var ErrPageInvalidLevel = errors.New("invalid permission_level")
 // it to the user.
 var ErrPagePermissionDuplicate = errors.New("permission already granted")
 
+// ErrPageGrantPrincipalNotFound is returned when GrantPermission is asked
+// to attach an ACL row to a user/group/role that does not exist or is
+// disabled. The runtime evaluator already requires workspace membership
+// for the match to count, but rejecting unknown principals at write time
+// prevents stale-id grants from sitting in the audit log forever.
+var ErrPageGrantPrincipalNotFound = errors.New("principal does not exist")
+
 // GrantPermission attaches an ACL row to a page. Writes a 'permissions'
 // revision so the audit trail captures the change. Returns the persisted
 // row.
@@ -569,6 +576,10 @@ func (s *PageService) GrantPermission(actorID, pageID int, principalType string,
 			if errors.Is(err, repository.ErrNotFound) {
 				return nil, ErrPageNotFound
 			}
+			return nil, err
+		}
+
+		if err := s.validateGrantPrincipal(tx, principalType, principalID); err != nil {
 			return nil, err
 		}
 
@@ -663,6 +674,35 @@ func (s *PageService) SetInheritPermissions(actorID, pageID int, inherit bool) (
 		}
 		return updated, nil
 	})
+}
+
+// validateGrantPrincipal verifies the principal exists (and is_active
+// where applicable) inside the same transaction as the grant. We
+// deliberately do NOT also check workspace membership here — membership
+// can drop independently, and the runtime evaluator already requires
+// workspace.page.view as a floor for ACL matches. This validation just
+// catches dead-on-arrival grants (typo'd ids, deleted users) so the audit
+// row points at a real entity.
+func (s *PageService) validateGrantPrincipal(tx database.Tx, principalType string, principalID int) error {
+	var query string
+	switch principalType {
+	case models.PagePrincipalTypeUser:
+		query = "SELECT EXISTS(SELECT 1 FROM users WHERE id = ? AND is_active = 1)"
+	case models.PagePrincipalTypeGroup:
+		query = "SELECT EXISTS(SELECT 1 FROM groups WHERE id = ? AND is_active = 1)"
+	case models.PagePrincipalTypeRole:
+		query = "SELECT EXISTS(SELECT 1 FROM workspace_roles WHERE id = ?)"
+	default:
+		return ErrPageInvalidPrincipal
+	}
+	var exists bool
+	if err := tx.QueryRow(query, principalID).Scan(&exists); err != nil {
+		return fmt.Errorf("validate grant principal %s/%d: %w", principalType, principalID, err)
+	}
+	if !exists {
+		return ErrPageGrantPrincipalNotFound
+	}
+	return nil
 }
 
 func isValidPrincipalType(t string) bool {

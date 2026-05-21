@@ -23,7 +23,13 @@ func newPagesTestDB(t *testing.T) database.Database {
 
 	for _, stmt := range []string{
 		`CREATE TABLE workspaces (id INTEGER PRIMARY KEY, name TEXT, key TEXT)`,
-		`CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT)`,
+		// is_active mirrors the production users column so GrantPermission's
+		// principal validation (slice 21) can run against this minimal
+		// schema. The production users table has many more columns, but
+		// only id + is_active are read here.
+		`CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, is_active BOOLEAN DEFAULT 1)`,
+		`CREATE TABLE groups (id INTEGER PRIMARY KEY, name TEXT, is_active BOOLEAN DEFAULT 1)`,
+		`CREATE TABLE workspace_roles (id INTEGER PRIMARY KEY, name TEXT)`,
 		`CREATE TABLE pages (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			workspace_id INTEGER NOT NULL,

@@ -130,10 +130,18 @@ func (s *PagePermissionService) Can(userID, workspaceID, pageID int, op string) 
 
 	if len(acl) > 0 {
 		// Restricted page: ACL must contain a matching principal at the
-		// required level. Workspace-role permissions do NOT confer access
-		// to a restricted page — that's the whole point of breaking
-		// inheritance.
-		return s.matchesACL(userID, workspaceID, acl, op)
+		// required level. Workspace-role permissions do NOT confer the
+		// requested op on a restricted page — that's the whole point of
+		// breaking inheritance — but they DO establish that the caller
+		// is a workspace member. An ACL grant on a user who never joined
+		// the workspace (e.g. a stale row left over after removing them)
+		// must not be a back door, so we require workspace.page.view as
+		// the membership floor on top of the ACL match.
+		matched, err := s.matchesACL(userID, workspaceID, acl, op)
+		if err != nil || !matched {
+			return matched, err
+		}
+		return s.perm.HasWorkspacePermission(userID, workspaceID, models.PermissionPageView)
 	}
 
 	// Inheritance broken with no explicit grants → admin-only. The admin

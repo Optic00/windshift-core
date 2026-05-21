@@ -498,6 +498,9 @@ func (h *PageHandler) GrantPermission(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, services.ErrPagePermissionDuplicate):
 			respondConflict(w, r, "permission already granted")
 			return
+		case errors.Is(err, services.ErrPageGrantPrincipalNotFound):
+			respondValidationError(w, r, "principal does not exist")
+			return
 		}
 		h.respondServiceError(w, r, err)
 		return
