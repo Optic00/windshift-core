@@ -4,9 +4,12 @@
   import DialogFooter from '../../dialogs/DialogFooter.svelte';
   import Button from '../../components/Button.svelte';
   import Select from '../../components/Select.svelte';
+  import DataTable from '../../components/DataTable.svelte';
+  import EmptyState from '../../components/EmptyState.svelte';
   import UserPicker from '../../pickers/UserPicker.svelte';
   import GroupPicker from '../../pickers/GroupPicker.svelte';
   import RolePicker from '../../pickers/RolePicker.svelte';
+  import { IconShield as Shield } from '@tabler/icons-svelte-runes';
   import { api } from '../../api.js';
   import { confirm } from '../../composables/useConfirm.js';
 
@@ -43,6 +46,12 @@
     { value: 'view', label: 'View' },
     { value: 'edit', label: 'Edit' },
     { value: 'admin', label: 'Admin' },
+  ];
+
+  const aclColumns = [
+    { key: 'principal', label: 'Principal', slot: 'principal' },
+    { key: 'permission_level', label: 'Level', slot: 'level' },
+    { key: 'remove', label: '', slot: 'remove', width: '6rem', align: 'text-right' },
   ];
 
   // Reset the principal selection when the type changes — a user id makes
@@ -173,39 +182,34 @@
 
       <section class="acl">
         <h3>Explicit grants</h3>
-        {#if data.acl.length === 0}
-          <p class="status empty">No explicit grants on this page.</p>
-        {:else}
-          <table class="acl-table">
-            <thead>
-              <tr>
-                <th>Principal</th>
-                <th>Level</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each data.acl as row (row.id)}
-                <tr data-testid="page-acl-row">
-                  <td>{row.principal_type} #{row.principal_id}</td>
-                  <td>{row.permission_level}</td>
-                  <td class="row-actions">
-                    {#if isAdmin}
-                      <button
-                        type="button"
-                        class="link-button"
-                        onclick={() => revoke(row.id)}
-                        disabled={saving}
-                      >
-                        Remove
-                      </button>
-                    {/if}
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        {/if}
+        <DataTable
+          columns={aclColumns}
+          data={data.acl}
+          keyField="id"
+          emptyMessage="No explicit grants on this page."
+          emptyDescription="Inheritance and workspace roles still apply."
+          emptyIcon={Shield}
+          rowAttrs={() => ({ 'data-testid': 'page-acl-row' })}
+        >
+          {#snippet principal(row)}
+            <span style="color: var(--ds-text);">{row.principal_type} #{row.principal_id}</span>
+          {/snippet}
+          {#snippet level(row)}
+            <span style="color: var(--ds-text);">{row.permission_level}</span>
+          {/snippet}
+          {#snippet remove(row)}
+            {#if isAdmin}
+              <Button
+                variant="link"
+                size="small"
+                onclick={() => revoke(row.id)}
+                disabled={saving}
+              >
+                Remove
+              </Button>
+            {/if}
+          {/snippet}
+        </DataTable>
 
         {#if isAdmin}
           <form
@@ -305,32 +309,6 @@
     color: var(--ds-text-subtle, #6b7280);
   }
 
-  .acl-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.875rem;
-  }
-
-  .acl-table th,
-  .acl-table td {
-    text-align: left;
-    padding: 0.375rem 0.5rem;
-    border-bottom: 1px solid var(--ds-border, #e5e7eb);
-  }
-
-  .row-actions {
-    text-align: right;
-  }
-
-  .link-button {
-    background: transparent;
-    border: none;
-    color: var(--ds-text-danger, #b91c1c);
-    cursor: pointer;
-    font-size: 0.875rem;
-    padding: 0;
-  }
-
   .add-grant {
     display: grid;
     grid-template-columns: minmax(8rem, 1fr) minmax(12rem, 1.5fr) minmax(7rem, 1fr) auto;
@@ -354,10 +332,5 @@
   .status {
     color: var(--ds-text-subtle, #6b7280);
     font-size: 0.875rem;
-  }
-
-  .status.empty {
-    text-align: center;
-    padding: 0.75rem;
   }
 </style>

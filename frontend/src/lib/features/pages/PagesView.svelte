@@ -8,6 +8,8 @@
   import { parseMarkdownHeadings, slugify } from './markdownToc.js';
   import Button from '../../components/Button.svelte';
   import Input from '../../components/Input.svelte';
+  import EmptyState from '../../components/EmptyState.svelte';
+  import { IconBook as Book } from '@tabler/icons-svelte-runes';
   import { confirm } from '../../composables/useConfirm.js';
 
   /**
@@ -271,7 +273,13 @@
     {#if loadingTree}
       <p class="status">Loading…</p>
     {:else if pages.length === 0}
-      <p class="status empty">No pages yet — create the first one above.</p>
+      <div class="tree-empty">
+        <EmptyState
+          icon={Book}
+          title="No pages yet"
+          description="Type a title above and press New to create the first page."
+        />
+      </div>
     {:else}
       <ul class="tree" data-testid="page-tree">
         {#each pages as page (page.id)}
@@ -588,8 +596,7 @@
     padding: 1rem;
   }
 
-  .status.empty {
-    text-align: center;
-    padding: 2rem 1rem;
+  .tree-empty {
+    padding: 0.5rem;
   }
 </style>
