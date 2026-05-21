@@ -23,4 +23,8 @@ func RegisterPageRoutes(deps *Deps) {
 	api.HandleH("GET /workspaces/{workspaceId}/pages/{pageId}/history/{revisionId}", auth(http.HandlerFunc(deps.Pages.Page.GetRevision)))
 	api.HandleH("POST /workspaces/{workspaceId}/pages/{pageId}/history/{revisionId}/restore", auth(http.HandlerFunc(deps.Pages.Page.RestoreRevision)))
 	api.HandleH("GET /workspaces/{workspaceId}/pages/{pageId}/permissions", auth(http.HandlerFunc(deps.Pages.Page.GetPermissions)))
+
+	if deps.Pages.KnowledgeSearch != nil {
+		api.HandleH("GET /workspaces/{workspaceId}/knowledge/search", auth(http.HandlerFunc(deps.Pages.KnowledgeSearch.Search)))
+	}
 }

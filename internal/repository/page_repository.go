@@ -645,6 +645,97 @@ func (r *PageRepository) ListChunksForPage(pageID int) ([]models.PageChunk, erro
 	return out, rows.Err()
 }
 
+// PageChunkSearchResult is a single ranked search hit. Score range depends
+// on the backend (ts_rank floats on Postgres; substring-presence integer on
+// SQLite) — callers should treat it as opaque except for sort ordering.
+type PageChunkSearchResult struct {
+	ChunkID     int
+	PageID      int
+	WorkspaceID int
+	HeadingPath string
+	Content     string
+	Snippet     string
+	Score       float64
+}
+
+// SearchChunks runs full-text search over page_chunks in the given
+// workspace. The query is treated as a websearch-style phrase on Postgres
+// and falls back to case-insensitive LIKE on SQLite. Permission filtering
+// is the caller's responsibility (see KnowledgeRetrievalService.Search).
+func (r *PageRepository) SearchChunks(workspaceID int, query string, limit int) ([]PageChunkSearchResult, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, nil
+	}
+
+	switch r.db.GetDriverName() {
+	case "postgres":
+		return r.searchChunksPostgres(workspaceID, query, limit)
+	default:
+		return r.searchChunksSQLite(workspaceID, query, limit)
+	}
+}
+
+func (r *PageRepository) searchChunksPostgres(workspaceID int, query string, limit int) ([]PageChunkSearchResult, error) {
+	rows, err := r.db.Query(`
+		SELECT c.id, c.page_id, c.workspace_id, c.heading_path, c.content,
+		       ts_headline('english', c.content, websearch_to_tsquery('english', ?),
+		           'MaxWords=40, MinWords=15, StartSel=<mark>, StopSel=</mark>') AS snippet,
+		       ts_rank(to_tsvector('english', coalesce(c.heading_path, '') || ' ' || coalesce(c.content, '')),
+		           websearch_to_tsquery('english', ?)) AS score
+		FROM page_chunks c
+		JOIN pages p ON p.id = c.page_id
+		WHERE c.workspace_id = ? AND p.archived_at IS NULL
+		AND to_tsvector('english', coalesce(c.heading_path, '') || ' ' || coalesce(c.content, ''))
+		    @@ websearch_to_tsquery('english', ?)
+		ORDER BY score DESC
+		LIMIT ?
+	`, query, query, workspaceID, query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("page chunk search (postgres): %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	return scanChunkSearch(rows)
+}
+
+func (r *PageRepository) searchChunksSQLite(workspaceID int, query string, limit int) ([]PageChunkSearchResult, error) {
+	like := "%" + strings.ToLower(query) + "%"
+	rows, err := r.db.Query(`
+		SELECT c.id, c.page_id, c.workspace_id, c.heading_path, c.content,
+		       SUBSTR(c.content, 1, 240) AS snippet,
+		       CAST(
+		           (CASE WHEN LOWER(c.heading_path) LIKE ? THEN 2 ELSE 0 END) +
+		           (CASE WHEN LOWER(c.content) LIKE ? THEN 1 ELSE 0 END)
+		       AS REAL) AS score
+		FROM page_chunks c
+		JOIN pages p ON p.id = c.page_id
+		WHERE c.workspace_id = ? AND p.archived_at IS NULL
+		AND (LOWER(c.heading_path) LIKE ? OR LOWER(c.content) LIKE ?)
+		ORDER BY score DESC, c.id ASC
+		LIMIT ?
+	`, like, like, workspaceID, like, like, limit)
+	if err != nil {
+		return nil, fmt.Errorf("page chunk search (sqlite): %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	return scanChunkSearch(rows)
+}
+
+func scanChunkSearch(rows *sql.Rows) ([]PageChunkSearchResult, error) {
+	var out []PageChunkSearchResult
+	for rows.Next() {
+		var hit PageChunkSearchResult
+		if err := rows.Scan(&hit.ChunkID, &hit.PageID, &hit.WorkspaceID, &hit.HeadingPath, &hit.Content, &hit.Snippet, &hit.Score); err != nil {
+			return nil, fmt.Errorf("scan chunk search result: %w", err)
+		}
+		out = append(out, hit)
+	}
+	return out, rows.Err()
+}
+
 // CountWorkspacePages returns the number of non-archived pages in a
 // workspace. Used by handlers to short-circuit empty trees.
 func (r *PageRepository) CountWorkspacePages(workspaceID int) (int, error) {

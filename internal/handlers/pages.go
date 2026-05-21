@@ -9,6 +9,47 @@ import (
 	"windshift/internal/services"
 )
 
+// KnowledgeSearchHandler serves the unified knowledge search endpoint.
+type KnowledgeSearchHandler struct {
+	retrieval *services.KnowledgeRetrievalService
+}
+
+// NewKnowledgeSearchHandler constructs a KnowledgeSearchHandler.
+func NewKnowledgeSearchHandler(retrieval *services.KnowledgeRetrievalService) *KnowledgeSearchHandler {
+	return &KnowledgeSearchHandler{retrieval: retrieval}
+}
+
+// Search runs full-text search over pages (and, in a later slice, other
+// knowledge sources). Workspace membership is enforced by the underlying
+// permission evaluator; no-permission yields an empty result rather than
+// 404 because the workspace itself is the lookup scope.
+func (h *KnowledgeSearchHandler) Search(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := requireIDParam(w, r, "workspaceId")
+	if !ok {
+		return
+	}
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+	query := r.URL.Query().Get("q")
+	limit, _ := parseOffsetPagination(r, 25, 100)
+	results, err := h.retrieval.Search(services.SearchInput{
+		UserID:      user.ID,
+		WorkspaceID: workspaceID,
+		Query:       query,
+		Limit:       limit,
+	})
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	if results == nil {
+		results = []services.KnowledgeResult{}
+	}
+	respondJSONOK(w, map[string]interface{}{"results": results, "query": query})
+}
+
 // PageHandler serves the workspace knowledge-pages API.
 //
 // Authorization model (Phase 1):

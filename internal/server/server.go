@@ -510,6 +510,8 @@ func (s *Server) initialize() error {
 	pageService := services.NewPageService(s.db)
 	pagePermissionService := services.NewPagePermissionService(s.db, permService)
 	pageHandler := handlers.NewPageHandler(pageService, pagePermissionService, logger.NewAuditor(s.db))
+	knowledgeRetrieval := services.NewKnowledgeRetrievalService(s.db, pagePermissionService)
+	knowledgeSearchHandler := handlers.NewKnowledgeSearchHandler(knowledgeRetrieval)
 
 	// Recurrence handler
 	recurrenceHandler := handlers.NewRecurrenceHandler(s.db, s.recurrenceScheduler, permService)
@@ -1191,7 +1193,8 @@ func (s *Server) initialize() error {
 			ItemLinks: integrationItemLinksHandler,
 		},
 		Pages: routes.PageHandlers{
-			Page: pageHandler,
+			Page:            pageHandler,
+			KnowledgeSearch: knowledgeSearchHandler,
 		},
 	}
 	routes.RegisterAll(routeDeps)

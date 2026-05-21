@@ -245,7 +245,8 @@ type TeamHandlers struct {
 
 // PageHandlers groups workspace knowledge-page handlers.
 type PageHandlers struct {
-	Page *handlers.PageHandler
+	Page            *handlers.PageHandler
+	KnowledgeSearch *handlers.KnowledgeSearchHandler
 }
 
 // MiscHandlers groups miscellaneous handlers.
