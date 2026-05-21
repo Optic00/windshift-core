@@ -1,15 +1,16 @@
 <script>
-  import { tick } from 'svelte';
   import Modal from '../../dialogs/Modal.svelte';
   import ModalHeader from '../../dialogs/ModalHeader.svelte';
   import DialogFooter from '../../dialogs/DialogFooter.svelte';
+  import BasePicker from '../../pickers/BasePicker.svelte';
   import { api } from '../../api.js';
 
   /**
    * "Move to…" dialog for reparenting a page. Computes valid destinations
-   * by excluding the page itself and any descendant — the backend cycle
-   * check is the source of truth, but filtering up front gives the user a
-   * cleaner picker and avoids a guaranteed-error round-trip.
+   * by excluding the page itself, every descendant, and the current
+   * parent — the backend cycle check is the source of truth, but
+   * filtering up front avoids guaranteed-error round-trips and a
+   * confusing "already there" no-op option.
    *
    * Descendant detection uses the materialized path returned by
    * /pages/tree, so it survives without an extra request per row.
@@ -22,24 +23,26 @@
   } = $props();
 
   let candidates = $state([]);
-  let filter = $state('');
   let loading = $state(false);
   let saving = $state(false);
   let error = $state('');
-  /** @type {HTMLInputElement | null} */
-  let filterEl = $state(null);
+
+  /**
+   * `pickedParentId` mirrors the picker's bound value (null when the
+   * user picks "Workspace root", a page id otherwise). It alone can't
+   * distinguish "root picked" from "nothing picked yet" — both surface
+   * as null — so we track `selectionMade` separately via onSelect.
+   */
+  let pickedParentId = $state(null);
+  let selectionMade = $state(false);
 
   $effect(() => {
     if (isOpen && page) {
       loadCandidates();
-      // Focus the filter input after the modal mounts. Using a programmatic
-      // focus rather than the `autofocus` HTML attribute avoids the
-      // a11y-autofocus warning while still landing the cursor where the
-      // user expects when the dialog opens.
-      tick().then(() => filterEl?.focus());
     }
     if (!isOpen) {
-      filter = '';
+      pickedParentId = null;
+      selectionMade = false;
       error = '';
     }
   });
@@ -58,6 +61,7 @@
       candidates = all.filter((p) => {
         if (p.id === page.id) return false;
         if (p.path === selfPrefix || p.path.startsWith(selfPrefix)) return false;
+        if (p.id === page.parent_id) return false; // already the parent
         return true;
       });
     } catch (err) {
@@ -67,17 +71,24 @@
     }
   }
 
-  const filtered = $derived(
-    !filter
-      ? candidates
-      : candidates.filter((p) => p.title.toLowerCase().includes(filter.toLowerCase()))
-  );
+  function onPick(item) {
+    // BasePicker fires onSelect with the chosen item, or null when the
+    // user picks the "Workspace root" (showUnassigned) option.
+    selectionMade = true;
+    pickedParentId = item ? item.id : null;
+  }
 
-  async function moveTo(parentId) {
+  // Show the "Workspace root" option only when moving there would
+  // actually change something. If the page is already at the root it'd
+  // be a confusing no-op.
+  const rootAvailable = $derived(page?.parent_id != null);
+
+  async function confirmMove() {
+    if (!selectionMade || saving) return;
     saving = true;
     error = '';
     try {
-      await api.pages.movePage(workspaceId, page.id, parentId);
+      await api.pages.movePage(workspaceId, page.id, pickedParentId);
       isOpen = false;
       onMoved?.();
     } catch (err) {
@@ -91,7 +102,7 @@
 <Modal bind:isOpen maxWidth="max-w-lg">
   <ModalHeader
     title={`Move "${page?.title || ''}"`}
-    subtitle="Choose a new parent. Pages under the current page are hidden because they would create a cycle."
+    subtitle="Pick a new parent. Pages under the current page are hidden because they would create a cycle."
     onClose={() => (isOpen = false)}
   />
   <div class="dialog">
@@ -99,51 +110,36 @@
       <div class="error" role="alert">{error}</div>
     {/if}
 
-    {#if loading}
-      <p class="status">Loading…</p>
-    {:else}
-      <input
-        bind:this={filterEl}
-        id="page-move-filter"
-        class="filter"
-        type="text"
-        placeholder="Search pages…"
-        bind:value={filter}
-      />
-
-      <ul class="results" data-testid="page-move-results">
-        <li>
-          <button
-            id="page-move-to-root"
-            type="button"
-            class="result"
-            disabled={saving || page?.parent_id == null}
-            onclick={() => moveTo(null)}
-          >
-            <span class="path">/</span>
-            <span>Workspace root</span>
-          </button>
-        </li>
-        {#each filtered as candidate (candidate.id)}
-          <li>
-            <button
-              type="button"
-              class="result"
-              data-testid="page-move-candidate"
-              disabled={saving || candidate.id === page?.parent_id}
-              onclick={() => moveTo(candidate.id)}
-            >
-              <span class="path">{candidate.path || '/'}</span>
-              <span>{candidate.title}</span>
-            </button>
-          </li>
-        {/each}
-      </ul>
-    {/if}
+    <BasePicker
+      id="page-move-picker"
+      bind:value={pickedParentId}
+      items={candidates}
+      {loading}
+      placeholder="Search pages…"
+      showUnassigned={rootAvailable}
+      unassignedLabel="Workspace root"
+      searchFields={['title', 'path']}
+      getValue={(p) => p.id}
+      getLabel={(p) => p.title}
+      onSelect={onPick}
+    >
+      {#snippet itemSnippet({ item: candidate })}
+        <div class="flex flex-col min-w-0">
+          <span class="font-medium truncate">{candidate.title}</span>
+          <span class="path-hint truncate" style="color: var(--ds-text-subtle);">
+            {candidate.path || '/'}
+          </span>
+        </div>
+      {/snippet}
+    </BasePicker>
   </div>
   <DialogFooter
     cancelLabel="Cancel"
+    confirmLabel="Move"
+    confirmDisabled={!selectionMade}
+    loading={saving}
     onCancel={() => (isOpen = false)}
+    onConfirm={confirmMove}
   />
 </Modal>
 
@@ -155,50 +151,8 @@
     gap: 0.75rem;
   }
 
-  .filter {
-    padding: 0.375rem 0.5rem;
-    font-size: 0.875rem;
-    border: 1px solid var(--ds-border, #d1d5db);
-    border-radius: 0.25rem;
-    background: var(--ds-background-input, #fff);
-    color: var(--ds-text, #111);
-  }
-
-  .results {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    max-height: 320px;
-    overflow-y: auto;
-    border: 1px solid var(--ds-border, #e5e7eb);
-    border-radius: 0.25rem;
-  }
-
-  .result {
-    width: 100%;
-    text-align: left;
-    background: transparent;
-    border: none;
-    padding: 0.5rem 0.75rem;
-    cursor: pointer;
-    display: flex;
-    flex-direction: column;
-    gap: 0.125rem;
-    border-bottom: 1px solid var(--ds-border, #f3f4f6);
-  }
-
-  .result:hover:not(:disabled) {
-    background: var(--ds-background-neutral-hovered, #f3f4f6);
-  }
-
-  .result:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
-
-  .path {
+  .path-hint {
     font-size: 0.75rem;
-    color: var(--ds-text-subtle, #6b7280);
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   }
 
@@ -207,11 +161,6 @@
     background: var(--ds-status-danger-bg, #fef2f2);
     color: var(--ds-text-danger, #b91c1c);
     border-radius: 0.25rem;
-    font-size: 0.875rem;
-  }
-
-  .status {
-    color: var(--ds-text-subtle, #6b7280);
     font-size: 0.875rem;
   }
 </style>
