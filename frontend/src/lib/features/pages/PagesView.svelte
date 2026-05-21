@@ -4,6 +4,7 @@
   import { navigate } from '../../router.js';
   import LazyMilkdownEditor from '../../editors/LazyMilkdownEditor.svelte';
   import PagePermissionsDialog from './PagePermissionsDialog.svelte';
+  import PageMoveDialog from './PageMoveDialog.svelte';
   import { parseMarkdownHeadings, slugify } from './markdownToc.js';
 
   /**
@@ -28,6 +29,7 @@
   let creating = $state(false);
   let newTitle = $state('');
   let permsDialogOpen = $state(false);
+  let moveDialogOpen = $state(false);
 
   // Headings are re-parsed from draftContent reactively. We use draftContent
   // rather than selectedPage.content so the TOC tracks unsaved edits.
@@ -266,6 +268,14 @@
             {saving ? 'Saving…' : 'Save'}
           </button>
           <button
+            id="page-move-button"
+            type="button"
+            onclick={() => (moveDialogOpen = true)}
+            disabled={saving}
+          >
+            Move
+          </button>
+          <button
             id="page-permissions-button"
             type="button"
             onclick={() => (permsDialogOpen = true)}
@@ -328,6 +338,15 @@
     {workspaceId}
     pageId={selectedPage.id}
     onUpdated={loadTree}
+  />
+  <PageMoveDialog
+    bind:isOpen={moveDialogOpen}
+    {workspaceId}
+    page={selectedPage}
+    onMoved={async () => {
+      await loadTree();
+      await loadPage(selectedPage.id);
+    }}
   />
 {/if}
 
