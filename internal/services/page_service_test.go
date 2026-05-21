@@ -254,6 +254,65 @@ func TestPageService_Update_PreservesInheritPermissions(t *testing.T) {
 	}
 }
 
+// Bug-hunt-2 #4: Move previously checked only the moved page's new
+// depth, not the subtree's. A deep chain of descendants reparented
+// under a deep parent could land descendants past MaxPageDepth.
+func TestPageService_Move_RejectsWhenSubtreeWouldOverflowDepth(t *testing.T) {
+	db := newPagesTestDB(t)
+	s := NewPageService(db)
+
+	// Build a chain a → b → c → d as a subtree (4 levels deep). Then
+	// build another chain e → f → … long enough that grafting the
+	// 4-level subtree under its tail would breach MaxPageDepth=30.
+	a, err := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "a"})
+	if err != nil {
+		t.Fatalf("a: %v", err)
+	}
+	b, err := s.Create(1, CreatePageInput{WorkspaceID: 1, ParentID: &a.ID, Title: "b"})
+	if err != nil {
+		t.Fatalf("b: %v", err)
+	}
+	c, err := s.Create(1, CreatePageInput{WorkspaceID: 1, ParentID: &b.ID, Title: "c"})
+	if err != nil {
+		t.Fatalf("c: %v", err)
+	}
+	if _, err := s.Create(1, CreatePageInput{WorkspaceID: 1, ParentID: &c.ID, Title: "d"}); err != nil {
+		t.Fatalf("d: %v", err)
+	}
+	// a-subtree max depth is 3 (a=0, d=3). page.Depth+offset=3.
+
+	// Build the long chain under root. Take it up to depth 28 — moving
+	// a (offset 3) under depth-28 would land d at depth 31, past
+	// MaxPageDepth=30.
+	parentID := 0
+	for i := 0; i < 28; i++ {
+		var in CreatePageInput
+		in.WorkspaceID = 1
+		in.Title = fmt.Sprintf("chain-%d", i)
+		if parentID != 0 {
+			pid := parentID
+			in.ParentID = &pid
+		}
+		page, cerr := s.Create(1, in)
+		if cerr != nil {
+			t.Fatalf("chain[%d]: %v", i, cerr)
+		}
+		parentID = page.ID
+	}
+	deepLeaf, _ := s.GetByID(parentID)
+	// deepLeaf.Depth should be 27 (28 nodes starting at 0).
+	if deepLeaf.Depth != 27 {
+		t.Fatalf("expected deepLeaf.Depth=27, got %d", deepLeaf.Depth)
+	}
+
+	// Moving `a` (whose subtree has max-offset 3) under deepLeaf would
+	// land its `d` descendant at depth 28+3=31 (>= MaxPageDepth=30).
+	// The move must refuse.
+	if _, err := s.Move(1, a.ID, &deepLeaf.ID); !errors.Is(err, ErrPageDepthExceeded) {
+		t.Errorf("subtree depth overflow: want ErrPageDepthExceeded, got %v", err)
+	}
+}
+
 func TestPageService_Move_RejectsSelf(t *testing.T) {
 	db := newPagesTestDB(t)
 	s := NewPageService(db)

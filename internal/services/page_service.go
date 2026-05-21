@@ -7,6 +7,7 @@ package services
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -268,6 +269,26 @@ func (s *PageService) Move(actorID, pageID int, newParentID *int) (*models.Page,
 				return nil, ErrPageDepthExceeded
 			}
 			newPath = parent.Path + fmt.Sprintf("%d/", parent.ID)
+		}
+
+		// Verify the WHOLE subtree fits under MaxPageDepth after the
+		// shift, not just the moved page. The deepest descendant gains
+		// (newDepth - page.Depth) levels; if its post-move depth would
+		// breach the cap, refuse the move. Pulled into a single MAX
+		// query so deeply-nested subtrees don't cost a recursive walk.
+		descendantPrefix := page.Path + fmt.Sprintf("%d/", page.ID)
+		var deepestDescendant sql.NullInt64
+		if err := tx.QueryRow(
+			`SELECT MAX(depth) FROM pages WHERE workspace_id = ? AND path LIKE ?`,
+			page.WorkspaceID, descendantPrefix+"%",
+		).Scan(&deepestDescendant); err != nil {
+			return nil, fmt.Errorf("measure subtree depth: %w", err)
+		}
+		if deepestDescendant.Valid {
+			shifted := int(deepestDescendant.Int64) - page.Depth + newDepth
+			if shifted >= repository.MaxPageDepth {
+				return nil, ErrPageDepthExceeded
+			}
 		}
 
 		if err := s.pages.MoveTx(tx, pageID, newParentID, newPath, newDepth, actorID); err != nil {
