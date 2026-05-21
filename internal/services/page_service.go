@@ -295,6 +295,14 @@ func (s *PageService) Move(actorID, pageID int, newParentID *int) (*models.Page,
 			if errors.Is(err, repository.ErrNotFound) {
 				return nil, ErrPageNotFound
 			}
+			// Repo maps unique-violations (composite UNIQUE on
+			// workspace_id, parent_id, slug or the partial root-slug
+			// index) to ErrDuplicateEntry. Without translation here the
+			// handler hit its default 500 branch instead of the 409 the
+			// other slug-conflict paths already produced.
+			if errors.Is(err, repository.ErrDuplicateEntry) {
+				return nil, ErrPageSlugConflict
+			}
 			return nil, err
 		}
 

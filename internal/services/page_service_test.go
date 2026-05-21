@@ -313,6 +313,36 @@ func TestPageService_Move_RejectsWhenSubtreeWouldOverflowDepth(t *testing.T) {
 	}
 }
 
+// Bug-hunt-2 #5: a Move that would collide with a sibling slug must
+// surface ErrPageSlugConflict (→ 409), not the bare repository error
+// (→ 500). The repository emits ErrDuplicateEntry on the unique
+// violation; Move now translates it.
+func TestPageService_Move_SurfacesSlugConflictAsErrPageSlugConflict(t *testing.T) {
+	db := newPagesTestDB(t)
+	s := NewPageService(db)
+
+	// Two pages with the same slug under different parents — fine.
+	parentA, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "ParentA"})
+	parentB, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "ParentB"})
+	// Both children get slug "notes" because pickAvailableSlug only
+	// disambiguates within the same parent.
+	_, err := s.Create(1, CreatePageInput{WorkspaceID: 1, ParentID: &parentA.ID, Title: "Notes"})
+	if err != nil {
+		t.Fatalf("a/notes: %v", err)
+	}
+	childB, err := s.Create(1, CreatePageInput{WorkspaceID: 1, ParentID: &parentB.ID, Title: "Notes"})
+	if err != nil {
+		t.Fatalf("b/notes: %v", err)
+	}
+
+	// Move childB under parentA — both children would now sit under
+	// parentA with the same slug, hitting the UNIQUE constraint at the
+	// repo. Service must translate to ErrPageSlugConflict.
+	if _, err := s.Move(1, childB.ID, &parentA.ID); !errors.Is(err, ErrPageSlugConflict) {
+		t.Errorf("slug collision on move: want ErrPageSlugConflict, got %v", err)
+	}
+}
+
 func TestPageService_Move_RejectsSelf(t *testing.T) {
 	db := newPagesTestDB(t)
 	s := NewPageService(db)
