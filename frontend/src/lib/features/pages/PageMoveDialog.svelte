@@ -30,6 +30,11 @@
   $effect(() => {
     if (isOpen && page) {
       loadCandidates();
+      // Focus the filter input after the modal mounts. Using a programmatic
+      // focus rather than the `autofocus` HTML attribute avoids the
+      // a11y-autofocus warning while still landing the cursor where the
+      // user expects when the dialog opens.
+      tick().then(() => filterEl?.focus());
     }
     if (!isOpen) {
       filter = '';
@@ -96,12 +101,12 @@
       <p class="status">Loading…</p>
     {:else}
       <input
+        bind:this={filterEl}
         id="page-move-filter"
         class="filter"
         type="text"
         placeholder="Search pages…"
         bind:value={filter}
-        autofocus
       />
 
       <ul class="results" data-testid="page-move-results">
