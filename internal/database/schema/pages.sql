@@ -41,6 +41,14 @@ CREATE INDEX IF NOT EXISTS idx_pages_content_hash ON pages(content_hash) WHERE c
 CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_workspace_home ON pages(workspace_id) WHERE is_home = 1 AND archived_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_pages_workspace_parent_rank ON pages(workspace_id, parent_id, rank) WHERE rank IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_frac_index ON pages(frac_index) WHERE frac_index IS NOT NULL;
+-- UNIQUE(workspace_id, parent_id, slug) above is bypassed for root pages
+-- because parent_id IS NULL collates as NOT EQUAL to itself in both
+-- SQLite and PostgreSQL. This partial unique index plugs that gap for
+-- live (non-archived) root pages so concurrent inserts cannot race past
+-- the service-level pickAvailableSlug check. Archived root pages may
+-- still share a slug — once archived they're frozen and out of the
+-- caller's address space.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_workspace_root_slug ON pages(workspace_id, slug) WHERE parent_id IS NULL AND archived_at IS NULL;
 
 -- Immutable page revision history. revision_number is assigned MAX(revision_number)+1
 -- inside the same transaction as the page mutation that produced it.
