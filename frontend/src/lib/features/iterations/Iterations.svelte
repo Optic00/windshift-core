@@ -317,7 +317,7 @@
       {#snippet typeCell(item)}
         {#if item.type_name}
           <span
-            class="inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium"
+            class="inline-flex items-center gap-1.5 whitespace-nowrap px-2 py-1 rounded text-xs font-medium"
             style="background-color: {item.type_color || '#6b7280'}20; color: {item.type_color || '#6b7280'};"
           >
             <ColorDot color={item.type_color || '#6b7280'} />
@@ -378,7 +378,7 @@
               class="rounded-xl border shadow-sm"
             >
               {#snippet name(item)}<div class="flex items-center gap-2">{@render nameCell(item)}</div>{/snippet}
-              {#snippet type(item)}<div>{@render typeCell(item)}</div>{/snippet}
+              {#snippet type(item)}<div class="whitespace-nowrap">{@render typeCell(item)}</div>{/snippet}
               {#snippet date_range(item)}<div class="flex items-baseline gap-2">{@render dateRangeCell(item)}</div>{/snippet}
               {#snippet status(item)}<div class="flex items-center gap-2">{@render statusCell(item)}</div>{/snippet}
             </DataTable>
@@ -405,7 +405,7 @@
                   class="rounded-xl border shadow-sm"
                 >
                   {#snippet name(item)}<div class="flex items-center gap-2">{@render nameCell(item)}</div>{/snippet}
-                  {#snippet type(item)}<div>{@render typeCell(item)}</div>{/snippet}
+                  {#snippet type(item)}<div class="whitespace-nowrap">{@render typeCell(item)}</div>{/snippet}
                   {#snippet date_range(item)}<div class="flex items-baseline gap-2">{@render dateRangeCell(item)}</div>{/snippet}
                   {#snippet status(item)}<div class="flex items-center gap-2">{@render statusCell(item)}</div>{/snippet}
                 </DataTable>
@@ -432,7 +432,7 @@
                   class="rounded-xl border shadow-sm"
                 >
                   {#snippet name(item)}<div class="flex items-center gap-2">{@render nameCell(item)}</div>{/snippet}
-                  {#snippet type(item)}<div>{@render typeCell(item)}</div>{/snippet}
+                  {#snippet type(item)}<div class="whitespace-nowrap">{@render typeCell(item)}</div>{/snippet}
                   {#snippet date_range(item)}<div class="flex items-baseline gap-2">{@render dateRangeCell(item)}</div>{/snippet}
                   {#snippet status(item)}<div class="flex items-center gap-2">{@render statusCell(item)}</div>{/snippet}
                 </DataTable>
