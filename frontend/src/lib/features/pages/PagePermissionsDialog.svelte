@@ -2,6 +2,11 @@
   import Modal from '../../dialogs/Modal.svelte';
   import ModalHeader from '../../dialogs/ModalHeader.svelte';
   import DialogFooter from '../../dialogs/DialogFooter.svelte';
+  import Button from '../../components/Button.svelte';
+  import Select from '../../components/Select.svelte';
+  import UserPicker from '../../pickers/UserPicker.svelte';
+  import GroupPicker from '../../pickers/GroupPicker.svelte';
+  import RolePicker from '../../pickers/RolePicker.svelte';
   import { api } from '../../api.js';
   import { confirm } from '../../composables/useConfirm.js';
 
@@ -10,11 +15,6 @@
    * effective level for the current user, and the page's own ACL rows.
    * Admins (effective_level === 'admin') can flip inheritance and add or
    * remove ACL rows; lower-tier viewers see the data read-only.
-   *
-   * Phase 2 keeps the principal picker minimal: a type select +
-   * numeric-id input. A richer user/group picker can replace it once we
-   * unify with the existing AssigneePicker — this dialog already wires
-   * the back-end contract so swapping inputs is cosmetic.
    */
   let {
     isOpen = $bindable(false),
@@ -29,8 +29,27 @@
   let saving = $state(false);
 
   let newPrincipalType = $state('user');
-  let newPrincipalId = $state('');
+  /** @type {number | null} principal id bound to whichever picker is active */
+  let newPrincipalId = $state(null);
   let newLevel = $state('view');
+
+  const principalTypeOptions = [
+    { value: 'user', label: 'User' },
+    { value: 'group', label: 'Group' },
+    { value: 'role', label: 'Role' },
+  ];
+
+  const levelOptions = [
+    { value: 'view', label: 'View' },
+    { value: 'edit', label: 'Edit' },
+    { value: 'admin', label: 'Admin' },
+  ];
+
+  // Reset the principal selection when the type changes — a user id makes
+  // no sense once the user has switched to picking a group or role.
+  function onPrincipalTypeChange() {
+    newPrincipalId = null;
+  }
 
   $effect(() => {
     if (isOpen && workspaceId && pageId) {
@@ -39,7 +58,7 @@
     if (!isOpen) {
       data = null;
       error = '';
-      newPrincipalId = '';
+      newPrincipalId = null;
       newPrincipalType = 'user';
       newLevel = 'view';
     }
@@ -76,9 +95,8 @@
 
   async function addGrant() {
     if (!isAdmin) return;
-    const principalId = Number(newPrincipalId);
-    if (!Number.isFinite(principalId) || principalId <= 0) {
-      error = 'Principal ID must be a positive number';
+    if (typeof newPrincipalId !== 'number' || newPrincipalId <= 0) {
+      error = 'Pick a principal before adding the grant';
       return;
     }
     saving = true;
@@ -86,10 +104,10 @@
     try {
       await api.pages.grantPermission(workspaceId, pageId, {
         principalType: newPrincipalType,
-        principalId,
+        principalId: newPrincipalId,
         permissionLevel: newLevel,
       });
-      newPrincipalId = '';
+      newPrincipalId = null;
       await load();
       onUpdated?.();
     } catch (err) {
@@ -197,25 +215,50 @@
               addGrant();
             }}
           >
-            <select bind:value={newPrincipalType} disabled={saving}>
-              <option value="user">User</option>
-              <option value="group">Group</option>
-              <option value="role">Role</option>
-            </select>
-            <input
-              type="number"
-              min="1"
-              placeholder="ID"
-              bind:value={newPrincipalId}
+            <Select
+              id="page-perms-new-principal-type"
+              bind:value={newPrincipalType}
+              options={principalTypeOptions}
               disabled={saving}
-              id="page-perms-new-principal-id"
+              onchange={onPrincipalTypeChange}
             />
-            <select bind:value={newLevel} disabled={saving}>
-              <option value="view">view</option>
-              <option value="edit">edit</option>
-              <option value="admin">admin</option>
-            </select>
-            <button id="page-perms-add-grant" type="submit" disabled={saving}>Add</button>
+            <div class="principal-picker">
+              {#if newPrincipalType === 'user'}
+                <UserPicker
+                  bind:value={newPrincipalId}
+                  {workspaceId}
+                  placeholder="Pick a user"
+                  disabled={saving}
+                />
+              {:else if newPrincipalType === 'group'}
+                <GroupPicker
+                  bind:value={newPrincipalId}
+                  placeholder="Pick a group"
+                  disabled={saving}
+                />
+              {:else}
+                <RolePicker
+                  bind:value={newPrincipalId}
+                  placeholder="Pick a role"
+                  disabled={saving}
+                />
+              {/if}
+            </div>
+            <Select
+              id="page-perms-new-level"
+              bind:value={newLevel}
+              options={levelOptions}
+              disabled={saving}
+            />
+            <Button
+              id="page-perms-add-grant"
+              type="submit"
+              variant="primary"
+              size="small"
+              disabled={saving || typeof newPrincipalId !== 'number' || newPrincipalId <= 0}
+            >
+              Add
+            </Button>
           </form>
         {/if}
       </section>
@@ -290,29 +333,14 @@
 
   .add-grant {
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr auto;
+    grid-template-columns: minmax(8rem, 1fr) minmax(12rem, 1.5fr) minmax(7rem, 1fr) auto;
     gap: 0.5rem;
     margin-top: 0.75rem;
+    align-items: start;
   }
 
-  .add-grant select,
-  .add-grant input {
-    padding: 0.375rem 0.5rem;
-    font-size: 0.875rem;
-    border: 1px solid var(--ds-border, #d1d5db);
-    border-radius: 0.25rem;
-    background: var(--ds-background-input, #fff);
-    color: var(--ds-text, #111);
-  }
-
-  .add-grant button {
-    padding: 0.375rem 0.75rem;
-    font-size: 0.875rem;
-    border: 1px solid var(--ds-border, #d1d5db);
-    border-radius: 0.25rem;
-    background: var(--ds-surface-raised, #fff);
-    color: var(--ds-text, #111);
-    cursor: pointer;
+  .principal-picker {
+    min-width: 0;
   }
 
   .error {
