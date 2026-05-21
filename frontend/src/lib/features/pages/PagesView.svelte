@@ -487,26 +487,81 @@
     color: var(--ds-text);
   }
 
+  /* Single-column when no TOC; two-column only when there are
+     headings to show. Grid with a reserved 220px right column left
+     dead space below the editor frame, even when the TOC wasn't
+     rendered. */
   .editor-row {
-    display: grid;
-    grid-template-columns: 1fr 220px;
+    display: flex;
+    flex-direction: row;
     gap: 2rem;
     flex: 1;
     min-height: 0;
   }
 
   /* Frameless editor: no border, no rounded corners, no background —
-     the Markdown content sits flush with the page like Docmost. */
+     content sits flush with the page like Docmost. The flex chain
+     below propagates height all the way down to .ProseMirror so a
+     click anywhere in the empty space lands the cursor at the end of
+     the document. */
   .editor-frame {
     flex: 1;
-    min-height: 60vh;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* The embedded MilkdownEditor ships its own border + 150px
+     min-height that paint as a small card. Inside the pages surface
+     we strip the card and stretch every wrapper in the chain so the
+     ProseMirror surface fills the whole page-pane. The selectors are
+     scoped to `.editor-frame` so other consumers of MilkdownEditor
+     (inline editors, item descriptions) keep their boxed look. */
+  :global(.editor-frame .milkdown-wrapper) {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  :global(.editor-frame .milkdown-editor),
+  :global(.editor-frame .milkdown-editor.has-toolbar) {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
     border: none;
     border-radius: 0;
     background: transparent;
     overflow: visible;
   }
 
+  :global(.editor-frame .milkdown-toolbar) {
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  :global(.editor-frame .milkdown-editor .milkdown) {
+    flex: 1;
+    min-height: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ProseMirror itself must grow so the entire empty column is
+     clickable + focusable, not just the first text node. */
+  :global(.editor-frame .milkdown-editor .ProseMirror) {
+    flex: 1;
+    min-height: 50vh;
+    outline: none;
+  }
+
   .toc {
+    flex: 0 0 220px;
     position: sticky;
     top: 0;
     align-self: start;
