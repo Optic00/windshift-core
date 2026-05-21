@@ -401,7 +401,9 @@
 
   .page-frame {
     width: 100%;
-    max-width: 880px;
+    /* No max-width — use the full pane. The right-hand TOC column
+       takes its own 220px slot in the editor-row, so the editor still
+       has a natural right margin when headings exist. */
     margin: 0 auto;
     padding: 0 3rem;
     display: flex;
@@ -569,7 +571,9 @@
   :global(.editor-frame .milkdown-wrapper .milkdown-editor .milkdown) {
     flex: 1;
     min-height: 0;
-    padding: 0;
+    /* Breathing room between the toolbar's divider and the first
+       paragraph; otherwise the body sits flush against the hairline. */
+    padding: 1.5rem 0 0 0;
     display: flex;
     flex-direction: column;
   }
