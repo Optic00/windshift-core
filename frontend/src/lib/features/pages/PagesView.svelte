@@ -4,6 +4,7 @@
   import { navigate } from '../../router.js';
   import LazyMilkdownEditor from '../../editors/LazyMilkdownEditor.svelte';
   import PagePermissionsDialog from './PagePermissionsDialog.svelte';
+  import { parseMarkdownHeadings, slugify } from './markdownToc.js';
 
   /**
    * Workspace knowledge-pages view: left tree + right Markdown editor.
@@ -27,6 +28,10 @@
   let creating = $state(false);
   let newTitle = $state('');
   let permsDialogOpen = $state(false);
+
+  // Headings are re-parsed from draftContent reactively. We use draftContent
+  // rather than selectedPage.content so the TOC tracks unsaved edits.
+  let headings = $derived(parseMarkdownHeadings(draftContent));
 
   onMount(async () => {
     await loadTree();
@@ -140,6 +145,43 @@
     draftTitle = event.target.value;
     if (selectedPage && draftTitle !== selectedPage.title) dirty = true;
   }
+
+  // TOC click → find the matching heading in the rendered ProseMirror DOM
+  // and scrollIntoView. We match by text slug so the lookup works even
+  // though Milkdown doesn't stamp heading IDs onto the DOM. Updates the
+  // URL hash so the deep link is copyable.
+  function scrollToHeading(heading) {
+    const root = document.querySelector('.editor-frame .ProseMirror');
+    if (!root) return;
+    const nodes = root.querySelectorAll('h1, h2, h3, h4, h5, h6');
+    for (const node of nodes) {
+      if (slugify(node.textContent || '') === heading.slug) {
+        node.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        // Replace, not push: TOC navigation inside a single page shouldn't
+        // pollute history.
+        try {
+          history.replaceState(null, '', `#${heading.slug}`);
+        } catch (_) {
+          // Ignore SecurityError in sandboxed previews.
+        }
+        return;
+      }
+    }
+  }
+
+  // After a page loads and the editor renders, honor any hash in the URL
+  // by scrolling to the matching heading once. Subsequent navigations
+  // within the page are handled by scrollToHeading directly.
+  $effect(() => {
+    if (!selectedPage || loadingPage) return;
+    const hash = window.location.hash?.slice(1);
+    if (!hash) return;
+    const target = headings.find((h) => h.slug === hash);
+    if (!target) return;
+    // Wait a tick for the editor's lazy import + render to settle.
+    const handle = setTimeout(() => scrollToHeading(target), 100);
+    return () => clearTimeout(handle);
+  });
 </script>
 
 <div class="pages-view">
@@ -242,15 +284,39 @@
           </button>
         </div>
       </div>
-      <div class="editor-frame" data-testid="page-editor">
-        <LazyMilkdownEditor
-          bind:content={draftContent}
-          placeholder="Start writing…"
-          showToolbar={true}
-          entityType="page"
-          entityId={selectedPage.id}
-          onContentChange={onContentInput}
-        />
+      <div class="editor-row">
+        <div class="editor-frame" data-testid="page-editor">
+          <LazyMilkdownEditor
+            bind:content={draftContent}
+            placeholder="Start writing…"
+            showToolbar={true}
+            entityType="page"
+            entityId={selectedPage.id}
+            onContentChange={onContentInput}
+          />
+        </div>
+        {#if headings.length > 0}
+          <aside class="toc" data-testid="page-toc" aria-label="Table of contents">
+            <h3>On this page</h3>
+            <ul>
+              {#each headings as heading (heading.line)}
+                <li
+                  class="toc-item"
+                  data-testid="page-toc-entry"
+                  style="padding-left: {(heading.level - 1) * 0.75}rem"
+                >
+                  <button
+                    type="button"
+                    onclick={() => scrollToHeading(heading)}
+                    title={heading.text}
+                  >
+                    {heading.text}
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          </aside>
+        {/if}
       </div>
     {/if}
   </main>
@@ -395,12 +461,74 @@
     color: var(--ds-text-danger, #b91c1c);
   }
 
+  .editor-row {
+    display: grid;
+    grid-template-columns: 1fr 220px;
+    gap: 1.5rem;
+    flex: 1;
+    min-height: 0;
+  }
+
   .editor-frame {
     flex: 1;
     min-height: 300px;
     border: 1px solid var(--ds-border, #e5e7eb);
     border-radius: 0.375rem;
     overflow: hidden;
+  }
+
+  .toc {
+    position: sticky;
+    top: 0;
+    align-self: start;
+    max-height: calc(100vh - 8rem);
+    overflow-y: auto;
+    border-left: 1px solid var(--ds-border, #e5e7eb);
+    padding-left: 1rem;
+    font-size: 0.8125rem;
+  }
+
+  .toc h3 {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--ds-text-subtle, #6b7280);
+  }
+
+  .toc ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+  }
+
+  .toc button {
+    background: transparent;
+    border: none;
+    padding: 0.25rem 0;
+    text-align: left;
+    color: var(--ds-text-subtle, #6b7280);
+    cursor: pointer;
+    width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .toc button:hover {
+    color: var(--ds-text, #111);
+  }
+
+  @media (max-width: 1100px) {
+    .editor-row {
+      grid-template-columns: 1fr;
+    }
+    .toc {
+      display: none;
+    }
   }
 
   .error {
