@@ -47,6 +47,39 @@ func newPagesTestDB(t *testing.T) database.Database {
 			archived_at DATETIME,
 			UNIQUE(workspace_id, parent_id, slug)
 		)`,
+		`CREATE TABLE page_revisions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			page_id INTEGER NOT NULL,
+			revision_number INTEGER NOT NULL,
+			title TEXT NOT NULL,
+			slug TEXT NOT NULL,
+			content TEXT NOT NULL DEFAULT '',
+			content_hash TEXT NOT NULL DEFAULT '',
+			excerpt TEXT NOT NULL DEFAULT '',
+			parent_id INTEGER,
+			path TEXT NOT NULL DEFAULT '/',
+			depth INTEGER NOT NULL DEFAULT 0,
+			change_summary TEXT NOT NULL DEFAULT '',
+			change_type TEXT NOT NULL DEFAULT 'edit',
+			created_by INTEGER NOT NULL,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(page_id, revision_number)
+		)`,
+		`CREATE TABLE page_chunks (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			page_id INTEGER NOT NULL,
+			workspace_id INTEGER NOT NULL,
+			revision_number INTEGER NOT NULL,
+			position INTEGER NOT NULL,
+			heading_path TEXT NOT NULL DEFAULT '',
+			content TEXT NOT NULL,
+			token_count INTEGER NOT NULL DEFAULT 0,
+			byte_start INTEGER NOT NULL DEFAULT 0,
+			byte_end INTEGER NOT NULL DEFAULT 0,
+			content_hash TEXT NOT NULL DEFAULT '',
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(page_id, revision_number, position)
+		)`,
 		`INSERT INTO workspaces (id, name, key) VALUES (1, 'ws', 'WS'), (2, 'ws2', 'WS2')`,
 		`INSERT INTO users (id, username) VALUES (1, 'alice'), (2, 'bob')`,
 	} {
@@ -291,6 +324,213 @@ func TestPageService_ListTree_FiltersArchived(t *testing.T) {
 	}
 	if len(full) != 2 {
 		t.Errorf("expected 2 pages with archived included, got %d", len(full))
+	}
+}
+
+func TestPageService_Create_WritesFirstRevisionAndChunks(t *testing.T) {
+	db := newPagesTestDB(t)
+	s := NewPageService(db)
+
+	page, err := s.Create(1, CreatePageInput{
+		WorkspaceID: 1,
+		Title:       "Onboarding",
+		Content:     "# Welcome\n\nThis is the intro.\n\n## Setup\n\nFollow these steps.",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	revs, err := s.ListRevisions(page.ID, 0, 0)
+	if err != nil {
+		t.Fatalf("list revisions: %v", err)
+	}
+	if len(revs) != 1 {
+		t.Fatalf("expected 1 revision after create, got %d", len(revs))
+	}
+	if revs[0].ChangeType != "create" || revs[0].RevisionNumber != 1 {
+		t.Errorf("first revision: change_type=%q rev=%d, want change_type=create rev=1", revs[0].ChangeType, revs[0].RevisionNumber)
+	}
+
+	chunks := listChunksForPage(t, db, page.ID)
+	if len(chunks) < 2 {
+		t.Fatalf("expected at least 2 chunks (2 headings), got %d", len(chunks))
+	}
+	if chunks[0].RevisionNumber != 1 {
+		t.Errorf("chunk revision_number: want 1, got %d", chunks[0].RevisionNumber)
+	}
+	if chunks[0].HeadingPath == "" {
+		t.Error("first chunk should carry the heading_path of the first heading section")
+	}
+}
+
+func TestPageService_Update_BumpsRevisionAndRebuildsChunks(t *testing.T) {
+	db := newPagesTestDB(t)
+	s := NewPageService(db)
+
+	page, err := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "Doc", Content: "# A\n\nbody"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if _, err := s.Update(2, UpdatePageInput{ID: page.ID, Title: "Doc", Content: "# A\n\nrewritten body"}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+
+	revs, err := s.ListRevisions(page.ID, 0, 0)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(revs) != 2 {
+		t.Fatalf("expected 2 revisions, got %d", len(revs))
+	}
+	if revs[0].RevisionNumber != 2 || revs[0].ChangeType != "edit" {
+		t.Errorf("newest revision: rev=%d type=%q, want 2/edit", revs[0].RevisionNumber, revs[0].ChangeType)
+	}
+
+	chunks := listChunksForPage(t, db, page.ID)
+	for _, c := range chunks {
+		if c.RevisionNumber != 2 {
+			t.Errorf("chunk revision_number: want 2, got %d", c.RevisionNumber)
+		}
+		if !strings.Contains(c.Content, "rewritten") {
+			t.Errorf("chunk content should reflect latest update, got %q", c.Content)
+		}
+	}
+}
+
+func TestPageService_Restore_ProducesRestoreRevision(t *testing.T) {
+	db := newPagesTestDB(t)
+	s := NewPageService(db)
+
+	page, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "Doc", Content: "original"})
+	if _, err := s.Update(2, UpdatePageInput{ID: page.ID, Title: "Doc", Content: "second pass"}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+
+	revs, _ := s.ListRevisions(page.ID, 0, 0)
+	// revs[0] = rev 2 (edit), revs[1] = rev 1 (create with "original" content)
+	var rev1 int
+	for _, r := range revs {
+		if r.RevisionNumber == 1 {
+			rev1 = r.ID
+			break
+		}
+	}
+	if rev1 == 0 {
+		t.Fatalf("revision 1 not found in %+v", revs)
+	}
+
+	restored, err := s.Restore(1, page.ID, rev1)
+	if err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if restored.Content != "original" {
+		t.Errorf("restored content: want %q, got %q", "original", restored.Content)
+	}
+
+	revs2, _ := s.ListRevisions(page.ID, 0, 0)
+	if len(revs2) != 3 {
+		t.Fatalf("expected 3 revisions after restore, got %d", len(revs2))
+	}
+	if revs2[0].ChangeType != "restore" {
+		t.Errorf("newest revision should be 'restore', got %q", revs2[0].ChangeType)
+	}
+}
+
+func TestPageService_Restore_RejectsCrossPageRevision(t *testing.T) {
+	db := newPagesTestDB(t)
+	s := NewPageService(db)
+	a, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "A", Content: "a"})
+	b, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "B", Content: "b"})
+
+	bRevs, _ := s.ListRevisions(b.ID, 0, 0)
+	if len(bRevs) == 0 {
+		t.Fatalf("no revisions on B")
+	}
+	if _, err := s.Restore(1, a.ID, bRevs[0].ID); !errors.Is(err, ErrPageRevisionMismatch) {
+		t.Errorf("want ErrPageRevisionMismatch, got %v", err)
+	}
+}
+
+func TestPageService_Archive_RemovesChunks(t *testing.T) {
+	db := newPagesTestDB(t)
+	s := NewPageService(db)
+	page, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "Old", Content: "stuff to forget"})
+
+	if got := listChunksForPage(t, db, page.ID); len(got) == 0 {
+		t.Fatalf("expected chunks before archive")
+	}
+	if err := s.Archive(1, page.ID); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	if got := listChunksForPage(t, db, page.ID); len(got) != 0 {
+		t.Errorf("expected chunks removed on archive, got %d", len(got))
+	}
+
+	revs, _ := s.ListRevisions(page.ID, 0, 0)
+	if len(revs) == 0 || revs[0].ChangeType != "archive" {
+		t.Errorf("newest revision should be 'archive', got %+v", revs)
+	}
+}
+
+// listChunksForPage reads page_chunks directly for assertions, decoupled
+// from the service surface so test failures point at the chunk pipeline.
+type chunkRow struct {
+	Position       int
+	RevisionNumber int
+	HeadingPath    string
+	Content        string
+}
+
+func listChunksForPage(t *testing.T, db database.Database, pageID int) []chunkRow {
+	t.Helper()
+	rows, err := db.Query(`
+		SELECT position, revision_number, heading_path, content
+		FROM page_chunks WHERE page_id = ? ORDER BY position
+	`, pageID)
+	if err != nil {
+		t.Fatalf("query chunks: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []chunkRow
+	for rows.Next() {
+		var c chunkRow
+		if err := rows.Scan(&c.Position, &c.RevisionNumber, &c.HeadingPath, &c.Content); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+func TestChunkPageMarkdown_BreaksOnHeadings(t *testing.T) {
+	md := "# Top\n\nintro\n\n## Mid\n\nmiddle\n\n### Deep\n\nbottom\n"
+	specs := chunkPageMarkdown(md)
+	if len(specs) < 3 {
+		t.Fatalf("expected at least 3 chunks for 3 headings, got %d", len(specs))
+	}
+	if specs[0].HeadingPath != "Top" {
+		t.Errorf("first chunk heading_path: want Top, got %q", specs[0].HeadingPath)
+	}
+	if specs[1].HeadingPath != "Top > Mid" {
+		t.Errorf("second chunk heading_path: want Top > Mid, got %q", specs[1].HeadingPath)
+	}
+	if specs[2].HeadingPath != "Top > Mid > Deep" {
+		t.Errorf("third chunk heading_path: want Top > Mid > Deep, got %q", specs[2].HeadingPath)
+	}
+}
+
+func TestChunkPageMarkdown_SplitsOversizeSections(t *testing.T) {
+	body := strings.Repeat("paragraph one. ", 200) + "\n\n" + strings.Repeat("paragraph two. ", 200)
+	md := "# Big\n\n" + body
+	specs := chunkPageMarkdown(md)
+	if len(specs) < 2 {
+		t.Fatalf("expected oversize section to split, got %d", len(specs))
+	}
+	for _, s := range specs {
+		if len(s.Content) > pageChunkMaxBytes+pageChunkMinBytes {
+			t.Errorf("chunk exceeds max+min slack: %d bytes", len(s.Content))
+		}
 	}
 }
 

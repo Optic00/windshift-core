@@ -441,6 +441,177 @@ func (r *PageRepository) WouldCreatePageCycleTx(tx database.Tx, pageID, newParen
 	return true, nil
 }
 
+// --- revisions ---
+
+// pageRevisionColumns mirrors models.PageRevision field order.
+const pageRevisionColumns = `id, page_id, revision_number, title, slug, content, content_hash,
+	excerpt, parent_id, path, depth, change_summary, change_type, created_by, created_at`
+
+func scanPageRevision(s rowScanner) (*models.PageRevision, error) {
+	var rev models.PageRevision
+	var parentID sql.NullInt64
+	if err := s.Scan(
+		&rev.ID, &rev.PageID, &rev.RevisionNumber, &rev.Title, &rev.Slug, &rev.Content, &rev.ContentHash,
+		&rev.Excerpt, &parentID, &rev.Path, &rev.Depth, &rev.ChangeSummary, &rev.ChangeType,
+		&rev.CreatedBy, &rev.CreatedAt,
+	); err != nil {
+		return nil, err
+	}
+	if parentID.Valid {
+		v := int(parentID.Int64)
+		rev.ParentID = &v
+	}
+	return &rev, nil
+}
+
+// NextRevisionNumberTx returns MAX(revision_number)+1 for the given page,
+// or 1 when the page has no revisions yet. Run inside the same tx as the
+// subsequent insert so revision_number stays unique under concurrent writes.
+func (r *PageRepository) NextRevisionNumberTx(tx database.Tx, pageID int) (int, error) {
+	var next int
+	err := tx.QueryRow(
+		"SELECT COALESCE(MAX(revision_number), 0) + 1 FROM page_revisions WHERE page_id = ?",
+		pageID,
+	).Scan(&next)
+	if err != nil {
+		return 0, fmt.Errorf("compute next revision number: %w", err)
+	}
+	return next, nil
+}
+
+// InsertRevisionTx persists an immutable snapshot inside an existing tx.
+// Returns the new revision id.
+func (r *PageRepository) InsertRevisionTx(tx database.Tx, rev models.PageRevision) (int, error) {
+	var id int
+	err := tx.QueryRow(`
+		INSERT INTO page_revisions (
+			page_id, revision_number, title, slug, content, content_hash, excerpt,
+			parent_id, path, depth, change_summary, change_type, created_by
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		RETURNING id
+	`,
+		rev.PageID, rev.RevisionNumber, rev.Title, rev.Slug, rev.Content, rev.ContentHash, rev.Excerpt,
+		nullInt(rev.ParentID), rev.Path, rev.Depth, rev.ChangeSummary, rev.ChangeType, rev.CreatedBy,
+	).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("insert revision: %w", err)
+	}
+	return id, nil
+}
+
+// GetRevisionByID loads a single revision. Returns ErrNotFound when no row
+// matches.
+func (r *PageRepository) GetRevisionByID(id int) (*models.PageRevision, error) {
+	row := r.db.QueryRow("SELECT "+pageRevisionColumns+" FROM page_revisions WHERE id = ?", id)
+	rev, err := scanPageRevision(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get revision %d: %w", id, err)
+	}
+	return rev, nil
+}
+
+// ListRevisions returns revisions for a page newest-first. limit <= 0
+// returns up to 50; clients can paginate via offset for older history.
+func (r *PageRepository) ListRevisions(pageID, limit, offset int) ([]models.PageRevision, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	rows, err := r.db.Query(`
+		SELECT `+pageRevisionColumns+`
+		FROM page_revisions
+		WHERE page_id = ?
+		ORDER BY revision_number DESC
+		LIMIT ? OFFSET ?
+	`, pageID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("list revisions: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []models.PageRevision
+	for rows.Next() {
+		rev, scanErr := scanPageRevision(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("scan revision: %w", scanErr)
+		}
+		out = append(out, *rev)
+	}
+	return out, rows.Err()
+}
+
+// --- chunks ---
+
+const pageChunkColumns = `id, page_id, workspace_id, revision_number, position, heading_path,
+	content, token_count, byte_start, byte_end, content_hash, created_at`
+
+func scanPageChunk(s rowScanner) (*models.PageChunk, error) {
+	var c models.PageChunk
+	if err := s.Scan(
+		&c.ID, &c.PageID, &c.WorkspaceID, &c.RevisionNumber, &c.Position, &c.HeadingPath,
+		&c.Content, &c.TokenCount, &c.ByteStart, &c.ByteEnd, &c.ContentHash, &c.CreatedAt,
+	); err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// DeleteChunksForPageTx removes every chunk row for a page within a tx.
+// Used before re-inserting freshly computed chunks.
+func (r *PageRepository) DeleteChunksForPageTx(tx database.Tx, pageID int) error {
+	_, err := tx.Exec("DELETE FROM page_chunks WHERE page_id = ?", pageID)
+	if err != nil {
+		return fmt.Errorf("delete page chunks: %w", err)
+	}
+	return nil
+}
+
+// InsertChunkTx persists a chunk inside the same tx as the page edit that
+// produced it.
+func (r *PageRepository) InsertChunkTx(tx database.Tx, c models.PageChunk) error {
+	_, err := tx.Exec(`
+		INSERT INTO page_chunks (
+			page_id, workspace_id, revision_number, position, heading_path,
+			content, token_count, byte_start, byte_end, content_hash
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, c.PageID, c.WorkspaceID, c.RevisionNumber, c.Position, c.HeadingPath,
+		c.Content, c.TokenCount, c.ByteStart, c.ByteEnd, c.ContentHash)
+	if err != nil {
+		return fmt.Errorf("insert page chunk: %w", err)
+	}
+	return nil
+}
+
+// ListChunksForPage returns chunks in position order. Used by the search
+// pipeline once the page passes the permission check.
+func (r *PageRepository) ListChunksForPage(pageID int) ([]models.PageChunk, error) {
+	rows, err := r.db.Query(`
+		SELECT `+pageChunkColumns+`
+		FROM page_chunks
+		WHERE page_id = ?
+		ORDER BY position ASC
+	`, pageID)
+	if err != nil {
+		return nil, fmt.Errorf("list page chunks: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []models.PageChunk
+	for rows.Next() {
+		c, scanErr := scanPageChunk(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("scan chunk: %w", scanErr)
+		}
+		out = append(out, *c)
+	}
+	return out, rows.Err()
+}
+
 // CountWorkspacePages returns the number of non-archived pages in a
 // workspace. Used by handlers to short-circuit empty trees.
 func (r *PageRepository) CountWorkspacePages(workspaceID int) (int, error) {

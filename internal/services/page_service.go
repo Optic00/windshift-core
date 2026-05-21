@@ -37,12 +37,13 @@ func NewPageService(db database.Database) *PageService {
 // Service-level errors. Wraps repository errors so the handler layer can
 // map them to HTTP status codes without knowing repository internals.
 var (
-	ErrPageNotFound       = errors.New("page not found")
-	ErrPageTitleRequired  = errors.New("page title is required")
-	ErrPageParentMismatch = errors.New("parent page belongs to a different workspace")
-	ErrPageCycle          = errors.New("move would create a cycle")
-	ErrPageDepthExceeded  = errors.New("page tree depth limit exceeded")
-	ErrPageSlugConflict   = errors.New("slug conflicts with an existing sibling page")
+	ErrPageNotFound         = errors.New("page not found")
+	ErrPageTitleRequired    = errors.New("page title is required")
+	ErrPageParentMismatch   = errors.New("parent page belongs to a different workspace")
+	ErrPageCycle            = errors.New("move would create a cycle")
+	ErrPageDepthExceeded    = errors.New("page tree depth limit exceeded")
+	ErrPageSlugConflict     = errors.New("slug conflicts with an existing sibling page")
+	ErrPageRevisionMismatch = errors.New("revision does not belong to the target page")
 )
 
 // CreatePageInput is the request shape for Create. Permission inheritance
@@ -120,6 +121,10 @@ func (s *PageService) Create(actorID int, in CreatePageInput) (*models.Page, err
 
 		page, err := s.pages.GetByIDTx(tx, id)
 		if err != nil {
+			return nil, err
+		}
+
+		if err := s.snapshotAndRebuildChunks(tx, page, actorID, models.PageRevisionChangeTypeCreate, ""); err != nil {
 			return nil, err
 		}
 		return page, nil
@@ -205,7 +210,14 @@ func (s *PageService) Update(actorID int, in UpdatePageInput) (*models.Page, err
 			return nil, err
 		}
 
-		return s.pages.GetByIDTx(tx, in.ID)
+		updated, err := s.pages.GetByIDTx(tx, in.ID)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.snapshotAndRebuildChunks(tx, updated, actorID, models.PageRevisionChangeTypeEdit, ""); err != nil {
+			return nil, err
+		}
+		return updated, nil
 	})
 }
 
@@ -280,7 +292,17 @@ func (s *PageService) Move(actorID, pageID int, newParentID *int) (*models.Page,
 			}
 		}
 
-		return s.pages.GetByIDTx(tx, pageID)
+		moved, err := s.pages.GetByIDTx(tx, pageID)
+		if err != nil {
+			return nil, err
+		}
+		// Move does not rewrite chunks — content didn't change — but we
+		// still snapshot a revision so the audit log captures the
+		// parent/path change.
+		if _, err := s.writeRevisionTx(tx, moved, actorID, models.PageRevisionChangeTypeMove, ""); err != nil {
+			return nil, err
+		}
+		return moved, nil
 	})
 }
 
@@ -311,8 +333,149 @@ func (s *PageService) Archive(actorID, pageID int) error {
 		`, actorID, actorID, pageID, page.WorkspaceID, prefix+"%"); err != nil {
 			return fmt.Errorf("archive subtree: %w", err)
 		}
-		return nil
+
+		// Drop the now-stale chunks for the archived page so search and AI
+		// tools cannot surface content from a hidden page even before the
+		// permission filter runs.
+		if err := s.pages.DeleteChunksForPageTx(tx, page.ID); err != nil {
+			return err
+		}
+
+		archived, err := s.pages.GetByIDTx(tx, page.ID)
+		if err != nil {
+			return err
+		}
+		_, err = s.writeRevisionTx(tx, archived, actorID, models.PageRevisionChangeTypeArchive, "")
+		return err
 	})
+}
+
+// GetRevision returns a single revision by id, or ErrPageNotFound when no
+// row matches.
+func (s *PageService) GetRevision(id int) (*models.PageRevision, error) {
+	rev, err := s.pages.GetRevisionByID(id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, ErrPageNotFound
+		}
+		return nil, err
+	}
+	return rev, nil
+}
+
+// ListRevisions returns the revision history for a page, newest first.
+func (s *PageService) ListRevisions(pageID, limit, offset int) ([]models.PageRevision, error) {
+	return s.pages.ListRevisions(pageID, limit, offset)
+}
+
+// Restore overwrites a page's live content/title with the snapshot stored
+// in the given revision and records a new revision of change_type
+// 'restore'. The revision must belong to the same page; cross-page
+// restores return ErrPageRevisionMismatch.
+func (s *PageService) Restore(actorID, pageID, revisionID int) (*models.Page, error) {
+	return database.WithTxResult(s.db, func(tx database.Tx) (*models.Page, error) {
+		page, err := s.pages.GetByIDTx(tx, pageID)
+		if err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				return nil, ErrPageNotFound
+			}
+			return nil, err
+		}
+		rev, err := s.pages.GetRevisionByID(revisionID)
+		if err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				return nil, ErrPageNotFound
+			}
+			return nil, err
+		}
+		if rev.PageID != pageID {
+			return nil, ErrPageRevisionMismatch
+		}
+
+		// Restore overwrites title/slug/content/excerpt/hash on the live row.
+		// parent/path/depth are deliberately not restored — moving a page is
+		// a separate explicit action. If a user wants to undo a move,
+		// they should run Move explicitly.
+		if err := s.pages.UpdateTx(tx, repository.UpdateInput{
+			ID:                 page.ID,
+			Title:              rev.Title,
+			Slug:               rev.Slug,
+			Content:            rev.Content,
+			ContentHash:        rev.ContentHash,
+			Excerpt:            rev.Excerpt,
+			InheritPermissions: page.InheritPermissions,
+			Rank:               page.Rank,
+			FracIndex:          page.FracIndex,
+			UpdatedBy:          actorID,
+		}); err != nil {
+			if errors.Is(err, repository.ErrDuplicateEntry) {
+				return nil, ErrPageSlugConflict
+			}
+			return nil, err
+		}
+
+		restored, err := s.pages.GetByIDTx(tx, page.ID)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.snapshotAndRebuildChunks(tx, restored, actorID, models.PageRevisionChangeTypeRestore, fmt.Sprintf("restored from revision %d", rev.RevisionNumber)); err != nil {
+			return nil, err
+		}
+		return restored, nil
+	})
+}
+
+// writeRevisionTx persists a revision row for the given page snapshot.
+// Used by every page-mutating operation so the history is always complete.
+// Returns the revision_number that was just written.
+func (s *PageService) writeRevisionTx(tx database.Tx, page *models.Page, actorID int, changeType, summary string) (int, error) {
+	next, err := s.pages.NextRevisionNumberTx(tx, page.ID)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := s.pages.InsertRevisionTx(tx, models.PageRevision{
+		PageID:         page.ID,
+		RevisionNumber: next,
+		Title:          page.Title,
+		Slug:           page.Slug,
+		Content:        page.Content,
+		ContentHash:    page.ContentHash,
+		Excerpt:        page.Excerpt,
+		ParentID:       page.ParentID,
+		Path:           page.Path,
+		Depth:          page.Depth,
+		ChangeSummary:  summary,
+		ChangeType:     changeType,
+		CreatedBy:      actorID,
+	}); err != nil {
+		return 0, err
+	}
+	return next, nil
+}
+
+// snapshotAndRebuildChunks persists a revision and rebuilds the page chunk
+// table in a single transaction. Use this on every content-affecting
+// operation (create, edit, restore). Move uses writeRevisionTx directly
+// because the content hasn't changed.
+func (s *PageService) snapshotAndRebuildChunks(tx database.Tx, page *models.Page, actorID int, changeType, summary string) error {
+	revisionNumber, err := s.writeRevisionTx(tx, page, actorID, changeType, summary)
+	if err != nil {
+		return err
+	}
+	if err := s.pages.DeleteChunksForPageTx(tx, page.ID); err != nil {
+		return err
+	}
+	if page.Content == "" {
+		return nil
+	}
+	specs := chunkPageMarkdown(page.Content)
+	chunks := buildPageChunks(page, revisionNumber, specs)
+	for _, chunk := range chunks {
+		if err := s.pages.InsertChunkTx(tx, chunk); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ListTree returns every non-archived page in a workspace ordered for
