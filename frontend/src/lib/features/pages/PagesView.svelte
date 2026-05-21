@@ -8,6 +8,7 @@
   import { parseMarkdownHeadings, slugify } from './markdownToc.js';
   import Button from '../../components/Button.svelte';
   import Input from '../../components/Input.svelte';
+  import { confirm } from '../../composables/useConfirm.js';
 
   /**
    * Workspace knowledge-pages view: left tree + right Markdown editor.
@@ -113,8 +114,17 @@
     }
   }
 
-  function selectPage(id) {
-    if (dirty && !confirm('You have unsaved changes. Discard?')) return;
+  async function selectPage(id) {
+    if (dirty) {
+      const ok = await confirm({
+        title: 'Discard unsaved changes?',
+        message: 'You have unsaved changes on the current page. They will be lost if you switch.',
+        confirmText: 'Discard',
+        cancelText: 'Keep editing',
+        variant: 'danger',
+      });
+      if (!ok) return;
+    }
     navigate(`/workspaces/${workspaceId}/pages/${id}`);
   }
 
@@ -161,7 +171,14 @@
 
   async function archivePage() {
     if (!selectedPage) return;
-    if (!confirm(`Archive "${selectedPage.title}" and all child pages? This cannot be undone in Phase 1.`)) return;
+    const ok = await confirm({
+      title: `Archive "${selectedPage.title}"?`,
+      message: 'This archives the page and every child page. Phase 1 has no undo for this action.',
+      confirmText: 'Archive',
+      cancelText: 'Cancel',
+      variant: 'danger',
+    });
+    if (!ok) return;
     try {
       await api.pages.archivePage(workspaceId, selectedPage.id);
       selectedPage = null;

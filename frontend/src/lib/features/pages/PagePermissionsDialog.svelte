@@ -3,6 +3,7 @@
   import ModalHeader from '../../dialogs/ModalHeader.svelte';
   import DialogFooter from '../../dialogs/DialogFooter.svelte';
   import { api } from '../../api.js';
+  import { confirm } from '../../composables/useConfirm.js';
 
   /**
    * Page permissions dialog. Shows the inherit_permissions flag, the
@@ -100,7 +101,14 @@
 
   async function revoke(permissionId) {
     if (!isAdmin) return;
-    if (!confirm('Remove this permission?')) return;
+    const ok = await confirm({
+      title: 'Remove permission?',
+      message: 'This grant will be removed from the page. You can re-add it later.',
+      confirmText: 'Remove',
+      cancelText: 'Cancel',
+      variant: 'danger',
+    });
+    if (!ok) return;
     saving = true;
     error = '';
     try {
