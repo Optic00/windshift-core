@@ -491,3 +491,80 @@ type TestResultUpdateRequest struct {
 	ActualResult string `json:"actual_result,omitempty"`
 	Notes        string `json:"notes,omitempty"`
 }
+
+// ============================================
+// Pages (workspace knowledge / wiki)
+// ============================================
+
+// Page mirrors dto.PageResponse on the v1 surface; fields are kept
+// lowercase JSON to match what the server emits.
+type Page struct {
+	ID                 int        `json:"id"`
+	WorkspaceID        int        `json:"workspace_id"`
+	ParentID           *int       `json:"parent_id,omitempty"`
+	Title              string     `json:"title"`
+	Slug               string     `json:"slug"`
+	Content            string     `json:"content,omitempty"`
+	Excerpt            string     `json:"excerpt,omitempty"`
+	ContentHash        string     `json:"content_hash,omitempty"`
+	Path               string     `json:"path"`
+	Depth              int        `json:"depth"`
+	IsHome             bool       `json:"is_home"`
+	InheritPermissions bool       `json:"inherit_permissions"`
+	CreatedBy          int        `json:"created_by"`
+	UpdatedBy          *int       `json:"updated_by,omitempty"`
+	ArchivedBy         *int       `json:"archived_by,omitempty"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
+	ArchivedAt         *time.Time `json:"archived_at,omitempty"`
+}
+
+// PageListResponse is the wire shape of GET /workspaces/:id/pages.
+type PageListResponse struct {
+	Items []Page `json:"items"`
+}
+
+// PageRevision mirrors dto.PageRevisionResponse.
+type PageRevision struct {
+	ID             int       `json:"id"`
+	PageID         int       `json:"page_id"`
+	RevisionNumber int       `json:"revision_number"`
+	Title          string    `json:"title"`
+	Slug           string    `json:"slug"`
+	Content        string    `json:"content,omitempty"`
+	Excerpt        string    `json:"excerpt,omitempty"`
+	ParentID       *int      `json:"parent_id,omitempty"`
+	Path           string    `json:"path"`
+	Depth          int       `json:"depth"`
+	ChangeSummary  string    `json:"change_summary,omitempty"`
+	ChangeType     string    `json:"change_type"`
+	CreatedBy      int       `json:"created_by"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// PageHistoryResponse wraps a list of revisions newest-first.
+type PageHistoryResponse struct {
+	Items []PageRevision `json:"items"`
+}
+
+// PageCreateRequest is the body for POST /workspaces/:id/pages.
+type PageCreateRequest struct {
+	Title    string `json:"title"`
+	Content  string `json:"content,omitempty"`
+	ParentID *int   `json:"parent_id,omitempty"`
+	IsHome   bool   `json:"is_home,omitempty"`
+}
+
+// PageUpdateRequest is the body for PUT /workspaces/:id/pages/:pageId.
+// All fields are pointers so callers can leave them unchanged. There is
+// no inherit_permissions field — that toggle is an admin-only operation
+// with its own endpoint and would not be accepted by the server here.
+type PageUpdateRequest struct {
+	Title   *string `json:"title,omitempty"`
+	Content *string `json:"content,omitempty"`
+}
+
+// PageMoveRequest is the body for POST /workspaces/:id/pages/:pageId/move.
+type PageMoveRequest struct {
+	ParentID *int `json:"parent_id"`
+}

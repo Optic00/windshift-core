@@ -18,6 +18,7 @@ import time from './time.js';
 import ui from './ui.js';
 import workflows from './workflows.js';
 import workspace from './workspace.js';
+import pages from './pages.js';
 
 export default createLocale({
   admin,
@@ -34,4 +35,5 @@ export default createLocale({
   actions,
   logbook,
   analytics,
+  pages,
 });

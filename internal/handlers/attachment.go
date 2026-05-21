@@ -33,11 +33,12 @@ import (
 var errAttachmentPathOutsideRoot = errors.New("attachment path is outside configured storage root")
 
 type AttachmentHandler struct {
-	db                database.Database
-	attachmentPath    string
-	permissionService *services.PermissionService
-	attachmentService *services.AttachmentService
-	approvalService   *services.ApprovalService // for approver-derived item.view fallback (optional, may be nil)
+	db                    database.Database
+	attachmentPath        string
+	permissionService     *services.PermissionService
+	attachmentService     *services.AttachmentService
+	approvalService       *services.ApprovalService       // for approver-derived item.view fallback (optional, may be nil)
+	pagePermissionService *services.PagePermissionService // for entity_type='page' uploads (optional)
 }
 
 func NewAttachmentHandler(db database.Database, attachmentPath string, permissionService *services.PermissionService) *AttachmentHandler {
@@ -54,6 +55,14 @@ func NewAttachmentHandler(db database.Database, attachmentPath string, permissio
 // workspace item.view (mirrors the documented exception in approvals.go's Decide).
 func (h *AttachmentHandler) SetApprovalService(ap *services.ApprovalService) {
 	h.approvalService = ap
+}
+
+// SetPagePermissionService wires the page-permission evaluator so that
+// uploads with entity_type='page' run the full ACL walk rather than just
+// the workspace page.edit role check. Nil-safe: if unset, the page
+// upload branch falls back to workspace page.edit only.
+func (h *AttachmentHandler) SetPagePermissionService(ps *services.PagePermissionService) {
+	h.pagePermissionService = ps
 }
 
 // authorizeTestCaseAttachmentAccess writes a 404 response and returns false
@@ -233,6 +242,48 @@ func (h *AttachmentHandler) authorizeUploadEntity(w http.ResponseWriter, r *http
 		}
 		if !canModify {
 			respondNotFound(w, r, "item")
+			return false
+		}
+		return true
+
+	case "page":
+		// Resolve workspace via pages and gate on page-edit. When the
+		// page-permission evaluator is wired (production wiring in
+		// server.go), use it so per-page ACL grants are honored; otherwise
+		// fall back to a workspace page.edit check.
+		var wsID int
+		err := h.db.QueryRow(`SELECT workspace_id FROM pages WHERE id = ?`, entityID).Scan(&wsID)
+		if errors.Is(err, sql.ErrNoRows) {
+			respondNotFound(w, r, "page")
+			return false
+		}
+		if err != nil {
+			respondInternalError(w, r, err)
+			return false
+		}
+		user, ok := RequireAuth(w, r)
+		if !ok {
+			return false
+		}
+		if h.pagePermissionService != nil {
+			can, perr := h.pagePermissionService.Can(user.ID, wsID, entityID, services.PageOpEdit)
+			if perr != nil {
+				respondInternalError(w, r, perr)
+				return false
+			}
+			if !can {
+				respondNotFound(w, r, "page")
+				return false
+			}
+			return true
+		}
+		allowed, err := h.permissionService.HasWorkspacePermission(user.ID, wsID, models.PermissionPageEdit)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return false
+		}
+		if !allowed {
+			respondNotFound(w, r, "page")
 			return false
 		}
 		return true
@@ -1027,6 +1078,40 @@ func (h *AttachmentHandler) Download(w http.ResponseWriter, r *http.Request) {
 		if _, ok := RequireAuth(w, r); !ok {
 			return
 		}
+	case "page":
+		// Workspace knowledge pages: gate downloads on page.view via the
+		// PagePermissionService so per-page ACLs are honored. Falls back
+		// to workspace page.view if the service isn't wired (degraded mode).
+		if attachment.ItemID == nil {
+			respondNotFound(w, r, "attachment")
+			return
+		}
+		var wsID int
+		if err := h.db.QueryRow(`SELECT workspace_id FROM pages WHERE id = ?`, *attachment.ItemID).Scan(&wsID); err != nil {
+			respondNotFound(w, r, "attachment")
+			return
+		}
+		user, ok := RequireAuth(w, r)
+		if !ok {
+			return
+		}
+		if h.pagePermissionService != nil {
+			can, perr := h.pagePermissionService.Can(user.ID, wsID, *attachment.ItemID, services.PageOpView)
+			if perr != nil {
+				respondInternalError(w, r, perr)
+				return
+			}
+			if !can {
+				respondNotFound(w, r, "attachment")
+				return
+			}
+		} else {
+			allowed, perr := h.permissionService.HasWorkspacePermission(user.ID, wsID, models.PermissionPageView)
+			if perr != nil || !allowed {
+				respondNotFound(w, r, "attachment")
+				return
+			}
+		}
 	case "portal_background", "portal_logo", "hub_logo":
 		// Canonical access route is /api/portal-assets/{id}; refuse to
 		// serve portal/hub branding through the cookie-auth path so there
@@ -1173,6 +1258,34 @@ func (h *AttachmentHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		if !h.authorizeTestResultAttachmentAccess(w, r, *details.ItemID, models.PermissionTestExecute) {
 			return
 		}
+	case "page":
+		// Page attachment deletes require page-edit on the owning page.
+		if details.ItemID == nil {
+			respondNotFound(w, r, "attachment")
+			return
+		}
+		var wsID int
+		if err = h.db.QueryRow(`SELECT workspace_id FROM pages WHERE id = ?`, *details.ItemID).Scan(&wsID); err != nil {
+			respondNotFound(w, r, "attachment")
+			return
+		}
+		user, ok := RequireAuth(w, r)
+		if !ok {
+			return
+		}
+		if h.pagePermissionService != nil {
+			can, perr := h.pagePermissionService.Can(user.ID, wsID, *details.ItemID, services.PageOpEdit)
+			if perr != nil || !can {
+				respondNotFound(w, r, "attachment")
+				return
+			}
+		} else {
+			allowed, perr := h.permissionService.HasWorkspacePermission(user.ID, wsID, models.PermissionPageEdit)
+			if perr != nil || !allowed {
+				respondNotFound(w, r, "attachment")
+				return
+			}
+		}
 	case "avatar":
 		user, authed := RequireAuth(w, r)
 		if !authed {
@@ -1287,6 +1400,33 @@ func (h *AttachmentHandler) Thumbnail(w http.ResponseWriter, r *http.Request) {
 		}
 		if !CheckItemPermissionAsActor(w, r, repository.NewItemRepository(h.db), h.permissionService, h.approvalService, int(thumbItemID.Int64), models.PermissionItemView) {
 			return
+		}
+	case "page":
+		if !thumbItemID.Valid {
+			respondNotFound(w, r, "attachment")
+			return
+		}
+		var wsID int
+		if err := h.db.QueryRow(`SELECT workspace_id FROM pages WHERE id = ?`, int(thumbItemID.Int64)).Scan(&wsID); err != nil {
+			respondNotFound(w, r, "attachment")
+			return
+		}
+		user, ok := RequireAuth(w, r)
+		if !ok {
+			return
+		}
+		if h.pagePermissionService != nil {
+			can, perr := h.pagePermissionService.Can(user.ID, wsID, int(thumbItemID.Int64), services.PageOpView)
+			if perr != nil || !can {
+				respondNotFound(w, r, "attachment")
+				return
+			}
+		} else {
+			allowed, perr := h.permissionService.HasWorkspacePermission(user.ID, wsID, models.PermissionPageView)
+			if perr != nil || !allowed {
+				respondNotFound(w, r, "attachment")
+				return
+			}
 		}
 	case "avatar",
 		"workspace_avatar", "workspace_background",

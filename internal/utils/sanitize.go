@@ -125,6 +125,28 @@ func SanitizeMarkdownURLs(input string) string {
 	return dangerousMarkdownURLRegex.ReplaceAllString(input, "${1}(#unsafe-link-removed)")
 }
 
+// SanitizePageMarkdown sanitizes Markdown source for workspace knowledge
+// pages: strip all HTML except <br/> (used by Milkdown for blank lines),
+// scrub dangerous Markdown URLs, and enforce a generous size cap.
+// Page content is meaningfully larger than item descriptions, so the cap
+// is 256KB rather than the 10KB SanitizeDescription enforces.
+func SanitizePageMarkdown(content string) string {
+	if content == "" {
+		return ""
+	}
+
+	content = brOnlyPolicy.Sanitize(content)
+	content = html.UnescapeString(content)
+	content = strings.ReplaceAll(content, "<br/>", "<br />")
+	content = SanitizeMarkdownURLs(content)
+
+	const maxLength = 256 * 1024
+	if len(content) > maxLength {
+		return content[:maxLength]
+	}
+	return content
+}
+
 // SanitizeCommentContent sanitizes user-submitted comment content.
 // It chains HTML tag stripping (for injected HTML) with Markdown URL sanitization
 // (for javascript:/vbscript:/data: links that would be rendered by the Markdown editor).

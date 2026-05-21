@@ -155,6 +155,7 @@
     'workspace-tree': () => import('../features/collections/CollectionTree.svelte'),
     'workspace-map': () => import('../features/collections/CollectionMap.svelte'),
     'workspace-roadmap': () => import('../features/collections/CollectionRoadmap.svelte'),
+    'workspace-pages': () => import('../features/pages/PagesView.svelte'),
     // Global collection views (no workspace)
     'collection-board': () => import('../features/collections/CollectionBoard.svelte'),
     'collection-board-config': () => import('../settings/BoardConfigurationPage.svelte'),
@@ -352,6 +353,15 @@
       loadingMsg: 'Loading Roadmap...',
       errorMsg: 'Failed to load Roadmap',
       getProps: (route) => ({ workspaceId: route.params.id, collectionId: route.params.collectionId })
+    },
+    'workspace-pages': {
+      loadingMsg: 'Loading Pages...',
+      errorMsg: 'Failed to load Pages',
+      wrapper: 'none',
+      getProps: (route) => ({
+        workspaceId: Number(route.params.id),
+        pageId: route.params.pageId ? Number(route.params.pageId) : null,
+      })
     },
     // Global collection views (no workspace)
     'collection-board': {

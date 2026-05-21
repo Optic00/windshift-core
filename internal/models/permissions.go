@@ -97,6 +97,13 @@ const (
 
 	// Public board management
 	PermissionPublicBoardManage = "public_board.manage" // Make collections public and configure public board sharing
+
+	// Knowledge (wiki) pages permissions
+	PermissionPageView   = "page.view"   // View workspace pages (subject to per-page ACL)
+	PermissionPageCreate = "page.create" // Create workspace pages
+	PermissionPageEdit   = "page.edit"   // Edit workspace pages (subject to per-page ACL)
+	PermissionPageDelete = "page.delete" // Archive/delete workspace pages
+	PermissionPageAdmin  = "page.admin"  // Manage page ACLs and restore versions
 )
 
 // Workspace role names (seeded by schema)

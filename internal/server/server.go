@@ -506,6 +506,13 @@ func (s *Server) initialize() error {
 	// Label handler
 	labelHandler := handlers.NewLabelHandler(repository.NewLabelRepository(s.db), repository.NewItemRepository(s.db), permService, logger.NewAuditor(s.db))
 
+	// Knowledge pages handler (workspace-scoped wiki).
+	pageService := services.NewPageService(s.db)
+	pagePermissionService := services.NewPagePermissionService(s.db, permService)
+	pageHandler := handlers.NewPageHandler(pageService, pagePermissionService, logger.NewAuditor(s.db))
+	knowledgeRetrieval := services.NewKnowledgeRetrievalService(s.db, pagePermissionService)
+	knowledgeSearchHandler := handlers.NewKnowledgeSearchHandler(knowledgeRetrieval)
+
 	// Recurrence handler
 	recurrenceHandler := handlers.NewRecurrenceHandler(s.db, s.recurrenceScheduler, permService)
 
@@ -813,6 +820,7 @@ func (s *Server) initialize() error {
 		slog.Info("attachments enabled", "path", cfg.AttachmentPath)
 		attachmentHandler = handlers.NewAttachmentHandler(s.db, cfg.AttachmentPath, permService)
 		attachmentHandler.SetApprovalService(approvalService)
+		attachmentHandler.SetPagePermissionService(pagePermissionService)
 		attachmentSettingsService := services.NewAttachmentSettingsService(s.db)
 		if err := attachmentSettingsService.Initialize(cfg.AttachmentPath); err != nil {
 			slog.Warn("failed to initialize attachment settings", "error", err)
@@ -1184,6 +1192,10 @@ func (s *Server) initialize() error {
 			Provider:  integrationProviderHandler,
 			OAuth:     integrationOAuthHandler,
 			ItemLinks: integrationItemLinksHandler,
+		},
+		Pages: routes.PageHandlers{
+			Page:            pageHandler,
+			KnowledgeSearch: knowledgeSearchHandler,
 		},
 	}
 	routes.RegisterAll(routeDeps)

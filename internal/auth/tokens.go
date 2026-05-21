@@ -76,6 +76,12 @@ const (
 	ScopeActionsRead  = "actions:read"
 	ScopeActionsWrite = "actions:write"
 
+	// Pages (workspace knowledge / wiki). :write covers create + edit + move;
+	// :delete is required for archive. Per-page ACLs still apply in-handler.
+	ScopePagesRead   = "pages:read"
+	ScopePagesWrite  = "pages:write"
+	ScopePagesDelete = "pages:delete"
+
 	// Admin scopes (require system admin role AND scope on token)
 	ScopeAdminUsersRead      = "admin:users:read"
 	ScopeAdminUsersWrite     = "admin:users:write"
@@ -99,6 +105,7 @@ var AllValidScopes = []string{
 	ScopeMCPAccess,
 	ScopeCollectionsRead,
 	ScopeActionsRead, ScopeActionsWrite,
+	ScopePagesRead, ScopePagesWrite, ScopePagesDelete,
 	ScopeAdminUsersRead, ScopeAdminUsersWrite,
 	ScopeAdminGroupsRead, ScopeAdminGroupsWrite,
 	ScopeAdminAuditLogsRead,
@@ -111,7 +118,7 @@ var allNonAdminReadScopes = []string{
 	ScopeWorkflowsRead, ScopeItemTypesRead, ScopePrioritiesRead,
 	ScopeCustomFieldsRead, ScopeUsersRead, ScopeMilestonesRead,
 	ScopeIterationsRead, ScopeProjectsRead, ScopeCollectionsRead,
-	ScopeActionsRead,
+	ScopeActionsRead, ScopePagesRead,
 }
 
 // allNonAdminScopes is the set of all non-admin scopes (for legacy "write" mapping).
@@ -127,6 +134,7 @@ var allNonAdminScopes = []string{
 	ScopeMCPAccess,
 	ScopeCollectionsRead,
 	ScopeActionsRead, ScopeActionsWrite,
+	ScopePagesRead, ScopePagesWrite, ScopePagesDelete,
 }
 
 // AdminScopes returns the set of scopes that require system admin role.

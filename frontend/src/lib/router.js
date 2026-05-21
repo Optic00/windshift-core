@@ -47,6 +47,9 @@ const routes = {
   '/workspaces/:id/iterations': 'workspace-iterations',
   '/workspaces/:id/milestones': 'workspace-milestones',
   '/workspaces/:id/analytics': 'workspace-analytics',
+  // Knowledge pages (workspace wiki)
+  '/workspaces/:id/pages': 'workspace-pages',
+  '/workspaces/:id/pages/:pageId': 'workspace-pages',
   // Routes with collection ID filtering
   '/workspaces/:id/collections/:collectionId/board': 'workspace-board',
   '/workspaces/:id/collections/:collectionId/board/configure': 'workspace-board-config',

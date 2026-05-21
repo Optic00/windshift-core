@@ -143,6 +143,9 @@ var integrationsSchemaPostgres string
 //go:embed schema/auth_policy_postgres.sql
 var authPolicySchemaPostgres string
 
+//go:embed schema/pages_postgres.sql
+var pagesSchemaPostgres string
+
 // PostgresDB implements the Database interface for PostgreSQL
 type PostgresDB struct {
 	db  *sql.DB
@@ -668,6 +671,34 @@ func (p *PostgresDB) Initialize() error {
 		if llmContent != "" {
 			if _, err = p.db.Exec(llmContent); err != nil {
 				slog.Warn("llm postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
+			}
+		}
+
+		// Drop legacy vector-search artifacts and the abandoned
+		// page_attachments table for installs that ran the original Slice 1
+		// schema. Page attachments now live in the polymorphic `attachments`
+		// table with entity_type='page'. Idempotent.
+		for _, stmt := range []string{
+			`DROP TABLE IF EXISTS page_chunk_embeddings`,
+			`DROP TABLE IF EXISTS page_attachments`,
+			`DELETE FROM system_settings WHERE key IN (
+				'knowledge.vector_search_enabled',
+				'knowledge.embedding_model',
+				'knowledge.embedding_connection_id',
+				'knowledge.embedding_dimensions'
+			)`,
+		} {
+			if _, err = p.db.Exec(stmt); err != nil {
+				slog.Warn("knowledge cleanup postgres migration failed", slog.String("component", "database"), slog.String("stmt", stmt), slog.Any("error", err))
+			}
+		}
+
+		// Create knowledge pages tables, permission keys, role grants, and
+		// system settings for existing databases. Schema is fully idempotent.
+		pagesContent := strings.TrimSpace(pagesSchemaPostgres)
+		if pagesContent != "" {
+			if _, err = p.db.Exec(pagesContent); err != nil {
+				slog.Warn("pages postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
 			}
 		}
 
@@ -1289,6 +1320,7 @@ func (p *PostgresDB) getPostgresSchemaFiles() []schemaFile {
 		{"condition_sets_postgres.sql", conditionSetsSchemaPostgres},
 		{"approvals_postgres.sql", approvalsSchemaPostgres},
 		{"integrations_postgres.sql", integrationsSchemaPostgres},
+		{"pages_postgres.sql", pagesSchemaPostgres},
 	}
 }
 

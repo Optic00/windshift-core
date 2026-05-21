@@ -1,6 +1,7 @@
 import { GanttChart } from '@lucide/svelte';
 import {
   IconChartBar as BarChart3,
+  IconBook as Book,
   IconCalendar as Calendar,
   IconFileCheck as FileCheck,
   IconFileStack as FileStack,
@@ -67,6 +68,13 @@ export const workspaceOnlyViews = [
     tooltip: 'Velocity, cycle time, and forecasting',
   },
   { id: 'actions', label: 'Actions', icon: Zap, tooltip: 'Automate workflows and triggers' },
+  {
+    id: 'pages',
+    label: 'Pages',
+    icon: Book,
+    tooltip: 'Workspace knowledge pages (wiki)',
+    activeViews: ['workspace-pages'],
+  },
 ];
 
 /**
