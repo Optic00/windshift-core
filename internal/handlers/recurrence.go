@@ -71,10 +71,25 @@ func parseRecurrenceDate(s string) (time.Time, error) {
 	return time.Parse("2006-01-02", s)
 }
 
-// GetRecurrence gets the recurrence rule for an item
+// GetRecurrence gets the recurrence rule for an item. Absence is a normal
+// state for most items, so return JSON null instead of a 404 that pollutes the
+// browser console during item-detail loads.
 func (h *RecurrenceHandler) GetRecurrence(w http.ResponseWriter, r *http.Request) {
-	rule, ok := h.resolveRuleForItem(w, r, models.PermissionItemView)
+	itemID, ok := requireIDParam(w, r, "id")
 	if !ok {
+		return
+	}
+	if !CheckItemPermission(w, r, repository.NewItemRepository(h.db), h.permissionService, itemID, models.PermissionItemView) {
+		return
+	}
+
+	rule, err := h.recurrenceRepo.GetByTemplateItemID(itemID)
+	if err == repository.ErrNotFound {
+		respondJSONOK(w, nil)
+		return
+	}
+	if err != nil {
+		respondInternalError(w, r, err)
 		return
 	}
 	respondJSONOK(w, rule)
