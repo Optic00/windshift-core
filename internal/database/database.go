@@ -569,6 +569,26 @@ func (db *DB) Initialize() error {
 			slog.Warn("auth_policy migration failed", slog.String("component", "database"), slog.Any("error", err))
 		}
 
+		// Drop legacy vector-search artifacts and the abandoned
+		// page_attachments table for installs that ran the original Slice 1
+		// schema. Page attachments now live in the polymorphic `attachments`
+		// table with entity_type='page'. We do this BEFORE running
+		// pagesSchema so a fresh install sees nothing to drop. Idempotent.
+		for _, stmt := range []string{
+			`DROP TABLE IF EXISTS page_chunk_embeddings`,
+			`DROP TABLE IF EXISTS page_attachments`,
+			`DELETE FROM system_settings WHERE key IN (
+				'knowledge.vector_search_enabled',
+				'knowledge.embedding_model',
+				'knowledge.embedding_connection_id',
+				'knowledge.embedding_dimensions'
+			)`,
+		} {
+			if _, err := db.Exec(stmt); err != nil {
+				slog.Warn("knowledge cleanup migration failed", slog.String("component", "database"), slog.String("stmt", stmt), slog.Any("error", err))
+			}
+		}
+
 		// Create knowledge pages tables, permission keys, role grants, and
 		// system settings for existing databases. Schema is fully idempotent.
 		if _, err := db.Exec(pagesSchema); err != nil {

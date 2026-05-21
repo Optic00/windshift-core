@@ -74,21 +74,9 @@ CREATE TABLE IF NOT EXISTS page_permissions (
 CREATE INDEX IF NOT EXISTS idx_page_permissions_page ON page_permissions(page_id);
 CREATE INDEX IF NOT EXISTS idx_page_permissions_principal ON page_permissions(principal_type, principal_id);
 
-CREATE TABLE IF NOT EXISTS page_attachments (
-    id SERIAL PRIMARY KEY,
-    page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
-    workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-    filename TEXT NOT NULL,
-    original_filename TEXT NOT NULL,
-    file_path TEXT NOT NULL,
-    mime_type TEXT NOT NULL DEFAULT '',
-    file_size BIGINT NOT NULL DEFAULT 0,
-    uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS idx_page_attachments_page ON page_attachments(page_id);
-CREATE INDEX IF NOT EXISTS idx_page_attachments_workspace ON page_attachments(workspace_id);
+-- Page attachments are stored in the polymorphic `attachments` table with
+-- entity_type='page' rather than a dedicated table; reuses the existing
+-- upload/download/thumbnail/audit pipeline (handlers/attachment.go).
 
 CREATE TABLE IF NOT EXISTS page_chunks (
     id SERIAL PRIMARY KEY,
@@ -111,26 +99,11 @@ CREATE INDEX IF NOT EXISTS idx_page_chunks_workspace ON page_chunks(workspace_id
 CREATE INDEX IF NOT EXISTS idx_page_chunks_hash ON page_chunks(content_hash) WHERE content_hash != '';
 CREATE INDEX IF NOT EXISTS idx_page_chunks_fts ON page_chunks USING GIN (to_tsvector('english', coalesce(heading_path, '') || ' ' || coalesce(content, '')));
 
-CREATE TABLE IF NOT EXISTS page_chunk_embeddings (
-    id SERIAL PRIMARY KEY,
-    chunk_id INTEGER NOT NULL REFERENCES page_chunks(id) ON DELETE CASCADE,
-    provider TEXT NOT NULL,
-    model TEXT NOT NULL,
-    dimensions INTEGER NOT NULL,
-    -- JSONB keeps the column portable. If pgvector is installed later, a
-    -- separate migration adds an embedding_vector column of the configured
-    -- dimensions (see knowledge.embedding_dimensions system setting).
-    embedding_json JSONB,
-    content_hash TEXT NOT NULL,
-    status TEXT NOT NULL CHECK (status IN ('pending', 'ready', 'error')) DEFAULT 'ready',
-    error_message TEXT NOT NULL DEFAULT '',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE(chunk_id, provider, model)
-);
-
-CREATE INDEX IF NOT EXISTS idx_page_chunk_embeddings_chunk ON page_chunk_embeddings(chunk_id);
-CREATE INDEX IF NOT EXISTS idx_page_chunk_embeddings_status ON page_chunk_embeddings(status);
+-- Vector search is intentionally not supported; the embeddings table and
+-- knowledge.embedding_* / knowledge.vector_search_enabled settings were
+-- removed. Full-text search over page_chunks (above) is the only retrieval
+-- path. Fresh installs never see the legacy tables/settings; existing
+-- installs get them dropped by the migration block in postgres.go.
 
 -- Workspace-scoped page permission keys.
 
@@ -165,12 +138,9 @@ JOIN permissions p ON p.permission_key IN ('page.view', 'page.create', 'page.edi
 WHERE r.name = 'Administrator'
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
--- Knowledge module system settings. Vector search is disabled at launch.
+-- Knowledge module system settings. Only the FTS toggle is honored;
+-- vector-search settings were removed because we do not use vectors.
 
 INSERT INTO system_settings (key, value, value_type, description, category) VALUES
-    ('knowledge.full_text_search_enabled', 'true', 'boolean', 'Enable full-text knowledge search', 'knowledge'),
-    ('knowledge.vector_search_enabled', 'false', 'boolean', 'Enable optional vector search over page chunks', 'knowledge'),
-    ('knowledge.embedding_model', '', 'string', 'Embedding model used for knowledge vectors', 'knowledge'),
-    ('knowledge.embedding_connection_id', '', 'integer', 'LLM connection used for embeddings', 'knowledge'),
-    ('knowledge.embedding_dimensions', '1536', 'integer', 'Embedding vector dimensions', 'knowledge')
+    ('knowledge.full_text_search_enabled', 'true', 'boolean', 'Enable full-text knowledge search', 'knowledge')
 ON CONFLICT (key) DO NOTHING;

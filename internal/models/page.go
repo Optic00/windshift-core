@@ -92,20 +92,10 @@ const (
 	PagePermissionLevelAdmin = "admin"
 )
 
-// PageAttachment links uploaded files (image/file embedded via Milkdown)
-// to a page. Phase 1 ships the table; upload wiring lands in Phase 3.
-type PageAttachment struct {
-	ID               int       `json:"id" db:"id"`
-	PageID           int       `json:"page_id" db:"page_id"`
-	WorkspaceID      int       `json:"workspace_id" db:"workspace_id"`
-	Filename         string    `json:"filename" db:"filename"`
-	OriginalFilename string    `json:"original_filename" db:"original_filename"`
-	FilePath         string    `json:"file_path" db:"file_path"`
-	MimeType         string    `json:"mime_type" db:"mime_type"`
-	FileSize         int64     `json:"file_size" db:"file_size"`
-	UploadedBy       *int      `json:"uploaded_by" db:"uploaded_by"`
-	CreatedAt        time.Time `json:"created_at" db:"created_at"`
-}
+// Page attachments are stored in the polymorphic `attachments` table
+// (models.Attachment) with entity_type='page'. There is intentionally no
+// dedicated PageAttachment model — uploads route through the existing
+// AttachmentService.
 
 // PageChunk is a search/RAG chunk derived from the current page content,
 // rebuilt within the same transaction as any content change.

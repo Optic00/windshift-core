@@ -89,26 +89,9 @@ CREATE TABLE IF NOT EXISTS page_permissions (
 CREATE INDEX IF NOT EXISTS idx_page_permissions_page ON page_permissions(page_id);
 CREATE INDEX IF NOT EXISTS idx_page_permissions_principal ON page_permissions(principal_type, principal_id);
 
--- Page attachments. Phase 1 ships the table; Milkdown upload wiring lands in Phase 3.
-
-CREATE TABLE IF NOT EXISTS page_attachments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    page_id INTEGER NOT NULL,
-    workspace_id INTEGER NOT NULL,
-    filename TEXT NOT NULL,
-    original_filename TEXT NOT NULL,
-    file_path TEXT NOT NULL,
-    mime_type TEXT NOT NULL DEFAULT '',
-    file_size INTEGER NOT NULL DEFAULT 0,
-    uploaded_by INTEGER,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE,
-    FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
-    FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_page_attachments_page ON page_attachments(page_id);
-CREATE INDEX IF NOT EXISTS idx_page_attachments_workspace ON page_attachments(workspace_id);
+-- Page attachments are stored in the polymorphic `attachments` table with
+-- entity_type='page' rather than a dedicated table; reuses the existing
+-- upload/download/thumbnail/audit pipeline (handlers/attachment.go).
 
 -- Search/RAG chunks. Rebuilt within the same transaction as any page content
 -- change so chunks cannot drift from live content.
@@ -135,28 +118,11 @@ CREATE INDEX IF NOT EXISTS idx_page_chunks_page ON page_chunks(page_id);
 CREATE INDEX IF NOT EXISTS idx_page_chunks_workspace ON page_chunks(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_page_chunks_hash ON page_chunks(content_hash) WHERE content_hash != '';
 
--- Optional embedding metadata. Schema only in Phase 1; vector search is
--- gated by the knowledge.vector_search_enabled system setting.
-
-CREATE TABLE IF NOT EXISTS page_chunk_embeddings (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    chunk_id INTEGER NOT NULL,
-    provider TEXT NOT NULL,
-    model TEXT NOT NULL,
-    dimensions INTEGER NOT NULL,
-    embedding BLOB,
-    embedding_json TEXT,
-    content_hash TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'ready' CHECK (status IN ('pending', 'ready', 'error')),
-    error_message TEXT NOT NULL DEFAULT '',
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (chunk_id) REFERENCES page_chunks(id) ON DELETE CASCADE,
-    UNIQUE(chunk_id, provider, model)
-);
-
-CREATE INDEX IF NOT EXISTS idx_page_chunk_embeddings_chunk ON page_chunk_embeddings(chunk_id);
-CREATE INDEX IF NOT EXISTS idx_page_chunk_embeddings_status ON page_chunk_embeddings(status);
+-- Vector search is intentionally not supported; the embeddings table and
+-- knowledge.embedding_* / knowledge.vector_search_enabled settings were
+-- removed. Full-text search over page_chunks (above) is the only retrieval
+-- path. Fresh installs never see the legacy tables/settings; existing
+-- installs get them dropped by the migration block in database.go.
 
 -- Workspace-scoped page permission keys.
 
@@ -187,11 +153,8 @@ FROM workspace_roles r
 JOIN permissions p ON p.permission_key IN ('page.view', 'page.create', 'page.edit', 'page.delete', 'page.admin')
 WHERE r.name = 'Administrator';
 
--- Knowledge module system settings. Vector search is disabled at launch.
+-- Knowledge module system settings. Only the FTS toggle is honored;
+-- vector-search settings were removed because we do not use vectors.
 
 INSERT OR IGNORE INTO system_settings (key, value, value_type, description, category) VALUES
-    ('knowledge.full_text_search_enabled', 'true', 'boolean', 'Enable full-text knowledge search', 'knowledge'),
-    ('knowledge.vector_search_enabled', 'false', 'boolean', 'Enable optional vector search over page chunks', 'knowledge'),
-    ('knowledge.embedding_model', '', 'string', 'Embedding model used for knowledge vectors', 'knowledge'),
-    ('knowledge.embedding_connection_id', '', 'integer', 'LLM connection used for embeddings', 'knowledge'),
-    ('knowledge.embedding_dimensions', '1536', 'integer', 'Embedding vector dimensions', 'knowledge');
+    ('knowledge.full_text_search_enabled', 'true', 'boolean', 'Enable full-text knowledge search', 'knowledge');
