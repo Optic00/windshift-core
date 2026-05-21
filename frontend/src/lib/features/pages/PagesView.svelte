@@ -1,0 +1,405 @@
+<script>
+  import { onMount } from 'svelte';
+  import { api } from '../../api.js';
+  import { navigate } from '../../router.js';
+  import LazyMilkdownEditor from '../../editors/LazyMilkdownEditor.svelte';
+
+  /**
+   * Workspace knowledge-pages view: left tree + right Markdown editor.
+   *
+   * Phase 1 deliberately co-locates tree, editor, and save controls in a
+   * single Svelte component. Future slices may split out PageTree,
+   * PageHistoryDialog, and PagePermissionsDialog as the surface grows.
+   */
+  let { workspaceId, pageId = null } = $props();
+
+  let pages = $state([]);
+  let selectedId = $state(pageId);
+  let selectedPage = $state(null);
+  let draftTitle = $state('');
+  let draftContent = $state('');
+  let dirty = $state(false);
+  let loadingTree = $state(true);
+  let loadingPage = $state(false);
+  let saving = $state(false);
+  let error = $state('');
+  let creating = $state(false);
+  let newTitle = $state('');
+
+  onMount(async () => {
+    await loadTree();
+    if (pageId) await loadPage(pageId);
+  });
+
+  $effect(() => {
+    if (pageId && pageId !== selectedId) {
+      selectedId = pageId;
+      loadPage(pageId);
+    }
+  });
+
+  async function loadTree() {
+    loadingTree = true;
+    error = '';
+    try {
+      const resp = await api.pages.getTree(workspaceId);
+      pages = resp.pages || [];
+    } catch (err) {
+      error = err?.message || 'Failed to load pages';
+    } finally {
+      loadingTree = false;
+    }
+  }
+
+  async function loadPage(id) {
+    loadingPage = true;
+    error = '';
+    try {
+      selectedPage = await api.pages.getPage(workspaceId, id);
+      draftTitle = selectedPage.title;
+      draftContent = selectedPage.content;
+      dirty = false;
+    } catch (err) {
+      error = err?.message || 'Failed to load page';
+      selectedPage = null;
+    } finally {
+      loadingPage = false;
+    }
+  }
+
+  function selectPage(id) {
+    if (dirty && !confirm('You have unsaved changes. Discard?')) return;
+    navigate(`/workspaces/${workspaceId}/pages/${id}`);
+  }
+
+  async function savePage() {
+    if (!selectedPage) return;
+    saving = true;
+    error = '';
+    try {
+      const updated = await api.pages.updatePage(workspaceId, selectedPage.id, {
+        title: draftTitle,
+        content: draftContent,
+        inheritPermissions: selectedPage.inherit_permissions,
+      });
+      selectedPage = updated;
+      draftTitle = updated.title;
+      draftContent = updated.content;
+      dirty = false;
+      await loadTree();
+    } catch (err) {
+      error = err?.message || 'Failed to save';
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function createPage() {
+    if (!newTitle.trim()) return;
+    creating = true;
+    error = '';
+    try {
+      const page = await api.pages.createPage(workspaceId, {
+        title: newTitle.trim(),
+        content: '',
+        parentId: selectedPage?.id ?? null,
+      });
+      newTitle = '';
+      await loadTree();
+      navigate(`/workspaces/${workspaceId}/pages/${page.id}`);
+    } catch (err) {
+      error = err?.message || 'Failed to create page';
+    } finally {
+      creating = false;
+    }
+  }
+
+  async function archivePage() {
+    if (!selectedPage) return;
+    if (!confirm(`Archive "${selectedPage.title}" and all child pages? This cannot be undone in Phase 1.`)) return;
+    try {
+      await api.pages.archivePage(workspaceId, selectedPage.id);
+      selectedPage = null;
+      await loadTree();
+      navigate(`/workspaces/${workspaceId}/pages`);
+    } catch (err) {
+      error = err?.message || 'Failed to archive';
+    }
+  }
+
+  function onContentInput(value) {
+    draftContent = value;
+    if (selectedPage && (value !== selectedPage.content || draftTitle !== selectedPage.title)) {
+      dirty = true;
+    }
+  }
+
+  function onTitleInput(event) {
+    draftTitle = event.target.value;
+    if (selectedPage && draftTitle !== selectedPage.title) dirty = true;
+  }
+</script>
+
+<div class="pages-view">
+  <aside class="page-tree">
+    <header class="tree-header">
+      <h2>Pages</h2>
+      <form
+        class="new-page-form"
+        onsubmit={(e) => {
+          e.preventDefault();
+          createPage();
+        }}
+      >
+        <input
+          id="page-new-title"
+          type="text"
+          placeholder={selectedPage ? `Child of ${selectedPage.title}` : 'New root page'}
+          bind:value={newTitle}
+          disabled={creating}
+        />
+        <button id="page-create-button" type="submit" disabled={creating || !newTitle.trim()}>
+          New
+        </button>
+      </form>
+    </header>
+
+    {#if loadingTree}
+      <p class="status">Loading…</p>
+    {:else if pages.length === 0}
+      <p class="status empty">No pages yet — create the first one above.</p>
+    {:else}
+      <ul class="tree" data-testid="page-tree">
+        {#each pages as page (page.id)}
+          <li
+            class="tree-item"
+            data-testid="page-tree-item"
+            data-page-id={page.id}
+            style="padding-left: {0.5 + page.depth * 0.8}rem"
+          >
+            <button
+              type="button"
+              class:active={selectedId === page.id}
+              onclick={() => selectPage(page.id)}
+            >
+              {page.title}
+            </button>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  </aside>
+
+  <main class="page-pane">
+    {#if error}
+      <div class="error" role="alert">{error}</div>
+    {/if}
+
+    {#if !selectedPage && !loadingPage}
+      <div class="empty-page">
+        <h1>Knowledge Pages</h1>
+        <p>Select a page from the tree, or create one to get started.</p>
+      </div>
+    {:else if loadingPage}
+      <p class="status">Loading page…</p>
+    {:else if selectedPage}
+      <div class="toolbar">
+        <input
+          id="page-title-input"
+          class="title-input"
+          type="text"
+          value={draftTitle}
+          oninput={onTitleInput}
+          placeholder="Untitled"
+        />
+        <div class="actions">
+          <button
+            id="page-save-button"
+            type="button"
+            onclick={savePage}
+            disabled={!dirty || saving}
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+          <button
+            id="page-archive-button"
+            type="button"
+            class="danger"
+            onclick={archivePage}
+            disabled={saving}
+          >
+            Archive
+          </button>
+        </div>
+      </div>
+      <div class="editor-frame" data-testid="page-editor">
+        <LazyMilkdownEditor
+          bind:content={draftContent}
+          placeholder="Start writing…"
+          showToolbar={true}
+          entityType="page"
+          entityId={selectedPage.id}
+          onContentChange={onContentInput}
+        />
+      </div>
+    {/if}
+  </main>
+</div>
+
+<style>
+  .pages-view {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .page-tree {
+    border-right: 1px solid var(--ds-border, #e5e7eb);
+    overflow-y: auto;
+    background: var(--ds-background-neutral, #fafafa);
+  }
+
+  .tree-header {
+    padding: 1rem;
+    border-bottom: 1px solid var(--ds-border, #e5e7eb);
+  }
+
+  .tree-header h2 {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--ds-text-subtle, #6b7280);
+  }
+
+  .new-page-form {
+    display: flex;
+    gap: 0.25rem;
+  }
+
+  .new-page-form input {
+    flex: 1;
+    padding: 0.25rem 0.5rem;
+    font-size: 0.875rem;
+    border: 1px solid var(--ds-border, #d1d5db);
+    border-radius: 0.25rem;
+    background: var(--ds-background, #fff);
+    color: var(--ds-text, #111);
+  }
+
+  .new-page-form button {
+    padding: 0.25rem 0.75rem;
+    font-size: 0.875rem;
+    border: 1px solid var(--ds-border, #d1d5db);
+    border-radius: 0.25rem;
+    background: var(--ds-background, #fff);
+    cursor: pointer;
+  }
+
+  .tree {
+    list-style: none;
+    padding: 0.5rem 0;
+    margin: 0;
+  }
+
+  .tree-item button {
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: none;
+    padding: 0.375rem 0.5rem;
+    font-size: 0.875rem;
+    color: var(--ds-text, #111);
+    cursor: pointer;
+    border-radius: 0.25rem;
+  }
+
+  .tree-item button:hover {
+    background: var(--ds-background-neutral-hovered, #f3f4f6);
+  }
+
+  .tree-item button.active {
+    background: var(--ds-background-selected, #e0f2fe);
+    font-weight: 500;
+  }
+
+  .page-pane {
+    overflow-y: auto;
+    padding: 1.5rem 2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    min-height: 0;
+  }
+
+  .empty-page {
+    color: var(--ds-text-subtle, #6b7280);
+  }
+
+  .toolbar {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+  }
+
+  .title-input {
+    flex: 1;
+    font-size: 1.5rem;
+    font-weight: 600;
+    background: transparent;
+    border: none;
+    color: var(--ds-text, #111);
+    outline: none;
+  }
+
+  .actions {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .actions button {
+    padding: 0.375rem 0.75rem;
+    border: 1px solid var(--ds-border, #d1d5db);
+    border-radius: 0.25rem;
+    background: var(--ds-background, #fff);
+    font-size: 0.875rem;
+    cursor: pointer;
+  }
+
+  .actions button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .actions button.danger {
+    color: var(--ds-text-danger, #b91c1c);
+  }
+
+  .editor-frame {
+    flex: 1;
+    min-height: 300px;
+    border: 1px solid var(--ds-border, #e5e7eb);
+    border-radius: 0.375rem;
+    overflow: hidden;
+  }
+
+  .error {
+    padding: 0.75rem 1rem;
+    background: var(--ds-background-danger, #fef2f2);
+    color: var(--ds-text-danger, #b91c1c);
+    border-radius: 0.25rem;
+    font-size: 0.875rem;
+  }
+
+  .status {
+    color: var(--ds-text-subtle, #6b7280);
+    font-size: 0.875rem;
+    padding: 1rem;
+  }
+
+  .status.empty {
+    text-align: center;
+    padding: 2rem 1rem;
+  }
+</style>

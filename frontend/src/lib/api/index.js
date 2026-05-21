@@ -75,6 +75,7 @@ import {
 } from './notifications.js';
 import { oauth } from './oauth.js';
 import { onCallSchedules } from './oncall.js';
+import { pages } from './pages.js';
 import { groups, permissions } from './permissions.js';
 import {
   contactRoles,
@@ -410,6 +411,9 @@ export const api = {
 
   // Knowledge Base / Logbook
   logbook,
+
+  // Workspace knowledge pages (wiki)
+  pages,
 
   // AI features
   ai,
