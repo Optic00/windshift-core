@@ -211,23 +211,65 @@ func (r *PageRepository) UpdateTx(tx database.Tx, in UpdateInput) error {
 }
 
 // MoveTx reparents a page and overwrites its path/depth. Cycle detection is
-// the caller's responsibility (see WouldCreateCycleTx).
-func (r *PageRepository) MoveTx(tx database.Tx, pageID int, newParentID *int, newPath string, newDepth, updatedBy int) error {
+// the caller's responsibility (see WouldCreateCycleTx). When newFracIndex is
+// non-nil the page's frac_index is rewritten in the same UPDATE so callers
+// don't need a second round-trip for reorder-with-move.
+func (r *PageRepository) MoveTx(tx database.Tx, pageID int, newParentID *int, newPath string, newDepth, updatedBy int, newFracIndex *string) error {
 	now := time.Now().UTC()
-	res, err := tx.Exec(`
-		UPDATE pages
-		SET parent_id = ?,
-		    path = ?,
-		    depth = ?,
-		    updated_by = ?,
-		    updated_at = ?
-		WHERE id = ?
-	`, nullInt(newParentID), newPath, newDepth, updatedBy, now, pageID)
+	var (
+		res sql.Result
+		err error
+	)
+	if newFracIndex != nil {
+		res, err = tx.Exec(`
+			UPDATE pages
+			SET parent_id = ?,
+			    path = ?,
+			    depth = ?,
+			    frac_index = ?,
+			    updated_by = ?,
+			    updated_at = ?
+			WHERE id = ?
+		`, nullInt(newParentID), newPath, newDepth, *newFracIndex, updatedBy, now, pageID)
+	} else {
+		res, err = tx.Exec(`
+			UPDATE pages
+			SET parent_id = ?,
+			    path = ?,
+			    depth = ?,
+			    updated_by = ?,
+			    updated_at = ?
+			WHERE id = ?
+		`, nullInt(newParentID), newPath, newDepth, updatedBy, now, pageID)
+	}
 	if err != nil {
 		if isUniqueConstraintError(err) {
 			return ErrDuplicateEntry
 		}
 		return fmt.Errorf("move page %d: %w", pageID, err)
+	}
+	rows, _ := res.RowsAffected()
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetFracIndexTx writes a frac_index for a single page. Used for one-shot
+// backfills when reordering exposes siblings whose frac_index is still NULL
+// (pages predating drag-and-drop). The caller is responsible for picking a
+// key that preserves the desired sibling order.
+func (r *PageRepository) SetFracIndexTx(tx database.Tx, pageID int, fracIndex string, updatedBy int) error {
+	now := time.Now().UTC()
+	res, err := tx.Exec(`
+		UPDATE pages
+		SET frac_index = ?,
+		    updated_by = ?,
+		    updated_at = ?
+		WHERE id = ?
+	`, fracIndex, updatedBy, now, pageID)
+	if err != nil {
+		return fmt.Errorf("set frac_index for page %d: %w", pageID, err)
 	}
 	rows, _ := res.RowsAffected()
 	if rows == 0 {
@@ -317,6 +359,46 @@ func (r *PageRepository) ListChildren(workspaceID int, parentID *int) ([]models.
 	}
 	if err != nil {
 		return nil, fmt.Errorf("list children: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []models.Page
+	for rows.Next() {
+		page, scanErr := scanPage(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("scan page child: %w", scanErr)
+		}
+		out = append(out, *page)
+	}
+	return out, rows.Err()
+}
+
+// ListChildrenTx mirrors ListChildren but reads inside the caller's
+// transaction so a reorder pass sees the same neighbor state it is about
+// to update. Returns rows in display order (frac_index, then rank, then
+// title, then id) — the same order ListChildren uses.
+func (r *PageRepository) ListChildrenTx(tx database.Tx, workspaceID int, parentID *int) ([]models.Page, error) {
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if parentID == nil {
+		rows, err = tx.Query(`
+			SELECT `+pageColumns+`
+			FROM pages
+			WHERE workspace_id = ? AND parent_id IS NULL AND archived_at IS NULL
+			ORDER BY COALESCE(frac_index, '') ASC, COALESCE(rank, '') ASC, title ASC, id ASC
+		`, workspaceID)
+	} else {
+		rows, err = tx.Query(`
+			SELECT `+pageColumns+`
+			FROM pages
+			WHERE workspace_id = ? AND parent_id = ? AND archived_at IS NULL
+			ORDER BY COALESCE(frac_index, '') ASC, COALESCE(rank, '') ASC, title ASC, id ASC
+		`, workspaceID, *parentID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list children (tx): %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 

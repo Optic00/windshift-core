@@ -9,6 +9,7 @@
   import { api } from '../api.js';
   import DropdownMenu from '../layout/DropdownMenu.svelte';
   import Tooltip from '../components/Tooltip.svelte';
+  import PagesNavSidebar from '../features/pages/PagesNavSidebar.svelte';
   import { workspaceGradientIndex, applyToAllViews, loadWorkspaceGradient, getGradientStyle } from '../stores/workspaceGradient.svelte.js';
   import { useEventListener } from 'runed';
   import { uiStore } from '../stores/ui.svelte.js';
@@ -354,7 +355,23 @@
   }
 </script>
 
-{#if isCollapsed}
+{#if $currentRoute.view === 'workspace-pages'}
+  <!-- Pages drilldown: when the user is inside the pages view, swap the
+       workspace sidebar for a pages-focused tree with its own back arrow.
+       Keeps the regular sidebar's responsive width via the same uiStore. -->
+  <div
+    class="relative h-full flex-shrink-0 border-r flex flex-col {sidebarBgClass}"
+    style="width: {isCollapsed ? 48 : sidebarWidth}px; min-width: {isCollapsed ? 48 : MIN_WIDTH}px; max-width: {MAX_WIDTH}px; {sidebarBgStyle}"
+  >
+    <PagesNavSidebar {workspaceId} />
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="ws-resize-handle"
+      onmousedown={onResizeStart}
+      ondblclick={onResizeHandleDblClick}
+    ></div>
+  </div>
+{:else if isCollapsed}
   <!-- Collapsed icon-only sidebar -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="relative h-full flex-shrink-0 border-r flex flex-col items-center py-4 {sidebarBgClass}"

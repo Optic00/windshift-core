@@ -86,13 +86,31 @@ describe('pages API client', () => {
     const [url, init] = lastCall();
     expect(url).toBe('/api/workspaces/42/pages/7/move');
     expect(init.method).toBe('POST');
-    expect(JSON.parse(init.body)).toEqual({ parent_id: 11 });
+    expect(JSON.parse(init.body)).toEqual({
+      parent_id: 11,
+      prev_sibling_id: null,
+      next_sibling_id: null,
+    });
   });
 
   test('movePage to root passes parent_id: null', async () => {
     await pages.movePage(42, 7, null);
     const [, init] = lastCall();
-    expect(JSON.parse(init.body)).toEqual({ parent_id: null });
+    expect(JSON.parse(init.body)).toEqual({
+      parent_id: null,
+      prev_sibling_id: null,
+      next_sibling_id: null,
+    });
+  });
+
+  test('movePage forwards prev/next sibling positioning for reorder', async () => {
+    await pages.movePage(42, 7, 11, { prevSiblingId: 3, nextSiblingId: 5 });
+    const [, init] = lastCall();
+    expect(JSON.parse(init.body)).toEqual({
+      parent_id: 11,
+      prev_sibling_id: 3,
+      next_sibling_id: 5,
+    });
   });
 
   test('getHistory → GET with default limit/offset query string', async () => {

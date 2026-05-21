@@ -36,11 +36,20 @@ export const pages = {
   archivePage: (workspaceId, pageId) =>
     fetchAPI(`/workspaces/${workspaceId}/pages/${pageId}`, { method: 'DELETE' }),
 
-  /** Reparent a page; pass null to move it to the workspace root. */
-  movePage: (workspaceId, pageId, parentId) =>
+  /**
+   * Reparent a page; pass parentId=null to move it to the workspace root.
+   * prevSiblingId / nextSiblingId position the page within its new parent's
+   * children — either may be null for "start of list" / "end of list", and
+   * omitting both preserves the legacy append-by-natural-order behavior.
+   */
+  movePage: (workspaceId, pageId, parentId, { prevSiblingId = null, nextSiblingId = null } = {}) =>
     fetchAPI(`/workspaces/${workspaceId}/pages/${pageId}/move`, {
       method: 'POST',
-      body: JSON.stringify({ parent_id: parentId }),
+      body: JSON.stringify({
+        parent_id: parentId,
+        prev_sibling_id: prevSiblingId,
+        next_sibling_id: nextSiblingId,
+      }),
     }),
 
   /** Paginated revision history for a page. */

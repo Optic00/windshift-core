@@ -52,7 +52,9 @@ type pageUpdateRequest struct {
 }
 
 type pageMoveRequest struct {
-	ParentID *int `json:"parent_id"`
+	ParentID      *int `json:"parent_id"`
+	PrevSiblingID *int `json:"prev_sibling_id,omitempty"`
+	NextSiblingID *int `json:"next_sibling_id,omitempty"`
 }
 
 // --- response shapes ---
@@ -231,7 +233,7 @@ func (h *PageHandler) Move(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	moved, err := h.service.Move(user.ID, pageID, req.ParentID)
+	moved, err := h.service.Move(user.ID, pageID, req.ParentID, req.PrevSiblingID, req.NextSiblingID)
 	if err != nil {
 		h.respondPageServiceError(w, r, err)
 		return

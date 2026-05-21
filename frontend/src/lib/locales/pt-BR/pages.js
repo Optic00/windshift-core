@@ -10,14 +10,21 @@
  */
 export default {
   pages: {
-    // Tree / left rail
+    // Sidebar / drilldown nav
+    backWorkspace: 'Workspace',
     treeHeading: 'Pages',
-    newPagePlaceholderChild: 'Child of {parent}',
-    newPagePlaceholderRoot: 'New root page',
-    newPageButton: 'New',
+    addPageAria: 'Add page',
+    untitled: 'Untitled',
     treeLoading: 'Loading…',
     treeEmptyTitle: 'No pages yet',
-    treeEmptyDescription: 'Type a title above and press New to create the first page.',
+    treeEmptyDescription: 'Use the + button above to create your first page.',
+
+    // Per-item kebab menu
+    menuAddChild: 'Add child page',
+    menuRename: 'Rename',
+    menuMove: 'Move',
+    menuPermissions: 'Permissions',
+    menuArchive: 'Archive',
 
     // Page pane
     pageLoading: 'Loading page…',
