@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -59,6 +60,22 @@ func seedWorkspaceWithRole(t *testing.T, db database.Database, workspaceID, user
 		`, workspaceID, adminRoleID); err != nil {
 			t.Fatalf("assign phantom admin: %v", err)
 		}
+	}
+}
+
+// assignWorkspaceRole adds a role grant for an existing workspace without
+// re-inserting the workspace row, which seedWorkspaceWithRole always does.
+func assignWorkspaceRole(t *testing.T, db database.Database, workspaceID, userID int, role string) {
+	t.Helper()
+	var roleID int
+	if err := db.QueryRow(`SELECT id FROM workspace_roles WHERE name = ?`, role).Scan(&roleID); err != nil {
+		t.Fatalf("look up role %s: %v", role, err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO user_workspace_roles (user_id, workspace_id, role_id, granted_at)
+		VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+	`, userID, workspaceID, roleID); err != nil {
+		t.Fatalf("assign workspace role: %v", err)
 	}
 }
 
@@ -451,6 +468,257 @@ func TestPageHandler_RevokePermission_404OnCrossPageRow(t *testing.T) {
 	acl, _ := h.service.ListOwnACL(a.ID)
 	if len(acl) != 1 {
 		t.Errorf("row should remain on page A, got %d", len(acl))
+	}
+}
+
+// newKnowledgeSearchHandler builds a KnowledgeSearchHandler against the
+// same wired stack as the page tests: real DB, real PermissionService, real
+// PagePermissionService. Returns the page handler too so callers can seed
+// pages via the service surface.
+func newKnowledgeSearchHandler(t *testing.T) (*KnowledgeSearchHandler, *PageHandler, database.Database) {
+	t.Helper()
+	pageH, db, _ := newPageHandler(t)
+	retrieval := services.NewKnowledgeRetrievalService(db, pageH.pageAuth)
+	return NewKnowledgeSearchHandler(retrieval), pageH, db
+}
+
+// knowledgeSearchResponse mirrors the wire shape returned by Search.
+type knowledgeSearchResponse struct {
+	Query   string                      `json:"query"`
+	Results []services.KnowledgeResult  `json:"results"`
+}
+
+func TestKnowledgeSearchHandler_HappyPath(t *testing.T) {
+	search, pageH, db := newKnowledgeSearchHandler(t)
+	const userID = 1
+	seedNegativeTestUser(t, db, userID)
+	seedNegativeTestUser(t, db, 999)
+	seedWorkspaceWithRole(t, db, 1, userID, "Editor")
+
+	if _, err := pageH.service.Create(userID, services.CreatePageInput{
+		WorkspaceID: 1,
+		Title:       "Runbook",
+		Content:     "# Runbook\n\nDeployment procedure for onboarding new clients.",
+	}); err != nil {
+		t.Fatalf("seed page: %v", err)
+	}
+
+	req := authedRequest(http.MethodGet, "/workspaces/1/knowledge/search?q=onboarding", userID, nil)
+	setPath(req, map[string]string{"workspaceId": "1"})
+	rr := httptest.NewRecorder()
+	search.Search(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: want 200, got %d, body=%s", rr.Code, rr.Body.String())
+	}
+
+	var resp knowledgeSearchResponse
+	decodeJSONBody(t, rr, &resp)
+	if resp.Query != "onboarding" {
+		t.Errorf("query echo: want 'onboarding', got %q", resp.Query)
+	}
+	if len(resp.Results) == 0 {
+		t.Fatalf("expected at least one result, got 0")
+	}
+	first := resp.Results[0]
+	if first.Source != services.KnowledgeSourcePage {
+		t.Errorf("source: want %q, got %q", services.KnowledgeSourcePage, first.Source)
+	}
+	if first.Title != "Runbook" {
+		t.Errorf("title: want 'Runbook', got %q", first.Title)
+	}
+	if first.WorkspaceID != 1 {
+		t.Errorf("workspace_id: want 1, got %d", first.WorkspaceID)
+	}
+	if first.PageID == 0 || first.ChunkID == 0 {
+		t.Errorf("page_id and chunk_id must be populated, got page=%d chunk=%d", first.PageID, first.ChunkID)
+	}
+}
+
+// Empty query returns a 200 with an empty results array (never nil) so the
+// frontend doesn't need a nil check.
+func TestKnowledgeSearchHandler_EmptyQuery(t *testing.T) {
+	search, pageH, db := newKnowledgeSearchHandler(t)
+	const userID = 1
+	seedNegativeTestUser(t, db, userID)
+	seedNegativeTestUser(t, db, 999)
+	seedWorkspaceWithRole(t, db, 1, userID, "Editor")
+	if _, err := pageH.service.Create(userID, services.CreatePageInput{WorkspaceID: 1, Title: "X", Content: "body"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	req := authedRequest(http.MethodGet, "/workspaces/1/knowledge/search?q=", userID, nil)
+	setPath(req, map[string]string{"workspaceId": "1"})
+	rr := httptest.NewRecorder()
+	search.Search(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: want 200, got %d, body=%s", rr.Code, rr.Body.String())
+	}
+
+	// Decode as a map so we can prove the field is a JSON array, not null —
+	// the handler explicitly normalizes nil to [] for this reason.
+	var raw map[string]json.RawMessage
+	decodeJSONBody(t, rr, &raw)
+	if string(raw["results"]) != "[]" {
+		t.Errorf("empty-query results should serialize as [], got %s", string(raw["results"]))
+	}
+}
+
+// limit query-string is parsed by parseOffsetPagination (cap=100). Values
+// above the cap or non-numeric fall back to the default. The service caps
+// again at 100. A valid limit between 1 and 100 is honored end-to-end.
+func TestKnowledgeSearchHandler_LimitParsing(t *testing.T) {
+	search, pageH, db := newKnowledgeSearchHandler(t)
+	const userID = 1
+	seedNegativeTestUser(t, db, userID)
+	seedNegativeTestUser(t, db, 999)
+	seedWorkspaceWithRole(t, db, 1, userID, "Editor")
+
+	// Seed enough pages to exercise the limit. Each page has a heading-only
+	// markdown body so it produces exactly one chunk.
+	const total = 30
+	for i := 0; i < total; i++ {
+		title := fmt.Sprintf("Page %02d alpha", i)
+		body := fmt.Sprintf("# %s\n\nbody mentions alpha keyword %d.", title, i)
+		if _, err := pageH.service.Create(userID, services.CreatePageInput{
+			WorkspaceID: 1,
+			Title:       title,
+			Content:     body,
+		}); err != nil {
+			t.Fatalf("seed %d: %v", i, err)
+		}
+	}
+
+	for _, tc := range []struct {
+		name      string
+		limit     string
+		wantMax   int
+	}{
+		{"valid limit honored", "5", 5},
+		{"above cap falls back to default 25", "1000", 25},
+		{"non-numeric falls back to default 25", "abc", 25},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			url := "/workspaces/1/knowledge/search?q=alpha&limit=" + tc.limit
+			req := authedRequest(http.MethodGet, url, userID, nil)
+			setPath(req, map[string]string{"workspaceId": "1"})
+			rr := httptest.NewRecorder()
+			search.Search(rr, req)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status: want 200, got %d body=%s", rr.Code, rr.Body.String())
+			}
+			var resp knowledgeSearchResponse
+			decodeJSONBody(t, rr, &resp)
+			if len(resp.Results) != tc.wantMax {
+				t.Errorf("limit=%s: want %d results, got %d", tc.limit, tc.wantMax, len(resp.Results))
+			}
+		})
+	}
+}
+
+// A user without any role in the target workspace gets an empty result set
+// even when chunks matching the query exist there — the per-page permission
+// re-check denies every hit. Workspaces stay in "open" mode until a Viewer
+// role is assigned, so we seed a phantom Viewer to gate workspace 2.
+func TestKnowledgeSearchHandler_RespectsWorkspaceBoundary(t *testing.T) {
+	search, pageH, db := newKnowledgeSearchHandler(t)
+	const userID = 1
+	const phantomAdmin = 999
+	const phantomViewer = 998
+	seedNegativeTestUser(t, db, userID)
+	seedNegativeTestUser(t, db, phantomAdmin)
+	seedNegativeTestUser(t, db, phantomViewer)
+	// userID is the Editor of workspace 1; workspace 2 is gated by an
+	// explicit Viewer role distinct from userID, so userID has no access.
+	seedWorkspaceWithRole(t, db, 1, userID, "Editor")
+	seedWorkspaceWithRole(t, db, 2, phantomAdmin, "Administrator")
+	assignWorkspaceRole(t, db, 2, phantomViewer, "Viewer")
+
+	// Seed a page in workspace 2 the userID has no role in.
+	if _, err := pageH.service.Create(phantomAdmin, services.CreatePageInput{
+		WorkspaceID: 2,
+		Title:       "Cross-ws secret",
+		Content:     "alpha bravo charlie",
+	}); err != nil {
+		t.Fatalf("seed ws2: %v", err)
+	}
+
+	req := authedRequest(http.MethodGet, "/workspaces/2/knowledge/search?q=alpha", userID, nil)
+	setPath(req, map[string]string{"workspaceId": "2"})
+	rr := httptest.NewRecorder()
+	search.Search(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: want 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	var resp knowledgeSearchResponse
+	decodeJSONBody(t, rr, &resp)
+	if len(resp.Results) != 0 {
+		t.Errorf("non-member should see zero hits, got %+v", resp.Results)
+	}
+}
+
+// A restricted page (inherit_permissions=false, no ACL granting view) must
+// not surface through the HTTP search endpoint even though the workspace
+// Viewer would normally see open pages. The service-level test covers the
+// same invariant; this test pins it at the HTTP layer where the wiring
+// between handler, retrieval service, and permission evaluator lives.
+func TestKnowledgeSearchHandler_SuppressesRestrictedPages(t *testing.T) {
+	search, pageH, db := newKnowledgeSearchHandler(t)
+	const viewerID = 1
+	const adminID = 999
+	seedNegativeTestUser(t, db, viewerID)
+	seedNegativeTestUser(t, db, adminID)
+	// seedWorkspaceWithRole gives viewerID the Viewer role and auto-seeds
+	// uid 999 as Administrator to gate the workspace — so adminID is
+	// already wired up as the admin without a second assignment.
+	seedWorkspaceWithRole(t, db, 1, viewerID, "Viewer")
+
+	// Admin creates an open page and a restricted (inherit=false) page,
+	// both with the same matching keyword.
+	if _, err := pageH.service.Create(adminID, services.CreatePageInput{
+		WorkspaceID: 1, Title: "Open doc", Content: "openzebra term in open doc",
+	}); err != nil {
+		t.Fatalf("open page: %v", err)
+	}
+	restricted, err := pageH.service.Create(adminID, services.CreatePageInput{
+		WorkspaceID: 1, Title: "Restricted", Content: "openzebra term in restricted doc",
+	})
+	if err != nil {
+		t.Fatalf("restricted: %v", err)
+	}
+	if _, err := pageH.service.SetInheritPermissions(adminID, restricted.ID, false); err != nil {
+		t.Fatalf("break inheritance: %v", err)
+	}
+
+	// Viewer sees the open one but not the restricted one.
+	req := authedRequest(http.MethodGet, "/workspaces/1/knowledge/search?q=openzebra", viewerID, nil)
+	setPath(req, map[string]string{"workspaceId": "1"})
+	rr := httptest.NewRecorder()
+	search.Search(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: want 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	var resp knowledgeSearchResponse
+	decodeJSONBody(t, rr, &resp)
+	for _, r := range resp.Results {
+		if r.PageID == restricted.ID {
+			t.Errorf("restricted page %d must not appear in viewer's results, got %+v", restricted.ID, resp.Results)
+		}
+	}
+	if len(resp.Results) == 0 {
+		t.Error("viewer should still see the open page hit")
+	}
+}
+
+// Unauthenticated requests are rejected by RequireAuth before reaching the
+// retrieval service. Use a plain httptest.NewRequest (no user-in-context).
+func TestKnowledgeSearchHandler_Unauthenticated_401(t *testing.T) {
+	search, _, _ := newKnowledgeSearchHandler(t)
+	req := httptest.NewRequest(http.MethodGet, "/workspaces/1/knowledge/search?q=foo", nil)
+	req.SetPathValue("workspaceId", "1")
+	rr := httptest.NewRecorder()
+	search.Search(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("status: want 401, got %d body=%s", rr.Code, rr.Body.String())
 	}
 }
 
