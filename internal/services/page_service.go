@@ -356,6 +356,7 @@ func (s *PageService) Archive(actorID, pageID int) error {
 		// A single statement keeps the operation atomic and avoids walking
 		// the CTE for each row.
 		prefix := page.Path + fmt.Sprintf("%d/", page.ID)
+		pathLike := prefix + "%"
 		if _, err := tx.Exec(`
 			UPDATE pages
 			SET archived_at = CURRENT_TIMESTAMP,
@@ -363,14 +364,14 @@ func (s *PageService) Archive(actorID, pageID int) error {
 			    updated_at = CURRENT_TIMESTAMP,
 			    updated_by = ?
 			WHERE id = ? OR (workspace_id = ? AND path LIKE ?)
-		`, actorID, actorID, pageID, page.WorkspaceID, prefix+"%"); err != nil {
+		`, actorID, actorID, pageID, page.WorkspaceID, pathLike); err != nil {
 			return fmt.Errorf("archive subtree: %w", err)
 		}
 
-		// Drop the now-stale chunks for the archived page so search and AI
-		// tools cannot surface content from a hidden page even before the
-		// permission filter runs.
-		if err := s.pages.DeleteChunksForPageTx(tx, page.ID); err != nil {
+		// Drop the now-stale chunks for the archived subtree so search and
+		// AI tools cannot surface content from a hidden page even before
+		// the permission filter runs.
+		if err := s.pages.DeleteChunksForSubtreeTx(tx, page.ID, page.WorkspaceID, pathLike); err != nil {
 			return err
 		}
 

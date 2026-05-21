@@ -409,10 +409,10 @@ func TestPageService_Move_UpdatesDescendantPaths(t *testing.T) {
 func TestPageService_Archive_CascadesToSubtree(t *testing.T) {
 	db := newPagesTestDB(t)
 	s := NewPageService(db)
-	a, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "A"})
-	b, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, ParentID: &a.ID, Title: "B"})
-	c, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, ParentID: &b.ID, Title: "C"})
-	other, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "Other"})
+	a, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "A", Content: "# A\n\nroot body"})
+	b, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, ParentID: &a.ID, Title: "B", Content: "# B\n\nchild body"})
+	c, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, ParentID: &b.ID, Title: "C", Content: "# C\n\ngrandchild body"})
+	other, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "Other", Content: "# Other\n\nunrelated"})
 
 	if err := s.Archive(1, a.ID); err != nil {
 		t.Fatalf("archive: %v", err)
@@ -426,12 +426,18 @@ func TestPageService_Archive_CascadesToSubtree(t *testing.T) {
 		if page.ArchivedAt == nil {
 			t.Errorf("page %d should be archived", id)
 		}
+		if got := listChunksForPage(t, db, id); len(got) != 0 {
+			t.Errorf("page %d: expected chunks dropped on subtree archive, got %d", id, len(got))
+		}
 	}
 
-	// Other root must remain live.
+	// Other root must remain live and keep its chunks.
 	otherAfter, _ := s.GetByID(other.ID)
 	if otherAfter.ArchivedAt != nil {
 		t.Errorf("unrelated page %d should not be archived", other.ID)
+	}
+	if got := listChunksForPage(t, db, other.ID); len(got) == 0 {
+		t.Errorf("unrelated page %d: chunks should be untouched, got 0", other.ID)
 	}
 }
 
@@ -604,6 +610,34 @@ func TestPageService_Archive_RemovesChunks(t *testing.T) {
 	revs, _ := s.ListRevisions(page.ID, 0, 0)
 	if len(revs) == 0 || revs[0].ChangeType != "archive" {
 		t.Errorf("newest revision should be 'archive', got %+v", revs)
+	}
+}
+
+func TestPageService_Archive_RemovesSubtreeChunks(t *testing.T) {
+	db := newPagesTestDB(t)
+	s := NewPageService(db)
+	root, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "Root", Content: "# Root\n\nroot body to index"})
+	child, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, ParentID: &root.ID, Title: "Child", Content: "# Child\n\nchild body to index"})
+	grand, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, ParentID: &child.ID, Title: "Grand", Content: "# Grand\n\ngrandchild body to index"})
+	sibling, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "Sibling", Content: "# Sibling\n\nsibling body to index"})
+
+	for _, id := range []int{root.ID, child.ID, grand.ID, sibling.ID} {
+		if got := listChunksForPage(t, db, id); len(got) == 0 {
+			t.Fatalf("expected chunks before archive for page %d", id)
+		}
+	}
+
+	if err := s.Archive(1, root.ID); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+
+	for _, id := range []int{root.ID, child.ID, grand.ID} {
+		if got := listChunksForPage(t, db, id); len(got) != 0 {
+			t.Errorf("page %d: expected chunks dropped on subtree archive, got %d", id, len(got))
+		}
+	}
+	if got := listChunksForPage(t, db, sibling.ID); len(got) == 0 {
+		t.Errorf("sibling page %d: chunks should be untouched after unrelated archive", sibling.ID)
 	}
 }
 

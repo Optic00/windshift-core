@@ -680,6 +680,24 @@ func (r *PageRepository) DeleteChunksForPageTx(tx database.Tx, pageID int) error
 	return nil
 }
 
+// DeleteChunksForSubtreeTx removes chunks for the root page and every
+// descendant matched by the materialized-path prefix. Mirrors the WHERE
+// clause used by Archive's cascade UPDATE so the chunk index stays in
+// step with archived rows.
+func (r *PageRepository) DeleteChunksForSubtreeTx(tx database.Tx, rootID, workspaceID int, pathLikePrefix string) error {
+	_, err := tx.Exec(`
+		DELETE FROM page_chunks
+		WHERE page_id IN (
+			SELECT id FROM pages
+			WHERE id = ? OR (workspace_id = ? AND path LIKE ?)
+		)
+	`, rootID, workspaceID, pathLikePrefix)
+	if err != nil {
+		return fmt.Errorf("delete subtree page chunks: %w", err)
+	}
+	return nil
+}
+
 // InsertChunkTx persists a chunk inside the same tx as the page edit that
 // produced it.
 func (r *PageRepository) InsertChunkTx(tx database.Tx, c models.PageChunk) error {
