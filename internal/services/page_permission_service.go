@@ -1,6 +1,7 @@
 package services
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 
@@ -159,16 +160,239 @@ func (s *PagePermissionService) Can(userID, workspaceID, pageID int, op string) 
 // ListVisiblePageIDs returns the subset of pageIDs the user can view.
 // Optimized for tree rendering, which checks ~tens to hundreds of pages
 // per workspace per request.
+//
+// The batched evaluator preserves Can(..., PageOpView)'s semantics:
+//
+//   - userID == 0 → all false (denied).
+//   - cross-workspace or missing page → false.
+//   - archived page → visible only to system.admin or workspace.admin.
+//   - system.admin / workspace.admin / workspace.page.admin → all live pages
+//     visible.
+//   - otherwise, walk inheritance chain to assemble the effective ACL; a
+//     restricted page (ACL present) requires a matching ACL row AND the
+//     workspace's page.view permission as a membership floor; a page with
+//     inheritance broken and no ACL is admin-only; an open page falls back
+//     to workspace page.view.
+//
+// Implementation notes — savings vs. the per-page Can loop:
+//
+//   - admin checks (system, workspace.admin, page.admin, page.view) are
+//     evaluated once per call instead of once per page.
+//   - user→groups and user→workspace-roles lookups happen once.
+//   - pages, ancestor inherit flags, and page_permissions rows are each
+//     bulk-loaded in a single query covering every page and every ancestor.
 func (s *PagePermissionService) ListVisiblePageIDs(userID, workspaceID int, pageIDs []int) (map[int]bool, error) {
 	out := make(map[int]bool, len(pageIDs))
+	if len(pageIDs) == 0 {
+		return out, nil
+	}
 	for _, id := range pageIDs {
-		can, err := s.Can(userID, workspaceID, id, PageOpView)
-		if err != nil {
-			return nil, err
+		out[id] = false
+	}
+	if userID == 0 {
+		return out, nil
+	}
+
+	isSysAdmin, err := s.perm.IsSystemAdmin(userID)
+	if err != nil {
+		return nil, err
+	}
+	hasWsAdmin, err := s.perm.HasWorkspacePermission(userID, workspaceID, models.PermissionWorkspaceAdmin)
+	if err != nil {
+		return nil, err
+	}
+	hasPageAdmin, err := s.perm.HasWorkspacePermission(userID, workspaceID, models.PermissionPageAdmin)
+	if err != nil {
+		return nil, err
+	}
+	hasWorkspacePageView, err := s.perm.HasWorkspacePermission(userID, workspaceID, models.PermissionPageView)
+	if err != nil {
+		return nil, err
+	}
+	adminShortcut := isSysAdmin || hasWsAdmin || hasPageAdmin
+
+	pages, err := s.pages.GetByIDs(pageIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	livePages := make([]models.Page, 0, len(pages))
+	for _, p := range pages {
+		if p.WorkspaceID != workspaceID {
+			continue
 		}
-		out[id] = can
+		if p.ArchivedAt != nil {
+			// Archived pages: page-level ACLs do NOT apply; only system or
+			// workspace admin can view (mirrors Can's archived branch).
+			if isSysAdmin || hasWsAdmin {
+				out[p.ID] = true
+			}
+			continue
+		}
+		if adminShortcut {
+			out[p.ID] = true
+			continue
+		}
+		livePages = append(livePages, p)
+	}
+	if len(livePages) == 0 {
+		return out, nil
+	}
+
+	// Collect the union of (page + ancestor) ids so we can bulk-load
+	// inheritance flags and page_permissions in one round trip each.
+	candidateSet := make(map[int]struct{}, len(livePages)*2)
+	for _, p := range livePages {
+		candidateSet[p.ID] = struct{}{}
+		if p.InheritPermissions {
+			for _, aid := range splitPathIDs(p.Path) {
+				candidateSet[aid] = struct{}{}
+			}
+		}
+	}
+	candidateIDs := make([]int, 0, len(candidateSet))
+	for id := range candidateSet {
+		candidateIDs = append(candidateIDs, id)
+	}
+
+	inheritFlags, err := s.loadAncestorInheritFlags(candidateIDs)
+	if err != nil {
+		return nil, err
+	}
+	aclsByPage, err := s.loadPagePermissionsByPage(candidateIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	groupIDs, err := s.userGroupIDs(userID)
+	if err != nil {
+		return nil, err
+	}
+	roleIDs, err := s.userWorkspaceRoleIDs(userID, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+
+	viewLevels := map[string]bool{
+		models.PagePermissionLevelView:  true,
+		models.PagePermissionLevelEdit:  true,
+		models.PagePermissionLevelAdmin: true,
+	}
+
+	for _, p := range livePages {
+		acl := collectACLInMemory(p, inheritFlags, aclsByPage)
+		if len(acl) > 0 {
+			// Restricted: must match ACL AND meet workspace page.view floor.
+			if !hasWorkspacePageView {
+				continue
+			}
+			if matchesACLInMemory(userID, groupIDs, roleIDs, acl, viewLevels) {
+				out[p.ID] = true
+			}
+			continue
+		}
+		// No effective ACL.
+		if !p.InheritPermissions {
+			// Inheritance broken with no grants → admin-only. Admins were
+			// already short-circuited above, so deny here.
+			continue
+		}
+		out[p.ID] = hasWorkspacePageView
 	}
 	return out, nil
+}
+
+// loadPagePermissionsByPage bulk-loads page_permissions rows for the given
+// page ids and groups them by page_id. The result mirrors what
+// collectEffectiveACL would scan per-page; pages without rows are absent
+// from the map (callers must treat that as "no rows").
+func (s *PagePermissionService) loadPagePermissionsByPage(ids []int) (map[int][]models.PagePermission, error) {
+	if len(ids) == 0 {
+		return map[int][]models.PagePermission{}, nil
+	}
+	args := make([]interface{}, len(ids))
+	placeholders := ""
+	for i, id := range ids {
+		args[i] = id
+		if i > 0 {
+			placeholders += ", "
+		}
+		placeholders += "?"
+	}
+	rows, err := s.db.Query(`
+		SELECT id, page_id, principal_type, principal_id, permission_level, granted_by, granted_at
+		FROM page_permissions
+		WHERE page_id IN (`+placeholders+`)
+	`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("bulk load page permissions: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make(map[int][]models.PagePermission, len(ids))
+	for rows.Next() {
+		var p models.PagePermission
+		var grantedBy sql.NullInt64
+		if err := rows.Scan(&p.ID, &p.PageID, &p.PrincipalType, &p.PrincipalID, &p.PermissionLevel, &grantedBy, &p.GrantedAt); err != nil {
+			return nil, fmt.Errorf("scan ACL row: %w", err)
+		}
+		if grantedBy.Valid {
+			gb := int(grantedBy.Int64)
+			p.GrantedBy = &gb
+		}
+		out[p.PageID] = append(out[p.PageID], p)
+	}
+	return out, rows.Err()
+}
+
+// collectACLInMemory mirrors collectEffectiveACL's chain-walk but operates
+// against pre-loaded inheritance flags and per-page ACL rows so it issues no
+// queries. The page's own ACL is always included; if the page inherits, walk
+// ancestors closest-first and stop after the first ancestor that breaks
+// inheritance (or is missing — fail-closed).
+func collectACLInMemory(p models.Page, inheritFlags map[int]bool, aclsByPage map[int][]models.PagePermission) []models.PagePermission {
+	out := append([]models.PagePermission(nil), aclsByPage[p.ID]...)
+	if !p.InheritPermissions {
+		return out
+	}
+	ancestorIDs := splitPathIDs(p.Path)
+	for i := len(ancestorIDs) - 1; i >= 0; i-- {
+		aid := ancestorIDs[i]
+		out = append(out, aclsByPage[aid]...)
+		if inh, ok := inheritFlags[aid]; !ok || !inh {
+			break
+		}
+	}
+	return out
+}
+
+// matchesACLInMemory mirrors matchesACL's principal-match loop but uses
+// pre-computed group/role memberships so we don't requery per page.
+func matchesACLInMemory(userID int, groupIDs, roleIDs []int, acl []models.PagePermission, wantLevels map[string]bool) bool {
+	for _, row := range acl {
+		if !wantLevels[row.PermissionLevel] {
+			continue
+		}
+		switch row.PrincipalType {
+		case models.PagePrincipalTypeUser:
+			if row.PrincipalID == userID {
+				return true
+			}
+		case models.PagePrincipalTypeGroup:
+			for _, gid := range groupIDs {
+				if gid == row.PrincipalID {
+					return true
+				}
+			}
+		case models.PagePrincipalTypeRole:
+			for _, rid := range roleIDs {
+				if rid == row.PrincipalID {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // collectEffectiveACL walks from the page upward through its ancestors
@@ -233,15 +457,13 @@ func (s *PagePermissionService) collectEffectiveACL(page *models.Page) ([]models
 	var out []models.PagePermission
 	for rows.Next() {
 		var p models.PagePermission
-		var grantedBy interface{}
+		var grantedBy sql.NullInt64
 		if err := rows.Scan(&p.ID, &p.PageID, &p.PrincipalType, &p.PrincipalID, &p.PermissionLevel, &grantedBy, &p.GrantedAt); err != nil {
 			return nil, fmt.Errorf("scan ACL row: %w", err)
 		}
-		if grantedBy != nil {
-			if v, ok := grantedBy.(int64); ok {
-				gb := int(v)
-				p.GrantedBy = &gb
-			}
+		if grantedBy.Valid {
+			gb := int(grantedBy.Int64)
+			p.GrantedBy = &gb
 		}
 		out = append(out, p)
 	}

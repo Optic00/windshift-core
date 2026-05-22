@@ -1135,3 +1135,45 @@ func TestBuildPageTree_AssemblesNestedNodes(t *testing.T) {
 		t.Fatalf("expected B→C, got %+v", roots[0].Children[0].Children)
 	}
 }
+
+func TestPageService_SearchByTitle_EscapesLikeMetacharacters(t *testing.T) {
+	db := newPagesTestDB(t)
+	s := NewPageService(db)
+
+	for _, title := range []string{"foo_bar", "fooxbar", "foobar", "100% awesome", "back\\slash"} {
+		if _, err := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: title}); err != nil {
+			t.Fatalf("create %q: %v", title, err)
+		}
+	}
+
+	// Underscore must match literally, not act as a single-character wildcard.
+	got, err := s.SearchByTitle(1, "foo_bar", 20)
+	if err != nil {
+		t.Fatalf("search underscore: %v", err)
+	}
+	if len(got) != 1 || got[0].Title != "foo_bar" {
+		titles := make([]string, 0, len(got))
+		for _, p := range got {
+			titles = append(titles, p.Title)
+		}
+		t.Fatalf("foo_bar search: want exactly [foo_bar], got %v", titles)
+	}
+
+	// Percent must match literally.
+	gotPct, err := s.SearchByTitle(1, "100%", 20)
+	if err != nil {
+		t.Fatalf("search percent: %v", err)
+	}
+	if len(gotPct) != 1 || gotPct[0].Title != "100% awesome" {
+		t.Fatalf("100%% search: got %+v", gotPct)
+	}
+
+	// Backslash must not break the ESCAPE clause.
+	gotBS, err := s.SearchByTitle(1, `back\slash`, 20)
+	if err != nil {
+		t.Fatalf("search backslash: %v", err)
+	}
+	if len(gotBS) != 1 || gotBS[0].Title != "back\\slash" {
+		t.Fatalf("backslash search: got %+v", gotBS)
+	}
+}

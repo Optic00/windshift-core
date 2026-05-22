@@ -521,3 +521,92 @@ func TestPagePermission_InheritedACLFromAncestor(t *testing.T) {
 		t.Errorf("carol (no grant) should NOT inherit parent restriction-passthrough: can=%v err=%v", can, err)
 	}
 }
+
+// TestPagePermission_ListVisiblePageIDs_MatchesCan pins the batched
+// evaluator against a one-at-a-time Can(PageOpView) loop across the parity
+// scenarios from the fix plan: open inherited page, page with direct ACL,
+// child inheriting from parent, child under inherit_permissions=false,
+// archived page, and a cross-workspace id. Both flows must agree for every
+// (user, page) pair — the whole point of the batch optimization is to keep
+// security semantics identical while cutting query count.
+func TestPagePermission_ListVisiblePageIDs_MatchesCan(t *testing.T) {
+	env := newPagePermTestEnv(t)
+
+	// Seed a second workspace so we can verify cross-workspace ids resolve
+	// to false in the batched path.
+	if _, err := env.db.Exec(`INSERT INTO workspaces (id, name, key, active) VALUES (2, 'WS2', 'WS2K', 1)`); err != nil {
+		t.Fatalf("seed workspace 2: %v", err)
+	}
+
+	// Open root page (inherits, no ACL).
+	openPage, _ := env.pages.Create(env.users["alice"], CreatePageInput{WorkspaceID: 1, Title: "Open"})
+
+	// Restricted parent with a direct ACL granting carol view.
+	parent, _ := env.pages.Create(env.users["alice"], CreatePageInput{WorkspaceID: 1, Title: "Parent"})
+	if _, err := env.pages.SetInheritPermissions(env.users["bob"], parent.ID, false); err != nil {
+		t.Fatalf("break parent inheritance: %v", err)
+	}
+	if _, err := env.pages.GrantPermission(env.users["bob"], parent.ID, "user", env.users["alice"], "view"); err != nil {
+		t.Fatalf("grant alice on parent: %v", err)
+	}
+
+	// Child of the restricted parent — inherits ACL via the chain.
+	inheritingChild, _ := env.pages.Create(env.users["alice"], CreatePageInput{WorkspaceID: 1, ParentID: &parent.ID, Title: "ChildInherits"})
+
+	// Child under a broken-inheritance branch with no ACL → admin-only.
+	lockedChild, _ := env.pages.Create(env.users["alice"], CreatePageInput{WorkspaceID: 1, ParentID: &parent.ID, Title: "Locked"})
+	if _, err := env.pages.SetInheritPermissions(env.users["bob"], lockedChild.ID, false); err != nil {
+		t.Fatalf("break locked child inheritance: %v", err)
+	}
+
+	// Archived page (rule: admin-only, ACL doesn't apply).
+	archived, _ := env.pages.Create(env.users["alice"], CreatePageInput{WorkspaceID: 1, Title: "Archived"})
+	if err := env.pages.Archive(env.users["bob"], archived.ID); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+
+	// Page in a different workspace — must come back false from the batch
+	// when queried against workspace 1.
+	crossWS, _ := env.pages.Create(env.users["bob"], CreatePageInput{WorkspaceID: 2, Title: "Elsewhere"})
+
+	pageIDs := []int{openPage.ID, parent.ID, inheritingChild.ID, lockedChild.ID, archived.ID, crossWS.ID, 999999}
+
+	users := []string{"alice", "bob", "phantom", "carol"}
+	for _, name := range users {
+		t.Run(name, func(t *testing.T) {
+			uid := env.users[name]
+			batch, err := env.auth.ListVisiblePageIDs(uid, 1, pageIDs)
+			if err != nil {
+				t.Fatalf("ListVisiblePageIDs: %v", err)
+			}
+			for _, pid := range pageIDs {
+				want, err := env.auth.Can(uid, 1, pid, PageOpView)
+				if err != nil {
+					t.Fatalf("Can(%d): %v", pid, err)
+				}
+				got, ok := batch[pid]
+				if !ok {
+					t.Errorf("page %d missing from batch result", pid)
+					continue
+				}
+				if got != want {
+					t.Errorf("page %d: batch=%v, Can=%v", pid, got, want)
+				}
+			}
+		})
+	}
+}
+
+// TestPagePermission_ListVisiblePageIDs_EmptyInput covers the fast-return
+// path so future refactors don't accidentally regress to issuing queries
+// with an empty IN (...) list.
+func TestPagePermission_ListVisiblePageIDs_EmptyInput(t *testing.T) {
+	env := newPagePermTestEnv(t)
+	got, err := env.auth.ListVisiblePageIDs(env.users["alice"], 1, nil)
+	if err != nil {
+		t.Fatalf("empty input: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("empty input: want empty map, got %v", got)
+	}
+}
