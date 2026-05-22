@@ -43,6 +43,12 @@
   let dirty = $state(false);
   let loadingPage = $state(false);
   let error = $state('');
+  // Monotonic token for loadPage. A user who clicks page A then quickly
+  // page B can get the slow A response back after B's fast response —
+  // without this guard, the late A response would clobber selectedPage and
+  // the editor would silently swap to A's content. The token also lets the
+  // route-clearing branch invalidate any in-flight load.
+  let loadPageRequestSeq = 0;
   let permsDialogOpen = $state(false);
   let moveDialogOpen = $state(false);
   let titleInputEl = $state(null);
@@ -160,6 +166,9 @@
     if (pageId) {
       loadPage(pageId);
     } else {
+      // Bump the token so any in-flight loadPage can't write back into
+      // the cleared state when its response eventually lands.
+      loadPageRequestSeq++;
       selectedPage = null;
       draftTitle = '';
       draftContent = '';
@@ -183,12 +192,15 @@
   });
 
   async function loadPage(id) {
+    const requestSeq = ++loadPageRequestSeq;
     loadingPage = true;
     error = '';
     try {
-      selectedPage = await api.pages.getPage(workspaceId, id);
-      draftTitle = selectedPage.title;
-      draftContent = selectedPage.content;
+      const page = await api.pages.getPage(workspaceId, id);
+      if (requestSeq !== loadPageRequestSeq) return;
+      selectedPage = page;
+      draftTitle = page.title;
+      draftContent = page.content;
       dirty = false;
       saveStatus = 'idle';
       // Run in parallel: linked work items are independent of the page
@@ -196,10 +208,11 @@
       void loadPageLinks(id);
       void ensureLinkTypesLoaded();
     } catch (err) {
+      if (requestSeq !== loadPageRequestSeq) return;
       error = err?.message || t('pages.errorLoadPage');
       selectedPage = null;
     } finally {
-      loadingPage = false;
+      if (requestSeq === loadPageRequestSeq) loadingPage = false;
     }
   }
 
