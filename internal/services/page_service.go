@@ -329,9 +329,13 @@ func (s *PageService) Move(actorID, pageID int, newParentID, prevSiblingID, next
 		}
 
 		// Compute the moved page's new frac_index when the caller supplied
-		// sibling positioning. Backfills NULL keys for the new parent's
-		// children so KeyBetween has well-defined neighbors to bisect.
-		newFracIndex, err := s.resolveSiblingFracIndex(tx, page.WorkspaceID, newParentID, pageID, prevSiblingID, nextSiblingID, actorID)
+		// sibling positioning, or when the parent is changing (in which
+		// case we must give the page a fresh key in its new sibling set
+		// rather than carry its old key). Backfills NULL keys for the
+		// new parent's children so KeyBetween has well-defined neighbors
+		// to bisect.
+		parentChanged := !samePageParent(page.ParentID, newParentID)
+		newFracIndex, err := s.resolveSiblingFracIndex(tx, page.WorkspaceID, newParentID, pageID, prevSiblingID, nextSiblingID, parentChanged, actorID)
 		if err != nil {
 			return nil, err
 		}
@@ -799,6 +803,17 @@ func isValidPermissionLevel(l string) bool {
 
 // --- helpers ---
 
+// samePageParent treats nil as "workspace root" and compares two parent
+// pointers structurally. Used by Move to decide whether the page is
+// crossing into a different sibling set (which requires a fresh
+// frac_index) or just reordering within its current one.
+func samePageParent(a, b *int) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
 func (s *PageService) resolveParent(tx database.Tx, workspaceID int, parentID *int) (resolvedParentID *int, childPath string, parentDepth int, err error) {
 	if parentID == nil {
 		return nil, "/", -1, nil
@@ -818,22 +833,30 @@ func (s *PageService) resolveParent(tx database.Tx, workspaceID int, parentID *i
 }
 
 // resolveSiblingFracIndex computes the frac_index the moved page should
-// receive given prev/next sibling IDs that bracket the drop position. Returns
-// nil (no frac_index write) when the caller didn't supply positioning — that
-// preserves the legacy append-by-natural-order semantics. When neighbors
-// have NULL frac_index (pages predating drag-and-drop), they are backfilled
-// with monotonically-increasing keys in their current display order before
-// KeyBetween is consulted, so subsequent reorders against the same group
-// have well-defined endpoints.
+// receive given prev/next sibling IDs that bracket the drop position.
+//
+// When the caller supplied no anchors and the parent is unchanged, returns
+// nil (no frac_index write) to preserve the page's current position in
+// its existing sibling set. When the caller supplied no anchors AND the
+// parent is changing, the moved page is appended to the end of the new
+// parent's children — without this, the page would carry its old key
+// into the new sibling set and land in a visually arbitrary position
+// (and potentially collide on the per-sibling-set uniqueness invariant).
+//
+// When neighbors have NULL frac_index (pages predating drag-and-drop),
+// they are backfilled with monotonically-increasing keys in their
+// current display order before KeyBetween is consulted, so subsequent
+// reorders against the same group have well-defined endpoints.
 func (s *PageService) resolveSiblingFracIndex(
 	tx database.Tx,
 	workspaceID int,
 	newParentID *int,
 	movedPageID int,
 	prevSiblingID, nextSiblingID *int,
+	parentChanged bool,
 	actorID int,
 ) (*string, error) {
-	if prevSiblingID == nil && nextSiblingID == nil {
+	if prevSiblingID == nil && nextSiblingID == nil && !parentChanged {
 		return nil, nil
 	}
 
@@ -865,6 +888,37 @@ func (s *PageService) resolveSiblingFracIndex(
 		if _, ok := siblingByID[*id]; !ok {
 			return nil, fmt.Errorf("sibling %d is not a child of the target parent", *id)
 		}
+	}
+
+	// Append-to-end on a parent-changing move with no anchors: anchor
+	// the new page after the current last sibling (or as the lone child
+	// if the new parent is empty). The backfill branch below already
+	// handles a sibling set with NULL keys; once that runs, the
+	// per-sibling-set last key is known and the second pass below
+	// (prevKey / nextKey computation) produces a fresh key to its right.
+	if prevSiblingID == nil && nextSiblingID == nil {
+		// No non-moved siblings → the moved page is the lone child;
+		// pick a deterministic starting key.
+		if len(siblingByID) == 0 {
+			key, kerr := KeyBetween("", "")
+			if kerr != nil {
+				return nil, fmt.Errorf("compute initial frac_index for empty parent: %w", kerr)
+			}
+			return &key, nil
+		}
+		// Anchor after the last sibling in display order. ListChildrenTx
+		// returns siblings sorted by COALESCE(frac_index,''), rank, title,
+		// id — so the final non-moved entry is the visual end of the list.
+		var lastSibling *models.Page
+		for i := len(siblings) - 1; i >= 0; i-- {
+			if siblings[i].ID == movedPageID {
+				continue
+			}
+			lastSibling = &siblings[i]
+			break
+		}
+		// lastSibling can't be nil here because len(siblingByID) > 0.
+		prevSiblingID = &lastSibling.ID
 	}
 
 	needsBackfill := false

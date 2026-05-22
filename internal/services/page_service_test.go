@@ -307,6 +307,85 @@ func TestPageService_Update_PreservesRankAndFracIndex(t *testing.T) {
 	}
 }
 
+// Bug-hunt #4: a parent-changing Move without prev/next sibling anchors
+// used to leave the moved page's old frac_index intact. That meant the
+// page carried a key generated for one sibling set into a different one,
+// landing visually in an unpredictable position (and risking collision
+// on the per-sibling-set uniqueness invariant). It must now be
+// appended to the end of the new parent's children.
+func TestPageService_Move_CrossParentNoAnchors_AppendsAtEnd(t *testing.T) {
+	db := newPagesTestDB(t)
+	s := NewPageService(db)
+
+	srcParent, err := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "Src"})
+	if err != nil {
+		t.Fatalf("src parent: %v", err)
+	}
+	dstParent, err := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "Dst"})
+	if err != nil {
+		t.Fatalf("dst parent: %v", err)
+	}
+
+	srcA, err := s.Create(1, CreatePageInput{WorkspaceID: 1, ParentID: &srcParent.ID, Title: "srcA"})
+	if err != nil {
+		t.Fatalf("srcA: %v", err)
+	}
+	srcB, err := s.Create(1, CreatePageInput{WorkspaceID: 1, ParentID: &srcParent.ID, Title: "srcB"})
+	if err != nil {
+		t.Fatalf("srcB: %v", err)
+	}
+	// Give srcB a frac_index by reordering it ahead of srcA — this is
+	// the "old sibling set" key that the bug would carry over.
+	if _, err := s.Move(1, srcB.ID, &srcParent.ID, nil, &srcA.ID); err != nil {
+		t.Fatalf("reorder src children: %v", err)
+	}
+
+	dstA, err := s.Create(1, CreatePageInput{WorkspaceID: 1, ParentID: &dstParent.ID, Title: "dstA"})
+	if err != nil {
+		t.Fatalf("dstA: %v", err)
+	}
+	dstB, err := s.Create(1, CreatePageInput{WorkspaceID: 1, ParentID: &dstParent.ID, Title: "dstB"})
+	if err != nil {
+		t.Fatalf("dstB: %v", err)
+	}
+	// Populate dstA / dstB keys so the new parent has well-defined endpoints.
+	if _, err := s.Move(1, dstB.ID, &dstParent.ID, &dstA.ID, nil); err != nil {
+		t.Fatalf("seed dst order: %v", err)
+	}
+
+	// Move srcB into Dst without any sibling anchors.
+	moved, err := s.Move(1, srcB.ID, &dstParent.ID, nil, nil)
+	if err != nil {
+		t.Fatalf("cross-parent move: %v", err)
+	}
+	if moved.ParentID == nil || *moved.ParentID != dstParent.ID {
+		t.Fatalf("parent not updated: %+v", moved.ParentID)
+	}
+	if moved.FracIndex == nil {
+		t.Fatal("frac_index nil after cross-parent move — should be appended at end")
+	}
+
+	dstAFresh, err := s.GetByID(dstA.ID)
+	if err != nil {
+		t.Fatalf("reload dstA: %v", err)
+	}
+	dstBFresh, err := s.GetByID(dstB.ID)
+	if err != nil {
+		t.Fatalf("reload dstB: %v", err)
+	}
+	if dstAFresh.FracIndex == nil || dstBFresh.FracIndex == nil {
+		t.Fatalf("expected both pre-existing siblings to have keys (dstA=%v dstB=%v)", dstAFresh.FracIndex, dstBFresh.FracIndex)
+	}
+	// dstB was reordered after dstA, so display order is dstA, dstB.
+	// The appended page must sort after both.
+	if *moved.FracIndex <= *dstAFresh.FracIndex {
+		t.Errorf("appended key %q must sort after dstA %q", *moved.FracIndex, *dstAFresh.FracIndex)
+	}
+	if *moved.FracIndex <= *dstBFresh.FracIndex {
+		t.Errorf("appended key %q must sort after dstB %q", *moved.FracIndex, *dstBFresh.FracIndex)
+	}
+}
+
 // Bug-hunt-2 #4: Move previously checked only the moved page's new
 // depth, not the subtree's. A deep chain of descendants reparented
 // under a deep parent could land descendants past MaxPageDepth.
