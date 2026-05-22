@@ -26,6 +26,12 @@ type Page struct {
 	CreatedAt          time.Time  `json:"created_at" db:"created_at"`
 	UpdatedAt          time.Time  `json:"updated_at" db:"updated_at"`
 	ArchivedAt         *time.Time `json:"archived_at" db:"archived_at"`
+
+	// Labels is populated by the page-label preload helpers
+	// (PageLabelRepository.LoadForPages); always an empty slice in the JSON
+	// response when no labels are attached so the frontend never has to
+	// null-check.
+	Labels []PageLabel `json:"labels" db:"-"`
 }
 
 // PageNode is a tree-rendering projection of Page with computed children.

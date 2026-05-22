@@ -146,6 +146,9 @@ var authPolicySchemaPostgres string
 //go:embed schema/pages_postgres.sql
 var pagesSchemaPostgres string
 
+//go:embed schema/page_labels_postgres.sql
+var pageLabelsSchemaPostgres string
+
 // PostgresDB implements the Database interface for PostgreSQL
 type PostgresDB struct {
 	db  *sql.DB
@@ -663,6 +666,14 @@ func (p *PostgresDB) Initialize() error {
 		if labelsContent != "" {
 			if _, err = p.db.Exec(labelsContent); err != nil {
 				slog.Warn("labels postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
+			}
+		}
+
+		// Create page_labels tables if they don't exist (for existing databases)
+		pageLabelsContent := strings.TrimSpace(pageLabelsSchemaPostgres)
+		if pageLabelsContent != "" {
+			if _, err = p.db.Exec(pageLabelsContent); err != nil {
+				slog.Warn("page_labels postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
 			}
 		}
 
@@ -1321,6 +1332,7 @@ func (p *PostgresDB) getPostgresSchemaFiles() []schemaFile {
 		{"approvals_postgres.sql", approvalsSchemaPostgres},
 		{"integrations_postgres.sql", integrationsSchemaPostgres},
 		{"pages_postgres.sql", pagesSchemaPostgres},
+		{"page_labels_postgres.sql", pageLabelsSchemaPostgres},
 	}
 }
 
