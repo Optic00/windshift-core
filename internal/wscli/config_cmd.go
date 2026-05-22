@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -342,11 +343,64 @@ func promptForToken(reader *bufio.Reader, instanceURL string) (string, error) {
 	return t, nil
 }
 
+var configDocsCmd = &cobra.Command{
+	Use:   "docs",
+	Short: "Regenerate WINDSHIFT.md from the current workspace",
+	Long: `Refetch workspace context (statuses, item types, transitions) and
+rewrite WINDSHIFT.md with the live CLI surface plus this workspace's
+taxonomy. Does not touch ws.toml, AGENTS.md, or CLAUDE.md — use
+` + "`ws init`" + ` for full project setup.
+
+Writes to the directory containing the active ws.toml (the one found by
+walking up from cwd) so running this from a subdirectory still updates
+the canonical WINDSHIFT.md at the repo root. Falls back to cwd when no
+project config is loaded.
+
+WINDSHIFT.md is workspace- and token-specific; gitignore it and load it
+into agent context via a CLAUDE.md @WINDSHIFT.md import (or equivalent).
+
+Examples:
+  ws config docs                          # Rewrite WINDSHIFT.md next to ws.toml`,
+	RunE: func(_ *cobra.Command, _ []string) error {
+		client, err := NewClient()
+		if err != nil {
+			return err
+		}
+
+		wsKey := cfg.GetEffectiveWorkspace()
+		if wsKey == "" {
+			return fmt.Errorf("workspace is required: use -w flag or set defaults.workspace_key in config")
+		}
+		wsID, err := client.ResolveWorkspaceID(wsKey)
+		if err != nil {
+			return fmt.Errorf("failed to resolve workspace: %w", err)
+		}
+		wsCtx, err := fetchWorkspaceContext(client, wsID)
+		if err != nil {
+			return err
+		}
+
+		// Anchor the output next to the active ws.toml so running from a
+		// subdir still rewrites the repo-root copy (mirrors `config refresh`).
+		dir := "."
+		if discoveredProjectConfig != "" {
+			dir = filepath.Dir(discoveredProjectConfig)
+		}
+		path := filepath.Join(dir, "WINDSHIFT.md")
+		if err := writeWindshiftMD(client, wsCtx, path); err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintf(stdout, "Wrote %s\n", path)
+		return nil
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(configCmd)
 	configCmd.AddCommand(configInitCmd)
 	configCmd.AddCommand(configShowCmd)
 	configCmd.AddCommand(configRefreshCmd)
+	configCmd.AddCommand(configDocsCmd)
 
 	configInitCmd.Flags().BoolVar(&configInitGlobal, "global", false, "create global config instead of project config")
 	configInitCmd.Flags().BoolVar(&configInitNonInteractive, "non-interactive", false, "fail instead of prompting when required fields are missing (auto-detected when stdin is not a TTY)")

@@ -180,26 +180,9 @@ func runProjectInit() error {
 	}
 	workspace := wsCtx.Workspace
 	statuses := wsCtx.Statuses
-	itemTypes := wsCtx.ItemTypes
 
-	var defaultWorkflow *Workflow
-	for i := range wsCtx.Workflows {
-		if wsCtx.Workflows[i].IsDefault {
-			defaultWorkflow = &wsCtx.Workflows[i]
-			break
-		}
-	}
-	var transitions []Transition
-	if defaultWorkflow != nil {
-		transitions, err = client.GetWorkflowTransitions(defaultWorkflow.ID)
-		if err != nil {
-			transitions = nil
-		}
-	}
-
-	content := generateWindshiftMD(workspace, statuses, itemTypes, transitions)
-	if err := os.WriteFile("WINDSHIFT.md", []byte(content), 0o600); err != nil {
-		return fmt.Errorf("failed to write WINDSHIFT.md: %w", err)
+	if err := writeWindshiftMD(client, wsCtx, "WINDSHIFT.md"); err != nil {
+		return err
 	}
 	_, _ = fmt.Fprintln(stdout, "Created WINDSHIFT.md")
 
@@ -391,6 +374,31 @@ func yesIf(b bool) string {
 		return "Yes"
 	}
 	return ""
+}
+
+// writeWindshiftMD renders WINDSHIFT.md from the workspace context and
+// writes it to path. Used by both `ws init` (during project setup) and
+// `ws config docs` (refresh-only). Transitions are best-effort: if the
+// workflow lookup fails, we still emit the file without the transitions
+// table rather than aborting the whole render.
+func writeWindshiftMD(client *Client, wsCtx *WorkspaceContext, path string) error {
+	var defaultWorkflow *Workflow
+	for i := range wsCtx.Workflows {
+		if wsCtx.Workflows[i].IsDefault {
+			defaultWorkflow = &wsCtx.Workflows[i]
+			break
+		}
+	}
+	var transitions []Transition
+	if defaultWorkflow != nil {
+		transitions, _ = client.GetWorkflowTransitions(defaultWorkflow.ID)
+	}
+
+	content := generateWindshiftMD(wsCtx.Workspace, wsCtx.Statuses, wsCtx.ItemTypes, transitions)
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil { //nolint:gosec // G306: project doc, group-readable is fine
+		return fmt.Errorf("failed to write %s: %w", path, err)
+	}
+	return nil
 }
 
 func generateDefaultAliases(statuses []Status) map[string]string {
