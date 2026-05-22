@@ -131,6 +131,40 @@ func (r *PageRepository) GetByID(id int) (*models.Page, error) {
 	return page, nil
 }
 
+// GetByIDs loads multiple pages in a single query. Missing ids are simply
+// absent from the result — the caller decides how to surface that. The slice
+// is ordered as returned by the database (callers that need a specific order
+// should sort by id themselves).
+func (r *PageRepository) GetByIDs(ids []int) ([]models.Page, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	args := make([]interface{}, len(ids))
+	placeholders := ""
+	for i, id := range ids {
+		args[i] = id
+		if i > 0 {
+			placeholders += ", "
+		}
+		placeholders += "?"
+	}
+	rows, err := r.db.Query("SELECT "+pageColumns+" FROM pages WHERE id IN ("+placeholders+")", args...)
+	if err != nil {
+		return nil, fmt.Errorf("get pages by ids: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]models.Page, 0, len(ids))
+	for rows.Next() {
+		page, scanErr := scanPage(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("scan page: %w", scanErr)
+		}
+		out = append(out, *page)
+	}
+	return out, rows.Err()
+}
+
 // GetByIDTx loads a single page within a transaction.
 func (r *PageRepository) GetByIDTx(tx database.Tx, id int) (*models.Page, error) {
 	row := tx.QueryRow("SELECT "+pageColumns+" FROM pages WHERE id = ?", id)
@@ -299,9 +333,6 @@ func (r *PageRepository) ArchiveTx(tx database.Tx, pageID, archivedBy int) error
 	return nil
 }
 
-// ListWorkspaceTree returns every (non-archived unless includeArchived) page
-// in a workspace, ordered by depth and then by frac_index/rank/title so
-// callers can build the tree client-side with a single query.
 // SearchByTitle returns non-archived pages in the workspace whose title
 // matches a case-insensitive substring of query, ordered by title. Results
 // are capped at limit. The caller must filter the result through per-page
@@ -314,7 +345,10 @@ func (r *PageRepository) SearchByTitle(workspaceID int, query string, limit int)
 	if q == "" {
 		return nil, nil
 	}
-	like := "%" + strings.ReplaceAll(strings.ReplaceAll(q, `\`, `\\`), "%", `\%`) + "%"
+	q = strings.ReplaceAll(q, `\`, `\\`)
+	q = strings.ReplaceAll(q, `%`, `\%`)
+	q = strings.ReplaceAll(q, `_`, `\_`)
+	like := "%" + q + "%"
 	rows, err := r.db.Query(`
 		SELECT `+pageColumns+`
 		FROM pages
@@ -340,6 +374,9 @@ func (r *PageRepository) SearchByTitle(workspaceID int, query string, limit int)
 	return out, rows.Err()
 }
 
+// ListWorkspaceTree returns every (non-archived unless includeArchived) page
+// in a workspace, ordered by depth and then by frac_index/rank/title so
+// callers can build the tree client-side with a single query.
 func (r *PageRepository) ListWorkspaceTree(workspaceID int, includeArchived bool) ([]models.Page, error) {
 	cond := "workspace_id = ? AND archived_at IS NULL"
 	if includeArchived {
@@ -917,7 +954,7 @@ func (r *PageRepository) searchChunksSQLite(workspaceID int, query string, limit
 	like := "%" + strings.ToLower(query) + "%"
 	rows, err := r.db.Query(`
 		SELECT c.id, c.page_id, c.workspace_id, c.heading_path, c.content,
-		       SUBSTR(c.content, 1, 240) AS snippet,
+		       '' AS snippet,
 		       CAST(
 		           (CASE WHEN LOWER(c.heading_path) LIKE ? THEN 2 ELSE 0 END) +
 		           (CASE WHEN LOWER(c.content) LIKE ? THEN 1 ELSE 0 END)
@@ -933,7 +970,47 @@ func (r *PageRepository) searchChunksSQLite(workspaceID int, query string, limit
 		return nil, fmt.Errorf("page chunk search (sqlite): %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	return scanChunkSearch(rows)
+	hits, err := scanChunkSearch(rows)
+	if err != nil {
+		return nil, err
+	}
+	for i := range hits {
+		hits[i].Snippet = centeredSnippet(hits[i].Content, query, 240)
+	}
+	return hits, nil
+}
+
+// centeredSnippet returns up to maxRunes of content. When query occurs in
+// content (case-insensitive), the window is shifted so the match lands roughly
+// one third in. Rune-based slicing so multi-byte characters survive intact.
+// The Postgres path uses ts_headline for an equivalent (better) result; this
+// is the SQLite-only fallback.
+func centeredSnippet(content, query string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	runes := []rune(content)
+	if len(runes) <= maxRunes {
+		return content
+	}
+
+	start := 0
+	if q := strings.TrimSpace(query); q != "" {
+		idx := strings.Index(strings.ToLower(content), strings.ToLower(q))
+		if idx >= 0 {
+			// idx is a byte offset; translate to a rune offset.
+			matchRune := len([]rune(content[:idx]))
+			lead := maxRunes / 3
+			start = matchRune - lead
+			if start < 0 {
+				start = 0
+			}
+			if start+maxRunes > len(runes) {
+				start = len(runes) - maxRunes
+			}
+		}
+	}
+	return string(runes[start : start+maxRunes])
 }
 
 func scanChunkSearch(rows *sql.Rows) ([]PageChunkSearchResult, error) {
