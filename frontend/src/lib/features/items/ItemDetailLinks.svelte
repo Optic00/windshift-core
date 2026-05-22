@@ -17,6 +17,7 @@
     workspaceId,
     itemId,
     itemLinks = [],
+    linkTypes = [],
     loadingLinks = false,
     availableSubIssueTypes = [],
     childItems = [],
@@ -37,6 +38,22 @@
   // Use centralized icon map for item types
   let currentItemId = $derived(parseInt(itemId));
   const iconMap = itemTypeIconMap;
+
+  // Partition links into the work-item group (items / test_cases / assets)
+  // and the page group. Pages render differently — no status badge, no
+  // workspace-key prefix, page-icon instead of item-type icon — so the
+  // markup forks below.
+  let workItemLinks = $derived(
+    itemLinks.filter((l) => l.source_type !== 'page' && l.target_type !== 'page')
+  );
+  let pageLinks = $derived(
+    itemLinks.filter((l) => l.source_type === 'page' || l.target_type === 'page')
+  );
+  // ID of the seeded "Page" link type, looked up by name so we don't pin a
+  // numeric id that varies between fresh installs and retroactive migration.
+  let pageLinkTypeId = $derived(
+    linkTypes.find((lt) => lt?.name === 'Page')?.id ?? null
+  );
 
   function getLinkLabel(link) {
     const isCurrentSource = currentItemId === link.source_id;
@@ -69,8 +86,8 @@
     onremovelink?.({ linkId });
   }
 
-  function handleShowLinkModal() {
-    onshowlinkmodal?.();
+  function handleShowLinkModal(preselectLinkTypeId = null) {
+    onshowlinkmodal?.({ preselectLinkTypeId });
   }
 
   // Drag and drop state for child items
@@ -234,8 +251,8 @@
   });
 </script>
 
-<!-- Links Section -->
-{#if itemLinks.length > 0}
+<!-- Links Section (work items, test cases, assets) -->
+{#if workItemLinks.length > 0}
   <div class="mt-6">
     <div class="pt-2">
       <!-- Header with icon, label, and add button -->
@@ -251,7 +268,7 @@
           style="color: var(--ds-text-subtle);"
           onmouseenter={(e) => { e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'; e.currentTarget.style.color = 'var(--ds-text)'; }}
           onmouseleave={(e) => { e.currentTarget.style.backgroundColor = ''; e.currentTarget.style.color = 'var(--ds-text-subtle)'; }}
-          onclick={handleShowLinkModal}
+          onclick={() => handleShowLinkModal()}
         >
           <Plus class="w-3 h-3" />
           {t('common.add')}
@@ -264,7 +281,7 @@
         </div>
       {:else}
       <div class="space-y-2">
-        {#each itemLinks as link}
+        {#each workItemLinks as link}
           {@const isCurrentSource = link.source_id === currentItemId}
           {@const linkedItemType = isCurrentSource ? link.target_type : link.source_type}
           {@const linkedItemId = isCurrentSource ? link.target_id : link.source_id}
@@ -357,6 +374,87 @@
     {/if}
   </div>
 </div>
+{/if}
+
+<!-- Pages Section (item ↔ page links) -->
+{#if pageLinks.length > 0 || pageLinkTypeId != null}
+  <div class="mt-6">
+    <div class="pt-2">
+      <div class="flex items-center justify-between mb-4">
+        <div class="flex items-center gap-2">
+          <FileText class="w-4 h-4" style="color: var(--ds-text-subtle);" />
+          <h3 class="text-sm font-semibold uppercase tracking-wider" style="color: var(--ds-text-subtle); font-size: 11px;">{t('items.linkedPages')}</h3>
+        </div>
+        {#if pageLinkTypeId != null}
+          <button
+            type="button"
+            data-testid="add-page-link-button"
+            class="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded transition-colors cursor-pointer"
+            style="color: var(--ds-text-subtle);"
+            onmouseenter={(e) => { e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'; e.currentTarget.style.color = 'var(--ds-text)'; }}
+            onmouseleave={(e) => { e.currentTarget.style.backgroundColor = ''; e.currentTarget.style.color = 'var(--ds-text-subtle)'; }}
+            onclick={() => handleShowLinkModal(pageLinkTypeId)}
+          >
+            <Plus class="w-3 h-3" />
+            {t('common.add')}
+          </button>
+        {/if}
+      </div>
+
+      {#if pageLinks.length === 0}
+        <div class="text-sm py-2" style="color: var(--ds-text-subtle);" data-testid="linked-pages-empty">
+          {t('pages.workItemsEmpty')}
+        </div>
+      {:else}
+        <div class="space-y-2">
+          {#each pageLinks as link}
+            {@const isCurrentSource = link.source_id === currentItemId && link.source_type === 'item'}
+            {@const linkedPageId = isCurrentSource ? link.target_id : link.source_id}
+            {@const linkedPageWorkspaceId = isCurrentSource ? link.target_workspace_id : link.source_workspace_id}
+            {@const linkedPageTitle = isCurrentSource ? link.target_title : link.source_title}
+            {@const linkedPageHref = `/workspaces/${linkedPageWorkspaceId || workspaceId}/pages/${linkedPageId}`}
+            <div
+              class="group flex items-center justify-between px-4 py-3 rounded-lg border transition-colors"
+              style="background-color: var(--ds-surface-raised); border-color: var(--ds-border);"
+              data-testid="linked-page-row"
+              data-link-id={link.id}
+              data-page-id={linkedPageId}
+            >
+              <div class="flex items-center gap-3 flex-1 min-w-0">
+                <div
+                  class="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
+                  style="background-color: var(--ds-background-neutral); color: var(--ds-text-subtle);"
+                >
+                  <FileText class="w-3.5 h-3.5" />
+                </div>
+                <LinkComponent
+                  href={linkedPageHref}
+                  class="text-sm hover:text-blue-600 cursor-pointer truncate"
+                  onClick={(event) => handleLinkClick(event, 'page', linkedPageId, linkedPageWorkspaceId, linkedPageHref)}
+                  style="color: var(--ds-text);"
+                >
+                  {linkedPageTitle}
+                </LinkComponent>
+              </div>
+              <div class="flex items-center gap-2 flex-shrink-0">
+                <button
+                  data-testid="linked-page-delete"
+                  class="p-1 rounded hidden group-hover:flex cursor-pointer delete-button"
+                  style="color: var(--ds-text-subtle);"
+                  onmouseenter={(e) => e.currentTarget.style.color = 'var(--ds-text-danger)'}
+                  onmouseleave={(e) => e.currentTarget.style.color = 'var(--ds-text-subtle)'}
+                  onclick={() => removeLink(link.id)}
+                  title={t('items.removeLink')}
+                >
+                  <Trash2 class="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  </div>
 {/if}
 
 <!-- Child Work Items Section -->

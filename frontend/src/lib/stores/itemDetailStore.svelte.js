@@ -121,6 +121,9 @@ class ItemDetailStore {
   // Modals
   showDeleteDialog = $state(false);
   showLinkModal = $state(false);
+  // Preselect the link type when the add-link modal opens — set by callers
+  // that pre-select a type (e.g. the Pages section's Add button).
+  linkModalPreselectTypeId = $state(null);
   showTestCaseModal = $state(false);
   selectedTestCaseId = $state(null);
   showTimeLogModal = $state(false);
@@ -984,12 +987,14 @@ class ItemDetailStore {
     this.showDeleteDialog = false;
   }
 
-  openLinkModal() {
+  openLinkModal(preselectLinkTypeId = null) {
+    this.linkModalPreselectTypeId = preselectLinkTypeId;
     this.showLinkModal = true;
   }
 
   closeLinkModal() {
     this.showLinkModal = false;
+    this.linkModalPreselectTypeId = null;
   }
 
   openTestCaseModal(testCaseId) {
@@ -1071,6 +1076,7 @@ class ItemDetailStore {
     this.manualActions = [];
     this.showDeleteDialog = false;
     this.showLinkModal = false;
+    this.linkModalPreselectTypeId = null;
     this.showTestCaseModal = false;
     this.selectedTestCaseId = null;
     this.showTimeLogModal = false;

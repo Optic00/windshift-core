@@ -312,8 +312,8 @@ import Button from '../../components/Button.svelte';
     startCreateSubIssue();
   }
 
-  function handleShowLinkModal() {
-    itemDetailStore.openLinkModal();
+  function handleShowLinkModal(data) {
+    itemDetailStore.openLinkModal(data?.preselectLinkTypeId ?? null);
   }
 
   function handleLinkModalCancel() {
@@ -1103,6 +1103,7 @@ import Button from '../../components/Button.svelte';
     editingDescription={itemDetailStore.editing.description.active}
     editDescription={itemDetailStore.editing.description.value}
     itemLinks={itemDetailStore.itemLinks}
+    linkTypes={itemDetailStore.filteredLinkTypes}
     loadingLinks={itemDetailStore.loadingLinks}
     availableSubIssueTypes={itemDetailStore.availableSubIssueTypes}
     childItems={itemDetailStore.childItems}
@@ -1361,6 +1362,8 @@ import Button from '../../components/Button.svelte';
   isOpen={itemDetailStore.showLinkModal}
   linkTypes={itemDetailStore.filteredLinkTypes}
   currentItemId={parseInt(itemId)}
+  workspaceId={parseInt(workspaceId)}
+  preselectLinkTypeId={itemDetailStore.linkModalPreselectTypeId}
   onsubmit={handleLinkCreated}
   oncancel={handleLinkModalCancel}
 />

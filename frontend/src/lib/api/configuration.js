@@ -109,6 +109,9 @@ export const linkTypes = {
 
 export const links = {
   getForItem: (type, id) => fetchAPI(`/${type}/${id}/links`),
+  // Symmetric to getForItem for the page-detail "Work items" popover.
+  // Routes through the same handler (GET /pages/{id}/links).
+  getForPage: (pageId) => fetchAPI(`/pages/${pageId}/links`),
   getFieldLinks: (itemId, fieldId) => fetchAPI(`/items/${itemId}/field-links/${fieldId}`),
   create: (data) =>
     fetchAPI('/links', {

@@ -99,6 +99,14 @@ export const pages = {
   /** Unified knowledge search across pages (and future sources). */
   searchKnowledge: (workspaceId, query, { limit = 25 } = {}) =>
     fetchAPI(`/workspaces/${workspaceId}/knowledge/search${buildQueryString({ q: query, limit })}`),
+
+  /**
+   * Title-substring page search scoped to a workspace. Server-side and
+   * permission-filtered. Used by the page picker in the link dialog and
+   * the page-side work-item popover.
+   */
+  searchPages: (workspaceId, query, { limit = 20 } = {}) =>
+    fetchAPI(`/workspaces/${workspaceId}/pages/search${buildQueryString({ q: query, limit })}`),
 };
 
 /**

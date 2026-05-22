@@ -3,6 +3,7 @@
   import ModalHeader from './ModalHeader.svelte';
   import DialogFooter from './DialogFooter.svelte';
   import BasePicker from '../pickers/BasePicker.svelte';
+  import PagePicker from '../pickers/PagePicker.svelte';
   import { FileText } from '@lucide/svelte';
   import { itemTypeIconMap } from '../utils/icons.js';
   import { api } from '../api.js';
@@ -17,6 +18,8 @@
     isOpen = $bindable(false),
     linkTypes = [],
     currentItemId = null,
+    workspaceId = null,
+    preselectLinkTypeId = null,
     onsubmit = null,
     oncancel = null
   } = $props();
@@ -63,7 +66,15 @@
 
   // Derived state
   let selectedLinkTypeId = $derived(formData.link_type_id ? Number(formData.link_type_id) : null);
+  let selectedLinkType = $derived(linkTypes.find((lt) => Number(lt.id) === selectedLinkTypeId) ?? null);
   let isTestLinkTypeSelected = $derived(selectedLinkTypeId === TEST_LINK_TYPE_ID);
+  // A link type whose allowed_entity_types contains "page" routes the
+  // target field to the page picker instead of the inline work-item /
+  // test-case search. Detection is data-driven so we don't hardcode an id.
+  let isPageLinkTypeSelected = $derived.by(() => {
+    const allowed = selectedLinkType?.allowed_entity_types;
+    return Array.isArray(allowed) && allowed.includes('page');
+  });
   let searchPlaceholder = $derived(isTestLinkTypeSelected ? t('items.searchTestCases') : t('items.searchWorkItems'));
   let searchDisabled = $derived(!formData.link_type_id);
   let canSubmit = $derived(formData.link_type_id && formData.target_id);
@@ -95,6 +106,17 @@
     const trimmedQuery = (searchQuery || '').trim();
     const searchType = isTestLinkTypeSelected ? 'test_case' : 'item';
 
+    // The Page link type swaps the search box for PagePicker — skip the
+    // inline runSearch entirely so we don't fire item-search requests
+    // while the user types into the page picker.
+    if (isPageLinkTypeSelected) {
+      untrack(() => runSearch.cancel());
+      searchResults = [];
+      highlightedIndex = -1;
+      searching = false;
+      return;
+    }
+
     if (trimmedQuery.length >= 2 && formData.link_type_id) {
       untrack(() => runSearch(trimmedQuery, searchType));
     } else {
@@ -108,6 +130,7 @@
   // Reset target when link type changes
   $effect(() => {
     const isTestLink = selectedLinkTypeId === TEST_LINK_TYPE_ID;
+    const isPageLink = isPageLinkTypeSelected;
     if (!isTestLink && formData.target_type === 'test_case') {
       formData.target_id = null;
       formData.target_title = '';
@@ -116,6 +139,26 @@
       searchResults = [];
       highlightedIndex = -1;
     }
+    if (!isPageLink && formData.target_type === 'page') {
+      formData.target_id = null;
+      formData.target_title = '';
+      formData.target_type = 'item';
+      searchQuery = '';
+      searchResults = [];
+      highlightedIndex = -1;
+    }
+  });
+
+  // Preselect the link type when the caller passes one (used by the
+  // separate "Add" buttons on the item-detail "Linked items" vs "Pages"
+  // sections so each opens the modal with the right type already chosen).
+  // Only fires while the modal is open and only when no type is set yet,
+  // so reopens don't clobber an in-flight pick.
+  $effect(() => {
+    if (!isOpen) return;
+    if (preselectLinkTypeId == null) return;
+    if (formData.link_type_id != null) return;
+    formData.link_type_id = preselectLinkTypeId;
   });
 
   function handleKeyDown(e) {
@@ -151,10 +194,23 @@
     highlightedIndex = -1;
   }
 
+  function handleSelectPage(page) {
+    if (!page) return;
+    formData.target_id = page.id;
+    formData.target_title = page.title;
+    formData.target_type = 'page';
+    searchResults = [];
+    highlightedIndex = -1;
+  }
+
   function clearTarget() {
     formData.target_id = null;
     formData.target_title = '';
-    formData.target_type = isTestLinkTypeSelected ? 'test_case' : 'item';
+    formData.target_type = isPageLinkTypeSelected
+      ? 'page'
+      : isTestLinkTypeSelected
+        ? 'test_case'
+        : 'item';
     searchQuery = '';
     searchResults = [];
     highlightedIndex = -1;
@@ -222,12 +278,15 @@
         {#if isTestLinkTypeSelected}
           <p class="text-xs text-blue-600">{t('items.linkToTestCase')}</p>
         {/if}
+        {#if isPageLinkTypeSelected}
+          <p class="text-xs text-blue-600">{t('items.linkToPage')}</p>
+        {/if}
       </div>
 
       <!-- Target Item Search -->
       <div>
         <label for="link-target-search" class="block text-sm font-medium mb-1" style="color: var(--ds-text-subtle);">
-          {t('items.targetItem')}
+          {isPageLinkTypeSelected ? t('items.targetPage') : t('items.targetItem')}
         </label>
 
         {#if formData.target_id}
@@ -235,7 +294,13 @@
           <div class="flex items-center justify-between py-2 px-3 border rounded" style="border-color: var(--ds-border); background-color: var(--ds-surface-raised);">
             <div>
               <div class="text-xs uppercase tracking-wide" style="color: var(--ds-text-subtle);">
-                {formData.target_type === 'test_case' ? t('items.testCase') : t('items.workItem')}
+                {#if formData.target_type === 'test_case'}
+                  {t('items.testCase')}
+                {:else if formData.target_type === 'page'}
+                  {t('items.page')}
+                {:else}
+                  {t('items.workItem')}
+                {/if}
               </div>
               <div class="text-sm font-medium" style="color: var(--ds-text);">{formData.target_title}</div>
             </div>
@@ -247,6 +312,13 @@
               {t('common.clear')}
             </button>
           </div>
+        {:else if isPageLinkTypeSelected}
+          <PagePicker
+            workspaceId={workspaceId}
+            bind:value={formData.target_id}
+            placeholder={t('items.pagePickerPlaceholder')}
+            onSelect={handleSelectPage}
+          />
         {:else}
           <!-- Search Input -->
           <div class="relative">

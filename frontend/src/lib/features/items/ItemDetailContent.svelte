@@ -30,6 +30,7 @@
     editingDescription = false,
     editDescription = '',
     itemLinks = [],
+    linkTypes = [],
     loadingLinks = false,
     availableSubIssueTypes = [],
     childItems = [],
@@ -205,8 +206,8 @@
     onviewTestCase?.(data);
   }
 
-  function handleShowLinkModal() {
-    onshowLinkModal?.();
+  function handleShowLinkModal(data) {
+    onshowLinkModal?.(data);
   }
 
   function handleStartEditingAssignee() {
@@ -426,6 +427,7 @@
             itemId={item.id}
             {isModal}
             {itemLinks}
+            {linkTypes}
             {loadingLinks}
             {availableSubIssueTypes}
             {childItems}

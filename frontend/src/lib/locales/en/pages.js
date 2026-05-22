@@ -142,5 +142,19 @@ export default {
     toggleSubtreeAria: 'Toggle children of {title}',
     expandAllAria: 'Expand all',
     collapseAllAria: 'Collapse all',
+
+    // Linked work items button + popover (top-right on page detail)
+    workItemsButton: 'Work items',
+    workItemsAria: 'Show linked work items',
+    workItemsEmpty: 'No work items link here yet',
+    workItemsLoading: 'Loading work items…',
+    workItemsTitle: 'Work items',
+    addWorkItem: 'Add work item',
+    addWorkItemCancel: 'Cancel',
+    addWorkItemSearchPlaceholder: 'Search work items…',
+    removeWorkItemLink: 'Unlink work item',
+    workItemsErrorLoad: 'Failed to load linked work items',
+    workItemsErrorLink: 'Failed to link work item',
+    workItemsErrorUnlink: 'Failed to unlink work item',
   },
 };

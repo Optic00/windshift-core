@@ -14,6 +14,8 @@ export default {
     createItem: 'Create "{value}"',
     noItemsFound: 'No items found',
     noItemsAvailable: 'No items available',
+    startTypingToSearch: 'Start typing to search…',
+    searchPages: 'Search pages…',
 
     // Asset Picker
     selectAsset: 'Select asset',

@@ -6,6 +6,7 @@
   import PagePermissionsDialog from './PagePermissionsDialog.svelte';
   import PageMoveDialog from './PageMoveDialog.svelte';
   import PageLabelPicker from './PageLabelPicker.svelte';
+  import PageWorkItemsButton from './PageWorkItemsButton.svelte';
   import { IconX } from '@tabler/icons-svelte-runes';
   import { parseMarkdownHeadings, slugify } from './markdownToc.js';
   import DropdownMenu from '../../layout/DropdownMenu.svelte';
@@ -66,6 +67,70 @@
 
   let headings = $derived(parseMarkdownHeadings(draftContent));
 
+  // Linked work items (other side of the item↔page links touching this
+  // page). Loaded alongside the page itself; mutated optimistically by
+  // the popover button's add/remove callbacks.
+  let pageLinks = $state(/** @type {any[]} */ ([]));
+  let loadingPageLinks = $state(false);
+  // System link types — used to locate the "Page" type id so the popover
+  // can pass it to POST /links. One fetch per session is plenty; the
+  // result is small and stable.
+  let linkTypesCache = $state(/** @type {any[]} */ ([]));
+  let pageLinkTypeId = $derived(
+    linkTypesCache.find((lt) => lt?.name === 'Page')?.id ?? null
+  );
+
+  async function loadPageLinks(id) {
+    loadingPageLinks = true;
+    try {
+      const resp = await api.links.getForPage(id);
+      const outgoing = Array.isArray(resp?.outgoing) ? resp.outgoing : [];
+      const incoming = Array.isArray(resp?.incoming) ? resp.incoming : [];
+      // De-dup by id; outgoing and incoming should never share rows but
+      // belt-and-braces against backend changes.
+      const seen = new Set();
+      const merged = [];
+      for (const link of [...incoming, ...outgoing]) {
+        if (link && link.id != null && !seen.has(link.id)) {
+          seen.add(link.id);
+          merged.push(link);
+        }
+      }
+      pageLinks = merged;
+    } catch (err) {
+      console.error('failed to load page links', err);
+      pageLinks = [];
+    } finally {
+      loadingPageLinks = false;
+    }
+  }
+
+  async function ensureLinkTypesLoaded() {
+    if (linkTypesCache.length > 0) return;
+    try {
+      const resp = await api.linkTypes.getAll();
+      linkTypesCache = Array.isArray(resp) ? resp : (resp?.data ?? []);
+    } catch (err) {
+      console.error('failed to load link types', err);
+    }
+  }
+
+  function handlePageLinkCreated(link) {
+    if (link && !pageLinks.some((l) => l.id === link.id)) {
+      pageLinks = [link, ...pageLinks];
+    }
+    if (selectedPage) {
+      // Re-fetch to pick up joined fields the server applies on read
+      // (status_name, item_type_icon, workspace_key) that the POST
+      // response doesn't include.
+      loadPageLinks(selectedPage.id);
+    }
+  }
+
+  function handlePageLinkRemoved(linkId) {
+    pageLinks = pageLinks.filter((l) => l.id !== linkId);
+  }
+
   onMount(async () => {
     if (pageId) {
       selectedId = pageId;
@@ -100,6 +165,7 @@
       draftContent = '';
       dirty = false;
       saveStatus = 'idle';
+      pageLinks = [];
     }
   });
 
@@ -125,6 +191,10 @@
       draftContent = selectedPage.content;
       dirty = false;
       saveStatus = 'idle';
+      // Run in parallel: linked work items are independent of the page
+      // payload, and the link-types list is cached for the session.
+      void loadPageLinks(id);
+      void ensureLinkTypesLoaded();
     } catch (err) {
       error = err?.message || t('pages.errorLoadPage');
       selectedPage = null;
@@ -396,6 +466,17 @@
             >
               {statusLabel}
             </span>
+          {/if}
+          {#if selectedPage}
+            <PageWorkItemsButton
+              workspaceId={selectedPage.workspace_id ?? workspaceId}
+              pageId={selectedPage.id}
+              pageLinks={pageLinks}
+              loading={loadingPageLinks}
+              pageLinkTypeId={pageLinkTypeId}
+              onlinkCreated={handlePageLinkCreated}
+              onlinkRemoved={handlePageLinkRemoved}
+            />
           {/if}
           <div
             class="mode-toggle"
