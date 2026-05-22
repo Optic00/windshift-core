@@ -34,7 +34,17 @@ CREATE INDEX IF NOT EXISTS idx_pages_path ON pages(path);
 CREATE INDEX IF NOT EXISTS idx_pages_content_hash ON pages(content_hash) WHERE content_hash != '';
 CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_workspace_home ON pages(workspace_id) WHERE is_home = true AND archived_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_pages_workspace_parent_rank ON pages(workspace_id, parent_id, rank) WHERE rank IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_frac_index ON pages(frac_index) WHERE frac_index IS NOT NULL;
+-- frac_index uniqueness is per sibling set, not global. KeyBetween("","")
+-- deterministically produces the same first key for every group, so a
+-- global UNIQUE(frac_index) would mean only one page in the whole table
+-- could be at the "first" position. Scope the index by (workspace_id,
+-- parent_id) so each sibling set has its own key space. COALESCE makes
+-- NULL parent_id (root pages) collate as a sibling set in its own
+-- right, since both SQLite and PostgreSQL treat NULL = NULL as false
+-- inside unique constraints.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_frac_index_scoped
+    ON pages(workspace_id, COALESCE(parent_id, -1), frac_index)
+    WHERE frac_index IS NOT NULL;
 -- UNIQUE(workspace_id, parent_id, slug) above is bypassed for root pages
 -- because parent_id IS NULL collates as NOT EQUAL to itself in both
 -- SQLite and PostgreSQL. This partial unique index plugs that gap for

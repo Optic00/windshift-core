@@ -97,6 +97,14 @@ func newPagesTestDB(t *testing.T) database.Database {
 			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(page_id, revision_number, position)
 		)`,
+		// Per-sibling-set unique index for frac_index. Mirrors the
+		// production schema so tests exercise the same uniqueness
+		// surface — historically this index was missing here, which is
+		// why the global-uniqueness bug went unnoticed at the unit
+		// level for a while.
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_frac_index_scoped
+			ON pages(workspace_id, COALESCE(parent_id, -1), frac_index)
+			WHERE frac_index IS NOT NULL`,
 		`INSERT INTO workspaces (id, name, key) VALUES (1, 'ws', 'WS'), (2, 'ws2', 'WS2')`,
 		`INSERT INTO users (id, username) VALUES (1, 'alice'), (2, 'bob')`,
 	} {
@@ -304,6 +312,55 @@ func TestPageService_Update_PreservesRankAndFracIndex(t *testing.T) {
 	}
 	if *after.FracIndex != originalFrac {
 		t.Errorf("frac_index changed across Update: was %q, now %q", originalFrac, *after.FracIndex)
+	}
+}
+
+// Bug-hunt #3: the original idx_pages_frac_index was UNIQUE globally,
+// but KeyBetween("","") returns the same first key for every sibling
+// set — so the first reorder under each independent parent would
+// collide on that global UNIQUE. After the migration to a per-
+// (workspace_id, parent_id) unique index, two independent sibling
+// sets can hold the same frac_index value without conflict.
+func TestPageService_Move_TwoSiblingSetsCanShareFracIndex(t *testing.T) {
+	db := newPagesTestDB(t)
+	s := NewPageService(db)
+
+	parentA, err := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "A"})
+	if err != nil {
+		t.Fatalf("parent A: %v", err)
+	}
+	parentB, err := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "B"})
+	if err != nil {
+		t.Fatalf("parent B: %v", err)
+	}
+
+	// Two children per parent; reorder each pair so KeyBetween fires
+	// in each sibling set independently and produces a frac_index for
+	// the leading child.
+	a1, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, ParentID: &parentA.ID, Title: "a1"})
+	a2, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, ParentID: &parentA.ID, Title: "a2"})
+	b1, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, ParentID: &parentB.ID, Title: "b1"})
+	b2, _ := s.Create(1, CreatePageInput{WorkspaceID: 1, ParentID: &parentB.ID, Title: "b2"})
+
+	if _, err := s.Move(1, a2.ID, &parentA.ID, nil, &a1.ID); err != nil {
+		t.Fatalf("reorder A: %v", err)
+	}
+	if _, err := s.Move(1, b2.ID, &parentB.ID, nil, &b1.ID); err != nil {
+		t.Fatalf("reorder B: %v", err)
+	}
+
+	a2Reloaded, _ := s.GetByID(a2.ID)
+	b2Reloaded, _ := s.GetByID(b2.ID)
+	if a2Reloaded.FracIndex == nil || b2Reloaded.FracIndex == nil {
+		t.Fatalf("expected both leading children to have frac_index, got a2=%v b2=%v",
+			a2Reloaded.FracIndex, b2Reloaded.FracIndex)
+	}
+	// Pre-fix the global UNIQUE(frac_index) would have rejected the
+	// second reorder. After the fix both leading children get an
+	// equivalent (or identical) starting key without colliding.
+	if *a2Reloaded.FracIndex != *b2Reloaded.FracIndex {
+		t.Logf("note: independent sibling sets produced distinct keys (a2=%q b2=%q); test still validates the absence of a collision",
+			*a2Reloaded.FracIndex, *b2Reloaded.FracIndex)
 	}
 }
 

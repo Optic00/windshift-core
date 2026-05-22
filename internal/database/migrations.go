@@ -443,6 +443,62 @@ var Catalog = []Migration{
 			VALUES ('Page', 'Work item references a knowledge page', 'references page', 'referenced by', '#0ea5e9', true, true, '["item","page"]', NOW(), NOW())`,
 	},
 	{
+		// frac_index was originally declared UNIQUE globally, but the
+		// generator (KeyBetween) only intends per-sibling-set
+		// uniqueness — KeyBetween("","") deterministically returns "a0",
+		// so two independent sibling sets would both attempt that key
+		// on first reorder and collide. Scope the index by
+		// (workspace_id, parent_id) instead. Before swapping the index
+		// we resolve any duplicate keys that may have crept in: keep
+		// the lowest-id row per (workspace_id, parent_id, frac_index)
+		// and NULL the others so the next drag-and-drop in that group
+		// backfills cleanly. COALESCE(parent_id,-1) treats root pages
+		// as their own sibling set (both backends consider NULL=NULL
+		// false inside a UNIQUE index).
+		Version:       "20260522_pages_frac_index_scoped",
+		Name:          "Scope pages.frac_index uniqueness to (workspace_id, parent_id)",
+		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_pages_frac_index_scoped'",
+		CheckPostgres: "SELECT COUNT(*) FROM pg_indexes WHERE schemaname='public' AND indexname='idx_pages_frac_index_scoped'",
+		SQLite: `
+			UPDATE pages SET frac_index = NULL
+			WHERE frac_index IS NOT NULL
+			  AND id IN (
+				SELECT p1.id FROM pages p1
+				WHERE p1.frac_index IS NOT NULL
+				  AND EXISTS (
+					SELECT 1 FROM pages p2
+					WHERE p2.frac_index = p1.frac_index
+					  AND p2.workspace_id = p1.workspace_id
+					  AND COALESCE(p2.parent_id, -1) = COALESCE(p1.parent_id, -1)
+					  AND p2.id < p1.id
+				  )
+			  );
+			DROP INDEX IF EXISTS idx_pages_frac_index;
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_frac_index_scoped
+				ON pages(workspace_id, COALESCE(parent_id, -1), frac_index)
+				WHERE frac_index IS NOT NULL;
+		`,
+		Postgres: `
+			UPDATE pages SET frac_index = NULL
+			WHERE frac_index IS NOT NULL
+			  AND id IN (
+				SELECT p1.id FROM pages p1
+				WHERE p1.frac_index IS NOT NULL
+				  AND EXISTS (
+					SELECT 1 FROM pages p2
+					WHERE p2.frac_index = p1.frac_index
+					  AND p2.workspace_id = p1.workspace_id
+					  AND COALESCE(p2.parent_id, -1) = COALESCE(p1.parent_id, -1)
+					  AND p2.id < p1.id
+				  )
+			  );
+			DROP INDEX IF EXISTS idx_pages_frac_index;
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_frac_index_scoped
+				ON pages(workspace_id, COALESCE(parent_id, -1), frac_index)
+				WHERE frac_index IS NOT NULL;
+		`,
+	},
+	{
 		Version:       "20260520_llm_provider_model_cache",
 		Name:          "Add llm_provider_model_cache for dynamic model lists",
 		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='llm_provider_model_cache'",
