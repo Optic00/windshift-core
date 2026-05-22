@@ -9,6 +9,7 @@
   let {
     value = $bindable(null),
     workspaceId,
+    id = 'page-picker',
     placeholder = '',
     disabled = false,
     allowClear = true,
@@ -46,6 +47,7 @@
 </script>
 
 <BasePicker
+  {id}
   bind:value
   items={pages.data || []}
   loading={pages.loading}

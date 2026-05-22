@@ -314,6 +314,7 @@
           </div>
         {:else if isPageLinkTypeSelected}
           <PagePicker
+            id="link-target-page-picker"
             workspaceId={workspaceId}
             bind:value={formData.target_id}
             placeholder={t('items.pagePickerPlaceholder')}
