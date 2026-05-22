@@ -560,8 +560,12 @@ func (s *PageService) snapshotAndRebuildChunks(tx database.Tx, page *models.Page
 	return nil
 }
 
-// ListTree returns every non-archived page in a workspace ordered for
-// client-side tree assembly (depth-first by frac_index/rank/title).
+// ListTree returns every non-archived page in a workspace. Rows are
+// grouped by depth (all roots, then all depth-1 children, …) and
+// within each depth-band sorted by frac_index, rank, title, id —
+// i.e. breadth-by-depth, not depth-first. Callers that care about
+// rendering order rebuild the tree via BuildPageTree, which is
+// id-based and order-insensitive.
 func (s *PageService) ListTree(workspaceID int, includeArchived bool) ([]models.Page, error) {
 	return s.pages.ListWorkspaceTree(workspaceID, includeArchived)
 }
