@@ -31,6 +31,7 @@ var pageRouteScopes = []struct {
 	{http.MethodDelete, "/workspaces/{id}/pages/{pageId}", "pages:delete"},
 	{http.MethodPost, "/workspaces/{id}/pages/{pageId}/move", "pages:write"},
 	{http.MethodGet, "/workspaces/{id}/pages/{pageId}/history", "pages:read"},
+	{http.MethodPost, "/workspaces/{id}/pages/{pageId}/attachments", "pages:write"},
 }
 
 // withTokenScopes returns a request carrying an APIToken whose Permissions

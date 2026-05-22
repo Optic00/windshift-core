@@ -15,17 +15,19 @@ import (
 // --- shared flag-bound vars (reset by Run before each invocation) ---
 
 var (
-	pageCreateTitle     string
-	pageCreateFile      string
-	pageCreateParent    int
-	pageCreateContent   string
-	pageEditTitle       string
-	pageEditFile        string
-	pageEditContent     string
-	pageMoveParent      int
-	pageMoveToRoot      bool
-	pageGetRaw          bool
-	pageHistoryRevision int
+	pageCreateTitle        string
+	pageCreateFile         string
+	pageCreateParent       int
+	pageCreateContent      string
+	pageCreateUploadAssets bool
+	pageEditTitle          string
+	pageEditFile           string
+	pageEditContent        string
+	pageEditUploadAssets   bool
+	pageMoveParent         int
+	pageMoveToRoot         bool
+	pageGetRaw             bool
+	pageHistoryRevision    int
 )
 
 var pageCmd = &cobra.Command{
@@ -131,11 +133,20 @@ var pageCreateCmd = &cobra.Command{
   2. first H1 (line starting with "# ") found in the file
   3. filename (without extension) of --file
 
+When --upload-assets is set together with --file, every
+` + "`![alt](./local.png)`" + ` image reference in the markdown that resolves to
+a file on disk is uploaded as a page attachment and the markdown is
+rewritten to point at the uploaded URL before the page is finalized.
+Remote URLs, absolute paths, and references already pointing at
+/api/attachments/... are left alone. Plain links ` + "`[doc](./spec.pdf)`" + `
+are NOT uploaded — only image syntax is scanned.
+
 Examples:
   ws page create --file onboarding.md
   ws page create --title "Runbook" --file runbook.md
   ws page create --title "Notes" --content "Initial body"
-  ws page create --title "Child" --parent 12 --file notes.md`,
+  ws page create --title "Child" --parent 12 --file notes.md
+  ws page create --file blog.md --upload-assets`,
 	RunE: func(_ *cobra.Command, _ []string) error {
 		client, err := NewClient()
 		if err != nil {
@@ -165,8 +176,31 @@ Examples:
 
 		page, err := client.CreatePage(wsID, req)
 		if err != nil {
-			return fmt.Errorf("failed to create page: %w", err)
+			return translatePagePermissionError(err, "create page", "")
 		}
+
+		// --upload-assets: scan the body for local image refs, upload each
+		// to the page just created, and PUT the rewritten markdown back.
+		// We deliberately create-then-update because the upload endpoint
+		// requires entity_id=<pageID>; uploading before create isn't
+		// possible. If an upload fails mid-way the page exists with the
+		// original (broken-ref) markdown — re-run `ws page edit ...
+		// --file ... --upload-assets` to retry.
+		if pageCreateUploadAssets && pageCreateFile != "" {
+			rewritten, summary, uerr := uploadAndRewrite(client, wsID, page.ID, content, pageInputDir(pageCreateFile), stderr)
+			if uerr != nil {
+				return translatePagePermissionError(uerr, "upload page assets", "")
+			}
+			if rewritten != content {
+				updated, perr := client.UpdatePage(wsID, page.ID, PageUpdateRequest{Content: &rewritten})
+				if perr != nil {
+					return translatePagePermissionError(perr, "update page with rewritten markdown", strconv.Itoa(page.ID))
+				}
+				page = updated
+			}
+			_, _ = fmt.Fprintln(stderr, summary)
+		}
+
 		if outputFormat == "" || outputFormat == "table" {
 			_, _ = fmt.Fprintf(stdout, "Created page %d (%s)\n", page.ID, page.Title)
 			return nil
@@ -183,10 +217,16 @@ var pageEditCmd = &cobra.Command{
 By default --file replaces the body but leaves the title unchanged.
 Pass --title to also update the title.
 
+--upload-assets behaves the same way as on ` + "`page create`" + `: every
+` + "`![alt](./local.png)`" + ` image reference in the markdown that resolves
+to a file on disk is uploaded as a page attachment first, then the
+markdown is rewritten to point at the uploaded URL before the PUT.
+
 Examples:
   ws page edit 42 --file rewritten.md
   ws page edit 42 --title "New title" --file rewritten.md
-  ws page edit 42 --content "Quick patch"`,
+  ws page edit 42 --content "Quick patch"
+  ws page edit 42 --file blog.md --upload-assets`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
 		client, err := NewClient()
@@ -235,9 +275,23 @@ Examples:
 			return fmt.Errorf("nothing to update: pass --title, --content, or --file")
 		}
 
+		// --upload-assets: upload referenced local images to this page,
+		// then rewrite the content we're about to PUT. The page already
+		// exists, so we can upload first and submit the rewritten body
+		// in a single update — no separate create step needed.
+		if pageEditUploadAssets && pageEditFile != "" && req.Content != nil {
+			rewritten, summary, uerr := uploadAndRewrite(client, wsID, pageID, content, pageInputDir(pageEditFile), stderr)
+			if uerr != nil {
+				return translatePagePermissionError(uerr, "upload page assets", strconv.Itoa(pageID))
+			}
+			content = rewritten
+			req.Content = &content
+			_, _ = fmt.Fprintln(stderr, summary)
+		}
+
 		page, err := client.UpdatePage(wsID, pageID, req)
 		if err != nil {
-			return fmt.Errorf("failed to update page: %w", err)
+			return translatePagePermissionError(err, "update page", strconv.Itoa(pageID))
 		}
 		if outputFormat == "" || outputFormat == "table" {
 			_, _ = fmt.Fprintf(stdout, "Updated page %d (%s)\n", page.ID, page.Title)
@@ -440,10 +494,12 @@ func init() {
 	pageCreateCmd.Flags().StringVarP(&pageCreateFile, "file", "f", "", "path to a Markdown file (use - for stdin)")
 	pageCreateCmd.Flags().StringVar(&pageCreateContent, "content", "", "inline Markdown content (ignored when --file is set)")
 	pageCreateCmd.Flags().IntVar(&pageCreateParent, "parent", 0, "parent page id (omit or pass 0 for a root page)")
+	pageCreateCmd.Flags().BoolVar(&pageCreateUploadAssets, "upload-assets", false, "scan --file for ![](./local.png) image refs, upload each as a page attachment, and rewrite the markdown to point at the uploaded URL before creating the page")
 
 	pageEditCmd.Flags().StringVarP(&pageEditTitle, "title", "t", "", "new page title (omit to keep existing)")
 	pageEditCmd.Flags().StringVarP(&pageEditFile, "file", "f", "", "path to a Markdown file (use - for stdin)")
 	pageEditCmd.Flags().StringVar(&pageEditContent, "content", "", "inline Markdown content (ignored when --file is set)")
+	pageEditCmd.Flags().BoolVar(&pageEditUploadAssets, "upload-assets", false, "scan --file for ![](./local.png) image refs, upload each as a page attachment, and rewrite the markdown to point at the uploaded URL before the update")
 
 	pageMoveCmd.Flags().IntVar(&pageMoveParent, "parent", 0, "new parent page id")
 	pageMoveCmd.Flags().BoolVar(&pageMoveToRoot, "root", false, "move the page to the workspace root")

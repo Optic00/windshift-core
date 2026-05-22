@@ -50,10 +50,12 @@
 package v1
 
 import (
+	legacyhandlers "windshift/internal/handlers"
 	"windshift/internal/restapi"
 	"windshift/internal/restapi/v1/handlers"
 	"windshift/internal/restapi/v1/middleware"
 	"windshift/internal/router"
+	"windshift/internal/services"
 )
 
 // RegisterRoutes registers all v1 API routes on the given ServeMux
@@ -86,6 +88,18 @@ func RegisterRoutes(deps restapi.Deps) {
 	attachmentHandler := handlers.NewAttachmentHandler(db, permissionService, deps.AttachmentPath)
 	pageHandler := handlers.NewPageHandler(db, permissionService)
 	pageLabelHandler := handlers.NewPageLabelHandler(db, permissionService)
+
+	// Page-attachment upload reuses the legacy attachment handler (whose
+	// Upload method holds the full validation / storage / DB-insert
+	// pipeline) so bearer-token callers don't reimplement it. The v1
+	// wrapper in PageAttachmentUploadHandler injects the bearer user into
+	// the request context and forces entity_type=page before delegating.
+	legacyAttachHandler := legacyhandlers.NewAttachmentHandler(db, deps.AttachmentPath, permissionService)
+	legacyAttachHandler.SetPagePermissionService(services.NewPagePermissionService(db, permissionService))
+	pageAttachmentUploadHandler := handlers.NewPageAttachmentUploadHandler(
+		handlers.NewBaseHandler(db, permissionService),
+		legacyAttachHandler,
+	)
 
 	// Create authenticated route group with middleware chain:
 	// RequestID -> RequireAuth -> RateLimiter
@@ -253,6 +267,11 @@ func RegisterRoutes(deps restapi.Deps) {
 	v1.HandleWithMiddleware("DELETE /workspaces/{id}/pages/{pageId}", pageHandler.Archive, bearerAuth.RequirePermission("pages:delete"), router.RequireNumericID)
 	v1.HandleWithMiddleware("POST /workspaces/{id}/pages/{pageId}/move", pageHandler.Move, bearerAuth.RequirePermission("pages:write"), router.RequireNumericID)
 	v1.HandleWithMiddleware("GET /workspaces/{id}/pages/{pageId}/history", pageHandler.GetHistory, bearerAuth.RequirePermission("pages:read"), router.RequireNumericID)
+	// Bearer-authenticated page-attachment upload (the legacy
+	// /api/attachments/upload route rejects crw_ tokens). Delegates to
+	// the legacy upload pipeline so validation/storage/audit stay in one
+	// place. See PageAttachmentUploadHandler for the bridging contract.
+	v1.HandleWithMiddleware("POST /workspaces/{id}/pages/{pageId}/attachments", pageAttachmentUploadHandler.Upload, bearerAuth.RequirePermission("pages:write"), router.RequireNumericID)
 
 	// ============================================
 	// Page labels (workspace-scoped, attach to pages only). Label CRUD

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strings"
@@ -37,8 +38,12 @@ func NewClient() (*Client, error) {
 	}, nil
 }
 
-// APIError represents an error response from the API
+// APIError represents an error response from the API. Status carries
+// the HTTP status code so callers can branch on 404/403/etc. without
+// pattern-matching the message string. Zero means "unknown" (e.g.
+// transport failure before a response arrived).
 type APIError struct {
+	Status  int               `json:"-"`
 	Code    string            `json:"code"`
 	Message string            `json:"message"`
 	Details map[string]string `json:"details,omitempty"`
@@ -97,6 +102,7 @@ func (c *Client) doRequest(method, path string, body, result interface{}) error 
 	if resp.StatusCode >= 400 {
 		var apiErr APIError
 		if err := json.Unmarshal(respBody, &apiErr); err == nil && (apiErr.Code != "" || apiErr.Message != "") {
+			apiErr.Status = resp.StatusCode
 			return &apiErr
 		}
 		return fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(respBody))
@@ -521,6 +527,97 @@ func (c *Client) DeleteDiagram(id int) error {
 // /api/attachments/{id}/download route explicitly rejects bearer tokens
 // (cookie-auth only), so the CLI must use /rest/api/v1/*.
 
+// UploadPageAttachment uploads a file as an attachment on a workspace
+// knowledge page via POST /rest/api/v1/workspaces/{wsID}/pages/{pageID}/attachments.
+// The response is the legacy attachment-upload envelope: a JSON object
+// with `attachment.{id,filename,...}`. Returns the parsed attachment so
+// callers can build the embed URL `/api/attachments/{id}/download`.
+//
+// The server gate is `pages:write` + per-page `page.edit` (Editor role
+// on the workspace satisfies that by default). A 404 from the server
+// means either the page id does not exist or the caller lacks edit
+// permission — page handlers never distinguish the two on purpose.
+func (c *Client) UploadPageAttachment(workspaceID, pageID int, originalFilename string, body io.Reader) (*Attachment, error) {
+	var buf bytes.Buffer
+	mp := multipart.NewWriter(&buf)
+	part, err := mp.CreateFormFile("file", originalFilename)
+	if err != nil {
+		return nil, fmt.Errorf("multipart create part: %w", err)
+	}
+	if _, err := io.Copy(part, body); err != nil {
+		return nil, fmt.Errorf("multipart copy body: %w", err)
+	}
+	if err := mp.Close(); err != nil {
+		return nil, fmt.Errorf("multipart close: %w", err)
+	}
+
+	reqURL := fmt.Sprintf("%s/rest/api/v1/workspaces/%d/pages/%d/attachments", c.baseURL, workspaceID, pageID)
+	if debugHTTP {
+		_, _ = fmt.Fprintf(stderr, "[ws-debug] POST %s upload=%s bytes=%d\n", reqURL, originalFilename, buf.Len())
+	}
+
+	req, err := http.NewRequest("POST", reqURL, &buf)
+	if err != nil {
+		return nil, fmt.Errorf("create upload request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", mp.FormDataContentType())
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: URL from server config
+	if err != nil {
+		return nil, fmt.Errorf("upload request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read upload response: %w", err)
+	}
+	if debugHTTP {
+		// #nosec G705 -- writing to a CLI terminal, not HTML
+		_, _ = fmt.Fprintf(stderr, "[ws-debug] -> status=%d body=%s\n", resp.StatusCode, string(respBody))
+	}
+
+	if resp.StatusCode >= 400 {
+		// Try v1's APIError shape first, then fall back to the legacy
+		// {success:false,message:"..."} envelope the wrapped handler
+		// emits for its own validation errors.
+		var apiErr APIError
+		if jerr := json.Unmarshal(respBody, &apiErr); jerr == nil && (apiErr.Code != "" || apiErr.Message != "") {
+			apiErr.Status = resp.StatusCode
+			return nil, &apiErr
+		}
+		var legacy struct {
+			Success bool   `json:"success"`
+			Message string `json:"message"`
+			Error   string `json:"error"`
+		}
+		if jerr := json.Unmarshal(respBody, &legacy); jerr == nil && (legacy.Message != "" || legacy.Error != "") {
+			msg := legacy.Message
+			if msg == "" {
+				msg = legacy.Error
+			}
+			return nil, &APIError{Status: resp.StatusCode, Message: msg}
+		}
+		return nil, fmt.Errorf("upload failed (status %d): %s", resp.StatusCode, string(respBody))
+	}
+
+	// Legacy envelope: {"success":true,"message":"...","attachment":{...}}.
+	var envelope struct {
+		Success    bool        `json:"success"`
+		Message    string      `json:"message"`
+		Attachment *Attachment `json:"attachment"`
+	}
+	if err := json.Unmarshal(respBody, &envelope); err != nil {
+		return nil, fmt.Errorf("parse upload response: %w", err)
+	}
+	if envelope.Attachment == nil || envelope.Attachment.ID == 0 {
+		return nil, fmt.Errorf("upload response missing attachment id: %s", string(respBody))
+	}
+	return envelope.Attachment, nil
+}
+
 // ListAttachments returns all attachments on an item.
 func (c *Client) ListAttachments(itemID int) ([]Attachment, error) {
 	var atts []Attachment
@@ -562,6 +659,7 @@ func (c *Client) DownloadAttachment(id int, w io.Writer) (string, error) {
 		}
 		var apiErr APIError
 		if jerr := json.Unmarshal(body, &apiErr); jerr == nil && (apiErr.Code != "" || apiErr.Message != "") {
+			apiErr.Status = resp.StatusCode
 			return "", &apiErr
 		}
 		return "", fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
