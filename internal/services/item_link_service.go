@@ -9,13 +9,35 @@ import (
 	"windshift/internal/database"
 )
 
-// ItemLinkService handles item link creation in the database.
-// HTTP concerns (notifications, action events) remain in the handler.
+// ItemLinkService owns the link-management business logic shared by every
+// caller (cookie-auth handler, v1 bearer handler, AI accept-dependencies
+// flow, Jira import). The base file holds only the bare DB insert; the
+// full orchestration (permission checks, cross-workspace gating,
+// duplicate-detection, list filtering, notification + action emission)
+// lives in item_link_orchestration.go and is opt-in via the With* setters
+// below.
+//
+// Callers that only need the DB insert (validation included) can keep
+// using `NewItemLinkService(db)` + `CreateLink(...)`. Callers that need
+// the full HTTP-grade flow build with `.With...()` and call
+// `CreateLinkWithChecks` / `DeleteLinkWithChecks` /
+// `ListLinksForEntityWithChecks`.
 type ItemLinkService struct {
 	db database.Database
+
+	// Optional dependencies — set via the With* methods. Nil-friendly:
+	// when missing, callers that need them get a fail-closed permission
+	// response. The bare CreateLink path does not touch any of these.
+	perm          *PermissionService
+	pagePerm      PagePermissionChecker
+	assetPerm     AssetPermissionChecker
+	notifications ItemLinkNotificationEmitter
+	actions       ItemLinkActionEmitter
 }
 
-// NewItemLinkService creates a new ItemLinkService.
+// NewItemLinkService creates a new ItemLinkService with only the database
+// wired. Use the With* setters to add the permission / notification
+// dependencies the orchestration methods need.
 func NewItemLinkService(db database.Database) *ItemLinkService {
 	return &ItemLinkService{db: db}
 }

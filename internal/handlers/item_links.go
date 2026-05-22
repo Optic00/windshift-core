@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"windshift/internal/database"
 	"windshift/internal/models"
@@ -17,265 +16,98 @@ import (
 	"windshift/internal/utils"
 )
 
-// assetPermissionChecker is a minimal interface satisfied by *AssetHandler,
-// declared here to avoid an AssetHandler import cycle. When nil (e.g. because
-// wiring is missing in server setup), asset-endpoint permission checks fail
-// closed — they return false / 404, never true.
-type assetPermissionChecker interface {
-	HasAssetSetPermission(userID, setID int, permissionKey string) (bool, error)
-}
+// assetPermissionChecker / pagePermissionChecker are kept as package-local
+// aliases of the service-defined interfaces so the existing server.go
+// wiring (which passes typed handlers / services) doesn't change shape.
+type assetPermissionChecker = services.AssetPermissionChecker
+type pagePermissionChecker = services.PagePermissionChecker
 
-// pagePermissionChecker is the minimal slice of *services.PagePermissionService
-// the link handler needs to authorize page endpoints on item↔page links. Held
-// as an interface so tests can substitute a stub without dragging the full
-// repository wiring. When nil, page-endpoint checks fail closed.
-type pagePermissionChecker interface {
-	Can(userID, workspaceID, pageID int, op string) (bool, error)
-	ListVisiblePageIDs(userID, workspaceID int, pageIDs []int) (map[int]bool, error)
-}
-
+// ItemLinkHandler is the cookie-auth HTTP shim around services.ItemLinkService.
+// All real orchestration (permission checks, cross-workspace gating, dup
+// detection, list filtering, notification + action emission) lives in the
+// service so the v1 bearer-auth handler can share it verbatim.
+//
+// What still lives here:
+//   - HTTP decode / response shaping
+//   - Custom-field-managed link pre-processing (UI-form specific, not on
+//     the v1 surface): validateAndPrepareFieldLink + enforceSingleValueFieldLink
+//   - Asset-link list + linkable-item search (separate flows the CLI doesn't
+//     consume): GetLinkedAssets, SearchLinkableItems, search* helpers
 type ItemLinkHandler struct {
 	db                  database.Database
 	permissionService   *services.PermissionService
 	assetPerm           assetPermissionChecker
-	pagePerm            pagePermissionChecker
-	notificationService interface {
-		EmitEvent(event *services.NotificationEvent)
-	} // Notification service for async notification processing (optional, can be nil)
-	actionService interface {
-		EmitActionEvent(event *models.ActionEvent)
-	} // Action service for automation workflows (optional, can be nil)
+	notificationService notificationEmitter
+	actionService       actionEmitter
+
+	linkSvc *services.ItemLinkService
 }
 
-func NewItemLinkHandler(db database.Database, notificationService interface {
+// notificationEmitter / actionEmitter mirror the existing handler-side
+// interface contract so server.go can keep passing its concrete services.
+type notificationEmitter interface {
 	EmitEvent(event *services.NotificationEvent)
-}, permissionService *services.PermissionService) *ItemLinkHandler {
+}
+type actionEmitter interface {
+	EmitActionEvent(event *models.ActionEvent)
+}
+
+func NewItemLinkHandler(db database.Database, notificationService notificationEmitter, permissionService *services.PermissionService) *ItemLinkHandler {
+	svc := services.NewItemLinkService(db).WithPermissionService(permissionService)
+	if notificationService != nil {
+		svc = svc.WithNotificationEmitter(notificationService)
+	}
 	return &ItemLinkHandler{
 		db:                  db,
-		notificationService: notificationService,
 		permissionService:   permissionService,
+		notificationService: notificationService,
+		linkSvc:             svc,
 	}
 }
 
-// SetAssetPermissionChecker wires in a checker (typically *AssetHandler) so
-// that asset-endpoint permission checks resolve. Called after AssetHandler is
-// constructed in server setup; without it, every asset endpoint fails closed.
+// SetAssetPermissionChecker wires in a checker (typically *AssetHandler).
+// Forwards to the underlying service so both the cookie path AND the v1
+// bearer path get the same asset-permission gating.
 func (h *ItemLinkHandler) SetAssetPermissionChecker(p assetPermissionChecker) {
 	h.assetPerm = p
+	h.linkSvc.WithAssetPermissionChecker(p)
 }
 
-// SetPagePermissionChecker wires in the page permission service so item↔page
-// link endpoints can authorize the page side. Called after
-// PagePermissionService is constructed; without it, page endpoints fail
-// closed (404 on every check).
+// SetPagePermissionChecker wires in the page permission service. Same
+// forwarding rationale as SetAssetPermissionChecker.
 func (h *ItemLinkHandler) SetPagePermissionChecker(p pagePermissionChecker) {
-	h.pagePerm = p
+	h.linkSvc.WithPagePermissionChecker(p)
 }
 
-// SetActionService sets the action service for automation workflows
-func (h *ItemLinkHandler) SetActionService(actionService interface {
-	EmitActionEvent(event *models.ActionEvent)
-}) {
+// SetActionService wires the optional action-event emitter.
+func (h *ItemLinkHandler) SetActionService(actionService actionEmitter) {
 	h.actionService = actionService
+	h.linkSvc.WithActionEmitter(actionService)
 }
 
-// resolveEntityScope looks up the scoping identifier for a link endpoint:
-// items and test_cases → workspace_id; assets → set_id. found=false on
-// sql.ErrNoRows so callers can 404 cleanly without leaking which kind of
-// lookup failed.
-func (h *ItemLinkHandler) resolveEntityScope(entityType string, entityID int) (wsID, setID int, found bool, err error) {
-	switch entityType {
-	case "item":
-		wsID, err := repository.NewItemRepository(h.db).GetWorkspaceID(entityID)
-		if errors.Is(err, repository.ErrNotFound) {
-			return 0, 0, false, nil
-		}
-		if err != nil {
-			return 0, 0, false, err
-		}
-		return wsID, 0, true, nil
-	case "test_case":
-		var scopeID int
-		err = h.db.QueryRow("SELECT workspace_id FROM test_cases WHERE id = ?", entityID).Scan(&scopeID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return 0, 0, false, nil
-		}
-		if err != nil {
-			return 0, 0, false, err
-		}
-		return scopeID, 0, true, nil
-	case "asset":
-		var scopeID int
-		err = h.db.QueryRow("SELECT set_id FROM assets WHERE id = ?", entityID).Scan(&scopeID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return 0, 0, false, nil
-		}
-		if err != nil {
-			return 0, 0, false, err
-		}
-		return 0, scopeID, true, nil
-	case "page":
-		var scopeID int
-		err = h.db.QueryRow("SELECT workspace_id FROM pages WHERE id = ?", entityID).Scan(&scopeID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return 0, 0, false, nil
-		}
-		if err != nil {
-			return 0, 0, false, err
-		}
-		return scopeID, 0, true, nil
-	default:
-		return 0, 0, false, fmt.Errorf("unsupported entity type %q", entityType)
-	}
+// LinkService exposes the underlying service so the v1 link handler can
+// share a single fully-wired instance instead of re-wiring all the
+// optional dependencies (asset checker, page checker, notification,
+// action emitter). Returns nil when called before the handler is
+// constructed (shouldn't happen in normal wiring).
+func (h *ItemLinkHandler) LinkService() *services.ItemLinkService {
+	return h.linkSvc
 }
 
-// checkEntityPermission verifies the current user has the given permission on
-// a link endpoint, regardless of entity type. It writes 404 (per project
-// policy) for every denial path — missing user, missing entity, nil asset
-// checker, permission denied — so existence is never leaked. Returns true
-// only when access is permitted.
-func (h *ItemLinkHandler) checkEntityPermission(w http.ResponseWriter, r *http.Request, entityType string, entityID int, workspacePerm, assetPermKey string) bool {
-	if entityType == "item" {
-		// Existing helper already returns 404 on all failure paths.
-		return CheckItemPermission(w, r, repository.NewItemRepository(h.db), h.permissionService, entityID, workspacePerm)
-	}
-
-	user, ok := RequireAuth(w, r)
-	if !ok {
-		return false
-	}
-
-	wsID, setID, found, err := h.resolveEntityScope(entityType, entityID)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return false
-	}
-	if !found {
-		respondNotFound(w, r, entityType)
-		return false
-	}
-
-	switch entityType {
-	case "test_case":
-		hasPerm, err := h.permissionService.HasWorkspacePermission(user.ID, wsID, workspacePerm)
-		if err != nil || !hasPerm {
-			respondNotFound(w, r, entityType)
-			return false
-		}
-		return true
-	case "asset":
-		if h.assetPerm == nil {
-			respondNotFound(w, r, entityType)
-			return false
-		}
-		hasPerm, err := h.assetPerm.HasAssetSetPermission(user.ID, setID, assetPermKey)
-		if err != nil || !hasPerm {
-			respondNotFound(w, r, entityType)
-			return false
-		}
-		return true
-	case "page":
-		if h.pagePerm == nil {
-			respondNotFound(w, r, entityType)
-			return false
-		}
-		op := pageOpForWorkspacePerm(workspacePerm)
-		hasPerm, err := h.pagePerm.Can(user.ID, wsID, entityID, op)
-		if err != nil || !hasPerm {
-			respondNotFound(w, r, entityType)
-			return false
-		}
-		return true
-	}
-	respondValidationError(w, r, "unsupported entity type")
-	return false
-}
-
-// linkEndpointsShareWorkspace verifies both ends of a link are scoped to the
-// same workspace. Only called when at least one endpoint is "page" — the
-// item↔page invariant. Returns false (and writes a 404) when scope lookup
-// fails or the workspaces diverge.
-func (h *ItemLinkHandler) linkEndpointsShareWorkspace(w http.ResponseWriter, r *http.Request, link *models.ItemLink) bool {
-	srcWs, _, srcFound, err := h.resolveEntityScope(link.SourceType, link.SourceID)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return false
-	}
-	if !srcFound {
-		respondNotFound(w, r, link.SourceType)
-		return false
-	}
-	tgtWs, _, tgtFound, err := h.resolveEntityScope(link.TargetType, link.TargetID)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return false
-	}
-	if !tgtFound {
-		respondNotFound(w, r, link.TargetType)
-		return false
-	}
-	if srcWs != tgtWs {
-		// Page-bound endpoint is the one we're hiding existence of; emit
-		// the generic 404 used elsewhere in the handler.
-		respondNotFound(w, r, "page")
-		return false
-	}
-	return true
-}
-
-// pageOpForWorkspacePerm maps the workspace-permission strings the link
-// handler already uses ("item.view" / "item.edit") onto the page-op
-// vocabulary expected by PagePermissionService.Can. Everything that isn't
-// explicitly edit-or-higher resolves to view — the safe default for callers.
-func pageOpForWorkspacePerm(workspacePerm string) string {
-	if workspacePerm == models.PermissionItemEdit || workspacePerm == models.PermissionItemDelete {
-		return services.PageOpEdit
-	}
-	return services.PageOpView
-}
-
-// canUserViewEntity is the silent counterpart to checkEntityPermission, used
-// for filtering result sets without writing to the response. Pre-built
-// allow-lists keep it cheap when called once per row. Exercised by unit
-// tests; production callers use endpointVisible / filterLinksByAccess.
-//
-// deadcode-keep: called by core-tests/internal/handlers/item_links_helpers_test.go
-//
-//nolint:unused // covered by item_links_test.go (tests excluded from lint)
-func (h *ItemLinkHandler) canUserViewEntity(_ int, entityType string, entityID int, accessibleWs, accessibleSets map[int]bool) bool {
-	wsID, setID, found, err := h.resolveEntityScope(entityType, entityID)
-	if err != nil || !found {
-		return false
-	}
-	switch entityType {
-	case "item", "test_case", "page":
-		// Pages additionally have per-ACL gating, but the workspace
-		// membership probe is the cheap first cut. endpointVisible runs
-		// the full Can() check for pages during list filtering.
-		return accessibleWs[wsID]
-	case "asset":
-		return accessibleSets[setID]
-	}
-	return false
-}
-
-// GetLinksForItem returns all links for a specific item (work item, test
-// case, or page). The URL path segment ("items" / "test-cases" / "pages") is
-// translated into the internal entity-type string used by item_links rows.
+// GetLinksForItem returns all links for the entity identified by the {id}
+// path segment. The leading URL segment ("items" / "test-cases" / "pages")
+// is mapped to the internal entity-type string before delegating to the
+// service, which owns the permission + visibility filtering.
 func (h *ItemLinkHandler) GetLinksForItem(w http.ResponseWriter, r *http.Request) {
 	id, ok := requireIDParam(w, r, "id")
 	if !ok {
 		return
 	}
-
 	user, ok := RequireAuth(w, r)
 	if !ok {
 		return
 	}
 
-	// Route pattern detection: the three mount points share this handler.
-	// The Go 1.22 ServeMux doesn't expose the prefix as a path value, so we
-	// inspect r.URL.Path directly.
 	internalType := "item"
 	switch {
 	case strings.Contains(r.URL.Path, "/test-cases/"):
@@ -284,273 +116,74 @@ func (h *ItemLinkHandler) GetLinksForItem(w http.ResponseWriter, r *http.Request
 		internalType = "page"
 	}
 
-	// Unified view-permission check across items and test_cases. Writes 404
-	// on missing entity or denial — no silent-empty branch for test_cases.
-	if !h.checkEntityPermission(w, r, internalType, id, models.PermissionItemView, AssetPermissionKeyView) {
+	outgoing, incoming, err := h.linkSvc.ListLinksForEntityWithChecks(user.ID, internalType, id)
+	if err != nil {
+		respondLinkServiceError(w, r, internalType, err)
 		return
 	}
+	respondJSONOK(w, map[string]interface{}{
+		"outgoing": outgoing,
+		"incoming": incoming,
+	})
+}
 
-	// Get outgoing links (where this item is the source), excluding field-managed links
-	outgoingLinks, err := h.getLinksWhere("source_type = ? AND source_id = ? AND il.custom_field_id IS NULL", internalType, id)
-	if err != nil {
+// respondLinkServiceError maps the service's typed errors onto HTTP
+// responses. Centralized so the v1 handler (added in
+// internal/restapi/v1/handlers/links.go) can map the same set without
+// duplicating the switch.
+func respondLinkServiceError(w http.ResponseWriter, r *http.Request, fallbackResource string, err error) {
+	switch {
+	case errors.Is(err, services.ErrLinkSelfReference),
+		errors.Is(err, services.ErrLinkInvalidEntityType):
+		respondValidationError(w, r, err.Error())
+	case errors.Is(err, services.ErrInvalidLinkTypeForEntities):
+		respondValidationError(w, r, "The selected link type does not allow these entity types")
+	case errors.Is(err, services.ErrLinkExists):
+		respondConflict(w, r, "A link between these items already exists")
+	case errors.Is(err, services.ErrLinkNotFound):
+		respondNotFound(w, r, "link")
+	case errors.Is(err, services.ErrLinkCrossWorkspacePage):
+		respondNotFound(w, r, "page")
+	case services.IsEntityNotAccessible(err):
+		var nae *services.EntityNotAccessibleError
+		errors.As(err, &nae)
+		resource := fallbackResource
+		if nae.EntityType != "" {
+			resource = nae.EntityType
+		}
+		respondNotFound(w, r, resource)
+	default:
 		respondInternalError(w, r, err)
-		return
 	}
-
-	// Get incoming links (where this item is the target)
-	// Include field-managed links in incoming so they appear annotated with field name
-	incomingLinks, err := h.getLinksWhere("target_type = ? AND target_id = ?", internalType, id)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-
-	// Filter linked entities by what the user can actually see: workspace
-	// access covers items and test_cases, asset set access covers assets.
-	accessibleKeys, _ := GetAccessibleWorkspaceKeys(user, h.db, h.permissionService)
-	accessibleWsIDs := h.accessibleWorkspaceIDSet(user)
-	accessibleSetIDs := h.accessibleAssetSetIDSet(user)
-	outgoingLinks = h.filterLinksByAccess(outgoingLinks, accessibleKeys, accessibleWsIDs, accessibleSetIDs)
-	incomingLinks = h.filterLinksByAccess(incomingLinks, accessibleKeys, accessibleWsIDs, accessibleSetIDs)
-	// Page endpoints additionally honor per-page ACLs; the workspace pass
-	// above only catches the workspace-membership gate. Skipped when no
-	// page rows are present so the common item↔item case stays free.
-	outgoingLinks = h.filterPageLinksByACL(user, outgoingLinks)
-	incomingLinks = h.filterPageLinksByACL(user, incomingLinks)
-
-	response := map[string]interface{}{
-		"outgoing": outgoingLinks,
-		"incoming": incomingLinks,
-	}
-
-	respondJSONOK(w, response)
 }
 
-// filterPageLinksByACL drops links whose page endpoint is hidden by per-page
-// ACLs. Non-page links pass through untouched. When the page permission
-// checker is not wired, every page-endpoint link is dropped (fail closed) —
-// the same posture used for assets when their checker is missing.
-func (h *ItemLinkHandler) filterPageLinksByACL(user *models.User, links []models.ItemLink) []models.ItemLink {
-	if len(links) == 0 {
-		return links
-	}
-	hasPage := false
-	for _, l := range links {
-		if l.SourceType == "page" || l.TargetType == "page" {
-			hasPage = true
-			break
-		}
-	}
-	if !hasPage {
-		return links
-	}
-	if h.pagePerm == nil {
-		out := links[:0]
-		for _, l := range links {
-			if l.SourceType == "page" || l.TargetType == "page" {
-				continue
-			}
-			out = append(out, l)
-		}
-		return out
-	}
-
-	// Bucket page IDs by workspace so ListVisiblePageIDs can answer in
-	// per-workspace batches; pages are workspace-scoped.
-	bucket := make(map[int]map[int]struct{})
-	addPage := func(workspaceID *int, pageID int) {
-		if workspaceID == nil {
-			return
-		}
-		ids, ok := bucket[*workspaceID]
-		if !ok {
-			ids = make(map[int]struct{})
-			bucket[*workspaceID] = ids
-		}
-		ids[pageID] = struct{}{}
-	}
-	for _, l := range links {
-		if l.SourceType == "page" {
-			addPage(l.SourceWorkspaceID, l.SourceID)
-		}
-		if l.TargetType == "page" {
-			addPage(l.TargetWorkspaceID, l.TargetID)
-		}
-	}
-
-	visible := make(map[int]map[int]bool, len(bucket))
-	for wsID, ids := range bucket {
-		flat := make([]int, 0, len(ids))
-		for id := range ids {
-			flat = append(flat, id)
-		}
-		got, err := h.pagePerm.ListVisiblePageIDs(user.ID, wsID, flat)
-		if err != nil {
-			// Fail closed for this workspace's pages.
-			got = map[int]bool{}
-		}
-		visible[wsID] = got
-	}
-
-	pageVisible := func(workspaceID *int, pageID int) bool {
-		if workspaceID == nil {
-			return false
-		}
-		return visible[*workspaceID][pageID]
-	}
-
-	out := make([]models.ItemLink, 0, len(links))
-	for _, l := range links {
-		if l.SourceType == "page" && !pageVisible(l.SourceWorkspaceID, l.SourceID) {
-			continue
-		}
-		if l.TargetType == "page" && !pageVisible(l.TargetWorkspaceID, l.TargetID) {
-			continue
-		}
-		out = append(out, l)
-	}
-	return out
-}
-
-// filterLinksByAccess drops links whose endpoint is in an inaccessible
-// workspace (items, test_cases) or inaccessible asset set (assets). The bare
-// workspace-key check only covered item endpoints — callers that return
-// links touching test_cases and assets would otherwise leak titles.
-func (h *ItemLinkHandler) filterLinksByAccess(links []models.ItemLink, accessibleKeys map[string]bool, accessibleWsIDs, accessibleSetIDs map[int]bool) []models.ItemLink {
-	filtered := make([]models.ItemLink, 0, len(links))
-	for _, link := range links {
-		if !h.endpointVisible(link.SourceType, link.SourceID, link.SourceWorkspaceKey, accessibleKeys, accessibleWsIDs, accessibleSetIDs) {
-			continue
-		}
-		if !h.endpointVisible(link.TargetType, link.TargetID, link.TargetWorkspaceKey, accessibleKeys, accessibleWsIDs, accessibleSetIDs) {
-			continue
-		}
-		filtered = append(filtered, link)
-	}
-	return filtered
-}
-
-// endpointVisible returns true when the given endpoint of a link is
-// accessible to the current user. Items use the workspace-key cache already
-// joined into ItemLink; test_cases and assets are resolved via a small
-// lookup (at most one extra query per link per endpoint).
-func (h *ItemLinkHandler) endpointVisible(entityType string, entityID int, workspaceKey string, accessibleKeys map[string]bool, accessibleWsIDs, accessibleSetIDs map[int]bool) bool {
-	switch entityType {
-	case "item":
-		// Keep existing fast path: trust the pre-joined workspace key.
-		return workspaceKey == "" || accessibleKeys[workspaceKey]
-	case "test_case":
-		wsID, _, found, err := h.resolveEntityScope(entityType, entityID)
-		if err != nil || !found {
-			return false
-		}
-		return accessibleWsIDs[wsID]
-	case "asset":
-		_, setID, found, err := h.resolveEntityScope(entityType, entityID)
-		if err != nil || !found {
-			return false
-		}
-		return accessibleSetIDs[setID]
-	case "page":
-		// Pages live behind both the workspace gate AND per-page ACLs.
-		// Workspace check is the cheap first cut; the deeper Can() check
-		// is run by callers via filterPageLinksByACL once they know
-		// which user is asking.
-		wsID, _, found, err := h.resolveEntityScope(entityType, entityID)
-		if err != nil || !found {
-			return false
-		}
-		return accessibleWsIDs[wsID]
-	}
-	return false
-}
-
-// accessibleWorkspaceIDSet returns a set of workspace IDs the user can view,
-// used as a fast membership check while filtering result rows.
-func (h *ItemLinkHandler) accessibleWorkspaceIDSet(user *models.User) map[int]bool {
-	set := make(map[int]bool)
-	ids, err := GetAccessibleWorkspaceIDs(user, h.db, h.permissionService)
-	if err != nil {
-		return set
-	}
-	for _, id := range ids {
-		set[id] = true
-	}
-	return set
-}
-
-// accessibleAssetSetIDSet returns a set of asset_management_sets IDs the
-// user can view. Iterates over every set and invokes the injected asset
-// permission checker; tolerable for correctness first-pass and matches the
-// pattern used by AssetHandler.canAccessEntity. If the checker is nil the
-// set is empty (fail-closed).
-func (h *ItemLinkHandler) accessibleAssetSetIDSet(user *models.User) map[int]bool {
-	set := make(map[int]bool)
-	if user == nil || h.assetPerm == nil {
-		return set
-	}
-	rows, err := h.db.Query("SELECT id FROM asset_management_sets")
-	if err != nil {
-		return set
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var id int
-		if err := rows.Scan(&id); err != nil {
-			continue
-		}
-		hasView, err := h.assetPerm.HasAssetSetPermission(user.ID, id, AssetPermissionKeyView)
-		if err == nil && hasView {
-			set[id] = true
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return make(map[int]bool)
-	}
-	return set
-}
-
-// CreateLink creates a new link between items
+// CreateLink creates a new link between items. Thin HTTP shim over
+// services.ItemLinkService — does cookie-auth decode, custom-field-link
+// pre-processing (the UI-form-only concern), then delegates the
+// permission checks / duplicate detection / insert / notification +
+// action emission to the service.
 func (h *ItemLinkHandler) CreateLink(w http.ResponseWriter, r *http.Request) {
 	link, ok := decodeJSON[models.ItemLink](w, r)
 	if !ok {
 		return
 	}
 
-	// Validate required fields
+	// Required-field validation kept HTTP-side so the user gets a
+	// targeted 400 instead of a generic service error.
 	if link.LinkTypeID == 0 || link.SourceType == "" || link.SourceID == 0 ||
 		link.TargetType == "" || link.TargetID == 0 {
 		respondValidationError(w, r, "link_type_id, source_type, source_id, target_type, and target_id are required")
 		return
 	}
 
-	// Validate source and target types
-	if !isValidLinkType(link.SourceType) || !isValidLinkType(link.TargetType) {
-		respondValidationError(w, r, "Invalid source_type or target_type. Must be 'item', 'test_case', 'asset', or 'page'")
-		return
-	}
-
-	// Prevent self-links
-	if link.SourceType == link.TargetType && link.SourceID == link.TargetID {
-		respondValidationError(w, r, "Cannot create link to self")
-		return
-	}
-
-	// Link-type semantic validation (e.g. "Tests" must be item↔test_case)
-	// is enforced inside services.ItemLinkService.CreateLink so all callers,
-	// including AI flows, share the same gate.
-
 	currentUser, ok := RequireAuth(w, r)
 	if !ok {
 		return
 	}
-	createdBy := currentUser.ID
 
 	// For custom-field-managed links, validate field config and apply
-	// mirror-field source/target swap FIRST. Permission checks below then
-	// run against the final entities that will actually own the link —
-	// otherwise a mirror-field request could be authorized against its
-	// pre-swap source and sneak a write to an entity it can't edit.
+	// mirror-field source/target swap FIRST so permission checks below
+	// run against the final source+target.
 	var fieldPlan *fieldLinkPlan
 	if link.CustomFieldID != nil {
 		var fieldErr error
@@ -559,211 +192,50 @@ func (h *ItemLinkHandler) CreateLink(w http.ResponseWriter, r *http.Request) {
 			respondValidationError(w, r, fieldErr.Error())
 			return
 		}
-	}
 
-	// Permission checks on the final source + target, regardless of entity
-	// type. 404 on any failure — never 403 — to avoid leaking existence.
-	// Must run before the duplicate probe below, otherwise a 409 vs 404
-	// oracle leaks whether a given (source, target) link already exists.
-	if !h.checkEntityPermission(w, r, link.SourceType, link.SourceID, models.PermissionItemEdit, AssetPermissionKeyEdit) {
-		return
-	}
-	if !h.checkEntityPermission(w, r, link.TargetType, link.TargetID, models.PermissionItemView, AssetPermissionKeyView) {
-		return
-	}
-
-	// Item↔page links must stay inside a single workspace; cross-workspace
-	// is rejected as 404 (rather than a clearer 400) so the response shape
-	// matches the per-page ACL denial path and existence stays opaque.
-	if link.SourceType == "page" || link.TargetType == "page" {
-		if !h.linkEndpointsShareWorkspace(w, r, &link) {
+		// Pre-authorize on the rewritten source so an unauthorized caller
+		// can't trip enforceSingleValueFieldLink's DELETE on its way to
+		// rejection. The service will repeat this check inside
+		// CreateLinkWithChecks — paying that small duplicate cost is
+		// preferable to threading a callback through the service surface.
+		if err := h.linkSvc.CheckEntityPermission(currentUser.ID, link.SourceType, link.SourceID, models.PermissionItemEdit, services.AssetPermissionKeyEdit); err != nil {
+			respondLinkServiceError(w, r, link.SourceType, err)
 			return
 		}
+		h.enforceSingleValueFieldLink(&link, fieldPlan)
 	}
 
-	// Check if link already exists (in either direction). Runs after the
-	// permission checks so unauthorized callers never get a 409 leak.
-	var existingID int
-	err := h.db.QueryRow(`
-		SELECT id FROM item_links
-		WHERE (source_type = ? AND source_id = ? AND target_type = ? AND target_id = ?)
-		   OR (source_type = ? AND source_id = ? AND target_type = ? AND target_id = ?)
-	`, link.SourceType, link.SourceID, link.TargetType, link.TargetID,
-		link.TargetType, link.TargetID, link.SourceType, link.SourceID).Scan(&existingID)
-
-	if err == nil {
-		respondConflict(w, r, "A link between these items already exists")
-		return
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		respondInternalError(w, r, err)
-		return
-	}
-
-	// Single-value field DELETE runs only after permission checks pass,
-	// so an unauthorized caller can't wipe the field on a rejected request.
-	h.enforceSingleValueFieldLink(&link, fieldPlan)
-
-	// Create link via service (handles link type validation + insert)
-	linkSvc := services.NewItemLinkService(h.db)
-	id, err := linkSvc.CreateLink(services.CreateItemLinkParams{
+	created, err := h.linkSvc.CreateLinkWithChecks(currentUser.ID, services.CreateItemLinkParams{
 		LinkTypeID:    link.LinkTypeID,
 		SourceType:    link.SourceType,
 		SourceID:      link.SourceID,
 		TargetType:    link.TargetType,
 		TargetID:      link.TargetID,
-		CreatedBy:     &createdBy,
 		CustomFieldID: link.CustomFieldID,
 	})
-	if errors.Is(err, services.ErrInvalidLinkTypeForEntities) {
-		respondValidationError(w, r, "The selected link type does not allow these entity types")
-		return
-	}
 	if err != nil {
-		respondInternalError(w, r, err)
+		respondLinkServiceError(w, r, link.SourceType, err)
 		return
 	}
-	if id == 0 {
-		respondConflict(w, r, "Link already exists")
-		return
-	}
-
-	link.ID = int(id)
-	link.CreatedAt = time.Now()
-
-	// Get the created link with full details
-	createdLink, err := h.getLinkByID(int(id))
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-
-	// Emit notification event (only for work item links)
-	itemRepo := repository.NewItemRepository(h.db)
-
-	if h.notificationService != nil && link.SourceType == "item" {
-		user := utils.GetCurrentUser(r)
-		if user != nil {
-			// Fetch source item details for notification
-			if sourceItem, err := itemRepo.FindByID(link.SourceID); err == nil {
-				h.notificationService.EmitEvent(&services.NotificationEvent{
-					EventType:   models.EventItemLinked,
-					WorkspaceID: sourceItem.WorkspaceID,
-					ActorUserID: user.ID,
-					ItemID:      link.SourceID,
-					AssigneeID:  sourceItem.AssigneeID,
-					CreatorID:   sourceItem.CreatorID,
-					Title:       "Item Linked",
-					TemplateData: map[string]interface{}{
-						"item.title":   sourceItem.Title,
-						"item.id":      link.SourceID,
-						"target.title": createdLink.TargetTitle,
-						"target.id":    link.TargetID,
-						"user.name":    user.Username,
-					},
-				})
-			}
-		}
-	}
-
-	// Emit action event for item linked
-	if h.actionService != nil && link.SourceType == "item" {
-		// Get workspace ID for the source item (ignore errors — we've already
-		// dispatched the notification above and don't want to fail the request).
-		workspaceID, _ := itemRepo.GetWorkspaceID(link.SourceID)
-
-		h.actionService.EmitActionEvent(&models.ActionEvent{
-			EventType:   models.ActionTriggerItemLinked,
-			WorkspaceID: workspaceID,
-			ItemID:      link.SourceID,
-			ActorUserID: currentUser.ID,
-			NewValues: map[string]interface{}{
-				"link_type_id": link.LinkTypeID,
-				"target_type":  link.TargetType,
-				"target_id":    link.TargetID,
-			},
-		})
-	}
-
-	respondJSONCreated(w, createdLink)
+	respondJSONCreated(w, created)
 }
 
-// DeleteLink removes a link
+// DeleteLink removes a link. Thin HTTP shim over the service — the
+// service handles the source-edit permission check, the actual delete,
+// and the "item unlinked" notification.
 func (h *ItemLinkHandler) DeleteLink(w http.ResponseWriter, r *http.Request) {
 	id, ok := requireIDParam(w, r, "id")
 	if !ok {
 		return
 	}
-
-	var err error
-
-	// Get link details before deletion for notification
-	var sourceType string
-	var sourceID, targetID int
-	var targetTitle string
-	err = h.db.QueryRow(`
-		SELECT il.source_type, il.source_id, il.target_id,
-		       COALESCE(i.title, tc.name, a.title, '') as target_title
-		FROM item_links il
-		LEFT JOIN items i ON il.target_type = 'item' AND il.target_id = i.id
-		LEFT JOIN test_cases tc ON il.target_type = 'test_case' AND il.target_id = tc.id
-		LEFT JOIN assets a ON il.target_type = 'asset' AND il.target_id = a.id
-		WHERE il.id = ?
-	`, id).Scan(&sourceType, &sourceID, &targetID, &targetTitle)
-
-	if errors.Is(err, sql.ErrNoRows) {
-		respondNotFound(w, r, "link")
+	user, ok := RequireAuth(w, r)
+	if !ok {
 		return
 	}
-	if err != nil {
-		respondInternalError(w, r, fmt.Errorf("failed to fetch link details: %w", err))
+	if err := h.linkSvc.DeleteLinkWithChecks(user.ID, id); err != nil {
+		respondLinkServiceError(w, r, "link", err)
 		return
 	}
-
-	// Edit permission on source (covers item, test_case, and asset endpoints).
-	// 404 on any denial per CLAUDE.md policy.
-	if !h.checkEntityPermission(w, r, sourceType, sourceID, models.PermissionItemEdit, AssetPermissionKeyEdit) {
-		return
-	}
-
-	result, err := h.db.ExecWrite("DELETE FROM item_links WHERE id = ?", id)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-
-	rowsAffected, _ := result.RowsAffected()
-	if rowsAffected == 0 {
-		respondNotFound(w, r, "link")
-		return
-	}
-
-	// Emit notification event (only for work item links)
-	if h.notificationService != nil && sourceType == "item" {
-		user := utils.GetCurrentUser(r)
-		if user != nil {
-			// Fetch source item details for notification
-			if sourceItem, err := repository.NewItemRepository(h.db).FindByID(sourceID); err == nil {
-				h.notificationService.EmitEvent(&services.NotificationEvent{
-					EventType:   models.EventItemUnlinked,
-					WorkspaceID: sourceItem.WorkspaceID,
-					ActorUserID: user.ID,
-					ItemID:      sourceID,
-					AssigneeID:  sourceItem.AssigneeID,
-					CreatorID:   sourceItem.CreatorID,
-					Title:       "Item Unlinked",
-					TemplateData: map[string]interface{}{
-						"item.title":   sourceItem.Title,
-						"item.id":      sourceID,
-						"target.title": targetTitle,
-						"target.id":    targetID,
-						"user.name":    user.Username,
-					},
-				})
-			}
-		}
-	}
-
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -782,7 +254,7 @@ func (h *ItemLinkHandler) GetLinkedAssets(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	accessibleSets := h.accessibleAssetSetIDSet(user)
+	accessibleSets := h.linkSvc.AccessibleAssetSetIDs(user.ID)
 
 	// Get assets where item is the source
 	outgoingQuery := `
@@ -975,99 +447,6 @@ func (h *ItemLinkHandler) SearchLinkableItems(w http.ResponseWriter, r *http.Req
 
 // Helper functions
 
-func (h *ItemLinkHandler) getLinksWhere(whereClause string, args ...interface{}) ([]models.ItemLink, error) {
-	query := `
-		SELECT il.id, il.link_type_id, il.source_type, il.source_id, il.target_type, il.target_id,
-		       il.created_by, il.created_at,
-		       lt.name, lt.color, lt.forward_label, lt.reverse_label,
-		       COALESCE(si.title, stc.title, sa.title, sp.title, '') as source_title,
-		       COALESCE(ti.title, ttc.title, ta.title, tp.title, '') as target_title,
-		       COALESCE(u.username, '') as created_by_name,
-		       si.status_id as source_status_id,
-		       COALESCE(ss.name, '') as source_status_name,
-		       si.item_type_id as source_item_type_id,
-		       COALESCE(sit.name, '') as source_item_type_name,
-		       COALESCE(sit.icon, '') as source_item_type_icon,
-		       COALESCE(sit.color, '') as source_item_type_color,
-		       COALESCE(sw.key, spw.key, '') as source_workspace_key,
-		       COALESCE(si.workspace_id, sp.workspace_id) as source_workspace_id,
-		       ti.status_id as target_status_id,
-		       COALESCE(ts.name, '') as target_status_name,
-		       ti.item_type_id as target_item_type_id,
-		       COALESCE(tit.name, '') as target_item_type_name,
-		       COALESCE(tit.icon, '') as target_item_type_icon,
-		       COALESCE(tit.color, '') as target_item_type_color,
-		       COALESCE(tw.key, tpw.key, '') as target_workspace_key,
-		       COALESCE(ti.workspace_id, tp.workspace_id) as target_workspace_id,
-		       il.custom_field_id,
-		       COALESCE(cfd.name, '') as custom_field_name
-		FROM item_links il
-		JOIN link_types lt ON il.link_type_id = lt.id
-		LEFT JOIN items si ON il.source_type = 'item' AND il.source_id = si.id
-		LEFT JOIN test_cases stc ON il.source_type = 'test_case' AND il.source_id = stc.id
-		LEFT JOIN assets sa ON il.source_type = 'asset' AND il.source_id = sa.id
-		LEFT JOIN pages sp ON il.source_type = 'page' AND il.source_id = sp.id
-		LEFT JOIN items ti ON il.target_type = 'item' AND il.target_id = ti.id
-		LEFT JOIN test_cases ttc ON il.target_type = 'test_case' AND il.target_id = ttc.id
-		LEFT JOIN assets ta ON il.target_type = 'asset' AND il.target_id = ta.id
-		LEFT JOIN pages tp ON il.target_type = 'page' AND il.target_id = tp.id
-		LEFT JOIN users u ON il.created_by = u.id
-		LEFT JOIN statuses ss ON si.status_id = ss.id
-		LEFT JOIN statuses ts ON ti.status_id = ts.id
-		LEFT JOIN item_types sit ON si.item_type_id = sit.id
-		LEFT JOIN item_types tit ON ti.item_type_id = tit.id
-		LEFT JOIN workspaces sw ON si.workspace_id = sw.id
-		LEFT JOIN workspaces tw ON ti.workspace_id = tw.id
-		LEFT JOIN workspaces spw ON sp.workspace_id = spw.id
-		LEFT JOIN workspaces tpw ON tp.workspace_id = tpw.id
-		LEFT JOIN custom_field_definitions cfd ON il.custom_field_id = cfd.id
-		WHERE ` + whereClause + `
-		ORDER BY lt.name, il.created_at DESC
-	`
-
-	rows, err := h.db.Query(query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	var links []models.ItemLink
-	for rows.Next() {
-		var link models.ItemLink
-		err := rows.Scan(&link.ID, &link.LinkTypeID, &link.SourceType, &link.SourceID,
-			&link.TargetType, &link.TargetID, &link.CreatedBy, &link.CreatedAt,
-			&link.LinkTypeName, &link.LinkTypeColor, &link.LinkTypeForwardLabel, &link.LinkTypeReverseLabel,
-			&link.SourceTitle, &link.TargetTitle, &link.CreatedByName,
-			&link.SourceStatusID, &link.SourceStatusName,
-			&link.SourceItemTypeID, &link.SourceItemTypeName, &link.SourceItemTypeIcon, &link.SourceItemTypeColor,
-			&link.SourceWorkspaceKey, &link.SourceWorkspaceID,
-			&link.TargetStatusID, &link.TargetStatusName,
-			&link.TargetItemTypeID, &link.TargetItemTypeName, &link.TargetItemTypeIcon, &link.TargetItemTypeColor,
-			&link.TargetWorkspaceKey, &link.TargetWorkspaceID,
-			&link.CustomFieldID, &link.CustomFieldName)
-		if err != nil {
-			return nil, err
-		}
-		links = append(links, link)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return links, nil
-}
-
-func (h *ItemLinkHandler) getLinkByID(id int) (*models.ItemLink, error) {
-	links, err := h.getLinksWhere("il.id = ?", id)
-	if err != nil {
-		return nil, err
-	}
-	if len(links) == 0 {
-		return nil, sql.ErrNoRows
-	}
-	return &links[0], nil
-}
-
 func (h *ItemLinkHandler) searchWorkItems(query string, limit int, accessibleWorkspaceIDs []int, itemTypeIDs ...[]int) ([]models.LinkableItem, error) {
 	var typeIDs []int
 	if len(itemTypeIDs) > 0 {
@@ -1129,7 +508,7 @@ func (h *ItemLinkHandler) searchAssets(user *models.User, query string, limit in
 		return []models.LinkableItem{}, nil
 	}
 
-	accessibleSets := h.accessibleAssetSetIDSet(user)
+	accessibleSets := h.linkSvc.AccessibleAssetSetIDs(user.ID)
 	if len(accessibleSets) == 0 {
 		return []models.LinkableItem{}, nil
 	}
@@ -1243,14 +622,14 @@ func (h *ItemLinkHandler) GetFieldLinks(w http.ResponseWriter, r *http.Request) 
 		_ = json.Unmarshal([]byte(optionsJSON.String), &opts)
 	}
 
-	var links []models.ItemLink
+	// Resolve mirror fields to the primary field id; the service stores
+	// links under the primary id with item as target.
+	primaryFieldID, mirror := fieldID, false
 	if opts.MirrorOfFieldID > 0 {
-		// Mirror field: links are stored with custom_field_id = primary, target_id = this item
-		links, err = h.getLinksWhere("il.custom_field_id = ? AND il.target_type = 'item' AND il.target_id = ?", opts.MirrorOfFieldID, itemID)
-	} else {
-		// Primary field: links are stored with custom_field_id = this field, source_id = this item
-		links, err = h.getLinksWhere("il.custom_field_id = ? AND il.source_type = 'item' AND il.source_id = ?", fieldID, itemID)
+		primaryFieldID = opts.MirrorOfFieldID
+		mirror = true
 	}
+	links, err := h.linkSvc.ListLinksByCustomField(primaryFieldID, itemID, mirror)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -1261,9 +640,9 @@ func (h *ItemLinkHandler) GetFieldLinks(w http.ResponseWriter, r *http.Request) 
 	user := utils.GetCurrentUser(r)
 	if user != nil {
 		accessibleKeys, _ := GetAccessibleWorkspaceKeys(user, h.db, h.permissionService)
-		accessibleWsIDs := h.accessibleWorkspaceIDSet(user)
-		accessibleSetIDs := h.accessibleAssetSetIDSet(user)
-		links = h.filterLinksByAccess(links, accessibleKeys, accessibleWsIDs, accessibleSetIDs)
+		accessibleWsIDs := h.linkSvc.AccessibleWorkspaceIDs(user.ID)
+		accessibleSetIDs := h.linkSvc.AccessibleAssetSetIDs(user.ID)
+		links = h.linkSvc.FilterLinksByAccess(links, accessibleKeys, accessibleWsIDs, accessibleSetIDs)
 	}
 
 	respondJSONOK(w, links)
