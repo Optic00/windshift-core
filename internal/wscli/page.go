@@ -27,7 +27,6 @@ var (
 	pageMoveParent         int
 	pageMoveToRoot         bool
 	pageGetRaw             bool
-	pageHistoryRevision    int
 )
 
 var pageCmd = &cobra.Command{
@@ -507,6 +506,4 @@ func init() {
 
 	pageMoveCmd.Flags().IntVar(&pageMoveParent, "parent", 0, "new parent page id")
 	pageMoveCmd.Flags().BoolVar(&pageMoveToRoot, "root", false, "move the page to the workspace root")
-
-	pageHistoryCmd.Flags().IntVar(&pageHistoryRevision, "revision", 0, "show only the given revision (default: list all)")
 }
