@@ -75,7 +75,7 @@ import {
 } from './notifications.js';
 import { oauth } from './oauth.js';
 import { onCallSchedules } from './oncall.js';
-import { pages } from './pages.js';
+import { pageLabels, pages } from './pages.js';
 import { groups, permissions } from './permissions.js';
 import {
   contactRoles,
@@ -414,6 +414,7 @@ export const api = {
 
   // Workspace knowledge pages (wiki)
   pages,
+  pageLabels,
 
   // AI features
   ai,

@@ -100,3 +100,45 @@ export const pages = {
   searchKnowledge: (workspaceId, query, { limit = 25 } = {}) =>
     fetchAPI(`/workspaces/${workspaceId}/knowledge/search${buildQueryString({ q: query, limit })}`),
 };
+
+/**
+ * Page label API client. Workspace-scoped labels that attach to pages only;
+ * separate system from work-item labels (no shared rows or endpoints).
+ *
+ * Label CRUD requires workspace `page.edit`; attach/detach requires
+ * per-page edit (evaluated by PagePermissionService). Permission failures
+ * surface as 404 to avoid leaking page-label existence.
+ */
+export const pageLabels = {
+  list: (workspaceId) => fetchAPI(`/workspaces/${workspaceId}/page-labels`),
+  get: (workspaceId, id) => fetchAPI(`/workspaces/${workspaceId}/page-labels/${id}`),
+  create: (workspaceId, { name, color }) =>
+    fetchAPI(`/workspaces/${workspaceId}/page-labels`, {
+      method: 'POST',
+      body: JSON.stringify({ name, color }),
+    }),
+  update: (workspaceId, id, { name, color }) =>
+    fetchAPI(`/workspaces/${workspaceId}/page-labels/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ name, color }),
+    }),
+  delete: (workspaceId, id) =>
+    fetchAPI(`/workspaces/${workspaceId}/page-labels/${id}`, { method: 'DELETE' }),
+
+  listForPage: (workspaceId, pageId) =>
+    fetchAPI(`/workspaces/${workspaceId}/pages/${pageId}/labels`),
+  setForPage: (workspaceId, pageId, labelIds) =>
+    fetchAPI(`/workspaces/${workspaceId}/pages/${pageId}/labels`, {
+      method: 'PUT',
+      body: JSON.stringify({ label_ids: labelIds }),
+    }),
+  addToPage: (workspaceId, pageId, labelId) =>
+    fetchAPI(`/workspaces/${workspaceId}/pages/${pageId}/labels`, {
+      method: 'POST',
+      body: JSON.stringify({ label_id: labelId }),
+    }),
+  removeFromPage: (workspaceId, pageId, labelId) =>
+    fetchAPI(`/workspaces/${workspaceId}/pages/${pageId}/labels/${labelId}`, {
+      method: 'DELETE',
+    }),
+};

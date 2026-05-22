@@ -5,6 +5,8 @@
   import LazyMilkdownEditor from '../../editors/LazyMilkdownEditor.svelte';
   import PagePermissionsDialog from './PagePermissionsDialog.svelte';
   import PageMoveDialog from './PageMoveDialog.svelte';
+  import PageLabelPicker from './PageLabelPicker.svelte';
+  import { IconX } from '@tabler/icons-svelte-runes';
   import { parseMarkdownHeadings, slugify } from './markdownToc.js';
   import DropdownMenu from '../../layout/DropdownMenu.svelte';
   import {
@@ -124,6 +126,38 @@
     } finally {
       loadingPage = false;
     }
+  }
+
+  // Label chip helpers — attach/detach mutate the local selectedPage.labels
+  // optimistically so the chip row reflects state instantly; on error we
+  // roll back and surface the failure in the error banner.
+  let selectedLabelIds = $derived(
+    new Set((selectedPage?.labels || []).map((l) => l.id))
+  );
+
+  async function onLabelToggle(label) {
+    if (!selectedPage) return;
+    const isAttached = selectedLabelIds.has(label.id);
+    const previous = selectedPage.labels || [];
+    try {
+      if (isAttached) {
+        selectedPage.labels = previous.filter((l) => l.id !== label.id);
+        await api.pageLabels.removeFromPage(workspaceId, selectedPage.id, label.id);
+      } else {
+        selectedPage.labels = [...previous, label].sort((a, b) =>
+          a.name.localeCompare(b.name)
+        );
+        await api.pageLabels.addToPage(workspaceId, selectedPage.id, label.id);
+      }
+      pagesTreeRefresh.bump();
+    } catch (err) {
+      selectedPage.labels = previous;
+      error = err?.message || t(isAttached ? 'pages.labelsErrorDetach' : 'pages.labelsErrorAttach');
+    }
+  }
+
+  async function removeLabel(label) {
+    await onLabelToggle(label);
   }
 
   function scheduleAutoSave() {
@@ -375,6 +409,42 @@
           />
         </div>
       </div>
+      <div class="label-row" data-testid="page-label-row">
+        {#each selectedPage.labels || [] as label (label.id)}
+          <span
+            class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs"
+            style="background-color: {label.color || '#3B82F6'}1A; color: var(--ds-text); border: 1px solid {label.color || '#3B82F6'};"
+            data-testid="page-label-chip"
+            data-label-id={label.id}
+          >
+            <span
+              class="inline-block w-2 h-2 rounded-full"
+              style="background-color: {label.color || '#3B82F6'};"
+              aria-hidden="true"
+            ></span>
+            {label.name}
+            {#if mode === 'edit'}
+              <button
+                type="button"
+                class="label-chip__remove"
+                onclick={() => removeLabel(label)}
+                aria-label={t('pages.labelsRemoveAria', { name: label.name })}
+                data-testid="page-label-chip-remove"
+              >
+                <IconX size={12} />
+              </button>
+            {/if}
+          </span>
+        {/each}
+        {#if mode === 'edit'}
+          <PageLabelPicker
+            {workspaceId}
+            selectedIds={selectedLabelIds}
+            onToggle={onLabelToggle}
+            triggerLabel={t('pages.labelsAdd')}
+          />
+        {/if}
+      </div>
       <div class="editor-row">
         <div class="editor-frame" data-testid="page-editor">
           <LazyMilkdownEditor
@@ -486,6 +556,37 @@
     gap: 1rem;
     align-items: center;
     padding: 0 3rem;
+  }
+
+  .label-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+    align-items: center;
+    padding: 0 3rem;
+    margin-top: -0.5rem;
+  }
+
+  /* Chip visuals (background/border/dot) come from inline Tailwind classes —
+     same shape as the work-item label chip in ItemDetailSidebar so page
+     labels look identical to work-item labels. Only the remove button gets
+     a scoped style since Tailwind doesn't carry an opacity-on-hover utility
+     cheaply here. */
+  .label-chip__remove {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    padding: 0;
+    opacity: 0.7;
+    transition: opacity 120ms;
+  }
+
+  .label-chip__remove:hover {
+    opacity: 1;
   }
 
   .title-input {
