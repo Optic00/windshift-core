@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"net/http"
+	"strconv"
 
 	"windshift/internal/database"
 	"windshift/internal/repository"
@@ -307,7 +308,8 @@ func (h *PageHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	revs, err := h.service.ListRevisions(pageID, 0, 0)
+	limit, offset := parseHistoryPagination(r)
+	revs, err := h.service.ListRevisions(pageID, limit, offset)
 	if err != nil {
 		h.RespondInternalError(w, r)
 		return
@@ -317,6 +319,24 @@ func (h *PageHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 		items = append(items, dto.MapPageRevisionToResponse(&revs[i]))
 	}
 	h.RespondOK(w, pageHistoryListResponse{Items: items})
+}
+
+// parseHistoryPagination mirrors the cookie-auth GetHistory pagination
+// (limit default 50, max 200; offset >= 0) so the same query params work
+// against the v1 surface.
+func parseHistoryPagination(r *http.Request) (limit, offset int) {
+	limit = 50
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 && parsed <= 200 {
+			limit = parsed
+		}
+	}
+	if v := r.URL.Query().Get("offset"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+	return limit, offset
 }
 
 // --- helpers ---
