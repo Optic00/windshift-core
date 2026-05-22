@@ -579,7 +579,7 @@
           id="pages-add-button"
           class="header-button"
           type="button"
-          onclick={() => createPage(activePageId)}
+          onclick={() => createPage(null)}
           disabled={creating}
           aria-label={t('pages.addPageAria')}
         >
