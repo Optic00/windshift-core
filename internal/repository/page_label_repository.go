@@ -142,7 +142,12 @@ func (r *PageLabelRepository) ListForPage(pageID int) ([]models.PageLabel, error
 	return scanPageLabels(rows)
 }
 
-// ReplaceAssignments swaps the label set for a page atomically.
+// ReplaceAssignments swaps the label set for a page atomically. Duplicate
+// IDs in the input are deduplicated rather than rejected: callers (the
+// HTTP handlers in particular) accept arbitrary client payloads, and a
+// {label_ids: [1,1]} request that surfaced as a 500 because of the
+// junction's UNIQUE(page_id, page_label_id) constraint is brittle. Treat
+// the assignment set as a set.
 func (r *PageLabelRepository) ReplaceAssignments(pageID int, labelIDs []int) error {
 	tx, err := r.db.Begin()
 	if err != nil {
@@ -155,7 +160,12 @@ func (r *PageLabelRepository) ReplaceAssignments(pageID int, labelIDs []int) err
 	}
 
 	now := time.Now()
+	seen := make(map[int]struct{}, len(labelIDs))
 	for _, labelID := range labelIDs {
+		if _, dup := seen[labelID]; dup {
+			continue
+		}
+		seen[labelID] = struct{}{}
 		if _, err := tx.Exec(
 			"INSERT INTO page_label_assignments (page_id, page_label_id, created_at) VALUES (?, ?, ?)",
 			pageID, labelID, now,

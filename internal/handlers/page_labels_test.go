@@ -307,3 +307,41 @@ func TestPageLabels_PreloadLabelsOnPageDetail(t *testing.T) {
 		t.Errorf("preload missing: %+v", resp.Labels)
 	}
 }
+
+// Bug-hunt #5: SetForPage used to 500 when a client submitted the same
+// label id twice, because the junction's UNIQUE(page_id, page_label_id)
+// rejected the duplicate INSERT and the wrapped error reached the
+// handler unchanged. ReplaceAssignments now treats the input as a set,
+// so the request succeeds and the attached labels list is
+// deterministic.
+func TestPageLabels_SetForPage_DedupesDuplicateIDs(t *testing.T) {
+	h, pageHandler, db := newPageLabelHandler(t)
+	const userID = 1
+	seedNegativeTestUser(t, db, userID)
+	seedNegativeTestUser(t, db, 999)
+	seedWorkspaceWithRole(t, db, 1, userID, "Editor")
+
+	page, err := pageHandler.service.Create(userID, services.CreatePageInput{WorkspaceID: 1, Title: "Home"})
+	if err != nil {
+		t.Fatalf("seed page: %v", err)
+	}
+	labelID, _, err := h.repo.Create("design", "#3B82F6", 1)
+	if err != nil {
+		t.Fatalf("seed label: %v", err)
+	}
+
+	body := map[string]interface{}{"label_ids": []int{int(labelID), int(labelID)}}
+	req := authedRequest(http.MethodPut, "/workspaces/1/pages/"+strconv.Itoa(page.ID)+"/labels", userID, body)
+	setPath(req, map[string]string{"workspaceId": "1", "pageId": strconv.Itoa(page.ID)})
+	rr := httptest.NewRecorder()
+	h.SetForPage(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("set: want 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var attached []models.PageLabel
+	decodeJSONBody(t, rr, &attached)
+	if len(attached) != 1 || attached[0].ID != int(labelID) {
+		t.Errorf("expected exactly one attached label, got %+v", attached)
+	}
+}
