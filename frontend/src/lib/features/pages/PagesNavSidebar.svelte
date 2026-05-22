@@ -11,14 +11,17 @@
     IconArrowLeft as ArrowLeft,
     IconPlus as Plus,
     IconDots as Dots,
-    IconBook as Book
+    IconBook as Book,
+    IconX as X
   } from '@tabler/icons-svelte-runes';
   import DropdownMenu from '../../layout/DropdownMenu.svelte';
   import EmptyState from '../../components/EmptyState.svelte';
   import PageMoveDialog from './PageMoveDialog.svelte';
   import PagePermissionsDialog from './PagePermissionsDialog.svelte';
+  import PageLabelPicker from './PageLabelPicker.svelte';
   import { pagesTreeRefresh } from './pagesTreeRefresh.svelte.js';
   import { pagesFocusTitle } from './pagesFocusTitle.svelte.js';
+  import { pagesFilter } from './pagesFilter.svelte.js';
 
   let { workspaceId } = $props();
 
@@ -32,6 +35,73 @@
   let dndState = $state(new Map());
   let setupTimeout;
   let setupCleanups = [];
+
+  // Cache of workspace labels keyed by id. Populated lazily on first
+  // page-tree load by walking the preloaded `labels` arrays on each page.
+  // Lets the filter row render colored chips for active filters even when
+  // the picker popover is closed.
+  let labelLookup = $state(/** @type {Map<number, any>} */ (new Map()));
+
+  // Reset the per-workspace filter when the workspace id changes — filters
+  // are session-only and a workspace switch shouldn't carry a stale label
+  // set into a workspace where those ids don't exist.
+  $effect(() => {
+    pagesFilter.reset(workspaceId);
+  });
+
+  let filterLabelIds = $derived(pagesFilter.labelIds);
+  let activeFilterLabels = $derived(
+    Array.from(filterLabelIds)
+      .map((id) => labelLookup.get(id))
+      .filter(Boolean)
+  );
+
+  // Visibility filter: when no filters are active, every page is visible.
+  // Otherwise, a page is visible iff its own labels intersect the filter set
+  // OR it is an ancestor of a matching page (kept for tree context). Ancestor
+  // detection uses the materialized `path` field that the backend stamps on
+  // every page row.
+  let visibleIds = $derived.by(() => {
+    if (filterLabelIds.size === 0) return null; // null means "show everything"
+    const visible = new Set();
+    for (const page of pages) {
+      const hit = (page.labels || []).some((l) => filterLabelIds.has(l.id));
+      if (!hit) continue;
+      visible.add(page.id);
+      // Walk the path "1/4/9/" → ancestor ids 1, 4, 9.
+      const segments = (page.path || '').split('/').filter(Boolean);
+      for (const seg of segments) {
+        const ancestorId = Number(seg);
+        if (Number.isFinite(ancestorId)) visible.add(ancestorId);
+      }
+    }
+    return visible;
+  });
+
+  function isLabelHit(page) {
+    return (page.labels || []).some((l) => filterLabelIds.has(l.id));
+  }
+
+  function isAncestorOnly(page) {
+    // Visible only because of the ancestor-context rule; rendered dimmer
+    // so the user can tell which rows are the actual matches.
+    if (visibleIds === null) return false;
+    return visibleIds.has(page.id) && !isLabelHit(page);
+  }
+
+  function onFilterToggle(label) {
+    labelLookup.set(label.id, label);
+    labelLookup = labelLookup; // trigger reactivity
+    pagesFilter.toggle(workspaceId, label.id);
+  }
+
+  function removeFilter(labelId) {
+    pagesFilter.remove(workspaceId, labelId);
+  }
+
+  function clearFilters() {
+    pagesFilter.clear(workspaceId);
+  }
 
   // The currently active page id comes from the route param, not local state —
   // navigating back/forward (or PagesView selecting via a different path) must
@@ -69,6 +139,14 @@
     try {
       const resp = await api.pages.getTree(workspaceId);
       pages = flattenDepthFirst(resp.tree || []);
+      // Cache every label we encounter so the filter row can render names
+      // + colors for active filters without an extra round-trip.
+      for (const page of pages) {
+        for (const label of page.labels || []) {
+          labelLookup.set(label.id, label);
+        }
+      }
+      labelLookup = labelLookup;
     } catch (err) {
       errorToast(err?.message || t('pages.errorLoadTree'));
     } finally {
@@ -292,6 +370,50 @@
     </div>
   </header>
 
+  <div class="filter-row" data-testid="pages-filter-row">
+    {#each activeFilterLabels as label (label.id)}
+      <span
+        class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs"
+        style="background-color: {label.color || '#3B82F6'}1A; color: var(--ds-text); border: 1px solid {label.color || '#3B82F6'};"
+        data-testid="pages-filter-chip"
+        data-label-id={label.id}
+      >
+        <span
+          class="inline-block w-2 h-2 rounded-full"
+          style="background-color: {label.color || '#3B82F6'};"
+          aria-hidden="true"
+        ></span>
+        {label.name}
+        <button
+          type="button"
+          class="filter-chip__remove"
+          onclick={() => removeFilter(label.id)}
+          aria-label={t('pages.labelsRemoveAria', { name: label.name })}
+        >
+          <X size={12} />
+        </button>
+      </span>
+    {/each}
+    <PageLabelPicker
+      {workspaceId}
+      selectedIds={filterLabelIds}
+      allowCreate={false}
+      onToggle={onFilterToggle}
+      triggerLabel={t('pages.labelsFilterTitle')}
+      triggerTestid="pages-filter-trigger"
+    />
+    {#if activeFilterLabels.length > 0}
+      <button
+        type="button"
+        class="filter-clear"
+        onclick={clearFilters}
+        data-testid="pages-filter-clear"
+      >
+        {t('pages.labelsFilterClear')}
+      </button>
+    {/if}
+  </div>
+
   {#if loading}
     <p class="status">{t('pages.treeLoading')}</p>
   {:else if pages.length === 0}
@@ -307,12 +429,16 @@
       {#each pages as page (page.id)}
         {@const edge = dndState.get(page.id)?.closestEdge}
         {@const isOver = dndState.get(page.id)?.over}
+        {@const hidden = visibleIds !== null && !visibleIds.has(page.id)}
+        {@const dimmed = isAncestorOnly(page)}
         <li
           class="tree-item"
           class:active={activePageId === page.id}
           class:drop-top={edge === 'top'}
           class:drop-bottom={edge === 'bottom'}
           class:drop-on={isOver && !edge}
+          class:hidden
+          class:dimmed
           data-page-row={page.id}
           data-testid="page-tree-item"
           data-page-id={page.id}
@@ -433,6 +559,46 @@
     cursor: not-allowed;
   }
 
+  .filter-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--ds-border);
+  }
+
+  .filter-chip__remove {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    padding: 0;
+    opacity: 0.7;
+    transition: opacity 120ms;
+  }
+
+  .filter-chip__remove:hover {
+    opacity: 1;
+  }
+
+  .filter-clear {
+    background: transparent;
+    border: none;
+    color: var(--ds-text-subtle);
+    font-size: 0.75rem;
+    cursor: pointer;
+    padding: 0.125rem 0.25rem;
+  }
+
+  .filter-clear:hover {
+    color: var(--ds-text);
+    text-decoration: underline;
+  }
+
   .tree {
     list-style: none;
     padding: 0.5rem 0;
@@ -446,6 +612,15 @@
     gap: 0.25rem;
     padding-right: 0.5rem;
     transition: background-color var(--duration-fast, 100ms) ease;
+  }
+
+  .tree-item.hidden {
+    display: none;
+  }
+
+  .tree-item.dimmed .page-button {
+    color: var(--ds-text-subtle);
+    opacity: 0.7;
   }
 
   .tree-item.active .page-button {
