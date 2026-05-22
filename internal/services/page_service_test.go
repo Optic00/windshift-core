@@ -255,6 +255,58 @@ func TestPageService_Update_PreservesInheritPermissions(t *testing.T) {
 	}
 }
 
+// Bug-hunt #2: regular Update used to forward Rank/FracIndex into UpdateTx,
+// which wrote SQL NULL for normal title/content saves. Drag-and-drop
+// ordering set by Move was silently destroyed on the next edit. Update
+// must now leave both columns alone.
+func TestPageService_Update_PreservesRankAndFracIndex(t *testing.T) {
+	db := newPagesTestDB(t)
+	s := NewPageService(db)
+
+	parent, err := s.Create(1, CreatePageInput{WorkspaceID: 1, Title: "Parent"})
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	first, err := s.Create(1, CreatePageInput{WorkspaceID: 1, ParentID: &parent.ID, Title: "First"})
+	if err != nil {
+		t.Fatalf("create first: %v", err)
+	}
+	second, err := s.Create(1, CreatePageInput{WorkspaceID: 1, ParentID: &parent.ID, Title: "Second"})
+	if err != nil {
+		t.Fatalf("create second: %v", err)
+	}
+
+	// Reorder so second precedes first; this populates frac_index for
+	// both via the backfill path in resolveSiblingFracIndex.
+	if _, err := s.Move(1, second.ID, &parent.ID, nil, &first.ID); err != nil {
+		t.Fatalf("reorder: %v", err)
+	}
+
+	moved, err := s.GetByID(second.ID)
+	if err != nil {
+		t.Fatalf("get after move: %v", err)
+	}
+	if moved.FracIndex == nil || *moved.FracIndex == "" {
+		t.Fatalf("expected frac_index populated after reorder, got %v", moved.FracIndex)
+	}
+	originalFrac := *moved.FracIndex
+
+	if _, err := s.Update(1, UpdatePageInput{ID: second.ID, Title: "Second renamed", Content: "edit"}); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+
+	after, err := s.GetByID(second.ID)
+	if err != nil {
+		t.Fatalf("get after update: %v", err)
+	}
+	if after.FracIndex == nil {
+		t.Fatalf("frac_index cleared by Update — would silently destroy drag-and-drop ordering")
+	}
+	if *after.FracIndex != originalFrac {
+		t.Errorf("frac_index changed across Update: was %q, now %q", originalFrac, *after.FracIndex)
+	}
+}
+
 // Bug-hunt-2 #4: Move previously checked only the moved page's new
 // depth, not the subtree's. A deep chain of descendants reparented
 // under a deep parent could land descendants past MaxPageDepth.
