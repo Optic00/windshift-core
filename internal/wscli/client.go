@@ -3,6 +3,7 @@ package wscli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -175,6 +176,18 @@ func (c *Client) GetItem(id int, expand string) (*Item, error) {
 		path += "?expand=" + url.QueryEscape(expand)
 	}
 
+	var item Item
+	if err := c.GET(path, &item); err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
+// GetItemByKeyAndNumber gets an item by its (workspace_key, workspace_item_number) pair
+// via the direct-lookup endpoint, avoiding paginating over /rest/api/v1/items when
+// resolving a KEY-NUMBER identifier.
+func (c *Client) GetItemByKeyAndNumber(wsKey string, number int) (*Item, error) {
+	path := fmt.Sprintf("/rest/api/v1/workspaces/%s/items/%d", url.PathEscape(wsKey), number)
 	var item Item
 	if err := c.GET(path, &item); err != nil {
 		return nil, err
@@ -918,28 +931,15 @@ func (c *Client) ResolveItemID(keyOrID string) (int, error) {
 		return 0, fmt.Errorf("invalid item number in: %s", keyOrID)
 	}
 
-	// Find workspace ID
-	wsID, err := c.ResolveWorkspaceID(wsKey)
+	item, err := c.GetItemByKeyAndNumber(wsKey, itemNum)
 	if err != nil {
-		return 0, err
-	}
-
-	// Search for item by workspace item number
-	filters := map[string]string{
-		"workspace_id": fmt.Sprintf("%d", wsID),
-	}
-	resp, err := c.ListItems(filters)
-	if err != nil {
-		return 0, err
-	}
-
-	for _, item := range resp.Data {
-		if item.WorkspaceItemNumber == itemNum {
-			return item.ID, nil
+		var apiErr *APIError
+		if errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound {
+			return 0, fmt.Errorf("item not found: %s", keyOrID)
 		}
+		return 0, err
 	}
-
-	return 0, fmt.Errorf("item not found: %s", keyOrID)
+	return item.ID, nil
 }
 
 // ============================================
