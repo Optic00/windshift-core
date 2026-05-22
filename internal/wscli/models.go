@@ -616,3 +616,65 @@ type PageLabelSetRequest struct {
 type PageLabelAddRequest struct {
 	LabelID int `json:"label_id"`
 }
+
+// ============================================
+// Links (item ↔ item / item ↔ page / item ↔ test_case)
+// ============================================
+
+// LinkType is the wire shape of GET /link-types entries. AllowedEntityTypes
+// being nil means "any combination"; a populated list (e.g. ["item","page"]
+// for the system "Page" type) gates which source/target entity-type pairs
+// are valid.
+type LinkType struct {
+	ID                 int      `json:"id"`
+	Name               string   `json:"name"`
+	Description        string   `json:"description,omitempty"`
+	ForwardLabel       string   `json:"forward_label"`
+	ReverseLabel       string   `json:"reverse_label"`
+	Color              string   `json:"color,omitempty"`
+	IsSystem           bool     `json:"is_system"`
+	Active             bool     `json:"active"`
+	AllowedEntityTypes []string `json:"allowed_entity_types"`
+}
+
+// ItemLink mirrors the server-side ItemLink with the joined display fields
+// the link handlers return (link_type_name, source/target titles, status
+// names, workspace keys). Only fields the CLI actually reads or surfaces
+// are declared — `omitempty` keeps the request shape minimal.
+type ItemLink struct {
+	ID         int    `json:"id"`
+	LinkTypeID int    `json:"link_type_id"`
+	SourceType string `json:"source_type"`
+	SourceID   int    `json:"source_id"`
+	TargetType string `json:"target_type"`
+	TargetID   int    `json:"target_id"`
+
+	LinkTypeName         string `json:"link_type_name,omitempty"`
+	LinkTypeForwardLabel string `json:"link_type_forward_label,omitempty"`
+	LinkTypeReverseLabel string `json:"link_type_reverse_label,omitempty"`
+
+	SourceTitle        string `json:"source_title,omitempty"`
+	SourceWorkspaceKey string `json:"source_workspace_key,omitempty"`
+	SourceStatusName   string `json:"source_status_name,omitempty"`
+
+	TargetTitle        string `json:"target_title,omitempty"`
+	TargetWorkspaceKey string `json:"target_workspace_key,omitempty"`
+	TargetStatusName   string `json:"target_status_name,omitempty"`
+}
+
+// LinkCreateRequest is the body for POST /links.
+type LinkCreateRequest struct {
+	LinkTypeID int    `json:"link_type_id"`
+	SourceType string `json:"source_type"`
+	SourceID   int    `json:"source_id"`
+	TargetType string `json:"target_type"`
+	TargetID   int    `json:"target_id"`
+}
+
+// LinkListResponse is the wire shape of GET /items/{id}/links (and the
+// matching page/test_case variants): two parallel arrays split by
+// direction relative to the queried entity.
+type LinkListResponse struct {
+	Outgoing []ItemLink `json:"outgoing"`
+	Incoming []ItemLink `json:"incoming"`
+}

@@ -1101,3 +1101,58 @@ func (c *Client) AddPageLabelToPage(workspaceID, pageID, labelID int) ([]PageLab
 func (c *Client) RemovePageLabelFromPage(workspaceID, pageID, labelID int) error {
 	return c.DELETE(fmt.Sprintf("/rest/api/v1/workspaces/%d/pages/%d/labels/%d", workspaceID, pageID, labelID))
 }
+
+// ============================================
+// Links API Methods (item ↔ item / item ↔ page / item ↔ test_case)
+// ============================================
+
+// ListLinkTypes returns every active link type plus the system catalog.
+// AllowedEntityTypes on each entry constrains which source/target pairs
+// are valid (nil means any).
+func (c *Client) ListLinkTypes() ([]LinkType, error) {
+	var types []LinkType
+	if err := c.GET("/rest/api/v1/link-types", &types); err != nil {
+		return nil, err
+	}
+	return types, nil
+}
+
+// CreateLink creates a cross-entity link. The server enforces the
+// link-type / entity-type compatibility check; the CLI front-loads an
+// obvious-mismatch check for a friendlier error.
+func (c *Client) CreateLink(req LinkCreateRequest) (*ItemLink, error) {
+	var link ItemLink
+	if err := c.POST("/rest/api/v1/links", req, &link); err != nil {
+		return nil, err
+	}
+	return &link, nil
+}
+
+// ListLinksForEntity returns outgoing and incoming links for a single
+// entity. The route prefix depends on entityType — items, pages, and
+// test cases each get their own list endpoint that funnels into the
+// same handler.
+func (c *Client) ListLinksForEntity(entityType string, id int) (*LinkListResponse, error) {
+	var route string
+	switch entityType {
+	case "item":
+		route = fmt.Sprintf("/rest/api/v1/items/%d/links", id)
+	case "page":
+		route = fmt.Sprintf("/rest/api/v1/pages/%d/links", id)
+	case "test_case":
+		route = fmt.Sprintf("/rest/api/v1/test-cases/%d/links", id)
+	default:
+		return nil, fmt.Errorf("unsupported entity type %q (want item, page, or test_case)", entityType)
+	}
+	var resp LinkListResponse
+	if err := c.GET(route, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// DeleteLink removes a link by its numeric id. The server enforces edit
+// permission on the source entity.
+func (c *Client) DeleteLink(id int) error {
+	return c.DELETE(fmt.Sprintf("/rest/api/v1/links/%d", id))
+}

@@ -99,6 +99,12 @@ func (o *Output) printTable(data interface{}) {
 		o.printPageLabelDetailTable(w, v)
 	case []PageRevision:
 		o.printPageRevisionsTable(w, v)
+	case []LinkType:
+		o.printLinkTypesTable(w, v)
+	case *ItemLink:
+		o.printItemLinkDetailTable(w, v)
+	case *LinkListResponse:
+		o.printLinkListTable(w, v)
 	default:
 		// Fallback to JSON for unknown types
 		o.printJSON(data)
@@ -168,6 +174,12 @@ func (o *Output) printCSV(data interface{}) {
 		o.printPageLabelCSV(w, v)
 	case []PageRevision:
 		o.printPageRevisionsCSV(w, v)
+	case []LinkType:
+		o.printLinkTypesCSV(w, v)
+	case *ItemLink:
+		o.printItemLinkCSV(w, v)
+	case *LinkListResponse:
+		o.printLinkListCSV(w, v)
 	default:
 		// Fallback to JSON for unknown types
 		o.printJSON(data)
@@ -926,6 +938,130 @@ func (o *Output) printPageRevisionsCSV(w *csv.Writer, revs []PageRevision) {
 			fmt.Sprintf("%d", r.CreatedBy),
 			r.Title,
 			r.CreatedAt.Format(time.RFC3339),
+		})
+	}
+}
+
+// ============================================
+// Link / LinkType formatters
+// ============================================
+
+func (o *Output) printLinkTypesTable(w *tabwriter.Writer, types []LinkType) {
+	_, _ = fmt.Fprintln(w, "ID\tNAME\tALLOWED\tFORWARD\tREVERSE")
+	_, _ = fmt.Fprintln(w, "--\t----\t-------\t-------\t-------")
+	for i := range types {
+		t := &types[i]
+		allowed := "any"
+		if len(t.AllowedEntityTypes) > 0 {
+			allowed = strings.Join(t.AllowedEntityTypes, ",")
+		}
+		_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\n", t.ID, t.Name, allowed, t.ForwardLabel, t.ReverseLabel)
+	}
+}
+
+func (o *Output) printLinkTypesCSV(w *csv.Writer, types []LinkType) {
+	_ = w.Write([]string{"ID", "NAME", "ALLOWED", "FORWARD", "REVERSE", "ACTIVE", "IS_SYSTEM"})
+	for _, t := range types {
+		allowed := ""
+		if len(t.AllowedEntityTypes) > 0 {
+			allowed = strings.Join(t.AllowedEntityTypes, ",")
+		}
+		_ = w.Write([]string{
+			fmt.Sprintf("%d", t.ID),
+			t.Name,
+			allowed,
+			t.ForwardLabel,
+			t.ReverseLabel,
+			fmt.Sprintf("%t", t.Active),
+			fmt.Sprintf("%t", t.IsSystem),
+		})
+	}
+}
+
+// linkEndpointRef renders one side of a link as "TYPE:ID Title" for the
+// table output. Items get the workspace-key form when available so the
+// caller sees a usable handle (WI-7) rather than an opaque numeric id.
+func linkEndpointRef(entityType string, id int, workspaceKey, title string) string {
+	handle := fmt.Sprintf("%s:%d", entityType, id)
+	if entityType == "item" && workspaceKey != "" {
+		handle = fmt.Sprintf("%s-%d", workspaceKey, id)
+	}
+	if title == "" {
+		return handle
+	}
+	return fmt.Sprintf("%s  %s", handle, truncateString(title, 50))
+}
+
+func (o *Output) printItemLinkDetailTable(w *tabwriter.Writer, l *ItemLink) {
+	_, _ = fmt.Fprintf(w, "ID:\t%d\n", l.ID)
+	_, _ = fmt.Fprintf(w, "Type:\t%s (%s)\n", l.LinkTypeName, l.LinkTypeForwardLabel)
+	_, _ = fmt.Fprintf(w, "Source:\t%s\n", linkEndpointRef(l.SourceType, l.SourceID, l.SourceWorkspaceKey, l.SourceTitle))
+	_, _ = fmt.Fprintf(w, "Target:\t%s\n", linkEndpointRef(l.TargetType, l.TargetID, l.TargetWorkspaceKey, l.TargetTitle))
+}
+
+func (o *Output) printItemLinkCSV(w *csv.Writer, l *ItemLink) {
+	_ = w.Write([]string{"ID", "TYPE", "SOURCE", "TARGET"})
+	_ = w.Write([]string{
+		fmt.Sprintf("%d", l.ID),
+		l.LinkTypeName,
+		linkEndpointRef(l.SourceType, l.SourceID, l.SourceWorkspaceKey, l.SourceTitle),
+		linkEndpointRef(l.TargetType, l.TargetID, l.TargetWorkspaceKey, l.TargetTitle),
+	})
+}
+
+// printLinkListTable renders outgoing + incoming links as two sections.
+// Each row shows the link id, type label (forward for outgoing, reverse
+// for incoming) and the *other* endpoint relative to the queried entity.
+func (o *Output) printLinkListTable(w *tabwriter.Writer, resp *LinkListResponse) {
+	writeRows := func(header string, links []ItemLink, otherSide func(ItemLink) (string, int, string, string), label func(ItemLink) string) {
+		_, _ = fmt.Fprintf(w, "%s\n", header)
+		_, _ = fmt.Fprintln(w, "ID\tTYPE\tLABEL\tENTITY")
+		_, _ = fmt.Fprintln(w, "--\t----\t-----\t------")
+		for _, l := range links {
+			eType, eID, eWS, eTitle := otherSide(l)
+			_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%s\n", l.ID, l.LinkTypeName, label(l), linkEndpointRef(eType, eID, eWS, eTitle))
+		}
+		if len(links) == 0 {
+			_, _ = fmt.Fprintln(w, "(none)\t\t\t")
+		}
+		_, _ = fmt.Fprintln(w, "\t\t\t")
+	}
+	writeRows(
+		"Outgoing",
+		resp.Outgoing,
+		func(l ItemLink) (string, int, string, string) {
+			return l.TargetType, l.TargetID, l.TargetWorkspaceKey, l.TargetTitle
+		},
+		func(l ItemLink) string { return l.LinkTypeForwardLabel },
+	)
+	writeRows(
+		"Incoming",
+		resp.Incoming,
+		func(l ItemLink) (string, int, string, string) {
+			return l.SourceType, l.SourceID, l.SourceWorkspaceKey, l.SourceTitle
+		},
+		func(l ItemLink) string { return l.LinkTypeReverseLabel },
+	)
+}
+
+func (o *Output) printLinkListCSV(w *csv.Writer, resp *LinkListResponse) {
+	_ = w.Write([]string{"DIRECTION", "ID", "TYPE", "LABEL", "ENTITY"})
+	for _, l := range resp.Outgoing {
+		_ = w.Write([]string{
+			"outgoing",
+			fmt.Sprintf("%d", l.ID),
+			l.LinkTypeName,
+			l.LinkTypeForwardLabel,
+			linkEndpointRef(l.TargetType, l.TargetID, l.TargetWorkspaceKey, l.TargetTitle),
+		})
+	}
+	for _, l := range resp.Incoming {
+		_ = w.Write([]string{
+			"incoming",
+			fmt.Sprintf("%d", l.ID),
+			l.LinkTypeName,
+			l.LinkTypeReverseLabel,
+			linkEndpointRef(l.SourceType, l.SourceID, l.SourceWorkspaceKey, l.SourceTitle),
 		})
 	}
 }

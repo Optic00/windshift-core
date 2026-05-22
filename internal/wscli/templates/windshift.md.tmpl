@@ -24,6 +24,12 @@ ws page list                       # Check for an existing spec / doc first
 ws page get <id>                   # Stream a page as Markdown
 ws page create --file spec.md      # Publish a new spec / design / runbook
 ws page edit <id> --file spec.md   # Update an existing page
+
+# Links (cross-entity: item ↔ item / item ↔ page / item ↔ test_case)
+ws link add WI-1 page:42           # Auto-picks the Page link type
+ws link ls WI-1                    # Outgoing + incoming links on WI-1
+ws link rm <link-id>               # Remove a link by id
+ws link types                      # Catalog of available link types
 ```
 {{if .StatusAliases}}
 ## Status Aliases
@@ -125,13 +131,50 @@ Use a link whenever an item has an authoritative spec or design page so that
 either side surfaces the other. Both sides must share a workspace; per-page
 ACLs are honored when listing links.
 
+```bash
+ws link add WI-1 page:42          # Attach a spec page to a work item
+ws link ls WI-1                   # See all links on the item
+ws link ls page:42                # See work items that reference the page
+ws link rm <link-id>              # Detach
+```
+
 - A work item's detail view shows a **Pages** section alongside Linked items.
 - A page's detail view shows a **Work items** popover with linking items.
-- API endpoints: `GET /items/{id}/links`, `GET /pages/{id}/links`,
-  `POST /item-links`, plus `GET /workspaces/{id}/pages/search?q=` for picker UIs.
-- The ws CLI does not yet expose `link`-management subcommands; use the
-  REST API (the agent token's `items:write` + `pages:read` scopes cover it)
-  or the web UI to add or remove links.
+
+## Links
+
+Cross-entity links use the polymorphic `item_links` table and a small set
+of link types. The CLI fronts the full surface — no need to call the REST
+API directly.
+
+### Entity reference syntax (SOURCE / TARGET / ENTITY)
+
+- `WI-1` — work item by workspace key + number (uses current workspace)
+- `item:42` — work item by numeric id
+- `page:42` — page by numeric id
+- `test:5` (alias: `test_case:5`) — test case by numeric id
+
+### Link-type rules (the CLI auto-picks the right one)
+
+| Pair                  | Link type   | Notes                                  |
+|-----------------------|-------------|----------------------------------------|
+| item ↔ page           | **Page**    | Only type allowed for item↔page.       |
+| item ↔ test_case      | **Tests**   | Only type allowed for item↔test_case.  |
+| item ↔ item           | **Relates To** (default) | Override with `--type Implements`, `Depends On`, `Links To`, `Duplicates`, `Child Of`. |
+
+Pages **cannot** be linked to test cases or to other pages — no link type
+covers those pairs. Passing `--type Page` with a test-case target is
+rejected client-side before the request is sent.
+
+```bash
+ws link types                                  # See the full catalog
+ws link add WI-1 page:42                       # Auto-picks Page
+ws link add WI-1 test:5                        # Auto-picks Tests
+ws link add WI-1 WI-2                          # Auto-picks Relates To
+ws link add WI-1 WI-2 --type Implements        # Explicit item↔item type
+ws link ls WI-1                                # Outgoing + incoming
+ws link rm 123                                 # Delete by link id (from ls)
+```
 
 ## Scopes & Capabilities
 
