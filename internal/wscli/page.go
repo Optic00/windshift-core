@@ -82,13 +82,15 @@ var pageGetCmd = &cobra.Command{
 	Use:   "get <id>",
 	Short: "Get a page by id",
 	Long: `Fetch a single page by its numeric id. By default prints the
-Markdown source to stdout; use -o json/table for the full record.
+Markdown source to stdout so callers can pipe straight into a file. Pass
+an explicit -o json/csv (or -o table for the human-friendly Markdown
+stream) to use the structured printer instead.
 
 Examples:
   ws page get 42 > onboarding.md
   ws page get 42 -o json`,
 	Args: cobra.ExactArgs(1),
-	RunE: func(_ *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := NewClient()
 		if err != nil {
 			return err
@@ -105,10 +107,12 @@ Examples:
 		if err != nil {
 			return fmt.Errorf("failed to get page: %w", err)
 		}
-		// In table mode (the default for human use), stream the raw
-		// Markdown so callers can pipe it into a file. JSON/CSV go
-		// through the structured printer.
-		if outputFormat == "" || outputFormat == "table" {
+		// Default behavior: stream Markdown to stdout. Matches the
+		// documented `ws page get 42 > onboarding.md` example. The
+		// global -o json default doesn't apply unless the user
+		// explicitly chose -o on THIS invocation.
+		explicitOutput := cmd.Flags().Changed("output")
+		if !explicitOutput || outputFormat == "table" {
 			if !pageGetRaw {
 				_, _ = fmt.Fprintf(stdout, "# %s\n\n", page.Title)
 			}
