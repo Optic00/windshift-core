@@ -44,15 +44,23 @@ func NewClient() (*Client, error) {
 // pattern-matching the message string. Zero means "unknown" (e.g.
 // transport failure before a response arrived).
 type APIError struct {
-	Status  int               `json:"-"`
-	Code    string            `json:"code"`
-	Message string            `json:"message"`
-	Details map[string]string `json:"details,omitempty"`
+	Status int    `json:"-"`
+	Code   string `json:"code"`
+	// Message is the human-readable error. The cookie-auth surface puts
+	// it under "message"; the v1 REST surface (restapi.ErrorResponse)
+	// puts it under "error". Accept both so we don't fall back to the
+	// machine-readable Code on v1 responses.
+	Message      string            `json:"message"`
+	ErrorMessage string            `json:"error"`
+	Details      map[string]string `json:"details,omitempty"`
 }
 
 func (e *APIError) Error() string {
 	if e.Message != "" {
 		return e.Message
+	}
+	if e.ErrorMessage != "" {
+		return e.ErrorMessage
 	}
 	return e.Code
 }
