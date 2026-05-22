@@ -908,3 +908,91 @@ func (c *Client) GetPageHistory(workspaceID, pageID int) ([]PageRevision, error)
 	}
 	return resp.Items, nil
 }
+
+// ============================================
+// Page Labels API Methods
+// ============================================
+//
+// Workspace-scoped labels that attach to pages only. Fully separate from
+// the work-item label system; never share rows or endpoints.
+
+// ListPageLabels returns every page label in the workspace.
+func (c *Client) ListPageLabels(workspaceID int) ([]PageLabel, error) {
+	var resp PageLabelListResponse
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/workspaces/%d/page-labels", workspaceID), &resp); err != nil {
+		return nil, err
+	}
+	return resp.Items, nil
+}
+
+// GetPageLabel fetches a single page label by id.
+func (c *Client) GetPageLabel(workspaceID, labelID int) (*PageLabel, error) {
+	var label PageLabel
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/workspaces/%d/page-labels/%d", workspaceID, labelID), &label); err != nil {
+		return nil, err
+	}
+	return &label, nil
+}
+
+// CreatePageLabel inserts a new page label in the workspace.
+func (c *Client) CreatePageLabel(workspaceID int, req PageLabelCreateRequest) (*PageLabel, error) {
+	var label PageLabel
+	if err := c.POST(fmt.Sprintf("/rest/api/v1/workspaces/%d/page-labels", workspaceID), req, &label); err != nil {
+		return nil, err
+	}
+	return &label, nil
+}
+
+// UpdatePageLabel applies a partial update to a label.
+func (c *Client) UpdatePageLabel(workspaceID, labelID int, req PageLabelUpdateRequest) (*PageLabel, error) {
+	var label PageLabel
+	if err := c.PUT(fmt.Sprintf("/rest/api/v1/workspaces/%d/page-labels/%d", workspaceID, labelID), req, &label); err != nil {
+		return nil, err
+	}
+	return &label, nil
+}
+
+// DeletePageLabel removes a label and cascades the page assignments.
+func (c *Client) DeletePageLabel(workspaceID, labelID int) error {
+	return c.DELETE(fmt.Sprintf("/rest/api/v1/workspaces/%d/page-labels/%d", workspaceID, labelID))
+}
+
+// ListPageLabelsForPage returns the labels attached to a single page.
+func (c *Client) ListPageLabelsForPage(workspaceID, pageID int) ([]PageLabel, error) {
+	var resp PageLabelListResponse
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/workspaces/%d/pages/%d/labels", workspaceID, pageID), &resp); err != nil {
+		return nil, err
+	}
+	return resp.Items, nil
+}
+
+// SetPageLabelsForPage atomically replaces the label set on a page.
+func (c *Client) SetPageLabelsForPage(workspaceID, pageID int, labelIDs []int) ([]PageLabel, error) {
+	var resp PageLabelListResponse
+	if err := c.PUT(
+		fmt.Sprintf("/rest/api/v1/workspaces/%d/pages/%d/labels", workspaceID, pageID),
+		PageLabelSetRequest{LabelIDs: labelIDs},
+		&resp,
+	); err != nil {
+		return nil, err
+	}
+	return resp.Items, nil
+}
+
+// AddPageLabelToPage attaches a single label to a page.
+func (c *Client) AddPageLabelToPage(workspaceID, pageID, labelID int) ([]PageLabel, error) {
+	var resp PageLabelListResponse
+	if err := c.POST(
+		fmt.Sprintf("/rest/api/v1/workspaces/%d/pages/%d/labels", workspaceID, pageID),
+		PageLabelAddRequest{LabelID: labelID},
+		&resp,
+	); err != nil {
+		return nil, err
+	}
+	return resp.Items, nil
+}
+
+// RemovePageLabelFromPage detaches a single label from a page.
+func (c *Client) RemovePageLabelFromPage(workspaceID, pageID, labelID int) error {
+	return c.DELETE(fmt.Sprintf("/rest/api/v1/workspaces/%d/pages/%d/labels/%d", workspaceID, pageID, labelID))
+}

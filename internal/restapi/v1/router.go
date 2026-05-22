@@ -85,6 +85,7 @@ func RegisterRoutes(deps restapi.Deps) {
 	actionHandler := handlers.NewActionHandler(db, permissionService, deps.ActionService)
 	attachmentHandler := handlers.NewAttachmentHandler(db, permissionService, deps.AttachmentPath)
 	pageHandler := handlers.NewPageHandler(db, permissionService)
+	pageLabelHandler := handlers.NewPageLabelHandler(db, permissionService)
 
 	// Create authenticated route group with middleware chain:
 	// RequestID -> RequireAuth -> RateLimiter
@@ -252,6 +253,23 @@ func RegisterRoutes(deps restapi.Deps) {
 	v1.HandleWithMiddleware("DELETE /workspaces/{id}/pages/{pageId}", pageHandler.Archive, bearerAuth.RequirePermission("pages:delete"), router.RequireNumericID)
 	v1.HandleWithMiddleware("POST /workspaces/{id}/pages/{pageId}/move", pageHandler.Move, bearerAuth.RequirePermission("pages:write"), router.RequireNumericID)
 	v1.HandleWithMiddleware("GET /workspaces/{id}/pages/{pageId}/history", pageHandler.GetHistory, bearerAuth.RequirePermission("pages:read"), router.RequireNumericID)
+
+	// ============================================
+	// Page labels (workspace-scoped, attach to pages only). Label CRUD
+	// uses pages:write/pages:read scopes — same as page edits — because
+	// the user-facing permission gate is also page.edit / page.view.
+	// Attach/detach gates per-page via PagePermissionService.
+	// ============================================
+	v1.HandleWithMiddleware("GET /workspaces/{id}/page-labels", pageLabelHandler.ListLabels, bearerAuth.RequirePermission("pages:read"), router.RequireNumericID)
+	v1.HandleWithMiddleware("POST /workspaces/{id}/page-labels", pageLabelHandler.CreateLabel, bearerAuth.RequirePermission("pages:write"), router.RequireNumericID)
+	v1.HandleWithMiddleware("GET /workspaces/{id}/page-labels/{labelId}", pageLabelHandler.GetLabel, bearerAuth.RequirePermission("pages:read"), router.RequireNumericID)
+	v1.HandleWithMiddleware("PUT /workspaces/{id}/page-labels/{labelId}", pageLabelHandler.UpdateLabel, bearerAuth.RequirePermission("pages:write"), router.RequireNumericID)
+	v1.HandleWithMiddleware("DELETE /workspaces/{id}/page-labels/{labelId}", pageLabelHandler.DeleteLabel, bearerAuth.RequirePermission("pages:write"), router.RequireNumericID)
+
+	v1.HandleWithMiddleware("GET /workspaces/{id}/pages/{pageId}/labels", pageLabelHandler.ListForPage, bearerAuth.RequirePermission("pages:read"), router.RequireNumericID)
+	v1.HandleWithMiddleware("PUT /workspaces/{id}/pages/{pageId}/labels", pageLabelHandler.SetForPage, bearerAuth.RequirePermission("pages:write"), router.RequireNumericID)
+	v1.HandleWithMiddleware("POST /workspaces/{id}/pages/{pageId}/labels", pageLabelHandler.AddToPage, bearerAuth.RequirePermission("pages:write"), router.RequireNumericID)
+	v1.HandleWithMiddleware("DELETE /workspaces/{id}/pages/{pageId}/labels/{labelId}", pageLabelHandler.RemoveFromPage, bearerAuth.RequirePermission("pages:write"), router.RequireNumericID)
 
 	// ============================================
 	// Search

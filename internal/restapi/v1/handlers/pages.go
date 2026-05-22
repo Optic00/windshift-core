@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"windshift/internal/database"
+	"windshift/internal/repository"
 	"windshift/internal/restapi"
 	"windshift/internal/restapi/v1/dto"
 	"windshift/internal/services"
@@ -22,12 +23,16 @@ type PageHandler struct {
 
 // NewPageHandler constructs a v1 PageHandler. HATEOAS links are derived
 // per-request via getBaseURL so the response surface matches the host
-// the caller hit (correct behavior behind reverse proxies).
+// the caller hit (correct behavior behind reverse proxies). Wires a
+// PageLabelRepository onto the service so List/Get responses preload
+// the page's labels.
 func NewPageHandler(db database.Database, permissionService *services.PermissionService) *PageHandler {
 	pageAuth := services.NewPagePermissionService(db, permissionService)
+	svc := services.NewPageService(db)
+	svc.SetPageLabelRepository(repository.NewPageLabelRepository(db))
 	return &PageHandler{
 		BaseHandler: NewBaseHandler(db, permissionService),
-		service:     services.NewPageService(db),
+		service:     svc,
 		pageAuth:    pageAuth,
 	}
 }
@@ -97,6 +102,15 @@ func (h *PageHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Preload labels onto the visible slice before mapping so each DTO
+	// in the response includes its labels (no per-page round-trip for the
+	// CLI). Safe to call on the full slice — invisible pages just get
+	// their Labels stamped and then dropped below.
+	if err := h.service.PreloadLabels(pages); err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+
 	items := make([]dto.PageResponse, 0, len(pages))
 	for i := range pages {
 		if !visible[pages[i].ID] {
@@ -116,6 +130,10 @@ func (h *PageHandler) Get(w http.ResponseWriter, r *http.Request) {
 	page, err := h.service.GetByID(pageID)
 	if err != nil || page.WorkspaceID != wsID {
 		h.RespondNotFound(w, r)
+		return
+	}
+	if err := h.service.PreloadLabelsForPage(page); err != nil {
+		h.RespondInternalError(w, r)
 		return
 	}
 	h.RespondOK(w, dto.MapPageToResponse(page, getBaseURL(r)))

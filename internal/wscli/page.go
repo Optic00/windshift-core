@@ -44,9 +44,17 @@ var pageListCmd = &cobra.Command{
 	Long: `List every page the caller can view in the configured workspace.
 Output includes id, depth-indented title, slug, and updated_at.
 
+Pass --label NAME (repeatable, or comma-separated) to filter to pages
+tagged with all of the listed page labels. Matching is case-insensitive
+and uses AND semantics — only pages carrying every requested label are
+returned. The filter is applied client-side after the server returns the
+preloaded labels on each page, so no extra round-trip is required.
+
 Examples:
   ws page list
-  ws page list -o json`,
+  ws page list -o json
+  ws page list --label design
+  ws page list --label design,spec`,
 	RunE: func(_ *cobra.Command, _ []string) error {
 		client, err := NewClient()
 		if err != nil {
@@ -59,6 +67,9 @@ Examples:
 		pages, err := client.ListPages(wsID)
 		if err != nil {
 			return fmt.Errorf("failed to list pages: %w", err)
+		}
+		if len(pageListLabelFilter) > 0 {
+			pages = filterPagesByLabels(pages, pageListLabelFilter)
 		}
 		NewOutput().Print(pages)
 		return nil

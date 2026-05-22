@@ -517,6 +517,11 @@ type Page struct {
 	CreatedAt          time.Time  `json:"created_at"`
 	UpdatedAt          time.Time  `json:"updated_at"`
 	ArchivedAt         *time.Time `json:"archived_at,omitempty"`
+
+	// Labels carries any page labels attached to this page (always non-nil
+	// in JSON). Lets `ws page list --label foo` filter client-side without
+	// a per-page round-trip.
+	Labels []PageLabel `json:"labels,omitempty"`
 }
 
 // PageListResponse is the wire shape of GET /workspaces/:id/pages.
@@ -567,4 +572,43 @@ type PageUpdateRequest struct {
 // PageMoveRequest is the body for POST /workspaces/:id/pages/:pageId/move.
 type PageMoveRequest struct {
 	ParentID *int `json:"parent_id"`
+}
+
+// PageLabel is a workspace-scoped label that attaches to pages only.
+// Separate from work-item Label (no shared rows or endpoints).
+type PageLabel struct {
+	ID          int       `json:"id"`
+	Name        string    `json:"name"`
+	Color       string    `json:"color"`
+	WorkspaceID int       `json:"workspace_id"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// PageLabelListResponse wraps a list of page labels.
+type PageLabelListResponse struct {
+	Items []PageLabel `json:"items"`
+}
+
+// PageLabelCreateRequest is the body for POST /workspaces/:id/page-labels.
+type PageLabelCreateRequest struct {
+	Name  string `json:"name"`
+	Color string `json:"color,omitempty"`
+}
+
+// PageLabelUpdateRequest is the body for PUT /workspaces/:id/page-labels/:labelId.
+// Pointers so callers can partial-update.
+type PageLabelUpdateRequest struct {
+	Name  *string `json:"name,omitempty"`
+	Color *string `json:"color,omitempty"`
+}
+
+// PageLabelSetRequest is the body for PUT /workspaces/:id/pages/:pageId/labels.
+type PageLabelSetRequest struct {
+	LabelIDs []int `json:"label_ids"`
+}
+
+// PageLabelAddRequest is the body for POST /workspaces/:id/pages/:pageId/labels.
+type PageLabelAddRequest struct {
+	LabelID int `json:"label_id"`
 }

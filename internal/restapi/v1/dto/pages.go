@@ -30,6 +30,12 @@ type PageResponse struct {
 	UpdatedAt          time.Time  `json:"updated_at"`
 	ArchivedAt         *time.Time `json:"archived_at,omitempty"`
 
+	// Labels carries the workspace page-labels currently attached to the
+	// page. Populated by the service layer when the page-label repository
+	// is wired; always serialized as an array (never null) so CLI/JSON
+	// consumers don't need to null-check.
+	Labels []models.PageLabel `json:"labels"`
+
 	Links *PageLinks `json:"_links,omitempty"`
 }
 
@@ -82,6 +88,10 @@ func MapPageToResponse(p *models.Page, baseURL string) PageResponse {
 		CreatedAt:          p.CreatedAt,
 		UpdatedAt:          p.UpdatedAt,
 		ArchivedAt:         p.ArchivedAt,
+		Labels:             p.Labels,
+	}
+	if resp.Labels == nil {
+		resp.Labels = []models.PageLabel{}
 	}
 	if baseURL != "" {
 		resp.Links = &PageLinks{
