@@ -15,22 +15,13 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"windshift/internal/auth"
 )
 
-// Scopes requested by the automatic onboarding flow. Kept minimal — enough for
-// every currently-shipped `ws` command but none of the admin namespace.
-var defaultCLIScopes = []string{
-	"items:read",
-	"items:write",
-	"workspaces:read",
-	"workspaces:write",
-	"users:read",
-	"item-types:read",
-	"workflows:read",
-	"pages:read",
-	"pages:write",
-	"pages:delete",
-}
+// Scopes requested by the automatic onboarding flow. Sourced from
+// auth.DefaultAgentScopes so the CLI mint and the API/UI mints stay in lockstep.
+var defaultCLIScopes = auth.DefaultAgentScopes
 
 type cliCapabilities struct {
 	AutoOnboardingEnabled bool   `json:"auto_onboarding_enabled"`

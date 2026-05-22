@@ -92,6 +92,22 @@ const (
 	ScopeAdminAPITokensWrite = "admin:api-tokens:write"
 )
 
+// DefaultAgentScopes is the scope set granted when a token is minted without
+// an explicit permissions list. Tuned for agent / `ws` CLI workflows: full
+// items + workspace + pages access, all non-admin planning reads, and MCP
+// access. Excludes admin scopes and write access to planning entities — mint
+// with an explicit permissions list when you need those.
+var DefaultAgentScopes = []string{
+	ScopeItemsRead, ScopeItemsWrite,
+	ScopeWorkspacesRead, ScopeWorkspacesWrite,
+	ScopeUsersRead,
+	ScopeItemTypesRead, ScopeWorkflowsRead,
+	ScopeStatusesRead, ScopePrioritiesRead, ScopeCustomFieldsRead,
+	ScopeMilestonesRead, ScopeIterationsRead, ScopeProjectsRead,
+	ScopePagesRead, ScopePagesWrite, ScopePagesDelete,
+	ScopeMCPAccess,
+}
+
 // AllValidScopes is the complete set of valid scope strings for validation.
 var AllValidScopes = []string{
 	ScopeItemsRead, ScopeItemsWrite, ScopeItemsDelete,

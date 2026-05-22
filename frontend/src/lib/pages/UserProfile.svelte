@@ -146,8 +146,7 @@
 		try {
 			const payload = {
 				name: s.name,
-				user_id: agentId,
-				permissions: ['items:read', 'items:write', 'workspaces:read', 'users:read']
+				user_id: agentId
 			};
 			if (s.expiresAt) {
 				payload.expires_at = new Date(s.expiresAt).toISOString();

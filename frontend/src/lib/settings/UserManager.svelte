@@ -372,10 +372,7 @@
 		try {
 			const payload = {
 				name: newTokenName,
-				user_id: tokenTargetUser.id,
-				// Default scopes for a service-user / agent token. Admins can
-				// revoke and mint a narrower one if needed.
-				permissions: ['items:read', 'items:write', 'workspaces:read', 'users:read']
+				user_id: tokenTargetUser.id
 			};
 			if (newTokenExpiresDays && Number(newTokenExpiresDays) > 0) {
 				const expires = new Date();

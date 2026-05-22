@@ -80,7 +80,7 @@ func (ath *APITokenHandler) CreateToken(w http.ResponseWriter, r *http.Request) 
 
 	// Set default permissions if none provided
 	if len(request.Permissions) == 0 {
-		request.Permissions = []string{auth.ScopeItemsRead, auth.ScopeWorkspacesRead, auth.ScopeUsersRead}
+		request.Permissions = auth.DefaultAgentScopes
 	}
 
 	// Validate all scopes
