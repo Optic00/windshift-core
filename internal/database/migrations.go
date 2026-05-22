@@ -518,6 +518,51 @@ var Catalog = []Migration{
 			updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		)`,
 	},
+	{
+		// page_label_assignments is the junction table behind ws/page-label
+		// attach/detach (page_label_repository.AddAssignment / ReplaceAssignments /
+		// ListForPage / LoadLabelsForPages). The legacy upgrade path in
+		// postgres.go:672 re-runs the embedded page_labels schema for
+		// existing installs, but at least one production DB ended up with
+		// page_labels present and page_label_assignments missing (tree-load
+		// 500: "relation \"page_label_assignments\" does not exist"). Stamp
+		// it through the catalog so the table is guaranteed regardless of
+		// which path the install took.
+		//
+		// Both backends use CREATE TABLE IF NOT EXISTS + indexes that are
+		// also IF NOT EXISTS, so re-running this on a healthy install is a
+		// no-op even when the Check happens to be skipped.
+		Version:       "20260522_page_label_assignments",
+		Name:          "Ensure page_label_assignments table exists",
+		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='page_label_assignments'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='page_label_assignments'",
+		SQLite: `
+			CREATE TABLE IF NOT EXISTS page_label_assignments (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				page_id INTEGER NOT NULL,
+				page_label_id INTEGER NOT NULL,
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE,
+				FOREIGN KEY (page_label_id) REFERENCES page_labels(id) ON DELETE CASCADE,
+				UNIQUE(page_id, page_label_id)
+			);
+			CREATE INDEX IF NOT EXISTS idx_page_label_assignments_page_id ON page_label_assignments(page_id);
+			CREATE INDEX IF NOT EXISTS idx_page_label_assignments_label_id ON page_label_assignments(page_label_id);
+		`,
+		Postgres: `
+			CREATE TABLE IF NOT EXISTS page_label_assignments (
+				id SERIAL PRIMARY KEY,
+				page_id INTEGER NOT NULL,
+				page_label_id INTEGER NOT NULL,
+				created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE,
+				FOREIGN KEY (page_label_id) REFERENCES page_labels(id) ON DELETE CASCADE,
+				UNIQUE(page_id, page_label_id)
+			);
+			CREATE INDEX IF NOT EXISTS idx_page_label_assignments_page_id ON page_label_assignments(page_id);
+			CREATE INDEX IF NOT EXISTS idx_page_label_assignments_label_id ON page_label_assignments(page_label_id);
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {
