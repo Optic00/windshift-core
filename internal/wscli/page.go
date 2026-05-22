@@ -231,7 +231,7 @@ Examples:
   ws page edit 42 --content "Quick patch"
   ws page edit 42 --file blog.md --upload-assets`,
 	Args: cobra.ExactArgs(1),
-	RunE: func(_ *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := NewClient()
 		if err != nil {
 			return err
@@ -245,32 +245,36 @@ Examples:
 			return fmt.Errorf("invalid page id: %s", args[0])
 		}
 
+		// Detect flag presence with cobra rather than empty-string checks
+		// so an explicit `--content ""` can intentionally clear the body.
+		titleChanged := cmd.Flags().Changed("title")
+		fileChanged := cmd.Flags().Changed("file")
+		contentChanged := cmd.Flags().Changed("content")
+
 		var req PageUpdateRequest
 		var content string
 		var titleFromFile string
 
-		if pageEditFile != "" {
+		if fileChanged {
 			body, fileTitle, ferr := readMarkdownFile(pageEditFile)
 			if ferr != nil {
 				return ferr
 			}
 			content = body
 			titleFromFile = fileTitle
-		} else if pageEditContent != "" {
+		} else if contentChanged {
 			content = pageEditContent
 		}
 
-		if pageEditTitle != "" {
+		if titleChanged {
 			t := pageEditTitle
 			req.Title = &t
-		} else if titleFromFile != "" && pageEditFile != "" && pageEditTitle == "" {
-			// File supplied a title but the caller didn't ask for a
-			// title change. Leave title untouched — matches the doc
-			// for "edit --file" semantics (content replace by default).
-			_ = titleFromFile
 		}
+		// File-supplied H1 never overrides — matches the existing
+		// "edit --file" semantics (content replace by default).
+		_ = titleFromFile
 
-		if pageEditFile != "" || pageEditContent != "" {
+		if fileChanged || contentChanged {
 			req.Content = &content
 		}
 
