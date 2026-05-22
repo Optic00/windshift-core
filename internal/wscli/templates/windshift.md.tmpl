@@ -1,0 +1,183 @@
+# Windshift CLI
+
+This project is connected to Windshift workspace **{{.Workspace.Key}}** ({{.Workspace.Name}}).
+
+## Quick Commands
+
+```bash
+# My work
+ws task mine              # Tasks assigned to me
+ws task created           # Tasks I created
+
+# Create & manage
+ws task create -t "Title" [-d "Description"]
+ws task move <KEY-123> <status>
+ws task get <KEY-123>
+
+# Test execution
+ws test run mine          # My test runs
+ws test run start <set>   # Start test run
+ws test result <run> <case> passed|failed|blocked|skipped
+
+# Pages (specs, design docs, runbooks — workspace documentation)
+ws page list                       # Check for an existing spec / doc first
+ws page get <id>                   # Stream a page as Markdown
+ws page create --file spec.md      # Publish a new spec / design / runbook
+ws page edit <id> --file spec.md   # Update an existing page
+```
+{{if .StatusAliases}}
+## Status Aliases
+
+Use these consistent commands regardless of actual workspace statuses:
+
+| Alias | Maps To | Usage |
+|-------|---------|-------|
+{{- range $alias, $status := .StatusAliases}}
+| `{{$alias}}` | {{$status}} | `ws task move X {{$alias}}` |
+{{- end}}
+{{end}}
+## Available Item Types
+
+{{range .ItemTypes -}}
+- {{if .Icon}}{{.Icon}} {{end}}{{.Name}}
+{{end}}
+## Available Statuses
+
+| ID | Status | Category | Default | Completed |
+|----|--------|----------|---------|------------|
+{{- range .Statuses}}
+| {{.ID}} | {{.Name}} | {{.CategoryName}} | {{.IsDefault}} | {{.IsCompleted}} |
+{{- end}}
+
+{{if .HasTransitions -}}
+## Workflow Transitions
+{{if .InitialStatuses}}
+**Initial statuses:** {{.InitialStatuses}}
+{{end}}
+| From Status | Can Move To |
+|-------------|-------------|
+{{- range .Transitions}}
+| {{.From}} | {{.To}} |
+{{- end}}
+
+{{end -}}
+## Pages (Workspace Documentation)
+
+**Pages are the canonical store for project documentation in this workspace:**
+specifications, design docs, architecture notes, ADRs, runbooks, onboarding
+guides, meeting notes, and other long-lived knowledge. They are Markdown
+documents organized as a per-workspace tree, with immutable revision
+history, per-page ACLs, attachments, and labels.
+
+Agent guidance:
+- **Read first.** Before writing new docs or guessing at requirements,
+  search the workspace's pages (`ws page list`, optionally filtered by
+  `--label spec`/`--label design`) — the specification or runbook may
+  already exist.
+- **Publish there, not in the repo.** When you produce documentation that
+  should be discoverable by the team or by other agents (a spec, a design
+  note, a postmortem), create it as a page via `ws page create` instead of
+  committing a Markdown file to the repository.
+- **Link from work items.** Attach the spec/design page to the work item
+  it describes using the "Page" link type (see *Work Items ↔ Pages* below)
+  so the relationship is discoverable from both sides.
+
+```bash
+# Read
+ws page list                                # List non-archived pages
+ws page list --label design,spec            # Filter by one or more labels
+ws page get <id>                            # Stream page body as Markdown
+ws page get <id> -o json                    # Page + metadata as JSON
+ws page history <id>                        # List revisions
+
+# Write
+ws page create --title "Runbook" --file runbook.md
+ws page create --file notes.md --parent <id>          # Place under a parent
+ws page create --file blog.md --upload-assets         # Upload local images
+ws page edit <id> --file rewritten.md
+ws page edit <id> --content ""                       # Intentionally clear body
+ws page edit <id> --file blog.md --upload-assets
+
+# Organize
+ws page move <id> --parent <id>             # Reparent
+ws page move <id> --root                    # Move to workspace root
+ws page move <id> --parent <id> --after <sibling-id>   # Insert after sibling
+ws page move <id> --parent <id> --before <sibling-id>  # Insert before sibling
+ws page archive <id>                        # Archive page + subtree
+
+# Labels
+ws page-label list                          # List workspace labels
+ws page-label create --name design --color "#0ea5e9"
+ws page-label labels <page-id>              # Show / attach / detach / replace
+```
+
+Notes:
+- `--upload-assets` scans Markdown for `![alt](./local.png)` refs, uploads each
+  local image as a page attachment, and rewrites the link to the hosted URL.
+- `ws page get` defaults to streaming Markdown regardless of the global `-o`.
+
+## Work Items ↔ Pages
+
+Work items track *what to do*; pages hold the *documentation that describes it*
+— the spec, the design, the runbook, the postmortem. The two are cross-linked
+through the built-in **"Page"** link type (entity types `["item","page"]`).
+Use a link whenever an item has an authoritative spec or design page so that
+either side surfaces the other. Both sides must share a workspace; per-page
+ACLs are honored when listing links.
+
+- A work item's detail view shows a **Pages** section alongside Linked items.
+- A page's detail view shows a **Work items** popover with linking items.
+- API endpoints: `GET /items/{id}/links`, `GET /pages/{id}/links`,
+  `POST /item-links`, plus `GET /workspaces/{id}/pages/search?q=` for picker UIs.
+- The ws CLI does not yet expose `link`-management subcommands; use the
+  REST API (the agent token's `items:write` + `pages:read` scopes cover it)
+  or the web UI to add or remove links.
+
+## Scopes & Capabilities
+
+`ws init` mints a token with the default agent scope set. Capabilities:
+
+| Area | Scopes | Capability |
+|------|--------|------------|
+| Work items | `items:read`, `items:write` | List, get, create, edit, move, set milestones. **Delete is not granted by default.** |
+| Workspaces | `workspaces:read`, `workspaces:write` | Discover and configure workspaces. |
+| Users | `users:read` | Look up users for assignments / mentions. |
+| Item taxonomy | `item-types:read`, `workflows:read`, `statuses:read`, `priorities:read`, `custom-fields:read` | Read-only — enough to validate transitions and resolve names. |
+| Planning | `milestones:read`, `iterations:read`, `projects:read` | Read-only. Mint with explicit scopes to write to these. |
+| Pages | `pages:read`, `pages:write`, `pages:delete` | Full lifecycle: read, create, edit, move, label, archive. Per-page ACLs still apply in-handler. |
+| MCP | `mcp:access` | Use Windshift's MCP server (single binary scope — exposes both read and write tools). |
+
+Excluded from the default mint (require an explicit `--scopes` / permissions list):
+- `items:delete`
+- `milestones:write|delete`, `iterations:write|delete`, `projects:write|delete`
+- `actions:read|write` (automation graphs)
+- `collections:read`
+- All `admin:*` scopes (also require the system admin role on the user)
+
+## Test Management
+
+```bash
+# Test Cases
+ws test case ls                    # List all test cases
+ws test case get <id>              # Get case with steps
+
+# Test Runs
+ws test run mine                   # My assigned runs
+ws test run ls                     # List all runs
+ws test run get <id>               # Get run with results
+ws test run start <set-id>         # Start new run from set
+ws test run end <id>               # End/complete a run
+
+# Recording Results
+ws test result <run-id> <case-id> passed
+ws test result <run-id> <case-id> failed --notes "Issue description"
+```
+
+## Configuration
+
+Project config is stored in `ws.toml`. Global config is at `~/.config/ws/config.toml`.
+
+```bash
+ws config show                     # Show effective config
+ws config init                     # Initialize config
+```

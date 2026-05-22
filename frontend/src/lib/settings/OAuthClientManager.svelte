@@ -26,6 +26,9 @@
 		{ value: 'items:delete', label: 'Delete items' },
 		{ value: 'workspaces:read', label: 'Read workspaces and configuration' },
 		{ value: 'workspaces:write', label: 'Modify workspaces and configuration' },
+		{ value: 'pages:read', label: 'Read knowledge pages' },
+		{ value: 'pages:write', label: 'Create and update knowledge pages' },
+		{ value: 'pages:delete', label: 'Archive knowledge pages' },
 		{ value: 'users:read', label: 'Read user directory' },
 	];
 

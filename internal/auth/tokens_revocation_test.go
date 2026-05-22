@@ -49,6 +49,16 @@ func mustCreateToken(t *testing.T, tm *auth.TokenManager, userID int, name strin
 	return resp.Token, resp.APIToken.ID
 }
 
+func TestCreateTokenRejectsInactiveUser(t *testing.T) {
+	tm, db, uid := newTokenManagerEnv(t)
+	if _, err := db.Exec(`UPDATE users SET is_active = 0 WHERE id = ?`, uid); err != nil {
+		t.Fatalf("deactivate user: %v", err)
+	}
+	if _, err := tm.CreateToken(uid, models.APITokenCreate{Name: "inactive", Permissions: []string{"read"}}); err == nil {
+		t.Fatal("expected CreateToken to reject inactive user")
+	}
+}
+
 func TestInvalidateTokens_EvictsCachedValidation(t *testing.T) {
 	tm, db, uid := newTokenManagerEnv(t)
 

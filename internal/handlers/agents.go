@@ -25,6 +25,7 @@ var (
 	ErrAgentLimitReached  = errors.New("agent limit reached")
 	ErrAgentUsernameTaken = errors.New("username already exists")
 	ErrAgentEmailTaken    = errors.New("email already exists")
+	ErrAgentInactive      = errors.New("agent is inactive")
 )
 
 // AgentHandler handles profile-scoped CRUD for owned agent users.
@@ -257,7 +258,7 @@ func (h *AgentHandler) FindOwnedAgentByUsername(ownerID int, username string) (*
 	err := h.db.QueryRow(`
 		SELECT id, email, username, first_name, last_name, is_active, avatar_url, created_at, updated_at
 		FROM users
-		WHERE username = ? AND agent_owner_user_id = ?
+		WHERE username = ? AND agent_owner_user_id = ? AND COALESCE(is_agent, false) = true
 	`, username, ownerID).Scan(&u.ID, &u.Email, &u.Username, &u.FirstName, &u.LastName, &u.IsActive, &avatarURL, &u.CreatedAt, &u.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil

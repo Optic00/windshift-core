@@ -43,7 +43,7 @@ class SecurityStore {
   // === Token Form ===
   // Defaults mirror the backend fallback in api_tokens.go when no scopes are sent.
   newTokenName = $state('');
-  newTokenScopes = $state(['items:read', 'workspaces:read', 'users:read']);
+  newTokenScopes = $state(['items:read', 'workspaces:read', 'pages:read', 'users:read']);
   newTokenExpiry = $state('');
   newTokenValue = $state('');
   creatingToken = $state(false);
@@ -362,7 +362,7 @@ class SecurityStore {
 
   resetTokenForm() {
     this.newTokenName = '';
-    this.newTokenScopes = ['items:read', 'workspaces:read', 'users:read'];
+    this.newTokenScopes = ['items:read', 'workspaces:read', 'pages:read', 'users:read'];
     this.newTokenExpiry = '';
     this.showAddToken = false;
   }
@@ -392,7 +392,7 @@ class SecurityStore {
     this.testingLogin = false;
     this.loginTestResult = '';
     this.newTokenName = '';
-    this.newTokenScopes = ['items:read', 'workspaces:read', 'users:read'];
+    this.newTokenScopes = ['items:read', 'workspaces:read', 'pages:read', 'users:read'];
     this.newTokenExpiry = '';
     this.newTokenValue = '';
     this.creatingToken = false;

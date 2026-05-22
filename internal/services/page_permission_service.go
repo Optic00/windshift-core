@@ -87,6 +87,11 @@ func (s *PagePermissionService) Can(userID, workspaceID, pageID int, op string) 
 		return false, nil
 	}
 
+	subjectID, err := s.delegatedPagePrincipalUserID(userID)
+	if err != nil {
+		return false, err
+	}
+
 	if page.ArchivedAt != nil {
 		// Mutations on archived pages always 404. The page is frozen until
 		// an explicit unarchive op (not implemented yet) restores it; this
@@ -138,7 +143,7 @@ func (s *PagePermissionService) Can(userID, workspaceID, pageID int, op string) 
 		// the workspace (e.g. a stale row left over after removing them)
 		// must not be a back door, so we require workspace.page.view as
 		// the membership floor on top of the ACL match.
-		matched, err := s.matchesACL(userID, workspaceID, acl, op)
+		matched, err := s.matchesACL(subjectID, workspaceID, acl, op)
 		if err != nil || !matched {
 			return matched, err
 		}
@@ -264,11 +269,15 @@ func (s *PagePermissionService) ListVisiblePageIDs(userID, workspaceID int, page
 		return nil, err
 	}
 
-	groupIDs, err := s.userGroupIDs(userID)
+	subjectID, err := s.delegatedPagePrincipalUserID(userID)
 	if err != nil {
 		return nil, err
 	}
-	roleIDs, err := s.userWorkspaceRoleIDs(userID, workspaceID)
+	groupIDs, err := s.userGroupIDs(subjectID)
+	if err != nil {
+		return nil, err
+	}
+	roleIDs, err := s.userWorkspaceRoleIDs(subjectID, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -286,7 +295,7 @@ func (s *PagePermissionService) ListVisiblePageIDs(userID, workspaceID int, page
 			if !hasWorkspacePageView {
 				continue
 			}
-			if matchesACLInMemory(userID, groupIDs, roleIDs, acl, viewLevels) {
+			if matchesACLInMemory(subjectID, groupIDs, roleIDs, acl, viewLevels) {
 				out[p.ID] = true
 			}
 			continue
@@ -554,6 +563,31 @@ func (s *PagePermissionService) matchesACL(userID, workspaceID int, acl []models
 		}
 	}
 	return false, nil
+}
+
+// delegatedPagePrincipalUserID returns the human principal whose page ACLs an
+// authenticated user should use. Owned agents inherit their owner's effective
+// permissions everywhere else via PermissionService; restricted-page ACLs must
+// follow the same delegation or an owner-visible page becomes invisible to the
+// owner's API token. Service users (agents without an owner) keep their own
+// principal identity and must be granted page/workspace access explicitly.
+func (s *PagePermissionService) delegatedPagePrincipalUserID(userID int) (int, error) {
+	var isAgent sql.NullBool
+	var ownerID sql.NullInt64
+	err := s.db.QueryRow(
+		`SELECT COALESCE(is_agent, false), agent_owner_user_id FROM users WHERE id = ?`,
+		userID,
+	).Scan(&isAgent, &ownerID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return userID, nil
+		}
+		return 0, fmt.Errorf("resolve page principal delegation: %w", err)
+	}
+	if isAgent.Valid && isAgent.Bool && ownerID.Valid {
+		return int(ownerID.Int64), nil
+	}
+	return userID, nil
 }
 
 // userGroupIDs returns the user's active group memberships. Mirrors the

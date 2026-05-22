@@ -32,11 +32,19 @@ type CacheConfig struct {
 
 var cfg Config
 
+// discoveredProjectConfig is the ws.toml path actually loaded for this
+// invocation (either an explicit --config, or the nearest ws.toml found by
+// walking up from cwd). Empty when no project config was found. Other
+// subcommands (config show, config refresh) read this so they target the
+// real file instead of a stray ./ws.toml in a subdirectory.
+var discoveredProjectConfig string
+
 func initConfig() {
 	// Initialize config with defaults
 	cfg = Config{
 		StatusAliases: make(map[string]string),
 	}
+	discoveredProjectConfig = ""
 
 	// 1. Load global config first (lowest priority)
 	globalConfigPath := getGlobalConfigPath()
@@ -44,13 +52,18 @@ func initConfig() {
 		loadConfigFile(globalConfigPath)
 	}
 
-	// 2. Load project config (overrides global)
-	projectConfigPath := "./ws.toml"
-	if cfgFile != "" {
-		projectConfigPath = cfgFile
+	// 2. Load project config (overrides global). Walk up from cwd so that
+	// running `ws` from a subdirectory of the repo still picks up the
+	// repo-root ws.toml instead of silently falling back to the global token.
+	projectConfigPath := cfgFile
+	if projectConfigPath == "" {
+		projectConfigPath = findProjectConfigPath()
 	}
-	if _, err := os.Stat(projectConfigPath); err == nil {
-		loadConfigFile(projectConfigPath)
+	if projectConfigPath != "" {
+		if _, err := os.Stat(projectConfigPath); err == nil {
+			loadConfigFile(projectConfigPath)
+			discoveredProjectConfig = projectConfigPath
+		}
 	}
 
 	// 3. Override with environment variables
@@ -117,6 +130,27 @@ func validateAliasValue(key, value string) string {
 		return fmt.Sprintf("status_aliases.%s = %q looks malformed (contains , or =) — split into separate keys", key, value)
 	}
 	return ""
+}
+
+// findProjectConfigPath walks up from the current working directory looking
+// for a ws.toml. Returns the absolute path of the first match, or "" if none
+// is found before reaching the filesystem root.
+func findProjectConfigPath() string {
+	dir, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	for {
+		candidate := filepath.Join(dir, "ws.toml")
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
 }
 
 func getGlobalConfigPath() string {

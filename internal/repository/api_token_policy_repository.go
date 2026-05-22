@@ -11,9 +11,10 @@ import (
 
 // AgentOwnership describes whether a user is an agent and who owns it.
 type AgentOwnership struct {
-	IsAgent bool
-	OwnerID *int
-	Exists  bool
+	IsAgent  bool
+	IsActive bool
+	OwnerID  *int
+	Exists   bool
 }
 
 // APITokenPolicyRepository provides supporting reads for API-token policy handlers.
@@ -31,9 +32,9 @@ func (r *APITokenPolicyRepository) LoadAgentOwnership(userID int) (AgentOwnershi
 	var out AgentOwnership
 	var owner sql.NullInt64
 	err := r.db.QueryRow(
-		"SELECT COALESCE(is_agent, false), agent_owner_user_id FROM users WHERE id = ?",
+		"SELECT COALESCE(is_agent, false), COALESCE(is_active, false), agent_owner_user_id FROM users WHERE id = ?",
 		userID,
-	).Scan(&out.IsAgent, &owner)
+	).Scan(&out.IsAgent, &out.IsActive, &owner)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AgentOwnership{Exists: false}, nil
 	}

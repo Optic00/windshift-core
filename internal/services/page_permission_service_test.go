@@ -155,6 +155,38 @@ func TestPagePermission_InheritFalse_WithACL_GrantsAccess(t *testing.T) {
 	}
 }
 
+func TestPagePermission_OwnedAgentUsesOwnerACLPrincipal(t *testing.T) {
+	env := newPagePermTestEnv(t)
+	page, _ := env.pages.Create(env.users["alice"], CreatePageInput{WorkspaceID: 1, Title: "Owner restricted"})
+	if _, err := env.pages.SetInheritPermissions(env.users["bob"], page.ID, false); err != nil {
+		t.Fatalf("break inheritance: %v", err)
+	}
+	if _, err := env.pages.GrantPermission(env.users["bob"], page.ID, "user", env.users["alice"], "view"); err != nil {
+		t.Fatalf("grant owner: %v", err)
+	}
+
+	var agentID int
+	if err := env.db.QueryRow(
+		`INSERT INTO users (email, username, first_name, last_name, is_active, is_agent, agent_owner_user_id, password_hash)
+		 VALUES ('alice-agent@x', 'alice-agent', 'Alice', 'Agent', 1, 1, ?, NULL) RETURNING id`,
+		env.users["alice"],
+	).Scan(&agentID); err != nil {
+		t.Fatalf("seed owned agent: %v", err)
+	}
+
+	can, err := env.auth.Can(agentID, 1, page.ID, PageOpView)
+	if err != nil || !can {
+		t.Fatalf("owned agent should view via owner's direct ACL: can=%v err=%v", can, err)
+	}
+	visible, err := env.auth.ListVisiblePageIDs(agentID, 1, []int{page.ID})
+	if err != nil {
+		t.Fatalf("list visible: %v", err)
+	}
+	if !visible[page.ID] {
+		t.Fatalf("owned agent should see restricted page in batched listing via owner's ACL")
+	}
+}
+
 // Bug-hunt-2 #2: an ACL match must require workspace membership (i.e.
 // workspace.page.view) — granting an explicit role on a page to a user
 // who isn't even a workspace member must not give them access.

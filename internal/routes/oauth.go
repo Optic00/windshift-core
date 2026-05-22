@@ -24,8 +24,9 @@ func RegisterOAuthRoutes(deps *Deps) {
 	api.HandleH("POST /oauth/authorize/deny", auth(http.HandlerFunc(deps.Users.OAuth.AuthorizeDeny)))
 
 	// /userinfo is the OIDC-compatible identity endpoint OAuth clients call
-	// after token exchange. Bearer-token-authenticated like any other API.
-	api.HandleH("GET /oauth/userinfo", auth(http.HandlerFunc(deps.Users.OAuth.Userinfo)))
+	// after token exchange. It accepts OAuth-issued crw_ bearer tokens, so it
+	// must not go through the cookie-auth middleware (that surface rejects crw_).
+	api.HandleH("GET /oauth/userinfo", http.HandlerFunc(deps.Users.OAuth.Userinfo))
 
 	// /token is public (server-to-server). Rate-limited via the same
 	// limiter the rest of the auth surface uses to deter brute-force on

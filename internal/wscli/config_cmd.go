@@ -172,7 +172,7 @@ var configShowCmd = &cobra.Command{
 This shows the merged configuration from all sources:
   1. CLI flags (highest priority)
   2. Environment variables
-  3. Project config (./ws.toml)
+  3. Project config (nearest ws.toml walking up from cwd)
   4. Global config (~/.config/ws/config.toml)`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		// Mask token for display
@@ -206,7 +206,10 @@ This shows the merged configuration from all sources:
 			result.Defaults.WorkspaceKey = cfg.Defaults.WorkspaceKey
 			result.Cache.UserID = cfg.Cache.UserID
 			result.Sources.GlobalConfig = getGlobalConfigPath()
-			result.Sources.ProjectConfig = "./ws.toml"
+			result.Sources.ProjectConfig = discoveredProjectConfig
+			if result.Sources.ProjectConfig == "" {
+				result.Sources.ProjectConfig = "(none found)"
+			}
 
 			output := NewOutput()
 			output.Print(result)
@@ -220,7 +223,11 @@ This shows the merged configuration from all sources:
 			}
 			_, _ = fmt.Fprintln(stdout, "\n=== Config Sources ===")
 			_, _ = fmt.Fprintf(stdout, "Global:  %s\n", getGlobalConfigPath())
-			_, _ = fmt.Fprintf(stdout, "Project: ./ws.toml\n")
+			projectDisplay := discoveredProjectConfig
+			if projectDisplay == "" {
+				projectDisplay = "(none found)"
+			}
+			_, _ = fmt.Fprintf(stdout, "Project: %s\n", projectDisplay)
 			if len(cfg.StatusAliases) > 0 {
 				_, _ = fmt.Fprintln(stdout, "\n=== Status Aliases ===")
 				for alias, status := range cfg.StatusAliases {
@@ -273,11 +280,18 @@ Examples:
 			Cache:         cfg.Cache,
 			StatusAliases: cfg.StatusAliases,
 		}
-		if err := saveProjectConfig(projectConfig, "./ws.toml"); err != nil {
-			return fmt.Errorf("failed to save ws.toml: %w", err)
+		// Write back to the same ws.toml we loaded so refresh from a
+		// subdirectory updates the repo-root file rather than creating a
+		// stray one in cwd. Fall back to ./ws.toml if none was discovered.
+		targetPath := discoveredProjectConfig
+		if targetPath == "" {
+			targetPath = "./ws.toml"
+		}
+		if err := saveProjectConfig(projectConfig, targetPath); err != nil {
+			return fmt.Errorf("failed to save %s: %w", targetPath, err)
 		}
 
-		_, _ = fmt.Fprintln(stdout, "Refreshed status aliases in ws.toml:")
+		_, _ = fmt.Fprintf(stdout, "Refreshed status aliases in %s:\n", targetPath)
 		for alias, id := range cfg.StatusAliases {
 			_, _ = fmt.Fprintf(stdout, "  %s -> %s\n", alias, id)
 		}

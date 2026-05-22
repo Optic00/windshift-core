@@ -414,6 +414,17 @@ func (tm *TokenManager) ValidateToken(token string) (*models.User, *models.APITo
 
 // CreateToken creates a new API token for a user
 func (tm *TokenManager) CreateToken(userID int, request models.APITokenCreate) (*models.APITokenResponse, error) {
+	var userActive bool
+	if err := tm.db.QueryRow(`SELECT COALESCE(is_active, false) FROM users WHERE id = ?`, userID).Scan(&userActive); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("user not found")
+		}
+		return nil, fmt.Errorf("failed to load token user: %w", err)
+	}
+	if !userActive {
+		return nil, fmt.Errorf("cannot create token for inactive user")
+	}
+
 	// Generate token
 	token, err := tm.GenerateToken()
 	if err != nil {

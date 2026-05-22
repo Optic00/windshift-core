@@ -57,7 +57,7 @@ for developers and Claude Code integration.
 Configuration priority:
   1. CLI flags (--url, --token, --workspace)
   2. Environment variables (WS_URL, WS_TOKEN, WS_WORKSPACE)
-  3. Project config (./ws.toml)
+  3. Project config (nearest ws.toml walking up from cwd)
   4. Global config (~/.config/ws/config.toml)`,
 	SilenceUsage: true,
 }
@@ -110,7 +110,7 @@ PowerShell:
 func init() {
 	cobra.OnInitialize(initConfig)
 
-	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "c", "", "config file (default: ./ws.toml or ~/.config/ws/config.toml)")
+	rootCmd.PersistentFlags().StringVarP(&cfgFile, "config", "c", "", "config file (default: nearest ws.toml walking up from cwd, then ~/.config/ws/config.toml)")
 	rootCmd.PersistentFlags().StringVarP(&outputFormat, "output", "o", "json", "output format: json, table, csv")
 	rootCmd.PersistentFlags().StringVar(&serverURL, "url", "", "Windshift server URL")
 	rootCmd.PersistentFlags().StringVar(&token, "token", "", "API token")

@@ -144,6 +144,10 @@ func (ath *APITokenHandler) CreateToken(w http.ResponseWriter, r *http.Request) 
 			respondNotFound(w, r, "user")
 			return
 		}
+		if !ownership.IsActive {
+			respondValidationError(w, r, "Cannot create token for inactive user")
+			return
+		}
 
 		authorized := false
 		via := ""
@@ -180,6 +184,18 @@ func (ath *APITokenHandler) CreateToken(w http.ResponseWriter, r *http.Request) 
 			})
 			respondForbidden(w, r)
 			return
+		}
+
+		if ownership.IsAgent && ownership.OwnerID == nil && tokenRequestsPageScope(request.Permissions) {
+			hasPageAccess, accessErr := ath.userHasAnyPageWorkspaceAccess(*request.UserID)
+			if accessErr != nil {
+				respondInternalError(w, r, accessErr)
+				return
+			}
+			if !hasPageAccess {
+				respondValidationError(w, r, "Agent has no workspace page access; grant it a workspace role/page permission or remove page scopes")
+				return
+			}
 		}
 
 		targetUserID = *request.UserID
@@ -321,6 +337,38 @@ func (ath *APITokenHandler) RevokeToken(w http.ResponseWriter, r *http.Request) 
 // canActOnUserTokens returns true if the caller may list/get/revoke tokens
 // belonging to targetUserID. Kept in one place so every surface enforces the
 // same rule: self, or system admin on any agent, or caller owns the target agent.
+func tokenRequestsPageScope(scopes []string) bool {
+	for _, scope := range scopes {
+		switch scope {
+		case "read", "write", "admin", auth.ScopePagesRead, auth.ScopePagesWrite, auth.ScopePagesDelete:
+			return true
+		}
+	}
+	return false
+}
+
+func (ath *APITokenHandler) userHasAnyPageWorkspaceAccess(userID int) (bool, error) {
+	rows, err := ath.db.Query(`SELECT id FROM workspaces WHERE active = true`)
+	if err != nil {
+		return false, fmt.Errorf("load workspaces for agent page-access check: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var workspaceID int
+		if err := rows.Scan(&workspaceID); err != nil {
+			return false, err
+		}
+		hasView, err := ath.permissionService.HasWorkspacePermission(userID, workspaceID, models.PermissionPageView)
+		if err != nil {
+			return false, err
+		}
+		if hasView {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
+}
+
 func (ath *APITokenHandler) canActOnUserTokens(caller *models.User, targetUserID int) bool {
 	if caller == nil {
 		return false

@@ -58,9 +58,31 @@
 	let tokenTargetUser = $state(null);
 	let newTokenName = $state('');
 	let newTokenExpiresDays = $state(90);
+	let newTokenScopes = $state([]);
 	let creatingToken = $state(false);
 	let mintedToken = $state('');
 	let mintedTokenError = $state('');
+
+	const AGENT_TOKEN_SCOPE_OPTIONS = [
+		{ value: 'items:read', label: 'Read items' },
+		{ value: 'items:write', label: 'Create/update items' },
+		{ value: 'workspaces:read', label: 'Read workspaces' },
+		{ value: 'workspaces:write', label: 'Modify workspaces' },
+		{ value: 'pages:read', label: 'Read pages' },
+		{ value: 'pages:write', label: 'Create/update pages' },
+		{ value: 'pages:delete', label: 'Archive pages' },
+		{ value: 'users:read', label: 'Read users' },
+		{ value: 'item-types:read', label: 'Read item types' },
+		{ value: 'workflows:read', label: 'Read workflows' },
+		{ value: 'statuses:read', label: 'Read statuses' },
+		{ value: 'priorities:read', label: 'Read priorities' },
+		{ value: 'custom-fields:read', label: 'Read custom fields' },
+		{ value: 'milestones:read', label: 'Read milestones' },
+		{ value: 'iterations:read', label: 'Read iterations' },
+		{ value: 'projects:read', label: 'Read projects' },
+		{ value: 'mcp:access', label: 'MCP access' },
+	];
+	const DEFAULT_AGENT_TOKEN_SCOPES = AGENT_TOKEN_SCOPE_OPTIONS.map((s) => s.value);
 
 	async function loadUsers() {
 		loading = true;
@@ -227,7 +249,7 @@
 
 		// Admins can mint API tokens for agents (service users or user-owned).
 		// The backend enforces: admin + target-is-agent OR caller-is-owner.
-		if (user.is_agent) {
+		if (user.is_agent && user.is_active) {
 			items.push({
 				id: 'mint-token',
 				type: 'regular',
@@ -352,6 +374,7 @@
 		tokenTargetUser = user;
 		newTokenName = `${user.username}-token`;
 		newTokenExpiresDays = 90;
+		newTokenScopes = [...DEFAULT_AGENT_TOKEN_SCOPES];
 		mintedToken = '';
 		mintedTokenError = '';
 		showTokenModal = true;
@@ -361,8 +384,15 @@
 		showTokenModal = false;
 		tokenTargetUser = null;
 		newTokenName = '';
+		newTokenScopes = [];
 		mintedToken = '';
 		mintedTokenError = '';
+	}
+
+	function toggleAgentTokenScope(scope, checked) {
+		const next = new Set(newTokenScopes);
+		if (checked) next.add(scope); else next.delete(scope);
+		newTokenScopes = [...next];
 	}
 
 	async function createTokenForUser() {
@@ -372,7 +402,8 @@
 		try {
 			const payload = {
 				name: newTokenName,
-				user_id: tokenTargetUser.id
+				user_id: tokenTargetUser.id,
+				permissions: newTokenScopes
 			};
 			if (newTokenExpiresDays && Number(newTokenExpiresDays) > 0) {
 				const expires = new Date();
@@ -765,6 +796,22 @@
 					<Label for="token-expiry" color="default">Expires in (days, 0 = never)</Label>
 					<Input id="token-expiry" type="number" min="0" max="3650" bind:value={newTokenExpiresDays} />
 				</div>
+				{#if tokenTargetUser && !tokenTargetUser.agent_owner_user_id}
+					<AlertBox message="Service users do not inherit an owner's workspace/page permissions. Grant this agent workspace roles or page ACLs separately; scopes only limit what the token may do." />
+				{/if}
+				<div class="space-y-2">
+					<Label color="default">Scopes</Label>
+					<div class="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-56 overflow-y-auto border rounded p-3" style="border-color: var(--ds-border);">
+						{#each AGENT_TOKEN_SCOPE_OPTIONS as scope}
+							<Checkbox
+								checked={newTokenScopes.includes(scope.value)}
+								onchange={(checked) => toggleAgentTokenScope(scope.value, checked)}
+								label={scope.label}
+								size="small"
+							/>
+						{/each}
+					</div>
+				</div>
 				{#if mintedTokenError}
 					<AlertBox message={mintedTokenError} />
 				{/if}
@@ -775,7 +822,8 @@
 			confirmLabel={mintedToken ? t('common.done') : 'Mint token'}
 			onCancel={closeTokenModal}
 			onConfirm={mintedToken ? closeTokenModal : createTokenForUser}
-			confirmDisabled={creatingToken}
+			confirmDisabled={creatingToken || (!mintedToken && newTokenScopes.length === 0)}
+			showKeyboardHint={true}
 		/>
 	</Modal>
 </div>

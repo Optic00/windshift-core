@@ -250,6 +250,10 @@ func (h *OAuthHandler) AuthorizeApprove(w http.ResponseWriter, r *http.Request) 
 
 	agent, err := h.findOrCreateClientAgent(user, client)
 	if err != nil {
+		if errors.Is(err, ErrAgentInactive) {
+			respondConflict(w, r, ErrAgentInactive.Error())
+			return
+		}
 		respondInternalError(w, r, err)
 		return
 	}
@@ -328,16 +332,27 @@ func (h *OAuthHandler) AuthorizeDeny(w http.ResponseWriter, r *http.Request) {
 }
 
 // Userinfo is the OIDC-compatible identity endpoint OAuth clients call after
-// token exchange to learn who the access token represents. The auth
-// middleware has already resolved the Bearer token to a user (the
-// per-(client, user) agent), so we just project the relevant fields.
+// token exchange to learn who the access token represents. It is registered
+// without cookie auth because the cookie surface rejects crw_ bearer tokens;
+// validate the bearer token directly here instead.
 //
 // Returns the OIDC-conventional shape: `sub` (stable identifier), `email`,
 // `name`, plus a Windshift-specific `username` for display. Used by Omni's
 // generic OAuth dispatcher to populate `service_credentials.principal_email`.
 func (h *OAuthHandler) Userinfo(w http.ResponseWriter, r *http.Request) {
-	user, ok := RequireAuth(w, r)
-	if !ok {
+	authHeader := r.Header.Get("Authorization")
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		respondUnauthorized(w, r)
+		return
+	}
+	raw := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+	if raw == "" {
+		respondUnauthorized(w, r)
+		return
+	}
+	user, _, err := h.tokenManager.ValidateToken(raw)
+	if err != nil {
+		respondUnauthorized(w, r)
 		return
 	}
 	respondJSONOK(w, map[string]interface{}{
@@ -571,6 +586,9 @@ func (h *OAuthHandler) findOrCreateClientAgent(user *models.User, client *oauthC
 		return nil, err
 	}
 	if existing != nil {
+		if !existing.IsActive {
+			return nil, ErrAgentInactive
+		}
 		return existing, nil
 	}
 

@@ -144,6 +144,11 @@ func (h *CLIAuthHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	}
 	var agent *models.User
 	if existing != nil {
+		if !existing.IsActive {
+			h.auditApproveFailure(r, currentUser, agentName, "agent_inactive")
+			respondConflict(w, r, ErrAgentInactive.Error())
+			return
+		}
 		agent = existing
 	} else {
 		firstName := strings.TrimSpace(req.FirstName)

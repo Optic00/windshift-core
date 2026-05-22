@@ -66,6 +66,7 @@
 		{ resource: 'milestones', label: 'Milestones', actions: ['read', 'write', 'delete'] },
 		{ resource: 'iterations', label: 'Iterations', actions: ['read', 'write', 'delete'] },
 		{ resource: 'projects', label: 'Projects', actions: ['read', 'write', 'delete'] },
+		{ resource: 'pages', label: 'Pages', actions: ['read', 'write', 'delete'] },
 		{ resource: 'users', label: 'Users', actions: ['read'] },
 		{ resource: 'statuses', label: 'Statuses', actions: ['read'] },
 		{ resource: 'workflows', label: 'Workflows', actions: ['read'] },
@@ -84,14 +85,14 @@
 
 	const READ_ONLY_PRESET = [
 		'items:read', 'workspaces:read', 'milestones:read', 'iterations:read',
-		'projects:read', 'users:read', 'statuses:read', 'workflows:read',
+		'projects:read', 'pages:read', 'users:read', 'statuses:read', 'workflows:read',
 		'item-types:read', 'priorities:read', 'custom-fields:read',
 	];
 
 	const READ_WRITE_PRESET = [
 		...READ_ONLY_PRESET,
 		'items:write', 'workspaces:write', 'milestones:write',
-		'iterations:write', 'projects:write',
+		'iterations:write', 'projects:write', 'pages:write',
 	];
 
 	function isScopeSelected(scope) {

@@ -2,13 +2,23 @@ package wscli
 
 import (
 	"bufio"
+	_ "embed"
 	"fmt"
 	"os"
 	"strings"
+	"text/template"
 
 	"github.com/BurntSushi/toml"
 	"github.com/spf13/cobra"
 )
+
+//go:embed templates/windshift.md.tmpl
+var windshiftMDTemplateSrc string
+
+// windshiftMDTemplate is the precompiled `WINDSHIFT.md` template. Parsing at
+// package init means a malformed template fails fast on binary startup rather
+// than at the first `ws init` call.
+var windshiftMDTemplate = template.Must(template.New("windshift.md").Parse(windshiftMDTemplateSrc))
 
 var (
 	initGlobal    bool
@@ -293,134 +303,94 @@ func loadGlobalAgentName() string {
 	return defaultGlobalAgentName()
 }
 
+// windshiftMDData is the input bound to templates/windshift.md.tmpl. Fields
+// are flattened / pre-rendered so the template stays purely structural — no
+// helper funcs needed at execute time.
+type windshiftMDData struct {
+	Workspace       *Workspace
+	StatusAliases   map[string]string // template ranges in sorted key order
+	ItemTypes       []ItemType
+	Statuses        []windshiftStatusRow
+	HasTransitions  bool
+	InitialStatuses string // pre-joined ", "
+	Transitions     []windshiftTransitionRow
+}
+
+type windshiftStatusRow struct {
+	ID           int
+	Name         string
+	CategoryName string
+	IsDefault    string // "Yes" or ""
+	IsCompleted  string // "Yes" or ""
+}
+
+type windshiftTransitionRow struct {
+	From string
+	To   string // pre-joined ", "
+}
+
 func generateWindshiftMD(ws *Workspace, statuses []Status, itemTypes []ItemType, transitions []Transition) string {
-	var sb strings.Builder
-
-	sb.WriteString("# Windshift CLI\n\n")
-	fmt.Fprintf(&sb, "This project is connected to Windshift workspace **%s** (%s).\n\n", ws.Key, ws.Name)
-
-	// Quick Commands section
-	sb.WriteString("## Quick Commands\n\n")
-	sb.WriteString("```bash\n")
-	sb.WriteString("# My work\n")
-	sb.WriteString("ws task mine              # Tasks assigned to me\n")
-	sb.WriteString("ws task created           # Tasks I created\n")
-	sb.WriteString("\n")
-	sb.WriteString("# Create & manage\n")
-	sb.WriteString("ws task create -t \"Title\" [-d \"Description\"]\n")
-	sb.WriteString("ws task move <KEY-123> <status>\n")
-	sb.WriteString("ws task get <KEY-123>\n")
-	sb.WriteString("\n")
-	sb.WriteString("# Test execution\n")
-	sb.WriteString("ws test run mine          # My test runs\n")
-	sb.WriteString("ws test run start <set>   # Start test run\n")
-	sb.WriteString("ws test result <run> <case> passed|failed|blocked|skipped\n")
-	sb.WriteString("```\n\n")
-
-	// Status Aliases section (if any are configured)
-	if len(cfg.StatusAliases) > 0 {
-		sb.WriteString("## Status Aliases\n\n")
-		sb.WriteString("Use these consistent commands regardless of actual workspace statuses:\n\n")
-		sb.WriteString("| Alias | Maps To | Usage |\n")
-		sb.WriteString("|-------|---------|-------|\n")
-		for alias, status := range cfg.StatusAliases {
-			fmt.Fprintf(&sb, "| `%s` | %s | `ws task move X %s` |\n", alias, status, alias)
-		}
-		sb.WriteString("\n")
+	data := windshiftMDData{
+		Workspace:     ws,
+		StatusAliases: cfg.StatusAliases,
+		ItemTypes:     itemTypes,
+		Statuses:      make([]windshiftStatusRow, 0, len(statuses)),
 	}
-
-	// Item Types section
-	sb.WriteString("## Available Item Types\n\n")
-	for _, t := range itemTypes {
-		icon := ""
-		if t.Icon != "" {
-			icon = t.Icon + " "
-		}
-		fmt.Fprintf(&sb, "- %s%s\n", icon, t.Name)
-	}
-	sb.WriteString("\n")
-
-	// Statuses section
-	sb.WriteString("## Available Statuses\n\n")
-	sb.WriteString("| ID | Status | Category | Default | Completed |\n")
-	sb.WriteString("|----|--------|----------|---------|------------|\n")
 	for _, s := range statuses {
-		isDefault := ""
-		if s.IsDefault {
-			isDefault = "Yes"
-		}
-		isCompleted := ""
-		if s.IsCompleted {
-			isCompleted = "Yes"
-		}
-		fmt.Fprintf(&sb, "| %d | %s | %s | %s | %s |\n", s.ID, s.Name, s.CategoryName, isDefault, isCompleted)
+		data.Statuses = append(data.Statuses, windshiftStatusRow{
+			ID:           s.ID,
+			Name:         s.Name,
+			CategoryName: s.CategoryName,
+			IsDefault:    yesIf(s.IsDefault),
+			IsCompleted:  yesIf(s.IsCompleted),
+		})
 	}
-	sb.WriteString("\n")
 
-	// Workflow Rules section (if we have transitions)
 	if len(transitions) > 0 {
-		sb.WriteString("## Workflow Transitions\n\n")
-
-		// Build transition map
-		transitionMap := make(map[int][]string) // from status ID -> list of to status names
-		initialStatuses := []string{}
-
+		// transitionMap: from-status ID -> list of to-status names. Built in
+		// Go so the template can range over a pre-sorted slice instead of
+		// having to look up by ID.
+		transitionMap := map[int][]string{}
+		var initials []string
 		for _, t := range transitions {
 			if t.FromStatusID == nil {
-				// Initial status (can be set when creating)
 				if t.ToStatus != nil {
-					initialStatuses = append(initialStatuses, t.ToStatus.Name)
+					initials = append(initials, t.ToStatus.Name)
 				}
-			} else {
-				if t.ToStatus != nil {
-					transitionMap[*t.FromStatusID] = append(transitionMap[*t.FromStatusID], t.ToStatus.Name)
-				}
+				continue
+			}
+			if t.ToStatus != nil {
+				transitionMap[*t.FromStatusID] = append(transitionMap[*t.FromStatusID], t.ToStatus.Name)
 			}
 		}
-
-		if len(initialStatuses) > 0 {
-			fmt.Fprintf(&sb, "**Initial statuses:** %s\n\n", strings.Join(initialStatuses, ", "))
-		}
-
-		sb.WriteString("| From Status | Can Move To |\n")
-		sb.WriteString("|-------------|-------------|\n")
+		data.InitialStatuses = strings.Join(initials, ", ")
 		for _, s := range statuses {
 			targets := transitionMap[s.ID]
-			if len(targets) > 0 {
-				fmt.Fprintf(&sb, "| %s | %s |\n", s.Name, strings.Join(targets, ", "))
+			if len(targets) == 0 {
+				continue
 			}
+			data.Transitions = append(data.Transitions, windshiftTransitionRow{
+				From: s.Name,
+				To:   strings.Join(targets, ", "),
+			})
 		}
-		sb.WriteString("\n")
+		data.HasTransitions = len(data.Transitions) > 0 || data.InitialStatuses != ""
 	}
 
-	// Test Management section
-	sb.WriteString("## Test Management\n\n")
-	sb.WriteString("```bash\n")
-	sb.WriteString("# Test Cases\n")
-	sb.WriteString("ws test case ls                    # List all test cases\n")
-	sb.WriteString("ws test case get <id>              # Get case with steps\n")
-	sb.WriteString("\n")
-	sb.WriteString("# Test Runs\n")
-	sb.WriteString("ws test run mine                   # My assigned runs\n")
-	sb.WriteString("ws test run ls                     # List all runs\n")
-	sb.WriteString("ws test run get <id>               # Get run with results\n")
-	sb.WriteString("ws test run start <set-id>         # Start new run from set\n")
-	sb.WriteString("ws test run end <id>               # End/complete a run\n")
-	sb.WriteString("\n")
-	sb.WriteString("# Recording Results\n")
-	sb.WriteString("ws test result <run-id> <case-id> passed\n")
-	sb.WriteString("ws test result <run-id> <case-id> failed --notes \"Issue description\"\n")
-	sb.WriteString("```\n\n")
-
-	// Configuration section
-	sb.WriteString("## Configuration\n\n")
-	sb.WriteString("Project config is stored in `ws.toml`. Global config is at `~/.config/ws/config.toml`.\n\n")
-	sb.WriteString("```bash\n")
-	sb.WriteString("ws config show                     # Show effective config\n")
-	sb.WriteString("ws config init                     # Initialize config\n")
-	sb.WriteString("```\n")
-
+	var sb strings.Builder
+	if err := windshiftMDTemplate.Execute(&sb, data); err != nil {
+		// Template is embedded and data shape is owned by this file — any
+		// error here is a programmer mistake, not a runtime condition.
+		panic(fmt.Sprintf("render WINDSHIFT.md: %v", err))
+	}
 	return sb.String()
+}
+
+func yesIf(b bool) string {
+	if b {
+		return "Yes"
+	}
+	return ""
 }
 
 func generateDefaultAliases(statuses []Status) map[string]string {
