@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -343,5 +344,49 @@ func TestPageLabels_SetForPage_DedupesDuplicateIDs(t *testing.T) {
 	decodeJSONBody(t, rr, &attached)
 	if len(attached) != 1 || attached[0].ID != int(labelID) {
 		t.Errorf("expected exactly one attached label, got %+v", attached)
+	}
+}
+
+// Bug-hunt #6: handlers pre-check label-name uniqueness via
+// NameExistsInWorkspace, but the check is racy across concurrent
+// requests — the loser of the race hits the DB UNIQUE(workspace_id,
+// name) constraint directly. Repository must translate that to
+// ErrDuplicateEntry so the handler responds 409 instead of 500.
+func TestPageLabelRepository_Create_TranslatesUniqueViolation(t *testing.T) {
+	h, _, db := newPageLabelHandler(t)
+	const userID = 1
+	seedNegativeTestUser(t, db, userID)
+	seedNegativeTestUser(t, db, 999)
+	seedWorkspaceWithRole(t, db, 1, userID, "Editor")
+
+	if _, _, err := h.repo.Create("design", "#3B82F6", 1); err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+	_, _, err := h.repo.Create("design", "#3B82F6", 1)
+	if !errors.Is(err, repository.ErrDuplicateEntry) {
+		t.Errorf("second create: want ErrDuplicateEntry, got %v", err)
+	}
+}
+
+// Bug-hunt #6 (rename half): repository.Update must surface the
+// workspace-name uniqueness constraint as ErrDuplicateEntry too.
+func TestPageLabelRepository_Update_TranslatesUniqueViolation(t *testing.T) {
+	h, _, db := newPageLabelHandler(t)
+	const userID = 1
+	seedNegativeTestUser(t, db, userID)
+	seedNegativeTestUser(t, db, 999)
+	seedWorkspaceWithRole(t, db, 1, userID, "Editor")
+
+	idA, _, err := h.repo.Create("design", "#3B82F6", 1)
+	if err != nil {
+		t.Fatalf("create A: %v", err)
+	}
+	if _, _, err := h.repo.Create("eng", "#22C55E", 1); err != nil {
+		t.Fatalf("create B: %v", err)
+	}
+	// Rename A onto B's name.
+	err = h.repo.Update(int(idA), "eng", "#3B82F6")
+	if !errors.Is(err, repository.ErrDuplicateEntry) {
+		t.Errorf("rename onto sibling name: want ErrDuplicateEntry, got %v", err)
 	}
 }

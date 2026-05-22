@@ -92,6 +92,11 @@ func (r *PageLabelRepository) NameExistsInWorkspace(workspaceID int, name string
 }
 
 // Create inserts a page label and returns the id + the stamped timestamp.
+// Returns ErrDuplicateEntry when the workspace already owns a label with
+// the same name. Handlers pre-check with NameExistsInWorkspace, but two
+// concurrent creates can race past that check — without translating the
+// resulting unique-violation here, the loser would surface as a 500
+// instead of the 409 the pre-check path already returns.
 func (r *PageLabelRepository) Create(name, color string, workspaceID int) (int64, time.Time, error) {
 	now := time.Now()
 	var id int64
@@ -100,18 +105,27 @@ func (r *PageLabelRepository) Create(name, color string, workspaceID int) (int64
 		VALUES (?, ?, ?, ?, ?) RETURNING id
 	`, name, color, workspaceID, now, now).Scan(&id)
 	if err != nil {
+		if database.IsUniqueConstraintError(err) {
+			return 0, time.Time{}, ErrDuplicateEntry
+		}
 		return 0, time.Time{}, fmt.Errorf("create page label: %w", err)
 	}
 	return id, now, nil
 }
 
-// Update overwrites a page label's name and color.
+// Update overwrites a page label's name and color. Returns ErrDuplicateEntry
+// when the new name collides with a sibling label in the same workspace —
+// the handler's pre-check is racy across concurrent renames, so the same
+// translation Create uses applies here.
 func (r *PageLabelRepository) Update(id int, name, color string) error {
 	_, err := r.db.ExecWrite(
 		"UPDATE page_labels SET name = ?, color = ?, updated_at = ? WHERE id = ?",
 		name, color, time.Now(), id,
 	)
 	if err != nil {
+		if database.IsUniqueConstraintError(err) {
+			return ErrDuplicateEntry
+		}
 		return fmt.Errorf("update page label %d: %w", id, err)
 	}
 	return nil

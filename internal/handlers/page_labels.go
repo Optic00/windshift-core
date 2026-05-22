@@ -121,6 +121,14 @@ func (h *PageLabelHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	id, _, err := h.repo.Create(input.Name, input.Color, workspaceID)
 	if err != nil {
+		// The pre-check above is racy; a concurrent Create can squeeze
+		// past it and only fail at the DB unique constraint. Translate
+		// to the same 409 the pre-check returns so the API stays
+		// consistent regardless of which path catches the collision.
+		if errors.Is(err, repository.ErrDuplicateEntry) {
+			respondConflict(w, r, "A page label with this name already exists in this workspace")
+			return
+		}
 		respondInternalError(w, r, err)
 		return
 	}
@@ -187,6 +195,13 @@ func (h *PageLabelHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.repo.Update(labelID, input.Name, input.Color); err != nil {
+		// Same racy pre-check as Create: a concurrent rename can land
+		// on the workspace's UNIQUE(workspace_id, name) constraint after
+		// NameExistsInWorkspace reported the name was free.
+		if errors.Is(err, repository.ErrDuplicateEntry) {
+			respondConflict(w, r, "A page label with this name already exists in this workspace")
+			return
+		}
 		respondInternalError(w, r, err)
 		return
 	}
