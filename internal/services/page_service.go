@@ -184,13 +184,13 @@ func (s *PageService) GetByID(id int) (*models.Page, error) {
 // UpdatePageInput is the request shape for Update. InheritPermissions is
 // intentionally absent: inheritance changes go through SetInheritPermissions
 // (PageOpAdmin) — accepting it here would let an editor flip the flag via
-// a normal title/content save, bypassing the admin gate.
+// a normal title/content save, bypassing the admin gate. Rank / FracIndex
+// are absent for the same reason: reordering goes through Move /
+// SetFracIndex so a normal save cannot clear an existing ordering.
 type UpdatePageInput struct {
-	ID        int
-	Title     string
-	Content   string
-	Rank      *string
-	FracIndex *string
+	ID      int
+	Title   string
+	Content string
 }
 
 // Update overwrites a page's title/content and recomputes the derived
@@ -235,8 +235,6 @@ func (s *PageService) Update(actorID int, in UpdatePageInput) (*models.Page, err
 			ContentHash:        hash,
 			Excerpt:            excerpt,
 			InheritPermissions: existing.InheritPermissions,
-			Rank:               in.Rank,
-			FracIndex:          in.FracIndex,
 			UpdatedBy:          actorID,
 		})
 		if err != nil {
@@ -474,9 +472,10 @@ func (s *PageService) Restore(actorID, pageID, revisionID int) (*models.Page, er
 		}
 
 		// Restore overwrites title/slug/content/excerpt/hash on the live row.
-		// parent/path/depth are deliberately not restored — moving a page is
-		// a separate explicit action. If a user wants to undo a move,
-		// they should run Move explicitly.
+		// parent/path/depth/rank/frac_index are deliberately not restored —
+		// moving and reordering a page are separate explicit actions, and
+		// UpdateTx no longer touches those columns. If a user wants to undo
+		// a move, they should run Move explicitly.
 		if err := s.pages.UpdateTx(tx, repository.UpdateInput{
 			ID:                 page.ID,
 			Title:              rev.Title,
@@ -485,8 +484,6 @@ func (s *PageService) Restore(actorID, pageID, revisionID int) (*models.Page, er
 			ContentHash:        rev.ContentHash,
 			Excerpt:            rev.Excerpt,
 			InheritPermissions: page.InheritPermissions,
-			Rank:               page.Rank,
-			FracIndex:          page.FracIndex,
 			UpdatedBy:          actorID,
 		}); err != nil {
 			if errors.Is(err, repository.ErrDuplicateEntry) {
@@ -563,6 +560,12 @@ func (s *PageService) snapshotAndRebuildChunks(tx database.Tx, page *models.Page
 // client-side tree assembly (depth-first by frac_index/rank/title).
 func (s *PageService) ListTree(workspaceID int, includeArchived bool) ([]models.Page, error) {
 	return s.pages.ListWorkspaceTree(workspaceID, includeArchived)
+}
+
+// SearchByTitle delegates to the repository's title-substring search.
+// Permission filtering happens at the handler layer via ListVisiblePageIDs.
+func (s *PageService) SearchByTitle(workspaceID int, query string, limit int) ([]models.Page, error) {
+	return s.pages.SearchByTitle(workspaceID, query, limit)
 }
 
 // BuildPageTree turns a flat ordered page list (typically from ListTree)

@@ -2,6 +2,7 @@ package services
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -40,9 +41,17 @@ var ErrInvalidLinkTypeForEntities = errors.New("link type does not allow these e
 // CreateLink validates and inserts a new item link.
 // Returns the new link ID, or 0 if the link was a duplicate (INSERT OR IGNORE).
 func (s *ItemLinkService) CreateLink(params CreateItemLinkParams) (int64, error) {
-	// Verify the link type exists and is active
-	var active bool
-	err := s.db.QueryRow("SELECT active FROM link_types WHERE id = ?", params.LinkTypeID).Scan(&active)
+	// Verify the link type exists and is active, and pull its
+	// allowed_entity_types constraint in the same query so we can gate
+	// pairs that the link type's schema disallows.
+	var (
+		active             bool
+		allowedEntityTypes sql.NullString
+	)
+	err := s.db.QueryRow(
+		"SELECT active, allowed_entity_types FROM link_types WHERE id = ?",
+		params.LinkTypeID,
+	).Scan(&active, &allowedEntityTypes)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, fmt.Errorf("link type %d not found", params.LinkTypeID)
 	}
@@ -53,14 +62,31 @@ func (s *ItemLinkService) CreateLink(params CreateItemLinkParams) (int64, error)
 		return 0, fmt.Errorf("link type %d is not active", params.LinkTypeID)
 	}
 
-	// Link type 1 ("Tests") is hardcoded to only allow item↔test_case
-	// pairs. Mirrors the check in handlers/item_links.go so direct
-	// callers of the service (notably AcceptDependencies) can't bypass it.
-	if params.LinkTypeID == 1 {
-		isItemTestCase := (params.SourceType == "item" && params.TargetType == "test_case") ||
-			(params.SourceType == "test_case" && params.TargetType == "item")
-		if !isItemTestCase {
-			return 0, ErrInvalidLinkTypeForEntities
+	// When the link type declares an allowed_entity_types set, require the
+	// unordered {source, target} multiset to be covered by it. e.g.
+	// ["item","test_case"] permits (item,test_case) and its mirror but
+	// rejects (item,item), because the pair needs one "item" slot and one
+	// "test_case" slot. nil/empty allowed_entity_types means no
+	// restriction. Mirrors the legacy hardcoded LinkTypeID==1 gate so
+	// direct callers of the service (notably AcceptDependencies) can't
+	// bypass it.
+	if allowedEntityTypes.Valid && allowedEntityTypes.String != "" {
+		var allowed []string
+		if err := json.Unmarshal([]byte(allowedEntityTypes.String), &allowed); err != nil {
+			return 0, fmt.Errorf("invalid allowed_entity_types on link type %d: %w", params.LinkTypeID, err)
+		}
+		if len(allowed) > 0 {
+			budget := make(map[string]int, len(allowed))
+			for _, t := range allowed {
+				budget[t]++
+			}
+			need := map[string]int{params.SourceType: 1}
+			need[params.TargetType]++
+			for t, n := range need {
+				if budget[t] < n {
+					return 0, ErrInvalidLinkTypeForEntities
+				}
+			}
 		}
 	}
 

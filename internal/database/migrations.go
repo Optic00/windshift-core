@@ -429,6 +429,20 @@ var Catalog = []Migration{
 		`,
 	},
 	{
+		// Seed the "Page" system link type retroactively so existing installs
+		// can link work items to knowledge pages. Skips the insert if a row
+		// with that name already exists (e.g. a fresh install that already
+		// got it via the database.go seed loop).
+		Version:       "20260522_link_type_page",
+		Name:          "Seed Page system link type",
+		CheckSQLite:   "SELECT COUNT(*) FROM link_types WHERE name='Page'",
+		CheckPostgres: "SELECT COUNT(*) FROM link_types WHERE name='Page'",
+		SQLite: `INSERT INTO link_types (name, description, forward_label, reverse_label, color, is_system, active, allowed_entity_types, created_at, updated_at)
+			VALUES ('Page', 'Work item references a knowledge page', 'references page', 'referenced by', '#0ea5e9', 1, 1, '["item","page"]', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+		Postgres: `INSERT INTO link_types (name, description, forward_label, reverse_label, color, is_system, active, allowed_entity_types, created_at, updated_at)
+			VALUES ('Page', 'Work item references a knowledge page', 'references page', 'referenced by', '#0ea5e9', true, true, '["item","page"]', NOW(), NOW())`,
+	},
+	{
 		Version:       "20260520_llm_provider_model_cache",
 		Name:          "Add llm_provider_model_cache for dynamic model lists",
 		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='llm_provider_model_cache'",

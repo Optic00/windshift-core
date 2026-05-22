@@ -175,6 +175,63 @@ func (h *PageHandler) GetTree(w http.ResponseWriter, r *http.Request) {
 	respondJSONOK(w, pageTreeResponse{Pages: filtered, Tree: tree})
 }
 
+// Search returns workspace pages whose title matches q (substring,
+// case-insensitive). Drives the page-picker in the link dialog. Returns
+// only pages the user may view; per-page ACLs are honored. The response
+// shape stays minimal (id, title, workspace_id, parent_id, path) — the
+// picker doesn't need the full page payload.
+func (h *PageHandler) Search(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := requireIDParam(w, r, "workspaceId")
+	if !ok {
+		return
+	}
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+
+	query := r.URL.Query().Get("q")
+	limit, _ := parseOffsetPagination(r, 20, 50)
+
+	pages, err := h.service.SearchByTitle(workspaceID, query, limit)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+
+	ids := make([]int, len(pages))
+	for i, p := range pages {
+		ids[i] = p.ID
+	}
+	visible, err := h.pageAuth.ListVisiblePageIDs(user.ID, workspaceID, ids)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+
+	type result struct {
+		ID          int    `json:"id"`
+		Title       string `json:"title"`
+		WorkspaceID int    `json:"workspace_id"`
+		ParentID    *int   `json:"parent_id,omitempty"`
+		Path        string `json:"path,omitempty"`
+	}
+	results := make([]result, 0, len(pages))
+	for _, p := range pages {
+		if !visible[p.ID] {
+			continue
+		}
+		results = append(results, result{
+			ID:          p.ID,
+			Title:       p.Title,
+			WorkspaceID: p.WorkspaceID,
+			ParentID:    p.ParentID,
+			Path:        p.Path,
+		})
+	}
+	respondJSONOK(w, map[string]interface{}{"results": results, "query": query})
+}
+
 // Get returns a single page after authorizing view access.
 func (h *PageHandler) Get(w http.ResponseWriter, r *http.Request) {
 	workspaceID, pageID, user, ok := h.requireWorkspacePageAuth(w, r, services.PageOpView)

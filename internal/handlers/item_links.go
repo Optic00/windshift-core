@@ -25,10 +25,20 @@ type assetPermissionChecker interface {
 	HasAssetSetPermission(userID, setID int, permissionKey string) (bool, error)
 }
 
+// pagePermissionChecker is the minimal slice of *services.PagePermissionService
+// the link handler needs to authorize page endpoints on item↔page links. Held
+// as an interface so tests can substitute a stub without dragging the full
+// repository wiring. When nil, page-endpoint checks fail closed.
+type pagePermissionChecker interface {
+	Can(userID, workspaceID, pageID int, op string) (bool, error)
+	ListVisiblePageIDs(userID, workspaceID int, pageIDs []int) (map[int]bool, error)
+}
+
 type ItemLinkHandler struct {
 	db                  database.Database
 	permissionService   *services.PermissionService
 	assetPerm           assetPermissionChecker
+	pagePerm            pagePermissionChecker
 	notificationService interface {
 		EmitEvent(event *services.NotificationEvent)
 	} // Notification service for async notification processing (optional, can be nil)
@@ -52,6 +62,14 @@ func NewItemLinkHandler(db database.Database, notificationService interface {
 // constructed in server setup; without it, every asset endpoint fails closed.
 func (h *ItemLinkHandler) SetAssetPermissionChecker(p assetPermissionChecker) {
 	h.assetPerm = p
+}
+
+// SetPagePermissionChecker wires in the page permission service so item↔page
+// link endpoints can authorize the page side. Called after
+// PagePermissionService is constructed; without it, page endpoints fail
+// closed (404 on every check).
+func (h *ItemLinkHandler) SetPagePermissionChecker(p pagePermissionChecker) {
+	h.pagePerm = p
 }
 
 // SetActionService sets the action service for automation workflows
@@ -96,6 +114,16 @@ func (h *ItemLinkHandler) resolveEntityScope(entityType string, entityID int) (w
 			return 0, 0, false, err
 		}
 		return 0, scopeID, true, nil
+	case "page":
+		var scopeID int
+		err = h.db.QueryRow("SELECT workspace_id FROM pages WHERE id = ?", entityID).Scan(&scopeID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, 0, false, nil
+		}
+		if err != nil {
+			return 0, 0, false, err
+		}
+		return scopeID, 0, true, nil
 	default:
 		return 0, 0, false, fmt.Errorf("unsupported entity type %q", entityType)
 	}
@@ -146,9 +174,64 @@ func (h *ItemLinkHandler) checkEntityPermission(w http.ResponseWriter, r *http.R
 			return false
 		}
 		return true
+	case "page":
+		if h.pagePerm == nil {
+			respondNotFound(w, r, entityType)
+			return false
+		}
+		op := pageOpForWorkspacePerm(workspacePerm)
+		hasPerm, err := h.pagePerm.Can(user.ID, wsID, entityID, op)
+		if err != nil || !hasPerm {
+			respondNotFound(w, r, entityType)
+			return false
+		}
+		return true
 	}
 	respondValidationError(w, r, "unsupported entity type")
 	return false
+}
+
+// linkEndpointsShareWorkspace verifies both ends of a link are scoped to the
+// same workspace. Only called when at least one endpoint is "page" — the
+// item↔page invariant. Returns false (and writes a 404) when scope lookup
+// fails or the workspaces diverge.
+func (h *ItemLinkHandler) linkEndpointsShareWorkspace(w http.ResponseWriter, r *http.Request, link *models.ItemLink) bool {
+	srcWs, _, srcFound, err := h.resolveEntityScope(link.SourceType, link.SourceID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return false
+	}
+	if !srcFound {
+		respondNotFound(w, r, link.SourceType)
+		return false
+	}
+	tgtWs, _, tgtFound, err := h.resolveEntityScope(link.TargetType, link.TargetID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return false
+	}
+	if !tgtFound {
+		respondNotFound(w, r, link.TargetType)
+		return false
+	}
+	if srcWs != tgtWs {
+		// Page-bound endpoint is the one we're hiding existence of; emit
+		// the generic 404 used elsewhere in the handler.
+		respondNotFound(w, r, "page")
+		return false
+	}
+	return true
+}
+
+// pageOpForWorkspacePerm maps the workspace-permission strings the link
+// handler already uses ("item.view" / "item.edit") onto the page-op
+// vocabulary expected by PagePermissionService.Can. Everything that isn't
+// explicitly edit-or-higher resolves to view — the safe default for callers.
+func pageOpForWorkspacePerm(workspacePerm string) string {
+	if workspacePerm == models.PermissionItemEdit || workspacePerm == models.PermissionItemDelete {
+		return services.PageOpEdit
+	}
+	return services.PageOpView
 }
 
 // canUserViewEntity is the silent counterpart to checkEntityPermission, used
@@ -165,7 +248,10 @@ func (h *ItemLinkHandler) canUserViewEntity(_ int, entityType string, entityID i
 		return false
 	}
 	switch entityType {
-	case "item", "test_case":
+	case "item", "test_case", "page":
+		// Pages additionally have per-ACL gating, but the workspace
+		// membership probe is the cheap first cut. endpointVisible runs
+		// the full Can() check for pages during list filtering.
 		return accessibleWs[wsID]
 	case "asset":
 		return accessibleSets[setID]
@@ -173,9 +259,10 @@ func (h *ItemLinkHandler) canUserViewEntity(_ int, entityType string, entityID i
 	return false
 }
 
-// GetLinksForItem returns all links for a specific item (work item or test case)
+// GetLinksForItem returns all links for a specific item (work item, test
+// case, or page). The URL path segment ("items" / "test-cases" / "pages") is
+// translated into the internal entity-type string used by item_links rows.
 func (h *ItemLinkHandler) GetLinksForItem(w http.ResponseWriter, r *http.Request) {
-	itemType := r.PathValue("type") // "items" or "test-cases"
 	id, ok := requireIDParam(w, r, "id")
 	if !ok {
 		return
@@ -186,10 +273,15 @@ func (h *ItemLinkHandler) GetLinksForItem(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Convert URL path to internal type
+	// Route pattern detection: the three mount points share this handler.
+	// The Go 1.22 ServeMux doesn't expose the prefix as a path value, so we
+	// inspect r.URL.Path directly.
 	internalType := "item"
-	if itemType == "test-cases" {
+	switch {
+	case strings.Contains(r.URL.Path, "/test-cases/"):
 		internalType = "test_case"
+	case strings.Contains(r.URL.Path, "/pages/"):
+		internalType = "page"
 	}
 
 	// Unified view-permission check across items and test_cases. Writes 404
@@ -220,6 +312,11 @@ func (h *ItemLinkHandler) GetLinksForItem(w http.ResponseWriter, r *http.Request
 	accessibleSetIDs := h.accessibleAssetSetIDSet(user)
 	outgoingLinks = h.filterLinksByAccess(outgoingLinks, accessibleKeys, accessibleWsIDs, accessibleSetIDs)
 	incomingLinks = h.filterLinksByAccess(incomingLinks, accessibleKeys, accessibleWsIDs, accessibleSetIDs)
+	// Page endpoints additionally honor per-page ACLs; the workspace pass
+	// above only catches the workspace-membership gate. Skipped when no
+	// page rows are present so the common item↔item case stays free.
+	outgoingLinks = h.filterPageLinksByACL(user, outgoingLinks)
+	incomingLinks = h.filterPageLinksByACL(user, incomingLinks)
 
 	response := map[string]interface{}{
 		"outgoing": outgoingLinks,
@@ -227,6 +324,92 @@ func (h *ItemLinkHandler) GetLinksForItem(w http.ResponseWriter, r *http.Request
 	}
 
 	respondJSONOK(w, response)
+}
+
+// filterPageLinksByACL drops links whose page endpoint is hidden by per-page
+// ACLs. Non-page links pass through untouched. When the page permission
+// checker is not wired, every page-endpoint link is dropped (fail closed) —
+// the same posture used for assets when their checker is missing.
+func (h *ItemLinkHandler) filterPageLinksByACL(user *models.User, links []models.ItemLink) []models.ItemLink {
+	if len(links) == 0 {
+		return links
+	}
+	hasPage := false
+	for _, l := range links {
+		if l.SourceType == "page" || l.TargetType == "page" {
+			hasPage = true
+			break
+		}
+	}
+	if !hasPage {
+		return links
+	}
+	if h.pagePerm == nil {
+		out := links[:0]
+		for _, l := range links {
+			if l.SourceType == "page" || l.TargetType == "page" {
+				continue
+			}
+			out = append(out, l)
+		}
+		return out
+	}
+
+	// Bucket page IDs by workspace so ListVisiblePageIDs can answer in
+	// per-workspace batches; pages are workspace-scoped.
+	bucket := make(map[int]map[int]struct{})
+	addPage := func(workspaceID *int, pageID int) {
+		if workspaceID == nil {
+			return
+		}
+		ids, ok := bucket[*workspaceID]
+		if !ok {
+			ids = make(map[int]struct{})
+			bucket[*workspaceID] = ids
+		}
+		ids[pageID] = struct{}{}
+	}
+	for _, l := range links {
+		if l.SourceType == "page" {
+			addPage(l.SourceWorkspaceID, l.SourceID)
+		}
+		if l.TargetType == "page" {
+			addPage(l.TargetWorkspaceID, l.TargetID)
+		}
+	}
+
+	visible := make(map[int]map[int]bool, len(bucket))
+	for wsID, ids := range bucket {
+		flat := make([]int, 0, len(ids))
+		for id := range ids {
+			flat = append(flat, id)
+		}
+		got, err := h.pagePerm.ListVisiblePageIDs(user.ID, wsID, flat)
+		if err != nil {
+			// Fail closed for this workspace's pages.
+			got = map[int]bool{}
+		}
+		visible[wsID] = got
+	}
+
+	pageVisible := func(workspaceID *int, pageID int) bool {
+		if workspaceID == nil {
+			return false
+		}
+		return visible[*workspaceID][pageID]
+	}
+
+	out := make([]models.ItemLink, 0, len(links))
+	for _, l := range links {
+		if l.SourceType == "page" && !pageVisible(l.SourceWorkspaceID, l.SourceID) {
+			continue
+		}
+		if l.TargetType == "page" && !pageVisible(l.TargetWorkspaceID, l.TargetID) {
+			continue
+		}
+		out = append(out, l)
+	}
+	return out
 }
 
 // filterLinksByAccess drops links whose endpoint is in an inaccessible
@@ -268,6 +451,16 @@ func (h *ItemLinkHandler) endpointVisible(entityType string, entityID int, works
 			return false
 		}
 		return accessibleSetIDs[setID]
+	case "page":
+		// Pages live behind both the workspace gate AND per-page ACLs.
+		// Workspace check is the cheap first cut; the deeper Can() check
+		// is run by callers via filterPageLinksByACL once they know
+		// which user is asking.
+		wsID, _, found, err := h.resolveEntityScope(entityType, entityID)
+		if err != nil || !found {
+			return false
+		}
+		return accessibleWsIDs[wsID]
 	}
 	return false
 }
@@ -333,7 +526,7 @@ func (h *ItemLinkHandler) CreateLink(w http.ResponseWriter, r *http.Request) {
 
 	// Validate source and target types
 	if !isValidLinkType(link.SourceType) || !isValidLinkType(link.TargetType) {
-		respondValidationError(w, r, "Invalid source_type or target_type. Must be 'item', 'test_case', or 'asset'")
+		respondValidationError(w, r, "Invalid source_type or target_type. Must be 'item', 'test_case', 'asset', or 'page'")
 		return
 	}
 
@@ -377,6 +570,15 @@ func (h *ItemLinkHandler) CreateLink(w http.ResponseWriter, r *http.Request) {
 	}
 	if !h.checkEntityPermission(w, r, link.TargetType, link.TargetID, models.PermissionItemView, AssetPermissionKeyView) {
 		return
+	}
+
+	// Item↔page links must stay inside a single workspace; cross-workspace
+	// is rejected as 404 (rather than a clearer 400) so the response shape
+	// matches the per-page ACL denial path and existence stays opaque.
+	if link.SourceType == "page" || link.TargetType == "page" {
+		if !h.linkEndpointsShareWorkspace(w, r, &link) {
+			return
+		}
 	}
 
 	// Check if link already exists (in either direction). Runs after the
@@ -778,8 +980,8 @@ func (h *ItemLinkHandler) getLinksWhere(whereClause string, args ...interface{})
 		SELECT il.id, il.link_type_id, il.source_type, il.source_id, il.target_type, il.target_id,
 		       il.created_by, il.created_at,
 		       lt.name, lt.color, lt.forward_label, lt.reverse_label,
-		       COALESCE(si.title, stc.title, sa.title, '') as source_title,
-		       COALESCE(ti.title, ttc.title, ta.title, '') as target_title,
+		       COALESCE(si.title, stc.title, sa.title, sp.title, '') as source_title,
+		       COALESCE(ti.title, ttc.title, ta.title, tp.title, '') as target_title,
 		       COALESCE(u.username, '') as created_by_name,
 		       si.status_id as source_status_id,
 		       COALESCE(ss.name, '') as source_status_name,
@@ -787,16 +989,16 @@ func (h *ItemLinkHandler) getLinksWhere(whereClause string, args ...interface{})
 		       COALESCE(sit.name, '') as source_item_type_name,
 		       COALESCE(sit.icon, '') as source_item_type_icon,
 		       COALESCE(sit.color, '') as source_item_type_color,
-		       COALESCE(sw.key, '') as source_workspace_key,
-		       si.workspace_id as source_workspace_id,
+		       COALESCE(sw.key, spw.key, '') as source_workspace_key,
+		       COALESCE(si.workspace_id, sp.workspace_id) as source_workspace_id,
 		       ti.status_id as target_status_id,
 		       COALESCE(ts.name, '') as target_status_name,
 		       ti.item_type_id as target_item_type_id,
 		       COALESCE(tit.name, '') as target_item_type_name,
 		       COALESCE(tit.icon, '') as target_item_type_icon,
 		       COALESCE(tit.color, '') as target_item_type_color,
-		       COALESCE(tw.key, '') as target_workspace_key,
-		       ti.workspace_id as target_workspace_id,
+		       COALESCE(tw.key, tpw.key, '') as target_workspace_key,
+		       COALESCE(ti.workspace_id, tp.workspace_id) as target_workspace_id,
 		       il.custom_field_id,
 		       COALESCE(cfd.name, '') as custom_field_name
 		FROM item_links il
@@ -804,9 +1006,11 @@ func (h *ItemLinkHandler) getLinksWhere(whereClause string, args ...interface{})
 		LEFT JOIN items si ON il.source_type = 'item' AND il.source_id = si.id
 		LEFT JOIN test_cases stc ON il.source_type = 'test_case' AND il.source_id = stc.id
 		LEFT JOIN assets sa ON il.source_type = 'asset' AND il.source_id = sa.id
+		LEFT JOIN pages sp ON il.source_type = 'page' AND il.source_id = sp.id
 		LEFT JOIN items ti ON il.target_type = 'item' AND il.target_id = ti.id
 		LEFT JOIN test_cases ttc ON il.target_type = 'test_case' AND il.target_id = ttc.id
 		LEFT JOIN assets ta ON il.target_type = 'asset' AND il.target_id = ta.id
+		LEFT JOIN pages tp ON il.target_type = 'page' AND il.target_id = tp.id
 		LEFT JOIN users u ON il.created_by = u.id
 		LEFT JOIN statuses ss ON si.status_id = ss.id
 		LEFT JOIN statuses ts ON ti.status_id = ts.id
@@ -814,6 +1018,8 @@ func (h *ItemLinkHandler) getLinksWhere(whereClause string, args ...interface{})
 		LEFT JOIN item_types tit ON ti.item_type_id = tit.id
 		LEFT JOIN workspaces sw ON si.workspace_id = sw.id
 		LEFT JOIN workspaces tw ON ti.workspace_id = tw.id
+		LEFT JOIN workspaces spw ON sp.workspace_id = spw.id
+		LEFT JOIN workspaces tpw ON tp.workspace_id = tpw.id
 		LEFT JOIN custom_field_definitions cfd ON il.custom_field_id = cfd.id
 		WHERE ` + whereClause + `
 		ORDER BY lt.name, il.created_at DESC
@@ -992,7 +1198,7 @@ func (h *ItemLinkHandler) searchAssets(user *models.User, query string, limit in
 }
 
 func isValidLinkType(linkType string) bool {
-	return linkType == "item" || linkType == "test_case" || linkType == "asset"
+	return linkType == "item" || linkType == "test_case" || linkType == "asset" || linkType == "page"
 }
 
 // GetFieldLinks returns links managed by a specific custom field for a given item

@@ -511,6 +511,7 @@ func (s *Server) initialize() error {
 	pageService := services.NewPageService(s.db)
 	pageService.SetPageLabelRepository(pageLabelRepo)
 	pagePermissionService := services.NewPagePermissionService(s.db, permService)
+	itemLinkHandler.SetPagePermissionChecker(pagePermissionService)
 	pageHandler := handlers.NewPageHandler(pageService, pagePermissionService, logger.NewAuditor(s.db))
 	knowledgeRetrieval := services.NewKnowledgeRetrievalService(s.db, pagePermissionService)
 	knowledgeSearchHandler := handlers.NewKnowledgeSearchHandler(knowledgeRetrieval)

@@ -14,6 +14,7 @@ func RegisterPageRoutes(deps *Deps) {
 	auth := deps.AuthMiddleware.RequireAuth
 
 	api.HandleH("GET /workspaces/{workspaceId}/pages/tree", auth(http.HandlerFunc(deps.Pages.Page.GetTree)))
+	api.HandleH("GET /workspaces/{workspaceId}/pages/search", auth(http.HandlerFunc(deps.Pages.Page.Search)))
 	api.HandleH("POST /workspaces/{workspaceId}/pages", auth(http.HandlerFunc(deps.Pages.Page.Create)))
 	api.HandleH("GET /workspaces/{workspaceId}/pages/{pageId}", auth(http.HandlerFunc(deps.Pages.Page.Get)))
 	api.HandleH("PUT /workspaces/{workspaceId}/pages/{pageId}", auth(http.HandlerFunc(deps.Pages.Page.Update)))

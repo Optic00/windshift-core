@@ -172,14 +172,14 @@ type UpdateInput struct {
 	ContentHash        string
 	Excerpt            string
 	InheritPermissions bool
-	Rank               *string
-	FracIndex          *string
 	UpdatedBy          int
 }
 
 // UpdateTx applies a content/title/slug/inheritance edit within a transaction.
-// Move and Archive are separate methods because they touch parent_id/path/depth
-// and archived_* fields respectively.
+// rank and frac_index are deliberately not touched — sibling ordering is owned
+// by MoveTx and SetFracIndexTx so a normal title/content save can't silently
+// destroy a drag-and-drop ordering. Move and Archive are separate methods
+// because they touch parent_id/path/depth and archived_* fields respectively.
 func (r *PageRepository) UpdateTx(tx database.Tx, in UpdateInput) error {
 	now := time.Now().UTC()
 	res, err := tx.Exec(`
@@ -190,13 +190,11 @@ func (r *PageRepository) UpdateTx(tx database.Tx, in UpdateInput) error {
 		    content_hash = ?,
 		    excerpt = ?,
 		    inherit_permissions = ?,
-		    rank = ?,
-		    frac_index = ?,
 		    updated_by = ?,
 		    updated_at = ?
 		WHERE id = ?
 	`, in.Title, in.Slug, in.Content, in.ContentHash, in.Excerpt, in.InheritPermissions,
-		nullString(in.Rank), nullString(in.FracIndex), in.UpdatedBy, now, in.ID)
+		in.UpdatedBy, now, in.ID)
 	if err != nil {
 		if isUniqueConstraintError(err) {
 			return ErrDuplicateEntry
@@ -304,6 +302,44 @@ func (r *PageRepository) ArchiveTx(tx database.Tx, pageID, archivedBy int) error
 // ListWorkspaceTree returns every (non-archived unless includeArchived) page
 // in a workspace, ordered by depth and then by frac_index/rank/title so
 // callers can build the tree client-side with a single query.
+// SearchByTitle returns non-archived pages in the workspace whose title
+// matches a case-insensitive substring of query, ordered by title. Results
+// are capped at limit. The caller must filter the result through per-page
+// ACLs before returning to a user — workspace scoping alone isn't enough.
+func (r *PageRepository) SearchByTitle(workspaceID int, query string, limit int) ([]models.Page, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	q := strings.TrimSpace(query)
+	if q == "" {
+		return nil, nil
+	}
+	like := "%" + strings.ReplaceAll(strings.ReplaceAll(q, `\`, `\\`), "%", `\%`) + "%"
+	rows, err := r.db.Query(`
+		SELECT `+pageColumns+`
+		FROM pages
+		WHERE workspace_id = ?
+		  AND archived_at IS NULL
+		  AND LOWER(title) LIKE LOWER(?) ESCAPE '\'
+		ORDER BY title ASC, id ASC
+		LIMIT ?
+	`, workspaceID, like, limit)
+	if err != nil {
+		return nil, fmt.Errorf("search pages by title: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []models.Page
+	for rows.Next() {
+		p, scanErr := scanPage(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("scan page: %w", scanErr)
+		}
+		out = append(out, *p)
+	}
+	return out, rows.Err()
+}
+
 func (r *PageRepository) ListWorkspaceTree(workspaceID int, includeArchived bool) ([]models.Page, error) {
 	cond := "workspace_id = ? AND archived_at IS NULL"
 	if includeArchived {

@@ -1417,6 +1417,7 @@ func (db *DB) initializeDefaultData() error {
 		{"Links To", "General directional link", "links to", "linked from", "#64748b", true, nil},
 		{"Duplicates", "Work item is a duplicate of another", "duplicates", "duplicated by", "#ef4444", true, nil},
 		{"Child Of", "Alternative hierarchy relationship", "child of", "parent of", "#8b5cf6", true, nil},
+		{"Page", "Work item references a knowledge page", "references page", "referenced by", "#0ea5e9", true, strPtr(`["item","page"]`)},
 	}
 
 	for _, linkType := range linkTypes {
