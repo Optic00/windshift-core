@@ -30,4 +30,21 @@ func RegisterPageRoutes(deps *Deps) {
 	if deps.Pages.KnowledgeSearch != nil {
 		api.HandleH("GET /workspaces/{workspaceId}/knowledge/search", auth(http.HandlerFunc(deps.Pages.KnowledgeSearch.Search)))
 	}
+
+	if deps.Pages.PageLabel != nil {
+		// Workspace-scoped label CRUD. Permission failures inside the
+		// handler return 404 (memory: workspace-resource access checks
+		// must not leak existence).
+		api.HandleH("GET /workspaces/{workspaceId}/page-labels", auth(http.HandlerFunc(deps.Pages.PageLabel.List)))
+		api.HandleH("POST /workspaces/{workspaceId}/page-labels", auth(http.HandlerFunc(deps.Pages.PageLabel.Create)))
+		api.HandleH("GET /workspaces/{workspaceId}/page-labels/{labelId}", auth(http.HandlerFunc(deps.Pages.PageLabel.Get)))
+		api.HandleH("PUT /workspaces/{workspaceId}/page-labels/{labelId}", auth(http.HandlerFunc(deps.Pages.PageLabel.Update)))
+		api.HandleH("DELETE /workspaces/{workspaceId}/page-labels/{labelId}", auth(http.HandlerFunc(deps.Pages.PageLabel.Delete)))
+
+		// Page-scoped attachments — gated per-page via PagePermissionService.
+		api.HandleH("GET /workspaces/{workspaceId}/pages/{pageId}/labels", auth(http.HandlerFunc(deps.Pages.PageLabel.ListForPage)))
+		api.HandleH("PUT /workspaces/{workspaceId}/pages/{pageId}/labels", auth(http.HandlerFunc(deps.Pages.PageLabel.SetForPage)))
+		api.HandleH("POST /workspaces/{workspaceId}/pages/{pageId}/labels", auth(http.HandlerFunc(deps.Pages.PageLabel.AddToPage)))
+		api.HandleH("DELETE /workspaces/{workspaceId}/pages/{pageId}/labels/{labelId}", auth(http.HandlerFunc(deps.Pages.PageLabel.RemoveFromPage)))
+	}
 }

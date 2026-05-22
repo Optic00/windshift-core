@@ -641,6 +641,11 @@ const (
 	ActionLabelUpdate = "label.update"
 	ActionLabelDelete = "label.delete"
 
+	// Page label management (workspace-level, applies to wiki pages)
+	ActionPageLabelCreate = "page_label.create"
+	ActionPageLabelUpdate = "page_label.update"
+	ActionPageLabelDelete = "page_label.delete"
+
 	// Asset management
 	ActionAssetCreate = "asset.create"
 	ActionAssetUpdate = "asset.update"
@@ -784,6 +789,7 @@ const (
 	ResourceTimeCustomer         = "time_customer"
 	ResourcePortalCustomer       = "portal_customer"
 	ResourceLabel                = "label"
+	ResourcePageLabel            = "page_label"
 	ResourceAsset                = "asset"
 	ResourceAssetType            = "asset_type"
 	ResourceAssetStatus          = "asset_status"

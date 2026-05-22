@@ -247,6 +247,7 @@ type TeamHandlers struct {
 type PageHandlers struct {
 	Page            *handlers.PageHandler
 	KnowledgeSearch *handlers.KnowledgeSearchHandler
+	PageLabel       *handlers.PageLabelHandler
 }
 
 // MiscHandlers groups miscellaneous handlers.

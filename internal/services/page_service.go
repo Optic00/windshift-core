@@ -24,8 +24,9 @@ import (
 
 // PageService is the entry point for all page CRUD and tree operations.
 type PageService struct {
-	db    database.Database
-	pages *repository.PageRepository
+	db         database.Database
+	pages      *repository.PageRepository
+	pageLabels *repository.PageLabelRepository
 }
 
 // NewPageService creates a PageService backed by the provided database.
@@ -34,6 +35,39 @@ func NewPageService(db database.Database) *PageService {
 		db:    db,
 		pages: repository.NewPageRepository(db),
 	}
+}
+
+// SetPageLabelRepository wires the page-label repository for label preload
+// on tree/detail responses. Optional — when unset, responses still serialize
+// pages but omit the `labels` field (it remains nil/empty).
+func (s *PageService) SetPageLabelRepository(repo *repository.PageLabelRepository) {
+	s.pageLabels = repo
+}
+
+// PreloadLabels populates Labels on each page when a page-label repository
+// is wired. Safe to call on an empty slice or when the repo is unset.
+func (s *PageService) PreloadLabels(pages []models.Page) error {
+	if s.pageLabels == nil {
+		return nil
+	}
+	return s.pageLabels.LoadForPages(pages)
+}
+
+// PreloadLabelsForPage loads labels for a single page. No-op when no
+// page-label repository is wired.
+func (s *PageService) PreloadLabelsForPage(page *models.Page) error {
+	if s.pageLabels == nil || page == nil {
+		return nil
+	}
+	labels, err := s.pageLabels.ListForPage(page.ID)
+	if err != nil {
+		return err
+	}
+	if labels == nil {
+		labels = []models.PageLabel{}
+	}
+	page.Labels = labels
+	return nil
 }
 
 // Service-level errors. Wraps repository errors so the handler layer can

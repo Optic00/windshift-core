@@ -164,6 +164,13 @@ func (h *PageHandler) GetTree(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Preload labels onto each visible page before BuildPageTree copies
+	// them into PageNodes — the copy inherits the slice header.
+	if err := h.service.PreloadLabels(filtered); err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+
 	tree := services.BuildPageTree(filtered)
 	respondJSONOK(w, pageTreeResponse{Pages: filtered, Tree: tree})
 }
@@ -187,6 +194,10 @@ func (h *PageHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	if page.WorkspaceID != workspaceID {
 		respondNotFound(w, r, "Page")
+		return
+	}
+	if err := h.service.PreloadLabelsForPage(page); err != nil {
+		respondInternalError(w, r, err)
 		return
 	}
 	respondJSONOK(w, page)

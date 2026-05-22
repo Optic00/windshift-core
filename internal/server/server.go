@@ -507,11 +507,14 @@ func (s *Server) initialize() error {
 	labelHandler := handlers.NewLabelHandler(repository.NewLabelRepository(s.db), repository.NewItemRepository(s.db), permService, logger.NewAuditor(s.db))
 
 	// Knowledge pages handler (workspace-scoped wiki).
+	pageLabelRepo := repository.NewPageLabelRepository(s.db)
 	pageService := services.NewPageService(s.db)
+	pageService.SetPageLabelRepository(pageLabelRepo)
 	pagePermissionService := services.NewPagePermissionService(s.db, permService)
 	pageHandler := handlers.NewPageHandler(pageService, pagePermissionService, logger.NewAuditor(s.db))
 	knowledgeRetrieval := services.NewKnowledgeRetrievalService(s.db, pagePermissionService)
 	knowledgeSearchHandler := handlers.NewKnowledgeSearchHandler(knowledgeRetrieval)
+	pageLabelHandler := handlers.NewPageLabelHandler(pageLabelRepo, pagePermissionService, logger.NewAuditor(s.db))
 
 	// Recurrence handler
 	recurrenceHandler := handlers.NewRecurrenceHandler(s.db, s.recurrenceScheduler, permService)
@@ -1196,6 +1199,7 @@ func (s *Server) initialize() error {
 		Pages: routes.PageHandlers{
 			Page:            pageHandler,
 			KnowledgeSearch: knowledgeSearchHandler,
+			PageLabel:       pageLabelHandler,
 		},
 	}
 	routes.RegisterAll(routeDeps)
