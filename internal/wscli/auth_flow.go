@@ -27,6 +27,9 @@ var defaultCLIScopes = []string{
 	"users:read",
 	"item-types:read",
 	"workflows:read",
+	"pages:read",
+	"pages:write",
+	"pages:delete",
 }
 
 type cliCapabilities struct {
