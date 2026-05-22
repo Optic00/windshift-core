@@ -8,7 +8,6 @@
   import { confirm } from '../../composables/useConfirm.js';
   import { errorToast } from '../../stores/toasts.svelte.js';
   import {
-    IconArrowLeft as ArrowLeft,
     IconPlus as Plus,
     IconDots as Dots,
     IconBook as Book,
@@ -21,6 +20,7 @@
   } from '@tabler/icons-svelte-runes';
   import DropdownMenu from '../../layout/DropdownMenu.svelte';
   import EmptyState from '../../components/EmptyState.svelte';
+  import Tooltip from '../../components/Tooltip.svelte';
   import PageMoveDialog from './PageMoveDialog.svelte';
   import PagePermissionsDialog from './PagePermissionsDialog.svelte';
   import PageLabelPicker from './PageLabelPicker.svelte';
@@ -28,7 +28,7 @@
   import { pagesFocusTitle } from './pagesFocusTitle.svelte.js';
   import { pagesFilter } from './pagesFilter.svelte.js';
 
-  let { workspaceId } = $props();
+  let { workspaceId, embedded = false } = $props();
 
   let pages = $state([]);
   let loading = $state(true);
@@ -344,10 +344,6 @@
     return out;
   }
 
-  function backToWorkspace() {
-    navigate(`/workspaces/${workspaceId}`);
-  }
-
   function selectPage(id) {
     navigate(`/workspaces/${workspaceId}/pages/${id}`);
   }
@@ -536,55 +532,59 @@
   }
 </script>
 
-<aside class="pages-sidebar" data-testid="pages-nav-sidebar">
+<aside class="pages-sidebar" class:pages-sidebar--embedded={embedded} data-testid="pages-nav-sidebar">
   <header class="header">
-    <button class="back" type="button" onclick={backToWorkspace} data-testid="pages-back-button">
-      <ArrowLeft size={16} />
-      <span>{t('pages.backWorkspace')}</span>
-    </button>
     <div class="title-row">
       <h2>{t('pages.treeHeading')}</h2>
       <div class="title-actions">
-        <button
-          id="pages-search-button"
-          class="header-button"
-          class:header-button--active={searchOpen}
-          type="button"
-          onclick={toggleSearch}
-          aria-label={t('pages.searchAria')}
-          aria-pressed={searchOpen}
-          data-testid="pages-search-toggle"
-        >
-          <Search size={16} />
-        </button>
-        <button
-          class="header-button"
-          type="button"
-          onclick={expandAll}
-          aria-label={t('pages.expandAllAria')}
-          data-testid="pages-expand-all"
-        >
-          <ChevronsDown size={16} />
-        </button>
-        <button
-          class="header-button"
-          type="button"
-          onclick={collapseAll}
-          aria-label={t('pages.collapseAllAria')}
-          data-testid="pages-collapse-all"
-        >
-          <ChevronsUp size={16} />
-        </button>
-        <button
-          id="pages-add-button"
-          class="header-button"
-          type="button"
-          onclick={() => createPage(null)}
-          disabled={creating}
-          aria-label={t('pages.addPageAria')}
-        >
-          <Plus size={16} />
-        </button>
+        <Tooltip content={t('pages.searchAria')} placement="bottom" class="inline-flex">
+          <button
+            id="pages-search-button"
+            class="header-button"
+            class:header-button--active={searchOpen}
+            type="button"
+            onclick={toggleSearch}
+            aria-label={t('pages.searchAria')}
+            aria-pressed={searchOpen}
+            data-testid="pages-search-toggle"
+          >
+            <Search size={16} />
+          </button>
+        </Tooltip>
+        <Tooltip content={t('pages.expandAllAria')} placement="bottom" class="inline-flex">
+          <button
+            class="header-button"
+            type="button"
+            onclick={expandAll}
+            aria-label={t('pages.expandAllAria')}
+            data-testid="pages-expand-all"
+          >
+            <ChevronsDown size={16} />
+          </button>
+        </Tooltip>
+        <Tooltip content={t('pages.collapseAllAria')} placement="bottom" class="inline-flex">
+          <button
+            class="header-button"
+            type="button"
+            onclick={collapseAll}
+            aria-label={t('pages.collapseAllAria')}
+            data-testid="pages-collapse-all"
+          >
+            <ChevronsUp size={16} />
+          </button>
+        </Tooltip>
+        <Tooltip content={t('pages.addPageAria')} placement="bottom" class="inline-flex">
+          <button
+            id="pages-add-button"
+            class="header-button"
+            type="button"
+            onclick={() => createPage(null)}
+            disabled={creating}
+            aria-label={t('pages.addPageAria')}
+          >
+            <Plus size={16} />
+          </button>
+        </Tooltip>
       </div>
     </div>
   </header>
@@ -691,26 +691,32 @@
           data-testid="page-tree-item"
           data-page-id={page.id}
           data-expanded={hasChildren ? String(isExpanded) : undefined}
-          style="padding-left: {0.5 + page.depth * 0.8}rem"
+          style="padding-left: {0.25 + page.depth * 0.75}rem"
         >
           {#if hasChildren}
-            <button
-              type="button"
-              class="chevron"
-              onclick={(e) => {
-                e.stopPropagation();
-                toggleNode(page.id);
-              }}
-              aria-expanded={isExpanded}
-              aria-label={t('pages.toggleSubtreeAria', { title: page.title })}
-              data-testid="page-tree-chevron"
+            <Tooltip
+              content={t('pages.toggleSubtreeAria', { title: page.title })}
+              placement="bottom"
+              class="inline-flex"
             >
-              {#if isExpanded}
-                <ChevronDown size={14} />
-              {:else}
-                <ChevronRight size={14} />
-              {/if}
-            </button>
+              <button
+                type="button"
+                class="chevron"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  toggleNode(page.id);
+                }}
+                aria-expanded={isExpanded}
+                aria-label={t('pages.toggleSubtreeAria', { title: page.title })}
+                data-testid="page-tree-chevron"
+              >
+                {#if isExpanded}
+                  <ChevronDown size={14} />
+                {:else}
+                  <ChevronRight size={14} />
+                {/if}
+              </button>
+            </Tooltip>
           {:else}
             <span class="chevron chevron--placeholder" aria-hidden="true"></span>
           {/if}
@@ -718,16 +724,18 @@
             {page.title}
           </button>
           <span class="kebab-slot">
-            <DropdownMenu
-              triggerIcon={Dots}
-              triggerIconClass="w-4 h-4"
-              items={kebabItems(page)}
-              showChevron={false}
-              iconOnly={true}
-              placement="bottom-end"
-              triggerClass="kebab-trigger"
-              triggerTestid="page-kebab"
-            />
+            <Tooltip content={t('common.actions')} placement="bottom" class="inline-flex">
+              <DropdownMenu
+                triggerIcon={Dots}
+                triggerIconClass="w-4 h-4"
+                items={kebabItems(page)}
+                showChevron={false}
+                iconOnly={true}
+                placement="bottom-end"
+                triggerClass="kebab-trigger"
+                triggerTestid="page-kebab"
+              />
+            </Tooltip>
           </span>
         </li>
       {/each}
@@ -763,31 +771,19 @@
     overflow-y: auto;
   }
 
+  .pages-sidebar--embedded {
+    height: 100%;
+    min-height: 0;
+    flex: 1;
+    border-right: none;
+  }
+
   .header {
     padding: 0.75rem 0.75rem 0.5rem;
     border-bottom: 1px solid var(--ds-border);
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
-  }
-
-  .back {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.375rem;
-    background: transparent;
-    border: none;
-    padding: 0.25rem 0.375rem;
-    color: var(--ds-text-subtle);
-    font-size: 0.75rem;
-    cursor: pointer;
-    border-radius: 0.25rem;
-    align-self: flex-start;
-  }
-
-  .back:hover {
-    background: var(--ds-background-neutral-hovered);
-    color: var(--ds-text);
   }
 
   .title-row {
@@ -977,6 +973,15 @@
     cursor: default;
   }
 
+  .chevron--placeholder::before {
+    content: '';
+    width: 0.25rem;
+    height: 0.25rem;
+    border: 1px solid currentColor;
+    border-radius: 9999px;
+    opacity: 0.7;
+  }
+
   .chevron--placeholder:hover {
     background: transparent;
     color: var(--ds-text-subtle);
@@ -1017,7 +1022,7 @@
     text-align: left;
     background: transparent;
     border: none;
-    padding: 0.375rem 0.5rem;
+    padding: 0.375rem 0.375rem;
     font-size: 0.875rem;
     color: var(--ds-text);
     cursor: pointer;
