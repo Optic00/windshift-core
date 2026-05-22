@@ -24,6 +24,13 @@ type Deps struct {
 	// Empty when attachments are disabled — the v1 download route falls back
 	// to a not-enabled response in that case.
 	AttachmentPath string
+	// ItemLinkService is the fully-wired link orchestration service
+	// (asset/page permission checkers, notification + action emitters)
+	// shared with the cookie-auth handler. Required for the v1 link
+	// surface; the v1 router falls back to a bare service if nil so old
+	// embedders that haven't wired this yet still work for everything
+	// EXCEPT link endpoints.
+	ItemLinkService *services.ItemLinkService
 }
 
 // SetupRoutesFunc is a function type for setting up v1 routes

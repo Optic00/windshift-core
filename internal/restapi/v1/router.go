@@ -291,6 +291,29 @@ func RegisterRoutes(deps restapi.Deps) {
 	v1.HandleWithMiddleware("DELETE /workspaces/{id}/pages/{pageId}/labels/{labelId}", pageLabelHandler.RemoveFromPage, bearerAuth.RequirePermission("pages:write"), router.RequireNumericID)
 
 	// ============================================
+	// Links (item ↔ item / item ↔ page / item ↔ test_case)
+	// Shares the fully-wired *services.ItemLinkService that the cookie-
+	// auth handler built (asset checker, page checker, notification +
+	// action emitters) so both surfaces behave identically. deps.ItemLinkService
+	// is nil during early-boot or in tests that don't construct the
+	// cookie path; fall back to a bare service so the rest of v1 still
+	// boots — link endpoints in that case fail closed (404) because the
+	// permission checkers are absent.
+	// ============================================
+	linkSvc := deps.ItemLinkService
+	if linkSvc == nil {
+		linkSvc = services.NewItemLinkService(db).WithPermissionService(permissionService)
+	}
+	linkHandler := handlers.NewLinkHandler(handlers.NewBaseHandler(db, permissionService), linkSvc)
+
+	v1.HandleWithMiddleware("GET /link-types", linkHandler.ListLinkTypes, bearerAuth.RequirePermission("items:read"))
+	v1.HandleWithMiddleware("POST /links", linkHandler.CreateLink, bearerAuth.RequirePermission("items:write"))
+	v1.HandleWithMiddleware("DELETE /links/{id}", linkHandler.DeleteLink, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)
+	v1.HandleWithMiddleware("GET /items/{id}/links", linkHandler.GetLinksForEntity, bearerAuth.RequirePermission("items:read"), router.RequireNumericID)
+	v1.HandleWithMiddleware("GET /pages/{id}/links", linkHandler.GetLinksForEntity, bearerAuth.RequirePermission("pages:read"), router.RequireNumericID)
+	v1.HandleWithMiddleware("GET /test-cases/{id}/links", linkHandler.GetLinksForEntity, bearerAuth.RequirePermission("items:read"), router.RequireNumericID)
+
+	// ============================================
 	// Search
 	// ============================================
 	v1.HandleWithMiddleware("GET /search/items", itemHandler.Search, bearerAuth.RequirePermission("items:read"))
