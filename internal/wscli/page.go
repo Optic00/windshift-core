@@ -26,6 +26,8 @@ var (
 	pageEditUploadAssets   bool
 	pageMoveParent         int
 	pageMoveToRoot         bool
+	pageMoveBefore         int
+	pageMoveAfter          int
 	pageGetRaw             bool
 )
 
@@ -346,9 +348,15 @@ var pageMoveCmd = &cobra.Command{
 	Long: `Move a page under a new parent. Either --parent <id> or --root
 must be supplied. The server enforces cycle and depth limits.
 
+Pass --before <id> or --after <id> to place the page at a specific
+position among its siblings (mutually exclusive). Combine freely with
+--parent / --root to reparent and reorder in one call.
+
 Examples:
   ws page move 42 --parent 7
-  ws page move 42 --root`,
+  ws page move 42 --root
+  ws page move 42 --parent 7 --after 11
+  ws page move 42 --parent 7 --before 9`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
 		client, err := NewClient()
@@ -369,12 +377,28 @@ Examples:
 		if pageMoveToRoot && pageMoveParent != 0 {
 			return fmt.Errorf("--parent and --root are mutually exclusive")
 		}
+		if pageMoveBefore != 0 && pageMoveAfter != 0 {
+			return fmt.Errorf("--before and --after are mutually exclusive")
+		}
 		var parent *int
 		if !pageMoveToRoot {
 			pid := pageMoveParent
 			parent = &pid
 		}
-		page, err := client.MovePage(wsID, pageID, parent)
+		// --after X means "this page comes right after X" →
+		// prev_sibling_id = X. --before X means "this page comes right
+		// before X" → next_sibling_id = X. Field names in the server
+		// payload describe the neighbor relative to the moved page.
+		var prevSibling, nextSibling *int
+		if pageMoveAfter != 0 {
+			v := pageMoveAfter
+			prevSibling = &v
+		}
+		if pageMoveBefore != 0 {
+			v := pageMoveBefore
+			nextSibling = &v
+		}
+		page, err := client.MovePage(wsID, pageID, parent, prevSibling, nextSibling)
 		if err != nil {
 			return fmt.Errorf("failed to move page: %w", err)
 		}
@@ -510,4 +534,6 @@ func init() {
 
 	pageMoveCmd.Flags().IntVar(&pageMoveParent, "parent", 0, "new parent page id")
 	pageMoveCmd.Flags().BoolVar(&pageMoveToRoot, "root", false, "move the page to the workspace root")
+	pageMoveCmd.Flags().IntVar(&pageMoveBefore, "before", 0, "insert the moved page immediately before this sibling id")
+	pageMoveCmd.Flags().IntVar(&pageMoveAfter, "after", 0, "insert the moved page immediately after this sibling id")
 }

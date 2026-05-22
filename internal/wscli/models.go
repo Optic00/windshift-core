@@ -570,8 +570,12 @@ type PageUpdateRequest struct {
 }
 
 // PageMoveRequest is the body for POST /workspaces/:id/pages/:pageId/move.
+// PrevSiblingID / NextSiblingID let callers place the page at a specific
+// position among its siblings; both omitted means server-default placement.
 type PageMoveRequest struct {
-	ParentID *int `json:"parent_id"`
+	ParentID      *int `json:"parent_id"`
+	PrevSiblingID *int `json:"prev_sibling_id,omitempty"`
+	NextSiblingID *int `json:"next_sibling_id,omitempty"`
 }
 
 // PageLabel is a workspace-scoped label that attaches to pages only.

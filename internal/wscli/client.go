@@ -984,10 +984,17 @@ func (c *Client) UpdatePage(workspaceID, pageID int, req PageUpdateRequest) (*Pa
 	return &page, nil
 }
 
-// MovePage reparents a page. Pass parentID=nil to move to the workspace root.
-func (c *Client) MovePage(workspaceID, pageID int, parentID *int) (*Page, error) {
+// MovePage reparents a page. Pass parentID=nil to move to the workspace
+// root. prevSiblingID / nextSiblingID place the page at a specific position
+// among its siblings; pass nil for both to let the server pick.
+func (c *Client) MovePage(workspaceID, pageID int, parentID, prevSiblingID, nextSiblingID *int) (*Page, error) {
 	var page Page
-	if err := c.POST(fmt.Sprintf("/rest/api/v1/workspaces/%d/pages/%d/move", workspaceID, pageID), PageMoveRequest{ParentID: parentID}, &page); err != nil {
+	req := PageMoveRequest{
+		ParentID:      parentID,
+		PrevSiblingID: prevSiblingID,
+		NextSiblingID: nextSiblingID,
+	}
+	if err := c.POST(fmt.Sprintf("/rest/api/v1/workspaces/%d/pages/%d/move", workspaceID, pageID), req, &page); err != nil {
 		return nil, err
 	}
 	return &page, nil

@@ -175,7 +175,7 @@ func TestClient_MovePage_RootViaNullParent(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(Page{ID: 7, ParentID: nil})
 	})
 
-	if _, err := c.MovePage(42, 7, nil); err != nil {
+	if _, err := c.MovePage(42, 7, nil, nil, nil); err != nil {
 		t.Fatalf("MovePage(root): %v", err)
 	}
 	if gotPath != "/rest/api/v1/workspaces/42/pages/7/move" {
@@ -194,7 +194,7 @@ func TestClient_MovePage_NonRoot(t *testing.T) {
 	})
 
 	parent := 11
-	if _, err := c.MovePage(42, 7, &parent); err != nil {
+	if _, err := c.MovePage(42, 7, &parent, nil, nil); err != nil {
 		t.Fatalf("MovePage: %v", err)
 	}
 	if gotBody.ParentID == nil || *gotBody.ParentID != 11 {
@@ -284,5 +284,66 @@ func TestClient_ErrorResponseMapping(t *testing.T) {
 				t.Errorf("APIError typing: want %v, got %T", tc.wantAPIErr, err)
 			}
 		})
+	}
+}
+
+// Regression for bug-hunt finding #6: the CLI must serialize
+// --before/--after as prev_sibling_id / next_sibling_id so the server
+// (which already supports sibling-aware moves) gets the placement hints.
+func TestClient_MovePage_SerializesSiblings(t *testing.T) {
+	var gotBody PageMoveRequest
+	c, _ := newTestPageClient(t, func(w http.ResponseWriter, r *http.Request) {
+		readJSONBody(t, r, &gotBody)
+		_ = json.NewEncoder(w).Encode(Page{ID: 42})
+	})
+
+	parent := 7
+	prev := 11
+	if _, err := c.MovePage(99, 42, &parent, &prev, nil); err != nil {
+		t.Fatalf("MovePage: %v", err)
+	}
+	if gotBody.ParentID == nil || *gotBody.ParentID != 7 {
+		t.Errorf("parent_id: want &7, got %+v", gotBody.ParentID)
+	}
+	if gotBody.PrevSiblingID == nil || *gotBody.PrevSiblingID != 11 {
+		t.Errorf("prev_sibling_id: want &11, got %+v", gotBody.PrevSiblingID)
+	}
+	if gotBody.NextSiblingID != nil {
+		t.Errorf("next_sibling_id should be omitted, got %+v", gotBody.NextSiblingID)
+	}
+
+	// And the inverse: --before X populates next_sibling_id. Reset
+	// gotBody first — omitempty fields decode-merge with prior state.
+	gotBody = PageMoveRequest{}
+	next := 9
+	if _, err := c.MovePage(99, 42, &parent, nil, &next); err != nil {
+		t.Fatalf("MovePage: %v", err)
+	}
+	if gotBody.NextSiblingID == nil || *gotBody.NextSiblingID != 9 {
+		t.Errorf("next_sibling_id: want &9, got %+v", gotBody.NextSiblingID)
+	}
+	if gotBody.PrevSiblingID != nil {
+		t.Errorf("prev_sibling_id should be omitted, got %+v", gotBody.PrevSiblingID)
+	}
+}
+
+// Bare move (no siblings) — both fields must be omitted from the wire
+// body so server-default placement kicks in.
+func TestClient_MovePage_OmitsEmptySiblings(t *testing.T) {
+	var rawBody []byte
+	c, _ := newTestPageClient(t, func(w http.ResponseWriter, r *http.Request) {
+		rawBody, _ = io.ReadAll(r.Body)
+		_ = json.NewEncoder(w).Encode(Page{ID: 42})
+	})
+	parent := 7
+	if _, err := c.MovePage(99, 42, &parent, nil, nil); err != nil {
+		t.Fatalf("MovePage: %v", err)
+	}
+	body := string(rawBody)
+	if strings.Contains(body, "prev_sibling_id") {
+		t.Errorf("nil siblings should omit prev_sibling_id; body=%s", body)
+	}
+	if strings.Contains(body, "next_sibling_id") {
+		t.Errorf("nil siblings should omit next_sibling_id; body=%s", body)
 	}
 }
