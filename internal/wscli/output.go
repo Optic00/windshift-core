@@ -89,6 +89,16 @@ func (o *Output) printTable(data interface{}) {
 		o.printMilestoneDetailTable(w, v)
 	case *MilestoneProgress:
 		o.printMilestoneProgressTable(w, v)
+	case []Page:
+		o.printPagesTable(w, v)
+	case *Page:
+		o.printPageDetailTable(w, v)
+	case []PageLabel:
+		o.printPageLabelsTable(w, v)
+	case *PageLabel:
+		o.printPageLabelDetailTable(w, v)
+	case []PageRevision:
+		o.printPageRevisionsTable(w, v)
 	default:
 		// Fallback to JSON for unknown types
 		o.printJSON(data)
@@ -148,6 +158,16 @@ func (o *Output) printCSV(data interface{}) {
 		o.printMilestoneCSV(w, v)
 	case *MilestoneProgress:
 		o.printMilestoneProgressCSV(w, v)
+	case []Page:
+		o.printPagesCSV(w, v)
+	case *Page:
+		o.printPageCSV(w, v)
+	case []PageLabel:
+		o.printPageLabelsCSV(w, v)
+	case *PageLabel:
+		o.printPageLabelCSV(w, v)
+	case []PageRevision:
+		o.printPageRevisionsCSV(w, v)
 	default:
 		// Fallback to JSON for unknown types
 		o.printJSON(data)
@@ -762,4 +782,150 @@ func (o *Output) printMilestoneProgressCSV(w *csv.Writer, p *MilestoneProgress) 
 		fmt.Sprintf("%.1f", p.PercentComplete),
 		breakdown,
 	})
+}
+
+// ============================================
+// Page / PageLabel / PageRevision formatters
+// ============================================
+
+// pageRowTitle indents the title by depth so the flat list reads like a
+// tree — matches the `ws page list` help promise (id / depth-indented
+// title / slug / updated).
+func pageRowTitle(p *Page) string {
+	indent := strings.Repeat("  ", p.Depth)
+	return indent + p.Title
+}
+
+func (o *Output) printPagesTable(w *tabwriter.Writer, pages []Page) {
+	_, _ = fmt.Fprintln(w, "ID\tTITLE\tSLUG\tUPDATED")
+	_, _ = fmt.Fprintln(w, "--\t-----\t----\t-------")
+	for i := range pages {
+		p := &pages[i]
+		title := truncateString(pageRowTitle(p), 60)
+		_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%s\n", p.ID, title, p.Slug, p.UpdatedAt.Format("2006-01-02 15:04"))
+	}
+}
+
+func (o *Output) printPageDetailTable(w *tabwriter.Writer, p *Page) {
+	_, _ = fmt.Fprintf(w, "ID:\t%d\n", p.ID)
+	_, _ = fmt.Fprintf(w, "Title:\t%s\n", p.Title)
+	_, _ = fmt.Fprintf(w, "Slug:\t%s\n", p.Slug)
+	if p.ParentID != nil {
+		_, _ = fmt.Fprintf(w, "Parent:\t%d\n", *p.ParentID)
+	}
+	_, _ = fmt.Fprintf(w, "Depth:\t%d\n", p.Depth)
+	if p.Path != "" {
+		_, _ = fmt.Fprintf(w, "Path:\t%s\n", p.Path)
+	}
+	if p.IsHome {
+		_, _ = fmt.Fprintf(w, "Home:\tyes\n")
+	}
+	_, _ = fmt.Fprintf(w, "Created:\t%s\n", p.CreatedAt.Format(time.RFC3339))
+	_, _ = fmt.Fprintf(w, "Updated:\t%s\n", p.UpdatedAt.Format(time.RFC3339))
+	if p.Excerpt != "" {
+		_, _ = fmt.Fprintf(w, "Excerpt:\t%s\n", truncateString(p.Excerpt, 100))
+	}
+	if len(p.Labels) > 0 {
+		names := make([]string, 0, len(p.Labels))
+		for _, l := range p.Labels {
+			names = append(names, l.Name)
+		}
+		_, _ = fmt.Fprintf(w, "Labels:\t%s\n", strings.Join(names, ", "))
+	}
+}
+
+func (o *Output) printPageLabelsTable(w *tabwriter.Writer, labels []PageLabel) {
+	_, _ = fmt.Fprintln(w, "ID\tNAME\tCOLOR")
+	_, _ = fmt.Fprintln(w, "--\t----\t-----")
+	for _, l := range labels {
+		_, _ = fmt.Fprintf(w, "%d\t%s\t%s\n", l.ID, l.Name, l.Color)
+	}
+}
+
+func (o *Output) printPageLabelDetailTable(w *tabwriter.Writer, l *PageLabel) {
+	_, _ = fmt.Fprintf(w, "ID:\t%d\n", l.ID)
+	_, _ = fmt.Fprintf(w, "Name:\t%s\n", l.Name)
+	_, _ = fmt.Fprintf(w, "Color:\t%s\n", l.Color)
+	_, _ = fmt.Fprintf(w, "Workspace:\t%d\n", l.WorkspaceID)
+	_, _ = fmt.Fprintf(w, "Created:\t%s\n", l.CreatedAt.Format(time.RFC3339))
+	_, _ = fmt.Fprintf(w, "Updated:\t%s\n", l.UpdatedAt.Format(time.RFC3339))
+}
+
+func (o *Output) printPageRevisionsTable(w *tabwriter.Writer, revs []PageRevision) {
+	_, _ = fmt.Fprintln(w, "REVISION\tCHANGE_TYPE\tAUTHOR\tCREATED")
+	_, _ = fmt.Fprintln(w, "--------\t-----------\t------\t-------")
+	for _, r := range revs {
+		_, _ = fmt.Fprintf(w, "%d\t%s\t%d\t%s\n", r.RevisionNumber, r.ChangeType, r.CreatedBy, r.CreatedAt.Format("2006-01-02 15:04"))
+	}
+}
+
+func (o *Output) printPagesCSV(w *csv.Writer, pages []Page) {
+	_ = w.Write([]string{"ID", "TITLE", "SLUG", "DEPTH", "PARENT_ID", "UPDATED"})
+	for i := range pages {
+		p := &pages[i]
+		parent := ""
+		if p.ParentID != nil {
+			parent = fmt.Sprintf("%d", *p.ParentID)
+		}
+		_ = w.Write([]string{
+			fmt.Sprintf("%d", p.ID),
+			p.Title,
+			p.Slug,
+			fmt.Sprintf("%d", p.Depth),
+			parent,
+			p.UpdatedAt.Format(time.RFC3339),
+		})
+	}
+}
+
+func (o *Output) printPageCSV(w *csv.Writer, p *Page) {
+	parent := ""
+	if p.ParentID != nil {
+		parent = fmt.Sprintf("%d", *p.ParentID)
+	}
+	_ = w.Write([]string{"ID", "TITLE", "SLUG", "PARENT_ID", "DEPTH", "PATH", "EXCERPT", "CREATED", "UPDATED"})
+	_ = w.Write([]string{
+		fmt.Sprintf("%d", p.ID),
+		p.Title,
+		p.Slug,
+		parent,
+		fmt.Sprintf("%d", p.Depth),
+		p.Path,
+		p.Excerpt,
+		p.CreatedAt.Format(time.RFC3339),
+		p.UpdatedAt.Format(time.RFC3339),
+	})
+}
+
+func (o *Output) printPageLabelsCSV(w *csv.Writer, labels []PageLabel) {
+	_ = w.Write([]string{"ID", "NAME", "COLOR", "WORKSPACE_ID"})
+	for _, l := range labels {
+		_ = w.Write([]string{fmt.Sprintf("%d", l.ID), l.Name, l.Color, fmt.Sprintf("%d", l.WorkspaceID)})
+	}
+}
+
+func (o *Output) printPageLabelCSV(w *csv.Writer, l *PageLabel) {
+	_ = w.Write([]string{"ID", "NAME", "COLOR", "WORKSPACE_ID", "CREATED", "UPDATED"})
+	_ = w.Write([]string{
+		fmt.Sprintf("%d", l.ID),
+		l.Name,
+		l.Color,
+		fmt.Sprintf("%d", l.WorkspaceID),
+		l.CreatedAt.Format(time.RFC3339),
+		l.UpdatedAt.Format(time.RFC3339),
+	})
+}
+
+func (o *Output) printPageRevisionsCSV(w *csv.Writer, revs []PageRevision) {
+	_ = w.Write([]string{"REVISION", "PAGE_ID", "CHANGE_TYPE", "AUTHOR_ID", "TITLE", "CREATED"})
+	for _, r := range revs {
+		_ = w.Write([]string{
+			fmt.Sprintf("%d", r.RevisionNumber),
+			fmt.Sprintf("%d", r.PageID),
+			r.ChangeType,
+			fmt.Sprintf("%d", r.CreatedBy),
+			r.Title,
+			r.CreatedAt.Format(time.RFC3339),
+		})
+	}
 }
