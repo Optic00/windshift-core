@@ -22,7 +22,23 @@ export default {
     menuRename: 'Rename',
     menuMove: 'Move',
     menuPermissions: 'Permissions',
+    menuHistory: 'History',
     menuArchive: 'Archive',
+
+    // Revision history drawer
+    history: {
+      title: 'Revision history',
+      empty: 'No revisions yet.',
+      loadError: 'Failed to load revision history.',
+      restoreTitle: 'Restore revision #{rev}?',
+      restoreMessage:
+        'This will replace the current page body with the content of the selected revision and create a new revision recording the restore.',
+      restoreConfirm: 'Restore',
+      restoreAction: 'Restore #{rev}',
+      restoring: 'Restoring…',
+      restoredOK: 'Restored revision #{rev}.',
+      restoreError: 'Failed to restore revision.',
+    },
 
     // Page pane
     pageLoading: 'Loading page…',

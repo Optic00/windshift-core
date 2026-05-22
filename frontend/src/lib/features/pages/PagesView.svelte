@@ -5,6 +5,7 @@
   import LazyMilkdownEditor from '../../editors/LazyMilkdownEditor.svelte';
   import PagePermissionsDialog from './PagePermissionsDialog.svelte';
   import PageMoveDialog from './PageMoveDialog.svelte';
+  import PagesHistoryDrawer from './PagesHistoryDrawer.svelte';
   import PageLabelPicker from './PageLabelPicker.svelte';
   import PageWorkItemsButton from './PageWorkItemsButton.svelte';
   import { IconX } from '@tabler/icons-svelte-runes';
@@ -51,6 +52,7 @@
   let loadPageRequestSeq = 0;
   let permsDialogOpen = $state(false);
   let moveDialogOpen = $state(false);
+  let historyDrawerOpen = $state(false);
   let titleInputEl = $state(null);
 
   // 'idle' = nothing to save; 'pending' = waiting for the debounce
@@ -387,6 +389,13 @@
       title: t('pages.menuPermissions'),
       onClick: () => (permsDialogOpen = true),
     },
+    {
+      id: 'history',
+      type: 'regular',
+      title: t('pages.menuHistory'),
+      testid: 'page-menu-history',
+      onClick: () => (historyDrawerOpen = true),
+    },
     { id: 'divider', type: 'divider' },
     {
       id: 'archive',
@@ -619,6 +628,14 @@
     page={selectedPage}
     onMoved={async () => {
       pagesTreeRefresh.bump();
+      if (selectedPage) await loadPage(selectedPage.id);
+    }}
+  />
+  <PagesHistoryDrawer
+    bind:open={historyDrawerOpen}
+    {workspaceId}
+    pageId={selectedPage.id}
+    onRestored={async () => {
       if (selectedPage) await loadPage(selectedPage.id);
     }}
   />
