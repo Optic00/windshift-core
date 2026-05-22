@@ -51,6 +51,11 @@
   // succeeded; 'error' = last write failed.
   let saveStatus = $state('idle');
   let saveTimer = null;
+  // Guards flushSave against re-entry while a save is awaiting the
+  // server. Without this, a debounce that fires during an in-flight
+  // request would issue a second concurrent save whose response can
+  // arrive out of order and clobber state.
+  let saveInFlight = false;
 
   // 'edit' (default) shows the formatting toolbar + lets the user type.
   // 'read' renders the body read-only, hides the toolbar (via
@@ -174,10 +179,18 @@
    * Push the current draft to the server immediately. Captures the
    * page id + draft contents up front so a concurrent navigation
    * (which would reassign selectedPage to a different row) cannot let
-   * the response overwrite the wrong page's local state.
+   * the response overwrite the wrong page's local state, and so a
+   * slow response cannot clobber keystrokes typed during the in-flight
+   * window — we only fold the response back into draftTitle /
+   * draftContent when the draft is still identical to what we sent.
    */
   async function flushSave() {
     if (!selectedPage || !dirty) return;
+    // Single-flight: a debounce that fires while a save is already
+    // in flight should defer rather than race. The pending input has
+    // already kept dirty=true, so the post-request reschedule below
+    // will pick it up.
+    if (saveInFlight) return;
     if (saveTimer) {
       clearTimeout(saveTimer);
       saveTimer = null;
@@ -187,6 +200,7 @@
     const contentSnap = draftContent;
     saveStatus = 'saving';
     error = '';
+    saveInFlight = true;
     try {
       const updated = await api.pages.updatePage(workspaceId, targetId, {
         title: titleSnap,
@@ -196,15 +210,29 @@
       // the same page; a fast-switching user has already moved on.
       if (selectedPage?.id === targetId) {
         selectedPage = updated;
-        draftTitle = updated.title;
-        draftContent = updated.content;
-        dirty = false;
-        saveStatus = 'saved';
+        // If the user kept typing while the request was in flight,
+        // the local draft is newer than what the server just echoed
+        // back. Preserve the newer draft and let the next debounce
+        // ship it; only clear `dirty` when the snapshot we sent is
+        // still the current draft.
+        const stillClean =
+          draftTitle === titleSnap && draftContent === contentSnap;
+        if (stillClean) {
+          draftTitle = updated.title;
+          draftContent = updated.content;
+          dirty = false;
+          saveStatus = 'saved';
+        } else {
+          saveStatus = 'pending';
+          scheduleAutoSave();
+        }
       }
       pagesTreeRefresh.bump();
     } catch (err) {
       saveStatus = 'error';
       error = err?.message || t('pages.errorSave');
+    } finally {
+      saveInFlight = false;
     }
   }
 
