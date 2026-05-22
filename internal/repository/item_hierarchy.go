@@ -9,6 +9,8 @@ import (
 	"windshift/internal/models"
 )
 
+const maxItemHierarchyDepth = 30
+
 // GetChildren returns direct children of an item
 func (r *ItemRepository) GetChildren(parentID int) ([]*models.Item, error) {
 	rows, err := r.db.Query(`
@@ -36,8 +38,16 @@ func (r *ItemRepository) GetChildren(parentID int) ([]*models.Item, error) {
 	return scanItemsWithDetails(rows)
 }
 
-// GetDescendants returns all descendants of an item using recursive CTE
+// GetDescendants returns all descendants of an item using a capped recursive CTE.
 func (r *ItemRepository) GetDescendants(parentID int) ([]*models.Item, error) {
+	return r.GetDescendantsWithMaxDepth(parentID, maxItemHierarchyDepth)
+}
+
+// GetDescendantsWithMaxDepth returns descendants up to maxDepth levels deep.
+func (r *ItemRepository) GetDescendantsWithMaxDepth(parentID, maxDepth int) ([]*models.Item, error) {
+	if maxDepth <= 0 || maxDepth > maxItemHierarchyDepth {
+		maxDepth = maxItemHierarchyDepth
+	}
 	rows, err := r.db.Query(`
 		WITH RECURSIVE descendants AS (
 			SELECT id, parent_id, 1 as level
@@ -47,6 +57,7 @@ func (r *ItemRepository) GetDescendants(parentID int) ([]*models.Item, error) {
 			SELECT i.id, i.parent_id, d.level + 1
 			FROM items i
 			INNER JOIN descendants d ON i.parent_id = d.id
+			WHERE d.level < ?
 		)
 		SELECT i.id, i.workspace_id, i.workspace_item_number, i.item_type_id, i.title, i.description,
 		       i.status_id, i.priority_id, i.due_date, i.is_task, i.iteration_id,
@@ -64,7 +75,7 @@ func (r *ItemRepository) GetDescendants(parentID int) ([]*models.Item, error) {
 		LEFT JOIN statuses s ON i.status_id = s.id
 		LEFT JOIN item_types it ON i.item_type_id = it.id
 		ORDER BY d.level, i.frac_index
-	`, parentID)
+	`, parentID, maxDepth)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get descendants: %w", err)
 	}
@@ -84,6 +95,7 @@ func (r *ItemRepository) GetAncestors(itemID int) ([]*models.Item, error) {
 			SELECT i.id, i.parent_id, a.level + 1
 			FROM items i
 			INNER JOIN ancestors a ON i.id = a.parent_id
+			WHERE a.level < ?
 		)
 		SELECT i.id, i.workspace_id, i.workspace_item_number, i.item_type_id, i.title, i.description,
 		       i.status_id, i.priority_id, i.due_date, i.is_task, i.iteration_id,
@@ -101,13 +113,90 @@ func (r *ItemRepository) GetAncestors(itemID int) ([]*models.Item, error) {
 		LEFT JOIN item_types it ON i.item_type_id = it.id
 		WHERE a.level > 0
 		ORDER BY a.level DESC
-	`, itemID)
+	`, itemID, maxItemHierarchyDepth)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get ancestors: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
 	return scanItemsWithDetails(rows)
+}
+
+// GetAncestorsForHierarchy returns ancestors using the lightweight projection
+// consumed by HierarchyService. It intentionally avoids status/priority joins
+// so cycle-safety tests and callers with minimal hierarchy fixtures do not need
+// the full item-detail schema.
+func (r *ItemRepository) GetAncestorsForHierarchy(itemID, maxDepth int) ([]models.Item, error) {
+	if maxDepth <= 0 || maxDepth > maxItemHierarchyDepth {
+		maxDepth = maxItemHierarchyDepth
+	}
+	rows, err := r.db.Query(`
+		WITH RECURSIVE ancestors AS (
+			SELECT i.id, i.workspace_id, i.workspace_item_number, i.item_type_id, i.title, i.description, i.is_task,
+			       i.assignee_id, i.creator_id, i.custom_field_values, i.parent_id,
+			       i.created_at, i.updated_at,
+			       w.name as workspace_name, w.key as workspace_key, it.name as item_type_name, it.color as item_type_color, it.icon as item_type_icon,
+			       0 as level
+			FROM items i
+			JOIN workspaces w ON i.workspace_id = w.id
+			LEFT JOIN item_types it ON i.item_type_id = it.id
+			WHERE i.id = ?
+
+			UNION ALL
+
+			SELECT p.id, p.workspace_id, p.workspace_item_number, p.item_type_id, p.title, p.description, p.is_task,
+			       p.assignee_id, p.creator_id, p.custom_field_values, p.parent_id,
+			       p.created_at, p.updated_at,
+			       w.name as workspace_name, w.key as workspace_key, it.name as item_type_name, it.color as item_type_color, it.icon as item_type_icon,
+			       a.level + 1 as level
+			FROM items p
+			JOIN workspaces w ON p.workspace_id = w.id
+			LEFT JOIN item_types it ON p.item_type_id = it.id
+			JOIN ancestors a ON p.id = a.parent_id
+			WHERE a.level < ?
+		)
+		SELECT id, workspace_id, workspace_item_number, item_type_id, title, description, is_task,
+		       assignee_id, creator_id, custom_field_values, parent_id,
+		       created_at, updated_at,
+		       workspace_name, workspace_key, item_type_name, item_type_color, item_type_icon, level
+		FROM ancestors
+		WHERE id != ?
+		ORDER BY level DESC
+	`, itemID, maxDepth, itemID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query ancestors: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var ancestors []models.Item
+	for rows.Next() {
+		var item models.Item
+		var itemTypeID, assigneeID, creatorID, parentID sql.NullInt64
+		var customFieldValuesJSON sql.NullString
+		var workspaceName, workspaceKey, itemTypeName, itemTypeColor, itemTypeIcon sql.NullString
+		var level int
+		if err := rows.Scan(
+			&item.ID, &item.WorkspaceID, &item.WorkspaceItemNumber, &itemTypeID, &item.Title, &item.Description, &item.IsTask,
+			&assigneeID, &creatorID, &customFieldValuesJSON, &parentID,
+			&item.CreatedAt, &item.UpdatedAt,
+			&workspaceName, &workspaceKey, &itemTypeName, &itemTypeColor, &itemTypeIcon, &level,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan ancestor: %w", err)
+		}
+		_ = level
+		_ = itemTypeColor
+		_ = itemTypeIcon
+		assignNullableInt(&item.ItemTypeID, itemTypeID)
+		assignNullableInt(&item.AssigneeID, assigneeID)
+		assignNullableInt(&item.CreatorID, creatorID)
+		assignNullableInt(&item.ParentID, parentID)
+		assignNullableString(&item.WorkspaceName, workspaceName)
+		assignNullableString(&item.WorkspaceKey, workspaceKey)
+		assignNullableString(&item.ItemTypeName, itemTypeName)
+		item.CustomFieldValues = parseCustomFieldsJSON(customFieldValuesJSON)
+		ancestors = append(ancestors, item)
+	}
+	return ancestors, rows.Err()
 }
 
 // GetRootItems returns all root items (no parent) for a workspace
@@ -141,13 +230,14 @@ func (r *ItemRepository) GetRootItems(workspaceID int) ([]*models.Item, error) {
 func (r *ItemRepository) GetDescendantIDs(parentID int) ([]int, error) {
 	rows, err := r.db.Query(`
 		WITH RECURSIVE descendants AS (
-			SELECT id FROM items WHERE parent_id = ?
+			SELECT id, 1 as level FROM items WHERE parent_id = ?
 			UNION ALL
-			SELECT i.id FROM items i
+			SELECT i.id, d.level + 1 FROM items i
 			INNER JOIN descendants d ON i.parent_id = d.id
+			WHERE d.level < ?
 		)
 		SELECT id FROM descendants
-	`, parentID)
+	`, parentID, maxItemHierarchyDepth)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get descendant ids: %w", err)
 	}

@@ -8,6 +8,7 @@ import (
 
 	"windshift/internal/constants"
 	"windshift/internal/database"
+	"windshift/internal/repository"
 )
 
 // ItemValidationParams contains parameters for validating item creation
@@ -165,10 +166,8 @@ func validateRelatedWorkItem(db database.Database, workspaceID, userID, relatedW
 		return &ItemValidationResult{Valid: false, Error: "Personal tasks must be created in your own personal workspace"}
 	}
 
-	// Verify the related work item exists
-	var relatedWorkspaceID int
-	err = db.QueryRow("SELECT workspace_id FROM items WHERE id = ?", relatedWorkItemID).Scan(&relatedWorkspaceID)
-	if err != nil {
+	// Verify the related work item exists.
+	if _, err := repository.NewItemRepository(db).GetWorkspaceID(relatedWorkItemID); err != nil {
 		return &ItemValidationResult{Valid: false, Error: "Related work item not found or access denied"}
 	}
 

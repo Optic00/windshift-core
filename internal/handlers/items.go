@@ -955,27 +955,7 @@ func (h *ItemHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Delete using repository
-	tx, err := h.db.Begin()
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if err := repo.DeleteItemLinks(tx, id); err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	if err := repo.ClearWorklogItemReferences(tx, id); err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	if err := repo.Delete(tx, id); err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	if err := tx.Commit(); err != nil {
+	if err := services.NewItemCRUDService(h.db).DeleteSingle(id); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
@@ -1350,99 +1330,20 @@ func (h *ItemHandler) Copy(w http.ResponseWriter, r *http.Request) {
 	// Create copy title
 	copyTitle := utils.SanitizeTitle(fmt.Sprintf("COPY - %s", originalItem.Title))
 
-	// Run the copy as one atomic transaction: read MAX(frac_index)
-	// (locked on Postgres), compute the next key, INSERT the copy,
-	// carry milestones over, commit. Retry the whole tx on a
-	// frac_index unique-violation (concurrent writer beat us to the
-	// generated key); each retry re-reads MAX inside the new tx, so
-	// no cache is needed.
-	driverName := h.db.GetDriverName()
-	const maxRetries = 5
-	var copiedItemID int
-	var newItem *models.Item
-	var lastErr error
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		copiedItemID, newItem, lastErr = func() (int, *models.Item, error) {
-			tx, err := h.db.Begin()
-			if err != nil {
-				return 0, nil, err
-			}
-			defer func() { _ = tx.Rollback() }()
-
-			newFracIndex, err := services.GenerateFracIndexForNewItem(tx, driverName)
-			if err != nil {
-				return 0, nil, err
-			}
-
-			nextNum, err := repo.GetNextWorkspaceItemNumber(tx, originalItem.WorkspaceID)
-			if err != nil {
-				return 0, nil, err
-			}
-
-			item := &models.Item{
-				WorkspaceID:         originalItem.WorkspaceID,
-				WorkspaceItemNumber: nextNum,
-				ItemTypeID:          originalItem.ItemTypeID,
-				Title:               copyTitle,
-				Description:         originalItem.Description,
-				StatusID:            originalItem.StatusID,
-				PriorityID:          originalItem.PriorityID,
-				DueDate:             originalItem.DueDate,
-				StartDate:           originalItem.StartDate,
-				EndDate:             originalItem.EndDate,
-				AssigneeID:          originalItem.AssigneeID,
-				CreatorID:           &user.ID,
-				ParentID:            originalItem.ParentID,
-				TimeProjectID:       originalItem.TimeProjectID,
-				CustomFieldValues:   originalItem.CustomFieldValues,
-				FracIndex:           &newFracIndex,
-			}
-
-			id, err := repo.Create(tx, item)
-			if err != nil {
-				return 0, nil, err
-			}
-
-			now := time.Now()
-			if _, err := tx.Exec(`
-				INSERT INTO item_milestones (item_id, milestone_id, created_at)
-				SELECT ?, milestone_id, ? FROM item_milestones WHERE item_id = ?
-			`, id, now, originalItem.ID); err != nil {
-				return 0, nil, err
-			}
-
-			if err := tx.Commit(); err != nil {
-				return 0, nil, err
-			}
-			return id, item, nil
-		}()
-
-		if lastErr == nil {
-			break
-		}
-		if !services.IsFracIndexUniqueViolation(lastErr) {
-			respondInternalError(w, r, lastErr)
-			return
-		}
-		slog.Warn("frac_index unique violation on copy, retrying",
-			slog.Int("attempt", attempt+1),
-			slog.Int("source_item_id", originalItem.ID),
-			slog.String("component", "fracindex"))
-		if attempt == maxRetries-1 {
-			respondInternalError(w, r, fmt.Errorf("copy item %d failed after %d frac_index retries: %w", originalItem.ID, maxRetries, lastErr))
-			return
-		}
+	result, err := services.NewItemCRUDService(h.db).Copy(id, services.CopyOptions{
+		NewTitle:  copyTitle,
+		CreatorID: user.ID,
+	})
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
 	}
 
-	// Record item creation history for the copied item
-	updateService := services.NewItemUpdateService(h.db)
-	if err := updateService.RecordItemCreationHistory(h.db, copiedItemID, user.ID); err != nil {
-		slog.Warn("failed to record copied item creation history", slog.Int("item_id", copiedItemID), slog.Any("error", err))
-		// Don't fail request, just log the error
+	newItem, err := repo.FindByID(result.NewItemID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
 	}
-
-	// Return the copied item
-	newItem.ID = copiedItemID
 	respondJSONOK(w, newItem)
 }
 

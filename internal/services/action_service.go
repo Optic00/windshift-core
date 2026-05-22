@@ -994,8 +994,7 @@ func (as *ActionService) currentItemFieldValue(ctx *models.ExecutionContext, fie
 		}
 	}
 	if itemID != 0 && repository.IsAllowedItemColumn(fieldName) {
-		var val interface{}
-		if err := as.db.QueryRow(`SELECT `+fieldName+` FROM items WHERE id = ?`, itemID).Scan(&val); err == nil {
+		if val, err := as.itemRepo.GetAllowedColumnValue(itemID, fieldName); err == nil {
 			return val
 		}
 	}
@@ -1169,10 +1168,10 @@ func (as *ActionService) executeSetFieldColumn(ctx *models.ExecutionContext, ste
 	}
 
 	// Get current field value for event emission (best effort).
-	// Safe to concatenate config.FieldName because it was just validated against the allowlist.
 	var oldValue interface{}
-	row := as.db.QueryRow(`SELECT `+config.FieldName+` FROM items WHERE id = ?`, itemID)
-	if err := row.Scan(&oldValue); err != nil {
+	if val, err := as.itemRepo.GetAllowedColumnValue(itemID, config.FieldName); err == nil {
+		oldValue = val
+	} else {
 		slog.Debug("failed to get current field value for cascade event",
 			slog.String("component", "actions"),
 			slog.String("field_name", config.FieldName),

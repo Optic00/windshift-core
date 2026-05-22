@@ -25,36 +25,32 @@ func NewItemRepository(db database.Database) *ItemRepository {
 	return &ItemRepository{db: db}
 }
 
-// FindByID loads an item by ID with all fields (no joins)
-func (r *ItemRepository) FindByID(id int) (*models.Item, error) {
+const itemBaseColumns = `id, workspace_id, workspace_item_number, item_type_id, title, description, status_id,
+       priority_id, due_date, start_date, end_date, is_task, iteration_id, project_id, inherit_project,
+       assignee_id, creator_id, creator_portal_customer_id, custom_field_values, parent_id, related_work_item_id,
+       story_points, frac_index, created_at, updated_at`
+
+func scanItemBase(scanner interface {
+	Scan(dest ...interface{}) error
+}) (*models.Item, error) {
 	var item models.Item
 	var customFieldValuesJSON sql.NullString
 	var itemTypeID, parentID, statusID, iterationID, projectID, priorityID sql.NullInt64
 	var assigneeID, creatorID, creatorPortalCustomerID, relatedWorkItemID sql.NullInt64
 	var dueDate, startDate, endDate sql.NullTime
 	var storyPoints sql.NullFloat64
+	var fracIndex sql.NullString
 
-	err := r.db.QueryRow(`
-		SELECT id, workspace_id, workspace_item_number, item_type_id, title, description, status_id,
-		       priority_id, due_date, start_date, end_date, is_task, iteration_id, project_id, inherit_project,
-		       assignee_id, creator_id, creator_portal_customer_id, custom_field_values, parent_id, related_work_item_id,
-		       story_points, frac_index, created_at, updated_at
-		FROM items WHERE id = ?
-	`, id).Scan(
+	err := scanner.Scan(
 		&item.ID, &item.WorkspaceID, &item.WorkspaceItemNumber, &itemTypeID, &item.Title, &item.Description,
 		&statusID, &priorityID, &dueDate, &startDate, &endDate, &item.IsTask, &iterationID,
 		&projectID, &item.InheritProject, &assigneeID, &creatorID, &creatorPortalCustomerID, &customFieldValuesJSON, &parentID,
-		&relatedWorkItemID, &storyPoints, &item.FracIndex, &item.CreatedAt, &item.UpdatedAt,
+		&relatedWorkItemID, &storyPoints, &fracIndex, &item.CreatedAt, &item.UpdatedAt,
 	)
-
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to find item: %w", err)
+		return nil, err
 	}
 
-	// Handle nullable fields
 	assignNullableInt(&item.ItemTypeID, itemTypeID)
 	assignNullableInt(&item.ParentID, parentID)
 	assignNullableInt(&item.StatusID, statusID)
@@ -65,15 +61,51 @@ func (r *ItemRepository) FindByID(id int) (*models.Item, error) {
 	assignNullableInt(&item.CreatorID, creatorID)
 	assignNullableInt(&item.CreatorPortalCustomerID, creatorPortalCustomerID)
 	assignNullableInt(&item.RelatedWorkItemID, relatedWorkItemID)
-
 	assignNullableTime(&item.DueDate, dueDate)
 	assignNullableTime(&item.StartDate, startDate)
 	assignNullableTime(&item.EndDate, endDate)
 	assignNullableFloat64(&item.StoryPoints, storyPoints)
-
+	assignNullableStringPtr(&item.FracIndex, fracIndex)
 	item.CustomFieldValues = parseCustomFieldsJSON(customFieldValuesJSON)
 
 	return &item, nil
+}
+
+func assignNullableStringPtr(dest **string, src sql.NullString) {
+	if src.Valid {
+		val := src.String
+		*dest = &val
+	}
+}
+
+// FindByID loads an item by ID with all fields (no joins)
+func (r *ItemRepository) FindByID(id int) (*models.Item, error) {
+	item, err := scanItemBase(r.db.QueryRow(`SELECT `+itemBaseColumns+` FROM items WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to find item: %w", err)
+	}
+	return item, nil
+}
+
+// FindByIDForUpdate loads an item by ID inside a transaction. On Postgres it
+// appends FOR UPDATE so update workflows can lock the row while validating and
+// mutating it. SQLite ignores row-level locking and uses the plain select.
+func (r *ItemRepository) FindByIDForUpdate(tx database.Tx, id int) (*models.Item, error) {
+	query := `SELECT ` + itemBaseColumns + ` FROM items WHERE id = ?`
+	if r.db.GetDriverName() == "postgres" {
+		query += " FOR UPDATE"
+	}
+	item, err := scanItemBase(tx.QueryRow(query, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to find item for update: %w", err)
+	}
+	return item, nil
 }
 
 // ItemWithWorkspaceStatus includes workspace active status for permission checks
@@ -527,6 +559,21 @@ var allowedItemColumns = map[string]bool{
 // dynamic SELECT/UPDATE statements, e.g., action nodes).
 func IsAllowedItemColumn(col string) bool {
 	return allowedItemColumns[col]
+}
+
+// GetAllowedColumnValue returns one whitelisted items-table column value for
+// callers that need dynamic field access (for example action nodes). Keeping
+// the allowlist at the repository boundary prevents ad-hoc dynamic SELECTs
+// from spreading through services.
+func (r *ItemRepository) GetAllowedColumnValue(itemID int, col string) (interface{}, error) {
+	if !allowedItemColumns[col] {
+		return nil, fmt.Errorf("unknown item column: %s", col)
+	}
+	var val interface{}
+	if err := r.db.QueryRow(`SELECT `+col+` FROM items WHERE id = ?`, itemID).Scan(&val); err != nil {
+		return nil, fmt.Errorf("get item column %s: %w", col, err)
+	}
+	return val, nil
 }
 
 // UpdateFields updates only the specified columns of an item.

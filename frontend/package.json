@@ -46,7 +46,7 @@
   "dependencies": {
     "@atlaskit/pragmatic-drag-and-drop": "^1.7.6",
     "@atlaskit/pragmatic-drag-and-drop-hitbox": "^1.1.0",
-    "@excalidraw/excalidraw": "0.18.0",
+    "@excalidraw/excalidraw": "0.18.1",
     "@fontsource/geist-sans": "^5.2.5",
     "@fontsource/inter": "^5.2.8",
     "@github/hotkey": "^3.1.1",
@@ -85,6 +85,7 @@
       "mermaid": "^10.9.6",
       "nanoid": "^5.0.9"
     },
-    "devalue": "^5.8.1"
+    "devalue": "^5.8.1",
+    "lodash-es": "^4.18.1"
   }
 }

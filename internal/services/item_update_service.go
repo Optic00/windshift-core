@@ -1,7 +1,6 @@
 package services
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -215,96 +214,19 @@ func (s *ItemUpdateService) UpdateItem(req UpdateItemRequest) (*UpdateItemResult
 	}, nil
 }
 
-// loadItemInTx loads an item inside a transaction. On Postgres, appends FOR UPDATE to lock the row.
+// loadItemInTx loads an item inside a transaction. On Postgres, the repository
+// appends FOR UPDATE to lock the row while validation and mutation run.
 func (s *ItemUpdateService) loadItemInTx(tx database.Tx, itemID int) (*models.Item, error) {
-	query := `
-		SELECT id, workspace_id, workspace_item_number, item_type_id, title, description, status_id,
-		       priority_id, due_date, start_date, end_date, is_task, iteration_id, project_id, inherit_project,
-		       assignee_id, creator_id, custom_field_values, parent_id, related_work_item_id,
-		       story_points, created_at, updated_at
-		FROM items WHERE id = ?`
-
-	if s.db.GetDriverName() == "postgres" {
-		query += " FOR UPDATE"
-	}
-
-	item, err := scanItemBaseFields(tx.QueryRow(query, itemID))
-	if errors.Is(err, sql.ErrNoRows) {
+	item, err := repository.NewItemRepository(s.db).FindByIDForUpdate(tx, itemID)
+	if errors.Is(err, repository.ErrNotFound) {
 		return nil, fmt.Errorf("item not found")
 	}
-	if err != nil {
-		return nil, err
-	}
-
-	return item, nil
+	return item, err
 }
 
-// loadItemWithJoins loads an item with all joined data for response
+// loadItemWithJoins loads an item with all joined data for response.
 func (s *ItemUpdateService) loadItemWithJoins(itemID int) (*models.Item, error) {
-	var item models.Item
-	var customFieldValuesJSON sql.NullString
-	var statusID, priorityID, projectID sql.NullInt64
-	var projectName sql.NullString
-	var assigneeID, creatorID sql.NullInt64
-	var assigneeName, assigneeEmail, assigneeAvatar, creatorName, creatorEmail sql.NullString
-	var priorityName, priorityIcon, priorityColor sql.NullString
-
-	err := s.db.QueryRow(`
-		SELECT i.id, i.workspace_id, i.workspace_item_number, i.title, i.description, i.status_id, i.priority_id,
-		       i.is_task, i.project_id, i.inherit_project, i.assignee_id, i.creator_id,
-		       i.custom_field_values, i.created_at, i.updated_at,
-		       w.name as workspace_name, w.key as workspace_key,
-		       proj.name as project_name,
-		       assignee.first_name || ' ' || assignee.last_name as assignee_name, assignee.email as assignee_email, assignee.avatar_url as assignee_avatar,
-		       creator.first_name || ' ' || creator.last_name as creator_name, creator.email as creator_email,
-		       pri.name as priority_name, pri.icon as priority_icon, pri.color as priority_color
-		FROM items i
-		JOIN workspaces w ON i.workspace_id = w.id
-		LEFT JOIN time_projects proj ON i.project_id = proj.id
-		LEFT JOIN users assignee ON i.assignee_id = assignee.id
-		LEFT JOIN users creator ON i.creator_id = creator.id
-		LEFT JOIN priorities pri ON i.priority_id = pri.id
-		WHERE i.id = ?
-	`, itemID).Scan(
-		&item.ID, &item.WorkspaceID, &item.WorkspaceItemNumber, &item.Title, &item.Description,
-		&statusID, &priorityID, &item.IsTask, &projectID, &item.InheritProject,
-		&assigneeID, &creatorID, &customFieldValuesJSON, &item.CreatedAt, &item.UpdatedAt,
-		&item.WorkspaceName, &item.WorkspaceKey, &projectName,
-		&assigneeName, &assigneeEmail, &assigneeAvatar, &creatorName, &creatorEmail,
-		&priorityName, &priorityIcon, &priorityColor,
-	)
-
-	if err != nil {
-		return nil, err
-	}
-
-	// Handle nullable ID fields
-	item.StatusID = nullInt64ToIntPtr(statusID)
-	item.PriorityID = nullInt64ToIntPtr(priorityID)
-	item.ProjectID = nullInt64ToIntPtr(projectID)
-	item.AssigneeID = nullInt64ToIntPtr(assigneeID)
-	item.CreatorID = nullInt64ToIntPtr(creatorID)
-
-	// Handle nullable string fields
-	item.ProjectName = nullStringToString(projectName)
-	item.PriorityName = nullStringToString(priorityName)
-	item.PriorityIcon = nullStringToString(priorityIcon)
-	item.PriorityColor = nullStringToString(priorityColor)
-	item.AssigneeName = nullStringToString(assigneeName)
-	item.AssigneeEmail = nullStringToString(assigneeEmail)
-	item.AssigneeAvatar = nullStringToString(assigneeAvatar)
-	item.CreatorName = nullStringToString(creatorName)
-	item.CreatorEmail = nullStringToString(creatorEmail)
-
-	parseItemCustomFieldValues(&item, customFieldValuesJSON)
-
-	// Hydrate milestones for the response.
-	holder := []models.Item{item}
-	if err := repository.NewMilestoneAttachRepository(s.db).LoadForItems(holder); err == nil {
-		item = holder[0]
-	}
-
-	return &item, nil
+	return repository.NewItemRepository(s.db).FindByIDWithDetails(itemID)
 }
 
 // hasStatusChanged checks if the status changed between two items
@@ -396,15 +318,8 @@ func (s *ItemUpdateService) RecordItemCreationHistory(db database.Database, item
 
 // recordItemCreationHistory records the initial values when an item is created
 func (s *ItemUpdateService) recordItemCreationHistory(db database.Database, itemID, userID int) error {
-	// Load the newly created item to get all its initial values
-	item, err := scanItemBaseFields(db.QueryRow(`
-		SELECT id, workspace_id, workspace_item_number, item_type_id, title, description, status_id,
-		       priority_id, due_date, start_date, end_date, is_task, iteration_id, project_id, inherit_project,
-		       assignee_id, creator_id, custom_field_values, parent_id, related_work_item_id,
-		       story_points, created_at, updated_at
-		FROM items WHERE id = ?
-	`, itemID))
-
+	// Load the newly created item to get all its initial values.
+	item, err := repository.NewItemRepository(db).FindByID(itemID)
 	if err != nil {
 		return fmt.Errorf("failed to load created item: %w", err)
 	}
@@ -483,85 +398,6 @@ func joinIntsCSV(ids []int) string {
 		parts[i] = fmt.Sprintf("%d", n)
 	}
 	return strings.Join(parts, ",")
-}
-
-// nullInt64ToIntPtr converts a sql.NullInt64 to *int
-func nullInt64ToIntPtr(n sql.NullInt64) *int {
-	if !n.Valid {
-		return nil
-	}
-	val := int(n.Int64)
-	return &val
-}
-
-// nullTimeToTimePtr converts a sql.NullTime to *time.Time
-func nullTimeToTimePtr(n sql.NullTime) *time.Time {
-	if !n.Valid {
-		return nil
-	}
-	return &n.Time
-}
-
-// nullStringToString returns the string value or empty string for a sql.NullString
-func nullStringToString(n sql.NullString) string {
-	return n.String
-}
-
-// parseItemCustomFieldValues parses JSON custom field values into the item
-func parseItemCustomFieldValues(item *models.Item, raw sql.NullString) {
-	if raw.Valid && raw.String != "" {
-		if err := json.Unmarshal([]byte(raw.String), &item.CustomFieldValues); err != nil {
-			item.CustomFieldValues = make(map[string]interface{})
-		}
-	} else {
-		item.CustomFieldValues = make(map[string]interface{})
-	}
-}
-
-// scanItemBaseFields scans the common item base query columns and populates nullable fields.
-// The query must select: id, workspace_id, workspace_item_number, item_type_id, title, description,
-// status_id, priority_id, due_date, start_date, end_date, is_task, iteration_id,
-// project_id, inherit_project, assignee_id, creator_id, custom_field_values, parent_id,
-// related_work_item_id, created_at, updated_at
-func scanItemBaseFields(scanner interface {
-	Scan(dest ...interface{}) error
-}) (*models.Item, error) {
-	var item models.Item
-	var customFieldValuesJSON sql.NullString
-	var itemTypeID, parentID, statusID, iterationID, projectID, priorityID sql.NullInt64
-	var assigneeID, creatorID, relatedWorkItemID sql.NullInt64
-	var dueDate, startDate, endDate sql.NullTime
-	var storyPoints sql.NullFloat64
-
-	err := scanner.Scan(
-		&item.ID, &item.WorkspaceID, &item.WorkspaceItemNumber, &itemTypeID, &item.Title, &item.Description,
-		&statusID, &priorityID, &dueDate, &startDate, &endDate, &item.IsTask, &iterationID,
-		&projectID, &item.InheritProject, &assigneeID, &creatorID, &customFieldValuesJSON, &parentID,
-		&relatedWorkItemID, &storyPoints, &item.CreatedAt, &item.UpdatedAt,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	item.ItemTypeID = nullInt64ToIntPtr(itemTypeID)
-	item.ParentID = nullInt64ToIntPtr(parentID)
-	item.IterationID = nullInt64ToIntPtr(iterationID)
-	item.StatusID = nullInt64ToIntPtr(statusID)
-	item.PriorityID = nullInt64ToIntPtr(priorityID)
-	item.DueDate = nullTimeToTimePtr(dueDate)
-	item.StartDate = nullTimeToTimePtr(startDate)
-	item.EndDate = nullTimeToTimePtr(endDate)
-	item.ProjectID = nullInt64ToIntPtr(projectID)
-	item.AssigneeID = nullInt64ToIntPtr(assigneeID)
-	item.CreatorID = nullInt64ToIntPtr(creatorID)
-	item.RelatedWorkItemID = nullInt64ToIntPtr(relatedWorkItemID)
-	if storyPoints.Valid {
-		item.StoryPoints = &storyPoints.Float64
-	}
-
-	parseItemCustomFieldValues(&item, customFieldValuesJSON)
-
-	return &item, nil
 }
 
 // Helper functions for converting values to strings for history

@@ -576,10 +576,6 @@ func (h *ItemLinkHandler) searchAssets(user *models.User, query string, limit in
 	return items, nil
 }
 
-func isValidLinkType(linkType string) bool {
-	return linkType == "item" || linkType == "test_case" || linkType == "asset" || linkType == "page"
-}
-
 // GetFieldLinks returns links managed by a specific custom field for a given item
 func (h *ItemLinkHandler) GetFieldLinks(w http.ResponseWriter, r *http.Request) {
 	itemID, ok := requireIDParam(w, r, "id")

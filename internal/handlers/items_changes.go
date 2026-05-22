@@ -1,13 +1,13 @@
 package handlers
 
 import (
-	"database/sql"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"windshift/internal/models"
+	"windshift/internal/repository"
 	"windshift/internal/services"
 )
 
@@ -19,11 +19,6 @@ type itemChangesResponse struct {
 	Watermark          int64 `json:"watermark"`
 	RequiresFullReload bool  `json:"requires_full_reload"`
 	MembershipDirty    bool  `json:"membership_dirty"`
-}
-
-type itemChangeRow struct {
-	ItemID  int
-	Deleted bool
 }
 
 // GetChanges handles GET /api/items/changes?since=&workspace_id=&collection_id=&sub_ql=.
@@ -78,8 +73,10 @@ func (h *ItemHandler) GetChanges(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	changeRepo := repository.NewItemChangeRepository(h.db)
+
 	if collectionID > 0 {
-		if exists, err := h.collectionExistsInWorkspace(collectionID, workspaceID); err != nil {
+		if exists, err := changeRepo.CollectionExistsInWorkspace(collectionID, workspaceID); err != nil {
 			respondInternalError(w, r, err)
 			return
 		} else if !exists {
@@ -99,7 +96,7 @@ func (h *ItemHandler) GetChanges(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	watermark, err := h.currentItemChangeWatermark(accessibleWorkspaceIDs, workspaceID)
+	watermark, err := changeRepo.CurrentWatermark(accessibleWorkspaceIDs, workspaceID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -119,7 +116,7 @@ func (h *ItemHandler) GetChanges(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	changes, err := h.queryItemChangesSince(accessibleWorkspaceIDs, workspaceID, since)
+	changes, err := changeRepo.QuerySince(accessibleWorkspaceIDs, workspaceID, since, maxDeltaChanges+1)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -197,78 +194,6 @@ func parseOptionalPathIntParam(w http.ResponseWriter, r *http.Request, name stri
 		return 0, false
 	}
 	return parsed, true
-}
-
-func (h *ItemHandler) collectionExistsInWorkspace(collectionID, workspaceID int) (bool, error) {
-	var collectionWorkspaceID sql.NullInt64
-	err := h.db.QueryRow("SELECT workspace_id FROM collections WHERE id = ?", collectionID).Scan(&collectionWorkspaceID)
-	if err == sql.ErrNoRows {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	if workspaceID > 0 && collectionWorkspaceID.Valid && int(collectionWorkspaceID.Int64) != workspaceID {
-		return false, nil
-	}
-	return true, nil
-}
-
-func (h *ItemHandler) currentItemChangeWatermark(accessibleWorkspaceIDs []int, workspaceID int) (int64, error) {
-	where, args := itemChangeScopeWhere(accessibleWorkspaceIDs, workspaceID, 0)
-	var watermark sql.NullInt64
-	err := h.db.QueryRow("SELECT COALESCE(MAX(id), 0) FROM item_change_log "+where, args...).Scan(&watermark)
-	if err != nil {
-		return 0, err
-	}
-	return watermark.Int64, nil
-}
-
-func (h *ItemHandler) queryItemChangesSince(accessibleWorkspaceIDs []int, workspaceID int, since int64) ([]itemChangeRow, error) {
-	where, args := itemChangeScopeWhere(accessibleWorkspaceIDs, workspaceID, since)
-	rows, err := h.db.Query(`
-		SELECT item_id, MAX(CASE WHEN change_type = 'delete' THEN 1 ELSE 0 END) AS deleted
-		FROM item_change_log
-		`+where+`
-		GROUP BY item_id
-		ORDER BY MAX(id) ASC
-		LIMIT ?
-	`, append(args, maxDeltaChanges+1)...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	changes := []itemChangeRow{}
-	for rows.Next() {
-		var change itemChangeRow
-		var deleted int
-		if err := rows.Scan(&change.ItemID, &deleted); err != nil {
-			return nil, err
-		}
-		change.Deleted = deleted > 0
-		changes = append(changes, change)
-	}
-	return changes, rows.Err()
-}
-
-func itemChangeScopeWhere(accessibleWorkspaceIDs []int, workspaceID int, since int64) (where string, args []interface{}) {
-	clauses := []string{}
-	if since > 0 {
-		clauses = append(clauses, "id > ?")
-		args = append(args, since)
-	}
-	if workspaceID > 0 {
-		clauses = append(clauses, "workspace_id = ?")
-		args = append(args, workspaceID)
-	} else {
-		placeholders := strings.TrimRight(strings.Repeat("?,", len(accessibleWorkspaceIDs)), ",")
-		clauses = append(clauses, "workspace_id IN ("+placeholders+")")
-		for _, id := range accessibleWorkspaceIDs {
-			args = append(args, id)
-		}
-	}
-	return "WHERE " + strings.Join(clauses, " AND "), args
 }
 
 func (h *ItemHandler) itemVisibleInDeltaScope(user *models.User, accessibleWorkspaceIDs []int, workspaceID, collectionID, itemID int, subQL string) (bool, error) {

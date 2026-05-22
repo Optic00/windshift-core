@@ -64,6 +64,31 @@ type DeleteResult struct {
 	AffectedParent *int
 }
 
+// DeleteSingle removes only the requested item and shared related rows. It
+// preserves the legacy non-cascade delete endpoint semantics; use Delete for
+// item + descendants cleanup.
+func (s *ItemCRUDService) DeleteSingle(itemID int) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if err := s.repo.DeleteItemLinks(tx, itemID); err != nil {
+		return err
+	}
+	if err := s.repo.ClearWorklogItemReferences(tx, itemID); err != nil {
+		return err
+	}
+	if err := s.repo.Delete(tx, itemID); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+	return nil
+}
+
 // Delete removes an item and all its descendants
 func (s *ItemCRUDService) Delete(itemID int) (*DeleteResult, error) {
 	// Get parent ID before deleting
@@ -142,85 +167,102 @@ type CopyResult struct {
 	CopyCount int
 }
 
-// Copy creates a copy of an item
+// Copy creates a copy of an item.
 // deadcode-keep: called by core-tests/internal/services/item_crud_service_test.go
 func (s *ItemCRUDService) Copy(itemID int, opts CopyOptions) (*CopyResult, error) {
-	// Get the source item
 	source, err := s.repo.FindByID(itemID)
 	if err != nil {
 		return nil, fmt.Errorf("source item not found: %w", err)
 	}
 
-	tx, err := s.db.Begin()
-	if err != nil {
-		return nil, fmt.Errorf("failed to begin transaction: %w", err)
+	driverName := s.db.GetDriverName()
+	const maxRetries = 5
+	var newID int
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		newID, lastErr = func() (int, error) {
+			tx, err := s.db.Begin()
+			if err != nil {
+				return 0, fmt.Errorf("failed to begin transaction: %w", err)
+			}
+			defer func() { _ = tx.Rollback() }()
+
+			fracIndex, err := GenerateFracIndexForNewItem(tx, driverName)
+			if err != nil {
+				return 0, err
+			}
+			nextNum, err := s.repo.GetNextWorkspaceItemNumber(tx, source.WorkspaceID)
+			if err != nil {
+				return 0, err
+			}
+
+			parentID := opts.NewParentID
+			if parentID == nil {
+				parentID = source.ParentID
+			}
+			newItem := &models.Item{
+				WorkspaceID:         source.WorkspaceID,
+				WorkspaceItemNumber: nextNum,
+				ItemTypeID:          source.ItemTypeID,
+				Title:               opts.NewTitle,
+				Description:         source.Description,
+				StatusID:            source.StatusID,
+				PriorityID:          source.PriorityID,
+				DueDate:             source.DueDate,
+				StartDate:           source.StartDate,
+				EndDate:             source.EndDate,
+				IsTask:              source.IsTask,
+				IterationID:         source.IterationID,
+				ProjectID:           source.ProjectID,
+				InheritProject:      source.InheritProject,
+				AssigneeID:          source.AssigneeID,
+				CreatorID:           &opts.CreatorID,
+				CustomFieldValues:   source.CustomFieldValues,
+				ParentID:            parentID,
+				RelatedWorkItemID:   source.RelatedWorkItemID,
+				StoryPoints:         source.StoryPoints,
+				FracIndex:           &fracIndex,
+			}
+
+			id, err := s.repo.Create(tx, newItem)
+			if err != nil {
+				return 0, fmt.Errorf("failed to create copy: %w", err)
+			}
+
+			now := time.Now()
+			if _, err := tx.Exec(`
+				INSERT INTO item_milestones (item_id, milestone_id, created_at)
+				SELECT ?, milestone_id, ? FROM item_milestones WHERE item_id = ?
+			`, id, now, source.ID); err != nil {
+				return 0, fmt.Errorf("failed to copy milestones: %w", err)
+			}
+
+			if err := tx.Commit(); err != nil {
+				return 0, fmt.Errorf("failed to commit transaction: %w", err)
+			}
+			return id, nil
+		}()
+		if lastErr == nil {
+			break
+		}
+		if !IsFracIndexUniqueViolation(lastErr) {
+			return nil, lastErr
+		}
+		slog.Warn("frac_index unique violation on copy, retrying",
+			slog.Int("attempt", attempt+1),
+			slog.Int("source_item_id", source.ID),
+			slog.String("component", "fracindex"))
+		if attempt == maxRetries-1 {
+			return nil, fmt.Errorf("copy item %d failed after %d frac_index retries: %w", source.ID, maxRetries, lastErr)
+		}
 	}
-	defer func() { _ = tx.Rollback() }()
 
-	// Get next item number
-	nextNum, err := s.repo.GetNextWorkspaceItemNumber(tx, source.WorkspaceID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Create the copy
-	newItem := &models.Item{
-		WorkspaceID:         source.WorkspaceID,
-		WorkspaceItemNumber: nextNum,
-		ItemTypeID:          source.ItemTypeID,
-		Title:               opts.NewTitle,
-		Description:         source.Description,
-		StatusID:            source.StatusID,
-		PriorityID:          source.PriorityID,
-		DueDate:             source.DueDate,
-		StartDate:           source.StartDate,
-		EndDate:             source.EndDate,
-		IsTask:              source.IsTask,
-		IterationID:         source.IterationID,
-		ProjectID:           source.ProjectID,
-		InheritProject:      source.InheritProject,
-		AssigneeID:          source.AssigneeID,
-		CreatorID:           &opts.CreatorID,
-		CustomFieldValues:   source.CustomFieldValues,
-		ParentID:            opts.NewParentID,
-	}
-
-	if newItem.ParentID == nil {
-		newItem.ParentID = source.ParentID
-	}
-
-	newID, err := s.repo.Create(tx, newItem)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create copy: %w", err)
-	}
-
-	// Carry over the source item's milestone set to the copy. Read fresh
-	// from item_milestones rather than trusting the caller-supplied source
-	// to be eagerly loaded.
-	now := time.Now()
-	if _, err := tx.Exec(`
-		INSERT INTO item_milestones (item_id, milestone_id, created_at)
-		SELECT ?, milestone_id, ? FROM item_milestones WHERE item_id = ?
-	`, newID, now, source.ID); err != nil {
-		return nil, fmt.Errorf("failed to copy milestones: %w", err)
-	}
-
-	copyCount := 1
-
-	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	// Record item creation history for the copied item
 	updateService := NewItemUpdateService(s.db)
 	if err := updateService.recordItemCreationHistory(s.db, newID, opts.CreatorID); err != nil {
 		slog.Warn("failed to record item creation history", "error", err, "item_id", newID)
 	}
 
-	return &CopyResult{
-		NewItemID: newID,
-		CopyCount: copyCount,
-	}, nil
+	return &CopyResult{NewItemID: newID, CopyCount: 1}, nil
 }
 
 // GetChildren returns direct children of an item
