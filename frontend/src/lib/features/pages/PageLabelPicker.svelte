@@ -143,6 +143,11 @@
     '#EF4444', // red
     '#6B7280', // gray
   ];
+
+  // True when createColor isn't one of the preset palette swatches — the
+  // 7th "custom" swatch then renders the actual color (rather than its
+  // rainbow gradient) so the user can see what they picked.
+  let customColorActive = $derived(!palette.includes(createColor));
 </script>
 
 <button
@@ -220,6 +225,24 @@
               aria-label={hex}
             ></button>
           {/each}
+          <!-- 7th swatch = custom. Renders the current createColor when it
+               isn't in the preset palette, otherwise a rainbow gradient so
+               the user knows what the button does. Clicking it opens the
+               native OS color picker via the hidden <input type="color">. -->
+          <label
+            class="swatch-btn swatch-btn--custom"
+            class:swatch-btn--active={customColorActive}
+            style={customColorActive ? `background: ${createColor};` : ''}
+            aria-label="Custom color"
+            data-testid="page-label-picker-custom-swatch"
+          >
+            <input
+              type="color"
+              class="color-input"
+              bind:value={createColor}
+              aria-label="Pick a custom color"
+            />
+          </label>
         </div>
         <button
           type="button"
@@ -370,6 +393,39 @@
     border: 2px solid transparent;
     cursor: pointer;
     padding: 0;
+  }
+
+  /* Custom-color swatch: conic-gradient rainbow when no custom color has
+     been picked yet, otherwise the parent's inline `background` wins.
+     The native <input type="color"> sits inside but is invisible — the
+     <label> wrapping it forwards the click to the OS picker. */
+  .swatch-btn--custom {
+    background: conic-gradient(
+      from 0deg,
+      #ef4444,
+      #f59e0b,
+      #10b981,
+      #3b82f6,
+      #8b5cf6,
+      #ef4444
+    );
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .color-input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+    padding: 0;
+    border: none;
+    background: transparent;
   }
 
   .swatch-btn--active {
