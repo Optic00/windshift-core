@@ -97,9 +97,9 @@ func (r *PageLabelRepository) NameExistsInWorkspace(workspaceID int, name string
 // concurrent creates can race past that check — without translating the
 // resulting unique-violation here, the loser would surface as a 500
 // instead of the 409 the pre-check path already returns.
-func (r *PageLabelRepository) Create(name, color string, workspaceID int) (int64, time.Time, error) {
+func (r *PageLabelRepository) Create(name, color string, workspaceID int) (int, time.Time, error) {
 	now := time.Now()
-	var id int64
+	var id int
 	err := r.db.QueryRow(`
 		INSERT INTO page_labels (name, color, workspace_id, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?) RETURNING id

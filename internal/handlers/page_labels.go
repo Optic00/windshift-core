@@ -133,7 +133,7 @@ func (h *PageLabelHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	label, err := h.repo.GetByID(int(id))
+	label, err := h.repo.GetByID(id)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return

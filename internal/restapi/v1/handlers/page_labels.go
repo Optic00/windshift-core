@@ -156,7 +156,7 @@ func (h *PageLabelHandler) CreateLabel(w http.ResponseWriter, r *http.Request) {
 		h.RespondInternalError(w, r)
 		return
 	}
-	label, err := h.repo.GetByID(int(id))
+	label, err := h.repo.GetByID(id)
 	if err != nil {
 		h.RespondInternalError(w, r)
 		return

@@ -95,8 +95,8 @@ func TestPageLabels_Get_404ForCrossWorkspace(t *testing.T) {
 
 	// Requesting workspace 1's URL for a workspace-2 label must 404 so
 	// existence doesn't leak across workspaces.
-	req := authedRequest(http.MethodGet, "/workspaces/1/page-labels/"+strconv.FormatInt(id, 10), userID, nil)
-	setPath(req, map[string]string{"workspaceId": "1", "labelId": strconv.FormatInt(id, 10)})
+	req := authedRequest(http.MethodGet, "/workspaces/1/page-labels/"+strconv.Itoa(id), userID, nil)
+	setPath(req, map[string]string{"workspaceId": "1", "labelId": strconv.Itoa(id)})
 	rr := httptest.NewRecorder()
 	h.Get(rr, req)
 	if rr.Code != http.StatusNotFound {
@@ -119,7 +119,7 @@ func TestPageLabels_Delete_CascadesAssignments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed label: %v", err)
 	}
-	if err := h.repo.AddAssignment(page.ID, int(labelID)); err != nil {
+	if err := h.repo.AddAssignment(page.ID, labelID); err != nil {
 		t.Fatalf("attach label: %v", err)
 	}
 
@@ -129,8 +129,8 @@ func TestPageLabels_Delete_CascadesAssignments(t *testing.T) {
 		t.Fatalf("setup: want 1 attached label, got %d", len(attached))
 	}
 
-	req := authedRequest(http.MethodDelete, "/workspaces/1/page-labels/"+strconv.FormatInt(labelID, 10), userID, nil)
-	setPath(req, map[string]string{"workspaceId": "1", "labelId": strconv.FormatInt(labelID, 10)})
+	req := authedRequest(http.MethodDelete, "/workspaces/1/page-labels/"+strconv.Itoa(labelID), userID, nil)
+	setPath(req, map[string]string{"workspaceId": "1", "labelId": strconv.Itoa(labelID)})
 	rr := httptest.NewRecorder()
 	h.Delete(rr, req)
 	if rr.Code != http.StatusNoContent {
@@ -385,7 +385,7 @@ func TestPageLabelRepository_Update_TranslatesUniqueViolation(t *testing.T) {
 		t.Fatalf("create B: %v", err)
 	}
 	// Rename A onto B's name.
-	err = h.repo.Update(int(idA), "eng", "#3B82F6")
+	err = h.repo.Update(idA, "eng", "#3B82F6")
 	if !errors.Is(err, repository.ErrDuplicateEntry) {
 		t.Errorf("rename onto sibling name: want ErrDuplicateEntry, got %v", err)
 	}
