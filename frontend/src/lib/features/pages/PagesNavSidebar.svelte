@@ -13,7 +13,11 @@
     IconDots as Dots,
     IconBook as Book,
     IconX as X,
-    IconSearch as Search
+    IconSearch as Search,
+    IconChevronRight as ChevronRight,
+    IconChevronDown as ChevronDown,
+    IconChevronsDown as ChevronsDown,
+    IconChevronsUp as ChevronsUp
   } from '@tabler/icons-svelte-runes';
   import DropdownMenu from '../../layout/DropdownMenu.svelte';
   import EmptyState from '../../components/EmptyState.svelte';
@@ -42,6 +46,60 @@
   // Lets the filter row render colored chips for active filters even when
   // the picker popover is closed.
   let labelLookup = $state(/** @type {Map<number, any>} */ (new Map()));
+
+  // Set of page ids whose subtree is currently shown. Persisted to
+  // localStorage per workspace; first visit defaults to "every root
+  // expanded, every nested subtree collapsed". The set stores expanded
+  // ids (not collapsed) because the default seed is small (one entry per
+  // root) and only grows as the user opens subtrees.
+  let expandedIds = $state(/** @type {Set<number>} */ (new Set()));
+
+  function expandedStorageKey(wsId) {
+    return `pagesTree_expanded_${wsId}`;
+  }
+
+  function loadExpanded(wsId, rootIds) {
+    if (typeof localStorage === 'undefined') return new Set(rootIds);
+    try {
+      const raw = localStorage.getItem(expandedStorageKey(wsId));
+      if (raw == null) return new Set(rootIds);
+      const parsed = JSON.parse(raw);
+      return new Set(Array.isArray(parsed) ? parsed.map(Number) : []);
+    } catch {
+      return new Set(rootIds);
+    }
+  }
+
+  function persistExpanded() {
+    if (typeof localStorage === 'undefined') return;
+    try {
+      localStorage.setItem(
+        expandedStorageKey(workspaceId),
+        JSON.stringify(Array.from(expandedIds)),
+      );
+    } catch {
+      // Storage quota / private-window fallback: ignore — collapse state
+      // gracefully degrades to in-memory only for this session.
+    }
+  }
+
+  function toggleNode(pageId) {
+    const next = new Set(expandedIds);
+    if (next.has(pageId)) next.delete(pageId);
+    else next.add(pageId);
+    expandedIds = next;
+    persistExpanded();
+  }
+
+  function expandAll() {
+    expandedIds = new Set(pages.map((p) => p.id));
+    persistExpanded();
+  }
+
+  function collapseAll() {
+    expandedIds = new Set();
+    persistExpanded();
+  }
 
   // Reset the per-workspace filter when the workspace id changes — filters
   // are session-only and a workspace switch shouldn't carry a stale label
@@ -109,6 +167,40 @@
     // so the user can tell which rows are the actual matches.
     if (visibleIds === null) return false;
     return visibleIds.has(page.id) && !isPageHit(page);
+  }
+
+  // Number of direct children per page id. Drives the per-row chevron
+  // (only render it on rows that actually have children).
+  let childCountById = $derived.by(() => {
+    const m = new Map();
+    for (const p of pages) {
+      const parent = p.parent_id;
+      if (parent == null) continue;
+      m.set(parent, (m.get(parent) || 0) + 1);
+    }
+    return m;
+  });
+
+  // Effective expanded set used for visibility. When a label or title
+  // filter is active, ancestors of every match are virtually expanded so
+  // the user actually sees their hits — but `expandedIds` itself is not
+  // mutated, so the user's saved collapse state returns once the filter
+  // clears. `visibleIds` already includes ancestors via the existing
+  // path walk in `labelVisibleIds` / `titleMatchIds`.
+  let effectiveExpanded = $derived.by(() => {
+    if (visibleIds === null) return expandedIds;
+    const out = new Set(expandedIds);
+    for (const id of visibleIds) out.add(id);
+    return out;
+  });
+
+  function isCollapseHidden(page) {
+    if (!page.path) return false; // root pages are never hidden by collapse
+    const segments = page.path.split('/').filter(Boolean);
+    for (const seg of segments) {
+      if (!effectiveExpanded.has(Number(seg))) return true;
+    }
+    return false;
   }
 
   function onFilterToggle(label) {
@@ -226,6 +318,14 @@
         }
       }
       labelLookup = labelLookup;
+
+      // Seed expanded state from localStorage; on a workspace's first
+      // visit the seed is just the root ids so the tree opens with the
+      // top level visible and every nested subtree collapsed.
+      const rootIds = (resp.tree || [])
+        .map((n) => n?.id)
+        .filter((id) => Number.isFinite(id));
+      expandedIds = loadExpanded(workspaceId, rootIds);
     } catch (err) {
       errorToast(err?.message || t('pages.errorLoadTree'));
     } finally {
@@ -261,6 +361,14 @@
         content: '',
         parentId: parentId ?? null,
       });
+      // Auto-expand the parent so the new child row is visible after
+      // loadTree() reseeds expandedIds from localStorage. Without this,
+      // adding a child under a collapsed (or never-expanded) parent
+      // would create a row the user can't see.
+      if (parentId != null && !expandedIds.has(parentId)) {
+        expandedIds = new Set(expandedIds).add(parentId);
+        persistExpanded();
+      }
       pagesFocusTitle.request(page.id);
       navigate(`/workspaces/${workspaceId}/pages/${page.id}`);
       await loadTree();
@@ -450,6 +558,24 @@
           <Search size={16} />
         </button>
         <button
+          class="header-button"
+          type="button"
+          onclick={expandAll}
+          aria-label={t('pages.expandAllAria')}
+          data-testid="pages-expand-all"
+        >
+          <ChevronsDown size={16} />
+        </button>
+        <button
+          class="header-button"
+          type="button"
+          onclick={collapseAll}
+          aria-label={t('pages.collapseAllAria')}
+          data-testid="pages-collapse-all"
+        >
+          <ChevronsUp size={16} />
+        </button>
+        <button
           id="pages-add-button"
           class="header-button"
           type="button"
@@ -547,7 +673,11 @@
       {#each pages as page (page.id)}
         {@const edge = dndState.get(page.id)?.closestEdge}
         {@const isOver = dndState.get(page.id)?.over}
-        {@const hidden = visibleIds !== null && !visibleIds.has(page.id)}
+        {@const hasChildren = (childCountById.get(page.id) || 0) > 0}
+        {@const isExpanded = expandedIds.has(page.id)}
+        {@const hidden =
+          (visibleIds !== null && !visibleIds.has(page.id)) ||
+          isCollapseHidden(page)}
         {@const dimmed = isAncestorOnly(page)}
         <li
           class="tree-item"
@@ -560,8 +690,30 @@
           data-page-row={page.id}
           data-testid="page-tree-item"
           data-page-id={page.id}
+          data-expanded={hasChildren ? String(isExpanded) : undefined}
           style="padding-left: {0.5 + page.depth * 0.8}rem"
         >
+          {#if hasChildren}
+            <button
+              type="button"
+              class="chevron"
+              onclick={(e) => {
+                e.stopPropagation();
+                toggleNode(page.id);
+              }}
+              aria-expanded={isExpanded}
+              aria-label={t('pages.toggleSubtreeAria', { title: page.title })}
+              data-testid="page-tree-chevron"
+            >
+              {#if isExpanded}
+                <ChevronDown size={14} />
+              {:else}
+                <ChevronRight size={14} />
+              {/if}
+            </button>
+          {:else}
+            <span class="chevron chevron--placeholder" aria-hidden="true"></span>
+          {/if}
           <button class="page-button" type="button" onclick={() => selectPage(page.id)}>
             {page.title}
           </button>
@@ -797,6 +949,37 @@
   .tree-item.dimmed .page-button {
     color: var(--ds-text-subtle);
     opacity: 0.7;
+  }
+
+  .chevron {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.125rem;
+    height: 1.125rem;
+    flex-shrink: 0;
+    border: none;
+    background: transparent;
+    color: var(--ds-text-subtle);
+    border-radius: 0.25rem;
+    cursor: pointer;
+    padding: 0;
+  }
+
+  .chevron:hover {
+    background: var(--ds-background-neutral-hovered);
+    color: var(--ds-text);
+  }
+
+  /* Empty slot keeps title text aligned with rows that DO have a chevron,
+     so leaf and branch rows share a left edge. */
+  .chevron--placeholder {
+    cursor: default;
+  }
+
+  .chevron--placeholder:hover {
+    background: transparent;
+    color: var(--ds-text-subtle);
   }
 
   .tree-item.active .page-button {

@@ -137,5 +137,10 @@ export default {
     searchAria: 'Search pages',
     searchPlaceholder: 'Search pages…',
     searchClear: 'Clear search',
+
+    // Sidebar tree expand/collapse
+    toggleSubtreeAria: 'Toggle children of {title}',
+    expandAllAria: 'Expand all',
+    collapseAllAria: 'Collapse all',
   },
 };
