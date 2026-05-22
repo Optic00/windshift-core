@@ -162,7 +162,7 @@ Examples:
 			return err
 		}
 
-		title, content, err := resolvePageInput(pageCreateTitle, pageCreateContent, pageCreateFile)
+		title, content, err := resolvePageInput(pageCreateTitle, ParseCLIEscapes(pageCreateContent), pageCreateFile)
 		if err != nil {
 			return err
 		}
@@ -265,7 +265,7 @@ Examples:
 			content = body
 			titleFromFile = fileTitle
 		} else if contentChanged {
-			content = pageEditContent
+			content = ParseCLIEscapes(pageEditContent)
 		}
 
 		if titleChanged {
@@ -523,13 +523,13 @@ func init() {
 
 	pageCreateCmd.Flags().StringVarP(&pageCreateTitle, "title", "t", "", "page title (wins over --file H1 / filename)")
 	pageCreateCmd.Flags().StringVarP(&pageCreateFile, "file", "f", "", "path to a Markdown file (use - for stdin)")
-	pageCreateCmd.Flags().StringVar(&pageCreateContent, "content", "", "inline Markdown content (ignored when --file is set)")
+	pageCreateCmd.Flags().StringVar(&pageCreateContent, "content", "", "inline Markdown content (ignored when --file is set; supports \\n / \\t / \\\\, pass --file for verbatim bytes)")
 	pageCreateCmd.Flags().IntVar(&pageCreateParent, "parent", 0, "parent page id (omit or pass 0 for a root page)")
 	pageCreateCmd.Flags().BoolVar(&pageCreateUploadAssets, "upload-assets", false, "scan --file for ![](./local.png) image refs, upload each as a page attachment, and rewrite the markdown to point at the uploaded URL before creating the page")
 
 	pageEditCmd.Flags().StringVarP(&pageEditTitle, "title", "t", "", "new page title (omit to keep existing)")
 	pageEditCmd.Flags().StringVarP(&pageEditFile, "file", "f", "", "path to a Markdown file (use - for stdin)")
-	pageEditCmd.Flags().StringVar(&pageEditContent, "content", "", "inline Markdown content (ignored when --file is set)")
+	pageEditCmd.Flags().StringVar(&pageEditContent, "content", "", "inline Markdown content (ignored when --file is set; supports \\n / \\t / \\\\, pass --file for verbatim bytes)")
 	pageEditCmd.Flags().BoolVar(&pageEditUploadAssets, "upload-assets", false, "scan --file for ![](./local.png) image refs, upload each as a page attachment, and rewrite the markdown to point at the uploaded URL before the update")
 
 	pageMoveCmd.Flags().IntVar(&pageMoveParent, "parent", 0, "new parent page id")

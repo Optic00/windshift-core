@@ -232,7 +232,7 @@ Examples:
 		req := ItemCreateRequest{
 			WorkspaceID: wsID,
 			Title:       createTitle,
-			Description: createDescription,
+			Description: ParseCLIEscapes(createDescription),
 		}
 
 		// Set optional fields
@@ -543,7 +543,8 @@ Examples:
 			hasChanges = true
 		}
 		if cmd.Flags().Changed("description") {
-			req.Description = &editDescription
+			desc := ParseCLIEscapes(editDescription)
+			req.Description = &desc
 			hasChanges = true
 		}
 		if cmd.Flags().Changed("type") {
@@ -681,7 +682,7 @@ func init() {
 
 	// Edit flags
 	taskEditCmd.Flags().StringVarP(&editTitle, "title", "t", "", "new title")
-	taskEditCmd.Flags().StringVarP(&editDescription, "description", "d", "", "new description")
+	taskEditCmd.Flags().StringVarP(&editDescription, "description", "d", "", "new description (supports \\n / \\t / \\\\)")
 	taskEditCmd.Flags().IntVar(&editTypeID, "type", 0, "item type ID")
 	taskEditCmd.Flags().IntVar(&editPriorityID, "priority", 0, "priority ID")
 	taskEditCmd.Flags().IntVar(&editAssigneeID, "assignee", 0, "assignee user ID")
@@ -689,7 +690,7 @@ func init() {
 
 	// Create flags
 	taskCreateCmd.Flags().StringVarP(&createTitle, "title", "t", "", "task title (required)")
-	taskCreateCmd.Flags().StringVarP(&createDescription, "description", "d", "", "task description")
+	taskCreateCmd.Flags().StringVarP(&createDescription, "description", "d", "", "task description (supports \\n / \\t / \\\\)")
 	taskCreateCmd.Flags().IntVar(&createTypeID, "type", 0, "item type ID")
 	taskCreateCmd.Flags().IntVar(&createPriorityID, "priority", 0, "priority ID")
 	taskCreateCmd.Flags().IntVar(&createStatusID, "status", 0, "status ID")

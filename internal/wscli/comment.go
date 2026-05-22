@@ -37,7 +37,7 @@ Examples:
 			return fmt.Errorf("failed to resolve item: %w", err)
 		}
 
-		comment, err := client.CreateComment(itemID, commentMessage)
+		comment, err := client.CreateComment(itemID, ParseCLIEscapes(commentMessage))
 		if err != nil {
 			return fmt.Errorf("failed to create comment: %w", err)
 		}
@@ -102,7 +102,7 @@ Examples:
 			return err
 		}
 
-		comment, err := client.UpdateComment(commentID, commentMessage)
+		comment, err := client.UpdateComment(commentID, ParseCLIEscapes(commentMessage))
 		if err != nil {
 			return fmt.Errorf("failed to update comment: %w", err)
 		}
@@ -160,6 +160,6 @@ func init() {
 	commentCmd.AddCommand(commentDeleteCmd)
 
 	// Message flag for add and edit
-	commentAddCmd.Flags().StringVarP(&commentMessage, "message", "m", "", "comment content (supports markdown)")
-	commentEditCmd.Flags().StringVarP(&commentMessage, "message", "m", "", "new comment content (supports markdown)")
+	commentAddCmd.Flags().StringVarP(&commentMessage, "message", "m", "", "comment content (Markdown; supports \\n / \\t / \\\\)")
+	commentEditCmd.Flags().StringVarP(&commentMessage, "message", "m", "", "new comment content (Markdown; supports \\n / \\t / \\\\)")
 }
