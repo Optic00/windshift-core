@@ -141,6 +141,11 @@ func (c *Client) PUT(path string, body, result interface{}) error {
 	return c.doRequest("PUT", path, body, result)
 }
 
+// PATCH performs a PATCH request
+func (c *Client) PATCH(path string, body, result interface{}) error {
+	return c.doRequest("PATCH", path, body, result)
+}
+
 // DELETE performs a DELETE request
 func (c *Client) DELETE(path string) error {
 	return c.doRequest("DELETE", path, nil, nil)
@@ -1013,13 +1018,77 @@ func (c *Client) ArchivePage(workspaceID, pageID int) error {
 	return c.DELETE(fmt.Sprintf("/rest/api/v1/workspaces/%d/pages/%d", workspaceID, pageID))
 }
 
-// GetPageHistory returns revisions for a page newest-first.
-func (c *Client) GetPageHistory(workspaceID, pageID int) ([]PageRevision, error) {
+// GetPageHistory returns revisions for a page newest-first. Optional
+// pagination arguments are limit, offset (kept variadic for compatibility with
+// existing call sites/tests that used the original two-argument form).
+func (c *Client) GetPageHistory(workspaceID, pageID int, pagination ...int) ([]PageRevision, error) {
 	var resp PageHistoryResponse
-	if err := c.GET(fmt.Sprintf("/rest/api/v1/workspaces/%d/pages/%d/history", workspaceID, pageID), &resp); err != nil {
+	endpoint := fmt.Sprintf("/rest/api/v1/workspaces/%d/pages/%d/history", workspaceID, pageID)
+	limit, offset := 0, 0
+	if len(pagination) > 0 {
+		limit = pagination[0]
+	}
+	if len(pagination) > 1 {
+		offset = pagination[1]
+	}
+	q := url.Values{}
+	if limit > 0 {
+		q.Set("limit", fmt.Sprintf("%d", limit))
+	}
+	if offset > 0 {
+		q.Set("offset", fmt.Sprintf("%d", offset))
+	}
+	if encoded := q.Encode(); encoded != "" {
+		endpoint += "?" + encoded
+	}
+	if err := c.GET(endpoint, &resp); err != nil {
 		return nil, err
 	}
 	return resp.Items, nil
+}
+
+func (c *Client) GetPageRevision(workspaceID, pageID, revisionID int) (*PageRevision, error) {
+	var rev PageRevision
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/workspaces/%d/pages/%d/history/%d", workspaceID, pageID, revisionID), &rev); err != nil {
+		return nil, err
+	}
+	return &rev, nil
+}
+
+func (c *Client) RestorePageRevision(workspaceID, pageID, revisionID int) (*Page, error) {
+	var page Page
+	if err := c.POST(fmt.Sprintf("/rest/api/v1/workspaces/%d/pages/%d/history/%d/restore", workspaceID, pageID, revisionID), map[string]any{}, &page); err != nil {
+		return nil, err
+	}
+	return &page, nil
+}
+
+func (c *Client) GetPagePermissions(workspaceID, pageID int) (*PagePermissions, error) {
+	var perms PagePermissions
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/workspaces/%d/pages/%d/permissions", workspaceID, pageID), &perms); err != nil {
+		return nil, err
+	}
+	return &perms, nil
+}
+
+func (c *Client) GrantPagePermission(workspaceID, pageID int, req PageGrantPermissionRequest) (*PagePermission, error) {
+	var perm PagePermission
+	if err := c.POST(fmt.Sprintf("/rest/api/v1/workspaces/%d/pages/%d/permissions", workspaceID, pageID), req, &perm); err != nil {
+		return nil, err
+	}
+	return &perm, nil
+}
+
+func (c *Client) RevokePagePermission(workspaceID, pageID, permissionID int) error {
+	return c.DELETE(fmt.Sprintf("/rest/api/v1/workspaces/%d/pages/%d/permissions/%d", workspaceID, pageID, permissionID))
+}
+
+func (c *Client) SetPageInheritance(workspaceID, pageID int, inherit bool) (*Page, error) {
+	var page Page
+	if err := c.PATCH(fmt.Sprintf("/rest/api/v1/workspaces/%d/pages/%d/inheritance", workspaceID, pageID), PageSetInheritanceRequest{InheritPermissions: inherit}, &page); err != nil {
+		return nil, err
+	}
+	return &page, nil
 }
 
 // ============================================

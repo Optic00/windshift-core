@@ -58,8 +58,16 @@
     error = '';
     try {
       const rows = await api.pages.getHistory(workspaceId, pageId, { limit: 50 });
-      // The list endpoint returns newest-first; we keep that ordering.
-      history = Array.isArray(rows?.items) ? rows.items : Array.isArray(rows) ? rows : [];
+      // Cookie-auth returns { revisions }, v1 returns { items }. Accept both
+      // shapes because this drawer sits on the cookie surface while the CLI
+      // shares the same api/pages helper conventions.
+      history = Array.isArray(rows?.revisions)
+        ? rows.revisions
+        : Array.isArray(rows?.items)
+          ? rows.items
+          : Array.isArray(rows)
+            ? rows
+            : [];
       void prefetchAuthors(history);
     } catch (e) {
       error = e?.message || t('pages.history.loadError');
@@ -191,7 +199,7 @@
                   <div class="rev-preview">
                     <LazyMilkdownEditor content={rev.content || ''} readonly={true} />
                   </div>
-                  {#if canRestore}
+                  {#if canRestore && rev.id !== history[0]?.id}
                     <div class="rev-actions">
                       <button
                         type="button"

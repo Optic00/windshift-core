@@ -29,6 +29,14 @@ var (
 	pageMoveBefore         int
 	pageMoveAfter          int
 	pageGetRaw             bool
+	pageHistoryLimit       int
+	pageHistoryOffset      int
+	pageHistoryRevision    int
+	pageGrantPrincipalType string
+	pageGrantPrincipalID   int
+	pageGrantLevel         string
+	pageInheritanceOn      bool
+	pageInheritanceOff     bool
 )
 
 var pageCmd = &cobra.Command{
@@ -422,7 +430,9 @@ var pageHistoryCmd = &cobra.Command{
 revision number, change_type, author, and timestamp.
 
 Examples:
-  ws page history 42`,
+  ws page history 42
+  ws page history 42 --limit 25 --offset 50
+  ws page history 42 --revision 99`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
 		client, err := NewClient()
@@ -437,11 +447,172 @@ Examples:
 		if err != nil {
 			return fmt.Errorf("invalid page id: %s", args[0])
 		}
-		revs, err := client.GetPageHistory(wsID, pageID)
+		if pageHistoryRevision > 0 {
+			rev, err := client.GetPageRevision(wsID, pageID, pageHistoryRevision)
+			if err != nil {
+				return fmt.Errorf("failed to load revision: %w", err)
+			}
+			NewOutput().Print(rev)
+			return nil
+		}
+		revs, err := client.GetPageHistory(wsID, pageID, pageHistoryLimit, pageHistoryOffset)
 		if err != nil {
 			return fmt.Errorf("failed to load history: %w", err)
 		}
 		NewOutput().Print(revs)
+		return nil
+	},
+}
+
+var pageRestoreCmd = &cobra.Command{
+	Use:   "restore <page-id> <revision-id>",
+	Short: "Restore a page from a revision",
+	Long: `Restore a page's title and Markdown content from a revision. If the
+page is archived, restore also unarchives that page (not its subtree).`,
+	Args: cobra.ExactArgs(2),
+	RunE: func(_ *cobra.Command, args []string) error {
+		client, err := NewClient()
+		if err != nil {
+			return err
+		}
+		wsID, err := resolveRequiredWorkspace(client)
+		if err != nil {
+			return err
+		}
+		pageID, err := strconv.Atoi(args[0])
+		if err != nil {
+			return fmt.Errorf("invalid page id: %s", args[0])
+		}
+		revisionID, err := strconv.Atoi(args[1])
+		if err != nil {
+			return fmt.Errorf("invalid revision id: %s", args[1])
+		}
+		page, err := client.RestorePageRevision(wsID, pageID, revisionID)
+		if err != nil {
+			return fmt.Errorf("failed to restore page: %w", err)
+		}
+		if outputFormat == "" || outputFormat == "table" {
+			_, _ = fmt.Fprintf(stdout, "Restored page %d (%s) from revision %d\n", page.ID, page.Title, revisionID)
+			return nil
+		}
+		NewOutput().Print(page)
+		return nil
+	},
+}
+
+var pagePermissionsCmd = &cobra.Command{
+	Use:   "permissions <page-id>",
+	Short: "Show page permissions and explicit ACL rows",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		client, err := NewClient()
+		if err != nil {
+			return err
+		}
+		wsID, err := resolveRequiredWorkspace(client)
+		if err != nil {
+			return err
+		}
+		pageID, err := strconv.Atoi(args[0])
+		if err != nil {
+			return fmt.Errorf("invalid page id: %s", args[0])
+		}
+		perms, err := client.GetPagePermissions(wsID, pageID)
+		if err != nil {
+			return fmt.Errorf("failed to load page permissions: %w", err)
+		}
+		NewOutput().Print(perms)
+		return nil
+	},
+}
+
+var pageGrantCmd = &cobra.Command{
+	Use:   "grant <page-id>",
+	Short: "Grant a page ACL row",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		client, err := NewClient()
+		if err != nil {
+			return err
+		}
+		wsID, err := resolveRequiredWorkspace(client)
+		if err != nil {
+			return err
+		}
+		pageID, err := strconv.Atoi(args[0])
+		if err != nil {
+			return fmt.Errorf("invalid page id: %s", args[0])
+		}
+		if pageGrantPrincipalType == "" || pageGrantPrincipalID <= 0 || pageGrantLevel == "" {
+			return fmt.Errorf("pass --type user|group|role, --principal <id>, and --level view|edit|admin")
+		}
+		perm, err := client.GrantPagePermission(wsID, pageID, PageGrantPermissionRequest{PrincipalType: pageGrantPrincipalType, PrincipalID: pageGrantPrincipalID, PermissionLevel: pageGrantLevel})
+		if err != nil {
+			return fmt.Errorf("failed to grant page permission: %w", err)
+		}
+		NewOutput().Print(perm)
+		return nil
+	},
+}
+
+var pageRevokeCmd = &cobra.Command{
+	Use:   "revoke <page-id> <permission-id>",
+	Short: "Revoke a page ACL row",
+	Args:  cobra.ExactArgs(2),
+	RunE: func(_ *cobra.Command, args []string) error {
+		client, err := NewClient()
+		if err != nil {
+			return err
+		}
+		wsID, err := resolveRequiredWorkspace(client)
+		if err != nil {
+			return err
+		}
+		pageID, err := strconv.Atoi(args[0])
+		if err != nil {
+			return fmt.Errorf("invalid page id: %s", args[0])
+		}
+		permissionID, err := strconv.Atoi(args[1])
+		if err != nil {
+			return fmt.Errorf("invalid permission id: %s", args[1])
+		}
+		if err := client.RevokePagePermission(wsID, pageID, permissionID); err != nil {
+			return fmt.Errorf("failed to revoke page permission: %w", err)
+		}
+		_, _ = fmt.Fprintf(stdout, "Revoked permission %d from page %d\n", permissionID, pageID)
+		return nil
+	},
+}
+
+var pageInheritanceCmd = &cobra.Command{
+	Use:   "inheritance <page-id>",
+	Short: "Enable or disable page permission inheritance",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		client, err := NewClient()
+		if err != nil {
+			return err
+		}
+		wsID, err := resolveRequiredWorkspace(client)
+		if err != nil {
+			return err
+		}
+		pageID, err := strconv.Atoi(args[0])
+		if err != nil {
+			return fmt.Errorf("invalid page id: %s", args[0])
+		}
+		if pageInheritanceOn == pageInheritanceOff {
+			return fmt.Errorf("pass exactly one of --on or --off")
+		}
+		page, err := client.SetPageInheritance(wsID, pageID, pageInheritanceOn)
+		if err != nil {
+			return fmt.Errorf("failed to set inheritance: %w", err)
+		}
+		if outputFormat == "" || outputFormat == "table" {
+			_, _ = fmt.Fprintf(stdout, "Page %d inherit_permissions=%t\n", page.ID, page.InheritPermissions)
+			return nil
+		}
+		NewOutput().Print(page)
 		return nil
 	},
 }
@@ -518,6 +689,11 @@ func init() {
 	pageCmd.AddCommand(pageArchiveCmd)
 	pageCmd.AddCommand(pageMoveCmd)
 	pageCmd.AddCommand(pageHistoryCmd)
+	pageCmd.AddCommand(pageRestoreCmd)
+	pageCmd.AddCommand(pagePermissionsCmd)
+	pageCmd.AddCommand(pageGrantCmd)
+	pageCmd.AddCommand(pageRevokeCmd)
+	pageCmd.AddCommand(pageInheritanceCmd)
 
 	pageGetCmd.Flags().BoolVar(&pageGetRaw, "raw", false, "in table mode, omit the synthetic '# Title' header and print only the body")
 
@@ -536,4 +712,15 @@ func init() {
 	pageMoveCmd.Flags().BoolVar(&pageMoveToRoot, "root", false, "move the page to the workspace root")
 	pageMoveCmd.Flags().IntVar(&pageMoveBefore, "before", 0, "insert the moved page immediately before this sibling id")
 	pageMoveCmd.Flags().IntVar(&pageMoveAfter, "after", 0, "insert the moved page immediately after this sibling id")
+
+	pageHistoryCmd.Flags().IntVar(&pageHistoryLimit, "limit", 0, "maximum revisions to return (server default 50, max 200)")
+	pageHistoryCmd.Flags().IntVar(&pageHistoryOffset, "offset", 0, "number of newest revisions to skip")
+	pageHistoryCmd.Flags().IntVar(&pageHistoryRevision, "revision", 0, "fetch a single revision id instead of listing history")
+
+	pageGrantCmd.Flags().StringVar(&pageGrantPrincipalType, "type", "", "principal type: user, group, or role")
+	pageGrantCmd.Flags().IntVar(&pageGrantPrincipalID, "principal", 0, "principal id to grant")
+	pageGrantCmd.Flags().StringVar(&pageGrantLevel, "level", "view", "permission level: view, edit, or admin")
+
+	pageInheritanceCmd.Flags().BoolVar(&pageInheritanceOn, "on", false, "enable inheritance")
+	pageInheritanceCmd.Flags().BoolVar(&pageInheritanceOff, "off", false, "disable inheritance")
 }

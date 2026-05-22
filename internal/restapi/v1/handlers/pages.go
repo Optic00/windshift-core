@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"windshift/internal/database"
+	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
 	"windshift/internal/restapi/v1/dto"
@@ -63,6 +64,16 @@ type pageMoveRequest struct {
 	NextSiblingID *int `json:"next_sibling_id,omitempty"`
 }
 
+type pageGrantPermissionRequest struct {
+	PrincipalType   string `json:"principal_type"`
+	PrincipalID     int    `json:"principal_id"`
+	PermissionLevel string `json:"permission_level"`
+}
+
+type pageSetInheritanceRequest struct {
+	InheritPermissions bool `json:"inherit_permissions"`
+}
+
 // --- response shapes ---
 
 type pageListResponse struct {
@@ -71,6 +82,13 @@ type pageListResponse struct {
 
 type pageHistoryListResponse struct {
 	Items []dto.PageRevisionResponse `json:"items"`
+}
+
+type pagePermissionsResponse struct {
+	PageID             int                     `json:"page_id"`
+	InheritPermissions bool                    `json:"inherit_permissions"`
+	EffectiveLevel     string                  `json:"effective_level,omitempty"`
+	ACL                []models.PagePermission `json:"acl"`
 }
 
 // --- endpoints ---
@@ -279,23 +297,18 @@ func (h *PageHandler) Archive(w http.ResponseWriter, r *http.Request) {
 		h.RespondNotFound(w, r)
 		return
 	}
-	descendants, err := h.service.ListDescendants(pageID)
-	if err != nil {
-		h.RespondInternalError(w, r)
-		return
-	}
-	for _, d := range descendants {
-		can, cerr := h.pageAuth.Can(user.ID, wsID, d.ID, services.PageOpAdmin)
-		if cerr != nil {
-			h.RespondInternalError(w, r)
-			return
+	if err := h.service.ArchiveChecked(user.ID, pageID, func(subtree []models.Page) error {
+		for _, d := range subtree {
+			can, cerr := h.pageAuth.Can(user.ID, wsID, d.ID, services.PageOpAdmin)
+			if cerr != nil {
+				return cerr
+			}
+			if !can {
+				return services.ErrPageNotFound
+			}
 		}
-		if !can {
-			h.RespondNotFound(w, r)
-			return
-		}
-	}
-	if err := h.service.Archive(user.ID, pageID); err != nil {
+		return nil
+	}); err != nil {
 		h.respondPageServiceError(w, r, err)
 		return
 	}
@@ -319,6 +332,145 @@ func (h *PageHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 		items = append(items, dto.MapPageRevisionToResponse(&revs[i]))
 	}
 	h.RespondOK(w, pageHistoryListResponse{Items: items})
+}
+
+// GetRevision returns a single revision. The revision id must belong to the
+// addressed page so callers cannot use a visible page as a side-channel for a
+// different page's revision body.
+func (h *PageHandler) GetRevision(w http.ResponseWriter, r *http.Request) {
+	_, pageID, ok := h.requireWorkspacePageView(w, r)
+	if !ok {
+		return
+	}
+	revisionID, ok := h.ParsePathID(w, r, "revisionId", "revision ID")
+	if !ok {
+		return
+	}
+	rev, err := h.service.GetRevision(revisionID)
+	if errors.Is(err, services.ErrPageNotFound) || (err == nil && rev.PageID != pageID) {
+		h.RespondNotFound(w, r)
+		return
+	}
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.RespondOK(w, dto.MapPageRevisionToResponse(rev))
+}
+
+// RestoreRevision overwrites a page's live title/content from a revision and
+// unarchives the page when the target is archived. Live pages require edit;
+// archived pages require the restore branch in PagePermissionService.
+func (h *PageHandler) RestoreRevision(w http.ResponseWriter, r *http.Request) {
+	_, pageID, user, ok := h.resolveWorkspacePageOp(w, r, services.PageOpRestore)
+	if !ok {
+		return
+	}
+	revisionID, ok := h.ParsePathID(w, r, "revisionId", "revision ID")
+	if !ok {
+		return
+	}
+	page, err := h.service.Restore(user.ID, pageID, revisionID)
+	if err != nil {
+		h.respondPageServiceError(w, r, err)
+		return
+	}
+	h.RespondOK(w, dto.MapPageToResponse(page, getBaseURL(r)))
+}
+
+// GetPermissions returns the caller's effective level plus ACL rows stored
+// directly on this page. Inherited ACL rows are evaluated by the service but
+// not expanded in this compact v1 payload.
+func (h *PageHandler) GetPermissions(w http.ResponseWriter, r *http.Request) {
+	wsID, pageID, user, ok := h.resolveWorkspacePageOp(w, r, services.PageOpView)
+	if !ok {
+		return
+	}
+	page, err := h.service.GetByID(pageID)
+	if err != nil {
+		h.RespondNotFound(w, r)
+		return
+	}
+	effective := ""
+	for _, op := range []string{services.PageOpAdmin, services.PageOpEdit, services.PageOpView} {
+		can, cerr := h.pageAuth.Can(user.ID, wsID, pageID, op)
+		if cerr != nil {
+			h.RespondInternalError(w, r)
+			return
+		}
+		if can {
+			effective = op
+			break
+		}
+	}
+	acl, err := h.service.ListOwnACL(pageID)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	if acl == nil {
+		acl = []models.PagePermission{}
+	}
+	h.RespondOK(w, pagePermissionsResponse{PageID: page.ID, InheritPermissions: page.InheritPermissions, EffectiveLevel: effective, ACL: acl})
+}
+
+// GrantPermission attaches an ACL row to a page. Requires page.admin on the
+// target page via PagePermissionService and pages:write at the route layer.
+func (h *PageHandler) GrantPermission(w http.ResponseWriter, r *http.Request) {
+	_, pageID, user, ok := h.resolveWorkspacePageOp(w, r, services.PageOpAdmin)
+	if !ok {
+		return
+	}
+	var req pageGrantPermissionRequest
+	if !h.DecodeBodyOrRespond(w, r, &req) {
+		return
+	}
+	if req.PrincipalType == "" || req.PrincipalID == 0 || req.PermissionLevel == "" {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeMissingField, "principal_type, principal_id, and permission_level are required"))
+		return
+	}
+	row, err := h.service.GrantPermission(user.ID, pageID, req.PrincipalType, req.PrincipalID, req.PermissionLevel)
+	if err != nil {
+		h.respondPageServiceError(w, r, err)
+		return
+	}
+	h.RespondCreated(w, row)
+}
+
+// RevokePermission deletes one ACL row from the page.
+func (h *PageHandler) RevokePermission(w http.ResponseWriter, r *http.Request) {
+	_, pageID, user, ok := h.resolveWorkspacePageOp(w, r, services.PageOpAdmin)
+	if !ok {
+		return
+	}
+	permissionID, ok := h.ParsePathID(w, r, "permissionId", "permission ID")
+	if !ok {
+		return
+	}
+	if err := h.service.RevokePermission(user.ID, pageID, permissionID); err != nil {
+		h.respondPageServiceError(w, r, err)
+		return
+	}
+	h.RespondNoContent(w)
+}
+
+// SetInheritance flips the page's inherit_permissions flag. Requires admin on
+// the page and pages:write on the bearer token.
+func (h *PageHandler) SetInheritance(w http.ResponseWriter, r *http.Request) {
+	_, pageID, user, ok := h.resolveWorkspacePageOp(w, r, services.PageOpAdmin)
+	if !ok {
+		return
+	}
+	var req pageSetInheritanceRequest
+	if !h.DecodeBodyOrRespond(w, r, &req) {
+		return
+	}
+	page, err := h.service.SetInheritPermissions(user.ID, pageID, req.InheritPermissions)
+	if err != nil {
+		h.respondPageServiceError(w, r, err)
+		return
+	}
+	h.RespondOK(w, dto.MapPageToResponse(page, getBaseURL(r)))
 }
 
 // parseHistoryPagination mirrors the cookie-auth GetHistory pagination
@@ -415,6 +567,16 @@ func (h *PageHandler) respondPageServiceError(w http.ResponseWriter, r *http.Req
 		h.RespondError(w, r, restapi.NewAPIError(http.StatusConflict, restapi.ErrCodeValidationFailed, "page tree depth limit exceeded"))
 	case errors.Is(err, services.ErrPageSlugConflict):
 		h.RespondError(w, r, restapi.NewAPIError(http.StatusConflict, restapi.ErrCodeValidationFailed, "slug conflicts with an existing sibling page"))
+	case errors.Is(err, services.ErrPageRevisionMismatch):
+		h.RespondNotFound(w, r)
+	case errors.Is(err, services.ErrPageInvalidPrincipal):
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, "principal_type must be user, group, or role"))
+	case errors.Is(err, services.ErrPageInvalidLevel):
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, "permission_level must be view, edit, or admin"))
+	case errors.Is(err, services.ErrPagePermissionDuplicate):
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusConflict, restapi.ErrCodeValidationFailed, "permission already granted"))
+	case errors.Is(err, services.ErrPageGrantPrincipalNotFound):
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, "principal does not exist"))
 	default:
 		h.RespondInternalError(w, r)
 	}

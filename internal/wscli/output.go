@@ -99,6 +99,12 @@ func (o *Output) printTable(data interface{}) {
 		o.printPageLabelDetailTable(w, v)
 	case []PageRevision:
 		o.printPageRevisionsTable(w, v)
+	case *PageRevision:
+		o.printPageRevisionDetailTable(w, v)
+	case *PagePermissions:
+		o.printPagePermissionsTable(w, v)
+	case *PagePermission:
+		o.printPagePermissionDetailTable(w, v)
 	case []LinkType:
 		o.printLinkTypesTable(w, v)
 	case *ItemLink:
@@ -174,6 +180,12 @@ func (o *Output) printCSV(data interface{}) {
 		o.printPageLabelCSV(w, v)
 	case []PageRevision:
 		o.printPageRevisionsCSV(w, v)
+	case *PageRevision:
+		o.printPageRevisionCSV(w, v)
+	case *PagePermissions:
+		o.printPagePermissionsCSV(w, v)
+	case *PagePermission:
+		o.printPagePermissionCSV(w, v)
 	case []LinkType:
 		o.printLinkTypesCSV(w, v)
 	case *ItemLink:
@@ -864,10 +876,51 @@ func (o *Output) printPageLabelDetailTable(w *tabwriter.Writer, l *PageLabel) {
 }
 
 func (o *Output) printPageRevisionsTable(w *tabwriter.Writer, revs []PageRevision) {
-	_, _ = fmt.Fprintln(w, "REVISION\tCHANGE_TYPE\tAUTHOR\tCREATED")
-	_, _ = fmt.Fprintln(w, "--------\t-----------\t------\t-------")
+	_, _ = fmt.Fprintln(w, "ID\tREVISION\tCHANGE_TYPE\tAUTHOR\tCREATED")
+	_, _ = fmt.Fprintln(w, "--\t--------\t-----------\t------\t-------")
 	for _, r := range revs {
-		_, _ = fmt.Fprintf(w, "%d\t%s\t%d\t%s\n", r.RevisionNumber, r.ChangeType, r.CreatedBy, r.CreatedAt.Format("2006-01-02 15:04"))
+		_, _ = fmt.Fprintf(w, "%d\t%d\t%s\t%d\t%s\n", r.ID, r.RevisionNumber, r.ChangeType, r.CreatedBy, r.CreatedAt.Format("2006-01-02 15:04"))
+	}
+}
+
+func (o *Output) printPageRevisionDetailTable(w *tabwriter.Writer, r *PageRevision) {
+	_, _ = fmt.Fprintf(w, "ID:\t%d\n", r.ID)
+	_, _ = fmt.Fprintf(w, "Page:\t%d\n", r.PageID)
+	_, _ = fmt.Fprintf(w, "Revision:\t%d\n", r.RevisionNumber)
+	_, _ = fmt.Fprintf(w, "Change:\t%s\n", r.ChangeType)
+	_, _ = fmt.Fprintf(w, "Author:\t%d\n", r.CreatedBy)
+	_, _ = fmt.Fprintf(w, "Created:\t%s\n", r.CreatedAt.Format(time.RFC3339))
+	_, _ = fmt.Fprintf(w, "Title:\t%s\n", r.Title)
+	if r.ChangeSummary != "" {
+		_, _ = fmt.Fprintf(w, "Summary:\t%s\n", r.ChangeSummary)
+	}
+	if r.Excerpt != "" {
+		_, _ = fmt.Fprintf(w, "Excerpt:\t%s\n", truncateString(r.Excerpt, 100))
+	}
+}
+
+func (o *Output) printPagePermissionsTable(w *tabwriter.Writer, p *PagePermissions) {
+	_, _ = fmt.Fprintf(w, "Page:\t%d\n", p.PageID)
+	_, _ = fmt.Fprintf(w, "Inherit permissions:\t%t\n", p.InheritPermissions)
+	_, _ = fmt.Fprintf(w, "Effective level:\t%s\n\n", p.EffectiveLevel)
+	_, _ = fmt.Fprintln(w, "ID\tPRINCIPAL\tLEVEL\tGRANTED_BY")
+	_, _ = fmt.Fprintln(w, "--\t---------\t-----\t----------")
+	for _, row := range p.ACL {
+		grantedBy := ""
+		if row.GrantedBy != nil {
+			grantedBy = fmt.Sprintf("%d", *row.GrantedBy)
+		}
+		_, _ = fmt.Fprintf(w, "%d\t%s:%d\t%s\t%s\n", row.ID, row.PrincipalType, row.PrincipalID, row.PermissionLevel, grantedBy)
+	}
+}
+
+func (o *Output) printPagePermissionDetailTable(w *tabwriter.Writer, p *PagePermission) {
+	_, _ = fmt.Fprintf(w, "ID:\t%d\n", p.ID)
+	_, _ = fmt.Fprintf(w, "Page:\t%d\n", p.PageID)
+	_, _ = fmt.Fprintf(w, "Principal:\t%s:%d\n", p.PrincipalType, p.PrincipalID)
+	_, _ = fmt.Fprintf(w, "Level:\t%s\n", p.PermissionLevel)
+	if p.GrantedBy != nil {
+		_, _ = fmt.Fprintf(w, "Granted by:\t%d\n", *p.GrantedBy)
 	}
 }
 
@@ -931,15 +984,44 @@ func (o *Output) printPageLabelCSV(w *csv.Writer, l *PageLabel) {
 func (o *Output) printPageRevisionsCSV(w *csv.Writer, revs []PageRevision) {
 	_ = w.Write([]string{"REVISION", "PAGE_ID", "CHANGE_TYPE", "AUTHOR_ID", "TITLE", "CREATED"})
 	for _, r := range revs {
-		_ = w.Write([]string{
-			fmt.Sprintf("%d", r.RevisionNumber),
-			fmt.Sprintf("%d", r.PageID),
-			r.ChangeType,
-			fmt.Sprintf("%d", r.CreatedBy),
-			r.Title,
-			r.CreatedAt.Format(time.RFC3339),
-		})
+		o.writePageRevisionCSVRow(w, &r)
 	}
+}
+
+func (o *Output) printPageRevisionCSV(w *csv.Writer, r *PageRevision) {
+	_ = w.Write([]string{"REVISION", "PAGE_ID", "CHANGE_TYPE", "AUTHOR_ID", "TITLE", "CREATED"})
+	o.writePageRevisionCSVRow(w, r)
+}
+
+func (o *Output) writePageRevisionCSVRow(w *csv.Writer, r *PageRevision) {
+	_ = w.Write([]string{
+		fmt.Sprintf("%d", r.RevisionNumber),
+		fmt.Sprintf("%d", r.PageID),
+		r.ChangeType,
+		fmt.Sprintf("%d", r.CreatedBy),
+		r.Title,
+		r.CreatedAt.Format(time.RFC3339),
+	})
+}
+
+func (o *Output) printPagePermissionsCSV(w *csv.Writer, p *PagePermissions) {
+	_ = w.Write([]string{"ID", "PAGE_ID", "PRINCIPAL_TYPE", "PRINCIPAL_ID", "PERMISSION_LEVEL", "GRANTED_BY"})
+	for _, row := range p.ACL {
+		o.writePagePermissionCSVRow(w, &row)
+	}
+}
+
+func (o *Output) printPagePermissionCSV(w *csv.Writer, p *PagePermission) {
+	_ = w.Write([]string{"ID", "PAGE_ID", "PRINCIPAL_TYPE", "PRINCIPAL_ID", "PERMISSION_LEVEL", "GRANTED_BY"})
+	o.writePagePermissionCSVRow(w, p)
+}
+
+func (o *Output) writePagePermissionCSVRow(w *csv.Writer, p *PagePermission) {
+	grantedBy := ""
+	if p.GrantedBy != nil {
+		grantedBy = fmt.Sprintf("%d", *p.GrantedBy)
+	}
+	_ = w.Write([]string{fmt.Sprintf("%d", p.ID), fmt.Sprintf("%d", p.PageID), p.PrincipalType, fmt.Sprintf("%d", p.PrincipalID), p.PermissionLevel, grantedBy})
 }
 
 // ============================================

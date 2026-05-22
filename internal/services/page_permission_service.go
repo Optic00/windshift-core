@@ -44,9 +44,10 @@ func NewPagePermissionService(db database.Database, perm *PermissionService) *Pa
 
 // Page operations evaluated by Can.
 const (
-	PageOpView  = "view"
-	PageOpEdit  = "edit"
-	PageOpAdmin = "admin"
+	PageOpView    = "view"
+	PageOpEdit    = "edit"
+	PageOpAdmin   = "admin"
+	PageOpRestore = "restore"
 )
 
 // HasWorkspacePermissionFor exposes a workspace-level permission check
@@ -93,16 +94,12 @@ func (s *PagePermissionService) Can(userID, workspaceID, pageID int, op string) 
 	}
 
 	if page.ArchivedAt != nil {
-		// Mutations on archived pages always 404. The page is frozen until
-		// an explicit unarchive op (not implemented yet) restores it; this
-		// keeps Restore, Update, Move, and ACL writes from changing
-		// archived rows.
-		if op != PageOpView {
+		// Archived pages are frozen except for the explicit restore operation.
+		// View and restore on archived pages are admin-only: system.admin or
+		// workspace.admin. Page-level ACL grants do NOT apply to archived pages.
+		if op != PageOpView && op != PageOpRestore {
 			return false, nil
 		}
-		// View on archived pages is admin-only: system.admin or workspace
-		// admin. Page-level ACL grants do NOT apply to archived pages —
-		// they're frozen from the user's perspective.
 		if isAdmin, ierr := s.perm.IsSystemAdmin(userID); ierr != nil {
 			return false, ierr
 		} else if isAdmin {
@@ -646,14 +643,14 @@ func (s *PagePermissionService) userWorkspaceRoleIDs(userID, workspaceID int) ([
 }
 
 func isValidPageOp(op string) bool {
-	return op == PageOpView || op == PageOpEdit || op == PageOpAdmin
+	return op == PageOpView || op == PageOpEdit || op == PageOpAdmin || op == PageOpRestore
 }
 
 func allowedLevelsForOp(op string) []string {
 	switch op {
 	case PageOpView:
 		return []string{models.PagePermissionLevelView, models.PagePermissionLevelEdit, models.PagePermissionLevelAdmin}
-	case PageOpEdit:
+	case PageOpEdit, PageOpRestore:
 		return []string{models.PagePermissionLevelEdit, models.PagePermissionLevelAdmin}
 	case PageOpAdmin:
 		return []string{models.PagePermissionLevelAdmin}
@@ -666,7 +663,7 @@ func workspacePermKeyForOp(op string) string {
 	switch op {
 	case PageOpView:
 		return models.PermissionPageView
-	case PageOpEdit:
+	case PageOpEdit, PageOpRestore:
 		return models.PermissionPageEdit
 	case PageOpAdmin:
 		return models.PermissionPageAdmin

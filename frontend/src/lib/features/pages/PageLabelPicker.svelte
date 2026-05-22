@@ -34,9 +34,9 @@
     labels: providedLabels = null,
   } = $props();
 
-  let labels = $state(/** @type {any[]} */ (providedLabels ?? []));
+  let labels = $state(/** @type {any[]} */ ([]));
   let loading = $state(false);
-  let loadedOnce = $state(providedLabels !== null);
+  let loadedOnce = $state(false);
   let search = $state('');
   let creating = $state(false);
   let createColor = $state('#3B82F6');
@@ -70,7 +70,7 @@
   // filter reloads the tree), sync it. We deliberately do NOT replace the
   // local labels when the popover is open — that would yank the create form.
   $effect(() => {
-    if (providedLabels && !$open) {
+    if (providedLabels !== null && !$open) {
       labels = providedLabels;
       loadedOnce = true;
     }

@@ -267,6 +267,12 @@ func RegisterRoutes(deps restapi.Deps) {
 	v1.HandleWithMiddleware("DELETE /workspaces/{id}/pages/{pageId}", pageHandler.Archive, bearerAuth.RequirePermission("pages:delete"), router.RequireNumericID)
 	v1.HandleWithMiddleware("POST /workspaces/{id}/pages/{pageId}/move", pageHandler.Move, bearerAuth.RequirePermission("pages:write"), router.RequireNumericID)
 	v1.HandleWithMiddleware("GET /workspaces/{id}/pages/{pageId}/history", pageHandler.GetHistory, bearerAuth.RequirePermission("pages:read"), router.RequireNumericID)
+	v1.HandleWithMiddleware("GET /workspaces/{id}/pages/{pageId}/history/{revisionId}", pageHandler.GetRevision, bearerAuth.RequirePermission("pages:read"), router.RequireNumericID)
+	v1.HandleWithMiddleware("POST /workspaces/{id}/pages/{pageId}/history/{revisionId}/restore", pageHandler.RestoreRevision, bearerAuth.RequirePermission("pages:write"), router.RequireNumericID)
+	v1.HandleWithMiddleware("GET /workspaces/{id}/pages/{pageId}/permissions", pageHandler.GetPermissions, bearerAuth.RequirePermission("pages:read"), router.RequireNumericID)
+	v1.HandleWithMiddleware("POST /workspaces/{id}/pages/{pageId}/permissions", pageHandler.GrantPermission, bearerAuth.RequirePermission("pages:write"), router.RequireNumericID)
+	v1.HandleWithMiddleware("DELETE /workspaces/{id}/pages/{pageId}/permissions/{permissionId}", pageHandler.RevokePermission, bearerAuth.RequirePermission("pages:write"), router.RequireNumericID)
+	v1.HandleWithMiddleware("PATCH /workspaces/{id}/pages/{pageId}/inheritance", pageHandler.SetInheritance, bearerAuth.RequirePermission("pages:write"), router.RequireNumericID)
 	// Bearer-authenticated page-attachment upload (the legacy
 	// /api/attachments/upload route rejects crw_ tokens). Delegates to
 	// the legacy upload pipeline so validation/storage/audit stay in one

@@ -522,6 +522,14 @@ type Page struct {
 	// in JSON). Lets `ws page list --label foo` filter client-side without
 	// a per-page round-trip.
 	Labels []PageLabel `json:"labels,omitempty"`
+	Links  *PageLinks  `json:"_links,omitempty"`
+}
+
+type PageLinks struct {
+	Self        string `json:"self"`
+	Workspace   string `json:"workspace"`
+	History     string `json:"history"`
+	Permissions string `json:"permissions"`
 }
 
 // PageListResponse is the wire shape of GET /workspaces/:id/pages.
@@ -550,6 +558,33 @@ type PageRevision struct {
 // PageHistoryResponse wraps a list of revisions newest-first.
 type PageHistoryResponse struct {
 	Items []PageRevision `json:"items"`
+}
+
+type PagePermissions struct {
+	PageID             int              `json:"page_id"`
+	InheritPermissions bool             `json:"inherit_permissions"`
+	EffectiveLevel     string           `json:"effective_level,omitempty"`
+	ACL                []PagePermission `json:"acl"`
+}
+
+type PagePermission struct {
+	ID              int        `json:"id"`
+	PageID          int        `json:"page_id"`
+	PrincipalType   string     `json:"principal_type"`
+	PrincipalID     int        `json:"principal_id"`
+	PermissionLevel string     `json:"permission_level"`
+	GrantedBy       *int       `json:"granted_by,omitempty"`
+	GrantedAt       *time.Time `json:"granted_at,omitempty"`
+}
+
+type PageGrantPermissionRequest struct {
+	PrincipalType   string `json:"principal_type"`
+	PrincipalID     int    `json:"principal_id"`
+	PermissionLevel string `json:"permission_level"`
+}
+
+type PageSetInheritanceRequest struct {
+	InheritPermissions bool `json:"inherit_permissions"`
 }
 
 // PageCreateRequest is the body for POST /workspaces/:id/pages.

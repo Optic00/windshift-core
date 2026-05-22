@@ -389,9 +389,18 @@ func (s *PageService) Move(actorID, pageID int, newParentID, prevSiblingID, next
 }
 
 // Archive flags a page (and its entire subtree) as archived. Archive is
-// reversible only by restoring an explicit revision in a later slice;
-// for Phase 1 it just sets archived_at on the target and every descendant.
+// reversible by restoring an explicit revision, which unarchives only the
+// addressed page. Use ArchiveChecked from HTTP handlers so descendant ACL
+// checks run inside the archive transaction.
 func (s *PageService) Archive(actorID, pageID int) error {
+	return s.ArchiveChecked(actorID, pageID, nil)
+}
+
+// ArchiveChecked locks the page subtree, runs an optional authorization check
+// over the exact rows that will be archived, then archives the same locked set.
+// This closes the handler-level TOCTOU where a restricted descendant could be
+// inserted between an out-of-transaction descendant scan and the archive UPDATE.
+func (s *PageService) ArchiveChecked(actorID, pageID int, authorize func([]models.Page) error) error {
 	return database.WithTx(s.db, func(tx database.Tx) error {
 		page, err := s.pages.GetByIDTx(tx, pageID)
 		if err != nil {
@@ -401,11 +410,24 @@ func (s *PageService) Archive(actorID, pageID int) error {
 			return err
 		}
 
-		// Archive the page and every descendant by materialized-path prefix.
-		// A single statement keeps the operation atomic and avoids walking
-		// the CTE for each row.
 		prefix := page.Path + fmt.Sprintf("%d/", page.ID)
 		pathLike := prefix + "%"
+		subtree, err := s.pages.ListSubtreeForArchiveTx(tx, page, s.db.GetDriverName() == "postgres")
+		if err != nil {
+			return err
+		}
+		if len(subtree) == 0 {
+			return ErrPageNotFound
+		}
+		if authorize != nil {
+			if err := authorize(subtree); err != nil {
+				return err
+			}
+		}
+
+		// Archive the page and every descendant by materialized-path prefix.
+		// A single statement keeps the operation atomic and targets the same
+		// locked subtree rows authorized above.
 		if _, err := tx.Exec(`
 			UPDATE pages
 			SET archived_at = CURRENT_TIMESTAMP,
@@ -424,12 +446,14 @@ func (s *PageService) Archive(actorID, pageID int) error {
 			return err
 		}
 
-		archived, err := s.pages.GetByIDTx(tx, page.ID)
-		if err != nil {
-			return err
+		// Every archived row gets its own revision entry so descendants have a
+		// local audit trail explaining why/when they disappeared.
+		for i := range subtree {
+			if _, err := s.writeRevisionTx(tx, &subtree[i], actorID, models.PageRevisionChangeTypeArchive, "archived with subtree"); err != nil {
+				return err
+			}
 		}
-		_, err = s.writeRevisionTx(tx, archived, actorID, models.PageRevisionChangeTypeArchive, "")
-		return err
+		return nil
 	})
 }
 
@@ -464,7 +488,7 @@ func (s *PageService) Restore(actorID, pageID, revisionID int) (*models.Page, er
 			}
 			return nil, err
 		}
-		rev, err := s.pages.GetRevisionByID(revisionID)
+		rev, err := s.pages.GetRevisionByIDTx(tx, revisionID)
 		if err != nil {
 			if errors.Is(err, repository.ErrNotFound) {
 				return nil, ErrPageNotFound
@@ -489,6 +513,7 @@ func (s *PageService) Restore(actorID, pageID, revisionID int) (*models.Page, er
 			Excerpt:            rev.Excerpt,
 			InheritPermissions: page.InheritPermissions,
 			UpdatedBy:          actorID,
+			Unarchive:          page.ArchivedAt != nil,
 		}); err != nil {
 			if errors.Is(err, repository.ErrDuplicateEntry) {
 				return nil, ErrPageSlugConflict

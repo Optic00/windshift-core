@@ -54,6 +54,7 @@
   let moveDialogOpen = $state(false);
   let historyDrawerOpen = $state(false);
   let titleInputEl = $state(null);
+  let pageEffectiveLevel = $state('');
 
   // 'idle' = nothing to save; 'pending' = waiting for the debounce
   // timer; 'saving' = request in flight; 'saved' = last write
@@ -177,6 +178,7 @@
       dirty = false;
       saveStatus = 'idle';
       pageLinks = [];
+      pageEffectiveLevel = '';
     }
   });
 
@@ -205,16 +207,31 @@
       draftContent = page.content;
       dirty = false;
       saveStatus = 'idle';
-      // Run in parallel: linked work items are independent of the page
-      // payload, and the link-types list is cached for the session.
+      pageEffectiveLevel = '';
+      // Run in parallel: linked work items / permissions are independent
+      // of the page payload, and the link-types list is cached for the session.
       void loadPageLinks(id);
+      void ensurePageEffectiveLevel(id);
       void ensureLinkTypesLoaded();
     } catch (err) {
       if (requestSeq !== loadPageRequestSeq) return;
       error = err?.message || t('pages.errorLoadPage');
       selectedPage = null;
+      pageEffectiveLevel = '';
     } finally {
       if (requestSeq === loadPageRequestSeq) loadingPage = false;
+    }
+  }
+
+  async function ensurePageEffectiveLevel(id) {
+    try {
+      const perms = await api.pages.getPermissions(workspaceId, id);
+      if (selectedPage?.id === id) {
+        pageEffectiveLevel = perms?.effective_level || '';
+      }
+    } catch (err) {
+      console.error('failed to load page permissions', err);
+      if (selectedPage?.id === id) pageEffectiveLevel = '';
     }
   }
 
@@ -635,6 +652,7 @@
     bind:open={historyDrawerOpen}
     {workspaceId}
     pageId={selectedPage.id}
+    canRestore={pageEffectiveLevel === 'edit' || pageEffectiveLevel === 'admin'}
     onRestored={async () => {
       if (selectedPage) await loadPage(selectedPage.id);
     }}

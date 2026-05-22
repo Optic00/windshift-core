@@ -374,27 +374,21 @@ func (h *PageHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	descendants, err := h.service.ListDescendants(pageID)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	for _, d := range descendants {
-		can, cerr := h.pageAuth.Can(user.ID, workspaceID, d.ID, services.PageOpAdmin)
-		if cerr != nil {
-			respondInternalError(w, r, cerr)
-			return
+	if err := h.service.ArchiveChecked(user.ID, pageID, func(subtree []models.Page) error {
+		for _, d := range subtree {
+			can, cerr := h.pageAuth.Can(user.ID, workspaceID, d.ID, services.PageOpAdmin)
+			if cerr != nil {
+				return cerr
+			}
+			if !can {
+				// A restricted descendant blocks the whole archive. 404 keeps
+				// existence-not-leaked — caller learns "no" without learning
+				// which descendant denied.
+				return services.ErrPageNotFound
+			}
 		}
-		if !can {
-			// A restricted descendant blocks the whole archive. 404 keeps
-			// existence-not-leaked — caller learns "no" without learning
-			// which descendant denied.
-			respondNotFound(w, r, "Page")
-			return
-		}
-	}
-
-	if err := h.service.Archive(user.ID, pageID); err != nil {
+		return nil
+	}); err != nil {
 		h.respondServiceError(w, r, err)
 		return
 	}
@@ -480,7 +474,7 @@ func (h *PageHandler) GetRevision(w http.ResponseWriter, r *http.Request) {
 // RestoreRevision overwrites a page's live content from a revision.
 // Requires edit permission on the target page.
 func (h *PageHandler) RestoreRevision(w http.ResponseWriter, r *http.Request) {
-	_, pageID, user, ok := h.requireWorkspacePageAuth(w, r, services.PageOpEdit)
+	_, pageID, user, ok := h.requireWorkspacePageAuth(w, r, services.PageOpRestore)
 	if !ok {
 		return
 	}

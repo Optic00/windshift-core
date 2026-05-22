@@ -207,6 +207,9 @@ type UpdateInput struct {
 	Excerpt            string
 	InheritPermissions bool
 	UpdatedBy          int
+	// Unarchive clears archived_at/archived_by while applying the update.
+	// Used by restore; normal title/content edits leave archive state alone.
+	Unarchive bool
 }
 
 // UpdateTx applies a content/title/slug/inheritance edit within a transaction.
@@ -216,7 +219,7 @@ type UpdateInput struct {
 // because they touch parent_id/path/depth and archived_* fields respectively.
 func (r *PageRepository) UpdateTx(tx database.Tx, in UpdateInput) error {
 	now := time.Now().UTC()
-	res, err := tx.Exec(`
+	query := `
 		UPDATE pages
 		SET title = ?,
 		    slug = ?,
@@ -225,10 +228,18 @@ func (r *PageRepository) UpdateTx(tx database.Tx, in UpdateInput) error {
 		    excerpt = ?,
 		    inherit_permissions = ?,
 		    updated_by = ?,
-		    updated_at = ?
-		WHERE id = ?
-	`, in.Title, in.Slug, in.Content, in.ContentHash, in.Excerpt, in.InheritPermissions,
-		in.UpdatedBy, now, in.ID)
+		    updated_at = ?`
+	args := make([]interface{}, 0, 9)
+	args = append(args, in.Title, in.Slug, in.Content, in.ContentHash, in.Excerpt, in.InheritPermissions, in.UpdatedBy, now)
+	if in.Unarchive {
+		query += `,
+		    archived_at = NULL,
+		    archived_by = NULL`
+	}
+	query += `
+		WHERE id = ?`
+	args = append(args, in.ID)
+	res, err := tx.Exec(query, args...)
 	if err != nil {
 		if isUniqueConstraintError(err) {
 			return ErrDuplicateEntry
@@ -527,6 +538,37 @@ func (r *PageRepository) GetAncestors(pageID int) ([]models.Page, error) {
 	return out, rows.Err()
 }
 
+// ListSubtreeForArchiveTx returns the target page plus every descendant matched
+// by the materialized-path prefix. When forUpdate is true (Postgres), rows are
+// locked until the caller's transaction commits so permission checks performed
+// by the service cannot race a concurrent insert/update in the archived subtree.
+func (r *PageRepository) ListSubtreeForArchiveTx(tx database.Tx, page *models.Page, forUpdate bool) ([]models.Page, error) {
+	prefix := page.Path + fmt.Sprintf("%d/", page.ID)
+	query := `
+		SELECT ` + pageColumns + `
+		FROM pages
+		WHERE id = ? OR (workspace_id = ? AND path LIKE ?)
+		ORDER BY depth ASC, id ASC`
+	if forUpdate {
+		query += " FOR UPDATE"
+	}
+	rows, err := tx.Query(query, page.ID, page.WorkspaceID, prefix+"%")
+	if err != nil {
+		return nil, fmt.Errorf("list archive subtree: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []models.Page
+	for rows.Next() {
+		p, scanErr := scanPage(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("scan archive subtree: %w", scanErr)
+		}
+		out = append(out, *p)
+	}
+	return out, rows.Err()
+}
+
 // GetDescendants returns every descendant of a page up to maxDepth.
 // maxDepth <= 0 or > MaxPageDepth is clamped to MaxPageDepth.
 func (r *PageRepository) GetDescendants(pageID, maxDepth int) ([]models.Page, error) {
@@ -658,12 +700,22 @@ func (r *PageRepository) InsertRevisionTx(tx database.Tx, rev models.PageRevisio
 // matches.
 func (r *PageRepository) GetRevisionByID(id int) (*models.PageRevision, error) {
 	row := r.db.QueryRow("SELECT "+pageRevisionColumns+" FROM page_revisions WHERE id = ?", id)
+	return scanRevisionRow(row, id, "")
+}
+
+// GetRevisionByIDTx loads a single revision inside the caller's transaction.
+func (r *PageRepository) GetRevisionByIDTx(tx database.Tx, id int) (*models.PageRevision, error) {
+	row := tx.QueryRow("SELECT "+pageRevisionColumns+" FROM page_revisions WHERE id = ?", id)
+	return scanRevisionRow(row, id, " (tx)")
+}
+
+func scanRevisionRow(row rowScanner, id int, suffix string) (*models.PageRevision, error) {
 	rev, err := scanPageRevision(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
-		return nil, fmt.Errorf("get revision %d: %w", id, err)
+		return nil, fmt.Errorf("get revision %d%s: %w", id, suffix, err)
 	}
 	return rev, nil
 }
