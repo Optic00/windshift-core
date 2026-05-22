@@ -134,5 +134,10 @@ export default {
     labelsErrorSave: 'Failed to save label',
     labelsErrorAttach: 'Failed to attach label',
     labelsErrorDetach: 'Failed to detach label',
+
+    // Sidebar title search
+    searchAria: 'Search pages',
+    searchPlaceholder: 'Search pages…',
+    searchClear: 'Clear search',
   },
 };

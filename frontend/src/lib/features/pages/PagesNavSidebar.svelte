@@ -12,7 +12,8 @@
     IconPlus as Plus,
     IconDots as Dots,
     IconBook as Book,
-    IconX as X
+    IconX as X,
+    IconSearch as Search
   } from '@tabler/icons-svelte-runes';
   import DropdownMenu from '../../layout/DropdownMenu.svelte';
   import EmptyState from '../../components/EmptyState.svelte';
@@ -61,7 +62,7 @@
   // OR it is an ancestor of a matching page (kept for tree context). Ancestor
   // detection uses the materialized `path` field that the backend stamps on
   // every page row.
-  let visibleIds = $derived.by(() => {
+  let labelVisibleIds = $derived.by(() => {
     if (filterLabelIds.size === 0) return null; // null means "show everything"
     const visible = new Set();
     for (const page of pages) {
@@ -78,15 +79,36 @@
     return visible;
   });
 
+  // Combined visibility: a page is visible iff every active filter says so.
+  // Label + title search compose with AND semantics — both filters must
+  // include the page (or its descendant chain) for it to survive.
+  let visibleIds = $derived.by(() => {
+    if (labelVisibleIds === null && titleMatchIds === null) return null;
+    if (labelVisibleIds === null) return titleMatchIds;
+    if (titleMatchIds === null) return labelVisibleIds;
+    const intersection = new Set();
+    for (const id of labelVisibleIds) {
+      if (titleMatchIds.has(id)) intersection.add(id);
+    }
+    return intersection;
+  });
+
   function isLabelHit(page) {
     return (page.labels || []).some((l) => filterLabelIds.has(l.id));
+  }
+
+  function isPageHit(page) {
+    // "Hit" = matches every active filter, not just an ancestor of a match.
+    const titleOK = titleMatchIds === null || isSearchHit(page);
+    const labelOK = filterLabelIds.size === 0 || isLabelHit(page);
+    return titleOK && labelOK;
   }
 
   function isAncestorOnly(page) {
     // Visible only because of the ancestor-context rule; rendered dimmer
     // so the user can tell which rows are the actual matches.
     if (visibleIds === null) return false;
-    return visibleIds.has(page.id) && !isLabelHit(page);
+    return visibleIds.has(page.id) && !isPageHit(page);
   }
 
   function onFilterToggle(label) {
@@ -101,6 +123,63 @@
 
   function clearFilters() {
     pagesFilter.clear(workspaceId);
+  }
+
+  // --- title search ---
+  // Local search filter on page titles. Client-side substring match
+  // (case-insensitive) over the already-loaded tree — fast, no extra
+  // round-trip. The input lives in a toggleable row revealed by the
+  // search icon in the header so the default sidebar stays compact.
+  let searchOpen = $state(false);
+  let searchQuery = $state('');
+  let searchInputEl = $state(null);
+
+  function toggleSearch() {
+    searchOpen = !searchOpen;
+    if (searchOpen) {
+      // Focus on next tick so the input mounts first.
+      setTimeout(() => searchInputEl?.focus(), 0);
+    } else {
+      searchQuery = '';
+    }
+  }
+
+  function clearSearch() {
+    searchQuery = '';
+    searchInputEl?.focus();
+  }
+
+  function onSearchKeydown(e) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      searchOpen = false;
+      searchQuery = '';
+    }
+  }
+
+  // Title-match: case-insensitive substring on each page's title. Pages
+  // that don't match are hidden; ancestors of matches stay visible for
+  // tree context (same rule the label filter uses).
+  let titleMatchIds = $derived.by(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return null;
+    const visible = new Set();
+    for (const page of pages) {
+      if (!page.title?.toLowerCase().includes(q)) continue;
+      visible.add(page.id);
+      const segments = (page.path || '').split('/').filter(Boolean);
+      for (const seg of segments) {
+        const ancestorId = Number(seg);
+        if (Number.isFinite(ancestorId)) visible.add(ancestorId);
+      }
+    }
+    return visible;
+  });
+
+  function isSearchHit(page) {
+    if (titleMatchIds === null) return false;
+    const q = searchQuery.trim().toLowerCase();
+    return Boolean(q) && page.title?.toLowerCase().includes(q);
   }
 
   // The currently active page id comes from the route param, not local state —
@@ -357,18 +436,57 @@
     </button>
     <div class="title-row">
       <h2>{t('pages.treeHeading')}</h2>
-      <button
-        id="pages-add-button"
-        class="add-button"
-        type="button"
-        onclick={() => createPage(activePageId)}
-        disabled={creating}
-        aria-label={t('pages.addPageAria')}
-      >
-        <Plus size={16} />
-      </button>
+      <div class="title-actions">
+        <button
+          id="pages-search-button"
+          class="header-button"
+          class:header-button--active={searchOpen}
+          type="button"
+          onclick={toggleSearch}
+          aria-label={t('pages.searchAria')}
+          aria-pressed={searchOpen}
+          data-testid="pages-search-toggle"
+        >
+          <Search size={16} />
+        </button>
+        <button
+          id="pages-add-button"
+          class="header-button"
+          type="button"
+          onclick={() => createPage(activePageId)}
+          disabled={creating}
+          aria-label={t('pages.addPageAria')}
+        >
+          <Plus size={16} />
+        </button>
+      </div>
     </div>
   </header>
+
+  {#if searchOpen}
+    <div class="search-row" data-testid="pages-search-row">
+      <Search size={14} class="search-row__icon" aria-hidden="true" />
+      <input
+        bind:this={searchInputEl}
+        bind:value={searchQuery}
+        onkeydown={onSearchKeydown}
+        type="text"
+        class="search-input"
+        placeholder={t('pages.searchPlaceholder')}
+        data-testid="pages-search-input"
+      />
+      {#if searchQuery}
+        <button
+          type="button"
+          class="search-row__clear"
+          onclick={clearSearch}
+          aria-label={t('pages.searchClear')}
+        >
+          <X size={12} />
+        </button>
+      {/if}
+    </div>
+  {/if}
 
   <div class="filter-row" data-testid="pages-filter-row">
     {#each activeFilterLabels as label (label.id)}
@@ -536,7 +654,13 @@
     color: var(--ds-text-subtle);
   }
 
-  .add-button {
+  .title-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.125rem;
+  }
+
+  .header-button {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -549,14 +673,66 @@
     cursor: pointer;
   }
 
-  .add-button:hover:not(:disabled) {
+  .header-button:hover:not(:disabled) {
     background: var(--ds-background-neutral-hovered);
     color: var(--ds-text);
   }
 
-  .add-button:disabled {
+  .header-button:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  .header-button--active {
+    background: var(--ds-surface-selected);
+    color: var(--ds-text);
+  }
+
+  .search-row {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--ds-border);
+  }
+
+  :global(.search-row__icon) {
+    color: var(--ds-text-subtle);
+    flex-shrink: 0;
+  }
+
+  .search-input {
+    flex: 1;
+    padding: 0.25rem 0.375rem;
+    border: 1px solid var(--ds-border);
+    border-radius: 0.25rem;
+    background: var(--ds-surface);
+    color: var(--ds-text);
+    font-size: 0.8125rem;
+    min-width: 0;
+  }
+
+  .search-input:focus {
+    outline: none;
+    border-color: var(--ds-accent-blue);
+  }
+
+  .search-row__clear {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    color: var(--ds-text-subtle);
+    cursor: pointer;
+    padding: 0.125rem;
+    border-radius: 0.25rem;
+    flex-shrink: 0;
+  }
+
+  .search-row__clear:hover {
+    color: var(--ds-text);
+    background: var(--ds-background-neutral-hovered);
   }
 
   .filter-row {
