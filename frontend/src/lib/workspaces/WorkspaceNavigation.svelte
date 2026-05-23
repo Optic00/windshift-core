@@ -557,7 +557,7 @@
 
     {@render resizeHandle()}
   </div>
-{:else if $currentRoute.view === 'workspace-pages'}
+{:else if $currentRoute.view === 'workspace-pages' || $currentRoute.view === 'workspace-pages-archived'}
   <!-- Pages drilldown keeps the common workspace identity header and swaps the body for the page tree. -->
   <div
     class="sidebar-mode-panel relative h-full flex-shrink-0 {sidebarBgClass} border-r flex flex-col py-4"

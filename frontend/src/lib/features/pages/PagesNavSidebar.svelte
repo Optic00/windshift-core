@@ -25,7 +25,6 @@
   import PageMoveDialog from './PageMoveDialog.svelte';
   import PagePermissionsDialog from './PagePermissionsDialog.svelte';
   import PageLabelPicker from './PageLabelPicker.svelte';
-  import ArchivedPagesModal from './ArchivedPagesModal.svelte';
   import { workspacePermissions } from '../../stores/workspacePermissions.svelte.js';
   import { pagesTreeRefresh } from './pagesTreeRefresh.svelte.js';
   import { pagesFocusTitle } from './pagesFocusTitle.svelte.js';
@@ -40,7 +39,6 @@
   let moveDialogPage = $state(null);
   let permsDialogOpen = $state(false);
   let permsDialogPage = $state(null);
-  let archivedModalOpen = $state(false);
   let dndState = $state(new Map());
   let setupTimeout;
   let setupCleanups = [];
@@ -581,8 +579,9 @@
           <Tooltip content={t('pages.archivedOpenAria')} placement="bottom" class="inline-flex">
             <button
               class="header-button"
+              class:header-button--active={$currentRoute.view === 'workspace-pages-archived'}
               type="button"
-              onclick={() => (archivedModalOpen = true)}
+              onclick={() => navigate(`/workspaces/${workspaceId}/pages/archived`)}
               aria-label={t('pages.archivedOpenAria')}
               data-testid="pages-archived-open"
             >
@@ -777,12 +776,6 @@
     onUpdated={loadTree}
   />
 {/if}
-
-<ArchivedPagesModal
-  bind:isOpen={archivedModalOpen}
-  {workspaceId}
-  onUnarchived={loadTree}
-/>
 
 <style>
   .pages-sidebar {

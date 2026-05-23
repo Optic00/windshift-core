@@ -1,39 +1,33 @@
 <script>
-  import Modal from '../../dialogs/Modal.svelte';
-  import ModalHeader from '../../dialogs/ModalHeader.svelte';
   import DataTable from '../../components/DataTable.svelte';
   import Button from '../../components/Button.svelte';
-  import { Archive } from '@lucide/svelte';
+  import PageHeader from '../../layout/PageHeader.svelte';
+  import { IconArchive, IconArrowLeft } from '@tabler/icons-svelte-runes';
   import { api } from '../../api.js';
+  import { navigate } from '../../router.js';
   import { t } from '../../stores/i18n.svelte.js';
   import { errorToast, successToast } from '../../stores/toasts.svelte.js';
   import { confirm } from '../../composables/useConfirm.js';
   import { formatDateSimple } from '../../utils/dateFormatter.js';
+  import { pagesTreeRefresh } from './pagesTreeRefresh.svelte.js';
 
   /**
-   * Admin-only modal listing every archived page in the workspace, with a
-   * per-row Unarchive button. The backend's /pages/archived endpoint is
-   * gated to system.admin or workspace.admin (404 otherwise) so even if a
-   * non-admin reaches this component, the list comes back empty/404.
-   *
-   * The Unarchive action calls the dedicated POST /pages/{id}/unarchive
-   * endpoint — distinct from "restore a revision" because we don't want
-   * to overwrite content as a side effect. Single-page only: ancestors
-   * stay archived unless explicitly unarchived too.
+   * Admin-only archived-pages list, mounted at /workspaces/:id/pages/archived.
+   * Rendered as a full-page view (not a modal) so admins can scan large
+   * archive sets, sort columns, and unarchive without losing the sidebar
+   * tree context. The backend endpoint already enforces admin (system or
+   * workspace) and returns 404 otherwise, so a deep-linked non-admin
+   * lands on an empty list rather than an error screen.
    */
-  let { isOpen = $bindable(false), workspaceId, onUnarchived = () => {} } = $props();
+  let { workspaceId } = $props();
 
   let rows = $state(/** @type {any[]} */ ([]));
-  let loading = $state(false);
+  let loading = $state(true);
   let pendingId = $state(/** @type {number | null} */ (null));
 
   $effect(() => {
-    if (isOpen && workspaceId) {
+    if (workspaceId) {
       void load();
-    }
-    if (!isOpen) {
-      rows = [];
-      pendingId = null;
     }
   });
 
@@ -44,6 +38,7 @@
       rows = Array.isArray(data) ? data : [];
     } catch (err) {
       errorToast(err?.message || t('pages.archivedLoadError'));
+      rows = [];
     } finally {
       loading = false;
     }
@@ -62,12 +57,18 @@
       await api.pages.unarchive(workspaceId, row.id);
       successToast(t('pages.archivedUnarchiveOK', { title: row.title }));
       rows = rows.filter((r) => r.id !== row.id);
-      onUnarchived();
+      // Refresh the sidebar tree so the unarchived page shows up there
+      // for any sibling tab that has the tree loaded.
+      pagesTreeRefresh.bump();
     } catch (err) {
       errorToast(err?.message || t('pages.archivedUnarchiveError'));
     } finally {
       pendingId = null;
     }
+  }
+
+  function goBack() {
+    navigate(`/workspaces/${workspaceId}/pages`);
   }
 
   const columns = $derived([
@@ -88,38 +89,48 @@
   ]);
 </script>
 
-<Modal bind:isOpen maxWidth="max-w-3xl">
-  <ModalHeader
+<main class="archived-page" data-testid="archived-pages-view">
+  <PageHeader
+    icon={IconArchive}
     title={t('pages.archivedHeading')}
-    onClose={() => (isOpen = false)}
-  />
-  <div class="archived-body" data-testid="archived-pages-modal">
-    <DataTable
-      {columns}
-      data={rows}
-      keyField="id"
-      {loading}
-      emptyMessage={t('pages.archivedEmpty')}
-      emptyIcon={Archive}
-    >
-      {#snippet unarchive(row)}
-        <Button
-          variant="secondary"
-          size="small"
-          disabled={pendingId === row.id}
-          onclick={() => handleUnarchive(row)}
-          data-testid="archived-page-unarchive"
-          data-page-id={row.id}
-        >
-          {t('pages.archivedUnarchive')}
-        </Button>
-      {/snippet}
-    </DataTable>
-  </div>
-</Modal>
+    subtitle={t('pages.archivedSubtitle')}
+  >
+    {#snippet actions()}
+      <Button variant="ghost" size="small" onclick={goBack} data-testid="archived-pages-back">
+        <IconArrowLeft size={14} />
+        {t('pages.archivedBack')}
+      </Button>
+    {/snippet}
+  </PageHeader>
+
+  <DataTable
+    {columns}
+    data={rows}
+    keyField="id"
+    {loading}
+    emptyMessage={t('pages.archivedEmpty')}
+    emptyIcon={IconArchive}
+  >
+    {#snippet unarchive(row)}
+      <Button
+        variant="secondary"
+        size="small"
+        disabled={pendingId === row.id}
+        onclick={() => handleUnarchive(row)}
+        data-testid="archived-page-unarchive"
+        data-page-id={row.id}
+      >
+        {t('pages.archivedUnarchive')}
+      </Button>
+    {/snippet}
+  </DataTable>
+</main>
 
 <style>
-  .archived-body {
-    padding: 1rem 1.25rem 1.25rem;
+  .archived-page {
+    padding: 1.5rem 2rem 2rem;
+    max-width: 72rem;
+    margin: 0 auto;
+    width: 100%;
   }
 </style>

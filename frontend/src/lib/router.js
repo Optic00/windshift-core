@@ -48,7 +48,10 @@ const routes = {
   '/workspaces/:id/milestones': 'workspace-milestones',
   '/workspaces/:id/analytics': 'workspace-analytics',
   // Knowledge pages (workspace wiki)
+  // archived must precede :pageId so the literal segment wins the
+  // sequential-iteration match in updateRoute().
   '/workspaces/:id/pages': 'workspace-pages',
+  '/workspaces/:id/pages/archived': 'workspace-pages-archived',
   '/workspaces/:id/pages/:pageId': 'workspace-pages',
   // Routes with collection ID filtering
   '/workspaces/:id/collections/:collectionId/board': 'workspace-board',

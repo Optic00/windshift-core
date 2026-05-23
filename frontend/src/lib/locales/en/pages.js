@@ -84,9 +84,11 @@ export default {
       'This archives the page and every child page. Phase 1 has no undo for this action.',
     archiveConfirm: 'Archive',
 
-    // Archived pages list (admin-only modal opened from the sidebar header)
+    // Archived pages list (admin-only full-page view opened from the sidebar header)
     archivedOpenAria: 'View archived pages',
     archivedHeading: 'Archived pages',
+    archivedSubtitle: 'Review and restore pages that were previously archived.',
+    archivedBack: 'Back to pages',
     archivedEmpty: 'No archived pages',
     archivedColTitle: 'Title',
     archivedColArchivedAt: 'Archived',

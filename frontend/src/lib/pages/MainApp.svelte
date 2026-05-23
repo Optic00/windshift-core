@@ -156,6 +156,7 @@
     'workspace-map': () => import('../features/collections/CollectionMap.svelte'),
     'workspace-roadmap': () => import('../features/collections/CollectionRoadmap.svelte'),
     'workspace-pages': () => import('../features/pages/PagesView.svelte'),
+    'workspace-pages-archived': () => import('../features/pages/ArchivedPagesPage.svelte'),
     // Global collection views (no workspace)
     'collection-board': () => import('../features/collections/CollectionBoard.svelte'),
     'collection-board-config': () => import('../settings/BoardConfigurationPage.svelte'),
@@ -362,6 +363,12 @@
         workspaceId: Number(route.params.id),
         pageId: route.params.pageId ? Number(route.params.pageId) : null,
       })
+    },
+    'workspace-pages-archived': {
+      loadingMsg: 'Loading Archived Pages...',
+      errorMsg: 'Failed to load Archived Pages',
+      wrapper: 'none',
+      getProps: (route) => ({ workspaceId: Number(route.params.id) })
     },
     // Global collection views (no workspace)
     'collection-board': {
