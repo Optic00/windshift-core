@@ -602,6 +602,7 @@
             readonly={mode === 'read'}
             entityType="page"
             entityId={selectedPage.id}
+            enableDiagrams={true}
             onContentChange={onContentInput}
           />
         </div>

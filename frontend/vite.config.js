@@ -34,7 +34,26 @@ export default defineConfig({
     }),
   ],
   optimizeDeps: {
-    include: ['@milkdown/core', '@milkdown/kit', '@milkdown/theme-nord'],
+    // React + jsx-runtime are force-included so the dev optimizer emits all
+    // exports (Fragment, jsx, jsxs) — needed by Excalidraw's auto-JSX output.
+    // Excalidraw and its mermaid bridge are pre-bundled rather than excluded:
+    // their dep tree contains CJS packages (es6-promise-pool, sanitize-url,
+    // lodash.throttle, …) and Vite's on-demand pre-bundle for an *excluded*
+    // package's CJS dependencies produces interop-broken chunks that fail at
+    // runtime ("does not provide an export named 'default' / 'Fragment'").
+    // The startup cost is bounded since both are only loaded behind a dynamic
+    // import — the optimizer just makes sure the pre-bundle is well-formed.
+    include: [
+      '@milkdown/core',
+      '@milkdown/kit',
+      '@milkdown/theme-nord',
+      'react',
+      'react-dom',
+      'react/jsx-runtime',
+      'react/jsx-dev-runtime',
+      '@excalidraw/excalidraw',
+      '@excalidraw/mermaid-to-excalidraw',
+    ],
     // exclude deps that are only loaded via dynamic import() behind a
     // runtime guard (isTauri, route-level lazy loads). Pre-bundling them
     // wastes startup time and — worse — when Vite's scanner misses one
@@ -48,8 +67,6 @@ export default defineConfig({
       '@tauri-apps/plugin-dialog',
       '@tauri-apps/plugin-fs',
       'tauri-pty',
-      '@excalidraw/excalidraw',
-      '@excalidraw/mermaid-to-excalidraw',
       '@xterm/xterm',
       '@xterm/addon-fit',
       '@xterm/addon-webgl',

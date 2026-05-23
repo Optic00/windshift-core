@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"crypto/rand"
 	"database/sql"
 	"encoding/json"
@@ -1517,6 +1518,11 @@ func (h *AttachmentHandler) verifyFileContentFromBytes(fileData []byte, filename
 			if detectedBase == "application/zip" && isZipBasedMimeType(expectedBase) {
 				return expectedType, nil
 			}
+			// http.DetectContentType has no JSON sniffer, so .json files come
+			// back as text/plain. Accept when the payload is structurally JSON.
+			if detectedBase == "text/plain" && expectedBase == "application/json" && looksLikeJSON(fileData) {
+				return expectedType, nil
+			}
 			return "", fmt.Errorf("file content type (%s) doesn't match extension %s (expected %s)", detectedBase, ext, expectedBase)
 		}
 	}
@@ -1533,6 +1539,19 @@ func isZipBasedMimeType(mimeType string) bool {
 		strings.Contains(mimeType, "openxmlformats") ||
 		strings.Contains(mimeType, "opendocument") ||
 		mimeType == "application/epub+zip"
+}
+
+// looksLikeJSON returns true if data parses as JSON. Used to rescue .json
+// uploads that http.DetectContentType reports as text/plain.
+func looksLikeJSON(data []byte) bool {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 {
+		return false
+	}
+	if trimmed[0] != '{' && trimmed[0] != '[' {
+		return false
+	}
+	return json.Valid(trimmed)
 }
 
 // validateFileExtension checks if the file extension is allowed (not in dangerous list)

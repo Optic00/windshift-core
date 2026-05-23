@@ -1,0 +1,174 @@
+<script>
+  import { Pencil, AlertTriangle, Loader2 } from '@lucide/svelte';
+  import { t } from '../stores/i18n.svelte.js';
+
+  let {
+    attachmentId,
+    name = '',
+    readonly = false,
+    onEdit = () => {},
+  } = $props();
+
+  let svgHost = $state(null);
+  let status = $state('idle'); // idle | loading | ready | missing | error
+  let errorMsg = $state('');
+
+  // Re-render whenever the underlying attachment changes (edit saves a new one).
+  $effect(() => {
+    const id = attachmentId;
+    if (!id || !svgHost) return;
+    void renderDiagram(id);
+  });
+
+  async function renderDiagram(id) {
+    status = 'loading';
+    errorMsg = '';
+    try {
+      const res = await fetch(`/api/attachments/${id}/download`, { credentials: 'same-origin' });
+      if (res.status === 404) {
+        status = 'missing';
+        return;
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const scene = await res.json();
+      const { exportToSvg } = await import('@excalidraw/excalidraw');
+      const svg = await exportToSvg({
+        elements: scene.elements || [],
+        appState: { ...(scene.appState || {}), exportBackground: true, exportWithDarkMode: false },
+        files: scene.files || null,
+        exportPadding: 16,
+      });
+      svg.setAttribute('width', '100%');
+      svg.setAttribute('height', 'auto');
+      svg.style.maxWidth = '100%';
+      svg.style.height = 'auto';
+      if (svgHost) {
+        svgHost.replaceChildren(svg);
+        status = 'ready';
+      }
+    } catch (err) {
+      console.error('Failed to render diagram', err);
+      errorMsg = err?.message || String(err);
+      status = 'error';
+    }
+  }
+
+  function handleClick() {
+    if (readonly) return;
+    onEdit();
+  }
+</script>
+
+<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+<figure class="excalidraw-block" class:readonly>
+  <div
+    class="excalidraw-block__canvas"
+    bind:this={svgHost}
+    onclick={handleClick}
+    role="button"
+    tabindex={readonly ? -1 : 0}
+    aria-label={name || t('editors.diagramOpen')}
+  >
+    {#if status === 'loading' || status === 'idle'}
+      <div class="excalidraw-block__placeholder">
+        <Loader2 size={18} class="spin" />
+      </div>
+    {:else if status === 'missing'}
+      <div class="excalidraw-block__placeholder error">
+        <AlertTriangle size={18} />
+        <span>{t('editors.diagramDeleted')}</span>
+      </div>
+    {:else if status === 'error'}
+      <div class="excalidraw-block__placeholder error">
+        <AlertTriangle size={18} />
+        <span>{t('editors.diagramRenderError')}</span>
+      </div>
+    {/if}
+  </div>
+  <figcaption class="excalidraw-block__caption">
+    <span class="excalidraw-block__name">{name || t('editors.diagramUntitled')}</span>
+    {#if !readonly}
+      <button
+        type="button"
+        class="excalidraw-block__edit"
+        onclick={() => onEdit()}
+        title={t('editors.diagramEdit')}
+        aria-label={t('editors.diagramEdit')}
+        data-testid="excalidraw-block-edit"
+      >
+        <Pencil size={14} />
+      </button>
+    {/if}
+  </figcaption>
+</figure>
+
+<style>
+  .excalidraw-block {
+    display: block;
+    margin: 0.75rem 0;
+    border: 1px solid var(--border-color, #d1d5db);
+    border-radius: 6px;
+    background: var(--surface-1, #fff);
+    overflow: hidden;
+  }
+  .excalidraw-block__canvas {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 120px;
+    padding: 8px;
+    cursor: pointer;
+  }
+  .excalidraw-block.readonly .excalidraw-block__canvas {
+    cursor: default;
+  }
+  .excalidraw-block__canvas :global(svg) {
+    max-width: 100%;
+    height: auto;
+  }
+  .excalidraw-block__placeholder {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    color: var(--text-muted, #6b7280);
+    font-size: 0.875rem;
+  }
+  .excalidraw-block__placeholder.error {
+    color: var(--danger-color, #b91c1c);
+  }
+  .excalidraw-block__caption {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 10px;
+    border-top: 1px solid var(--border-color, #d1d5db);
+    background: var(--surface-2, #f9fafb);
+    font-size: 0.8125rem;
+    color: var(--text-muted, #4b5563);
+  }
+  .excalidraw-block__name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .excalidraw-block__edit {
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 4px;
+    cursor: pointer;
+    color: inherit;
+    display: inline-flex;
+    align-items: center;
+  }
+  .excalidraw-block__edit:hover {
+    background: var(--surface-3, #e5e7eb);
+    border-color: var(--border-color, #d1d5db);
+  }
+  :global(.spin) {
+    animation: excal-spin 1s linear infinite;
+  }
+  @keyframes excal-spin {
+    to { transform: rotate(360deg); }
+  }
+</style>

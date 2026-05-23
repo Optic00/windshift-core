@@ -1,12 +1,17 @@
 package handlers
 
 import (
+	"bytes"
+	"context"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"testing"
 
+	"windshift/internal/contextkeys"
 	"windshift/internal/database"
+	"windshift/internal/models"
 	"windshift/internal/services"
 )
 
@@ -255,5 +260,71 @@ func TestAttachmentDownload_Page_NullItemIDRejected(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("null item_id page attachment: want 404, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestAttachmentUpload_Page_AcceptsJSONForDiagram pins the JSON-content
+// rescue in verifyFileContentFromBytes: page diagrams upload Excalidraw
+// scenes as application/json blobs, which http.DetectContentType reports
+// as text/plain. The verifier must allow this when the extension is .json
+// and the body parses as JSON.
+func TestAttachmentUpload_Page_AcceptsJSONForDiagram(t *testing.T) {
+	h, pageSvc, db := newPageAttachmentHandler(t)
+	const editorID = 1
+	seedNegativeTestUser(t, db, editorID)
+	seedNegativeTestUser(t, db, 999)
+	seedWorkspaceWithRole(t, db, 1, editorID, "Editor")
+
+	page, err := pageSvc.Create(editorID, services.CreatePageInput{
+		WorkspaceID: 1, Title: "Diagrams", Content: "body",
+	})
+	if err != nil {
+		t.Fatalf("seed page: %v", err)
+	}
+
+	scene := []byte(`{"elements":[],"appState":{},"files":{}}`)
+	body := &bytes.Buffer{}
+	mw := multipart.NewWriter(body)
+	if err := mw.WriteField("entity_type", "page"); err != nil {
+		t.Fatalf("write entity_type: %v", err)
+	}
+	if err := mw.WriteField("entity_id", strconv.Itoa(page.ID)); err != nil {
+		t.Fatalf("write entity_id: %v", err)
+	}
+	fw, err := mw.CreateFormFile("file", "diagram.json")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := fw.Write(scene); err != nil {
+		t.Fatalf("write scene: %v", err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatalf("close mw: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/attachments/upload", body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	user := &models.User{ID: editorID, Email: "neg@example.com", Username: "neguser", IsActive: true}
+	req = req.WithContext(context.WithValue(req.Context(), contextkeys.User, user))
+	rec := httptest.NewRecorder()
+	h.Upload(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("upload diagram: want 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var n int
+	var mimeType string
+	if err := db.QueryRow(`
+		SELECT COUNT(*), COALESCE(MAX(mime_type), '')
+		FROM attachments WHERE item_id = ? AND entity_type = 'page'
+	`, page.ID).Scan(&n, &mimeType); err != nil {
+		t.Fatalf("count attachments: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("attachments row count: want 1, got %d", n)
+	}
+	if mimeType != "application/json" {
+		t.Errorf("attachment mime: want application/json, got %q", mimeType)
 	}
 }

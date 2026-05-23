@@ -12,11 +12,13 @@
   import { nord } from '@milkdown/theme-nord';
   import '@milkdown/theme-nord/style.css';
   import { imageBlockComponent } from '@milkdown/kit/component/image-block';
-  import { Bold, Italic, Code, List, ListOrdered, Strikethrough, Image as ImageIcon } from '@lucide/svelte';
+  import { Bold, Italic, Code, List, ListOrdered, Strikethrough, Image as ImageIcon, Workflow } from '@lucide/svelte';
   import { api } from '../api.js';
   import MentionPicker from '../pickers/MentionPicker.svelte';
   import { mentionDecorationPlugin } from './milkdown-mention-mark.js';
   import { linkSanitizerPlugin } from './milkdown-link-sanitizer.js';
+  import { excalidrawBlock } from './milkdown-excalidraw-block.svelte.js';
+  import PageDiagramModal from '../features/pages/PageDiagramModal.svelte';
   import { highlightCodeBlocks } from './code-highlight.js';
   import { t } from '../stores/i18n.svelte.js';
   import { attachmentStatus } from '../stores/attachmentStatus.svelte.js';
@@ -26,8 +28,12 @@
     showToolbar = false, hideToolbarUntilFocus = false, itemId = null, entityType = null,
     entityId = null, onImageInsert = null, onContentChange = null, isPersonalWorkspace = false, compact = false,
     customUploadFn = null, downloadUrlBase = '/api/attachments', deferImageUploads = false,
-    onDeferredImageUpload = null
+    onDeferredImageUpload = null,
+    enableDiagrams = false
   } = $props();
+
+  // Diagram modal state — only meaningful when enableDiagrams=true.
+  let diagramModal = $state({ open: false, mode: 'create', attachmentId: null, name: '', getPos: null });
 
   const effectivePlaceholder = $derived(placeholder || t('editors.enterText'));
 
@@ -357,9 +363,32 @@
     return nodes;
   }
 
+  function openDiagramCreate() {
+    if (readonly || !enableDiagrams) return;
+    diagramModal = { open: true, mode: 'create', attachmentId: null, name: '', getPos: null };
+  }
+
+  function handleDiagramSaved({ attachmentId, name }) {
+    if (!editor) return;
+    if (diagramModal.mode === 'edit' && typeof diagramModal.getPos === 'function') {
+      const pos = diagramModal.getPos();
+      if (typeof pos === 'number') {
+        editor.action((ctx) => {
+          const view = ctx.get(editorViewCtx);
+          const tr = view.state.tr.setNodeMarkup(pos, undefined, { attachmentId, name });
+          view.dispatch(tr);
+        });
+        return;
+      }
+    }
+    // Create mode — insert a fenced excalidraw block at the cursor.
+    const fenced = '\n```excalidraw\n' + JSON.stringify({ attachmentId, name }) + '\n```\n';
+    editor.action(insert(fenced));
+  }
+
   onMount(async () => {
     try {
-      editor = await Editor.make()
+      const builder = Editor.make()
         .config((ctx) => {
           ctx.set(rootCtx, editorElement);
           ctx.set(defaultValueCtx, initialContent || '');
@@ -408,12 +437,30 @@
         .use(upload)  // Include upload in main chain per docs
         .use(imageBlockComponent)  // Enable image resizing
         .use(mentionDecorationPlugin)  // Add mention chip decorations
-        .use(linkSanitizerPlugin)  // Sanitize dangerous URL schemes in links/images
-        .create();
+        .use(linkSanitizerPlugin);     // Sanitize dangerous URL schemes in links/images
+
+      if (enableDiagrams) {
+        builder.use(excalidrawBlock);
+      }
+
+      editor = await builder.create();
 
     } catch (error) {
       console.error('Failed to initialize Milkdown editor:', error);
     }
+  });
+
+  // Listen for "edit me" requests from node views. The custom event bubbles
+  // from inside the diagram block view; the wrapper owns the modal so the
+  // node view stays presentational.
+  $effect(() => {
+    if (!editorElement || !enableDiagrams) return;
+    const handler = (e) => {
+      const { attachmentId, name, getPos } = e.detail || {};
+      diagramModal = { open: true, mode: 'edit', attachmentId, name: name || '', getPos };
+    };
+    editorElement.addEventListener('excalidraw:edit', handler);
+    return () => editorElement.removeEventListener('excalidraw:edit', handler);
   });
 
   onDestroy(async () => {
@@ -572,6 +619,11 @@
           <ImageIcon size={14} />
         </button>
       {/if}
+      {#if enableDiagrams}
+        <button type="button" class="toolbar-btn" tabindex="-1" onclick={openDiagramCreate} title={t('editors.insertDiagram')} data-testid="milkdown-insert-diagram">
+          <Workflow size={14} />
+        </button>
+      {/if}
     </div>
   {/if}
   <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
@@ -587,6 +639,16 @@
   class="hidden-file-input"
   onchange={handleFileInputChange}
 />
+{#if enableDiagrams}
+  <PageDiagramModal
+    bind:open={diagramModal.open}
+    mode={diagramModal.mode}
+    initialAttachmentId={diagramModal.attachmentId}
+    initialName={diagramModal.name}
+    pageId={entityType === 'page' ? entityId : null}
+    onSaved={handleDiagramSaved}
+  />
+{/if}
 <!-- Mention Picker for @ mentions -->
 <MentionPicker
   bind:open={mentionPickerOpen}
