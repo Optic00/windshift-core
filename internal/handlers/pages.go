@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"windshift/internal/logger"
 	"windshift/internal/models"
@@ -90,6 +91,17 @@ type pageEffectivePermissionsResponse struct {
 	InheritPermissions bool                    `json:"inherit_permissions"`
 	EffectiveLevel     string                  `json:"effective_level,omitempty"`
 	ACL                []models.PagePermission `json:"acl"`
+}
+
+type archivedPageResponse struct {
+	ID             int       `json:"id"`
+	Title          string    `json:"title"`
+	Slug           string    `json:"slug"`
+	Path           string    `json:"path"`
+	Depth          int       `json:"depth"`
+	ArchivedAt     time.Time `json:"archived_at"`
+	ArchivedBy     *int      `json:"archived_by,omitempty"`
+	ArchivedByName string    `json:"archived_by_name,omitempty"`
 }
 
 // --- request payloads ---
@@ -618,7 +630,113 @@ func (h *PageHandler) SetInheritance(w http.ResponseWriter, r *http.Request) {
 	respondJSONOK(w, page)
 }
 
+// ListArchived returns every archived page in the workspace for the
+// admin UI. Admin-only (system.admin or workspace.admin) — mirrors the
+// archived-page view policy in PagePermissionService.Can.
+func (h *PageHandler) ListArchived(w http.ResponseWriter, r *http.Request) {
+	workspaceID, _, ok := h.requireWorkspaceAdmin(w, r)
+	if !ok {
+		return
+	}
+	rows, err := h.service.ListArchived(workspaceID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	out := make([]archivedPageResponse, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, archivedPageResponse{
+			ID:             row.ID,
+			Title:          row.Title,
+			Slug:           row.Slug,
+			Path:           row.Path,
+			Depth:          row.Depth,
+			ArchivedAt:     row.ArchivedAt,
+			ArchivedBy:     row.ArchivedBy,
+			ArchivedByName: row.ArchivedByName,
+		})
+	}
+	respondJSONOK(w, out)
+}
+
+// Unarchive flips a single archived page back to active without
+// overwriting its content. Admin-only. Does not cascade — if the
+// page's ancestor is still archived the page remains hidden from the
+// tree until that ancestor is also unarchived (matches the existing
+// Restore behavior).
+func (h *PageHandler) Unarchive(w http.ResponseWriter, r *http.Request) {
+	workspaceID, user, ok := h.requireWorkspaceAdmin(w, r)
+	if !ok {
+		return
+	}
+	pageID, ok := requireIDParam(w, r, "pageId")
+	if !ok {
+		return
+	}
+	page, err := h.service.GetByID(pageID)
+	if err != nil {
+		if errors.Is(err, services.ErrPageNotFound) {
+			respondNotFound(w, r, "Page")
+			return
+		}
+		respondInternalError(w, r, err)
+		return
+	}
+	if page.WorkspaceID != workspaceID {
+		respondNotFound(w, r, "Page")
+		return
+	}
+	restored, err := h.service.Unarchive(user.ID, pageID)
+	if err != nil {
+		h.respondServiceError(w, r, err)
+		return
+	}
+	h.auditor.Log(r, user, "unarchive", "page", &restored.ID, restored.Title)
+	respondJSONOK(w, restored)
+}
+
 // --- helpers ---
+
+// requireWorkspaceAdmin enforces system.admin OR workspace.admin on the
+// path's {workspaceId}. Used for workspace-wide admin surfaces where
+// there's no specific pageID to feed PagePermissionService.Can —
+// mirrors the gating that Can applies to archived pages
+// (page_permission_service.go:96-109).
+//
+// Returns 404 (not 403) on failure to keep workspace existence
+// unleakable, consistent with the project-wide policy captured in
+// project_workspace_permissions_open_default.
+func (h *PageHandler) requireWorkspaceAdmin(w http.ResponseWriter, r *http.Request) (workspaceID int, user *models.User, ok bool) {
+	workspaceID, ok = requireIDParam(w, r, "workspaceId")
+	if !ok {
+		return
+	}
+	user, ok = RequireAuth(w, r)
+	if !ok {
+		return
+	}
+	isAdmin, err := h.pageAuth.IsSystemAdmin(user.ID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		ok = false
+		return
+	}
+	if isAdmin {
+		return
+	}
+	wsAdmin, err := h.pageAuth.HasWorkspacePermissionFor(user.ID, workspaceID, models.PermissionWorkspaceAdmin)
+	if err != nil {
+		respondInternalError(w, r, err)
+		ok = false
+		return
+	}
+	if !wsAdmin {
+		respondNotFound(w, r, "Workspace")
+		ok = false
+		return
+	}
+	return
+}
 
 // requireWorkspacePageAuth pulls {workspaceId} + {pageId} + the current
 // user, then runs the page permission check for the requested op. On

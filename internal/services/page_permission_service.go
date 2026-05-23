@@ -58,6 +58,13 @@ func (s *PagePermissionService) HasWorkspacePermissionFor(userID, workspaceID in
 	return s.perm.HasWorkspacePermission(userID, workspaceID, key)
 }
 
+// IsSystemAdmin exposes the system-admin check the page handler needs when
+// gating workspace-wide admin surfaces (e.g. the archived-pages list)
+// without going through Can on a specific pageID.
+func (s *PagePermissionService) IsSystemAdmin(userID int) (bool, error) {
+	return s.perm.IsSystemAdmin(userID)
+}
+
 // Can reports whether userID may perform op on pageID in the given
 // workspace. workspaceID must match the page's workspace; cross-workspace
 // calls return false (rather than ErrPageNotFound) so handlers can map to

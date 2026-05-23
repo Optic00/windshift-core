@@ -1077,6 +1077,56 @@ func scanChunkSearch(rows *sql.Rows) ([]PageChunkSearchResult, error) {
 	return out, rows.Err()
 }
 
+// ArchivedPageRow is the joined shape returned by ListArchivedByWorkspace:
+// the columns the admin UI needs to display + the archiver's resolved
+// display name (empty when the user record is gone or had no name).
+type ArchivedPageRow struct {
+	ID             int
+	Title          string
+	Slug           string
+	Path           string
+	Depth          int
+	ArchivedAt     time.Time
+	ArchivedBy     *int
+	ArchivedByName string
+}
+
+// ListArchivedByWorkspace returns every archived page in the workspace
+// joined to the archiver's display name. Ordered by archived_at DESC then
+// path ASC so the UI shows newest archives first; within an archive batch,
+// ancestors precede descendants which lets users unarchive top-down.
+//
+// Permission filtering is the handler's responsibility (admin-only).
+func (r *PageRepository) ListArchivedByWorkspace(workspaceID int) ([]ArchivedPageRow, error) {
+	rows, err := r.db.Query(`
+		SELECT p.id, p.title, p.slug, p.path, p.depth, p.archived_at, p.archived_by,
+		       TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')) AS archived_by_name
+		FROM pages p
+		LEFT JOIN users u ON u.id = p.archived_by
+		WHERE p.workspace_id = ? AND p.archived_at IS NOT NULL
+		ORDER BY p.archived_at DESC, p.path ASC, p.id ASC
+	`, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("list archived pages: %w", err)
+	}
+	defer rows.Close()
+
+	var out []ArchivedPageRow
+	for rows.Next() {
+		var row ArchivedPageRow
+		var archivedBy sql.NullInt64
+		if err := rows.Scan(&row.ID, &row.Title, &row.Slug, &row.Path, &row.Depth, &row.ArchivedAt, &archivedBy, &row.ArchivedByName); err != nil {
+			return nil, fmt.Errorf("scan archived page: %w", err)
+		}
+		if archivedBy.Valid {
+			v := int(archivedBy.Int64)
+			row.ArchivedBy = &v
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
 // CountWorkspacePages returns the number of non-archived pages in a
 // workspace. Used by handlers to short-circuit empty trees.
 func (r *PageRepository) CountWorkspacePages(workspaceID int) (int, error) {

@@ -532,6 +532,58 @@ func (s *PageService) Restore(actorID, pageID, revisionID int) (*models.Page, er
 	})
 }
 
+// ListArchived returns every archived page in the workspace plus the
+// archiver's resolved display name. Caller must enforce admin access.
+func (s *PageService) ListArchived(workspaceID int) ([]repository.ArchivedPageRow, error) {
+	return s.pages.ListArchivedByWorkspace(workspaceID)
+}
+
+// Unarchive flips a single page back to active by clearing archived_at /
+// archived_by, without overwriting the page's content. A new revision is
+// recorded (change_type=restore, summary="unarchived") so the history
+// reflects the action. No-op when the page wasn't archived.
+//
+// Single-page only by design — Archive cascades via materialized path,
+// but unarchiving is symmetric with Restore: each addressed page is
+// opted into explicitly. A page whose parent remains archived stays
+// hidden from the tree until the ancestor is also unarchived, matching
+// existing Restore semantics.
+func (s *PageService) Unarchive(actorID, pageID int) (*models.Page, error) {
+	return database.WithTxResult(s.db, func(tx database.Tx) (*models.Page, error) {
+		page, err := s.pages.GetByIDTx(tx, pageID)
+		if err != nil {
+			if errors.Is(err, repository.ErrNotFound) {
+				return nil, ErrPageNotFound
+			}
+			return nil, err
+		}
+		if page.ArchivedAt == nil {
+			return page, nil
+		}
+		if err := s.pages.UpdateTx(tx, repository.UpdateInput{
+			ID:                 page.ID,
+			Title:              page.Title,
+			Slug:               page.Slug,
+			Content:            page.Content,
+			ContentHash:        page.ContentHash,
+			Excerpt:            page.Excerpt,
+			InheritPermissions: page.InheritPermissions,
+			UpdatedBy:          actorID,
+			Unarchive:          true,
+		}); err != nil {
+			return nil, err
+		}
+		fresh, err := s.pages.GetByIDTx(tx, page.ID)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := s.writeRevisionTx(tx, fresh, actorID, models.PageRevisionChangeTypeRestore, "unarchived"); err != nil {
+			return nil, err
+		}
+		return fresh, nil
+	})
+}
+
 // writeRevisionTx persists a revision row for the given page snapshot.
 // Used by every page-mutating operation so the history is always complete.
 // Returns the revision_number that was just written.

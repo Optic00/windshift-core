@@ -722,6 +722,165 @@ func TestKnowledgeSearchHandler_Unauthenticated_401(t *testing.T) {
 	}
 }
 
+func TestPageHandler_ListArchived_AdminAllowed(t *testing.T) {
+	h, db, _ := newPageHandler(t)
+	const adminID = 1
+	seedNegativeTestUser(t, db, adminID)
+	seedNegativeTestUser(t, db, 999)
+	seedWorkspaceWithRole(t, db, 1, adminID, "Administrator")
+
+	page, err := h.service.Create(adminID, services.CreatePageInput{WorkspaceID: 1, Title: "Doomed", Content: "body"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := h.service.Archive(adminID, page.ID); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+
+	req := authedRequest(http.MethodGet, "/workspaces/1/pages/archived", adminID, nil)
+	setPath(req, map[string]string{"workspaceId": "1"})
+	rr := httptest.NewRecorder()
+	h.ListArchived(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: want 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	var rows []archivedPageResponse
+	decodeJSONBody(t, rr, &rows)
+	if len(rows) != 1 || rows[0].ID != page.ID {
+		t.Fatalf("expected single archived row for page %d, got %+v", page.ID, rows)
+	}
+	if rows[0].Title != "Doomed" {
+		t.Errorf("title: want Doomed, got %q", rows[0].Title)
+	}
+	if rows[0].ArchivedAt.IsZero() {
+		t.Error("archived_at should be set")
+	}
+	if rows[0].ArchivedBy == nil || *rows[0].ArchivedBy != adminID {
+		t.Errorf("archived_by: want %d, got %v", adminID, rows[0].ArchivedBy)
+	}
+	if rows[0].ArchivedByName != "Neg User" {
+		t.Errorf("archived_by_name: want %q, got %q", "Neg User", rows[0].ArchivedByName)
+	}
+}
+
+func TestPageHandler_ListArchived_RejectsNonAdmin(t *testing.T) {
+	h, db, _ := newPageHandler(t)
+	const userID = 1
+	seedNegativeTestUser(t, db, userID)
+	seedNegativeTestUser(t, db, 999)
+	seedWorkspaceWithRole(t, db, 1, userID, "Editor")
+
+	// Admin archives a page so the list isn't trivially empty.
+	page, err := h.service.Create(999, services.CreatePageInput{WorkspaceID: 1, Title: "Hidden"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := h.service.Archive(999, page.ID); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+
+	req := authedRequest(http.MethodGet, "/workspaces/1/pages/archived", userID, nil)
+	setPath(req, map[string]string{"workspaceId": "1"})
+	rr := httptest.NewRecorder()
+	h.ListArchived(rr, req)
+
+	// 404 not 403 — workspace-resource access checks must not leak
+	// existence (project_workspace_permissions_open_default).
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("editor list-archived: want 404, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestPageHandler_Unarchive_ClearsFieldsAndWritesRevision(t *testing.T) {
+	h, db, _ := newPageHandler(t)
+	const adminID = 1
+	seedNegativeTestUser(t, db, adminID)
+	seedNegativeTestUser(t, db, 999)
+	seedWorkspaceWithRole(t, db, 1, adminID, "Administrator")
+
+	page, err := h.service.Create(adminID, services.CreatePageInput{WorkspaceID: 1, Title: "Bring me back", Content: "v1"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	originalContent := page.Content
+	if err := h.service.Archive(adminID, page.ID); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+	// Sanity: archive set the field.
+	if archived, _ := h.service.GetByID(page.ID); archived.ArchivedAt == nil {
+		t.Fatalf("archive did not set archived_at")
+	}
+
+	req := authedRequest(http.MethodPost, "/workspaces/1/pages/"+strconv.Itoa(page.ID)+"/unarchive", adminID, nil)
+	setPath(req, map[string]string{"workspaceId": "1", "pageId": strconv.Itoa(page.ID)})
+	rr := httptest.NewRecorder()
+	h.Unarchive(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: want 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	got, err := h.service.GetByID(page.ID)
+	if err != nil {
+		t.Fatalf("re-fetch: %v", err)
+	}
+	if got.ArchivedAt != nil {
+		t.Errorf("archived_at: want nil after unarchive, got %v", got.ArchivedAt)
+	}
+	if got.ArchivedBy != nil {
+		t.Errorf("archived_by: want nil after unarchive, got %v", got.ArchivedBy)
+	}
+	if got.Content != originalContent {
+		t.Errorf("content must NOT be overwritten by unarchive: want %q, got %q", originalContent, got.Content)
+	}
+
+	// History should now include an archive entry and the new "unarchived" restore entry.
+	revs, err := h.service.ListRevisions(page.ID, 50, 0)
+	if err != nil {
+		t.Fatalf("list revisions: %v", err)
+	}
+	var sawUnarchive bool
+	for _, rev := range revs {
+		if rev.ChangeType == models.PageRevisionChangeTypeRestore && rev.ChangeSummary == "unarchived" {
+			sawUnarchive = true
+			break
+		}
+	}
+	if !sawUnarchive {
+		t.Errorf("expected revision with change_type=restore summary=\"unarchived\", got %+v", revs)
+	}
+}
+
+func TestPageHandler_Unarchive_RejectsNonAdmin(t *testing.T) {
+	h, db, _ := newPageHandler(t)
+	const userID = 1
+	seedNegativeTestUser(t, db, userID)
+	seedNegativeTestUser(t, db, 999)
+	seedWorkspaceWithRole(t, db, 1, userID, "Editor")
+
+	page, err := h.service.Create(999, services.CreatePageInput{WorkspaceID: 1, Title: "Stays archived"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := h.service.Archive(999, page.ID); err != nil {
+		t.Fatalf("archive: %v", err)
+	}
+
+	req := authedRequest(http.MethodPost, fmt.Sprintf("/workspaces/1/pages/%d/unarchive", page.ID), userID, nil)
+	setPath(req, map[string]string{"workspaceId": "1", "pageId": strconv.Itoa(page.ID)})
+	rr := httptest.NewRecorder()
+	h.Unarchive(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("editor unarchive: want 404, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	got, _ := h.service.GetByID(page.ID)
+	if got.ArchivedAt == nil {
+		t.Error("page must remain archived when non-admin attempts unarchive")
+	}
+}
+
 // Ensure JSON encoding stays stable across the handler boundary so the
 // frontend can rely on these fields. A pure structural check.
 func TestPageHandler_GetTree_JSONShape(t *testing.T) {

@@ -36,6 +36,13 @@ export const pages = {
   archivePage: (workspaceId, pageId) =>
     fetchAPI(`/workspaces/${workspaceId}/pages/${pageId}`, { method: 'DELETE' }),
 
+  /** Admin-only: list every archived page in the workspace with archiver display name. */
+  listArchived: (workspaceId) => fetchAPI(`/workspaces/${workspaceId}/pages/archived`),
+
+  /** Admin-only: clear archived_at/archived_by on a single page (no content overwrite). */
+  unarchive: (workspaceId, pageId) =>
+    fetchAPI(`/workspaces/${workspaceId}/pages/${pageId}/unarchive`, { method: 'POST' }),
+
   /**
    * Reparent a page; pass parentId=null to move it to the workspace root.
    * prevSiblingId / nextSiblingId position the page within its new parent's

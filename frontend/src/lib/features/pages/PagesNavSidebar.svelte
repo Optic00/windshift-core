@@ -16,7 +16,8 @@
     IconChevronRight as ChevronRight,
     IconChevronDown as ChevronDown,
     IconChevronsDown as ChevronsDown,
-    IconChevronsUp as ChevronsUp
+    IconChevronsUp as ChevronsUp,
+    IconArchive as Archive
   } from '@tabler/icons-svelte-runes';
   import DropdownMenu from '../../layout/DropdownMenu.svelte';
   import EmptyState from '../../components/EmptyState.svelte';
@@ -24,6 +25,8 @@
   import PageMoveDialog from './PageMoveDialog.svelte';
   import PagePermissionsDialog from './PagePermissionsDialog.svelte';
   import PageLabelPicker from './PageLabelPicker.svelte';
+  import ArchivedPagesModal from './ArchivedPagesModal.svelte';
+  import { workspacePermissions } from '../../stores/workspacePermissions.svelte.js';
   import { pagesTreeRefresh } from './pagesTreeRefresh.svelte.js';
   import { pagesFocusTitle } from './pagesFocusTitle.svelte.js';
   import { pagesFilter } from './pagesFilter.svelte.js';
@@ -37,6 +40,7 @@
   let moveDialogPage = $state(null);
   let permsDialogOpen = $state(false);
   let permsDialogPage = $state(null);
+  let archivedModalOpen = $state(false);
   let dndState = $state(new Map());
   let setupTimeout;
   let setupCleanups = [];
@@ -573,6 +577,19 @@
             <ChevronsUp size={16} />
           </button>
         </Tooltip>
+        {#if workspacePermissions.canAdminWorkspace(workspaceId)}
+          <Tooltip content={t('pages.archivedOpenAria')} placement="bottom" class="inline-flex">
+            <button
+              class="header-button"
+              type="button"
+              onclick={() => (archivedModalOpen = true)}
+              aria-label={t('pages.archivedOpenAria')}
+              data-testid="pages-archived-open"
+            >
+              <Archive size={16} />
+            </button>
+          </Tooltip>
+        {/if}
         <Tooltip content={t('pages.addPageAria')} placement="bottom" class="inline-flex">
           <button
             id="pages-add-button"
@@ -760,6 +777,12 @@
     onUpdated={loadTree}
   />
 {/if}
+
+<ArchivedPagesModal
+  bind:isOpen={archivedModalOpen}
+  {workspaceId}
+  onUnarchived={loadTree}
+/>
 
 <style>
   .pages-sidebar {

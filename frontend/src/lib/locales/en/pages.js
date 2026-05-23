@@ -84,6 +84,22 @@ export default {
       'This archives the page and every child page. Phase 1 has no undo for this action.',
     archiveConfirm: 'Archive',
 
+    // Archived pages list (admin-only modal opened from the sidebar header)
+    archivedOpenAria: 'View archived pages',
+    archivedHeading: 'Archived pages',
+    archivedEmpty: 'No archived pages',
+    archivedColTitle: 'Title',
+    archivedColArchivedAt: 'Archived',
+    archivedColArchivedBy: 'Archived by',
+    archivedUnarchive: 'Unarchive',
+    archivedUnarchiveTitle: 'Unarchive "{title}"?',
+    archivedUnarchiveMessage:
+      'The page reappears in the tree. If its parent is still archived, the page stays hidden until you unarchive the parent too.',
+    archivedUnarchiveConfirm: 'Unarchive',
+    archivedUnarchiveOK: 'Restored "{title}"',
+    archivedLoadError: 'Failed to load archived pages',
+    archivedUnarchiveError: 'Failed to unarchive page',
+
     // Move dialog
     moveTitle: 'Move "{title}"',
     moveSubtitle:
