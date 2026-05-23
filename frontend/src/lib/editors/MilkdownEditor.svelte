@@ -14,6 +14,7 @@
   import { imageBlockComponent } from '@milkdown/kit/component/image-block';
   import { Bold, Italic, Code, List, ListOrdered, Strikethrough, Image as ImageIcon, Workflow } from '@lucide/svelte';
   import { api } from '../api.js';
+  import Tooltip from '../components/Tooltip.svelte';
   import MentionPicker from '../pickers/MentionPicker.svelte';
   import { mentionDecorationPlugin } from './milkdown-mention-mark.js';
   import { linkSanitizerPlugin } from './milkdown-link-sanitizer.js';
@@ -594,35 +595,67 @@
   onfocusout={(e) => { if (!e.currentTarget.contains(/** @type {Node | null} */ (e.relatedTarget))) isFocused = false; }}
 >
   {#if toolbarVisible}
-    <div class="milkdown-toolbar" tabindex="-1" aria-hidden="true">
-      <button type="button" class="toolbar-btn" tabindex="-1" onclick={toggleBold} title={t('editors.bold')}>
-        <Bold size={14} />
-      </button>
-      <button type="button" class="toolbar-btn" tabindex="-1" onclick={toggleItalic} title={t('editors.italic')}>
-        <Italic size={14} />
-      </button>
-      <button type="button" class="toolbar-btn" tabindex="-1" onclick={toggleStrikethrough} title={t('editors.strikethrough')}>
-        <Strikethrough size={14} />
-      </button>
-      <button type="button" class="toolbar-btn" tabindex="-1" onclick={toggleCode} title={t('editors.inlineCode')}>
-        <Code size={14} />
-      </button>
+    <div class="milkdown-toolbar" tabindex="-1">
+      <Tooltip content={t('editors.bold')} placement="bottom">
+        {#snippet children()}
+          <button type="button" class="toolbar-btn" tabindex="-1" onclick={toggleBold} aria-label={t('editors.bold')}>
+            <Bold size={14} />
+          </button>
+        {/snippet}
+      </Tooltip>
+      <Tooltip content={t('editors.italic')} placement="bottom">
+        {#snippet children()}
+          <button type="button" class="toolbar-btn" tabindex="-1" onclick={toggleItalic} aria-label={t('editors.italic')}>
+            <Italic size={14} />
+          </button>
+        {/snippet}
+      </Tooltip>
+      <Tooltip content={t('editors.strikethrough')} placement="bottom">
+        {#snippet children()}
+          <button type="button" class="toolbar-btn" tabindex="-1" onclick={toggleStrikethrough} aria-label={t('editors.strikethrough')}>
+            <Strikethrough size={14} />
+          </button>
+        {/snippet}
+      </Tooltip>
+      <Tooltip content={t('editors.inlineCode')} placement="bottom">
+        {#snippet children()}
+          <button type="button" class="toolbar-btn" tabindex="-1" onclick={toggleCode} aria-label={t('editors.inlineCode')}>
+            <Code size={14} />
+          </button>
+        {/snippet}
+      </Tooltip>
       <div class="toolbar-divider"></div>
-      <button type="button" class="toolbar-btn" tabindex="-1" onclick={toggleBulletList} title={t('editors.bulletList')}>
-        <List size={14} />
-      </button>
-      <button type="button" class="toolbar-btn" tabindex="-1" onclick={toggleOrderedList} title={t('editors.numberedList')}>
-        <ListOrdered size={14} />
-      </button>
+      <Tooltip content={t('editors.bulletList')} placement="bottom">
+        {#snippet children()}
+          <button type="button" class="toolbar-btn" tabindex="-1" onclick={toggleBulletList} aria-label={t('editors.bulletList')}>
+            <List size={14} />
+          </button>
+        {/snippet}
+      </Tooltip>
+      <Tooltip content={t('editors.numberedList')} placement="bottom">
+        {#snippet children()}
+          <button type="button" class="toolbar-btn" tabindex="-1" onclick={toggleOrderedList} aria-label={t('editors.numberedList')}>
+            <ListOrdered size={14} />
+          </button>
+        {/snippet}
+      </Tooltip>
       {#if canUploadImages}
-        <button type="button" class="toolbar-btn" tabindex="-1" onclick={openFilePicker} title={t('editors.insertImage')}>
-          <ImageIcon size={14} />
-        </button>
+        <Tooltip content={t('editors.insertImage')} placement="bottom">
+          {#snippet children()}
+            <button type="button" class="toolbar-btn" tabindex="-1" onclick={openFilePicker} aria-label={t('editors.insertImage')}>
+              <ImageIcon size={14} />
+            </button>
+          {/snippet}
+        </Tooltip>
       {/if}
       {#if enableDiagrams}
-        <button type="button" class="toolbar-btn" tabindex="-1" onclick={openDiagramCreate} title={t('editors.insertDiagram')} data-testid="milkdown-insert-diagram">
-          <Workflow size={14} />
-        </button>
+        <Tooltip content={t('editors.insertDiagram')} placement="bottom">
+          {#snippet children()}
+            <button type="button" class="toolbar-btn" tabindex="-1" onclick={openDiagramCreate} aria-label={t('editors.insertDiagram')} data-testid="milkdown-insert-diagram">
+              <Workflow size={14} />
+            </button>
+          {/snippet}
+        </Tooltip>
       {/if}
     </div>
   {/if}
