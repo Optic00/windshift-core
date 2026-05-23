@@ -111,12 +111,18 @@ func (e *IPExtractor) isValidClientIP(ip net.IP) bool {
 	return ip != nil && !ip.IsUnspecified()
 }
 
-// GetClientIP extracts the client IP address from request headers.
+// GetClientIP extracts the client IP address from request context/headers.
 //
-// Deprecated: Use IPExtractor.GetClientIP for secure proxy-aware extraction.
-// This function blindly trusts proxy headers and should only be used when
-// proxy validation is not required (e.g., internal services).
+// Prefer the proxy-validated client IP stored by auth middleware. When called
+// outside the API middleware chain, this falls back to legacy header parsing.
+//
+// Deprecated: Prefer IPExtractor.GetClientIP for new code, or rely on the
+// middleware-populated context value for audit logging.
 func GetClientIP(r *http.Request) string {
+	if ip, ok := r.Context().Value(contextkeys.ClientIP).(string); ok && ip != "" {
+		return ip
+	}
+
 	// Check X-Forwarded-For header (for proxies)
 	forwarded := r.Header.Get("X-Forwarded-For")
 	if forwarded != "" {

@@ -428,6 +428,9 @@ async function handleBackgroundUpload(files) {
     const uploadFormData = new FormData();
     uploadFormData.append('file', file);
     uploadFormData.append('category', 'portal_background');
+    if (portalData?.channel_id) {
+      uploadFormData.append('entity_id', String(portalData.channel_id));
+    }
 
     const uploadResult = await api.attachments.upload(uploadFormData);
 
@@ -458,6 +461,9 @@ async function handleLogoUpload(files) {
     const uploadFormData = new FormData();
     uploadFormData.append('file', file);
     uploadFormData.append('category', 'portal_logo');
+    if (portalData?.channel_id) {
+      uploadFormData.append('entity_id', String(portalData.channel_id));
+    }
 
     const uploadResult = await api.attachments.upload(uploadFormData);
 

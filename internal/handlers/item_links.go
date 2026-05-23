@@ -94,6 +94,56 @@ func (h *ItemLinkHandler) LinkService() *services.ItemLinkService {
 	return h.linkSvc
 }
 
+//nolint:unused // Kept for compatibility with helper tests that exercise service migration wrappers.
+func (h *ItemLinkHandler) ensureLinkService() *services.ItemLinkService {
+	if h.linkSvc == nil {
+		h.linkSvc = services.NewItemLinkService(h.db).WithPermissionService(h.permissionService)
+	}
+	if h.assetPerm != nil {
+		h.linkSvc.WithAssetPermissionChecker(h.assetPerm)
+	}
+	return h.linkSvc
+}
+
+// Compatibility wrappers for the helper tests that predate moving link
+// orchestration into ItemLinkService. Keep these thin so handler code does not
+// regain ownership of the SQL-heavy access logic.
+//
+//nolint:unused // Kept for compatibility with helper tests that predate the service migration.
+func (h *ItemLinkHandler) resolveEntityScope(entityType string, entityID int) (wsID, setID int, found bool, err error) {
+	return h.ensureLinkService().ResolveEntityScope(entityType, entityID)
+}
+
+//nolint:unused // Kept for compatibility with helper tests that predate the service migration.
+func (h *ItemLinkHandler) endpointVisible(entityType string, entityID int, workspaceKey string, accessibleKeys map[string]bool, accessibleWs, accessibleSets map[int]bool) bool {
+	return h.ensureLinkService().EndpointVisible(entityType, entityID, workspaceKey, accessibleKeys, accessibleWs, accessibleSets)
+}
+
+//nolint:unused // Kept for compatibility with helper tests that predate the service migration.
+func (h *ItemLinkHandler) filterLinksByAccess(links []models.ItemLink, accessibleKeys map[string]bool, accessibleWs, accessibleSets map[int]bool) []models.ItemLink {
+	return h.ensureLinkService().FilterLinksByAccess(links, accessibleKeys, accessibleWs, accessibleSets)
+}
+
+//nolint:unused // Kept for compatibility with helper tests that predate the service migration.
+func (h *ItemLinkHandler) accessibleAssetSetIDSet(user *models.User) map[int]bool {
+	if user == nil {
+		return map[int]bool{}
+	}
+	return h.ensureLinkService().AccessibleAssetSetIDs(user.ID)
+}
+
+//nolint:unused // Kept for compatibility with helper tests that predate the service migration.
+func (h *ItemLinkHandler) canUserViewEntity(_ int, entityType string, entityID int, accessibleWs, accessibleSets map[int]bool) bool {
+	wsID, setID, found, err := h.resolveEntityScope(entityType, entityID)
+	if err != nil || !found {
+		return false
+	}
+	if entityType == "asset" {
+		return accessibleSets[setID]
+	}
+	return accessibleWs[wsID]
+}
+
 // GetLinksForItem returns all links for the entity identified by the {id}
 // path segment. The leading URL segment ("items" / "test-cases" / "pages")
 // is mapped to the internal entity-type string before delegating to the

@@ -127,6 +127,36 @@ CREATE INDEX IF NOT EXISTS idx_item_history_item_id_changed_at ON item_history(i
 -- Index for querying history by user
 CREATE INDEX IF NOT EXISTS idx_item_history_user_id ON item_history(user_id);
 
+-- Item change log for collection delta polling (PostgreSQL)
+CREATE TABLE IF NOT EXISTS item_change_log (
+	id BIGSERIAL PRIMARY KEY,
+	item_id INTEGER NOT NULL,
+	workspace_id INTEGER NOT NULL,
+	change_type TEXT NOT NULL CHECK (change_type IN ('upsert', 'delete')),
+	changed_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_item_change_log_workspace_id ON item_change_log(workspace_id, id);
+CREATE INDEX IF NOT EXISTS idx_item_change_log_item_id ON item_change_log(item_id, id);
+CREATE OR REPLACE FUNCTION log_item_change() RETURNS trigger AS $$
+BEGIN
+	IF TG_OP = 'DELETE' THEN
+		INSERT INTO item_change_log(item_id, workspace_id, change_type) VALUES (OLD.id, OLD.workspace_id, 'delete');
+		RETURN OLD;
+	END IF;
+	IF TG_OP = 'UPDATE' AND OLD.workspace_id <> NEW.workspace_id THEN
+		INSERT INTO item_change_log(item_id, workspace_id, change_type) VALUES (OLD.id, OLD.workspace_id, 'delete');
+	END IF;
+	INSERT INTO item_change_log(item_id, workspace_id, change_type) VALUES (NEW.id, NEW.workspace_id, 'upsert');
+	RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_items_change_insert ON items;
+DROP TRIGGER IF EXISTS trg_items_change_update ON items;
+DROP TRIGGER IF EXISTS trg_items_change_delete ON items;
+CREATE TRIGGER trg_items_change_insert AFTER INSERT ON items FOR EACH ROW EXECUTE FUNCTION log_item_change();
+CREATE TRIGGER trg_items_change_update AFTER UPDATE ON items FOR EACH ROW EXECUTE FUNCTION log_item_change();
+CREATE TRIGGER trg_items_change_delete BEFORE DELETE ON items FOR EACH ROW EXECUTE FUNCTION log_item_change();
+
 -- Late-bound FKs from earlier schema files that reference items(id).
 -- Declared here because items has to exist first.
 DO $$ BEGIN

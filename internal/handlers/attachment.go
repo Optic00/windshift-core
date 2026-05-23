@@ -37,6 +37,7 @@ type AttachmentHandler struct {
 	db                    database.Database
 	attachmentPath        string
 	permissionService     *services.PermissionService
+	channelService        *services.ChannelService
 	attachmentService     *services.AttachmentService
 	approvalService       *services.ApprovalService       // for approver-derived item.view fallback (optional, may be nil)
 	pagePermissionService *services.PagePermissionService // for entity_type='page' uploads (optional)
@@ -64,6 +65,13 @@ func (h *AttachmentHandler) SetApprovalService(ap *services.ApprovalService) {
 // upload branch falls back to workspace page.edit only.
 func (h *AttachmentHandler) SetPagePermissionService(ps *services.PagePermissionService) {
 	h.pagePermissionService = ps
+}
+
+// SetChannelService wires channel-manager authorization for public portal
+// branding uploads (portal logo/background). Without this, those uploads fail
+// closed except for the system-admin fallback below.
+func (h *AttachmentHandler) SetChannelService(cs *services.ChannelService) {
+	h.channelService = cs
 }
 
 // authorizeTestCaseAttachmentAccess writes a 404 response and returns false
@@ -415,13 +423,62 @@ func (h *AttachmentHandler) authorizeUploadEntity(w http.ResponseWriter, r *http
 		}
 		return true
 
-	case "portal_background", "portal_logo", "hub_logo":
-		// Global branding referenced by URL from per-channel/per-hub config
-		// records. The /channels/{id}/config endpoint enforces resource-level
-		// authz on the bind step; the upload itself just needs an
-		// authenticated internal session (the auth middleware on the route
-		// already blocks portal customer sessions).
-		if _, ok := RequireAuth(w, r); !ok {
+	case "portal_background", "portal_logo":
+		// Public portal branding URLs are served anonymously via
+		// /api/portal-assets/{id}, so the upload itself must be authorized —
+		// not just the later bind into channel config. entityID is the channel
+		// id supplied by the customization UI.
+		user, ok := RequireAuth(w, r)
+		if !ok {
+			return false
+		}
+		if entityID <= 0 {
+			respondValidationError(w, r, "entity_id is required for portal branding uploads")
+			return false
+		}
+		if h.channelService != nil {
+			canManage, err := h.channelService.UserCanManage(r.Context(), user.ID, entityID)
+			if err != nil {
+				respondInternalError(w, r, err)
+				return false
+			}
+			if !canManage {
+				respondNotFound(w, r, "channel")
+				return false
+			}
+			return true
+		}
+		if h.permissionService != nil {
+			isAdmin, err := h.permissionService.IsSystemAdmin(user.ID)
+			if err != nil {
+				respondInternalError(w, r, err)
+				return false
+			}
+			if isAdmin {
+				return true
+			}
+		}
+		respondNotFound(w, r, "channel")
+		return false
+
+	case "hub_logo":
+		// Hub config is system-admin-only; keep its public logo upload aligned
+		// with PUT /api/hub/config.
+		user, ok := RequireAuth(w, r)
+		if !ok {
+			return false
+		}
+		if h.permissionService == nil {
+			respondForbidden(w, r)
+			return false
+		}
+		isAdmin, err := h.permissionService.IsSystemAdmin(user.ID)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return false
+		}
+		if !isAdmin {
+			respondForbidden(w, r)
 			return false
 		}
 		return true
@@ -524,11 +581,10 @@ func (h *AttachmentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 
 	// entity_id is required for every entity type that has an owner row
 	// (item, test_case, test_result, workspace/team/customer scoped image
-	// assets). The truly global branding uploads — user avatar and the
-	// portal/hub assets — are referenced by URL and need no owner id here.
+	// assets). Portal logo/background uploads use entity_id as the owning
+	// channel id so public URLs cannot be minted by arbitrary users. The truly
+	// global uploads — user avatar and hub logo — need no owner id here.
 	entityIDRequired := entityType != "avatar" &&
-		entityType != "portal_background" &&
-		entityType != "portal_logo" &&
 		entityType != "hub_logo"
 	if entityIDStr == "" && entityIDRequired {
 		slog.Debug("missing entity_id in form", slog.String("component", "attachments"))

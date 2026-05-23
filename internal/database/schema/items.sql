@@ -121,3 +121,28 @@ CREATE INDEX IF NOT EXISTS idx_item_history_item_id_changed_at ON item_history(i
 
 -- Index for querying history by user
 CREATE INDEX IF NOT EXISTS idx_item_history_user_id ON item_history(user_id);
+
+-- Item change log for collection delta polling
+CREATE TABLE IF NOT EXISTS item_change_log (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	item_id INTEGER NOT NULL,
+	workspace_id INTEGER NOT NULL,
+	change_type TEXT NOT NULL CHECK (change_type IN ('upsert', 'delete')),
+	changed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_item_change_log_workspace_id ON item_change_log(workspace_id, id);
+CREATE INDEX IF NOT EXISTS idx_item_change_log_item_id ON item_change_log(item_id, id);
+CREATE TRIGGER IF NOT EXISTS trg_items_change_insert AFTER INSERT ON items
+BEGIN
+	INSERT INTO item_change_log(item_id, workspace_id, change_type) VALUES (NEW.id, NEW.workspace_id, 'upsert');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_items_change_update AFTER UPDATE ON items
+BEGIN
+	INSERT INTO item_change_log(item_id, workspace_id, change_type)
+	SELECT OLD.id, OLD.workspace_id, 'delete' WHERE OLD.workspace_id <> NEW.workspace_id;
+	INSERT INTO item_change_log(item_id, workspace_id, change_type) VALUES (NEW.id, NEW.workspace_id, 'upsert');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_items_change_delete BEFORE DELETE ON items
+BEGIN
+	INSERT INTO item_change_log(item_id, workspace_id, change_type) VALUES (OLD.id, OLD.workspace_id, 'delete');
+END;

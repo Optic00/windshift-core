@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
+	"unicode"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -561,20 +563,70 @@ func scanOAuthClient(s oauthClientScanner) (OAuthClientResponse, error) {
 	return c, nil
 }
 
-// validateRedirectURIs enforces basic shape: non-empty, parseable, and either
-// http/https or a custom scheme. Loopback constraints from cli_auth aren't
-// applied — OAuth third-party apps can register any URL the admin trusts.
+// validateRedirectURIs enforces basic shape: non-empty, parseable, no
+// fragments, and either http(s) with a host or a non-browser-executable custom
+// scheme. Loopback constraints from cli_auth aren't applied — OAuth third-party
+// apps can register any URL the admin trusts.
 func validateRedirectURIs(uris []string) error {
 	if len(uris) == 0 {
 		return errInvalidf("at least one redirect_uri is required")
 	}
 	for _, u := range uris {
-		u = strings.TrimSpace(u)
-		if u == "" {
-			return errInvalidf("redirect_uris must not contain empty entries")
+		if err := validateOAuthRedirectURI(u); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func validateOAuthRedirectURI(raw string) error {
+	u := strings.TrimSpace(raw)
+	if u == "" {
+		return errInvalidf("redirect_uris must not contain empty entries")
+	}
+	if u != raw {
+		return errInvalidf("redirect_uris must not contain leading or trailing whitespace")
+	}
+	if strings.HasPrefix(u, "//") {
+		return errInvalidf("redirect_uris must not be protocol-relative")
+	}
+	if strings.Contains(u, "\\") || containsControlOrSpace(u) {
+		return errInvalidf("redirect_uris must not contain whitespace, control characters, or backslashes")
+	}
+
+	parsed, err := url.Parse(u)
+	if err != nil || parsed.Scheme == "" {
+		return errInvalidf("redirect_uris must be absolute and parseable")
+	}
+	if parsed.Fragment != "" {
+		return errInvalidf("redirect_uris must not contain fragments")
+	}
+
+	scheme := strings.ToLower(parsed.Scheme)
+	switch scheme {
+	case "http", "https":
+		if parsed.Host == "" {
+			return errInvalidf("http(s) redirect_uris must include a host")
+		}
+	case "javascript", "data", "vbscript", "file", "about", "blob":
+		return errInvalidf("redirect_uri scheme is not allowed")
+	default:
+		// Native-app custom schemes are allowed, but they still need some target
+		// component after the scheme (opaque value, host, or path).
+		if parsed.Opaque == "" && parsed.Host == "" && parsed.Path == "" {
+			return errInvalidf("custom-scheme redirect_uris must include a target")
+		}
+	}
+	return nil
+}
+
+func containsControlOrSpace(s string) bool {
+	for _, r := range s {
+		if unicode.IsControl(r) || unicode.IsSpace(r) {
+			return true
+		}
+	}
+	return false
 }
 
 // generateOAuthClientID returns a 32-char hex identifier prefixed with

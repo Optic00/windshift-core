@@ -215,6 +215,15 @@ CREATE INDEX IF NOT EXISTS idx_collections_is_public ON collections(is_public);
 CREATE INDEX IF NOT EXISTS idx_collections_category_id ON collections(category_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_collections_public_slug ON collections(public_slug);
 
+CREATE OR REPLACE FUNCTION log_collection_change() RETURNS trigger AS $$
+BEGIN
+	INSERT INTO item_change_log(item_id, workspace_id, change_type) VALUES (0, COALESCE(NEW.workspace_id, OLD.workspace_id, 0), 'upsert');
+	RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_collections_change_update ON collections;
+CREATE TRIGGER trg_collections_change_update AFTER UPDATE OF ql_query, filter_state, workspace_id ON collections FOR EACH ROW EXECUTE FUNCTION log_collection_change();
+
 -- Active timers table
 CREATE TABLE active_timers (
 	id SERIAL PRIMARY KEY,

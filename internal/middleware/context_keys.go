@@ -15,4 +15,5 @@ const (
 	ContextKeySCIMToken        = contextkeys.SCIMToken
 	ContextKeyPortalSession    = contextkeys.PortalSession
 	ContextKeyPortalCustomerID = contextkeys.PortalCustomerID
+	ContextKeyClientIP         = contextkeys.ClientIP
 )

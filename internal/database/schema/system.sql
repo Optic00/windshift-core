@@ -201,6 +201,11 @@ CREATE INDEX IF NOT EXISTS idx_collections_is_public ON collections(is_public);
 CREATE INDEX IF NOT EXISTS idx_collections_category_id ON collections(category_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_collections_public_slug ON collections(public_slug);
 
+CREATE TRIGGER IF NOT EXISTS trg_collections_change_update AFTER UPDATE OF ql_query, filter_state, workspace_id ON collections
+BEGIN
+	INSERT INTO item_change_log(item_id, workspace_id, change_type) VALUES (0, COALESCE(NEW.workspace_id, OLD.workspace_id, 0), 'upsert');
+END;
+
 -- Active timers table
 CREATE TABLE active_timers (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,

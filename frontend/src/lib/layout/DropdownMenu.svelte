@@ -368,6 +368,8 @@
           <!-- Regular item -->
           <button
             data-menu-item
+            data-testid={itemData.testid || undefined}
+            data-id={itemData.id ?? undefined}
             role="menuitem"
             onclick={(e) => handleItemClick(itemData, e)}
             class="flex items-center w-full px-4 py-3 text-sm transition-all duration-200 cursor-pointer {itemData.class || ''}"

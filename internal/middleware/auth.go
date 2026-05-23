@@ -133,6 +133,9 @@ func (am *AuthMiddleware) tryAuthenticate(r *http.Request) authResult {
 // RequireAuth middleware that requires authentication for all routes except setup
 func (am *AuthMiddleware) RequireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		clientIP := am.getClientIP(r)
+		r = r.WithContext(context.WithValue(r.Context(), ContextKeyClientIP, clientIP))
+
 		// Skip authentication for setup endpoints when setup is not completed
 		if am.shouldSkipAuth(r) {
 			next.ServeHTTP(w, r)
@@ -168,6 +171,9 @@ func (am *AuthMiddleware) RequireAuth(next http.Handler) http.Handler {
 // OptionalAuth middleware that adds user context if authenticated but doesn't require it
 func (am *AuthMiddleware) OptionalAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		clientIP := am.getClientIP(r)
+		r = r.WithContext(context.WithValue(r.Context(), ContextKeyClientIP, clientIP))
+
 		result := am.tryAuthenticate(r)
 
 		if result.shouldClearCookie {
@@ -525,6 +531,9 @@ func (pam *PortalAuthMiddleware) tryPortalAuthenticate(r *http.Request) (context
 // RequirePortalAuth middleware accepts either internal session OR portal customer session
 func (pam *PortalAuthMiddleware) RequirePortalAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		clientIP := pam.getClientIP(r)
+		r = r.WithContext(context.WithValue(r.Context(), ContextKeyClientIP, clientIP))
+
 		if ctx, ok := pam.tryPortalAuthenticate(r); ok {
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
@@ -548,6 +557,9 @@ func (pam *PortalAuthMiddleware) RequirePortalAuth(next http.Handler) http.Handl
 // but must still serve anonymous callers.
 func (pam *PortalAuthMiddleware) OptionalPortalAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		clientIP := pam.getClientIP(r)
+		r = r.WithContext(context.WithValue(r.Context(), ContextKeyClientIP, clientIP))
+
 		if ctx, ok := pam.tryPortalAuthenticate(r); ok {
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return

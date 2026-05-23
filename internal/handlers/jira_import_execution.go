@@ -75,14 +75,20 @@ func (h *JiraImportHandler) executeImport(jobID string, req StartImportRequest) 
 	if createdBy.Valid {
 		createdByID = int(createdBy.Int64)
 	}
-	h.executeImportWithClient(ctx, jobID, req, client, createdByID)
+	h.executeImportWithClientContext(ctx, jobID, req, client, createdByID)
 }
 
 // executeImportWithClient runs the import using the provided Jira client.
 // Extracted from executeImport to allow testing with a mock client.
 // createdByUserID is the ID of the user who initiated the import (0 if unknown),
 // used to grant workspace admin access on imported workspaces.
-func (h *JiraImportHandler) executeImportWithClient(ctx context.Context, jobID string, req StartImportRequest, client jira.Client, createdByUserID int) {
+//
+//nolint:unused // Kept for importer tests that inject a mock Jira client.
+func (h *JiraImportHandler) executeImportWithClient(jobID string, req StartImportRequest, client jira.Client, createdByUserID int) {
+	h.executeImportWithClientContext(context.Background(), jobID, req, client, createdByUserID)
+}
+
+func (h *JiraImportHandler) executeImportWithClientContext(ctx context.Context, jobID string, req StartImportRequest, client jira.Client, createdByUserID int) {
 	progress := &ImportProgress{
 		Phase:         "initializing",
 		TotalProjects: len(req.ProjectKeys),

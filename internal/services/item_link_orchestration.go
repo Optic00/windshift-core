@@ -315,8 +315,8 @@ func (s *ItemLinkService) ListLinksForEntityWithChecks(userID int, entityType st
 // expects. Lifted here so the service can reference them without an
 // import cycle with the handlers package.
 const (
-	AssetPermissionKeyView = "view"
-	AssetPermissionKeyEdit = "edit"
+	AssetPermissionKeyView = "asset.view"
+	AssetPermissionKeyEdit = "asset.edit"
 )
 
 // isValidLinkEntityType reports whether s is one of the four entity

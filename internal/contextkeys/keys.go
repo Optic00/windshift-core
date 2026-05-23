@@ -23,4 +23,6 @@ const (
 	PortalSession ContextKey = "portal_session"
 	// PortalCustomerID stores the portal customer ID (int)
 	PortalCustomerID ContextKey = "portal_customer_id"
+	// ClientIP stores the proxy-validated client IP address (string)
+	ClientIP ContextKey = "client_ip"
 )

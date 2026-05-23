@@ -31,6 +31,10 @@ var (
 	_ IssueProvider   = (*GitHubProvider)(nil)
 )
 
+func githubRepoPath(owner, repo string) string {
+	return url.PathEscape(owner) + "/" + url.PathEscape(repo)
+}
+
 // GitHubProvider implements the Provider interface for GitHub
 type GitHubProvider struct {
 	baseProvider
@@ -355,7 +359,7 @@ func (g *GitHubProvider) GetRepository(ctx context.Context, owner, repo string) 
 		return nil, err
 	}
 
-	reqURL := fmt.Sprintf("%s/repos/%s/%s", g.baseURL, owner, repo)
+	reqURL := fmt.Sprintf("%s/repos/%s", g.baseURL, githubRepoPath(owner, repo))
 
 	var ghRepo githubRepo
 	if err := g.doJSON(ctx, "GET", reqURL, http.NoBody, http.StatusOK, &ghRepo); err != nil {
@@ -386,8 +390,8 @@ func (g *GitHubProvider) ListPullRequests(ctx context.Context, owner, repo strin
 		state = "open"
 	}
 
-	reqURL := fmt.Sprintf("%s/repos/%s/%s/pulls?state=%s&page=%d&per_page=%d",
-		g.baseURL, owner, repo, state, page, perPage)
+	reqURL := fmt.Sprintf("%s/repos/%s/pulls?state=%s&page=%d&per_page=%d",
+		g.baseURL, githubRepoPath(owner, repo), state, page, perPage)
 	if opts.Sort != "" {
 		reqURL += "&sort=" + opts.Sort
 	}
@@ -413,7 +417,7 @@ func (g *GitHubProvider) GetPullRequest(ctx context.Context, owner, repo string,
 		return nil, err
 	}
 
-	reqURL := fmt.Sprintf("%s/repos/%s/%s/pulls/%d", g.baseURL, owner, repo, number)
+	reqURL := fmt.Sprintf("%s/repos/%s/pulls/%d", g.baseURL, githubRepoPath(owner, repo), number)
 
 	var ghPR githubPullRequest
 	if err := g.doJSON(ctx, "GET", reqURL, http.NoBody, http.StatusOK, &ghPR); err != nil {
@@ -435,8 +439,8 @@ func (g *GitHubProvider) ListPullRequestCommits(ctx context.Context, owner, repo
 
 	var all []Commit
 	for page := 1; ; page++ {
-		reqURL := fmt.Sprintf("%s/repos/%s/%s/pulls/%d/commits?page=%d&per_page=%d",
-			g.baseURL, owner, repo, number, page, perPage)
+		reqURL := fmt.Sprintf("%s/repos/%s/pulls/%d/commits?page=%d&per_page=%d",
+			g.baseURL, githubRepoPath(owner, repo), number, page, perPage)
 		var ghCommits []githubCommit
 		if err := g.doJSON(ctx, "GET", reqURL, http.NoBody, http.StatusOK, &ghCommits); err != nil {
 			return nil, err
@@ -461,7 +465,7 @@ func (g *GitHubProvider) CreateBranch(ctx context.Context, owner, repo, branchNa
 	}
 
 	// First, get the SHA of the base branch
-	refURL := fmt.Sprintf("%s/repos/%s/%s/git/refs/heads/%s", g.baseURL, owner, repo, baseBranch)
+	refURL := fmt.Sprintf("%s/repos/%s/git/refs/heads/%s", g.baseURL, githubRepoPath(owner, repo), baseBranch)
 	var ref struct {
 		Object struct {
 			SHA string `json:"sha"`
@@ -472,7 +476,7 @@ func (g *GitHubProvider) CreateBranch(ctx context.Context, owner, repo, branchNa
 	}
 
 	// Create the new branch
-	createURL := fmt.Sprintf("%s/repos/%s/%s/git/refs", g.baseURL, owner, repo)
+	createURL := fmt.Sprintf("%s/repos/%s/git/refs", g.baseURL, githubRepoPath(owner, repo))
 	body := map[string]string{
 		"ref": "refs/heads/" + branchName,
 		"sha": ref.Object.SHA,
@@ -488,7 +492,7 @@ func (g *GitHubProvider) CreatePullRequest(ctx context.Context, owner, repo stri
 		return nil, err
 	}
 
-	createURL := fmt.Sprintf("%s/repos/%s/%s/pulls", g.baseURL, owner, repo)
+	createURL := fmt.Sprintf("%s/repos/%s/pulls", g.baseURL, githubRepoPath(owner, repo))
 
 	body := map[string]interface{}{
 		"title": opts.Title,
@@ -514,7 +518,7 @@ func (g *GitHubProvider) CreateRelease(ctx context.Context, owner, repo string, 
 		return nil, err
 	}
 
-	createURL := fmt.Sprintf("%s/repos/%s/%s/releases", g.baseURL, owner, repo)
+	createURL := fmt.Sprintf("%s/repos/%s/releases", g.baseURL, githubRepoPath(owner, repo))
 
 	body := map[string]interface{}{
 		"tag_name":   opts.TagName,
@@ -543,7 +547,7 @@ func (g *GitHubProvider) ListReleases(ctx context.Context, owner, repo string) (
 		return nil, err
 	}
 
-	reqURL := fmt.Sprintf("%s/repos/%s/%s/releases", g.baseURL, owner, repo)
+	reqURL := fmt.Sprintf("%s/repos/%s/releases", g.baseURL, githubRepoPath(owner, repo))
 
 	var ghReleases []githubRelease
 	if err := g.doJSON(ctx, "GET", reqURL, http.NoBody, http.StatusOK, &ghReleases); err != nil {
@@ -563,7 +567,7 @@ func (g *GitHubProvider) GetCommit(ctx context.Context, owner, repo, sha string)
 		return nil, err
 	}
 
-	reqURL := fmt.Sprintf("%s/repos/%s/%s/commits/%s", g.baseURL, owner, repo, sha)
+	reqURL := fmt.Sprintf("%s/repos/%s/commits/%s", g.baseURL, githubRepoPath(owner, repo), sha)
 
 	var ghCommit githubCommit
 	if err := g.doJSON(ctx, "GET", reqURL, http.NoBody, http.StatusOK, &ghCommit); err != nil {
@@ -593,8 +597,8 @@ func (g *GitHubProvider) ListBranches(ctx context.Context, owner, repo string) (
 
 	var branches []Branch
 	for page := 1; ; page++ {
-		reqURL := fmt.Sprintf("%s/repos/%s/%s/branches?page=%d&per_page=%d",
-			g.baseURL, owner, repo, page, perPage)
+		reqURL := fmt.Sprintf("%s/repos/%s/branches?page=%d&per_page=%d",
+			g.baseURL, githubRepoPath(owner, repo), page, perPage)
 
 		var ghBranches []ghBranch
 		if err := g.doJSON(ctx, "GET", reqURL, http.NoBody, http.StatusOK, &ghBranches); err != nil {
@@ -638,8 +642,8 @@ func (g *GitHubProvider) ListTags(ctx context.Context, owner, repo string, since
 
 	var tags []Tag
 	for page := 1; ; page++ {
-		reqURL := fmt.Sprintf("%s/repos/%s/%s/tags?page=%d&per_page=%d",
-			g.baseURL, owner, repo, page, perPage)
+		reqURL := fmt.Sprintf("%s/repos/%s/tags?page=%d&per_page=%d",
+			g.baseURL, githubRepoPath(owner, repo), page, perPage)
 
 		var ghTags []ghTag
 		if err := g.doJSON(ctx, "GET", reqURL, http.NoBody, http.StatusOK, &ghTags); err != nil {
@@ -690,8 +694,8 @@ func (g *GitHubProvider) CompareCommits(ctx context.Context, owner, repo, base, 
 
 	var out []Commit
 	for page := 1; ; page++ {
-		reqURL := fmt.Sprintf("%s/repos/%s/%s/compare/%s...%s?page=%d&per_page=%d",
-			g.baseURL, owner, repo, base, head, page, perPage)
+		reqURL := fmt.Sprintf("%s/repos/%s/compare/%s...%s?page=%d&per_page=%d",
+			g.baseURL, githubRepoPath(owner, repo), base, head, page, perPage)
 
 		var resp ghCompare
 		if err := g.doJSON(ctx, "GET", reqURL, http.NoBody, http.StatusOK, &resp); err != nil {
@@ -716,7 +720,7 @@ func (g *GitHubProvider) RegisterWebhook(ctx context.Context, owner, repo string
 		return nil, err
 	}
 
-	createURL := fmt.Sprintf("%s/repos/%s/%s/hooks", g.baseURL, owner, repo)
+	createURL := fmt.Sprintf("%s/repos/%s/hooks", g.baseURL, githubRepoPath(owner, repo))
 
 	contentType := opts.ContentType
 	if contentType == "" {
@@ -761,7 +765,7 @@ func (g *GitHubProvider) DeleteWebhook(ctx context.Context, owner, repo, webhook
 		return err
 	}
 
-	deleteURL := fmt.Sprintf("%s/repos/%s/%s/hooks/%s", g.baseURL, owner, repo, webhookID)
+	deleteURL := fmt.Sprintf("%s/repos/%s/hooks/%s", g.baseURL, githubRepoPath(owner, repo), webhookID)
 	return g.doJSON(ctx, "DELETE", deleteURL, http.NoBody, http.StatusNoContent, nil)
 }
 
@@ -784,8 +788,8 @@ func (g *GitHubProvider) ListIssues(ctx context.Context, owner, repo string, opt
 		state = "all"
 	}
 
-	reqURL := fmt.Sprintf("%s/repos/%s/%s/issues?state=%s&page=%d&per_page=%d&direction=asc",
-		g.baseURL, owner, repo, state, page, perPage)
+	reqURL := fmt.Sprintf("%s/repos/%s/issues?state=%s&page=%d&per_page=%d&direction=asc",
+		g.baseURL, githubRepoPath(owner, repo), state, page, perPage)
 
 	if opts.Since != nil {
 		reqURL += "&since=" + url.QueryEscape(opts.Since.Format(time.RFC3339))
@@ -816,7 +820,7 @@ func (g *GitHubProvider) GetIssue(ctx context.Context, owner, repo string, numbe
 		return nil, err
 	}
 
-	reqURL := fmt.Sprintf("%s/repos/%s/%s/issues/%d", g.baseURL, owner, repo, number)
+	reqURL := fmt.Sprintf("%s/repos/%s/issues/%d", g.baseURL, githubRepoPath(owner, repo), number)
 
 	var gi githubIssue
 	if err := g.doJSON(ctx, "GET", reqURL, http.NoBody, http.StatusOK, &gi); err != nil {
@@ -833,7 +837,7 @@ func (g *GitHubProvider) UpdateIssue(ctx context.Context, owner, repo string, nu
 		return nil, err
 	}
 
-	reqURL := fmt.Sprintf("%s/repos/%s/%s/issues/%d", g.baseURL, owner, repo, number)
+	reqURL := fmt.Sprintf("%s/repos/%s/issues/%d", g.baseURL, githubRepoPath(owner, repo), number)
 
 	body := make(map[string]interface{})
 	if opts.State != nil {
@@ -876,7 +880,7 @@ func (g *GitHubProvider) CreateIssueComment(ctx context.Context, owner, repo str
 		return 0, err
 	}
 
-	reqURL := fmt.Sprintf("%s/repos/%s/%s/issues/%d/comments", g.baseURL, owner, repo, number)
+	reqURL := fmt.Sprintf("%s/repos/%s/issues/%d/comments", g.baseURL, githubRepoPath(owner, repo), number)
 
 	body := map[string]string{"body": commentBody}
 	bodyJSON, _ := json.Marshal(body)
@@ -900,7 +904,7 @@ func (g *GitHubProvider) ListIssueComments(ctx context.Context, owner, repo stri
 	var allComments []IssueComment
 	page := 1
 	for {
-		reqURL := fmt.Sprintf("%s/repos/%s/%s/issues/%d/comments?per_page=100&page=%d", g.baseURL, owner, repo, number, page)
+		reqURL := fmt.Sprintf("%s/repos/%s/issues/%d/comments?per_page=100&page=%d", g.baseURL, githubRepoPath(owner, repo), number, page)
 
 		var ghComments []struct {
 			ID        int64      `json:"id"`
@@ -937,7 +941,7 @@ func (g *GitHubProvider) UpdateIssueComment(ctx context.Context, owner, repo str
 		return err
 	}
 
-	reqURL := fmt.Sprintf("%s/repos/%s/%s/issues/comments/%d", g.baseURL, owner, repo, commentID)
+	reqURL := fmt.Sprintf("%s/repos/%s/issues/comments/%d", g.baseURL, githubRepoPath(owner, repo), commentID)
 
 	body := map[string]string{"body": commentBody}
 	bodyJSON, _ := json.Marshal(body)
@@ -951,7 +955,7 @@ func (g *GitHubProvider) ListRepoLabels(ctx context.Context, owner, repo string)
 		return nil, err
 	}
 
-	reqURL := fmt.Sprintf("%s/repos/%s/%s/labels?per_page=100", g.baseURL, owner, repo)
+	reqURL := fmt.Sprintf("%s/repos/%s/labels?per_page=100", g.baseURL, githubRepoPath(owner, repo))
 
 	var ghLabels []struct {
 		ID    int64  `json:"id"`
@@ -975,7 +979,7 @@ func (g *GitHubProvider) ListRepoMilestones(ctx context.Context, owner, repo str
 		return nil, err
 	}
 
-	reqURL := fmt.Sprintf("%s/repos/%s/%s/milestones?state=all&per_page=100", g.baseURL, owner, repo)
+	reqURL := fmt.Sprintf("%s/repos/%s/milestones?state=all&per_page=100", g.baseURL, githubRepoPath(owner, repo))
 
 	var ghMilestones []struct {
 		ID     int64  `json:"id"`
