@@ -21,11 +21,11 @@ import (
 	"windshift/internal/server"
 	"windshift/internal/tui"
 
+	"charm.land/wish/v2"
+	"charm.land/wish/v2/activeterm"
+	wishbubbletea "charm.land/wish/v2/bubbletea"
+	"charm.land/wish/v2/logging"
 	"github.com/charmbracelet/ssh"
-	"github.com/charmbracelet/wish"
-	"github.com/charmbracelet/wish/activeterm"
-	wishbubbletea "github.com/charmbracelet/wish/bubbletea"
-	"github.com/charmbracelet/wish/logging"
 )
 
 //go:embed all:frontend/dist

@@ -1,9 +1,26 @@
 package tui
 
 import (
-	"github.com/charmbracelet/bubbles/textarea"
-	tea "github.com/charmbracelet/bubbletea"
+	"unicode/utf8"
+
+	"charm.land/bubbles/v2/textarea"
+	tea "charm.land/bubbletea/v2"
 )
+
+// keyText returns the first printable rune from a key press in Bubble Tea v2,
+// or 0 if the message isn't a printable key press. v1's `msg.Runes` field is
+// gone; v2 carries typed text on `tea.KeyPressMsg.Text`.
+func keyText(msg tea.KeyMsg) rune {
+	p, ok := msg.(tea.KeyPressMsg)
+	if !ok || p.Text == "" {
+		return 0
+	}
+	r, _ := utf8.DecodeRuneInString(p.Text)
+	if r == utf8.RuneError {
+		return 0
+	}
+	return r
+}
 
 // handleKeyPress handles key presses based on the current screen
 func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -182,7 +199,7 @@ func (m Model) handleWorkItemDetailKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Special handling for description field using textarea
 		if m.editForm.currentField == 1 {
 			// Check for ESC to stop editing (stay on current field)
-			if msg.Type == tea.KeyEscape {
+			if msg.String() == "esc" {
 				// Save the content from textarea
 				m.editForm.description = m.editForm.descriptionTextarea.Value()
 				m.editForm.descriptionTextarea.Blur()
@@ -190,7 +207,7 @@ func (m Model) handleWorkItemDetailKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			// Check for Tab or Ctrl+Enter to exit the field and move to next
-			if msg.Type == tea.KeyTab || msg.String() == "ctrl+enter" {
+			if msg.String() == "tab" || msg.String() == "ctrl+enter" {
 				// Save the content from textarea
 				m.editForm.description = m.editForm.descriptionTextarea.Value()
 				m.editForm.descriptionTextarea.Blur()
@@ -209,35 +226,32 @@ func (m Model) handleWorkItemDetailKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		// Handle title field (index 0) with text editing
 		if m.editForm.currentField == 0 {
-			switch msg.Type {
-			case tea.KeyEscape:
+			switch msg.String() {
+			case "esc":
 				m.editForm.editing = false
 				return m, nil
-			case tea.KeyEnter, tea.KeyTab:
+			case "enter", "tab":
 				m.editForm.editing = false
 				m.editForm.currentField++
 				return m, nil
-			case tea.KeyBackspace, tea.KeyDelete:
+			case "backspace", "delete":
 				(&m).editFormBackspace()
 				return m, nil
-			case tea.KeyLeft:
+			case "left":
 				(&m).editFormMoveCursor(-1)
 				return m, nil
-			case tea.KeyRight:
+			case "right":
 				(&m).editFormMoveCursor(1)
 				return m, nil
-			}
-
-			// Handle Ctrl+Enter separately
-			if msg.String() == "ctrl+enter" {
+			case "ctrl+enter":
 				m.editForm.editing = false
 				m.editForm.currentField++
 				return m, nil
 			}
 
 			// Handle regular character input
-			if len(msg.Runes) > 0 {
-				(&m).editFormAddChar(msg.Runes[0])
+			if r := keyText(msg); r != 0 {
+				(&m).editFormAddChar(r)
 			}
 		}
 	} else {
@@ -298,30 +312,30 @@ func (m Model) handleWorkItemDetailKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleCreateWorkItemKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.createForm.editing {
 		// Handle title and description with text editing
-		switch msg.Type {
-		case tea.KeyEscape:
+		switch msg.String() {
+		case "esc":
 			m.createForm.editing = false
 			return m, nil
-		case tea.KeyEnter, tea.KeyTab:
+		case "enter", "tab":
 			m.createForm.editing = false
 			if m.createForm.currentField < 2 {
 				m.createForm.currentField++
 			}
 			return m, nil
-		case tea.KeyBackspace, tea.KeyDelete:
+		case "backspace", "delete":
 			(&m).createFormBackspace()
 			return m, nil
-		case tea.KeyLeft:
+		case "left":
 			(&m).createFormMoveCursor(-1)
 			return m, nil
-		case tea.KeyRight:
+		case "right":
 			(&m).createFormMoveCursor(1)
 			return m, nil
 		}
 
 		// Handle regular character input
-		if len(msg.Runes) > 0 {
-			(&m).createFormAddChar(msg.Runes[0])
+		if r := keyText(msg); r != 0 {
+			(&m).createFormAddChar(r)
 		}
 	} else {
 		switch msg.String() {
@@ -376,8 +390,8 @@ func (m Model) handleCommentsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.commentForm.content = m.commentForm.content[:len(m.commentForm.content)-1]
 			}
 		default:
-			if len(msg.Runes) == 1 {
-				m.commentForm.content += string(msg.Runes[0])
+			if r := keyText(msg); r != 0 {
+				m.commentForm.content += string(r)
 			}
 		}
 	} else {
@@ -414,8 +428,8 @@ func (m Model) handleTimeLoggingKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "backspace":
 			(&m).timeFormBackspace()
 		default:
-			if len(msg.Runes) == 1 {
-				(&m).timeFormAddChar(msg.Runes[0])
+			if r := keyText(msg); r != 0 {
+				(&m).timeFormAddChar(r)
 			}
 		}
 	} else {

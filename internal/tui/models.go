@@ -5,9 +5,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textarea"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textarea"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // UserInfo contains authenticated SSH user information
@@ -243,10 +243,8 @@ func NewModelWithUserAndToken(apiURL string, userInfo *UserInfo, sessionToken st
 
 // Init implements tea.Model
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(
-		m.loadWorkspaces(),
-		tea.EnterAltScreen,
-	)
+	// Alt-screen is now declared on the View struct (see View()).
+	return m.loadWorkspaces()
 }
 
 // Update implements tea.Model
@@ -371,9 +369,11 @@ func textareaDimensions(winW, winH int) (w, h int) {
 }
 
 // View implements tea.Model
-func (m Model) View() string {
+func (m Model) View() tea.View {
 	if m.width == 0 {
-		return "Loading..."
+		v := tea.NewView("Loading...")
+		v.AltScreen = true
+		return v
 	}
 
 	var content string
@@ -430,7 +430,10 @@ func (m Model) View() string {
 		result = m.overlayPicker(result)
 	}
 
-	return result
+	v := tea.NewView(result)
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
+	return v
 }
 
 // Helper methods for rendering different screens
@@ -994,6 +997,6 @@ func (m Model) overlayPicker(_ string) string {
 		lipgloss.Center,
 		picker,
 		lipgloss.WithWhitespaceChars(" "),
-		lipgloss.WithWhitespaceForeground(lipgloss.Color("#1E1E1E")),
+		lipgloss.WithWhitespaceStyle(lipgloss.NewStyle().Foreground(lipgloss.Color("#1E1E1E"))),
 	)
 }

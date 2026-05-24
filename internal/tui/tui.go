@@ -7,7 +7,7 @@ import (
 	"windshift/internal/auth"
 	"windshift/internal/middleware"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/ssh"
 )
 
@@ -72,9 +72,8 @@ func NewTUIHandler(apiURL string, sessionManager *auth.SessionManager) func(s ss
 		// Create new app instance for each session
 		model := NewModelWithUserAndToken(apiURL, userInfo, sessionToken)
 
-		return model, []tea.ProgramOption{
-			tea.WithAltScreen(),
-			tea.WithMouseCellMotion(),
-		}
+		// Bubble Tea v2 owns alt-screen + mouse mode via the View struct
+		// (see Model.View). No program options needed for those.
+		return model, nil
 	}
 }
