@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -60,6 +61,15 @@ func NewSessionManager(db database.Database, useSecureCookies, useProxy bool, ad
 // CreateSession creates a new session for a user
 // last review: ser, 210426, NOTE: inline sql again
 func (sm *SessionManager) CreateSession(userID int, ipAddress, userAgent string, rememberMe bool) (*Session, error) {
+	// Normalise to host-only so ValidateSession (which compares against
+	// getClientIP's port-stripped result) can match. Callers sometimes pass
+	// host:port — notably the SSH TUI handler, which uses
+	// ssh.Session.RemoteAddr().String() — and the validator would otherwise
+	// reject every subsequent request from a working session.
+	if host, _, err := net.SplitHostPort(ipAddress); err == nil {
+		ipAddress = host
+	}
+
 	slog.Debug("creating session", slog.String("component", "sso"), slog.Int("user_id", userID), slog.String("ip_address", ipAddress))
 
 	token, err := generateSessionToken()

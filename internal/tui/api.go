@@ -12,11 +12,29 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// APIClient handles communication with the Windshift API
+// authMode picks which header doGet/doMutate attaches.
+type authMode int
+
+const (
+	authBearer authMode = iota
+	authSession
+)
+
+// APIClient handles communication with the Windshift API.
+//
+// The TUI's endpoints split across two surfaces:
+//   - /rest/api/v1/... uses bearer auth (Authorization: Bearer crw_*),
+//     populated from an SSH-minted temp API token.
+//   - /api/...           uses session auth (X-Session-Token), populated from
+//     an SSH-minted session row.
+//
+// Once v1 grows /time/projects and /time/worklogs endpoints, the legacy
+// session path can be removed entirely.
 type APIClient struct {
 	baseURL      string
 	httpClient   *http.Client
 	sessionToken string
+	bearerToken  string
 }
 
 // NewAPIClient creates a new API client
@@ -29,21 +47,36 @@ func NewAPIClient(baseURL string) *APIClient {
 	}
 }
 
-// SetSessionToken sets the session token for authentication
+// SetSessionToken sets the session token used by legacy /api/* calls.
 func (c *APIClient) SetSessionToken(token string) {
 	c.sessionToken = token
 }
 
+// SetBearerToken sets the API token used by /rest/api/v1/* calls.
+func (c *APIClient) SetBearerToken(token string) {
+	c.bearerToken = token
+}
+
+func (c *APIClient) setAuth(req *http.Request, mode authMode) {
+	switch mode {
+	case authBearer:
+		if c.bearerToken != "" {
+			req.Header.Set("Authorization", "Bearer "+c.bearerToken)
+		}
+	case authSession:
+		if c.sessionToken != "" {
+			req.Header.Set("X-Session-Token", c.sessionToken)
+		}
+	}
+}
+
 // doGet performs a GET request to the given path and decodes the JSON response into result.
-func (c *APIClient) doGet(path string, result interface{}) error {
+func (c *APIClient) doGet(path string, mode authMode, result interface{}) error {
 	req, err := http.NewRequest("GET", c.baseURL+path, http.NoBody)
 	if err != nil {
 		return err
 	}
-
-	if c.sessionToken != "" {
-		req.Header.Set("X-Session-Token", c.sessionToken)
-	}
+	c.setAuth(req, mode)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -59,11 +92,15 @@ func (c *APIClient) doGet(path string, result interface{}) error {
 		return fmt.Errorf("API error: %s - %s", resp.Status, string(body))
 	}
 
+	if result == nil {
+		return nil
+	}
 	return json.NewDecoder(resp.Body).Decode(result)
 }
 
 // doMutate performs a mutating HTTP request (POST, PUT, etc.) with a JSON body.
-func (c *APIClient) doMutate(method, path string, body interface{}) error {
+// If result is non-nil, the response body is decoded into it.
+func (c *APIClient) doMutate(method, path string, mode authMode, body, result interface{}) error { //nolint:unparam // result is wired for callers that will decode bodies; all current call sites pass nil
 	jsonData, err := json.Marshal(body)
 	if err != nil {
 		return err
@@ -74,10 +111,7 @@ func (c *APIClient) doMutate(method, path string, body interface{}) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-
-	if c.sessionToken != "" {
-		req.Header.Set("X-Session-Token", c.sessionToken)
-	}
+	c.setAuth(req, mode)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -85,7 +119,7 @@ func (c *APIClient) doMutate(method, path string, body interface{}) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusNoContent {
 		body, readErr := io.ReadAll(resp.Body)
 		if readErr != nil {
 			return fmt.Errorf("API error: %s; failed to read response body: %w", resp.Status, readErr)
@@ -93,8 +127,91 @@ func (c *APIClient) doMutate(method, path string, body interface{}) error {
 		return fmt.Errorf("API error: %s - %s", resp.Status, string(body))
 	}
 
-	return nil
+	if result == nil || resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
+	return json.NewDecoder(resp.Body).Decode(result)
 }
+
+// ─── v1 wire mirrors ──────────────────────────────────────────────────
+// These types mirror the relevant subset of internal/restapi/v1/dto. We
+// duplicate them rather than import the dto package to avoid pulling the
+// v1 layering dependency into the TUI. Field-for-field copies; if the
+// upstream DTO grows fields we care about, mirror them here.
+
+type v1PaginationMeta struct {
+	Page       int `json:"page"`
+	Limit      int `json:"limit"`
+	Total      int `json:"total"`
+	TotalPages int `json:"total_pages"`
+}
+
+type v1WorkspacesPage struct {
+	Data       []v1WorkspaceResponse `json:"data"`
+	Pagination v1PaginationMeta      `json:"pagination"`
+}
+
+type v1ItemsPage struct {
+	Data       []v1ItemResponse `json:"data"`
+	Pagination v1PaginationMeta `json:"pagination"`
+}
+
+type v1UserSummary struct {
+	ID        int    `json:"id"`
+	Email     string `json:"email"`
+	Username  string `json:"username"`
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+	FullName  string `json:"full_name"`
+}
+
+type v1StatusSummary struct {
+	ID            int    `json:"id"`
+	Name          string `json:"name"`
+	CategoryID    int    `json:"category_id"`
+	CategoryName  string `json:"category_name,omitempty"`
+	CategoryColor string `json:"category_color,omitempty"`
+}
+
+type v1PrioritySummary struct {
+	ID    int    `json:"id"`
+	Name  string `json:"name"`
+	Icon  string `json:"icon,omitempty"`
+	Color string `json:"color,omitempty"`
+}
+
+type v1WorkspaceResponse struct {
+	ID          int    `json:"id"`
+	Name        string `json:"name"`
+	Key         string `json:"key"`
+	Description string `json:"description"`
+	Active      bool   `json:"active"`
+}
+
+type v1ItemResponse struct {
+	ID          int                `json:"id"`
+	WorkspaceID int                `json:"workspace_id"`
+	Title       string             `json:"title"`
+	Description string             `json:"description"`
+	ParentID    *int               `json:"parent_id,omitempty"`
+	Status      *v1StatusSummary   `json:"status,omitempty"`
+	Priority    *v1PrioritySummary `json:"priority,omitempty"`
+	Assignee    *v1UserSummary     `json:"assignee,omitempty"`
+	Creator     *v1UserSummary     `json:"creator,omitempty"`
+	CreatedAt   time.Time          `json:"created_at"`
+	UpdatedAt   time.Time          `json:"updated_at"`
+}
+
+type v1CommentResponse struct {
+	ID        int            `json:"id"`
+	ItemID    int            `json:"item_id"`
+	Content   string         `json:"content"`
+	Author    *v1UserSummary `json:"author,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+}
+
+// ─── existing TUI types (kept; converters below adapt v1 wire to these) ──
 
 // Workspace represents a workspace from the Windshift API.
 type Workspace struct {
@@ -103,7 +220,7 @@ type Workspace struct {
 	Key           string `json:"key"`
 	Description   string `json:"description"`
 	Active        bool   `json:"active"`
-	TimeProjectID *int   `json:"time_project_id"`
+	TimeProjectID *int   `json:"time_project_id"` // populated only by legacy callers; v1 omits it
 }
 
 // Status represents a workflow status
@@ -163,7 +280,9 @@ type WorkItem struct {
 	PriorityColor       string `json:"priority_color,omitempty"`
 }
 
-// GetLevel calculates hierarchy level from path
+// GetLevel calculates hierarchy level from path. v1 doesn't surface a path
+// string, so for v1-sourced items this returns 0; the work-item list groups
+// flat unless we later expand parent chains.
 func (wi *WorkItem) GetLevel() int {
 	if wi.Path == "" {
 		return 0
@@ -221,7 +340,78 @@ type CreateTimeLogRequest struct {
 	EndTime     *string `json:"end_time"`
 }
 
-// Message types for tea.Cmd
+// ─── v1 → TUI converters ─────────────────────────────────────────────
+
+func workspaceFromV1(w v1WorkspaceResponse) Workspace {
+	return Workspace{
+		ID:          w.ID,
+		Name:        w.Name,
+		Key:         w.Key,
+		Description: w.Description,
+		Active:      w.Active,
+	}
+}
+
+func workItemFromV1(it v1ItemResponse) WorkItem {
+	wi := WorkItem{
+		ID:          it.ID,
+		WorkspaceID: it.WorkspaceID,
+		Title:       it.Title,
+		Description: it.Description,
+		ParentID:    it.ParentID,
+		CreatedAt:   it.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:   it.UpdatedAt.Format(time.RFC3339),
+	}
+	if it.Status != nil {
+		id := it.Status.ID
+		wi.StatusID = &id
+		wi.StatusName = it.Status.Name
+		wi.StatusCategoryColor = it.Status.CategoryColor
+		wi.Status = it.Status.Name
+	}
+	if it.Priority != nil {
+		id := it.Priority.ID
+		wi.PriorityID = &id
+		wi.PriorityName = it.Priority.Name
+		wi.PriorityIcon = it.Priority.Icon
+		wi.PriorityColor = it.Priority.Color
+		wi.Priority = it.Priority.Name
+	}
+	if it.Assignee != nil {
+		id := it.Assignee.ID
+		wi.AssigneeID = &id
+		wi.AssigneeName = it.Assignee.FullName
+		wi.AssigneeEmail = it.Assignee.Email
+	}
+	if it.Creator != nil {
+		id := it.Creator.ID
+		wi.CreatorID = &id
+		wi.CreatorName = it.Creator.FullName
+		wi.CreatorEmail = it.Creator.Email
+	}
+	return wi
+}
+
+func commentFromV1(c v1CommentResponse) Comment {
+	out := Comment{
+		ID:        c.ID,
+		ItemID:    c.ItemID,
+		Content:   c.Content,
+		CreatedAt: c.CreatedAt.Format(time.RFC3339),
+		UpdatedAt: c.UpdatedAt.Format(time.RFC3339),
+	}
+	if c.Author != nil {
+		out.AuthorID = c.Author.ID
+		name := c.Author.FullName
+		email := c.Author.Email
+		out.AuthorName = &name
+		out.AuthorEmail = &email
+	}
+	return out
+}
+
+// ─── Message types for tea.Cmd ────────────────────────────────────────
+
 type workspacesLoadedMsg struct {
 	workspaces []Workspace
 }
@@ -258,7 +448,8 @@ type errorMsg struct {
 	error string
 }
 
-// API methods that return tea.Cmd
+// ─── API methods that return tea.Cmd ─────────────────────────────────
+
 func (m Model) loadWorkspaces() tea.Cmd {
 	return tea.Cmd(func() tea.Msg {
 		workspaces, err := m.apiClient.getWorkspaces()
@@ -289,9 +480,9 @@ func (m Model) loadComments(itemID int) tea.Cmd {
 	})
 }
 
-func (m Model) loadStatuses() tea.Cmd {
+func (m Model) loadStatuses(workspaceID int) tea.Cmd {
 	return tea.Cmd(func() tea.Msg {
-		statuses, err := m.apiClient.getStatuses()
+		statuses, err := m.apiClient.getStatuses(workspaceID)
 		if err != nil {
 			return errorMsg{error: err.Error()}
 		}
@@ -359,103 +550,135 @@ func (m Model) createTimeLog(itemID, projectID int, description, duration, date,
 	})
 }
 
-// HTTP API methods
+// ─── HTTP API methods ─────────────────────────────────────────────────
+
 func (c *APIClient) getWorkspaces() ([]Workspace, error) {
-	var workspaces []Workspace
-	if err := c.doGet("/api/workspaces", &workspaces); err != nil {
+	var resp v1WorkspacesPage
+	if err := c.doGet("/rest/api/v1/workspaces", authBearer, &resp); err != nil {
 		return nil, err
 	}
-	return workspaces, nil
+	out := make([]Workspace, 0, len(resp.Data))
+	for _, w := range resp.Data {
+		out = append(out, workspaceFromV1(w))
+	}
+	return out, nil
 }
 
 func (c *APIClient) getWorkItems(workspaceID int) ([]WorkItem, error) {
-	var paginatedResponse struct {
-		Items      []WorkItem `json:"items"`
-		Pagination struct {
-			Page       int `json:"page"`
-			Limit      int `json:"limit"`
-			Total      int `json:"total"`
-			TotalPages int `json:"total_pages"`
-		} `json:"pagination"`
-	}
-
-	path := fmt.Sprintf("/api/items?workspace_id=%d", workspaceID)
-	if err := c.doGet(path, &paginatedResponse); err != nil {
+	var resp v1ItemsPage
+	// expand= populates the nested status/priority/assignee/creator the
+	// list view chips need; without it those come back nil.
+	path := fmt.Sprintf("/rest/api/v1/workspaces/%d/items?expand=status,priority,assignee,creator", workspaceID)
+	if err := c.doGet(path, authBearer, &resp); err != nil {
 		return nil, err
 	}
-	return paginatedResponse.Items, nil
+	out := make([]WorkItem, 0, len(resp.Data))
+	for _, it := range resp.Data {
+		out = append(out, workItemFromV1(it))
+	}
+	return out, nil
 }
 
 func (c *APIClient) getComments(itemID int) ([]Comment, error) {
-	var comments []Comment
-	if err := c.doGet(fmt.Sprintf("/api/items/%d/comments", itemID), &comments); err != nil {
+	// v1's comments list endpoint isn't paginated for items; it returns a bare
+	// array. If a future v1 release wraps it in {data,pagination} we'll need
+	// to swap the decoder here.
+	var raw []v1CommentResponse
+	if err := c.doGet(fmt.Sprintf("/rest/api/v1/items/%d/comments?expand=author", itemID), authBearer, &raw); err != nil {
 		return nil, err
 	}
-	return comments, nil
+	out := make([]Comment, 0, len(raw))
+	for _, c2 := range raw {
+		out = append(out, commentFromV1(c2))
+	}
+	return out, nil
 }
 
-func (c *APIClient) getStatuses() ([]Status, error) {
-	var statuses []Status
-	if err := c.doGet("/api/statuses", &statuses); err != nil {
+func (c *APIClient) getStatuses(workspaceID int) ([]Status, error) {
+	// Workspace-scoped: /workspaces/{id}/statuses requires workspaces:read
+	// (the global /statuses route would need a separate statuses:read scope).
+	var raw []v1StatusSummary
+	if err := c.doGet(fmt.Sprintf("/rest/api/v1/workspaces/%d/statuses", workspaceID), authBearer, &raw); err != nil {
 		return nil, err
 	}
-	return statuses, nil
+	out := make([]Status, 0, len(raw))
+	for _, s := range raw {
+		out = append(out, Status(s))
+	}
+	return out, nil
 }
 
 func (c *APIClient) getPriorities() ([]Priority, error) {
-	var priorities []Priority
-	if err := c.doGet("/api/priorities", &priorities); err != nil {
+	var raw []v1PrioritySummary
+	if err := c.doGet("/rest/api/v1/priorities", authBearer, &raw); err != nil {
 		return nil, err
 	}
-	return priorities, nil
+	out := make([]Priority, 0, len(raw))
+	for _, p := range raw {
+		out = append(out, Priority{
+			ID:    p.ID,
+			Name:  p.Name,
+			Icon:  p.Icon,
+			Color: p.Color,
+		})
+	}
+	return out, nil
 }
 
 func (c *APIClient) getTimeProjects() ([]TimeProject, error) {
+	// Legacy /api/* + session auth — v1 doesn't yet expose /time/projects.
 	var projects []TimeProject
-	if err := c.doGet("/api/time/projects", &projects); err != nil {
+	if err := c.doGet("/api/time/projects", authSession, &projects); err != nil {
 		return nil, err
 	}
 	return projects, nil
 }
 
+// updateWorkItem updates title/description/priority via PUT, then if statusID
+// changed, drives the workflow transition through POST /items/{id}/transition.
+// v1's ItemUpdateRequest deliberately rejects status_id to keep workflow
+// validator/condition rules in the hot path.
 func (c *APIClient) updateWorkItem(itemID int, title, description string, statusID, priorityID *int) error {
-	data := map[string]interface{}{
+	body := map[string]interface{}{
 		"title":       title,
 		"description": description,
 	}
-	if statusID != nil {
-		data["status_id"] = *statusID
-	}
 	if priorityID != nil {
-		data["priority_id"] = *priorityID
+		body["priority_id"] = *priorityID
 	}
-
-	return c.doMutate("PUT", fmt.Sprintf("/api/items/%d", itemID), data)
+	if err := c.doMutate("PUT", fmt.Sprintf("/rest/api/v1/items/%d", itemID), authBearer, body, nil); err != nil {
+		return err
+	}
+	if statusID != nil {
+		transition := map[string]interface{}{"to_status_id": *statusID}
+		if err := c.doMutate("POST", fmt.Sprintf("/rest/api/v1/items/%d/transition", itemID), authBearer, transition, nil); err != nil {
+			return fmt.Errorf("status transition: %w", err)
+		}
+	}
+	return nil
 }
 
 func (c *APIClient) createWorkItem(workspaceID int, title, description string, priorityID *int) error {
-	data := map[string]interface{}{
+	body := map[string]interface{}{
 		"workspace_id": workspaceID,
 		"title":        title,
 		"description":  description,
 	}
 	if priorityID != nil {
-		data["priority_id"] = *priorityID
+		body["priority_id"] = *priorityID
 	}
-
-	return c.doMutate("POST", "/api/items", data)
+	return c.doMutate("POST", "/rest/api/v1/items", authBearer, body, nil)
 }
 
 func (c *APIClient) createComment(itemID int, content string) error {
-	data := CreateCommentRequest{
-		Content:  content,
-		AuthorID: 1, // Default author ID - in a real app, this would be the current user
-	}
-
-	return c.doMutate("POST", fmt.Sprintf("/api/items/%d/comments", itemID), data)
+	// v1's request shape drops the author_id field — the user is identified
+	// from the bearer token. Less to forge.
+	body := map[string]interface{}{"content": content}
+	return c.doMutate("POST", fmt.Sprintf("/rest/api/v1/items/%d/comments", itemID), authBearer, body, nil)
 }
 
 func (c *APIClient) createTimeLog(itemID, projectID int, description, duration, date, startTime string) error {
+	// Legacy /api/* + session auth — v1 doesn't yet expose /time/worklogs.
 	data := CreateTimeLogRequest{
 		ProjectID:   projectID,
 		ItemID:      &itemID,
@@ -464,6 +687,5 @@ func (c *APIClient) createTimeLog(itemID, projectID int, description, duration, 
 		StartTime:   startTime,
 		Duration:    duration,
 	}
-
-	return c.doMutate("POST", "/api/time/worklogs", data)
+	return c.doMutate("POST", "/api/time/worklogs", authSession, data, nil)
 }

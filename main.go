@@ -93,7 +93,13 @@ func main() {
 	var sshServer *ssh.Server
 	var sshDB database.Database // Declared at function scope to allow explicit cleanup
 	if cfg.SSH.Enabled {
-		apiURL := fmt.Sprintf("http://localhost:%d", srv.Port())
+		// 127.0.0.1 (not "localhost") so the loopback IP family the TUI's
+		// HTTP client dials matches what the SSH listener stored in the
+		// session row. "localhost" resolves to ::1 on modern systems while
+		// SSH typically binds to 127.0.0.1, and the legacy /api/* session
+		// middleware compares request IP against session IP by string
+		// equality — IPv4 vs IPv6 loopback would mismatch.
+		apiURL := fmt.Sprintf("http://127.0.0.1:%d", srv.Port())
 
 		var additionalProxyList []string
 		if cfg.AdditionalProxies != "" {
@@ -111,6 +117,9 @@ func main() {
 			slog.Error("failed to create SSH database connection", "error", err)
 		} else {
 			sessionManager := auth.NewSessionManager(sshDB, enableHTTPS, cfg.UseProxy, additionalProxyList, cfg.Auth.SessionSecret)
+			// nil tokenTracker: the SSH-minted temp tokens are short-lived
+			// (24h) and we don't need last-used-at tracking for them.
+			tokenManager := auth.NewTokenManager(sshDB, nil)
 
 			serverOptions := make([]ssh.Option, 0, 4)
 			serverOptions = append(serverOptions,
@@ -125,7 +134,7 @@ func main() {
 				wish.WithIdleTimeout(30*time.Minute),
 				wish.WithMaxTimeout(24*time.Hour),
 				wish.WithMiddleware(
-					wishbubbletea.Middleware(tui.NewTUIHandler(apiURL, sessionManager)),
+					wishbubbletea.Middleware(tui.NewTUIHandler(apiURL, sessionManager, tokenManager)),
 					activeterm.Middleware(),
 					logging.Middleware(),
 				),

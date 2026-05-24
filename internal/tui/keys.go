@@ -1,57 +1,33 @@
 package tui
 
 import (
-	"unicode/utf8"
+	"time"
 
-	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
+
+	"windshift/internal/tui/dialog"
 )
 
-// keyText returns the first printable rune from a key press in Bubble Tea v2,
-// or 0 if the message isn't a printable key press. v1's `msg.Runes` field is
-// gone; v2 carries typed text on `tea.KeyPressMsg.Text`.
-func keyText(msg tea.KeyMsg) rune {
-	p, ok := msg.(tea.KeyPressMsg)
-	if !ok || p.Text == "" {
-		return 0
-	}
-	r, _ := utf8.DecodeRuneInString(p.Text)
-	if r == utf8.RuneError {
-		return 0
-	}
-	return r
-}
-
-// handleKeyPress handles key presses based on the current screen
-func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd
-
-	// Clear success message on any key press
+// handleKey is the top-level key router. Order matters: dialogs eat keys
+// first, then global bindings, then per-screen dispatch.
+func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	m.successMessage = ""
 
-	// Handle picker keys if picker is active
-	if m.picker.Active {
-		return m.handlePickerKeys(msg)
+	if len(m.dialogs) > 0 {
+		return m.handleDialogKey(msg)
 	}
 
-	// Global quit key
-	if msg.String() == "q" && !m.isEditing() {
-		return m, tea.Quit
-	}
-
-	// Global help key
-	if (msg.String() == "h" || msg.String() == "f1") && !m.isEditing() {
-		if m.currentScreen == HelpScreen {
-			// Return to previous screen
-			if m.currentWorkspace != nil {
-				m.currentScreen = WorkItemListScreen
-			} else {
-				m.currentScreen = WorkspaceListScreen
-			}
-		} else {
-			m.currentScreen = HelpScreen
+	// Global keys — but only when we're not editing a text field, otherwise
+	// they'd swallow typed characters that look like single-letter bindings
+	// (e.g. 'q' in a comment).
+	if !m.isEditing() {
+		if key.Matches(msg, m.keys.Quit) {
+			return m, tea.Quit
 		}
-		return m, nil
+		if key.Matches(msg, m.keys.Help) {
+			return m.toggleHelp(), nil
+		}
 	}
 
 	switch m.currentScreen {
@@ -70,8 +46,21 @@ func (m Model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case HelpScreen:
 		return m.handleHelpKeys(msg)
 	}
+	return m, nil
+}
 
-	return m, cmd
+// toggleHelp flips between the help screen and the previous screen.
+func (m Model) toggleHelp() Model {
+	if m.currentScreen == HelpScreen {
+		if m.currentWorkspace != nil {
+			m.currentScreen = WorkItemListScreen
+		} else {
+			m.currentScreen = WorkspaceListScreen
+		}
+	} else {
+		m.currentScreen = HelpScreen
+	}
+	return m
 }
 
 func (m Model) isEditing() bool {
@@ -88,31 +77,87 @@ func (m Model) isEditing() bool {
 	return false
 }
 
-func (m Model) handleWorkspaceKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "up", "k":
+func (m Model) handleDialogKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	top := m.dialogs[len(m.dialogs)-1]
+	action := top.HandleKey(msg)
+	if action.Close {
+		m.applyDialogSelection(top.ID(), action.Selected)
+		m.dialogs = m.dialogs[:len(m.dialogs)-1]
+	}
+	return m, action.Cmd
+}
+
+// applyDialogSelection routes a picker result back to the right form field.
+func (m *Model) applyDialogSelection(id string, sel any) {
+	if sel == nil {
+		return
+	}
+	switch id {
+	case pickerStatusID:
+		s, ok := sel.(Status)
+		if !ok {
+			return
+		}
+		if m.currentScreen == WorkItemDetailScreen {
+			m.editForm.statusID = &s.ID
+			m.editForm.statusName = s.Name
+			m.editForm.statusColor = s.CategoryColor
+		}
+	case pickerPriorityID:
+		p, ok := sel.(Priority)
+		if !ok {
+			return
+		}
+		switch m.currentScreen {
+		case WorkItemDetailScreen:
+			m.editForm.priorityID = &p.ID
+			m.editForm.priorityName = p.Name
+			m.editForm.priorityColor = p.Color
+		case CreateWorkItemScreen:
+			m.createForm.priorityID = &p.ID
+			m.createForm.priorityName = p.Name
+			m.createForm.priorityColor = p.Color
+		}
+	case pickerProjectID:
+		p, ok := sel.(TimeProject)
+		if !ok {
+			return
+		}
+		if m.currentScreen == TimeLoggingScreen {
+			id := int(p.ID)
+			m.timeForm.projectID = &id
+			m.timeForm.projectName = p.Name
+		}
+	}
+}
+
+// ---------- per-screen handlers ----------
+
+func (m Model) handleWorkspaceKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, m.keys.Up):
 		if m.selectedWorkspaceIdx > 0 {
 			m.selectedWorkspaceIdx--
 		} else if len(m.workspaces) > 0 {
 			m.selectedWorkspaceIdx = len(m.workspaces) - 1
 		}
-	case "down", "j":
+	case key.Matches(msg, m.keys.Down):
 		if len(m.workspaces) > 0 {
 			m.selectedWorkspaceIdx = (m.selectedWorkspaceIdx + 1) % len(m.workspaces)
 		}
-	case "enter":
+	case key.Matches(msg, m.keys.Enter):
 		if len(m.workspaces) > 0 && m.selectedWorkspaceIdx < len(m.workspaces) {
 			m.currentWorkspace = &m.workspaces[m.selectedWorkspaceIdx]
 			m.currentScreen = WorkItemListScreen
-			// Load work items, statuses, priorities, and time projects
+			m.loading = true
 			return m, tea.Batch(
 				m.loadWorkItems(m.currentWorkspace.ID),
-				m.loadStatuses(),
+				m.loadStatuses(m.currentWorkspace.ID),
 				m.loadPriorities(),
 				m.loadTimeProjects(),
 			)
 		}
-	case "r":
+	case key.Matches(msg, m.keys.Refresh):
 		m.loading = true
 		m.errorMessage = ""
 		return m, m.loadWorkspaces()
@@ -120,588 +165,428 @@ func (m Model) handleWorkspaceKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleWorkItemKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "up", "k":
+func (m Model) handleWorkItemKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, m.keys.Up):
 		if m.selectedItemIdx > 0 {
 			m.selectedItemIdx--
 		} else if len(m.workItems) > 0 {
 			m.selectedItemIdx = len(m.workItems) - 1
 		}
-	case "down", "j":
+	case key.Matches(msg, m.keys.Down):
 		if len(m.workItems) > 0 {
 			m.selectedItemIdx = (m.selectedItemIdx + 1) % len(m.workItems)
 		}
-	case "enter":
+	case key.Matches(msg, m.keys.Enter):
 		if len(m.workItems) > 0 && m.selectedItemIdx < len(m.workItems) {
 			item := m.workItems[m.selectedItemIdx]
-
-			// Initialize the textarea for description
-			ta := textarea.New()
-			ta.SetValue(item.Description)
-			taW, taH := textareaDimensions(m.width, m.height)
-			ta.SetWidth(taW)
-			ta.SetHeight(taH)
-			ta.ShowLineNumbers = false
-			ta.CharLimit = 5000
-			ta.Placeholder = "Enter description..."
-
-			m.editForm = WorkItemEditForm{
-				title:               item.Title,
-				description:         item.Description,
-				descriptionTextarea: ta,
-				statusID:            item.StatusID,
-				statusName:          item.StatusName,
-				statusColor:         item.StatusCategoryColor,
-				priorityID:          item.PriorityID,
-				priorityName:        item.PriorityName,
-				priorityColor:       item.PriorityColor,
-				titleCursor:         len(item.Title),
-			}
+			m.editForm = m.resetEditForm(item)
 			m.currentScreen = WorkItemDetailScreen
 		}
-	case "l":
+	case key.Matches(msg, m.keys.LogTime):
 		if len(m.workItems) > 0 {
 			m.enterTimeLoggingForCurrentWorkspace()
 		}
-	case "c":
+	case key.Matches(msg, m.keys.Comments):
 		if len(m.workItems) > 0 && m.selectedItemIdx < len(m.workItems) {
 			item := m.workItems[m.selectedItemIdx]
 			m.currentScreen = CommentsScreen
+			m.commentForm = m.resetCommentForm()
 			return m, m.loadComments(item.ID)
 		}
-	case "n":
+	case key.Matches(msg, m.keys.New):
 		if m.currentWorkspace != nil {
-			m.createForm = CreateWorkItemForm{
-				title:        "",
-				description:  "",
-				priorityID:   nil,
-				priorityName: "",
-				titleCursor:  0,
-			}
+			m.createForm = m.resetCreateForm()
 			m.currentScreen = CreateWorkItemScreen
 		}
-	case "r":
+	case key.Matches(msg, m.keys.Refresh):
 		if m.currentWorkspace != nil {
 			m.loading = true
 			m.errorMessage = ""
 			return m, m.loadWorkItems(m.currentWorkspace.ID)
 		}
-	case "escape", "esc":
+	case key.Matches(msg, m.keys.Back):
 		m.currentScreen = WorkspaceListScreen
 		m.currentWorkspace = nil
 	}
 	return m, nil
 }
 
-func (m Model) handleWorkItemDetailKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleWorkItemDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.editForm.editing {
-		// Special handling for description field using textarea
-		if m.editForm.currentField == 1 {
-			// Check for ESC to stop editing (stay on current field)
-			if msg.String() == "esc" {
-				// Save the content from textarea
-				m.editForm.description = m.editForm.descriptionTextarea.Value()
-				m.editForm.descriptionTextarea.Blur()
-				m.editForm.editing = false
-				return m, nil
-			}
-			// Check for Tab or Ctrl+Enter to exit the field and move to next
-			if msg.String() == "tab" || msg.String() == "ctrl+enter" {
-				// Save the content from textarea
-				m.editForm.description = m.editForm.descriptionTextarea.Value()
-				m.editForm.descriptionTextarea.Blur()
-				m.editForm.editing = false
-				if m.editForm.currentField < 3 {
-					m.editForm.currentField++
-				}
-				return m, nil
-			}
-			// Pass all other key messages to the textarea
-			var cmd tea.Cmd
-			m.editForm.descriptionTextarea, cmd = m.editForm.descriptionTextarea.Update(msg)
-			m.editForm.description = m.editForm.descriptionTextarea.Value()
-			return m, cmd
+		return m.handleEditFormEditingKeys(msg)
+	}
+	switch {
+	case key.Matches(msg, m.keys.Up):
+		if m.editForm.currentField > 0 {
+			m.editForm.currentField--
 		}
-
-		// Handle title field (index 0) with text editing
-		if m.editForm.currentField == 0 {
-			switch msg.String() {
-			case "esc":
-				m.editForm.editing = false
-				return m, nil
-			case "enter", "tab":
-				m.editForm.editing = false
-				m.editForm.currentField++
-				return m, nil
-			case "backspace", "delete":
-				(&m).editFormBackspace()
-				return m, nil
-			case "left":
-				(&m).editFormMoveCursor(-1)
-				return m, nil
-			case "right":
-				(&m).editFormMoveCursor(1)
-				return m, nil
-			case "ctrl+enter":
-				m.editForm.editing = false
-				m.editForm.currentField++
-				return m, nil
-			}
-
-			// Handle regular character input
-			if r := keyText(msg); r != 0 {
-				(&m).editFormAddChar(r)
-			}
+	case key.Matches(msg, m.keys.Down):
+		if m.editForm.currentField < 3 {
+			m.editForm.currentField++
 		}
-	} else {
+	case key.Matches(msg, m.keys.Enter):
+		switch m.editForm.currentField {
+		case 0:
+			m.editForm.editing = true
+			m.editForm.titleInput.Focus()
+			m.editForm.titleInput.CursorEnd()
+		case 1:
+			m.editForm.editing = true
+			return m, m.editForm.descriptionTextarea.Focus()
+		case 2:
+			m.openStatusPicker()
+		case 3:
+			m.openPriorityPicker(m.editForm.priorityID)
+		}
+	case key.Matches(msg, m.keys.Save):
+		if len(m.workItems) > 0 && m.selectedItemIdx < len(m.workItems) {
+			item := m.workItems[m.selectedItemIdx]
+			return m, m.updateWorkItem(item.ID, m.editForm.titleInput.Value(), m.editForm.descriptionTextarea.Value(), m.editForm.statusID, m.editForm.priorityID)
+		}
+	case key.Matches(msg, m.keys.LogTime):
+		m.enterTimeLoggingForCurrentWorkspace()
+	case key.Matches(msg, m.keys.Comments):
+		if len(m.workItems) > 0 && m.selectedItemIdx < len(m.workItems) {
+			item := m.workItems[m.selectedItemIdx]
+			m.currentScreen = CommentsScreen
+			m.commentForm = m.resetCommentForm()
+			return m, m.loadComments(item.ID)
+		}
+	case key.Matches(msg, m.keys.Back):
+		m.currentScreen = WorkItemListScreen
+	}
+	return m, nil
+}
+
+func (m Model) handleEditFormEditingKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	// Description (textarea, multi-line). Esc stops editing; tab/ctrl+enter
+	// moves to next field; everything else (incl. enter) goes to the
+	// textarea so it can insert newlines.
+	if m.editForm.currentField == 1 {
 		switch msg.String() {
-		case "up", "k":
-			if m.editForm.currentField > 0 {
-				m.editForm.currentField--
-			}
-		case "down", "j":
+		case "esc":
+			m.editForm.descriptionTextarea.Blur()
+			m.editForm.editing = false
+			return m, nil
+		case "tab", "ctrl+enter":
+			m.editForm.descriptionTextarea.Blur()
+			m.editForm.editing = false
 			if m.editForm.currentField < 3 {
 				m.editForm.currentField++
 			}
-		case "enter":
-			switch m.editForm.currentField {
-			case 0:
-				// Title - text editing
-				m.editForm.editing = true
-				m.editForm.titleCursor = len(m.editForm.title)
-			case 1:
-				// Description - textarea editing
-				m.editForm.editing = true
-				return m, m.editForm.descriptionTextarea.Focus()
-			case 2:
-				// Status - open picker
-				m.picker = PickerState{
-					Active:   true,
-					Type:     PickerStatus,
-					Selected: m.findStatusIndex(m.editForm.statusID),
-				}
-			case 3:
-				// Priority - open picker
-				m.picker = PickerState{
-					Active:   true,
-					Type:     PickerPriority,
-					Selected: m.findPriorityIndex(m.editForm.priorityID),
-				}
-			}
-		case "s":
-			if len(m.workItems) > 0 && m.selectedItemIdx < len(m.workItems) {
-				item := m.workItems[m.selectedItemIdx]
-				return m, m.updateWorkItem(item.ID, m.editForm.title, m.editForm.description, m.editForm.statusID, m.editForm.priorityID)
-			}
-		case "l":
-			m.enterTimeLoggingForCurrentWorkspace()
-		case "c":
-			if len(m.workItems) > 0 && m.selectedItemIdx < len(m.workItems) {
-				item := m.workItems[m.selectedItemIdx]
-				m.currentScreen = CommentsScreen
-				return m, m.loadComments(item.ID)
-			}
-		case "escape", "esc", "q":
-			m.currentScreen = WorkItemListScreen
+			return m, nil
 		}
+		var cmd tea.Cmd
+		m.editForm.descriptionTextarea, cmd = m.editForm.descriptionTextarea.Update(msg)
+		return m, cmd
 	}
-	return m, nil
-}
 
-func (m Model) handleCreateWorkItemKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.createForm.editing {
-		// Handle title and description with text editing
+	// Title (single-line textinput). Esc / enter / tab leave editing.
+	if m.editForm.currentField == 0 {
 		switch msg.String() {
 		case "esc":
-			m.createForm.editing = false
+			m.editForm.titleInput.Blur()
+			m.editForm.editing = false
 			return m, nil
-		case "enter", "tab":
-			m.createForm.editing = false
-			if m.createForm.currentField < 2 {
-				m.createForm.currentField++
+		case "enter", "tab", "ctrl+enter":
+			m.editForm.titleInput.Blur()
+			m.editForm.editing = false
+			if m.editForm.currentField < 3 {
+				m.editForm.currentField++
 			}
-			return m, nil
-		case "backspace", "delete":
-			(&m).createFormBackspace()
-			return m, nil
-		case "left":
-			(&m).createFormMoveCursor(-1)
-			return m, nil
-		case "right":
-			(&m).createFormMoveCursor(1)
 			return m, nil
 		}
-
-		// Handle regular character input
-		if r := keyText(msg); r != 0 {
-			(&m).createFormAddChar(r)
-		}
-	} else {
-		switch msg.String() {
-		case "up", "k":
-			if m.createForm.currentField > 0 {
-				m.createForm.currentField--
-			}
-		case "down", "j":
-			if m.createForm.currentField < 2 {
-				m.createForm.currentField++
-			}
-		case "enter":
-			switch m.createForm.currentField {
-			case 0, 1:
-				// Title, Description - text editing
-				m.createForm.editing = true
-				if m.createForm.currentField == 0 {
-					m.createForm.titleCursor = len(m.createForm.title)
-				}
-			case 2:
-				// Priority - open picker
-				m.picker = PickerState{
-					Active:   true,
-					Type:     PickerPriority,
-					Selected: m.findPriorityIndex(m.createForm.priorityID),
-				}
-			}
-		case "s":
-			if m.currentWorkspace != nil {
-				return m, m.createWorkItem(m.currentWorkspace.ID, m.createForm.title, m.createForm.description, m.createForm.priorityID)
-			}
-		case "escape", "esc":
-			m.currentScreen = WorkItemListScreen
-		}
+		var cmd tea.Cmd
+		m.editForm.titleInput, cmd = m.editForm.titleInput.Update(msg)
+		return m, cmd
 	}
 	return m, nil
 }
 
-func (m Model) handleCommentsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleCreateWorkItemKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.createForm.editing {
+		return m.handleCreateFormEditingKeys(msg)
+	}
+	switch {
+	case key.Matches(msg, m.keys.Up):
+		if m.createForm.currentField > 0 {
+			m.createForm.currentField--
+		}
+	case key.Matches(msg, m.keys.Down):
+		if m.createForm.currentField < 2 {
+			m.createForm.currentField++
+		}
+	case key.Matches(msg, m.keys.Enter):
+		switch m.createForm.currentField {
+		case 0:
+			m.createForm.editing = true
+			m.createForm.titleInput.Focus()
+			m.createForm.titleInput.CursorEnd()
+		case 1:
+			m.createForm.editing = true
+			m.createForm.descInput.Focus()
+			m.createForm.descInput.CursorEnd()
+		case 2:
+			m.openPriorityPicker(m.createForm.priorityID)
+		}
+	case key.Matches(msg, m.keys.Save):
+		if m.currentWorkspace != nil {
+			return m, m.createWorkItem(m.currentWorkspace.ID, m.createForm.titleInput.Value(), m.createForm.descInput.Value(), m.createForm.priorityID)
+		}
+	case key.Matches(msg, m.keys.Back):
+		m.currentScreen = WorkItemListScreen
+	}
+	return m, nil
+}
+
+func (m Model) handleCreateFormEditingKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.createForm.titleInput.Blur()
+		m.createForm.descInput.Blur()
+		m.createForm.editing = false
+		return m, nil
+	case "enter", "tab", "ctrl+enter":
+		m.createForm.titleInput.Blur()
+		m.createForm.descInput.Blur()
+		m.createForm.editing = false
+		if m.createForm.currentField < 2 {
+			m.createForm.currentField++
+		}
+		return m, nil
+	}
+
+	var cmd tea.Cmd
+	switch m.createForm.currentField {
+	case 0:
+		m.createForm.titleInput, cmd = m.createForm.titleInput.Update(msg)
+	case 1:
+		m.createForm.descInput, cmd = m.createForm.descInput.Update(msg)
+	}
+	return m, cmd
+}
+
+func (m Model) handleCommentsKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.commentForm.editing {
 		switch msg.String() {
-		case "escape", "esc":
+		case "esc":
+			m.commentForm.input.Blur()
 			m.commentForm.editing = false
+			return m, nil
 		case "enter":
-			if m.commentForm.content != "" && len(m.workItems) > 0 && m.selectedItemIdx < len(m.workItems) {
+			content := m.commentForm.input.Value()
+			if content != "" && len(m.workItems) > 0 && m.selectedItemIdx < len(m.workItems) {
 				item := m.workItems[m.selectedItemIdx]
-				return m, m.createComment(item.ID, m.commentForm.content)
+				m.commentForm.input.Blur()
+				m.commentForm.editing = false
+				return m, m.createComment(item.ID, content)
 			}
+			m.commentForm.input.Blur()
 			m.commentForm.editing = false
-		case "backspace":
-			if m.commentForm.content != "" {
-				m.commentForm.content = m.commentForm.content[:len(m.commentForm.content)-1]
-			}
-		default:
-			if r := keyText(msg); r != 0 {
-				m.commentForm.content += string(r)
-			}
+			return m, nil
 		}
-	} else {
-		switch msg.String() {
-		case "n":
-			m.commentForm.content = ""
-			m.commentForm.editing = true
-		case "r":
-			if len(m.workItems) > 0 && m.selectedItemIdx < len(m.workItems) {
-				item := m.workItems[m.selectedItemIdx]
-				return m, m.loadComments(item.ID)
-			}
-		case "escape", "esc":
-			m.currentScreen = WorkItemListScreen
+		var cmd tea.Cmd
+		m.commentForm.input, cmd = m.commentForm.input.Update(msg)
+		return m, cmd
+	}
+	switch {
+	case key.Matches(msg, m.keys.New):
+		m.commentForm = m.resetCommentForm()
+		m.commentForm.editing = true
+		m.commentForm.input.Focus()
+	case key.Matches(msg, m.keys.Refresh):
+		if len(m.workItems) > 0 && m.selectedItemIdx < len(m.workItems) {
+			item := m.workItems[m.selectedItemIdx]
+			return m, m.loadComments(item.ID)
 		}
+	case key.Matches(msg, m.keys.Back):
+		m.currentScreen = WorkItemListScreen
 	}
 	return m, nil
 }
 
-func (m Model) handleTimeLoggingKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleTimeLoggingKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.timeForm.editing {
-		switch msg.String() {
-		case "escape", "esc":
-			m.timeForm.editing = false
-		case "enter":
-			m.timeForm.editing = false
-			if m.timeForm.currentField < 3 {
-				m.timeForm.currentField++
-				m.timeForm.editing = true
-			} else if m.timeForm.currentField == 3 {
-				// Move to project field but don't start editing (it uses a picker)
-				m.timeForm.currentField++
-			}
-		case "backspace":
-			(&m).timeFormBackspace()
-		default:
-			if r := keyText(msg); r != 0 {
-				(&m).timeFormAddChar(r)
-			}
-		}
-	} else {
-		switch msg.String() {
-		case "up", "k":
-			if m.timeForm.currentField > 0 {
-				m.timeForm.currentField--
-			}
-		case "down", "j":
-			if m.timeForm.currentField < 4 {
-				m.timeForm.currentField++
-			}
-		case "enter":
-			if m.timeForm.currentField == 4 {
-				// Project field - open picker
-				m.picker = PickerState{
-					Active:   true,
-					Type:     PickerProject,
-					Selected: m.findTimeProjectIndex(m.timeForm.projectID),
-				}
-			} else {
-				// Text fields - start editing
-				m.timeForm.editing = true
-			}
-		case "s":
-			if len(m.workItems) > 0 && m.selectedItemIdx < len(m.workItems) {
-				// Validate project is selected
-				if m.timeForm.projectID == nil {
-					m.errorMessage = "Please select a project"
-					return m, nil
-				}
-				item := m.workItems[m.selectedItemIdx]
-				return m, m.createTimeLog(item.ID, *m.timeForm.projectID, m.timeForm.description, m.timeForm.duration, m.timeForm.date, m.timeForm.startTime)
-			}
-		case "escape", "esc":
-			m.currentScreen = WorkItemListScreen
-		}
+		return m.handleTimeFormEditingKeys(msg)
 	}
-	return m, nil
-}
-
-func (m Model) handleHelpKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "escape", "h", "f1":
-		if m.currentWorkspace != nil {
-			m.currentScreen = WorkItemListScreen
+	switch {
+	case key.Matches(msg, m.keys.Up):
+		if m.timeForm.currentField > 0 {
+			m.timeForm.currentField--
+		}
+	case key.Matches(msg, m.keys.Down):
+		if m.timeForm.currentField < 4 {
+			m.timeForm.currentField++
+		}
+	case key.Matches(msg, m.keys.Enter):
+		if m.timeForm.currentField == 4 {
+			m.openProjectPicker(m.timeForm.projectID)
 		} else {
-			m.currentScreen = WorkspaceListScreen
+			m.timeForm.editing = true
+			m.focusTimeField()
 		}
+	case key.Matches(msg, m.keys.Save):
+		if len(m.workItems) > 0 && m.selectedItemIdx < len(m.workItems) {
+			if m.timeForm.projectID == nil {
+				m.errorMessage = "Please select a project"
+				return m, nil
+			}
+			item := m.workItems[m.selectedItemIdx]
+			return m, m.createTimeLog(
+				item.ID, *m.timeForm.projectID,
+				m.timeForm.descInput.Value(),
+				m.timeForm.durationInput.Value(),
+				m.timeForm.dateInput.Value(),
+				m.timeForm.startTimeInput.Value(),
+			)
+		}
+	case key.Matches(msg, m.keys.Back):
+		m.currentScreen = WorkItemListScreen
 	}
 	return m, nil
 }
 
-// Helper methods for form editing
-func (m *Model) editFormBackspace() {
-	// Only title field (0) uses text editing in edit form
-	if m.editForm.currentField == 0 {
-		if m.editForm.titleCursor > 0 {
-			m.editForm.title = m.editForm.title[:m.editForm.titleCursor-1] + m.editForm.title[m.editForm.titleCursor:]
-			m.editForm.titleCursor--
-		}
-	}
-}
-
-func (m *Model) editFormAddChar(r rune) {
-	// Only title field (0) uses text editing in edit form
-	if m.editForm.currentField == 0 {
-		m.editForm.title = m.editForm.title[:m.editForm.titleCursor] + string(r) + m.editForm.title[m.editForm.titleCursor:]
-		m.editForm.titleCursor++
-	}
-}
-
-func (m *Model) editFormMoveCursor(delta int) {
-	// Only title field (0) uses text editing in edit form
-	if m.editForm.currentField == 0 {
-		newPos := m.editForm.titleCursor + delta
-		if newPos >= 0 && newPos <= len(m.editForm.title) {
-			m.editForm.titleCursor = newPos
-		}
-	}
-}
-
-func (m *Model) createFormBackspace() {
-	switch m.createForm.currentField {
-	case 0:
-		if m.createForm.titleCursor > 0 {
-			m.createForm.title = m.createForm.title[:m.createForm.titleCursor-1] + m.createForm.title[m.createForm.titleCursor:]
-			m.createForm.titleCursor--
-		}
-	case 1:
-		if m.createForm.description != "" {
-			m.createForm.description = m.createForm.description[:len(m.createForm.description)-1]
-		}
-	}
-}
-
-func (m *Model) createFormAddChar(r rune) {
-	switch m.createForm.currentField {
-	case 0:
-		m.createForm.title = m.createForm.title[:m.createForm.titleCursor] + string(r) + m.createForm.title[m.createForm.titleCursor:]
-		m.createForm.titleCursor++
-	case 1:
-		m.createForm.description += string(r)
-	}
-}
-
-func (m *Model) createFormMoveCursor(delta int) {
-	if m.createForm.currentField == 0 {
-		newPos := m.createForm.titleCursor + delta
-		if newPos >= 0 && newPos <= len(m.createForm.title) {
-			m.createForm.titleCursor = newPos
-		}
-	}
-}
-
-func (m *Model) timeFormBackspace() {
-	switch m.timeForm.currentField {
-	case 0:
-		if m.timeForm.description != "" {
-			m.timeForm.description = m.timeForm.description[:len(m.timeForm.description)-1]
-		}
-	case 1:
-		if m.timeForm.duration != "" {
-			m.timeForm.duration = m.timeForm.duration[:len(m.timeForm.duration)-1]
-		}
-	case 2:
-		if m.timeForm.date != "" {
-			m.timeForm.date = m.timeForm.date[:len(m.timeForm.date)-1]
-		}
-	case 3:
-		if m.timeForm.startTime != "" {
-			m.timeForm.startTime = m.timeForm.startTime[:len(m.timeForm.startTime)-1]
-		}
-	}
-}
-
-func (m *Model) timeFormAddChar(r rune) {
-	switch m.timeForm.currentField {
-	case 0:
-		m.timeForm.description += string(r)
-	case 1:
-		m.timeForm.duration += string(r)
-	case 2:
-		m.timeForm.date += string(r)
-	case 3:
-		m.timeForm.startTime += string(r)
-	}
-}
-
-// handlePickerKeys handles key presses when the picker is active
-func (m Model) handlePickerKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleTimeFormEditingKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "up", "k":
-		if m.picker.Selected > 0 {
-			m.picker.Selected--
-		}
-	case "down", "j":
-		maxIdx := 0
-		switch m.picker.Type {
-		case PickerStatus:
-			maxIdx = len(m.statuses) - 1
-		case PickerPriority:
-			maxIdx = len(m.priorities) - 1
-		case PickerProject:
-			maxIdx = len(m.timeProjects) - 1
-		}
-		if m.picker.Selected < maxIdx {
-			m.picker.Selected++
-		}
-	case "enter":
-		// Apply the selection
-		switch m.picker.Type {
-		case PickerStatus:
-			if m.picker.Selected >= 0 && m.picker.Selected < len(m.statuses) {
-				status := m.statuses[m.picker.Selected]
-				if m.currentScreen == WorkItemDetailScreen {
-					m.editForm.statusID = &status.ID
-					m.editForm.statusName = status.Name
-					m.editForm.statusColor = status.CategoryColor
-				}
-			}
-		case PickerPriority:
-			if m.picker.Selected >= 0 && m.picker.Selected < len(m.priorities) {
-				priority := m.priorities[m.picker.Selected]
-				switch m.currentScreen {
-				case WorkItemDetailScreen:
-					m.editForm.priorityID = &priority.ID
-					m.editForm.priorityName = priority.Name
-					m.editForm.priorityColor = priority.Color
-				case CreateWorkItemScreen:
-					m.createForm.priorityID = &priority.ID
-					m.createForm.priorityName = priority.Name
-					m.createForm.priorityColor = priority.Color
-				}
-			}
-		case PickerProject:
-			if m.picker.Selected >= 0 && m.picker.Selected < len(m.timeProjects) {
-				project := m.timeProjects[m.picker.Selected]
-				if m.currentScreen == TimeLoggingScreen {
-					projectID := int(project.ID)
-					m.timeForm.projectID = &projectID
-					m.timeForm.projectName = project.Name
-				}
+	case "esc":
+		m.blurTimeFields()
+		m.timeForm.editing = false
+		return m, nil
+	case "enter", "tab", "ctrl+enter":
+		m.blurTimeFields()
+		m.timeForm.editing = false
+		if m.timeForm.currentField < 4 {
+			m.timeForm.currentField++
+			if m.timeForm.currentField < 4 {
+				m.timeForm.editing = true
+				m.focusTimeField()
 			}
 		}
-		// Close the picker
-		m.picker = PickerState{}
-	case "escape", "esc":
-		// Cancel - close picker without changes
-		m.picker = PickerState{}
+		return m, nil
+	}
+
+	var cmd tea.Cmd
+	switch m.timeForm.currentField {
+	case 0:
+		m.timeForm.descInput, cmd = m.timeForm.descInput.Update(msg)
+	case 1:
+		m.timeForm.durationInput, cmd = m.timeForm.durationInput.Update(msg)
+	case 2:
+		m.timeForm.dateInput, cmd = m.timeForm.dateInput.Update(msg)
+	case 3:
+		m.timeForm.startTimeInput, cmd = m.timeForm.startTimeInput.Update(msg)
+	}
+	return m, cmd
+}
+
+func (m *Model) focusTimeField() {
+	m.blurTimeFields()
+	switch m.timeForm.currentField {
+	case 0:
+		m.timeForm.descInput.Focus()
+		m.timeForm.descInput.CursorEnd()
+	case 1:
+		m.timeForm.durationInput.Focus()
+		m.timeForm.durationInput.CursorEnd()
+	case 2:
+		m.timeForm.dateInput.Focus()
+		m.timeForm.dateInput.CursorEnd()
+	case 3:
+		m.timeForm.startTimeInput.Focus()
+		m.timeForm.startTimeInput.CursorEnd()
+	}
+}
+
+func (m *Model) blurTimeFields() {
+	m.timeForm.descInput.Blur()
+	m.timeForm.durationInput.Blur()
+	m.timeForm.dateInput.Blur()
+	m.timeForm.startTimeInput.Blur()
+}
+
+func (m Model) handleHelpKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if key.Matches(msg, m.keys.Back) || key.Matches(msg, m.keys.Help) {
+		return m.toggleHelp(), nil
 	}
 	return m, nil
 }
 
-// findStatusIndex finds the index of a status ID in the statuses slice
-func (m Model) findStatusIndex(statusID *int) int {
-	if statusID == nil {
-		return 0
-	}
-	for i, status := range m.statuses {
-		if status.ID == *statusID {
-			return i
+// ---------- picker dialog openers ----------
+
+func (m *Model) openStatusPicker() {
+	options := make([]dialog.Option, len(m.statuses))
+	selectedIdx := 0
+	for i, s := range m.statuses {
+		options[i] = dialog.Option{
+			Label: m.chipForStatus(s.Name, s.CategoryColor),
+			Value: s,
+		}
+		if m.editForm.statusID != nil && *m.editForm.statusID == s.ID {
+			selectedIdx = i
 		}
 	}
-	return 0
+	m.dialogs = append(m.dialogs, dialog.NewPicker(pickerStatusID, "Select status", options, selectedIdx, m.styles))
 }
 
-// findPriorityIndex finds the index of a priority ID in the priorities slice
-func (m Model) findPriorityIndex(priorityID *int) int {
-	if priorityID == nil {
-		return 0
-	}
-	for i, priority := range m.priorities {
-		if priority.ID == *priorityID {
-			return i
+func (m *Model) openPriorityPicker(currentID *int) {
+	options := make([]dialog.Option, len(m.priorities))
+	selectedIdx := 0
+	for i, p := range m.priorities {
+		options[i] = dialog.Option{
+			Label: m.chipForPriority(p.Name, p.Color),
+			Value: p,
+		}
+		if currentID != nil && *currentID == p.ID {
+			selectedIdx = i
 		}
 	}
-	return 0
+	m.dialogs = append(m.dialogs, dialog.NewPicker(pickerPriorityID, "Select priority", options, selectedIdx, m.styles))
 }
 
-// findTimeProjectIndex finds the index of a project ID in the timeProjects slice
-func (m Model) findTimeProjectIndex(projectID *int) int {
-	if projectID == nil {
-		return 0
-	}
-	for i, project := range m.timeProjects {
-		if int(project.ID) == *projectID {
-			return i
+func (m *Model) openProjectPicker(currentID *int) {
+	options := make([]dialog.Option, len(m.timeProjects))
+	selectedIdx := 0
+	for i, p := range m.timeProjects {
+		label := p.Name
+		if p.CustomerName != nil && *p.CustomerName != "" {
+			label += " (" + *p.CustomerName + ")"
+		}
+		options[i] = dialog.Option{
+			Label: label,
+			Value: p,
+		}
+		if currentID != nil && int(p.ID) == *currentID {
+			selectedIdx = i
 		}
 	}
-	return 0
+	m.dialogs = append(m.dialogs, dialog.NewPicker(pickerProjectID, "Select project", options, selectedIdx, m.styles))
 }
 
-// enterTimeLoggingForCurrentWorkspace sets up the TimeLogging screen with a
-// clean form and, if the current workspace has a default TimeProjectID, pre-
-// selects that project. Shared by the work-items and work-item-detail screens.
+// enterTimeLoggingForCurrentWorkspace resets the time-log form and pre-fills
+// the project from the workspace's default if one is set.
 func (m *Model) enterTimeLoggingForCurrentWorkspace() {
 	m.currentScreen = TimeLoggingScreen
-	m.timeForm.description = ""
-	m.timeForm.duration = ""
-	m.timeForm.currentField = 0
+	now := timeNow()
+	m.timeForm = m.resetTimeLogForm(now.date, now.startTime)
 
 	if m.currentWorkspace != nil && m.currentWorkspace.TimeProjectID != nil {
 		m.timeForm.projectID = m.currentWorkspace.TimeProjectID
-		for _, proj := range m.timeProjects {
-			if int(proj.ID) == *m.currentWorkspace.TimeProjectID {
-				m.timeForm.projectName = proj.Name
+		for _, p := range m.timeProjects {
+			if int(p.ID) == *m.currentWorkspace.TimeProjectID {
+				m.timeForm.projectName = p.Name
 				break
 			}
 		}
-	} else {
-		m.timeForm.projectID = nil
-		m.timeForm.projectName = ""
+	}
+}
+
+type nowParts struct{ date, startTime string }
+
+func timeNow() nowParts {
+	t := time.Now()
+	return nowParts{
+		date:      t.Format("2006-01-02"),
+		startTime: t.Format("15:04"),
 	}
 }
