@@ -61,6 +61,7 @@ LLM_ENDPOINT=http://localhost:1234 \
   -db "$DB_PATH" \
   -attachment-path "$ATTACHMENT_PATH" \
   -no-csrf \
+  -ssh \
   -log-level debug &
 PIDS+=($!)
 
@@ -72,7 +73,7 @@ if ! kill -0 "${PIDS[0]}" 2>/dev/null; then
   exit 1
 fi
 
-echo "windshift running on :7777 (SQLite)"
+echo "windshift running on :7777 (SQLite) — SSH TUI on :23234 (ssh localhost -p 23234)"
 echo "Press Ctrl+C to stop."
 
 wait "${PIDS[@]}" || true
