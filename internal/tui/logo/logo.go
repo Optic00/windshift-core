@@ -51,10 +51,10 @@ type Opts struct {
 func Full(opts Opts) string {
 	from, to := opts.From, opts.To
 	if from == nil {
-		from = lipgloss.Color("#2874bb")
+		from = lipgloss.Color("#3b82f6")
 	}
 	if to == nil {
-		to = lipgloss.Color("#1ab1bc")
+		to = lipgloss.Color("#8b5cf6")
 	}
 
 	gradMark := make([]string, len(markLines))
@@ -92,10 +92,10 @@ func Full(opts Opts) string {
 // Returns "◐ Windshift" with the dot+name colored across the gradient.
 func Small(from, to color.Color) string {
 	if from == nil {
-		from = lipgloss.Color("#2874bb")
+		from = lipgloss.Color("#3b82f6")
 	}
 	if to == nil {
-		to = lipgloss.Color("#1ab1bc")
+		to = lipgloss.Color("#8b5cf6")
 	}
 	return styles.ApplyForegroundGrad(
 		lipgloss.NewStyle().Bold(true),

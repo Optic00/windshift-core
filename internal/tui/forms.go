@@ -228,7 +228,7 @@ func (m Model) chipForLegacyStatus(status string) string {
 	case "in_progress", "in progress", "progress":
 		hex = "#ca8a04"
 	case "completed", "done", "closed":
-		hex = "#16a34a"
+		hex = "#2874bb"
 	case "cancelled", "canceled": //nolint:misspell // accept both spellings
 		hex = "#dc2626"
 	}
