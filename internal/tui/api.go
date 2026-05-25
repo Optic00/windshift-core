@@ -89,7 +89,7 @@ func (c *APIClient) doGet(path string, mode authMode, result interface{}) error 
 		if readErr != nil {
 			return fmt.Errorf("API error: %s; failed to read response body: %w", resp.Status, readErr)
 		}
-		return fmt.Errorf("API error: %s - %s", resp.Status, string(body))
+		return fmt.Errorf("API error: %s - %s", resp.Status, sanitizeTerminalText(string(body)))
 	}
 
 	if result == nil {
@@ -124,7 +124,7 @@ func (c *APIClient) doMutate(method, path string, mode authMode, body, result in
 		if readErr != nil {
 			return fmt.Errorf("API error: %s; failed to read response body: %w", resp.Status, readErr)
 		}
-		return fmt.Errorf("API error: %s - %s", resp.Status, string(body))
+		return fmt.Errorf("API error: %s - %s", resp.Status, sanitizeTerminalText(string(body)))
 	}
 
 	if result == nil || resp.StatusCode == http.StatusNoContent {
@@ -345,9 +345,9 @@ type CreateTimeLogRequest struct {
 func workspaceFromV1(w v1WorkspaceResponse) Workspace {
 	return Workspace{
 		ID:          w.ID,
-		Name:        w.Name,
-		Key:         w.Key,
-		Description: w.Description,
+		Name:        sanitizeTerminalLine(w.Name),
+		Key:         sanitizeTerminalLine(w.Key),
+		Description: sanitizeTerminalText(w.Description),
 		Active:      w.Active,
 	}
 }
@@ -356,8 +356,8 @@ func workItemFromV1(it v1ItemResponse) WorkItem {
 	wi := WorkItem{
 		ID:          it.ID,
 		WorkspaceID: it.WorkspaceID,
-		Title:       it.Title,
-		Description: it.Description,
+		Title:       sanitizeTerminalLine(it.Title),
+		Description: sanitizeTerminalText(it.Description),
 		ParentID:    it.ParentID,
 		CreatedAt:   it.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:   it.UpdatedAt.Format(time.RFC3339),
@@ -365,29 +365,29 @@ func workItemFromV1(it v1ItemResponse) WorkItem {
 	if it.Status != nil {
 		id := it.Status.ID
 		wi.StatusID = &id
-		wi.StatusName = it.Status.Name
-		wi.StatusCategoryColor = it.Status.CategoryColor
-		wi.Status = it.Status.Name
+		wi.StatusName = sanitizeTerminalLine(it.Status.Name)
+		wi.StatusCategoryColor = sanitizeTerminalLine(it.Status.CategoryColor)
+		wi.Status = wi.StatusName
 	}
 	if it.Priority != nil {
 		id := it.Priority.ID
 		wi.PriorityID = &id
-		wi.PriorityName = it.Priority.Name
-		wi.PriorityIcon = it.Priority.Icon
-		wi.PriorityColor = it.Priority.Color
-		wi.Priority = it.Priority.Name
+		wi.PriorityName = sanitizeTerminalLine(it.Priority.Name)
+		wi.PriorityIcon = sanitizeTerminalLine(it.Priority.Icon)
+		wi.PriorityColor = sanitizeTerminalLine(it.Priority.Color)
+		wi.Priority = wi.PriorityName
 	}
 	if it.Assignee != nil {
 		id := it.Assignee.ID
 		wi.AssigneeID = &id
-		wi.AssigneeName = it.Assignee.FullName
-		wi.AssigneeEmail = it.Assignee.Email
+		wi.AssigneeName = sanitizeTerminalLine(it.Assignee.FullName)
+		wi.AssigneeEmail = sanitizeTerminalLine(it.Assignee.Email)
 	}
 	if it.Creator != nil {
 		id := it.Creator.ID
 		wi.CreatorID = &id
-		wi.CreatorName = it.Creator.FullName
-		wi.CreatorEmail = it.Creator.Email
+		wi.CreatorName = sanitizeTerminalLine(it.Creator.FullName)
+		wi.CreatorEmail = sanitizeTerminalLine(it.Creator.Email)
 	}
 	return wi
 }
@@ -396,14 +396,14 @@ func commentFromV1(c v1CommentResponse) Comment {
 	out := Comment{
 		ID:        c.ID,
 		ItemID:    c.ItemID,
-		Content:   c.Content,
+		Content:   sanitizeTerminalText(c.Content),
 		CreatedAt: c.CreatedAt.Format(time.RFC3339),
 		UpdatedAt: c.UpdatedAt.Format(time.RFC3339),
 	}
 	if c.Author != nil {
 		out.AuthorID = c.Author.ID
-		name := c.Author.FullName
-		email := c.Author.Email
+		name := sanitizeTerminalLine(c.Author.FullName)
+		email := sanitizeTerminalLine(c.Author.Email)
 		out.AuthorName = &name
 		out.AuthorEmail = &email
 	}
@@ -603,7 +603,13 @@ func (c *APIClient) getStatuses(workspaceID int) ([]Status, error) {
 	}
 	out := make([]Status, 0, len(raw))
 	for _, s := range raw {
-		out = append(out, Status(s))
+		out = append(out, Status{
+			ID:            s.ID,
+			Name:          sanitizeTerminalLine(s.Name),
+			CategoryID:    s.CategoryID,
+			CategoryName:  sanitizeTerminalLine(s.CategoryName),
+			CategoryColor: sanitizeTerminalLine(s.CategoryColor),
+		})
 	}
 	return out, nil
 }
@@ -617,9 +623,9 @@ func (c *APIClient) getPriorities() ([]Priority, error) {
 	for _, p := range raw {
 		out = append(out, Priority{
 			ID:    p.ID,
-			Name:  p.Name,
-			Icon:  p.Icon,
-			Color: p.Color,
+			Name:  sanitizeTerminalLine(p.Name),
+			Icon:  sanitizeTerminalLine(p.Icon),
+			Color: sanitizeTerminalLine(p.Color),
 		})
 	}
 	return out, nil
@@ -630,6 +636,11 @@ func (c *APIClient) getTimeProjects() ([]TimeProject, error) {
 	var projects []TimeProject
 	if err := c.doGet("/api/time/projects", authSession, &projects); err != nil {
 		return nil, err
+	}
+	for i := range projects {
+		projects[i].Name = sanitizeTerminalLine(projects[i].Name)
+		projects[i].Description = sanitizeTerminalStringPtr(projects[i].Description, false)
+		projects[i].CustomerName = sanitizeTerminalStringPtr(projects[i].CustomerName, true)
 	}
 	return projects, nil
 }

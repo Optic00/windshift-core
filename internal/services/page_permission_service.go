@@ -601,7 +601,7 @@ func (s *PagePermissionService) userGroupIDs(userID int) ([]int, error) {
 	rows, err := s.db.Query(`
 		SELECT gm.group_id FROM group_members gm
 		JOIN groups g ON g.id = gm.group_id
-		WHERE gm.user_id = ? AND g.is_active = 1
+		WHERE gm.user_id = ? AND g.is_active = TRUE
 	`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("load user groups: %w", err)
@@ -632,7 +632,7 @@ func (s *PagePermissionService) userWorkspaceRoleIDs(userID, workspaceID int) ([
 		SELECT gwr.role_id FROM group_workspace_roles gwr
 		JOIN group_members gm ON gm.group_id = gwr.group_id
 		JOIN groups g ON g.id = gwr.group_id
-		WHERE gm.user_id = ? AND gwr.workspace_id = ? AND g.is_active = 1
+		WHERE gm.user_id = ? AND gwr.workspace_id = ? AND g.is_active = TRUE
 	`, userID, workspaceID, userID, workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("load user workspace roles: %w", err)

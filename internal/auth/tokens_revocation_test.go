@@ -59,6 +59,45 @@ func TestCreateTokenRejectsInactiveUser(t *testing.T) {
 	}
 }
 
+func TestCreateTokenCanMarkTemporary(t *testing.T) {
+	tm, _, uid := newTokenManagerEnv(t)
+	resp, err := tm.CreateToken(uid, models.APITokenCreate{
+		Name:        "ssh-tui",
+		Permissions: []string{"items:read"},
+		IsTemporary: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateToken: %v", err)
+	}
+	if !resp.APIToken.IsTemporary {
+		t.Fatal("created token metadata was not marked temporary")
+	}
+
+	_, token, err := tm.ValidateToken(resp.Token)
+	if err != nil {
+		t.Fatalf("ValidateToken: %v", err)
+	}
+	if token == nil || !token.IsTemporary {
+		t.Fatalf("validated token IsTemporary = %v, want true", token != nil && token.IsTemporary)
+	}
+
+	userTokens, err := tm.GetUserTokens(uid)
+	if err != nil {
+		t.Fatalf("GetUserTokens: %v", err)
+	}
+	if len(userTokens) != 0 {
+		t.Fatalf("temporary token leaked into user token list: %+v", userTokens)
+	}
+
+	adminTokens, total, err := tm.ListAllTokens(nil, 50, 0)
+	if err != nil {
+		t.Fatalf("ListAllTokens: %v", err)
+	}
+	if total != 0 || len(adminTokens) != 0 {
+		t.Fatalf("temporary token leaked into admin token list: total=%d tokens=%+v", total, adminTokens)
+	}
+}
+
 func TestInvalidateTokens_EvictsCachedValidation(t *testing.T) {
 	tm, db, uid := newTokenManagerEnv(t)
 

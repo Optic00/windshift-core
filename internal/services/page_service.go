@@ -852,9 +852,9 @@ func (s *PageService) validateGrantPrincipal(tx database.Tx, principalType strin
 	var query string
 	switch principalType {
 	case models.PagePrincipalTypeUser:
-		query = "SELECT EXISTS(SELECT 1 FROM users WHERE id = ? AND is_active = 1)"
+		query = "SELECT EXISTS(SELECT 1 FROM users WHERE id = ? AND is_active = TRUE)"
 	case models.PagePrincipalTypeGroup:
-		query = "SELECT EXISTS(SELECT 1 FROM groups WHERE id = ? AND is_active = 1)"
+		query = "SELECT EXISTS(SELECT 1 FROM groups WHERE id = ? AND is_active = TRUE)"
 	case models.PagePrincipalTypeRole:
 		query = "SELECT EXISTS(SELECT 1 FROM workspace_roles WHERE id = ?)"
 	default:

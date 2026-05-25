@@ -285,6 +285,11 @@ func (s *Server) initialize() error {
 
 	// Create token manager
 	tokenManager := auth.NewTokenManager(s.db, s.tokenTracker)
+	if cleaned, cleanupErr := tokenManager.CleanupExpiredTokens(); cleanupErr != nil {
+		slog.Warn("failed to cleanup expired api tokens on startup", "error", cleanupErr)
+	} else if cleaned > 0 {
+		slog.Info("cleaned expired api tokens on startup", "count", cleaned)
+	}
 
 	// Create auth middleware
 	authMiddleware := middleware.NewAuthMiddleware(sessionManager, tokenManager, s.db, cfg.UseProxy, additionalProxyList, setupCompleted)

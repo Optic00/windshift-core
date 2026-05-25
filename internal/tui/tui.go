@@ -93,9 +93,10 @@ func NewTUIHandler(apiURL string, sessionManager *auth.SessionManager, tokenMana
 			if tokenManager != nil {
 				exp := time.Now().Add(tuiTokenLifetime)
 				resp, err := tokenManager.CreateToken(userID, models.APITokenCreate{
-					Name:        fmt.Sprintf("ssh-tui:%s", credentialName),
+					Name:        fmt.Sprintf("ssh-tui:%s", sanitizeTerminalLine(credentialName)),
 					Permissions: tuiTokenScopes,
 					ExpiresAt:   &exp,
+					IsTemporary: true,
 				})
 				if err != nil {
 					slog.Error("failed to mint api token",

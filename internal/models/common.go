@@ -101,6 +101,7 @@ type APITokenCreate struct {
 	UserID      *int       `json:"user_id,omitempty"` // Optional: admins can create tokens for other users
 	Permissions []string   `json:"permissions"`
 	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
+	IsTemporary bool       `json:"-"` // Internal-only: hide ephemeral server-minted tokens from user/admin token lists
 }
 
 // APITokenResponse represents the response when creating an API token

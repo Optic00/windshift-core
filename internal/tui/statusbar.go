@@ -41,9 +41,9 @@ func (m Model) statusLeft() string {
 	s := m.styles
 	switch {
 	case m.errorMessage != "":
-		return s.Status.Bar.Render(s.Status.Error.Render("● ") + m.errorMessage)
+		return s.Status.Bar.Render(s.Status.Error.Render("● ") + sanitizeTerminalLine(m.errorMessage))
 	case m.successMessage != "":
-		return s.Status.Bar.Render(s.Status.Success.Render("● ") + m.successMessage)
+		return s.Status.Bar.Render(s.Status.Success.Render("● ") + sanitizeTerminalLine(m.successMessage))
 	case m.loading:
 		return s.Status.Bar.Render(s.Status.Info.Render("● ") + "Loading…")
 	}

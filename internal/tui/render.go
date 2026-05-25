@@ -32,7 +32,7 @@ func (m Model) renderWorkspaceList() string {
 		}
 	}
 	if m.errorMessage != "" {
-		rows = append(rows, "", s.Status.Error.Render("● ")+m.errorMessage)
+		rows = append(rows, "", s.Status.Error.Render("● ")+sanitizeTerminalLine(m.errorMessage))
 	}
 	return strings.Join(rows, "\n")
 }
@@ -111,7 +111,7 @@ func (m Model) renderWorkItemList() string {
 	}
 
 	if m.errorMessage != "" {
-		rows = append(rows, "", s.Status.Error.Render("● ")+m.errorMessage)
+		rows = append(rows, "", s.Status.Error.Render("● ")+sanitizeTerminalLine(m.errorMessage))
 	}
 	return strings.Join(rows, "\n")
 }

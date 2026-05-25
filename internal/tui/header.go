@@ -71,16 +71,17 @@ func headerUserLabel(u *UserInfo) string {
 	}
 	switch {
 	case u.FirstName != "" && u.LastName != "":
-		return u.FirstName + " " + u.LastName
+		return sanitizeTerminalLine(u.FirstName + " " + u.LastName)
 	case u.Username != "":
-		return u.Username
+		return sanitizeTerminalLine(u.Username)
 	case u.Email != "":
-		if at := strings.Index(u.Email, "@"); at > 0 {
-			return u.Email[:at]
+		email := sanitizeTerminalLine(u.Email)
+		if at := strings.Index(email, "@"); at > 0 {
+			return email[:at]
 		}
-		return u.Email
+		return email
 	}
-	name := u.CredentialName
+	name := sanitizeTerminalLine(u.CredentialName)
 	name = strings.TrimSuffix(name, " SSH Key")
 	name = strings.TrimSuffix(name, " Key")
 	return name

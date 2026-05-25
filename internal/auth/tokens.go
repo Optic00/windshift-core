@@ -331,7 +331,7 @@ func (tm *TokenManager) ValidateToken(token string) (*models.User, *models.APITo
 	// Use CURRENT_TIMESTAMP which works in both SQLite and PostgreSQL
 	rows, err := tm.db.Query(`
 		SELECT t.id, t.user_id, t.name, t.token_hash, t.token_prefix, t.permissions,
-		       t.expires_at, t.last_used_at, t.created_at, t.updated_at,
+		       t.is_temporary, t.expires_at, t.last_used_at, t.created_at, t.updated_at,
 		       u.id, u.email, u.username, u.first_name, u.last_name, u.is_active
 		FROM api_tokens t
 		JOIN users u ON t.user_id = u.id
@@ -350,7 +350,7 @@ func (tm *TokenManager) ValidateToken(token string) (*models.User, *models.APITo
 
 		err := rows.Scan(
 			&apiToken.ID, &apiToken.UserID, &apiToken.Name, &apiToken.Token,
-			&apiToken.TokenPrefix, &apiToken.Permissions,
+			&apiToken.TokenPrefix, &apiToken.Permissions, &apiToken.IsTemporary,
 			&expiresAt, &lastUsedAt, &apiToken.CreatedAt, &apiToken.UpdatedAt,
 			&user.ID, &user.Email, &user.Username, &user.FirstName,
 			&user.LastName, &user.IsActive,
@@ -449,10 +449,10 @@ func (tm *TokenManager) CreateToken(userID int, request models.APITokenCreate) (
 	// Insert token into database using RETURNING clause (supported by both SQLite 3.35+ and PostgreSQL)
 	var tokenID int64
 	err = tm.db.QueryRow(`
-		INSERT INTO api_tokens (user_id, name, token_hash, token_prefix, permissions, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO api_tokens (user_id, name, token_hash, token_prefix, permissions, expires_at, is_temporary)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		RETURNING id
-	`, userID, request.Name, tokenHash, tokenPrefix, string(permissionsJSON), request.ExpiresAt).Scan(&tokenID)
+	`, userID, request.Name, tokenHash, tokenPrefix, string(permissionsJSON), request.ExpiresAt, request.IsTemporary).Scan(&tokenID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create token: %w", err)
 	}
