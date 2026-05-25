@@ -950,8 +950,8 @@
             {@const hiddenColumnItemCount = allColumnItems.length - columnItems.length}
             {@const isOverWip = column.wip_limit && allColumnItems.length > column.wip_limit}
             <div
-              class="rounded border shadow-sm transition-colors"
-              style="{styles.columnStyle(12)}"
+              class="relative rounded border shadow-sm transition-colors"
+              style="{styles.columnStyle(12)} {quickAddState[column.id]?.show ? 'z-index: 30;' : ''}"
               data-testid="board-column"
               data-status-column
               data-status-id={column.status_ids[0]}

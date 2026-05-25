@@ -239,9 +239,7 @@
     {:else}
       {#if loading}
         <p class="status">{t('pages.workItemsLoading')}</p>
-      {:else if pageLinks.length === 0}
-        <p class="status">{t('pages.workItemsEmpty')}</p>
-      {:else}
+      {:else if pageLinks.length > 0}
         <ul class="list">
           {#each pageLinks as link}
             {@const isCurrentPage = link.target_type === 'page' && link.target_id === pageId}

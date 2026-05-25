@@ -18,6 +18,9 @@ const COLLECTION_VIEWS = new Set([
   'workspace-roadmap',
 ]);
 
+const BOARD_VIEWS = new Set(['workspace-board', 'collection-board']);
+const LIST_VIEWS = new Set(['workspace-list', 'collection-list']);
+
 const DEFAULT_PAGE_SIZE = 250;
 
 class CollectionStore {
@@ -55,6 +58,7 @@ class CollectionStore {
   #loadId = 0;
   #changesWatermark = null;
   #previousRouteKey = null;
+  #currentView = null;
   #unsubscribe = null;
 
   constructor() {
@@ -66,11 +70,11 @@ class CollectionStore {
         const colId = $route.params?.id || null;
         if (!colId) return;
 
-        const routeKey = `global-${colId}`;
+        const routeKey = `${view}-global-${colId}`;
         if (routeKey === this.#previousRouteKey) return;
         this.#previousRouteKey = routeKey;
 
-        this.load(null, colId);
+        this.load(null, colId, view);
         return;
       }
 
@@ -85,18 +89,18 @@ class CollectionStore {
         return;
       }
 
-      const routeKey = `${wsId}-${colId}`;
+      const routeKey = `${view}-${wsId}-${colId}`;
       if (routeKey === this.#previousRouteKey) return;
       this.#previousRouteKey = routeKey;
 
-      this.load(wsId, colId);
+      this.load(wsId, colId, view);
     });
   }
 
   /**
    * Initial load: fetches page 1 of items and backlog, resets all pagination state.
    */
-  async load(wsId, colId) {
+  async load(wsId, colId, view = this.#currentView) {
     // Clear sub-filter and sort on navigation (workspace or collection change)
     if (wsId !== this.#wsId || colId !== this.#colId) {
       this.subFilterQL = '';
@@ -109,6 +113,7 @@ class CollectionStore {
     }
     this.#wsId = wsId;
     this.#colId = colId;
+    this.#currentView = view;
     const loadId = ++this.#loadId;
 
     this.loading = true;
@@ -122,7 +127,7 @@ class CollectionStore {
           page: 1,
           limit: DEFAULT_PAGE_SIZE,
           sub_ql: this.subFilterQL || undefined,
-          ...this.#sortOptions(),
+          ...this.#itemSortOptions(),
         }),
         fetchCollectionBacklog(wsId, colId, {
           page: 1,
@@ -169,7 +174,7 @@ class CollectionStore {
         page: nextPage,
         limit: this.itemsPagination?.limit ?? DEFAULT_PAGE_SIZE,
         sub_ql: this.subFilterQL || undefined,
-        ...this.#sortOptions(),
+        ...this.#itemSortOptions(),
       });
 
       this.items = [...this.items, ...result.items];
@@ -225,7 +230,7 @@ class CollectionStore {
         page,
         limit,
         sub_ql: this.subFilterQL || undefined,
-        ...this.#sortOptions(),
+        ...this.#itemSortOptions(),
       });
 
       if (loadId !== this.#loadId) return;
@@ -271,7 +276,7 @@ class CollectionStore {
           page: 1,
           limit: itemsLimit,
           sub_ql: this.subFilterQL || undefined,
-          ...this.#sortOptions(),
+          ...this.#itemSortOptions(),
         }),
         fetchCollectionBacklog(this.#wsId, this.#colId, {
           page: 1,
@@ -305,7 +310,7 @@ class CollectionStore {
     this.subFilterQL = ql;
     this.subFilterRows = rows;
     if (this.#wsId || this.#colId) {
-      this.load(this.#wsId, this.#colId);
+      this.load(this.#wsId, this.#colId, this.#currentView);
     }
   }
 
@@ -316,7 +321,7 @@ class CollectionStore {
     this.subFilterQL = '';
     this.subFilterRows = [];
     if (this.#wsId || this.#colId) {
-      this.load(this.#wsId, this.#colId);
+      this.load(this.#wsId, this.#colId, this.#currentView);
     }
   }
 
@@ -336,7 +341,7 @@ class CollectionStore {
    */
   reload() {
     if (this.#wsId || this.#colId) {
-      this.load(this.#wsId, this.#colId);
+      this.load(this.#wsId, this.#colId, this.#currentView);
     }
   }
 
@@ -398,7 +403,10 @@ class CollectionStore {
 
       const hasNewVisibleItem = loadedChangedIds.length !== changedIds.length;
       const touchesBacklog = loadedChangedIds.some((id) => loadedBacklogIds.has(id));
-      if (hasNewVisibleItem || touchesBacklog || this.#sortBy || this.#sortDirection) {
+      const usesServerOrderedItems =
+        BOARD_VIEWS.has(this.#currentView) ||
+        (LIST_VIEWS.has(this.#currentView) && (this.#sortBy || this.#sortDirection));
+      if (hasNewVisibleItem || touchesBacklog || usesServerOrderedItems) {
         await this.refresh();
         return;
       }
@@ -454,11 +462,19 @@ class CollectionStore {
     }
   }
 
-  #sortOptions() {
-    const opts = {};
-    if (this.#sortBy) opts.order_by = this.#sortBy;
-    if (this.#sortDirection) opts.sort_direction = this.#sortDirection;
-    return opts;
+  #itemSortOptions() {
+    if (BOARD_VIEWS.has(this.#currentView)) {
+      return { order_by: 'frac_index', sort_direction: 'asc' };
+    }
+
+    if (LIST_VIEWS.has(this.#currentView)) {
+      const opts = {};
+      if (this.#sortBy) opts.order_by = this.#sortBy;
+      if (this.#sortDirection) opts.sort_direction = this.#sortDirection;
+      return opts;
+    }
+
+    return {};
   }
 
   destroy() {

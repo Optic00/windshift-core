@@ -42,7 +42,7 @@
   }
 </script>
 
-<div class="rounded shadow-md border" style={cardBgStyle}>
+<div class="relative z-[100] rounded shadow-md border" style={cardBgStyle}>
   <!-- Textarea area -->
   <div class="p-3 pb-2">
     <textarea

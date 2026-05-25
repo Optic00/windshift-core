@@ -347,6 +347,9 @@ func (r *ItemRepository) buildOrderByClause(sortBy string, sortAsc bool) string 
 	}
 
 	// System field?
+	if sortBy == "frac_index" && sortAsc {
+		return r.defaultOrderBy()
+	}
 	if col, ok := systemFieldSortColumns[sortBy]; ok {
 		return fmt.Sprintf(" ORDER BY %s %s", col, direction)
 	}

@@ -377,7 +377,7 @@
 {/if}
 
 <!-- Pages Section (item ↔ page links) -->
-{#if pageLinks.length > 0 || pageLinkTypeId != null}
+{#if pageLinks.length > 0}
   <div class="mt-6">
     <div class="pt-2">
       <div class="flex items-center justify-between mb-4">
@@ -401,58 +401,52 @@
         {/if}
       </div>
 
-      {#if pageLinks.length === 0}
-        <div class="text-sm py-2" style="color: var(--ds-text-subtle);" data-testid="linked-pages-empty">
-          {t('pages.workItemsEmpty')}
-        </div>
-      {:else}
-        <div class="space-y-2">
-          {#each pageLinks as link}
-            {@const isCurrentSource = link.source_id === currentItemId && link.source_type === 'item'}
-            {@const linkedPageId = isCurrentSource ? link.target_id : link.source_id}
-            {@const linkedPageWorkspaceId = isCurrentSource ? link.target_workspace_id : link.source_workspace_id}
-            {@const linkedPageTitle = isCurrentSource ? link.target_title : link.source_title}
-            {@const linkedPageHref = `/workspaces/${linkedPageWorkspaceId || workspaceId}/pages/${linkedPageId}`}
-            <div
-              class="group flex items-center justify-between px-4 py-3 rounded-lg border transition-colors"
-              style="background-color: var(--ds-surface-raised); border-color: var(--ds-border);"
-              data-testid="linked-page-row"
-              data-link-id={link.id}
-              data-page-id={linkedPageId}
-            >
-              <div class="flex items-center gap-3 flex-1 min-w-0">
-                <div
-                  class="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
-                  style="background-color: var(--ds-background-neutral); color: var(--ds-text-subtle);"
-                >
-                  <FileText class="w-3.5 h-3.5" />
-                </div>
-                <LinkComponent
-                  href={linkedPageHref}
-                  class="text-sm hover:text-blue-600 cursor-pointer truncate"
-                  onClick={(event) => handleLinkClick(event, 'page', linkedPageId, linkedPageWorkspaceId, linkedPageHref)}
-                  style="color: var(--ds-text);"
-                >
-                  {linkedPageTitle}
-                </LinkComponent>
+      <div class="space-y-2">
+        {#each pageLinks as link}
+          {@const isCurrentSource = link.source_id === currentItemId && link.source_type === 'item'}
+          {@const linkedPageId = isCurrentSource ? link.target_id : link.source_id}
+          {@const linkedPageWorkspaceId = isCurrentSource ? link.target_workspace_id : link.source_workspace_id}
+          {@const linkedPageTitle = isCurrentSource ? link.target_title : link.source_title}
+          {@const linkedPageHref = `/workspaces/${linkedPageWorkspaceId || workspaceId}/pages/${linkedPageId}`}
+          <div
+            class="group flex items-center justify-between px-4 py-3 rounded-lg border transition-colors"
+            style="background-color: var(--ds-surface-raised); border-color: var(--ds-border);"
+            data-testid="linked-page-row"
+            data-link-id={link.id}
+            data-page-id={linkedPageId}
+          >
+            <div class="flex items-center gap-3 flex-1 min-w-0">
+              <div
+                class="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0"
+                style="background-color: var(--ds-background-neutral); color: var(--ds-text-subtle);"
+              >
+                <FileText class="w-3.5 h-3.5" />
               </div>
-              <div class="flex items-center gap-2 flex-shrink-0">
-                <button
-                  data-testid="linked-page-delete"
-                  class="p-1 rounded hidden group-hover:flex cursor-pointer delete-button"
-                  style="color: var(--ds-text-subtle);"
-                  onmouseenter={(e) => e.currentTarget.style.color = 'var(--ds-text-danger)'}
-                  onmouseleave={(e) => e.currentTarget.style.color = 'var(--ds-text-subtle)'}
-                  onclick={() => removeLink(link.id)}
-                  title={t('items.removeLink')}
-                >
-                  <Trash2 class="w-4 h-4" />
-                </button>
-              </div>
+              <LinkComponent
+                href={linkedPageHref}
+                class="text-sm hover:text-blue-600 cursor-pointer truncate"
+                onClick={(event) => handleLinkClick(event, 'page', linkedPageId, linkedPageWorkspaceId, linkedPageHref)}
+                style="color: var(--ds-text);"
+              >
+                {linkedPageTitle}
+              </LinkComponent>
             </div>
-          {/each}
-        </div>
-      {/if}
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <button
+                data-testid="linked-page-delete"
+                class="p-1 rounded hidden group-hover:flex cursor-pointer delete-button"
+                style="color: var(--ds-text-subtle);"
+                onmouseenter={(e) => e.currentTarget.style.color = 'var(--ds-text-danger)'}
+                onmouseleave={(e) => e.currentTarget.style.color = 'var(--ds-text-subtle)'}
+                onclick={() => removeLink(link.id)}
+                title={t('items.removeLink')}
+              >
+                <Trash2 class="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        {/each}
+      </div>
     </div>
   </div>
 {/if}
