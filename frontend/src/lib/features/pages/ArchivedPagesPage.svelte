@@ -96,7 +96,7 @@
     subtitle={t('pages.archivedSubtitle')}
   >
     {#snippet actions()}
-      <Button variant="ghost" size="small" onclick={goBack} data-testid="archived-pages-back">
+      <Button variant="ghost" size="small" onclick={goBack} dataTestid="archived-pages-back">
         <IconArrowLeft size={14} />
         {t('pages.archivedBack')}
       </Button>
@@ -117,8 +117,8 @@
         size="small"
         disabled={pendingId === row.id}
         onclick={() => handleUnarchive(row)}
-        data-testid="archived-page-unarchive"
-        data-page-id={row.id}
+        dataTestid="archived-page-unarchive"
+        dataPageId={row.id}
       >
         {t('pages.archivedUnarchive')}
       </Button>

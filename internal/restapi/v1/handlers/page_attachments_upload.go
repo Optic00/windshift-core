@@ -62,8 +62,8 @@ func NewPageAttachmentUploadHandler(base BaseHandler, legacy *legacyhandlers.Att
 // @Param        pageId  path      int    true  "Page ID"
 // @Param        file    formData  file   true  "File to upload"
 // @Success      200     {object}  map[string]interface{}
-// @Failure      400     {object}  restapi.APIError
-// @Failure      404     {object}  restapi.APIError  "page not found or you lack page.edit"
+// @Failure      400     {object}  handlers.ErrorResponse
+// @Failure      404     {object}  handlers.ErrorResponse  "page not found or you lack page.edit"
 // @Router       /workspaces/{id}/pages/{pageId}/attachments [post]
 func (h *PageAttachmentUploadHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	user, ok := h.RequireAuth(w, r)

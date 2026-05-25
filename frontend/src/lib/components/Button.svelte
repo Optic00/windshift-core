@@ -22,6 +22,7 @@
     onclick = null,
     hotkeyConfig = null,
     dataTestid = undefined,
+    dataPageId = undefined,
     style = '',
     class: className = '',
     children = undefined
@@ -152,11 +153,11 @@
 <!-- Snippet for the button/link element -->
 {#snippet buttonElement()}
   {#if href}
-    <a bind:this={buttonEl} {id} {href} {target} {style} data-testid={dataTestid} class={allClasses} onclick={(e) => onclick?.(e)}>
+    <a bind:this={buttonEl} {id} {href} {target} {style} data-testid={dataTestid} data-page-id={dataPageId} class={allClasses} onclick={(e) => onclick?.(e)}>
       {@render linkContent()}
     </a>
   {:else}
-    <button bind:this={buttonEl} {id} type={buttonType} {disabled} {style} data-testid={dataTestid} class={allClasses} onclick={(e) => onclick?.(e)}>
+    <button bind:this={buttonEl} {id} type={buttonType} {disabled} {style} data-testid={dataTestid} data-page-id={dataPageId} class={allClasses} onclick={(e) => onclick?.(e)}>
       {@render buttonContent()}
     </button>
   {/if}
