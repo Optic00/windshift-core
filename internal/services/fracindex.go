@@ -19,6 +19,19 @@ import (
 // transactions that read the same neighbor keys before either committed.
 const fracIndexMaxRetries = 5
 
+// fracIndexRebalanceLengthThreshold is the point where a generated key is
+// considered pathologically long for an interactive reorder. A local window
+// rebalance is attempted before writing keys above this size. Normal keys are
+// usually 2-5 bytes; the threshold leaves ample headroom while avoiding index
+// bloat from repeated insertion into the same hot gap.
+const fracIndexRebalanceLengthThreshold = 128
+
+// fracIndexLocalRebalanceWindowSize caps the number of neighboring rows that a
+// synchronous hot-gap rebalance rewrites. It is intentionally small enough for
+// drag-and-drop latency, but large enough that balanced midpoint assignment
+// restores plenty of space around the insertion point.
+const fracIndexLocalRebalanceWindowSize = 128
+
 // IsFracIndexUniqueViolation reports whether err is specifically a
 // UNIQUE-constraint violation on idx_items_frac_index. Other unique
 // violations (e.g. workspace_item_number) must not trigger the retry,
@@ -373,9 +386,34 @@ func MoveItemBetween(db database.Database, itemID int, prevID, nextID *int) (str
 			if nerr != nil {
 				return "", nerr
 			}
-			newKey, kerr := KeyBetween(prev, next)
+			newKey, kerr := chooseMoveFracIndex(tx, itemID, prev, next, driver)
 			if kerr != nil {
 				return "", fmt.Errorf("compute key between %q and %q: %w", prev, next, kerr)
+			}
+			if len(newKey) > fracIndexRebalanceLengthThreshold {
+				if rerr := rebalanceLocalFracIndexWindow(tx, itemID, prev, next, driver); rerr != nil {
+					return "", rerr
+				}
+				// Re-read explicit neighbors because the local rebalance may have
+				// rewritten their frac_index values while preserving order.
+				prev, perr = readFracIndexForUpdate(tx, prevID, driver)
+				if perr != nil {
+					return "", perr
+				}
+				next, nerr = readFracIndexForUpdate(tx, nextID, driver)
+				if nerr != nil {
+					return "", nerr
+				}
+				newKey, kerr = chooseMoveFracIndex(tx, itemID, prev, next, driver)
+				if kerr != nil {
+					return "", fmt.Errorf("compute key after local rebalance between %q and %q: %w", prev, next, kerr)
+				}
+				if len(newKey) > fracIndexRebalanceLengthThreshold {
+					slog.Warn("frac_index local rebalance left a long move key",
+						slog.Int("item_id", itemID),
+						slog.Int("key_length", len(newKey)),
+						slog.String("component", "fracindex"))
+				}
 			}
 			if _, eerr := tx.Exec("UPDATE items SET frac_index = ? WHERE id = ?", newKey, itemID); eerr != nil {
 				return "", eerr
@@ -395,6 +433,279 @@ func MoveItemBetween(db database.Database, itemID int, prevID, nextID *int) (str
 			slog.String("component", "fracindex"))
 	}
 	return "", fmt.Errorf("move item %d failed after %d frac_index retries: %w", itemID, fracIndexMaxRetries, lastErr)
+}
+
+// chooseMoveFracIndex returns a globally unique frac_index that still sorts
+// within the caller's requested view-local bounds. Board and backlog reorders
+// pass neighbors from a filtered subset (status column, iteration section,
+// etc.), while items.frac_index is globally unique. A naive KeyBetween(prev,
+// next) can therefore deterministically produce a key already held by an item
+// outside that subset (for example prev=a0, next=nil -> a1, but a1 is in a
+// different board column). In that case retrying the same bounds will collide
+// forever.
+//
+// To avoid that, use the immediate global row just inside the requested bound
+// as the opposite bound. The open interval between an item and its immediate
+// global neighbor contains no existing frac_index, so KeyBetween cannot collide
+// deterministically. The chosen key remains valid for the filtered view because
+// it is still inside the caller's original open interval.
+func chooseMoveFracIndex(tx database.Tx, itemID int, prev, next, driver string) (string, error) {
+	if prev == "" && next == "" {
+		maxKey, found, err := readGlobalBoundaryFracIndexForUpdate(tx, itemID, "DESC", driver)
+		if err != nil {
+			return "", err
+		}
+		if !found {
+			return KeyBetween("", "")
+		}
+		return KeyBetween(maxKey, "")
+	}
+
+	if prev == "" {
+		lower := ""
+		maxBelowNext, found, err := readBoundedFracIndexForUpdate(tx, itemID, "frac_index < ?", []interface{}{next}, "DESC", driver)
+		if err != nil {
+			return "", err
+		}
+		if found {
+			lower = maxBelowNext
+		}
+		return KeyBetween(lower, next)
+	}
+
+	upper := next
+	where := "frac_index > ?"
+	args := []interface{}{prev}
+	if next != "" {
+		where += " AND frac_index < ?"
+		args = append(args, next)
+	}
+	minAbovePrev, found, err := readBoundedFracIndexForUpdate(tx, itemID, where, args, "ASC", driver)
+	if err != nil {
+		return "", err
+	}
+	if found {
+		upper = minAbovePrev
+	}
+	return KeyBetween(prev, upper)
+}
+
+type fracIndexWindowRow struct {
+	id  int
+	key string
+}
+
+// rebalanceLocalFracIndexWindow resequences a small contiguous global window
+// around the intended insertion point. It preserves the relative order of every
+// existing row in the window, but assigns balanced midpoint keys between the
+// rows just outside the window. This is the cheap hot-gap escape hatch: repeated
+// insertion into the same gap can make the immediate midpoint very long, and a
+// full-table rebalance would be excessive for an interactive drag.
+func rebalanceLocalFracIndexWindow(tx database.Tx, movingItemID int, prev, next, driver string) error {
+	rows, err := readLocalRebalanceWindowForUpdate(tx, movingItemID, prev, next, driver)
+	if err != nil {
+		return err
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+
+	left, right, err := readWindowOutsideBoundsForUpdate(tx, movingItemID, rows[0].key, rows[len(rows)-1].key, driver)
+	if err != nil {
+		return err
+	}
+	keys, err := generateEvenlySpacedFracKeys(left, right, len(rows))
+	if err != nil {
+		return fmt.Errorf("generate local rebalance keys: %w", err)
+	}
+
+	// Temporarily remove the moving row and the window rows from the UNIQUE
+	// partial index. Without this, sequential rewrites can fail when a new key
+	// equals another window row's old key. The transaction restores final keys
+	// before commit; readers never observe the temporary NULLs on Postgres.
+	ids := make([]int, 0, len(rows)+1)
+	ids = append(ids, movingItemID)
+	for _, row := range rows {
+		ids = append(ids, row.id)
+	}
+	if err := setFracIndexNullForIDs(tx, ids); err != nil {
+		return err
+	}
+
+	for i, row := range rows {
+		if _, err := tx.Exec("UPDATE items SET frac_index = ? WHERE id = ?", keys[i], row.id); err != nil {
+			return fmt.Errorf("write local rebalance key for item %d: %w", row.id, err)
+		}
+	}
+
+	slog.Info("rebalanced local frac_index window",
+		slog.Int("rows", len(rows)),
+		slog.Int("moving_item_id", movingItemID),
+		slog.String("component", "fracindex"))
+	return nil
+}
+
+func readLocalRebalanceWindowForUpdate(tx database.Tx, movingItemID int, prev, next, driver string) ([]fracIndexWindowRow, error) {
+	beforeLimit := fracIndexLocalRebalanceWindowSize / 2
+	afterLimit := fracIndexLocalRebalanceWindowSize - beforeLimit
+
+	var before, after []fracIndexWindowRow
+	var err error
+	switch {
+	case prev != "":
+		before, err = readWindowRowsForUpdate(tx, `frac_index <= ?`, []interface{}{prev}, "DESC", beforeLimit, movingItemID, driver)
+		if err != nil {
+			return nil, err
+		}
+		after, err = readWindowRowsForUpdate(tx, `frac_index > ?`, []interface{}{prev}, "ASC", afterLimit, movingItemID, driver)
+		if err != nil {
+			return nil, err
+		}
+		reverseWindowRows(before)
+	case next != "":
+		before, err = readWindowRowsForUpdate(tx, `frac_index < ?`, []interface{}{next}, "DESC", beforeLimit, movingItemID, driver)
+		if err != nil {
+			return nil, err
+		}
+		after, err = readWindowRowsForUpdate(tx, `frac_index >= ?`, []interface{}{next}, "ASC", afterLimit, movingItemID, driver)
+		if err != nil {
+			return nil, err
+		}
+		reverseWindowRows(before)
+	default:
+		before, err = readWindowRowsForUpdate(tx, `frac_index IS NOT NULL`, nil, "DESC", fracIndexLocalRebalanceWindowSize, movingItemID, driver)
+		if err != nil {
+			return nil, err
+		}
+		reverseWindowRows(before)
+	}
+
+	rows := make([]fracIndexWindowRow, 0, len(before)+len(after))
+	rows = append(rows, before...)
+	rows = append(rows, after...)
+	return rows, nil
+}
+
+func readWindowRowsForUpdate(tx database.Tx, where string, args []interface{}, direction string, limit, movingItemID int, driver string) ([]fracIndexWindowRow, error) {
+	q := `SELECT id, frac_index FROM items
+		WHERE ` + where + ` AND id <> ?
+		ORDER BY frac_index ` + direction + `
+		LIMIT ?`
+	args = append(args, movingItemID, limit)
+	if driver == "postgres" {
+		q += " FOR UPDATE"
+	}
+	rows, err := tx.Query(q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("read local rebalance window: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]fracIndexWindowRow, 0, limit)
+	for rows.Next() {
+		var row fracIndexWindowRow
+		if err := rows.Scan(&row.id, &row.key); err != nil {
+			return nil, fmt.Errorf("scan local rebalance window: %w", err)
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate local rebalance window: %w", err)
+	}
+	return out, nil
+}
+
+func readWindowOutsideBoundsForUpdate(tx database.Tx, movingItemID int, firstKey, lastKey, driver string) (left, right string, err error) {
+	left, _, err = readBoundedFracIndexForUpdate(tx, movingItemID, "frac_index < ?", []interface{}{firstKey}, "DESC", driver)
+	if err != nil {
+		return "", "", err
+	}
+	right, _, err = readBoundedFracIndexForUpdate(tx, movingItemID, "frac_index > ?", []interface{}{lastKey}, "ASC", driver)
+	if err != nil {
+		return "", "", err
+	}
+	return left, right, nil
+}
+
+func setFracIndexNullForIDs(tx database.Tx, ids []int) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	q := "UPDATE items SET frac_index = NULL WHERE id IN (" + strings.Join(placeholders, ",") + ")"
+	if _, err := tx.Exec(q, args...); err != nil {
+		return fmt.Errorf("clear local rebalance keys: %w", err)
+	}
+	return nil
+}
+
+func generateEvenlySpacedFracKeys(left, right string, n int) ([]string, error) {
+	keys := make([]string, n)
+	if err := fillEvenlySpacedFracKeys(keys, 0, n, left, right); err != nil {
+		return nil, err
+	}
+	return keys, nil
+}
+
+func fillEvenlySpacedFracKeys(keys []string, lo, hi int, left, right string) error {
+	if lo >= hi {
+		return nil
+	}
+	mid := lo + (hi-lo)/2
+	key, err := KeyBetween(left, right)
+	if err != nil {
+		return err
+	}
+	keys[mid] = key
+	if err := fillEvenlySpacedFracKeys(keys, lo, mid, left, key); err != nil {
+		return err
+	}
+	return fillEvenlySpacedFracKeys(keys, mid+1, hi, key, right)
+}
+
+func reverseWindowRows(rows []fracIndexWindowRow) {
+	for i, j := 0, len(rows)-1; i < j; i, j = i+1, j-1 {
+		rows[i], rows[j] = rows[j], rows[i]
+	}
+}
+
+func readGlobalBoundaryFracIndexForUpdate(tx database.Tx, itemID int, direction, driver string) (key string, found bool, err error) {
+	q := `SELECT frac_index FROM items
+		WHERE frac_index IS NOT NULL AND id <> ?
+		ORDER BY frac_index ` + direction + `
+		LIMIT 1`
+	return scanBoundaryFracIndexForUpdate(tx, q, []interface{}{itemID}, driver)
+}
+
+func readBoundedFracIndexForUpdate(tx database.Tx, itemID int, where string, args []interface{}, direction, driver string) (key string, found bool, err error) {
+	q := `SELECT frac_index FROM items
+		WHERE ` + where + ` AND id <> ?
+		ORDER BY frac_index ` + direction + `
+		LIMIT 1`
+	args = append(args, itemID)
+	return scanBoundaryFracIndexForUpdate(tx, q, args, driver)
+}
+
+func scanBoundaryFracIndexForUpdate(tx database.Tx, q string, args []interface{}, driver string) (key string, found bool, err error) {
+	if driver == "postgres" {
+		q += " FOR UPDATE"
+	}
+	var k sql.NullString
+	if err := tx.QueryRow(q, args...).Scan(&k); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("read frac_index boundary: %w", err)
+	}
+	if !k.Valid {
+		return "", false, nil
+	}
+	return k.String, true, nil
 }
 
 // readFracIndexForUpdate reads the frac_index of a neighbor row. On Postgres
