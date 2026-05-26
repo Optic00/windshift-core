@@ -35,6 +35,7 @@ func RegisterItemRoutes(deps *Deps) {
 	api.HandleH("GET /items/{id}/ancestors", auth(http.HandlerFunc(deps.Items.Item.GetAncestors)))
 	api.HandleH("GET /items/{id}/descendants", auth(http.HandlerFunc(deps.Items.Item.GetDescendantsNew)))
 	api.HandleH("GET /items/{id}/tree", auth(http.HandlerFunc(deps.Items.Item.GetTree)))
+	api.HandleH("GET /items/{id}/time-rollup", auth(http.HandlerFunc(deps.Items.Item.GetTimeRollup)))
 
 	// Item watch endpoints
 	api.HandleH("POST /items/{id}/watch", auth(http.HandlerFunc(deps.Items.Item.AddWatch)))

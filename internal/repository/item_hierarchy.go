@@ -4,12 +4,18 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"windshift/internal/database"
 	"windshift/internal/models"
 )
 
 const maxItemHierarchyDepth = 30
+
+// defaultTimeRollupMaxItems caps how many items contribute to a time-rollup
+// aggregation. Sized so the IN-list stays well under SQLite's default
+// SQLITE_MAX_VARIABLE_NUMBER (32766) even with a handful of extra params.
+const defaultTimeRollupMaxItems = 500
 
 // GetChildren returns direct children of an item
 func (r *ItemRepository) GetChildren(parentID int) ([]*models.Item, error) {
@@ -224,6 +230,104 @@ func (r *ItemRepository) GetRootItems(workspaceID int) ([]*models.Item, error) {
 	defer func() { _ = rows.Close() }()
 
 	return scanItemsWithDetails(rows)
+}
+
+// GetTimeRollup sums estimate_minutes and time_worklogs.duration_minutes for
+// the item and its descendants up to maxDepth levels deep, capped at maxItems
+// total items. The caller-supplied root item counts as level 0. When the
+// descendant set hits maxItems the result's Truncated flag is set and only
+// the first maxItems contribute to the sums.
+//
+// The root item's view permission is checked by the handler; per-descendant
+// permission filtering is intentionally skipped here — we only expose
+// aggregate counts, not per-item data.
+func (r *ItemRepository) GetTimeRollup(itemID, maxDepth, maxItems int) (*models.TimeRollup, error) {
+	if maxDepth <= 0 || maxDepth > maxItemHierarchyDepth {
+		maxDepth = maxItemHierarchyDepth
+	}
+	if maxItems <= 0 {
+		maxItems = defaultTimeRollupMaxItems
+	}
+
+	// Step 1: collect ids + estimate_minutes for the root + descendants.
+	// Fetch maxItems+1 so we can detect whether the result was truncated
+	// without a second COUNT query.
+	rows, err := r.db.Query(`
+		WITH RECURSIVE tree(id, est, level) AS (
+			SELECT id, COALESCE(estimate_minutes, 0), 0
+			FROM items WHERE id = ?
+			UNION ALL
+			SELECT i.id, COALESCE(i.estimate_minutes, 0), t.level + 1
+			FROM items i
+			INNER JOIN tree t ON i.parent_id = t.id
+			WHERE t.level < ?
+		)
+		SELECT id, est FROM tree LIMIT ?
+	`, itemID, maxDepth, maxItems+1)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query time rollup tree: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	type idEst struct {
+		id  int
+		est int64
+	}
+	rowsData := make([]idEst, 0, maxItems+1)
+	for rows.Next() {
+		var id int
+		var est sql.NullInt64
+		if err := rows.Scan(&id, &est); err != nil {
+			return nil, fmt.Errorf("failed to scan time rollup row: %w", err)
+		}
+		var estVal int64
+		if est.Valid {
+			estVal = est.Int64
+		}
+		rowsData = append(rowsData, idEst{id: id, est: estVal})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate time rollup rows: %w", err)
+	}
+
+	truncated := len(rowsData) > maxItems
+	if truncated {
+		rowsData = rowsData[:maxItems]
+	}
+
+	rollup := &models.TimeRollup{
+		ItemCount: len(rowsData),
+		Truncated: truncated,
+	}
+
+	if len(rowsData) == 0 {
+		return rollup, nil
+	}
+
+	ids := make([]int, len(rowsData))
+	for i, r := range rowsData {
+		ids[i] = r.id
+		rollup.TotalEstimateMinutes += r.est
+	}
+
+	// Step 2: sum logged minutes across the included items. The IN-list is
+	// bounded by maxItems (default 500) which is well within SQL parameter
+	// limits on both SQLite and Postgres.
+	placeholders := strings.Repeat("?,", len(ids))
+	placeholders = placeholders[:len(placeholders)-1]
+	query := fmt.Sprintf(
+		"SELECT COALESCE(SUM(duration_minutes), 0) FROM time_worklogs WHERE item_id IN (%s)",
+		placeholders,
+	)
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	if err := r.db.QueryRow(query, args...).Scan(&rollup.TotalLoggedMinutes); err != nil {
+		return nil, fmt.Errorf("failed to sum worklog duration: %w", err)
+	}
+
+	return rollup, nil
 }
 
 // GetDescendantIDs returns just the IDs of all descendants (for bulk operations like delete)

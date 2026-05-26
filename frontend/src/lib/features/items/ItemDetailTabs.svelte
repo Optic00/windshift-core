@@ -13,6 +13,11 @@
   import DescriptionText from '../../components/DescriptionText.svelte';
   import EmptyState from '../../components/EmptyState.svelte';
   import DataTable from '../../components/DataTable.svelte';
+  import Toggle from '../../components/Toggle.svelte';
+  // Direct store access for the sub-item rollup keeps the time-tab logic
+  // co-located and avoids threading four extra props through ItemDetail and
+  // ItemDetailContent for a feature that only lives in this tab.
+  import { itemDetailStore } from '../../stores';
 
   let {
     item,
@@ -37,23 +42,42 @@
 
   let commentCount = $state(0);
 
-  // Sum logged worklog minutes for the time tab header.
+  // Sum logged worklog minutes for the time tab header. When the
+  // "Include sub-items" toggle is on, swap to the server-side rollup totals
+  // (covers root + descendants) which itemDetailStore caches.
+  const includeSubItems = $derived(itemDetailStore.includeSubItems);
+  const rollup = $derived(itemDetailStore.timeRollup);
+  const rollupLoading = $derived(itemDetailStore.timeRollupLoading);
+
   const totalLoggedMinutes = $derived(
-    (timeWorklogs ?? []).reduce(
-      (sum, w) => sum + (Number(w?.duration_minutes) || 0),
-      0,
-    ),
+    includeSubItems && rollup
+      ? Number(rollup.total_logged_minutes) || 0
+      : (timeWorklogs ?? []).reduce(
+          (sum, w) => sum + (Number(w?.duration_minutes) || 0),
+          0,
+        ),
   );
-  const estimateMinutes = $derived(
-    Number.isFinite(item?.estimate_minutes) && item?.estimate_minutes > 0
+  const estimateMinutes = $derived.by(() => {
+    if (includeSubItems && rollup) {
+      const v = Number(rollup.total_estimate_minutes) || 0;
+      return v > 0 ? v : 0;
+    }
+    return Number.isFinite(item?.estimate_minutes) && item?.estimate_minutes > 0
       ? item.estimate_minutes
-      : 0,
-  );
+      : 0;
+  });
   const hasEstimate = $derived(estimateMinutes > 0);
   const loggedRatio = $derived(
     hasEstimate ? totalLoggedMinutes / estimateMinutes : 0,
   );
   const overBudget = $derived(hasEstimate && totalLoggedMinutes > estimateMinutes);
+
+  function handleToggleSubItems(checked) {
+    itemDetailStore.includeSubItems = checked;
+    if (checked) {
+      itemDetailStore.loadTimeRollup();
+    }
+  }
 
   function switchTab(newTab) {
     onswitchtab?.({ tab: newTab });
@@ -232,21 +256,41 @@
           <div class="space-y-3">
             <div class="flex items-center justify-between">
               <div class="flex flex-col gap-1">
-                <h4 class="text-sm font-medium" style="color: var(--ds-text);">
-                  {t('items.timeEntries')} ({timeWorklogs.length})
-                </h4>
+                <div class="flex items-center gap-3">
+                  <h4 class="text-sm font-medium" style="color: var(--ds-text);">
+                    {t('items.timeEntries')} ({timeWorklogs.length})
+                  </h4>
+                  <Toggle
+                    size="small"
+                    label={t('items.includeSubItems')}
+                    checked={includeSubItems}
+                    onchange={handleToggleSubItems}
+                  />
+                </div>
                 <div class="text-xs" style="color: var(--ds-text-subtle);">
-                  {#if hasEstimate}
+                  {#if rollupLoading}
+                    {t('common.loading')}
+                  {:else if hasEstimate}
                     <span style={overBudget ? 'color: var(--ds-text-danger, #cc3344); font-weight: 600;' : ''}>
                       {durationToString(totalLoggedMinutes, { withDays: true })}
                     </span>
-                    {' '}{t('items.loggedOf') || 'logged of'}{' '}
+                    {' '}{t('items.loggedOf')}{' '}
                     {durationToString(estimateMinutes, { withDays: true })}
-                    {' '}{t('items.estimated') || 'estimated'}
+                    {' '}{t('items.estimated')}
                   {:else}
-                    {durationToString(totalLoggedMinutes, { withDays: true })} {t('items.logged') || 'logged'}
+                    {durationToString(totalLoggedMinutes, { withDays: true })} {t('items.logged')}
+                  {/if}
+                  {#if includeSubItems && rollup}
+                    <span class="ml-1" style="color: var(--ds-text-subtle);">
+                      ({t('items.rollupItemCount', { count: rollup.item_count })})
+                    </span>
                   {/if}
                 </div>
+                {#if includeSubItems && rollup?.truncated}
+                  <div class="text-xs" style="color: var(--ds-text-warning, #b45309);">
+                    {t('items.rollupTruncated', { max: rollup.item_count })}
+                  </div>
+                {/if}
                 {#if hasEstimate}
                   <div class="h-1 rounded overflow-hidden mt-0.5" style="background: var(--ds-background-neutral-subtle, var(--ds-surface-sunken)); width: 12rem;">
                     <div
@@ -291,14 +335,45 @@
             />
           </div>
         {:else}
-          {#if hasEstimate}
+          <div class="mb-3 flex items-center">
+            <Toggle
+              size="small"
+              label={t('items.includeSubItems')}
+              checked={includeSubItems}
+              onchange={handleToggleSubItems}
+            />
+          </div>
+          {#if hasEstimate || (includeSubItems && rollup && totalLoggedMinutes > 0)}
             <div class="flex flex-col gap-1 mb-3">
               <div class="text-xs" style="color: var(--ds-text-subtle);">
-                0m {t('items.loggedOf') || 'logged of'} {durationToString(estimateMinutes, { withDays: true })} {t('items.estimated') || 'estimated'}
+                {#if rollupLoading}
+                  {t('common.loading')}
+                {:else if hasEstimate}
+                  <span style={overBudget ? 'color: var(--ds-text-danger, #cc3344); font-weight: 600;' : ''}>
+                    {durationToString(totalLoggedMinutes, { withDays: true })}
+                  </span>
+                  {' '}{t('items.loggedOf')}{' '}
+                  {durationToString(estimateMinutes, { withDays: true })}
+                  {' '}{t('items.estimated')}
+                {:else}
+                  {durationToString(totalLoggedMinutes, { withDays: true })} {t('items.logged')}
+                {/if}
+                {#if includeSubItems && rollup}
+                  <span class="ml-1" style="color: var(--ds-text-subtle);">
+                    ({t('items.rollupItemCount', { count: rollup.item_count })})
+                  </span>
+                {/if}
               </div>
-              <div class="h-1 rounded overflow-hidden" style="background: var(--ds-background-neutral-subtle, var(--ds-surface-sunken)); width: 12rem;">
-                <div class="h-full" style="width: 0%; background: var(--ds-background-brand, #3b82f6);"></div>
-              </div>
+              {#if includeSubItems && rollup?.truncated}
+                <div class="text-xs" style="color: var(--ds-text-warning, #b45309);">
+                  {t('items.rollupTruncated', { max: rollup.item_count })}
+                </div>
+              {/if}
+              {#if hasEstimate}
+                <div class="h-1 rounded overflow-hidden" style="background: var(--ds-background-neutral-subtle, var(--ds-surface-sunken)); width: 12rem;">
+                  <div class="h-full transition-all" style="width: {Math.min(loggedRatio, 1) * 100}%; background: {overBudget ? 'var(--ds-text-danger, #cc3344)' : 'var(--ds-background-brand, #3b82f6)'};"></div>
+                </div>
+              {/if}
             </div>
           {/if}
           <EmptyState icon={Clock} title={t('items.noTimeLogged')}>

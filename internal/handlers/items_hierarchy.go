@@ -132,6 +132,45 @@ func (h *ItemHandler) GetDescendantsNew(w http.ResponseWriter, r *http.Request) 
 	respondJSONOK(w, filteredDescendants)
 }
 
+// GetTimeRollup returns the aggregated estimate + logged minutes for an item
+// and its descendants (subtree). Used by the item detail Time Tracking tab's
+// "Include sub-items" toggle.
+//
+// Query params:
+//   - max_depth: optional, defaults to 10, clamped to [1, 30].
+//
+// Permission model: view permission on the root item is enforced; per-
+// descendant permission filtering is skipped because the response only exposes
+// aggregate totals, not per-item data.
+func (h *ItemHandler) GetTimeRollup(w http.ResponseWriter, r *http.Request) {
+	id, ok := requireIDParam(w, r, "id")
+	if !ok {
+		return
+	}
+
+	if _, ok := h.requireItemViewByWorkspace(w, r, id); !ok {
+		return
+	}
+
+	maxDepth := 10
+	if s := r.URL.Query().Get("max_depth"); s != "" {
+		parsed, err := strconv.Atoi(s)
+		if err != nil || parsed < 1 {
+			respondValidationError(w, r, "Invalid max_depth parameter")
+			return
+		}
+		maxDepth = parsed
+	}
+
+	rollup, err := repository.NewItemRepository(h.db).GetTimeRollup(id, maxDepth, 0)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+
+	respondJSONOK(w, rollup)
+}
+
 // GetTree returns the item and all its descendants as a nested tree structure
 func (h *ItemHandler) GetTree(w http.ResponseWriter, r *http.Request) {
 	id, ok := requireIDParam(w, r, "id")

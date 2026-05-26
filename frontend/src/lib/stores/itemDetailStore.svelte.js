@@ -112,6 +112,12 @@ class ItemDetailStore {
   customers = $state([]);
   workItems = $state([]);
   workspaces = $state([]);
+  // Sub-item rollup for the Time Tracking tab "Include sub-items" toggle.
+  // timeRollup is null until the user opts in; it caches the API response
+  // for the current item view so toggling on/off doesn't refetch.
+  includeSubItems = $state(false);
+  timeRollup = $state(null);
+  timeRollupLoading = $state(false);
 
   // Diagrams & Actions
   diagrams = $state([]);
@@ -353,6 +359,29 @@ class ItemDetailStore {
       this.timeWorklogs = (await api.time.worklogs.getByItem(this.itemId)) || [];
     } catch (err) {
       console.error('Failed to reload worklogs:', err);
+    }
+    // Logging time also changes the rollup totals; refresh in the background
+    // if the user has it visible.
+    if (this.includeSubItems) {
+      this.loadTimeRollup({ force: true });
+    }
+  }
+
+  /**
+   * Fetch the rolled-up estimate / logged minutes across the current item
+   * and its descendants. Cached; pass { force: true } to refetch.
+   */
+  async loadTimeRollup({ force = false } = {}) {
+    if (!this.itemId) return;
+    if (this.timeRollup && !force) return;
+    this.timeRollupLoading = true;
+    try {
+      this.timeRollup = await api.items.getTimeRollup(this.itemId);
+    } catch (err) {
+      console.error('Failed to load time rollup:', err);
+      this.timeRollup = null;
+    } finally {
+      this.timeRollupLoading = false;
     }
   }
 
@@ -1075,6 +1104,9 @@ class ItemDetailStore {
     this.loadingWatchStatus = false;
     this.timeProjects = [];
     this.timeWorklogs = [];
+    this.includeSubItems = false;
+    this.timeRollup = null;
+    this.timeRollupLoading = false;
     this.customers = [];
     this.workItems = [];
     this.workspaces = [];

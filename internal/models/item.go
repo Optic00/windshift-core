@@ -87,6 +87,16 @@ type Item struct {
 	Milestones                  []Milestone     `json:"milestones,omitempty"`
 }
 
+// TimeRollup is the rolled-up estimate/logged total for an item plus its
+// descendants. Returned by GET /items/{id}/time-rollup so the Time Tracking
+// tab can show "X logged of Y estimated" across an entire subtree.
+type TimeRollup struct {
+	ItemCount            int   `json:"item_count"`             // Items included in the sum (root + descendants).
+	TotalEstimateMinutes int64 `json:"total_estimate_minutes"` // Sum of items.estimate_minutes across the included items.
+	TotalLoggedMinutes   int64 `json:"total_logged_minutes"`   // Sum of time_worklogs.duration_minutes for those items.
+	Truncated            bool  `json:"truncated"`              // True when the descendant set hit the max-items cap.
+}
+
 // ItemHistory represents a single change to an item field
 type ItemHistory struct {
 	ID        int       `json:"id"`

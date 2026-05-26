@@ -153,6 +153,10 @@ export default {
     logged: 'logged',
     loggedOf: 'logged of',
     estimated: 'estimated',
+    includeSubItems: 'Include sub-items',
+    rollupTruncated: 'Limited to first {max} sub-items',
+    rollupItemCount_one: 'rolled up across {count} item',
+    rollupItemCount_other: 'rolled up across {count} items',
 
     // Item Detail additional translations
     workItemDetails: 'Work Item Details',

@@ -76,6 +76,8 @@ export const items = {
     const params = maxDepth ? `?max_depth=${maxDepth}` : '';
     return fetchAPI(`/items/${itemId}/descendants${params}`);
   },
+  getTimeRollup: (itemId, { maxDepth = 10 } = {}) =>
+    fetchAPI(`/items/${itemId}/time-rollup?max_depth=${maxDepth}`),
   // Get available status transitions for a specific item based on workflow configuration
   getAvailableStatusTransitions: (itemId) =>
     fetchAPI(`/items/${itemId}/available-status-transitions`),
