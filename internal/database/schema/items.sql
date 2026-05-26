@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS items (
 	related_work_item_id INTEGER REFERENCES items(id) ON DELETE SET NULL,
 	-- Estimation
 	story_points REAL,
+	estimate_minutes INTEGER,
 	-- Manual sorting fields
 	rank TEXT,
 	frac_index TEXT COLLATE BINARY,
