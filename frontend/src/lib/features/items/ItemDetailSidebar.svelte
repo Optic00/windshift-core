@@ -1,5 +1,6 @@
 <script>
-  import { AlertCircle, ChevronDown, ChevronUp, MoreHorizontal, TrendingUpDown, ChevronsUp, Briefcase, Calendar, Globe, Building2, Repeat, Shield } from '@lucide/svelte';
+  import { AlertCircle, ChevronDown, ChevronUp, MoreHorizontal, Briefcase, Calendar, Globe, Building2, Repeat, Shield } from '@lucide/svelte';
+  import { priorityIconMap } from '../../utils/icons.js';
   import { buildIterationPickerConfig } from '../iterations/iterationPickerUtils.js';
   import { rruleToText } from '../../editors/rruleUtils.js';
   import Lozenge from '../../components/Lozenge.svelte';
@@ -59,13 +60,7 @@
   const priorityConfig = {
     icon: {
       type: 'component',
-      source: (item) => {
-        // Map icon name string to Lucide component
-        const iconMap = {
-          AlertCircle, ChevronsUp, TrendingUpDown
-        };
-        return iconMap[item.icon] || AlertCircle;
-      }
+      source: (item) => priorityIconMap[item.icon] || AlertCircle
     },
     primary: {
       text: (item) => item.name
@@ -713,7 +708,8 @@
             <Text variant="subtle" size="sm">{t('common.priority')}</Text>
             <div class="flex items-center gap-2">
               {#if selectedPriority}
-                <ChevronsUp size={14} class="flex-shrink-0" style="color: {selectedPriority.color};" />
+                {@const PriorityIcon = priorityIconMap[selectedPriority.icon] || AlertCircle}
+                <PriorityIcon size={14} class="flex-shrink-0" style="color: {selectedPriority.color};" />
                 <span style="color: var(--ds-text);">{selectedPriority.name}</span>
               {:else}
                 <Text variant="subtle" size="sm">{t('common.none')}</Text>
