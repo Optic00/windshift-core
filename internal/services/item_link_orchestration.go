@@ -672,6 +672,7 @@ func (s *ItemLinkService) getLinksWhere(whereClause string, args ...interface{})
 		       COALESCE(sit.color, '') as source_item_type_color,
 		       COALESCE(sw.key, spw.key, '') as source_workspace_key,
 		       COALESCE(si.workspace_id, sp.workspace_id) as source_workspace_id,
+		       si.workspace_item_number as source_item_number,
 		       ti.status_id as target_status_id,
 		       COALESCE(ts.name, '') as target_status_name,
 		       ti.item_type_id as target_item_type_id,
@@ -680,6 +681,7 @@ func (s *ItemLinkService) getLinksWhere(whereClause string, args ...interface{})
 		       COALESCE(tit.color, '') as target_item_type_color,
 		       COALESCE(tw.key, tpw.key, '') as target_workspace_key,
 		       COALESCE(ti.workspace_id, tp.workspace_id) as target_workspace_id,
+		       ti.workspace_item_number as target_item_number,
 		       il.custom_field_id,
 		       COALESCE(cfd.name, '') as custom_field_name
 		FROM item_links il
@@ -721,10 +723,10 @@ func (s *ItemLinkService) getLinksWhere(whereClause string, args ...interface{})
 			&link.SourceTitle, &link.TargetTitle, &link.CreatedByName,
 			&link.SourceStatusID, &link.SourceStatusName,
 			&link.SourceItemTypeID, &link.SourceItemTypeName, &link.SourceItemTypeIcon, &link.SourceItemTypeColor,
-			&link.SourceWorkspaceKey, &link.SourceWorkspaceID,
+			&link.SourceWorkspaceKey, &link.SourceWorkspaceID, &link.SourceItemNumber,
 			&link.TargetStatusID, &link.TargetStatusName,
 			&link.TargetItemTypeID, &link.TargetItemTypeName, &link.TargetItemTypeIcon, &link.TargetItemTypeColor,
-			&link.TargetWorkspaceKey, &link.TargetWorkspaceID,
+			&link.TargetWorkspaceKey, &link.TargetWorkspaceID, &link.TargetItemNumber,
 			&link.CustomFieldID, &link.CustomFieldName,
 		); err != nil {
 			return nil, err

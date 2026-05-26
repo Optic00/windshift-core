@@ -253,6 +253,11 @@ type ItemLink struct {
 	SourceItemTypeColor string `json:"source_item_type_color,omitempty"`
 	SourceWorkspaceKey  string `json:"source_workspace_key,omitempty"`
 	SourceWorkspaceID   *int   `json:"source_workspace_id,omitempty"`
+	// SourceItemNumber is the workspace-scoped item number (the "74" in
+	// "WI-74"). Display the user-facing key as
+	// SourceWorkspaceKey + "-" + SourceItemNumber, never SourceID — that
+	// field is the global DB id and looks wrong (e.g. "WI-149") in UI.
+	SourceItemNumber *int `json:"source_item_number,omitempty"`
 	// Target item details
 	TargetStatusID      *int   `json:"target_status_id,omitempty"`
 	TargetStatusName    string `json:"target_status_name,omitempty"`
@@ -262,6 +267,8 @@ type ItemLink struct {
 	TargetItemTypeColor string `json:"target_item_type_color,omitempty"`
 	TargetWorkspaceKey  string `json:"target_workspace_key,omitempty"`
 	TargetWorkspaceID   *int   `json:"target_workspace_id,omitempty"`
+	// TargetItemNumber: see SourceItemNumber.
+	TargetItemNumber *int `json:"target_item_number,omitempty"`
 	// Custom field link metadata
 	CustomFieldName string `json:"custom_field_name,omitempty"`
 }

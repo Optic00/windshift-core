@@ -286,12 +286,13 @@
           {@const linkedItemType = isCurrentSource ? link.target_type : link.source_type}
           {@const linkedItemId = isCurrentSource ? link.target_id : link.source_id}
           {@const linkedItemWorkspaceId = isCurrentSource ? link.target_workspace_id : link.source_workspace_id}
+          {@const linkedItemNumber = isCurrentSource ? link.target_item_number : link.source_item_number}
           {@const linkedItemKeyPrefix = linkedItemType === 'test_case'
             ? 'TC'
             : (isCurrentSource
               ? (link.target_workspace_key || workspace?.key || 'WORK')
               : (link.source_workspace_key || workspace?.key || 'WORK'))}
-          {@const linkedItemKey = `${linkedItemKeyPrefix}-${linkedItemId}`}
+          {@const linkedItemKey = `${linkedItemKeyPrefix}-${linkedItemNumber ?? linkedItemId}`}
           {@const linkedItemTitle = isCurrentSource ? link.target_title : link.source_title}
           {@const linkedItemHref = linkedItemType === 'test_case'
             ? '#view-test-case'

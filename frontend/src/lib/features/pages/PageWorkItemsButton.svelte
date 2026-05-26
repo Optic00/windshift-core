@@ -247,10 +247,11 @@
             {@const linkedItemTitle = isCurrentPage ? link.source_title : link.target_title}
             {@const linkedItemWorkspaceKey = isCurrentPage ? link.source_workspace_key : link.target_workspace_key}
             {@const linkedItemWorkspaceId = isCurrentPage ? link.source_workspace_id : link.target_workspace_id}
+            {@const linkedItemNumber = isCurrentPage ? link.source_item_number : link.target_item_number}
             {@const linkedItemStatus = isCurrentPage ? link.source_status_name : link.target_status_name}
             {@const linkedItemIconKey = isCurrentPage ? link.source_item_type_icon : link.target_item_type_icon}
             {@const linkedItemIconColor = isCurrentPage ? link.source_item_type_color : link.target_item_type_color}
-            {@const linkedItemKey = `${linkedItemWorkspaceKey || 'WORK'}-${linkedItemId}`}
+            {@const linkedItemKey = `${linkedItemWorkspaceKey || 'WORK'}-${linkedItemNumber ?? linkedItemId}`}
             {@const linkedItemHref = `/workspaces/${linkedItemWorkspaceId || workspaceId}/items/${linkedItemId}`}
             <li
               class="row-li"
