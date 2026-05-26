@@ -410,6 +410,29 @@ func (v *ItemFieldValidator) ValidateAndApplyUpdates(
 		}
 	}
 
+	// Estimate minutes validation
+	if emValue, ok := updateData["estimate_minutes"]; ok {
+		if emValue == nil {
+			item.EstimateMinutes = nil
+		} else {
+			switch v := emValue.(type) {
+			case float64:
+				if v < 0 {
+					return &ValidationError{Field: "estimate_minutes", Message: "Estimate cannot be negative"}
+				}
+				n := int(v)
+				item.EstimateMinutes = &n
+			case int:
+				if v < 0 {
+					return &ValidationError{Field: "estimate_minutes", Message: "Estimate cannot be negative"}
+				}
+				item.EstimateMinutes = &v
+			default:
+				return &ValidationError{Field: "estimate_minutes", Message: "Invalid estimate_minutes type"}
+			}
+		}
+	}
+
 	// Custom field values validation
 	if customFields, ok := updateData["custom_field_values"]; ok {
 		if customFields != nil {

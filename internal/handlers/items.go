@@ -565,6 +565,7 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 		EndDate:               item.EndDate,
 		RelatedWorkItemID:     relatedWorkItemIDPtr,
 		StoryPoints:           item.StoryPoints,
+		EstimateMinutes:       item.EstimateMinutes,
 		CustomFieldValuesJSON: customFieldValuesJSON,
 	})
 	if err != nil {

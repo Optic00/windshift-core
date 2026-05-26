@@ -24,6 +24,7 @@
   import { workspacePermissions } from '../../stores';
   import { t } from '../../stores/i18n.svelte.js';
   import { formatDateShort, formatCustomFieldDate } from '../../utils/dateFormatter.js';
+  import { parseDuration, durationToString } from '../../utils/timeUtils.js';
   import { resolveOptionLabel, resolveOptionLabels } from '../../utils/optionUtils.js';
   import StatusBadge from '../../components/StatusBadge.svelte';
   import Badge from '../../components/Badge.svelte';
@@ -233,6 +234,11 @@
   let editingStoryPoints = $state(false);
   let storyPointsEditValue = $state('');
 
+  // Estimate inline editing (duration string parsed to minutes)
+  let editingEstimate = $state(false);
+  let estimateEditValue = $state('');
+  let estimateError = $state(false);
+
   // Personal labels inline editing
   let editingPersonalLabels = $state(false);
 
@@ -263,6 +269,28 @@
     const value = parsed != null && !Number.isNaN(parsed) && parsed >= 0 ? parsed : null;
     if (value === (item?.story_points ?? null)) return;
     onsaveField?.({ field: 'story_points', value });
+  }
+
+  function saveEstimate() {
+    const raw = (estimateEditValue ?? '').trim();
+    if (raw === '') {
+      editingEstimate = false;
+      estimateError = false;
+      if ((item?.estimate_minutes ?? null) !== null) {
+        onsaveField?.({ field: 'estimate_minutes', value: null });
+      }
+      return;
+    }
+    const minutes = parseDuration(raw);
+    if (!Number.isFinite(minutes) || minutes <= 0) {
+      estimateError = true;
+      return;
+    }
+    editingEstimate = false;
+    estimateError = false;
+    const rounded = Math.round(minutes);
+    if (rounded === (item?.estimate_minutes ?? null)) return;
+    onsaveField?.({ field: 'estimate_minutes', value: rounded });
   }
 
   // Computed item key for SCM operations
@@ -929,6 +957,60 @@
           {/each}
         </div>
       {/if}
+    </div>
+    {/if}
+
+    <!-- Estimate Field -->
+    {#if shouldShowSystemField('estimate')}
+    <div class="mb-3">
+      <div
+        class="w-full flex items-center justify-between px-2 py-1.5 text-sm transition-colors rounded group"
+        role="button"
+        tabindex="0"
+        onmouseenter={(e) => e.currentTarget.style.background = 'var(--ds-background-neutral-hovered)'}
+        onmouseleave={(e) => e.currentTarget.style.background = ''}
+      >
+        <Text variant="subtle" size="sm">{t('items.estimate') || 'Estimate'}</Text>
+        <div class="flex items-center gap-2">
+          {#if editingEstimate}
+            <!-- svelte-ignore a11y_autofocus -->
+            <input
+              type="text"
+              placeholder="3d 4h"
+              class="w-24 text-right text-sm rounded px-1.5 py-0.5 border focus:outline-none focus:ring-1"
+              style="background: var(--ds-surface-sunken); border-color: {estimateError ? 'var(--ds-border-danger, #cc3344)' : 'var(--ds-border)'}; color: var(--ds-text); --tw-ring-color: var(--ds-border-focused);"
+              value={estimateEditValue ?? ''}
+              onfocus={(e) => e.currentTarget.select()}
+              oninput={(e) => { estimateEditValue = e.currentTarget.value; estimateError = false; }}
+              onblur={() => saveEstimate()}
+              onkeydown={(e) => {
+                if (e.key === 'Enter') { e.currentTarget.blur(); }
+                if (e.key === 'Escape') { editingEstimate = false; estimateError = false; }
+              }}
+              autofocus
+            />
+          {:else}
+            <button
+              class="cursor-pointer hover:underline"
+              style="color: var(--ds-text);"
+              disabled={!canEdit || !isSystemFieldEditable('estimate')}
+              onclick={() => {
+                estimateEditValue = item?.estimate_minutes != null
+                  ? durationToString(item.estimate_minutes, { withDays: true })
+                  : '';
+                estimateError = false;
+                editingEstimate = true;
+              }}
+            >
+              {#if item?.estimate_minutes != null && item?.estimate_minutes > 0}
+                <span>{durationToString(item.estimate_minutes, { withDays: true })}</span>
+              {:else}
+                <Text variant="subtle" size="sm">{t('common.none')}</Text>
+              {/if}
+            </button>
+          {/if}
+        </div>
+      </div>
     </div>
     {/if}
 

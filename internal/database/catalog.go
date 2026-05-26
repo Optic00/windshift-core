@@ -1346,6 +1346,14 @@ func postSliceColumnAddMigrations() []Migration {
 			Postgres:      "ALTER TABLE items ADD COLUMN story_points REAL",
 		},
 		{
+			Version:       "col_items_estimate_minutes",
+			Name:          "items.estimate_minutes",
+			CheckSQLite:   sqliteColumnCheck("items", "estimate_minutes"),
+			CheckPostgres: pgColumnCheck("items", "estimate_minutes"),
+			SQLite:        "ALTER TABLE items ADD COLUMN estimate_minutes INTEGER",
+			Postgres:      "ALTER TABLE items ADD COLUMN estimate_minutes INTEGER",
+		},
+		{
 			Version:       "col_approval_requests_from_status_id",
 			Name:          "approval_requests.from_status_id",
 			CheckSQLite:   sqliteColumnCheck("approval_requests", "from_status_id"),

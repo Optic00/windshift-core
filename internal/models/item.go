@@ -38,7 +38,8 @@ type Item struct {
 	// Personal task relationship (for linking personal workspace tasks to work items)
 	RelatedWorkItemID *int `json:"related_work_item_id,omitempty"` // Link to work item (for personal tasks)
 	// Estimation
-	StoryPoints *float64 `json:"story_points,omitempty"` // Story points for velocity tracking
+	StoryPoints     *float64 `json:"story_points,omitempty"`     // Story points for velocity tracking
+	EstimateMinutes *int     `json:"estimate_minutes,omitempty"` // Time estimate in minutes (compared against logged worklog time)
 	// Manual sorting field
 	FracIndex   *string    `json:"frac_index,omitempty"` // Fractional index string for manual ordering
 	CreatedAt   time.Time  `json:"created_at"`

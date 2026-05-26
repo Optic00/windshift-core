@@ -105,6 +105,13 @@ export const SYSTEM_FIELDS = [
     cardSelectable: true,
     listColumn: { required: false },
   },
+  {
+    identifier: 'estimate',
+    name: 'Estimate',
+    type: 'duration',
+    cardSelectable: true,
+    listColumn: { required: false },
+  },
 ];
 
 // Derived lists for specific contexts

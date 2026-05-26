@@ -1,7 +1,7 @@
 // Shared helpers for time parsing and synchronization between duration strings and HH:MM values.
 
 /**
- * Parse a duration string like "2h", "30m", "2h30m", or "1d" (8 hours by default).
+ * Parse a duration string like "2h", "30m", "2h30m", "1d", or "3d 4h" (8 hours/day by default).
  * Returns total minutes.
  */
 export function parseDuration(durationStr, hoursPerDay = 8) {
@@ -10,14 +10,13 @@ export function parseDuration(durationStr, hoursPerDay = 8) {
   const str = durationStr.toLowerCase().trim();
   let totalMinutes = 0;
 
-  if (str.endsWith('d')) {
-    const days = parseFloat(str.slice(0, -1));
-    return days * hoursPerDay * 60;
+  const daysMatch = str.match(/(\d+(?:\.\d+)?)\s*d/);
+  const hoursMatch = str.match(/(\d+(?:\.\d+)?)\s*h/);
+  const minutesMatch = str.match(/(\d+(?:\.\d+)?)\s*m/);
+
+  if (daysMatch) {
+    totalMinutes += parseFloat(daysMatch[1]) * hoursPerDay * 60;
   }
-
-  const hoursMatch = str.match(/(\d+(?:\.\d+)?)h/);
-  const minutesMatch = str.match(/(\d+(?:\.\d+)?)m/);
-
   if (hoursMatch) {
     totalMinutes += parseFloat(hoursMatch[1]) * 60;
   }
@@ -43,10 +42,28 @@ export function addMinutesToTime(timeStr, minutes) {
 }
 
 /**
- * Convert total minutes to a compact duration string (e.g., 90 -> "1h30m", 30 -> "30m").
+ * Convert total minutes to a compact duration string.
+ * Default: "1h30m" / "30m" / "8h".
+ * With `withDays: true`, peels whole days (8h each by default) into a "Xd" prefix,
+ * e.g. 1680 -> "3d 4h", 960 -> "2d".
  */
-export function durationToString(totalMinutes) {
+export function durationToString(totalMinutes, options = {}) {
+  const { withDays = false, hoursPerDay = 8 } = options;
   const minutes = Math.max(0, Math.round(totalMinutes));
+
+  if (withDays) {
+    const minutesPerDay = hoursPerDay * 60;
+    const days = Math.floor(minutes / minutesPerDay);
+    const remainderMinutes = minutes - days * minutesPerDay;
+    const hours = Math.floor(remainderMinutes / 60);
+    const mins = remainderMinutes % 60;
+    const parts = [];
+    if (days > 0) parts.push(`${days}d`);
+    if (hours > 0) parts.push(`${hours}h`);
+    if (mins > 0) parts.push(`${mins}m`);
+    return parts.length === 0 ? '0m' : parts.join(' ');
+  }
+
   const hours = Math.floor(minutes / 60);
   const mins = minutes % 60;
 

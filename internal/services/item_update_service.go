@@ -117,14 +117,14 @@ func (s *ItemUpdateService) UpdateItem(req UpdateItemRequest) (*UpdateItemResult
 		SET workspace_id = ?, title = ?, description = ?, status_id = ?, priority_id = ?, due_date = ?,
 		    start_date = ?, end_date = ?,
 		    iteration_id = ?, project_id = ?, inherit_project = ?, assignee_id = ?, creator_id = ?,
-		    custom_field_values = ?, parent_id = ?, related_work_item_id = ?, story_points = ?, updated_at = ?
+		    custom_field_values = ?, parent_id = ?, related_work_item_id = ?, story_points = ?, estimate_minutes = ?, updated_at = ?
 		WHERE id = ?
 	`, existingItem.WorkspaceID, existingItem.Title, existingItem.Description,
 		existingItem.StatusID, existingItem.PriorityID, existingItem.DueDate,
 		existingItem.StartDate, existingItem.EndDate,
 		existingItem.IterationID, existingItem.ProjectID, existingItem.InheritProject, existingItem.AssigneeID,
 		existingItem.CreatorID, customFieldValuesJSON, existingItem.ParentID, existingItem.RelatedWorkItemID,
-		existingItem.StoryPoints, now, req.ItemID)
+		existingItem.StoryPoints, existingItem.EstimateMinutes, now, req.ItemID)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to update item: %w", err)
@@ -293,6 +293,9 @@ func (s *ItemUpdateService) compareAndGenerateHistory(original, updated *models.
 	// Compare story_points (float64 pointer)
 	addHistory("story_points", float64PtrToString(original.StoryPoints), float64PtrToString(updated.StoryPoints))
 
+	// Compare estimate_minutes (int pointer)
+	addHistory("estimate_minutes", intPtrToString(original.EstimateMinutes), intPtrToString(updated.EstimateMinutes))
+
 	// Compare custom field values
 	allKeys := make(map[string]struct{})
 	for k := range original.CustomFieldValues {
@@ -358,6 +361,7 @@ func (s *ItemUpdateService) recordItemCreationHistory(db database.Database, item
 	addHistory("end_date", timePtrToString(item.EndDate))
 	addHistory("workspace_id", fmt.Sprintf("%d", item.WorkspaceID))
 	addHistory("story_points", float64PtrToString(item.StoryPoints))
+	addHistory("estimate_minutes", intPtrToString(item.EstimateMinutes))
 
 	// Record history entries directly (no transaction needed here, caller should manage)
 	for _, entry := range history {

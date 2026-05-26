@@ -101,6 +101,7 @@ type ItemCreationParams struct {
 	EndDate                 *time.Time // End date for the item
 	RelatedWorkItemID       *int       // For personal tasks: related work item
 	StoryPoints             *float64   // Story points for velocity tracking
+	EstimateMinutes         *int       // Time estimate in minutes (compared against logged worklog time)
 	CustomFieldValuesJSON   string     // JSON string of custom field values
 	// CreatedAt / UpdatedAt override the default `time.Now()` timestamps. Used
 	// by the Jira importer to preserve the original issue chronology so audit
@@ -239,9 +240,9 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 				workspace_id, workspace_item_number, item_type_id, title, description, status_id, priority_id, is_task,
 				iteration_id, project_id, inherit_project, time_project_id, assignee_id, reporter_id, creator_id, creator_portal_customer_id,
 				channel_id, request_type_id, due_date, start_date, end_date, related_work_item_id,
-				story_points, custom_field_values, parent_id,
+				story_points, estimate_minutes, custom_field_values, parent_id,
 				frac_index, created_at, updated_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			RETURNING id
 		`
 
@@ -270,6 +271,7 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 			params.EndDate,
 			params.RelatedWorkItemID,
 			params.StoryPoints,
+			params.EstimateMinutes,
 			nullString(params.CustomFieldValuesJSON),
 			params.ParentID,
 			fracIndex,

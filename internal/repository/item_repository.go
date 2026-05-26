@@ -28,7 +28,7 @@ func NewItemRepository(db database.Database) *ItemRepository {
 const itemBaseColumns = `id, workspace_id, workspace_item_number, item_type_id, title, description, status_id,
        priority_id, due_date, start_date, end_date, is_task, iteration_id, project_id, inherit_project,
        assignee_id, creator_id, creator_portal_customer_id, custom_field_values, parent_id, related_work_item_id,
-       story_points, frac_index, created_at, updated_at`
+       story_points, estimate_minutes, frac_index, created_at, updated_at`
 
 func scanItemBase(scanner interface {
 	Scan(dest ...interface{}) error
@@ -39,13 +39,14 @@ func scanItemBase(scanner interface {
 	var assigneeID, creatorID, creatorPortalCustomerID, relatedWorkItemID sql.NullInt64
 	var dueDate, startDate, endDate sql.NullTime
 	var storyPoints sql.NullFloat64
+	var estimateMinutes sql.NullInt64
 	var fracIndex sql.NullString
 
 	err := scanner.Scan(
 		&item.ID, &item.WorkspaceID, &item.WorkspaceItemNumber, &itemTypeID, &item.Title, &item.Description,
 		&statusID, &priorityID, &dueDate, &startDate, &endDate, &item.IsTask, &iterationID,
 		&projectID, &item.InheritProject, &assigneeID, &creatorID, &creatorPortalCustomerID, &customFieldValuesJSON, &parentID,
-		&relatedWorkItemID, &storyPoints, &fracIndex, &item.CreatedAt, &item.UpdatedAt,
+		&relatedWorkItemID, &storyPoints, &estimateMinutes, &fracIndex, &item.CreatedAt, &item.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -65,6 +66,7 @@ func scanItemBase(scanner interface {
 	assignNullableTime(&item.StartDate, startDate)
 	assignNullableTime(&item.EndDate, endDate)
 	assignNullableFloat64(&item.StoryPoints, storyPoints)
+	assignNullableInt(&item.EstimateMinutes, estimateMinutes)
 	assignNullableStringPtr(&item.FracIndex, fracIndex)
 	item.CustomFieldValues = parseCustomFieldsJSON(customFieldValuesJSON)
 
@@ -148,13 +150,14 @@ func (r *ItemRepository) FindByIDWithWorkspaceStatus(id int) (*ItemWithWorkspace
 	var creatorPortalCustomerID, channelID, requestTypeID sql.NullInt64
 
 	var storyPoints sql.NullFloat64
+	var estimateMinutes sql.NullInt64
 
 	err := r.db.QueryRow(`
 		SELECT i.id, i.workspace_id, i.workspace_item_number, i.item_type_id, i.title, i.description,
 		       i.status_id, i.priority_id, i.due_date, i.start_date, i.end_date, i.is_task, i.iteration_id,
 		       i.project_id, i.inherit_project, i.time_project_id, i.assignee_id, i.creator_id, i.custom_field_values,
 		       i.virtual_field_data,
-		       i.parent_id, i.story_points, i.frac_index, i.created_at, i.updated_at,
+		       i.parent_id, i.story_points, i.estimate_minutes, i.frac_index, i.created_at, i.updated_at,
 		       i.creator_portal_customer_id, i.channel_id, i.request_type_id,
 		       w.name as workspace_name, w.key as workspace_key, w.active as workspace_active,
 		       iter.name as iteration_name,
@@ -190,7 +193,7 @@ func (r *ItemRepository) FindByIDWithWorkspaceStatus(id int) (*ItemWithWorkspace
 		&statusID, &priorityID, &dueDate, &startDate, &endDate, &item.IsTask, &iterationID,
 		&projectID, &item.InheritProject, &timeProjectID, &assigneeID, &creatorID, &customFieldValuesJSON,
 		&virtualFieldDataJSON,
-		&parentID, &storyPoints, &item.FracIndex, &item.CreatedAt, &item.UpdatedAt,
+		&parentID, &storyPoints, &estimateMinutes, &item.FracIndex, &item.CreatedAt, &item.UpdatedAt,
 		&creatorPortalCustomerID, &channelID, &requestTypeID,
 		&item.WorkspaceName, &item.WorkspaceKey, &workspaceActive,
 		&iterationName, &projectName, &timeProjectName, &parentTitle,
@@ -232,6 +235,7 @@ func (r *ItemRepository) FindByIDWithWorkspaceStatus(id int) (*ItemWithWorkspace
 	assignNullableTime(&item.StartDate, startDate)
 	assignNullableTime(&item.EndDate, endDate)
 	assignNullableFloat64(&item.StoryPoints, storyPoints)
+	assignNullableInt(&item.EstimateMinutes, estimateMinutes)
 
 	// Handle nullable string fields from joins
 	assignNullableString(&item.IterationName, iterationName)
@@ -498,14 +502,14 @@ func (r *ItemRepository) Create(tx database.Tx, item *models.Item) (int, error) 
 			workspace_id, workspace_item_number, item_type_id, title, description, status_id,
 			priority_id, due_date, start_date, end_date, is_task, iteration_id, project_id, inherit_project,
 			assignee_id, creator_id, custom_field_values, parent_id, related_work_item_id,
-			story_points, frac_index, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+			story_points, estimate_minutes, frac_index, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
 	`,
 		item.WorkspaceID, item.WorkspaceItemNumber, item.ItemTypeID, item.Title, item.Description,
 		item.StatusID, item.PriorityID, item.DueDate, item.StartDate, item.EndDate, item.IsTask,
 		item.IterationID, item.ProjectID, item.InheritProject, item.AssigneeID, item.CreatorID,
 		customFieldValuesJSON, item.ParentID, item.RelatedWorkItemID,
-		item.StoryPoints, item.FracIndex, now, now,
+		item.StoryPoints, item.EstimateMinutes, item.FracIndex, now, now,
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create item: %w", err)
@@ -527,13 +531,13 @@ func (r *ItemRepository) Update(tx database.Tx, item *models.Item) error {
 		SET workspace_id = ?, title = ?, description = ?, status_id = ?, priority_id = ?,
 		    due_date = ?, start_date = ?, end_date = ?, iteration_id = ?, project_id = ?, inherit_project = ?,
 		    assignee_id = ?, creator_id = ?, custom_field_values = ?, parent_id = ?,
-		    related_work_item_id = ?, story_points = ?, updated_at = ?
+		    related_work_item_id = ?, story_points = ?, estimate_minutes = ?, updated_at = ?
 		WHERE id = ?
 	`,
 		item.WorkspaceID, item.Title, item.Description, item.StatusID, item.PriorityID,
 		item.DueDate, item.StartDate, item.EndDate, item.IterationID, item.ProjectID, item.InheritProject,
 		item.AssigneeID, item.CreatorID, customFieldValuesJSON, item.ParentID,
-		item.RelatedWorkItemID, item.StoryPoints, now, item.ID,
+		item.RelatedWorkItemID, item.StoryPoints, item.EstimateMinutes, now, item.ID,
 	)
 
 	if err != nil {
@@ -551,7 +555,7 @@ var allowedItemColumns = map[string]bool{
 	"assignee_id": true, "creator_id": true, "custom_field_values": true,
 	"parent_id": true, "related_work_item_id": true, "item_type_id": true,
 	"frac_index": true, "is_task": true, "time_project_id": true,
-	"story_points": true,
+	"story_points": true, "estimate_minutes": true,
 }
 
 // IsAllowedItemColumn reports whether col names a column on the items table

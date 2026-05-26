@@ -7,6 +7,7 @@
   import { confirm } from '../../composables/useConfirm.js';
   import { formatDateTimeLocale, formatDateShort } from '../../utils/dateFormatter.js';
   import { t } from '../../stores/i18n.svelte.js';
+  import { durationToString } from '../../utils/timeUtils.js';
   import { toHotkeyString, getShortcutDisplay } from '../../utils/keyboardShortcuts.js';
   import Badge from '../../components/Badge.svelte';
   import DescriptionText from '../../components/DescriptionText.svelte';
@@ -35,6 +36,24 @@
   }
 
   let commentCount = $state(0);
+
+  // Sum logged worklog minutes for the time tab header.
+  const totalLoggedMinutes = $derived(
+    (timeWorklogs ?? []).reduce(
+      (sum, w) => sum + (Number(w?.duration_minutes) || 0),
+      0,
+    ),
+  );
+  const estimateMinutes = $derived(
+    Number.isFinite(item?.estimate_minutes) && item?.estimate_minutes > 0
+      ? item.estimate_minutes
+      : 0,
+  );
+  const hasEstimate = $derived(estimateMinutes > 0);
+  const loggedRatio = $derived(
+    hasEstimate ? totalLoggedMinutes / estimateMinutes : 0,
+  );
+  const overBudget = $derived(hasEstimate && totalLoggedMinutes > estimateMinutes);
 
   function switchTab(newTab) {
     onswitchtab?.({ tab: newTab });
@@ -212,7 +231,31 @@
         {#if timeWorklogs && timeWorklogs.length > 0}
           <div class="space-y-3">
             <div class="flex items-center justify-between">
-              <h4 class="text-sm font-medium" style="color: var(--ds-text);">{t('items.timeEntries')} ({timeWorklogs.length})</h4>
+              <div class="flex flex-col gap-1">
+                <h4 class="text-sm font-medium" style="color: var(--ds-text);">
+                  {t('items.timeEntries')} ({timeWorklogs.length})
+                </h4>
+                <div class="text-xs" style="color: var(--ds-text-subtle);">
+                  {#if hasEstimate}
+                    <span style={overBudget ? 'color: var(--ds-text-danger, #cc3344); font-weight: 600;' : ''}>
+                      {durationToString(totalLoggedMinutes, { withDays: true })}
+                    </span>
+                    {' '}{t('items.loggedOf') || 'logged of'}{' '}
+                    {durationToString(estimateMinutes, { withDays: true })}
+                    {' '}{t('items.estimated') || 'estimated'}
+                  {:else}
+                    {durationToString(totalLoggedMinutes, { withDays: true })} {t('items.logged') || 'logged'}
+                  {/if}
+                </div>
+                {#if hasEstimate}
+                  <div class="h-1 rounded overflow-hidden mt-0.5" style="background: var(--ds-background-neutral-subtle, var(--ds-surface-sunken)); width: 12rem;">
+                    <div
+                      class="h-full transition-all"
+                      style="width: {Math.min(loggedRatio, 1) * 100}%; background: {overBudget ? 'var(--ds-text-danger, #cc3344)' : 'var(--ds-background-brand, #3b82f6)'};"
+                    ></div>
+                  </div>
+                {/if}
+              </div>
               <div class="flex gap-2">
                 {#if !activeTimer && getDefaultProjectForTimeLogging()}
                   <Button
@@ -248,6 +291,16 @@
             />
           </div>
         {:else}
+          {#if hasEstimate}
+            <div class="flex flex-col gap-1 mb-3">
+              <div class="text-xs" style="color: var(--ds-text-subtle);">
+                0m {t('items.loggedOf') || 'logged of'} {durationToString(estimateMinutes, { withDays: true })} {t('items.estimated') || 'estimated'}
+              </div>
+              <div class="h-1 rounded overflow-hidden" style="background: var(--ds-background-neutral-subtle, var(--ds-surface-sunken)); width: 12rem;">
+                <div class="h-full" style="width: 0%; background: var(--ds-background-brand, #3b82f6);"></div>
+              </div>
+            </div>
+          {/if}
           <EmptyState icon={Clock} title={t('items.noTimeLogged')}>
             {#snippet action()}
             <div class="flex justify-center gap-2">
