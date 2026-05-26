@@ -25,6 +25,7 @@
   import Security from './Security.svelte';
   import SearchPage from './SearchPage.svelte';
   import About from './About.svelte';
+  import ApiDocs from './ApiDocs.svelte';
   import CliAuthorize from './CliAuthorize.svelte';
   import OAuthAuthorize from './OAuthAuthorize.svelte';
   import Channels from '../features/channels/Channels.svelte';
@@ -1062,6 +1063,8 @@
 
     {:else if view === 'about'}
       <About />
+    {:else if view === 'api-docs'}
+      <ApiDocs />
     {:else if view === 'cli-authorize'}
       <CliAuthorize />
     {:else if view === 'oauth-authorize'}

@@ -57,6 +57,7 @@
     "@milkdown/kit": "^7.18.0",
     "@milkdown/plugin-listener": "^7.18.0",
     "@milkdown/theme-nord": "^7.18.0",
+    "@scalar/api-reference": "^1.55.3",
     "@tabler/icons-svelte-runes": "^3.40.0",
     "@tailwindcss/vite": "^4.1.11",
     "@tauri-apps/api": "^2.10.1",

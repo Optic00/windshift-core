@@ -1610,7 +1610,8 @@
           "container_run",
           "http_request",
           "transition_item",
-          "related_items"
+          "related_items",
+          "create_milestone"
         ],
         "type": "string",
         "x-enum-varnames": [
@@ -1628,7 +1629,8 @@
           "ActionNodeContainerRun",
           "ActionNodeHTTPRequest",
           "ActionNodeTransitionItem",
-          "ActionNodeRelatedItems"
+          "ActionNodeRelatedItems",
+          "ActionNodeCreateMilestone"
         ]
       },
       "models.ActionTriggerType": {
@@ -1637,7 +1639,9 @@
           "item_created",
           "item_updated",
           "item_linked",
-          "manual"
+          "manual",
+          "scm_tag_created",
+          "scm_release_branch_created"
         ],
         "type": "string",
         "x-enum-varnames": [
@@ -1645,7 +1649,9 @@
           "ActionTriggerItemCreated",
           "ActionTriggerItemUpdated",
           "ActionTriggerItemLinked",
-          "ActionTriggerManual"
+          "ActionTriggerManual",
+          "ActionTriggerSCMTagCreated",
+          "ActionTriggerSCMReleaseBranchCreated"
         ]
       },
       "models.CapabilityType": {
@@ -2749,6 +2755,83 @@
           }
         ],
         "summary": "Download an attachment's binary contents",
+        "tags": [
+          "items"
+        ]
+      }
+    },
+    "/attachments/{id}/thumbnail": {
+      "get": {
+        "parameters": [
+          {
+            "description": "Attachment ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the items:read scope"
+          },
+          "404": {
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Attachment not found, has no thumbnail, or is not visible to caller"
+          },
+          "500": {
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Download an attachment thumbnail",
         "tags": [
           "items"
         ]
@@ -5935,6 +6018,48 @@
         "summary": "Get progress report for a milestone",
         "tags": [
           "milestones"
+        ]
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "description": "Returns the OpenAPI 3.0 description of this API. Public; no auth required.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "OpenAPI 3.0 document"
+          }
+        },
+        "summary": "OpenAPI 3.0 spec (JSON)",
+        "tags": [
+          "meta"
+        ]
+      }
+    },
+    "/openapi.yaml": {
+      "get": {
+        "description": "Returns the OpenAPI 3.0 description of this API. Public; no auth required.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/yaml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "OpenAPI 3.0 document"
+          }
+        },
+        "summary": "OpenAPI 3.0 spec (YAML)",
+        "tags": [
+          "meta"
         ]
       }
     },
@@ -9346,6 +9471,93 @@
         "tags": [
           "workspaces",
           "milestones"
+        ]
+      }
+    },
+    "/workspaces/{id}/pages/{pageId}/attachments": {
+      "post": {
+        "description": "Uploads a file as an attachment on the given page. Requires\nthe bearer token to carry the `pages:write` scope and the\nauthenticated user to have `page.edit` on the page (Editor\nrole on the workspace by default). The response includes\nthe attachment id which can be embedded in markdown as\n`![alt](/api/attachments/{id}/download)`.",
+        "parameters": [
+          {
+            "description": "Workspace ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Page ID",
+            "in": "path",
+            "name": "pageId",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "properties": {
+                  "file": {
+                    "description": "File to upload",
+                    "format": "binary",
+                    "type": "string",
+                    "x-formData-name": "file"
+                  }
+                },
+                "required": [
+                  "file"
+                ],
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "page not found or you lack page.edit"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Upload an attachment to a workspace knowledge page",
+        "tags": [
+          "pages"
         ]
       }
     },

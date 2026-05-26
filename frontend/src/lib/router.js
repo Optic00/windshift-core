@@ -140,6 +140,7 @@ const routes = {
   '/forms/:slug': 'public-form',
   '/set-password/:token': 'set-password',
   '/about': 'about',
+  '/api-docs': 'api-docs',
   '/cli/authorize': 'cli-authorize',
   '/oauth/authorize': 'oauth-authorize',
   '/404': '404',

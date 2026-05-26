@@ -101,6 +101,17 @@ func RegisterRoutes(deps restapi.Deps) {
 		legacyAttachHandler,
 	)
 
+	// Public discovery routes (no bearer auth). Mounted on a sibling group
+	// that shares the /rest/api/v1 prefix and rate limiter but skips
+	// RequireAuth — the OpenAPI document describes the public surface and
+	// has to be fetchable by clients that don't yet have a token.
+	publicV1 := router.NewRouteGroup(mux, "/rest/api/v1",
+		middleware.RequestID,
+		rateLimiter.Middleware,
+	)
+	publicV1.Handle("GET /openapi.json", handlers.OpenAPISpecJSON)
+	publicV1.Handle("GET /openapi.yaml", handlers.OpenAPISpecYAML)
+
 	// Create authenticated route group with middleware chain:
 	// RequestID -> RequireAuth -> RateLimiter
 	v1 := router.NewRouteGroup(mux, "/rest/api/v1",

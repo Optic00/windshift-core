@@ -1288,15 +1288,11 @@ func (s *Server) initialize() error {
 			}
 
 			mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-				if len(r.URL.Path) >= 4 && r.URL.Path[:4] == "/api" {
-					http.NotFound(w, r)
-					return
-				}
-				if len(r.URL.Path) >= 5 && r.URL.Path[:5] == "/rest" {
-					http.NotFound(w, r)
-					return
-				}
-				if len(r.URL.Path) >= 5 && r.URL.Path[:5] == "/scim" {
+				// Anything under an API root that hasn't matched a specific
+				// route is a 404 — don't fall through to the SPA shell.
+				// The prefixes must be path-segment scoped so client routes
+				// like /api-docs aren't shadowed by the /api check.
+				if isAPIPath(r.URL.Path) {
 					http.NotFound(w, r)
 					return
 				}
@@ -1519,6 +1515,19 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 	slog.Info("server shutdown complete")
 	return nil
+}
+
+// isAPIPath reports whether p falls under an API root (and so should be a
+// hard 404 when no specific route matched) rather than the SPA shell. The
+// match is path-segment scoped — `/api-docs` is *not* an API path even
+// though it starts with the four bytes `/api`.
+func isAPIPath(p string) bool {
+	for _, root := range []string{"/api", "/rest", "/scim"} {
+		if p == root || strings.HasPrefix(p, root+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // cleanup releases all resources.

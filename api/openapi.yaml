@@ -1071,6 +1071,7 @@ components:
       - http_request
       - transition_item
       - related_items
+      - create_milestone
       type: string
       x-enum-varnames:
       - ActionNodeTrigger
@@ -1088,6 +1089,7 @@ components:
       - ActionNodeHTTPRequest
       - ActionNodeTransitionItem
       - ActionNodeRelatedItems
+      - ActionNodeCreateMilestone
     models.ActionTriggerType:
       enum:
       - status_transition
@@ -1095,6 +1097,8 @@ components:
       - item_updated
       - item_linked
       - manual
+      - scm_tag_created
+      - scm_release_branch_created
       type: string
       x-enum-varnames:
       - ActionTriggerStatusTransition
@@ -1102,6 +1106,8 @@ components:
       - ActionTriggerItemUpdated
       - ActionTriggerItemLinked
       - ActionTriggerManual
+      - ActionTriggerSCMTagCreated
+      - ActionTriggerSCMReleaseBranchCreated
     models.CapabilityType:
       enum:
       - docker_environment
@@ -1784,6 +1790,53 @@ paths:
       security:
       - BearerAuth: []
       summary: Download an attachment's binary contents
+      tags:
+      - items
+  /attachments/{id}/thumbnail:
+    get:
+      parameters:
+      - description: Attachment ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            image/jpeg:
+              schema:
+                format: binary
+                type: string
+          description: OK
+        "401":
+          content:
+            image/jpeg:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            image/jpeg:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the items:read scope
+        "404":
+          content:
+            image/jpeg:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Attachment not found, has no thumbnail, or is not visible to
+            caller
+        "500":
+          content:
+            image/jpeg:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Download an attachment thumbnail
       tags:
       - items
   /collections:
@@ -3730,6 +3783,34 @@ paths:
       summary: Get progress report for a milestone
       tags:
       - milestones
+  /openapi.json:
+    get:
+      description: Returns the OpenAPI 3.0 description of this API. Public; no auth
+        required.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: string
+          description: OpenAPI 3.0 document
+      summary: OpenAPI 3.0 spec (JSON)
+      tags:
+      - meta
+  /openapi.yaml:
+    get:
+      description: Returns the OpenAPI 3.0 description of this API. Public; no auth
+        required.
+      responses:
+        "200":
+          content:
+            application/yaml:
+              schema:
+                type: string
+          description: OpenAPI 3.0 document
+      summary: OpenAPI 3.0 spec (YAML)
+      tags:
+      - meta
   /priorities:
     get:
       responses:
@@ -5816,6 +5897,66 @@ paths:
       tags:
       - workspaces
       - milestones
+  /workspaces/{id}/pages/{pageId}/attachments:
+    post:
+      description: |-
+        Uploads a file as an attachment on the given page. Requires
+        the bearer token to carry the `pages:write` scope and the
+        authenticated user to have `page.edit` on the page (Editor
+        role on the workspace by default). The response includes
+        the attachment id which can be embedded in markdown as
+        `![alt](/api/attachments/{id}/download)`.
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - description: Page ID
+        in: path
+        name: pageId
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              properties:
+                file:
+                  description: File to upload
+                  format: binary
+                  type: string
+                  x-formData-name: file
+              required:
+              - file
+              type: object
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: page not found or you lack page.edit
+      security:
+      - BearerAuth: []
+      summary: Upload an attachment to a workspace knowledge page
+      tags:
+      - pages
   /workspaces/{id}/statuses:
     get:
       parameters:
@@ -5986,491 +6127,5 @@ paths:
       summary: Get an item by workspace key and per-workspace number
       tags:
       - items
-
-  /attachments/{id}/thumbnail:
-    parameters:
-    - in: path
-      name: id
-      required: true
-      schema:
-        type: integer
-    get:
-      responses:
-        "200":
-          description: OK
-      security:
-      - BearerAuth: []
-      summary: Get attachment thumbnail
-      tags:
-      - attachments
-  /items/{id}/links:
-    parameters:
-    - in: path
-      name: id
-      required: true
-      schema:
-        type: integer
-    get:
-      responses:
-        "200":
-          description: OK
-      security:
-      - BearerAuth: []
-      summary: List item links
-      tags:
-      - links
-  /link-types:
-    get:
-      responses:
-        "200":
-          description: OK
-      security:
-      - BearerAuth: []
-      summary: List link types
-      tags:
-      - links
-  /links:
-    post:
-      responses:
-        "201":
-          description: Created
-      security:
-      - BearerAuth: []
-      summary: Create link
-      tags:
-      - links
-  /links/{id}:
-    parameters:
-    - in: path
-      name: id
-      required: true
-      schema:
-        type: integer
-    delete:
-      responses:
-        "204":
-          description: No Content
-      security:
-      - BearerAuth: []
-      summary: Delete link
-      tags:
-      - links
-  /pages/{id}/links:
-    parameters:
-    - in: path
-      name: id
-      required: true
-      schema:
-        type: integer
-    get:
-      responses:
-        "200":
-          description: OK
-      security:
-      - BearerAuth: []
-      summary: List page links
-      tags:
-      - links
-  /test-cases/{id}/links:
-    parameters:
-    - in: path
-      name: id
-      required: true
-      schema:
-        type: integer
-    get:
-      responses:
-        "200":
-          description: OK
-      security:
-      - BearerAuth: []
-      summary: List test case links
-      tags:
-      - links
-  /workspaces/{id}/page-labels:
-    parameters:
-    - in: path
-      name: id
-      required: true
-      schema:
-        type: integer
-    get:
-      responses:
-        "200":
-          description: OK
-      security:
-      - BearerAuth: []
-      summary: List page labels
-      tags:
-      - pages
-    post:
-      responses:
-        "201":
-          description: Created
-      security:
-      - BearerAuth: []
-      summary: Create page label
-      tags:
-      - pages
-  /workspaces/{id}/page-labels/{labelId}:
-    parameters:
-    - in: path
-      name: id
-      required: true
-      schema:
-        type: integer
-    - in: path
-      name: labelId
-      required: true
-      schema:
-        type: integer
-    get:
-      responses:
-        "200":
-          description: OK
-      security:
-      - BearerAuth: []
-      summary: Get page label
-      tags:
-      - pages
-    put:
-      responses:
-        "200":
-          description: OK
-      security:
-      - BearerAuth: []
-      summary: Update page label
-      tags:
-      - pages
-    delete:
-      responses:
-        "204":
-          description: No Content
-      security:
-      - BearerAuth: []
-      summary: Delete page label
-      tags:
-      - pages
-  /workspaces/{id}/pages:
-    parameters:
-    - in: path
-      name: id
-      required: true
-      schema:
-        type: integer
-    get:
-      responses:
-        "200":
-          description: OK
-      security:
-      - BearerAuth: []
-      summary: List pages
-      tags:
-      - pages
-    post:
-      responses:
-        "201":
-          description: Created
-      security:
-      - BearerAuth: []
-      summary: Create page
-      tags:
-      - pages
-  /workspaces/{id}/pages/{pageId}:
-    parameters:
-    - in: path
-      name: id
-      required: true
-      schema:
-        type: integer
-    - in: path
-      name: pageId
-      required: true
-      schema:
-        type: integer
-    get:
-      responses:
-        "200":
-          description: OK
-      security:
-      - BearerAuth: []
-      summary: Get page
-      tags:
-      - pages
-    put:
-      responses:
-        "200":
-          description: OK
-      security:
-      - BearerAuth: []
-      summary: Update page
-      tags:
-      - pages
-    delete:
-      responses:
-        "204":
-          description: No Content
-      security:
-      - BearerAuth: []
-      summary: Archive page
-      tags:
-      - pages
-  /workspaces/{id}/pages/{pageId}/attachments:
-    parameters:
-    - in: path
-      name: id
-      required: true
-      schema:
-        type: integer
-    - in: path
-      name: pageId
-      required: true
-      schema:
-        type: integer
-    post:
-      responses:
-        "201":
-          description: Created
-      security:
-      - BearerAuth: []
-      summary: Upload page attachment
-      tags:
-      - pages
-  /workspaces/{id}/pages/{pageId}/history:
-    parameters:
-    - in: path
-      name: id
-      required: true
-      schema:
-        type: integer
-    - in: path
-      name: pageId
-      required: true
-      schema:
-        type: integer
-    get:
-      responses:
-        "200":
-          description: OK
-      security:
-      - BearerAuth: []
-      summary: List page history
-      tags:
-      - pages
-  /workspaces/{id}/pages/{pageId}/history/{revisionId}:
-    parameters:
-    - in: path
-      name: id
-      required: true
-      schema:
-        type: integer
-    - in: path
-      name: pageId
-      required: true
-      schema:
-        type: integer
-    - in: path
-      name: revisionId
-      required: true
-      schema:
-        type: integer
-    get:
-      responses:
-        "200":
-          description: OK
-      security:
-      - BearerAuth: []
-      summary: Get page revision
-      tags:
-      - pages
-  /workspaces/{id}/pages/{pageId}/history/{revisionId}/restore:
-    parameters:
-    - in: path
-      name: id
-      required: true
-      schema:
-        type: integer
-    - in: path
-      name: pageId
-      required: true
-      schema:
-        type: integer
-    - in: path
-      name: revisionId
-      required: true
-      schema:
-        type: integer
-    post:
-      responses:
-        "200":
-          description: OK
-      security:
-      - BearerAuth: []
-      summary: Restore page revision
-      tags:
-      - pages
-  /workspaces/{id}/pages/{pageId}/inheritance:
-    parameters:
-    - in: path
-      name: id
-      required: true
-      schema:
-        type: integer
-    - in: path
-      name: pageId
-      required: true
-      schema:
-        type: integer
-    patch:
-      responses:
-        "200":
-          description: OK
-      security:
-      - BearerAuth: []
-      summary: Set page inheritance
-      tags:
-      - pages
-  /workspaces/{id}/pages/{pageId}/labels:
-    parameters:
-    - in: path
-      name: id
-      required: true
-      schema:
-        type: integer
-    - in: path
-      name: pageId
-      required: true
-      schema:
-        type: integer
-    get:
-      responses:
-        "200":
-          description: OK
-      security:
-      - BearerAuth: []
-      summary: List labels for page
-      tags:
-      - pages
-    post:
-      responses:
-        "200":
-          description: OK
-      security:
-      - BearerAuth: []
-      summary: Add label to page
-      tags:
-      - pages
-    put:
-      responses:
-        "200":
-          description: OK
-      security:
-      - BearerAuth: []
-      summary: Set page labels
-      tags:
-      - pages
-  /workspaces/{id}/pages/{pageId}/labels/{labelId}:
-    parameters:
-    - in: path
-      name: id
-      required: true
-      schema:
-        type: integer
-    - in: path
-      name: pageId
-      required: true
-      schema:
-        type: integer
-    - in: path
-      name: labelId
-      required: true
-      schema:
-        type: integer
-    delete:
-      responses:
-        "204":
-          description: No Content
-      security:
-      - BearerAuth: []
-      summary: Remove label from page
-      tags:
-      - pages
-  /workspaces/{id}/pages/{pageId}/move:
-    parameters:
-    - in: path
-      name: id
-      required: true
-      schema:
-        type: integer
-    - in: path
-      name: pageId
-      required: true
-      schema:
-        type: integer
-    post:
-      responses:
-        "200":
-          description: OK
-      security:
-      - BearerAuth: []
-      summary: Move page
-      tags:
-      - pages
-  /workspaces/{id}/pages/{pageId}/permissions:
-    parameters:
-    - in: path
-      name: id
-      required: true
-      schema:
-        type: integer
-    - in: path
-      name: pageId
-      required: true
-      schema:
-        type: integer
-    get:
-      responses:
-        "200":
-          description: OK
-      security:
-      - BearerAuth: []
-      summary: List page permissions
-      tags:
-      - pages
-    post:
-      responses:
-        "201":
-          description: Created
-      security:
-      - BearerAuth: []
-      summary: Grant page permission
-      tags:
-      - pages
-  /workspaces/{id}/pages/{pageId}/permissions/{permissionId}:
-    parameters:
-    - in: path
-      name: id
-      required: true
-      schema:
-        type: integer
-    - in: path
-      name: pageId
-      required: true
-      schema:
-        type: integer
-    - in: path
-      name: permissionId
-      required: true
-      schema:
-        type: integer
-    delete:
-      responses:
-        "204":
-          description: No Content
-      security:
-      - BearerAuth: []
-      summary: Revoke page permission
-      tags:
-      - pages
 servers:
 - url: /rest/api/v1
