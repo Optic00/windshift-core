@@ -150,6 +150,9 @@ export default {
     startTimerTitle: 'Start tracking time for this work item',
     logTimeTitle: 'Manually log time worked on this item',
     noTimeLogged: 'No time logged yet',
+    logged: 'logged',
+    loggedOf: 'logged of',
+    estimated: 'estimated',
 
     // Item Detail additional translations
     workItemDetails: 'Work Item Details',
