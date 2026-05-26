@@ -403,6 +403,23 @@
     onstartEditingEndDate?.();
   }
 
+  // Estimate helpers
+  function startEditingEstimate() {
+    if (!canEdit || !isSystemFieldEditable('estimate')) return;
+    estimateEditValue = item?.estimate_minutes != null
+      ? durationToString(item.estimate_minutes, { withDays: true })
+      : '';
+    estimateError = false;
+    editingEstimate = true;
+  }
+
+  // Story Points helpers
+  function startEditingStoryPoints() {
+    if (!canEdit || !isSystemFieldEditable('story_points')) return;
+    storyPointsEditValue = item?.story_points ?? '';
+    editingStoryPoints = true;
+  }
+
   // Svelte action to focus and show date picker
   function focusAndShowPicker(node) {
     node.focus();
@@ -922,11 +939,8 @@
     <!-- Personal Labels (mine + shared) -->
     {#if item?.id && shouldShowSystemField('labels')}
     <div class="mb-3" data-testid="personal-labels-field">
-      <div class="px-2 py-1.5">
-        <Text variant="subtle" size="sm">{t('items.labels') || 'Labels'}</Text>
-      </div>
       {#if editingPersonalLabels}
-        <div class="px-2">
+        <div class="px-2 py-1.5">
           <PersonalLabelCombobox
             value={(item?.personal_labels || []).map((l) => l.name)}
             placeholder={t('items.selectOrCreateLabels') || 'Select or create labels...'}
@@ -936,35 +950,35 @@
           />
         </div>
       {:else}
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div
-          class="px-2 py-1 flex flex-wrap gap-1.5 cursor-pointer rounded transition-colors"
-          role="button"
-          tabindex="0"
+        <button
           onclick={() => canEdit && isSystemFieldEditable('labels') && (editingPersonalLabels = true)}
-          onkeydown={(e) => { if (canEdit && isSystemFieldEditable('labels') && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); editingPersonalLabels = true; } }}
+          class="w-full flex items-start justify-between gap-2 px-2 py-1.5 text-sm transition-colors rounded group text-left"
           onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'}
           onmouseleave={(e) => e.currentTarget.style.backgroundColor = ''}
+          disabled={!canEdit || !isSystemFieldEditable('labels')}
         >
-          {#each (item?.personal_labels || []) as label (label.id)}
-            <span
-              class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs"
-              style="background-color: {label.color || '#3B82F6'}1A; color: var(--ds-text); border: 1px solid {label.color || '#3B82F6'};"
-              data-testid="item-personal-label"
-            >
+          <Text variant="subtle" size="sm" class="shrink-0">{t('items.labels') || 'Labels'}</Text>
+          <div class="flex flex-wrap justify-end gap-1.5 min-w-0">
+            {#each (item?.personal_labels || []) as label (label.id)}
               <span
-                class="inline-block w-2 h-2 rounded-full"
-                style="background-color: {label.color || '#3B82F6'};"
-                aria-hidden="true"
-              ></span>
-              {label.name}
-            </span>
-          {:else}
-            <Text variant="subtle" size="sm">
-              {canEdit ? (t('items.addLabel') || '+ Add label') : (t('common.none') || 'None')}
-            </Text>
-          {/each}
-        </div>
+                class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs"
+                style="background-color: {label.color || '#3B82F6'}1A; color: var(--ds-text); border: 1px solid {label.color || '#3B82F6'};"
+                data-testid="item-personal-label"
+              >
+                <span
+                  class="inline-block w-2 h-2 rounded-full"
+                  style="background-color: {label.color || '#3B82F6'};"
+                  aria-hidden="true"
+                ></span>
+                {label.name}
+              </span>
+            {:else}
+              <Text variant="subtle" size="sm">
+                {canEdit ? (t('items.addLabel') || '+ Add label') : (t('common.none') || 'None')}
+              </Text>
+            {/each}
+          </div>
+        </button>
       {/if}
     </div>
     {/if}
@@ -972,106 +986,89 @@
     <!-- Estimate Field -->
     {#if shouldShowSystemField('estimate')}
     <div class="mb-3">
-      <div
-        class="w-full flex items-center justify-between px-2 py-1.5 text-sm transition-colors rounded group"
-        role="button"
-        tabindex="0"
-        onmouseenter={(e) => e.currentTarget.style.background = 'var(--ds-background-neutral-hovered)'}
-        onmouseleave={(e) => e.currentTarget.style.background = ''}
-      >
-        <Text variant="subtle" size="sm">{t('items.estimate') || 'Estimate'}</Text>
-        <div class="flex items-center gap-2">
-          {#if editingEstimate}
-            <!-- svelte-ignore a11y_autofocus -->
-            <input
-              type="text"
-              placeholder="3d 4h"
-              class="w-24 text-right text-sm rounded px-1.5 py-0.5 border focus:outline-none focus:ring-1"
-              style="background: var(--ds-surface-sunken); border-color: {estimateError ? 'var(--ds-border-danger, #cc3344)' : 'var(--ds-border)'}; color: var(--ds-text); --tw-ring-color: var(--ds-border-focused);"
-              value={estimateEditValue ?? ''}
-              onfocus={(e) => e.currentTarget.select()}
-              oninput={(e) => { estimateEditValue = e.currentTarget.value; estimateError = false; }}
-              onblur={() => saveEstimate()}
-              onkeydown={(e) => {
-                if (e.key === 'Enter') { e.currentTarget.blur(); }
-                if (e.key === 'Escape') { editingEstimate = false; estimateError = false; }
-              }}
-              autofocus
-            />
-          {:else}
-            <button
-              class="cursor-pointer hover:underline"
-              style="color: var(--ds-text);"
-              disabled={!canEdit || !isSystemFieldEditable('estimate')}
-              onclick={() => {
-                estimateEditValue = item?.estimate_minutes != null
-                  ? durationToString(item.estimate_minutes, { withDays: true })
-                  : '';
-                estimateError = false;
-                editingEstimate = true;
-              }}
-            >
-              {#if item?.estimate_minutes != null && item?.estimate_minutes > 0}
-                <span>{durationToString(item.estimate_minutes, { withDays: true })}</span>
-              {:else}
-                <Text variant="subtle" size="sm">{t('common.none')}</Text>
-              {/if}
-            </button>
-          {/if}
+      {#if editingEstimate}
+        <div class="w-full flex items-center justify-between px-2 py-1.5 text-sm">
+          <Text variant="subtle" size="sm">{t('items.estimate') || 'Estimate'}</Text>
+          <!-- svelte-ignore a11y_autofocus -->
+          <input
+            type="text"
+            placeholder="3d 4h"
+            class="w-24 text-right text-sm rounded px-1.5 py-0.5 border focus:outline-none focus:ring-1"
+            style="background: var(--ds-surface-sunken); border-color: {estimateError ? 'var(--ds-border-danger, #cc3344)' : 'var(--ds-border)'}; color: var(--ds-text); --tw-ring-color: var(--ds-border-focused);"
+            value={estimateEditValue ?? ''}
+            onfocus={(e) => e.currentTarget.select()}
+            oninput={(e) => { estimateEditValue = e.currentTarget.value; estimateError = false; }}
+            onblur={() => saveEstimate()}
+            onkeydown={(e) => {
+              if (e.key === 'Enter') { e.currentTarget.blur(); }
+              if (e.key === 'Escape') { editingEstimate = false; estimateError = false; }
+            }}
+            autofocus
+          />
         </div>
-      </div>
+      {:else}
+        <button
+          onclick={startEditingEstimate}
+          class="w-full flex items-center justify-between px-2 py-1.5 text-sm transition-colors rounded group"
+          onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'}
+          onmouseleave={(e) => e.currentTarget.style.backgroundColor = ''}
+          disabled={!canEdit || !isSystemFieldEditable('estimate')}
+        >
+          <Text variant="subtle" size="sm">{t('items.estimate') || 'Estimate'}</Text>
+          <div class="flex items-center gap-2">
+            {#if item?.estimate_minutes != null && item?.estimate_minutes > 0}
+              <span style="color: var(--ds-text);">{durationToString(item.estimate_minutes, { withDays: true })}</span>
+            {:else}
+              <Text variant="subtle" size="sm">{t('common.none')}</Text>
+            {/if}
+          </div>
+        </button>
+      {/if}
     </div>
     {/if}
 
     <!-- Story Points Field -->
     {#if shouldShowSystemField('story_points')}
     <div class="mb-3">
-      <div
-        class="w-full flex items-center justify-between px-2 py-1.5 text-sm transition-colors rounded group"
-        role="button"
-        tabindex="0"
-        onmouseenter={(e) => e.currentTarget.style.background = 'var(--ds-background-neutral-hovered)'}
-        onmouseleave={(e) => e.currentTarget.style.background = ''}
-      >
-        <Text variant="subtle" size="sm">{t('items.storyPoints')}</Text>
-        <div class="flex items-center gap-2">
-          {#if editingStoryPoints}
-            <!-- svelte-ignore a11y_autofocus -->
-            <input
-              type="number"
-              step="0.5"
-              min="0"
-              class="w-20 text-right text-sm rounded px-1.5 py-0.5 border focus:outline-none focus:ring-1"
-              style="background: var(--ds-surface-sunken); border-color: var(--ds-border); color: var(--ds-text); --tw-ring-color: var(--ds-border-focused);"
-              value={storyPointsEditValue ?? ''}
-              onfocus={(e) => e.currentTarget.select()}
-              oninput={(e) => storyPointsEditValue = e.currentTarget.value}
-              onblur={() => saveStoryPoints()}
-              onkeydown={(e) => {
-                if (e.key === 'Enter') { e.currentTarget.blur(); }
-                if (e.key === 'Escape') { editingStoryPoints = false; }
-              }}
-              autofocus
-            />
-          {:else}
-            <button
-              class="cursor-pointer hover:underline"
-              style="color: var(--ds-text);"
-              disabled={!canEdit || !isSystemFieldEditable('story_points')}
-              onclick={() => {
-                storyPointsEditValue = item?.story_points ?? '';
-                editingStoryPoints = true;
-              }}
-            >
-              {#if item?.story_points != null && item?.story_points !== 0}
-                <span>{item.story_points}</span>
-              {:else}
-                <Text variant="subtle" size="sm">{t('common.none')}</Text>
-              {/if}
-            </button>
-          {/if}
+      {#if editingStoryPoints}
+        <div class="w-full flex items-center justify-between px-2 py-1.5 text-sm">
+          <Text variant="subtle" size="sm">{t('items.storyPoints')}</Text>
+          <!-- svelte-ignore a11y_autofocus -->
+          <input
+            type="number"
+            step="0.5"
+            min="0"
+            class="w-20 text-right text-sm rounded px-1.5 py-0.5 border focus:outline-none focus:ring-1"
+            style="background: var(--ds-surface-sunken); border-color: var(--ds-border); color: var(--ds-text); --tw-ring-color: var(--ds-border-focused);"
+            value={storyPointsEditValue ?? ''}
+            onfocus={(e) => e.currentTarget.select()}
+            oninput={(e) => storyPointsEditValue = e.currentTarget.value}
+            onblur={() => saveStoryPoints()}
+            onkeydown={(e) => {
+              if (e.key === 'Enter') { e.currentTarget.blur(); }
+              if (e.key === 'Escape') { editingStoryPoints = false; }
+            }}
+            autofocus
+          />
         </div>
-      </div>
+      {:else}
+        <button
+          onclick={startEditingStoryPoints}
+          class="w-full flex items-center justify-between px-2 py-1.5 text-sm transition-colors rounded group"
+          onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'}
+          onmouseleave={(e) => e.currentTarget.style.backgroundColor = ''}
+          disabled={!canEdit || !isSystemFieldEditable('story_points')}
+        >
+          <Text variant="subtle" size="sm">{t('items.storyPoints')}</Text>
+          <div class="flex items-center gap-2">
+            {#if item?.story_points != null && item?.story_points !== 0}
+              <span style="color: var(--ds-text);">{item.story_points}</span>
+            {:else}
+              <Text variant="subtle" size="sm">{t('common.none')}</Text>
+            {/if}
+          </div>
+        </button>
+      {/if}
     </div>
     {/if}
 
