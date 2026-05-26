@@ -252,14 +252,14 @@ class HomepageStore {
 
       // Load notifications. "What's New" hides read notifications once they're
       // older than a day — the tray keeps them, the dashboard doesn't.
-      // Fetch a buffer so the visible slice still fills after filtering.
-      const notificationsData = await api.notifications.getAll({ limit: 20 });
+      // Fetch a wider pool than the widget shows so per-workspace grouping
+      // still fills after filtering.
+      const notificationsData = await api.notifications.getAll({ limit: 50 });
       const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
-      const visible = (notificationsData || []).filter((n) => {
+      this.notifications = (notificationsData || []).filter((n) => {
         if (!n.read) return true;
         return new Date(n.timestamp).getTime() >= dayAgo;
       });
-      this.notifications = visible.slice(0, 5);
     } catch (err) {
       console.error('Failed to load homepage data:', err);
     } finally {
