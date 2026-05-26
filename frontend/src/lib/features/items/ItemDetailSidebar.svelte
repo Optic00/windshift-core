@@ -454,6 +454,34 @@
     );
   }
 
+  // Status sits at the top of the sidebar and the date fields live in the
+  // collapsible Scheduling section below, so the "middle group" is everything
+  // else that the screen wants to surface. Their order follows the screen
+  // configuration; when no screen is configured we fall back to a default.
+  const MIDDLE_FIELDS_DEFAULT = [
+    'priority', 'project', 'assignee', 'milestone', 'iteration',
+    'labels', 'estimate', 'story_points',
+  ];
+  const MIDDLE_FIELDS_EXCLUDED = new Set([
+    'title', 'description', 'status', 'due_date', 'start_date', 'end_date', 'created_at',
+  ]);
+  const orderedMiddleFields = $derived.by(() => {
+    if (!workspaceScreenSystemFields || workspaceScreenSystemFields.length === 0) {
+      return MIDDLE_FIELDS_DEFAULT;
+    }
+    // Normalize the estimate_minutes alias and drop anything that belongs to
+    // a fixed section. Preserves the screen's display_order.
+    const seen = new Set();
+    const out = [];
+    for (const raw of workspaceScreenSystemFields) {
+      const ident = raw === 'estimate_minutes' ? 'estimate' : raw;
+      if (MIDDLE_FIELDS_EXCLUDED.has(ident) || seen.has(ident)) continue;
+      seen.add(ident);
+      out.push(ident);
+    }
+    return out;
+  });
+
   // When the workspace has separate Edit and View screens, fields on the
   // view screen but not the edit screen are visible-but-read-only. The
   // editable* sets are null when no separation is in play (backwards
@@ -709,78 +737,22 @@
       </ItemPicker>
     </div>
     {/if}
-    <!-- Priority Field -->
-    {#if shouldShowSystemField('priority')}
-    <div class="mb-3" data-testid="priority-field">
-      <ItemPicker
-        value={item?.priority_id ?? null}
-        items={priorities}
-        config={priorityConfig}
-        placeholder="Select priority..."
-        showUnassigned={true}
-        unassignedLabel="No priority"
-        disabled={!canEdit || !isSystemFieldEditable('priority')}
-        class="w-full"
-        onSelect={(selectedPriority) => {
-          onsaveField?.({
-            field: 'priority_id',
-            value: selectedPriority?.id || null
-          });
-        }}
-      >
-        {#snippet children()}
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div
-            class="w-full flex items-center justify-between px-2 py-1.5 text-sm transition-colors rounded group"
-            onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'}
-            onmouseleave={(e) => e.currentTarget.style.backgroundColor = ''}
-          >
-            <Text variant="subtle" size="sm">{t('common.priority')}</Text>
-            <div class="flex items-center gap-2">
-              {#if selectedPriority}
-                {@const PriorityIcon = priorityIconMap[selectedPriority.icon] || AlertCircle}
-                <PriorityIcon size={14} class="flex-shrink-0" style="color: {selectedPriority.color};" />
-                <span style="color: var(--ds-text);">{selectedPriority.name}</span>
-              {:else}
-                <Text variant="subtle" size="sm">{t('common.none')}</Text>
-              {/if}
-            </div>
-          </div>
-        {/snippet}
-      </ItemPicker>
-    </div>
-    {/if}
-
-    <!-- Project Field -->
-    {#if shouldShowSystemField('project') && moduleSettings.time_tracking_enabled}
-      <div class="mb-3">
+    {#snippet priorityField()}
+      <div class="mb-3" data-testid="priority-field">
         <ItemPicker
-          value={selectedProject?.id ?? null}
-          items={projectItems}
-          config={projectConfig}
-          placeholder="Select project..."
-          showUnassigned={false}
-          disabled={!canEdit || !isSystemFieldEditable('project')}
+          value={item?.priority_id ?? null}
+          items={priorities}
+          config={priorityConfig}
+          placeholder="Select priority..."
+          showUnassigned={true}
+          unassignedLabel="No priority"
+          disabled={!canEdit || !isSystemFieldEditable('priority')}
           class="w-full"
-          onSelect={(selectedProject) => {
-            // Handle special items
-            if (selectedProject?.specialType === 'none') {
-              onsaveField?.({
-                field: 'project',
-                value: { project_id: null, inherit_project: false }
-              });
-            } else if (selectedProject?.specialType === 'inherit') {
-              onsaveField?.({
-                field: 'project',
-                value: { project_id: null, inherit_project: true }
-              });
-            } else if (selectedProject) {
-              // Regular project
-              onsaveField?.({
-                field: 'project',
-                value: { project_id: selectedProject.id, inherit_project: false }
-              });
-            }
+          onSelect={(selectedPriority) => {
+            onsaveField?.({
+              field: 'priority_id',
+              value: selectedPriority?.id || null
+            });
           }}
         >
           {#snippet children()}
@@ -790,11 +762,12 @@
               onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'}
               onmouseleave={(e) => e.currentTarget.style.backgroundColor = ''}
             >
-              <Text variant="subtle" size="sm">{t('items.project')}</Text>
+              <Text variant="subtle" size="sm">{t('common.priority')}</Text>
               <div class="flex items-center gap-2">
-                {#if item.effective_project_name || item.project_name}
-                  <Briefcase size={14} class="flex-shrink-0" style="color: var(--ds-text-subtle);" />
-                  <span style="color: var(--ds-text);">{getProjectDisplayText(item)}</span>
+                {#if selectedPriority}
+                  {@const PriorityIcon = priorityIconMap[selectedPriority.icon] || AlertCircle}
+                  <PriorityIcon size={14} class="flex-shrink-0" style="color: {selectedPriority.color};" />
+                  <span style="color: var(--ds-text);">{selectedPriority.name}</span>
                 {:else}
                   <Text variant="subtle" size="sm">{t('common.none')}</Text>
                 {/if}
@@ -803,274 +776,338 @@
           {/snippet}
         </ItemPicker>
       </div>
-    {/if}
-    <!-- Assignee Field -->
-    {#if shouldShowSystemField('assignee')}
-    <div class="mb-3">
-      <UserPicker
-        value={item.assignee_id ?? null}
-        placeholder="Select assignee..."
-        showUnassigned={true}
-        disabled={!canEdit || !isSystemFieldEditable('assignee')}
-        workspaceId={item?.workspace_id}
-        class="w-full"
-        onSelect={(selectedUser) => {
-          onsaveField?.({
-            field: 'assignee',
-            value: selectedUser?.id || null,
-            assigneeName: selectedUser ? `${selectedUser.first_name} ${selectedUser.last_name}`.trim() : null
-          });
-        }}
-      >
-        {#snippet children()}
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div
-            class="w-full flex items-center justify-between px-2 py-1.5 text-sm transition-colors rounded group"
-            onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'}
-            onmouseleave={(e) => e.currentTarget.style.backgroundColor = ''}
-          >
-            <Text variant="subtle" size="sm">{t('common.assignee')}</Text>
-            <div class="flex items-center gap-2">
-              {#if item.assignee_id && item.assignee_name}
-                <Avatar src={item.assignee_avatar} name={item.assignee_name} size="xs" variant="teal" />
-                <span style="color: var(--ds-text);">{item.assignee_name}</span>
-              {:else}
-                <Text variant="subtle" size="sm">{t('items.unassigned')}</Text>
-              {/if}
-            </div>
-          </div>
-        {/snippet}
-      </UserPicker>
-    </div>
-    {/if}
+    {/snippet}
 
-    <!-- Milestones Field (multi) -->
-    {#if shouldShowSystemField('milestone')}
-    {@const itemMilestones = (item.milestones || []).map(m => m.id)}
-    {@const selectedMilestones = (item.milestones || [])}
-    <div class="mb-3" data-testid="milestone-field">
-      <MilestoneCombobox
-        multiple={true}
-        value={itemMilestones}
-        workspaceId={item.workspace_id}
-        disabled={!canEdit || !isSystemFieldEditable('milestone')}
-        class="w-full"
-        onSelect={({ ids }) => {
-          onsaveField?.({
-            field: 'milestone',
-            value: ids
-          });
-        }}
-      >
-        {#snippet children()}
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div
-            class="w-full flex items-center justify-between px-2 py-1.5 text-sm transition-colors rounded group"
-            onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'}
-            onmouseleave={(e) => e.currentTarget.style.backgroundColor = ''}
+    {#snippet projectField()}
+      {#if moduleSettings.time_tracking_enabled}
+        <div class="mb-3">
+          <ItemPicker
+            value={selectedProject?.id ?? null}
+            items={projectItems}
+            config={projectConfig}
+            placeholder="Select project..."
+            showUnassigned={false}
+            disabled={!canEdit || !isSystemFieldEditable('project')}
+            class="w-full"
+            onSelect={(selectedProject) => {
+              // Handle special items
+              if (selectedProject?.specialType === 'none') {
+                onsaveField?.({
+                  field: 'project',
+                  value: { project_id: null, inherit_project: false }
+                });
+              } else if (selectedProject?.specialType === 'inherit') {
+                onsaveField?.({
+                  field: 'project',
+                  value: { project_id: null, inherit_project: true }
+                });
+              } else if (selectedProject) {
+                // Regular project
+                onsaveField?.({
+                  field: 'project',
+                  value: { project_id: selectedProject.id, inherit_project: false }
+                });
+              }
+            }}
           >
-            <Text variant="subtle" size="sm">{t('items.milestone')}</Text>
-            <div class="flex items-center gap-1 flex-wrap justify-end">
-              {#if selectedMilestones.length === 0}
-                <span style="color: var(--ds-text-subtle);">{t('common.none')}</span>
-              {:else}
-                {#each selectedMilestones as ms (ms.id)}
-                  <span
-                    class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs"
-                    style="background-color: {ms.category_color || '#9CA3AF'}1A; border: 1px solid {ms.category_color || '#9CA3AF'}; color: var(--ds-text);"
-                  >
-                    {ms.name}
-                  </span>
-                {/each}
-              {/if}
-            </div>
-          </div>
-        {/snippet}
-      </MilestoneCombobox>
-    </div>
-    {/if}
+            {#snippet children()}
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div
+                class="w-full flex items-center justify-between px-2 py-1.5 text-sm transition-colors rounded group"
+                onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'}
+                onmouseleave={(e) => e.currentTarget.style.backgroundColor = ''}
+              >
+                <Text variant="subtle" size="sm">{t('items.project')}</Text>
+                <div class="flex items-center gap-2">
+                  {#if item.effective_project_name || item.project_name}
+                    <Briefcase size={14} class="flex-shrink-0" style="color: var(--ds-text-subtle);" />
+                    <span style="color: var(--ds-text);">{getProjectDisplayText(item)}</span>
+                  {:else}
+                    <Text variant="subtle" size="sm">{t('common.none')}</Text>
+                  {/if}
+                </div>
+              </div>
+            {/snippet}
+          </ItemPicker>
+        </div>
+      {/if}
+    {/snippet}
 
-    <!-- Iteration Field -->
-    {#if shouldShowSystemField('iteration')}
-    <div class="mb-3" data-testid="iteration-field">
-      <ItemPicker
-        value={item?.iteration_id ?? null}
-        items={iterations}
-        config={iterationConfig}
-        placeholder="Select iteration..."
-        showUnassigned={true}
-        unassignedLabel="No iteration"
-        disabled={!canEdit || !isSystemFieldEditable('iteration')}
-        class="w-full"
-        onSelect={(selectedIteration) => {
-          onsaveField?.({
-            field: 'iteration',
-            value: selectedIteration?.id || null,
-            iterationName: selectedIteration?.name || null
-          });
-        }}
-      >
-        {#snippet children()}
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div
-            class="w-full flex items-center justify-between px-2 py-1.5 text-sm transition-colors rounded group"
-            onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'}
-            onmouseleave={(e) => e.currentTarget.style.backgroundColor = ''}
-          >
-            <Text variant="subtle" size="sm">{t('items.iteration')}</Text>
-            <div class="flex items-center gap-2">
-              {#if selectedIteration}
-                {#if selectedIteration.is_global}
-                  <Globe size={14} class="flex-shrink-0" style="color: var(--ds-text-subtle);" />
+    {#snippet assigneeField()}
+      <div class="mb-3">
+        <UserPicker
+          value={item.assignee_id ?? null}
+          placeholder="Select assignee..."
+          showUnassigned={true}
+          disabled={!canEdit || !isSystemFieldEditable('assignee')}
+          workspaceId={item?.workspace_id}
+          class="w-full"
+          onSelect={(selectedUser) => {
+            onsaveField?.({
+              field: 'assignee',
+              value: selectedUser?.id || null,
+              assigneeName: selectedUser ? `${selectedUser.first_name} ${selectedUser.last_name}`.trim() : null
+            });
+          }}
+        >
+          {#snippet children()}
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
+              class="w-full flex items-center justify-between px-2 py-1.5 text-sm transition-colors rounded group"
+              onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'}
+              onmouseleave={(e) => e.currentTarget.style.backgroundColor = ''}
+            >
+              <Text variant="subtle" size="sm">{t('common.assignee')}</Text>
+              <div class="flex items-center gap-2">
+                {#if item.assignee_id && item.assignee_name}
+                  <Avatar src={item.assignee_avatar} name={item.assignee_name} size="xs" variant="teal" />
+                  <span style="color: var(--ds-text);">{item.assignee_name}</span>
                 {:else}
-                  <Building2 size={14} class="flex-shrink-0" style="color: var(--ds-text-subtle);" />
+                  <Text variant="subtle" size="sm">{t('items.unassigned')}</Text>
                 {/if}
-                <span style="color: var(--ds-text);">{selectedIteration.name}</span>
+              </div>
+            </div>
+          {/snippet}
+        </UserPicker>
+      </div>
+    {/snippet}
+
+    {#snippet milestoneField()}
+      {@const itemMilestones = (item.milestones || []).map(m => m.id)}
+      {@const selectedMilestones = (item.milestones || [])}
+      <div class="mb-3" data-testid="milestone-field">
+        <MilestoneCombobox
+          multiple={true}
+          value={itemMilestones}
+          workspaceId={item.workspace_id}
+          disabled={!canEdit || !isSystemFieldEditable('milestone')}
+          class="w-full"
+          onSelect={({ ids }) => {
+            onsaveField?.({
+              field: 'milestone',
+              value: ids
+            });
+          }}
+        >
+          {#snippet children()}
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
+              class="w-full flex items-center justify-between px-2 py-1.5 text-sm transition-colors rounded group"
+              onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'}
+              onmouseleave={(e) => e.currentTarget.style.backgroundColor = ''}
+            >
+              <Text variant="subtle" size="sm">{t('items.milestone')}</Text>
+              <div class="flex items-center gap-1 flex-wrap justify-end">
+                {#if selectedMilestones.length === 0}
+                  <span style="color: var(--ds-text-subtle);">{t('common.none')}</span>
+                {:else}
+                  {#each selectedMilestones as ms (ms.id)}
+                    <span
+                      class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs"
+                      style="background-color: {ms.category_color || '#9CA3AF'}1A; border: 1px solid {ms.category_color || '#9CA3AF'}; color: var(--ds-text);"
+                    >
+                      {ms.name}
+                    </span>
+                  {/each}
+                {/if}
+              </div>
+            </div>
+          {/snippet}
+        </MilestoneCombobox>
+      </div>
+    {/snippet}
+
+    {#snippet iterationField()}
+      <div class="mb-3" data-testid="iteration-field">
+        <ItemPicker
+          value={item?.iteration_id ?? null}
+          items={iterations}
+          config={iterationConfig}
+          placeholder="Select iteration..."
+          showUnassigned={true}
+          unassignedLabel="No iteration"
+          disabled={!canEdit || !isSystemFieldEditable('iteration')}
+          class="w-full"
+          onSelect={(selectedIteration) => {
+            onsaveField?.({
+              field: 'iteration',
+              value: selectedIteration?.id || null,
+              iterationName: selectedIteration?.name || null
+            });
+          }}
+        >
+          {#snippet children()}
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
+              class="w-full flex items-center justify-between px-2 py-1.5 text-sm transition-colors rounded group"
+              onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'}
+              onmouseleave={(e) => e.currentTarget.style.backgroundColor = ''}
+            >
+              <Text variant="subtle" size="sm">{t('items.iteration')}</Text>
+              <div class="flex items-center gap-2">
+                {#if selectedIteration}
+                  {#if selectedIteration.is_global}
+                    <Globe size={14} class="flex-shrink-0" style="color: var(--ds-text-subtle);" />
+                  {:else}
+                    <Building2 size={14} class="flex-shrink-0" style="color: var(--ds-text-subtle);" />
+                  {/if}
+                  <span style="color: var(--ds-text);">{selectedIteration.name}</span>
+                {:else}
+                  <Text variant="subtle" size="sm">{t('common.none')}</Text>
+                {/if}
+              </div>
+            </div>
+          {/snippet}
+        </ItemPicker>
+      </div>
+    {/snippet}
+
+    {#snippet labelsField()}
+      {#if item?.id}
+        <div class="mb-3" data-testid="personal-labels-field">
+          {#if editingPersonalLabels}
+            <div class="px-2 py-1.5">
+              <PersonalLabelCombobox
+                value={(item?.personal_labels || []).map((l) => l.name)}
+                placeholder={t('items.selectOrCreateLabels') || 'Select or create labels...'}
+                disabled={!canEdit || !isSystemFieldEditable('labels')}
+                onSelect={savePersonalLabels}
+                onCancel={() => (editingPersonalLabels = false)}
+              />
+            </div>
+          {:else}
+            <button
+              onclick={() => canEdit && isSystemFieldEditable('labels') && (editingPersonalLabels = true)}
+              class="w-full flex items-start justify-between gap-2 px-2 py-1.5 text-sm transition-colors rounded group text-left"
+              onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'}
+              onmouseleave={(e) => e.currentTarget.style.backgroundColor = ''}
+              disabled={!canEdit || !isSystemFieldEditable('labels')}
+            >
+              <Text variant="subtle" size="sm" class="shrink-0">{t('items.labels') || 'Labels'}</Text>
+              <div class="flex flex-wrap justify-end gap-1.5 min-w-0">
+                {#each (item?.personal_labels || []) as label (label.id)}
+                  <span
+                    class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs"
+                    style="background-color: {label.color || '#3B82F6'}1A; color: var(--ds-text); border: 1px solid {label.color || '#3B82F6'};"
+                    data-testid="item-personal-label"
+                  >
+                    <span
+                      class="inline-block w-2 h-2 rounded-full"
+                      style="background-color: {label.color || '#3B82F6'};"
+                      aria-hidden="true"
+                    ></span>
+                    {label.name}
+                  </span>
+                {:else}
+                  <Text variant="subtle" size="sm">
+                    {canEdit ? (t('items.addLabel') || '+ Add label') : (t('common.none') || 'None')}
+                  </Text>
+                {/each}
+              </div>
+            </button>
+          {/if}
+        </div>
+      {/if}
+    {/snippet}
+
+    {#snippet estimateField()}
+      <div class="mb-3">
+        {#if editingEstimate}
+          <div class="w-full flex items-center justify-between px-2 py-1.5 text-sm">
+            <Text variant="subtle" size="sm">{t('items.estimate') || 'Estimate'}</Text>
+            <!-- svelte-ignore a11y_autofocus -->
+            <input
+              type="text"
+              placeholder="3d 4h"
+              class="w-24 text-right text-sm rounded px-1.5 py-0.5 border focus:outline-none focus:ring-1"
+              style="background: var(--ds-surface-sunken); border-color: {estimateError ? 'var(--ds-border-danger, #cc3344)' : 'var(--ds-border)'}; color: var(--ds-text); --tw-ring-color: var(--ds-border-focused);"
+              value={estimateEditValue ?? ''}
+              onfocus={(e) => e.currentTarget.select()}
+              oninput={(e) => { estimateEditValue = e.currentTarget.value; estimateError = false; }}
+              onblur={() => saveEstimate()}
+              onkeydown={(e) => {
+                if (e.key === 'Enter') { e.currentTarget.blur(); }
+                if (e.key === 'Escape') { editingEstimate = false; estimateError = false; }
+              }}
+              autofocus
+            />
+          </div>
+        {:else}
+          <button
+            onclick={startEditingEstimate}
+            class="w-full flex items-center justify-between px-2 py-1.5 text-sm transition-colors rounded group"
+            onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'}
+            onmouseleave={(e) => e.currentTarget.style.backgroundColor = ''}
+            disabled={!canEdit || !isSystemFieldEditable('estimate')}
+          >
+            <Text variant="subtle" size="sm">{t('items.estimate') || 'Estimate'}</Text>
+            <div class="flex items-center gap-2">
+              {#if item?.estimate_minutes != null && item?.estimate_minutes > 0}
+                <span style="color: var(--ds-text);">{durationToString(item.estimate_minutes, { withDays: true })}</span>
               {:else}
                 <Text variant="subtle" size="sm">{t('common.none')}</Text>
               {/if}
             </div>
-          </div>
-        {/snippet}
-      </ItemPicker>
-    </div>
-    {/if}
+          </button>
+        {/if}
+      </div>
+    {/snippet}
 
-    <!-- Personal Labels (mine + shared) -->
-    {#if item?.id && shouldShowSystemField('labels')}
-    <div class="mb-3" data-testid="personal-labels-field">
-      {#if editingPersonalLabels}
-        <div class="px-2 py-1.5">
-          <PersonalLabelCombobox
-            value={(item?.personal_labels || []).map((l) => l.name)}
-            placeholder={t('items.selectOrCreateLabels') || 'Select or create labels...'}
-            disabled={!canEdit || !isSystemFieldEditable('labels')}
-            onSelect={savePersonalLabels}
-            onCancel={() => (editingPersonalLabels = false)}
-          />
-        </div>
-      {:else}
-        <button
-          onclick={() => canEdit && isSystemFieldEditable('labels') && (editingPersonalLabels = true)}
-          class="w-full flex items-start justify-between gap-2 px-2 py-1.5 text-sm transition-colors rounded group text-left"
-          onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'}
-          onmouseleave={(e) => e.currentTarget.style.backgroundColor = ''}
-          disabled={!canEdit || !isSystemFieldEditable('labels')}
-        >
-          <Text variant="subtle" size="sm" class="shrink-0">{t('items.labels') || 'Labels'}</Text>
-          <div class="flex flex-wrap justify-end gap-1.5 min-w-0">
-            {#each (item?.personal_labels || []) as label (label.id)}
-              <span
-                class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs"
-                style="background-color: {label.color || '#3B82F6'}1A; color: var(--ds-text); border: 1px solid {label.color || '#3B82F6'};"
-                data-testid="item-personal-label"
-              >
-                <span
-                  class="inline-block w-2 h-2 rounded-full"
-                  style="background-color: {label.color || '#3B82F6'};"
-                  aria-hidden="true"
-                ></span>
-                {label.name}
-              </span>
-            {:else}
-              <Text variant="subtle" size="sm">
-                {canEdit ? (t('items.addLabel') || '+ Add label') : (t('common.none') || 'None')}
-              </Text>
-            {/each}
+    {#snippet storyPointsField()}
+      <div class="mb-3">
+        {#if editingStoryPoints}
+          <div class="w-full flex items-center justify-between px-2 py-1.5 text-sm">
+            <Text variant="subtle" size="sm">{t('items.storyPoints')}</Text>
+            <!-- svelte-ignore a11y_autofocus -->
+            <input
+              type="number"
+              step="0.5"
+              min="0"
+              class="w-20 text-right text-sm rounded px-1.5 py-0.5 border focus:outline-none focus:ring-1"
+              style="background: var(--ds-surface-sunken); border-color: var(--ds-border); color: var(--ds-text); --tw-ring-color: var(--ds-border-focused);"
+              value={storyPointsEditValue ?? ''}
+              onfocus={(e) => e.currentTarget.select()}
+              oninput={(e) => storyPointsEditValue = e.currentTarget.value}
+              onblur={() => saveStoryPoints()}
+              onkeydown={(e) => {
+                if (e.key === 'Enter') { e.currentTarget.blur(); }
+                if (e.key === 'Escape') { editingStoryPoints = false; }
+              }}
+              autofocus
+            />
           </div>
-        </button>
-      {/if}
-    </div>
-    {/if}
+        {:else}
+          <button
+            onclick={startEditingStoryPoints}
+            class="w-full flex items-center justify-between px-2 py-1.5 text-sm transition-colors rounded group"
+            onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'}
+            onmouseleave={(e) => e.currentTarget.style.backgroundColor = ''}
+            disabled={!canEdit || !isSystemFieldEditable('story_points')}
+          >
+            <Text variant="subtle" size="sm">{t('items.storyPoints')}</Text>
+            <div class="flex items-center gap-2">
+              {#if item?.story_points != null && item?.story_points !== 0}
+                <span style="color: var(--ds-text);">{item.story_points}</span>
+              {:else}
+                <Text variant="subtle" size="sm">{t('common.none')}</Text>
+              {/if}
+            </div>
+          </button>
+        {/if}
+      </div>
+    {/snippet}
 
-    <!-- Estimate Field -->
-    {#if shouldShowSystemField('estimate')}
-    <div class="mb-3">
-      {#if editingEstimate}
-        <div class="w-full flex items-center justify-between px-2 py-1.5 text-sm">
-          <Text variant="subtle" size="sm">{t('items.estimate') || 'Estimate'}</Text>
-          <!-- svelte-ignore a11y_autofocus -->
-          <input
-            type="text"
-            placeholder="3d 4h"
-            class="w-24 text-right text-sm rounded px-1.5 py-0.5 border focus:outline-none focus:ring-1"
-            style="background: var(--ds-surface-sunken); border-color: {estimateError ? 'var(--ds-border-danger, #cc3344)' : 'var(--ds-border)'}; color: var(--ds-text); --tw-ring-color: var(--ds-border-focused);"
-            value={estimateEditValue ?? ''}
-            onfocus={(e) => e.currentTarget.select()}
-            oninput={(e) => { estimateEditValue = e.currentTarget.value; estimateError = false; }}
-            onblur={() => saveEstimate()}
-            onkeydown={(e) => {
-              if (e.key === 'Enter') { e.currentTarget.blur(); }
-              if (e.key === 'Escape') { editingEstimate = false; estimateError = false; }
-            }}
-            autofocus
-          />
-        </div>
-      {:else}
-        <button
-          onclick={startEditingEstimate}
-          class="w-full flex items-center justify-between px-2 py-1.5 text-sm transition-colors rounded group"
-          onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'}
-          onmouseleave={(e) => e.currentTarget.style.backgroundColor = ''}
-          disabled={!canEdit || !isSystemFieldEditable('estimate')}
-        >
-          <Text variant="subtle" size="sm">{t('items.estimate') || 'Estimate'}</Text>
-          <div class="flex items-center gap-2">
-            {#if item?.estimate_minutes != null && item?.estimate_minutes > 0}
-              <span style="color: var(--ds-text);">{durationToString(item.estimate_minutes, { withDays: true })}</span>
-            {:else}
-              <Text variant="subtle" size="sm">{t('common.none')}</Text>
-            {/if}
-          </div>
-        </button>
+    {#each orderedMiddleFields as ident (ident)}
+      {#if ident === 'priority'}{@render priorityField()}
+      {:else if ident === 'project'}{@render projectField()}
+      {:else if ident === 'assignee'}{@render assigneeField()}
+      {:else if ident === 'milestone'}{@render milestoneField()}
+      {:else if ident === 'iteration'}{@render iterationField()}
+      {:else if ident === 'labels'}{@render labelsField()}
+      {:else if ident === 'estimate'}{@render estimateField()}
+      {:else if ident === 'story_points'}{@render storyPointsField()}
       {/if}
-    </div>
-    {/if}
-
-    <!-- Story Points Field -->
-    {#if shouldShowSystemField('story_points')}
-    <div class="mb-3">
-      {#if editingStoryPoints}
-        <div class="w-full flex items-center justify-between px-2 py-1.5 text-sm">
-          <Text variant="subtle" size="sm">{t('items.storyPoints')}</Text>
-          <!-- svelte-ignore a11y_autofocus -->
-          <input
-            type="number"
-            step="0.5"
-            min="0"
-            class="w-20 text-right text-sm rounded px-1.5 py-0.5 border focus:outline-none focus:ring-1"
-            style="background: var(--ds-surface-sunken); border-color: var(--ds-border); color: var(--ds-text); --tw-ring-color: var(--ds-border-focused);"
-            value={storyPointsEditValue ?? ''}
-            onfocus={(e) => e.currentTarget.select()}
-            oninput={(e) => storyPointsEditValue = e.currentTarget.value}
-            onblur={() => saveStoryPoints()}
-            onkeydown={(e) => {
-              if (e.key === 'Enter') { e.currentTarget.blur(); }
-              if (e.key === 'Escape') { editingStoryPoints = false; }
-            }}
-            autofocus
-          />
-        </div>
-      {:else}
-        <button
-          onclick={startEditingStoryPoints}
-          class="w-full flex items-center justify-between px-2 py-1.5 text-sm transition-colors rounded group"
-          onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'}
-          onmouseleave={(e) => e.currentTarget.style.backgroundColor = ''}
-          disabled={!canEdit || !isSystemFieldEditable('story_points')}
-        >
-          <Text variant="subtle" size="sm">{t('items.storyPoints')}</Text>
-          <div class="flex items-center gap-2">
-            {#if item?.story_points != null && item?.story_points !== 0}
-              <span style="color: var(--ds-text);">{item.story_points}</span>
-            {:else}
-              <Text variant="subtle" size="sm">{t('common.none')}</Text>
-            {/if}
-          </div>
-        </button>
-      {/if}
-    </div>
-    {/if}
+    {/each}
 
     <!-- Recurrence Section -->
     {#if recurrenceRule}
