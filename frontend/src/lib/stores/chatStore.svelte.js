@@ -43,12 +43,13 @@ async function sendMessage(text, context) {
   if (!text.trim() || loading) return;
 
   const userMsg = { role: 'user', content: text };
+  const previousMessages = messages;
   messages = [...messages, userMsg];
   loading = true;
   error = '';
 
   try {
-    const history = messages
+    const history = previousMessages
       .filter((m) => !m.error)
       .map((m) => ({ role: m.role, content: m.content }));
     const result = await api.ai.chat(text, connectionId || undefined, history, context);

@@ -115,12 +115,12 @@ func (e *timerTestEnv) bootstrap() {
 	e.openItemID = int(exec(`
 		INSERT INTO items (workspace_id, workspace_item_number, item_type_id, title, description,
 		                   status_id, assignee_id, creator_id, custom_field_values)
-		VALUES (?, 1, ?, 'Open Item', '', ?, ?, ?, '{}')`,
+		VALUES (?, 123, ?, 'Open Item', '', ?, ?, ?, '{}')`,
 		e.openWSID, e.itemTypeID, e.statusID, e.userID, e.userID))
 	e.gatedItemID = int(exec(`
 		INSERT INTO items (workspace_id, workspace_item_number, item_type_id, title, description,
 		                   status_id, assignee_id, creator_id, custom_field_values)
-		VALUES (?, 1, ?, 'Gated Item', '', ?, ?, ?, '{}')`,
+		VALUES (?, 456, ?, 'Gated Item', '', ?, ?, ?, '{}')`,
 		e.gatedWSID, e.itemTypeID, e.statusID, e.userID, e.userID))
 
 	// Customer + project. No member rows → open booking for everyone.
@@ -175,6 +175,9 @@ func TestTimerService_StartTimer_HappyPath(t *testing.T) {
 	}
 	if timer.Description != "work" {
 		t.Errorf("description = %q, want 'work'", timer.Description)
+	}
+	if timer.WorkspaceItemNumber == nil || *timer.WorkspaceItemNumber != 123 {
+		t.Errorf("workspace_item_number = %v, want 123", timer.WorkspaceItemNumber)
 	}
 }
 

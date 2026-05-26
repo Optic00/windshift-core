@@ -1,12 +1,15 @@
 package llm
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
+
+	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 // stripMarkdownCodeBlock extracts JSON content from markdown code blocks.
@@ -59,9 +62,44 @@ func ChatCompletionStructured[T any](
 			}
 			return nil, fmt.Errorf("failed to parse response after retry: %w", err)
 		}
+		if req.StructuredOutput != nil && len(req.StructuredOutput.Schema) > 0 {
+			if err := validateStructuredJSON(req.StructuredOutput.Schema, []byte(content)); err != nil {
+				if attempt == 0 {
+					slog.Warn("structured output schema validation failed, retrying",
+						slog.Any("error", err),
+						slog.String("content_preview", truncate(content, 200)))
+					continue
+				}
+				return nil, fmt.Errorf("response failed schema validation after retry: %w", err)
+			}
+		}
 		return &result, nil
 	}
 	return nil, ErrNoResponse // unreachable
+}
+
+func validateStructuredJSON(schemaRaw, valueRaw []byte) error {
+	schemaDoc, err := jsonschema.UnmarshalJSON(bytes.NewReader(schemaRaw))
+	if err != nil {
+		return fmt.Errorf("invalid JSON schema: %w", err)
+	}
+	compiler := jsonschema.NewCompiler()
+	compiler.DefaultDraft(jsonschema.Draft2020)
+	if err := compiler.AddResource("schema.json", schemaDoc); err != nil {
+		return fmt.Errorf("add schema resource: %w", err)
+	}
+	schema, err := compiler.Compile("schema.json")
+	if err != nil {
+		return fmt.Errorf("compile JSON schema: %w", err)
+	}
+	value, err := jsonschema.UnmarshalJSON(bytes.NewReader(valueRaw))
+	if err != nil {
+		return fmt.Errorf("invalid JSON response: %w", err)
+	}
+	if err := schema.Validate(value); err != nil {
+		return fmt.Errorf("validate JSON response: %w", err)
+	}
+	return nil
 }
 
 // truncate returns the first n characters of s, or all of s if shorter.

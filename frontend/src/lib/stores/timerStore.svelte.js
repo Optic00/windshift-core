@@ -15,6 +15,7 @@ class TimerStore {
   #timerInterval = null;
   #timerStartTimeUTC = null;
   #syncInterval = null;
+  #stateVersion = 0;
 
   // === Derived Values ===
 
@@ -140,8 +141,10 @@ class TimerStore {
     try {
       this.syncing = true;
       this.error = null;
+      this.#stateVersion += 1;
 
       const timer = await api.timer.start(timerData);
+      this.#stateVersion += 1;
       this.activeTimer = timer;
 
       // Start timer interval for live updates
@@ -174,10 +177,12 @@ class TimerStore {
     try {
       this.syncing = true;
       this.error = null;
+      this.#stateVersion += 1;
 
       const result = await api.timer.stop(this.activeTimer.id);
 
       // Clear active timer
+      this.#stateVersion += 1;
       this.activeTimer = null;
 
       // Stop timer interval
@@ -201,10 +206,15 @@ class TimerStore {
    * This fetches the current active timer from the server
    */
   async sync() {
+    const syncVersion = this.#stateVersion;
+
     try {
       this.error = null;
 
       const timer = await api.timer.getActive();
+      if (syncVersion !== this.#stateVersion || this.syncing) {
+        return;
+      }
 
       if (timer) {
         this.activeTimer = timer;
@@ -254,6 +264,7 @@ class TimerStore {
    */
   reset() {
     this.cleanup();
+    this.#stateVersion += 1;
     this.activeTimer = null;
     this.syncing = false;
     this.error = null;

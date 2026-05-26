@@ -97,7 +97,8 @@ const activeTimerJoinedQuery = `
 		tc.name as customer_name,
 		i.title as item_title,
 		ws.name as workspace_name,
-		ws.key as workspace_key
+		ws.key as workspace_key,
+		i.workspace_item_number
 	FROM active_timers at
 	LEFT JOIN time_projects tp ON at.project_id = tp.id
 	LEFT JOIN customer_organisations tc ON tp.customer_id = tc.id
@@ -120,10 +121,11 @@ func (r *ActiveTimerRepository) GetTimerForUser(userID int) (*models.ActiveTimer
 func scanJoinedActiveTimer(row *sql.Row) (*models.ActiveTimer, error) {
 	timer := &models.ActiveTimer{}
 	var projectName, customerName, itemTitle, workspaceName, workspaceKey sql.NullString
+	var workspaceItemNumber sql.NullInt64
 	err := row.Scan(
 		&timer.ID, &timer.WorkspaceID, &timer.ItemID, &timer.ProjectID, &timer.UserID, &timer.Description,
 		&timer.StartTimeUTC, &timer.CreatedAt,
-		&projectName, &customerName, &itemTitle, &workspaceName, &workspaceKey,
+		&projectName, &customerName, &itemTitle, &workspaceName, &workspaceKey, &workspaceItemNumber,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -145,6 +147,10 @@ func scanJoinedActiveTimer(row *sql.Row) (*models.ActiveTimer, error) {
 	}
 	if workspaceKey.Valid {
 		timer.WorkspaceKey = &workspaceKey.String
+	}
+	if workspaceItemNumber.Valid {
+		itemNumber := int(workspaceItemNumber.Int64)
+		timer.WorkspaceItemNumber = &itemNumber
 	}
 	return timer, nil
 }

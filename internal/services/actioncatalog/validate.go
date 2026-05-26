@@ -3,6 +3,7 @@ package actioncatalog
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -113,6 +114,10 @@ type CapabilityResolver interface {
 	HasCapability(workspaceID, capabilityID int) bool
 }
 
+type typedCapabilityResolver interface {
+	HasCapabilityOfType(workspaceID, capabilityID int, capabilityType models.CapabilityType) bool
+}
+
 // Validate runs the full validation pipeline on def and returns a
 // ValidationErrors list. An empty list means the action is structurally
 // sound and safe to persist. The workspace argument is forwarded to the
@@ -201,12 +206,34 @@ func Validate(c *Catalog, def ActionDefinition, workspaceID int, caps Capability
 		}
 		if caps != nil && workspaceID > 0 {
 			if capID, field := capabilityRef(n); capID > 0 {
-				if !caps.HasCapability(workspaceID, capID) {
+				if !nodeCapabilityAvailable(caps, workspaceID, capID, n.NodeType) {
 					errs = append(errs, ValidationError{
 						Code:    CodeUnknownCapability,
-						Message: fmt.Sprintf("Capability %d is not available to this workspace", capID),
+						Message: fmt.Sprintf("Capability %d is not available to this workspace or has the wrong type", capID),
 						Path:    path + ".node_config." + field,
 					})
+				}
+			}
+			if n.NodeType == models.ActionNodeAIAgent {
+				var cfg models.AIAgentNodeConfig
+				_ = json.Unmarshal([]byte(n.NodeConfig), &cfg)
+				for j, rawID := range cfg.Tools {
+					capID, err := strconv.Atoi(rawID)
+					if err != nil || capID <= 0 {
+						errs = append(errs, ValidationError{
+							Code:    CodeInvalidConfig,
+							Message: fmt.Sprintf("Tool capability %q is not a valid capability ID", rawID),
+							Path:    fmt.Sprintf("%s.node_config.tools[%d]", path, j),
+						})
+						continue
+					}
+					if !toolCapabilityAvailable(caps, workspaceID, capID) {
+						errs = append(errs, ValidationError{
+							Code:    CodeUnknownCapability,
+							Message: fmt.Sprintf("Tool capability %d is not available to this workspace or is not an http_client capability", capID),
+							Path:    fmt.Sprintf("%s.node_config.tools[%d]", path, j),
+						})
+					}
 				}
 			}
 		}
@@ -417,6 +444,27 @@ func validateNodeConfigValues(n models.ActionNode) (msg, field string) {
 		}
 	}
 	return "", ""
+}
+
+func nodeCapabilityAvailable(caps CapabilityResolver, workspaceID, capabilityID int, nodeType models.ActionNodeType) bool {
+	if typed, ok := caps.(typedCapabilityResolver); ok {
+		switch nodeType {
+		case models.ActionNodeHTTPRequest:
+			return typed.HasCapabilityOfType(workspaceID, capabilityID, models.CapabilityHTTPClient)
+		case models.ActionNodeContainerRun:
+			return typed.HasCapabilityOfType(workspaceID, capabilityID, models.CapabilityDockerEnvironment)
+		case models.ActionNodeAIExtract, models.ActionNodeAIAgent:
+			return typed.HasCapabilityOfType(workspaceID, capabilityID, models.CapabilityLLMConnection)
+		}
+	}
+	return caps.HasCapability(workspaceID, capabilityID)
+}
+
+func toolCapabilityAvailable(caps CapabilityResolver, workspaceID, capabilityID int) bool {
+	if typed, ok := caps.(typedCapabilityResolver); ok {
+		return typed.HasCapabilityOfType(workspaceID, capabilityID, models.CapabilityHTTPClient)
+	}
+	return caps.HasCapability(workspaceID, capabilityID)
 }
 
 // capabilityRef pulls the capability_id field out of a node's config

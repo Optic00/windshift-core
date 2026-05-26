@@ -149,8 +149,8 @@
 
   function getWorkItemKey() {
     const currentTimer = timerStore.activeTimer;
-    if (currentTimer && currentTimer.workspace_key && currentTimer.item_id) {
-      return `${currentTimer.workspace_key}-${currentTimer.item_id}`;
+    if (currentTimer?.workspace_key && currentTimer?.workspace_item_number) {
+      return `${currentTimer.workspace_key}-${currentTimer.workspace_item_number}`;
     }
     return null;
   }

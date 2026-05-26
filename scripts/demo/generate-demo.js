@@ -16,7 +16,8 @@
  * Options:
  *   --port <number>        Server port (default: 8080)
  *   --db <path>            Database file path (default: demo.db)
- *   --binary <path>        Path to server binary (default: ../../$BINARY_NAME or ../../windshift)
+ *   --binary <path>        Path to server binary to build/run (default: ../../$BINARY_NAME or ../../windshift)
+ *   --no-build             Skip frontend/backend build before starting the local server
  *   --no-server            Don't start server (assumes server is already running)
  *   --base-url <url>       Base URL if server is already running (default: http://localhost:8080)
  *   --keep-server          Don't stop server after completion
@@ -83,6 +84,7 @@ function getRelativeDate(daysFromMonday) {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const PROJECT_ROOT = path.join(__dirname, '../..');
 
 // Configuration from environment variables
 const APP_NAME = process.env.APP_NAME || 'WINDSHIFT';
@@ -107,7 +109,8 @@ function parseArgs() {
   const options = {
     port: 8080,
     db: 'demo.db',
-    binary: path.join(__dirname, '../..', BINARY_NAME),
+    binary: path.join(PROJECT_ROOT, BINARY_NAME),
+    build: true,
     startServer: true,
     baseURL: null,
     keepServer: true,
@@ -128,6 +131,9 @@ function parseArgs() {
         break;
       case '--binary':
         options.binary = args[++i];
+        break;
+      case '--no-build':
+        options.build = false;
         break;
       case '--no-server':
         options.startServer = false;
@@ -167,7 +173,8 @@ ${colors.cyan}Usage:${colors.reset}
 ${colors.cyan}Options:${colors.reset}
   --port <number>        Server port (default: 8080)
   --db <path>            Database file path (default: demo.db)
-  --binary <path>        Path to server binary (default: ../../${BINARY_NAME})
+  --binary <path>        Path to server binary to build/run (default: ../../${BINARY_NAME})
+  --no-build             Skip frontend/backend build before starting the local server
   --no-server            Don't start server (assumes server is already running)
   --base-url <url>       Base URL if server is already running (default: http://localhost:8080)
   --keep-server          Keep server running after completion (default)
@@ -192,6 +199,9 @@ ${colors.cyan}Examples:${colors.reset}
   ${colors.dim}# Custom database and keep server running${colors.reset}
   node generate-demo.js --db my-demo.db --keep-server
 
+  ${colors.dim}# Use an already-built binary${colors.reset}
+  node generate-demo.js --no-build --binary /path/to/${BINARY_NAME}
+
   ${colors.dim}# Connect to existing instance with custom credentials${colors.reset}
   node generate-demo.js --no-server --base-url https://example.com --admin-user myuser --admin-password mypass
 `);
@@ -200,6 +210,10 @@ ${colors.cyan}Examples:${colors.reset}
         console.error(`${colors.red}Unknown option: ${args[i]}${colors.reset}`);
         process.exit(1);
     }
+  }
+
+  if (!path.isAbsolute(options.binary)) {
+    options.binary = path.resolve(process.cwd(), options.binary);
   }
 
   if (!options.baseURL) {
@@ -336,6 +350,46 @@ function cleanDatabase(dbPath) {
   }
 }
 
+function runCommand(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    logInfo(`$ ${command} ${args.join(' ')}`);
+    const child = spawn(command, args, {
+      cwd: options.cwd || PROJECT_ROOT,
+      stdio: 'inherit',
+      env: { ...process.env, ...(options.env || {}) },
+      shell: false
+    });
+
+    child.on('error', reject);
+    child.on('exit', (code, signal) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`${command} ${args.join(' ')} failed${signal ? ` with signal ${signal}` : ` with exit code ${code}`}`));
+    });
+  });
+}
+
+async function buildApplication(options) {
+  logSection('Building Frontend and Backend');
+
+  const frontendDir = path.join(PROJECT_ROOT, 'frontend');
+  if (!fs.existsSync(path.join(frontendDir, 'node_modules'))) {
+    logInfo('frontend/node_modules not found; installing frontend dependencies first...');
+    await runCommand('npm', ['install'], { cwd: frontendDir });
+  }
+
+  // Build frontend before Go so //go:embed captures a current frontend/dist/index.html.
+  await runCommand('npm', ['run', 'build'], { cwd: frontendDir });
+
+  // Match the production Makefile build: exclude test code and embed the freshly
+  // built frontend dist into the binary that this script is about to run.
+  await runCommand('go', ['build', '-tags', '!test', '-ldflags', '-s -w', '-o', options.binary, '.'], { cwd: PROJECT_ROOT });
+
+  logSuccess(`Built ${options.binary}`);
+}
+
 // Start server
 async function startServer(options) {
   logSection('Starting Server');
@@ -353,7 +407,7 @@ async function startServer(options) {
   // Check if binary exists
   if (!fs.existsSync(options.binary)) {
     logError(`${APP_NAME} binary not found at: ${options.binary}`);
-    logInfo(`Please build the binary first: go build -o ${BINARY_NAME}`);
+    logInfo(`Run without --no-build so this script can build it, or build manually: go build -o ${BINARY_NAME}`);
     process.exit(1);
   }
 
@@ -378,10 +432,18 @@ async function startServer(options) {
     }
   });
 
-  // Log server errors to help debug startup issues
+  // The Go slog default writes INFO/WARN/ERROR to stderr. Surface it without
+  // painting normal startup/audit messages as demo-generator failures.
   serverProcess.stderr.on('data', (data) => {
     const msg = data.toString().trim();
-    if (msg) logError(`Server: ${msg}`);
+    if (!msg) return;
+    if (msg.includes('ERROR')) {
+      logError(`Server: ${msg}`);
+    } else if (msg.includes('WARN')) {
+      log(`Server: ${msg}`, colors.yellow);
+    } else {
+      log(`Server: ${msg}`, colors.dim);
+    }
   });
 
   serverProcess.on('error', (err) => {
@@ -409,17 +471,18 @@ async function startServer(options) {
   return serverProcess;
 }
 
-// Note: CSRF protection uses Sec-Fetch-Site header, no token endpoint needed
+// Note: CSRF protection uses Sec-Fetch-Site header, no token endpoint needed.
 
-// Make authenticated request using the admin's session cookie.
+// Make authenticated requests to the cookie-auth `/api/*` surface.
 //
-// Post-v0.5.x: API tokens (crw_*) only authenticate on /rest/api/v1/* — the
-// /api/* surface is cookie-only. So getBearerToken() now returns the session
-// cookie value (`windshift_session=…`) and we send it via the Cookie header.
-// We also send Sec-Fetch-Site so the CSRF middleware lets us through.
-async function makeAuthRequest(baseURL, method, endpoint, data, token) {
+// API tokens (`crw_*`) are intentionally only valid on `/rest/api/v1/*`; the
+// legacy/UI `/api/*` surface is session-cookie authenticated. Demo generation
+// still needs several endpoints that are not exposed in v1 yet (test mgmt,
+// assets, screens, admin custom fields), so we login once and send the session
+// cookie plus Sec-Fetch-Site for CSRF.
+async function makeAuthRequest(baseURL, method, endpoint, data, sessionCookie) {
   return makeRequest(method, `${baseURL}${endpoint}`, data, {
-    'Cookie': token,
+    'Cookie': sessionCookie,
     'Sec-Fetch-Site': 'same-origin'
   });
 }
@@ -463,9 +526,9 @@ async function completeSetup(baseURL) {
   }
 }
 
-// Get bearer token - following exact Go test pattern
-async function getBearerToken(baseURL, options = {}) {
-  logSection('Getting Bearer Token');
+// Get a session cookie for the `/api/*` seeding surface.
+async function getSessionCookie(baseURL, options = {}) {
+  logSection('Getting Session Cookie');
 
   const adminUser = options.adminUser || 'admin';
   const adminPassword = options.adminPassword || 'admin';
@@ -510,11 +573,6 @@ async function getBearerToken(baseURL, options = {}) {
 
     logInfo('Session cookie obtained');
 
-    // Post-v0.5.x: /api/* no longer accepts crw_* bearer tokens (they only
-    // work on /rest/api/v1/*). The admin session cookie is what we use to
-    // authenticate the seeding calls — return it as the "token" so the rest
-    // of the script (which uses the value verbatim in makeAuthRequest) works
-    // unchanged.
     return sessionCookie;
   } catch (error) {
     logError(`Authentication error: ${error.message}`);
@@ -524,6 +582,10 @@ async function getBearerToken(baseURL, options = {}) {
     return null;
   }
 }
+
+// Backwards-compatible export name for callers that imported this helper
+// before `/api/*` switched to session-only auth.
+const getBearerToken = getSessionCookie;
 
 // Create demo users
 async function createUsers(baseURL, token, usersData = demoUsers) {
@@ -867,18 +929,43 @@ async function createMilestones(baseURL, token, workspaceMap, categoryMap = {}, 
   return createdMilestones;
 }
 
+// Get iteration types from the API (returns name → id map)
+async function getIterationTypes(baseURL, token) {
+  try {
+    const response = await makeAuthRequest(baseURL, 'GET', '/api/iteration-types', null, token);
+
+    if (response.status === 200 && Array.isArray(response.data)) {
+      const typeMap = {};
+      for (const type of response.data) {
+        typeMap[type.name] = type.id;
+      }
+      return typeMap;
+    }
+
+    logError(`Failed to fetch iteration types: ${response.status}`);
+    return {};
+  } catch (error) {
+    logError(`Error fetching iteration types: ${error.message}`);
+    return {};
+  }
+}
+
 // Create iterations (supports both global and local, with different types)
-async function createIterations(baseURL, token, workspaceMap, iterationsData = iterations) {
+async function createIterations(baseURL, token, workspaceMap, iterationTypeMap = {}, iterationsData = iterations) {
+  // Backwards compatibility for callers using the old signature:
+  // createIterations(baseURL, token, workspaceMap, iterationsData)
+  if (Array.isArray(iterationTypeMap)) {
+    iterationsData = iterationTypeMap;
+    iterationTypeMap = {};
+  }
+
   logSection('Creating Iterations');
 
-  const createdIterations = {};
+  if (Object.keys(iterationTypeMap).length === 0) {
+    iterationTypeMap = await getIterationTypes(baseURL, token);
+  }
 
-  // Map type names to IDs (pre-seeded in database)
-  const typeIds = {
-    'Sprint': 1,
-    'PI / Quarter': 2,
-    'Release': 3
-  };
+  const createdIterations = {};
 
   for (const iteration of iterationsData) {
     // Handle global vs local iterations
@@ -901,7 +988,7 @@ async function createIterations(baseURL, token, workspaceMap, iterationsData = i
         start_date: startDate,
         end_date: endDate,
         status: iteration.status,
-        type_id: typeIds[iteration.type] || 1,
+        type_id: iterationTypeMap[iteration.type] || iterationTypeMap['Sprint'] || null,
         is_global: iteration.is_global || false,
         workspace_id: workspaceId
       };
@@ -925,6 +1012,27 @@ async function createIterations(baseURL, token, workspaceMap, iterationsData = i
   }
 
   return createdIterations;
+}
+
+// Get link types from the API (returns name → id map)
+async function getLinkTypes(baseURL, token) {
+  try {
+    const response = await makeAuthRequest(baseURL, 'GET', '/api/link-types', null, token);
+
+    if (response.status === 200 && Array.isArray(response.data)) {
+      const linkTypes = {};
+      for (const linkType of response.data) {
+        linkTypes[linkType.name] = linkType.id;
+      }
+      return linkTypes;
+    }
+
+    logError(`Failed to fetch link types: ${response.status}`);
+    return {};
+  } catch (error) {
+    logError(`Error fetching link types: ${error.message}`);
+    return {};
+  }
 }
 
 // Get item types from the API
@@ -1128,6 +1236,12 @@ async function createWorkItem(baseURL, token, item, workspaceId, workspaceKey, i
       iteration_id: iterationId,
       custom_field_values: item.custom_fields || {}
     };
+
+    // The Go API decodes due_date as time.Time; send RFC3339 rather than a
+    // bare YYYY-MM-DD so demo data remains valid across both legacy and v1 DTOs.
+    if (item.due_date) {
+      itemData.due_date = item.due_date.includes('T') ? item.due_date : `${item.due_date}T00:00:00Z`;
+    }
 
     const response = await makeAuthRequest(baseURL, 'POST', '/api/items', itemData, token);
 
@@ -1615,8 +1729,14 @@ async function executeTestRuns(baseURL, token, workspaceId, templateMap, itemMap
 }
 
 // Create links between test cases and requirements
-async function createTestCaseLinks(baseURL, token, itemMap, testCaseMap) {
+async function createTestCaseLinks(baseURL, token, itemMap, testCaseMap, linkTypeMap = {}) {
   logSection('Creating Test Case to Requirement Links');
+
+  const testsLinkTypeId = linkTypeMap['Tests'];
+  if (!testsLinkTypeId) {
+    logError('Tests link type not found - skipping test case requirement links');
+    return 0;
+  }
 
   let createdCount = 0;
 
@@ -1640,10 +1760,11 @@ async function createTestCaseLinks(baseURL, token, itemMap, testCaseMap) {
         continue;
       }
 
-      // Create link: test_case (source) → item (target)
-      // This creates a "tests" relationship
+      // Create link: test_case (source) → item (target).
+      // Resolve the system "Tests" link type via the catalog instead of
+      // assuming a database ID; IDs can differ across existing/demo instances.
       const linkData = {
-        link_type_id: 1,  // "Tests" link type
+        link_type_id: testsLinkTypeId,
         source_type: "test_case",
         source_id: testCaseId,
         target_type: "item",
@@ -2118,6 +2239,12 @@ ${colors.reset}`);
 
     // Start server if needed
     if (options.startServer) {
+      if (options.build) {
+        await buildApplication(options);
+      } else {
+        logInfo('Skipping frontend/backend build (--no-build)');
+      }
+
       serverProcess = await startServer(options);
       // Wait a bit for migrations
       await new Promise(resolve => setTimeout(resolve, 2000));
@@ -2132,10 +2259,10 @@ ${colors.reset}`);
       logInfo('Skipping setup (assuming instance is already configured)');
     }
 
-    // Get bearer token
-    const token = await getBearerToken(options.baseURL, options);
+    // Login once and use the session cookie for the cookie-auth `/api/*` routes.
+    const token = await getSessionCookie(options.baseURL, options);
     if (!token) {
-      throw new Error('Failed to get bearer token');
+      throw new Error('Failed to get session cookie');
     }
 
     // Create all demo content (merge with challenge data if enabled)
@@ -2148,9 +2275,11 @@ ${colors.reset}`);
     const priorityMap = await createPriorities(options.baseURL, token);
     const categoryMap = await createMilestoneCategories(options.baseURL, token);
     const milestoneMap = await createMilestones(options.baseURL, token, workspaceMap, categoryMap, getMergedData(milestones, 'challengeMilestones', 'scaleMilestones'));
-    const iterationMap = await createIterations(options.baseURL, token, workspaceMap, getMergedData(iterations, 'challengeIterations', 'scaleIterations'));
+    const iterationTypeMap = await getIterationTypes(options.baseURL, token);
+    const iterationMap = await createIterations(options.baseURL, token, workspaceMap, iterationTypeMap, getMergedData(iterations, 'challengeIterations', 'scaleIterations'));
     const itemTypes = await getItemTypes(options.baseURL, token);
     const statusMap = await getStatuses(options.baseURL, token);
+    const linkTypeMap = await getLinkTypes(options.baseURL, token);
     const itemMap = await createWorkItems(options.baseURL, token, workspaceMap, projectMap, priorityMap, itemTypes, milestoneMap, iterationMap, statusMap, getMergedData(workItems, 'challengeWorkItems', 'scaleWorkItems'));
     const worklogCount = await createWorkLogs(options.baseURL, token, itemMap, projectMap);
 
@@ -2180,7 +2309,7 @@ ${colors.reset}`);
       testSetMap = await createTestSets(options.baseURL, token, softwareDevWorkspaceId, milestoneMap, testCaseMap, labelMap);
       templateMap = await createTestRunTemplates(options.baseURL, token, softwareDevWorkspaceId, testSetMap);
       testRunMap = await executeTestRuns(options.baseURL, token, softwareDevWorkspaceId, templateMap, itemMap);
-      linkCount = await createTestCaseLinks(options.baseURL, token, itemMap, testCaseMap);
+      linkCount = await createTestCaseLinks(options.baseURL, token, itemMap, testCaseMap, linkTypeMap);
     }
 
     // Asset Management
@@ -2277,7 +2406,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 // Export for use as module
 export {
   makeRequest,
+  buildApplication,
   completeSetup,
+  getSessionCookie,
   getBearerToken,
   createUsers,
   createWorkspaces,
@@ -2286,8 +2417,10 @@ export {
   createScreens,
   createPriorities,
   createMilestones,
+  getIterationTypes,
   createIterations,
   getStatuses,
+  getLinkTypes,
   createWorkItems,
   createComments,
   createPersonalTasks,

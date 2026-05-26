@@ -2,6 +2,7 @@ package aitools
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -158,9 +159,10 @@ func init() {
 				}
 				accessParts = append(accessParts, fmt.Sprintf("m.workspace_id IN (%s)", strings.Join(ph, ",")))
 			}
-			if len(accessParts) > 0 {
-				query += " AND (" + strings.Join(accessParts, " OR ") + ")"
+			if len(accessParts) == 0 {
+				return listMilestonesOut{Milestones: []milestoneDTO{}}, nil
 			}
+			query += " AND (" + strings.Join(accessParts, " OR ") + ")"
 			if args.Status != "" {
 				query += " AND m.status = ?"
 				qa = append(qa, args.Status)
@@ -227,9 +229,10 @@ func init() {
 				}
 				accessParts = append(accessParts, fmt.Sprintf("iter.workspace_id IN (%s)", strings.Join(ph, ",")))
 			}
-			if len(accessParts) > 0 {
-				query += " AND (" + strings.Join(accessParts, " OR ") + ")"
+			if len(accessParts) == 0 {
+				return listIterationsOut{Iterations: []iterationDTO{}}, nil
 			}
+			query += " AND (" + strings.Join(accessParts, " OR ") + ")"
 			if args.Status != "" {
 				query += " AND iter.status = ?"
 				qa = append(qa, args.Status)
@@ -243,8 +246,15 @@ func init() {
 			out := listIterationsOut{Iterations: []iterationDTO{}}
 			for rows.Next() {
 				var it iterationDTO
-				if err := rows.Scan(&it.ID, &it.Name, &it.Description, &it.Status, &it.StartDate, &it.EndDate, &it.TypeName, &it.WorkspaceID, &it.WorkspaceName); err != nil {
+				var startDate, endDate sql.NullString
+				if err := rows.Scan(&it.ID, &it.Name, &it.Description, &it.Status, &startDate, &endDate, &it.TypeName, &it.WorkspaceID, &it.WorkspaceName); err != nil {
 					continue
+				}
+				if startDate.Valid {
+					it.StartDate = startDate.String
+				}
+				if endDate.Valid {
+					it.EndDate = endDate.String
 				}
 				out.Iterations = append(out.Iterations, it)
 			}

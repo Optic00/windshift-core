@@ -385,11 +385,12 @@ type ActiveTimer struct {
 	StartTimeUTC int64  `json:"start_time_utc"` // Unix timestamp in UTC
 	CreatedAt    int64  `json:"created_at"`     // Unix timestamp
 	// Joined fields for API responses - nullable since they come from LEFT JOINs
-	ProjectName   *string `json:"project_name,omitempty"`
-	CustomerName  *string `json:"customer_name,omitempty"`
-	ItemTitle     *string `json:"item_title,omitempty"`
-	WorkspaceName *string `json:"workspace_name,omitempty"`
-	WorkspaceKey  *string `json:"workspace_key,omitempty"`
+	ProjectName         *string `json:"project_name,omitempty"`
+	CustomerName        *string `json:"customer_name,omitempty"`
+	ItemTitle           *string `json:"item_title,omitempty"`
+	WorkspaceName       *string `json:"workspace_name,omitempty"`
+	WorkspaceKey        *string `json:"workspace_key,omitempty"`
+	WorkspaceItemNumber *int    `json:"workspace_item_number,omitempty"`
 }
 
 // Review System Models

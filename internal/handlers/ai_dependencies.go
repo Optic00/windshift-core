@@ -540,18 +540,45 @@ func buildChatContextHint(ctx *ChatContext) string {
 	if ctx.View == "workspace-actions" {
 		if ctx.ActionID > 0 {
 			return fmt.Sprintf(
-				"\n\nThe user is currently editing action %d in workspace %d. Workflow: (1) call get_action with workspace_id=%d, action_id=%d to read the current graph; (2) call describe_action_catalog with workspace_id=%d if you need to recall node configs; (3) compose the full replacement graph and call update_action — the editor live-reloads on success. Optionally validate non-trivial changes with validate_action before the write. update_action is a full replace (not a patch), so you must include every node and edge you want to keep.",
+				"\n\nThe user is currently editing action %d in workspace %d. Workflow: (1) call get_action with workspace_id=%d, action_id=%d to read the current graph; (2) call describe_action_catalog with workspace_id=%d if you need to recall node configs; (3) compose the full replacement graph and call update_action — the editor live-reloads on success. Optionally validate non-trivial changes with validate_action before the write. update_action is a full replace (not a patch), so you must include every node and edge you want to keep. After update_action succeeds, do not call it again; summarize the completed change to the user.",
 				ctx.ActionID, ctx.WorkspaceID, ctx.WorkspaceID, ctx.ActionID, ctx.WorkspaceID,
 			)
 		}
 		if ctx.WorkspaceID > 0 {
 			return fmt.Sprintf(
-				"\n\nThe user is on the action settings page for workspace %d. If they ask you to build an automation, use describe_action_catalog to discover available triggers and nodes, list_action_templates for shipped blueprints, then create_action to persist a new automation in this workspace.",
+				"\n\nThe user is on the action settings page for workspace %d. If they ask you to build an automation, use describe_action_catalog to discover available triggers and nodes, list_action_templates for shipped blueprints, then create_action to persist a new automation in this workspace. After create_action succeeds, do not call it again; summarize the created automation to the user.",
 				ctx.WorkspaceID,
 			)
 		}
 	}
 	return ""
+}
+
+func chatTerminalTools() map[string]bool {
+	return map[string]bool{
+		"add_comment":            true,
+		"archive_page":           true,
+		"create_action":          true,
+		"create_diagram":         true,
+		"create_item":            true,
+		"create_page":            true,
+		"delete_diagram":         true,
+		"delete_item":            true,
+		"grant_page_permission":  true,
+		"log_time":               true,
+		"move_page":              true,
+		"restore_page_revision":  true,
+		"revoke_page_permission": true,
+		"set_item_labels":        true,
+		"set_page_inheritance":   true,
+		"start_timer":            true,
+		"stop_timer":             true,
+		"transition_item":        true,
+		"update_action":          true,
+		"update_diagram":         true,
+		"update_item":            true,
+		"update_page":            true,
+	}
 }
 
 // ChatResponse is the response from the agentic chat endpoint.
@@ -623,6 +650,7 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		MaxTokens:     2048,
 		Temperature:   0.1,
 		MaxIterations: 12,
+		TerminalTools: chatTerminalTools(),
 	}, req.Message, executor.Execute, history)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "chat agent run failed",

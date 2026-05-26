@@ -1,6 +1,7 @@
 package aitools
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -150,6 +151,61 @@ func (a actionDefinitionArg) toDefinition() actioncatalog.ActionDefinition {
 	}
 }
 
+func compactJSONForCompare(s string) string {
+	if s == "" {
+		return ""
+	}
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, []byte(s)); err != nil {
+		return s
+	}
+	return buf.String()
+}
+
+func actionDefinitionMatches(def actioncatalog.ActionDefinition, existing *models.Action) bool {
+	if existing == nil || existing.Name != def.Name || existing.Description != def.Description ||
+		existing.TriggerType != def.TriggerType || compactJSONForCompare(existing.TriggerConfig) != compactJSONForCompare(def.TriggerConfig) ||
+		len(existing.Nodes) != len(def.Nodes) || len(existing.Edges) != len(def.Edges) {
+		return false
+	}
+	idMap := map[int]int{}
+	for i, n := range def.Nodes {
+		existingNode := existing.Nodes[i]
+		if existingNode.NodeType != n.NodeType || compactJSONForCompare(existingNode.NodeConfig) != compactJSONForCompare(n.NodeConfig) ||
+			existingNode.PositionX != n.PositionX || existingNode.PositionY != n.PositionY {
+			return false
+		}
+		idMap[n.ID] = existingNode.ID
+	}
+	for i, e := range def.Edges {
+		existingEdge := existing.Edges[i]
+		if existingEdge.SourceNodeID != idMap[e.SourceNodeID] || existingEdge.TargetNodeID != idMap[e.TargetNodeID] || existingEdge.EdgeType != e.EdgeType {
+			return false
+		}
+	}
+	return true
+}
+
+func findExistingEquivalentAction(repo *repository.ActionRepository, workspaceID int, def actioncatalog.ActionDefinition, createdBy int) (*models.Action, error) {
+	actions, err := repo.ListByWorkspace(workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	for _, candidate := range actions {
+		if candidate.CreatedBy == nil || *candidate.CreatedBy != createdBy || candidate.Name != def.Name || candidate.TriggerType != def.TriggerType {
+			continue
+		}
+		full, err := repo.GetByID(candidate.ID)
+		if err != nil {
+			continue
+		}
+		if actionDefinitionMatches(def, full) {
+			return full, nil
+		}
+	}
+	return nil, nil
+}
+
 // capabilityResolverForEnv reuses the ActionRepository to check capability
 // scope. Wrapped so the validator can stay decoupled from the repository
 // type.
@@ -160,6 +216,15 @@ type capabilityResolverForEnv struct {
 func (c capabilityResolverForEnv) HasCapability(workspaceID, capabilityID int) bool {
 	capability, err := c.repo.GetCapabilityByID(capabilityID)
 	if err != nil || capability == nil || !capability.IsEnabled {
+		return false
+	}
+	scoped, err := c.repo.IsCapabilityScopedToWorkspace(capabilityID, workspaceID)
+	return err == nil && scoped
+}
+
+func (c capabilityResolverForEnv) HasCapabilityOfType(workspaceID, capabilityID int, capabilityType models.CapabilityType) bool {
+	capability, err := c.repo.GetCapabilityByID(capabilityID)
+	if err != nil || capability == nil || !capability.IsEnabled || capability.CapabilityType != capabilityType {
 		return false
 	}
 	scoped, err := c.repo.IsCapabilityScopedToWorkspace(capabilityID, workspaceID)
@@ -376,6 +441,21 @@ func init() {
 			resolver := capabilityResolverForEnv{repo: repo}
 			if errs := actioncatalog.Validate(actioncatalog.Default(), def, args.WorkspaceID, resolver); len(errs) > 0 {
 				return map[string]any{"error": errs[0].Message, "validation_errors": errs}, nil
+			}
+			if existing, err := findExistingEquivalentAction(repo, args.WorkspaceID, def, env.UserID); err != nil {
+				return nil, fmt.Errorf("check duplicate action: %w", err)
+			} else if existing != nil {
+				return createActionOut{
+					ID:            existing.ID,
+					WorkspaceID:   existing.WorkspaceID,
+					Name:          existing.Name,
+					Description:   existing.Description,
+					IsEnabled:     existing.IsEnabled,
+					TriggerType:   existing.TriggerType,
+					TriggerConfig: existing.TriggerConfig,
+					NodeCount:     len(existing.Nodes),
+					EdgeCount:     len(existing.Edges),
+				}, nil
 			}
 
 			action := &models.Action{

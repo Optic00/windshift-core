@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -16,6 +17,15 @@ type AgentConfig struct {
 	Timeout       time.Duration
 	MaxTokens     int
 	Temperature   float64
+	// TerminalTools are side-effecting tools after which the agent should make
+	// one final no-tools model call to summarize the completed mutation instead
+	// of allowing another tool round. Exact duplicate successful terminal tool
+	// calls within the same run are also suppressed to avoid repeated side
+	// effects from weaker models that get stuck calling the same function.
+	TerminalTools map[string]bool
+	// TerminalToolFunc is an optional dynamic predicate for tools whose
+	// mutating/read-only nature depends on arguments (for example HTTP method).
+	TerminalToolFunc func(name string, arguments string) bool
 }
 
 // ToolExecutorFunc executes a tool call and returns the result as a string.
@@ -73,12 +83,21 @@ func RunAgent(ctx context.Context, client Client, cfg AgentConfig, userMessage s
 
 	var allToolCalls []ToolCallRecord
 	var totalUsage Usage
+	terminalResults := map[string]string{}
+	forceFinalWithoutTools := false
 
 	for i := 0; i < maxIter; i++ {
+		tools := cfg.Tools
+		var toolChoice interface{} = "auto"
+		if forceFinalWithoutTools {
+			tools = nil
+			toolChoice = nil
+		}
+
 		resp, err := client.ChatCompletion(ctx, ChatCompletionRequest{
 			Messages:    messages,
-			Tools:       cfg.Tools,
-			ToolChoice:  "auto",
+			Tools:       tools,
+			ToolChoice:  toolChoice,
 			MaxTokens:   cfg.MaxTokens,
 			Temperature: cfg.Temperature,
 		})
@@ -118,12 +137,47 @@ func RunAgent(ctx context.Context, client Client, cfg AgentConfig, userMessage s
 		// Append the assistant message (with tool_calls) to history
 		messages = append(messages, choice.Message)
 
-		// Execute each tool call
+		// Execute each tool call. Once a terminal side-effect succeeds, suppress
+		// the remainder of this assistant batch: some weaker models emit several
+		// mutating calls in one response, and waiting until the next iteration to
+		// disable tools is too late for those calls.
+		terminalCompletedThisTurn := false
 		for _, tc := range choice.Message.ToolCalls {
 			start := time.Now()
-			result, execErr := executeTool(ctx, tc.Function.Name, tc.Function.Arguments)
+			isTerminalTool := cfg.TerminalTools != nil && cfg.TerminalTools[tc.Function.Name]
+			if !isTerminalTool && cfg.TerminalToolFunc != nil {
+				isTerminalTool = cfg.TerminalToolFunc(tc.Function.Name, tc.Function.Arguments)
+			}
+			terminalKey := ""
+			if isTerminalTool {
+				terminalKey = toolCallDedupeKey(tc.Function.Name, tc.Function.Arguments)
+			}
+
+			var result string
+			var execErr error
+			duplicateSuppressed := false
+			afterTerminalSuppressed := false
+			switch {
+			case terminalCompletedThisTurn:
+				result = skippedAfterTerminalToolResult(tc.Function.Name)
+				afterTerminalSuppressed = true
+			case isTerminalTool:
+				if previous, ok := terminalResults[terminalKey]; ok {
+					result = duplicateTerminalToolResult(tc.Function.Name, previous)
+					duplicateSuppressed = true
+				} else {
+					result, execErr = executeTool(ctx, tc.Function.Name, tc.Function.Arguments)
+				}
+			default:
+				result, execErr = executeTool(ctx, tc.Function.Name, tc.Function.Arguments)
+			}
 			if execErr != nil {
 				result = fmt.Sprintf(`{"error": "%s"}`, execErr.Error()) //nolint:gocritic // JSON string, not Go quoting
+			}
+			if isTerminalTool && !duplicateSuppressed && !afterTerminalSuppressed && execErr == nil && !toolReturnedError(result) {
+				terminalResults[terminalKey] = result
+				forceFinalWithoutTools = true
+				terminalCompletedThisTurn = true
 			}
 			slog.Info("agent tool call",
 				slog.Int("iteration", i+1),
@@ -133,6 +187,9 @@ func RunAgent(ctx context.Context, client Client, cfg AgentConfig, userMessage s
 				slog.Duration("duration", time.Since(start)),
 				slog.Bool("exec_error", execErr != nil),
 				slog.Bool("tool_returned_error", toolReturnedError(result)),
+				slog.Bool("terminal_tool", isTerminalTool),
+				slog.Bool("duplicate_suppressed", duplicateSuppressed),
+				slog.Bool("after_terminal_suppressed", afterTerminalSuppressed),
 			)
 
 			allToolCalls = append(allToolCalls, ToolCallRecord{
@@ -154,6 +211,27 @@ func RunAgent(ctx context.Context, client Client, cfg AgentConfig, userMessage s
 				Name:       tc.Function.Name,
 			})
 		}
+	}
+
+	if forceFinalWithoutTools {
+		// A terminal mutation succeeded on the final allowed iteration. Do not
+		// report a max-iterations failure that might invite the user/model to
+		// retry and duplicate the side effect.
+		slog.Info("agent loop finished after terminal tool without summary",
+			slog.String("stop_reason", string(StopReasonDone)),
+			slog.Int("iterations", maxIter),
+			slog.Int("max_iterations", maxIter),
+			slog.Int("tool_calls", len(allToolCalls)),
+			slog.Int("total_tokens", totalUsage.TotalTokens),
+		)
+		return &AgentResult{
+			Answer:     "The requested action completed successfully.",
+			ToolCalls:  allToolCalls,
+			Iterations: maxIter,
+			MaxIter:    maxIter,
+			StopReason: StopReasonDone,
+			Usage:      totalUsage,
+		}, nil
 	}
 
 	// Max iterations reached — return whatever we have. Callers should
@@ -192,10 +270,64 @@ func wrapUntrustedToolResult(toolName, payload string) string {
 	return fmt.Sprintf(`<tool_result name=%q trust="untrusted">%s</tool_result>`, toolName, payload)
 }
 
+func toolCallDedupeKey(name, arguments string) string {
+	trimmed := strings.TrimSpace(arguments)
+	var parsed any
+	if trimmed != "" && json.Unmarshal([]byte(trimmed), &parsed) == nil {
+		if canonical, err := json.Marshal(parsed); err == nil {
+			trimmed = string(canonical)
+		}
+	}
+	return name + "\x00" + trimmed
+}
+
+func duplicateTerminalToolResult(toolName, previous string) string {
+	previousJSON := json.RawMessage(previous)
+	if !json.Valid(previousJSON) {
+		encoded, _ := json.Marshal(previous)
+		previousJSON = encoded
+	}
+	payload := struct {
+		Skipped        bool            `json:"skipped"`
+		Tool           string          `json:"tool"`
+		Reason         string          `json:"reason"`
+		PreviousResult json.RawMessage `json:"previous_result"`
+	}{
+		Skipped:        true,
+		Tool:           toolName,
+		Reason:         "duplicate terminal tool call suppressed; the previous successful result is reused",
+		PreviousResult: previousJSON,
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return `{"skipped":true,"reason":"duplicate terminal tool call suppressed"}`
+	}
+	return string(b)
+}
+
+func skippedAfterTerminalToolResult(toolName string) string {
+	payload := struct {
+		Skipped bool   `json:"skipped"`
+		Tool    string `json:"tool"`
+		Reason  string `json:"reason"`
+	}{
+		Skipped: true,
+		Tool:    toolName,
+		Reason:  "tool call suppressed because a terminal side-effect already completed in this turn",
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return `{"skipped":true,"reason":"tool call suppressed after terminal side-effect"}`
+	}
+	return string(b)
+}
+
 // toolReturnedError is a best-effort check for the "soft error" convention
 // used by the aitools registry: a tool returns success at the Go level but
 // signals a user-facing problem by setting an "error" field on its JSON
-// result. Used only for logging — never for control flow.
+// result. This intentionally stays conservative: false negatives may allow a
+// final no-tools summary after an unusual error shape, but false positives
+// would keep the loop open and could permit repeated side effects.
 func toolReturnedError(result string) bool {
 	// Avoid pulling in encoding/json for a single substring probe on the
 	// hot path. The convention is `{"error":` (optionally preceded by

@@ -102,8 +102,10 @@ For development and testing, you can run the demo content generator directly wit
 
 ## Prerequisites
 
-1. **Node.js** (v18 or higher)
-2. **Server binary** built: `go build -o windshift`
+1. **Node.js** (v22 or higher; matches `frontend/package.json`)
+2. **Go** toolchain
+
+`generate-demo.js` builds the frontend first, then builds the Go backend so the binary embeds the current `frontend/dist/index.html`.
 
 ## Quick Start
 
@@ -113,11 +115,13 @@ node generate-demo.js
 ```
 
 This will:
-1. Create a new `demo.db` database
-2. Start server on port 8080
-3. Complete initial setup
-4. Generate all demo content
-5. Keep the server running
+1. Build the frontend (`npm run build`)
+2. Build the backend binary with the freshly embedded frontend
+3. Create a new `demo.db` database
+4. Start server on port 8080
+5. Complete initial setup
+6. Generate all demo content
+7. Keep the server running
 
 ## Usage Options
 
@@ -134,8 +138,11 @@ node generate-demo.js --no-server --base-url http://localhost:8080
 # Stop server after generation
 node generate-demo.js --stop-server
 
-# Custom binary path
+# Custom binary output path (the script builds this binary before running it)
 node generate-demo.js --binary /path/to/windshift
+
+# Use an already-built binary without rebuilding
+node generate-demo.js --no-build --binary /path/to/windshift
 
 # Help
 node generate-demo.js --help
@@ -198,9 +205,10 @@ Edit `demo-data.js` to customize workspaces, users, and work items.
 This is expected. Caddy generates a self-signed certificate for local development. Click "Advanced" and proceed.
 
 ### Binary Not Found
-Build the binary first:
+By default the generator builds the binary before starting the server. If you passed `--no-build`, either remove it or build manually after building the frontend:
 ```bash
-go build -o windshift
+cd frontend && npm run build
+cd .. && go build -tags '!test' -ldflags '-s -w' -o windshift .
 ```
 
 ### Server Startup Timeout

@@ -85,6 +85,15 @@ func (h *ActionsHandler) HasCapability(workspaceID, capabilityID int) bool {
 	return err == nil && scoped
 }
 
+func (h *ActionsHandler) HasCapabilityOfType(workspaceID, capabilityID int, capabilityType models.CapabilityType) bool {
+	capability, err := h.repo.GetCapabilityByID(capabilityID)
+	if err != nil || capability == nil || !capability.IsEnabled || capability.CapabilityType != capabilityType {
+		return false
+	}
+	scoped, err := h.repo.IsCapabilityScopedToWorkspace(capabilityID, workspaceID)
+	return err == nil && scoped
+}
+
 // validateActionDefinition runs the unified actioncatalog validator and
 // responds with a structured 400 if any errors were found. Returns true
 // when the action is safe to persist. The legacy surface emits the first

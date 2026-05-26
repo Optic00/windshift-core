@@ -2544,10 +2544,11 @@ func (as *ActionService) executeAIAgent(node *models.ActionNode, ctx *models.Exe
 	}
 	userMessage := strings.Join(inputParts, "\n\n")
 
-	// Substitute variables in the author-provided system prompt and prepend
-	// the untrusted-input guardrail so action authors don't need to remember
-	// to include it themselves.
-	systemPrompt := aiAgentUntrustedInputGuardrail + "\n\n" + as.substituteVariables(config.Prompt, ctx)
+	// Prepend the untrusted-input guardrail so action authors don't need to
+	// remember to include it themselves. Do not substitute execution variables
+	// into the system prompt: item/comment/HTTP fields are untrusted and must
+	// stay in the wrapped user-message input fields, not be promoted to system.
+	systemPrompt := aiAgentUntrustedInputGuardrail + "\n\n" + config.Prompt
 
 	// Build tool definitions from referenced capabilities. Each tool capability
 	// is workspace-scoped — capabilities not available to the action's workspace
@@ -2576,10 +2577,11 @@ func (as *ActionService) executeAIAgent(node *models.ActionNode, ctx *models.Exe
 		context.Background(),
 		client,
 		llm.AgentConfig{
-			SystemPrompt:  systemPrompt,
-			Tools:         tools,
-			MaxIterations: maxSteps,
-			Timeout:       time.Duration(maxSteps*30) * time.Second,
+			SystemPrompt:     systemPrompt,
+			Tools:            tools,
+			MaxIterations:    maxSteps,
+			Timeout:          time.Duration(maxSteps*30) * time.Second,
+			TerminalToolFunc: isMutatingAgentHTTPToolCall,
 		},
 		userMessage,
 		toolExecutor,
@@ -2721,6 +2723,10 @@ func (as *ActionService) executeAgentHTTPRequest(ctx context.Context, workspaceI
 	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
 		return "", fmt.Errorf("failed to parse arguments: %w", err)
 	}
+	method, err := normalizeAgentHTTPMethod(args.Method)
+	if err != nil {
+		return "", err
+	}
 
 	// Validate URL against allowed patterns
 	if !isURLAllowed(args.URL, httpConfig.AllowedURLPatterns) {
@@ -2731,7 +2737,31 @@ func (as *ActionService) executeAgentHTTPRequest(ctx context.Context, workspaceI
 	if err != nil {
 		return "", err
 	}
-	return doHTTPRequest(ctx, args.Method, args.URL, args.Body, mergedHeaders, nil, httpConfig.TimeoutSecs, httpConfig.AllowedURLPatterns)
+	return doHTTPRequest(ctx, method, args.URL, args.Body, mergedHeaders, nil, httpConfig.TimeoutSecs, httpConfig.AllowedURLPatterns)
+}
+
+func normalizeAgentHTTPMethod(method string) (string, error) {
+	method = strings.ToUpper(strings.TrimSpace(method))
+	switch method {
+	case "GET", "POST", "PUT", "DELETE", "PATCH":
+		return method, nil
+	default:
+		return "", fmt.Errorf("unsupported HTTP method %q", method)
+	}
+}
+
+func isMutatingAgentHTTPToolCall(name, arguments string) bool {
+	if !strings.HasPrefix(name, "http_request_") {
+		return false
+	}
+	var args struct {
+		Method string `json:"method"`
+	}
+	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+		return false
+	}
+	method, err := normalizeAgentHTTPMethod(args.Method)
+	return err == nil && method != "GET"
 }
 
 // executeContainerRun executes a container_run node.

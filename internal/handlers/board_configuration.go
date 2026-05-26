@@ -151,8 +151,6 @@ func (h *BoardConfigurationHandler) checkWorkspacePerm(w http.ResponseWriter, r 
 func (h *BoardConfigurationHandler) GetByCollection(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
-	slog.Info("getting board configuration", "id", id, "workspace_id", r.URL.Query().Get("workspace_id"))
-
 	var config models.BoardConfiguration
 	var err error
 
