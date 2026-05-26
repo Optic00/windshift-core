@@ -416,6 +416,15 @@
     }, 0);
   }
 
+  const SYSTEM_FIELD_ALIASES = {
+    estimate: ['estimate', 'estimate_minutes'],
+    estimate_minutes: ['estimate', 'estimate_minutes'],
+  };
+
+  function systemFieldIdentifiers(fieldName) {
+    return SYSTEM_FIELD_ALIASES[fieldName] || [fieldName];
+  }
+
   // Helper to check if a system field should be shown
   function shouldShowSystemField(fieldName) {
     // If no system fields are configured, show all fields (default behavior)
@@ -423,7 +432,9 @@
       return true;
     }
     // Otherwise, only show if the field is in the configured list
-    return workspaceScreenSystemFields.includes(fieldName);
+    return systemFieldIdentifiers(fieldName).some((identifier) =>
+      workspaceScreenSystemFields.includes(identifier)
+    );
   }
 
   // When the workspace has separate Edit and View screens, fields on the
@@ -432,7 +443,9 @@
   // compatible: every visible field is editable).
   function isSystemFieldEditable(fieldName) {
     if (!editableScreenSystemFields) return true;
-    return editableScreenSystemFields.has(fieldName);
+    return systemFieldIdentifiers(fieldName).some((identifier) =>
+      editableScreenSystemFields.has(identifier)
+    );
   }
   function isCustomFieldEditable(fieldId) {
     if (!editableScreenFieldIds) return true;

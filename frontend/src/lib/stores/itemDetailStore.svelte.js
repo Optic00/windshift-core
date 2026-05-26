@@ -726,6 +726,13 @@ class ItemDetailStore {
         }
         updateData.story_points = newPoints;
         this.item = { ...this.item, story_points: newPoints };
+      } else if (field === 'estimate_minutes' || field === 'estimate') {
+        const newEstimate = directValue !== undefined ? directValue : null;
+        if (newEstimate === (this.item.estimate_minutes ?? null)) {
+          return;
+        }
+        updateData.estimate_minutes = newEstimate;
+        this.item = { ...this.item, estimate_minutes: newEstimate };
       } else if (field === 'iteration') {
         const newIteration = directValue !== null ? directValue : null;
         if (newIteration === this.item.iteration_id) {

@@ -57,14 +57,20 @@
     if (readonly) return;
     onEdit();
   }
+
+  function handleKeydown(event) {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    handleClick();
+  }
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
 <figure class="excalidraw-block" class:readonly>
   <div
     class="excalidraw-block__canvas"
     bind:this={svgHost}
     onclick={handleClick}
+    onkeydown={handleKeydown}
     role="button"
     tabindex={readonly ? -1 : 0}
     aria-label={name || t('editors.diagramOpen')}
