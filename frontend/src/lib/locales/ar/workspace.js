@@ -152,7 +152,7 @@ export default {
     logged: 'مُسجَّل',
     loggedOf: 'من أصل',
     estimated: 'مُقدَّر',
-    includeSubItems: 'تضمين العناصر الفرعية',
+    includeChildItems: 'تضمين العناصر الفرعية',
     rollupTruncated: 'مقيد بأول {max} عنصر فرعي',
     rollupItemCount_one: 'مُجمَّع عبر {count} عنصر',
     rollupItemCount_other: 'مُجمَّع عبر {count} عنصرًا',

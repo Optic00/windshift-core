@@ -112,10 +112,10 @@ class ItemDetailStore {
   customers = $state([]);
   workItems = $state([]);
   workspaces = $state([]);
-  // Sub-item rollup for the Time Tracking tab "Include sub-items" toggle.
+  // Child-item rollup for the Time Tracking tab "Include child items" toggle.
   // timeRollup is null until the user opts in; it caches the API response
   // for the current item view so toggling on/off doesn't refetch.
-  includeSubItems = $state(false);
+  includeChildItems = $state(false);
   timeRollup = $state(null);
   timeRollupLoading = $state(false);
 
@@ -362,7 +362,7 @@ class ItemDetailStore {
     }
     // Logging time also changes the rollup totals; refresh in the background
     // if the user has it visible.
-    if (this.includeSubItems) {
+    if (this.includeChildItems) {
       this.loadTimeRollup({ force: true });
     }
   }
@@ -1104,7 +1104,7 @@ class ItemDetailStore {
     this.loadingWatchStatus = false;
     this.timeProjects = [];
     this.timeWorklogs = [];
-    this.includeSubItems = false;
+    this.includeChildItems = false;
     this.timeRollup = null;
     this.timeRollupLoading = false;
     this.customers = [];

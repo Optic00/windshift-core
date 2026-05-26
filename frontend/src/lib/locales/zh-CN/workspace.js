@@ -139,7 +139,7 @@ export default {
     logged: '已记录',
     loggedOf: '已记录，共',
     estimated: '预估',
-    includeSubItems: '包含子事项',
+    includeChildItems: '包含子事项',
     rollupTruncated: '仅统计前 {max} 个子事项',
     rollupItemCount_one: '汇总自 {count} 个事项',
     rollupItemCount_other: '汇总自 {count} 个事项',

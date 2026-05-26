@@ -134,7 +134,7 @@ func (h *ItemHandler) GetDescendantsNew(w http.ResponseWriter, r *http.Request) 
 
 // GetTimeRollup returns the aggregated estimate + logged minutes for an item
 // and its descendants (subtree). Used by the item detail Time Tracking tab's
-// "Include sub-items" toggle.
+// "Include child items" toggle.
 //
 // Query params:
 //   - max_depth: optional, defaults to 10, clamped to [1, 30].
