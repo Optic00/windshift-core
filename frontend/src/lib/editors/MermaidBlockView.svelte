@@ -72,12 +72,6 @@
       const { svg } = await mermaid.render(nextMermaidId(), text);
       if (!host) return;
       host.innerHTML = svg;
-      const rendered = host.querySelector('svg');
-      if (rendered) {
-        rendered.removeAttribute('height');
-        rendered.style.maxWidth = '100%';
-        rendered.style.height = 'auto';
-      }
       status = 'ready';
     } catch (err) {
       console.warn('Mermaid render failed', err);
