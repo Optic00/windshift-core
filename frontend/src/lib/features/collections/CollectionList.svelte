@@ -93,20 +93,34 @@
   );
 
   // Computed: Generate grid-template-columns CSS
-  const fixedColumnWidths = {
-    key: 'max-content',
-    status: '8rem',
-    priority: '7rem',
-    assignee: '9rem',
-    milestone: '12rem',
-    iteration: '9rem',
-    due_date: '7rem',
-    created_at: '7rem',
-    project: '9rem',
+  // Per-column baselines (rem) — what "M" looks like today.
+  // S/L/XL scale around this so the size picker has visible effect.
+  const baseFixedWidths = {
+    status: 8,
+    priority: 7,
+    assignee: 9,
+    milestone: 12,
+    iteration: 9,
+    due_date: 7,
+    created_at: 7,
+    project: 9,
   };
 
+  // width values: 1=S, 2=M, 3=L, 4=XL
+  const widthScale = { 1: 0.75, 2: 1, 3: 1.5, 4: 2 };
+
+  function columnTrack(col) {
+    if (col.field_identifier === 'key') return 'max-content';
+    const base = baseFixedWidths[col.field_identifier];
+    if (base !== undefined) {
+      const scale = widthScale[col.width] ?? 1;
+      return `${base * scale}rem`;
+    }
+    return `${col.width}fr`;
+  }
+
   let gridTemplateColumns = $derived(
-    listColumns.map(col => fixedColumnWidths[col.field_identifier] ?? `${col.width}fr`).join(' ') + ' auto'
+    listColumns.map(columnTrack).join(' ') + ' auto'
   );
 
 
