@@ -312,7 +312,7 @@ export default {
     showingRootItems: '显示 {start}-{end} / {total} 个根事项',
     page: '页',
     pageOfTotal: '第 {current} 页 / 共 {total} 页',
-    issue: '问题',
+    itemKey: '事项键',
     noStatus: '无状态',
     workspaceNotFound: '未找到工作区。',
   },

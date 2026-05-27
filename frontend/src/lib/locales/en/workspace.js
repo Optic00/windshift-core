@@ -355,7 +355,7 @@ export default {
     showingRootItems: 'Showing {start}-{end} of {total} root items',
     page: 'Page',
     pageOfTotal: 'Page {current} of {total}',
-    issue: 'Issue',
+    itemKey: 'Item Key',
     noStatus: 'No status',
     workspaceNotFound: 'Workspace not found.',
   },

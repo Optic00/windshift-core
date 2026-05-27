@@ -465,7 +465,7 @@
           <!-- Table Header -->
           <TableHeaderBar columns="3rem 6rem 1fr 6rem 5rem 5rem">
             <div></div>
-            <div>{t('collectionTree.issue')}</div>
+            <div>{t('collectionTree.itemKey')}</div>
             <div>{t('common.summary')}</div>
             <div>{t('common.status')}</div>
             <div>{t('common.priority')}</div>

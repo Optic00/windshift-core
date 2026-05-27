@@ -2,7 +2,7 @@ package models
 
 import "time"
 
-// Item represents a work item (formerly Issue) with hierarchical support
+// Item represents a unit of work with hierarchical support.
 type Item struct {
 	ID                  int        `json:"id"`
 	WorkspaceID         int        `json:"workspace_id"`

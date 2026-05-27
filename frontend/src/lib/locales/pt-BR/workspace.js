@@ -321,7 +321,7 @@ export default {
     showingRootItems: 'Exibindo {start}-{end} de {total} itens raiz',
     page: 'Página',
     pageOfTotal: 'Página {current} de {total}',
-    issue: 'Issue',
+    itemKey: 'Chave do item',
     noStatus: 'Sem status',
     workspaceNotFound: 'Workspace não encontrado.',
   },

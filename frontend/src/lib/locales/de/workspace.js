@@ -312,7 +312,7 @@ export default {
     showingRootItems: 'Zeige {start}-{end} von {total} Wurzelelementen',
     page: 'Seite',
     pageOfTotal: 'Seite {current} von {total}',
-    issue: 'Vorgang',
+    itemKey: 'Vorgangsschlüssel',
     noStatus: 'Kein Status',
     workspaceNotFound: 'Arbeitsbereich nicht gefunden.',
   },

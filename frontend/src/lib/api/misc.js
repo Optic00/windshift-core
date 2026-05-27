@@ -4,18 +4,7 @@ import { createCrudClient } from './createCrudClient.js';
 export const projects = {
   ...createCrudClient('/projects'),
   getByWorkspace: (workspaceId) => fetchAPI(`/projects?workspace_id=${workspaceId}`),
-  getIssues: (id) => fetchAPI(`/projects/${id}/issues`),
   getMilestones: (id) => fetchAPI(`/projects/${id}/milestones`),
-};
-
-export const issues = {
-  ...createCrudClient('/issues'),
-  getComments: (id) => fetchAPI(`/issues/${id}/comments`),
-  createComment: (id, data) =>
-    fetchAPI(`/issues/${id}/comments`, {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
 };
 
 export const search = {

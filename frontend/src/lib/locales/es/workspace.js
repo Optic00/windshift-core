@@ -322,7 +322,7 @@ export default {
     showingRootItems: 'Mostrando {start}-{end} de {total} elementos raíz',
     page: 'Página',
     pageOfTotal: 'Página {current} de {total}',
-    issue: 'Incidencia',
+    itemKey: 'Clave del elemento',
     noStatus: 'Sin estado',
     workspaceNotFound: 'Espacio de trabajo no encontrado.',
   },

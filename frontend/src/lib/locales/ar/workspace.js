@@ -322,7 +322,7 @@ export default {
     showingRootItems: 'عرض {start}-{end} من {total} عنصر جذري',
     page: 'صفحة',
     pageOfTotal: 'صفحة {current} من {total}',
-    issue: 'مشكلة',
+    itemKey: 'مفتاح العنصر',
     noStatus: 'بدون حالة',
     workspaceNotFound: 'لم يتم العثور على مساحة العمل.',
   },

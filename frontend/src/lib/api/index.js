@@ -59,7 +59,6 @@ import {
   getDiagram,
   getDiagrams,
   homepage,
-  issues,
   jiraImport,
   personalLabels,
   projects,
@@ -135,7 +134,6 @@ export const api = {
 
   // Domain objects
   projects,
-  issues,
   customFields,
   projectFieldRequirements,
   workspaces,

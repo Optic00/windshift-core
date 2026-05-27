@@ -53,7 +53,7 @@
     <div class="mb-2">
       {#if editingTitle}
         <div class="flex items-center gap-3 w-full pr-4 ">
-          <!-- Issue Key (in edit mode) -->
+          <!-- Item key (in edit mode) -->
 
           <div class="min-w-[80%]">
             <!-- svelte-ignore a11y_autofocus -->
@@ -84,7 +84,7 @@
           </div>
         </div>
       {:else}
-        <!-- Issue Key -->
+        <!-- Item key -->
 
         <button
           onclick={startEditingTitle}
