@@ -51,8 +51,9 @@
       const list = linkedRepos[connId] || [];
       const idx = list.findIndex((r) => r.id === updated.id);
       if (idx >= 0) {
-        list[idx] = updated;
-        linkedRepos[connId] = [...list];
+        const nextList = [...list];
+        nextList[idx] = updated;
+        linkedRepos = { ...linkedRepos, [connId]: nextList };
       }
       successToast('Repository settings saved');
       closeRepoSettings();
@@ -91,12 +92,12 @@
     const results = await Promise.allSettled(
       conns.map(c => api.workspaceSCM.getAuthStatus(workspaceId, c.id))
     );
-    results.forEach((res, i) => {
+    authStatuses = results.reduce((next, res, i) => {
       if (res.status === 'fulfilled' && res.value) {
-        authStatuses[conns[i].id] = res.value;
+        next[conns[i].id] = res.value;
       }
-    });
-    authStatuses = authStatuses;
+      return next;
+    }, { ...authStatuses });
   }
 
   async function reconnectOAuth(conn) {
@@ -146,10 +147,10 @@
         p.id === conn.scm_provider_id ? { ...p, is_connected: false } : p
       );
       // Clean up expanded state and repos
-      expandedConnections.delete(conn.id);
-      expandedConnections = expandedConnections;
-      delete linkedRepos[conn.id];
-      linkedRepos = linkedRepos;
+      expandedConnections = new Set([...expandedConnections].filter(id => id !== conn.id));
+      linkedRepos = Object.fromEntries(
+        Object.entries(linkedRepos).filter(([id]) => id !== String(conn.id))
+      );
       showNotification(`Disconnected from ${conn.provider_name}`, 'success');
     } catch (error) {
       console.error('Failed to disconnect provider:', error);
@@ -159,11 +160,9 @@
 
   async function toggleExpanded(connId) {
     if (expandedConnections.has(connId)) {
-      expandedConnections.delete(connId);
-      expandedConnections = expandedConnections;
+      expandedConnections = new Set([...expandedConnections].filter(id => id !== connId));
     } else {
-      expandedConnections.add(connId);
-      expandedConnections = expandedConnections;
+      expandedConnections = new Set(expandedConnections).add(connId);
       // Load repos if not already loaded
       if (!linkedRepos[connId]) {
         await loadLinkedRepos(connId);
@@ -172,19 +171,15 @@
   }
 
   async function loadLinkedRepos(connId) {
-    loadingRepos.add(connId);
-    loadingRepos = loadingRepos;
+    loadingRepos = new Set(loadingRepos).add(connId);
     try {
       const repos = await api.workspaceSCM.getLinkedRepos(workspaceId, connId);
-      linkedRepos[connId] = repos || [];
-      linkedRepos = linkedRepos;
+      linkedRepos = { ...linkedRepos, [connId]: repos || [] };
     } catch (error) {
       console.error('Failed to load repositories:', error);
-      linkedRepos[connId] = [];
-      linkedRepos = linkedRepos;
+      linkedRepos = { ...linkedRepos, [connId]: [] };
     } finally {
-      loadingRepos.delete(connId);
-      loadingRepos = loadingRepos;
+      loadingRepos = new Set([...loadingRepos].filter(id => id !== connId));
     }
   }
 
@@ -241,8 +236,10 @@
     if (!confirmed) return;
     try {
       await api.workspaceSCM.unlinkRepo(repo.id);
-      linkedRepos[connId] = linkedRepos[connId].filter(r => r.id !== repo.id);
-      linkedRepos = linkedRepos;
+      linkedRepos = {
+        ...linkedRepos,
+        [connId]: linkedRepos[connId].filter(r => r.id !== repo.id)
+      };
       // Update connection repo count
       connections = connections.map(c =>
         c.id === connId
