@@ -902,6 +902,53 @@ components:
             $ref: '#/components/schemas/handlers.triggerTypeDTO'
           type: array
       type: object
+    handlers.diagramListResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/models.ItemDiagram'
+          type: array
+      type: object
+    handlers.diagramWriteRequest:
+      properties:
+        diagram_data:
+          type: string
+        name:
+          type: string
+      type: object
+    handlers.itemLabelAddRequest:
+      properties:
+        label_id:
+          type: integer
+      type: object
+    handlers.itemLabelSetRequest:
+      properties:
+        label_ids:
+          items:
+            type: integer
+          type: array
+      type: object
+    handlers.labelCreateRequest:
+      properties:
+        color:
+          type: string
+        name:
+          type: string
+      type: object
+    handlers.labelListResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/models.Label'
+          type: array
+      type: object
+    handlers.labelUpdateRequest:
+      properties:
+        color:
+          type: string
+        name:
+          type: string
+      type: object
     handlers.nodeTypeDTO:
       properties:
         category:
@@ -1118,6 +1165,50 @@ components:
       - CapabilityDockerEnvironment
       - CapabilityHTTPClient
       - CapabilityLLMConnection
+    models.ItemDiagram:
+      properties:
+        created_at:
+          type: string
+        created_by:
+          type: integer
+        creator_email:
+          type: string
+        creator_name:
+          description: Joined fields for API responses
+          type: string
+        diagram_data:
+          description: JSON with elements, appState, files
+          type: string
+        id:
+          type: integer
+        item_id:
+          type: integer
+        name:
+          type: string
+        updated_at:
+          type: string
+        updated_by:
+          type: integer
+        updated_by_email:
+          type: string
+        updated_by_name:
+          type: string
+      type: object
+    models.Label:
+      properties:
+        color:
+          type: string
+        created_at:
+          type: string
+        id:
+          type: integer
+        name:
+          type: string
+        updated_at:
+          type: string
+        workspace_id:
+          type: integer
+      type: object
     restapi.PaginationMeta:
       properties:
         has_more:
@@ -2263,6 +2354,165 @@ paths:
       summary: Get a custom field by ID
       tags:
       - custom-fields
+  /diagrams/{id}:
+    delete:
+      parameters:
+      - description: Diagram ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        "204":
+          description: Diagram deleted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid diagram ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the items:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Diagram not found or not visible to caller
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Delete a diagram
+      tags:
+      - diagrams
+    get:
+      description: Returns 404 (not 403) when the diagram exists but its owning item
+        isn't visible — diagram and item existence are never leaked.
+      parameters:
+      - description: Diagram ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/models.ItemDiagram'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid diagram ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the items:read scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Diagram not found or not visible to caller
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Get a diagram by ID
+      tags:
+      - diagrams
+    put:
+      description: Overwrites both `name` and `diagram_data`. Both fields are required
+        — partial updates aren't supported (matches the cookie surface).
+      parameters:
+      - description: Diagram ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/handlers.diagramWriteRequest'
+        description: Replacement diagram contents
+        required: true
+        x-originalParamName: body
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/models.ItemDiagram'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body or missing required field
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the items:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Diagram not found or not visible to caller
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Update a diagram
+      tags:
+      - diagrams
   /item-types:
     get:
       responses:
@@ -2907,6 +3157,119 @@ paths:
       tags:
       - items
       - comments
+  /items/{id}/diagrams:
+    get:
+      description: Returns every diagram attached to the item, newest first. Diagrams
+        hold the opaque Mermaid/Excalidraw payload in `diagram_data`.
+      parameters:
+      - description: Item ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.diagramListResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid item ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the items:read scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Item not found or not visible to caller
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List diagrams on an item
+      tags:
+      - diagrams
+    post:
+      description: Creates a new diagram attached to the item. `diagram_data` is an
+        opaque payload (e.g. Mermaid source or Excalidraw JSON) the client renders.
+      parameters:
+      - description: Item ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/handlers.diagramWriteRequest'
+        description: Diagram to create
+        required: true
+        x-originalParamName: body
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/models.ItemDiagram'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body or missing required field
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the items:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Item not found or not visible to caller
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Create a diagram on an item
+      tags:
+      - diagrams
   /items/{id}/history:
     get:
       parameters:
@@ -2980,6 +3343,236 @@ paths:
       summary: Get the change history of an item
       tags:
       - items
+  /items/{id}/labels:
+    get:
+      parameters:
+      - description: Item ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.labelListResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid item ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the items:read scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Item not found or not visible to caller
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List labels attached to an item
+      tags:
+      - labels
+    post:
+      parameters:
+      - description: Item ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/handlers.itemLabelAddRequest'
+        description: Label to attach
+        required: true
+        x-originalParamName: body
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.labelListResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body or missing required field
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the items:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Item not found, not editable, or label doesn't belong to the
+            workspace
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Label is already attached to this item
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Attach a single label to an item
+      tags:
+      - labels
+    put:
+      description: Atomically replaces every label attached to the item with the supplied
+        IDs. Labels must belong to the item's workspace.
+      parameters:
+      - description: Item ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/handlers.itemLabelSetRequest'
+        description: Replacement label set
+        required: true
+        x-originalParamName: body
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.labelListResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the items:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Item not found, not editable, or label doesn't belong to the
+            workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Replace the label set on an item
+      tags:
+      - labels
+  /items/{id}/labels/{labelId}:
+    delete:
+      parameters:
+      - description: Item ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - description: Label ID
+        in: path
+        name: labelId
+        required: true
+        schema:
+          type: integer
+      responses:
+        "204":
+          description: Label detached
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid item or label ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the items:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Item not found or not editable by caller
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Detach a label from an item
+      tags:
+      - labels
   /items/{id}/transition:
     post:
       description: Performs a workflow transition with validator-mode and condition-mode
@@ -5421,6 +6014,306 @@ paths:
       tags:
       - workspaces
       - iterations
+  /workspaces/{id}/labels:
+    get:
+      description: Returns every item label defined in the workspace, alphabetically.
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.labelListResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the items:read scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Workspace not found or not visible to caller
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List workspace labels
+      tags:
+      - labels
+    post:
+      description: Creates a new item label in the workspace. `color` defaults to
+        a neutral blue if omitted.
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/handlers.labelCreateRequest'
+        description: Label to create
+        required: true
+        x-originalParamName: body
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/models.Label'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body or missing required field
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the items:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Workspace not found or not editable by caller
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: A label with this name already exists in the workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Create a workspace label
+      tags:
+      - labels
+  /workspaces/{id}/labels/{labelId}:
+    delete:
+      description: Cascade-removes the label from every item it was attached to.
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - description: Label ID
+        in: path
+        name: labelId
+        required: true
+        schema:
+          type: integer
+      responses:
+        "204":
+          description: Label deleted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace or label ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the items:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Label not found in this workspace or not editable by caller
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Delete a workspace label
+      tags:
+      - labels
+    get:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - description: Label ID
+        in: path
+        name: labelId
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/models.Label'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace or label ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the items:read scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Label not found in this workspace or not visible to caller
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Get a workspace label by ID
+      tags:
+      - labels
+    put:
+      description: 'Partial update: only fields supplied in the body are touched.
+        Pass `color` as `""` to reset to the default neutral blue.'
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - description: Label ID
+        in: path
+        name: labelId
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/handlers.labelUpdateRequest'
+        description: Fields to update
+        required: true
+        x-originalParamName: body
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/models.Label'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body or invalid field
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the items:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Label not found in this workspace or not editable by caller
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Another label in this workspace already has the new name
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Update a workspace label
+      tags:
+      - labels
   /workspaces/{id}/milestones:
     get:
       description: Lists milestones owned by the given workspace. Global milestones

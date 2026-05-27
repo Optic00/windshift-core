@@ -88,6 +88,8 @@ func RegisterRoutes(deps restapi.Deps) {
 	attachmentHandler := handlers.NewAttachmentHandler(db, permissionService, deps.AttachmentPath)
 	pageHandler := handlers.NewPageHandler(db, permissionService)
 	pageLabelHandler := handlers.NewPageLabelHandler(db, permissionService)
+	diagramHandler := handlers.NewDiagramHandler(db, permissionService)
+	labelHandler := handlers.NewLabelHandler(db, permissionService)
 
 	// Page-attachment upload reuses the legacy attachment handler (whose
 	// Upload method holds the full validation / storage / DB-insert
@@ -329,6 +331,36 @@ func RegisterRoutes(deps restapi.Deps) {
 	v1.HandleWithMiddleware("GET /items/{id}/links", linkHandler.GetLinksForEntity, bearerAuth.RequirePermission("items:read"), router.RequireNumericID)
 	v1.HandleWithMiddleware("GET /pages/{id}/links", linkHandler.GetLinksForEntity, bearerAuth.RequirePermission("pages:read"), router.RequireNumericID)
 	v1.HandleWithMiddleware("GET /test-cases/{id}/links", linkHandler.GetLinksForEntity, bearerAuth.RequirePermission("items:read"), router.RequireNumericID)
+
+	// ============================================
+	// Item diagrams (Mermaid / Excalidraw payloads attached to items).
+	// Gated by items:* because diagrams are item-scoped content; the
+	// handler still applies the workspace view/edit check on the owning
+	// item so a token cannot probe diagrams it isn't authorized to see.
+	// ============================================
+	v1.HandleWithMiddleware("GET /items/{id}/diagrams", diagramHandler.ListForItem, bearerAuth.RequirePermission("items:read"), router.RequireNumericID)
+	v1.HandleWithMiddleware("POST /items/{id}/diagrams", diagramHandler.CreateForItem, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)
+	v1.HandleWithMiddleware("GET /diagrams/{id}", diagramHandler.Get, bearerAuth.RequirePermission("items:read"), router.RequireNumericID)
+	v1.HandleWithMiddleware("PUT /diagrams/{id}", diagramHandler.Update, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)
+	v1.HandleWithMiddleware("DELETE /diagrams/{id}", diagramHandler.Delete, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)
+
+	// ============================================
+	// Item labels (workspace-scoped catalog + per-item attach/detach).
+	// Mirrors the page-labels surface in shape: catalog CRUD lives under
+	// /workspaces/{id}/labels, and the per-item attachments live under
+	// /items/{id}/labels. Gated by items:* because these labels are
+	// item-content; the handler enforces workspace view/edit on top.
+	// ============================================
+	v1.HandleWithMiddleware("GET /workspaces/{id}/labels", labelHandler.ListForWorkspace, bearerAuth.RequirePermission("items:read"), router.RequireNumericID)
+	v1.HandleWithMiddleware("POST /workspaces/{id}/labels", labelHandler.CreateInWorkspace, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)
+	v1.HandleWithMiddleware("GET /workspaces/{id}/labels/{labelId}", labelHandler.GetInWorkspace, bearerAuth.RequirePermission("items:read"), router.RequireNumericID)
+	v1.HandleWithMiddleware("PUT /workspaces/{id}/labels/{labelId}", labelHandler.UpdateInWorkspace, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)
+	v1.HandleWithMiddleware("DELETE /workspaces/{id}/labels/{labelId}", labelHandler.DeleteInWorkspace, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)
+
+	v1.HandleWithMiddleware("GET /items/{id}/labels", labelHandler.ListForItem, bearerAuth.RequirePermission("items:read"), router.RequireNumericID)
+	v1.HandleWithMiddleware("PUT /items/{id}/labels", labelHandler.SetForItem, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)
+	v1.HandleWithMiddleware("POST /items/{id}/labels", labelHandler.AddToItem, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)
+	v1.HandleWithMiddleware("DELETE /items/{id}/labels/{labelId}", labelHandler.RemoveFromItem, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)
 
 	// ============================================
 	// Search
