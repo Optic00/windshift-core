@@ -270,6 +270,9 @@ func (h *TimeProjectHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+	if projects == nil {
+		projects = []models.TimeProject{}
+	}
 
 	// Set IsManager flag for each project
 	if h.timePermissionService != nil {
