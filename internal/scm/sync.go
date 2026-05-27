@@ -26,6 +26,10 @@ const (
 	syncMaxPRs     = 500
 	syncPRLookback = 7 * 24 * time.Hour
 
+	syncCommitsPerPage = 100
+	syncMaxCommits     = 500
+	syncCommitLookback = 24 * time.Hour
+
 	// smartCommitFirstSyncWindow caps how far back smart-commits will fire
 	// when a repo is being synced for the first time (last_synced_at is
 	// null). Without this, connecting an existing repo with hundreds of
@@ -255,7 +259,7 @@ func (s *SyncService) SyncAllRepositories(ctx context.Context) error {
 			go func(repo repoInfo) {
 				defer wg.Done()
 				defer func() { <-sem }()
-				if err := s.syncRepository(ctx, provider, repo.ID, repo.RepositoryName, repo.WorkspaceID, repo.WorkspaceKey, repo.ItemKeyPattern, repo.LastSyncedAt); err != nil {
+				if err := s.syncRepository(ctx, provider, repo.ID, repo.RepositoryName, repo.DefaultBranch, repo.WorkspaceID, repo.WorkspaceKey, repo.ItemKeyPattern, repo.LastSyncedAt); err != nil {
 					slog.Error("Failed to sync repository", slog.String("component", "scm"), slog.String("repository", repo.RepositoryName), slog.Any("error", err))
 				}
 			}(repo)
@@ -305,11 +309,11 @@ func (s *SyncService) SyncRepository(ctx context.Context, repoID int) error {
 	if lastSyncedAt.Valid {
 		lastSync = lastSyncedAt.Time
 	}
-	return s.syncRepository(ctx, provider, repoID, repositoryName, workspaceID, workspaceKey, pattern, lastSync)
+	return s.syncRepository(ctx, provider, repoID, repositoryName, defaultBranch, workspaceID, workspaceKey, pattern, lastSync)
 }
 
 // syncRepository performs the actual sync for a single repository
-func (s *SyncService) syncRepository(ctx context.Context, provider Provider, repoID int, repositoryName string, workspaceID int, workspaceKey, itemKeyPattern string, lastSyncedAt time.Time) error {
+func (s *SyncService) syncRepository(ctx context.Context, provider Provider, repoID int, repositoryName, defaultBranch string, workspaceID int, workspaceKey, itemKeyPattern string, lastSyncedAt time.Time) error {
 	// Parse owner/repo from repository name
 	parts := strings.SplitN(repositoryName, "/", 2)
 	if len(parts) != 2 {
@@ -322,6 +326,12 @@ func (s *SyncService) syncRepository(ctx context.Context, provider Provider, rep
 	// Sync open pull requests
 	if err := s.syncPullRequests(ctx, provider, owner, repo, repoID, workspaceID, workspaceKey, itemKeyPattern, lastSyncedAt); err != nil {
 		slog.Error("Failed to sync pull requests", slog.String("component", "scm"), slog.String("repository", repositoryName), slog.Any("error", err))
+	}
+
+	// Sync commits on the default branch so commit messages containing item keys
+	// create commit links even when PR titles/bodies do not mention the item.
+	if err := s.syncCommits(ctx, provider, owner, repo, repoID, workspaceID, workspaceKey, itemKeyPattern, defaultBranch, lastSyncedAt); err != nil {
+		slog.Error("Failed to sync commits", slog.String("component", "scm"), slog.String("repository", repositoryName), slog.Any("error", err))
 	}
 
 	// Sync branches
@@ -354,9 +364,9 @@ func (s *SyncService) syncRepository(ctx context.Context, provider Provider, rep
 // syncPullRequests syncs pull requests from a repository. The paginated
 // fetch is delegated to iteratePullRequests so the loop can be unit-tested
 // in isolation; the callback below performs the per-PR work.
-func (s *SyncService) syncPullRequests(ctx context.Context, provider Provider, owner, repo string, repoID, workspaceID int, workspaceKey, _ string, lastSyncedAt time.Time) error {
+func (s *SyncService) syncPullRequests(ctx context.Context, provider Provider, owner, repo string, repoID, workspaceID int, workspaceKey, itemKeyPattern string, lastSyncedAt time.Time) error {
 	return iteratePullRequests(ctx, provider, owner, repo, lastSyncedAt, syncMaxPRs, func(pr PullRequest) {
-		s.processPullRequest(ctx, provider, owner, repo, pr, repoID, workspaceID, workspaceKey, lastSyncedAt)
+		s.processPullRequest(ctx, provider, owner, repo, pr, repoID, workspaceID, workspaceKey, itemKeyPattern, lastSyncedAt)
 	})
 }
 
@@ -436,8 +446,8 @@ func iteratePullRequests(ctx context.Context, provider Provider, owner, repo str
 
 // processPullRequest handles key detection, link upsert, and smart-commit
 // dispatch for a single PR. Extracted so the paged loop above stays tight.
-func (s *SyncService) processPullRequest(ctx context.Context, provider Provider, owner, repo string, pr PullRequest, repoID, workspaceID int, workspaceKey string, lastSyncedAt time.Time) {
-	keys := s.detector.DetectFromPullRequest(&pr, workspaceKey)
+func (s *SyncService) processPullRequest(ctx context.Context, provider Provider, owner, repo string, pr PullRequest, repoID, workspaceID int, workspaceKey, itemKeyPattern string, lastSyncedAt time.Time) {
+	keys := s.detectPullRequestKeys(&pr, workspaceKey, itemKeyPattern)
 	if len(keys) == 0 {
 		return
 	}
@@ -490,8 +500,129 @@ func (s *SyncService) isPRNewlyMerged(ctx context.Context, repoID, prNumber int)
 	return mergedCount == 0
 }
 
+// syncCommits syncs recent commits from the repository's default branch and
+// creates/updates commit SCM links for any item keys found in commit messages.
+func (s *SyncService) syncCommits(ctx context.Context, provider Provider, owner, repo string, repoID, workspaceID int, workspaceKey, itemKeyPattern, defaultBranch string, lastSyncedAt time.Time) error {
+	commitProvider, ok := provider.(CommitProvider)
+	if !ok {
+		return nil
+	}
+	if defaultBranch == "" {
+		defaultBranch = "main"
+	}
+
+	var since *time.Time
+	if !lastSyncedAt.IsZero() {
+		sinceTime := lastSyncedAt.Add(-syncCommitLookback)
+		since = &sinceTime
+	}
+
+	processed := 0
+	for page := 1; ; page++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		commits, err := commitProvider.ListCommits(ctx, owner, repo, ListCommitsOptions{
+			Sha:     defaultBranch,
+			Since:   since,
+			Page:    page,
+			PerPage: syncCommitsPerPage,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to list commits: %w", err)
+		}
+		if len(commits) == 0 {
+			return nil
+		}
+
+		for _, commit := range commits {
+			s.processCommit(ctx, commit, repoID, workspaceID, workspaceKey, itemKeyPattern)
+			processed++
+			if processed >= syncMaxCommits {
+				return nil
+			}
+		}
+		if len(commits) < syncCommitsPerPage {
+			return nil
+		}
+	}
+}
+
+func (s *SyncService) processCommit(ctx context.Context, commit Commit, repoID, workspaceID int, workspaceKey, itemKeyPattern string) {
+	keys := s.detectKeysInText(commit.Message, workspaceKey, itemKeyPattern, DetectionSourceCommitMessage)
+	if len(keys) == 0 {
+		return
+	}
+
+	title := strings.SplitN(commit.Message, "\n", 2)[0]
+	authorExternalID := commit.Author.ID
+	if authorExternalID == "" {
+		authorExternalID = commit.Committer.ID
+	}
+	authorName := scmUserDisplayName(commit.Author)
+	if authorName == "" {
+		authorName = scmUserDisplayName(commit.Committer)
+	}
+
+	for _, key := range keys {
+		itemID, err := s.findItemByKey(ctx, workspaceID, key.Prefix, key.Number)
+		if err != nil || itemID == 0 {
+			continue
+		}
+		if err := s.upsertItemSCMLink(ctx, itemID, repoID, models.SCMLinkTypeCommit,
+			commit.SHA, commit.URL, title, "", authorExternalID, authorName, string(key.Source)); err != nil {
+			slog.Error("Failed to upsert commit link", slog.String("component", "scm"), slog.Int("item_id", itemID), slog.String("sha", commit.SHA), slog.Any("error", err))
+		}
+	}
+}
+
+func scmUserDisplayName(u User) string {
+	if u.Name != "" {
+		return u.Name
+	}
+	if u.Username != "" {
+		return u.Username
+	}
+	return u.Email
+}
+
+func (s *SyncService) detectPullRequestKeys(pr *PullRequest, workspaceKey, itemKeyPattern string) []DetectedItemKey {
+	var allKeys []DetectedItemKey
+	seen := make(map[string]bool)
+	sources := []struct {
+		text   string
+		source DetectionSource
+	}{
+		{pr.Title, DetectionSourcePRTitle},
+		{pr.Body, DetectionSourcePRBody},
+		{pr.HeadBranch, DetectionSourceBranchName},
+	}
+	for _, source := range sources {
+		for _, key := range s.detectKeysInText(source.text, workspaceKey, itemKeyPattern, source.source) {
+			seenKey := strings.ToUpper(key.Prefix) + "-" + strconv.Itoa(key.Number)
+			if seen[seenKey] {
+				continue
+			}
+			seen[seenKey] = true
+			allKeys = append(allKeys, key)
+		}
+	}
+	return allKeys
+}
+
+func (s *SyncService) detectKeysInText(text, workspaceKey, itemKeyPattern string, source DetectionSource) []DetectedItemKey {
+	if itemKeyPattern != "" {
+		return s.detector.DetectItemKeysWithPattern(text, itemKeyPattern, source)
+	}
+	if workspaceKey != "" {
+		return s.detector.DetectItemKeysForPrefix(text, workspaceKey, source)
+	}
+	return s.detector.DetectItemKeys(text, source)
+}
+
 // syncBranches syncs branches from a repository
-func (s *SyncService) syncBranches(ctx context.Context, provider Provider, owner, repo string, repoID, workspaceID int, workspaceKey, _ string) error {
+func (s *SyncService) syncBranches(ctx context.Context, provider Provider, owner, repo string, repoID, workspaceID int, workspaceKey, itemKeyPattern string) error {
 	branches, err := provider.ListBranches(ctx, owner, repo)
 	if err != nil {
 		return fmt.Errorf("failed to list branches: %w", err)
@@ -499,7 +630,7 @@ func (s *SyncService) syncBranches(ctx context.Context, provider Provider, owner
 
 	for _, branch := range branches {
 		// Detect item keys in branch name
-		keys := s.detector.DetectFromBranch(&branch, workspaceKey)
+		keys := s.detectKeysInText(branch.Name, workspaceKey, itemKeyPattern, DetectionSourceBranchName)
 		if len(keys) == 0 {
 			continue
 		}

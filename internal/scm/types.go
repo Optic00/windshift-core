@@ -96,6 +96,16 @@ type ListPROptions struct {
 	Direction string // asc, desc
 }
 
+// ListCommitsOptions contains options for listing commits from a repository.
+// Sha is usually a branch or tag name; Since is an optional lower bound on the
+// commit timestamp. Pagination is provider-specific but exposed uniformly here.
+type ListCommitsOptions struct {
+	Sha     string
+	Since   *time.Time
+	Page    int
+	PerPage int
+}
+
 // CreatePROptions contains options for creating a pull request
 type CreatePROptions struct {
 	Title      string
@@ -276,6 +286,14 @@ type ReleaseProvider interface {
 	Provider
 	CreateRelease(ctx context.Context, owner, repo string, opts CreateReleaseOptions) (*Release, error)
 	ListReleases(ctx context.Context, owner, repo string) ([]Release, error)
+}
+
+// CommitProvider is an optional interface for providers that can list recent
+// commits on a branch. SyncService feature-detects this with a type assertion
+// and skips commit-message link discovery when unavailable.
+type CommitProvider interface {
+	Provider
+	ListCommits(ctx context.Context, owner, repo string, opts ListCommitsOptions) ([]Commit, error)
 }
 
 // RefProvider is an optional interface for providers that expose git refs

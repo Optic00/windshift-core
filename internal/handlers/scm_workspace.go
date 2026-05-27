@@ -85,10 +85,10 @@ type CreateWorkspaceSCMConnectionRequest struct {
 
 // UpdateWorkspaceSCMConnectionRequest represents a request to update a connection
 type UpdateWorkspaceSCMConnectionRequest struct {
-	Enabled              *bool  `json:"enabled,omitempty"`
-	SmartCommitsEnabled  *bool  `json:"smart_commits_enabled,omitempty"`
-	DefaultBranchPattern string `json:"default_branch_pattern,omitempty"`
-	ItemKeyPattern       string `json:"item_key_pattern,omitempty"`
+	Enabled              *bool   `json:"enabled,omitempty"`
+	SmartCommitsEnabled  *bool   `json:"smart_commits_enabled,omitempty"`
+	DefaultBranchPattern *string `json:"default_branch_pattern,omitempty"`
+	ItemKeyPattern       *string `json:"item_key_pattern,omitempty"`
 }
 
 // LinkRepositoryRequest represents a request to link a repository
@@ -334,6 +334,15 @@ func (h *SCMWorkspaceHandler) UpdateWorkspaceSCMConnection(w http.ResponseWriter
 		smartCommits = *req.SmartCommitsEnabled
 	}
 
+	defaultBranchPattern := conn.DefaultBranchPattern
+	if req.DefaultBranchPattern != nil {
+		defaultBranchPattern = *req.DefaultBranchPattern
+	}
+	itemKeyPattern := conn.ItemKeyPattern
+	if req.ItemKeyPattern != nil {
+		itemKeyPattern = *req.ItemKeyPattern
+	}
+
 	_, err = h.db.Exec(`
 		UPDATE workspace_scm_connections SET
 			enabled = ?,
@@ -342,7 +351,7 @@ func (h *SCMWorkspaceHandler) UpdateWorkspaceSCMConnection(w http.ResponseWriter
 			item_key_pattern = ?,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, enabled, smartCommits, nullString(req.DefaultBranchPattern), nullString(req.ItemKeyPattern), connID)
+	`, enabled, smartCommits, nullString(defaultBranchPattern), nullString(itemKeyPattern), connID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return

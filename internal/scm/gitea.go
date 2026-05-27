@@ -19,6 +19,7 @@ import (
 var (
 	_ Provider        = (*GiteaProvider)(nil)
 	_ ReleaseProvider = (*GiteaProvider)(nil)
+	_ CommitProvider  = (*GiteaProvider)(nil)
 	_ RefProvider     = (*GiteaProvider)(nil)
 )
 
@@ -276,6 +277,40 @@ func (g *GiteaProvider) GetCommit(ctx context.Context, owner, repo, sha string) 
 
 	commit := giteaCommitResp.toCommit()
 	return &commit, nil
+}
+
+// ListCommits lists commits from a repository branch/tag, newest first.
+func (g *GiteaProvider) ListCommits(ctx context.Context, owner, repo string, opts ListCommitsOptions) ([]Commit, error) {
+	page := opts.Page
+	if page == 0 {
+		page = 1
+	}
+	limit := opts.PerPage
+	if limit == 0 {
+		limit = 50
+	}
+
+	q := url.Values{}
+	q.Set("page", fmt.Sprintf("%d", page))
+	q.Set("limit", fmt.Sprintf("%d", limit))
+	if opts.Sha != "" {
+		q.Set("sha", opts.Sha)
+	}
+	if opts.Since != nil && !opts.Since.IsZero() {
+		q.Set("since", opts.Since.Format(time.RFC3339))
+	}
+
+	reqURL := g.apiURL(fmt.Sprintf("/repos/%s/%s/commits?%s", url.PathEscape(owner), url.PathEscape(repo), q.Encode()))
+	var giteaCommits []giteaCommit
+	if err := g.doJSON(ctx, "GET", reqURL, http.NoBody, http.StatusOK, &giteaCommits); err != nil {
+		return nil, err
+	}
+
+	commits := make([]Commit, len(giteaCommits))
+	for i, c := range giteaCommits {
+		commits[i] = c.toCommit()
+	}
+	return commits, nil
 }
 
 // CreateBranch creates a new branch

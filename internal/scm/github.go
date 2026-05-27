@@ -27,6 +27,7 @@ import (
 var (
 	_ Provider        = (*GitHubProvider)(nil)
 	_ ReleaseProvider = (*GitHubProvider)(nil)
+	_ CommitProvider  = (*GitHubProvider)(nil)
 	_ RefProvider     = (*GitHubProvider)(nil)
 	_ IssueProvider   = (*GitHubProvider)(nil)
 )
@@ -576,6 +577,44 @@ func (g *GitHubProvider) GetCommit(ctx context.Context, owner, repo, sha string)
 
 	commit := ghCommit.toCommit()
 	return &commit, nil
+}
+
+// ListCommits lists commits from a repository branch/tag, newest first.
+func (g *GitHubProvider) ListCommits(ctx context.Context, owner, repo string, opts ListCommitsOptions) ([]Commit, error) {
+	if err := g.ensureInstallationToken(ctx); err != nil {
+		return nil, err
+	}
+
+	page := opts.Page
+	if page == 0 {
+		page = 1
+	}
+	perPage := opts.PerPage
+	if perPage == 0 {
+		perPage = 100
+	}
+
+	q := url.Values{}
+	q.Set("page", strconv.Itoa(page))
+	q.Set("per_page", strconv.Itoa(perPage))
+	if opts.Sha != "" {
+		q.Set("sha", opts.Sha)
+	}
+	if opts.Since != nil && !opts.Since.IsZero() {
+		q.Set("since", opts.Since.Format(time.RFC3339))
+	}
+
+	reqURL := fmt.Sprintf("%s/repos/%s/commits?%s", g.baseURL, githubRepoPath(owner, repo), q.Encode())
+	var ghCommits []githubCommit
+	if err := g.doJSON(ctx, "GET", reqURL, http.NoBody, http.StatusOK, &ghCommits); err != nil {
+		return nil, err
+	}
+
+	commits := make([]Commit, len(ghCommits))
+	for i, c := range ghCommits {
+		commits[i] = c.toCommit()
+	}
+	return commits, nil
 }
 
 // ListBranches lists branches for a repository, paginated up to maxBranches.
