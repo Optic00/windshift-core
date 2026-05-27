@@ -185,6 +185,10 @@
     return parts[parts.length - 1] || link.repository_name;
   }
 
+  function canDeleteLink(link) {
+    return !link.detection_source || link.detection_source === 'manual';
+  }
+
   function openCreatePRModal(link) {
     oncreatepr?.({ link });
   }
@@ -413,14 +417,16 @@
       >
         <ExternalLink class="w-3 h-3" />
       </a>
-      <button
-        class="p-1 rounded hover:bg-opacity-50"
-        style="color: var(--ds-text-danger);"
-        onclick={() => deleteLink(link.id)}
-        title={t('items.removeLink')}
-      >
-        <Trash2 class="w-3 h-3" />
-      </button>
+      {#if canDeleteLink(link)}
+        <button
+          class="p-1 rounded hover:bg-opacity-50"
+          style="color: var(--ds-text-danger);"
+          onclick={() => deleteLink(link.id)}
+          title={t('items.removeLink')}
+        >
+          <Trash2 class="w-3 h-3" />
+        </button>
+      {/if}
     </div>
   </div>
 {/snippet}
