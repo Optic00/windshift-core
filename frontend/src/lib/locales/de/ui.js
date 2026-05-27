@@ -343,8 +343,6 @@ export default {
       themeLight: 'Hell',
       themeDark: 'Dunkel',
       themeSystem: 'System',
-      apiDocs: 'API-Referenz',
-      apiDocsSubtitle: 'REST-API für diesen Workspace durchsuchen',
     },
   },
   aria: {
@@ -436,6 +434,7 @@ export default {
   footer: {
     platformName: 'Windshift Arbeitsmanagement-Plattform',
     aboutWindshift: 'Über Windshift',
+    apiReference: 'API-Referenz',
     reportProblem: 'Problem melden',
   },
 };

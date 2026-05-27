@@ -373,8 +373,6 @@ export default {
       themeLight: 'Light',
       themeDark: 'Dark',
       themeSystem: 'System',
-      apiDocs: 'API reference',
-      apiDocsSubtitle: 'Browse the REST API for this workspace',
     },
   },
 
@@ -541,6 +539,7 @@ export default {
   footer: {
     platformName: 'Windshift Work Management Platform',
     aboutWindshift: 'About Windshift',
+    apiReference: 'API reference',
     reportProblem: 'Report a problem',
   },
 };

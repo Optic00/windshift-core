@@ -276,8 +276,6 @@ export default {
       themeLight: '浅色',
       themeDark: '深色',
       themeSystem: '系统',
-      apiDocs: 'API 参考',
-      apiDocsSubtitle: '浏览此工作区的 REST API',
     },
   },
 
@@ -373,6 +371,7 @@ export default {
   footer: {
     platformName: 'Windshift 工作管理平台',
     aboutWindshift: '关于 Windshift',
+    apiReference: 'API 参考',
     reportProblem: '报告问题',
   },
 };

@@ -24,6 +24,12 @@
         >
           {t('footer.aboutWindshift')}
         </button>
+        <button
+          onclick={() => navigate('/api-docs')}
+          class="text-[var(--ds-text-link)] hover:text-[var(--ds-text-link-hovered)] transition-colors cursor-pointer bg-transparent border-none"
+        >
+          {t('footer.apiReference')}
+        </button>
         <a href="https://github.com/Windshiftapp/core/issues" target="_blank" rel="noopener noreferrer" class="text-[var(--ds-text-link)] hover:text-[var(--ds-text-link-hovered)] transition-colors">
           {t('footer.reportProblem')}
         </a>
