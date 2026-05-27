@@ -495,24 +495,30 @@ func (c *Client) DeleteComment(commentID int) error {
 // Diagram Methods
 // ============================================
 //
-// Diagram routes live under the legacy /api/... prefix (not /rest/api/v1).
-// The handler accepts {name, diagram_data} where diagram_data is opaque
-// text — either an Excalidraw scene JSON or a {type:"mermaid",source:...}
-// seed wrapper that the frontend expands on first open.
+// Diagram routes live on /rest/api/v1 (gated by items:read / items:write)
+// since WI-71 mirrored them off the legacy cookie surface. The handler
+// accepts {name, diagram_data} where diagram_data is opaque text —
+// either an Excalidraw scene JSON or a {type:"mermaid",source:...} seed
+// wrapper that the frontend expands on first open.
 
 // ListDiagrams returns all diagrams for an item.
 func (c *Client) ListDiagrams(itemID int) ([]Diagram, error) {
-	var diagrams []Diagram
-	if err := c.GET(fmt.Sprintf("/api/items/%d/diagrams", itemID), &diagrams); err != nil {
+	// v1 list endpoints wrap the array in {"items":[...]} for forward
+	// compatibility with pagination metadata; unwrap that here so callers
+	// keep receiving a plain slice.
+	var envelope struct {
+		Items []Diagram `json:"items"`
+	}
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/items/%d/diagrams", itemID), &envelope); err != nil {
 		return nil, err
 	}
-	return diagrams, nil
+	return envelope.Items, nil
 }
 
 // GetDiagram fetches a single diagram by ID.
 func (c *Client) GetDiagram(id int) (*Diagram, error) {
 	var d Diagram
-	if err := c.GET(fmt.Sprintf("/api/diagrams/%d", id), &d); err != nil {
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/diagrams/%d", id), &d); err != nil {
 		return nil, err
 	}
 	return &d, nil
@@ -524,7 +530,7 @@ func (c *Client) GetDiagram(id int) (*Diagram, error) {
 func (c *Client) CreateDiagram(itemID int, name, diagramData string) (*Diagram, error) {
 	req := map[string]string{"name": name, "diagram_data": diagramData}
 	var d Diagram
-	if err := c.POST(fmt.Sprintf("/api/items/%d/diagrams", itemID), req, &d); err != nil {
+	if err := c.POST(fmt.Sprintf("/rest/api/v1/items/%d/diagrams", itemID), req, &d); err != nil {
 		return nil, err
 	}
 	return &d, nil
@@ -534,7 +540,7 @@ func (c *Client) CreateDiagram(itemID int, name, diagramData string) (*Diagram, 
 func (c *Client) UpdateDiagram(id int, name, diagramData string) (*Diagram, error) {
 	req := map[string]string{"name": name, "diagram_data": diagramData}
 	var d Diagram
-	if err := c.PUT(fmt.Sprintf("/api/diagrams/%d", id), req, &d); err != nil {
+	if err := c.PUT(fmt.Sprintf("/rest/api/v1/diagrams/%d", id), req, &d); err != nil {
 		return nil, err
 	}
 	return &d, nil
@@ -542,7 +548,7 @@ func (c *Client) UpdateDiagram(id int, name, diagramData string) (*Diagram, erro
 
 // DeleteDiagram removes a diagram.
 func (c *Client) DeleteDiagram(id int) error {
-	return c.DELETE(fmt.Sprintf("/api/diagrams/%d", id))
+	return c.DELETE(fmt.Sprintf("/rest/api/v1/diagrams/%d", id))
 }
 
 // ============================================
