@@ -22,8 +22,8 @@
     sectionHighlight = false,
     onToggleCollapse,
     onOpenItem,
-    onStartSprint = null,
-    onCompleteSprint = null,
+    onStartIteration = null,
+    onCompleteIteration = null,
     onRemoveGlobal = null,
   } = $props();
 
@@ -48,13 +48,13 @@
   let sectionId = $derived(iteration ? iteration.id : 'unassigned');
 
   let headerClass = $derived(
-    `w-full flex items-center gap-2 px-3 py-2 rounded-lg transition-colors select-none sprint-header` +
-    (sectionHighlight ? ' sprint-header-highlight' : '')
+    `w-full flex items-center gap-2 px-3 py-2 rounded-lg transition-colors select-none iteration-header` +
+    (sectionHighlight ? ' iteration-header-highlight' : '')
   );
 
   let dropZoneClass = $derived(
-    `flex items-center justify-center py-6 px-4 rounded-lg border-2 border-dashed transition-colors sprint-drop-zone` +
-    (sectionHighlight ? ' sprint-drop-zone-highlight' : '')
+    `flex items-center justify-center py-6 px-4 rounded-lg border-2 border-dashed transition-colors iteration-drop-zone` +
+    (sectionHighlight ? ' iteration-drop-zone-highlight' : '')
   );
 </script>
 
@@ -108,9 +108,9 @@
     {#if canStart}
       <button
         type="button"
-        class="ml-2 px-2 py-0.5 text-xs font-medium rounded border transition-colors sprint-action-btn sprint-action-start"
-        onclick={(e) => { e.stopPropagation(); onStartSprint?.(iteration); }}
-        title={t('iterations.startSprint')}
+        class="ml-2 px-2 py-0.5 text-xs font-medium rounded border transition-colors iteration-action-btn iteration-action-start"
+        onclick={(e) => { e.stopPropagation(); onStartIteration?.(iteration); }}
+        title={t('iterations.startIteration')}
       >
         <span class="inline-flex items-center gap-1">
           <Play class="w-3 h-3" />
@@ -122,9 +122,9 @@
     {#if canComplete}
       <button
         type="button"
-        class="ml-2 px-2 py-0.5 text-xs font-medium rounded border transition-colors sprint-action-btn sprint-action-complete"
-        onclick={(e) => { e.stopPropagation(); onCompleteSprint?.(iteration); }}
-        title={t('iterations.completeSprint')}
+        class="ml-2 px-2 py-0.5 text-xs font-medium rounded border transition-colors iteration-action-btn iteration-action-complete"
+        onclick={(e) => { e.stopPropagation(); onCompleteIteration?.(iteration); }}
+        title={t('iterations.completeIteration')}
       >
         <span class="inline-flex items-center gap-1">
           <CheckCircle class="w-3 h-3" />
@@ -200,40 +200,40 @@
 </div>
 
 <style>
-  .sprint-header:hover {
+  .iteration-header:hover {
     background-color: rgba(0, 0, 0, 0.05);
   }
-  :global(.dark) .sprint-header:hover {
+  :global(.dark) .iteration-header:hover {
     background-color: rgba(255, 255, 255, 0.05);
   }
 
-  .sprint-header-highlight {
+  .iteration-header-highlight {
     background-color: var(--ctx-active-bg, rgba(59, 130, 246, 0.1));
     box-shadow: 0 0 0 2px var(--ctx-border-focused, rgb(96, 165, 250));
   }
 
-  .sprint-drop-zone-highlight {
+  .iteration-drop-zone-highlight {
     border-color: var(--ctx-border-focused, rgb(96, 165, 250));
     background-color: var(--ctx-active-bg, rgba(59, 130, 246, 0.05));
   }
 
-  .sprint-action-btn {
+  .iteration-action-btn {
     border-color: var(--ctx-border-focused, currentColor);
     color: var(--ctx-text-interactive, currentColor);
     background-color: transparent;
   }
-  .sprint-action-start {
+  .iteration-action-start {
     border-color: var(--ctx-border-focused, rgb(96, 165, 250));
     color: var(--ctx-text-interactive, rgb(59, 130, 246));
   }
-  .sprint-action-start:hover {
+  .iteration-action-start:hover {
     background-color: var(--ctx-active-bg, rgba(59, 130, 246, 0.05));
   }
-  .sprint-action-complete {
+  .iteration-action-complete {
     border-color: var(--ctx-border-focused, rgb(74, 222, 128));
     color: var(--ctx-text-interactive, rgb(34, 197, 94));
   }
-  .sprint-action-complete:hover {
+  .iteration-action-complete:hover {
     background-color: var(--ctx-active-bg, rgba(34, 197, 94, 0.05));
   }
 </style>

@@ -347,7 +347,7 @@
                       text={relationshipLabels[suggestion.relationship] || suggestion.relationship}
                     />
                     {#if suggestion.cross_iteration}
-                      <Lozenge color="blue" text="Cross-Sprint" />
+                      <Lozenge color="blue" text="Cross-Iteration" />
                     {/if}
                   </div>
                   {#if suggestion.reason}

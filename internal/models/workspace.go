@@ -147,7 +147,7 @@ type Milestone struct {
 	Releases      []MilestoneRelease `json:"releases,omitempty"`
 }
 
-// IterationType represents a type of iteration (sprint, week, etc.)
+// IterationType categorizes an Iteration (e.g. "Sprint", "Week", "Cycle", "Release").
 type IterationType struct {
 	ID          int       `json:"id"`
 	Name        string    `json:"name"`
@@ -157,7 +157,7 @@ type IterationType struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
-// Iteration represents a time-boxed iteration (sprint)
+// Iteration represents a time-boxed period (start + end date) for organizing work, typed by an IterationType.
 type Iteration struct {
 	ID          int    `json:"id"`
 	Name        string `json:"name"`

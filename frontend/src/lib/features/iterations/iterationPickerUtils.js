@@ -26,7 +26,7 @@ function defaultStatusBadgeColors({ hex }) {
 }
 
 /**
- * Build the iteration/sprint picker config shared across CollectionBoard,
+ * Build the iteration picker config shared across CollectionBoard,
  * ItemDetailSidebar, and IterationDependencies.
  *
  * Variations:

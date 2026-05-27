@@ -281,7 +281,7 @@
           ? (activeTypeId
               ? `Showing ${iterationTypes.find(type => type.id === parseInt(activeTypeId))?.name || 'filtered'} iterations`
               : t('iterations.subtitle'))
-          : `${localIterations.length} ${t('sprints.local').toLowerCase()}, ${globalIterations.length} ${t('sprints.global').toLowerCase()}`}
+          : `${localIterations.length} ${t('iterations.local').toLowerCase()}, ${globalIterations.length} ${t('iterations.global').toLowerCase()}`}
       >
         {#snippet actions()}
           {#if canCreate}
@@ -392,8 +392,8 @@
               <div class="flex items-center gap-3 mb-3">
                 <IconBuilding class="w-5 h-5" style="color: var(--ds-interactive);" />
                 <div>
-                  <p class="font-semibold text-base" style="color: var(--ds-text);">{t('sprints.localIterations')}</p>
-                  <p class="text-sm" style="color: var(--ds-text-subtle);">{t('sprints.localIterationDescription')}</p>
+                  <p class="font-semibold text-base" style="color: var(--ds-text);">{t('iterations.localIterations')}</p>
+                  <p class="text-sm" style="color: var(--ds-text-subtle);">{t('iterations.localIterationDescription')}</p>
                 </div>
               </div>
               {#key localIterations.length}
@@ -419,8 +419,8 @@
                 <IconWorld class="w-5 h-5" style="color: var(--ds-interactive);" />
 
                 <div>
-                  <p class="font-semibold text-base" style="color: var(--ds-text);">{t('sprints.globalIterations')}</p>
-                  <p class="text-sm" style="color: var(--ds-text-subtle);">{t('sprints.globalIterationDescription')}</p>
+                  <p class="font-semibold text-base" style="color: var(--ds-text);">{t('iterations.globalIterations')}</p>
+                  <p class="text-sm" style="color: var(--ds-text-subtle);">{t('iterations.globalIterationDescription')}</p>
                 </div>
               </div>
               {#key globalIterations.length}

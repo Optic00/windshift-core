@@ -17,8 +17,8 @@
 
   const submitShortcut = getShortcut('modal', 'submit');
 
-  let moveTarget = $state('backlog'); // 'backlog' | 'sprint'
-  let selectedSprintId = $state(null);
+  let moveTarget = $state('backlog'); // 'backlog' | 'iteration'
+  let selectedIterationId = $state(null);
 
   let doneCount = $derived(
     iteration ? (iteration._totalItems ?? 0) - incompleteItems.length : 0
@@ -26,7 +26,7 @@
   let incompleteCount = $derived(incompleteItems.length);
   let hasIncomplete = $derived(incompleteCount > 0);
 
-  const sprintPickerConfig = {
+  const iterationPickerConfig = {
     primary: { text: (item) => item.name },
     secondary: { text: (item) => item.status },
     searchFields: ['name'],
@@ -38,7 +38,7 @@
   $effect(() => {
     if (show) {
       moveTarget = 'backlog';
-      selectedSprintId = null;
+      selectedIterationId = null;
     }
   });
 
@@ -62,11 +62,11 @@
   }
 
   function doConfirm() {
-    if (hasIncomplete && moveTarget === 'sprint' && !selectedSprintId) return;
+    if (hasIncomplete && moveTarget === 'iteration' && !selectedIterationId) return;
 
     const result = moveTarget === 'backlog'
       ? { type: 'backlog' }
-      : { type: 'sprint', iterationId: selectedSprintId };
+      : { type: 'iteration', iterationId: selectedIterationId };
 
     onconfirm?.(result);
     show = false;
@@ -78,13 +78,13 @@
   }
 
   let confirmDisabled = $derived(
-    hasIncomplete && moveTarget === 'sprint' && !selectedSprintId
+    hasIncomplete && moveTarget === 'iteration' && !selectedIterationId
   );
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
 
-<ModalBackdrop bind:show onclose={cancel} ariaLabelledBy="complete-sprint-title" zIndex={70}>
+<ModalBackdrop bind:show onclose={cancel} ariaLabelledBy="complete-iteration-title" zIndex={70}>
     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
     <div
       role="presentation"
@@ -102,11 +102,11 @@
             />
           </div>
           <h3
-            id="complete-sprint-title"
+            id="complete-iteration-title"
             class="text-lg font-medium flex-1"
             style="color: var(--ds-text);"
           >
-            {t('iterations.completeSprint')}
+            {t('iterations.completeIteration')}
           </h3>
           <Button
             variant="ghost"
@@ -120,7 +120,7 @@
       <!-- Body -->
       <div class="px-6 py-4 space-y-4">
         <p class="text-sm" style="color: var(--ds-text);">
-          {t('iterations.completeSprintConfirm', { name: iteration?.name ?? '' })}
+          {t('iterations.completeIterationConfirm', { name: iteration?.name ?? '' })}
         </p>
 
         {#if hasIncomplete}
@@ -147,28 +147,28 @@
               </span>
             </label>
 
-            <!-- Radio: Move to another sprint -->
+            <!-- Radio: Move to another iteration -->
             <label class="flex items-center gap-2 cursor-pointer">
               <input
                 type="radio"
                 name="move-target"
-                value="sprint"
+                value="iteration"
                 bind:group={moveTarget}
                 class="accent-[var(--ds-interactive)]"
               />
               <span class="text-sm" style="color: var(--ds-text);">
-                {t('iterations.moveToSprint')}
+                {t('iterations.moveToIteration')}
               </span>
             </label>
 
-            {#if moveTarget === 'sprint'}
+            {#if moveTarget === 'iteration'}
               <div class="ml-6">
                 {#if targetIterations.length > 0}
                   <ItemPicker
-                    bind:value={selectedSprintId}
+                    bind:value={selectedIterationId}
                     items={targetIterations}
-                    config={sprintPickerConfig}
-                    placeholder={t('iterations.filterBySprint')}
+                    config={iterationPickerConfig}
+                    placeholder={t('iterations.filterByIteration')}
                     allowClear={false}
                   />
                 {:else}

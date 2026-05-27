@@ -13,13 +13,13 @@
   import ViewHeader from '../../layout/ViewHeader.svelte';
   import SubFilterBar from './SubFilterBar.svelte';
   import CollectionViewSwitcher from './CollectionViewSwitcher.svelte';
-  import BacklogSprintSection from './BacklogSprintSection.svelte';
+  import BacklogIterationSection from './BacklogIterationSection.svelte';
   import ItemPicker from '../../pickers/ItemPicker.svelte';
   import { backlogStore, workspaceDataStore } from '../../stores/index.js';
   import { useWorkItemPoller } from '../../composables/useWorkItemPoller.svelte.js';
   import { successToast, warningToast } from '../../stores/toasts.svelte.js';
   import { getStatusCategory } from '../../utils/statusColors.js';
-  import CompleteSprintDialog from '../../dialogs/CompleteSprintDialog.svelte';
+  import CompleteIterationDialog from '../../dialogs/CompleteIterationDialog.svelte';
 
   let { workspaceId, collectionId = null } = $props();
 
@@ -42,17 +42,17 @@
   let dragState = $state(new Map()); // Track drag state for each item: { isDragging: boolean, closestEdge: 'top'|'bottom'|null }
   const backlogRowGap = 2; // px gap between rows to keep the list tight and align the drop indicator
 
-  // --- Iteration / Sprint section state ---
+  // --- Iteration section state ---
   let allIterations = $state([]);
   let addedGlobalIds = $state(new Set());
   let collapsedSections = $state(new Set());
   let sectionDropHighlight = $state(new Map()); // iterationId|'unassigned' -> boolean
 
-  // --- Complete Sprint dialog state ---
-  let completeSprintShow = $state(false);
-  let completeSprintIteration = $state(null);
-  let completeSprintIncomplete = $state([]);
-  let completeSprintTargets = $state([]);
+  // --- Complete Iteration dialog state ---
+  let completeIterationShow = $state(false);
+  let iterationBeingCompleted = $state(null);
+  let iterationIncompleteItems = $state([]);
+  let iterationCompleteTargets = $state([]);
 
   // localStorage keys
   const globalIdsKey = $derived(`backlog-global-iterations-${workspaceId}`);
@@ -115,9 +115,9 @@
     });
   });
 
-  let addSprintPickerValue = $state(null);
+  let addIterationPickerValue = $state(null);
 
-  const sprintPickerConfig = {
+  const iterationPickerConfig = {
     primary: { text: (item) => item.name },
     secondary: { text: (item) => item.status },
     searchFields: ['name'],
@@ -125,12 +125,12 @@
     getLabel: (item) => item.name,
   };
 
-  function handleSprintPickerSelect(iter) {
+  function handleIterationPickerSelect(iter) {
     if (iter?.id) {
       addGlobalIteration(iter.id);
     }
     // Reset picker so it can be used again
-    addSprintPickerValue = null;
+    addIterationPickerValue = null;
   }
 
   // Total item count across all sections
@@ -224,8 +224,8 @@
     persistCollapsed();
   }
 
-  // --- Start / Complete sprint ---
-  async function startSprint(iteration) {
+  // --- Start / Complete iteration ---
+  async function startIteration(iteration) {
     try {
       await api.iterations.update(iteration.id, {
         status: 'active',
@@ -235,38 +235,38 @@
       allIterations = allIterations.map(i =>
         i.id === iteration.id ? { ...i, status: 'active' } : i
       );
-      successToast(t('iterations.sprintStarted', { name: iteration.name }));
+      successToast(t('iterations.iterationStarted', { name: iteration.name }));
     } catch (error) {
-      console.error('Failed to start sprint:', error);
+      console.error('Failed to start iteration:', error);
     }
   }
 
-  function completeSprint(iteration) {
-    // Compute incomplete items for this sprint
-    const sprintItems = backlogItems.filter(i => i.iteration_id === iteration.id);
-    const incomplete = sprintItems.filter(i => {
+  function completeIteration(iteration) {
+    // Compute incomplete items for this iteration
+    const iterationItems = backlogItems.filter(i => i.iteration_id === iteration.id);
+    const incomplete = iterationItems.filter(i => {
       const cat = getStatusCategory(i.status_name, statuses, statusCategories);
       return !cat || cat.name !== 'Done';
     });
 
-    completeSprintIteration = { ...iteration, _totalItems: sprintItems.length };
-    completeSprintIncomplete = incomplete;
-    completeSprintTargets = allIterations.filter(
+    iterationBeingCompleted = { ...iteration, _totalItems: iterationItems.length };
+    iterationIncompleteItems = incomplete;
+    iterationCompleteTargets = allIterations.filter(
       i => i.id !== iteration.id && (i.status === 'planned' || i.status === 'active')
     );
-    completeSprintShow = true;
+    completeIterationShow = true;
   }
 
-  async function handleCompleteSprintConfirm(moveTarget) {
-    const iteration = completeSprintIteration;
+  async function handleCompleteIterationConfirm(moveTarget) {
+    const iteration = iterationBeingCompleted;
     if (!iteration) return;
 
     try {
       // Move incomplete items if needed
-      if (completeSprintIncomplete.length > 0) {
-        const targetIterationId = moveTarget.type === 'sprint' ? moveTarget.iterationId : null;
+      if (iterationIncompleteItems.length > 0) {
+        const targetIterationId = moveTarget.type === 'iteration' ? moveTarget.iterationId : null;
         await Promise.all(
-          completeSprintIncomplete.map(item =>
+          iterationIncompleteItems.map(item =>
             api.items.update(item.id, { iteration_id: targetIterationId })
           )
         );
@@ -280,10 +280,10 @@
       allIterations = allIterations.map(i =>
         i.id === iteration.id ? { ...i, status: 'completed' } : i
       );
-      successToast(t('iterations.sprintCompleted', { name: iteration.name }));
+      successToast(t('iterations.iterationCompleted', { name: iteration.name }));
       reloadCollection();
     } catch (error) {
-      console.error('Failed to complete sprint:', error);
+      console.error('Failed to complete iteration:', error);
     }
   }
 
@@ -578,7 +578,7 @@
   // Setup drag and drop when data changes
   $effect(() => {
     // Track both items and visible iterations so drag-drop re-initializes
-    // when global sprints are added/removed
+    // when global iterations are added/removed
     const _items = backlogItems.length;
     const _iterations = visibleIterations.length;
     if (_items > 0 && typeof document !== 'undefined') {
@@ -610,13 +610,13 @@
             <div class="flex items-center gap-2">
               {#if availableGlobalIterations.length > 0}
                 <ItemPicker
-                  bind:value={addSprintPickerValue}
+                  bind:value={addIterationPickerValue}
                   items={availableGlobalIterations}
-                  config={sprintPickerConfig}
-                  placeholder={t('iterations.addGlobalSprint')}
+                  config={iterationPickerConfig}
+                  placeholder={t('iterations.addGlobalIteration')}
                   allowClear={false}
                   showSelectedInTrigger={false}
-                  onSelect={handleSprintPickerSelect}
+                  onSelect={handleIterationPickerSelect}
                 >
                   {#snippet children()}
                     <span
@@ -624,7 +624,7 @@
                       style="{styles.glassStyle?.(12) ?? ''} {styles.glassTextStyle ?? ''}"
                     >
                       <Plus class="w-4 h-4" />
-                      {t('iterations.addGlobalSprint')}
+                      {t('iterations.addGlobalIteration')}
                     </span>
                   {/snippet}
                 </ItemPicker>
@@ -656,7 +656,7 @@
         <div class="w-full">
 
           {#each iterationSections as section (section.iteration.id)}
-            <BacklogSprintSection
+            <BacklogIterationSection
               iteration={section.iteration}
               items={section.items}
               collapsed={collapsedSections.has(section.iteration.id)}
@@ -671,14 +671,14 @@
               sectionHighlight={sectionDropHighlight.get(String(section.iteration.id)) || false}
               onToggleCollapse={toggleCollapse}
               onOpenItem={openItem}
-              onStartSprint={startSprint}
-              onCompleteSprint={completeSprint}
+              onStartIteration={startIteration}
+              onCompleteIteration={completeIteration}
               onRemoveGlobal={removeGlobalIteration}
             />
           {/each}
 
           <!-- Unassigned / Backlog section -->
-          <BacklogSprintSection
+          <BacklogIterationSection
             iteration={null}
             items={unassignedItems}
             collapsed={collapsedSections.has('unassigned')}
@@ -739,12 +739,12 @@
   />
 {/if}
 
-<!-- Complete Sprint Dialog -->
-<CompleteSprintDialog
-  bind:show={completeSprintShow}
-  iteration={completeSprintIteration}
-  incompleteItems={completeSprintIncomplete}
-  targetIterations={completeSprintTargets}
-  onconfirm={handleCompleteSprintConfirm}
+<!-- Complete Iteration Dialog -->
+<CompleteIterationDialog
+  bind:show={completeIterationShow}
+  iteration={iterationBeingCompleted}
+  incompleteItems={iterationIncompleteItems}
+  targetIterations={iterationCompleteTargets}
+  onconfirm={handleCompleteIterationConfirm}
 />
 

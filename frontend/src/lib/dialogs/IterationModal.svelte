@@ -36,10 +36,10 @@
   let saving = $state(false);
 
   const statusOptions = $derived([
-    { value: 'planned', label: t('sprints.statusPlanned') },
-    { value: 'active', label: t('sprints.statusActive') },
-    { value: 'completed', label: t('sprints.statusCompleted') },
-    { value: 'cancelled', label: t('sprints.statusCancelled') }
+    { value: 'planned', label: t('iterations.statusPlanned') },
+    { value: 'active', label: t('iterations.statusActive') },
+    { value: 'completed', label: t('iterations.statusCompleted') },
+    { value: 'cancelled', label: t('iterations.statusCancelled') }
   ]);
 
   function handleCancel() {
@@ -51,27 +51,27 @@
 
     // Validation
     if (!formData.name.trim()) {
-      error = t('sprints.iterationNameRequired');
+      error = t('iterations.iterationNameRequired');
       return;
     }
 
     if (!formData.start_date) {
-      error = t('sprints.startDateRequired');
+      error = t('iterations.startDateRequired');
       return;
     }
 
     if (!formData.end_date) {
-      error = t('sprints.endDateRequired');
+      error = t('iterations.endDateRequired');
       return;
     }
 
     if (!formData.type_id) {
-      error = t('sprints.typeRequired');
+      error = t('iterations.typeRequired');
       return;
     }
 
     if (new Date(formData.end_date) < new Date(formData.start_date)) {
-      error = t('sprints.endDateMustBeAfterStart');
+      error = t('iterations.endDateMustBeAfterStart');
       return;
     }
 
@@ -87,7 +87,7 @@
       saving = true;
       onsave(dataToSave);
     } catch (err) {
-      error = err.message || t('sprints.failedToSaveIteration');
+      error = err.message || t('iterations.failedToSaveIteration');
       saving = false;
     }
   }
@@ -113,7 +113,7 @@
 >
   {#snippet children(submitHint)}
   <!-- Modal header -->
-  <ModalHeader title={iteration ? t('sprints.editIteration') : t('sprints.createIteration')} showCloseButton={false} />
+  <ModalHeader title={iteration ? t('iterations.editIteration') : t('iterations.createIteration')} showCloseButton={false} />
 
   <!-- Modal content -->
   <div class="px-6 py-4">
@@ -133,14 +133,14 @@
             {#if formData.is_global}
               <Globe class="w-5 h-5" style="color: var(--ds-interactive);" />
               <div>
-                <p class="font-medium text-sm" style="color: var(--ds-text);">{t('sprints.globalIteration')}</p>
-                <p class="text-xs" style="color: var(--ds-text-subtle);">{t('sprints.globalIterationDescription')}</p>
+                <p class="font-medium text-sm" style="color: var(--ds-text);">{t('iterations.globalIteration')}</p>
+                <p class="text-xs" style="color: var(--ds-text-subtle);">{t('iterations.globalIterationDescription')}</p>
               </div>
             {:else}
               <Building2 class="w-5 h-5" style="color: var(--ds-interactive);" />
               <div>
-                <p class="font-medium text-sm" style="color: var(--ds-text);">{t('sprints.localIteration')}</p>
-                <p class="text-xs" style="color: var(--ds-text-subtle);">{t('sprints.localIterationDescription')}</p>
+                <p class="font-medium text-sm" style="color: var(--ds-text);">{t('iterations.localIteration')}</p>
+                <p class="text-xs" style="color: var(--ds-text-subtle);">{t('iterations.localIterationDescription')}</p>
               </div>
             {/if}
           </div>
@@ -151,7 +151,7 @@
               style="border-color: var(--ds-border); color: var(--ds-interactive);"
               onclick={toggleScope}
             >
-              {t('sprints.switchTo', { scope: formData.is_global ? t('sprints.local') : t('sprints.global') })}
+              {t('iterations.switchTo', { scope: formData.is_global ? t('iterations.local') : t('iterations.global') })}
             </button>
           {/if}
         </div>
@@ -164,7 +164,7 @@
         <Input
           id="iteration-name-input"
           bind:value={formData.name}
-          placeholder={t('sprints.iterationNamePlaceholder')}
+          placeholder={t('iterations.iterationNamePlaceholder')}
           required
         />
       </div>
@@ -174,7 +174,7 @@
         <Label color="default" class="mb-1.5">{t('common.description')}</Label>
         <Textarea
           bind:value={formData.description}
-          placeholder={t('sprints.iterationDescriptionPlaceholder')}
+          placeholder={t('iterations.iterationDescriptionPlaceholder')}
           rows={3}
         />
       </div>
@@ -182,7 +182,7 @@
       <!-- Type -->
       <div>
         <Label color="default" required class="mb-1.5"><Tag class="w-4 h-4 inline-block mr-1" />{t('common.type')}</Label>
-        <Select id="iteration-type-select" bind:value={formData.type_id} required options={[{ value: null, label: t('sprints.selectType'), disabled: true }, ...iterationTypes.map(type => ({ value: type.id, label: type.name }))]} />
+        <Select id="iteration-type-select" bind:value={formData.type_id} required options={[{ value: null, label: t('iterations.selectType'), disabled: true }, ...iterationTypes.map(type => ({ value: type.id, label: type.name }))]} />
       </div>
 
       <!-- Date Range -->
@@ -219,7 +219,7 @@
   <DialogFooter
     onCancel={handleCancel}
     onConfirm={handleSave}
-    confirmLabel={iteration ? t('sprints.updateIteration') : t('sprints.createIteration')}
+    confirmLabel={iteration ? t('iterations.updateIteration') : t('iterations.createIteration')}
     disabled={saving}
     loading={saving}
     showKeyboardHint={true}

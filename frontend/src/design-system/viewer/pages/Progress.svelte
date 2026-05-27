@@ -163,7 +163,7 @@
           style="background-color: var(--ds-surface-raised); border: 1px solid var(--ds-border);"
         >
           <div class="flex items-center justify-between mb-2">
-            <span class="text-sm font-medium" style="color: var(--ds-text);">Sprint Progress</span>
+            <span class="text-sm font-medium" style="color: var(--ds-text);">Iteration Progress</span>
             <span class="text-sm" style="color: var(--ds-text-subtle);">8 of 12 tasks</span>
           </div>
           <Progress value={67} color="success" />

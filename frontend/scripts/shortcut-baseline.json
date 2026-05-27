@@ -37,9 +37,9 @@
       "message": "Modal contains a confirming DialogFooter but does not pass onSubmit, so Enter/Cmd+Enter will not submit."
     },
     {
-      "signature": "src/lib/dialogs/CompleteSprintDialog.svelte:modal-backdrop-confirm-without-shortcut:<ModalBackdrop bind:show onclose={cancel} ariaLabelledBy=\"complete-sprint-title\" zIndex={70}>",
+      "signature": "src/lib/dialogs/CompleteIterationDialog.svelte:modal-backdrop-confirm-without-shortcut:<ModalBackdrop bind:show onclose={cancel} ariaLabelledBy=\"complete-iteration-title\" zIndex={70}>",
       "count": 1,
-      "file": "src/lib/dialogs/CompleteSprintDialog.svelte",
+      "file": "src/lib/dialogs/CompleteIterationDialog.svelte",
       "rule": "modal-backdrop-confirm-without-shortcut",
       "message": "ModalBackdrop contains a primary action but no obvious submit shortcut handling."
     },

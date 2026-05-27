@@ -69,9 +69,9 @@
   // Backlog functionality
   let backlogItems = $derived(collectionStore.backlogItems);
 
-  // Sprint filter state
+  // Iteration filter state
   let allIterations = $state([]);
-  let sprintFilterId = $state(null);
+  let iterationFilterId = $state(null);
 
   // Edge-based drag state
   let dragState = $state(new Map()); // Track drag state for each item: { isDragging: boolean, closestEdge: 'top'|'bottom'|null }
@@ -231,7 +231,7 @@
       console.error('Failed to load workspaces:', error);
       workspaces = [];
     }
-    // Load iterations for sprint filter (workspace only)
+    // Load iterations for iteration filter (workspace only)
     if (workspaceId) {
       try {
         const iters = await api.iterations.getAll({ workspace_id: workspaceId, include_global: !workspace?.is_personal });
@@ -239,14 +239,14 @@
       } catch (error) {
         console.error('Failed to load iterations:', error);
       }
-      // Restore persisted sprint filter
-      const saved = localStorage.getItem(`board-sprint-filter-${workspaceId}`);
+      // Restore persisted iteration filter
+      const saved = localStorage.getItem(`board-iteration-filter-${workspaceId}`);
       if (saved) {
         const id = parseInt(saved);
         if (allIterations.some(i => i.id === id)) {
-          sprintFilterId = id;
+          iterationFilterId = id;
         } else {
-          localStorage.removeItem(`board-sprint-filter-${workspaceId}`);
+          localStorage.removeItem(`board-iteration-filter-${workspaceId}`);
         }
       }
     }
@@ -289,10 +289,10 @@
     reloadCollection();
   }));
 
-  // Sprint filter derived values
-  let activeLocalSprint = $derived(allIterations.find(i => !i.is_global && i.status === 'active'));
+  // Iteration filter derived values
+  let activeLocalIteration = $derived(allIterations.find(i => !i.is_global && i.status === 'active'));
 
-  let sprintFilterOptions = $derived.by(() => {
+  let iterationFilterOptions = $derived.by(() => {
     const seen = new Set();
     return allIterations.filter(i => {
       if (i.status === 'completed' || i.status === 'cancelled') return false;
@@ -303,7 +303,7 @@
   });
 
   let filteredItems = $derived(
-    sprintFilterId ? items.filter(i => i.iteration_id === sprintFilterId) : items
+    iterationFilterId ? items.filter(i => i.iteration_id === iterationFilterId) : items
   );
 
   function getItemsByStatus(statusId) {
@@ -317,7 +317,7 @@
   // Status badges use an accessible-contrast pass so colours read against the
   // gradient backdrop on the board; the other iteration picker call sites
   // don't need this and keep the simpler hex+15 default.
-  const sprintPickerConfig = buildIterationPickerConfig({
+  const iterationPickerConfig = buildIterationPickerConfig({
     statusBadgeColors: ({ hex }) => {
       const visible = getVisibleColor(hex);
       const { r, g, b } = hexToRgb(visible);
@@ -328,20 +328,20 @@
     },
   });
 
-  let otherSprintOptions = $derived(sprintFilterOptions.filter(i => i.id !== activeLocalSprint?.id));
+  let otherIterationOptions = $derived(iterationFilterOptions.filter(i => i.id !== activeLocalIteration?.id));
 
-  let selectedOtherSprint = $derived(
-    sprintFilterId && sprintFilterId !== activeLocalSprint?.id
-      ? allIterations.find(i => i.id === sprintFilterId)
+  let selectedOtherIteration = $derived(
+    iterationFilterId && iterationFilterId !== activeLocalIteration?.id
+      ? allIterations.find(i => i.id === iterationFilterId)
       : null
   );
 
-  function setSprintFilter(iterationId) {
-    sprintFilterId = iterationId;
+  function setIterationFilter(iterationId) {
+    iterationFilterId = iterationId;
     if (iterationId) {
-      localStorage.setItem(`board-sprint-filter-${workspaceId}`, String(iterationId));
+      localStorage.setItem(`board-iteration-filter-${workspaceId}`, String(iterationId));
     } else {
-      localStorage.removeItem(`board-sprint-filter-${workspaceId}`);
+      localStorage.removeItem(`board-iteration-filter-${workspaceId}`);
     }
   }
 
@@ -858,47 +858,47 @@
                      style="background-color: var(--ctx-surface, transparent); backdrop-filter: var(--ctx-backdrop, none); border-color: var(--ctx-border, var(--ds-border));">
                   <button
                     class="px-3 py-1.5 transition-colors"
-                    style={!sprintFilterId
+                    style={!iterationFilterId
                       ? 'background-color: var(--ctx-surface-raised, var(--ds-surface-raised)); color: var(--ds-text); font-weight: 500;'
                       : 'color: var(--ds-text); background-color: transparent;'}
-                    onclick={() => setSprintFilter(null)}
+                    onclick={() => setIterationFilter(null)}
                   >
                     {t('collections.allItems')}
                   </button>
-                  {#if activeLocalSprint}
+                  {#if activeLocalIteration}
                     <button
                       class="px-3 py-1.5 transition-colors border-l"
-                      style="border-color: var(--ctx-border, var(--ds-border)); {sprintFilterId === activeLocalSprint.id
+                      style="border-color: var(--ctx-border, var(--ds-border)); {iterationFilterId === activeLocalIteration.id
                         ? 'background-color: var(--ctx-surface-raised, var(--ds-surface-raised)); color: var(--ds-text); font-weight: 500;'
                         : 'color: var(--ds-text); background-color: transparent;'}"
-                      onclick={() => setSprintFilter(activeLocalSprint.id)}
+                      onclick={() => setIterationFilter(activeLocalIteration.id)}
                     >
-                      {activeLocalSprint.name}
+                      {activeLocalIteration.name}
                     </button>
                   {/if}
-                  {#if otherSprintOptions.length > 0}
+                  {#if otherIterationOptions.length > 0}
                     <ItemPicker
-                      items={otherSprintOptions}
-                      value={sprintFilterId && sprintFilterId !== activeLocalSprint?.id ? sprintFilterId : null}
-                      config={sprintPickerConfig}
-                      placeholder={t('iterations.filterBySprint')}
+                      items={otherIterationOptions}
+                      value={iterationFilterId && iterationFilterId !== activeLocalIteration?.id ? iterationFilterId : null}
+                      config={iterationPickerConfig}
+                      placeholder={t('iterations.filterByIteration')}
                       showUnassigned={false}
                       allowClear={false}
                       showSelectedInTrigger={false}
                       onSelect={(iter) => {
                         if (iter) {
-                          setSprintFilter(iter.id);
+                          setIterationFilter(iter.id);
                         }
                       }}
                     >
                       {#snippet children()}
                         <span
                           class="px-3 py-1.5 text-sm border-l flex items-center gap-1 transition-colors"
-                          style="border-color: var(--ctx-border, var(--ds-border)); {selectedOtherSprint
+                          style="border-color: var(--ctx-border, var(--ds-border)); {selectedOtherIteration
                             ? 'color: var(--ds-text); font-weight: 500; background-color: var(--ctx-surface-raised, var(--ds-surface-raised));'
                             : 'color: var(--ds-text);'}"
                         >
-                          {selectedOtherSprint ? selectedOtherSprint.name : t('iterations.filterBySprint')}
+                          {selectedOtherIteration ? selectedOtherIteration.name : t('iterations.filterByIteration')}
                           <ChevronDown size={12} />
                         </span>
                       {/snippet}
@@ -1199,7 +1199,7 @@
               style="{styles.glassStyle?.(12) ?? ''} {styles.glassTextStyle ?? ''}"
             >
               {collectionStore.itemsLoadingMore ? t('common.loading') : t('common.loadMore')}
-              {#if collectionStore.itemsPagination?.total && !sprintFilterId}
+              {#if collectionStore.itemsPagination?.total && !iterationFilterId}
                 ({collectionStore.itemsPagination.total - collectionStore.items.length} {t('common.remaining')})
               {/if}
             </button>
