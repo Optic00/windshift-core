@@ -41,7 +41,19 @@ type linkCreateRequest struct {
 
 // --- endpoints ---
 
+// ListLinkTypes handles GET /rest/api/v1/link-types
+//
 // ListLinkTypes returns the active link-type catalog. Scope: items:read.
+//
+// @Summary      List active link types
+// @Description  Returns the active link-type catalog (e.g. Relates To, Page, Tests). Used to validate `link_type_id` on link creation.
+// @Tags         links
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {array}   models.LinkType
+// @Failure      401  {object}  handlers.ErrorResponse
+// @Failure      500  {object}  handlers.ErrorResponse
+// @Router       /link-types [get]
 func (h *LinkHandler) ListLinkTypes(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.RequireAuth(w, r); !ok {
 		return
@@ -54,10 +66,27 @@ func (h *LinkHandler) ListLinkTypes(w http.ResponseWriter, r *http.Request) {
 	h.RespondOK(w, types)
 }
 
+// CreateLink handles POST /rest/api/v1/links
+//
 // CreateLink creates a cross-entity link. Scope: items:write. The
 // service handles permission gating on source (edit) and target (view),
 // the same-workspace constraint for page links, link-type / entity-type
 // compatibility, and duplicate detection.
+//
+// @Summary      Create a cross-entity link
+// @Description  Creates a link between two entities (item/page/test_case). The link type must allow the given entity types; pages must share a workspace with the source item.
+// @Tags         links
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        body  body      handlers.linkCreateRequest  true  "Link to create"
+// @Success      201   {object}  models.ItemLink
+// @Failure      400   {object}  handlers.ErrorResponse  "Invalid request body, missing required field, or entity types not allowed for the link type"
+// @Failure      401   {object}  handlers.ErrorResponse
+// @Failure      404   {object}  handlers.ErrorResponse  "Source or target entity not found / not accessible to caller"
+// @Failure      409   {object}  handlers.ErrorResponse  "A link between these entities already exists"
+// @Failure      500   {object}  handlers.ErrorResponse
+// @Router       /links [post]
 func (h *LinkHandler) CreateLink(w http.ResponseWriter, r *http.Request) {
 	user, ok := h.RequireAuth(w, r)
 	if !ok {
@@ -86,8 +115,21 @@ func (h *LinkHandler) CreateLink(w http.ResponseWriter, r *http.Request) {
 	h.RespondCreated(w, link)
 }
 
+// DeleteLink handles DELETE /rest/api/v1/links/{id}
+//
 // DeleteLink removes a link by id. Scope: items:write. The service
 // enforces edit permission on the link's source entity.
+//
+// @Summary      Delete a link by ID
+// @Tags         links
+// @Security     BearerAuth
+// @Param        id   path  int  true  "Link ID"
+// @Success      204  "Link deleted"
+// @Failure      400  {object}  handlers.ErrorResponse  "Invalid link ID"
+// @Failure      401  {object}  handlers.ErrorResponse
+// @Failure      404  {object}  handlers.ErrorResponse  "Link not found or caller lacks edit on the source entity"
+// @Failure      500  {object}  handlers.ErrorResponse
+// @Router       /links/{id} [delete]
 func (h *LinkHandler) DeleteLink(w http.ResponseWriter, r *http.Request) {
 	user, ok := h.RequireAuth(w, r)
 	if !ok {
@@ -104,11 +146,29 @@ func (h *LinkHandler) DeleteLink(w http.ResponseWriter, r *http.Request) {
 	h.RespondNoContent(w)
 }
 
+// GetLinksForEntity handles GET /rest/api/v1/items/{id}/links,
+// GET /rest/api/v1/pages/{id}/links, and GET /rest/api/v1/test-cases/{id}/links.
+//
 // GetLinksForEntity dispatches to the entity-specific list endpoint. The
 // caller routes /items/{id}/links, /pages/{id}/links, and
 // /test-cases/{id}/links to this same handler — the URL prefix decides
 // the entity type. Scope: caller-route decides (items:read /
 // pages:read).
+//
+// @Summary      List links anchored on an entity
+// @Description  Returns outgoing and incoming links for the given entity. The URL prefix (items / pages / test-cases) selects the entity type. Required scope depends on the route: items:read for items/test-cases, pages:read for pages.
+// @Tags         links
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id   path      int  true  "Entity ID (item / page / test case)"
+// @Success      200  {object}  map[string]interface{}  "Object with `outgoing` and `incoming` arrays of models.ItemLink"
+// @Failure      400  {object}  handlers.ErrorResponse  "Invalid entity ID"
+// @Failure      401  {object}  handlers.ErrorResponse
+// @Failure      404  {object}  handlers.ErrorResponse  "Entity not found or not accessible to caller"
+// @Failure      500  {object}  handlers.ErrorResponse
+// @Router       /items/{id}/links [get]
+// @Router       /pages/{id}/links [get]
+// @Router       /test-cases/{id}/links [get]
 func (h *LinkHandler) GetLinksForEntity(w http.ResponseWriter, r *http.Request) {
 	user, ok := h.RequireAuth(w, r)
 	if !ok {

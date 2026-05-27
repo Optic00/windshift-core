@@ -303,6 +303,98 @@ components:
         target_date:
           type: string
       type: object
+    dto.PageLinks:
+      properties:
+        history:
+          type: string
+        permissions:
+          type: string
+        self:
+          type: string
+        workspace:
+          type: string
+      type: object
+    dto.PageResponse:
+      properties:
+        _links:
+          $ref: '#/components/schemas/dto.PageLinks'
+        archived_at:
+          type: string
+        archived_by:
+          type: integer
+        content:
+          type: string
+        content_hash:
+          type: string
+        created_at:
+          type: string
+        created_by:
+          type: integer
+        depth:
+          type: integer
+        excerpt:
+          type: string
+        id:
+          type: integer
+        inherit_permissions:
+          type: boolean
+        is_home:
+          type: boolean
+        labels:
+          description: |-
+            Labels carries the workspace page-labels currently attached to the
+            page. Populated by the service layer when the page-label repository
+            is wired; always serialized as an array (never null) so CLI/JSON
+            consumers don't need to null-check.
+          items:
+            $ref: '#/components/schemas/models.PageLabel'
+          type: array
+        parent_id:
+          type: integer
+        path:
+          type: string
+        slug:
+          type: string
+        title:
+          type: string
+        updated_at:
+          type: string
+        updated_by:
+          type: integer
+        workspace_id:
+          type: integer
+      type: object
+    dto.PageRevisionResponse:
+      properties:
+        change_summary:
+          type: string
+        change_type:
+          type: string
+        content:
+          type: string
+        created_at:
+          type: string
+        created_by:
+          type: integer
+        depth:
+          type: integer
+        excerpt:
+          type: string
+        id:
+          type: integer
+        page_id:
+          type: integer
+        parent_id:
+          type: integer
+        path:
+          type: string
+        revision_number:
+          type: integer
+        slug:
+          type: string
+        title:
+          type: string
+      type: object
     dto.PrioritySummary:
       properties:
         color:
@@ -949,6 +1041,19 @@ components:
         name:
           type: string
       type: object
+    handlers.linkCreateRequest:
+      properties:
+        link_type_id:
+          type: integer
+        source_id:
+          type: integer
+        source_type:
+          type: string
+        target_id:
+          type: integer
+        target_type:
+          type: string
+      type: object
     handlers.nodeTypeDTO:
       properties:
         category:
@@ -967,6 +1072,114 @@ components:
           type: array
         type:
           $ref: '#/components/schemas/models.ActionNodeType'
+      type: object
+    handlers.pageCreateRequest:
+      properties:
+        content:
+          type: string
+        is_home:
+          type: boolean
+        parent_id:
+          type: integer
+        title:
+          type: string
+      type: object
+    handlers.pageGrantPermissionRequest:
+      properties:
+        permission_level:
+          type: string
+        principal_id:
+          type: integer
+        principal_type:
+          type: string
+      type: object
+    handlers.pageHistoryListResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/dto.PageRevisionResponse'
+          type: array
+      type: object
+    handlers.pageLabelAddRequest:
+      properties:
+        label_id:
+          type: integer
+      type: object
+    handlers.pageLabelCreateRequest:
+      properties:
+        color:
+          type: string
+        name:
+          type: string
+      type: object
+    handlers.pageLabelListResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/models.PageLabel'
+          type: array
+      type: object
+    handlers.pageLabelSetRequest:
+      properties:
+        label_ids:
+          items:
+            type: integer
+          type: array
+      type: object
+    handlers.pageLabelUpdateRequest:
+      properties:
+        color:
+          type: string
+        name:
+          type: string
+      type: object
+    handlers.pageListResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/dto.PageResponse'
+          type: array
+      type: object
+    handlers.pageListWithLabelsResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/models.PageLabel'
+          type: array
+      type: object
+    handlers.pageMoveRequest:
+      properties:
+        next_sibling_id:
+          type: integer
+        parent_id:
+          type: integer
+        prev_sibling_id:
+          type: integer
+      type: object
+    handlers.pagePermissionsResponse:
+      properties:
+        acl:
+          items:
+            $ref: '#/components/schemas/models.PagePermission'
+          type: array
+        effective_level:
+          type: string
+        inherit_permissions:
+          type: boolean
+        page_id:
+          type: integer
+      type: object
+    handlers.pageSetInheritanceRequest:
+      properties:
+        inherit_permissions:
+          type: boolean
+      type: object
+    handlers.pageUpdateRequest:
+      properties:
+        content:
+          type: string
+        title:
+          type: string
       type: object
     handlers.testResultUpdateRequest:
       properties:
@@ -1238,6 +1451,95 @@ components:
         updated_by_name:
           type: string
       type: object
+    models.ItemLink:
+      properties:
+        created_at:
+          type: string
+        created_by:
+          type: integer
+        created_by_name:
+          type: string
+        custom_field_id:
+          type: integer
+        custom_field_name:
+          description: Custom field link metadata
+          type: string
+        id:
+          type: integer
+        link_type_color:
+          type: string
+        link_type_forward_label:
+          type: string
+        link_type_id:
+          type: integer
+        link_type_name:
+          description: Joined fields for API responses
+          type: string
+        link_type_reverse_label:
+          type: string
+        source_id:
+          type: integer
+        source_item_number:
+          description: |-
+            SourceItemNumber is the workspace-scoped item number (the "74" in
+            "WI-74"). Display the user-facing key as
+            SourceWorkspaceKey + "-" + SourceItemNumber, never SourceID — that
+            field is the global DB id and looks wrong (e.g. "WI-149") in UI.
+          type: integer
+        source_item_type_color:
+          type: string
+        source_item_type_icon:
+          type: string
+        source_item_type_id:
+          type: integer
+        source_item_type_name:
+          type: string
+        source_status_color:
+          type: string
+        source_status_id:
+          description: Source item details
+          type: integer
+        source_status_name:
+          type: string
+        source_title:
+          type: string
+        source_type:
+          description: '"item" or "test_case"'
+          type: string
+        source_workspace_id:
+          type: integer
+        source_workspace_key:
+          type: string
+        target_id:
+          type: integer
+        target_item_number:
+          description: 'TargetItemNumber: see SourceItemNumber.'
+          type: integer
+        target_item_type_color:
+          type: string
+        target_item_type_icon:
+          type: string
+        target_item_type_id:
+          type: integer
+        target_item_type_name:
+          type: string
+        target_status_color:
+          type: string
+        target_status_id:
+          description: Target item details
+          type: integer
+        target_status_name:
+          type: string
+        target_title:
+          type: string
+        target_type:
+          description: '"item" or "test_case"'
+          type: string
+        target_workspace_id:
+          type: integer
+        target_workspace_key:
+          type: string
+      type: object
     models.Label:
       properties:
         color:
@@ -1252,6 +1554,66 @@ components:
           type: string
         workspace_id:
           type: integer
+      type: object
+    models.LinkType:
+      properties:
+        active:
+          type: boolean
+        allowed_entity_types:
+          description: nil = all types allowed; e.g. ["item","test_case"]
+          items:
+            type: string
+          type: array
+        color:
+          type: string
+        created_at:
+          type: string
+        description:
+          type: string
+        forward_label:
+          type: string
+        id:
+          type: integer
+        is_system:
+          type: boolean
+        name:
+          type: string
+        reverse_label:
+          type: string
+        updated_at:
+          type: string
+      type: object
+    models.PageLabel:
+      properties:
+        color:
+          type: string
+        created_at:
+          type: string
+        id:
+          type: integer
+        name:
+          type: string
+        updated_at:
+          type: string
+        workspace_id:
+          type: integer
+      type: object
+    models.PagePermission:
+      properties:
+        granted_at:
+          type: string
+        granted_by:
+          type: integer
+        id:
+          type: integer
+        page_id:
+          type: integer
+        permission_level:
+          type: string
+        principal_id:
+          type: integer
+        principal_type:
+          type: string
       type: object
     models.TestCase:
       properties:
@@ -3757,6 +4119,56 @@ paths:
       summary: Detach a label from an item
       tags:
       - labels
+  /items/{id}/links:
+    get:
+      description: 'Returns outgoing and incoming links for the given entity. The
+        URL prefix (items / pages / test-cases) selects the entity type. Required
+        scope depends on the route: items:read for items/test-cases, pages:read for
+        pages.'
+      parameters:
+      - description: Entity ID (item / page / test case)
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+          description: Object with `outgoing` and `incoming` arrays of models.ItemLink
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid entity ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Entity not found or not accessible to caller
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List links anchored on an entity
+      tags:
+      - links
   /items/{id}/transition:
     post:
       description: Performs a workflow transition with validator-mode and condition-mode
@@ -4153,6 +4565,133 @@ paths:
       summary: Update an iteration
       tags:
       - iterations
+  /link-types:
+    get:
+      description: Returns the active link-type catalog (e.g. Relates To, Page, Tests).
+        Used to validate `link_type_id` on link creation.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/models.LinkType'
+                type: array
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List active link types
+      tags:
+      - links
+  /links:
+    post:
+      description: Creates a link between two entities (item/page/test_case). The
+        link type must allow the given entity types; pages must share a workspace
+        with the source item.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/handlers.linkCreateRequest'
+        description: Link to create
+        required: true
+        x-originalParamName: body
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/models.ItemLink'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body, missing required field, or entity types
+            not allowed for the link type
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Source or target entity not found / not accessible to caller
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: A link between these entities already exists
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Create a cross-entity link
+      tags:
+      - links
+  /links/{id}:
+    delete:
+      parameters:
+      - description: Link ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        "204":
+          description: Link deleted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid link ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Link not found or caller lacks edit on the source entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Delete a link by ID
+      tags:
+      - links
   /milestones:
     get:
       description: Paginated list of milestones across all scopes (global and workspace-scoped).
@@ -4588,6 +5127,56 @@ paths:
       summary: OpenAPI 3.0 spec (YAML)
       tags:
       - meta
+  /pages/{id}/links:
+    get:
+      description: 'Returns outgoing and incoming links for the given entity. The
+        URL prefix (items / pages / test-cases) selects the entity type. Required
+        scope depends on the route: items:read for items/test-cases, pages:read for
+        pages.'
+      parameters:
+      - description: Entity ID (item / page / test case)
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+          description: Object with `outgoing` and `incoming` arrays of models.ItemLink
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid entity ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Entity not found or not accessible to caller
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List links anchored on an entity
+      tags:
+      - links
   /priorities:
     get:
       responses:
@@ -4922,6 +5511,56 @@ paths:
       summary: Get a status by ID
       tags:
       - statuses
+  /test-cases/{id}/links:
+    get:
+      description: 'Returns outgoing and incoming links for the given entity. The
+        URL prefix (items / pages / test-cases) selects the entity type. Required
+        scope depends on the route: items:read for items/test-cases, pages:read for
+        pages.'
+      parameters:
+      - description: Entity ID (item / page / test case)
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+          description: Object with `outgoing` and `incoming` arrays of models.ItemLink
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid entity ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Entity not found or not accessible to caller
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List links anchored on an entity
+      tags:
+      - links
   /users:
     get:
       description: Requires the global `user.list` permission in addition to the users:read
@@ -6974,6 +7613,546 @@ paths:
       tags:
       - workspaces
       - milestones
+  /workspaces/{id}/page-labels:
+    get:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.pageLabelListResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Workspace not found or caller lacks page.view
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List page labels in a workspace
+      tags:
+      - pages
+      - labels
+    post:
+      description: Creates a new page label in the workspace. `color` defaults to
+        a neutral blue if omitted.
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/handlers.pageLabelCreateRequest'
+        description: Label to create
+        required: true
+        x-originalParamName: body
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/models.PageLabel'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body or missing required field
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Workspace not found or caller lacks page.edit
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: A page label with this name already exists in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Create a page label
+      tags:
+      - pages
+      - labels
+  /workspaces/{id}/page-labels/{labelId}:
+    delete:
+      description: Cascade-removes the label from every page it was attached to.
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - description: Page-label ID
+        in: path
+        name: labelId
+        required: true
+        schema:
+          type: integer
+      responses:
+        "204":
+          description: Label deleted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace or label ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Label not found in this workspace or caller lacks page.edit
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Delete a page label
+      tags:
+      - pages
+      - labels
+    get:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - description: Page-label ID
+        in: path
+        name: labelId
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/models.PageLabel'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace or label ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Label not found in this workspace or caller lacks page.view
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Get a page label by ID
+      tags:
+      - pages
+      - labels
+    put:
+      description: 'Partial update: only fields supplied in the body are touched.
+        Pass `color` as `""` to reset to the default neutral blue.'
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - description: Page-label ID
+        in: path
+        name: labelId
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/handlers.pageLabelUpdateRequest'
+        description: Fields to update
+        required: true
+        x-originalParamName: body
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/models.PageLabel'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body or invalid field
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Label not found in this workspace or caller lacks page.edit
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Another page label in this workspace already has the new name
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Update a page label
+      tags:
+      - pages
+      - labels
+  /workspaces/{id}/pages:
+    get:
+      description: Returns every page in the workspace the caller can view, flat list
+        sorted depth-first.
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.pageListResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Workspace not found or not visible to caller
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List pages in a workspace
+      tags:
+      - pages
+    post:
+      description: Creates a new page in the workspace. When parent_id is set the
+        caller must be able to edit the parent.
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/handlers.pageCreateRequest'
+        description: Page to create
+        required: true
+        x-originalParamName: body
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/dto.PageResponse'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body or missing required field
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Workspace or parent page not visible to caller, or caller lacks
+            page.create
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Slug conflict with existing sibling or page-tree depth exceeded
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Create a page
+      tags:
+      - pages
+  /workspaces/{id}/pages/{pageId}:
+    delete:
+      description: Requires page.admin on the page AND workspace page.delete; re-checks
+        page.admin on every descendant before cascading.
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - description: Page ID
+        in: path
+        name: pageId
+        required: true
+        schema:
+          type: integer
+      responses:
+        "204":
+          description: Page archived
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace or page ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Page not found or you lack page.admin / page.delete
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Archive (soft-delete) a page and its subtree
+      tags:
+      - pages
+    get:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - description: Page ID
+        in: path
+        name: pageId
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/dto.PageResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace or page ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Page not found or you lack page.view
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Get a page by ID
+      tags:
+      - pages
+    put:
+      description: 'Partial update: only fields supplied in the body are touched.'
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - description: Page ID
+        in: path
+        name: pageId
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/handlers.pageUpdateRequest'
+        description: Fields to update
+        required: true
+        x-originalParamName: body
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/dto.PageResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Page not found or you lack page.edit
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Update a page
+      tags:
+      - pages
   /workspaces/{id}/pages/{pageId}/attachments:
     post:
       description: |-
@@ -7032,6 +8211,722 @@ paths:
       security:
       - BearerAuth: []
       summary: Upload an attachment to a workspace knowledge page
+      tags:
+      - pages
+  /workspaces/{id}/pages/{pageId}/history:
+    get:
+      description: Returns revisions newest-first. Supports `limit` (default 50, max
+        200) and `offset` query parameters.
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - description: Page ID
+        in: path
+        name: pageId
+        required: true
+        schema:
+          type: integer
+      - description: Maximum revisions to return (default 50, max 200)
+        in: query
+        name: limit
+        schema:
+          type: integer
+      - description: Offset into the result set (default 0)
+        in: query
+        name: offset
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.pageHistoryListResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace or page ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Page not found or you lack page.view
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List revisions of a page
+      tags:
+      - pages
+  /workspaces/{id}/pages/{pageId}/history/{revisionId}:
+    get:
+      description: Returns the revision body. The revision must belong to the addressed
+        page.
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - description: Page ID
+        in: path
+        name: pageId
+        required: true
+        schema:
+          type: integer
+      - description: Revision ID
+        in: path
+        name: revisionId
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/dto.PageRevisionResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace, page, or revision ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Page or revision not found or you lack page.view
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Get a single page revision
+      tags:
+      - pages
+  /workspaces/{id}/pages/{pageId}/history/{revisionId}/restore:
+    post:
+      description: Overwrites the page's live title/content from the revision; unarchives
+        the page when the target is archived.
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - description: Page ID
+        in: path
+        name: pageId
+        required: true
+        schema:
+          type: integer
+      - description: Revision ID
+        in: path
+        name: revisionId
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/dto.PageResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace, page, or revision ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Page or revision not found or you lack page.edit / restore
+            permission
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Restore a page revision
+      tags:
+      - pages
+  /workspaces/{id}/pages/{pageId}/inheritance:
+    patch:
+      description: Flips inherit_permissions on the page. When false, the page evaluates
+        its own ACL only.
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - description: Page ID
+        in: path
+        name: pageId
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/handlers.pageSetInheritanceRequest'
+        description: Inheritance flag
+        required: true
+        x-originalParamName: body
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/dto.PageResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Page not found or you lack page.admin
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Toggle ACL inheritance on a page
+      tags:
+      - pages
+  /workspaces/{id}/pages/{pageId}/labels:
+    get:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - description: Page ID
+        in: path
+        name: pageId
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.pageListWithLabelsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace or page ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Page not found or you lack page.view
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List labels attached to a page
+      tags:
+      - pages
+      - labels
+    post:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - description: Page ID
+        in: path
+        name: pageId
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/handlers.pageLabelAddRequest'
+        description: Label to attach
+        required: true
+        x-originalParamName: body
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.pageListWithLabelsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body or missing required field
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Page not found, you lack page.edit, or label doesn't belong
+            to the workspace
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Label is already attached to this page
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Attach a single label to a page
+      tags:
+      - pages
+      - labels
+    put:
+      description: Atomically replaces every label attached to the page. Labels must
+        belong to the same workspace.
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - description: Page ID
+        in: path
+        name: pageId
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/handlers.pageLabelSetRequest'
+        description: Replacement label set
+        required: true
+        x-originalParamName: body
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.pageListWithLabelsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Page not found, you lack page.edit, or a label doesn't belong
+            to the workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Replace the label set on a page
+      tags:
+      - pages
+      - labels
+  /workspaces/{id}/pages/{pageId}/labels/{labelId}:
+    delete:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - description: Page ID
+        in: path
+        name: pageId
+        required: true
+        schema:
+          type: integer
+      - description: Page-label ID
+        in: path
+        name: labelId
+        required: true
+        schema:
+          type: integer
+      responses:
+        "204":
+          description: Label detached
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace, page, or label ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Page not found or you lack page.edit
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Detach a label from a page
+      tags:
+      - pages
+      - labels
+  /workspaces/{id}/pages/{pageId}/move:
+    post:
+      description: parent_id=null moves the page to the workspace root. Caller must
+        have page.edit on both the moved page and the destination parent.
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - description: Page ID
+        in: path
+        name: pageId
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/handlers.pageMoveRequest'
+        description: Move destination
+        required: true
+        x-originalParamName: body
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/dto.PageResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Page or destination parent not found or you lack page.edit
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Move would create a cycle or exceed depth limits
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Move (reparent) a page
+      tags:
+      - pages
+  /workspaces/{id}/pages/{pageId}/permissions:
+    get:
+      description: Returns the caller's effective permission level and the ACL rows
+        stored directly on the page (inherited rows are not expanded).
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - description: Page ID
+        in: path
+        name: pageId
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.pagePermissionsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace or page ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Page not found or you lack page.view
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Get page permissions
+      tags:
+      - pages
+    post:
+      description: Attaches an ACL row to the page. Requires page.admin on the target
+        page.
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - description: Page ID
+        in: path
+        name: pageId
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/handlers.pageGrantPermissionRequest'
+        description: ACL row to grant
+        required: true
+        x-originalParamName: body
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/models.PagePermission'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body, missing required field, or invalid principal/level
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Page not found or you lack page.admin
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Permission already granted for this principal
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Grant a page permission
+      tags:
+      - pages
+  /workspaces/{id}/pages/{pageId}/permissions/{permissionId}:
+    delete:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - description: Page ID
+        in: path
+        name: pageId
+        required: true
+        schema:
+          type: integer
+      - description: Permission (ACL row) ID
+        in: path
+        name: permissionId
+        required: true
+        schema:
+          type: integer
+      responses:
+        "204":
+          description: Permission revoked
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace, page, or permission ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Page or permission not found or you lack page.admin
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Revoke a page permission
       tags:
       - pages
   /workspaces/{id}/statuses:

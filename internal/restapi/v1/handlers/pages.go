@@ -93,8 +93,23 @@ type pagePermissionsResponse struct {
 
 // --- endpoints ---
 
+// List handles GET /rest/api/v1/workspaces/{id}/pages
+//
 // List returns every page in the workspace the caller can view. Returns
 // a flat list sorted depth-first; the CLI assembles the tree client-side.
+//
+// @Summary      List pages in a workspace
+// @Description  Returns every page in the workspace the caller can view, flat list sorted depth-first.
+// @Tags         pages
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id   path      int  true  "Workspace ID"
+// @Success      200  {object}  handlers.pageListResponse
+// @Failure      400  {object}  handlers.ErrorResponse  "Invalid workspace ID"
+// @Failure      401  {object}  handlers.ErrorResponse
+// @Failure      404  {object}  handlers.ErrorResponse  "Workspace not found or not visible to caller"
+// @Failure      500  {object}  handlers.ErrorResponse
+// @Router       /workspaces/{id}/pages [get]
 func (h *PageHandler) List(w http.ResponseWriter, r *http.Request) {
 	user, ok := h.RequireAuth(w, r)
 	if !ok {
@@ -140,7 +155,22 @@ func (h *PageHandler) List(w http.ResponseWriter, r *http.Request) {
 	h.RespondOK(w, pageListResponse{Items: items})
 }
 
+// Get handles GET /rest/api/v1/workspaces/{id}/pages/{pageId}
+//
 // Get returns a single page by id. 404 on missing or no view permission.
+//
+// @Summary      Get a page by ID
+// @Tags         pages
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id      path      int  true  "Workspace ID"
+// @Param        pageId  path      int  true  "Page ID"
+// @Success      200     {object}  dto.PageResponse
+// @Failure      400     {object}  handlers.ErrorResponse  "Invalid workspace or page ID"
+// @Failure      401     {object}  handlers.ErrorResponse
+// @Failure      404     {object}  handlers.ErrorResponse  "Page not found or you lack page.view"
+// @Failure      500     {object}  handlers.ErrorResponse
+// @Router       /workspaces/{id}/pages/{pageId} [get]
 func (h *PageHandler) Get(w http.ResponseWriter, r *http.Request) {
 	wsID, pageID, ok := h.requireWorkspacePageView(w, r)
 	if !ok {
@@ -158,9 +188,27 @@ func (h *PageHandler) Get(w http.ResponseWriter, r *http.Request) {
 	h.RespondOK(w, dto.MapPageToResponse(page, getBaseURL(r)))
 }
 
+// Create handles POST /rest/api/v1/workspaces/{id}/pages
+//
 // Create creates a new page. Requires pages:write scope and page.create
 // on the workspace (or page.admin / workspace.admin / system.admin).
 // When parent_id is set the caller must also be able to edit the parent.
+//
+// @Summary      Create a page
+// @Description  Creates a new page in the workspace. When parent_id is set the caller must be able to edit the parent.
+// @Tags         pages
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id    path      int                          true  "Workspace ID"
+// @Param        body  body      handlers.pageCreateRequest   true  "Page to create"
+// @Success      201   {object}  dto.PageResponse
+// @Failure      400   {object}  handlers.ErrorResponse  "Invalid request body or missing required field"
+// @Failure      401   {object}  handlers.ErrorResponse
+// @Failure      404   {object}  handlers.ErrorResponse  "Workspace or parent page not visible to caller, or caller lacks page.create"
+// @Failure      409   {object}  handlers.ErrorResponse  "Slug conflict with existing sibling or page-tree depth exceeded"
+// @Failure      500   {object}  handlers.ErrorResponse
+// @Router       /workspaces/{id}/pages [post]
 func (h *PageHandler) Create(w http.ResponseWriter, r *http.Request) {
 	user, ok := h.RequireAuth(w, r)
 	if !ok {
@@ -208,8 +256,26 @@ func (h *PageHandler) Create(w http.ResponseWriter, r *http.Request) {
 	h.RespondCreated(w, dto.MapPageToResponse(page, getBaseURL(r)))
 }
 
+// Update handles PUT /rest/api/v1/workspaces/{id}/pages/{pageId}
+//
 // Update overwrites a page's title and/or content. Body is a partial:
 // fields omitted are left unchanged.
+//
+// @Summary      Update a page
+// @Description  Partial update: only fields supplied in the body are touched.
+// @Tags         pages
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id      path      int                         true  "Workspace ID"
+// @Param        pageId  path      int                         true  "Page ID"
+// @Param        body    body      handlers.pageUpdateRequest  true  "Fields to update"
+// @Success      200     {object}  dto.PageResponse
+// @Failure      400     {object}  handlers.ErrorResponse  "Invalid request body"
+// @Failure      401     {object}  handlers.ErrorResponse
+// @Failure      404     {object}  handlers.ErrorResponse  "Page not found or you lack page.edit"
+// @Failure      500     {object}  handlers.ErrorResponse
+// @Router       /workspaces/{id}/pages/{pageId} [put]
 func (h *PageHandler) Update(w http.ResponseWriter, r *http.Request) {
 	wsID, pageID, user, ok := h.requireWorkspacePageEdit(w, r)
 	if !ok {
@@ -247,9 +313,28 @@ func (h *PageHandler) Update(w http.ResponseWriter, r *http.Request) {
 	h.RespondOK(w, dto.MapPageToResponse(updated, getBaseURL(r)))
 }
 
+// Move handles POST /rest/api/v1/workspaces/{id}/pages/{pageId}/move
+//
 // Move reparents a page. parent_id=null moves it to the workspace root.
 // The caller must be able to edit the moved page and the destination
 // parent (when supplied).
+//
+// @Summary      Move (reparent) a page
+// @Description  parent_id=null moves the page to the workspace root. Caller must have page.edit on both the moved page and the destination parent.
+// @Tags         pages
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id      path      int                       true  "Workspace ID"
+// @Param        pageId  path      int                       true  "Page ID"
+// @Param        body    body      handlers.pageMoveRequest  true  "Move destination"
+// @Success      200     {object}  dto.PageResponse
+// @Failure      400     {object}  handlers.ErrorResponse  "Invalid request body"
+// @Failure      401     {object}  handlers.ErrorResponse
+// @Failure      404     {object}  handlers.ErrorResponse  "Page or destination parent not found or you lack page.edit"
+// @Failure      409     {object}  handlers.ErrorResponse  "Move would create a cycle or exceed depth limits"
+// @Failure      500     {object}  handlers.ErrorResponse
+// @Router       /workspaces/{id}/pages/{pageId}/move [post]
 func (h *PageHandler) Move(w http.ResponseWriter, r *http.Request) {
 	wsID, pageID, user, ok := h.requireWorkspacePageEdit(w, r)
 	if !ok {
@@ -278,11 +363,26 @@ func (h *PageHandler) Move(w http.ResponseWriter, r *http.Request) {
 	h.RespondOK(w, dto.MapPageToResponse(moved, getBaseURL(r)))
 }
 
+// Archive handles DELETE /rest/api/v1/workspaces/{id}/pages/{pageId}
+//
 // Archive soft-deletes a page and its subtree. Requires pages:delete
 // scope at the route layer plus page.admin on the page AND workspace
 // page.delete. To prevent restricted descendants from being silently
 // archived, we re-check PageOpAdmin on every descendant before
 // cascading; see bug-hunt finding #3.
+//
+// @Summary      Archive (soft-delete) a page and its subtree
+// @Description  Requires page.admin on the page AND workspace page.delete; re-checks page.admin on every descendant before cascading.
+// @Tags         pages
+// @Security     BearerAuth
+// @Param        id      path  int  true  "Workspace ID"
+// @Param        pageId  path  int  true  "Page ID"
+// @Success      204     "Page archived"
+// @Failure      400     {object}  handlers.ErrorResponse  "Invalid workspace or page ID"
+// @Failure      401     {object}  handlers.ErrorResponse
+// @Failure      404     {object}  handlers.ErrorResponse  "Page not found or you lack page.admin / page.delete"
+// @Failure      500     {object}  handlers.ErrorResponse
+// @Router       /workspaces/{id}/pages/{pageId} [delete]
 func (h *PageHandler) Archive(w http.ResponseWriter, r *http.Request) {
 	wsID, pageID, user, ok := h.requireWorkspacePageAdmin(w, r)
 	if !ok {
@@ -315,7 +415,25 @@ func (h *PageHandler) Archive(w http.ResponseWriter, r *http.Request) {
 	h.RespondNoContent(w)
 }
 
+// GetHistory handles GET /rest/api/v1/workspaces/{id}/pages/{pageId}/history
+//
 // GetHistory returns revisions for a page newest-first.
+//
+// @Summary      List revisions of a page
+// @Description  Returns revisions newest-first. Supports `limit` (default 50, max 200) and `offset` query parameters.
+// @Tags         pages
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id      path      int  true   "Workspace ID"
+// @Param        pageId  path      int  true   "Page ID"
+// @Param        limit   query     int  false  "Maximum revisions to return (default 50, max 200)"
+// @Param        offset  query     int  false  "Offset into the result set (default 0)"
+// @Success      200     {object}  handlers.pageHistoryListResponse
+// @Failure      400     {object}  handlers.ErrorResponse  "Invalid workspace or page ID"
+// @Failure      401     {object}  handlers.ErrorResponse
+// @Failure      404     {object}  handlers.ErrorResponse  "Page not found or you lack page.view"
+// @Failure      500     {object}  handlers.ErrorResponse
+// @Router       /workspaces/{id}/pages/{pageId}/history [get]
 func (h *PageHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	_, pageID, ok := h.requireWorkspacePageView(w, r)
 	if !ok {
@@ -334,9 +452,26 @@ func (h *PageHandler) GetHistory(w http.ResponseWriter, r *http.Request) {
 	h.RespondOK(w, pageHistoryListResponse{Items: items})
 }
 
+// GetRevision handles GET /rest/api/v1/workspaces/{id}/pages/{pageId}/history/{revisionId}
+//
 // GetRevision returns a single revision. The revision id must belong to the
 // addressed page so callers cannot use a visible page as a side-channel for a
 // different page's revision body.
+//
+// @Summary      Get a single page revision
+// @Description  Returns the revision body. The revision must belong to the addressed page.
+// @Tags         pages
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id          path      int  true  "Workspace ID"
+// @Param        pageId      path      int  true  "Page ID"
+// @Param        revisionId  path      int  true  "Revision ID"
+// @Success      200         {object}  dto.PageRevisionResponse
+// @Failure      400         {object}  handlers.ErrorResponse  "Invalid workspace, page, or revision ID"
+// @Failure      401         {object}  handlers.ErrorResponse
+// @Failure      404         {object}  handlers.ErrorResponse  "Page or revision not found or you lack page.view"
+// @Failure      500         {object}  handlers.ErrorResponse
+// @Router       /workspaces/{id}/pages/{pageId}/history/{revisionId} [get]
 func (h *PageHandler) GetRevision(w http.ResponseWriter, r *http.Request) {
 	_, pageID, ok := h.requireWorkspacePageView(w, r)
 	if !ok {
@@ -358,9 +493,26 @@ func (h *PageHandler) GetRevision(w http.ResponseWriter, r *http.Request) {
 	h.RespondOK(w, dto.MapPageRevisionToResponse(rev))
 }
 
+// RestoreRevision handles POST /rest/api/v1/workspaces/{id}/pages/{pageId}/history/{revisionId}/restore
+//
 // RestoreRevision overwrites a page's live title/content from a revision and
 // unarchives the page when the target is archived. Live pages require edit;
 // archived pages require the restore branch in PagePermissionService.
+//
+// @Summary      Restore a page revision
+// @Description  Overwrites the page's live title/content from the revision; unarchives the page when the target is archived.
+// @Tags         pages
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id          path      int  true  "Workspace ID"
+// @Param        pageId      path      int  true  "Page ID"
+// @Param        revisionId  path      int  true  "Revision ID"
+// @Success      200         {object}  dto.PageResponse
+// @Failure      400         {object}  handlers.ErrorResponse  "Invalid workspace, page, or revision ID"
+// @Failure      401         {object}  handlers.ErrorResponse
+// @Failure      404         {object}  handlers.ErrorResponse  "Page or revision not found or you lack page.edit / restore permission"
+// @Failure      500         {object}  handlers.ErrorResponse
+// @Router       /workspaces/{id}/pages/{pageId}/history/{revisionId}/restore [post]
 func (h *PageHandler) RestoreRevision(w http.ResponseWriter, r *http.Request) {
 	_, pageID, user, ok := h.resolveWorkspacePageOp(w, r, services.PageOpRestore)
 	if !ok {
@@ -378,9 +530,25 @@ func (h *PageHandler) RestoreRevision(w http.ResponseWriter, r *http.Request) {
 	h.RespondOK(w, dto.MapPageToResponse(page, getBaseURL(r)))
 }
 
+// GetPermissions handles GET /rest/api/v1/workspaces/{id}/pages/{pageId}/permissions
+//
 // GetPermissions returns the caller's effective level plus ACL rows stored
 // directly on this page. Inherited ACL rows are evaluated by the service but
 // not expanded in this compact v1 payload.
+//
+// @Summary      Get page permissions
+// @Description  Returns the caller's effective permission level and the ACL rows stored directly on the page (inherited rows are not expanded).
+// @Tags         pages
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id      path      int  true  "Workspace ID"
+// @Param        pageId  path      int  true  "Page ID"
+// @Success      200     {object}  handlers.pagePermissionsResponse
+// @Failure      400     {object}  handlers.ErrorResponse  "Invalid workspace or page ID"
+// @Failure      401     {object}  handlers.ErrorResponse
+// @Failure      404     {object}  handlers.ErrorResponse  "Page not found or you lack page.view"
+// @Failure      500     {object}  handlers.ErrorResponse
+// @Router       /workspaces/{id}/pages/{pageId}/permissions [get]
 func (h *PageHandler) GetPermissions(w http.ResponseWriter, r *http.Request) {
 	wsID, pageID, user, ok := h.resolveWorkspacePageOp(w, r, services.PageOpView)
 	if !ok {
@@ -414,8 +582,27 @@ func (h *PageHandler) GetPermissions(w http.ResponseWriter, r *http.Request) {
 	h.RespondOK(w, pagePermissionsResponse{PageID: page.ID, InheritPermissions: page.InheritPermissions, EffectiveLevel: effective, ACL: acl})
 }
 
+// GrantPermission handles POST /rest/api/v1/workspaces/{id}/pages/{pageId}/permissions
+//
 // GrantPermission attaches an ACL row to a page. Requires page.admin on the
 // target page via PagePermissionService and pages:write at the route layer.
+//
+// @Summary      Grant a page permission
+// @Description  Attaches an ACL row to the page. Requires page.admin on the target page.
+// @Tags         pages
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id      path      int                                   true  "Workspace ID"
+// @Param        pageId  path      int                                   true  "Page ID"
+// @Param        body    body      handlers.pageGrantPermissionRequest   true  "ACL row to grant"
+// @Success      201     {object}  models.PagePermission
+// @Failure      400     {object}  handlers.ErrorResponse  "Invalid request body, missing required field, or invalid principal/level"
+// @Failure      401     {object}  handlers.ErrorResponse
+// @Failure      404     {object}  handlers.ErrorResponse  "Page not found or you lack page.admin"
+// @Failure      409     {object}  handlers.ErrorResponse  "Permission already granted for this principal"
+// @Failure      500     {object}  handlers.ErrorResponse
+// @Router       /workspaces/{id}/pages/{pageId}/permissions [post]
 func (h *PageHandler) GrantPermission(w http.ResponseWriter, r *http.Request) {
 	_, pageID, user, ok := h.resolveWorkspacePageOp(w, r, services.PageOpAdmin)
 	if !ok {
@@ -437,7 +624,22 @@ func (h *PageHandler) GrantPermission(w http.ResponseWriter, r *http.Request) {
 	h.RespondCreated(w, row)
 }
 
+// RevokePermission handles DELETE /rest/api/v1/workspaces/{id}/pages/{pageId}/permissions/{permissionId}
+//
 // RevokePermission deletes one ACL row from the page.
+//
+// @Summary      Revoke a page permission
+// @Tags         pages
+// @Security     BearerAuth
+// @Param        id            path  int  true  "Workspace ID"
+// @Param        pageId        path  int  true  "Page ID"
+// @Param        permissionId  path  int  true  "Permission (ACL row) ID"
+// @Success      204           "Permission revoked"
+// @Failure      400           {object}  handlers.ErrorResponse  "Invalid workspace, page, or permission ID"
+// @Failure      401           {object}  handlers.ErrorResponse
+// @Failure      404           {object}  handlers.ErrorResponse  "Page or permission not found or you lack page.admin"
+// @Failure      500           {object}  handlers.ErrorResponse
+// @Router       /workspaces/{id}/pages/{pageId}/permissions/{permissionId} [delete]
 func (h *PageHandler) RevokePermission(w http.ResponseWriter, r *http.Request) {
 	_, pageID, user, ok := h.resolveWorkspacePageOp(w, r, services.PageOpAdmin)
 	if !ok {
@@ -454,8 +656,26 @@ func (h *PageHandler) RevokePermission(w http.ResponseWriter, r *http.Request) {
 	h.RespondNoContent(w)
 }
 
+// SetInheritance handles PATCH /rest/api/v1/workspaces/{id}/pages/{pageId}/inheritance
+//
 // SetInheritance flips the page's inherit_permissions flag. Requires admin on
 // the page and pages:write on the bearer token.
+//
+// @Summary      Toggle ACL inheritance on a page
+// @Description  Flips inherit_permissions on the page. When false, the page evaluates its own ACL only.
+// @Tags         pages
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id      path      int                                  true  "Workspace ID"
+// @Param        pageId  path      int                                  true  "Page ID"
+// @Param        body    body      handlers.pageSetInheritanceRequest   true  "Inheritance flag"
+// @Success      200     {object}  dto.PageResponse
+// @Failure      400     {object}  handlers.ErrorResponse  "Invalid request body"
+// @Failure      401     {object}  handlers.ErrorResponse
+// @Failure      404     {object}  handlers.ErrorResponse  "Page not found or you lack page.admin"
+// @Failure      500     {object}  handlers.ErrorResponse
+// @Router       /workspaces/{id}/pages/{pageId}/inheritance [patch]
 func (h *PageHandler) SetInheritance(w http.ResponseWriter, r *http.Request) {
 	_, pageID, user, ok := h.resolveWorkspacePageOp(w, r, services.PageOpAdmin)
 	if !ok {
