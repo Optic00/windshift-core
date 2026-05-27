@@ -82,6 +82,15 @@ const (
 	ScopePagesWrite  = "pages:write"
 	ScopePagesDelete = "pages:delete"
 
+	// Test management (cases, sets, runs, run templates). :write covers
+	// run lifecycle on v1 (create, end, update results, execute template);
+	// the per-workspace test.view / test.execute / test.manage role gates
+	// individual actions in-handler. Mutating the test catalog (create/
+	// update/delete cases / sets / folders) lives on the cookie surface and
+	// will be added under :write in a follow-up.
+	ScopeTestsRead  = "tests:read"
+	ScopeTestsWrite = "tests:write"
+
 	// Admin scopes (require system admin role AND scope on token)
 	ScopeAdminUsersRead      = "admin:users:read"
 	ScopeAdminUsersWrite     = "admin:users:write"
@@ -105,6 +114,7 @@ var DefaultAgentScopes = []string{
 	ScopeStatusesRead, ScopePrioritiesRead, ScopeCustomFieldsRead,
 	ScopeMilestonesRead, ScopeIterationsRead, ScopeProjectsRead,
 	ScopePagesRead, ScopePagesWrite, ScopePagesDelete,
+	ScopeTestsRead, ScopeTestsWrite,
 	ScopeMCPAccess,
 }
 
@@ -122,6 +132,7 @@ var AllValidScopes = []string{
 	ScopeCollectionsRead,
 	ScopeActionsRead, ScopeActionsWrite,
 	ScopePagesRead, ScopePagesWrite, ScopePagesDelete,
+	ScopeTestsRead, ScopeTestsWrite,
 	ScopeAdminUsersRead, ScopeAdminUsersWrite,
 	ScopeAdminGroupsRead, ScopeAdminGroupsWrite,
 	ScopeAdminAuditLogsRead,
@@ -134,7 +145,7 @@ var allNonAdminReadScopes = []string{
 	ScopeWorkflowsRead, ScopeItemTypesRead, ScopePrioritiesRead,
 	ScopeCustomFieldsRead, ScopeUsersRead, ScopeMilestonesRead,
 	ScopeIterationsRead, ScopeProjectsRead, ScopeCollectionsRead,
-	ScopeActionsRead, ScopePagesRead,
+	ScopeActionsRead, ScopePagesRead, ScopeTestsRead,
 }
 
 // allNonAdminScopes is the set of all non-admin scopes (for legacy "write" mapping).
@@ -151,6 +162,7 @@ var allNonAdminScopes = []string{
 	ScopeCollectionsRead,
 	ScopeActionsRead, ScopeActionsWrite,
 	ScopePagesRead, ScopePagesWrite, ScopePagesDelete,
+	ScopeTestsRead, ScopeTestsWrite,
 }
 
 // AdminScopes returns the set of scopes that require system admin role.

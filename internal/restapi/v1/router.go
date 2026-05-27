@@ -90,6 +90,7 @@ func RegisterRoutes(deps restapi.Deps) {
 	pageLabelHandler := handlers.NewPageLabelHandler(db, permissionService)
 	diagramHandler := handlers.NewDiagramHandler(db, permissionService)
 	labelHandler := handlers.NewLabelHandler(db, permissionService)
+	testMgmtHandler := handlers.NewTestManagementHandler(db, permissionService)
 
 	// Page-attachment upload reuses the legacy attachment handler (whose
 	// Upload method holds the full validation / storage / DB-insert
@@ -361,6 +362,33 @@ func RegisterRoutes(deps restapi.Deps) {
 	v1.HandleWithMiddleware("PUT /items/{id}/labels", labelHandler.SetForItem, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)
 	v1.HandleWithMiddleware("POST /items/{id}/labels", labelHandler.AddToItem, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)
 	v1.HandleWithMiddleware("DELETE /items/{id}/labels/{labelId}", labelHandler.RemoveFromItem, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)
+
+	// ============================================
+	// Test management (Phase 1 — WI-68: read + run lifecycle).
+	// Gated by tests:* token scope at the route layer; in-handler
+	// workspace permission checks enforce test.view / test.execute on
+	// top so a tokens:write token can't drive runs in a workspace where
+	// the user lacks test.execute. The full catalog CRUD (folders,
+	// cases, sets, labels, reports) stays cookie-only until a follow-up
+	// ticket; what's here is just enough for `ws test` and MCP to drive
+	// the run lifecycle.
+	// ============================================
+	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-cases", testMgmtHandler.ListTestCases, bearerAuth.RequirePermission("tests:read"))
+	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-cases/{id}", testMgmtHandler.GetTestCase, bearerAuth.RequirePermission("tests:read"))
+	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-cases/{testCaseId}/steps", testMgmtHandler.GetTestCaseSteps, bearerAuth.RequirePermission("tests:read"))
+
+	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-sets", testMgmtHandler.ListTestSets, bearerAuth.RequirePermission("tests:read"))
+	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-sets/{id}", testMgmtHandler.GetTestSet, bearerAuth.RequirePermission("tests:read"))
+	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-sets/{id}/test-cases", testMgmtHandler.GetTestSetCases, bearerAuth.RequirePermission("tests:read"))
+
+	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-runs", testMgmtHandler.ListTestRuns, bearerAuth.RequirePermission("tests:read"))
+	v1.HandleWithMiddleware("POST /workspaces/{workspaceId}/test-runs", testMgmtHandler.CreateTestRun, bearerAuth.RequirePermission("tests:write"))
+	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-runs/{id}", testMgmtHandler.GetTestRun, bearerAuth.RequirePermission("tests:read"))
+	v1.HandleWithMiddleware("POST /workspaces/{workspaceId}/test-runs/{id}/end", testMgmtHandler.EndTestRun, bearerAuth.RequirePermission("tests:write"))
+	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-runs/{id}/results", testMgmtHandler.GetTestRunResults, bearerAuth.RequirePermission("tests:read"))
+	v1.HandleWithMiddleware("PUT /workspaces/{workspaceId}/test-runs/{id}/results/{resultId}", testMgmtHandler.UpdateTestRunResult, bearerAuth.RequirePermission("tests:write"))
+
+	v1.HandleWithMiddleware("POST /workspaces/{workspaceId}/test-run-templates/{id}/execute", testMgmtHandler.ExecuteTestRunTemplate, bearerAuth.RequirePermission("tests:write"))
 
 	// ============================================
 	// Search

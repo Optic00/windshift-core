@@ -1475,6 +1475,73 @@
         },
         "type": "object"
       },
+      "handlers.testResultUpdateRequest": {
+        "properties": {
+          "actual_result": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "handlers.testResultWithCaseTitle": {
+        "properties": {
+          "actual_result": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "executed_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "notes": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "integer"
+          },
+          "status": {
+            "description": "\"passed\", \"failed\", \"blocked\", \"skipped\", \"not_run\"",
+            "type": "string"
+          },
+          "test_case_id": {
+            "type": "integer"
+          },
+          "test_case_title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "handlers.testRunCreateRequest": {
+        "properties": {
+          "assignee_id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "set_id": {
+            "type": "integer"
+          },
+          "template_id": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
       "handlers.triggerTypeDTO": {
         "properties": {
           "config_schema": {
@@ -1803,6 +1870,214 @@
           },
           "workspace_id": {
             "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "models.TestCase": {
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "estimated_duration": {
+            "description": "in seconds",
+            "type": "integer"
+          },
+          "folder_id": {
+            "type": "integer"
+          },
+          "folder_name": {
+            "description": "Computed fields for API responses",
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "labels": {
+            "items": {
+              "$ref": "#/components/schemas/models.TestLabel"
+            },
+            "type": "array"
+          },
+          "name": {
+            "type": "string"
+          },
+          "preconditions": {
+            "type": "string"
+          },
+          "priority": {
+            "description": "low, medium, high, critical",
+            "type": "string"
+          },
+          "sort_order": {
+            "type": "integer"
+          },
+          "status": {
+            "description": "active, inactive, draft",
+            "type": "string"
+          },
+          "test_steps": {
+            "items": {
+              "$ref": "#/components/schemas/models.TestStep"
+            },
+            "type": "array"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "workspace_id": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "models.TestLabel": {
+        "properties": {
+          "color": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "workspace_id": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "models.TestRun": {
+        "properties": {
+          "assignee_avatar": {
+            "type": "string"
+          },
+          "assignee_email": {
+            "type": "string"
+          },
+          "assignee_id": {
+            "description": "User assigned to execute this run",
+            "type": "integer"
+          },
+          "assignee_name": {
+            "description": "Computed fields from JOIN with users table",
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "ended_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "set_id": {
+            "type": "integer"
+          },
+          "started_at": {
+            "type": "string"
+          },
+          "template_id": {
+            "description": "Optional reference to template",
+            "type": "integer"
+          },
+          "workspace_id": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "models.TestSet": {
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "failed_runs": {
+            "type": "integer"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "last_run_date": {
+            "type": "string"
+          },
+          "last_run_status": {
+            "type": "string"
+          },
+          "milestone_id": {
+            "type": "integer"
+          },
+          "milestone_name": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "successful_runs": {
+            "type": "integer"
+          },
+          "test_case_count": {
+            "description": "Test case count",
+            "type": "integer"
+          },
+          "total_runs": {
+            "description": "Test run statistics",
+            "type": "integer"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "workspace_id": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "models.TestStep": {
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "data": {
+            "type": "string"
+          },
+          "expected": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "step_number": {
+            "type": "integer"
+          },
+          "test_case_id": {
+            "type": "integer"
+          },
+          "updated_at": {
+            "type": "string"
           }
         },
         "type": "object"
@@ -11193,6 +11468,1269 @@
         "tags": [
           "workspaces",
           "statuses"
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/test-cases": {
+      "get": {
+        "description": "Optional `folder_id` query parameter filters to a single folder; pass `null` to retrieve top-level cases. `all=true` includes archived cases.",
+        "parameters": [
+          {
+            "description": "Workspace ID",
+            "in": "path",
+            "name": "workspaceId",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Folder ID or `null` for top-level cases",
+            "in": "query",
+            "name": "folder_id",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Include archived cases",
+            "in": "query",
+            "name": "all",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/models.TestCase"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid workspace or folder ID"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the tests:read scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Workspace not found or caller lacks test.view"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List test cases in a workspace",
+        "tags": [
+          "tests"
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/test-cases/{id}": {
+      "get": {
+        "parameters": [
+          {
+            "description": "Workspace ID",
+            "in": "path",
+            "name": "workspaceId",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Test case ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/models.TestCase"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid workspace or case ID"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the tests:read scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Test case not found in this workspace"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Get a test case by ID (scoped to workspace)",
+        "tags": [
+          "tests"
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/test-cases/{testCaseId}/steps": {
+      "get": {
+        "parameters": [
+          {
+            "description": "Workspace ID",
+            "in": "path",
+            "name": "workspaceId",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Test case ID",
+            "in": "path",
+            "name": "testCaseId",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/models.TestStep"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid workspace or test case ID"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the tests:read scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Test case not found in this workspace"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List steps on a test case",
+        "tags": [
+          "tests"
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/test-run-templates/{id}/execute": {
+      "post": {
+        "description": "Creates a new test run from the template's bound set, with the run name auto-generated as `\u003ctemplate name\u003e - Run \u003cN\u003e`.",
+        "parameters": [
+          {
+            "description": "Workspace ID",
+            "in": "path",
+            "name": "workspaceId",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Test run template ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/models.TestRun"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid workspace or template ID"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the tests:write scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Template not found in this workspace"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Execute a saved test run template",
+        "tags": [
+          "tests"
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/test-runs": {
+      "get": {
+        "description": "`assignee_id` filters to a single assignee; pass `unassigned` for runs with no assignee.",
+        "parameters": [
+          {
+            "description": "Workspace ID",
+            "in": "path",
+            "name": "workspaceId",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Assignee user ID, or `unassigned`",
+            "in": "query",
+            "name": "assignee_id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/models.TestRun"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid workspace ID"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the tests:read scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Workspace not found or caller lacks test.view"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List test runs in a workspace",
+        "tags": [
+          "tests"
+        ]
+      },
+      "post": {
+        "description": "Pass `set_id` to start a run from a test set, or `template_id` to start from a saved run template. `name` is optional — the service generates one from the template when omitted.",
+        "parameters": [
+          {
+            "description": "Workspace ID",
+            "in": "path",
+            "name": "workspaceId",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/handlers.testRunCreateRequest"
+              }
+            }
+          },
+          "description": "Test run to create",
+          "required": true,
+          "x-originalParamName": "body"
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/models.TestRun"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request body or validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the tests:write scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Workspace not found or caller lacks test.execute"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Create a new test run (from a set or template)",
+        "tags": [
+          "tests"
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/test-runs/{id}": {
+      "get": {
+        "parameters": [
+          {
+            "description": "Workspace ID",
+            "in": "path",
+            "name": "workspaceId",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Test run ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/models.TestRun"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid workspace or run ID"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the tests:read scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Test run not found in this workspace"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Get a test run by ID",
+        "tags": [
+          "tests"
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/test-runs/{id}/end": {
+      "post": {
+        "parameters": [
+          {
+            "description": "Workspace ID",
+            "in": "path",
+            "name": "workspaceId",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Test run ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Run marked complete"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid workspace or run ID"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the tests:write scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Test run not found in this workspace"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Mark a test run as ended",
+        "tags": [
+          "tests"
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/test-runs/{id}/results": {
+      "get": {
+        "parameters": [
+          {
+            "description": "Workspace ID",
+            "in": "path",
+            "name": "workspaceId",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Test run ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/handlers.testResultWithCaseTitle"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid workspace or run ID"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the tests:read scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Test run not found in this workspace"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List per-test-case results in a test run",
+        "tags": [
+          "tests"
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/test-runs/{id}/results/{resultId}": {
+      "put": {
+        "description": "`status` is the canonical string the workspace uses (\"passed\", \"failed\", \"blocked\", \"skipped\"). `actual_result` and `notes` accept the same Markdown the SPA writes — server-side sanitization preserves blank-line `\u003cbr /\u003e` markers from MilkdownEditor.",
+        "parameters": [
+          {
+            "description": "Workspace ID",
+            "in": "path",
+            "name": "workspaceId",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Test run ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Test result ID",
+            "in": "path",
+            "name": "resultId",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/handlers.testResultUpdateRequest"
+              }
+            }
+          },
+          "description": "Result update",
+          "required": true,
+          "x-originalParamName": "body"
+        },
+        "responses": {
+          "200": {
+            "description": "Result updated"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request body or validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the tests:write scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Test run or result not found in this workspace"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Record / update a single test-case result in a run",
+        "tags": [
+          "tests"
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/test-sets": {
+      "get": {
+        "parameters": [
+          {
+            "description": "Workspace ID",
+            "in": "path",
+            "name": "workspaceId",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/models.TestSet"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid workspace ID"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the tests:read scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Workspace not found or caller lacks test.view"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List test sets in a workspace",
+        "tags": [
+          "tests"
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/test-sets/{id}": {
+      "get": {
+        "parameters": [
+          {
+            "description": "Workspace ID",
+            "in": "path",
+            "name": "workspaceId",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Test set ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/models.TestSet"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid workspace or set ID"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the tests:read scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Test set not found in this workspace"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Get a test set by ID",
+        "tags": [
+          "tests"
+        ]
+      }
+    },
+    "/workspaces/{workspaceId}/test-sets/{id}/test-cases": {
+      "get": {
+        "parameters": [
+          {
+            "description": "Workspace ID",
+            "in": "path",
+            "name": "workspaceId",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Test set ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/models.TestCase"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid workspace or set ID"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the tests:read scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Test set not found in this workspace"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List test cases attached to a test set",
+        "tags": [
+          "tests"
         ]
       }
     },
