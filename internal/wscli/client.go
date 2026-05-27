@@ -331,10 +331,16 @@ func (c *Client) GetWorkflowTransitions(workflowID int) ([]Transition, error) {
 // ============================================
 // Test Management API Methods
 // ============================================
+//
+// Test routes live on /rest/api/v1 (gated by tests:read / tests:write)
+// since WI-68 mirrored the read + run-lifecycle slice off the legacy
+// cookie surface. Full catalog CRUD (folders, case writes, set writes,
+// labels) is still cookie-only; reach it through the SPA / admin tools
+// until a follow-up ticket lifts it to v1.
 
 // ListTestCases lists test cases in a workspace
 func (c *Client) ListTestCases(workspaceID int, folderID string) ([]TestCase, error) {
-	path := fmt.Sprintf("/workspaces/%d/test-cases", workspaceID)
+	path := fmt.Sprintf("/rest/api/v1/workspaces/%d/test-cases", workspaceID)
 	if folderID != "" {
 		path += "?folder_id=" + url.QueryEscape(folderID)
 	} else {
@@ -351,7 +357,7 @@ func (c *Client) ListTestCases(workspaceID int, folderID string) ([]TestCase, er
 // GetTestCase gets a test case by ID
 func (c *Client) GetTestCase(workspaceID, id int) (*TestCase, error) {
 	var tc TestCase
-	if err := c.GET(fmt.Sprintf("/workspaces/%d/test-cases/%d", workspaceID, id), &tc); err != nil {
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/workspaces/%d/test-cases/%d", workspaceID, id), &tc); err != nil {
 		return nil, err
 	}
 	return &tc, nil
@@ -360,7 +366,7 @@ func (c *Client) GetTestCase(workspaceID, id int) (*TestCase, error) {
 // GetTestSteps gets steps for a test case
 func (c *Client) GetTestSteps(workspaceID, testCaseID int) ([]TestStep, error) {
 	var steps []TestStep
-	if err := c.GET(fmt.Sprintf("/workspaces/%d/test-cases/%d/steps", workspaceID, testCaseID), &steps); err != nil {
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/workspaces/%d/test-cases/%d/steps", workspaceID, testCaseID), &steps); err != nil {
 		return nil, err
 	}
 	return steps, nil
@@ -368,7 +374,7 @@ func (c *Client) GetTestSteps(workspaceID, testCaseID int) ([]TestStep, error) {
 
 // ListTestRuns lists test runs in a workspace
 func (c *Client) ListTestRuns(workspaceID int, assigneeID string) ([]TestRun, error) {
-	path := fmt.Sprintf("/workspaces/%d/test-runs", workspaceID)
+	path := fmt.Sprintf("/rest/api/v1/workspaces/%d/test-runs", workspaceID)
 	if assigneeID != "" {
 		path += "?assignee_id=" + url.QueryEscape(assigneeID)
 	}
@@ -383,7 +389,7 @@ func (c *Client) ListTestRuns(workspaceID int, assigneeID string) ([]TestRun, er
 // GetTestRun gets a test run by ID
 func (c *Client) GetTestRun(workspaceID, id int) (*TestRun, error) {
 	var run TestRun
-	if err := c.GET(fmt.Sprintf("/workspaces/%d/test-runs/%d", workspaceID, id), &run); err != nil {
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/workspaces/%d/test-runs/%d", workspaceID, id), &run); err != nil {
 		return nil, err
 	}
 	return &run, nil
@@ -392,7 +398,7 @@ func (c *Client) GetTestRun(workspaceID, id int) (*TestRun, error) {
 // CreateTestRun creates a new test run
 func (c *Client) CreateTestRun(workspaceID int, req TestRunCreateRequest) (*TestRun, error) {
 	var run TestRun
-	if err := c.POST(fmt.Sprintf("/workspaces/%d/test-runs", workspaceID), req, &run); err != nil {
+	if err := c.POST(fmt.Sprintf("/rest/api/v1/workspaces/%d/test-runs", workspaceID), req, &run); err != nil {
 		return nil, err
 	}
 	return &run, nil
@@ -400,13 +406,13 @@ func (c *Client) CreateTestRun(workspaceID int, req TestRunCreateRequest) (*Test
 
 // EndTestRun ends a test run
 func (c *Client) EndTestRun(workspaceID, id int) error {
-	return c.POST(fmt.Sprintf("/workspaces/%d/test-runs/%d/end", workspaceID, id), nil, nil)
+	return c.POST(fmt.Sprintf("/rest/api/v1/workspaces/%d/test-runs/%d/end", workspaceID, id), nil, nil)
 }
 
 // GetTestRunResults gets results for a test run
 func (c *Client) GetTestRunResults(workspaceID, runID int) ([]TestResult, error) {
 	var results []TestResult
-	if err := c.GET(fmt.Sprintf("/workspaces/%d/test-runs/%d/results", workspaceID, runID), &results); err != nil {
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/workspaces/%d/test-runs/%d/results", workspaceID, runID), &results); err != nil {
 		return nil, err
 	}
 	return results, nil
@@ -414,13 +420,13 @@ func (c *Client) GetTestRunResults(workspaceID, runID int) ([]TestResult, error)
 
 // UpdateTestResult updates a test result
 func (c *Client) UpdateTestResult(workspaceID, runID, resultID int, req TestResultUpdateRequest) error {
-	return c.PUT(fmt.Sprintf("/workspaces/%d/test-runs/%d/results/%d", workspaceID, runID, resultID), req, nil)
+	return c.PUT(fmt.Sprintf("/rest/api/v1/workspaces/%d/test-runs/%d/results/%d", workspaceID, runID, resultID), req, nil)
 }
 
 // ListTestSets lists test sets in a workspace
 func (c *Client) ListTestSets(workspaceID int) ([]TestSet, error) {
 	var sets []TestSet
-	if err := c.GET(fmt.Sprintf("/workspaces/%d/test-sets", workspaceID), &sets); err != nil {
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/workspaces/%d/test-sets", workspaceID), &sets); err != nil {
 		return nil, err
 	}
 	return sets, nil
@@ -429,7 +435,7 @@ func (c *Client) ListTestSets(workspaceID int) ([]TestSet, error) {
 // GetTestSet gets a test set by ID
 func (c *Client) GetTestSet(workspaceID, id int) (*TestSet, error) {
 	var set TestSet
-	if err := c.GET(fmt.Sprintf("/workspaces/%d/test-sets/%d", workspaceID, id), &set); err != nil {
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/workspaces/%d/test-sets/%d", workspaceID, id), &set); err != nil {
 		return nil, err
 	}
 	return &set, nil
@@ -438,7 +444,7 @@ func (c *Client) GetTestSet(workspaceID, id int) (*TestSet, error) {
 // GetTestSetTestCases gets test cases in a test set
 func (c *Client) GetTestSetTestCases(workspaceID, setID int) ([]TestCase, error) {
 	var cases []TestCase
-	if err := c.GET(fmt.Sprintf("/workspaces/%d/test-sets/%d/test-cases", workspaceID, setID), &cases); err != nil {
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/workspaces/%d/test-sets/%d/test-cases", workspaceID, setID), &cases); err != nil {
 		return nil, err
 	}
 	return cases, nil
@@ -447,7 +453,7 @@ func (c *Client) GetTestSetTestCases(workspaceID, setID int) ([]TestCase, error)
 // ExecuteRunTemplate executes a test run template
 func (c *Client) ExecuteRunTemplate(workspaceID, templateID int) (*TestRun, error) {
 	var run TestRun
-	if err := c.POST(fmt.Sprintf("/workspaces/%d/test-run-templates/%d/execute", workspaceID, templateID), nil, &run); err != nil {
+	if err := c.POST(fmt.Sprintf("/rest/api/v1/workspaces/%d/test-run-templates/%d/execute", workspaceID, templateID), nil, &run); err != nil {
 		return nil, err
 	}
 	return &run, nil
