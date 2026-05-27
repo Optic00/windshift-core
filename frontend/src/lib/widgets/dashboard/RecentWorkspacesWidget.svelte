@@ -39,12 +39,20 @@
           onmouseleave={(e) => (e.currentTarget.style.backgroundColor = 'var(--ds-surface)')}
           onclick={() => go(ws)}
         >
-          <div
-            class="w-8 h-8 rounded flex items-center justify-center flex-shrink-0"
-            style={`background-color: ${ws.color || 'var(--color-blue-500)'}; color: white;`}
-          >
-            <Icon class="w-4 h-4" />
-          </div>
+          {#if ws.avatar_url}
+            <img
+              src={ws.avatar_url}
+              alt={`${ws.workspace_name} avatar`}
+              class="w-8 h-8 rounded object-cover flex-shrink-0"
+            />
+          {:else}
+            <div
+              class="w-8 h-8 rounded flex items-center justify-center flex-shrink-0"
+              style={`background-color: ${ws.color || 'var(--color-blue-500)'}; color: white;`}
+            >
+              <Icon class="w-4 h-4" />
+            </div>
+          {/if}
           <div class="min-w-0 flex-1">
             <p class="text-sm font-medium truncate" style="color: var(--ds-text);">
               {ws.workspace_name}

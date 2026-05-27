@@ -48,6 +48,7 @@ type WorkspaceActivity struct {
 	WorkspaceKey  string `json:"workspace_key"`
 	Icon          string `json:"icon"`
 	Color         string `json:"color"`
+	AvatarURL     string `json:"avatar_url,omitempty"`
 	LastVisited   string `json:"last_visited"`
 	VisitCount    int    `json:"visit_count"`
 }
@@ -289,6 +290,7 @@ func (h *HomepageHandler) getWorkspaceActivitiesBatch(visits []services.Workspac
 			WorkspaceKey:  wb.Key,
 			Icon:          wb.Icon,
 			Color:         wb.Color,
+			AvatarURL:     wb.AvatarURL,
 		}
 		if visit, ok := visitMap[wb.ID]; ok {
 			activity.LastVisited = visit.VisitedAt.Format("2006-01-02T15:04:05Z07:00")

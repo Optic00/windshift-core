@@ -469,14 +469,15 @@ func (r *WorkspaceRepository) CountNonPersonal() (int, error) {
 }
 
 // WorkspaceBasic carries the minimal workspace fields needed for activity
-// widgets (id, name, key, icon, color). Use FindBasicsByIDs to load many at
-// once.
+// widgets (id, name, key, icon, color, avatar URL). Use FindBasicsByIDs to load
+// many at once.
 type WorkspaceBasic struct {
-	ID    int
-	Name  string
-	Key   string
-	Icon  string
-	Color string
+	ID        int
+	Name      string
+	Key       string
+	Icon      string
+	Color     string
+	AvatarURL string
 }
 
 // FindBasicsByIDs returns basic workspace metadata for the given IDs.
@@ -493,7 +494,7 @@ func (r *WorkspaceRepository) FindBasicsByIDs(ids []int) ([]WorkspaceBasic, erro
 		placeholders[i] = "?"
 		args[i] = id
 	}
-	query := `SELECT id, name, key, icon, color FROM workspaces WHERE active = true AND id IN (` +
+	query := `SELECT id, name, key, icon, color, avatar_url FROM workspaces WHERE active = true AND id IN (` +
 		strings.Join(placeholders, ",") + `)`
 	rows, err := r.db.Query(query, args...)
 	if err != nil {
@@ -504,12 +505,13 @@ func (r *WorkspaceRepository) FindBasicsByIDs(ids []int) ([]WorkspaceBasic, erro
 	results := make([]WorkspaceBasic, 0, len(ids))
 	for rows.Next() {
 		var wb WorkspaceBasic
-		var icon, color sql.NullString
-		if err := rows.Scan(&wb.ID, &wb.Name, &wb.Key, &icon, &color); err != nil {
+		var icon, color, avatarURL sql.NullString
+		if err := rows.Scan(&wb.ID, &wb.Name, &wb.Key, &icon, &color, &avatarURL); err != nil {
 			return nil, fmt.Errorf("scan workspace basic: %w", err)
 		}
 		wb.Icon = icon.String
 		wb.Color = color.String
+		wb.AvatarURL = avatarURL.String
 		results = append(results, wb)
 	}
 	return results, rows.Err()

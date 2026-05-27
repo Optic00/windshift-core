@@ -41,12 +41,20 @@
         onmouseleave={(e) => (e.currentTarget.style.backgroundColor = 'var(--ds-surface)')}
         onclick={() => go(workspace)}
       >
-        <div
-          class="w-7 h-7 rounded flex items-center justify-center flex-shrink-0"
-          style={`background-color: ${workspace.color || 'var(--color-blue-500)'}; color: white;`}
-        >
-          <Icon class="w-3.5 h-3.5" />
-        </div>
+        {#if workspace.avatar_url}
+          <img
+            src={workspace.avatar_url}
+            alt={`${workspace.name || workspace.workspace_name || 'Workspace'} avatar`}
+            class="w-7 h-7 rounded object-cover flex-shrink-0"
+          />
+        {:else}
+          <div
+            class="w-7 h-7 rounded flex items-center justify-center flex-shrink-0"
+            style={`background-color: ${workspace.color || 'var(--color-blue-500)'}; color: white;`}
+          >
+            <Icon class="w-3.5 h-3.5" />
+          </div>
+        {/if}
         <span class="text-xs font-medium truncate" style="color: var(--ds-text);">
           {workspace.name || workspace.workspace_name || 'Workspace'}
         </span>
