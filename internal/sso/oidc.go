@@ -80,7 +80,16 @@ func (s *OIDCService) CreateRelyingParty(ctx context.Context, provider *SSOProvi
 	options := []rp.Option{
 		rp.WithCookieHandler(cookieHandler),
 		rp.WithVerifierOpts(
-			rp.WithIssuedAtOffset(5 * time.Second), // Allow 5s clock skew
+			rp.WithIssuedAtOffset(5*time.Second), // Allow 5s clock skew
+			// Pin accepted ID-token signing algorithms. Defense-in-depth against
+			// algorithm-confusion attacks if an IdP advertises (or is tricked
+			// into advertising) `none` or an HMAC alg via discovery. Asymmetric
+			// only — no `none`, no `HS*`.
+			rp.WithSupportedSigningAlgorithms(
+				"RS256", "RS384", "RS512",
+				"ES256", "ES384", "ES512",
+				"PS256", "PS384", "PS512",
+			),
 		),
 		rp.WithPKCE(cookieHandler), // Use PKCE for enhanced security
 	}
