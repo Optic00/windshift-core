@@ -17,11 +17,20 @@ type Item struct {
 	EndDate             *time.Time `json:"end_date,omitempty"`     // End date for item
 	IsTask              bool       `json:"is_task"`                // Flag to mark this item as a task (checklist item)
 	IterationID         *int       `json:"iteration_id,omitempty"` // Optional iteration assignment
-	// Project assignment
-	ProjectID      *int `json:"project_id,omitempty"` // General project assignment
-	InheritProject bool `json:"inherit_project"`      // If true, inherit project from parent
-	// Time tracking integration
-	TimeProjectID *int `json:"time_project_id,omitempty"` // Override project for time logging on this item
+	// Time-tracking project membership. "Project" in Windshift always refers
+	// to a row in time_projects; both ProjectID and TimeProjectID below are
+	// FKs to that table, serving different roles:
+	//   ProjectID       - the project this item belongs to (the bucket
+	//                     worklogs default to). Can be inherited from the
+	//                     parent item; see InheritProject.
+	//   TimeProjectID   - overrides the project used when logging time on
+	//                     this specific item (independent of the bucket the
+	//                     item belongs to).
+	// EffectiveProjectID (below) is the resolved value after applying
+	// inheritance, and is what consumers should read.
+	ProjectID      *int `json:"project_id,omitempty"`
+	InheritProject bool `json:"inherit_project"` // If true, ProjectID is ignored and the parent item's effective project is used
+	TimeProjectID  *int `json:"time_project_id,omitempty"`
 	// User assignment fields
 	AssigneeID              *int `json:"assignee_id,omitempty"`                // User assigned to this item
 	CreatorID               *int `json:"creator_id,omitempty"`                 // Internal user who created this item
@@ -56,12 +65,14 @@ type Item struct {
 	StatusName       string `json:"status_name,omitempty"` // Name from statuses table (joined field)
 	IterationName    string `json:"iteration_name,omitempty"`
 	IterationEndDate string `json:"iteration_end_date,omitempty"`
-	ProjectName      string `json:"project_name,omitempty"`      // Name of assigned project
-	TimeProjectName  string `json:"time_project_name,omitempty"` // Name of time project
-	// Effective project (computed from inheritance)
-	EffectiveProjectID     *int   `json:"effective_project_id,omitempty"`     // Computed effective project
-	EffectiveProjectName   string `json:"effective_project_name,omitempty"`   // Computed effective project name
-	ProjectInheritanceMode string `json:"project_inheritance_mode,omitempty"` // "none", "inherit", "direct"
+	ProjectName      string `json:"project_name,omitempty"`      // Name of the time-tracking project this item belongs to (joined from time_projects via ProjectID)
+	TimeProjectName  string `json:"time_project_name,omitempty"` // Name of the time-tracking project overriding worklog defaults (joined from time_projects via TimeProjectID)
+	// EffectiveProjectID is the resolved project after walking InheritProject
+	// up the parent chain. Consumers that need "which time-tracking project
+	// applies to this item" should read this, not ProjectID directly.
+	EffectiveProjectID     *int   `json:"effective_project_id,omitempty"`
+	EffectiveProjectName   string `json:"effective_project_name,omitempty"`
+	ProjectInheritanceMode string `json:"project_inheritance_mode,omitempty"` // "none" | "inherit" | "direct"
 	// User information for API responses
 	AssigneeName               string `json:"assignee_name,omitempty"`                 // Full name of assigned user
 	AssigneeEmail              string `json:"assignee_email,omitempty"`                // Email of assigned user
