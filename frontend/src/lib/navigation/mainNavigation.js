@@ -76,11 +76,11 @@ export const mainNavItems = [
     permission: 'canAccessPortalHub',
   },
   {
-    id: 'customers',
+    id: 'organizations',
     icon: IconUsers,
-    labelKey: 'nav.customers',
-    href: '/customers',
-    activeViews: ['customers'],
+    labelKey: 'nav.organizations',
+    href: '/organizations',
+    activeViews: ['organizations'],
     permission: 'canAccessCustomers',
   },
   {

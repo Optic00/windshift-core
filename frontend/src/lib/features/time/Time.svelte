@@ -19,7 +19,7 @@
     const allTabs = [
       { id: 'time-entry', label: t('time.entry.title'), icon: Clock, component: TimeEntry, route: '/time' },
       { id: 'timesheet', label: t('time.timesheet.title'), icon: CalendarDays, component: Timesheet, route: '/time/timesheet' },
-      { id: 'customers', label: t('time.organizations.title'), icon: User, component: TimeCustomers, route: '/time/customers', permission: canManageCustomers },
+      { id: 'organizations', label: t('time.organizations.title'), icon: User, component: TimeCustomers, route: '/time/organizations', permission: canManageCustomers },
       { id: 'projects', label: t('time.projects.title'), icon: Briefcase, component: TimeProjects, route: '/time/projects', permission: canManageProjects },
       { id: 'reports', label: t('time.reports.title'), icon: BarChart3, component: TimeReports, route: '/time/worklogs', permission: canManageProjects }
     ];
@@ -34,8 +34,8 @@
       activeTab = 'time-entry';
     } else if (path === '/time/timesheet') {
       activeTab = 'timesheet';
-    } else if (path === '/time/customers') {
-      activeTab = 'customers';
+    } else if (path === '/time/organizations') {
+      activeTab = 'organizations';
     } else if (path === '/time/categories') {
       activeTab = 'categories';
     } else if (path === '/time/projects') {

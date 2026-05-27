@@ -13,7 +13,7 @@ export default {
     assets: 'Assets',
     channels: 'Channels',
     portalHub: 'Portal Hub',
-    customers: 'Customers',
+    organizations: 'Organizations',
     teams: 'Teams',
     create: 'Create',
     search: 'Search',
@@ -202,7 +202,7 @@ export default {
       notifications: { label: 'Notifications', description: 'View notifications' },
       about: { label: 'About', description: 'About this application' },
       assets: { label: 'Assets', description: 'Manage asset sets and items' },
-      customers: { label: 'Customers', description: 'Manage customer organizations' },
+      organizations: { label: 'Organizations', description: 'Manage customer organizations' },
 
       // Dynamic workspace commands
       goToWorkspace: { label: 'Go to {name}', description: 'Navigate to {name} workspace' },

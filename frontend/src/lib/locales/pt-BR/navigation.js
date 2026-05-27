@@ -13,7 +13,7 @@ export default {
     assets: 'Ativos',
     channels: 'Canais',
     portalHub: 'Central do Portal',
-    customers: 'Clientes',
+    organizations: 'Organizações',
     create: 'Criar',
     search: 'Pesquisar',
     admin: 'Administração',
@@ -283,8 +283,8 @@ export default {
         label: 'Ativos',
         description: 'Gerenciar conjuntos e itens de ativos',
       },
-      customers: {
-        label: 'Clientes',
+      organizations: {
+        label: 'Organizações',
         description: 'Gerenciar organizações de clientes',
       },
       goToWorkspace: {

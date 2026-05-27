@@ -14,7 +14,7 @@ export default {
     assets: 'Activos',
     channels: 'Canales',
     portalHub: 'Centro del Portal',
-    customers: 'Clientes',
+    organizations: 'Organizaciones',
     create: 'Crear',
     search: 'Buscar',
     admin: 'Administración',
@@ -284,8 +284,8 @@ export default {
         label: 'Activos',
         description: 'Administrar conjuntos y elementos de activos',
       },
-      customers: {
-        label: 'Clientes',
+      organizations: {
+        label: 'Organizaciones',
         description: 'Administrar organizaciones de clientes',
       },
       goToWorkspace: {

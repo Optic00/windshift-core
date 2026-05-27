@@ -14,7 +14,7 @@ export default {
     assets: 'الأصول',
     channels: 'القنوات',
     portalHub: 'مركز البوابة',
-    customers: 'العملاء',
+    organizations: 'المؤسسات',
     create: 'إنشاء',
     search: 'بحث',
     admin: 'الإدارة',
@@ -284,8 +284,8 @@ export default {
         label: 'الأصول',
         description: 'إدارة مجموعات وعناصر الأصول',
       },
-      customers: {
-        label: 'العملاء',
+      organizations: {
+        label: 'المؤسسات',
         description: 'إدارة مؤسسات العملاء',
       },
       goToWorkspace: {

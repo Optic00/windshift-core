@@ -23,7 +23,7 @@
 
   // Route-derived state
   let contactDetailId = $derived(
-    $currentRoute.view === 'customer-contact-detail' ? $currentRoute.params.contactId : null
+    $currentRoute.view === 'organization-contact-detail' ? $currentRoute.params.contactId : null
   );
 
   // State
@@ -280,7 +280,7 @@
   }
 
   function openDetail(customer) {
-    navigate('/customers/contacts/' + customer.id);
+    navigate('/organizations/contacts/' + customer.id);
   }
 
   async function handleCreateCustomer() {
@@ -352,7 +352,7 @@
     {customerCounts}
     {dragOverOrgId}
     onSelect={selectOrganisation}
-    onManageOrgs={() => navigate('/time/customers')}
+    onManageOrgs={() => navigate('/time/organizations')}
   />
 
   <!-- Main Content -->
@@ -368,7 +368,7 @@
         contactId={contactDetailId}
         {customerOrganisations}
         {portalCustomerFields}
-        onBack={() => navigate('/customers')}
+        onBack={() => navigate('/organizations')}
         onCustomerUpdated={() => loadPortalCustomers()}
       />
     {:else}

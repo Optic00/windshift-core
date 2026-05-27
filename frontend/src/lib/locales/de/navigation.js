@@ -12,7 +12,7 @@ export default {
     assets: 'Assets',
     channels: 'Kanäle',
     portalHub: 'Portal Hub',
-    customers: 'Kunden',
+    organizations: 'Organisationen',
     create: 'Erstellen',
     search: 'Suchen',
     admin: 'Admin',
@@ -282,8 +282,8 @@ export default {
         label: 'Assets',
         description: 'Asset-Sets und Einträge verwalten',
       },
-      customers: {
-        label: 'Kunden',
+      organizations: {
+        label: 'Organisationen',
         description: 'Kundenorganisationen verwalten',
       },
       goToWorkspace: {

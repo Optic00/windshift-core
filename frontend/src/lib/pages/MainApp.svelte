@@ -1033,7 +1033,7 @@
       <div style="background-color: var(--ds-surface);">
         <Hub />
       </div>
-    {:else if view === 'customers' || view === 'customer-contact-detail'}
+    {:else if view === 'organizations' || view === 'organization-contact-detail'}
       <Customers />
 
     {:else if view === 'teams-list'}
