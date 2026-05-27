@@ -533,6 +533,13 @@
           hint={t('settings.sso.trustIdpEmailVerificationDesc')}
           size="small"
         />
+
+        {#if formData.auto_provision_users && !formData.require_verified_email}
+          <AlertBox type="warning">
+            <strong>{t('settings.sso.unsafeProvisioningWarningTitle')}</strong>
+            <div class="mt-1">{t('settings.sso.unsafeProvisioningWarningBody')}</div>
+          </AlertBox>
+        {/if}
       </div>
 
       <!-- Test Connection (only for edit) -->

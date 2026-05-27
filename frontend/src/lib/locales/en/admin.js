@@ -511,6 +511,9 @@ export default {
       trustIdpEmailVerificationDesc:
         "When enabled, blocks login if the IdP explicitly reports the email as unverified. When the IdP doesn't report verification status, we'll send a verification email.",
       idpVerificationNotEnforced: 'IdP verification not enforced',
+      unsafeProvisioningWarningTitle: 'Risky configuration',
+      unsafeProvisioningWarningBody:
+        'Auto-provisioning is enabled while the IdP email verification trust check is off. An identity provider that lets users self-assert email addresses can pre-empt or squat legitimate accounts, and may later be linked to access from stricter providers. Only use this combination with a fully trusted IdP.',
       testConnection: 'Test Connection',
       testing: 'Testing...',
       connectionSuccessful: 'Connection successful',

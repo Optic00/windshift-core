@@ -643,6 +643,13 @@ func (h *SSOHandler) CreateProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if provider.AutoProvisionUsers && !provider.RequireVerifiedEmail {
+		slog.Warn("SSO provider saved with auto-provisioning enabled and IdP email verification trust disabled — an IdP that lets users self-assert email addresses can pre-empt accounts and may later be linked to access from stricter providers",
+			slog.String("component", "sso"),
+			slog.String("provider", provider.Slug),
+			slog.Int("provider_id", provider.ID))
+	}
+
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
 		_ = logger.LogAudit(h.db, logger.AuditEvent{
@@ -733,6 +740,13 @@ func (h *SSOHandler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 	if err := h.providerStore.Update(existing); err != nil {
 		respondInternalError(w, r, err)
 		return
+	}
+
+	if existing.AutoProvisionUsers && !existing.RequireVerifiedEmail {
+		slog.Warn("SSO provider saved with auto-provisioning enabled and IdP email verification trust disabled — an IdP that lets users self-assert email addresses can pre-empt accounts and may later be linked to access from stricter providers",
+			slog.String("component", "sso"),
+			slog.String("provider", existing.Slug),
+			slog.Int("provider_id", existing.ID))
 	}
 
 	// Update secret if provided

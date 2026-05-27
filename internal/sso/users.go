@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -318,6 +319,19 @@ func (s *UserStore) FindOrCreateUser(provider *SSOProvider, claims *OIDCClaims) 
 	// 4. Create new user
 	if claims.Email == "" {
 		return nil, fmt.Errorf("%w: email is required for user provisioning", ErrOIDCMissingClaims)
+	}
+
+	// Surface the dangerous case in logs: IdP explicitly says email is not verified,
+	// provider has RequireVerifiedEmail=false, and we're about to create a brand-new
+	// user from that unverified claim. This row could later be cross-linked to a
+	// stricter provider, which is the account-takeover/squatting path.
+	if claims.EmailVerifiedProvided && !claims.EmailVerified {
+		slog.Warn("SSO auto-provisioning a new user from an IdP-unverified email claim",
+			slog.String("component", "sso"),
+			slog.String("provider", provider.Slug),
+			slog.Int("provider_id", provider.ID),
+			slog.String("email", claims.Email),
+			slog.String("subject", claims.Subject))
 	}
 
 	// Create user with email_verified set based on IdP claim

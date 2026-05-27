@@ -419,6 +419,9 @@ export default {
       trustIdpEmailVerification: '信任 IdP 邮箱验证',
       trustIdpEmailVerificationDesc: '启用后，如果 IdP 明确报告邮箱未验证，则阻止登录。当 IdP 不报告验证状态时，我们将发送验证邮件。',
       idpVerificationNotEnforced: '未强制 IdP 验证',
+      unsafeProvisioningWarningTitle: '高风险配置',
+      unsafeProvisioningWarningBody:
+        '已启用自动创建用户，但未信任 IdP 的邮箱验证。如果身份提供商允许用户声明任意未验证的邮箱地址，攻击者可能抢占或预先占用合法账户，之后还可能被链接到更严格提供商的访问权限。请仅在使用完全可信的 IdP 时启用此组合。',
       testConnection: '测试连接',
       testing: '测试中...',
       connectionSuccessful: '连接成功',

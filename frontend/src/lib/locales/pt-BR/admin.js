@@ -511,6 +511,9 @@ export default {
       trustIdpEmailVerification: 'Confiar na verificação de e-mail do IdP',
       trustIdpEmailVerificationDesc: 'Quando ativado, bloqueia o login se o IdP reportar explicitamente que o e-mail não foi verificado. Quando o IdP não reportar o status de verificação, enviaremos um e-mail de verificação.',
       idpVerificationNotEnforced: 'Verificação do IdP não aplicada',
+      unsafeProvisioningWarningTitle: 'Configuração arriscada',
+      unsafeProvisioningWarningBody:
+        'O provisionamento automático está habilitado enquanto a confiança na verificação de e-mail do IdP está desativada. Um provedor de identidade que permita aos usuários declarar qualquer e-mail sem verificação pode ocupar ou antecipar contas legítimas, e posteriormente ser vinculado a acessos de provedores mais rigorosos. Use esta combinação apenas com um IdP totalmente confiável.',
       testConnection: 'Testar Conexão',
       testing: 'Testando...',
       connectionSuccessful: 'Conexão bem-sucedida',

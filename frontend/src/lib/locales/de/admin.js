@@ -516,6 +516,9 @@ export default {
       trustIdpEmailVerification: 'IdP-E-Mail-Verifizierung vertrauen',
       trustIdpEmailVerificationDesc: 'Bei Aktivierung wird die Anmeldung blockiert, wenn der IdP die E-Mail ausdrücklich als nicht verifiziert meldet. Wenn der IdP keinen Verifizierungsstatus meldet, senden wir eine Verifizierungs-E-Mail.',
       idpVerificationNotEnforced: 'IdP-Verifizierung nicht erzwungen',
+      unsafeProvisioningWarningTitle: 'Riskante Konfiguration',
+      unsafeProvisioningWarningBody:
+        'Automatische Benutzerbereitstellung ist aktiviert, während die Vertrauensprüfung der IdP-E-Mail-Verifizierung ausgeschaltet ist. Ein Identity Provider, der Benutzern erlaubt, beliebige E-Mail-Adressen anzugeben, kann legitime Konten besetzen oder vorwegnehmen und später mit Zugriff von strengeren Providern verknüpft werden. Nur in Kombination mit einem vollständig vertrauenswürdigen IdP verwenden.',
       testConnection: 'Verbindung testen',
       testing: 'Teste...',
       connectionSuccessful: 'Verbindung erfolgreich',
