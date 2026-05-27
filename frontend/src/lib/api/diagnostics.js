@@ -113,3 +113,27 @@ export function purgeSchedulerRuns(olderThan) {
 export function getFracIndexState() {
   return fetchAPI('/admin/diagnostics/frac-index');
 }
+
+/**
+ * Per-provider LLM model-catalog cache state plus enabled-connection drift
+ * (configured model still in the cached catalog?).
+ *
+ * @returns {Promise<Array<{type: string, name: string, has_dynamic_models: boolean,
+ *   last_refreshed_at?: string, last_error?: string, models_cached_count: number,
+ *   connections: Array<{id: number, name: string, model: string, model_still_in_catalog?: boolean}>}>>}
+ */
+export function getLLMProviderStatus() {
+  return fetchAPI('/admin/diagnostics/llm-providers');
+}
+
+/**
+ * Recent daily_briefings rows where the LLM call failed, bucketed by error class.
+ * @param {Object} opts
+ * @param {string} [opts.since='24h']
+ */
+export function getBriefingFailures(opts = {}) {
+  const params = new URLSearchParams();
+  if (opts.since) params.set('since', opts.since);
+  const qs = params.toString();
+  return fetchAPI(`/admin/diagnostics/briefing-failures${qs ? `?${qs}` : ''}`);
+}

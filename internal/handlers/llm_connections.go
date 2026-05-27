@@ -210,9 +210,23 @@ func (h *LLMConnectionHandler) RefreshProviderModels(w http.ResponseWriter, r *h
 		return
 	}
 
-	// No API key for the catalog fetch — OpenRouter's /models is unauthenticated.
-	// If a future provider requires it, plumb a key from an existing connection here.
-	models, err := h.refresher.Refresh(r.Context(), *provider, "")
+	// Look up an API key from an existing enabled connection of this provider.
+	// OpenRouter's /models is unauthenticated, so an empty key is fine there;
+	// every other provider that supports dynamic refresh requires auth.
+	apiKey, err := h.manager.GetAnyAPIKeyForProvider(providerType)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	if apiKey == "" && providerType != llm.ProviderType("openrouter") {
+		respondBadRequest(w, r, fmt.Sprintf(
+			"configure an enabled %s connection with an API key before refreshing its model catalog",
+			provider.Name,
+		))
+		return
+	}
+
+	models, err := h.refresher.Refresh(r.Context(), *provider, apiKey)
 	if err != nil {
 		slog.Warn("LLM model refresh failed", slog.String("provider", string(providerType)), slog.Any("error", err))
 		respondError(w, r, restapi.NewAPIError(http.StatusBadGateway, restapi.ErrCodeConnectionTestFailed,

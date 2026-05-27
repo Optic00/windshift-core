@@ -86,6 +86,96 @@ func TestModelRefresher_SuccessWritesCache(t *testing.T) {
 	}
 }
 
+func TestModelRefresher_AnthropicShape(t *testing.T) {
+	var gotAPIKey, gotVersion string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAPIKey = r.Header.Get("x-api-key")
+		gotVersion = r.Header.Get("anthropic-version")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[
+			{"id":"claude-opus-4-6","display_name":"Claude Opus 4.6"},
+			{"id":"claude-haiku-4-5","display_name":""}
+		]}`))
+	}))
+	defer srv.Close()
+
+	db := newRefresherTestDB(t)
+	cache := NewModelCache(db)
+	refresher := newModelRefresherWithClient(cache, http.DefaultClient)
+
+	provider := ProviderInfo{
+		Type:                 "anthropic",
+		BaseURL:              srv.URL,
+		ModelsEndpoint:       "/v1/models",
+		ModelsAuthScheme:     "anthropic",
+		ModelsResponseFormat: "anthropic",
+	}
+	models, err := refresher.Refresh(context.Background(), provider, "sk-ant-test")
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if len(models) != 2 {
+		t.Fatalf("want 2 parsed models, got %d", len(models))
+	}
+	if models[0].Name != "Claude Opus 4.6" {
+		t.Errorf("display_name should populate Name, got %q", models[0].Name)
+	}
+	if models[1].Name != models[1].ID {
+		t.Errorf("blank display_name should fall back to ID, got %q", models[1].Name)
+	}
+	if gotAPIKey != "sk-ant-test" {
+		t.Errorf("expected x-api-key header, got %q", gotAPIKey)
+	}
+	if gotVersion == "" {
+		t.Error("expected anthropic-version header to be set")
+	}
+}
+
+func TestModelRefresher_GeminiShape(t *testing.T) {
+	var gotGoogKey string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotGoogKey = r.Header.Get("x-goog-api-key")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"models":[
+			{"name":"models/gemini-3.1-pro","displayName":"Gemini 3.1 Pro","inputTokenLimit":1048576,"supportedGenerationMethods":["generateContent","countTokens"]},
+			{"name":"models/text-embedding-004","displayName":"Embedding","supportedGenerationMethods":["embedContent"]},
+			{"name":"models/gemini-3-flash","displayName":"","inputTokenLimit":32768,"supportedGenerationMethods":["generateContent"]}
+		]}`))
+	}))
+	defer srv.Close()
+
+	db := newRefresherTestDB(t)
+	cache := NewModelCache(db)
+	refresher := newModelRefresherWithClient(cache, http.DefaultClient)
+
+	provider := ProviderInfo{
+		Type:                 "gemini",
+		BaseURL:              srv.URL,
+		ModelsEndpoint:       "/models",
+		ModelsAuthScheme:     "google",
+		ModelsResponseFormat: "google",
+	}
+	models, err := refresher.Refresh(context.Background(), provider, "AIza-test")
+	if err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if len(models) != 2 {
+		t.Fatalf("embedding-only model should be filtered, want 2 got %d", len(models))
+	}
+	if models[0].ID != "gemini-3.1-pro" {
+		t.Errorf("models/ prefix should be stripped, got %q", models[0].ID)
+	}
+	if models[0].MaxTokens != 1048576 {
+		t.Errorf("inputTokenLimit should populate MaxTokens, got %d", models[0].MaxTokens)
+	}
+	if models[1].Name != models[1].ID {
+		t.Errorf("blank displayName should fall back to stripped ID, got %q", models[1].Name)
+	}
+	if gotGoogKey != "AIza-test" {
+		t.Errorf("expected x-goog-api-key header, got %q", gotGoogKey)
+	}
+}
+
 func TestModelRefresher_FailurePreservesPriorCache(t *testing.T) {
 	db := newRefresherTestDB(t)
 	cache := NewModelCache(db)

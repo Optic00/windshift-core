@@ -32,20 +32,67 @@ type ModelInfo struct {
 // When ModelsEndpoint is set, the provider supports a `/models`-style catalog
 // that the admin can refresh on demand; the static Models slice then acts as
 // a seed (typically empty) and the live picker reads from the cache table.
+//
+// ModelsBaseURL / ModelsAuthScheme / ModelsResponseFormat let providers whose
+// catalog endpoint diverges from the chat endpoint (different host, different
+// auth, different response shape) plug into the same refresher. Gemini is the
+// motivating case — its OpenAI-compatible chat lives under /v1beta/openai, but
+// the catalog is at /v1beta/models with a Google-specific shape.
 type ProviderInfo struct {
-	Type           ProviderType `json:"type"`
-	Name           string       `json:"name"`
-	APIFormat      string       `json:"api_format"`
-	ChatPath       string       `json:"chat_path,omitempty"`
-	BaseURL        string       `json:"base_url"`
-	ModelsEndpoint string       `json:"models_endpoint,omitempty"`
-	Models         []ModelInfo  `json:"models"`
+	Type                 ProviderType `json:"type"`
+	Name                 string       `json:"name"`
+	APIFormat            string       `json:"api_format"`
+	ChatPath             string       `json:"chat_path,omitempty"`
+	BaseURL              string       `json:"base_url"`
+	ModelsEndpoint       string       `json:"models_endpoint,omitempty"`
+	ModelsBaseURL        string       `json:"models_base_url,omitempty"`
+	ModelsAuthScheme     string       `json:"models_auth_scheme,omitempty"`
+	ModelsResponseFormat string       `json:"models_response_format,omitempty"`
+	Models               []ModelInfo  `json:"models"`
 }
 
 // HasDynamicModels reports whether the provider exposes a `/models` catalog
 // that we can refresh into the cache.
 func (p *ProviderInfo) HasDynamicModels() bool {
 	return p != nil && p.ModelsEndpoint != ""
+}
+
+// ModelsURL returns the absolute URL of the provider's catalog endpoint,
+// preferring ModelsBaseURL when set (Gemini) and falling back to BaseURL.
+func (p *ProviderInfo) ModelsURL() string {
+	if p == nil || p.ModelsEndpoint == "" {
+		return ""
+	}
+	base := p.ModelsBaseURL
+	if base == "" {
+		base = p.BaseURL
+	}
+	return trimSlash(base) + p.ModelsEndpoint
+}
+
+// AuthScheme returns the auth scheme used for the catalog request; defaults
+// to "bearer" so existing OpenAI-compatible providers keep working unchanged.
+func (p *ProviderInfo) AuthScheme() string {
+	if p == nil || p.ModelsAuthScheme == "" {
+		return "bearer"
+	}
+	return p.ModelsAuthScheme
+}
+
+// ResponseFormat returns the catalog response shape; defaults to "openai"
+// (the OpenAI/OpenRouter `{"data":[…]}` shape).
+func (p *ProviderInfo) ResponseFormat() string {
+	if p == nil || p.ModelsResponseFormat == "" {
+		return "openai"
+	}
+	return p.ModelsResponseFormat
+}
+
+func trimSlash(s string) string {
+	for s != "" && s[len(s)-1] == '/' {
+		s = s[:len(s)-1]
+	}
+	return s
 }
 
 // providersFile is the JSON structure for the providers file.

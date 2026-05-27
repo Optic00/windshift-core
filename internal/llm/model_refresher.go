@@ -15,6 +15,12 @@ import (
 // ModelRefresher fetches a provider's /models catalog and writes it to the
 // ModelCache. Every call is admin-triggered — there is no background timer,
 // so an airgapped deployment never makes outbound HTTP unless an admin asks.
+//
+// The refresher branches on ProviderInfo.AuthScheme()/ResponseFormat() so that
+// providers whose catalog endpoint diverges from OpenAI's `/v1/models` shape
+// (Anthropic's `data[].display_name`, Gemini's `models[].name` +
+// `supportedGenerationMethods`) can share the same cache + error-recording
+// plumbing.
 type ModelRefresher struct {
 	cache *ModelCache
 	http  *http.Client
@@ -32,15 +38,36 @@ func newModelRefresherWithClient(cache *ModelCache, client *http.Client) *ModelR
 	return &ModelRefresher{cache: cache, http: client}
 }
 
-// modelsResponse mirrors the OpenAI /v1/models shape, which OpenRouter and
-// other OpenAI-compatible servers also emit. Fields we don't surface (pricing,
-// architecture, …) are ignored.
-type modelsResponse struct {
+// openaiModelsResponse matches `/v1/models` on OpenAI, OpenRouter, and other
+// OpenAI-compatible servers. Fields we don't surface (pricing, architecture)
+// are ignored.
+type openaiModelsResponse struct {
 	Data []struct {
 		ID            string `json:"id"`
 		Name          string `json:"name"`
 		ContextLength int    `json:"context_length"`
 	} `json:"data"`
+}
+
+// anthropicModelsResponse matches Anthropic's `/v1/models`. They use
+// `display_name` (not `name`) and don't expose context window in the list.
+type anthropicModelsResponse struct {
+	Data []struct {
+		ID          string `json:"id"`
+		DisplayName string `json:"display_name"`
+	} `json:"data"`
+}
+
+// geminiModelsResponse matches Google's `/v1beta/models`. Names are prefixed
+// with `models/` and entries also cover embedding-only models that can't be
+// used for chat, so we filter on supportedGenerationMethods.
+type geminiModelsResponse struct {
+	Models []struct {
+		Name                       string   `json:"name"`
+		DisplayName                string   `json:"displayName"`
+		InputTokenLimit            int      `json:"inputTokenLimit"`
+		SupportedGenerationMethods []string `json:"supportedGenerationMethods"`
+	} `json:"models"`
 }
 
 // Refresh fetches and caches the model list for one provider. On failure it
@@ -50,12 +77,12 @@ func (r *ModelRefresher) Refresh(ctx context.Context, provider ProviderInfo, api
 	if !provider.HasDynamicModels() {
 		return nil, fmt.Errorf("provider %q has no models_endpoint configured", provider.Type)
 	}
-	url := strings.TrimSuffix(provider.BaseURL, "/") + provider.ModelsEndpoint
+	url := provider.ModelsURL()
 	if err := utils.ValidateHTTPBaseURL(url); err != nil {
 		return nil, fmt.Errorf("invalid models URL: %w", err)
 	}
 
-	models, err := r.fetch(ctx, url, apiKey)
+	models, err := r.fetch(ctx, provider, url, apiKey)
 	if err != nil {
 		if cacheErr := r.cache.SaveFailure(provider.Type, err, time.Now()); cacheErr != nil {
 			return nil, fmt.Errorf("%w (also failed to persist error: %v)", err, cacheErr)
@@ -68,14 +95,12 @@ func (r *ModelRefresher) Refresh(ctx context.Context, provider ProviderInfo, api
 	return models, nil
 }
 
-func (r *ModelRefresher) fetch(ctx context.Context, url, apiKey string) ([]ModelInfo, error) {
+func (r *ModelRefresher) fetch(ctx context.Context, provider ProviderInfo, url, apiKey string) ([]ModelInfo, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("%w: build request: %v", ErrConnectionFailed, err)
 	}
-	if apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-	}
+	setCatalogAuth(req, provider.AuthScheme(), apiKey)
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := r.http.Do(req)
@@ -95,11 +120,42 @@ func (r *ModelRefresher) fetch(ctx context.Context, url, apiKey string) ([]Model
 		return nil, fmt.Errorf("%w: HTTP %d: %s", ErrAPIError, resp.StatusCode, truncateBody(body))
 	}
 
-	var parsed modelsResponse
+	switch provider.ResponseFormat() {
+	case "anthropic":
+		return parseAnthropicModels(body)
+	case "google":
+		return parseGeminiModels(body)
+	default:
+		return parseOpenAIModels(body)
+	}
+}
+
+// setCatalogAuth applies the right auth header for the provider's catalog
+// endpoint. The OpenAI-bearer path also accepts an empty key — OpenRouter's
+// /models is unauthenticated, and we want refresh to keep working there.
+func setCatalogAuth(req *http.Request, scheme, apiKey string) {
+	switch scheme {
+	case "anthropic":
+		if apiKey != "" {
+			req.Header.Set("x-api-key", apiKey)
+		}
+		req.Header.Set("anthropic-version", "2023-06-01")
+	case "google":
+		if apiKey != "" {
+			req.Header.Set("x-goog-api-key", apiKey)
+		}
+	default: // "bearer"
+		if apiKey != "" {
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+		}
+	}
+}
+
+func parseOpenAIModels(body []byte) ([]ModelInfo, error) {
+	var parsed openaiModelsResponse
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		return nil, fmt.Errorf("%w: decode response: %v", ErrAPIError, err)
 	}
-
 	out := make([]ModelInfo, 0, len(parsed.Data))
 	for _, m := range parsed.Data {
 		if m.ID == "" {
@@ -112,6 +168,59 @@ func (r *ModelRefresher) fetch(ctx context.Context, url, apiKey string) ([]Model
 		out = append(out, ModelInfo{ID: m.ID, Name: name, MaxTokens: m.ContextLength})
 	}
 	return out, nil
+}
+
+func parseAnthropicModels(body []byte) ([]ModelInfo, error) {
+	var parsed anthropicModelsResponse
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, fmt.Errorf("%w: decode response: %v", ErrAPIError, err)
+	}
+	out := make([]ModelInfo, 0, len(parsed.Data))
+	for _, m := range parsed.Data {
+		if m.ID == "" {
+			continue
+		}
+		name := m.DisplayName
+		if name == "" {
+			name = m.ID
+		}
+		out = append(out, ModelInfo{ID: m.ID, Name: name})
+	}
+	return out, nil
+}
+
+func parseGeminiModels(body []byte) ([]ModelInfo, error) {
+	var parsed geminiModelsResponse
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, fmt.Errorf("%w: decode response: %v", ErrAPIError, err)
+	}
+	out := make([]ModelInfo, 0, len(parsed.Models))
+	for _, m := range parsed.Models {
+		if !supportsGenerateContent(m.SupportedGenerationMethods) {
+			continue
+		}
+		// Gemini returns "models/gemini-…"; strip the prefix so the ID matches
+		// what the OpenAI-compat chat endpoint expects.
+		id := strings.TrimPrefix(m.Name, "models/")
+		if id == "" {
+			continue
+		}
+		name := m.DisplayName
+		if name == "" {
+			name = id
+		}
+		out = append(out, ModelInfo{ID: id, Name: name, MaxTokens: m.InputTokenLimit})
+	}
+	return out, nil
+}
+
+func supportsGenerateContent(methods []string) bool {
+	for _, m := range methods {
+		if m == "generateContent" {
+			return true
+		}
+	}
+	return false
 }
 
 func truncateBody(b []byte) string {

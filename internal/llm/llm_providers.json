@@ -5,6 +5,9 @@
       "name": "Anthropic",
       "api_format": "anthropic",
       "base_url": "https://api.anthropic.com",
+      "models_endpoint": "/v1/models",
+      "models_auth_scheme": "anthropic",
+      "models_response_format": "anthropic",
       "models": [
         {"id": "claude-opus-4-6", "name": "Claude Opus 4.6", "max_tokens": 8192},
         {"id": "claude-sonnet-4-6", "name": "Claude Sonnet 4.6", "max_tokens": 8192},
@@ -16,6 +19,9 @@
       "name": "OpenAI",
       "api_format": "openai",
       "base_url": "https://api.openai.com",
+      "models_endpoint": "/v1/models",
+      "models_auth_scheme": "bearer",
+      "models_response_format": "openai",
       "models": [
         {"id": "gpt-4o", "name": "GPT-4o", "max_tokens": 4096},
         {"id": "gpt-4o-mini", "name": "GPT-4o Mini", "max_tokens": 4096}
@@ -27,6 +33,10 @@
       "api_format": "openai",
       "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
       "chat_path": "/chat/completions",
+      "models_base_url": "https://generativelanguage.googleapis.com/v1beta",
+      "models_endpoint": "/models",
+      "models_auth_scheme": "google",
+      "models_response_format": "google",
       "models": [
         {"id": "gemini-3.1-pro-preview", "name": "Gemini 3.1 Pro", "max_tokens": 8192},
         {"id": "gemini-3.1-flash-lite-preview", "name": "Gemini 3.1 Flash Lite", "max_tokens": 8192},
@@ -39,6 +49,9 @@
       "api_format": "openai",
       "base_url": "https://api.z.ai/api/paas/v4",
       "chat_path": "/chat/completions",
+      "models_endpoint": "/models",
+      "models_auth_scheme": "bearer",
+      "models_response_format": "openai",
       "models": [
         {"id": "glm-4.7", "name": "GLM-4.7", "max_tokens": 8192},
         {"id": "glm-4.5", "name": "GLM-4.5", "max_tokens": 8192}
@@ -51,6 +64,8 @@
       "base_url": "https://openrouter.ai/api/v1",
       "chat_path": "/chat/completions",
       "models_endpoint": "/models",
+      "models_auth_scheme": "bearer",
+      "models_response_format": "openai",
       "models": []
     },
     {

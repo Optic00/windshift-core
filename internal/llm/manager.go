@@ -279,6 +279,38 @@ func (m *ConnectionManager) DeleteConnection(id int) error {
 	return err
 }
 
+// GetAnyAPIKeyForProvider returns a decrypted API key from any enabled
+// connection of the given provider type, or "" when none is configured.
+//
+// Used by the catalog-refresh handler: most provider /models endpoints require
+// auth, so we borrow the key from an existing connection rather than asking
+// admins to enter it twice. Returns ("", nil) when no enabled connection
+// exists — the handler then decides whether the provider requires a key
+// (everything except OpenRouter does today).
+func (m *ConnectionManager) GetAnyAPIKeyForProvider(providerType ProviderType) (string, error) {
+	var apiKeyEncrypted sql.NullString
+	err := m.db.QueryRow(
+		`SELECT api_key_encrypted FROM llm_connections
+		 WHERE provider_type = ? AND is_enabled = true AND api_key_encrypted IS NOT NULL AND api_key_encrypted <> ''
+		 ORDER BY is_default DESC, id ASC LIMIT 1`,
+		string(providerType),
+	).Scan(&apiKeyEncrypted)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("lookup api key for %q: %w", providerType, err)
+	}
+	if !apiKeyEncrypted.Valid || apiKeyEncrypted.String == "" {
+		return "", nil
+	}
+	apiKey, err := m.encryption.Decrypt(apiKeyEncrypted.String)
+	if err != nil {
+		return "", fmt.Errorf("decrypt api key for %q: %w", providerType, err)
+	}
+	return apiKey, nil
+}
+
 // TestConnection tests a connection by creating a client and calling Health.
 func (m *ConnectionManager) TestConnection(id int) error {
 	var providerType, model string

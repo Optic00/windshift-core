@@ -2,11 +2,13 @@ package handlers
 
 import (
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"windshift/internal/llm"
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
@@ -24,6 +26,9 @@ type DiagnosticsHandler struct {
 	deliveryRepo     *repository.WebhookDeliveryRepository
 	schedulerRunRepo *repository.SchedulerRunRepository
 	fracIndexRepo    *repository.FracIndexRepository
+	aiRepo           *repository.AIRepository
+	llmManager       *llm.ConnectionManager
+	llmCache         *llm.ModelCache
 	auditor          *logger.Auditor
 }
 
@@ -33,6 +38,9 @@ func NewDiagnosticsHandler(
 	deliveryRepo *repository.WebhookDeliveryRepository,
 	schedulerRunRepo *repository.SchedulerRunRepository,
 	fracIndexRepo *repository.FracIndexRepository,
+	aiRepo *repository.AIRepository,
+	llmManager *llm.ConnectionManager,
+	llmCache *llm.ModelCache,
 	auditor *logger.Auditor,
 ) *DiagnosticsHandler {
 	return &DiagnosticsHandler{
@@ -40,6 +48,9 @@ func NewDiagnosticsHandler(
 		deliveryRepo:     deliveryRepo,
 		schedulerRunRepo: schedulerRunRepo,
 		fracIndexRepo:    fracIndexRepo,
+		aiRepo:           aiRepo,
+		llmManager:       llmManager,
+		llmCache:         llmCache,
 		auditor:          auditor,
 	}
 }
@@ -375,6 +386,187 @@ func (h *DiagnosticsHandler) auditPurge(r *http.Request, action, olderThan strin
 		"older_than": olderThan,
 		"cutoff":     cutoff.Format(time.RFC3339),
 		"deleted":    rows,
+	})
+}
+
+// LLMProviderConnectionStatus pairs an enabled connection with whether its
+// configured model is still present in the provider's cached catalog.
+//
+// ModelStillInCatalog is nil when the catalog hasn't been refreshed yet
+// (the UI then shows "unknown — refresh to check") and false when the
+// model has dropped — the drift signal that surfaced the Gemini deprecation
+// in the first place.
+type LLMProviderConnectionStatus struct {
+	ID                  int    `json:"id"`
+	Name                string `json:"name"`
+	Model               string `json:"model"`
+	ModelStillInCatalog *bool  `json:"model_still_in_catalog,omitempty"`
+}
+
+// LLMProviderStatus is one row in the diagnostics widget: provider metadata,
+// the cache state, and the list of enabled connections (with drift flags).
+type LLMProviderStatus struct {
+	Type              llm.ProviderType              `json:"type"`
+	Name              string                        `json:"name"`
+	HasDynamicModels  bool                          `json:"has_dynamic_models"`
+	LastRefreshedAt   *time.Time                    `json:"last_refreshed_at,omitempty"`
+	LastError         string                        `json:"last_error,omitempty"`
+	ModelsCachedCount int                           `json:"models_cached_count"`
+	Connections       []LLMProviderConnectionStatus `json:"connections"`
+}
+
+// GetLLMProviderStatus returns per-provider catalog cache state plus an
+// enabled-connection drift check (configured model present in the cached
+// catalog?). This is the System Diagnostics counterpart to the per-provider
+// rows already shown in Settings → LLM Connections — same data, but explicitly
+// surfaces drift instead of expecting admins to spot it.
+//
+// GET /api/admin/diagnostics/llm-providers
+func (h *DiagnosticsHandler) GetLLMProviderStatus(w http.ResponseWriter, r *http.Request) {
+	if h.llmManager == nil || h.llmCache == nil {
+		respondInternalError(w, r, fmt.Errorf("llm dependencies not configured"))
+		return
+	}
+
+	connections, err := h.llmManager.ListConnections()
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	byProvider := make(map[llm.ProviderType][]llm.ConnectionInfo, len(connections))
+	for _, c := range connections {
+		if !c.IsEnabled {
+			continue
+		}
+		byProvider[c.ProviderType] = append(byProvider[c.ProviderType], c)
+	}
+
+	providers := llm.KnownProviders()
+	out := make([]LLMProviderStatus, 0, len(providers))
+	for _, p := range providers {
+		entry := LLMProviderStatus{
+			Type:             p.Type,
+			Name:             p.Name,
+			HasDynamicModels: p.HasDynamicModels(),
+			Connections:      []LLMProviderConnectionStatus{},
+		}
+		var cachedIDs map[string]struct{}
+		if p.HasDynamicModels() {
+			cached, cerr := h.llmCache.Get(p.Type)
+			if cerr != nil {
+				slog.Warn("read model cache", slog.String("provider", string(p.Type)), slog.Any("error", cerr))
+			} else {
+				entry.LastRefreshedAt = cached.LastRefreshedAt
+				entry.LastError = cached.LastError
+				entry.ModelsCachedCount = len(cached.Models)
+				if cached.LastRefreshedAt != nil {
+					cachedIDs = make(map[string]struct{}, len(cached.Models))
+					for _, m := range cached.Models {
+						cachedIDs[m.ID] = struct{}{}
+					}
+				}
+			}
+		}
+		for _, c := range byProvider[p.Type] {
+			cs := LLMProviderConnectionStatus{ID: c.ID, Name: c.Name, Model: c.Model}
+			if cachedIDs != nil {
+				_, ok := cachedIDs[c.Model]
+				cs.ModelStillInCatalog = &ok
+			}
+			entry.Connections = append(entry.Connections, cs)
+		}
+		out = append(out, entry)
+	}
+	respondJSONOK(w, out)
+}
+
+// BriefingFailureBucket counts failed briefings under one error class.
+type BriefingFailureBucket struct {
+	Class         string `json:"class"`
+	Count         int    `json:"count"`
+	LatestMessage string `json:"latest_message,omitempty"`
+}
+
+// BriefingFailureRow is one row in the recent-failures table, paired with its
+// classifier verdict so the frontend can render badges without re-classifying.
+type BriefingFailureRow struct {
+	ID           int    `json:"id"`
+	UserID       int    `json:"user_id"`
+	Date         string `json:"date"`
+	Error        string `json:"error"`
+	ClassifiedAs string `json:"classified_as"`
+	CreatedAt    string `json:"created_at"`
+}
+
+// GetBriefingFailures returns recent failed daily_briefings rows bucketed by
+// classifier verdict. The user reported a Gemini-deprecation 404 buried in
+// scheduler logs — this surfaces those buckets in the admin UI.
+//
+// Query params:
+//   - since: duration string (default "24h")
+//
+// GET /api/admin/diagnostics/briefing-failures
+func (h *DiagnosticsHandler) GetBriefingFailures(w http.ResponseWriter, r *http.Request) {
+	if h.aiRepo == nil {
+		respondInternalError(w, r, fmt.Errorf("ai repository not configured"))
+		return
+	}
+	since, err := parseSinceDuration(r.URL.Query().Get("since"), 24*time.Hour)
+	if err != nil {
+		respondValidationError(w, r, err.Error())
+		return
+	}
+
+	rows, err := h.aiRepo.ListFailedBriefings(time.Now().Add(-since), 100)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+
+	// Stable bucket order so the frontend can render a fixed grid even when
+	// some classes have zero hits.
+	bucketOrder := []llm.ErrorClass{
+		llm.ErrorClassModelNotFound,
+		llm.ErrorClassAuthFailed,
+		llm.ErrorClassRateLimited,
+		llm.ErrorClassServerError,
+		llm.ErrorClassConnectionFailed,
+		llm.ErrorClassOther,
+	}
+	buckets := make(map[llm.ErrorClass]*BriefingFailureBucket, len(bucketOrder))
+	for _, c := range bucketOrder {
+		buckets[c] = &BriefingFailureBucket{Class: string(c)}
+	}
+
+	recent := make([]BriefingFailureRow, 0, len(rows))
+	for i, row := range rows {
+		cls := llm.ClassifyError(row.Error)
+		b := buckets[cls]
+		b.Count++
+		if b.LatestMessage == "" {
+			b.LatestMessage = row.Error
+		}
+		if i < 25 {
+			recent = append(recent, BriefingFailureRow{
+				ID:           row.ID,
+				UserID:       row.UserID,
+				Date:         row.Date,
+				Error:        row.Error,
+				ClassifiedAs: string(cls),
+				CreatedAt:    row.CreatedAt,
+			})
+		}
+	}
+
+	bucketList := make([]BriefingFailureBucket, 0, len(bucketOrder))
+	for _, c := range bucketOrder {
+		bucketList = append(bucketList, *buckets[c])
+	}
+
+	respondJSONOK(w, map[string]interface{}{
+		"since":   since.String(),
+		"buckets": bucketList,
+		"recent":  recent,
 	})
 }
 
