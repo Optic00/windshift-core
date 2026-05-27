@@ -34,16 +34,13 @@ func (h *WorkspaceHandler) GetOrCreatePersonalWorkspace(w http.ResponseWriter, r
 	var timeProjectName sql.NullString
 	err := h.db.QueryRow(`
 		SELECT w.id, w.name, w.key, w.description, w.active, w.time_project_id, w.is_personal, w.owner_id, w.created_at, w.updated_at,
-		       COUNT(p.id) as project_count,
 		       tp.name as time_project_name
 		FROM workspaces w
-		LEFT JOIN projects p ON w.id = p.workspace_id
 		LEFT JOIN time_projects tp ON w.time_project_id = tp.id
 		WHERE w.is_personal = true AND w.owner_id = ?
-		GROUP BY w.id, w.name, w.key, w.description, w.active, w.time_project_id, w.is_personal, w.owner_id, w.created_at, w.updated_at, tp.name
 	`, userID).Scan(&workspace.ID, &workspace.Name, &workspace.Key, &workspace.Description,
 		&workspace.Active, &workspace.TimeProjectID, &workspace.IsPersonal, &workspace.OwnerID, &workspace.CreatedAt, &workspace.UpdatedAt,
-		&workspace.ProjectCount, &timeProjectName)
+		&timeProjectName)
 
 	if err == nil {
 		// Personal workspace exists, return it
@@ -110,15 +107,12 @@ func (h *WorkspaceHandler) GetOrCreatePersonalWorkspace(w http.ResponseWriter, r
 	// Return the created personal workspace
 	err = h.db.QueryRow(`
 		SELECT w.id, w.name, w.key, w.description, w.active, w.time_project_id, w.is_personal, w.owner_id, w.created_at, w.updated_at,
-		       COUNT(p.id) as project_count,
 		       tp.name as time_project_name
 		FROM workspaces w
-		LEFT JOIN projects p ON w.id = p.workspace_id
 		LEFT JOIN time_projects tp ON w.time_project_id = tp.id
 		WHERE w.id = ?
-		GROUP BY w.id, w.name, w.key, w.description, w.active, w.time_project_id, w.is_personal, w.owner_id, w.created_at, w.updated_at, tp.name
 	`, id).Scan(&workspace.ID, &workspace.Name, &workspace.Key, &workspace.Description,
-		&workspace.Active, &workspace.TimeProjectID, &workspace.IsPersonal, &workspace.OwnerID, &workspace.CreatedAt, &workspace.UpdatedAt, &workspace.ProjectCount, &timeProjectName)
+		&workspace.Active, &workspace.TimeProjectID, &workspace.IsPersonal, &workspace.OwnerID, &workspace.CreatedAt, &workspace.UpdatedAt, &timeProjectName)
 
 	workspace.TimeProjectName = timeProjectName.String
 

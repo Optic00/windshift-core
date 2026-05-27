@@ -13,6 +13,14 @@ type iterationScanner interface {
 	Scan(dest ...interface{}) error
 }
 
+// parseDate tries date-only format first, then falls back to RFC3339.
+func parseDate(s string) (time.Time, error) {
+	if t, err := time.Parse("2006-01-02", s); err == nil {
+		return t, nil
+	}
+	return time.Parse(time.RFC3339, s)
+}
+
 // scanIterationRow scans a single iteration row (with LEFT JOIN type/workspace
 // columns) into an IterationResult. The column order must match the standard
 // iteration query.

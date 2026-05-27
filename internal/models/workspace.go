@@ -2,18 +2,20 @@ package models
 
 import "time"
 
-// Workspace represents a project workspace
+// Workspace is a container for Items and Pages plus their configuration.
+// "Project" in Windshift refers exclusively to time-tracking projects
+// (table time_projects); a Workspace is not a project.
 type Workspace struct {
 	ID          int    `json:"id"`
 	Name        string `json:"name"`
-	Key         string `json:"key"` // Workspace key for issue prefixes (e.g., "TEST", "PROJ")
+	Key         string `json:"key"` // Workspace key for item prefixes (e.g., "WI", "TEST")
 	Description string `json:"description"`
 	Active      bool   `json:"active"`
 	// Personal workspace fields
 	IsPersonal bool `json:"is_personal"`        // Flag to indicate personal workspace
 	OwnerID    *int `json:"owner_id,omitempty"` // User ID for personal workspaces
 	// Time tracking integration
-	TimeProjectID *int `json:"time_project_id,omitempty"` // Default project for time logging in this workspace
+	TimeProjectID *int `json:"time_project_id,omitempty"` // Default time-tracking project for worklogs on items in this workspace
 	// Visual identity fields
 	Icon                    string    `json:"icon"`                      // Lucide icon name for workspace
 	Color                   string    `json:"color"`                     // Hex color code for workspace
@@ -24,7 +26,6 @@ type Workspace struct {
 	CreatedAt               time.Time `json:"created_at"`
 	UpdatedAt               time.Time `json:"updated_at"`
 	// Joined fields for API responses
-	ProjectCount          int    `json:"project_count,omitempty"`
 	TimeProjectName       string `json:"time_project_name,omitempty"`
 	OwnerName             string `json:"owner_name,omitempty"` // Name of workspace owner for API responses
 	ConfigurationSetID    *int64 `json:"configuration_set_id,omitempty"`

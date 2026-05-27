@@ -23,18 +23,16 @@ func NewWorkspaceRepository(db database.Database) *WorkspaceRepository {
 	return &WorkspaceRepository{db: db}
 }
 
-// workspaceSelectBase is the common SELECT columns for workspace queries with counts.
+// workspaceSelectBase is the common SELECT columns for workspace queries.
 const workspaceSelectBase = `SELECT w.id, w.name, w.key, w.description, w.active, w.time_project_id, w.is_personal, w.owner_id, w.icon, w.color, w.avatar_url, w.default_view, w.display_mode, w.internal_comments_enabled, w.created_at, w.updated_at,
-       COUNT(p.id) as project_count,
        tp.name as time_project_name`
 
 const workspaceFromJoinsBase = ` FROM workspaces w
-LEFT JOIN projects p ON w.id = p.workspace_id
 LEFT JOIN time_projects tp ON w.time_project_id = tp.id`
 
 const workspaceGroupByBase = ` GROUP BY w.id, w.name, w.key, w.description, w.active, w.time_project_id, w.is_personal, w.owner_id, w.icon, w.color, w.avatar_url, w.default_view, w.display_mode, w.internal_comments_enabled, w.created_at, w.updated_at, tp.name`
 
-// scanWorkspaceBase scans a standard workspace row (17 columns) and applies nullable fields.
+// scanWorkspaceBase scans a standard workspace row and applies nullable fields.
 func scanWorkspaceBase(s interface{ Scan(dest ...any) error }) (models.Workspace, error) {
 	var ws models.Workspace
 	var icon, color, defaultView, displayMode, timeProjectName sql.NullString
@@ -42,7 +40,7 @@ func scanWorkspaceBase(s interface{ Scan(dest ...any) error }) (models.Workspace
 		&ws.Active, &ws.TimeProjectID, &ws.IsPersonal, &ws.OwnerID,
 		&icon, &color, &ws.AvatarURL, &defaultView, &displayMode,
 		&ws.InternalCommentsEnabled,
-		&ws.CreatedAt, &ws.UpdatedAt, &ws.ProjectCount, &timeProjectName)
+		&ws.CreatedAt, &ws.UpdatedAt, &timeProjectName)
 	if err != nil {
 		return ws, err
 	}
@@ -156,7 +154,7 @@ func (r *WorkspaceRepository) ListIDKeys() ([]IDKey, error) {
 	return pairs, rows.Err()
 }
 
-// FindByID retrieves a workspace by ID with project count and time project name
+// FindByID retrieves a workspace by ID with its time-tracking project name.
 func (r *WorkspaceRepository) FindByID(id int) (*models.Workspace, error) {
 	var workspace models.Workspace
 	var timeProjectName, icon, color, defaultView, displayMode sql.NullString
@@ -171,7 +169,7 @@ func (r *WorkspaceRepository) FindByID(id int) (*models.Workspace, error) {
 		&icon, &color, &workspace.AvatarURL, &defaultView, &displayMode,
 		&workspace.InternalCommentsEnabled,
 		&workspace.CreatedAt, &workspace.UpdatedAt,
-		&workspace.ProjectCount, &timeProjectName, &configSetID)
+		&timeProjectName, &configSetID)
 
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound

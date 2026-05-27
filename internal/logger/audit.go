@@ -480,11 +480,6 @@ const (
 	ActionMilestoneCategoryUpdate = "milestone_category.update"
 	ActionMilestoneCategoryDelete = "milestone_category.delete"
 
-	// Project management
-	ActionProjectCreate = "project.create"
-	ActionProjectUpdate = "project.update"
-	ActionProjectDelete = "project.delete"
-
 	// Collection management
 	ActionCollectionCreate = "collection.create"
 	ActionCollectionUpdate = "collection.update"
@@ -757,7 +752,6 @@ const (
 	ResourceTimeProject          = "time_project"
 	ResourceMilestone            = "milestone"
 	ResourceMilestoneCategory    = "milestone_category"
-	ResourceProject              = "project"
 	ResourceCollection           = "collection"
 	ResourcePersonalLabel        = "personal_label"
 	ResourceTestCase             = "test_case"

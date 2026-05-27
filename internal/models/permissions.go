@@ -74,12 +74,6 @@ const (
 	// Comment permissions
 	PermissionCommentEditOthers = "comment.edit_others" // Edit other comments
 
-	// Project permissions
-	PermissionProjectView   = "project.view"   // View projects
-	PermissionProjectCreate = "project.create" // Create projects
-	PermissionProjectEdit   = "project.edit"   // Edit projects
-	PermissionProjectDelete = "project.delete" // Delete projects
-
 	// Item creation permission
 	PermissionItemCreate = "item.create" // Create work items
 
