@@ -31,6 +31,23 @@ ws link ls WI-1                    # Outgoing + incoming links on WI-1
 ws link rm <link-id>               # Remove a link by id
 ws link types                      # Catalog of available link types
 ```
+
+## Referencing items in commits
+
+When the work belongs to a Windshift ticket, include the item key in the
+**commit subject line** so `git log --oneline` and PR titles surface the
+linkage at a glance. The parenthetical-suffix form pairs well with
+Conventional Commits:
+
+```
+feat(v1): expose item labels + diagrams on the bearer-token surface ({{.Workspace.Key}}-71)
+fix(links): show workspace_item_number in linked-item key, not DB id ({{.Workspace.Key}}-58)
+```
+
+Look the key up via `ws task get` or `ws task mine` if it isn't already
+in the conversation. If a commit closes multiple tickets, list each key.
+Small fixes / tooling cleanups that aren't tracked under a ticket may
+omit the key — don't fabricate one.
 {{if .StatusAliases}}
 ## Status Aliases
 
