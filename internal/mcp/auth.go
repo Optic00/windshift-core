@@ -13,12 +13,6 @@ import (
 // bearerAuthMiddleware validates Bearer tokens and injects the user into context.
 func bearerAuthMiddleware(tokenManager *auth.TokenManager, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Allow DELETE without auth (MCP session termination)
-		if r.Method == http.MethodDelete {
-			next.ServeHTTP(w, r)
-			return
-		}
-
 		header := r.Header.Get("Authorization")
 		if !strings.HasPrefix(header, "Bearer ") {
 			http.Error(w, `{"error":"missing or invalid Authorization header"}`, http.StatusUnauthorized)
