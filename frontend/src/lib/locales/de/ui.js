@@ -343,6 +343,8 @@ export default {
       themeLight: 'Hell',
       themeDark: 'Dunkel',
       themeSystem: 'System',
+      apiDocs: 'API-Referenz',
+      apiDocsSubtitle: 'REST-API für diesen Workspace durchsuchen',
     },
   },
   aria: {

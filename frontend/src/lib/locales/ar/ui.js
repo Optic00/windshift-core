@@ -345,6 +345,8 @@ export default {
       themeLight: 'فاتح',
       themeDark: 'داكن',
       themeSystem: 'النظام',
+      apiDocs: 'مرجع واجهة برمجة التطبيقات',
+      apiDocsSubtitle: 'تصفح REST API لمساحة العمل هذه',
     },
   },
   aria: {

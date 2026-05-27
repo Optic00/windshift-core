@@ -344,6 +344,8 @@ export default {
       themeLight: 'Claro',
       themeDark: 'Escuro',
       themeSystem: 'Sistema',
+      apiDocs: 'Referência da API',
+      apiDocsSubtitle: 'Explore a API REST deste workspace',
     },
   },
   aria: {

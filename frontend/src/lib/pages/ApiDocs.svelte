@@ -1,64 +1,98 @@
 <script>
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
+  import ApiDocsSidebar from '../features/api-docs/ApiDocsSidebar.svelte';
+  import { loadSpec, groupOperationsByTag } from '../features/api-docs/openapi-store.svelte.js';
 
-  // Scalar pulls in Vue + the full reference UI (~3MB pre-gzip). Load it
-  // dynamically so this weight only ships when /api-docs is visited and
-  // stays out of the main bundle for everyone else.
-  let mountEl;
-  let app;
+  // ApiOperation pulls in marked + dompurify for description rendering;
+  // dynamic-import keeps that weight out of the main bundle so this page
+  // only pays for it when actually visited.
+  let ApiOperation = $state(null);
+
+  let spec = $state(null);
+  let groups = $state([]);
   let loading = $state(true);
   let loadError = $state(null);
+  let selectedId = $state(null);
+
+  const allOperations = $derived(groups.flatMap((g) => g.operations));
+  const selectedEntry = $derived(
+    allOperations.find((e) => e.id === selectedId) || allOperations[0] || null
+  );
 
   onMount(async () => {
     try {
-      const [{ createApiReference }] = await Promise.all([
-        import('@scalar/api-reference'),
-        import('@scalar/api-reference/style.css'),
+      const [doc, operationModule] = await Promise.all([
+        loadSpec(),
+        import('../features/api-docs/ApiOperation.svelte'),
       ]);
-      if (!mountEl) return;
-      app = createApiReference(mountEl, {
-        url: '/rest/api/v1/openapi.json',
-        hideDarkModeToggle: false,
-        defaultHttpClient: { targetKey: 'shell', clientKey: 'curl' },
-      });
+      spec = doc;
+      groups = groupOperationsByTag(doc);
+      ApiOperation = operationModule.default;
+      const hash = (typeof window !== 'undefined' && window.location.hash || '').replace(/^#/, '');
+      if (hash) selectedId = hash;
     } catch (err) {
-      console.error('Failed to load Scalar API reference', err);
-      loadError = err?.message || 'Failed to load API reference';
+      console.error('Failed to load OpenAPI spec', err);
+      loadError = err?.message || 'Failed to load OpenAPI spec';
     } finally {
       loading = false;
     }
   });
 
-  onDestroy(() => {
-    app?.unmount?.();
-  });
+  function handleSelect(entry) {
+    selectedId = entry.id;
+    if (typeof window !== 'undefined') {
+      // Keep the URL hash in sync without scrolling the page (we own scroll).
+      const url = `${window.location.pathname}${window.location.search}#${entry.id}`;
+      window.history.replaceState(null, '', url);
+    }
+  }
 </script>
 
-<div class="api-docs-host" bind:this={mountEl}>
+<div class="api-docs">
   {#if loading}
-    <p class="status">Loading API reference…</p>
+    <div class="state">Loading API reference…</div>
   {:else if loadError}
-    <p class="status status--error">{loadError}</p>
+    <div class="state state--error" data-testid="api-docs-error">{loadError}</div>
+  {:else if !spec || groups.length === 0}
+    <div class="state">No operations are documented in the OpenAPI spec.</div>
+  {:else}
+    <ApiDocsSidebar {groups} selectedId={selectedEntry?.id} onselect={handleSelect} />
+    <main class="main" data-testid="api-docs-main">
+      {#if selectedEntry && ApiOperation}
+        {@const Operation = ApiOperation}
+        {#key selectedEntry.id}
+          <Operation {spec} entry={selectedEntry} />
+        {/key}
+      {/if}
+    </main>
   {/if}
 </div>
 
 <style>
-  .api-docs-host {
-    height: 100%;
-    min-height: calc(100vh - var(--ds-app-header-height, 0px));
+  .api-docs {
+    display: flex;
+    height: calc(100vh - var(--ds-app-header-height, 0px));
+    min-height: 0;
     width: 100%;
-    overflow: hidden;
+    background: var(--ds-surface);
+    color: var(--ds-text);
   }
-  .api-docs-host :global(.scalar-app),
-  .api-docs-host :global(.scalar-api-reference) {
-    height: 100%;
+  .main {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-y: auto;
+    background: var(--ds-surface);
   }
-  .status {
-    padding: 2rem;
+  .state {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 48px 24px;
     color: var(--ds-text-subtle);
-    text-align: center;
+    font-size: 14px;
   }
-  .status--error {
-    color: var(--ds-text-danger, #ef4444);
+  .state--error {
+    color: var(--ds-text-danger);
   }
 </style>

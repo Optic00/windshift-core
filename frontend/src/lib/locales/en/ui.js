@@ -373,6 +373,8 @@ export default {
       themeLight: 'Light',
       themeDark: 'Dark',
       themeSystem: 'System',
+      apiDocs: 'API reference',
+      apiDocsSubtitle: 'Browse the REST API for this workspace',
     },
   },
 

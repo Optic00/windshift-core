@@ -276,6 +276,8 @@ export default {
       themeLight: '浅色',
       themeDark: '深色',
       themeSystem: '系统',
+      apiDocs: 'API 参考',
+      apiDocsSubtitle: '浏览此工作区的 REST API',
     },
   },
 
