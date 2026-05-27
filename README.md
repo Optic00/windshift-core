@@ -48,7 +48,7 @@ Windshift is a comprehensive highly optimized work management platform that comb
 
 **Collaboration**
 - Comments with activity tracking
-- Multi-channel notifications (email, webhooks)
+- Email and webhook notifications
 - Customer portal for external submissions
 - Public boards for external stakeholders
 - Team workspaces with role-based access
