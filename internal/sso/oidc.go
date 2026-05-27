@@ -11,7 +11,28 @@ import (
 	"github.com/zitadel/oidc/v3/pkg/client/rp"
 	httphelper "github.com/zitadel/oidc/v3/pkg/http"
 	"github.com/zitadel/oidc/v3/pkg/oidc"
+
+	"windshift/internal/utils"
 )
+
+// oidcHTTPTimeout caps every outbound call the relying party makes
+// (discovery, JWKS fetch, token exchange).
+const oidcHTTPTimeout = 15 * time.Second
+
+// newSSRFSafeOIDCClient returns an *http.Client whose Transport refuses
+// to dial loopback / RFC1918 / link-local / CGNAT addresses. Used as a
+// defense-in-depth layer beneath upfront IssuerURL validation: closes the
+// validate-then-dial gap (DNS rebinding) and also covers the JWKS URL and
+// token endpoint that the IdP advertises via discovery — those are not
+// validated upfront because we don't see them until discovery runs.
+func newSSRFSafeOIDCClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			DialContext: utils.SafeNetDialer(timeout).DialContext,
+		},
+	}
+}
 
 var (
 	ErrOIDCDiscoveryFailed = errors.New("OIDC discovery failed")
@@ -36,7 +57,8 @@ type OIDCClaims struct {
 
 // OIDCService handles OIDC authentication flows using zitadel/oidc library
 type OIDCService struct {
-	cookieKey []byte // 32-byte key for cookie encryption
+	cookieKey  []byte // 32-byte key for cookie encryption
+	httpClient *http.Client
 }
 
 // NewOIDCService creates a new OIDC service
@@ -49,7 +71,8 @@ func NewOIDCService(cookieKey []byte) *OIDCService {
 		cookieKey = padded
 	}
 	return &OIDCService{
-		cookieKey: cookieKey[:32],
+		cookieKey:  cookieKey[:32],
+		httpClient: newSSRFSafeOIDCClient(oidcHTTPTimeout),
 	}
 }
 
@@ -79,6 +102,7 @@ func (s *OIDCService) CreateRelyingParty(ctx context.Context, provider *SSOProvi
 	// Create options
 	options := []rp.Option{
 		rp.WithCookieHandler(cookieHandler),
+		rp.WithHTTPClient(s.httpClient),
 		rp.WithVerifierOpts(
 			rp.WithIssuedAtOffset(5*time.Second), // Allow 5s clock skew
 			// Pin accepted ID-token signing algorithms. Defense-in-depth against

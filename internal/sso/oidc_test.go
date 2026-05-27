@@ -21,6 +21,7 @@ func TestCreateRelyingParty_SmokeWithSignAlgsAllowlist(t *testing.T) {
 	defer srv.Close()
 
 	svc := NewOIDCService(make([]byte, 32))
+	svc.httpClient = srv.Client() // permissive; the stub IdP runs on 127.0.0.1, which SafeNetDialer would otherwise reject
 	provider := &SSOProvider{
 		ProviderType: ProviderTypeOIDC,
 		IssuerURL:    srv.URL,
@@ -59,6 +60,31 @@ func TestCreateRelyingParty_SmokeWithSignAlgsAllowlist(t *testing.T) {
 				t.Errorf("banned algorithm %q present in allowlist", banned)
 			}
 		}
+	}
+}
+
+// TestCreateRelyingParty_BlocksLoopbackDial confirms the SSRF-safe dialer
+// is actually wired into the relying-party constructor: when CreateRelyingParty
+// is called with the production (default) HTTP client, an issuer URL that
+// resolves to loopback gets rejected at dial time, before any discovery
+// request completes.
+func TestCreateRelyingParty_BlocksLoopbackDial(t *testing.T) {
+	srv := newStubIDPServer(t)
+	defer srv.Close()
+
+	svc := NewOIDCService(make([]byte, 32)) // default SSRF-safe client
+	provider := &SSOProvider{
+		ProviderType: ProviderTypeOIDC,
+		IssuerURL:    srv.URL, // httptest.Server binds 127.0.0.1
+		ClientID:     "test-client",
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := svc.CreateRelyingParty(ctx, provider, "https://example.test/callback", "test-secret")
+	if err == nil {
+		t.Fatalf("expected CreateRelyingParty to reject a loopback issuer URL via the SSRF-safe dialer")
 	}
 }
 

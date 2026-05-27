@@ -552,6 +552,10 @@ func (h *SSOHandler) CreateProvider(w http.ResponseWriter, r *http.Request) {
 			respondValidationError(w, r, "Issuer URL is required for OIDC providers")
 			return
 		}
+		if err := utils.ValidateExternalURL(req.IssuerURL); err != nil {
+			respondValidationError(w, r, fmt.Sprintf("Issuer URL is not a valid public HTTPS endpoint: %s", err.Error()))
+			return
+		}
 		if req.ClientID == "" {
 			respondValidationError(w, r, "Client ID is required for OIDC providers")
 			return
@@ -688,6 +692,12 @@ func (h *SSOHandler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 		existing.Name = req.Name
 	}
 	if req.IssuerURL != "" {
+		if existing.ProviderType == sso.ProviderTypeOIDC {
+			if err := utils.ValidateExternalURL(req.IssuerURL); err != nil {
+				respondValidationError(w, r, fmt.Sprintf("Issuer URL is not a valid public HTTPS endpoint: %s", err.Error()))
+				return
+			}
+		}
 		existing.IssuerURL = req.IssuerURL
 	}
 	if req.ClientID != "" {
