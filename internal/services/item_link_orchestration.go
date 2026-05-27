@@ -666,6 +666,7 @@ func (s *ItemLinkService) getLinksWhere(whereClause string, args ...interface{})
 		       COALESCE(u.username, '') as created_by_name,
 		       si.status_id as source_status_id,
 		       COALESCE(ss.name, '') as source_status_name,
+		       COALESCE(ssc.color, '') as source_status_color,
 		       si.item_type_id as source_item_type_id,
 		       COALESCE(sit.name, '') as source_item_type_name,
 		       COALESCE(sit.icon, '') as source_item_type_icon,
@@ -675,6 +676,7 @@ func (s *ItemLinkService) getLinksWhere(whereClause string, args ...interface{})
 		       si.workspace_item_number as source_item_number,
 		       ti.status_id as target_status_id,
 		       COALESCE(ts.name, '') as target_status_name,
+		       COALESCE(tsc.color, '') as target_status_color,
 		       ti.item_type_id as target_item_type_id,
 		       COALESCE(tit.name, '') as target_item_type_name,
 		       COALESCE(tit.icon, '') as target_item_type_icon,
@@ -697,6 +699,8 @@ func (s *ItemLinkService) getLinksWhere(whereClause string, args ...interface{})
 		LEFT JOIN users u ON il.created_by = u.id
 		LEFT JOIN statuses ss ON si.status_id = ss.id
 		LEFT JOIN statuses ts ON ti.status_id = ts.id
+		LEFT JOIN status_categories ssc ON ss.category_id = ssc.id
+		LEFT JOIN status_categories tsc ON ts.category_id = tsc.id
 		LEFT JOIN item_types sit ON si.item_type_id = sit.id
 		LEFT JOIN item_types tit ON ti.item_type_id = tit.id
 		LEFT JOIN workspaces sw ON si.workspace_id = sw.id
@@ -721,10 +725,10 @@ func (s *ItemLinkService) getLinksWhere(whereClause string, args ...interface{})
 			&link.TargetType, &link.TargetID, &link.CreatedBy, &link.CreatedAt,
 			&link.LinkTypeName, &link.LinkTypeColor, &link.LinkTypeForwardLabel, &link.LinkTypeReverseLabel,
 			&link.SourceTitle, &link.TargetTitle, &link.CreatedByName,
-			&link.SourceStatusID, &link.SourceStatusName,
+			&link.SourceStatusID, &link.SourceStatusName, &link.SourceStatusColor,
 			&link.SourceItemTypeID, &link.SourceItemTypeName, &link.SourceItemTypeIcon, &link.SourceItemTypeColor,
 			&link.SourceWorkspaceKey, &link.SourceWorkspaceID, &link.SourceItemNumber,
-			&link.TargetStatusID, &link.TargetStatusName,
+			&link.TargetStatusID, &link.TargetStatusName, &link.TargetStatusColor,
 			&link.TargetItemTypeID, &link.TargetItemTypeName, &link.TargetItemTypeIcon, &link.TargetItemTypeColor,
 			&link.TargetWorkspaceKey, &link.TargetWorkspaceID, &link.TargetItemNumber,
 			&link.CustomFieldID, &link.CustomFieldName,

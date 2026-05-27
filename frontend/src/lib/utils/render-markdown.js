@@ -15,6 +15,6 @@ marked.setOptions({
  */
 export function renderMarkdown(input) {
   if (!input) return '';
-  const raw = marked.parse(String(input));
+  const raw = marked.parse(String(input), { async: false });
   return DOMPurify.sanitize(raw, { USE_PROFILES: { html: true } });
 }

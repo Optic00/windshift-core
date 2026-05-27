@@ -247,6 +247,7 @@ type ItemLink struct {
 	// Source item details
 	SourceStatusID      *int   `json:"source_status_id,omitempty"`
 	SourceStatusName    string `json:"source_status_name,omitempty"`
+	SourceStatusColor   string `json:"source_status_color,omitempty"`
 	SourceItemTypeID    *int   `json:"source_item_type_id,omitempty"`
 	SourceItemTypeName  string `json:"source_item_type_name,omitempty"`
 	SourceItemTypeIcon  string `json:"source_item_type_icon,omitempty"`
@@ -261,6 +262,7 @@ type ItemLink struct {
 	// Target item details
 	TargetStatusID      *int   `json:"target_status_id,omitempty"`
 	TargetStatusName    string `json:"target_status_name,omitempty"`
+	TargetStatusColor   string `json:"target_status_color,omitempty"`
 	TargetItemTypeID    *int   `json:"target_item_type_id,omitempty"`
 	TargetItemTypeName  string `json:"target_item_type_name,omitempty"`
 	TargetItemTypeIcon  string `json:"target_item_type_icon,omitempty"`

@@ -5,6 +5,7 @@
   import { api } from '../../api.js';
   import { t } from '../../stores/i18n.svelte.js';
   import { errorToast } from '../../stores/toasts.svelte.js';
+  import StatusBadge from '../../components/StatusBadge.svelte';
   import { useDebounce } from 'runed';
   import { untrack } from 'svelte';
 
@@ -249,6 +250,7 @@
             {@const linkedItemWorkspaceId = isCurrentPage ? link.source_workspace_id : link.target_workspace_id}
             {@const linkedItemNumber = isCurrentPage ? link.source_item_number : link.target_item_number}
             {@const linkedItemStatus = isCurrentPage ? link.source_status_name : link.target_status_name}
+            {@const linkedItemStatusColor = isCurrentPage ? link.source_status_color : link.target_status_color}
             {@const linkedItemIconKey = isCurrentPage ? link.source_item_type_icon : link.target_item_type_icon}
             {@const linkedItemIconColor = isCurrentPage ? link.source_item_type_color : link.target_item_type_color}
             {@const linkedItemKey = `${linkedItemWorkspaceKey || 'WORK'}-${linkedItemNumber ?? linkedItemId}`}
@@ -274,7 +276,11 @@
                 <span class="row-key">{linkedItemKey}</span>
                 <span class="row-title">{linkedItemTitle}</span>
                 {#if linkedItemStatus}
-                  <span class="row-status">{linkedItemStatus}</span>
+                  <StatusBadge
+                    status={{ label: linkedItemStatus, categoryColor: linkedItemStatusColor }}
+                    uppercase={false}
+                    showDot={false}
+                  />
                 {/if}
               </a>
               <button
@@ -454,12 +460,7 @@
     font-size: 0.6875rem;
     flex-shrink: 0;
   }
-  .row-status {
-    background: var(--ds-background-neutral);
-    color: var(--ds-text-subtle);
-    padding: 0.125rem 0.375rem;
-    border-radius: 999px;
-    font-size: 0.6875rem;
+  .row :global(.inline-flex) {
     flex-shrink: 0;
   }
   .row-delete {
