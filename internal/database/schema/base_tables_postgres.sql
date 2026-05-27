@@ -132,18 +132,9 @@ CREATE TABLE IF NOT EXISTS time_project_categories (
 	updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
 
--- From core_postgres.sql
-CREATE TABLE IF NOT EXISTS projects (
-	id SERIAL PRIMARY KEY,
-	workspace_id INTEGER,
-	name TEXT NOT NULL,
-	description TEXT,
-	active BOOLEAN DEFAULT true,
-	created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-	updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_projects_workspace_id ON projects(workspace_id);
+-- The legacy `projects` table previously defined here was removed; see
+-- core.sql for context. "Project" in Windshift refers exclusively to
+-- `time_projects` (see time_tracking_postgres.sql).
 
 CREATE TABLE IF NOT EXISTS custom_field_definitions (
 	id SERIAL PRIMARY KEY,

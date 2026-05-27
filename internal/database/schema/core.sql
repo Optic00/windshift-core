@@ -1,17 +1,8 @@
--- Core tables (projects, custom field definitions)
-
-CREATE TABLE IF NOT EXISTS projects (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	workspace_id INTEGER,
-	name TEXT NOT NULL,
-	description TEXT,
-	active BOOLEAN DEFAULT 1,
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-	FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE SET NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_projects_workspace_id ON projects(workspace_id);
+-- Core tables (custom field definitions)
+-- The legacy `projects` table that lived here was removed. "Project" in
+-- Windshift refers exclusively to `time_projects` (see time_tracking.sql);
+-- pre-existing databases keep the orphan `projects` table around but no
+-- code reads or writes it.
 
 CREATE TABLE IF NOT EXISTS custom_field_definitions (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
