@@ -27,6 +27,7 @@ type Config struct {
 	DB           DBConfig
 	SSH          SSHConfig
 	Auth         AuthConfig
+	SSO          SSOConfig
 	WebAuthn     WebAuthnConfig
 	Logging      LoggingConfig
 	Plugins      PluginsConfig
@@ -71,6 +72,14 @@ type AuthConfig struct {
 	// SESSION_SECRET. Empty means neither env var was set — Load will fatal
 	// before populating this field, so consumers can treat empty as unreachable.
 	SessionSecret string
+}
+
+// SSOConfig holds SSO-specific runtime options.
+type SSOConfig struct {
+	// OIDCAllowedPrivateCIDRs is a comma-separated list of private / CGNAT CIDRs
+	// that OIDC discovery, JWKS, and token HTTP calls may dial. Empty keeps the
+	// SSRF guard fully public-internet-only.
+	OIDCAllowedPrivateCIDRs string
 }
 
 // WebAuthnConfig holds WebAuthn relying-party identity.

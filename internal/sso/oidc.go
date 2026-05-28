@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -20,16 +21,17 @@ import (
 const oidcHTTPTimeout = 15 * time.Second
 
 // newSSRFSafeOIDCClient returns an *http.Client whose Transport refuses
-// to dial loopback / RFC1918 / link-local / CGNAT addresses. Used as a
+// to dial loopback / RFC1918 / link-local / CGNAT addresses unless explicitly
+// allowlisted for this OIDC use case. Used as a
 // defense-in-depth layer beneath upfront IssuerURL validation: closes the
 // validate-then-dial gap (DNS rebinding) and also covers the JWKS URL and
 // token endpoint that the IdP advertises via discovery — those are not
 // validated upfront because we don't see them until discovery runs.
-func newSSRFSafeOIDCClient(timeout time.Duration) *http.Client {
+func newSSRFSafeOIDCClient(timeout time.Duration, allowedPrivateCIDRs []*net.IPNet) *http.Client {
 	return &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
-			DialContext: utils.SafeNetDialer(timeout).DialContext,
+			DialContext: utils.SafeNetDialerWithAllowedCIDRs(timeout, allowedPrivateCIDRs).DialContext,
 		},
 	}
 }
@@ -64,6 +66,13 @@ type OIDCService struct {
 // NewOIDCService creates a new OIDC service
 // cookieKey should be a 32-byte key for secure cookie encryption
 func NewOIDCService(cookieKey []byte) *OIDCService {
+	return NewOIDCServiceWithAllowedPrivateCIDRs(cookieKey, nil)
+}
+
+// NewOIDCServiceWithAllowedPrivateCIDRs creates a new OIDC service and permits
+// discovery / JWKS / token calls to private or CGNAT IPs only when the resolved
+// address falls inside one of the operator-supplied CIDRs.
+func NewOIDCServiceWithAllowedPrivateCIDRs(cookieKey []byte, allowedPrivateCIDRs []*net.IPNet) *OIDCService {
 	if len(cookieKey) < 32 {
 		// Pad key if too short (should not happen in production)
 		padded := make([]byte, 32)
@@ -72,7 +81,7 @@ func NewOIDCService(cookieKey []byte) *OIDCService {
 	}
 	return &OIDCService{
 		cookieKey:  cookieKey[:32],
-		httpClient: newSSRFSafeOIDCClient(oidcHTTPTimeout),
+		httpClient: newSSRFSafeOIDCClient(oidcHTTPTimeout, allowedPrivateCIDRs),
 	}
 }
 

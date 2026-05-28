@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -21,20 +22,88 @@ var ErrBlockedSSRFAddr = errors.New("dial host resolves to a blocked IP range")
 // metadata endpoints and other internal-only ranges that some
 // IsPrivate-equivalents miss).
 func IsBlockedSSRFAddr(ip net.IP) bool {
+	return IsBlockedSSRFAddrWithAllowedCIDRs(ip, nil)
+}
+
+// IsBlockedSSRFAddrWithAllowedCIDRs is IsBlockedSSRFAddr plus an explicit
+// operator allowlist for private / CGNAT networks. The allowlist intentionally
+// cannot override loopback, unspecified, link-local, or multicast blocks:
+// those ranges include local process surfaces and cloud metadata endpoints and
+// should not be reachable by server-side, config-driven HTTP clients.
+func IsBlockedSSRFAddrWithAllowedCIDRs(ip net.IP, allowedCIDRs []*net.IPNet) bool {
 	if ip == nil {
 		return true
 	}
-	if ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() ||
-		ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsPrivate() {
+	if isAlwaysBlockedSSRFAddr(ip) {
+		return true
+	}
+	if isPrivateOrCGNAT(ip) {
+		return !ipInCIDRs(ip, allowedCIDRs)
+	}
+	return false
+}
+
+func isAlwaysBlockedSSRFAddr(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.IsMulticast()
+}
+
+func isPrivateOrCGNAT(ip net.IP) bool {
+	if ip.IsPrivate() {
 		return true
 	}
 	if v4 := ip.To4(); v4 != nil {
 		_, cgnat, _ := net.ParseCIDR("100.64.0.0/10")
-		if cgnat != nil && cgnat.Contains(v4) {
+		return cgnat != nil && cgnat.Contains(v4)
+	}
+	return false
+}
+
+func ipInCIDRs(ip net.IP, cidrs []*net.IPNet) bool {
+	for _, cidr := range cidrs {
+		if cidr != nil && cidr.Contains(ip) {
 			return true
 		}
 	}
 	return false
+}
+
+// ParseCIDRList parses a comma-separated list of CIDRs. Bare IP literals are
+// accepted as host routes (/32 for IPv4, /128 for IPv6) for operator
+// convenience when allowing a single trusted endpoint.
+func ParseCIDRList(value string) ([]*net.IPNet, error) {
+	if strings.TrimSpace(value) == "" {
+		return nil, nil
+	}
+
+	parts := strings.Split(value, ",")
+	cidrs := make([]*net.IPNet, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if strings.Contains(part, "/") {
+			_, cidr, err := net.ParseCIDR(part)
+			if err != nil {
+				return nil, fmt.Errorf("invalid CIDR %q: %w", part, err)
+			}
+			cidrs = append(cidrs, cidr)
+			continue
+		}
+
+		ip := net.ParseIP(part)
+		if ip == nil {
+			return nil, fmt.Errorf("invalid IP/CIDR %q", part)
+		}
+		bits := 128
+		if v4 := ip.To4(); v4 != nil {
+			ip = v4
+			bits = 32
+		}
+		cidrs = append(cidrs, &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)})
+	}
+	return cidrs, nil
 }
 
 // SafeNetDialer returns a *net.Dialer that refuses to connect to non-public IPs.
@@ -46,6 +115,14 @@ func IsBlockedSSRFAddr(ip net.IP) bool {
 // otherwise point the dialer at 127.0.0.1, 169.254.169.254 (cloud metadata),
 // or RFC1918 internal services. The blocklist mirrors IsBlockedSSRFAddr above.
 func SafeNetDialer(timeout time.Duration) *net.Dialer {
+	return SafeNetDialerWithAllowedCIDRs(timeout, nil)
+}
+
+// SafeNetDialerWithAllowedCIDRs returns a SafeNetDialer that permits private /
+// CGNAT destination IPs only when they fall inside allowedCIDRs. See
+// IsBlockedSSRFAddrWithAllowedCIDRs for the ranges that remain blocked even
+// when listed.
+func SafeNetDialerWithAllowedCIDRs(timeout time.Duration, allowedCIDRs []*net.IPNet) *net.Dialer {
 	return &net.Dialer{
 		Timeout:   timeout,
 		KeepAlive: 30 * time.Second,
@@ -58,7 +135,7 @@ func SafeNetDialer(timeout time.Duration) *net.Dialer {
 			if ip == nil {
 				return fmt.Errorf("dial host %q did not resolve to an IP", host)
 			}
-			if IsBlockedSSRFAddr(ip) {
+			if IsBlockedSSRFAddrWithAllowedCIDRs(ip, allowedCIDRs) {
 				return fmt.Errorf("%w: %s (%s)", ErrBlockedSSRFAddr, ip.String(), network)
 			}
 			return nil
