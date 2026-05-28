@@ -648,36 +648,36 @@ func (at *ActivityTracker) CleanupExpiredActivities() error {
 	// Also enforce count limits (keep only most recent N records per user)
 	// This is a safety measure in case expiration isn't working properly
 
-	// Workspace visits: keep only last 10 per user
+	// Workspace visits: keep only the N most-recent per user.
 	_, err = at.db.ExecWrite(`
 		DELETE FROM user_workspace_visits
-		WHERE id NOT IN (
+		WHERE id IN (
 			SELECT id FROM (
-				SELECT id, user_id
+				SELECT id,
+				       ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY last_visited_at DESC) AS rn
 				FROM user_workspace_visits
-				ORDER BY user_id, last_visited_at DESC
-			) GROUP BY user_id
-			LIMIT ?
+			) ranked
+			WHERE rn > ?
 		)
 	`, at.config.MaxWorkspaceVisits)
 	if err != nil {
 		slog.Error("Error enforcing workspace visit limits", slog.String("component", "activity"), slog.Any("error", err))
 	}
 
-	// Item activities: keep only last 50 per user per type
+	// Item activities: keep only the N most-recent per user per activity type.
 	for _, activityType := range []ActivityType{ActivityView, ActivityEdit, ActivityComment} {
 		_, err = at.db.ExecWrite(`
 			DELETE FROM user_item_activities
-			WHERE activity_type = ? AND id NOT IN (
+			WHERE id IN (
 				SELECT id FROM (
-					SELECT id, user_id
+					SELECT id,
+					       ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY last_activity_at DESC) AS rn
 					FROM user_item_activities
 					WHERE activity_type = ?
-					ORDER BY user_id, last_activity_at DESC
-				) GROUP BY user_id
-				LIMIT ?
+				) ranked
+				WHERE rn > ?
 			)
-		`, activityType, activityType, at.config.MaxItemActivities)
+		`, activityType, at.config.MaxItemActivities)
 		if err != nil {
 			slog.Error("Error enforcing item activity limits", slog.String("component", "activity"), slog.String("activity_type", string(activityType)), slog.Any("error", err))
 		}
