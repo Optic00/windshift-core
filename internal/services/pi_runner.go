@@ -200,11 +200,17 @@ func (r *PiRunner) Run(ctx context.Context, input RunInput, emit EventSink) Runn
 	}
 }
 
-// DockerPiRunner spawns the runner image via `docker run -i --rm ...` and
-// delegates the JSONL stdio orchestration to PiRunner. The wrapper exists
-// because docker args (env, volume mounts) depend on RunInput, while
-// PiRunner.Args is static — splitting concerns keeps the JSONL logic
-// independent of the container layer.
+// DockerPiRunner spawns the runner image via `docker run` and delegates
+// the JSONL stdio orchestration to PiRunner. The wrapper exists because
+// docker args (env, volume mounts, sandbox flags) depend on RunInput,
+// while PiRunner.Args is static — splitting concerns keeps the JSONL
+// logic independent of the container layer.
+//
+// The sandbox flags baked by buildDockerArgs are not configurable from
+// outside this file; operator-tunable knobs (network, pids-limit,
+// memory, cpus) are exposed through the named fields below, but flags
+// like --cap-drop=ALL or --security-opt=no-new-privileges are part of
+// the contract and cannot be turned off.
 type DockerPiRunner struct {
 	Image         string
 	DockerBinary  string
@@ -213,20 +219,75 @@ type DockerPiRunner struct {
 	InitialPrompt string
 	IdleEventType string
 	ShutdownGrace time.Duration
+
+	// Sandbox tunables. Empty / zero values fall back to the safe
+	// defaults declared by sandboxDefaults below.
+	Network   string // docker --network value
+	PidsLimit int    // docker --pids-limit
+	Memory    string // docker --memory + --memory-swap
+	CPUs      string // docker --cpus
 }
 
-// Run implements Runner. Builds docker args from the runner's static
-// config + RunInput.Env, then dispatches through PiRunner.
-func (r *DockerPiRunner) Run(ctx context.Context, input RunInput, emit EventSink) RunnerResult {
-	if r.Image == "" {
-		return RunnerResult{Status: models.AgentRunStatusFailed, Error: "docker pi runner: Image is required"}
-	}
-	bin := r.DockerBinary
-	if bin == "" {
-		bin = "docker"
+// sandboxDefaults are the hardened defaults applied when the operator
+// has not overridden a tunable. Network defaults to a name the operator
+// is expected to have created with egress restrictions (see
+// deploy/coding-agent/README.md). Operators who knowingly want host
+// egress can set CODING_AGENT_NETWORK=bridge to opt out, loudly.
+var sandboxDefaults = struct {
+	Network   string
+	PidsLimit int
+	Memory    string
+	CPUs      string
+}{
+	Network:   "coding-agent-egress",
+	PidsLimit: 512,
+	Memory:    "4g",
+	CPUs:      "2",
+}
+
+// buildDockerArgs assembles the full docker-run argv for a single agent
+// run. Pure function over the runner config + RunInput so it can be
+// unit-tested without a live docker daemon. The flags it emits are
+// security-critical; the unit tests assert their presence.
+func (r *DockerPiRunner) buildDockerArgs(input RunInput) []string {
+	args := []string{
+		"run",
+		"-i",
+		"--rm",
+		"--cap-drop=ALL",
+		"--security-opt=no-new-privileges",
+		"--user=1000:1000", // matches the agent uid pinned in deploy/coding-agent/Dockerfile
+		"--read-only",
+		"--tmpfs=/tmp:rw,nosuid,nodev,size=256m",
+		"--tmpfs=/home/agent:rw,nosuid,nodev,size=512m", // /home/agent is the agent user's home; pi + ws state lives there at runtime
 	}
 
-	args := []string{"run", "-i", "--rm"}
+	network := r.Network
+	if network == "" {
+		network = sandboxDefaults.Network
+	}
+	args = append(args, "--network="+network)
+
+	pids := r.PidsLimit
+	if pids <= 0 {
+		pids = sandboxDefaults.PidsLimit
+	}
+	args = append(args, fmt.Sprintf("--pids-limit=%d", pids))
+
+	memory := r.Memory
+	if memory == "" {
+		memory = sandboxDefaults.Memory
+	}
+	// --memory-swap matches --memory so the container can't swap past
+	// its memory cap (docker default: swap = 2*memory).
+	args = append(args, "--memory="+memory, "--memory-swap="+memory)
+
+	cpus := r.CPUs
+	if cpus == "" {
+		cpus = sandboxDefaults.CPUs
+	}
+	args = append(args, "--cpus="+cpus)
+
 	mergedEnv := make(map[string]string, len(r.Env)+len(input.Env))
 	for k, v := range r.Env {
 		mergedEnv[k] = v
@@ -243,10 +304,23 @@ func (r *DockerPiRunner) Run(ctx context.Context, input RunInput, emit EventSink
 	}
 	args = append(args, r.ExtraArgs...)
 	args = append(args, r.Image)
+	return args
+}
+
+// Run implements Runner. Builds docker args from the runner's static
+// config + RunInput.Env, then dispatches through PiRunner.
+func (r *DockerPiRunner) Run(ctx context.Context, input RunInput, emit EventSink) RunnerResult {
+	if r.Image == "" {
+		return RunnerResult{Status: models.AgentRunStatusFailed, Error: "docker pi runner: Image is required"}
+	}
+	bin := r.DockerBinary
+	if bin == "" {
+		bin = "docker"
+	}
 
 	inner := &PiRunner{
 		Command:       bin,
-		Args:          args,
+		Args:          r.buildDockerArgs(input),
 		InitialPrompt: r.InitialPrompt,
 		IdleEventType: r.IdleEventType,
 		ShutdownGrace: r.ShutdownGrace,

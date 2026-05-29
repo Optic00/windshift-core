@@ -119,6 +119,11 @@ type LLMConfig struct {
 // through the BindingService, and the assignee-change trigger fires
 // real runs. When empty the harness stays in observer mode — bindings
 // can still be created, the trigger logs but no-ops.
+//
+// Sandbox knobs (Network/PidsLimit/Memory/CPUs) layer onto the hardened
+// `docker run` defaults baked into DockerPiRunner. They are tunables for
+// operator-specific resource budgets, NOT switches that can turn the
+// hardening off.
 type CodingAgentConfig struct {
 	RunnerImage  string // e.g. "windshift/coding-agent:wi-89"
 	DockerBinary string // defaults to "docker"
@@ -126,6 +131,10 @@ type CodingAgentConfig struct {
 	GlobalCap    int    // RunService.GlobalCap; defaults to 8
 	LLMProvider  string // env LLM_PROVIDER for the container
 	LLMModel     string // env LLM_MODEL for the container
+	Network      string // docker --network value; defaults to "coding-agent-egress" (operator-created, egress-filtered)
+	PidsLimit    int    // docker --pids-limit; defaults to 512
+	Memory       string // docker --memory + --memory-swap; defaults to "4g"
+	CPUs         string // docker --cpus; defaults to "2"
 }
 
 // LogbookConfig holds the URL of the logbook sidecar (if any).

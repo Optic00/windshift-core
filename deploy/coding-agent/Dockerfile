@@ -59,8 +59,8 @@ RUN if [ "${INSTALL_PI}" = "true" ]; then \
             "@earendil-works/pi-coding-agent@${PI_VERSION}"; \
     fi
 
-RUN groupadd --system agent \
-    && useradd --system --gid agent --create-home --home-dir /home/agent agent
+RUN groupadd --gid 1000 agent \
+    && useradd --uid 1000 --gid 1000 --create-home --home-dir /home/agent agent
 
 # ws binary, baked extension, ws.toml template, entrypoint.
 COPY --from=ws-build /out/ws /usr/local/bin/ws
