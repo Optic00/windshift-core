@@ -12,6 +12,7 @@
     label = '',
     disabled = false,
     multiple = true,
+    allowClear = false,
     class: className = '',
     onChange = () => {},
     onSelect = () => {},
@@ -64,6 +65,7 @@
   {disabled}
   class={className}
   multiple={multiple}
+  {allowClear}
   searchFields={['name', 'key', 'description']}
   getValue={(workspace) => workspace?.id}
   getLabel={(workspace) => workspace?.name ?? ''}

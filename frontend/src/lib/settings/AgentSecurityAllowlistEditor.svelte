@@ -31,11 +31,11 @@
   let serviceUsers = $state([]);
   let workspacesById = $state({});
 
-  // Add-form state. addWorkspaceId is null when the admin hasn't picked
-  // a specific workspace — interpreted as the "any workspace" grant by
-  // the backend.
+  // Add-form state. addWorkspaceIds is empty when the admin hasn't
+  // picked any specific workspace — interpreted as a single "any
+  // workspace" grant. Each picked id becomes its own grant on submit.
   let addUserId = $state(null);
-  let addWorkspaceId = $state(null);
+  let addWorkspaceIds = $state([]);
   let addReason = $state('');
   let adding = $state(false);
 
@@ -97,18 +97,29 @@
 
   async function addEntry() {
     if (!canAdd) return;
-    const body = { user_id: addUserId, reason: addReason.trim() };
-    if (addWorkspaceId) body.workspace_id = addWorkspaceId;
+    const reason = addReason.trim();
+    const targets =
+      addWorkspaceIds.length === 0
+        ? [null] // single "any workspace" grant
+        : addWorkspaceIds;
     adding = true;
     try {
-      await agentSecurity.addAllowlist(body);
+      // Sequential because the backend doesn't yet take a batch shape;
+      // a mid-loop failure leaves earlier grants in place but reload
+      // below makes the resulting state visible either way.
+      for (const wsId of targets) {
+        const body = { user_id: addUserId, reason };
+        if (wsId) body.workspace_id = wsId;
+        await agentSecurity.addAllowlist(body);
+      }
       addUserId = null;
-      addWorkspaceId = null;
+      addWorkspaceIds = [];
       addReason = '';
       await load();
     } catch (err) {
       errorToast(err?.message || 'Failed to add allowlist entry');
       console.error('Failed to add allowlist entry:', err);
+      await load();
     } finally {
       adding = false;
     }
@@ -213,9 +224,8 @@
           <label for="add-workspace" class="block text-xs mb-1" style="color: var(--ds-text-subtle);">Workspace</label>
           <div id="add-workspace">
             <WorkspacePicker
-              multiple={false}
-              value={addWorkspaceId}
-              onSelect={(ws) => (addWorkspaceId = ws?.id ?? null)}
+              bind:value={addWorkspaceIds}
+              allowClear
               placeholder="Any workspace"
             />
           </div>
