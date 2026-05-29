@@ -11,7 +11,7 @@
   import { Loader2, Plus, Trash2 } from '@lucide/svelte';
   import { agentSecurity, api } from '../api.js';
   import UserPicker from '../pickers/UserPicker.svelte';
-  import Select from '../components/Select.svelte';
+  import WorkspacePicker from '../pickers/WorkspacePicker.svelte';
   import Input from '../components/Input.svelte';
   import ConfirmWithReasonDialog from '../dialogs/ConfirmWithReasonDialog.svelte';
   import DescriptionText from '../components/DescriptionText.svelte';
@@ -30,11 +30,12 @@
   // even pick something the server is going to refuse.
   let serviceUsers = $state([]);
   let workspacesById = $state({});
-  let workspaceOptions = $state([{ value: 'any', label: 'Any workspace' }]);
 
-  // Add-form state.
+  // Add-form state. addWorkspaceId is null when the admin hasn't picked
+  // a specific workspace — interpreted as the "any workspace" grant by
+  // the backend.
   let addUserId = $state(null);
-  let addWorkspaceValue = $state('any'); // "any" | "<numeric id>"
+  let addWorkspaceId = $state(null);
   let addReason = $state('');
   let adding = $state(false);
 
@@ -51,7 +52,7 @@
       const [list, users, workspaces] = await Promise.all([
         agentSecurity.listAllowlist(),
         api.getUsers(),
-        api.workspaces.list(),
+        api.workspaces.getAll(),
       ]);
       entries = list ?? [];
       const um = {};
@@ -66,13 +67,10 @@
       usersById = um;
       serviceUsers = eligible;
       const wm = {};
-      const opts = [{ value: 'any', label: 'Any workspace' }];
       for (const w of workspaces ?? []) {
         wm[w.id] = w;
-        opts.push({ value: String(w.id), label: `${w.name || w.key} (#${w.id})` });
       }
       workspacesById = wm;
-      workspaceOptions = opts;
     } catch (err) {
       console.error('Failed to load agent-security allowlist:', err);
       errorToast(err?.message || 'Failed to load allowlist');
@@ -100,12 +98,12 @@
   async function addEntry() {
     if (!canAdd) return;
     const body = { user_id: addUserId, reason: addReason.trim() };
-    if (addWorkspaceValue !== 'any') body.workspace_id = Number(addWorkspaceValue);
+    if (addWorkspaceId) body.workspace_id = addWorkspaceId;
     adding = true;
     try {
       await agentSecurity.addAllowlist(body);
       addUserId = null;
-      addWorkspaceValue = 'any';
+      addWorkspaceId = null;
       addReason = '';
       await load();
     } catch (err) {
@@ -213,7 +211,14 @@
         </div>
         <div class="md:col-span-3">
           <label for="add-workspace" class="block text-xs mb-1" style="color: var(--ds-text-subtle);">Workspace</label>
-          <Select id="add-workspace" bind:value={addWorkspaceValue} options={workspaceOptions} />
+          <div id="add-workspace">
+            <WorkspacePicker
+              multiple={false}
+              value={addWorkspaceId}
+              onSelect={(ws) => (addWorkspaceId = ws?.id ?? null)}
+              placeholder="Any workspace"
+            />
+          </div>
         </div>
         <div class="md:col-span-4">
           <label for="add-reason" class="block text-xs mb-1" style="color: var(--ds-text-subtle);">Reason (audit-logged)</label>
