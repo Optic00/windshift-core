@@ -98,10 +98,13 @@ func (r *WorkspaceAgentBindingRepository) FindByActingUser(ctx context.Context, 
 	return b, err
 }
 
-// Delete removes a binding by id. Returns the number of rows affected so
-// the handler can distinguish "deleted" from "no such binding".
-func (r *WorkspaceAgentBindingRepository) Delete(ctx context.Context, id int) (int64, error) {
-	res, err := r.db.ExecWriteContext(ctx, `DELETE FROM workspace_agent_bindings WHERE id = ?`, id)
+// Delete removes a binding by (id, workspace_id). Returns the number of
+// rows affected so the handler can distinguish "deleted" from "no such
+// binding (or wrong workspace)". The workspace filter is required: a
+// workspace admin must not be able to delete a binding belonging to a
+// different workspace by guessing its id.
+func (r *WorkspaceAgentBindingRepository) Delete(ctx context.Context, id, workspaceID int) (int64, error) {
+	res, err := r.db.ExecWriteContext(ctx, `DELETE FROM workspace_agent_bindings WHERE id = ? AND workspace_id = ?`, id, workspaceID)
 	if err != nil {
 		return 0, fmt.Errorf("delete binding: %w", err)
 	}

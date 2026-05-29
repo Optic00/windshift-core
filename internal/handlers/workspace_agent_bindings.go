@@ -209,7 +209,7 @@ func (h *WorkspaceAgentBindingHandler) Delete(w http.ResponseWriter, r *http.Req
 		respondBadRequest(w, r, "id path param must be a positive integer")
 		return
 	}
-	n, err := h.bindings.Delete(r.Context(), id)
+	n, err := h.bindings.Delete(r.Context(), id, workspaceID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return

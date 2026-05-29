@@ -131,9 +131,11 @@ func (s *BindingService) ListForWorkspace(ctx context.Context, workspaceID int) 
 	return s.repo.ListForWorkspace(ctx, workspaceID)
 }
 
-// Delete removes a binding by id.
-func (s *BindingService) Delete(ctx context.Context, id int) (int64, error) {
-	return s.repo.Delete(ctx, id)
+// Delete removes a binding by (id, workspaceID). The workspace scope is
+// required so an admin of workspace A cannot delete a binding that lives
+// in workspace B by guessing its id.
+func (s *BindingService) Delete(ctx context.Context, id, workspaceID int) (int64, error) {
+	return s.repo.Delete(ctx, id, workspaceID)
 }
 
 // MaybeStartRunForAssignee is the assignee-change trigger. Hot path: if
