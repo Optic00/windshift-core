@@ -26,6 +26,11 @@
   // Add-form state.
   let addActingUserId = $state(null);
   let addSCMConnectionId = $state(null);
+  // Repo slug + remote URL are no longer typed by hand: they're derived
+  // from the repository the admin picks under the chosen SCM connection
+  // (WI-90). We keep them as plain state because addBinding() still posts
+  // repo_slug / repo_remote_url, and the run path needs both.
+  let addRepositoryId = $state(null);
   let addRepoSlug = $state('');
   let addRepoRemoteURL = $state('');
   let addRepoBaseRef = $state('');
@@ -33,6 +38,10 @@
   let addTokenTTLMinutes = $state(60);
   let addMaxRunsPerDay = $state(0);
   let adding = $state(false);
+
+  // Linked repositories for the currently-selected SCM connection.
+  let linkedRepos = $state([]);
+  let loadingRepos = $state(false);
 
   // Delete confirmation dialog.
   let deleteDialogOpen = $state(false);
@@ -77,6 +86,60 @@
     })),
   ]);
 
+  // Repository picker: populated from the linked repos of the selected
+  // SCM connection. Disabled (with an explanatory placeholder) until a
+  // connection is chosen.
+  let repoOptions = $derived(
+    !addSCMConnectionId
+      ? [{ value: null, label: 'Select an SCM connection first', disabled: true }]
+      : loadingRepos
+        ? [{ value: null, label: 'Loading repositories…', disabled: true }]
+        : linkedRepos.length === 0
+          ? [{ value: null, label: 'No repositories linked to this connection', disabled: true }]
+          : [
+              { value: null, label: 'Pick a repository', disabled: true },
+              ...linkedRepos.map((r) => ({
+                value: r.id,
+                label: r.repository_name || r.repository_url || `Repo #${r.id}`,
+                disabled: false,
+              })),
+            ]
+  );
+
+  async function onConnectionChange(connId) {
+    addSCMConnectionId = connId;
+    // Reset the repo selection — the previous repo belonged to a
+    // different connection.
+    addRepositoryId = null;
+    addRepoSlug = '';
+    addRepoRemoteURL = '';
+    addRepoBaseRef = '';
+    linkedRepos = [];
+    if (!connId) return;
+    loadingRepos = true;
+    try {
+      const repos = await api.workspaceSCM.getLinkedRepos(workspaceId, connId);
+      linkedRepos = repos ?? [];
+    } catch (err) {
+      console.error('Failed to load repositories for connection:', err);
+      errorToast(err?.message || 'Failed to load repositories');
+      linkedRepos = [];
+    } finally {
+      loadingRepos = false;
+    }
+  }
+
+  function onRepositoryChange(repoId) {
+    addRepositoryId = repoId;
+    const repo = linkedRepos.find((r) => r.id === repoId);
+    // Mirror the linked repo's coordinates into the fields the create
+    // request posts. The base ref defaults to the repo's default branch
+    // but stays editable below.
+    addRepoSlug = repo?.repository_name || '';
+    addRepoRemoteURL = repo?.repository_url || '';
+    addRepoBaseRef = repo?.default_branch || '';
+  }
+
   // Resolve display names for the existing bindings table without an
   // extra fetch — candidates already covers everyone the admin can see.
   let displayActingUser = $derived((userId) => {
@@ -95,12 +158,14 @@
   function resetForm() {
     addActingUserId = null;
     addSCMConnectionId = null;
+    addRepositoryId = null;
     addRepoSlug = '';
     addRepoRemoteURL = '';
     addRepoBaseRef = '';
     addLLMConnectionId = null;
     addTokenTTLMinutes = 60;
     addMaxRunsPerDay = 0;
+    linkedRepos = [];
   }
 
   async function addBinding() {
@@ -243,15 +308,11 @@
             </div>
             <div>
               <label for="binding-scm-connection" class="block text-xs mb-1" style="color: var(--ds-text-subtle);">SCM connection (for git + PR auth)</label>
-              <Select id="binding-scm-connection" bind:value={addSCMConnectionId} options={scmConnectionOptions} />
+              <Select id="binding-scm-connection" bind:value={addSCMConnectionId} onchange={onConnectionChange} options={scmConnectionOptions} />
             </div>
             <div>
-              <label for="binding-repo-slug" class="block text-xs mb-1" style="color: var(--ds-text-subtle);">Repo (owner/name)</label>
-              <Input id="binding-repo-slug" bind:value={addRepoSlug} placeholder="acme/widget" />
-            </div>
-            <div>
-              <label for="binding-repo-url" class="block text-xs mb-1" style="color: var(--ds-text-subtle);">Repo remote URL</label>
-              <Input id="binding-repo-url" bind:value={addRepoRemoteURL} placeholder="https://github.com/acme/widget" />
+              <label for="binding-repository" class="block text-xs mb-1" style="color: var(--ds-text-subtle);">Repository</label>
+              <Select id="binding-repository" bind:value={addRepositoryId} onchange={onRepositoryChange} options={repoOptions} disabled={!addSCMConnectionId || loadingRepos} />
             </div>
             <div>
               <label for="binding-repo-base" class="block text-xs mb-1" style="color: var(--ds-text-subtle);">Base ref</label>

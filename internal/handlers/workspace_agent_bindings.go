@@ -76,6 +76,7 @@ type bindingResponse struct {
 	RepoRemoteURL   string   `json:"repo_remote_url,omitempty"`
 	RepoBaseRef     string   `json:"repo_base_ref,omitempty"`
 	LLMConnectionID *int     `json:"llm_connection_id,omitempty"`
+	SCMConnectionID *int     `json:"scm_connection_id,omitempty"`
 	TokenScopes     []string `json:"token_scopes,omitempty"`
 	TokenTTLMinutes int      `json:"token_ttl_minutes"`
 	MaxRunsPerDay   int      `json:"max_runs_per_day"`
@@ -91,6 +92,7 @@ func toBindingResponse(b *models.WorkspaceAgentBinding) bindingResponse {
 		RepoRemoteURL:   b.RepoRemoteURL,
 		RepoBaseRef:     b.RepoBaseRef,
 		LLMConnectionID: b.LLMConnectionID,
+		SCMConnectionID: b.SCMConnectionID,
 		TokenScopes:     b.TokenScopes,
 		TokenTTLMinutes: b.TokenTTLMinutes,
 		MaxRunsPerDay:   b.MaxRunsPerDay,
@@ -103,6 +105,7 @@ type createBindingBody struct {
 	RepoRemoteURL   string   `json:"repo_remote_url,omitempty"`
 	RepoBaseRef     string   `json:"repo_base_ref,omitempty"`
 	LLMConnectionID *int     `json:"llm_connection_id,omitempty"`
+	SCMConnectionID *int     `json:"scm_connection_id,omitempty"`
 	TokenScopes     []string `json:"token_scopes,omitempty"`
 	TokenTTLMinutes int      `json:"token_ttl_minutes,omitempty"`
 	MaxRunsPerDay   int      `json:"max_runs_per_day,omitempty"`
@@ -166,6 +169,7 @@ func (h *WorkspaceAgentBindingHandler) Create(w http.ResponseWriter, r *http.Req
 		RepoRemoteURL:   body.RepoRemoteURL,
 		RepoBaseRef:     body.RepoBaseRef,
 		LLMConnectionID: body.LLMConnectionID,
+		SCMConnectionID: body.SCMConnectionID,
 		TokenScopes:     body.TokenScopes,
 		TokenTTLMinutes: body.TokenTTLMinutes,
 		MaxRunsPerDay:   body.MaxRunsPerDay,
