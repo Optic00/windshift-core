@@ -199,10 +199,13 @@ type ItemTypeSummary struct {
 // ============================================
 
 type Priority struct {
-	ID    int    `json:"id"`
-	Name  string `json:"name"`
-	Icon  string `json:"icon,omitempty"`
-	Color string `json:"color,omitempty"`
+	ID          int    `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Icon        string `json:"icon,omitempty"`
+	Color       string `json:"color,omitempty"`
+	SortOrder   int    `json:"sort_order"`
+	IsDefault   bool   `json:"is_default"`
 }
 
 type PrioritySummary struct {

@@ -310,6 +310,15 @@ func (c *Client) ListItemTypes() ([]ItemType, error) {
 	return types, nil
 }
 
+// ListPriorities lists all priorities
+func (c *Client) ListPriorities() ([]Priority, error) {
+	var priorities []Priority
+	if err := c.GET("/rest/api/v1/priorities", &priorities); err != nil {
+		return nil, err
+	}
+	return priorities, nil
+}
+
 // ListWorkflows lists all workflows
 func (c *Client) ListWorkflows() ([]Workflow, error) {
 	var workflows []Workflow

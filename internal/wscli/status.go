@@ -82,10 +82,39 @@ var itemTypeListCmd = &cobra.Command{
 	},
 }
 
+var priorityCmd = &cobra.Command{
+	Use:   "priority",
+	Short: "Priority commands",
+	Long:  `Commands for listing and viewing priorities.`,
+}
+
+var priorityListCmd = &cobra.Command{
+	Use:   "ls",
+	Short: "List available priorities",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client, err := NewClient()
+		if err != nil {
+			return err
+		}
+
+		priorities, err := client.ListPriorities()
+		if err != nil {
+			return fmt.Errorf("failed to list priorities: %w", err)
+		}
+
+		output := NewOutput()
+		output.Print(priorities)
+		return nil
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(statusCmd)
 	statusCmd.AddCommand(statusListCmd)
 
 	rootCmd.AddCommand(itemTypeCmd)
 	itemTypeCmd.AddCommand(itemTypeListCmd)
+
+	rootCmd.AddCommand(priorityCmd)
+	priorityCmd.AddCommand(priorityListCmd)
 }
