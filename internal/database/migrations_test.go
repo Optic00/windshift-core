@@ -150,6 +150,48 @@ func TestCatalog_FreshInstallStampsEveryEntry(t *testing.T) {
 // invariant that `create_milestone`'s upsert logic relies on: two
 // workspaces can share an external_key (e.g. both have a "2.0" milestone)
 // but a single workspace cannot. NULLs are unconstrained.
+func TestMigration_PortalRequestDrafts_CreatesMissingTable(t *testing.T) {
+	dsn := fmt.Sprintf("file:%s/portal-drafts.db?mode=memory&cache=shared", t.TempDir())
+	db, err := NewSQLiteDBWithPoolSizes(dsn, 4, 1)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	if err := db.Initialize(); err != nil {
+		t.Fatalf("initialize fresh db: %v", err)
+	}
+
+	if _, err := db.Exec(`DROP TABLE portal_request_drafts`); err != nil {
+		t.Fatalf("drop portal_request_drafts: %v", err)
+	}
+	if _, err := db.Exec(`DELETE FROM schema_migrations WHERE version = '20260528_portal_request_drafts'`); err != nil {
+		t.Fatalf("delete portal drafts stamp: %v", err)
+	}
+
+	var target *Migration
+	for i := range Catalog {
+		if Catalog[i].Version == "20260528_portal_request_drafts" {
+			target = &Catalog[i]
+			break
+		}
+	}
+	if target == nil {
+		t.Fatal("portal request drafts migration entry not found in Catalog")
+	}
+
+	if err := runPendingMigrations(db, []Migration{*target}); err != nil {
+		t.Fatalf("run portal drafts migration: %v", err)
+	}
+	if n := countRows(t, db, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='portal_request_drafts'"); n != 1 {
+		t.Fatalf("portal_request_drafts table not created (count=%d)", n)
+	}
+	for _, idx := range []string{"uq_portal_request_drafts_pc", "uq_portal_request_drafts_user", "idx_portal_request_drafts_updated_at"} {
+		if n := countRows(t, db, fmt.Sprintf("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='%s'", idx)); n != 1 {
+			t.Fatalf("%s index not created (count=%d)", idx, n)
+		}
+	}
+}
+
 func TestMigration_ExternalKey_UniquePerWorkspace(t *testing.T) {
 	dsn := fmt.Sprintf("file:%s/extkey.db?mode=memory&cache=shared", t.TempDir())
 	db, err := NewSQLiteDBWithPoolSizes(dsn, 4, 1)

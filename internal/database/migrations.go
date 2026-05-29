@@ -46,6 +46,68 @@ type Migration struct {
 // this Catalog in subsequent commits.
 var Catalog = []Migration{
 	{
+		Version:       "20260528_portal_request_drafts",
+		Name:          "Create portal request form drafts table",
+		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='portal_request_drafts'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='portal_request_drafts'",
+		SQLite: `
+			CREATE TABLE IF NOT EXISTS portal_request_drafts (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				channel_id INTEGER NOT NULL,
+				request_type_id INTEGER NOT NULL,
+				portal_customer_id INTEGER,
+				user_id INTEGER,
+				title TEXT NOT NULL DEFAULT '',
+				description TEXT NOT NULL DEFAULT '',
+				custom_field_values TEXT,
+				current_step INTEGER NOT NULL DEFAULT 1,
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+				FOREIGN KEY (request_type_id) REFERENCES request_types(id) ON DELETE CASCADE,
+				FOREIGN KEY (portal_customer_id) REFERENCES portal_customers(id) ON DELETE CASCADE,
+				FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+				CHECK (portal_customer_id IS NOT NULL OR user_id IS NOT NULL)
+			);
+			CREATE UNIQUE INDEX IF NOT EXISTS uq_portal_request_drafts_pc
+				ON portal_request_drafts(portal_customer_id, request_type_id)
+				WHERE portal_customer_id IS NOT NULL;
+			CREATE UNIQUE INDEX IF NOT EXISTS uq_portal_request_drafts_user
+				ON portal_request_drafts(user_id, request_type_id)
+				WHERE user_id IS NOT NULL;
+			CREATE INDEX IF NOT EXISTS idx_portal_request_drafts_updated_at
+				ON portal_request_drafts(updated_at DESC);
+		`,
+		Postgres: `
+			CREATE TABLE IF NOT EXISTS portal_request_drafts (
+				id SERIAL PRIMARY KEY,
+				channel_id INTEGER NOT NULL,
+				request_type_id INTEGER NOT NULL,
+				portal_customer_id INTEGER,
+				user_id INTEGER,
+				title TEXT NOT NULL DEFAULT '',
+				description TEXT NOT NULL DEFAULT '',
+				custom_field_values JSONB,
+				current_step INTEGER NOT NULL DEFAULT 1,
+				created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+				FOREIGN KEY (request_type_id) REFERENCES request_types(id) ON DELETE CASCADE,
+				FOREIGN KEY (portal_customer_id) REFERENCES portal_customers(id) ON DELETE CASCADE,
+				FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+				CHECK (portal_customer_id IS NOT NULL OR user_id IS NOT NULL)
+			);
+			CREATE UNIQUE INDEX IF NOT EXISTS uq_portal_request_drafts_pc
+				ON portal_request_drafts(portal_customer_id, request_type_id)
+				WHERE portal_customer_id IS NOT NULL;
+			CREATE UNIQUE INDEX IF NOT EXISTS uq_portal_request_drafts_user
+				ON portal_request_drafts(user_id, request_type_id)
+				WHERE user_id IS NOT NULL;
+			CREATE INDEX IF NOT EXISTS idx_portal_request_drafts_updated_at
+				ON portal_request_drafts(updated_at DESC);
+		`,
+	},
+	{
 		Version:       "20260520_item_change_log",
 		Name:          "Create item change log for collection delta polling",
 		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='item_change_log'",
