@@ -12,4 +12,15 @@ printf '{"type":"lifecycle","phase":"skeleton","run_id":"%s","item_id":"%s","wor
     "${WINDSHIFT_ITEM_ID:-unset}" \
     "${WS_WORKSPACE_ID:-unset}"
 
+# When the orchestrator bind-mounts a worktree (WI-85+) it lands at
+# /workspace. The skeleton just reports what it sees so the e2e test can
+# assert the mount made it through; Phase 3 (WI-86) does real work here.
+if [ -d /workspace ]; then
+    readme_present=false
+    if [ -f /workspace/README.md ]; then
+        readme_present=true
+    fi
+    printf '{"type":"workspace","mounted":true,"readme":%s}\n' "$readme_present"
+fi
+
 exit 0

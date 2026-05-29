@@ -39,36 +39,52 @@ type RunnerResult struct {
 	Error       string
 }
 
+// RunInput is what RunService hands to a Runner when work is admitted:
+// the run id, the host path containing the prepared worktree (empty if no
+// repo was attached to the request), and any orchestrator-supplied env
+// vars to forward into the container.
+type RunInput struct {
+	RunID         int
+	WorkspacePath string
+	Env           map[string]string
+}
+
 // Runner executes the actual work of a run: spawning a container, driving
 // pi via RPC, and streaming events back through the sink. The skeleton
 // uses a func adapter; the container-backed implementation lives in later
 // phases.
 type Runner interface {
-	Run(ctx context.Context, runID int, emit EventSink) RunnerResult
+	Run(ctx context.Context, input RunInput, emit EventSink) RunnerResult
 }
 
 // RunnerFunc adapts a plain function to the Runner interface.
-type RunnerFunc func(ctx context.Context, runID int, emit EventSink) RunnerResult
+type RunnerFunc func(ctx context.Context, input RunInput, emit EventSink) RunnerResult
 
 // Run implements Runner for RunnerFunc.
-func (f RunnerFunc) Run(ctx context.Context, runID int, emit EventSink) RunnerResult {
-	return f(ctx, runID, emit)
+func (f RunnerFunc) Run(ctx context.Context, input RunInput, emit EventSink) RunnerResult {
+	return f(ctx, input, emit)
 }
 
 // RunRequest is the minimum payload required to start a run. Binding,
-// acting identity, repo, and llm_connection get bolted on in later phases.
+// acting identity, and llm_connection get bolted on in later phases. Repo
+// is optional: when set, RunService asks the WorktreeManager to prepare a
+// worktree before the runner sees the run; when nil, the runner runs
+// without a /workspace mount (Phase 1 walking-skeleton path).
 type RunRequest struct {
 	WorkspaceID int
 	ItemID      *int
+	Repo        *RepoSpec
 }
 
 // RunServiceOptions controls construction. GlobalCap caps the number of
 // runs in-flight across the whole process; the queueing semaphore admits
 // goroutines past Start, so a backed-up queue parks here without blocking
-// the HTTP handler that called Start.
+// the HTTP handler that called Start. Worktrees is optional and only
+// required when callers actually attach Repo to a RunRequest.
 type RunServiceOptions struct {
 	GlobalCap int
 	Runner    Runner
+	Worktrees *WorktreeManager
 	Now       func() time.Time // injected for deterministic tests
 	Logger    *log.Logger
 }
@@ -80,11 +96,12 @@ var ErrShuttingDown = errors.New("run service is shutting down")
 
 // RunService orchestrates agent runs against the agent_runs table.
 type RunService struct {
-	repo   *repository.AgentRunRepository
-	runner Runner
-	sem    chan struct{}
-	now    func() time.Time
-	logger *log.Logger
+	repo      *repository.AgentRunRepository
+	runner    Runner
+	worktrees *WorktreeManager
+	sem       chan struct{}
+	now       func() time.Time
+	logger    *log.Logger
 
 	mu         sync.Mutex
 	shutdown   bool
@@ -116,6 +133,7 @@ func NewRunService(repo *repository.AgentRunRepository, opts RunServiceOptions) 
 	return &RunService{
 		repo:       repo,
 		runner:     opts.Runner,
+		worktrees:  opts.Worktrees,
 		sem:        make(chan struct{}, capacity),
 		now:        now,
 		logger:     logger,
@@ -154,19 +172,23 @@ func (s *RunService) Start(ctx context.Context, req RunRequest) (int, error) {
 		s.logger.Printf("run service: append queued event: %v", err)
 	}
 
+	if req.Repo != nil && s.worktrees == nil {
+		return 0, errors.New("run service: request includes a Repo but no WorktreeManager is configured")
+	}
+
 	s.wg.Add(1)
 	// The caller's ctx is request-scoped; the run must outlive it.
 	// execute() derives a service-scoped ctx wired to shutdownCh so
 	// cancellation flows from process shutdown instead of HTTP request
 	// teardown.
-	go s.execute(runID) //nolint:gosec // G118: intentional Background ctx; see comment above.
+	go s.execute(runID, req.Repo) //nolint:gosec // G118: intentional Background ctx; see comment above.
 	return runID, nil
 }
 
 // execute is the per-run worker. Acquires the global semaphore, marks the
 // run running, invokes the runner with an event sink wired to the repo,
 // then finalizes the run with the runner's verdict.
-func (s *RunService) execute(runID int) {
+func (s *RunService) execute(runID int, repoSpec *RepoSpec) {
 	defer s.wg.Done()
 
 	// Detach from the request ctx but honor service shutdown via cancel
@@ -205,7 +227,25 @@ func (s *RunService) execute(runID int) {
 		return s.repo.AppendEvent(ctx, runID, eventType, payloadJSON)
 	}
 
-	result := s.runner.Run(ctx, runID, sink)
+	var workspacePath string
+	if repoSpec != nil {
+		pw, err := s.worktrees.Prepare(ctx, *repoSpec, runID)
+		if err != nil {
+			s.logger.Printf("run service: prepare worktree run=%d: %v", runID, err)
+			s.finalize(runID, models.AgentRunStatusFailed, fmt.Sprintf("prepare worktree: %v", err))
+			return
+		}
+		workspacePath = pw.Path
+		_ = sink("lifecycle", fmt.Sprintf(`{"phase":"worktree_ready","path":%q,"branch":%q,"base_commit":%q}`,
+			pw.Path, pw.Branch, pw.BaseCommit))
+		defer func() {
+			if err := s.worktrees.Cleanup(context.Background(), pw); err != nil {
+				s.logger.Printf("run service: cleanup worktree run=%d: %v", runID, err)
+			}
+		}()
+	}
+
+	result := s.runner.Run(ctx, RunInput{RunID: runID, WorkspacePath: workspacePath}, sink)
 	if result.ContainerID != "" {
 		if err := s.repo.SetContainerID(ctx, runID, result.ContainerID); err != nil {
 			s.logger.Printf("run service: set container_id run=%d: %v", runID, err)

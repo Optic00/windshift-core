@@ -49,7 +49,7 @@ type DockerRunner struct {
 // stored as-is in payload_json; lines that don't are wrapped in
 // {"line": "<raw>"} so consumers can rely on payload_json being a JSON
 // document.
-func (r *DockerRunner) Run(ctx context.Context, runID int, emit EventSink) RunnerResult {
+func (r *DockerRunner) Run(ctx context.Context, input RunInput, emit EventSink) RunnerResult {
 	if r.Image == "" {
 		return RunnerResult{Status: models.AgentRunStatusFailed, Error: "docker runner: image is required"}
 	}
@@ -59,12 +59,25 @@ func (r *DockerRunner) Run(ctx context.Context, runID int, emit EventSink) Runne
 	}
 
 	args := []string{"run", "--rm"}
+	// Static env from the runner config plus per-run env from RunInput.
+	// Per-run wins on key collision (the RunService is the authoritative
+	// source for run-scoped values).
+	mergedEnv := make(map[string]string, len(r.Env)+len(input.Env))
 	for k, v := range r.Env {
+		mergedEnv[k] = v
+	}
+	for k, v := range input.Env {
+		mergedEnv[k] = v
+	}
+	for k, v := range mergedEnv {
 		args = append(args, "-e", fmt.Sprintf("%s=%s", k, v))
 	}
 	// Stamp the run id so a baked entrypoint can echo it back without the
 	// orchestrator having to inject it from outside.
-	args = append(args, "-e", fmt.Sprintf("AGENT_RUN_ID=%d", runID))
+	args = append(args, "-e", fmt.Sprintf("AGENT_RUN_ID=%d", input.RunID))
+	if input.WorkspacePath != "" {
+		args = append(args, "-v", fmt.Sprintf("%s:/workspace", input.WorkspacePath))
+	}
 	args = append(args, r.ExtraArgs...)
 	args = append(args, r.Image)
 

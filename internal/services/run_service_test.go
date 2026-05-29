@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -45,7 +46,7 @@ func TestRunService_SkeletonHappyPath(t *testing.T) {
 	db := newRunServiceTestDB(t)
 	repo := repository.NewAgentRunRepository(db)
 
-	runner := RunnerFunc(func(ctx context.Context, runID int, emit EventSink) RunnerResult {
+	runner := RunnerFunc(func(ctx context.Context, input RunInput, emit EventSink) RunnerResult {
 		_ = emit("stdout", `{"line":"hello from stub"}`)
 		_ = emit("stdout", `{"line":"second line"}`)
 		return RunnerResult{
@@ -112,7 +113,7 @@ func TestRunService_NonTerminalRunnerStatusBecomesFailed(t *testing.T) {
 	db := newRunServiceTestDB(t)
 	repo := repository.NewAgentRunRepository(db)
 
-	runner := RunnerFunc(func(ctx context.Context, runID int, emit EventSink) RunnerResult {
+	runner := RunnerFunc(func(ctx context.Context, input RunInput, emit EventSink) RunnerResult {
 		return RunnerResult{Status: "totally-bogus"}
 	})
 
@@ -154,7 +155,7 @@ func TestRunService_AdmissionCapsConcurrency(t *testing.T) {
 	gate := make(chan struct{})
 	entered := make(chan struct{}, cap)
 
-	runner := RunnerFunc(func(ctx context.Context, runID int, emit EventSink) RunnerResult {
+	runner := RunnerFunc(func(ctx context.Context, input RunInput, emit EventSink) RunnerResult {
 		n := atomic.AddInt32(&inflight, 1)
 		for {
 			p := atomic.LoadInt32(&peak)
@@ -206,6 +207,97 @@ func TestRunService_AdmissionCapsConcurrency(t *testing.T) {
 	}
 }
 
+// TestRunService_WithRepoPreparesWorktree threads a RepoSpec through Start
+// and asserts (a) the runner sees a populated WorkspacePath, (b) a
+// "worktree_ready" lifecycle event is emitted with branch + base commit
+// data, and (c) the worktree is cleaned up after the run finishes.
+func TestRunService_WithRepoPreparesWorktree(t *testing.T) {
+	ctx := context.Background()
+	db := newRunServiceTestDB(t)
+	repoDB := repository.NewAgentRunRepository(db)
+
+	origin := seedOriginRepo(t, "main")
+	wm := newTestWorktreeManager(t)
+
+	var observedPath string
+	runner := RunnerFunc(func(ctx context.Context, input RunInput, emit EventSink) RunnerResult {
+		observedPath = input.WorkspacePath
+		return RunnerResult{Status: models.AgentRunStatusSucceeded}
+	})
+
+	svc, err := NewRunService(repoDB, RunServiceOptions{
+		Runner:    runner,
+		Worktrees: wm,
+		Logger:    silentLogger(t),
+	})
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	runID, err := svc.Start(ctx, RunRequest{
+		WorkspaceID: 1,
+		Repo: &RepoSpec{
+			WorkspaceID: 1,
+			RepoSlug:    "acme/widget",
+			RemoteURL:   origin,
+			BaseRef:     "main",
+		},
+	})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	svc.Wait()
+
+	if observedPath == "" {
+		t.Fatal("runner saw empty WorkspacePath; worktree prep didn't flow through")
+	}
+	if _, err := os.Stat(observedPath); !os.IsNotExist(err) {
+		t.Errorf("worktree dir must be cleaned up after run, stat err=%v", err)
+	}
+
+	events, err := repoDB.ListEvents(ctx, runID)
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	foundReady := false
+	for _, ev := range events {
+		if ev.Type == "lifecycle" && strings.Contains(ev.PayloadJSON, "worktree_ready") {
+			foundReady = true
+			if !strings.Contains(ev.PayloadJSON, `"branch":"agent-runs/run-`) {
+				t.Errorf("worktree_ready payload missing branch info: %s", ev.PayloadJSON)
+			}
+		}
+	}
+	if !foundReady {
+		t.Errorf("expected a worktree_ready lifecycle event, got events=%+v", events)
+	}
+}
+
+// TestRunService_RepoWithoutManagerErrors verifies that asking for a Repo
+// without configuring a WorktreeManager fails fast at Start time — better
+// to surface the misconfiguration synchronously than write a queued row
+// that will never advance.
+func TestRunService_RepoWithoutManagerErrors(t *testing.T) {
+	ctx := context.Background()
+	db := newRunServiceTestDB(t)
+	repoDB := repository.NewAgentRunRepository(db)
+
+	runner := RunnerFunc(func(ctx context.Context, input RunInput, emit EventSink) RunnerResult {
+		return RunnerResult{Status: models.AgentRunStatusSucceeded}
+	})
+	svc, err := NewRunService(repoDB, RunServiceOptions{Runner: runner, Logger: silentLogger(t)})
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+	_, err = svc.Start(ctx, RunRequest{
+		WorkspaceID: 1,
+		Repo:        &RepoSpec{WorkspaceID: 1, RepoSlug: "acme/widget", RemoteURL: "ignored"},
+	})
+	if err == nil {
+		t.Fatal("expected error when Repo is set without WorktreeManager, got nil")
+	}
+}
+
 // TestRunService_ShutdownRejectsNewWork confirms Start returns
 // ErrShuttingDown after Shutdown has been initiated.
 func TestRunService_ShutdownRejectsNewWork(t *testing.T) {
@@ -213,7 +305,7 @@ func TestRunService_ShutdownRejectsNewWork(t *testing.T) {
 	db := newRunServiceTestDB(t)
 	repo := repository.NewAgentRunRepository(db)
 
-	runner := RunnerFunc(func(ctx context.Context, runID int, emit EventSink) RunnerResult {
+	runner := RunnerFunc(func(ctx context.Context, input RunInput, emit EventSink) RunnerResult {
 		return RunnerResult{Status: models.AgentRunStatusSucceeded}
 	})
 	svc, err := NewRunService(repo, RunServiceOptions{Runner: runner, Logger: silentLogger(t)})

@@ -1,15 +1,14 @@
 //go:build agent_e2e
 
-// End-to-end smoke for Phase 1 (WI-84): spawn the windshift/coding-agent
-// skeleton image via the DockerRunner, drive it through the RunService
-// pipeline, assert the run row finalizes succeeded and the entrypoint's
-// NDJSON line lands in agent_run_events.
+// End-to-end smokes that exercise the real Docker container path of the
+// coding-agent harness. Phase 1 (WI-84) added the basic skeleton round-
+// trip; Phase 2 (WI-85) adds the worktree-bound variant.
 //
 // Skipped from the default `go test ./...` invocation via the agent_e2e
 // build tag. Run manually with:
 //
-//   ( cd deploy/coding-agent && docker build -t windshift/coding-agent:wi-84-skeleton . )
-//   go test -tags agent_e2e ./internal/services/... -run TestRunService_DockerSmoke -v
+//   ( cd deploy/coding-agent && docker build -t windshift/coding-agent:wi-85-skeleton . )
+//   go test -tags agent_e2e ./internal/services/... -run TestRunService_Docker -v
 package services
 
 import (
@@ -24,7 +23,7 @@ import (
 	"windshift/internal/repository"
 )
 
-const dockerSmokeImage = "windshift/coding-agent:wi-84-skeleton"
+const dockerSmokeImage = "windshift/coding-agent:wi-85-skeleton"
 
 func TestRunService_DockerSmoke(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
@@ -103,5 +102,86 @@ func TestRunService_DockerSmoke(t *testing.T) {
 		for _, ev := range events {
 			t.Logf("  event: type=%s payload=%s", ev.Type, ev.PayloadJSON)
 		}
+	}
+}
+
+// TestRunService_DockerWithWorktree is the Phase 2 (WI-85) e2e: prepare a
+// worktree from a local origin, mount it into the runner container via
+// RunService → WorktreeManager → DockerRunner, and confirm the entrypoint
+// sees /workspace with the expected file present.
+func TestRunService_DockerWithWorktree(t *testing.T) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("docker not on PATH")
+	}
+	if err := exec.Command("docker", "image", "inspect", dockerSmokeImage).Run(); err != nil {
+		t.Skipf("image %q not present locally — build it first (see file header)", dockerSmokeImage)
+	}
+
+	db := newRunServiceTestDB(t)
+	repoDB := repository.NewAgentRunRepository(db)
+
+	origin := seedOriginRepo(t, "main")
+	wm := newTestWorktreeManager(t)
+
+	runner := &DockerRunner{Image: dockerSmokeImage}
+	svc, err := NewRunService(repoDB, RunServiceOptions{
+		Runner:    runner,
+		Worktrees: wm,
+		Logger:    silentLogger(t),
+	})
+	if err != nil {
+		t.Fatalf("new service: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	runID, err := svc.Start(ctx, RunRequest{
+		WorkspaceID: 1,
+		Repo: &RepoSpec{
+			WorkspaceID: 1,
+			RepoSlug:    "acme/widget",
+			RemoteURL:   origin,
+			BaseRef:     "main",
+		},
+	})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	svc.Wait()
+
+	got, err := repoDB.Get(ctx, runID)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if got.Status != models.AgentRunStatusSucceeded {
+		t.Fatalf("status: want succeeded, got %q (err=%q)", got.Status, got.Error)
+	}
+
+	events, err := repoDB.ListEvents(ctx, runID)
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	sawWorkspace := false
+	for _, ev := range events {
+		if ev.Type != "stdout" {
+			continue
+		}
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(ev.PayloadJSON), &payload); err != nil {
+			continue
+		}
+		if kind, _ := payload["type"].(string); kind == "workspace" {
+			sawWorkspace = true
+			if mounted, _ := payload["mounted"].(bool); !mounted {
+				t.Errorf("workspace event says not mounted: %s", ev.PayloadJSON)
+			}
+			if readme, _ := payload["readme"].(bool); !readme {
+				t.Errorf("workspace event says README missing: %s", ev.PayloadJSON)
+			}
+		}
+	}
+	if !sawWorkspace {
+		t.Errorf("expected a workspace event from the entrypoint; events=%+v", events)
 	}
 }
