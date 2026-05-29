@@ -6,6 +6,7 @@
   import Input from '../components/Input.svelte';
   import Panel from '../components/Panel.svelte';
   import AlertBox from '../components/AlertBox.svelte';
+  import ConfirmWithReasonDialog from '../dialogs/ConfirmWithReasonDialog.svelte';
   import { t } from '../stores/i18n.svelte.js';
   import { errorToast } from '../stores/toasts.svelte.js';
   import PageHeader from '../layout/PageHeader.svelte';
@@ -24,10 +25,13 @@
 
   // Coding-agent harness: allow workspace admins to bind runs to
   // centralized service users (WI-87). Flag changes need a reason —
-  // the backend audit-logs every flip.
+  // the backend audit-logs every flip; the reason dialog enforces a
+  // non-empty value before the PUT goes out.
   let allowCentralizedAgentUsers = $state(false);
   let savingAgentCentralized = $state(false);
   let loadingAgentCentralized = $state(true);
+  let agentReasonDialogOpen = $state(false);
+  let pendingAgentCentralizedValue = $state(false);
 
   // Auth policy state
   let authPolicyConfig = $state({
@@ -66,21 +70,21 @@
     }
   }
 
-  async function handleAgentCentralizedToggle(newValue) {
-    const reason = window.prompt(
-      newValue
-        ? 'Enabling centralized agent users — please record why (audit-logged):'
-        : 'Disabling centralized agent users — please record why (audit-logged):'
-    );
-    if (reason === null || reason.trim() === '') {
-      // User canceled or gave an empty reason — revert.
-      return;
-    }
+  function handleAgentCentralizedToggle(newValue) {
+    // The Toggle has already updated allowCentralizedAgentUsers via
+    // bind:checked. Snapshot the desired value, open the reason dialog;
+    // cancel-path reverts the bound state to whatever the server still
+    // has on file.
+    pendingAgentCentralizedValue = newValue;
+    agentReasonDialogOpen = true;
+  }
+
+  async function applyAgentCentralized(reason) {
     savingAgentCentralized = true;
     try {
       const result = await agentSecurity.updateSettings({
-        allow_centralized_service_users: newValue,
-        reason: reason.trim(),
+        allow_centralized_service_users: pendingAgentCentralizedValue,
+        reason,
       });
       allowCentralizedAgentUsers = !!result.allow_centralized_service_users;
     } catch (err) {
@@ -91,6 +95,12 @@
     } finally {
       savingAgentCentralized = false;
     }
+  }
+
+  async function cancelAgentCentralized() {
+    // Toggle bound state has already flipped; reload so the UI shows
+    // the server's truth instead of the un-confirmed user intent.
+    await loadAgentCentralized();
   }
 
   async function loadSettings() {
@@ -532,3 +542,17 @@
     </div>
   {/if}
 </div>
+
+<ConfirmWithReasonDialog
+  bind:show={agentReasonDialogOpen}
+  variant="warning"
+  title={pendingAgentCentralizedValue ? 'Enable centralized agent service users?' : 'Disable centralized agent service users?'}
+  message={pendingAgentCentralizedValue
+    ? 'Workspace admins will be able to bind coding-agent runs to centralized service users from the global allowlist. Existing bindings are unaffected.'
+    : 'Workspace admins will no longer be able to create new bindings against centralized service users. Existing bindings continue to fire until you delete them.'}
+  reasonLabel="Reason (audit-logged)"
+  reasonPlaceholder="e.g. enabling for the acme-agent pilot in WS-3"
+  confirmText={pendingAgentCentralizedValue ? 'Enable' : 'Disable'}
+  onconfirm={applyAgentCentralized}
+  oncancel={cancelAgentCentralized}
+/>
