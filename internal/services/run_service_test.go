@@ -413,6 +413,80 @@ func TestRunService_TokenWithoutManagerErrors(t *testing.T) {
 	}
 }
 
+// TestRunService_PostRunHookReceivesTerminalStatus pins the WI-90 hook
+// shape: the callback fires once with the terminal status, the
+// caller-provided BindingID, and (when a worktree was prepared) the
+// run's branch + base commit so the PR-creation hook can act on them.
+func TestRunService_PostRunHookReceivesTerminalStatus(t *testing.T) {
+	ctx := context.Background()
+	db := newRunServiceTestDB(t)
+	repoDB := repository.NewAgentRunRepository(db)
+
+	runner := RunnerFunc(func(ctx context.Context, _ RunInput, _ EventSink) RunnerResult {
+		return RunnerResult{Status: models.AgentRunStatusSucceeded}
+	})
+	var infos []PostRunInfo
+	hook := PostRunHookFunc(func(_ context.Context, info PostRunInfo) {
+		infos = append(infos, info)
+	})
+
+	svc, err := NewRunService(repoDB, RunServiceOptions{
+		Runner:      runner,
+		PostRunHook: hook,
+		Logger:      silentLogger(t),
+	})
+	if err != nil {
+		t.Fatalf("new svc: %v", err)
+	}
+	runID, err := svc.Start(ctx, RunRequest{WorkspaceID: 1, BindingID: 99})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	svc.Wait()
+	if len(infos) != 1 {
+		t.Fatalf("post-run hook should fire exactly once, got %d", len(infos))
+	}
+	got := infos[0]
+	if got.RunID != runID {
+		t.Errorf("RunID: want %d, got %d", runID, got.RunID)
+	}
+	if got.BindingID != 99 {
+		t.Errorf("BindingID: want 99, got %d", got.BindingID)
+	}
+	if got.Status != models.AgentRunStatusSucceeded {
+		t.Errorf("Status: want succeeded, got %q", got.Status)
+	}
+	if got.Branch != "" || got.BaseCommit != "" {
+		t.Errorf("Branch / BaseCommit should be empty when no worktree was prepared; got %+v", got)
+	}
+}
+
+// TestRunService_PostRunHookPanicIsContained verifies a misbehaving hook
+// cannot wedge the worker goroutine.
+func TestRunService_PostRunHookPanicIsContained(t *testing.T) {
+	ctx := context.Background()
+	db := newRunServiceTestDB(t)
+	repoDB := repository.NewAgentRunRepository(db)
+
+	runner := RunnerFunc(func(ctx context.Context, _ RunInput, _ EventSink) RunnerResult {
+		return RunnerResult{Status: models.AgentRunStatusSucceeded}
+	})
+	svc, err := NewRunService(repoDB, RunServiceOptions{
+		Runner: runner,
+		PostRunHook: PostRunHookFunc(func(context.Context, PostRunInfo) {
+			panic("kaboom")
+		}),
+		Logger: silentLogger(t),
+	})
+	if err != nil {
+		t.Fatalf("new svc: %v", err)
+	}
+	if _, err := svc.Start(ctx, RunRequest{WorkspaceID: 1}); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	svc.Wait() // would hang if the panic escaped
+}
+
 // TestRunService_ShutdownRejectsNewWork confirms Start returns
 // ErrShuttingDown after Shutdown has been initiated.
 func TestRunService_ShutdownRejectsNewWork(t *testing.T) {

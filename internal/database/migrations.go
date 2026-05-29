@@ -827,6 +827,33 @@ var Catalog = []Migration{
 				ON workspace_agent_bindings(workspace_id);
 		`,
 	},
+	{
+		// WI-90 broadens bindings to know which SCM connection the
+		// orchestrator should authenticate against when fetching the
+		// repo and opening PRs. workspace_scm_connections rows are
+		// shared with the rest of the SCM machinery; the FK lets the
+		// connection go away (ON DELETE SET NULL) without orphaning
+		// the binding row — the trigger just skips the SCM step when
+		// the column is NULL.
+		Version:       "20260529_workspace_agent_bindings_scm_connection",
+		Name:          "Add scm_connection_id to workspace_agent_bindings",
+		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('workspace_agent_bindings') WHERE name='scm_connection_id'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_name='workspace_agent_bindings' AND column_name='scm_connection_id'",
+		SQLite: `
+			ALTER TABLE workspace_agent_bindings
+				ADD COLUMN scm_connection_id INTEGER
+					REFERENCES workspace_scm_connections(id) ON DELETE SET NULL;
+			CREATE INDEX IF NOT EXISTS idx_workspace_agent_bindings_scm_connection
+				ON workspace_agent_bindings(scm_connection_id);
+		`,
+		Postgres: `
+			ALTER TABLE workspace_agent_bindings
+				ADD COLUMN scm_connection_id INTEGER
+					REFERENCES workspace_scm_connections(id) ON DELETE SET NULL;
+			CREATE INDEX IF NOT EXISTS idx_workspace_agent_bindings_scm_connection
+				ON workspace_agent_bindings(scm_connection_id);
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {

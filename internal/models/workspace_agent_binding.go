@@ -22,6 +22,7 @@ type WorkspaceAgentBinding struct {
 	RepoRemoteURL   string    `json:"repo_remote_url,omitempty"`
 	RepoBaseRef     string    `json:"repo_base_ref,omitempty"`
 	LLMConnectionID *int      `json:"llm_connection_id,omitempty"`
+	SCMConnectionID *int      `json:"scm_connection_id,omitempty"`
 	TokenScopes     []string  `json:"token_scopes,omitempty"`
 	TokenTTLMinutes int       `json:"token_ttl_minutes"`
 	MaxRunsPerDay   int       `json:"max_runs_per_day"`

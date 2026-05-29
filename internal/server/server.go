@@ -578,42 +578,9 @@ func (s *Server) initialize() error {
 	calendarFeedHandler := handlers.NewCalendarFeedHandler(s.db, permService, cfg.BaseURL)
 	securitySettingsHandler := handlers.NewSecuritySettingsHandler(repository.NewSystemSettingRepository(s.db), logger.NewAuditor(s.db), cfg.Plugins.Disabled)
 
-	// WI-87 + WI-88 + WI-89: coding-agent harness stack.
-	//
-	// The acting-identity chokepoint (WI-87) is constructed first; both
-	// the workspace-binding service and the admin AgentSecurity handler
-	// share its repo handle.
-	//
-	// When CodingAgent.RunnerImage is configured, the harness boots a
-	// production RunService (WI-89): WorktreeManager → RunTokenService
-	// → PiRunner spawning docker -i. Without it the harness stays in
-	// observer mode — bindings can still be created, the trigger logs
-	// when it matches but no run starts.
-	agentSecurityRepo := repository.NewAgentSecurityRepository(s.db)
-	agentIdentitySvc, _ := services.NewAgentActingIdentityService(s.db, agentSecurityRepo)
-	agentBindingRepo := repository.NewWorkspaceAgentBindingRepository(s.db)
-
-	var (
-		codingRunSvc *services.RunService
-	)
-	if cfg.CodingAgent.RunnerImage != "" {
-		var bootErr error
-		codingRunSvc, bootErr = bootCodingAgentRunService(s.db, tokenManager, cfg.CodingAgent)
-		if bootErr != nil {
-			slog.Warn("coding-agent harness disabled: failed to construct RunService",
-				slog.String("component", "coding-agent"),
-				slog.Any("error", bootErr),
-			)
-		}
-	}
-
-	bindingSvc, _ := services.NewBindingService(services.BindingServiceOptions{
-		Repo:     agentBindingRepo,
-		Identity: agentIdentitySvc,
-		Runs:     codingRunSvc,
-	})
-	agentBindingHandler := handlers.NewWorkspaceAgentBindingHandler(bindingSvc, permService, logger.NewAuditor(s.db))
-	itemHandler.SetBindingTrigger(bindingSvc)
+	// WI-87/88/89/90 coding-agent harness stack lands later in the
+	// constructor — see the block right after the SCM handlers are
+	// built, since scm.CredentialResolver needs scmProviderHandler.GetEncryption().
 
 	// Admin rate limiter
 	var adminRateLimiter *middleware.AdminFallbackRateLimiter
@@ -652,6 +619,41 @@ func (s *Server) initialize() error {
 	scmItemLinksHandler := handlers.NewSCMItemLinksHandler(s.db, scmProviderHandler.GetEncryption(), permService)
 	userSCMTokenHandler := handlers.NewUserSCMTokenHandler(s.db, scmProviderHandler.GetEncryption())
 	milestoneHandler := handlers.NewMilestoneHandler(s.db, permService, scm.NewCredentialResolver(s.db, scmProviderHandler.GetEncryption()))
+
+	// WI-87/88/89/90 coding-agent harness stack. The acting-identity
+	// chokepoint (WI-87) is constructed first; both the workspace-binding
+	// service and the admin AgentSecurity handler share its repo handle.
+	// When CodingAgent.RunnerImage is configured, the harness boots a
+	// production RunService (WI-89): WorktreeManager → RunTokenService →
+	// DockerPiRunner → AgentPRService (WI-90, opens draft PRs on GitHub or
+	// Gitea via scm.Provider). Without it the harness stays in observer
+	// mode — bindings can still be created, the trigger logs but no run
+	// starts.
+	agentSecurityRepo := repository.NewAgentSecurityRepository(s.db)
+	agentIdentitySvc, _ := services.NewAgentActingIdentityService(s.db, agentSecurityRepo)
+	agentBindingRepo := repository.NewWorkspaceAgentBindingRepository(s.db)
+	scmCredResolver := scm.NewCredentialResolver(s.db, scmProviderHandler.GetEncryption())
+
+	var codingRunSvc *services.RunService
+	if cfg.CodingAgent.RunnerImage != "" {
+		var bootErr error
+		codingRunSvc, bootErr = bootCodingAgentRunService(s.db, tokenManager, agentBindingRepo, scmCredResolver, cfg.CodingAgent)
+		if bootErr != nil {
+			slog.Warn("coding-agent harness disabled: failed to construct RunService",
+				slog.String("component", "coding-agent"),
+				slog.Any("error", bootErr),
+			)
+		}
+	}
+
+	bindingSvc, _ := services.NewBindingService(services.BindingServiceOptions{
+		Repo:     agentBindingRepo,
+		Identity: agentIdentitySvc,
+		Runs:     codingRunSvc,
+		SCMCreds: &scmCredsAdapter{cr: scmCredResolver},
+	})
+	agentBindingHandler := handlers.NewWorkspaceAgentBindingHandler(bindingSvc, permService, logger.NewAuditor(s.db))
+	itemHandler.SetBindingTrigger(bindingSvc)
 
 	// Asset management handlers
 	assetHandler := handlers.NewAssetHandler(s.db, permService, cfg.AttachmentPath)
@@ -1806,11 +1808,90 @@ func (s *Server) runIssueSync(issueSyncService *scm.IssueSyncService) {
 	}
 }
 
-// bootCodingAgentRunService builds the production WI-89 RunService when
-// cfg.CodingAgent.RunnerImage is configured. Returns an error (which the
-// caller logs and treats as "harness disabled") for any misconfig so the
-// rest of the server still comes up.
-func bootCodingAgentRunService(db database.Database, tm *auth.TokenManager, cfg config.CodingAgentConfig) (*services.RunService, error) {
+// scmCredsAdapter wraps scm.CredentialResolver into the interfaces the
+// coding-agent services expect, so the services layer doesn't have to
+// import scm directly (which would create a cycle).
+type scmCredsAdapter struct {
+	cr *scm.CredentialResolver
+}
+
+// ResolveForRun implements services.SCMCredentialResolver — used by
+// BindingService to embed an OAuth access token in the remote URL at
+// run-start time so both `git fetch` and the agent's `git push`
+// authenticate transparently. Works for GitHub + Gitea identically.
+func (a *scmCredsAdapter) ResolveForRun(ctx context.Context, connectionID int) (token, providerType, baseURL string, err error) {
+	creds, err := a.cr.GetCredentialsByConnectionID(ctx, connectionID)
+	if err != nil {
+		return "", "", "", err
+	}
+	token = creds.OAuthAccessToken
+	if token == "" {
+		token = creds.PersonalAccessToken
+	}
+	return token, string(creds.ProviderType), creds.BaseURL, nil
+}
+
+// openPRViaCredentialResolver implements services.OpenPRFn. Builds a
+// scm.Provider for the connection, calls CreatePullRequest, and lifts
+// the result into the orchestrator's OpenedPR shape.
+func openPRViaCredentialResolver(cr *scm.CredentialResolver) services.OpenPRFn {
+	return func(ctx context.Context, req services.OpenPRRequest) (*services.OpenedPR, error) {
+		creds, err := cr.GetCredentialsByConnectionID(ctx, req.ConnectionID)
+		if err != nil {
+			return nil, fmt.Errorf("resolve connection %d: %w", req.ConnectionID, err)
+		}
+		provider, err := scm.NewProvider(scm.ProviderConfig{
+			ProviderType:        creds.ProviderType,
+			AuthMethod:          creds.AuthMethod,
+			BaseURL:             creds.BaseURL,
+			OAuthAccessToken:    creds.OAuthAccessToken,
+			OAuthRefreshToken:   creds.OAuthRefreshToken,
+			PersonalAccessToken: creds.PersonalAccessToken,
+			OAuthClientID:       creds.OAuthClientID,
+			OAuthClientSecret:   creds.OAuthClientSecret,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("build provider: %w", err)
+		}
+		pr, err := provider.CreatePullRequest(ctx, req.Owner, req.Repo, scm.CreatePROptions{
+			Title:      req.Title,
+			Body:       req.Body,
+			HeadBranch: req.HeadBranch,
+			BaseBranch: req.BaseBranch,
+			Draft:      req.Draft,
+		})
+		if err != nil {
+			return nil, err
+		}
+		authorName := pr.Author.Username
+		if authorName == "" {
+			authorName = pr.Author.Name
+		}
+		return &services.OpenedPR{
+			ID:     fmt.Sprintf("%d", pr.ID),
+			Number: pr.Number,
+			URL:    pr.URL,
+			Title:  pr.Title,
+			State:  pr.State,
+			Author: authorName,
+		}, nil
+	}
+}
+
+// bootCodingAgentRunService builds the production WI-89 + WI-90 RunService
+// when cfg.CodingAgent.RunnerImage is configured: a DockerPiRunner spawning
+// pi-coding-agent containers, the worktree manager, the per-run token
+// minter, and the post-run hook that opens a draft PR (via either GitHub
+// or Gitea, transparently) and writes back an item_scm_links row.
+// Returns an error for any misconfig so the rest of the server still
+// comes up with the harness disabled.
+func bootCodingAgentRunService(
+	db database.Database,
+	tm *auth.TokenManager,
+	bindings *repository.WorkspaceAgentBindingRepository,
+	cr *scm.CredentialResolver,
+	cfg config.CodingAgentConfig,
+) (*services.RunService, error) {
 	if cfg.WorktreeRoot == "" {
 		return nil, fmt.Errorf("coding-agent: WorktreeRoot is required when RunnerImage is set")
 	}
@@ -1838,15 +1919,29 @@ func bootCodingAgentRunService(db database.Database, tm *auth.TokenManager, cfg 
 		InitialPrompt: "You are an autonomous coding agent. The Windshift item assigned to you is in $WINDSHIFT_ITEM_ID. " +
 			"Start by running `ws task get $WINDSHIFT_ITEM_ID` to read the requirements. " +
 			"The ws CLI is preconfigured (see ~/WINDSHIFT.md for the full surface). " +
-			"Complete the work in /workspace and open a draft pull request when ready.",
+			"Complete the work in /workspace, then commit and push your branch — the orchestrator opens the draft PR for you.",
+	}
+
+	// PR-creation post-run hook. cr is the same CredentialResolver
+	// BindingService uses for URL embedding; binding lookups go through
+	// the shared bindings repo so the hook sees the exact row the
+	// trigger fired on.
+	prSvc, err := services.NewAgentPRService(services.AgentPRServiceOptions{
+		Bindings: bindings,
+		OpenPR:   openPRViaCredentialResolver(cr),
+		DB:       db,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("coding-agent pr service: %w", err)
 	}
 
 	runRepo := repository.NewAgentRunRepository(db)
 	runSvc, err := services.NewRunService(runRepo, services.RunServiceOptions{
-		Runner:    runner,
-		Worktrees: wm,
-		Tokens:    tokens,
-		GlobalCap: cfg.GlobalCap,
+		Runner:      runner,
+		Worktrees:   wm,
+		Tokens:      tokens,
+		PostRunHook: prSvc,
+		GlobalCap:   cfg.GlobalCap,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("coding-agent run service: %w", err)

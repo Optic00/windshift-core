@@ -65,6 +65,10 @@ func (f RunnerFunc) Run(ctx context.Context, input RunInput, emit EventSink) Run
 	return f(ctx, input, emit)
 }
 
+// BindingID is the optional id stamped on PostRunInfo so the hook can
+// look the binding up without re-running the assignee match. The binding
+// trigger sets it; manual run starts leave it 0.
+
 // RunRequest is the minimum payload required to start a run.
 //
 // Repo is optional: when set, RunService asks the WorktreeManager to
@@ -87,6 +91,7 @@ func (f RunnerFunc) Run(ctx context.Context, input RunInput, emit EventSink) Run
 type RunRequest struct {
 	WorkspaceID int
 	ItemID      *int
+	BindingID   int
 	Repo        *RepoSpec
 	Token       *TokenSpec
 	Env         map[string]string
@@ -106,15 +111,46 @@ type TokenSpec struct {
 // goroutines past Start, so a backed-up queue parks here without blocking
 // the HTTP handler that called Start. Worktrees is optional and only
 // required when callers actually attach Repo to a RunRequest. Tokens is
-// optional and only required when callers attach a TokenSpec.
+// optional and only required when callers attach a TokenSpec. PostRunHook
+// is optional and fires once per run after the terminal status is
+// finalized — that's where WI-90's PR creation + ItemSCMLink writeback
+// live.
 type RunServiceOptions struct {
-	GlobalCap int
-	Runner    Runner
-	Worktrees *WorktreeManager
-	Tokens    *RunTokenService
-	Now       func() time.Time // injected for deterministic tests
-	Logger    *log.Logger
+	GlobalCap   int
+	Runner      Runner
+	Worktrees   *WorktreeManager
+	Tokens      *RunTokenService
+	PostRunHook PostRunHook
+	Now         func() time.Time // injected for deterministic tests
+	Logger      *log.Logger
 }
+
+// PostRunInfo is what RunService hands to PostRunHook.AfterRun once the
+// terminal status has been finalized. Branch + BaseCommit are populated
+// only when a worktree was prepared; BindingID is populated only when
+// the caller attached it to the request (the binding trigger does).
+type PostRunInfo struct {
+	RunID       int
+	WorkspaceID int
+	ItemID      *int
+	BindingID   int
+	Status      string
+	Branch      string
+	BaseCommit  string
+}
+
+// PostRunHook is the optional post-finalize callback. Errors are logged
+// and swallowed by RunService — a misbehaving hook must not affect the
+// run's recorded status.
+type PostRunHook interface {
+	AfterRun(ctx context.Context, info PostRunInfo)
+}
+
+// PostRunHookFunc adapts a plain function to PostRunHook.
+type PostRunHookFunc func(ctx context.Context, info PostRunInfo)
+
+// AfterRun implements PostRunHook for PostRunHookFunc.
+func (f PostRunHookFunc) AfterRun(ctx context.Context, info PostRunInfo) { f(ctx, info) }
 
 const defaultGlobalCap = 8
 
@@ -123,13 +159,14 @@ var ErrShuttingDown = errors.New("run service is shutting down")
 
 // RunService orchestrates agent runs against the agent_runs table.
 type RunService struct {
-	repo      *repository.AgentRunRepository
-	runner    Runner
-	worktrees *WorktreeManager
-	tokens    *RunTokenService
-	sem       chan struct{}
-	now       func() time.Time
-	logger    *log.Logger
+	repo        *repository.AgentRunRepository
+	runner      Runner
+	worktrees   *WorktreeManager
+	tokens      *RunTokenService
+	postRunHook PostRunHook
+	sem         chan struct{}
+	now         func() time.Time
+	logger      *log.Logger
 
 	mu         sync.Mutex
 	shutdown   bool
@@ -159,14 +196,15 @@ func NewRunService(repo *repository.AgentRunRepository, opts RunServiceOptions) 
 		logger = log.Default()
 	}
 	return &RunService{
-		repo:       repo,
-		runner:     opts.Runner,
-		worktrees:  opts.Worktrees,
-		tokens:     opts.Tokens,
-		sem:        make(chan struct{}, capacity),
-		now:        now,
-		logger:     logger,
-		shutdownCh: make(chan struct{}),
+		repo:        repo,
+		runner:      opts.Runner,
+		worktrees:   opts.Worktrees,
+		tokens:      opts.Tokens,
+		postRunHook: opts.PostRunHook,
+		sem:         make(chan struct{}, capacity),
+		now:         now,
+		logger:      logger,
+		shutdownCh:  make(chan struct{}),
 	}, nil
 }
 
@@ -259,15 +297,25 @@ func (s *RunService) execute(runID int, req RunRequest) {
 		return s.repo.AppendEvent(ctx, runID, eventType, payloadJSON)
 	}
 
-	var workspacePath string
+	var (
+		workspacePath string
+		runBranch     string
+		runBaseCommit string
+	)
 	if req.Repo != nil {
 		pw, err := s.worktrees.Prepare(ctx, *req.Repo, runID)
 		if err != nil {
 			s.logger.Printf("run service: prepare worktree run=%d: %v", runID, err)
 			s.finalize(runID, models.AgentRunStatusFailed, fmt.Sprintf("prepare worktree: %v", err))
+			s.invokePostRunHook(PostRunInfo{
+				RunID: runID, WorkspaceID: req.WorkspaceID, ItemID: req.ItemID,
+				BindingID: req.BindingID, Status: models.AgentRunStatusFailed,
+			})
 			return
 		}
 		workspacePath = pw.Path
+		runBranch = pw.Branch
+		runBaseCommit = pw.BaseCommit
 		_ = sink("lifecycle", fmt.Sprintf(`{"phase":"worktree_ready","path":%q,"branch":%q,"base_commit":%q}`,
 			pw.Path, pw.Branch, pw.BaseCommit))
 		defer func() {
@@ -316,6 +364,36 @@ func (s *RunService) execute(runID int, req RunRequest) {
 	}
 	s.finalize(runID, status, result.Error)
 	_ = sink("lifecycle", fmt.Sprintf(`{"phase":%q}`, status))
+
+	s.invokePostRunHook(PostRunInfo{
+		RunID:       runID,
+		WorkspaceID: req.WorkspaceID,
+		ItemID:      req.ItemID,
+		BindingID:   req.BindingID,
+		Status:      status,
+		Branch:      runBranch,
+		BaseCommit:  runBaseCommit,
+	})
+}
+
+// invokePostRunHook fires the post-run callback if one is configured.
+// Errors are swallowed-with-log; a misbehaving hook must not affect the
+// run's recorded status. A 30s ctx caps how long the hook can stall the
+// worker before the worker goroutine returns.
+func (s *RunService) invokePostRunHook(info PostRunInfo) {
+	if s.postRunHook == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				s.logger.Printf("run service: post-run hook panic run=%d: %v", info.RunID, r)
+			}
+		}()
+		s.postRunHook.AfterRun(ctx, info)
+	}()
 }
 
 func (s *RunService) finalize(runID int, status, errMsg string) {

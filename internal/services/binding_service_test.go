@@ -191,6 +191,104 @@ func TestBindingService_MaybeStartRun_NoOpWhenAssigneeUnchanged(t *testing.T) {
 	}
 }
 
+func TestBindingService_EmbedTokenInRemoteURL(t *testing.T) {
+	cases := []struct {
+		name     string
+		remote   string
+		token    string
+		want     string
+		wantSame bool
+	}{
+		{"https github", "https://github.com/acme/widget.git", "ghp_xxx", "https://oauth2:ghp_xxx@github.com/acme/widget.git", false},
+		{"https gitea self-hosted", "https://gitea.example.com/acme/widget.git", "gt-yyy", "https://oauth2:gt-yyy@gitea.example.com/acme/widget.git", false},
+		{"http unencrypted", "http://internal-gitea/acme/widget.git", "abc", "http://oauth2:abc@internal-gitea/acme/widget.git", false},
+		{"ssh unchanged", "git@github.com:acme/widget.git", "ghp_xxx", "git@github.com:acme/widget.git", true},
+		{"empty token unchanged", "https://github.com/acme/widget.git", "", "https://github.com/acme/widget.git", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := embedTokenInRemoteURL(tc.remote, tc.token)
+			if err != nil {
+				t.Fatalf("unexpected err: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// fakeSCMCreds is a deterministic stand-in for scm.CredentialResolver.
+type fakeSCMCreds struct {
+	token        string
+	providerType string
+	baseURL      string
+	calls        int
+}
+
+func (f *fakeSCMCreds) ResolveForRun(ctx context.Context, _ int) (string, string, string, error) {
+	f.calls++
+	return f.token, f.providerType, f.baseURL, nil
+}
+
+func TestBindingService_MaybeStartRun_EmbedsTokenWhenSCMConnectionPresent(t *testing.T) {
+	ctx := context.Background()
+	st := newBindingTestStack(t, true)
+	// Seed a minimal scm_providers + workspace_scm_connections row so
+	// the FK in workspace_agent_bindings.scm_connection_id resolves.
+	if _, err := st.DB.Exec(`INSERT INTO scm_providers(slug, name, provider_type, auth_method, base_url) VALUES ('test-gitea', 'Test Gitea', 'gitea', 'oauth', 'https://gitea.example.com')`); err != nil {
+		t.Fatalf("seed scm provider: %v", err)
+	}
+	if _, err := st.DB.Exec(`INSERT INTO workspace_scm_connections(workspace_id, scm_provider_id) VALUES (1, 1)`); err != nil {
+		t.Fatalf("seed scm connection: %v", err)
+	}
+	var scmConn int
+	if err := st.DB.QueryRow(`SELECT id FROM workspace_scm_connections LIMIT 1`).Scan(&scmConn); err != nil {
+		t.Fatalf("read connection id: %v", err)
+	}
+
+	if _, err := st.Bindings.Insert(ctx, &models.WorkspaceAgentBinding{
+		WorkspaceID:     1,
+		ActingUserID:    st.AgentID,
+		ActingUserKind:  ActingIdentityKindAgent,
+		RepoSlug:        "acme/widget",
+		RepoRemoteURL:   "https://gitea.example.com/acme/widget.git",
+		SCMConnectionID: &scmConn,
+		TokenTTLMinutes: 15,
+		CreatedByUserID: st.AdminID,
+	}); err != nil {
+		t.Fatalf("seed binding: %v", err)
+	}
+	// Seed an item so the agent_runs FK resolves.
+	itemID := seedItem(t, st.DB, 1)
+
+	creds := &fakeSCMCreds{token: "gt-secret", providerType: "gitea"}
+	st.BS.scmCreds = creds
+
+	// Worktree manager: required because Repo is set. Use a stub
+	// origin repo so the prepare path succeeds.
+	origin := seedOriginRepo(t, "main")
+	wm := newTestWorktreeManager(t)
+	st.BS.runs.worktrees = wm
+
+	// Override the binding's stored remote with the local origin so the
+	// prepare path actually works; the test only cares that the URL got
+	// rewritten with the token in the trigger's RunRequest.
+	if _, err := st.DB.Exec(`UPDATE workspace_agent_bindings SET repo_remote_url = ? WHERE acting_user_id = ?`, origin, st.AgentID); err != nil {
+		t.Fatalf("update binding remote: %v", err)
+	}
+
+	newAssignee := st.AgentID
+	if err := st.BS.MaybeStartRunForAssignee(ctx, 1, itemID, nil, &newAssignee); err != nil {
+		t.Fatalf("maybe start: %v", err)
+	}
+	st.BS.runs.Wait()
+
+	if creds.calls != 1 {
+		t.Errorf("expected ResolveForRun to be called once, got %d", creds.calls)
+	}
+}
+
 func TestBindingService_MaybeStartRun_NoOpWhenNoBindingMatches(t *testing.T) {
 	ctx := context.Background()
 	st := newBindingTestStack(t, true)

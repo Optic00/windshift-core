@@ -5,11 +5,22 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
+	"strings"
 	"time"
 
 	"windshift/internal/models"
 	"windshift/internal/repository"
 )
+
+// SCMCredentialResolver is the surface BindingService needs from
+// scm.CredentialResolver: given a workspace SCM connection id, return the
+// access token + provider type + (for self-hosted) base URL. Kept as an
+// interface so production wires scm.CredentialResolver while tests can
+// supply a fake.
+type SCMCredentialResolver interface {
+	ResolveForRun(ctx context.Context, connectionID int) (token string, providerType string, baseURL string, err error)
+}
 
 // BindingService owns the workspace_agent_bindings lifecycle from the
 // orchestrator's side: workspace-admin CRUD goes through Create / Delete
@@ -24,6 +35,7 @@ type BindingService struct {
 	repo     *repository.WorkspaceAgentBindingRepository
 	identity *AgentActingIdentityService
 	runs     *RunService
+	scmCreds SCMCredentialResolver
 	logger   *log.Logger
 }
 
@@ -34,6 +46,7 @@ type BindingServiceOptions struct {
 	Repo     *repository.WorkspaceAgentBindingRepository
 	Identity *AgentActingIdentityService
 	Runs     *RunService
+	SCMCreds SCMCredentialResolver
 	Logger   *log.Logger
 }
 
@@ -54,6 +67,7 @@ func NewBindingService(opts BindingServiceOptions) (*BindingService, error) {
 		repo:     opts.Repo,
 		identity: opts.Identity,
 		runs:     opts.Runs,
+		scmCreds: opts.SCMCreds,
 		logger:   logger,
 	}, nil
 }
@@ -68,6 +82,7 @@ type CreateBindingRequest struct {
 	RepoRemoteURL   string
 	RepoBaseRef     string
 	LLMConnectionID *int
+	SCMConnectionID *int
 	TokenScopes     []string
 	TokenTTLMinutes int
 	MaxRunsPerDay   int
@@ -97,6 +112,7 @@ func (s *BindingService) Create(ctx context.Context, req CreateBindingRequest) (
 		RepoRemoteURL:   req.RepoRemoteURL,
 		RepoBaseRef:     req.RepoBaseRef,
 		LLMConnectionID: req.LLMConnectionID,
+		SCMConnectionID: req.SCMConnectionID,
 		TokenScopes:     req.TokenScopes,
 		TokenTTLMinutes: req.TokenTTLMinutes,
 		MaxRunsPerDay:   req.MaxRunsPerDay,
@@ -149,12 +165,32 @@ func (s *BindingService) MaybeStartRunForAssignee(ctx context.Context, workspace
 	req := RunRequest{
 		WorkspaceID: workspaceID,
 		ItemID:      &itemID,
+		BindingID:   binding.ID,
 	}
 	if binding.HasRepo() {
+		remoteURL := binding.RepoRemoteURL
+		// When the binding carries an SCM connection (WI-90), embed the
+		// resolved OAuth access token into the remote URL so the bare
+		// clone, fetches, and the agent's `git push` all authenticate
+		// without needing a credential helper inside the container.
+		// Works for both GitHub and Gitea because the URL form is
+		// provider-agnostic.
+		if binding.SCMConnectionID != nil && s.scmCreds != nil {
+			token, providerType, _, err := s.scmCreds.ResolveForRun(ctx, *binding.SCMConnectionID)
+			if err != nil {
+				return fmt.Errorf("resolve scm credentials: %w", err)
+			}
+			rewritten, rewriteErr := embedTokenInRemoteURL(remoteURL, token)
+			if rewriteErr != nil {
+				return fmt.Errorf("embed token: %w", rewriteErr)
+			}
+			remoteURL = rewritten
+			s.logger.Printf("binding service: embedded %s token in remote for binding=%d", providerType, binding.ID)
+		}
 		req.Repo = &RepoSpec{
 			WorkspaceID: workspaceID,
 			RepoSlug:    binding.RepoSlug,
-			RemoteURL:   binding.RepoRemoteURL,
+			RemoteURL:   remoteURL,
 			BaseRef:     binding.RepoBaseRef,
 		}
 	}
@@ -176,4 +212,25 @@ func (s *BindingService) MaybeStartRunForAssignee(ctx context.Context, workspace
 	}
 	s.logger.Printf("binding service: started run=%d for item=%d binding=%d acting_user=%d", runID, itemID, binding.ID, binding.ActingUserID)
 	return nil
+}
+
+// embedTokenInRemoteURL rewrites an HTTPS git remote into the OAuth-
+// authenticated form. The "oauth2" username is the GitHub convention for
+// PAT/access tokens; Gitea also accepts it (or "x-access-token") since
+// both clone HTTPS handles any username when paired with a valid token
+// in the password slot. SSH URLs are returned unchanged — the
+// orchestrator only knows how to authenticate against HTTPS remotes.
+func embedTokenInRemoteURL(remote, token string) (string, error) {
+	if token == "" {
+		return remote, nil
+	}
+	if !strings.HasPrefix(remote, "https://") && !strings.HasPrefix(remote, "http://") {
+		return remote, nil
+	}
+	u, err := url.Parse(remote)
+	if err != nil {
+		return "", err
+	}
+	u.User = url.UserPassword("oauth2", token)
+	return u.String(), nil
 }
