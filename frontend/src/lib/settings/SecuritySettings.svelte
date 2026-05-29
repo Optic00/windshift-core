@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { Shield, Calendar, Loader2, Terminal, Key, Users, UserCog, AlertTriangle, ChevronDown, ChevronUp } from '@lucide/svelte';
   import { agentSecurity, getSecuritySettings, updateSecuritySettings, authPolicy } from '../api.js';
+  import AgentSecurityAllowlistEditor from './AgentSecurityAllowlistEditor.svelte';
   import Toggle from '../components/Toggle.svelte';
   import Input from '../components/Input.svelte';
   import Panel from '../components/Panel.svelte';
@@ -10,7 +11,6 @@
   import { t } from '../stores/i18n.svelte.js';
   import { errorToast } from '../stores/toasts.svelte.js';
   import PageHeader from '../layout/PageHeader.svelte';
-  import Select from '../components/Select.svelte';
   import DescriptionText from '../components/DescriptionText.svelte';
 
   let loading = $state(true);
@@ -378,9 +378,14 @@
 
             {#if allowCentralizedAgentUsers}
               <div class="mt-3">
-                <AlertBox variant="warning" message="Centralized service users may act across workspaces. Manage the per-user allowlist via the admin agent-security allowlist endpoint; only allowlisted users can be picked as a binding's acting identity." />
+                <AlertBox variant="warning" message="Centralized service users may act across workspaces. Only users in the allowlist below can be picked as a binding's acting identity." />
               </div>
             {/if}
+
+            <!-- Allowlist editor -->
+            <div class="mt-6 pt-4 border-t" style="border-color: var(--ds-border);">
+              <AgentSecurityAllowlistEditor flagEnabled={allowCentralizedAgentUsers} />
+            </div>
           </div>
         </div>
       </Panel>
