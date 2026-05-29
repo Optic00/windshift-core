@@ -625,6 +625,82 @@ var Catalog = []Migration{
 			CREATE INDEX IF NOT EXISTS idx_page_label_assignments_label_id ON page_label_assignments(page_label_id);
 		`,
 	},
+	{
+		// agent_runs records one execution of the coding-agent harness:
+		// admission → container spawn → exit. agent_run_events captures the
+		// per-run stdio / lifecycle stream that the orchestrator reads from
+		// pi's RPC mode and forwards to the SSE hub. binding_id /
+		// acting_user_id / token-budget / pr_url etc. land in later phases
+		// (WI-87 Security gate, WI-88 binding schema). This first slice is
+		// the walking-skeleton shape RunService needs to record a run end-to
+		// -end.
+		Version:       "20260529_agent_runs",
+		Name:          "Create agent_runs + agent_run_events for the coding-agent harness",
+		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='agent_runs'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='agent_runs'",
+		SQLite: `
+			CREATE TABLE IF NOT EXISTS agent_runs (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				workspace_id INTEGER NOT NULL,
+				item_id INTEGER,
+				status TEXT NOT NULL DEFAULT 'queued'
+					CHECK (status IN ('queued','running','succeeded','failed','canceled','killed')),
+				queued_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				started_at DATETIME,
+				ended_at DATETIME,
+				container_id TEXT,
+				error TEXT,
+				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+				FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE SET NULL
+			);
+			CREATE INDEX IF NOT EXISTS idx_agent_runs_workspace_queued ON agent_runs(workspace_id, queued_at DESC);
+			CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON agent_runs(status);
+			CREATE INDEX IF NOT EXISTS idx_agent_runs_item_id ON agent_runs(item_id);
+
+			CREATE TABLE IF NOT EXISTS agent_run_events (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				run_id INTEGER NOT NULL,
+				ts DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				type TEXT NOT NULL,
+				payload_json TEXT NOT NULL DEFAULT '{}',
+				FOREIGN KEY (run_id) REFERENCES agent_runs(id) ON DELETE CASCADE
+			);
+			CREATE INDEX IF NOT EXISTS idx_agent_run_events_run ON agent_run_events(run_id, id);
+		`,
+		Postgres: `
+			CREATE TABLE IF NOT EXISTS agent_runs (
+				id SERIAL PRIMARY KEY,
+				workspace_id INTEGER NOT NULL,
+				item_id INTEGER,
+				status TEXT NOT NULL DEFAULT 'queued'
+					CHECK (status IN ('queued','running','succeeded','failed','canceled','killed')),
+				queued_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				started_at TIMESTAMPTZ,
+				ended_at TIMESTAMPTZ,
+				container_id TEXT,
+				error TEXT,
+				created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+				FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE SET NULL
+			);
+			CREATE INDEX IF NOT EXISTS idx_agent_runs_workspace_queued ON agent_runs(workspace_id, queued_at DESC);
+			CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON agent_runs(status);
+			CREATE INDEX IF NOT EXISTS idx_agent_runs_item_id ON agent_runs(item_id);
+
+			CREATE TABLE IF NOT EXISTS agent_run_events (
+				id BIGSERIAL PRIMARY KEY,
+				run_id INTEGER NOT NULL,
+				ts TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				type TEXT NOT NULL,
+				payload_json JSONB NOT NULL DEFAULT '{}'::JSONB,
+				FOREIGN KEY (run_id) REFERENCES agent_runs(id) ON DELETE CASCADE
+			);
+			CREATE INDEX IF NOT EXISTS idx_agent_run_events_run ON agent_run_events(run_id, id);
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {

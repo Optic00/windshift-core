@@ -241,6 +241,60 @@ func TestMigration_ExternalKey_UniquePerWorkspace(t *testing.T) {
 	}
 }
 
+// TestMigration_AgentRuns_SchemaSanity exercises the 20260529_agent_runs
+// migration's table shape end-to-end on a fresh SQLite install: a workspace
+// can have an agent_run, that run can have events, events cascade away with
+// the run, and the status CHECK rejects bogus values.
+func TestMigration_AgentRuns_SchemaSanity(t *testing.T) {
+	dsn := fmt.Sprintf("file:%s/agent_runs.db?mode=memory&cache=shared", t.TempDir())
+	db, err := NewSQLiteDBWithPoolSizes(dsn, 4, 1)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	if err := db.Initialize(); err != nil {
+		t.Fatalf("initialize fresh db: %v", err)
+	}
+
+	if _, err := db.Exec(`INSERT INTO workspaces(id, name, key, active) VALUES (1, 'ws', 'WS', 1)`); err != nil {
+		t.Fatalf("seed workspace: %v", err)
+	}
+
+	res, err := db.Exec(`INSERT INTO agent_runs(workspace_id, item_id) VALUES (1, NULL)`)
+	if err != nil {
+		t.Fatalf("insert agent_run: %v", err)
+	}
+	runID, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("last insert id: %v", err)
+	}
+
+	if _, err := db.Exec(
+		`INSERT INTO agent_run_events(run_id, type, payload_json) VALUES (?, 'lifecycle', '{"phase":"queued"}')`,
+		runID,
+	); err != nil {
+		t.Fatalf("insert agent_run_event: %v", err)
+	}
+	if n := countRows(t, db, fmt.Sprintf("SELECT COUNT(*) FROM agent_run_events WHERE run_id=%d", runID)); n != 1 {
+		t.Fatalf("expected 1 event for run, got %d", n)
+	}
+
+	// Status CHECK rejects bogus values.
+	if _, err := db.Exec(
+		`INSERT INTO agent_runs(workspace_id, status) VALUES (1, 'in_orbit')`,
+	); err == nil {
+		t.Fatal("expected CHECK violation on bogus status, got nil")
+	}
+
+	// ON DELETE CASCADE cleans up events.
+	if _, err := db.Exec(`DELETE FROM agent_runs WHERE id = ?`, runID); err != nil {
+		t.Fatalf("delete agent_run: %v", err)
+	}
+	if n := countRows(t, db, fmt.Sprintf("SELECT COUNT(*) FROM agent_run_events WHERE run_id=%d", runID)); n != 0 {
+		t.Fatalf("expected cascade delete of events, got %d remaining", n)
+	}
+}
+
 func TestRunPendingMigrations_AbortsOnFailingMigration(t *testing.T) {
 	db := openTestDB(t)
 
