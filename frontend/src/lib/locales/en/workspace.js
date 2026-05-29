@@ -539,6 +539,7 @@ export default {
       members: 'Members',
       configurationSets: 'Configuration Sets',
       sourceControl: 'Source Control',
+      codingAgents: 'Coding Agents',
       issueSync: 'Issue Sync',
       recurrence: 'Recurrence',
       removeWorkspace: 'Remove Workspace',

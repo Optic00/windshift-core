@@ -451,6 +451,7 @@ export default {
       members: '成员',
       configurationSets: '配置集',
       sourceControl: '源代码管理',
+      codingAgents: '编程代理',
       issueSync: '问题同步',
       removeWorkspace: '移除工作区',
     },

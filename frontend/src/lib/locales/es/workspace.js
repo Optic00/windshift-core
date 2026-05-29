@@ -458,6 +458,7 @@ export default {
       members: 'Miembros',
       configurationSets: 'Conjuntos de configuración',
       sourceControl: 'Control de código fuente',
+      codingAgents: 'Agentes de codificación',
       removeWorkspace: 'Eliminar espacio de trabajo',
       issueSync: 'Sincronización de issues',
     },

@@ -38,4 +38,12 @@ export const agentBindings = {
     fetchAPI(`/workspaces/${workspaceId}/agent-bindings/${id}`, {
       method: 'DELETE',
     }),
+
+  /**
+   * List the acting-identity options the workspace admin may pick:
+   * owned agent users + allowlisted centralized service users (when the
+   * WI-87 master flag is on). The chokepoint re-validates at create
+   * time; this just keeps the picker honest.
+   */
+  getCandidates: (workspaceId) => fetchAPI(`/workspaces/${workspaceId}/agent-binding-candidates`),
 };

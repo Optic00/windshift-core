@@ -15,9 +15,11 @@ import (
 // WorkspaceAgentBindingHandler exposes the workspace-admin CRUD for the
 // coding-agent harness bindings (WI-88). Every mutation goes through
 // services.BindingService so the WI-87 acting-identity chokepoint always
-// runs at create time.
+// runs at create time. The Candidates endpoint surfaces the picker
+// contents to the UI so admins can't see ineligible options.
 type WorkspaceAgentBindingHandler struct {
 	bindings          *services.BindingService
+	identity          *services.AgentActingIdentityService
 	permissionService *services.PermissionService
 	auditor           *logger.Auditor
 }
@@ -25,14 +27,44 @@ type WorkspaceAgentBindingHandler struct {
 // NewWorkspaceAgentBindingHandler constructs the handler.
 func NewWorkspaceAgentBindingHandler(
 	bindings *services.BindingService,
+	identity *services.AgentActingIdentityService,
 	permissionService *services.PermissionService,
 	auditor *logger.Auditor,
 ) *WorkspaceAgentBindingHandler {
 	return &WorkspaceAgentBindingHandler{
 		bindings:          bindings,
+		identity:          identity,
 		permissionService: permissionService,
 		auditor:           auditor,
 	}
+}
+
+// Candidates returns the acting-identity options the workspace admin
+// may pick for a binding in this workspace: owned agents + allowlisted
+// centralized service users (when the WI-87 master flag is on). The
+// chokepoint still re-validates at create time — this endpoint is a UX
+// shortcut, not the security boundary.
+func (h *WorkspaceAgentBindingHandler) Candidates(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := requireIDParam(w, r, "workspaceId")
+	if !ok {
+		return
+	}
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+	if !RequireWorkspacePermission(w, r, user.ID, workspaceID, models.PermissionWorkspaceAdmin, h.permissionService) {
+		return
+	}
+	candidates, err := h.identity.ListCandidatesForBinding(r.Context(), user.ID, workspaceID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	if candidates == nil {
+		candidates = []services.CandidateActingIdentity{}
+	}
+	respondJSON(w, http.StatusOK, candidates)
 }
 
 type bindingResponse struct {

@@ -8,6 +8,7 @@
   import WorkspaceConfigurationAssigner from './WorkspaceConfigurationAssigner.svelte';
   import WorkspaceConfigurationPreview from './WorkspaceConfigurationPreview.svelte';
   import WorkspaceSCMSettings from './WorkspaceSCMSettings.svelte';
+  import WorkspaceAgentBindings from './WorkspaceAgentBindings.svelte';
   import IssueSyncSettings from '../settings/IssueSyncSettings.svelte';
   import RecurrenceManager from '../settings/RecurrenceManager.svelte';
   import Button from '../components/Button.svelte';
@@ -57,6 +58,7 @@
     { id: 'members', label: t('workspaceSettings.tabs.members'), href: `/workspaces/${workspaceId}/settings/members` },
     { id: 'configuration', label: t('workspaceSettings.tabs.configurationSets'), href: `/workspaces/${workspaceId}/settings/configuration` },
     { id: 'source-control', label: t('workspaceSettings.tabs.sourceControl'), href: `/workspaces/${workspaceId}/settings/source-control` },
+    { id: 'coding-agents', label: t('workspaceSettings.tabs.codingAgents'), href: `/workspaces/${workspaceId}/settings/coding-agents` },
     { id: 'issue-sync', label: t('workspaceSettings.tabs.issueSync'), href: `/workspaces/${workspaceId}/settings/issue-sync` },
     { id: 'recurrence', label: t('workspaceSettings.tabs.recurrence'), href: `/workspaces/${workspaceId}/settings/recurrence` },
     { id: 'danger', label: t('workspaceSettings.tabs.removeWorkspace'), className: 'tab-danger', href: `/workspaces/${workspaceId}/settings/danger` }
@@ -198,6 +200,8 @@
       navigate(`/workspaces/${workspaceId}/settings/configuration`);
     } else if (tab === 'source-control') {
       navigate(`/workspaces/${workspaceId}/settings/source-control`);
+    } else if (tab === 'coding-agents') {
+      navigate(`/workspaces/${workspaceId}/settings/coding-agents`);
     } else if (tab === 'issue-sync') {
       navigate(`/workspaces/${workspaceId}/settings/issue-sync`);
     } else if (tab === 'recurrence') {
@@ -438,6 +442,10 @@
     {:else if activeTab === 'source-control'}
         <!-- Source Control Settings -->
         <WorkspaceSCMSettings {workspaceId} />
+
+    {:else if activeTab === 'coding-agents'}
+        <!-- Coding Agent Bindings (WI-88) -->
+        <WorkspaceAgentBindings {workspaceId} />
 
     {:else if activeTab === 'issue-sync'}
         <!-- Issue Sync Settings -->

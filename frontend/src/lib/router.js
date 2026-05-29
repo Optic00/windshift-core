@@ -30,6 +30,7 @@ const routes = {
   '/workspaces/:id/settings/members': 'workspace-settings-members',
   '/workspaces/:id/settings/configuration': 'workspace-settings-configuration',
   '/workspaces/:id/settings/source-control': 'workspace-settings-source-control',
+  '/workspaces/:id/settings/coding-agents': 'workspace-settings-coding-agents',
   '/workspaces/:id/settings/issue-sync': 'workspace-settings-issue-sync',
   '/workspaces/:id/settings/danger': 'workspace-settings-danger',
   '/workspaces/:id/actions': 'workspace-actions',

@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -630,7 +631,7 @@ func (s *Server) initialize() error {
 	// mode — bindings can still be created, the trigger logs but no run
 	// starts.
 	agentSecurityRepo := repository.NewAgentSecurityRepository(s.db)
-	agentIdentitySvc, _ := services.NewAgentActingIdentityService(s.db, agentSecurityRepo)
+	agentIdentitySvc, _ := services.NewAgentActingIdentityService(services.NewUserReadService(s.db), agentSecurityRepo)
 	agentBindingRepo := repository.NewWorkspaceAgentBindingRepository(s.db)
 	scmCredResolver := scm.NewCredentialResolver(s.db, scmProviderHandler.GetEncryption())
 
@@ -652,7 +653,7 @@ func (s *Server) initialize() error {
 		Runs:     codingRunSvc,
 		SCMCreds: &scmCredsAdapter{cr: scmCredResolver},
 	})
-	agentBindingHandler := handlers.NewWorkspaceAgentBindingHandler(bindingSvc, permService, logger.NewAuditor(s.db))
+	agentBindingHandler := handlers.NewWorkspaceAgentBindingHandler(bindingSvc, agentIdentitySvc, permService, logger.NewAuditor(s.db))
 	agentRunHandler := handlers.NewAgentRunHandler(repository.NewAgentRunRepository(s.db), codingRunSvc, permService)
 	itemHandler.SetBindingTrigger(bindingSvc)
 
@@ -1819,19 +1820,72 @@ type scmCredsAdapter struct {
 }
 
 // ResolveForRun implements services.SCMCredentialResolver — used by
-// BindingService to embed an OAuth access token in the remote URL at
-// run-start time so both `git fetch` and the agent's `git push`
-// authenticate transparently. Works for GitHub + Gitea identically.
+// BindingService to embed an access token in the remote URL at run-start
+// time so both `git fetch` and the agent's `git push` authenticate
+// transparently. Resolution order matches what the scm.Provider would
+// pick for HTTP traffic: OAuth access token → personal access token →
+// GitHub App installation token (minted on demand via the App's JWT
+// flow). Works for GitHub OAuth, GitHub PAT, GitHub App, Gitea OAuth,
+// and Gitea PAT identically; the URL form `oauth2:<token>@host/...` is
+// provider-agnostic on the git side.
 func (a *scmCredsAdapter) ResolveForRun(ctx context.Context, connectionID int) (token, providerType, baseURL string, err error) {
 	creds, err := a.cr.GetCredentialsByConnectionID(ctx, connectionID)
 	if err != nil {
 		return "", "", "", err
 	}
-	token = creds.OAuthAccessToken
-	if token == "" {
+	switch {
+	case creds.OAuthAccessToken != "":
+		token = creds.OAuthAccessToken
+	case creds.PersonalAccessToken != "":
 		token = creds.PersonalAccessToken
+	case creds.GitHubAppID != "" && creds.GitHubAppPrivateKey != "" && creds.GitHubAppInstallationID != "":
+		// GitHub App-backed connection: mint a short-lived installation
+		// access token via the App JWT flow. scm.GitHubProvider does
+		// the cryptography; we just feed it the provider config and ask
+		// for a token. Note: installation tokens expire after ~1h; the
+		// per-run lifetime is well within that, so we don't bother
+		// caching or refreshing.
+		t, terr := a.mintGitHubAppToken(ctx, creds)
+		if terr != nil {
+			return "", "", "", fmt.Errorf("mint GitHub App installation token: %w", terr)
+		}
+		token = t
+	default:
+		return "", "", "", fmt.Errorf("connection %d has no usable auth (no OAuth, no PAT, no complete GitHub App config)", connectionID)
 	}
 	return token, string(creds.ProviderType), creds.BaseURL, nil
+}
+
+// mintGitHubAppToken builds a transient scm.GitHubAppProvider from the
+// stored App credentials and asks it for an installation token. Used by
+// ResolveForRun for the git-CLI auth path; CreatePullRequest goes through
+// the same provider already (it just calls GetInstallationAccessToken
+// internally on the first authenticated request).
+func (a *scmCredsAdapter) mintGitHubAppToken(ctx context.Context, creds *scm.ProviderCredentials) (string, error) {
+	provider, err := scm.NewProvider(scm.ProviderConfig{
+		ProviderType:            creds.ProviderType,
+		AuthMethod:              creds.AuthMethod,
+		BaseURL:                 creds.BaseURL,
+		GitHubAppID:             creds.GitHubAppID,
+		GitHubAppPrivateKey:     creds.GitHubAppPrivateKey,
+		GitHubAppInstallationID: creds.GitHubAppInstallationID,
+	})
+	if err != nil {
+		return "", fmt.Errorf("build provider: %w", err)
+	}
+	appProvider, ok := provider.(scm.GitHubAppProvider)
+	if !ok {
+		return "", fmt.Errorf("provider for connection is not a GitHubAppProvider (type %T)", provider)
+	}
+	installationID, err := strconv.ParseInt(creds.GitHubAppInstallationID, 10, 64)
+	if err != nil {
+		return "", fmt.Errorf("parse installation id %q: %w", creds.GitHubAppInstallationID, err)
+	}
+	token, _, err := appProvider.GetInstallationAccessToken(ctx, installationID)
+	if err != nil {
+		return "", err
+	}
+	return token, nil
 }
 
 // openPRViaCredentialResolver implements services.OpenPRFn. Builds a

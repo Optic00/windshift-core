@@ -5,6 +5,7 @@
   import AgentSecurityAllowlistEditor from './AgentSecurityAllowlistEditor.svelte';
   import Toggle from '../components/Toggle.svelte';
   import Input from '../components/Input.svelte';
+  import Select from '../components/Select.svelte';
   import Panel from '../components/Panel.svelte';
   import AlertBox from '../components/AlertBox.svelte';
   import ConfirmWithReasonDialog from '../dialogs/ConfirmWithReasonDialog.svelte';

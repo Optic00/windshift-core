@@ -2,12 +2,10 @@ package services
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
 
-	"windshift/internal/database"
 	"windshift/internal/repository"
 )
 
@@ -45,22 +43,25 @@ var (
 // a given (bindingCreator, actingUser, workspace) triple is valid. It is
 // consulted both at binding-create time (WI-88) and at run-start time
 // (defense in depth — never trust the client to carry the result through).
+// All user-table reads are delegated to UserReadService so the rules
+// about how an "agent user" or "centralized service user" is identified
+// live in one place; this service only composes those lookups with the
+// security-flag and allowlist gates.
 type AgentActingIdentityService struct {
-	db       database.Database
+	users    *UserReadService
 	security *repository.AgentSecurityRepository
 }
 
-// NewAgentActingIdentityService wires the service to the DB handle and the
-// security repository (the chokepoint reads both the master flag and the
-// allowlist).
-func NewAgentActingIdentityService(db database.Database, security *repository.AgentSecurityRepository) (*AgentActingIdentityService, error) {
-	if db == nil {
-		return nil, errors.New("agent acting identity service: db is required")
+// NewAgentActingIdentityService wires the service to the user-read
+// service and the security repository.
+func NewAgentActingIdentityService(users *UserReadService, security *repository.AgentSecurityRepository) (*AgentActingIdentityService, error) {
+	if users == nil {
+		return nil, errors.New("agent acting identity service: user-read service is required")
 	}
 	if security == nil {
 		return nil, errors.New("agent acting identity service: security repository is required")
 	}
-	return &AgentActingIdentityService{db: db, security: security}, nil
+	return &AgentActingIdentityService{users: users, security: security}, nil
 }
 
 // Resolve validates a candidate acting user against the gate rules and
@@ -73,47 +74,35 @@ func (s *AgentActingIdentityService) Resolve(ctx context.Context, bindingCreator
 		return nil, ErrActingIdentityNotFound
 	}
 
-	var (
-		email         string
-		username      string
-		firstName     string
-		lastName      string
-		isActive      bool
-		isAgent       bool
-		ownerNullable sql.NullInt64
-	)
-	err := s.db.QueryRowContext(ctx, `
-		SELECT email, username, first_name, last_name,
-		       COALESCE(is_active, 1), COALESCE(is_agent, 0),
-		       agent_owner_user_id
-		FROM users WHERE id = ?
-	`, actingUserID).Scan(&email, &username, &firstName, &lastName, &isActive, &isAgent, &ownerNullable)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrActingIdentityNotFound
-	}
+	u, err := s.users.GetByID(actingUserID)
 	if err != nil {
+		// GetByID returns "user not found: <id>" on missing rows; the
+		// security-aware mapping back to ErrActingIdentityNotFound
+		// keeps row existence from leaking to non-admins.
+		if strings.Contains(err.Error(), "user not found") {
+			return nil, ErrActingIdentityNotFound
+		}
 		return nil, fmt.Errorf("load candidate user: %w", err)
 	}
-	if !isActive {
+	if !u.IsActive {
 		return nil, ErrActingIdentityInactive
 	}
-	if !isAgent {
+	if !u.IsAgent {
 		return nil, ErrActingIdentityNotAgent
 	}
 
 	identity := &ActingIdentity{
 		UserID: actingUserID,
-		Name:   gitDisplayName(firstName, lastName, username),
-		Email:  email,
+		Name:   gitDisplayName(u.FirstName, u.LastName, u.Username),
+		Email:  u.Email,
 	}
 
-	if ownerNullable.Valid {
+	if u.AgentOwnerUserID != nil {
 		// Owned agent: must be owned by the binding creator. Anyone else
 		// asking to bind an agent owned by a third party is rejected;
 		// agents inherit the owner's permissions and would otherwise
 		// surface as a privilege-escalation surface.
-		ownerID := int(ownerNullable.Int64)
-		if ownerID != bindingCreatorID {
+		if *u.AgentOwnerUserID != bindingCreatorID {
 			return nil, ErrActingIdentityNotOwned
 		}
 		identity.Kind = ActingIdentityKindAgent
@@ -140,6 +129,82 @@ func (s *AgentActingIdentityService) Resolve(ctx context.Context, bindingCreator
 	}
 	identity.Kind = ActingIdentityKindCentralized
 	return identity, nil
+}
+
+// CandidateActingIdentity is what ListCandidatesForBinding returns — one
+// per acting identity the workspace admin is allowed to pick. The kind
+// determines whether it's an agent they own or a centralized service
+// user reachable only because the WI-87 master flag + allowlist let it
+// through.
+type CandidateActingIdentity struct {
+	UserID    int    `json:"user_id"`
+	Kind      string `json:"kind"` // ActingIdentityKindAgent or ActingIdentityKindCentralized
+	Username  string `json:"username"`
+	Email     string `json:"email"`
+	Name      string `json:"name"` // git-style display name
+	OwnerID   *int   `json:"owner_id,omitempty"`
+	OwnerName string `json:"owner_name,omitempty"`
+}
+
+// ListCandidatesForBinding returns every acting identity the given
+// workspace admin may pick when creating a binding in this workspace:
+//
+//  1. Agent users they own (is_agent + agent_owner_user_id =
+//     bindingCreatorID + active). Always available.
+//  2. Centralized service users (is_agent + agent_owner_user_id NULL +
+//     active) that the WI-87 allowlist reaches for this workspace.
+//     Only included when the master flag is on, matching what
+//     Resolve() would accept at create time.
+//
+// The handler layer surfaces this to the picker so admins can't even
+// see options the server is going to refuse.
+func (s *AgentActingIdentityService) ListCandidatesForBinding(ctx context.Context, bindingCreatorID, workspaceID int) ([]CandidateActingIdentity, error) {
+	if bindingCreatorID <= 0 || workspaceID <= 0 {
+		return nil, errors.New("agent acting identity service: bindingCreatorID and workspaceID are required")
+	}
+
+	owned, err := s.users.ListOwnedAgents(ctx, bindingCreatorID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]CandidateActingIdentity, 0, len(owned))
+	for i := range owned {
+		u := owned[i]
+		owner := bindingCreatorID
+		out = append(out, CandidateActingIdentity{
+			UserID:   u.ID,
+			Kind:     ActingIdentityKindAgent,
+			Username: u.Username,
+			Email:    u.Email,
+			Name:     gitDisplayName(u.FirstName, u.LastName, u.Username),
+			OwnerID:  &owner,
+		})
+	}
+
+	// Centralized service users only surface when the master flag is on
+	// — Resolve() would reject them otherwise.
+	flagEnabled, err := s.security.GetAllowCentralizedServiceUsers(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read security flag: %w", err)
+	}
+	if !flagEnabled {
+		return out, nil
+	}
+	centralized, err := s.users.ListAllowlistedCentralizedServiceUsers(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range centralized {
+		u := centralized[i]
+		out = append(out, CandidateActingIdentity{
+			UserID:   u.ID,
+			Kind:     ActingIdentityKindCentralized,
+			Username: u.Username,
+			Email:    u.Email,
+			Name:     gitDisplayName(u.FirstName, u.LastName, u.Username),
+		})
+	}
+	return out, nil
 }
 
 // gitDisplayName produces a `user.name`-shaped string. Prefer
