@@ -9,7 +9,7 @@
   import QuickAddForm from './QuickAddForm.svelte';
   import { getCollection, checkItemVisibility } from './collectionService.js';
   import { infoToast, successToast, warningToast } from '../../stores/toasts.svelte.js';
-  import { Plus, ChevronDown, MoreHorizontal } from '@lucide/svelte';
+  import { Plus, ChevronDown, ChevronRight, MoreHorizontal, Layers } from '@lucide/svelte';
   import ItemPicker from '../../pickers/ItemPicker.svelte';
   import { buildIterationPickerConfig } from '../iterations/iterationPickerUtils.js';
   import { itemTypeIconMap } from '../../utils/icons.js';
@@ -18,6 +18,7 @@
   import ItemDetail from '../items/ItemDetail.svelte';
   import DropIndicator from '../../layout/DropIndicator.svelte';
   import ViewHeader from '../../layout/ViewHeader.svelte';
+  import Button from '../../components/Button.svelte';
   import SubFilterBar from './SubFilterBar.svelte';
   import ItemKey from '../items/ItemKey.svelte';
   import CollectionViewSwitcher from './CollectionViewSwitcher.svelte';
@@ -73,6 +74,10 @@
   let allIterations = $state([]);
   let iterationFilterId = $state(null);
 
+  // Swimlane grouping state
+  let groupByItemTypeId = $state(null);
+  let swimlaneCollapsed = $state({});
+
   // Edge-based drag state
   let dragState = $state(new Map()); // Track drag state for each item: { isDragging: boolean, closestEdge: 'top'|'bottom'|null }
   let boardAnnouncement = $state('');
@@ -114,7 +119,7 @@
   useEventListener(() => window, 'refresh-work-items', handleRefreshWorkItems);
 
   // Quick-add functions
-  function initQuickAdd(columnId, statusId) {
+  function initQuickAdd(columnId, statusId, quickAddKey = columnId, parentId = null) {
     const availableTypes = (itemTypes || []).slice().sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
     if (availableTypes.length === 0) return;
 
@@ -128,58 +133,64 @@
       }
     } catch (e) { /* ignore storage errors */ }
 
-    quickAddState[columnId] = {
+    quickAddState[quickAddKey] = {
       show: true,
       workspaceId: preselectedWorkspaceId,
       itemTypeId: preselectedItemTypeId,
       availableTypes,
       statusId,
+      parentId,
       title: '',
       error: null
     };
 
     setTimeout(() => {
-      const textarea = /** @type {HTMLTextAreaElement | null} */ (document.querySelector(`textarea[data-quick-add-parent="${columnId}"]`));
+      const textarea = /** @type {HTMLTextAreaElement | null} */ (document.querySelector(`textarea[data-quick-add-parent="${quickAddKey}"]`));
       if (textarea) textarea.focus();
     }, 0);
   }
 
-  function cancelQuickAdd(columnId) {
-    delete quickAddState[columnId];
+  function cancelQuickAdd(quickAddKey) {
+    delete quickAddState[quickAddKey];
   }
 
-  function updateQuickAddField(columnId, field, value) {
-    if (quickAddState[columnId]) {
-      quickAddState[columnId][field] = value;
-      quickAddState[columnId].error = null;
+  function updateQuickAddField(quickAddKey, field, value) {
+    if (quickAddState[quickAddKey]) {
+      quickAddState[quickAddKey][field] = value;
+      quickAddState[quickAddKey].error = null;
     }
   }
 
-  async function createColumnItem(columnId) {
-    const state = quickAddState[columnId];
+  async function createColumnItem(quickAddKey) {
+    const state = quickAddState[quickAddKey];
     if (!state) return;
 
     if (!state.workspaceId) {
-      quickAddState[columnId].error = 'Please select a workspace';
+      quickAddState[quickAddKey].error = 'Please select a workspace';
       return;
     }
     if (!state.itemTypeId) {
-      quickAddState[columnId].error = 'Please select an item type';
+      quickAddState[quickAddKey].error = 'Please select an item type';
       return;
     }
     if (!state.title?.trim()) {
-      quickAddState[columnId].error = 'Please enter a title';
+      quickAddState[quickAddKey].error = 'Please enter a title';
       return;
     }
 
     try {
-      const newItem = await api.items.create({
+      const payload = {
         workspace_id: state.workspaceId,
         item_type_id: state.itemTypeId,
         title: state.title.trim(),
         description: '',
         status_id: state.statusId
-      });
+      };
+      if (state.parentId) {
+        payload.parent_id = state.parentId;
+      }
+
+      const newItem = await api.items.create(payload);
 
       if (collectionId) {
         const collection = await getCollection(collectionId);
@@ -211,10 +222,10 @@
         warningToast('The board has more items than can be displayed. Use "Load More" to see all items.');
       }
 
-      cancelQuickAdd(columnId);
+      cancelQuickAdd(quickAddKey);
     } catch (error) {
       console.error('Failed to create item:', error);
-      quickAddState[columnId].error = 'Failed to create item: ' + (error.message || error);
+      quickAddState[quickAddKey].error = 'Failed to create item: ' + (error.message || error);
     }
   }
 
@@ -250,7 +261,20 @@
         }
       }
     }
+    try {
+      const savedGroupBy = localStorage.getItem(groupByStorageKey());
+      const savedGroupById = savedGroupBy ? parseInt(savedGroupBy, 10) : null;
+      if (savedGroupById) {
+        groupByItemTypeId = savedGroupById;
+      }
+    } catch (e) { /* ignore storage errors */ }
     loading = false;
+  });
+
+  $effect(() => {
+    if (groupByItemTypeId && itemTypes.length > 0 && !itemTypes.some(type => type.id === groupByItemTypeId)) {
+      setGroupByItemType(null);
+    }
   });
 
   // Keep backlog count in sync
@@ -306,12 +330,12 @@
     iterationFilterId ? items.filter(i => i.iteration_id === iterationFilterId) : items
   );
 
-  function getItemsByStatus(statusId) {
-    return filteredItems.filter(item => item.status_id === statusId);
+  function getItemsByStatus(statusId, itemSubset = filteredItems) {
+    return itemSubset.filter(item => item.status_id === statusId);
   }
 
-  function getItemsByColumn(column) {
-    return filteredItems.filter(item => column.status_ids && column.status_ids.includes(item.status_id));
+  function getItemsByColumn(column, itemSubset = filteredItems) {
+    return itemSubset.filter(item => column.status_ids && column.status_ids.includes(item.status_id));
   }
 
   // Status badges use an accessible-contrast pass so colours read against the
@@ -343,6 +367,33 @@
     } else {
       localStorage.removeItem(`board-iteration-filter-${workspaceId}`);
     }
+  }
+
+  function groupByStorageKey() {
+    return `board-group-by-item-type-${collectionId ? `collection-${collectionId}` : `workspace-${workspaceId || 'global'}`}`;
+  }
+
+  function setGroupByItemType(itemTypeId) {
+    groupByItemTypeId = itemTypeId;
+    swimlaneCollapsed = {};
+    try {
+      if (itemTypeId) {
+        localStorage.setItem(groupByStorageKey(), String(itemTypeId));
+      } else {
+        localStorage.removeItem(groupByStorageKey());
+      }
+    } catch (e) { /* ignore storage errors */ }
+  }
+
+  function toggleSwimlane(swimlaneId) {
+    swimlaneCollapsed = {
+      ...swimlaneCollapsed,
+      [swimlaneId]: !swimlaneCollapsed[swimlaneId]
+    };
+  }
+
+  function isSwimlaneExpanded(swimlaneId) {
+    return swimlaneCollapsed[swimlaneId] !== true;
   }
 
 
@@ -395,8 +446,8 @@
     return new Date(item.updated_at || item.created_at || 0).getTime() || 0;
   }
 
-  function getDisplayItemsByColumn(column, columnIndex, columnsForBoard = validColumns) {
-    const columnItems = getItemsByColumn(column);
+  function getDisplayItemsByColumn(column, columnIndex, columnsForBoard = validColumns, itemSubset = filteredItems) {
+    const columnItems = getItemsByColumn(column, itemSubset);
     return shouldLimitRightmostColumn(columnIndex, columnsForBoard)
       ? columnItems
           .slice()
@@ -405,10 +456,97 @@
       : columnItems;
   }
 
+  let selectedGroupByItemType = $derived(
+    groupByItemTypeId ? itemTypes.find(type => type.id === groupByItemTypeId) : null
+  );
+
+  let groupByMenuItems = $derived.by(() => {
+    const sortedTypes = (itemTypes || []).slice().sort((a, b) => (a.hierarchy_level ?? 999) - (b.hierarchy_level ?? 999) || (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.name.localeCompare(b.name));
+    return [
+      {
+        id: 'group-none',
+        title: 'No swimlanes',
+        subtitle: 'Show every item as a normal card',
+        badge: groupByItemTypeId ? '' : 'Selected',
+        onClick: () => setGroupByItemType(null)
+      },
+      ...(sortedTypes.length > 0 ? [{ id: 'group-divider', type: 'divider' }] : []),
+      ...sortedTypes.map(type => {
+        const TypeIcon = itemTypeIconMap[type.icon] || itemTypeIconMap.FileText;
+        return {
+          id: `group-type-${type.id}`,
+          title: type.name,
+          subtitle: 'Use these items as swimlanes',
+          icon: TypeIcon,
+          iconColor: type.color,
+          badge: groupByItemTypeId === type.id ? 'Selected' : '',
+          onClick: () => setGroupByItemType(type.id)
+        };
+      })
+    ];
+  });
+
+  let boardSwimlanes = $derived.by(() => {
+    if (!groupByItemTypeId) {
+      return [{
+        id: 'all',
+        title: 'All items',
+        parent: null,
+        items: filteredItems,
+        isDefault: true,
+        isUnassigned: false,
+        itemCount: filteredItems.length,
+        parentIsVisible: false
+      }];
+    }
+
+    const parentItems = items.filter(item => item.item_type_id === groupByItemTypeId);
+    const parentIds = new Set(parentItems.map(item => item.id));
+    const visibleItemIds = new Set(filteredItems.map(item => item.id));
+
+    const lanes = parentItems
+      .map(parent => {
+        const laneItems = filteredItems.filter(item => item.parent_id === parent.id && item.id !== parent.id);
+        return {
+          id: `parent-${parent.id}`,
+          title: parent.title,
+          parent,
+          items: laneItems,
+          isDefault: false,
+          isUnassigned: false,
+          itemCount: laneItems.length,
+          parentIsVisible: visibleItemIds.has(parent.id)
+        };
+      })
+      .filter(lane => lane.itemCount > 0 || lane.parentIsVisible);
+
+    const unassignedItems = filteredItems.filter(item => {
+      if (item.item_type_id === groupByItemTypeId) return false;
+      if (item.parent_id && parentIds.has(item.parent_id)) return false;
+      return true;
+    });
+
+    return [
+      ...lanes,
+      {
+        id: 'unassigned',
+        title: 'Unassigned',
+        parent: null,
+        items: unassignedItems,
+        isDefault: false,
+        isUnassigned: true,
+        itemCount: unassignedItems.length,
+        parentIsVisible: false
+      }
+    ];
+  });
+
   // Calculate total visible items across all display columns
   let totalVisibleItems = $derived.by(() => {
-    return validColumns.reduce((total, column, columnIndex) => {
-      return total + getDisplayItemsByColumn(column, columnIndex, validColumns).length;
+    return boardSwimlanes.reduce((laneTotal, lane) => {
+      return laneTotal + validColumns.reduce((columnTotal, column, columnIndex) => {
+        return columnTotal + getDisplayItemsByColumn(column, columnIndex, validColumns, lane.items).length;
+      }, 0);
     }, 0);
   });
 
@@ -612,7 +750,7 @@
 
     statusColumns.forEach(element => {
       const statusId = parseInt(element.dataset.statusId);
-      const elementId = `status-${statusId}`;
+      const elementId = element.dataset.statusColumnKey || `status-${statusId}`;
 
       const status = statuses.find(s => s.id === statusId);
       if (!status) return;
@@ -906,6 +1044,16 @@
                   {/if}
                 </div>
               {/if}
+              <DropdownMenu
+                items={groupByMenuItems}
+                triggerIcon={Layers}
+                triggerText={selectedGroupByItemType ? `Group by: ${selectedGroupByItemType.name}` : 'Group by'}
+                placement="bottom-end"
+                maxWidth="max-w-xs"
+                triggerClass="px-3.5 py-1.5 rounded border text-sm font-medium"
+                triggerStyle="background-color: var(--ctx-surface, var(--ds-surface-raised)); color: var(--ds-text); border-color: var(--ctx-border, var(--ds-border)); backdrop-filter: var(--ctx-backdrop, none);"
+                triggerTestid="board-group-by-menu"
+              />
               <CollectionViewSwitcher
                 {workspaceId}
                 {collectionId}
@@ -942,250 +1090,306 @@
           </button>
         </div>
       {:else}
-        <!-- Board Columns -->
-        <div class="grid gap-6" data-testid="board-view" style="grid-template-columns: repeat({validColumns.length}, minmax(300px, 1fr));">
-          {#each validColumns as column, columnIndex (column.id)}
-            {@const allColumnItems = getItemsByColumn(column)}
-            {@const columnItems = getDisplayItemsByColumn(column, columnIndex, validColumns)}
-            {@const hiddenColumnItemCount = allColumnItems.length - columnItems.length}
-            {@const isOverWip = column.wip_limit && allColumnItems.length > column.wip_limit}
-            <div
-              class="relative rounded border shadow-sm transition-colors"
-              style="{styles.columnStyle(12)} {quickAddState[column.id]?.show ? 'z-index: 30;' : ''}"
-              data-testid="board-column"
-              data-status-column
-              data-status-id={column.status_ids[0]}
+        <!-- Board Columns / Swimlanes -->
+        <div class={selectedGroupByItemType ? 'space-y-4' : ''} data-testid="board-view">
+          {#each boardSwimlanes as lane (lane.id)}
+            {@const laneExpanded = isSwimlaneExpanded(lane.id)}
+            {@const LaneTypeIcon = selectedGroupByItemType ? (itemTypeIconMap[selectedGroupByItemType.icon] || itemTypeIconMap.FileText) : null}
+            <section
+              class={selectedGroupByItemType ? 'rounded-lg border overflow-hidden' : ''}
+              style={selectedGroupByItemType ? `${styles.glassStyle?.(10) ?? ''} border-color: var(--ctx-border, var(--ds-border));` : ''}
+              data-board-swimlane={lane.id}
             >
-              <div class="p-4 border-b border-t-4" style="border-bottom-color: var(--ctx-border, var(--ds-border)); border-top-color: {column.color};">
-                <div class="flex items-center justify-between">
-                  <h3 class="font-semibold" data-testid="column-header" style={styles.glassTextStyle}>{column.name}</h3>
-                  <button
-                    onclick={() => initQuickAdd(column.id, column.status_ids[0])}
-                    class="p-1 rounded transition-colors"
-                    style="color: var(--ds-text-subtle);"
-                    onmouseenter={(e) => e.currentTarget.style.color = 'var(--ds-text)'}
-                    onmouseleave={(e) => e.currentTarget.style.color = 'var(--ds-text-subtle)'}
-                    title={t('collections.addCard')}
+              {#if selectedGroupByItemType}
+                <div class="flex items-center justify-between gap-3 px-3 py-2 border-b" style="border-color: var(--ctx-border, var(--ds-border));">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    class="flex-1 justify-start px-2"
+                    style="color: var(--ds-text);"
+                    onclick={() => toggleSwimlane(lane.id)}
                   >
-                    <Plus class="w-4 h-4" />
-                  </button>
-                </div>
-                <div class="flex items-center justify-between">
-                  <span class="text-sm" style={styles.glassSubtleTextStyle}>
-                    {#if hiddenColumnItemCount > 0}
-                      {columnItems.length} of {allColumnItems.length} {t('items.item')}
+                    {#if laneExpanded}
+                      <ChevronDown class="w-4 h-4 flex-shrink-0" />
                     {:else}
-                      {allColumnItems.length} {t('items.item')}
+                      <ChevronRight class="w-4 h-4 flex-shrink-0" />
                     {/if}
-                  </span>
-                  {#if column.wip_limit}
-                    <span class="text-xs px-2 py-0.5 rounded"
-                          style={isOverWip
-                            ? 'background-color: var(--ds-danger-subtle); color: var(--ds-text-danger);'
-                            : 'background-color: var(--ds-background-neutral, #091e420f); color: var(--ds-text-subtle, #6b778c);'}>
-                      WIP: {allColumnItems.length}/{column.wip_limit}
-                    </span>
-                  {/if}
-                </div>
-              </div>
-              <div class="p-4 min-h-32">
-                {#if quickAddState[column.id]?.show}
-                  <div class="mb-3">
-                    <QuickAddForm
-                      parentId={column.id}
-                      formState={quickAddState[column.id]}
-                      {workspaces}
-                      cardBgStyle={styles.cardStyle(8)}
-                      onUpdateField={updateQuickAddField}
-                      onCreate={createColumnItem}
-                      onCancel={cancelQuickAdd}
-                    />
-                  </div>
-                {/if}
-                {#if columnItems.length === 0 && !quickAddState[column.id]?.show}
-                  <!-- Empty column state -->
-                  <div class="text-center py-8" style={styles.glassSubtleTextStyle}>
-                    <Plus class="w-8 h-8 mx-auto mb-2" />
-                    <p class="text-sm">{t('items.noItems')}</p>
-                  </div>
-                {:else}
-                  {#if hiddenColumnItemCount > 0}
-                    <p class="text-xs mb-3" style={styles.glassSubtleTextStyle}>
-                      Showing latest {RIGHTMOST_COLUMN_LIMIT} of {allColumnItems.length} items in this column.
-                    </p>
-                  {/if}
-                  <div class="space-y-1">
-                    {#each columnItems as item, index (item.id)}
-                      {@const itemStatus = statuses.find(s => s.name.toLowerCase().replace(/ /g, '_') === item.status)}
-                      {@const moveMenuItems = getMoveMenuItems(item)}
-                      <!-- Item card with edge-based drop detection -->
-                      <div
-                        class="relative border rounded px-3 py-3 board-card"
-                        style:box-shadow="var(--ds-shadow-raised)"
-                        style="{styles.cardStyle(4)}"
-                        data-item-card
-                        data-item-id={item.id}
-                        role="button"
-                        tabindex="0"
-                        onclick={event => openItem(item.id, event)}
-                        onkeydown={event => (event.key === 'Enter' || event.key === ' ') && openItem(item.id, event)}
+                    {#if LaneTypeIcon}
+                      <span
+                        class="w-5 h-5 rounded flex items-center justify-center text-white flex-shrink-0"
+                        style="background-color: {lane.isUnassigned ? 'var(--ds-background-neutral-bold, #6b7280)' : selectedGroupByItemType.color};"
                       >
-                        <!-- Drop indicator -->
-                        {#if dragState.get(item.id)?.closestEdge}
-                          <DropIndicator edge={dragState.get(item.id)?.closestEdge} />
-                        {/if}
+                        <LaneTypeIcon class="w-3 h-3" />
+                      </span>
+                    {/if}
+                    <span class="min-w-0 flex-1 text-left">
+                      <span class="block font-semibold truncate">{lane.title}</span>
+                      {#if lane.parent}
+                        <span class="block text-xs font-normal truncate" style="color: var(--ds-text-subtle);">
+                          <ItemKey item={lane.parent} {workspace} /> · {selectedGroupByItemType.name} swimlane
+                        </span>
+                      {:else}
+                        <span class="block text-xs font-normal truncate" style="color: var(--ds-text-subtle);">
+                          Items without a {selectedGroupByItemType.name} parent
+                        </span>
+                      {/if}
+                    </span>
+                  </Button>
+                  <span class="text-xs px-2 py-0.5 rounded-full flex-shrink-0" style="background: var(--ds-background-neutral); color: var(--ds-text-subtle);">
+                    {lane.itemCount} {lane.itemCount === 1 ? 'item' : 'items'}
+                  </span>
+                </div>
+              {/if}
 
-                        <div class="cursor-grab active:cursor-grabbing">
-                          <!-- Content -->
-                          <div class="min-w-0">
-                            <div class="flex items-start gap-2 mb-2">
-                              <!-- Title - allows wrapping -->
-                              <h4 class="text-sm leading-snug break-words flex-1 min-w-0" style={styles.glassTextStyle}>
-                                {item.title}
-                              </h4>
-                              <div class="shrink-0 -mt-1 -mr-1 opacity-80 transition-opacity board-card-menu">
-                                <DropdownMenu
-                                  items={moveMenuItems.length > 0 ? moveMenuItems : [{ id: `no-moves-${item.id}`, type: 'text', text: 'No available moves' }]}
-                                  placement="bottom-end"
-                                  maxWidth="max-w-xs"
-                                  triggerIcon={MoreHorizontal}
-                                  triggerClass="p-1 rounded hover:bg-[var(--ds-background-neutral-hovered)] focus:ring-2 focus:ring-[var(--ds-border-focused)]"
-                                  triggerStyle="color: var(--ds-text-subtle);"
-                                  iconOnly
-                                  showChevron={false}
-                                  triggerTestid={`board-card-move-menu-${item.id}`}
-                                />
-                              </div>
-                            </div>
-
-                            <!-- Configured card fields -->
-                            {#if cardFields.length > 0}
-                              <div class="flex flex-wrap gap-1.5 mt-1 mb-1.5">
-                                {#each cardFields as cardField}
-                                  {#if cardField.field_type === 'system'}
-                                    {#if cardField.field_identifier === 'priority' && item.priority_id}
-                                      {@const prio = priorities.find(p => p.id === item.priority_id)}
-                                      {#if prio}
-                                        <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium" style="background: {prio.color}20; color: {prio.color};">
-                                          {prio.name}
-                                        </span>
-                                      {/if}
-                                    {:else if cardField.field_identifier === 'due_date' && item.due_date}
-                                      <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]" style="background: var(--ds-surface); color: var(--ds-text-subtle);">
-                                        {formatDateShort(item.due_date)}
-                                      </span>
-                                    {:else if cardField.field_identifier === 'milestone' && (item.milestones?.length ?? 0) > 0}
-                                      {#each item.milestones as ms (ms.id)}
-                                        <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]" style="background: var(--ds-surface); color: var(--ds-text-subtle);">
-                                          <span class="w-2 h-2 rounded-full flex-shrink-0" style="background-color: {ms.category_color || '#6b7280'};"></span>
-                                          {ms.name}
-                                        </span>
-                                      {/each}
-                                    {:else if cardField.field_identifier === 'iteration' && item.iteration_id}
-                                      {@const iter = iterations.find(i => i.id === item.iteration_id)}
-                                      {#if iter}
-                                        <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px]" style="background: var(--ds-surface); color: var(--ds-text-subtle);">
-                                          {iter.name}
-                                        </span>
-                                      {/if}
-                                    {:else if cardField.field_identifier === 'labels' && item.label_ids?.length > 0}
-                                      {#each item.label_ids.slice(0, 3) as labelId}
-                                        {@const lbl = wdsLabels.find(l => l.id === labelId)}
-                                        {#if lbl}
-                                          <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] text-white font-medium" style="background-color: {lbl.color || '#6b7280'};">
-                                            {lbl.name}
-                                          </span>
-                                        {/if}
-                                      {/each}
-                                      {#if item.label_ids.length > 3}
-                                        <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px]" style="background: var(--ds-surface); color: var(--ds-text-subtle);">
-                                          +{item.label_ids.length - 3}
-                                        </span>
-                                      {/if}
-                                    {:else if cardField.field_identifier === 'status' && item.status_id}
-                                      {@const st = statuses.find(s => s.id === item.status_id)}
-                                      {#if st}
-                                        <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]" style="background: var(--ds-surface); color: var(--ds-text-subtle);">
-                                          <span class="w-2 h-2 rounded-full flex-shrink-0" style="background-color: {st.color || st.category_color || '#6b7280'};"></span>
-                                          {st.name}
-                                        </span>
-                                      {/if}
-                                    {:else if cardField.field_identifier === 'created_at' && item.created_at}
-                                      <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px]" style="background: var(--ds-surface); color: var(--ds-text-subtle);">
-                                        {formatDateShort(item.created_at)}
-                                      </span>
-                                    {:else if cardField.field_identifier === 'project' && item.project_id}
-                                      {@const proj = projects.find(p => p.id === item.project_id)}
-                                      {#if proj}
-                                        <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px]" style="background: var(--ds-surface); color: var(--ds-text-subtle);">
-                                          {proj.name}
-                                        </span>
-                                      {/if}
-                                    {/if}
-                                  {:else if cardField.field_type === 'custom'}
-                                    {@const cfId = parseInt(cardField.field_identifier.replace('custom_field_', ''))}
-                                    {@const cfDef = customFieldDefinitions.find(d => d.id === cfId)}
-                                    {@const cfVal = item.custom_field_values?.[cfId] ?? item.custom_field_values?.[String(cfId)]}
-                                    {#if cfDef && cfVal}
-                                      <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px]" style="background: var(--ds-surface); color: var(--ds-text-subtle);">
-                                        {#if cfDef.field_type === 'date'}
-                                          {formatDateShort(cfVal)}
-                                        {:else if (cfDef.field_type === 'select' || cfDef.field_type === 'multiselect') && cfDef.options}
-                                          {resolveOptionLabel(cfDef.options, cfVal) || cfVal}
-                                        {:else}
-                                          {cfVal}
-                                        {/if}
-                                      </span>
-                                    {/if}
-                                  {/if}
-                                {/each}
-                              </div>
+              {#if !selectedGroupByItemType || laneExpanded}
+                <div class="grid gap-6 {selectedGroupByItemType ? 'p-4' : ''}" style="grid-template-columns: repeat({validColumns.length}, minmax(300px, 1fr));">
+                  {#each validColumns as column, columnIndex (column.id)}
+                    {@const quickAddKey = `${lane.id}-${column.id}`}
+                    {@const allColumnItems = getItemsByColumn(column, lane.items)}
+                    {@const columnItems = getDisplayItemsByColumn(column, columnIndex, validColumns, lane.items)}
+                    {@const hiddenColumnItemCount = allColumnItems.length - columnItems.length}
+                    {@const isOverWip = column.wip_limit && allColumnItems.length > column.wip_limit}
+                    <div
+                      class="relative rounded border shadow-sm transition-colors"
+                      style="{styles.columnStyle(12)} {quickAddState[quickAddKey]?.show ? 'z-index: 30;' : ''}"
+                      data-testid="board-column"
+                      data-status-column
+                      data-status-column-key={`${lane.id}-${column.id}-${column.status_ids[0]}`}
+                      data-status-id={column.status_ids[0]}
+                    >
+                      <div class="p-4 border-b border-t-4" style="border-bottom-color: var(--ctx-border, var(--ds-border)); border-top-color: {column.color};">
+                        <div class="flex items-center justify-between">
+                          <h3 class="font-semibold" data-testid="column-header" style={styles.glassTextStyle}>{column.name}</h3>
+                          <button
+                            onclick={() => initQuickAdd(column.id, column.status_ids[0], quickAddKey, lane.parent?.id ?? null)}
+                            class="p-1 rounded transition-colors"
+                            style="color: var(--ds-text-subtle);"
+                            onmouseenter={(e) => e.currentTarget.style.color = 'var(--ds-text)'}
+                            onmouseleave={(e) => e.currentTarget.style.color = 'var(--ds-text-subtle)'}
+                            title={t('collections.addCard')}
+                          >
+                            <Plus class="w-4 h-4" />
+                          </button>
+                        </div>
+                        <div class="flex items-center justify-between">
+                          <span class="text-sm" style={styles.glassSubtleTextStyle}>
+                            {#if hiddenColumnItemCount > 0}
+                              {columnItems.length} of {allColumnItems.length} {t('items.item')}
+                            {:else}
+                              {allColumnItems.length} {t('items.item')}
                             {/if}
-
-                            <!-- Bottom row: Icon, Key, Assignee avatar -->
-                            <div class="flex items-center gap-2 min-h-5">
-                              {#if item.item_type_id && itemTypes.length > 0}
-                                {@const itemType = itemTypes.find(type => type.id === item.item_type_id)}
-                                {#if itemType}
-                                  {@const TypeIcon = itemTypeIconMap[itemType.icon] || itemTypeIconMap.FileText}
-                                  <div
-                                    class="w-4 h-4 rounded flex items-center justify-center text-white text-xs flex-shrink-0"
-                                    style="background-color: {itemType.color};"
-                                    title={itemType.name}
-                                  >
-                                    <TypeIcon class="w-3 h-3" />
-                                  </div>
-                                {/if}
-                              {/if}
-                              <ItemKey {item} {workspace} />
-                              <span class="flex-1"></span>
-                              {#if item.assignee_id}
-                                {@const assignee = users.find(u => u.id === item.assignee_id)}
-                                {#if assignee}
-                                  <div class="w-5 h-5 rounded-full bg-blue-500 flex items-center justify-center text-white text-[9px] font-medium flex-shrink-0"
-                                       title="{assignee.first_name} {assignee.last_name}">
-                                    {(assignee.first_name?.[0] || '') + (assignee.last_name?.[0] || '')}
-                                  </div>
-                                {/if}
-                              {/if}
-                              {#if false && statuses.find(s => s.id === item.status_id)}
-                                {@const itemStatusObj = statuses.find(s => s.id === item.status_id)}
-                                <Tooltip content={itemStatusObj.name} placement="top">
-                                  <div
-                                    class="w-4 h-4 rounded flex-shrink-0"
-                                    style="background-color: {itemStatusObj.category_color};"
-                                  ></div>
-                                </Tooltip>
-                              {/if}
-                            </div>
-                          </div>
+                          </span>
+                          {#if column.wip_limit}
+                            <span class="text-xs px-2 py-0.5 rounded"
+                                  style={isOverWip
+                                    ? 'background-color: var(--ds-danger-subtle); color: var(--ds-text-danger);'
+                                    : 'background-color: var(--ds-background-neutral, #091e420f); color: var(--ds-text-subtle, #6b778c);'}>
+                              WIP: {allColumnItems.length}/{column.wip_limit}
+                            </span>
+                          {/if}
                         </div>
                       </div>
-                    {/each}
-                  </div>
-                {/if}
-              </div>
-            </div>
+                      <div class="p-4 min-h-32">
+                        {#if quickAddState[quickAddKey]?.show}
+                          <div class="mb-3">
+                            <QuickAddForm
+                              parentId={quickAddKey}
+                              formState={quickAddState[quickAddKey]}
+                              {workspaces}
+                              cardBgStyle={styles.cardStyle(8)}
+                              onUpdateField={updateQuickAddField}
+                              onCreate={createColumnItem}
+                              onCancel={cancelQuickAdd}
+                            />
+                          </div>
+                        {/if}
+                        {#if columnItems.length === 0 && !quickAddState[quickAddKey]?.show}
+                          <!-- Empty column state -->
+                          <div class="text-center py-8" style={styles.glassSubtleTextStyle}>
+                            <Plus class="w-8 h-8 mx-auto mb-2" />
+                            <p class="text-sm">{t('items.noItems')}</p>
+                          </div>
+                        {:else}
+                          {#if hiddenColumnItemCount > 0}
+                            <p class="text-xs mb-3" style={styles.glassSubtleTextStyle}>
+                              Showing latest {RIGHTMOST_COLUMN_LIMIT} of {allColumnItems.length} items in this column.
+                            </p>
+                          {/if}
+                          <div class="space-y-1">
+                            {#each columnItems as item, index (item.id)}
+                              {@const moveMenuItems = getMoveMenuItems(item)}
+                              <!-- Item card with edge-based drop detection -->
+                              <div
+                                class="relative border rounded px-3 py-3 board-card"
+                                style:box-shadow="var(--ds-shadow-raised)"
+                                style="{styles.cardStyle(4)}"
+                                data-item-card
+                                data-item-id={item.id}
+                                role="button"
+                                tabindex="0"
+                                onclick={event => openItem(item.id, event)}
+                                onkeydown={event => (event.key === 'Enter' || event.key === ' ') && openItem(item.id, event)}
+                              >
+                                <!-- Drop indicator -->
+                                {#if dragState.get(item.id)?.closestEdge}
+                                  <DropIndicator edge={dragState.get(item.id)?.closestEdge} />
+                                {/if}
+
+                                <div class="cursor-grab active:cursor-grabbing">
+                                  <!-- Content -->
+                                  <div class="min-w-0">
+                                    <div class="flex items-start gap-2 mb-2">
+                                      <!-- Title - allows wrapping -->
+                                      <h4 class="text-sm leading-snug break-words flex-1 min-w-0" style={styles.glassTextStyle}>
+                                        {item.title}
+                                      </h4>
+                                      <div class="shrink-0 -mt-1 -mr-1 opacity-80 transition-opacity board-card-menu">
+                                        <DropdownMenu
+                                          items={moveMenuItems.length > 0 ? moveMenuItems : [{ id: `no-moves-${item.id}`, type: 'text', text: 'No available moves' }]}
+                                          placement="bottom-end"
+                                          maxWidth="max-w-xs"
+                                          triggerIcon={MoreHorizontal}
+                                          triggerClass="p-1 rounded hover:bg-[var(--ds-background-neutral-hovered)] focus:ring-2 focus:ring-[var(--ds-border-focused)]"
+                                          triggerStyle="color: var(--ds-text-subtle);"
+                                          iconOnly
+                                          showChevron={false}
+                                          triggerTestid={`board-card-move-menu-${item.id}`}
+                                        />
+                                      </div>
+                                    </div>
+
+                                    <!-- Configured card fields -->
+                                    {#if cardFields.length > 0}
+                                      <div class="flex flex-wrap gap-1.5 mt-1 mb-1.5">
+                                        {#each cardFields as cardField}
+                                          {#if cardField.field_type === 'system'}
+                                            {#if cardField.field_identifier === 'priority' && item.priority_id}
+                                              {@const prio = priorities.find(p => p.id === item.priority_id)}
+                                              {#if prio}
+                                                <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium" style="background: {prio.color}20; color: {prio.color};">
+                                                  {prio.name}
+                                                </span>
+                                              {/if}
+                                            {:else if cardField.field_identifier === 'due_date' && item.due_date}
+                                              <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]" style="background: var(--ds-surface); color: var(--ds-text-subtle);">
+                                                {formatDateShort(item.due_date)}
+                                              </span>
+                                            {:else if cardField.field_identifier === 'milestone' && (item.milestones?.length ?? 0) > 0}
+                                              {#each item.milestones as ms (ms.id)}
+                                                <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]" style="background: var(--ds-surface); color: var(--ds-text-subtle);">
+                                                  <span class="w-2 h-2 rounded-full flex-shrink-0" style="background-color: {ms.category_color || '#6b7280'};"></span>
+                                                  {ms.name}
+                                                </span>
+                                              {/each}
+                                            {:else if cardField.field_identifier === 'iteration' && item.iteration_id}
+                                              {@const iter = iterations.find(i => i.id === item.iteration_id)}
+                                              {#if iter}
+                                                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px]" style="background: var(--ds-surface); color: var(--ds-text-subtle);">
+                                                  {iter.name}
+                                                </span>
+                                              {/if}
+                                            {:else if cardField.field_identifier === 'labels' && item.label_ids?.length > 0}
+                                              {#each item.label_ids.slice(0, 3) as labelId}
+                                                {@const lbl = wdsLabels.find(l => l.id === labelId)}
+                                                {#if lbl}
+                                                  <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] text-white font-medium" style="background-color: {lbl.color || '#6b7280'};">
+                                                    {lbl.name}
+                                                  </span>
+                                                {/if}
+                                              {/each}
+                                              {#if item.label_ids.length > 3}
+                                                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px]" style="background: var(--ds-surface); color: var(--ds-text-subtle);">
+                                                  +{item.label_ids.length - 3}
+                                                </span>
+                                              {/if}
+                                            {:else if cardField.field_identifier === 'status' && item.status_id}
+                                              {@const st = statuses.find(s => s.id === item.status_id)}
+                                              {#if st}
+                                                <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]" style="background: var(--ds-surface); color: var(--ds-text-subtle);">
+                                                  <span class="w-2 h-2 rounded-full flex-shrink-0" style="background-color: {st.color || st.category_color || '#6b7280'};"></span>
+                                                  {st.name}
+                                                </span>
+                                              {/if}
+                                            {:else if cardField.field_identifier === 'created_at' && item.created_at}
+                                              <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px]" style="background: var(--ds-surface); color: var(--ds-text-subtle);">
+                                                {formatDateShort(item.created_at)}
+                                              </span>
+                                            {:else if cardField.field_identifier === 'project' && item.project_id}
+                                              {@const proj = projects.find(p => p.id === item.project_id)}
+                                              {#if proj}
+                                                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px]" style="background: var(--ds-surface); color: var(--ds-text-subtle);">
+                                                  {proj.name}
+                                                </span>
+                                              {/if}
+                                            {/if}
+                                          {:else if cardField.field_type === 'custom'}
+                                            {@const cfId = parseInt(cardField.field_identifier.replace('custom_field_', ''))}
+                                            {@const cfDef = customFieldDefinitions.find(d => d.id === cfId)}
+                                            {@const cfVal = item.custom_field_values?.[cfId] ?? item.custom_field_values?.[String(cfId)]}
+                                            {#if cfDef && cfVal}
+                                              <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px]" style="background: var(--ds-surface); color: var(--ds-text-subtle);">
+                                                {#if cfDef.field_type === 'date'}
+                                                  {formatDateShort(cfVal)}
+                                                {:else if (cfDef.field_type === 'select' || cfDef.field_type === 'multiselect') && cfDef.options}
+                                                  {resolveOptionLabel(cfDef.options, cfVal) || cfVal}
+                                                {:else}
+                                                  {cfVal}
+                                                {/if}
+                                              </span>
+                                            {/if}
+                                          {/if}
+                                        {/each}
+                                      </div>
+                                    {/if}
+
+                                    <!-- Bottom row: Icon, Key, Assignee avatar -->
+                                    <div class="flex items-center gap-2 min-h-5">
+                                      {#if item.item_type_id && itemTypes.length > 0}
+                                        {@const itemType = itemTypes.find(type => type.id === item.item_type_id)}
+                                        {#if itemType}
+                                          {@const TypeIcon = itemTypeIconMap[itemType.icon] || itemTypeIconMap.FileText}
+                                          <div
+                                            class="w-4 h-4 rounded flex items-center justify-center text-white text-xs flex-shrink-0"
+                                            style="background-color: {itemType.color};"
+                                            title={itemType.name}
+                                          >
+                                            <TypeIcon class="w-3 h-3" />
+                                          </div>
+                                        {/if}
+                                      {/if}
+                                      <ItemKey {item} {workspace} />
+                                      <span class="flex-1"></span>
+                                      {#if item.assignee_id}
+                                        {@const assignee = users.find(u => u.id === item.assignee_id)}
+                                        {#if assignee}
+                                          <div class="w-5 h-5 rounded-full bg-blue-500 flex items-center justify-center text-white text-[9px] font-medium flex-shrink-0"
+                                               title="{assignee.first_name} {assignee.last_name}">
+                                            {(assignee.first_name?.[0] || '') + (assignee.last_name?.[0] || '')}
+                                          </div>
+                                        {/if}
+                                      {/if}
+                                      {#if false && statuses.find(s => s.id === item.status_id)}
+                                        {@const itemStatusObj = statuses.find(s => s.id === item.status_id)}
+                                        <Tooltip content={itemStatusObj.name} placement="top">
+                                          <div
+                                            class="w-4 h-4 rounded flex-shrink-0"
+                                            style="background-color: {itemStatusObj.category_color};"
+                                          ></div>
+                                        </Tooltip>
+                                      {/if}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            {/each}
+                          </div>
+                        {/if}
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </section>
           {/each}
         </div>
 
