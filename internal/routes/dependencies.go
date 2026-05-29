@@ -129,6 +129,7 @@ type WorkspaceHandlers struct {
 	ApprovalSet           *handlers.ApprovalSetHandler
 	Approval              *handlers.ApprovalHandler
 	TransitionGovernance  *handlers.TransitionGovernanceHandler
+	AgentBinding          *handlers.WorkspaceAgentBindingHandler
 }
 
 // UserHandlers groups user-related handlers.

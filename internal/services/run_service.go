@@ -357,3 +357,10 @@ func (s *RunService) Shutdown(ctx context.Context) error {
 func (s *RunService) Wait() {
 	s.wg.Wait()
 }
+
+// HasTokens reports whether a RunTokenService is configured. Used by
+// upstream callers (BindingService) to know whether to build a TokenSpec
+// for the run.
+func (s *RunService) HasTokens() bool {
+	return s.tokens != nil
+}

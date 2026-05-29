@@ -370,6 +370,70 @@ func TestMigration_AgentSecurity_SchemaSanity(t *testing.T) {
 	}
 }
 
+// TestMigration_WorkspaceAgentBindings_SchemaSanity exercises the
+// 20260529_workspace_agent_bindings migration: the kind CHECK rejects
+// bogus values, the (workspace_id, acting_user_id) unique index forbids
+// duplicates, and the workspace + user cascades drop bindings.
+func TestMigration_WorkspaceAgentBindings_SchemaSanity(t *testing.T) {
+	dsn := fmt.Sprintf("file:%s/bindings.db?mode=memory&cache=shared", t.TempDir())
+	db, err := NewSQLiteDBWithPoolSizes(dsn, 4, 1)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	if err := db.Initialize(); err != nil {
+		t.Fatalf("init db: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO workspaces(id, name, key, active) VALUES (1, 'WS', 'WS', 1)`); err != nil {
+		t.Fatalf("seed workspace: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO users(email, username, first_name, last_name, is_agent) VALUES ('alice@example.com','alice','A','',0)`); err != nil {
+		t.Fatalf("seed admin: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO users(email, username, first_name, last_name, is_agent) VALUES ('agent@agents.local','agent','Ag','Ent',1)`); err != nil {
+		t.Fatalf("seed agent: %v", err)
+	}
+	var adminID, agentID int
+	if err := db.QueryRow(`SELECT id FROM users WHERE username='alice'`).Scan(&adminID); err != nil {
+		t.Fatalf("read admin id: %v", err)
+	}
+	if err := db.QueryRow(`SELECT id FROM users WHERE username='agent'`).Scan(&agentID); err != nil {
+		t.Fatalf("read agent id: %v", err)
+	}
+
+	// Insert a valid binding.
+	if _, err := db.Exec(
+		`INSERT INTO workspace_agent_bindings(workspace_id, acting_user_id, acting_user_kind, created_by_user_id) VALUES (?, ?, 'agent', ?)`,
+		1, agentID, adminID,
+	); err != nil {
+		t.Fatalf("insert binding: %v", err)
+	}
+
+	// CHECK constraint rejects bogus kind.
+	if _, err := db.Exec(
+		`INSERT INTO workspace_agent_bindings(workspace_id, acting_user_id, acting_user_kind, created_by_user_id) VALUES (?, ?, 'wat', ?)`,
+		1, adminID, adminID,
+	); err == nil {
+		t.Fatal("expected CHECK violation on bogus kind, got nil")
+	}
+
+	// Unique index rejects duplicate (workspace, acting_user).
+	if _, err := db.Exec(
+		`INSERT INTO workspace_agent_bindings(workspace_id, acting_user_id, acting_user_kind, created_by_user_id) VALUES (?, ?, 'agent', ?)`,
+		1, agentID, adminID,
+	); err == nil {
+		t.Fatal("expected uniqueness violation on duplicate (workspace, acting_user), got nil")
+	}
+
+	// Cascade on user delete drops the binding.
+	if _, err := db.Exec(`DELETE FROM users WHERE id = ?`, agentID); err != nil {
+		t.Fatalf("delete agent user: %v", err)
+	}
+	if n := countRows(t, db, fmt.Sprintf("SELECT COUNT(*) FROM workspace_agent_bindings WHERE acting_user_id=%d", agentID)); n != 0 {
+		t.Fatalf("cascade delete failed: %d rows remain", n)
+	}
+}
+
 func TestRunPendingMigrations_AbortsOnFailingMigration(t *testing.T) {
 	db := openTestDB(t)
 

@@ -154,6 +154,15 @@ func RegisterWorkspaceRoutes(deps *Deps) {
 		api.HandleH("POST /approvals/{id}/steps/{step_id}/escalate", auth(http.HandlerFunc(deps.Workspaces.Approval.EscalateNow)))
 	}
 
+	// Coding-agent harness binding endpoints (WI-88). workspace.admin
+	// permission gating happens inside the handler so we can render the
+	// same 403 surface regardless of the chokepoint's rejection reason.
+	if deps.Workspaces.AgentBinding != nil {
+		api.HandleH("GET /workspaces/{workspaceId}/agent-bindings", auth(http.HandlerFunc(deps.Workspaces.AgentBinding.List)))
+		api.HandleH("POST /workspaces/{workspaceId}/agent-bindings", auth(http.HandlerFunc(deps.Workspaces.AgentBinding.Create)))
+		api.HandleH("DELETE /workspaces/{workspaceId}/agent-bindings/{id}", auth(http.HandlerFunc(deps.Workspaces.AgentBinding.Delete)))
+	}
+
 	// Actions automation endpoints (workspace-scoped, requires action.manage permission)
 	if deps.Workspaces.Actions != nil {
 		actionManage := deps.PermissionMiddleware.RequireWorkspacePermission(models.PermissionActionManage)

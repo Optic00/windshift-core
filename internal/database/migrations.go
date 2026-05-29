@@ -764,6 +764,69 @@ var Catalog = []Migration{
 			) ON CONFLICT (key) DO NOTHING;
 		`,
 	},
+	{
+		// workspace_agent_bindings is the workspace-admin-managed link from
+		// an acting user (the binding's identity, validated by the WI-87
+		// chokepoint at create time) to the run-shape RunService needs
+		// when an item is assigned to that user. See WI-88 / the Coding
+		// Agent Harness — Design plan.
+		//
+		// One binding per (workspace, acting_user) — the lookup BindingService
+		// does at assignee-change time is intentionally O(1) on this index.
+		Version:       "20260529_workspace_agent_bindings",
+		Name:          "Create workspace_agent_bindings",
+		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='workspace_agent_bindings'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='workspace_agent_bindings'",
+		SQLite: `
+			CREATE TABLE IF NOT EXISTS workspace_agent_bindings (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				workspace_id INTEGER NOT NULL,
+				acting_user_id INTEGER NOT NULL,
+				acting_user_kind TEXT NOT NULL
+					CHECK (acting_user_kind IN ('agent','centralized_service')),
+				repo_slug TEXT,
+				repo_remote_url TEXT,
+				repo_base_ref TEXT,
+				llm_connection_id INTEGER,
+				token_scopes_json TEXT NOT NULL DEFAULT '[]',
+				token_ttl_minutes INTEGER NOT NULL DEFAULT 60,
+				max_runs_per_day INTEGER NOT NULL DEFAULT 0,
+				created_by_user_id INTEGER NOT NULL,
+				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+				FOREIGN KEY (acting_user_id) REFERENCES users(id) ON DELETE CASCADE,
+				FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+			);
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_agent_bindings_workspace_acting
+				ON workspace_agent_bindings(workspace_id, acting_user_id);
+			CREATE INDEX IF NOT EXISTS idx_workspace_agent_bindings_workspace
+				ON workspace_agent_bindings(workspace_id);
+		`,
+		Postgres: `
+			CREATE TABLE IF NOT EXISTS workspace_agent_bindings (
+				id SERIAL PRIMARY KEY,
+				workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+				acting_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+				acting_user_kind TEXT NOT NULL
+					CHECK (acting_user_kind IN ('agent','centralized_service')),
+				repo_slug TEXT,
+				repo_remote_url TEXT,
+				repo_base_ref TEXT,
+				llm_connection_id INTEGER,
+				token_scopes_json JSONB NOT NULL DEFAULT '[]'::JSONB,
+				token_ttl_minutes INTEGER NOT NULL DEFAULT 60,
+				max_runs_per_day INTEGER NOT NULL DEFAULT 0,
+				created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+				created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+			);
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_agent_bindings_workspace_acting
+				ON workspace_agent_bindings(workspace_id, acting_user_id);
+			CREATE INDEX IF NOT EXISTS idx_workspace_agent_bindings_workspace
+				ON workspace_agent_bindings(workspace_id);
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {

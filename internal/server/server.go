@@ -578,6 +578,21 @@ func (s *Server) initialize() error {
 	calendarFeedHandler := handlers.NewCalendarFeedHandler(s.db, permService, cfg.BaseURL)
 	securitySettingsHandler := handlers.NewSecuritySettingsHandler(repository.NewSystemSettingRepository(s.db), logger.NewAuditor(s.db), cfg.Plugins.Disabled)
 
+	// WI-88: coding-agent binding stack. The acting-identity chokepoint
+	// (WI-87) is constructed here so both the binding service and the
+	// admin AgentSecurity handler share the security repo handle. The
+	// RunService is left nil — the trigger no-ops when matched — until
+	// WI-89 wires the production runner.
+	agentSecurityRepo := repository.NewAgentSecurityRepository(s.db)
+	agentIdentitySvc, _ := services.NewAgentActingIdentityService(s.db, agentSecurityRepo)
+	agentBindingRepo := repository.NewWorkspaceAgentBindingRepository(s.db)
+	bindingSvc, _ := services.NewBindingService(services.BindingServiceOptions{
+		Repo:     agentBindingRepo,
+		Identity: agentIdentitySvc,
+	})
+	agentBindingHandler := handlers.NewWorkspaceAgentBindingHandler(bindingSvc, permService, logger.NewAuditor(s.db))
+	itemHandler.SetBindingTrigger(bindingSvc)
+
 	// Admin rate limiter
 	var adminRateLimiter *middleware.AdminFallbackRateLimiter
 	if cfg.EnableAdminFallback {
@@ -1094,6 +1109,7 @@ func (s *Server) initialize() error {
 			ApprovalSet:           handlers.NewApprovalSetHandler(approvalSetService, logger.NewAuditor(s.db)),
 			Approval:              handlers.NewApprovalHandler(s.db, permService, approvalService),
 			TransitionGovernance:  handlers.NewTransitionGovernanceHandler(repository.NewTransitionRepository(s.db), approvalSetService),
+			AgentBinding:          agentBindingHandler,
 		},
 		Users: routes.UserHandlers{
 			User:          userHandler,
@@ -1131,7 +1147,7 @@ func (s *Server) initialize() error {
 				logger.NewAuditor(s.db),
 			),
 			AgentSecurity: handlers.NewAgentSecurityHandler(
-				repository.NewAgentSecurityRepository(s.db),
+				agentSecurityRepo,
 				permService,
 				logger.NewAuditor(s.db),
 			),
