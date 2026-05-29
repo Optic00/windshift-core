@@ -24,6 +24,11 @@
   let entries = $state([]);
   let loading = $state(true);
   let usersById = $state({});
+  // Subset of usersById restricted to centralized service users (is_agent
+  // true + no owner). The backend rejects anything else from the
+  // allowlist; the UserPicker only ever offers these so admins can't
+  // even pick something the server is going to refuse.
+  let serviceUsers = $state([]);
   let workspacesById = $state({});
   let workspaceOptions = $state([{ value: 'any', label: 'Any workspace' }]);
 
@@ -50,8 +55,16 @@
       ]);
       entries = list ?? [];
       const um = {};
-      for (const u of users ?? []) um[u.id] = u;
+      const eligible = [];
+      for (const u of users ?? []) {
+        um[u.id] = u;
+        // Centralized service users only: is_agent=true and no owner.
+        // Owned agents (agent_owner_user_id set) reach bindings through
+        // the WI-87 chokepoint directly; humans must never be impersonated.
+        if (u.is_agent && !u.agent_owner_user_id) eligible.push(u);
+      }
       usersById = um;
+      serviceUsers = eligible;
       const wm = {};
       const opts = [{ value: 'any', label: 'Any workspace' }];
       for (const w of workspaces ?? []) {
@@ -195,7 +208,7 @@
         <div class="md:col-span-4">
           <label for="add-user" class="block text-xs mb-1" style="color: var(--ds-text-subtle);">User</label>
           <div id="add-user">
-            <UserPicker bind:value={addUserId} placeholder="Pick a service user" />
+            <UserPicker bind:value={addUserId} users={serviceUsers} placeholder="Pick a service user" />
           </div>
         </div>
         <div class="md:col-span-3">

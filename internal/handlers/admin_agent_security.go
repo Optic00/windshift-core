@@ -17,21 +17,25 @@ import (
 // the per-user-and-workspace allowlist.
 type AgentSecurityHandler struct {
 	repo              *repository.AgentSecurityRepository
+	userSvc           *services.UserReadService
 	permissionService *services.PermissionService
 	auditor           *logger.Auditor
 }
 
-// NewAgentSecurityHandler wires the handler to its repo + auth + audit
-// dependencies. permissionService.IsSystemAdmin gates every endpoint; the
-// auditor records both flag flips and allowlist mutations with the actor
-// and a required reason.
+// NewAgentSecurityHandler wires the handler to its repo + user-classification
+// service + auth + audit dependencies. permissionService.IsSystemAdmin gates
+// every endpoint; the auditor records both flag flips and allowlist mutations
+// with the actor and a required reason; userSvc.IsCentralizedServiceUser
+// keeps non-service users off the allowlist at the boundary.
 func NewAgentSecurityHandler(
 	repo *repository.AgentSecurityRepository,
+	userSvc *services.UserReadService,
 	permissionService *services.PermissionService,
 	auditor *logger.Auditor,
 ) *AgentSecurityHandler {
 	return &AgentSecurityHandler{
 		repo:              repo,
+		userSvc:           userSvc,
 		permissionService: permissionService,
 		auditor:           auditor,
 	}
@@ -159,6 +163,20 @@ func (h *AgentSecurityHandler) AddAllowlist(w http.ResponseWriter, r *http.Reque
 	}
 	if body.Reason == "" {
 		respondBadRequest(w, r, "reason is required")
+		return
+	}
+	// Only centralized service users (is_agent=true, no owner) belong on
+	// the allowlist. Owned agents reach bindings through the WI-87
+	// chokepoint without needing a grant, and regular humans must never
+	// be impersonated by the harness. Classification lives in the user
+	// service so the same rules apply wherever it's checked.
+	isService, err := h.userSvc.IsCentralizedServiceUser(r.Context(), body.UserID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	if !isService {
+		respondBadRequest(w, r, "user_id must reference a centralized service user (is_agent=true, no owner)")
 		return
 	}
 	if err := h.repo.AddAllowlistEntry(r.Context(), body.UserID, body.WorkspaceID, &user.ID, body.Reason); err != nil {

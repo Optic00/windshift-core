@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -161,4 +162,33 @@ func (s *UserReadService) Exists(id int) (bool, error) {
 		return false, fmt.Errorf("failed to check user existence: %w", err)
 	}
 	return exists, nil
+}
+
+// IsCentralizedServiceUser reports whether the user row exists, is an
+// agent identity (is_agent = true), and is *not* owned by anyone
+// (agent_owner_user_id IS NULL). The WI-87 admin allowlist editor uses
+// this to refuse non-service users at the boundary — owned agents reach
+// bindings through the chokepoint directly without needing a grant, and
+// regular humans must never be impersonated by the harness. Returns
+// (false, nil) when the user row does not exist so callers can render
+// a 400 without leaking row existence.
+func (s *UserReadService) IsCentralizedServiceUser(ctx context.Context, userID int) (bool, error) {
+	if userID <= 0 {
+		return false, nil
+	}
+	var (
+		isAgent  bool
+		hasOwner bool
+	)
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COALESCE(is_agent, 0), agent_owner_user_id IS NOT NULL
+		FROM users WHERE id = ?
+	`, userID).Scan(&isAgent, &hasOwner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read user for service-user check: %w", err)
+	}
+	return isAgent && !hasOwner, nil
 }

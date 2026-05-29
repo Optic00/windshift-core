@@ -1174,6 +1174,7 @@ func (s *Server) initialize() error {
 			),
 			AgentSecurity: handlers.NewAgentSecurityHandler(
 				agentSecurityRepo,
+				services.NewUserReadService(s.db),
 				permService,
 				logger.NewAuditor(s.db),
 			),
