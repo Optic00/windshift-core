@@ -10,6 +10,7 @@
   import { api } from '../../api.js';
   import { t } from '../../stores/i18n.svelte.js';
   import ItemKey from './ItemKey.svelte';
+  import StatusBadge from '../../components/StatusBadge.svelte';
 
   let {
     item,
@@ -301,6 +302,7 @@
           {@const linkedItemTypeIcon = isCurrentSource ? link.target_item_type_icon : link.source_item_type_icon}
           {@const linkedItemTypeColor = isCurrentSource ? link.target_item_type_color : link.source_item_type_color}
           {@const linkedItemStatusName = isCurrentSource ? link.target_status_name : link.source_status_name}
+          {@const linkedItemStatusColor = isCurrentSource ? link.target_status_color : link.source_status_color}
           <!-- Item row with card styling and hover-reveal delete -->
           <div
             class="group flex items-center justify-between px-4 py-3 rounded-lg border transition-colors"
@@ -353,9 +355,11 @@
             <!-- Right side: status badge + delete button -->
             <div class="flex items-center gap-2 flex-shrink-0">
               {#if linkedItemStatusName}
-                <span class="text-xs px-2 py-0.5 rounded-full" style="background-color: var(--ds-background-neutral); color: var(--ds-text-subtle);">
-                  {linkedItemStatusName}
-                </span>
+                <StatusBadge
+                  status={{ label: linkedItemStatusName, categoryColor: linkedItemStatusColor }}
+                  uppercase={false}
+                  showDot={false}
+                />
               {/if}
               <button
                 data-testid="linked-item-delete"
@@ -516,9 +520,11 @@
               <!-- Right side: status badge -->
               <div class="flex items-center gap-2 flex-shrink-0">
                 {#if childItem.status_name}
-                  <span class="text-xs px-2 py-0.5 rounded-full" style="background-color: var(--ds-background-neutral); color: var(--ds-text-subtle);">
-                    {childItem.status_name}
-                  </span>
+                  <StatusBadge
+                    status={{ label: childItem.status_name, categoryColor: childItem.status_color }}
+                    uppercase={false}
+                    showDot={false}
+                  />
                 {/if}
               </div>
             </div>

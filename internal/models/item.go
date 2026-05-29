@@ -62,7 +62,8 @@ type Item struct {
 	PriorityIcon     string `json:"priority_icon,omitempty"`
 	PriorityColor    string `json:"priority_color,omitempty"`
 	ParentTitle      string `json:"parent_title,omitempty"`
-	StatusName       string `json:"status_name,omitempty"` // Name from statuses table (joined field)
+	StatusName       string `json:"status_name,omitempty"`  // Name from statuses table (joined field)
+	StatusColor      string `json:"status_color,omitempty"` // Color from the status category (joined field)
 	IterationName    string `json:"iteration_name,omitempty"`
 	IterationEndDate string `json:"iteration_end_date,omitempty"`
 	ProjectName      string `json:"project_name,omitempty"`      // Name of the time-tracking project this item belongs to (joined from time_projects via ProjectID)

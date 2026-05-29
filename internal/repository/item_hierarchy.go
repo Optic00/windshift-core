@@ -26,12 +26,13 @@ func (r *ItemRepository) GetChildren(parentID int) ([]*models.Item, error) {
 		       i.parent_id, i.frac_index, i.created_at, i.updated_at,
 		       w.name as workspace_name, w.key as workspace_key,
 		       pri.name as priority_name, pri.icon as priority_icon, pri.color as priority_color,
-		       s.name as status_name,
+		       s.name as status_name, sc.color as status_color,
 		       it.name as item_type_name
 		FROM items i
 		JOIN workspaces w ON i.workspace_id = w.id
 		LEFT JOIN priorities pri ON i.priority_id = pri.id
 		LEFT JOIN statuses s ON i.status_id = s.id
+		LEFT JOIN status_categories sc ON s.category_id = sc.id
 		LEFT JOIN item_types it ON i.item_type_id = it.id
 		WHERE i.parent_id = ?
 		ORDER BY i.frac_index
@@ -71,7 +72,7 @@ func (r *ItemRepository) GetDescendantsWithMaxDepth(parentID, maxDepth int) ([]*
 		       i.parent_id, i.frac_index, i.created_at, i.updated_at,
 		       w.name as workspace_name, w.key as workspace_key,
 		       pri.name as priority_name, pri.icon as priority_icon, pri.color as priority_color,
-		       s.name as status_name,
+		       s.name as status_name, sc.color as status_color,
 		       it.name as item_type_name,
 		       d.level
 		FROM items i
@@ -79,6 +80,7 @@ func (r *ItemRepository) GetDescendantsWithMaxDepth(parentID, maxDepth int) ([]*
 		JOIN workspaces w ON i.workspace_id = w.id
 		LEFT JOIN priorities pri ON i.priority_id = pri.id
 		LEFT JOIN statuses s ON i.status_id = s.id
+		LEFT JOIN status_categories sc ON s.category_id = sc.id
 		LEFT JOIN item_types it ON i.item_type_id = it.id
 		ORDER BY d.level, i.frac_index
 	`, parentID, maxDepth)
@@ -109,13 +111,14 @@ func (r *ItemRepository) GetAncestors(itemID int) ([]*models.Item, error) {
 		       i.parent_id, i.frac_index, i.created_at, i.updated_at,
 		       w.name as workspace_name, w.key as workspace_key,
 		       pri.name as priority_name, pri.icon as priority_icon, pri.color as priority_color,
-		       s.name as status_name,
+		       s.name as status_name, sc.color as status_color,
 		       it.name as item_type_name
 		FROM items i
 		INNER JOIN ancestors a ON i.id = a.id
 		JOIN workspaces w ON i.workspace_id = w.id
 		LEFT JOIN priorities pri ON i.priority_id = pri.id
 		LEFT JOIN statuses s ON i.status_id = s.id
+		LEFT JOIN status_categories sc ON s.category_id = sc.id
 		LEFT JOIN item_types it ON i.item_type_id = it.id
 		WHERE a.level > 0
 		ORDER BY a.level DESC
@@ -214,12 +217,13 @@ func (r *ItemRepository) GetRootItems(workspaceID int) ([]*models.Item, error) {
 		       i.parent_id, i.frac_index, i.created_at, i.updated_at,
 		       w.name as workspace_name, w.key as workspace_key,
 		       pri.name as priority_name, pri.icon as priority_icon, pri.color as priority_color,
-		       s.name as status_name,
+		       s.name as status_name, sc.color as status_color,
 		       it.name as item_type_name
 		FROM items i
 		JOIN workspaces w ON i.workspace_id = w.id
 		LEFT JOIN priorities pri ON i.priority_id = pri.id
 		LEFT JOIN statuses s ON i.status_id = s.id
+		LEFT JOIN status_categories sc ON s.category_id = sc.id
 		LEFT JOIN item_types it ON i.item_type_id = it.id
 		WHERE i.workspace_id = ? AND i.parent_id IS NULL
 		ORDER BY i.frac_index
@@ -427,7 +431,7 @@ func scanItemRowBase(rows *sql.Rows, level *int) (*models.Item, error) {
 	var assigneeID, creatorID sql.NullInt64
 	var dueDate sql.NullTime
 	var priorityName, priorityIcon, priorityColor sql.NullString
-	var statusName sql.NullString
+	var statusName, statusColor sql.NullString
 	var itemTypeName sql.NullString
 
 	dests := []any{
@@ -437,7 +441,7 @@ func scanItemRowBase(rows *sql.Rows, level *int) (*models.Item, error) {
 		&parentID, &item.FracIndex, &item.CreatedAt, &item.UpdatedAt,
 		&item.WorkspaceName, &item.WorkspaceKey,
 		&priorityName, &priorityIcon, &priorityColor,
-		&statusName,
+		&statusName, &statusColor,
 		&itemTypeName,
 	}
 	if level != nil {
@@ -465,6 +469,7 @@ func scanItemRowBase(rows *sql.Rows, level *int) (*models.Item, error) {
 	assignNullableString(&item.PriorityIcon, priorityIcon)
 	assignNullableString(&item.PriorityColor, priorityColor)
 	assignNullableString(&item.StatusName, statusName)
+	assignNullableString(&item.StatusColor, statusColor)
 	assignNullableString(&item.ItemTypeName, itemTypeName)
 
 	if customFieldValuesJSON.Valid && customFieldValuesJSON.String != "" {
