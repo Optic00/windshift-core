@@ -1130,6 +1130,11 @@ func (s *Server) initialize() error {
 				llmModelCache,
 				logger.NewAuditor(s.db),
 			),
+			AgentSecurity: handlers.NewAgentSecurityHandler(
+				repository.NewAgentSecurityRepository(s.db),
+				permService,
+				logger.NewAuditor(s.db),
+			),
 		},
 		Planning: routes.PlanningHandlers{
 			MilestoneCategory: milestoneCategoryHandler,

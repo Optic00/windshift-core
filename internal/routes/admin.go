@@ -12,6 +12,16 @@ func RegisterAdminRoutes(deps *Deps) {
 	api.HandleH("GET /admin/security-settings", admin(http.HandlerFunc(deps.Admin.SecuritySettings.GetSecuritySettings)))
 	api.HandleH("PUT /admin/security-settings", admin(http.HandlerFunc(deps.Admin.SecuritySettings.UpdateSecuritySettings)))
 
+	// Coding-agent acting-identity gate (WI-87). Master flag + allowlist
+	// for which service users a workspace admin may bind a run to.
+	if deps.Admin.AgentSecurity != nil {
+		api.HandleH("GET /admin/agent-security/settings", admin(http.HandlerFunc(deps.Admin.AgentSecurity.GetSettings)))
+		api.HandleH("PUT /admin/agent-security/settings", admin(http.HandlerFunc(deps.Admin.AgentSecurity.UpdateSettings)))
+		api.HandleH("GET /admin/agent-security/allowlist", admin(http.HandlerFunc(deps.Admin.AgentSecurity.ListAllowlist)))
+		api.HandleH("POST /admin/agent-security/allowlist", admin(http.HandlerFunc(deps.Admin.AgentSecurity.AddAllowlist)))
+		api.HandleH("DELETE /admin/agent-security/allowlist/{user_id}", admin(http.HandlerFunc(deps.Admin.AgentSecurity.RemoveAllowlist)))
+	}
+
 	// System diagnostics (admin-only)
 	api.HandleH("GET /admin/diagnostics/action-logs", admin(http.HandlerFunc(deps.Admin.Diagnostics.GetActionLogs)))
 	api.HandleH("GET /admin/diagnostics/webhook-deliveries", admin(http.HandlerFunc(deps.Admin.Diagnostics.GetWebhookDeliveries)))

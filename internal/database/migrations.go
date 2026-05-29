@@ -701,6 +701,69 @@ var Catalog = []Migration{
 			CREATE INDEX IF NOT EXISTS idx_agent_run_events_run ON agent_run_events(run_id, id);
 		`,
 	},
+	{
+		// Agent acting-identity gate (see Coding Agent Harness — Design §7
+		// and WI-87). Two pieces:
+		//   1) system_settings row toggling whether workspace admins may
+		//      bind agent runs to centralized service users at all.
+		//   2) An allowlist of (user_id, workspace_id) pairs that *can*
+		//      be picked when the flag is on. workspace_id=NULL grants
+		//      the user as an acting identity across every workspace.
+		// The chokepoint that consults both lives in
+		// internal/services/agent_acting_identity_service.go; mutations
+		// flow through the global-admin handlers (audit-logged).
+		Version:       "20260529_agent_security_allowlist",
+		Name:          "Create agent acting-identity allowlist + security setting",
+		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='global_agent_acting_user_allowlist'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='global_agent_acting_user_allowlist'",
+		SQLite: `
+			CREATE TABLE IF NOT EXISTS global_agent_acting_user_allowlist (
+				user_id INTEGER NOT NULL,
+				workspace_id INTEGER,
+				reason TEXT NOT NULL DEFAULT '',
+				created_by_user_id INTEGER,
+				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+				FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+				FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+			);
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_global_agent_acting_user_allowlist_unique
+				ON global_agent_acting_user_allowlist(user_id, COALESCE(workspace_id, 0));
+			CREATE INDEX IF NOT EXISTS idx_global_agent_acting_user_allowlist_workspace
+				ON global_agent_acting_user_allowlist(workspace_id);
+
+			INSERT OR IGNORE INTO system_settings(key, value, value_type, description, category)
+			VALUES (
+				'agents.allow_centralized_service_users',
+				'false',
+				'boolean',
+				'Allow workspace admins to bind coding-agent runs to centralized service users (impersonation gate, WI-87).',
+				'security'
+			);
+		`,
+		Postgres: `
+			CREATE TABLE IF NOT EXISTS global_agent_acting_user_allowlist (
+				user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+				workspace_id INTEGER REFERENCES workspaces(id) ON DELETE CASCADE,
+				reason TEXT NOT NULL DEFAULT '',
+				created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+				created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+			);
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_global_agent_acting_user_allowlist_unique
+				ON global_agent_acting_user_allowlist(user_id, COALESCE(workspace_id, 0));
+			CREATE INDEX IF NOT EXISTS idx_global_agent_acting_user_allowlist_workspace
+				ON global_agent_acting_user_allowlist(workspace_id) WHERE workspace_id IS NOT NULL;
+
+			INSERT INTO system_settings(key, value, value_type, description, category)
+			VALUES (
+				'agents.allow_centralized_service_users',
+				'false',
+				'boolean',
+				'Allow workspace admins to bind coding-agent runs to centralized service users (impersonation gate, WI-87).',
+				'security'
+			) ON CONFLICT (key) DO NOTHING;
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {

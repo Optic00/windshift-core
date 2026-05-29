@@ -295,6 +295,81 @@ func TestMigration_AgentRuns_SchemaSanity(t *testing.T) {
 	}
 }
 
+// TestMigration_AgentSecurity_SchemaSanity exercises the
+// 20260529_agent_security_allowlist migration end-to-end on a fresh
+// SQLite install: the seeded system_settings row is present, the
+// (user_id, workspace_id) uniqueness constraint correctly treats
+// NULL as distinct from any concrete workspace, and user cascade
+// deletion drops the allowlist row.
+func TestMigration_AgentSecurity_SchemaSanity(t *testing.T) {
+	dsn := fmt.Sprintf("file:%s/agent_security.db?mode=memory&cache=shared", t.TempDir())
+	db, err := NewSQLiteDBWithPoolSizes(dsn, 4, 1)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	if err := db.Initialize(); err != nil {
+		t.Fatalf("initialize fresh db: %v", err)
+	}
+
+	var flagValue string
+	if err := db.QueryRow(`SELECT value FROM system_settings WHERE key='agents.allow_centralized_service_users'`).Scan(&flagValue); err != nil {
+		t.Fatalf("read security flag: %v", err)
+	}
+	if flagValue != "false" {
+		t.Errorf("flag default: want false, got %q", flagValue)
+	}
+
+	if _, err := db.Exec(`INSERT INTO workspaces(id, name, key, active) VALUES (1, 'WS', 'WS', 1)`); err != nil {
+		t.Fatalf("seed workspace: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO users(email, username, first_name, last_name, is_agent) VALUES ('s@example.com','s','S','',1)`); err != nil {
+		t.Fatalf("seed service user: %v", err)
+	}
+	var serviceUserID int
+	if err := db.QueryRow(`SELECT id FROM users WHERE username='s'`).Scan(&serviceUserID); err != nil {
+		t.Fatalf("read service user id: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO users(email, username, first_name, last_name) VALUES ('admin@example.com','admin','A','')`); err != nil {
+		t.Fatalf("seed admin: %v", err)
+	}
+	var adminID int
+	if err := db.QueryRow(`SELECT id FROM users WHERE username='admin'`).Scan(&adminID); err != nil {
+		t.Fatalf("read admin id: %v", err)
+	}
+
+	// NULL workspace_id (= any-workspace) and a concrete workspace_id
+	// must coexist for the same user — they're distinct grants.
+	if _, err := db.Exec(
+		`INSERT INTO global_agent_acting_user_allowlist(user_id, workspace_id, reason, created_by_user_id) VALUES (?, NULL, 'broad grant', ?)`,
+		serviceUserID, adminID,
+	); err != nil {
+		t.Fatalf("insert any-workspace grant: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO global_agent_acting_user_allowlist(user_id, workspace_id, reason, created_by_user_id) VALUES (?, 1, 'workspace-1 grant', ?)`,
+		serviceUserID, adminID,
+	); err != nil {
+		t.Fatalf("insert workspace-scoped grant: %v", err)
+	}
+
+	// Re-inserting the same (user_id, workspace_id) pair must fail.
+	if _, err := db.Exec(
+		`INSERT INTO global_agent_acting_user_allowlist(user_id, workspace_id, reason, created_by_user_id) VALUES (?, 1, 'dup', ?)`,
+		serviceUserID, adminID,
+	); err == nil {
+		t.Fatal("expected unique-index violation on duplicate (user_id, workspace_id), got nil")
+	}
+
+	// Cascade on user delete drops the rows.
+	if _, err := db.Exec(`DELETE FROM users WHERE id = ?`, serviceUserID); err != nil {
+		t.Fatalf("delete service user: %v", err)
+	}
+	if n := countRows(t, db, fmt.Sprintf("SELECT COUNT(*) FROM global_agent_acting_user_allowlist WHERE user_id=%d", serviceUserID)); n != 0 {
+		t.Fatalf("cascade delete failed: %d rows still reference user", n)
+	}
+}
+
 func TestRunPendingMigrations_AbortsOnFailingMigration(t *testing.T) {
 	db := openTestDB(t)
 

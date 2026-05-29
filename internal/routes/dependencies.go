@@ -160,6 +160,7 @@ type AdminHandlers struct {
 	Features         *handlers.FeaturesHandler
 	OAuthClients     *handlers.AdminOAuthClientHandler
 	Diagnostics      *handlers.DiagnosticsHandler
+	AgentSecurity    *handlers.AgentSecurityHandler
 }
 
 // PlanningHandlers groups planning-related handlers.
