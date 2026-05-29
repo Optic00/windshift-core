@@ -99,6 +99,61 @@ func TestAgentRunRepository_Lifecycle(t *testing.T) {
 	}
 }
 
+func TestAgentRunRepository_ListForWorkspaceAndEventsAfter(t *testing.T) {
+	ctx := context.Background()
+	db := openAgentRunTestDB(t)
+	repo := NewAgentRunRepository(db)
+
+	ids := make([]int, 3)
+	for i := range ids {
+		id, err := repo.Insert(ctx, &models.AgentRun{WorkspaceID: 1})
+		if err != nil {
+			t.Fatalf("insert %d: %v", i, err)
+		}
+		ids[i] = id
+	}
+	// Newest-first ordering.
+	got, err := repo.ListForWorkspace(ctx, 1, 50, 0)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("count: want 3, got %d", len(got))
+	}
+	if got[0].ID != ids[2] || got[2].ID != ids[0] {
+		t.Errorf("order: want %d..%d desc, got %d..%d", ids[2], ids[0], got[0].ID, got[2].ID)
+	}
+	// Cursor pagination — pass beforeID and we get the older slice.
+	older, err := repo.ListForWorkspace(ctx, 1, 50, ids[2])
+	if err != nil {
+		t.Fatalf("list older: %v", err)
+	}
+	if len(older) != 2 || older[0].ID != ids[1] {
+		t.Errorf("cursor pagination off: got %+v", older)
+	}
+
+	// Events: 4 on the first run, query "after id=0", "after id=2".
+	for i := 0; i < 4; i++ {
+		if err := repo.AppendEvent(ctx, ids[0], "stdout", fmt.Sprintf(`{"i":%d}`, i)); err != nil {
+			t.Fatalf("append %d: %v", i, err)
+		}
+	}
+	events, err := repo.ListEventsAfter(ctx, ids[0], 0, 50)
+	if err != nil {
+		t.Fatalf("list events all: %v", err)
+	}
+	if len(events) != 4 {
+		t.Errorf("first call: want 4, got %d", len(events))
+	}
+	tail, err := repo.ListEventsAfter(ctx, ids[0], events[1].ID, 50)
+	if err != nil {
+		t.Fatalf("list events tail: %v", err)
+	}
+	if len(tail) != 2 {
+		t.Errorf("tail: want 2, got %d", len(tail))
+	}
+}
+
 func TestAgentRunRepository_FinalizeRejectsNonTerminalStatus(t *testing.T) {
 	ctx := context.Background()
 	db := openAgentRunTestDB(t)

@@ -160,6 +160,98 @@ func (r *AgentRunRepository) AppendEvent(ctx context.Context, runID int, eventTy
 	return nil
 }
 
+// ListForWorkspace returns the most recent N runs in the workspace,
+// newest first. Used by the workspace-admin runs list. beforeID is for
+// cursor pagination ("give me runs with id < beforeID"); pass 0 for the
+// first page. Empty result is not an error.
+func (r *AgentRunRepository) ListForWorkspace(ctx context.Context, workspaceID, limit, beforeID int) ([]*models.AgentRun, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	query := `
+		SELECT id, workspace_id, item_id, status, queued_at, started_at, ended_at,
+		       container_id, error, created_at, updated_at
+		FROM agent_runs
+		WHERE workspace_id = ?
+	`
+	args := []any{workspaceID}
+	if beforeID > 0 {
+		query += " AND id < ?"
+		args = append(args, beforeID)
+	}
+	query += " ORDER BY id DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list runs for workspace: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []*models.AgentRun
+	for rows.Next() {
+		run := &models.AgentRun{}
+		var itemID sql.NullInt64
+		var startedAt, endedAt sql.NullTime
+		var containerID, errMsg sql.NullString
+		if err := rows.Scan(
+			&run.ID, &run.WorkspaceID, &itemID, &run.Status,
+			&run.QueuedAt, &startedAt, &endedAt,
+			&containerID, &errMsg, &run.CreatedAt, &run.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan run row: %w", err)
+		}
+		if itemID.Valid {
+			v := int(itemID.Int64)
+			run.ItemID = &v
+		}
+		if startedAt.Valid {
+			run.StartedAt = &startedAt.Time
+		}
+		if endedAt.Valid {
+			run.EndedAt = &endedAt.Time
+		}
+		if containerID.Valid {
+			run.ContainerID = containerID.String
+		}
+		if errMsg.Valid {
+			run.Error = errMsg.String
+		}
+		out = append(out, run)
+	}
+	return out, rows.Err()
+}
+
+// ListEventsAfter is the polling-style stream the UI uses to tail a
+// run's event log: returns up to `limit` events with id > afterID,
+// ordered by id ASC (insertion order). Empty result means "no new
+// events since afterID."
+func (r *AgentRunRepository) ListEventsAfter(ctx context.Context, runID, afterID, limit int) ([]*models.AgentRunEvent, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 200
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, run_id, ts, type, payload_json
+		FROM agent_run_events
+		WHERE run_id = ? AND id > ?
+		ORDER BY id ASC
+		LIMIT ?
+	`, runID, afterID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list events after: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*models.AgentRunEvent
+	for rows.Next() {
+		ev := &models.AgentRunEvent{}
+		if err := rows.Scan(&ev.ID, &ev.RunID, &ev.Timestamp, &ev.Type, &ev.PayloadJSON); err != nil {
+			return nil, fmt.Errorf("scan event row: %w", err)
+		}
+		out = append(out, ev)
+	}
+	return out, rows.Err()
+}
+
 // ListEvents returns events for a run ordered chronologically (by id ASC,
 // which matches insertion order in both backends). Used by the SSE backfill
 // when a client connects mid-run.

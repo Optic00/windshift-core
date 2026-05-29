@@ -163,6 +163,15 @@ func RegisterWorkspaceRoutes(deps *Deps) {
 		api.HandleH("DELETE /workspaces/{workspaceId}/agent-bindings/{id}", auth(http.HandlerFunc(deps.Workspaces.AgentBinding.Delete)))
 	}
 
+	// Coding-agent runs (WI-91). Reads are item-view gated; cancel is
+	// workspace-admin gated inside the handler.
+	if deps.Workspaces.AgentRun != nil {
+		api.HandleH("GET /workspaces/{workspaceId}/agent-runs", auth(http.HandlerFunc(deps.Workspaces.AgentRun.List)))
+		api.HandleH("GET /agent-runs/{id}", auth(http.HandlerFunc(deps.Workspaces.AgentRun.Get)))
+		api.HandleH("GET /agent-runs/{id}/events", auth(http.HandlerFunc(deps.Workspaces.AgentRun.Events)))
+		api.HandleH("POST /agent-runs/{id}/cancel", auth(http.HandlerFunc(deps.Workspaces.AgentRun.Cancel)))
+	}
+
 	// Actions automation endpoints (workspace-scoped, requires action.manage permission)
 	if deps.Workspaces.Actions != nil {
 		actionManage := deps.PermissionMiddleware.RequireWorkspacePermission(models.PermissionActionManage)

@@ -653,6 +653,7 @@ func (s *Server) initialize() error {
 		SCMCreds: &scmCredsAdapter{cr: scmCredResolver},
 	})
 	agentBindingHandler := handlers.NewWorkspaceAgentBindingHandler(bindingSvc, permService, logger.NewAuditor(s.db))
+	agentRunHandler := handlers.NewAgentRunHandler(repository.NewAgentRunRepository(s.db), codingRunSvc, permService)
 	itemHandler.SetBindingTrigger(bindingSvc)
 
 	// Asset management handlers
@@ -1134,6 +1135,7 @@ func (s *Server) initialize() error {
 			Approval:              handlers.NewApprovalHandler(s.db, permService, approvalService),
 			TransitionGovernance:  handlers.NewTransitionGovernanceHandler(repository.NewTransitionRepository(s.db), approvalSetService),
 			AgentBinding:          agentBindingHandler,
+			AgentRun:              agentRunHandler,
 		},
 		Users: routes.UserHandlers{
 			User:          userHandler,

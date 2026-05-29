@@ -172,6 +172,8 @@ type RunService struct {
 	shutdown   bool
 	wg         sync.WaitGroup
 	shutdownCh chan struct{}
+	inflightMu sync.Mutex
+	inflight   map[int]context.CancelFunc
 }
 
 // NewRunService constructs a RunService bound to the given repo. The
@@ -205,7 +207,37 @@ func NewRunService(repo *repository.AgentRunRepository, opts RunServiceOptions) 
 		now:         now,
 		logger:      logger,
 		shutdownCh:  make(chan struct{}),
+		inflight:    make(map[int]context.CancelFunc),
 	}, nil
+}
+
+// Cancel marks an in-flight run for cancellation. Returns true if the run
+// was actually in flight and got its ctx canceled; false (with no error)
+// if the run is no longer in flight (already terminal, never started, or
+// the worker already exited). The terminal status is set by the worker's
+// own canceled-by-ctx path, not here, so the DB state always reflects what
+// the runner actually saw.
+func (s *RunService) Cancel(runID int) bool {
+	s.inflightMu.Lock()
+	cancel, ok := s.inflight[runID]
+	s.inflightMu.Unlock()
+	if !ok {
+		return false
+	}
+	cancel()
+	return true
+}
+
+func (s *RunService) registerCancel(runID int, cancel context.CancelFunc) {
+	s.inflightMu.Lock()
+	defer s.inflightMu.Unlock()
+	s.inflight[runID] = cancel
+}
+
+func (s *RunService) unregisterCancel(runID int) {
+	s.inflightMu.Lock()
+	defer s.inflightMu.Unlock()
+	delete(s.inflight, runID)
 }
 
 // Start records a new run in the queued state and dispatches it onto a
@@ -262,9 +294,12 @@ func (s *RunService) execute(runID int, req RunRequest) {
 	defer s.wg.Done()
 
 	// Detach from the request ctx but honor service shutdown via cancel
-	// derived from the shutdown channel.
+	// derived from the shutdown channel. The same cancel is registered
+	// in the inflight map so RunService.Cancel can reach the worker.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	s.registerCancel(runID, cancel)
+	defer s.unregisterCancel(runID)
 	go func() {
 		select {
 		case <-s.shutdownCh:

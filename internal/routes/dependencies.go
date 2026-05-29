@@ -130,6 +130,7 @@ type WorkspaceHandlers struct {
 	Approval              *handlers.ApprovalHandler
 	TransitionGovernance  *handlers.TransitionGovernanceHandler
 	AgentBinding          *handlers.WorkspaceAgentBindingHandler
+	AgentRun              *handlers.AgentRunHandler
 }
 
 // UserHandlers groups user-related handlers.

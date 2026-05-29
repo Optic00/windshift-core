@@ -487,6 +487,56 @@ func TestRunService_PostRunHookPanicIsContained(t *testing.T) {
 	svc.Wait() // would hang if the panic escaped
 }
 
+// TestRunService_CancelInFlightRun verifies Cancel() reaches the
+// running worker via the per-run cancel registry and the runner
+// observes ctx.Done().
+func TestRunService_CancelInFlightRun(t *testing.T) {
+	ctx := context.Background()
+	db := newRunServiceTestDB(t)
+	repoDB := repository.NewAgentRunRepository(db)
+
+	gate := make(chan struct{})
+	saw := make(chan struct{})
+	runner := RunnerFunc(func(ctx context.Context, _ RunInput, _ EventSink) RunnerResult {
+		close(saw)
+		select {
+		case <-gate:
+			return RunnerResult{Status: models.AgentRunStatusSucceeded}
+		case <-ctx.Done():
+			return RunnerResult{Status: models.AgentRunStatusCanceled, Error: ctx.Err().Error()}
+		}
+	})
+
+	svc, err := NewRunService(repoDB, RunServiceOptions{Runner: runner, Logger: silentLogger(t)})
+	if err != nil {
+		t.Fatalf("new svc: %v", err)
+	}
+	runID, err := svc.Start(ctx, RunRequest{WorkspaceID: 1})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	<-saw // wait until the runner is inside
+
+	if ok := svc.Cancel(runID); !ok {
+		t.Fatalf("Cancel(%d) should return true for in-flight run", runID)
+	}
+	svc.Wait()
+	close(gate)
+
+	got, err := repoDB.Get(ctx, runID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Status != models.AgentRunStatusCanceled {
+		t.Errorf("status: want canceled, got %q", got.Status)
+	}
+
+	// Cancel on an already-finished run returns false (not in inflight map).
+	if ok := svc.Cancel(runID); ok {
+		t.Errorf("Cancel on already-finished run should return false")
+	}
+}
+
 // TestRunService_ShutdownRejectsNewWork confirms Start returns
 // ErrShuttingDown after Shutdown has been initiated.
 func TestRunService_ShutdownRejectsNewWork(t *testing.T) {
