@@ -32,6 +32,7 @@ type Config struct {
 	Logging      LoggingConfig
 	Plugins      PluginsConfig
 	LLM          LLMConfig
+	CodingAgent  CodingAgentConfig
 	Logbook      LogbookConfig
 	Notification NotificationConfig
 	Jira         JiraConfig
@@ -110,6 +111,21 @@ type LLMConfig struct {
 	Endpoint      string
 	ProvidersFile string
 	PromptsDir    string
+}
+
+// CodingAgentConfig configures the coding-agent harness (WI-89). When
+// RunnerImage is non-empty the server constructs a production RunService
+// that spawns pi-coding-agent inside that container image, wires it
+// through the BindingService, and the assignee-change trigger fires
+// real runs. When empty the harness stays in observer mode — bindings
+// can still be created, the trigger logs but no-ops.
+type CodingAgentConfig struct {
+	RunnerImage  string // e.g. "windshift/coding-agent:wi-89"
+	DockerBinary string // defaults to "docker"
+	WorktreeRoot string // absolute host path; required if RunnerImage is set
+	GlobalCap    int    // RunService.GlobalCap; defaults to 8
+	LLMProvider  string // env LLM_PROVIDER for the container
+	LLMModel     string // env LLM_MODEL for the container
 }
 
 // LogbookConfig holds the URL of the logbook sidecar (if any).

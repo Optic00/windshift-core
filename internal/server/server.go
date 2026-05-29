@@ -578,17 +578,39 @@ func (s *Server) initialize() error {
 	calendarFeedHandler := handlers.NewCalendarFeedHandler(s.db, permService, cfg.BaseURL)
 	securitySettingsHandler := handlers.NewSecuritySettingsHandler(repository.NewSystemSettingRepository(s.db), logger.NewAuditor(s.db), cfg.Plugins.Disabled)
 
-	// WI-88: coding-agent binding stack. The acting-identity chokepoint
-	// (WI-87) is constructed here so both the binding service and the
-	// admin AgentSecurity handler share the security repo handle. The
-	// RunService is left nil — the trigger no-ops when matched — until
-	// WI-89 wires the production runner.
+	// WI-87 + WI-88 + WI-89: coding-agent harness stack.
+	//
+	// The acting-identity chokepoint (WI-87) is constructed first; both
+	// the workspace-binding service and the admin AgentSecurity handler
+	// share its repo handle.
+	//
+	// When CodingAgent.RunnerImage is configured, the harness boots a
+	// production RunService (WI-89): WorktreeManager → RunTokenService
+	// → PiRunner spawning docker -i. Without it the harness stays in
+	// observer mode — bindings can still be created, the trigger logs
+	// when it matches but no run starts.
 	agentSecurityRepo := repository.NewAgentSecurityRepository(s.db)
 	agentIdentitySvc, _ := services.NewAgentActingIdentityService(s.db, agentSecurityRepo)
 	agentBindingRepo := repository.NewWorkspaceAgentBindingRepository(s.db)
+
+	var (
+		codingRunSvc *services.RunService
+	)
+	if cfg.CodingAgent.RunnerImage != "" {
+		var bootErr error
+		codingRunSvc, bootErr = bootCodingAgentRunService(s.db, tokenManager, cfg.CodingAgent)
+		if bootErr != nil {
+			slog.Warn("coding-agent harness disabled: failed to construct RunService",
+				slog.String("component", "coding-agent"),
+				slog.Any("error", bootErr),
+			)
+		}
+	}
+
 	bindingSvc, _ := services.NewBindingService(services.BindingServiceOptions{
 		Repo:     agentBindingRepo,
 		Identity: agentIdentitySvc,
+		Runs:     codingRunSvc,
 	})
 	agentBindingHandler := handlers.NewWorkspaceAgentBindingHandler(bindingSvc, permService, logger.NewAuditor(s.db))
 	itemHandler.SetBindingTrigger(bindingSvc)
@@ -1782,4 +1804,52 @@ func (s *Server) runIssueSync(issueSyncService *scm.IssueSyncService) {
 			return
 		}
 	}
+}
+
+// bootCodingAgentRunService builds the production WI-89 RunService when
+// cfg.CodingAgent.RunnerImage is configured. Returns an error (which the
+// caller logs and treats as "harness disabled") for any misconfig so the
+// rest of the server still comes up.
+func bootCodingAgentRunService(db database.Database, tm *auth.TokenManager, cfg config.CodingAgentConfig) (*services.RunService, error) {
+	if cfg.WorktreeRoot == "" {
+		return nil, fmt.Errorf("coding-agent: WorktreeRoot is required when RunnerImage is set")
+	}
+	wm, err := services.NewWorktreeManager(services.WorktreeManagerOptions{RootDir: cfg.WorktreeRoot})
+	if err != nil {
+		return nil, fmt.Errorf("coding-agent worktree manager: %w", err)
+	}
+	tokens, err := services.NewRunTokenService(tm)
+	if err != nil {
+		return nil, fmt.Errorf("coding-agent token service: %w", err)
+	}
+
+	staticEnv := map[string]string{}
+	if cfg.LLMProvider != "" {
+		staticEnv["LLM_PROVIDER"] = cfg.LLMProvider
+	}
+	if cfg.LLMModel != "" {
+		staticEnv["LLM_MODEL"] = cfg.LLMModel
+	}
+
+	runner := &services.DockerPiRunner{
+		Image:        cfg.RunnerImage,
+		DockerBinary: cfg.DockerBinary,
+		Env:          staticEnv,
+		InitialPrompt: "You are an autonomous coding agent. The Windshift item assigned to you is in $WINDSHIFT_ITEM_ID. " +
+			"Start by running `ws task get $WINDSHIFT_ITEM_ID` to read the requirements. " +
+			"The ws CLI is preconfigured (see ~/WINDSHIFT.md for the full surface). " +
+			"Complete the work in /workspace and open a draft pull request when ready.",
+	}
+
+	runRepo := repository.NewAgentRunRepository(db)
+	runSvc, err := services.NewRunService(runRepo, services.RunServiceOptions{
+		Runner:    runner,
+		Worktrees: wm,
+		Tokens:    tokens,
+		GlobalCap: cfg.GlobalCap,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("coding-agent run service: %w", err)
+	}
+	return runSvc, nil
 }

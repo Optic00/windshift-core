@@ -199,6 +199,14 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 			ProvidersFile: resolvedLLMProviders,
 			PromptsDir:    resolvedAIPromptsDir,
 		},
+		CodingAgent: CodingAgentConfig{
+			RunnerImage:  os.Getenv("CODING_AGENT_RUNNER_IMAGE"),
+			DockerBinary: os.Getenv("CODING_AGENT_DOCKER_BINARY"),
+			WorktreeRoot: os.Getenv("CODING_AGENT_WORKTREE_ROOT"),
+			GlobalCap:    parseIntEnv("CODING_AGENT_GLOBAL_CAP", 0),
+			LLMProvider:  os.Getenv("CODING_AGENT_LLM_PROVIDER"),
+			LLMModel:     os.Getenv("CODING_AGENT_LLM_MODEL"),
+		},
 		Logbook: LogbookConfig{
 			Endpoint: os.Getenv("LOGBOOK_ENDPOINT"),
 		},
