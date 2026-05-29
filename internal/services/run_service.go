@@ -261,6 +261,10 @@ func (s *RunService) Start(ctx context.Context, req RunRequest) (int, error) {
 		ItemID:      req.ItemID,
 		Status:      models.AgentRunStatusQueued,
 	}
+	if req.BindingID > 0 {
+		bID := req.BindingID
+		run.BindingID = &bID
+	}
 	runID, err := s.repo.Insert(ctx, run)
 	if err != nil {
 		return 0, fmt.Errorf("insert agent_run: %w", err)
@@ -476,4 +480,11 @@ func (s *RunService) Wait() {
 // for the run.
 func (s *RunService) HasTokens() bool {
 	return s.tokens != nil
+}
+
+// CountRunsForBindingSince proxies to the repository so BindingService
+// can enforce a binding's max_runs_per_day budget without taking on a
+// direct dependency on the agent_runs repo.
+func (s *RunService) CountRunsForBindingSince(ctx context.Context, bindingID int, since time.Time) (int, error) {
+	return s.repo.CountForBindingSince(ctx, bindingID, since)
 }

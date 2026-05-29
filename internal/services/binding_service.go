@@ -9,9 +9,24 @@ import (
 	"strings"
 	"time"
 
+	"windshift/internal/auth"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 )
+
+// ErrBindingTokenTTLOverCap is returned when a binding is created with a
+// TokenTTLMinutes value above the per-run-token ceiling (see
+// MaxAgentTokenTTL). Surfaced as 400 by the handler so the admin sees
+// the bad config at create time rather than getting silently clamped at
+// every run start.
+var ErrBindingTokenTTLOverCap = errors.New("binding service: token_ttl_minutes exceeds the agent-token ceiling")
+
+// ErrBindingBudgetExceeded is returned (and swallowed at log level) by
+// MaybeStartRunForAssignee when a binding has already started its
+// configured max_runs_per_day for the current UTC day. The binding
+// remains valid; new runs simply wait until the rolling 24h window
+// reopens.
+var ErrBindingBudgetExceeded = errors.New("binding service: max_runs_per_day budget exceeded for today")
 
 // SCMCredentialResolver is the surface BindingService needs from
 // scm.CredentialResolver: given a workspace SCM connection id, return the
@@ -93,12 +108,26 @@ type CreateBindingRequest struct {
 // persists the binding with the chokepoint-resolved kind (the client's
 // claim, if any, is ignored). Returns repository.ErrBindingDuplicate
 // when a binding already exists for (workspace, acting_user).
+//
+// Scopes and TTL are validated up front so a workspace admin gets a
+// 400 at create time instead of having their config silently clamped
+// (TTL) or runs failing at mint time (scopes).
 func (s *BindingService) Create(ctx context.Context, req CreateBindingRequest) (*models.WorkspaceAgentBinding, error) {
 	if req.WorkspaceID == 0 {
 		return nil, errors.New("binding service: workspace_id is required")
 	}
 	if req.CreatedByUserID == 0 {
 		return nil, errors.New("binding service: created_by_user_id is required")
+	}
+	if len(req.TokenScopes) > 0 {
+		if err := auth.ValidateAgentScopes(req.TokenScopes); err != nil {
+			return nil, fmt.Errorf("binding service: %w", err)
+		}
+	}
+	if req.TokenTTLMinutes > 0 {
+		if time.Duration(req.TokenTTLMinutes)*time.Minute > MaxAgentTokenTTL {
+			return nil, ErrBindingTokenTTLOverCap
+		}
 	}
 	identity, err := s.identity.Resolve(ctx, req.CreatedByUserID, req.ActingUserID, req.WorkspaceID)
 	if err != nil {
@@ -162,6 +191,22 @@ func (s *BindingService) MaybeStartRunForAssignee(ctx context.Context, workspace
 	if s.runs == nil {
 		s.logger.Printf("binding service: matched binding=%d for item=%d but no RunService is configured (dropping)", binding.ID, itemID)
 		return nil
+	}
+
+	if binding.MaxRunsPerDay > 0 {
+		// Use a rolling 24h window rather than calendar day: simpler to
+		// reason about, no time-zone surprises, and aligns with how the
+		// per-binding budget is typically meant ("at most N in any 24h
+		// stretch"). 0 means unlimited.
+		since := time.Now().UTC().Add(-24 * time.Hour)
+		count, err := s.runs.CountRunsForBindingSince(ctx, binding.ID, since)
+		if err != nil {
+			return fmt.Errorf("count recent runs: %w", err)
+		}
+		if count >= binding.MaxRunsPerDay {
+			s.logger.Printf("binding service: budget exceeded for binding=%d (max=%d, recent=%d) — dropping item=%d", binding.ID, binding.MaxRunsPerDay, count, itemID)
+			return ErrBindingBudgetExceeded
+		}
 	}
 
 	req := RunRequest{

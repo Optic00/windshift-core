@@ -28,12 +28,14 @@ func IsAgentRunTerminal(status string) bool {
 
 // AgentRun records one execution of the coding-agent harness: a per-run
 // Docker container that mounts a worktree, runs the pi coding agent, and
-// produces a PR. Binding + acting-identity columns land in later phases —
-// this struct stays slim while the walking skeleton settles.
+// produces a PR. BindingID is optional — set when the run was triggered
+// by an assignee change matching a workspace_agent_binding, nil for
+// manually-started runs.
 type AgentRun struct {
 	ID          int        `json:"id"`
 	WorkspaceID int        `json:"workspace_id"`
 	ItemID      *int       `json:"item_id,omitempty"`
+	BindingID   *int       `json:"binding_id,omitempty"`
 	Status      string     `json:"status"`
 	QueuedAt    time.Time  `json:"queued_at"`
 	StartedAt   *time.Time `json:"started_at,omitempty"`

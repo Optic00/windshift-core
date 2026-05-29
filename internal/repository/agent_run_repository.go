@@ -24,18 +24,18 @@ func NewAgentRunRepository(db database.Database) *AgentRunRepository {
 
 // Insert creates a new agent_runs row in the queued state and returns the
 // new ID. Fields managed by the DB (id, queued_at, created_at, updated_at)
-// are populated from defaults; the caller is responsible for workspace_id
-// + item_id only.
+// are populated from defaults; the caller is responsible for workspace_id,
+// item_id, and binding_id.
 func (r *AgentRunRepository) Insert(ctx context.Context, run *models.AgentRun) (int, error) {
 	status := run.Status
 	if status == "" {
 		status = models.AgentRunStatusQueued
 	}
 	res, err := r.db.ExecWriteContext(ctx, `
-		INSERT INTO agent_runs(workspace_id, item_id, status)
-		VALUES (?, ?, ?)
+		INSERT INTO agent_runs(workspace_id, item_id, binding_id, status)
+		VALUES (?, ?, ?, ?)
 	`,
-		run.WorkspaceID, nullIntArg(run.ItemID), status,
+		run.WorkspaceID, nullIntArg(run.ItemID), nullIntArg(run.BindingID), status,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("failed to insert agent_run: %w", err)
@@ -50,18 +50,18 @@ func (r *AgentRunRepository) Insert(ctx context.Context, run *models.AgentRun) (
 // Get loads a single run by ID. Returns sql.ErrNoRows if it does not exist.
 func (r *AgentRunRepository) Get(ctx context.Context, id int) (*models.AgentRun, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, workspace_id, item_id, status, queued_at, started_at, ended_at,
+		SELECT id, workspace_id, item_id, binding_id, status, queued_at, started_at, ended_at,
 		       container_id, error, created_at, updated_at
 		FROM agent_runs WHERE id = ?
 	`, id)
 
 	run := &models.AgentRun{}
-	var itemID sql.NullInt64
+	var itemID, bindingID sql.NullInt64
 	var startedAt, endedAt sql.NullTime
 	var containerID, errMsg sql.NullString
 
 	if err := row.Scan(
-		&run.ID, &run.WorkspaceID, &itemID, &run.Status,
+		&run.ID, &run.WorkspaceID, &itemID, &bindingID, &run.Status,
 		&run.QueuedAt, &startedAt, &endedAt,
 		&containerID, &errMsg, &run.CreatedAt, &run.UpdatedAt,
 	); err != nil {
@@ -70,6 +70,10 @@ func (r *AgentRunRepository) Get(ctx context.Context, id int) (*models.AgentRun,
 	if itemID.Valid {
 		v := int(itemID.Int64)
 		run.ItemID = &v
+	}
+	if bindingID.Valid {
+		v := int(bindingID.Int64)
+		run.BindingID = &v
 	}
 	if startedAt.Valid {
 		run.StartedAt = &startedAt.Time
@@ -84,6 +88,26 @@ func (r *AgentRunRepository) Get(ctx context.Context, id int) (*models.AgentRun,
 		run.Error = errMsg.String
 	}
 	return run, nil
+}
+
+// CountForBindingSince returns the number of runs created against the
+// given binding at or after `since`. Used to enforce a binding's
+// max_runs_per_day budget before admitting a new run. Returns 0 when
+// bindingID is 0 — callers that don't have a binding shouldn't be
+// enforcing a per-binding budget in the first place.
+func (r *AgentRunRepository) CountForBindingSince(ctx context.Context, bindingID int, since time.Time) (int, error) {
+	if bindingID == 0 {
+		return 0, nil
+	}
+	row := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM agent_runs
+		WHERE binding_id = ? AND created_at >= ?
+	`, bindingID, since)
+	var n int
+	if err := row.Scan(&n); err != nil {
+		return 0, fmt.Errorf("count runs for binding: %w", err)
+	}
+	return n, nil
 }
 
 // MarkRunning transitions a run from queued to running and stamps started_at.
@@ -169,7 +193,7 @@ func (r *AgentRunRepository) ListForWorkspace(ctx context.Context, workspaceID, 
 		limit = 50
 	}
 	query := `
-		SELECT id, workspace_id, item_id, status, queued_at, started_at, ended_at,
+		SELECT id, workspace_id, item_id, binding_id, status, queued_at, started_at, ended_at,
 		       container_id, error, created_at, updated_at
 		FROM agent_runs
 		WHERE workspace_id = ?
@@ -191,11 +215,11 @@ func (r *AgentRunRepository) ListForWorkspace(ctx context.Context, workspaceID, 
 	var out []*models.AgentRun
 	for rows.Next() {
 		run := &models.AgentRun{}
-		var itemID sql.NullInt64
+		var itemID, bindingID sql.NullInt64
 		var startedAt, endedAt sql.NullTime
 		var containerID, errMsg sql.NullString
 		if err := rows.Scan(
-			&run.ID, &run.WorkspaceID, &itemID, &run.Status,
+			&run.ID, &run.WorkspaceID, &itemID, &bindingID, &run.Status,
 			&run.QueuedAt, &startedAt, &endedAt,
 			&containerID, &errMsg, &run.CreatedAt, &run.UpdatedAt,
 		); err != nil {
@@ -204,6 +228,10 @@ func (r *AgentRunRepository) ListForWorkspace(ctx context.Context, workspaceID, 
 		if itemID.Valid {
 			v := int(itemID.Int64)
 			run.ItemID = &v
+		}
+		if bindingID.Valid {
+			v := int(bindingID.Int64)
+			run.BindingID = &v
 		}
 		if startedAt.Valid {
 			run.StartedAt = &startedAt.Time

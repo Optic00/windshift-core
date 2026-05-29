@@ -629,11 +629,10 @@ var Catalog = []Migration{
 		// agent_runs records one execution of the coding-agent harness:
 		// admission → container spawn → exit. agent_run_events captures the
 		// per-run stdio / lifecycle stream that the orchestrator reads from
-		// pi's RPC mode and forwards to the SSE hub. binding_id /
-		// acting_user_id / token-budget / pr_url etc. land in later phases
-		// (WI-87 Security gate, WI-88 binding schema). This first slice is
-		// the walking-skeleton shape RunService needs to record a run end-to
-		// -end.
+		// pi's RPC mode and forwards to the SSE hub. binding_id is the FK
+		// back to the workspace_agent_binding that triggered the run (NULL
+		// for manually-started runs); the (binding_id, created_at) index
+		// supports per-binding budget enforcement (WI-134).
 		Version:       "20260529_agent_runs",
 		Name:          "Create agent_runs + agent_run_events for the coding-agent harness",
 		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='agent_runs'",
@@ -643,6 +642,7 @@ var Catalog = []Migration{
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				workspace_id INTEGER NOT NULL,
 				item_id INTEGER,
+				binding_id INTEGER, -- soft ref to workspace_agent_bindings; that table is created in a later migration so no FK constraint, and agent_runs must outlive bindings for audit anyway
 				status TEXT NOT NULL DEFAULT 'queued'
 					CHECK (status IN ('queued','running','succeeded','failed','canceled','killed')),
 				queued_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -658,6 +658,7 @@ var Catalog = []Migration{
 			CREATE INDEX IF NOT EXISTS idx_agent_runs_workspace_queued ON agent_runs(workspace_id, queued_at DESC);
 			CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON agent_runs(status);
 			CREATE INDEX IF NOT EXISTS idx_agent_runs_item_id ON agent_runs(item_id);
+			CREATE INDEX IF NOT EXISTS idx_agent_runs_binding_created ON agent_runs(binding_id, created_at DESC);
 
 			CREATE TABLE IF NOT EXISTS agent_run_events (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -674,6 +675,7 @@ var Catalog = []Migration{
 				id SERIAL PRIMARY KEY,
 				workspace_id INTEGER NOT NULL,
 				item_id INTEGER,
+				binding_id INTEGER, -- soft ref to workspace_agent_bindings; that table is created in a later migration so no FK constraint, and agent_runs must outlive bindings for audit anyway
 				status TEXT NOT NULL DEFAULT 'queued'
 					CHECK (status IN ('queued','running','succeeded','failed','canceled','killed')),
 				queued_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -689,6 +691,7 @@ var Catalog = []Migration{
 			CREATE INDEX IF NOT EXISTS idx_agent_runs_workspace_queued ON agent_runs(workspace_id, queued_at DESC);
 			CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON agent_runs(status);
 			CREATE INDEX IF NOT EXISTS idx_agent_runs_item_id ON agent_runs(item_id);
+			CREATE INDEX IF NOT EXISTS idx_agent_runs_binding_created ON agent_runs(binding_id, created_at DESC);
 
 			CREATE TABLE IF NOT EXISTS agent_run_events (
 				id BIGSERIAL PRIMARY KEY,

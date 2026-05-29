@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"windshift/internal/logger"
 	"windshift/internal/models"
@@ -175,6 +176,10 @@ func (h *WorkspaceAgentBindingHandler) Create(w http.ResponseWriter, r *http.Req
 		switch {
 		case errors.Is(err, repository.ErrBindingDuplicate):
 			respondConflict(w, r, err.Error())
+		case errors.Is(err, services.ErrBindingTokenTTLOverCap):
+			respondBadRequest(w, r, err.Error())
+		case isAgentScopeError(err):
+			respondBadRequest(w, r, err.Error())
 		case isIdentityGateError(err):
 			respondForbidden(w, r)
 		default:
@@ -236,4 +241,12 @@ func isIdentityGateError(err error) bool {
 		errors.Is(err, services.ErrActingIdentityNotOwned) ||
 		errors.Is(err, services.ErrActingIdentityCentralizedGated) ||
 		errors.Is(err, services.ErrActingIdentityNotInAllowlist)
+}
+
+// isAgentScopeError reports whether the wrapped error came from
+// auth.ValidateAgentScopes. The auth package returns a plain
+// fmt.Errorf rather than a sentinel; matching by substring is ugly but
+// localized and preferable to leaking the validation message via 500.
+func isAgentScopeError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "scopes not permitted for coding-agent tokens")
 }

@@ -204,6 +204,29 @@ func ValidateScopes(scopes []string) error {
 	return nil
 }
 
+// ValidateAgentScopes restricts coding-agent run tokens to the
+// DefaultAgentScopes set: no admin:* scopes, no legacy "read"/"write"/
+// "admin" strings, no items:delete or planning :write/:delete scopes that
+// the default set deliberately excludes. The harness mints tokens that
+// run inside an attacker-reachable container, so the surface must stay
+// narrow regardless of what the binding's workspace admin requested.
+func ValidateAgentScopes(scopes []string) error {
+	allowed := make(map[string]bool, len(DefaultAgentScopes))
+	for _, s := range DefaultAgentScopes {
+		allowed[s] = true
+	}
+	var rejected []string
+	for _, s := range scopes {
+		if !allowed[s] {
+			rejected = append(rejected, s)
+		}
+	}
+	if len(rejected) > 0 {
+		return fmt.Errorf("scopes not permitted for coding-agent tokens: %s", strings.Join(rejected, ", "))
+	}
+	return nil
+}
+
 // expandLegacyScopes maps old-style permission strings to granular scopes.
 // Returns the original scopes unchanged if they are already in resource:action format.
 func expandLegacyScopes(scopes []string) []string {
