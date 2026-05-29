@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"windshift/internal/auth"
 	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
@@ -295,6 +296,120 @@ func TestRunService_RepoWithoutManagerErrors(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error when Repo is set without WorktreeManager, got nil")
+	}
+}
+
+// TestRunService_TokenAndEnvFlowThrough exercises WI-86 wiring: a
+// RunRequest with a TokenSpec and a caller Env reaches the runner with
+// WS_TOKEN populated from RunTokenService.Mint, caller Env preserved,
+// and a "token_minted" lifecycle event recorded.
+func TestRunService_TokenAndEnvFlowThrough(t *testing.T) {
+	ctx := context.Background()
+	db, actingUserID := newTokenTestDB(t)
+	tm := auth.NewTokenManager(db, nil)
+
+	if _, err := db.Exec(`INSERT INTO workspaces(id, name, key, active) VALUES (1, 'ws', 'WS', 1)`); err != nil {
+		t.Fatalf("seed workspace: %v", err)
+	}
+	repoDB := repository.NewAgentRunRepository(db)
+	tokens, err := NewRunTokenService(tm)
+	if err != nil {
+		t.Fatalf("new token svc: %v", err)
+	}
+
+	var observed RunInput
+	runner := RunnerFunc(func(ctx context.Context, input RunInput, emit EventSink) RunnerResult {
+		observed = input
+		return RunnerResult{Status: models.AgentRunStatusSucceeded}
+	})
+
+	svc, err := NewRunService(repoDB, RunServiceOptions{
+		Runner: runner,
+		Tokens: tokens,
+		Logger: silentLogger(t),
+	})
+	if err != nil {
+		t.Fatalf("new svc: %v", err)
+	}
+
+	runID, err := svc.Start(ctx, RunRequest{
+		WorkspaceID: 1,
+		Token: &TokenSpec{
+			ActingUserID: actingUserID,
+			TTL:          5 * time.Minute,
+			Name:         "agent-run:phase3",
+		},
+		Env: map[string]string{
+			"WS_API_URL":        "https://windshift.test",
+			"WS_WORKSPACE_ID":   "1",
+			"WINDSHIFT_ITEM_ID": "WI-71",
+		},
+	})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	svc.Wait()
+
+	if observed.Env["WS_TOKEN"] == "" {
+		t.Fatal("runner did not see WS_TOKEN in env")
+	}
+	if got := observed.Env["WS_API_URL"]; got != "https://windshift.test" {
+		t.Errorf("WS_API_URL: want https://windshift.test, got %q", got)
+	}
+	if got := observed.Env["WINDSHIFT_ITEM_ID"]; got != "WI-71" {
+		t.Errorf("WINDSHIFT_ITEM_ID: want WI-71, got %q", got)
+	}
+
+	// Confirm the minted token actually round-trips through TokenManager
+	// (i.e. it's a real token, not a placeholder).
+	user, _, validateErr := tm.ValidateToken(observed.Env["WS_TOKEN"])
+	if validateErr != nil {
+		t.Fatalf("validate minted token: %v", validateErr)
+	}
+	if user.ID != actingUserID {
+		t.Errorf("token actor: want user %d, got %d", actingUserID, user.ID)
+	}
+
+	events, err := repoDB.ListEvents(ctx, runID)
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	foundMinted := false
+	for _, ev := range events {
+		if ev.Type == "lifecycle" && strings.Contains(ev.PayloadJSON, "token_minted") {
+			foundMinted = true
+			if !strings.Contains(ev.PayloadJSON, `"token_id":`) {
+				t.Errorf("token_minted payload missing token_id: %s", ev.PayloadJSON)
+			}
+		}
+	}
+	if !foundMinted {
+		t.Errorf("expected a token_minted lifecycle event, got events=%+v", events)
+	}
+}
+
+// TestRunService_TokenWithoutManagerErrors mirrors the worktree
+// misconfig case: asking for a Token without a RunTokenService fails at
+// Start so the caller learns immediately rather than persisting a queued
+// row that will never run.
+func TestRunService_TokenWithoutManagerErrors(t *testing.T) {
+	ctx := context.Background()
+	db := newRunServiceTestDB(t)
+	repoDB := repository.NewAgentRunRepository(db)
+
+	runner := RunnerFunc(func(ctx context.Context, input RunInput, emit EventSink) RunnerResult {
+		return RunnerResult{Status: models.AgentRunStatusSucceeded}
+	})
+	svc, err := NewRunService(repoDB, RunServiceOptions{Runner: runner, Logger: silentLogger(t)})
+	if err != nil {
+		t.Fatalf("new svc: %v", err)
+	}
+	_, err = svc.Start(ctx, RunRequest{
+		WorkspaceID: 1,
+		Token:       &TokenSpec{ActingUserID: 99},
+	})
+	if err == nil {
+		t.Fatal("expected error when Token is set without RunTokenService, got nil")
 	}
 }
 

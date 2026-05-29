@@ -65,26 +65,53 @@ func (f RunnerFunc) Run(ctx context.Context, input RunInput, emit EventSink) Run
 	return f(ctx, input, emit)
 }
 
-// RunRequest is the minimum payload required to start a run. Binding,
-// acting identity, and llm_connection get bolted on in later phases. Repo
-// is optional: when set, RunService asks the WorktreeManager to prepare a
-// worktree before the runner sees the run; when nil, the runner runs
-// without a /workspace mount (Phase 1 walking-skeleton path).
+// RunRequest is the minimum payload required to start a run.
+//
+// Repo is optional: when set, RunService asks the WorktreeManager to
+// prepare a worktree before the runner sees the run; when nil, the runner
+// runs without a /workspace mount.
+//
+// Token is optional: when set, RunService mints a short-lived `ws` API
+// token via RunTokenService and forwards it to the container as
+// $WS_TOKEN. The minted token expires by TTL; the orchestrator does not
+// revoke it on run completion (cleanup happens via the token cleanup
+// sweeper on api_tokens.expires_at).
+//
+// Env is forwarded verbatim into the runner's environment. Orchestrator-
+// owned keys (WS_TOKEN, AGENT_RUN_ID) win over caller-supplied values to
+// avoid mixed-identity confusion.
+//
+// Binding, acting-identity resolution, and llm_connection selection get
+// bolted on in later phases (WI-87 / WI-88); for now the caller resolves
+// those itself and hands the result in via Token + Env.
 type RunRequest struct {
 	WorkspaceID int
 	ItemID      *int
 	Repo        *RepoSpec
+	Token       *TokenSpec
+	Env         map[string]string
+}
+
+// TokenSpec is the per-run input to RunTokenService.Mint. Phase 4-5 wire
+// this from a binding row; for now callers populate it directly.
+type TokenSpec struct {
+	ActingUserID int
+	Scopes       []string
+	TTL          time.Duration
+	Name         string
 }
 
 // RunServiceOptions controls construction. GlobalCap caps the number of
 // runs in-flight across the whole process; the queueing semaphore admits
 // goroutines past Start, so a backed-up queue parks here without blocking
 // the HTTP handler that called Start. Worktrees is optional and only
-// required when callers actually attach Repo to a RunRequest.
+// required when callers actually attach Repo to a RunRequest. Tokens is
+// optional and only required when callers attach a TokenSpec.
 type RunServiceOptions struct {
 	GlobalCap int
 	Runner    Runner
 	Worktrees *WorktreeManager
+	Tokens    *RunTokenService
 	Now       func() time.Time // injected for deterministic tests
 	Logger    *log.Logger
 }
@@ -99,6 +126,7 @@ type RunService struct {
 	repo      *repository.AgentRunRepository
 	runner    Runner
 	worktrees *WorktreeManager
+	tokens    *RunTokenService
 	sem       chan struct{}
 	now       func() time.Time
 	logger    *log.Logger
@@ -134,6 +162,7 @@ func NewRunService(repo *repository.AgentRunRepository, opts RunServiceOptions) 
 		repo:       repo,
 		runner:     opts.Runner,
 		worktrees:  opts.Worktrees,
+		tokens:     opts.Tokens,
 		sem:        make(chan struct{}, capacity),
 		now:        now,
 		logger:     logger,
@@ -175,20 +204,23 @@ func (s *RunService) Start(ctx context.Context, req RunRequest) (int, error) {
 	if req.Repo != nil && s.worktrees == nil {
 		return 0, errors.New("run service: request includes a Repo but no WorktreeManager is configured")
 	}
+	if req.Token != nil && s.tokens == nil {
+		return 0, errors.New("run service: request includes a Token but no RunTokenService is configured")
+	}
 
 	s.wg.Add(1)
 	// The caller's ctx is request-scoped; the run must outlive it.
 	// execute() derives a service-scoped ctx wired to shutdownCh so
 	// cancellation flows from process shutdown instead of HTTP request
 	// teardown.
-	go s.execute(runID, req.Repo) //nolint:gosec // G118: intentional Background ctx; see comment above.
+	go s.execute(runID, req) //nolint:gosec // G118: intentional Background ctx; see comment above.
 	return runID, nil
 }
 
 // execute is the per-run worker. Acquires the global semaphore, marks the
 // run running, invokes the runner with an event sink wired to the repo,
 // then finalizes the run with the runner's verdict.
-func (s *RunService) execute(runID int, repoSpec *RepoSpec) {
+func (s *RunService) execute(runID int, req RunRequest) {
 	defer s.wg.Done()
 
 	// Detach from the request ctx but honor service shutdown via cancel
@@ -228,8 +260,8 @@ func (s *RunService) execute(runID int, repoSpec *RepoSpec) {
 	}
 
 	var workspacePath string
-	if repoSpec != nil {
-		pw, err := s.worktrees.Prepare(ctx, *repoSpec, runID)
+	if req.Repo != nil {
+		pw, err := s.worktrees.Prepare(ctx, *req.Repo, runID)
 		if err != nil {
 			s.logger.Printf("run service: prepare worktree run=%d: %v", runID, err)
 			s.finalize(runID, models.AgentRunStatusFailed, fmt.Sprintf("prepare worktree: %v", err))
@@ -245,7 +277,31 @@ func (s *RunService) execute(runID int, repoSpec *RepoSpec) {
 		}()
 	}
 
-	result := s.runner.Run(ctx, RunInput{RunID: runID, WorkspacePath: workspacePath}, sink)
+	// Build the env the runner will see. Caller-supplied keys come
+	// first; the orchestrator's own injections (WS_TOKEN) overwrite on
+	// conflict so a confused caller can't smuggle in their own token.
+	env := make(map[string]string, len(req.Env)+1)
+	for k, v := range req.Env {
+		env[k] = v
+	}
+	if req.Token != nil {
+		minted, err := s.tokens.Mint(ctx, MintRequest{
+			ActingUserID: req.Token.ActingUserID,
+			Scopes:       req.Token.Scopes,
+			TTL:          req.Token.TTL,
+			Name:         req.Token.Name,
+		})
+		if err != nil {
+			s.logger.Printf("run service: mint ws token run=%d: %v", runID, err)
+			s.finalize(runID, models.AgentRunStatusFailed, fmt.Sprintf("mint ws token: %v", err))
+			return
+		}
+		env["WS_TOKEN"] = minted.Token
+		_ = sink("lifecycle", fmt.Sprintf(`{"phase":"token_minted","token_id":%d,"expires_at":%q}`,
+			minted.TokenID, minted.ExpiresAt.Format(time.RFC3339)))
+	}
+
+	result := s.runner.Run(ctx, RunInput{RunID: runID, WorkspacePath: workspacePath, Env: env}, sink)
 	if result.ContainerID != "" {
 		if err := s.repo.SetContainerID(ctx, runID, result.ContainerID); err != nil {
 			s.logger.Printf("run service: set container_id run=%d: %v", runID, err)
