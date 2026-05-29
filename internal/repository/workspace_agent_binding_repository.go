@@ -40,12 +40,12 @@ func (r *WorkspaceAgentBindingRepository) Insert(ctx context.Context, b *models.
 	}
 	res, err := r.db.ExecWriteContext(ctx, `
 		INSERT INTO workspace_agent_bindings
-			(workspace_id, acting_user_id, acting_user_kind, repo_slug, repo_remote_url, repo_base_ref,
+			(workspace_id, acting_user_id, acting_user_kind, repo_slug, repo_base_ref,
 			 llm_connection_id, scm_connection_id, token_scopes_json, token_ttl_minutes, max_runs_per_day, created_by_user_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		b.WorkspaceID, b.ActingUserID, b.ActingUserKind,
-		nullStringArg(b.RepoSlug), nullStringArg(b.RepoRemoteURL), nullStringArg(b.RepoBaseRef),
+		nullStringArg(b.RepoSlug), nullStringArg(b.RepoBaseRef),
 		nullIntArg(b.LLMConnectionID), nullIntArg(b.SCMConnectionID),
 		string(scopesJSON), b.TokenTTLMinutes, b.MaxRunsPerDay,
 		b.CreatedByUserID,
@@ -114,7 +114,7 @@ func (r *WorkspaceAgentBindingRepository) Delete(ctx context.Context, id, worksp
 
 const bindingSelectSQL = `
 	SELECT id, workspace_id, acting_user_id, acting_user_kind,
-	       repo_slug, repo_remote_url, repo_base_ref,
+	       repo_slug, repo_base_ref,
 	       llm_connection_id, scm_connection_id,
 	       token_scopes_json, token_ttl_minutes, max_runs_per_day,
 	       created_by_user_id, created_at, updated_at
@@ -135,12 +135,12 @@ func scanBindingRows(rows *sql.Rows) (*models.WorkspaceAgentBinding, error) {
 
 func scanBindingFrom(scanner bindingRowScanner) (*models.WorkspaceAgentBinding, error) {
 	b := &models.WorkspaceAgentBinding{}
-	var repoSlug, repoRemoteURL, repoBaseRef sql.NullString
+	var repoSlug, repoBaseRef sql.NullString
 	var llmConn, scmConn sql.NullInt64
 	var scopesJSON string
 	if err := scanner.Scan(
 		&b.ID, &b.WorkspaceID, &b.ActingUserID, &b.ActingUserKind,
-		&repoSlug, &repoRemoteURL, &repoBaseRef,
+		&repoSlug, &repoBaseRef,
 		&llmConn, &scmConn, &scopesJSON, &b.TokenTTLMinutes, &b.MaxRunsPerDay,
 		&b.CreatedByUserID, &b.CreatedAt, &b.UpdatedAt,
 	); err != nil {
@@ -148,9 +148,6 @@ func scanBindingFrom(scanner bindingRowScanner) (*models.WorkspaceAgentBinding, 
 	}
 	if repoSlug.Valid {
 		b.RepoSlug = repoSlug.String
-	}
-	if repoRemoteURL.Valid {
-		b.RepoRemoteURL = repoRemoteURL.String
 	}
 	if repoBaseRef.Valid {
 		b.RepoBaseRef = repoBaseRef.String

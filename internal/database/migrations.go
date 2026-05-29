@@ -788,7 +788,6 @@ var Catalog = []Migration{
 				acting_user_kind TEXT NOT NULL
 					CHECK (acting_user_kind IN ('agent','centralized_service')),
 				repo_slug TEXT,
-				repo_remote_url TEXT,
 				repo_base_ref TEXT,
 				llm_connection_id INTEGER,
 				token_scopes_json TEXT NOT NULL DEFAULT '[]',
@@ -814,7 +813,6 @@ var Catalog = []Migration{
 				acting_user_kind TEXT NOT NULL
 					CHECK (acting_user_kind IN ('agent','centralized_service')),
 				repo_slug TEXT,
-				repo_remote_url TEXT,
 				repo_base_ref TEXT,
 				llm_connection_id INTEGER,
 				token_scopes_json JSONB NOT NULL DEFAULT '[]'::JSONB,

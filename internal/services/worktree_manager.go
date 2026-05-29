@@ -245,12 +245,26 @@ func (m *WorktreeManager) runGit(ctx context.Context, dir string, args ...string
 }
 
 func (m *WorktreeManager) runGitOutput(ctx context.Context, dir string, args ...string) (string, error) {
+	// Prepend defense-in-depth git protocol restrictions to every
+	// invocation. Even though the clone URL itself is now derived from
+	// a trusted SCM connection record (WI-136), turning off ext::,
+	// file://, and tar:// remote helpers at the git level removes a
+	// whole class of injection paths if any future caller accidentally
+	// hands worktree_manager a URL it shouldn't.
+	prefixed := append([]string{
+		"-c", "protocol.ext.allow=never",
+		"-c", "protocol.file.allow=never",
+		"-c", "protocol.tar.allow=never",
+	}, args...)
 	// All values reaching args are operator-controlled or
 	// orchestrator-derived; there is no user-supplied data in scope.
-	cmd := exec.CommandContext(ctx, m.gitBinary, args...) //nolint:gosec // G204: see comment above.
+	cmd := exec.CommandContext(ctx, m.gitBinary, prefixed...) //nolint:gosec // G204: see comment above.
 	if dir != "" {
 		cmd.Dir = dir
 	}
+	// GIT_ALLOW_PROTOCOL bounds the protocols git itself will dial out
+	// over (defense-in-depth alongside the protocol.*.allow config).
+	cmd.Env = append(cmd.Environ(), "GIT_ALLOW_PROTOCOL=https")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), fmt.Errorf("git %s: %w (out=%q)", strings.Join(args, " "), err, strings.TrimSpace(string(out)))

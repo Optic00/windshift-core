@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -13,6 +14,24 @@ import (
 	"windshift/internal/models"
 	"windshift/internal/repository"
 )
+
+// ErrBindingRepoNeedsSCMConnection is returned when a binding sets a
+// RepoSlug but no SCMConnectionID. Bindings can no longer carry a
+// free-form remote URL (a workspace admin could otherwise point runs
+// at arbitrary hosts via SSRF or git remote helpers); the clone URL
+// is always derived server-side from a trusted SCM connection record.
+var ErrBindingRepoNeedsSCMConnection = errors.New("binding service: repo_slug requires scm_connection_id; the clone URL is derived from the trusted SCM connection")
+
+// ErrBindingInvalidRepoSlug is returned when a binding's RepoSlug is
+// not of the canonical owner/repo shape (no path traversal, no
+// schemes, no leading slashes).
+var ErrBindingInvalidRepoSlug = errors.New("binding service: repo_slug must be owner/repo, alphanumerics + . _ - only")
+
+// validRepoSlug is the canonical owner/repo shape. Two segments
+// separated by a single /. No "..", no leading slashes, no schemes —
+// the regex on its own rejects all of those because none of the
+// allowed characters can produce them.
+var validRepoSlug = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
 
 // ErrBindingTokenTTLOverCap is returned when a binding is created with a
 // TokenTTLMinutes value above the per-run-token ceiling (see
@@ -90,11 +109,16 @@ func NewBindingService(opts BindingServiceOptions) (*BindingService, error) {
 // CreateBindingRequest is the workspace-admin's payload, plus the
 // resolved binding-creator id. The handler layer wires CreatedByUserID
 // from the authenticated user; we never trust the client to set it.
+//
+// RepoRemoteURL is intentionally absent: a workspace admin must not
+// be able to make the orchestrator clone arbitrary URLs. A binding
+// that wants per-run worktree preparation must reference an
+// SCMConnectionID; the clone URL is derived from the connection's
+// provider host and the binding's RepoSlug.
 type CreateBindingRequest struct {
 	WorkspaceID     int
 	ActingUserID    int
 	RepoSlug        string
-	RepoRemoteURL   string
 	RepoBaseRef     string
 	LLMConnectionID *int
 	SCMConnectionID *int
@@ -129,6 +153,14 @@ func (s *BindingService) Create(ctx context.Context, req CreateBindingRequest) (
 			return nil, ErrBindingTokenTTLOverCap
 		}
 	}
+	if req.RepoSlug != "" {
+		if !validRepoSlug.MatchString(req.RepoSlug) {
+			return nil, ErrBindingInvalidRepoSlug
+		}
+		if req.SCMConnectionID == nil {
+			return nil, ErrBindingRepoNeedsSCMConnection
+		}
+	}
 	identity, err := s.identity.Resolve(ctx, req.CreatedByUserID, req.ActingUserID, req.WorkspaceID)
 	if err != nil {
 		return nil, err
@@ -138,7 +170,6 @@ func (s *BindingService) Create(ctx context.Context, req CreateBindingRequest) (
 		ActingUserID:    identity.UserID,
 		ActingUserKind:  identity.Kind,
 		RepoSlug:        req.RepoSlug,
-		RepoRemoteURL:   req.RepoRemoteURL,
 		RepoBaseRef:     req.RepoBaseRef,
 		LLMConnectionID: req.LLMConnectionID,
 		SCMConnectionID: req.SCMConnectionID,
@@ -215,25 +246,29 @@ func (s *BindingService) MaybeStartRunForAssignee(ctx context.Context, workspace
 		BindingID:   binding.ID,
 	}
 	if binding.HasRepo() {
-		remoteURL := binding.RepoRemoteURL
-		// When the binding carries an SCM connection (WI-90), embed the
-		// resolved OAuth access token into the remote URL so the bare
-		// clone, fetches, and the agent's `git push` all authenticate
-		// without needing a credential helper inside the container.
-		// Works for both GitHub and Gitea because the URL form is
-		// provider-agnostic.
-		if binding.SCMConnectionID != nil && s.scmCreds != nil {
-			token, providerType, _, err := s.scmCreds.ResolveForRun(ctx, *binding.SCMConnectionID)
-			if err != nil {
-				return fmt.Errorf("resolve scm credentials: %w", err)
-			}
-			rewritten, rewriteErr := embedTokenInRemoteURL(remoteURL, token)
-			if rewriteErr != nil {
-				return fmt.Errorf("embed token: %w", rewriteErr)
-			}
-			remoteURL = rewritten
-			s.logger.Printf("binding service: embedded %s token in remote for binding=%d", providerType, binding.ID)
+		// HasRepo guarantees SCMConnectionID is set; this is the only
+		// path that resolves a clone URL. The orchestrator derives the
+		// URL from the trusted SCM connection record + the binding's
+		// slug — the binding cannot carry a free-form URL.
+		if s.scmCreds == nil {
+			s.logger.Printf("binding service: binding=%d wants repo prep but no SCMCredentialResolver is configured (dropping)", binding.ID)
+			return nil
 		}
+		token, providerType, baseURL, err := s.scmCreds.ResolveForRun(ctx, *binding.SCMConnectionID)
+		if err != nil {
+			return fmt.Errorf("resolve scm credentials: %w", err)
+		}
+		tokenlessURL, derr := deriveCloneURL(providerType, baseURL, binding.RepoSlug)
+		if derr != nil {
+			return fmt.Errorf("derive clone url: %w", derr)
+		}
+		// TODO(WI-137): replace URL-embedded token with a git askpass
+		// helper so the token never appears in argv or .git/config.
+		remoteURL, rewriteErr := embedTokenInRemoteURL(tokenlessURL, token)
+		if rewriteErr != nil {
+			return fmt.Errorf("embed token: %w", rewriteErr)
+		}
+		s.logger.Printf("binding service: derived %s clone url for binding=%d slug=%s", providerType, binding.ID, binding.RepoSlug)
 		req.Repo = &RepoSpec{
 			WorkspaceID: workspaceID,
 			RepoSlug:    binding.RepoSlug,
@@ -267,6 +302,9 @@ func (s *BindingService) MaybeStartRunForAssignee(ctx context.Context, workspace
 // both clone HTTPS handles any username when paired with a valid token
 // in the password slot. SSH URLs are returned unchanged — the
 // orchestrator only knows how to authenticate against HTTPS remotes.
+//
+// Soon-to-be-deleted: WI-137 replaces this with a git askpass helper so
+// the token never appears in argv or .git/config.
 func embedTokenInRemoteURL(remote, token string) (string, error) {
 	if token == "" {
 		return remote, nil
@@ -280,4 +318,57 @@ func embedTokenInRemoteURL(remote, token string) (string, error) {
 	}
 	u.User = url.UserPassword("oauth2", token)
 	return u.String(), nil
+}
+
+// deriveCloneURL constructs an https git remote from the trusted SCM
+// connection record and the binding's slug. GitHub bindings use
+// github.com unless the connection's baseURL declares a GitHub
+// Enterprise host. Gitea bindings always derive the host from the
+// connection's baseURL.
+//
+// The returned URL has no embedded credentials; auth is layered on
+// later (currently via embedTokenInRemoteURL, replaced by askpass in
+// WI-137).
+func deriveCloneURL(providerType, baseURL, slug string) (string, error) {
+	if !validRepoSlug.MatchString(slug) {
+		return "", ErrBindingInvalidRepoSlug
+	}
+	host := ""
+	switch providerType {
+	case "github":
+		host = "github.com"
+		if baseURL != "" {
+			h, err := hostFromURL(baseURL)
+			if err != nil {
+				return "", fmt.Errorf("github base url: %w", err)
+			}
+			host = h
+		}
+	case "gitea":
+		if baseURL == "" {
+			return "", errors.New("gitea connection is missing base_url")
+		}
+		h, err := hostFromURL(baseURL)
+		if err != nil {
+			return "", fmt.Errorf("gitea base url: %w", err)
+		}
+		host = h
+	default:
+		return "", fmt.Errorf("unsupported scm provider type %q", providerType)
+	}
+	return "https://" + host + "/" + slug + ".git", nil
+}
+
+// hostFromURL parses a base URL ("https://gitea.example.com/" or
+// "https://github.example-corp.com") and returns just the host. The
+// scheme is dropped; the resulting clone URL is always https.
+func hostFromURL(raw string) (string, error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", err
+	}
+	if u.Host == "" {
+		return "", fmt.Errorf("base url %q has no host", raw)
+	}
+	return u.Host, nil
 }
