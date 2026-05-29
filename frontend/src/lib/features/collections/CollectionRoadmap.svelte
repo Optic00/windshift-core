@@ -11,6 +11,7 @@
   import { workspaceDataStore } from '../../stores/index.js';
   import { workspacePermissions } from '../../stores/workspacePermissions.svelte.js';
   import ViewHeader from '../../layout/ViewHeader.svelte';
+  import StaticViewBackground from '../../layout/StaticViewBackground.svelte';
   import SubFilterBar from './SubFilterBar.svelte';
   import Select from '../../components/Select.svelte';
   import ItemDetail from '../items/ItemDetail.svelte';
@@ -888,14 +889,23 @@
 </script>
 
 {#if loading}
-  <div class="flex items-center justify-center min-h-screen" style={styles.backgroundStyle}>
+  <StaticViewBackground
+    backgroundStyle={styles.backgroundStyle}
+    contextVars={styles.contextVars}
+    contentClass="flex items-center justify-center min-h-screen"
+  >
     <div class="animate-pulse" style="color: var(--ctx-text-subtle, var(--ds-text-subtle));">
       {t('collections.roadmapSettings')}...
     </div>
-  </div>
+  </StaticViewBackground>
 {:else}
-  <div class="h-screen flex flex-col overflow-hidden" style="{styles.backgroundStyle} {styles.contextVars} background-attachment: scroll; overscroll-behavior: none;" class:roadmap-dragging={isResizingPanel || scheduleDragInfo?.active}>
-    <div class="p-6 flex-1 flex flex-col min-h-0">
+  <StaticViewBackground
+    backgroundStyle={styles.backgroundStyle}
+    contextVars={styles.contextVars}
+    class="h-screen flex flex-col overflow-hidden {isResizingPanel || scheduleDragInfo?.active ? 'roadmap-dragging' : ''}"
+    contentClass="p-6 flex-1 flex flex-col min-h-0"
+    rootStyle="overscroll-behavior: none;"
+  >
       <!-- Header -->
       <div class="relative z-50 mb-6">
         <ViewHeader
@@ -1276,8 +1286,7 @@
           </div>
         </div>
       {/if}
-    </div>
-  </div>
+  </StaticViewBackground>
 {/if}
 
 <!-- Drag-to-schedule ghost -->
@@ -1337,7 +1346,7 @@
   }
 
   /* Disable text selection during drag/resize */
-  .roadmap-dragging {
+  :global(.roadmap-dragging) {
     user-select: none;
   }
 </style>

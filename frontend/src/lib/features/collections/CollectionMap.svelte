@@ -14,6 +14,7 @@
   import { draggable, dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter';
   import Tooltip from '../../components/Tooltip.svelte';
   import ViewHeader from '../../layout/ViewHeader.svelte';
+  import StaticViewBackground from '../../layout/StaticViewBackground.svelte';
   import SubFilterBar from './SubFilterBar.svelte';
   import ItemDetail from '../items/ItemDetail.svelte';
   import { infoToast, errorToast } from '../../stores/toasts.svelte.js';
@@ -653,7 +654,11 @@ async function loadStatusesGlobal() {
     <div class="animate-pulse">{t('collections.loadingStoryMap')}</div>
   </div>
 {:else if workspace || !workspaceId}
-  <div style="{styles.backgroundStyle} {styles.contextVars} min-height: 100vh;">
+  <StaticViewBackground
+    backgroundStyle={styles.backgroundStyle}
+    contextVars={styles.contextVars}
+    contentClass=""
+  >
     <!-- Header -->
     <div class="p-6 border-b" style="border-color: var(--ctx-border, var(--ds-border));">
 
@@ -958,7 +963,7 @@ async function loadStatusesGlobal() {
       </div>
     </div>
 
-  </div>
+  </StaticViewBackground>
 {:else}
   <div class="p-6">
     <EmptyState

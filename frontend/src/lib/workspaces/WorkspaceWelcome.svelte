@@ -22,6 +22,7 @@
   import Button from '../components/Button.svelte';
   import Card from '../components/Card.svelte';
   import ViewHeader from '../layout/ViewHeader.svelte';
+  import StaticViewBackground from '../layout/StaticViewBackground.svelte';
 
   // Widget components
   import WidgetWrapper from '../widgets/WidgetWrapper.svelte';
@@ -615,8 +616,12 @@
   bind:activeCategory={customizationCategory}
 />
 
-<div class="workspace-welcome-wrapper" style="{gradientStyles.backgroundStyle} {gradientStyles.contextVars}">
-  <div class="workspace-welcome p-6">
+<StaticViewBackground
+  backgroundStyle={gradientStyles.backgroundStyle}
+  contextVars={gradientStyles.contextVars}
+  class="workspace-welcome-wrapper"
+  contentClass="workspace-welcome p-6"
+>
     {#if loading}
       <div class="flex items-center justify-center h-64">
         <p style={gradientStyles.emptyStateStyle}>Loading workspace data...</p>
@@ -816,21 +821,20 @@
       </div>
     {/if}
     {/if}
-  </div>
-</div>
+</StaticViewBackground>
 
 <style>
   /* Workspace homepage wrapper with gradient background */
-  .workspace-welcome-wrapper {
+  :global(.workspace-welcome-wrapper) {
     width: 100%;
-    min-height: 100%;
+    min-height: 100vh;
     position: relative;
     background-size: 200% 200%;
     animation: gradient-shift 15s ease infinite;
   }
 
   /* Add subtle pattern overlay for depth */
-  .workspace-welcome-wrapper::before {
+  :global(.workspace-welcome-wrapper::before) {
     content: '';
     position: absolute;
     top: 0;
@@ -844,7 +848,7 @@
   }
 
   /* Floating glow orbs for visual interest */
-  .workspace-welcome-wrapper::after {
+  :global(.workspace-welcome-wrapper::after) {
     content: '';
     position: absolute;
     top: 10%;
@@ -859,7 +863,7 @@
   }
 
   /* Ensure content appears above the gradient overlay */
-  .workspace-welcome {
+  :global(.workspace-welcome) {
     position: relative;
     z-index: 1;
     animation: fade-up var(--duration-slow, 300ms) var(--ease-smooth, ease) forwards;
@@ -871,13 +875,13 @@
 
   /* Reduced motion support */
   @media (prefers-reduced-motion: reduce) {
-    .workspace-welcome-wrapper {
+    :global(.workspace-welcome-wrapper) {
       animation: none;
     }
-    .workspace-welcome-wrapper::after {
+    :global(.workspace-welcome-wrapper::after) {
       animation: none;
     }
-    .workspace-welcome {
+    :global(.workspace-welcome) {
       animation: none;
     }
   }

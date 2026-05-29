@@ -12,6 +12,7 @@
   import IconSelector from '../pickers/IconSelector.svelte';
   import Button from '../components/Button.svelte';
   import PageHeader from '../layout/PageHeader.svelte';
+  import StaticViewBackground from '../layout/StaticViewBackground.svelte';
   import Label from '../components/Label.svelte';
   import Card from '../components/Card.svelte';
   import { successToast, errorToast } from '../stores/toasts.svelte.js';
@@ -281,8 +282,10 @@
     </div>
   </Card>
 {:else if workspace}
-  <div class="look-and-feel-wrapper" style="{backgroundStyle()}">
-  <div class="p-6">
+  <StaticViewBackground
+    backgroundStyle={backgroundStyle()}
+    class="look-and-feel-wrapper"
+  >
   <div class="space-y-6 max-w-4xl">
     <!-- Header -->
     <PageHeader
@@ -528,8 +531,7 @@
     </Card>
 
   </div>
-  </div>
-  </div>
+  </StaticViewBackground>
 {:else}
   <div class="rounded-xl p-6 border shadow-sm" style="background-color: var(--ds-surface-raised); border-color: var(--ds-border);">
     <p class="text-center" style="color: var(--ds-text-subtle);">{t('workspaceSettings.workspaceNotFound')}</p>
@@ -537,16 +539,16 @@
 {/if}
 
 <style>
-  .look-and-feel-wrapper {
+  :global(.look-and-feel-wrapper) {
     width: 100%;
-    min-height: 100%;
+    min-height: 100vh;
     position: relative;
     background-size: 200% 200%;
     animation: gradient-shift 15s ease infinite;
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .look-and-feel-wrapper {
+    :global(.look-and-feel-wrapper) {
       animation: none;
     }
   }

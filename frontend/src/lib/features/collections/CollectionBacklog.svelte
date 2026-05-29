@@ -11,6 +11,7 @@
   import { attachClosestEdge, extractClosestEdge } from '@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge';
   import ItemDetail from '../items/ItemDetail.svelte';
   import ViewHeader from '../../layout/ViewHeader.svelte';
+  import StaticViewBackground from '../../layout/StaticViewBackground.svelte';
   import SubFilterBar from './SubFilterBar.svelte';
   import CollectionViewSwitcher from './CollectionViewSwitcher.svelte';
   import BacklogIterationSection from './BacklogIterationSection.svelte';
@@ -595,9 +596,11 @@
     <div class="animate-pulse">{t('common.loading')}</div>
   </div>
 {:else if workspace || !workspaceId}
-  <div class="min-h-screen" style="{styles.backgroundStyle} {styles.contextVars}">
+  <StaticViewBackground
+    backgroundStyle={styles.backgroundStyle}
+    contextVars={styles.contextVars}
+  >
     <!-- Content Container -->
-    <div class="p-6">
       <!-- Header with view tabs -->
       <div class="mb-8">
         <ViewHeader
@@ -719,8 +722,7 @@
           </div>
         </div>
       {/if}
-    </div>
-  </div>
+  </StaticViewBackground>
 {:else}
   <div class="p-6">
     <div class="text-center" style="color: var(--ds-text-subtle);">

@@ -17,6 +17,7 @@
   import DropdownMenu from '../../layout/DropdownMenu.svelte';
   import Pagination from '../../components/Pagination.svelte';
   import ViewHeader from '../../layout/ViewHeader.svelte';
+  import StaticViewBackground from '../../layout/StaticViewBackground.svelte';
   import EmptyState from '../../components/EmptyState.svelte';
   import TableHeaderBar from '../../components/TableHeaderBar.svelte';
   import ListCellRenderer from './ListCellRenderer.svelte';
@@ -341,9 +342,12 @@
     <div class="animate-pulse">{t('common.loading')}</div>
   </div>
 {:else if workspace || !workspaceId}
-  <div class="min-h-screen" data-testid="list-view" style="{styles.backgroundStyle} {styles.contextVars}">
+  <StaticViewBackground
+    backgroundStyle={styles.backgroundStyle}
+    contextVars={styles.contextVars}
+    testid="list-view"
+  >
     <!-- Content Container -->
-    <div class="p-6">
       <div class="mb-6">
         <ViewHeader
           workspaceName={workspace?.name || ''}
@@ -490,8 +494,7 @@
           </div>
         {/if}
       {/if}
-    </div>
-  </div>
+  </StaticViewBackground>
 {:else}
   <div class="p-6">
     <div class="text-center " style="color: var(--ctx-text-subtle, var(--ds-text-subtle));">

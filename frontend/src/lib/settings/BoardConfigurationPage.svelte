@@ -13,6 +13,7 @@
   import { Plus, GripVertical, X, Grip } from '@lucide/svelte';
   import { useGradientStyles, loadWorkspaceGradient } from '../stores/workspaceGradient.svelte.js';
   import ViewHeader from '../layout/ViewHeader.svelte';
+  import StaticViewBackground from '../layout/StaticViewBackground.svelte';
   import Button from '../components/Button.svelte';
   import Panel from '../components/Panel.svelte';
   import EmptyState from '../components/EmptyState.svelte';
@@ -645,8 +646,10 @@
     <div class="animate-pulse">{t('common.loading')}</div>
   </div>
 {:else if workspace || !workspaceId}
-  <div class="min-h-screen" style="{styles.backgroundStyle} {styles.contextVars}">
-    <div class="p-6">
+  <StaticViewBackground
+    backgroundStyle={styles.backgroundStyle}
+    contextVars={styles.contextVars}
+  >
       <div class="space-y-6">
         <!-- Header with view tabs -->
         <ViewHeader
@@ -1081,8 +1084,7 @@
         </div>
         </Panel>
       </div>
-    </div>
-  </div>
+  </StaticViewBackground>
 {:else}
   <div class="p-6">
     <div class="text-center" style="color: var(--ds-text-subtle);">

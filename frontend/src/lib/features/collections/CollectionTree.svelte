@@ -7,6 +7,7 @@
   import { ChevronRight, ChevronDown, GitBranch, Circle, FileCheck, Minus } from '@lucide/svelte';
   import { itemTypeIconMap } from '../../utils/icons.js';
   import ViewHeader from '../../layout/ViewHeader.svelte';
+  import StaticViewBackground from '../../layout/StaticViewBackground.svelte';
   import SubFilterBar from './SubFilterBar.svelte';
   import ItemKey from '../items/ItemKey.svelte';
   import ColorDot from '../../components/ColorDot.svelte';
@@ -389,9 +390,11 @@
     <div class="animate-pulse">{t('collectionTree.loading')}</div>
   </div>
 {:else if workspace || !workspaceId}
-  <div class="min-h-screen" style="{styles.backgroundStyle} {styles.contextVars}">
+  <StaticViewBackground
+    backgroundStyle={styles.backgroundStyle}
+    contextVars={styles.contextVars}
+  >
     <!-- Content Container -->
-    <div class="p-6">
       <!-- Header -->
       <div class="mb-6">
         <ViewHeader
@@ -627,8 +630,7 @@
           </div>
         {/if}
       {/if}
-    </div>
-  </div>
+  </StaticViewBackground>
 {:else}
   <div class="p-6">
     <div class="text-center" style="color: var(--ds-text-subtle);">

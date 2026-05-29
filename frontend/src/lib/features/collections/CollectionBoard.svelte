@@ -18,6 +18,7 @@
   import ItemDetail from '../items/ItemDetail.svelte';
   import DropIndicator from '../../layout/DropIndicator.svelte';
   import ViewHeader from '../../layout/ViewHeader.svelte';
+  import StaticViewBackground from '../../layout/StaticViewBackground.svelte';
   import Button from '../../components/Button.svelte';
   import SubFilterBar from './SubFilterBar.svelte';
   import ItemKey from '../items/ItemKey.svelte';
@@ -978,9 +979,12 @@
     <div class="animate-pulse">{t('common.loading')}</div>
   </div>
 {:else if workspace || !workspaceId}
-  <div class="min-h-screen min-w-fit" style="{styles.backgroundStyle} {styles.contextVars} background-attachment: scroll;">
+  <StaticViewBackground
+    backgroundStyle={styles.backgroundStyle}
+    contextVars={styles.contextVars}
+    contentClass="p-6 min-w-fit"
+  >
     <!-- Content Container -->
-    <div class="p-6">
       <!-- Header with view tabs -->
       <div class="mb-8">
         <ViewHeader
@@ -1417,8 +1421,7 @@
           </p>
         </div>
       {/if}
-    </div>
-  </div>
+  </StaticViewBackground>
 {:else}
   <div class="p-6">
     <div class="text-center" style="color: var(--ds-text-subtle);">
