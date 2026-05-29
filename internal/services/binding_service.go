@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/url"
 	"regexp"
-	"strings"
 	"time"
 
 	"windshift/internal/auth"
@@ -258,22 +257,20 @@ func (s *BindingService) MaybeStartRunForAssignee(ctx context.Context, workspace
 		if err != nil {
 			return fmt.Errorf("resolve scm credentials: %w", err)
 		}
-		tokenlessURL, derr := deriveCloneURL(providerType, baseURL, binding.RepoSlug)
+		cloneURL, derr := deriveCloneURL(providerType, baseURL, binding.RepoSlug)
 		if derr != nil {
 			return fmt.Errorf("derive clone url: %w", derr)
 		}
-		// TODO(WI-137): replace URL-embedded token with a git askpass
-		// helper so the token never appears in argv or .git/config.
-		remoteURL, rewriteErr := embedTokenInRemoteURL(tokenlessURL, token)
-		if rewriteErr != nil {
-			return fmt.Errorf("embed token: %w", rewriteErr)
-		}
 		s.logger.Printf("binding service: derived %s clone url for binding=%d slug=%s", providerType, binding.ID, binding.RepoSlug)
+		// Token travels on RepoSpec as a separate field — never embed
+		// it in RemoteURL. WorktreeManager injects it via a per-clone
+		// GIT_ASKPASS helper so it never appears in argv or .git/config.
 		req.Repo = &RepoSpec{
 			WorkspaceID: workspaceID,
 			RepoSlug:    binding.RepoSlug,
-			RemoteURL:   remoteURL,
+			RemoteURL:   cloneURL,
 			BaseRef:     binding.RepoBaseRef,
+			Token:       token,
 		}
 	}
 	// Mint a per-run ws token only if the RunService has a token service
@@ -294,30 +291,6 @@ func (s *BindingService) MaybeStartRunForAssignee(ctx context.Context, workspace
 	}
 	s.logger.Printf("binding service: started run=%d for item=%d binding=%d acting_user=%d", runID, itemID, binding.ID, binding.ActingUserID)
 	return nil
-}
-
-// embedTokenInRemoteURL rewrites an HTTPS git remote into the OAuth-
-// authenticated form. The "oauth2" username is the GitHub convention for
-// PAT/access tokens; Gitea also accepts it (or "x-access-token") since
-// both clone HTTPS handles any username when paired with a valid token
-// in the password slot. SSH URLs are returned unchanged — the
-// orchestrator only knows how to authenticate against HTTPS remotes.
-//
-// Soon-to-be-deleted: WI-137 replaces this with a git askpass helper so
-// the token never appears in argv or .git/config.
-func embedTokenInRemoteURL(remote, token string) (string, error) {
-	if token == "" {
-		return remote, nil
-	}
-	if !strings.HasPrefix(remote, "https://") && !strings.HasPrefix(remote, "http://") {
-		return remote, nil
-	}
-	u, err := url.Parse(remote)
-	if err != nil {
-		return "", err
-	}
-	u.User = url.UserPassword("oauth2", token)
-	return u.String(), nil
 }
 
 // deriveCloneURL constructs an https git remote from the trusted SCM

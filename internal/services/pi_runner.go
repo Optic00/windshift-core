@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -249,7 +250,12 @@ var sandboxDefaults = struct {
 // run. Pure function over the runner config + RunInput so it can be
 // unit-tested without a live docker daemon. The flags it emits are
 // security-critical; the unit tests assert their presence.
-func (r *DockerPiRunner) buildDockerArgs(input RunInput) []string {
+//
+// envFilePath, when non-empty, is added as `--env-file <path>` so env
+// values (which may include WS_TOKEN) do not appear in the docker
+// argv. Run() always supplies a real path; tests may pass "" to assert
+// the conditional.
+func (r *DockerPiRunner) buildDockerArgs(input RunInput, envFilePath string) []string {
 	args := []string{
 		"run",
 		"-i",
@@ -288,17 +294,9 @@ func (r *DockerPiRunner) buildDockerArgs(input RunInput) []string {
 	}
 	args = append(args, "--cpus="+cpus)
 
-	mergedEnv := make(map[string]string, len(r.Env)+len(input.Env))
-	for k, v := range r.Env {
-		mergedEnv[k] = v
+	if envFilePath != "" {
+		args = append(args, "--env-file", envFilePath)
 	}
-	for k, v := range input.Env {
-		mergedEnv[k] = v
-	}
-	for k, v := range mergedEnv {
-		args = append(args, "-e", fmt.Sprintf("%s=%s", k, v))
-	}
-	args = append(args, "-e", fmt.Sprintf("AGENT_RUN_ID=%d", input.RunID))
 	if input.WorkspacePath != "" {
 		args = append(args, "-v", fmt.Sprintf("%s:/workspace", input.WorkspacePath))
 	}
@@ -318,14 +316,69 @@ func (r *DockerPiRunner) Run(ctx context.Context, input RunInput, emit EventSink
 		bin = "docker"
 	}
 
+	// Write env to a 0600 file passed via --env-file. Env values (which
+	// can include WS_TOKEN + SCM tokens forwarded by the orchestrator)
+	// must never reach docker argv where they'd be visible via
+	// /proc/<pid>/cmdline and `docker inspect`.
+	envFile, cleanup, err := writeDockerEnvFile(r.Env, input.Env, input.RunID)
+	if err != nil {
+		return RunnerResult{Status: models.AgentRunStatusFailed, Error: fmt.Sprintf("docker pi runner: env file: %v", err)}
+	}
+	defer cleanup()
+
 	inner := &PiRunner{
 		Command:       bin,
-		Args:          r.buildDockerArgs(input),
+		Args:          r.buildDockerArgs(input, envFile),
 		InitialPrompt: r.InitialPrompt,
 		IdleEventType: r.IdleEventType,
 		ShutdownGrace: r.ShutdownGrace,
 	}
 	return inner.Run(ctx, RunInput{RunID: input.RunID}, emit)
+}
+
+// writeDockerEnvFile writes the merged env map (static runner Env
+// overridden by per-run RunInput.Env, plus AGENT_RUN_ID) to a
+// 0600-permissioned temp file in docker's --env-file format
+// (`KEY=value\n` per line). Returns the path plus a cleanup func the
+// caller must defer.
+func writeDockerEnvFile(static, perRun map[string]string, runID int) (path string, cleanup func(), err error) {
+	merged := make(map[string]string, len(static)+len(perRun)+1)
+	for k, v := range static {
+		merged[k] = v
+	}
+	for k, v := range perRun {
+		merged[k] = v
+	}
+	merged["AGENT_RUN_ID"] = fmt.Sprintf("%d", runID)
+
+	f, ferr := os.CreateTemp("", "windshift-agent-env-*.env")
+	if ferr != nil {
+		return "", func() {}, ferr
+	}
+	path = f.Name()
+	cleanup = func() { _ = os.Remove(path) }
+	if err = f.Chmod(0o600); err != nil {
+		_ = f.Close()
+		cleanup()
+		return "", func() {}, err
+	}
+	for k, v := range merged {
+		// docker --env-file is line-based KEY=value; values cannot
+		// contain newlines (docker rejects them). The orchestrator
+		// only emits short alphanumeric tokens / config strings, so
+		// this is asserted rather than escaped.
+		line := k + "=" + v + "\n"
+		if _, err = f.WriteString(line); err != nil {
+			_ = f.Close()
+			cleanup()
+			return "", func() {}, err
+		}
+	}
+	if err = f.Close(); err != nil {
+		cleanup()
+		return "", func() {}, err
+	}
+	return path, cleanup, nil
 }
 
 // buildPiEnv composes a "key=value" slice from the runner's static Env

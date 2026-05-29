@@ -438,7 +438,11 @@ func (s *RunService) invokePostRunHook(info PostRunInfo) {
 func (s *RunService) finalize(runID int, status, errMsg string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := s.repo.Finalize(ctx, runID, status, errMsg, s.now()); err != nil {
+	// Scrub embedded URL credentials before persistence. errMsg
+	// originates from runner output / git CombinedOutput / exec
+	// failures, any of which may include a `https://user:pass@host`
+	// fragment if a token slipped through somewhere upstream.
+	if err := s.repo.Finalize(ctx, runID, status, RedactString(errMsg), s.now()); err != nil {
 		s.logger.Printf("run service: finalize run=%d status=%s: %v", runID, status, err)
 	}
 }

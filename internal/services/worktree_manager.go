@@ -15,13 +15,15 @@ import (
 // RepoSpec identifies a source repository the orchestrator should prepare
 // for a run. The combination (WorkspaceID, RepoSlug) is what scopes the
 // bare-clone-per-(workspace,repo) cache; bindings (WI-88) surface these
-// values from configuration. RemoteURL is the fetch target; for SCM
-// providers it carries the OAuth token in the URL or via gitcredential.
+// values from configuration. RemoteURL is the tokenless fetch target;
+// Token (if non-empty) is injected via a per-clone GIT_ASKPASS helper
+// so it never appears in argv or .git/config.
 type RepoSpec struct {
 	WorkspaceID int
 	RepoSlug    string // e.g. "owner/name" — must not contain ".." or absolute paths
-	RemoteURL   string
+	RemoteURL   string // tokenless HTTPS URL
 	BaseRef     string // default "main"
+	Token       string // optional OAuth/PAT; injected via askpass, never embedded in URL
 }
 
 // PreparedWorktree is what WorktreeManager.Prepare returns. The Path field
@@ -138,10 +140,10 @@ func (m *WorktreeManager) Prepare(ctx context.Context, spec RepoSpec, runID int)
 
 	repoRoot := filepath.Join(m.rootDir, fmt.Sprintf("%d", spec.WorkspaceID), spec.RepoSlug)
 	bareDir := filepath.Join(repoRoot, ".bare")
-	if err := m.ensureBare(ctx, bareDir, spec.RemoteURL); err != nil {
+	if err := m.ensureBare(ctx, bareDir, spec.RemoteURL, spec.Token); err != nil {
 		return nil, fmt.Errorf("ensure bare clone: %w", err)
 	}
-	if err := m.fetchRef(ctx, bareDir, baseRef); err != nil {
+	if err := m.fetchRef(ctx, bareDir, baseRef, spec.Token); err != nil {
 		return nil, fmt.Errorf("fetch %s: %w", baseRef, err)
 	}
 
@@ -198,7 +200,7 @@ func (m *WorktreeManager) Cleanup(ctx context.Context, pw *PreparedWorktree) err
 	return nil
 }
 
-func (m *WorktreeManager) ensureBare(ctx context.Context, bareDir, remoteURL string) error {
+func (m *WorktreeManager) ensureBare(ctx context.Context, bareDir, remoteURL, token string) error {
 	if _, err := os.Stat(filepath.Join(bareDir, "HEAD")); err == nil {
 		return nil // bare clone already initialized
 	}
@@ -212,7 +214,7 @@ func (m *WorktreeManager) ensureBare(ctx context.Context, bareDir, remoteURL str
 	// Use --bare without a working tree. Run with `clone` so the remote
 	// is configured automatically (we'd otherwise need `git init --bare`
 	// + `git remote add origin` + `git fetch`).
-	if err := m.runGit(ctx, "", "clone", "--bare", remoteURL, bareDir); err != nil {
+	if err := m.runGitWithToken(ctx, "", token, "clone", "--bare", remoteURL, bareDir); err != nil {
 		return fmt.Errorf("git clone --bare: %w", err)
 	}
 	// Disable auto-gc on the bare clone. Auto-gc under concurrent
@@ -224,11 +226,11 @@ func (m *WorktreeManager) ensureBare(ctx context.Context, bareDir, remoteURL str
 	return nil
 }
 
-func (m *WorktreeManager) fetchRef(ctx context.Context, bareDir, ref string) error {
+func (m *WorktreeManager) fetchRef(ctx context.Context, bareDir, ref, token string) error {
 	// `+ref:ref` forces fast-forward; on bare repos this updates the
 	// local ref to track the remote's tip.
 	spec := fmt.Sprintf("+%s:%s", ref, ref)
-	return m.runGit(ctx, bareDir, "fetch", "--prune", "origin", spec)
+	return m.runGitWithToken(ctx, bareDir, token, "fetch", "--prune", "origin", spec)
 }
 
 func (m *WorktreeManager) revParse(ctx context.Context, bareDir, ref string) (string, error) {
@@ -244,7 +246,35 @@ func (m *WorktreeManager) runGit(ctx context.Context, dir string, args ...string
 	return err
 }
 
+// runGitWithToken runs git with the given token injected via a
+// per-invocation GIT_ASKPASS helper. The token is passed to the helper
+// via env var, never via argv, and never persisted to .git/config —
+// git's credential.helper is not invoked at all because askpass
+// answers the prompt directly. When token is empty the call behaves
+// exactly like runGit (no askpass setup).
+func (m *WorktreeManager) runGitWithToken(ctx context.Context, dir, token string, args ...string) error {
+	if token == "" {
+		return m.runGit(ctx, dir, args...)
+	}
+	dirPath, askpassPath, err := writeAskpassHelper()
+	if err != nil {
+		return fmt.Errorf("setup askpass: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(dirPath) }()
+	_, err = m.runGitOutputEnv(ctx, dir, []string{
+		"GIT_ASKPASS=" + askpassPath,
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_CONFIG_NOSYSTEM=1",
+		"AGENT_GIT_TOKEN=" + token,
+	}, args...)
+	return err
+}
+
 func (m *WorktreeManager) runGitOutput(ctx context.Context, dir string, args ...string) (string, error) {
+	return m.runGitOutputEnv(ctx, dir, nil, args...)
+}
+
+func (m *WorktreeManager) runGitOutputEnv(ctx context.Context, dir string, extraEnv []string, args ...string) (string, error) {
 	// Prepend defense-in-depth git protocol restrictions to every
 	// invocation. Even though the clone URL itself is now derived from
 	// a trusted SCM connection record (WI-136), turning off ext::,
@@ -265,9 +295,54 @@ func (m *WorktreeManager) runGitOutput(ctx context.Context, dir string, args ...
 	// GIT_ALLOW_PROTOCOL bounds the protocols git itself will dial out
 	// over (defense-in-depth alongside the protocol.*.allow config).
 	cmd.Env = append(cmd.Environ(), "GIT_ALLOW_PROTOCOL=https")
+	cmd.Env = append(cmd.Env, extraEnv...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return string(out), fmt.Errorf("git %s: %w (out=%q)", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		// Run the error string through RedactString so an embedded
+		// credential (in a remote URL, a git error message, a stray
+		// env echo) never reaches the caller — which writes it to
+		// agent_runs.error and the SSE event stream.
+		joined := strings.Join(args, " ")
+		return RedactString(string(out)), fmt.Errorf("git %s: %w (out=%q)", joined, err, RedactString(strings.TrimSpace(string(out))))
 	}
 	return string(out), nil
+}
+
+// writeAskpassHelper creates a private (0700) directory plus a shell
+// script that answers git's prompts from the AGENT_GIT_TOKEN env var.
+// Returns (dirPath, scriptPath, err); the caller is responsible for
+// removing dirPath after the git invocation completes.
+//
+// Script body:
+//
+//	case "$1" in
+//	  Username*) printf 'oauth2\n' ;;
+//	  Password*) printf '%s\n' "$AGENT_GIT_TOKEN" ;;
+//	esac
+//
+// The username "oauth2" works for both GitHub and Gitea — both accept
+// any non-empty username when paired with a token in the password slot.
+func writeAskpassHelper() (dirPath, scriptPath string, err error) {
+	dirPath, err = os.MkdirTemp("", "windshift-askpass-*")
+	if err != nil {
+		return "", "", err
+	}
+	// 0700 (rwx for owner) is the minimum that allows the windshift
+	// process to write the script into the directory and remove it
+	// afterwards. gosec G302 wants 0600 but a directory without +x
+	// can't be traversed.
+	if err = os.Chmod(dirPath, 0o700); err != nil { //nolint:gosec // G302: see comment above
+		_ = os.RemoveAll(dirPath)
+		return "", "", err
+	}
+	scriptPath = filepath.Join(dirPath, "askpass.sh")
+	body := "#!/bin/sh\ncase \"$1\" in\n  Username*) printf 'oauth2\\n' ;;\n  Password*) printf '%s\\n' \"$AGENT_GIT_TOKEN\" ;;\nesac\n"
+	// 0700 because git executes the helper via GIT_ASKPASS; the
+	// executable bit is required. gosec G306 wants 0600 but execute
+	// is intentional here.
+	if err = os.WriteFile(scriptPath, []byte(body), 0o700); err != nil { //nolint:gosec // G306: see comment above
+		_ = os.RemoveAll(dirPath)
+		return "", "", err
+	}
+	return dirPath, scriptPath, nil
 }
