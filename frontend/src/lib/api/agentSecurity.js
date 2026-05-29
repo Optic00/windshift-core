@@ -24,9 +24,11 @@ export const agentSecurity = {
   listAllowlist: () => fetchAPI('/admin/agent-security/allowlist'),
 
   /**
-   * Add an allowlist entry. workspace_id may be omitted to grant the
-   * acting user across every workspace.
-   * @param {{ user_id: number, workspace_id?: number, reason: string }} body
+   * Add one or more allowlist entries atomically. Pass workspace_ids as
+   * an array of numeric workspace ids to create one grant per id; an
+   * empty/missing array creates a single "any workspace" grant
+   * (workspace_id NULL on the row).
+   * @param {{ user_id: number, workspace_ids?: number[], reason: string }} body
    */
   addAllowlist: (body) =>
     fetchAPI('/admin/agent-security/allowlist', {

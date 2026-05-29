@@ -109,10 +109,14 @@ type allowlistEntryResponse struct {
 	CreatedAt       string `json:"created_at"`
 }
 
+// allowlistCreateRequest is the payload for POST
+// /admin/agent-security/allowlist. workspace_ids is the canonical shape:
+// an empty/missing array means a single "any workspace" grant, a
+// non-empty array creates one grant per id atomically.
 type allowlistCreateRequest struct {
-	UserID      int    `json:"user_id"`
-	WorkspaceID *int   `json:"workspace_id,omitempty"`
-	Reason      string `json:"reason"`
+	UserID       int    `json:"user_id"`
+	WorkspaceIDs []int  `json:"workspace_ids,omitempty"`
+	Reason       string `json:"reason"`
 }
 
 // ListAllowlist returns every (user, workspace?) grant.
@@ -179,19 +183,35 @@ func (h *AgentSecurityHandler) AddAllowlist(w http.ResponseWriter, r *http.Reque
 		respondBadRequest(w, r, "user_id must reference a centralized service user (is_agent=true, no owner)")
 		return
 	}
-	if err := h.repo.AddAllowlistEntry(r.Context(), body.UserID, body.WorkspaceID, &user.ID, body.Reason); err != nil {
+	if err := h.repo.AddAllowlistEntries(r.Context(), body.UserID, body.WorkspaceIDs, &user.ID, body.Reason); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
 	h.auditor.LogWithDetails(r, user, "agent_security.allowlist.add", "agent_security_allowlist", &body.UserID, "", map[string]interface{}{
-		"workspace_id": body.WorkspaceID,
-		"reason":       body.Reason,
+		"workspace_ids": body.WorkspaceIDs,
+		"reason":        body.Reason,
 	})
-	respondJSON(w, http.StatusCreated, allowlistEntryResponse{
-		UserID:      body.UserID,
-		WorkspaceID: body.WorkspaceID,
-		Reason:      body.Reason,
-	})
+
+	// Echo the created grants back. An empty WorkspaceIDs slice yields
+	// a single any-workspace response row (matching the persisted
+	// shape).
+	out := make([]allowlistEntryResponse, 0, max(1, len(body.WorkspaceIDs)))
+	if len(body.WorkspaceIDs) == 0 {
+		out = append(out, allowlistEntryResponse{
+			UserID: body.UserID,
+			Reason: body.Reason,
+		})
+	} else {
+		for i := range body.WorkspaceIDs {
+			ws := body.WorkspaceIDs[i]
+			out = append(out, allowlistEntryResponse{
+				UserID:      body.UserID,
+				WorkspaceID: &ws,
+				Reason:      body.Reason,
+			})
+		}
+	}
+	respondJSON(w, http.StatusCreated, out)
 }
 
 // RemoveAllowlist deletes a grant. user_id comes from the path; workspace_id

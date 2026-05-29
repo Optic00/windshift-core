@@ -97,21 +97,14 @@
 
   async function addEntry() {
     if (!canAdd) return;
-    const reason = addReason.trim();
-    const targets =
-      addWorkspaceIds.length === 0
-        ? [null] // single "any workspace" grant
-        : addWorkspaceIds;
+    const body = {
+      user_id: addUserId,
+      workspace_ids: addWorkspaceIds, // [] = single "any workspace" grant
+      reason: addReason.trim(),
+    };
     adding = true;
     try {
-      // Sequential because the backend doesn't yet take a batch shape;
-      // a mid-loop failure leaves earlier grants in place but reload
-      // below makes the resulting state visible either way.
-      for (const wsId of targets) {
-        const body = { user_id: addUserId, reason };
-        if (wsId) body.workspace_id = wsId;
-        await agentSecurity.addAllowlist(body);
-      }
+      await agentSecurity.addAllowlist(body);
       addUserId = null;
       addWorkspaceIds = [];
       addReason = '';
@@ -119,7 +112,6 @@
     } catch (err) {
       errorToast(err?.message || 'Failed to add allowlist entry');
       console.error('Failed to add allowlist entry:', err);
-      await load();
     } finally {
       adding = false;
     }
