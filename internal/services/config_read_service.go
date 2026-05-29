@@ -112,16 +112,9 @@ type PriorityResult struct {
 	IsDefault   bool
 }
 
-// ListPriorities retrieves all priorities ordered by sort order and name.
-func (s *ConfigReadService) ListPriorities() ([]PriorityResult, error) {
-	rows, err := s.db.Query(`
-		SELECT id, name, description, icon, color, sort_order, is_default
-		FROM priorities
-		ORDER BY sort_order, name
-	`)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list priorities: %w", err)
-	}
+// ScanPriorities scans rows from a priorities query into a slice of PriorityResult.
+// The rows must select: id, name, description, icon, color, sort_order, is_default.
+func ScanPriorities(rows *sql.Rows) ([]PriorityResult, error) {
 	defer rows.Close()
 
 	var priorities []PriorityResult
@@ -146,6 +139,20 @@ func (s *ConfigReadService) ListPriorities() ([]PriorityResult, error) {
 	}
 
 	return priorities, nil
+}
+
+// ListPriorities retrieves all priorities ordered by sort order and name.
+func (s *ConfigReadService) ListPriorities() ([]PriorityResult, error) {
+	rows, err := s.db.Query(`
+		SELECT id, name, description, icon, color, sort_order, is_default
+		FROM priorities
+		ORDER BY sort_order, name
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list priorities: %w", err)
+	}
+
+	return ScanPriorities(rows)
 }
 
 // GetPriority retrieves a priority by ID.

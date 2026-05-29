@@ -91,15 +91,40 @@ var priorityCmd = &cobra.Command{
 var priorityListCmd = &cobra.Command{
 	Use:   "ls",
 	Short: "List available priorities",
+	Long: `List priorities available for items.
+
+If a workspace is configured, shows only the priorities enabled for that
+workspace's configuration set. Otherwise, shows all priorities in the system.
+
+Examples:
+  ws priority ls                          # Priorities for the current workspace
+  ws priority ls -w PROJ                  # Priorities for workspace PROJ`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := NewClient()
 		if err != nil {
 			return err
 		}
 
-		priorities, err := client.ListPriorities()
-		if err != nil {
-			return fmt.Errorf("failed to list priorities: %w", err)
+		var priorities []Priority
+
+		// Scope to the workspace's configuration set when one is configured,
+		// mirroring `ws status ls`. Falls back to all priorities otherwise.
+		wsKey := cfg.GetEffectiveWorkspace()
+		if wsKey != "" {
+			var wsID int
+			wsID, err = client.ResolveWorkspaceID(wsKey)
+			if err != nil {
+				return fmt.Errorf("failed to resolve workspace: %w", err)
+			}
+			priorities, err = client.GetWorkspacePriorities(wsID)
+			if err != nil {
+				return fmt.Errorf("failed to list workspace priorities: %w", err)
+			}
+		} else {
+			priorities, err = client.ListPriorities()
+			if err != nil {
+				return fmt.Errorf("failed to list priorities: %w", err)
+			}
 		}
 
 		output := NewOutput()

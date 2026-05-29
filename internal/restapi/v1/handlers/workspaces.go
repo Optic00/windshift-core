@@ -473,6 +473,53 @@ func (h *WorkspaceHandler) GetItemTypes(w http.ResponseWriter, r *http.Request) 
 	h.RespondOK(w, result)
 }
 
+// GetPriorities handles GET /rest/api/v1/workspaces/{id}/priorities
+//
+// @Summary      List priorities configured for a workspace
+// @Description  Returns the priorities enabled for the workspace's configuration set. Falls back to all priorities when the workspace has no configuration set.
+// @Tags         workspaces, priorities
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id   path      int  true  "Workspace ID"
+// @Success      200  {array}   handlers.PriorityResponse
+// @Failure      400  {object}  handlers.ErrorResponse  "Invalid workspace ID"
+// @Failure      401  {object}  handlers.ErrorResponse
+// @Failure      403  {object}  handlers.ErrorResponse  "Token lacks the workspaces:read scope"
+// @Failure      404  {object}  handlers.ErrorResponse  "Workspace not found or not visible to caller"
+// @Failure      500  {object}  handlers.ErrorResponse
+// @Router       /workspaces/{id}/priorities [get]
+func (h *WorkspaceHandler) GetPriorities(w http.ResponseWriter, r *http.Request) {
+	wsID, ok := h.RequireWorkspaceViewAccess(w, r)
+	if !ok {
+		return
+	}
+
+	priorities, err := h.workspaceService.GetPriorities(wsID)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+
+	var result []PriorityResponse
+	for _, p := range priorities {
+		result = append(result, PriorityResponse{
+			ID:          p.ID,
+			Name:        p.Name,
+			Description: p.Description,
+			Icon:        p.Icon,
+			Color:       p.Color,
+			SortOrder:   p.SortOrder,
+			IsDefault:   p.IsDefault,
+		})
+	}
+
+	if result == nil {
+		result = []PriorityResponse{}
+	}
+
+	h.RespondOK(w, result)
+}
+
 // mapStatusesToDTO converts a slice of models.Status to a slice of dto.StatusSummary.
 func mapStatusesToDTO(statuses []models.Status) []dto.StatusSummary {
 	result := make([]dto.StatusSummary, 0, len(statuses))

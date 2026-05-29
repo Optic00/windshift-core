@@ -371,3 +371,30 @@ func (s *WorkspaceService) GetItemTypes(workspaceID int) ([]ItemTypeResult, erro
 
 	return ScanItemTypes(rows)
 }
+
+// GetPriorities returns the priorities enabled for a workspace's configuration
+// set. When the workspace has no configuration set (or no priorities mapped to
+// it), all priorities are returned — mirroring GetItemTypes/GetStatuses.
+func (s *WorkspaceService) GetPriorities(workspaceID int) ([]PriorityResult, error) {
+	rows, err := s.db.Query(`
+		SELECT DISTINCT p.id, p.name, p.description, p.icon, p.color,
+		       p.sort_order, p.is_default
+		FROM priorities p
+		WHERE NOT EXISTS (
+			SELECT 1 FROM workspace_configuration_sets wcs
+			JOIN configuration_set_priorities csp ON wcs.configuration_set_id = csp.configuration_set_id
+			WHERE wcs.workspace_id = ?
+		)
+		OR EXISTS (
+			SELECT 1 FROM workspace_configuration_sets wcs
+			JOIN configuration_set_priorities csp ON wcs.configuration_set_id = csp.configuration_set_id
+			WHERE wcs.workspace_id = ? AND csp.priority_id = p.id
+		)
+		ORDER BY p.sort_order, p.name
+	`, workspaceID, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get workspace priorities: %w", err)
+	}
+
+	return ScanPriorities(rows)
+}

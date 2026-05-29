@@ -319,6 +319,15 @@ func (c *Client) ListPriorities() ([]Priority, error) {
 	return priorities, nil
 }
 
+// GetWorkspacePriorities lists the priorities enabled for a workspace's configuration set
+func (c *Client) GetWorkspacePriorities(workspaceID int) ([]Priority, error) {
+	var priorities []Priority
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/workspaces/%d/priorities", workspaceID), &priorities); err != nil {
+		return nil, err
+	}
+	return priorities, nil
+}
+
 // ListWorkflows lists all workflows
 func (c *Client) ListWorkflows() ([]Workflow, error) {
 	var workflows []Workflow
