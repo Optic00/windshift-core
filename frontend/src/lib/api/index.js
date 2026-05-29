@@ -438,6 +438,12 @@ export const api = {
 
 // Security settings exports
 export { authPolicy, getSecuritySettings, updateSecuritySettings } from './admin.js';
+// Coding-agent harness — workspace bindings (WI-88).
+export { agentBindings } from './agentBindings.js';
+// Coding-agent harness — runs (WI-91).
+export { agentRuns } from './agentRuns.js';
+// Coding-agent harness — admin security gate (WI-87).
+export { agentSecurity } from './agentSecurity.js';
 // Calendar feed exports
 export { createCalendarFeedToken, getCalendarFeedToken, revokeCalendarFeedToken } from './misc.js';
 // Core utilities

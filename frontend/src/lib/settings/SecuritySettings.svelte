@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte';
-  import { Shield, Calendar, Loader2, Terminal, Key, Users, AlertTriangle, ChevronDown, ChevronUp } from '@lucide/svelte';
-  import { getSecuritySettings, updateSecuritySettings, authPolicy } from '../api.js';
+  import { Shield, Calendar, Loader2, Terminal, Key, Users, UserCog, AlertTriangle, ChevronDown, ChevronUp } from '@lucide/svelte';
+  import { agentSecurity, getSecuritySettings, updateSecuritySettings, authPolicy } from '../api.js';
   import Toggle from '../components/Toggle.svelte';
   import Input from '../components/Input.svelte';
   import Panel from '../components/Panel.svelte';
@@ -21,6 +21,13 @@
   let maxAgentsPerUser = $state(5);
   let apiKeyCreationPolicy = $state('all_users');
   let apiKeyAllowedGroupIds = $state([]);
+
+  // Coding-agent harness: allow workspace admins to bind runs to
+  // centralized service users (WI-87). Flag changes need a reason —
+  // the backend audit-logs every flip.
+  let allowCentralizedAgentUsers = $state(false);
+  let savingAgentCentralized = $state(false);
+  let loadingAgentCentralized = $state(true);
 
   // Auth policy state
   let authPolicyConfig = $state({
@@ -44,8 +51,47 @@
   ];
 
   onMount(async () => {
-    await Promise.all([loadSettings(), loadAuthPolicy()]);
+    await Promise.all([loadSettings(), loadAuthPolicy(), loadAgentCentralized()]);
   });
+
+  async function loadAgentCentralized() {
+    loadingAgentCentralized = true;
+    try {
+      const settings = await agentSecurity.getSettings();
+      allowCentralizedAgentUsers = !!settings.allow_centralized_service_users;
+    } catch (err) {
+      console.error('Failed to load agent security settings:', err);
+    } finally {
+      loadingAgentCentralized = false;
+    }
+  }
+
+  async function handleAgentCentralizedToggle(newValue) {
+    const reason = window.prompt(
+      newValue
+        ? 'Enabling centralized agent users — please record why (audit-logged):'
+        : 'Disabling centralized agent users — please record why (audit-logged):'
+    );
+    if (reason === null || reason.trim() === '') {
+      // User canceled or gave an empty reason — revert.
+      return;
+    }
+    savingAgentCentralized = true;
+    try {
+      const result = await agentSecurity.updateSettings({
+        allow_centralized_service_users: newValue,
+        reason: reason.trim(),
+      });
+      allowCentralizedAgentUsers = !!result.allow_centralized_service_users;
+    } catch (err) {
+      errorToast(err?.message || 'Failed to update agent security setting');
+      console.error('Failed to update agent security:', err);
+      // Force-refresh so the toggle reflects server truth.
+      await loadAgentCentralized();
+    } finally {
+      savingAgentCentralized = false;
+    }
+  }
 
   async function loadSettings() {
     loading = true;
@@ -285,6 +331,44 @@
                 <p class="text-xs mt-2" style="color: var(--ds-text-subtle);">
                   Caps the number of agents each non-admin may own. Admin-created service users are not subject to this limit.
                 </p>
+              </div>
+            {/if}
+          </div>
+        </div>
+      </Panel>
+    </div>
+
+    <!-- Coding-Agent Harness: Centralized Service Users (WI-87) -->
+    <div class="mt-4">
+      <Panel padding="spacious">
+        <div class="flex items-start gap-4">
+          <div class="p-2 rounded-lg" style="background-color: var(--ds-background-neutral);">
+            <UserCog class="w-5 h-5" style="color: var(--ds-icon);" />
+          </div>
+          <div class="flex-1">
+            <div class="flex items-center justify-between">
+              <div>
+                <h3 class="text-base font-medium" style="color: var(--ds-text);">Coding-Agent Centralized Service Users</h3>
+                <p class="text-sm mt-1" style="color: var(--ds-text-subtle);">
+                  Allow workspace admins to bind coding-agent runs to centralized service users.
+                  Without this, admins can only bind to agent users they own. Every change is
+                  audit-logged with the reason you supply at toggle time.
+                </p>
+              </div>
+              {#if loadingAgentCentralized}
+                <Loader2 class="w-5 h-5 animate-spin" style="color: var(--ds-icon-subtle);" />
+              {:else}
+                <Toggle
+                  bind:checked={allowCentralizedAgentUsers}
+                  disabled={savingAgentCentralized}
+                  onchange={handleAgentCentralizedToggle}
+                />
+              {/if}
+            </div>
+
+            {#if allowCentralizedAgentUsers}
+              <div class="mt-3">
+                <AlertBox variant="warning" message="Centralized service users may act across workspaces. Manage the per-user allowlist via the admin agent-security allowlist endpoint; only allowlisted users can be picked as a binding's acting identity." />
               </div>
             {/if}
           </div>
