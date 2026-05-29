@@ -22,6 +22,21 @@ type SCMCredentialResolver interface {
 	ResolveForRun(ctx context.Context, connectionID int) (token string, providerType string, baseURL string, err error)
 }
 
+// LLMCapabilityResolver reports which LLM connections a workspace is
+// allowed to bind to: the connection ids exposed to it as enabled
+// "llm_connection" action capabilities. Create validates a chosen
+// llm_connection_id against this list so the limit holds even when a
+// caller bypasses the UI and POSTs directly. Kept as an interface so
+// production wires the action repository while tests supply a fake.
+type LLMCapabilityResolver interface {
+	WorkspaceLLMConnectionIDs(ctx context.Context, workspaceID int) ([]int, error)
+}
+
+// ErrLLMConnectionNotExposed is returned by Create when the chosen
+// llm_connection_id is not exposed to the workspace as an action
+// capability. The handler maps it to a 400.
+var ErrLLMConnectionNotExposed = errors.New("binding service: llm connection is not available to this workspace")
+
 // BindingService owns the workspace_agent_bindings lifecycle from the
 // orchestrator's side: workspace-admin CRUD goes through Create / Delete
 // (Create validates the acting identity via the WI-87 chokepoint), and
@@ -36,6 +51,7 @@ type BindingService struct {
 	identity *AgentActingIdentityService
 	runs     *RunService
 	scmCreds SCMCredentialResolver
+	llmCaps  LLMCapabilityResolver
 	logger   *log.Logger
 }
 
@@ -47,6 +63,7 @@ type BindingServiceOptions struct {
 	Identity *AgentActingIdentityService
 	Runs     *RunService
 	SCMCreds SCMCredentialResolver
+	LLMCaps  LLMCapabilityResolver
 	Logger   *log.Logger
 }
 
@@ -68,6 +85,7 @@ func NewBindingService(opts BindingServiceOptions) (*BindingService, error) {
 		identity: opts.Identity,
 		runs:     opts.Runs,
 		scmCreds: opts.SCMCreds,
+		llmCaps:  opts.LLMCaps,
 		logger:   logger,
 	}, nil
 }
@@ -103,6 +121,19 @@ func (s *BindingService) Create(ctx context.Context, req CreateBindingRequest) (
 	identity, err := s.identity.Resolve(ctx, req.CreatedByUserID, req.ActingUserID, req.WorkspaceID)
 	if err != nil {
 		return nil, err
+	}
+	// An LLM, when chosen, must be one the workspace was granted via an
+	// "llm_connection" action capability. The UI already limits the
+	// picker to these; re-check here so a direct API call can't bind to a
+	// connection the workspace was never exposed to.
+	if req.LLMConnectionID != nil && s.llmCaps != nil {
+		allowed, err := s.llmCaps.WorkspaceLLMConnectionIDs(ctx, req.WorkspaceID)
+		if err != nil {
+			return nil, fmt.Errorf("resolve llm capabilities: %w", err)
+		}
+		if !containsInt(allowed, *req.LLMConnectionID) {
+			return nil, ErrLLMConnectionNotExposed
+		}
 	}
 	binding := &models.WorkspaceAgentBinding{
 		WorkspaceID:     req.WorkspaceID,
@@ -212,6 +243,16 @@ func (s *BindingService) MaybeStartRunForAssignee(ctx context.Context, workspace
 	}
 	s.logger.Printf("binding service: started run=%d for item=%d binding=%d acting_user=%d", runID, itemID, binding.ID, binding.ActingUserID)
 	return nil
+}
+
+// containsInt reports whether xs contains v.
+func containsInt(xs []int, v int) bool {
+	for _, x := range xs {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }
 
 // embedTokenInRemoteURL rewrites an HTTPS git remote into the OAuth-

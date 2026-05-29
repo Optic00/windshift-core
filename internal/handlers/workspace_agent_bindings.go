@@ -179,6 +179,8 @@ func (h *WorkspaceAgentBindingHandler) Create(w http.ResponseWriter, r *http.Req
 		switch {
 		case errors.Is(err, repository.ErrBindingDuplicate):
 			respondConflict(w, r, err.Error())
+		case errors.Is(err, services.ErrLLMConnectionNotExposed):
+			respondBadRequest(w, r, err.Error())
 		case isIdentityGateError(err):
 			respondForbidden(w, r)
 		default:

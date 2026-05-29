@@ -2,7 +2,9 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -27,6 +29,37 @@ func NewActionRepository(db database.Database) *ActionRepository {
 func (r *ActionRepository) IsEnabledLLMConnection(connectionID int) bool {
 	var exists int
 	return r.db.QueryRow(`SELECT 1 FROM llm_connections WHERE id = ? AND is_enabled = true`, connectionID).Scan(&exists) == nil
+}
+
+// WorkspaceLLMConnectionIDs returns the LLM connection ids exposed to the
+// workspace as enabled "llm_connection" action capabilities whose backing
+// connection is itself enabled. This mirrors the workspace capability
+// picker's "usable" set (ListWorkspaceCapabilities + filterUsableWorkspace-
+// Capabilities) and is the allowlist the agent-binding create path
+// validates a chosen llm_connection_id against. The ctx is accepted for
+// interface symmetry; the underlying queries are not yet context-aware.
+func (r *ActionRepository) WorkspaceLLMConnectionIDs(_ context.Context, workspaceID int) ([]int, error) {
+	caps, err := r.ListCapabilitiesForWorkspace(workspaceID, string(models.CapabilityLLMConnection))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]int, 0, len(caps))
+	seen := make(map[int]bool, len(caps))
+	for _, cap := range caps {
+		var cfg models.LLMConnectionCapabilityConfig
+		if err := json.Unmarshal([]byte(cap.Config), &cfg); err != nil {
+			continue
+		}
+		if cfg.ConnectionID == 0 || seen[cfg.ConnectionID] {
+			continue
+		}
+		if !r.IsEnabledLLMConnection(cfg.ConnectionID) {
+			continue
+		}
+		seen[cfg.ConnectionID] = true
+		out = append(out, cfg.ConnectionID)
+	}
+	return out, nil
 }
 
 // applyActionNulls sets nullable fields on an Action from scanned sql.Null values.

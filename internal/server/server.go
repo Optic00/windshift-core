@@ -652,6 +652,7 @@ func (s *Server) initialize() error {
 		Identity: agentIdentitySvc,
 		Runs:     codingRunSvc,
 		SCMCreds: &scmCredsAdapter{cr: scmCredResolver},
+		LLMCaps:  repository.NewActionRepository(s.db),
 	})
 	agentBindingHandler := handlers.NewWorkspaceAgentBindingHandler(bindingSvc, agentIdentitySvc, permService, logger.NewAuditor(s.db))
 	agentRunHandler := handlers.NewAgentRunHandler(repository.NewAgentRunRepository(s.db), codingRunSvc, permService)

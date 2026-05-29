@@ -22,6 +22,11 @@
   let bindings = $state([]);
   let candidates = $state([]);
   let scmConnections = $state([]);
+  // LLM connections exposed to this workspace as action capabilities
+  // (CapabilityType "llm_connection"). The binding's llm_connection_id is
+  // limited to these so admins can't bind to a connection the workspace
+  // was never granted.
+  let llmCapabilities = $state([]);
 
   // Add-form state.
   let addActingUserId = $state(null);
@@ -52,14 +57,19 @@
   async function load() {
     loading = true;
     try {
-      const [list, cands, conns] = await Promise.all([
+      const [list, cands, conns, llmCaps] = await Promise.all([
         agentBindings.listForWorkspace(workspaceId),
         agentBindings.getCandidates(workspaceId),
         api.workspaceSCM.getConnections(workspaceId).catch(() => []),
+        // action.manage gates this endpoint; the Administrator role carries
+        // it alongside workspace.admin, but a custom admin role might not —
+        // fall back to an empty list rather than breaking the whole form.
+        api.actionCapabilities.getForWorkspace(workspaceId, 'llm_connection').catch(() => []),
       ]);
       bindings = list ?? [];
       candidates = cands ?? [];
       scmConnections = conns ?? [];
+      llmCapabilities = llmCaps ?? [];
     } catch (err) {
       console.error('Failed to load agent bindings:', err);
       errorToast(err?.message || 'Failed to load agent bindings');
@@ -85,6 +95,28 @@
       disabled: false,
     })),
   ]);
+
+  // LLM picker: limited to the connections exposed to this workspace as
+  // "llm_connection" action capabilities. The capability wraps a raw LLM
+  // connection id in its config JSON; we post that id as llm_connection_id
+  // (the binding stores the connection, not the capability). Dedupe by
+  // connection id in case two capabilities point at the same connection.
+  let llmOptions = $derived.by(() => {
+    const opts = [{ value: null, label: 'Use workspace defaults', disabled: false }];
+    const seen = new Set();
+    for (const cap of llmCapabilities || []) {
+      let connId = null;
+      try {
+        connId = JSON.parse(cap.config || '{}')?.connection_id ?? null;
+      } catch {
+        connId = null;
+      }
+      if (!connId || seen.has(connId)) continue;
+      seen.add(connId);
+      opts.push({ value: connId, label: cap.name || `Connection #${connId}`, disabled: false });
+    }
+    return opts;
+  });
 
   // Repository picker: populated from the linked repos of the selected
   // SCM connection. Disabled (with an explanatory placeholder) until a
@@ -319,8 +351,8 @@
               <Input id="binding-repo-base" bind:value={addRepoBaseRef} placeholder="main" />
             </div>
             <div>
-              <label for="binding-llm" class="block text-xs mb-1" style="color: var(--ds-text-subtle);">LLM connection id (optional)</label>
-              <Input id="binding-llm" type="number" bind:value={addLLMConnectionId} placeholder="leave blank to use defaults" />
+              <label for="binding-llm" class="block text-xs mb-1" style="color: var(--ds-text-subtle);">LLM (optional)</label>
+              <Select id="binding-llm" bind:value={addLLMConnectionId} options={llmOptions} />
             </div>
             <div>
               <label for="binding-ttl" class="block text-xs mb-1" style="color: var(--ds-text-subtle);">Per-run token TTL (minutes)</label>
