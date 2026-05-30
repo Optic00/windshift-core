@@ -635,10 +635,15 @@ func (s *Server) initialize() error {
 	agentBindingRepo := repository.NewWorkspaceAgentBindingRepository(s.db)
 	scmCredResolver := scm.NewCredentialResolver(s.db, scmProviderHandler.GetEncryption())
 
+	// Shared AI prompt store: embedded defaults overridable from cfg.LLM.PromptsDir
+	// (AI_PROMPTS_DIR). Built here so the coding-agent harness and the AI handlers
+	// below resolve the same overridable prompts.
+	promptStore := llm.NewPromptStore(cfg.LLM.PromptsDir)
+
 	var codingRunSvc *services.RunService
 	if cfg.CodingAgent.RunnerImage != "" {
 		var bootErr error
-		codingRunSvc, bootErr = bootCodingAgentRunService(s.db, tokenManager, agentBindingRepo, scmCredResolver, cfg.CodingAgent)
+		codingRunSvc, bootErr = bootCodingAgentRunService(s.db, tokenManager, agentBindingRepo, scmCredResolver, cfg.CodingAgent, promptStore)
 		if bootErr != nil {
 			slog.Warn("coding-agent harness disabled: failed to construct RunService",
 				slog.String("component", "coding-agent"),
@@ -981,7 +986,6 @@ func (s *Server) initialize() error {
 	llmModelCache := llm.NewModelCache(s.db)
 	llmModelRefresher := llm.NewModelRefresher(llmModelCache)
 	llmConnHandler := handlers.NewLLMConnectionHandler(llmManager, logger.NewAuditor(s.db), llmModelCache, llmModelRefresher)
-	promptStore := llm.NewPromptStore(cfg.LLM.PromptsDir)
 	aiHandler := handlers.NewAIHandler(s.db, llmManager, permService, timePermissionService, timerService, promptStore, s.actionService)
 
 	// Briefing scheduler (generates daily briefings for all users)
@@ -1949,6 +1953,7 @@ func bootCodingAgentRunService(
 	bindings *repository.WorkspaceAgentBindingRepository,
 	cr *scm.CredentialResolver,
 	cfg config.CodingAgentConfig,
+	promptStore *llm.PromptStore,
 ) (*services.RunService, error) {
 	if cfg.WorktreeRoot == "" {
 		return nil, fmt.Errorf("coding-agent: WorktreeRoot is required when RunnerImage is set")
@@ -1971,19 +1976,14 @@ func bootCodingAgentRunService(
 	}
 
 	runner := &services.DockerPiRunner{
-		Image:        cfg.RunnerImage,
-		DockerBinary: cfg.DockerBinary,
-		Env:          staticEnv,
-		Network:      cfg.Network,
-		PidsLimit:    cfg.PidsLimit,
-		Memory:       cfg.Memory,
-		CPUs:         cfg.CPUs,
-		InitialPrompt: "You are an autonomous coding agent. The Windshift item assigned to you is in $WINDSHIFT_ITEM_ID. " +
-			"Start by running `ws task get $WINDSHIFT_ITEM_ID` to read the requirements. " +
-			"The ws CLI is preconfigured (see ~/WINDSHIFT.md for the full surface). " +
-			"You have no general internet egress: outbound network access is filtered, so don't expect to reach arbitrary URLs, install packages from the public internet, or call external APIs — work with what is already in /workspace and the ws API. " +
-			"You cannot chat with the user interactively. To ask a question, report progress, surface a blocker, or hand off, post a comment on the work item with `ws comment add $WINDSHIFT_ITEM_ID -m \"<markdown>\"` — that is your only channel to the human. " +
-			"Complete the work in /workspace, then commit and push your branch — the orchestrator opens the draft PR for you.",
+		Image:         cfg.RunnerImage,
+		DockerBinary:  cfg.DockerBinary,
+		Env:           staticEnv,
+		Network:       cfg.Network,
+		PidsLimit:     cfg.PidsLimit,
+		Memory:        cfg.Memory,
+		CPUs:          cfg.CPUs,
+		InitialPrompt: promptStore.Get(llm.PromptCodingAgentInitial),
 	}
 
 	// PR-creation post-run hook. cr is the same CredentialResolver

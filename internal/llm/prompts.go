@@ -21,6 +21,7 @@ const (
 	PromptAIChat             = "ai_chat"
 	PromptDailyBriefing      = "daily_briefing"
 	PromptSummarizeTestPlan  = "summarize_test_plan"
+	PromptCodingAgentInitial = "coding_agent_initial"
 )
 
 var allPromptNames = []string{
@@ -33,6 +34,7 @@ var allPromptNames = []string{
 	PromptAIChat,
 	PromptDailyBriefing,
 	PromptSummarizeTestPlan,
+	PromptCodingAgentInitial,
 }
 
 // PromptStore holds AI system prompts, loaded from embedded defaults with
