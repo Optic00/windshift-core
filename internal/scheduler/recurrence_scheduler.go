@@ -1,7 +1,6 @@
 package scheduler
 
 import (
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -247,7 +246,6 @@ func (rs *RecurrenceScheduler) generateInstancesForRule(rule *models.RecurrenceR
 }
 
 // createInstance creates a single recurring task instance
-// last review: ser, 300526, FIXME: db operation should not live in the scheduler, possibly reuse item service
 func (rs *RecurrenceScheduler) createInstance(rule *models.RecurrenceRule, template *models.Item, scheduledDate time.Time) error {
 	tx, err := rs.db.Begin()
 	if err != nil {
@@ -256,11 +254,7 @@ func (rs *RecurrenceScheduler) createInstance(rule *models.RecurrenceRule, templ
 	defer func() { _ = tx.Rollback() }()
 
 	// Get next workspace item number
-	var nextNum int
-	err = tx.QueryRow(`
-		SELECT COALESCE(MAX(workspace_item_number), 0) + 1
-		FROM items WHERE workspace_id = ?
-	`, template.WorkspaceID).Scan(&nextNum)
+	nextNum, err := rs.itemRepo.GetNextWorkspaceItemNumber(tx, template.WorkspaceID)
 	if err != nil {
 		return fmt.Errorf("failed to get next item number: %w", err)
 	}
@@ -269,20 +263,6 @@ func (rs *RecurrenceScheduler) createInstance(rule *models.RecurrenceRule, templ
 	seqNum, err := rs.recurrenceRepo.GetNextSequenceNumber(tx, rule.ID)
 	if err != nil {
 		return fmt.Errorf("failed to get sequence number: %w", err)
-	}
-
-	// Build the new item - copy fields based on rule settings
-	var description string
-	if rule.CopyDescription {
-		description = template.Description
-	}
-
-	var assigneeID, priorityID *int
-	if rule.CopyAssignee {
-		assigneeID = template.AssigneeID
-	}
-	if rule.CopyPriority {
-		priorityID = template.PriorityID
 	}
 
 	// Determine status. The user can pin one explicitly; otherwise resolve via the
@@ -304,31 +284,33 @@ func (rs *RecurrenceScheduler) createInstance(rule *models.RecurrenceRule, templ
 		statusID = *resolved
 	}
 
-	// Handle custom field values
-	var customFieldValuesJSON *string
-	if rule.CopyCustomFields && len(template.CustomFieldValues) > 0 {
-		var cfBytes []byte
-		cfBytes, err = json.Marshal(template.CustomFieldValues)
-		if err == nil {
-			cfStr := string(cfBytes)
-			customFieldValuesJSON = &cfStr
-		}
+	// Build the new item, copying template fields per the rule's flags. Insert
+	// goes through ItemRepository so the items-table write lives in the
+	// repository layer (same path scm/issue_sync.go uses), not in the scheduler.
+	item := &models.Item{
+		WorkspaceID:         template.WorkspaceID,
+		WorkspaceItemNumber: nextNum,
+		ItemTypeID:          template.ItemTypeID,
+		Title:               template.Title,
+		StatusID:            &statusID,
+		DueDate:             &scheduledDate,
+		IsTask:              template.IsTask,
+		ParentID:            template.ParentID,
+	}
+	if rule.CopyDescription {
+		item.Description = template.Description
+	}
+	if rule.CopyAssignee {
+		item.AssigneeID = template.AssigneeID
+	}
+	if rule.CopyPriority {
+		item.PriorityID = template.PriorityID
+	}
+	if rule.CopyCustomFields {
+		item.CustomFieldValues = template.CustomFieldValues
 	}
 
-	// Insert the new item
-	// last review: ser, 300526, FIXME: major encapsulation violation
-	var itemID int64
-	err = tx.QueryRow(`
-		INSERT INTO items (
-			workspace_id, workspace_item_number, item_type_id, title, description,
-			status_id, priority_id, due_date, is_task, parent_id,
-			assignee_id, custom_field_values, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
-	`,
-		template.WorkspaceID, nextNum, template.ItemTypeID, template.Title, description,
-		statusID, priorityID, scheduledDate, template.IsTask, template.ParentID,
-		assigneeID, customFieldValuesJSON, time.Now(), time.Now(),
-	).Scan(&itemID)
+	itemID, err := rs.itemRepo.Create(tx, item)
 	if err != nil {
 		return fmt.Errorf("failed to create item: %w", err)
 	}
@@ -336,7 +318,7 @@ func (rs *RecurrenceScheduler) createInstance(rule *models.RecurrenceRule, templ
 	// Create the instance record
 	err = rs.recurrenceRepo.CreateInstance(tx, &models.RecurrenceInstance{
 		RecurrenceRuleID: rule.ID,
-		InstanceItemID:   int(itemID),
+		InstanceItemID:   itemID,
 		ScheduledDate:    scheduledDate,
 		SequenceNumber:   seqNum,
 	})
