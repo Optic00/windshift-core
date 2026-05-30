@@ -1,46 +1,31 @@
-# Windshift v0.7.1 — "Knowledge Base"
+# Windshift v0.7.2 — "Shiplaunch"
 
-Windshift 0.7.1 introduces workspace Pages: a built-in knowledge base for specs, runbooks, design notes, and long-lived project documentation. Pages are available in the web app, REST API, `ws` CLI, links, and AI agent tooling.
+Windshift 0.7.2 introduces the coding-agent harness — Windshift can now run a coding agent against a work item on assignment — alongside CLI improvements that make Windshift a first-class backend for external task tools.
 
 ## Highlights
 
-### Workspace Pages
+### Coding-agent harness
 
-Create Markdown pages inside each workspace, organize them into a tree, attach labels, and maintain immutable revision history. Pages are designed for team documentation that should live alongside work items instead of being scattered across external files.
+Windshift can spawn a per-assignment coding agent in an isolated git worktree with the `ws` CLI, `pi`, and the task extension baked in. The harness covers the full round trip: a walking-skeleton runner and worktree manager, per-run minted tokens, pi RPC plumbing and production runner wiring, workspace bindings with an assignee-change trigger, and SCM round-trip + pull-request creation against both GitHub and Gitea. An acting-identity security gate, a global-admin security surface, and a centralized-service-user allowlist (with a reason-input dialog on the Security page) govern which identities an agent may act as. A runs HTTP API and JS clients back the harness UI.
 
-### Page permissions and revision recovery
+### Workspace-scoped priority listing for integrations
 
-Pages support per-page ACLs, inheritance toggles, and admin-gated archive/restore flows. Revision history can be inspected and restored, including recovery of archived pages.
-
-### CLI and API support
-
-The `ws page` and `ws page-label` commands cover page creation, editing, moving, archiving, labels, history, restore, permissions, and inheritance. The v1 bearer-token API now exposes matching page, revision, ACL, and label endpoints for automation.
-
-### AI agent page tools
-
-Built-in agents can now search, read, create, update, move, archive, restore, and manage permissions for workspace Pages, subject to the same workspace roles and page ACLs as human users.
+New `ws priority ls` command and `GET /rest/api/v1/workspaces/{id}/priorities` endpoint expose a workspace's priority catalog (id, name, sort order, default), scoped to the workspace's configuration set and mirroring `ws item-type ls` / `ws status ls`. This lets external task tools resolve priority names to ids for the right workspace — for example, the pi-tasks Windshift backend uses it to offer priority editing.
 
 ## Improvements
 
-- Pages can be linked to work items using the Page link type.
-- Page labels are included in CLI/API page responses and can be filtered from the CLI.
-- Page history is paginated and available to automation clients.
-- Page archive now records revision entries for affected subtree pages.
-- Archived page content is removed from the search/chunk index until restored.
-- Agent tokens minted by default include page scopes.
+- LLM model refresh now covers all providers, with a new diagnostics widget.
+- Board view supports swimlane grouping by item type.
+- The request portal persists in-progress request drafts.
 
 ## Bug fixes
 
-- Fixed the page history drawer showing an empty state despite existing revisions.
-- Fixed restore so archived pages can be recovered by authorized admins.
-- Fixed v1 page responses advertising a permissions URL that was not implemented.
-- Fixed restore revision lookup to stay inside the restore transaction.
-- Closed an archive permission-check race by authorizing the locked subtree inside the archive transaction.
-- Fixed CLI structured JSON output dropping page `_links`.
-- Fixed frontend Pages type-check warnings.
+- SSO: allow configured private OIDC endpoints.
+- Activity: use a window function for cleanup limits (Postgres-safe).
+- Items: color linked-item status badges.
 
 ## Upgrade notes
 
-- New page, revision, ACL, chunk, and label tables are created automatically on startup.
-- Existing agent/CLI tokens may need to be re-minted if they predate page scopes and need access to Pages.
-- Archive is still a soft-delete operation. Restoring a revision unarchives the addressed page; subtree recovery should be performed page-by-page where needed.
+- New agent-run and workspace-agent-binding tables are created automatically on startup.
+- The coding-agent harness is inactive until a workspace has an agent binding configured; running agents also requires Docker on the runner host.
+- `ws priority ls` and the new `/workspaces/{id}/priorities` endpoint require the v0.7.2 server; older clients are unaffected.

@@ -206,19 +206,14 @@ func (cm *cookieManager) clearSessionCookie(w http.ResponseWriter, r *http.Reque
 	http.SetCookie(w, cookie)
 }
 
-// getSessionFromRequest extracts a session token from cookie or Authorization bearer header.
+// getSessionFromRequest extracts a session token from the session cookie only.
+// Authorization: Bearer is reserved for scoped API tokens on /rest/api/v1/*;
+// web session tokens must not be accepted through that header.
 // last review: ser, 210426
 func (cm *cookieManager) getSessionFromRequest(r *http.Request, cookieName string) (string, error) {
-	// Try cookie first
 	token, err := cm.getSessionFromCookie(r, cookieName)
 	if err == nil {
 		return token, nil
-	}
-
-	// Try Authorization header as fallback
-	auth := r.Header.Get("Authorization")
-	if auth != "" && len(auth) > 7 && auth[:7] == "Bearer " {
-		return auth[7:], nil
 	}
 
 	return "", errors.New("no session token found")

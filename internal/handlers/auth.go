@@ -281,7 +281,9 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Set session cookie
+	// Password login always establishes a browser session via cookie. Do not
+	// return session tokens in JSON or treat them as REST API bearer tokens; the
+	// v1 API accepts only scoped crw_* API tokens.
 	if err := h.sessionManager.SetSessionCookie(w, r, session.Token, req.RememberMe); err != nil {
 		respondInternalError(w, r, err)
 		return

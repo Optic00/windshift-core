@@ -1412,6 +1412,27 @@ components:
       - ActionTriggerManual
       - ActionTriggerSCMTagCreated
       - ActionTriggerSCMReleaseBranchCreated
+    models.CalendarScheduleEntry:
+      properties:
+        created_at:
+          type: string
+        duration_minutes:
+          description: Duration in minutes, optional
+          type: integer
+        notes:
+          type: string
+        scheduled_date:
+          description: YYYY-MM-DD format
+          type: string
+        scheduled_time:
+          description: HH:MM format, optional
+          type: string
+        user_id:
+          type: integer
+        workspace_id:
+          description: User's personal workspace ID
+          type: integer
+      type: object
     models.CapabilityType:
       enum:
       - docker_environment
@@ -1422,6 +1443,221 @@ components:
       - CapabilityDockerEnvironment
       - CapabilityHTTPClient
       - CapabilityLLMConnection
+    models.Item:
+      properties:
+        assignee_avatar:
+          description: Avatar URL of assigned user
+          type: string
+        assignee_email:
+          description: Email of assigned user
+          type: string
+        assignee_id:
+          description: User assignment fields
+          type: integer
+        assignee_name:
+          description: User information for API responses
+          type: string
+        calendar_data:
+          items:
+            $ref: '#/components/schemas/models.CalendarScheduleEntry'
+          type: array
+        channel_id:
+          description: Portal submission tracking fields (immutable once set)
+          type: integer
+        channel_name:
+          description: Portal submission tracking joined fields
+          type: string
+        children:
+          description: For tree representations
+          items:
+            $ref: '#/components/schemas/models.Item'
+          type: array
+        completed_at:
+          type: string
+        created_at:
+          type: string
+        creator_email:
+          description: Email of creator (internal user or portal customer)
+          type: string
+        creator_id:
+          description: Internal user who created this item
+          type: integer
+        creator_name:
+          description: Full name of creator (internal user or portal customer)
+          type: string
+        creator_portal_customer_email:
+          description: Email of portal customer creator
+          type: string
+        creator_portal_customer_id:
+          description: Portal customer who created this item (for portal submissions)
+          type: integer
+        creator_portal_customer_name:
+          description: Name of portal customer creator
+          type: string
+        custom_field_values:
+          additionalProperties: true
+          type: object
+        description:
+          type: string
+        due_date:
+          description: Due date for item completion
+          type: string
+        effective_project_id:
+          description: |-
+            EffectiveProjectID is the resolved project after walking InheritProject
+            up the parent chain. Consumers that need "which time-tracking project
+            applies to this item" should read this, not ProjectID directly.
+          type: integer
+        effective_project_name:
+          type: string
+        end_date:
+          description: End date for item
+          type: string
+        estimate_minutes:
+          description: Time estimate in minutes (compared against logged worklog time)
+          type: integer
+        frac_index:
+          description: Manual sorting field
+          type: string
+        id:
+          type: integer
+        inherit_project:
+          description: If true, ProjectID is ignored and the parent item's effective
+            project is used
+          type: boolean
+        is_task:
+          description: Flag to mark this item as a task (checklist item)
+          type: boolean
+        item_type_id:
+          description: Optional, defaults to workspace's default item type
+          type: integer
+        item_type_name:
+          type: string
+        iteration_end_date:
+          type: string
+        iteration_id:
+          description: Optional iteration assignment
+          type: integer
+        iteration_name:
+          type: string
+        labels:
+          description: Workspace-scoped labels
+          items:
+            $ref: '#/components/schemas/models.Label'
+          type: array
+        milestones:
+          items:
+            $ref: '#/components/schemas/models.Milestone'
+          type: array
+        parent_id:
+          description: Hierarchy fields
+          type: integer
+        parent_title:
+          type: string
+        personal_labels:
+          items:
+            $ref: '#/components/schemas/models.PersonalLabel'
+          type: array
+        priority_color:
+          type: string
+        priority_icon:
+          type: string
+        priority_id:
+          description: Foreign key to priorities table
+          type: integer
+        priority_name:
+          type: string
+        project_id:
+          description: |-
+            Time-tracking project membership. "Project" in Windshift always refers
+            to a row in time_projects; both ProjectID and TimeProjectID below are
+            FKs to that table, serving different roles:
+              ProjectID       - the project this item belongs to (the bucket
+                                worklogs default to). Can be inherited from the
+                                parent item; see InheritProject.
+              TimeProjectID   - overrides the project used when logging time on
+                                this specific item (independent of the bucket the
+                                item belongs to).
+            EffectiveProjectID (below) is the resolved value after applying
+            inheritance, and is what consumers should read.
+          type: integer
+        project_inheritance_mode:
+          description: '"none" | "inherit" | "direct"'
+          type: string
+        project_name:
+          description: Name of the time-tracking project this item belongs to (joined
+            from time_projects via ProjectID)
+          type: string
+        related_work_item_id:
+          description: Personal task relationship (for linking personal workspace
+            tasks to work items)
+          type: integer
+        related_work_item_number:
+          type: integer
+        related_work_item_title:
+          description: Related work item joined fields (for personal tasks)
+          type: string
+        related_work_item_workspace_id:
+          type: integer
+        related_work_item_workspace_key:
+          type: string
+        reporter_avatar:
+          description: Avatar URL of reporter
+          type: string
+        reporter_email:
+          description: Email of reporter
+          type: string
+        reporter_id:
+          description: User who reported this item (from Jira import)
+          type: integer
+        reporter_name:
+          description: Full name of reporter
+          type: string
+        request_type_id:
+          description: Request type used for submission
+          type: integer
+        request_type_name:
+          description: Name of the request type
+          type: string
+        start_date:
+          description: Start date for item
+          type: string
+        status_color:
+          description: Color from the status category (joined field)
+          type: string
+        status_id:
+          description: Foreign key to statuses table
+          type: integer
+        status_name:
+          description: Name from statuses table (joined field)
+          type: string
+        story_points:
+          description: Estimation
+          type: number
+        time_project_id:
+          type: integer
+        time_project_name:
+          description: Name of the time-tracking project overriding worklog defaults
+            (joined from time_projects via TimeProjectID)
+          type: string
+        title:
+          type: string
+        updated_at:
+          type: string
+        virtual_field_data:
+          additionalProperties: true
+          type: object
+        workspace_id:
+          type: integer
+        workspace_item_number:
+          description: Workspace-specific sequential number for display keys
+          type: integer
+        workspace_key:
+          type: string
+        workspace_name:
+          description: Joined fields for API responses
+          type: string
+      type: object
     models.ItemDiagram:
       properties:
         created_at:
@@ -1583,6 +1819,83 @@ components:
         updated_at:
           type: string
       type: object
+    models.Milestone:
+      properties:
+        category_color:
+          type: string
+        category_id:
+          type: integer
+        category_name:
+          description: Joined fields for API responses
+          type: string
+        created_at:
+          type: string
+        description:
+          type: string
+        external_key:
+          description: Stable upsert key set by automation (e.g. tag short-name);
+            unique per workspace when set
+          type: string
+        id:
+          type: integer
+        is_global:
+          description: false=local to workspace, true=global (shared)
+          type: boolean
+        latest_release:
+          $ref: '#/components/schemas/models.MilestoneRelease'
+        name:
+          type: string
+        releases:
+          items:
+            $ref: '#/components/schemas/models.MilestoneRelease'
+          type: array
+        status:
+          description: planning, in-progress, completed, cancelled
+          type: string
+        target_date:
+          description: Date in YYYY-MM-DD format, nullable
+          type: string
+        updated_at:
+          type: string
+        workspace_id:
+          description: NULL if global, set if local to workspace
+          type: integer
+        workspace_name:
+          type: string
+      type: object
+    models.MilestoneRelease:
+      properties:
+        body:
+          type: string
+        created_at:
+          type: string
+        created_by:
+          type: integer
+        id:
+          type: integer
+        is_draft:
+          type: boolean
+        is_prerelease:
+          type: boolean
+        milestone_id:
+          type: integer
+        name:
+          type: string
+        scm_connection_id:
+          description: Visible only to users with connection workspace access
+          type: integer
+        scm_release_id:
+          type: string
+        scm_release_url:
+          type: string
+        scm_repository:
+          description: '"owner/repo"; same visibility as SCMConnectionID'
+          type: string
+        tag_name:
+          type: string
+        target_commitish:
+          type: string
+      type: object
     models.PageLabel:
       properties:
         color:
@@ -1614,6 +1927,22 @@ components:
           type: integer
         principal_type:
           type: string
+      type: object
+    models.PersonalLabel:
+      properties:
+        color:
+          type: string
+        created_at:
+          type: string
+        id:
+          type: integer
+        name:
+          type: string
+        updated_at:
+          type: string
+        user_id:
+          description: NULL for global labels, user_id for user-specific labels
+          type: integer
       type: object
     models.TestCase:
       properties:
@@ -1651,6 +1980,28 @@ components:
           type: array
         title:
           type: string
+        updated_at:
+          type: string
+        workspace_id:
+          type: integer
+      type: object
+    models.TestFolder:
+      properties:
+        created_at:
+          type: string
+        description:
+          type: string
+        id:
+          type: integer
+        name:
+          type: string
+        parent_id:
+          type: integer
+        sort_order:
+          type: integer
+        test_case_count:
+          description: Computed fields for API responses
+          type: integer
         updated_at:
           type: string
         workspace_id:
@@ -1700,6 +2051,26 @@ components:
         template_id:
           description: Optional reference to template
           type: integer
+        workspace_id:
+          type: integer
+      type: object
+    models.TestRunTemplate:
+      properties:
+        created_at:
+          type: string
+        description:
+          type: string
+        id:
+          type: integer
+        name:
+          type: string
+        set_id:
+          type: integer
+        set_name:
+          description: Joined fields for API responses
+          type: string
+        updated_at:
+          type: string
         workspace_id:
           type: integer
       type: object
@@ -8929,6 +9300,63 @@ paths:
       summary: Revoke a page permission
       tags:
       - pages
+  /workspaces/{id}/priorities:
+    get:
+      description: Returns the priorities enabled for the workspace's configuration
+        set. Falls back to all priorities when the workspace has no configuration
+        set.
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/handlers.PriorityResponse'
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the workspaces:read scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Workspace not found or not visible to caller
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List priorities configured for a workspace
+      tags:
+      - workspaces
+      - priorities
   /workspaces/{id}/statuses:
     get:
       parameters:
@@ -9104,7 +9532,117 @@ paths:
       summary: List test cases in a workspace
       tags:
       - tests
+    post:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/models.TestCase'
+        description: Test case to create
+        required: true
+        x-originalParamName: body
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/models.TestCase'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body or validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Workspace not found or caller lacks test.manage
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Create a new test case
+      tags:
+      - tests
   /workspaces/{workspaceId}/test-cases/{id}:
+    delete:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test case ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        "204":
+          description: Test case deleted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace or case ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test case not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Delete a test case
+      tags:
+      - tests
     get:
       parameters:
       - description: Workspace ID
@@ -9159,6 +9697,373 @@ paths:
       security:
       - BearerAuth: []
       summary: Get a test case by ID (scoped to workspace)
+      tags:
+      - tests
+    put:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test case ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/models.TestCase'
+        description: Test case fields to update
+        required: true
+        x-originalParamName: body
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/models.TestCase'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body or validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test case not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Update an existing test case
+      tags:
+      - tests
+  /workspaces/{workspaceId}/test-cases/{id}/connections:
+    get:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test case ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace or case ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:read scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test case not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List related sets, templates, and executions for a test case
+      tags:
+      - tests
+  /workspaces/{workspaceId}/test-cases/{id}/move:
+    put:
+      description: Body is `{"folder_id":<id|null>, "sort_order":<int>}`. Passing
+        `null` for `folder_id` moves the case to the top level.
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test case ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: true
+              type: object
+        description: Folder ID + sort order
+        required: true
+        x-originalParamName: body
+      responses:
+        "200":
+          description: Test case moved
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test case not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Move a test case to a different folder
+      tags:
+      - tests
+  /workspaces/{workspaceId}/test-cases/{testCaseId}/labels:
+    get:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test case ID
+        in: path
+        name: testCaseId
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/models.TestLabel'
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace or case ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:read scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test case not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List labels attached to a test case
+      tags:
+      - tests
+    post:
+      description: Body is `{"label_id":<id>}`.
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test case ID
+        in: path
+        name: testCaseId
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties:
+                type: integer
+              type: object
+        description: Label ID to attach
+        required: true
+        x-originalParamName: body
+      responses:
+        "201":
+          description: Label attached
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test case or label not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Attach a label to a test case
+      tags:
+      - tests
+  /workspaces/{workspaceId}/test-cases/{testCaseId}/labels/{labelId}:
+    delete:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test case ID
+        in: path
+        name: testCaseId
+        required: true
+        schema:
+          type: integer
+      - description: Test label ID
+        in: path
+        name: labelId
+        required: true
+        schema:
+          type: integer
+      responses:
+        "204":
+          description: Label detached
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace, case, or label ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test case not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Detach a label from a test case
       tags:
       - tests
   /workspaces/{workspaceId}/test-cases/{testCaseId}/steps:
@@ -9220,6 +10125,1955 @@ paths:
       summary: List steps on a test case
       tags:
       - tests
+    post:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test case ID
+        in: path
+        name: testCaseId
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/models.TestStep'
+        description: Test step to create
+        required: true
+        x-originalParamName: body
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/models.TestStep'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body or validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test case not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Append a step to a test case
+      tags:
+      - tests
+  /workspaces/{workspaceId}/test-cases/{testCaseId}/steps/{stepId}:
+    delete:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test case ID
+        in: path
+        name: testCaseId
+        required: true
+        schema:
+          type: integer
+      - description: Test step ID
+        in: path
+        name: stepId
+        required: true
+        schema:
+          type: integer
+      responses:
+        "204":
+          description: Test step deleted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace, case, or step ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test step not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Delete a test step
+      tags:
+      - tests
+    put:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test case ID
+        in: path
+        name: testCaseId
+        required: true
+        schema:
+          type: integer
+      - description: Test step ID
+        in: path
+        name: stepId
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/models.TestStep'
+        description: Test step fields to update
+        required: true
+        x-originalParamName: body
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/models.TestStep'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body or validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test step not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Update an existing test step
+      tags:
+      - tests
+  /workspaces/{workspaceId}/test-cases/{testCaseId}/steps/reorder:
+    put:
+      description: Body is `{"step_ids":[...]}` — the desired step order.
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test case ID
+        in: path
+        name: testCaseId
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties:
+                items:
+                  type: integer
+                type: array
+              type: object
+        description: Step IDs in desired order
+        required: true
+        x-originalParamName: body
+      responses:
+        "200":
+          description: Test steps reordered
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test case not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Reorder steps on a test case
+      tags:
+      - tests
+  /workspaces/{workspaceId}/test-cases/reorder:
+    put:
+      description: Body is `{"folder_id":<id|null>, "test_case_ids":[...]}` — the
+        desired order.
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: true
+              type: object
+        description: Folder ID + test case IDs in desired order
+        required: true
+        x-originalParamName: body
+      responses:
+        "200":
+          description: Test cases reordered
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Workspace not found or caller lacks test.manage
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Reorder test cases within a folder
+      tags:
+      - tests
+  /workspaces/{workspaceId}/test-folders:
+    get:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/models.TestFolder'
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:read scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Workspace not found or caller lacks test.view
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List test folders in a workspace
+      tags:
+      - tests
+    post:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/models.TestFolder'
+        description: Test folder to create
+        required: true
+        x-originalParamName: body
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/models.TestFolder'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body or validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Workspace not found or caller lacks test.manage
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Create a new test folder
+      tags:
+      - tests
+  /workspaces/{workspaceId}/test-folders/{id}:
+    delete:
+      description: Test cases inside the folder are moved to no folder (not deleted).
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test folder ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        "204":
+          description: Folder deleted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace or folder ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test folder not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Delete a test folder
+      tags:
+      - tests
+    get:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test folder ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/models.TestFolder'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace or folder ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:read scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test folder not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Get a test folder by ID
+      tags:
+      - tests
+    put:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test folder ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/models.TestFolder'
+        description: Test folder fields to update
+        required: true
+        x-originalParamName: body
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/models.TestFolder'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body or validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test folder not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Update an existing test folder
+      tags:
+      - tests
+  /workspaces/{workspaceId}/test-folders/reorder:
+    put:
+      description: Body is `{"folder_ids":[...]}` — the desired top-down order.
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties:
+                items:
+                  type: integer
+                type: array
+              type: object
+        description: Folder IDs in desired order
+        required: true
+        x-originalParamName: body
+      responses:
+        "200":
+          description: Folders reordered
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Workspace not found or caller lacks test.manage
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Reorder test folders in a workspace
+      tags:
+      - tests
+  /workspaces/{workspaceId}/test-labels:
+    get:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/models.TestLabel'
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:read scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Workspace not found or caller lacks test.view
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List all test labels in a workspace
+      tags:
+      - tests
+    post:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/models.TestLabel'
+        description: Test label to create
+        required: true
+        x-originalParamName: body
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/models.TestLabel'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body or validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Workspace not found or caller lacks test.manage
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Create a new test label in a workspace
+      tags:
+      - tests
+  /workspaces/{workspaceId}/test-labels/{labelId}:
+    delete:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test label ID
+        in: path
+        name: labelId
+        required: true
+        schema:
+          type: integer
+      responses:
+        "204":
+          description: Test label deleted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace or label ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test label not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Delete a test label
+      tags:
+      - tests
+    put:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test label ID
+        in: path
+        name: labelId
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/models.TestLabel'
+        description: Test label fields to update
+        required: true
+        x-originalParamName: body
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/models.TestLabel'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body or validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test label not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Update an existing test label
+      tags:
+      - tests
+  /workspaces/{workspaceId}/test-plans:
+    get:
+      description: Test plans share the underlying `test_sets` table — this is an
+        alias surface for clients that prefer "plan" terminology.
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/models.TestSet'
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:read scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Workspace not found or caller lacks test.view
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List test plans in a workspace
+      tags:
+      - tests
+    post:
+      description: Alias for `POST /workspaces/{workspaceId}/test-sets` — same persistence,
+        different terminology.
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/models.TestSet'
+        description: Test plan to create
+        required: true
+        x-originalParamName: body
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/models.TestSet'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body or validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Workspace not found or caller lacks test.manage
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Create a new test plan
+      tags:
+      - tests
+  /workspaces/{workspaceId}/test-plans/{id}:
+    delete:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test plan ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        "204":
+          description: Test plan deleted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace or plan ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test plan not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Delete a test plan
+      tags:
+      - tests
+    get:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test plan ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/models.TestSet'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace or plan ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:read scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test plan not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Get a test plan by ID
+      tags:
+      - tests
+    put:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test plan ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/models.TestSet'
+        description: Test plan fields to update
+        required: true
+        x-originalParamName: body
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/models.TestSet'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body or validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test plan not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Update an existing test plan
+      tags:
+      - tests
+  /workspaces/{workspaceId}/test-plans/{id}/runs:
+    get:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test plan ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/models.TestRun'
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace or plan ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:read scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test plan not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List test runs created from a test plan
+      tags:
+      - tests
+  /workspaces/{workspaceId}/test-plans/{id}/test-cases:
+    get:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test plan ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/models.TestCase'
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace or plan ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:read scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test plan not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List test cases attached to a test plan
+      tags:
+      - tests
+    post:
+      description: Body is `{"test_case_id":<id>}`.
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test plan ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties:
+                type: integer
+              type: object
+        description: Test case ID to attach
+        required: true
+        x-originalParamName: body
+      responses:
+        "201":
+          description: Test case attached to plan
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test plan or case not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Attach a test case to a test plan
+      tags:
+      - tests
+  /workspaces/{workspaceId}/test-plans/{id}/test-cases/{testCaseId}:
+    delete:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test plan ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - description: Test case ID
+        in: path
+        name: testCaseId
+        required: true
+        schema:
+          type: integer
+      responses:
+        "204":
+          description: Test case detached from plan
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace, plan, or case ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test plan not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Detach a test case from a test plan
+      tags:
+      - tests
+  /workspaces/{workspaceId}/test-reports/summary:
+    get:
+      description: Returns overall stats, trend, recent failures, and recent blocked
+        tests. Optional `milestone_id` and `days` (1-365, default 30) query parameters
+        scope the report.
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Milestone ID to scope the report to
+        in: query
+        name: milestone_id
+        schema:
+          type: integer
+      - description: Window (1-365 days, default 30)
+        in: query
+        name: days
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid query parameters
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:read scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Workspace not found or caller lacks test.view
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Get aggregate test reports for a workspace
+      tags:
+      - tests
+  /workspaces/{workspaceId}/test-results/{resultId}/items:
+    get:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test result ID
+        in: path
+        name: resultId
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/models.Item'
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace or result ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:read scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test result not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List work items linked to a test result
+      tags:
+      - tests
+    post:
+      description: Body is `{"item_id":<id>}`. Both entities must live in the same
+        workspace.
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test result ID
+        in: path
+        name: resultId
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties:
+                type: integer
+              type: object
+        description: Work item ID to link
+        required: true
+        x-originalParamName: body
+      responses:
+        "201":
+          description: Item linked to test result
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test result or item not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Link a work item to a test result
+      tags:
+      - tests
+  /workspaces/{workspaceId}/test-results/{resultId}/items/{itemId}:
+    delete:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test result ID
+        in: path
+        name: resultId
+        required: true
+        schema:
+          type: integer
+      - description: Work item ID
+        in: path
+        name: itemId
+        required: true
+        schema:
+          type: integer
+      responses:
+        "204":
+          description: Item unlinked from test result
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace, result, or item ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test result not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Unlink a work item from a test result
+      tags:
+      - tests
+  /workspaces/{workspaceId}/test-run-templates:
+    get:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/models.TestRunTemplate'
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:read scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Workspace not found or caller lacks test.view
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List test run templates in a workspace
+      tags:
+      - tests
+    post:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/models.TestRunTemplate'
+        description: Test run template to create
+        required: true
+        x-originalParamName: body
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/models.TestRunTemplate'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body or validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Workspace not found or caller lacks test.manage
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Create a new test run template
+      tags:
+      - tests
+  /workspaces/{workspaceId}/test-run-templates/{id}:
+    delete:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test run template ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        "204":
+          description: Template deleted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace or template ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test run template not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Delete a test run template
+      tags:
+      - tests
+    get:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test run template ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/models.TestRunTemplate'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace or template ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:read scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test run template not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Get a test run template by ID
+      tags:
+      - tests
+    put:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test run template ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/models.TestRunTemplate'
+        description: Test run template fields to update
+        required: true
+        x-originalParamName: body
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/models.TestRunTemplate'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body or validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test run template not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Update an existing test run template
+      tags:
+      - tests
   /workspaces/{workspaceId}/test-run-templates/{id}/execute:
     post:
       description: Creates a new test run from the template's bound set, with the
@@ -9277,6 +12131,65 @@ paths:
       security:
       - BearerAuth: []
       summary: Execute a saved test run template
+      tags:
+      - tests
+  /workspaces/{workspaceId}/test-run-templates/{id}/executions:
+    get:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test run template ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/models.TestRun'
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace or template ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:read scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test run template not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List test runs created from a template
       tags:
       - tests
   /workspaces/{workspaceId}/test-runs:
@@ -9401,6 +12314,58 @@ paths:
       tags:
       - tests
   /workspaces/{workspaceId}/test-runs/{id}:
+    delete:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test run ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          description: Test run deleted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace or run ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test run not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Delete a test run and its associated results
+      tags:
+      - tests
     get:
       parameters:
       - description: Workspace ID
@@ -9455,6 +12420,67 @@ paths:
       security:
       - BearerAuth: []
       summary: Get a test run by ID
+      tags:
+      - tests
+    put:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test run ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: true
+              type: object
+        description: Test run fields to update (name, assignee_id)
+        required: true
+        x-originalParamName: body
+      responses:
+        "200":
+          description: Test run updated
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body or validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test run not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Update an existing test run (name / assignee)
       tags:
       - tests
   /workspaces/{workspaceId}/test-runs/{id}/end:
@@ -9640,6 +12666,200 @@ paths:
       summary: Record / update a single test-case result in a run
       tags:
       - tests
+  /workspaces/{workspaceId}/test-runs/{id}/steps:
+    get:
+      description: Returns a map keyed by `<test_case_id>_<step_id>` so clients can
+        look up step results by composite key in one pass.
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test run ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace or run ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:read scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test run not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List per-step results in a test run
+      tags:
+      - tests
+  /workspaces/{workspaceId}/test-runs/{id}/steps/{stepId}:
+    put:
+      description: '`status` is one of "passed", "failed", "blocked", "skipped", "not_run".
+        `actual_result` and `notes` accept the same Markdown the SPA writes; server-side
+        sanitization preserves blank-line `<br />` markers from MilkdownEditor. Optional
+        `item_id` links a work item to the step result.'
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test run ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - description: Test step ID
+        in: path
+        name: stepId
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: true
+              type: object
+        description: Step result update
+        required: true
+        x-originalParamName: body
+      responses:
+        "200":
+          description: Step result recorded
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test run, step, or item not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Record / update a single step result in a run
+      tags:
+      - tests
+  /workspaces/{workspaceId}/test-runs/{id}/summary:
+    get:
+      description: 'Returns `{"markdown": "<rendered summary>"}` — header, statistics
+        table, failed/blocked sections, and full result table. Sanitization is the
+        client renderer''s responsibility.'
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test run ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace or run ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:read scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test run not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Get a Markdown summary of a test run
+      tags:
+      - tests
   /workspaces/{workspaceId}/test-sets:
     get:
       parameters:
@@ -9693,7 +12913,117 @@ paths:
       summary: List test sets in a workspace
       tags:
       - tests
+    post:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/models.TestSet'
+        description: Test set to create
+        required: true
+        x-originalParamName: body
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/models.TestSet'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body or validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Workspace not found or caller lacks test.manage
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Create a new test set
+      tags:
+      - tests
   /workspaces/{workspaceId}/test-sets/{id}:
+    delete:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test set ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        "204":
+          description: Test set deleted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace or set ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test set not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Delete a test set
+      tags:
+      - tests
     get:
       parameters:
       - description: Workspace ID
@@ -9748,6 +13078,129 @@ paths:
       security:
       - BearerAuth: []
       summary: Get a test set by ID
+      tags:
+      - tests
+    put:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test set ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/models.TestSet'
+        description: Test set fields to update
+        required: true
+        x-originalParamName: body
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/models.TestSet'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body or validation error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test set not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Update an existing test set
+      tags:
+      - tests
+  /workspaces/{workspaceId}/test-sets/{id}/runs:
+    get:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test set ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/models.TestRun'
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace or set ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:read scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test set not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List test runs created from a test set
       tags:
       - tests
   /workspaces/{workspaceId}/test-sets/{id}/test-cases:
@@ -9807,6 +13260,128 @@ paths:
       security:
       - BearerAuth: []
       summary: List test cases attached to a test set
+      tags:
+      - tests
+    post:
+      description: Body is `{"test_case_id":<id>}`.
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test set ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties:
+                type: integer
+              type: object
+        description: Test case ID to attach
+        required: true
+        x-originalParamName: body
+      responses:
+        "201":
+          description: Test case attached to set
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid request body
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test set or case not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Attach a test case to a test set
+      tags:
+      - tests
+  /workspaces/{workspaceId}/test-sets/{id}/test-cases/{testCaseId}:
+    delete:
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: workspaceId
+        required: true
+        schema:
+          type: integer
+      - description: Test set ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - description: Test case ID
+        in: path
+        name: testCaseId
+        required: true
+        schema:
+          type: integer
+      responses:
+        "204":
+          description: Test case detached from set
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Invalid workspace, set, or case ID
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the tests:write scope
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Test set not found in this workspace
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Detach a test case from a test set
       tags:
       - tests
   /workspaces/{ws_key}/items/{number}:

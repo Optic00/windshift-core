@@ -75,6 +75,9 @@ func (s *EmailVerificationService) GenerateVerificationToken(userID int) (string
 
 // SendVerificationEmail sends a verification email to the user.
 func (s *EmailVerificationService) SendVerificationEmail(user *models.User, token string) error {
+	if user.IsAgent {
+		return ErrRecipientIsAgent
+	}
 	firstName := user.FirstName
 	if firstName == "" {
 		firstName = "there"
@@ -135,9 +138,10 @@ func (s *EmailVerificationService) VerifyEmail(token string) (*models.User, erro
 
 // ResendVerification generates a new token and resends the verification email
 func (s *EmailVerificationService) ResendVerification(userID int) error {
-	// Get user details
+	// Get user details. is_agent is loaded so SendVerificationEmail can
+	// refuse agent/service-user recipients (see ErrRecipientIsAgent).
 	query := `
-		SELECT id, email, username, first_name, last_name, is_active, avatar_url, email_verified
+		SELECT id, email, username, first_name, last_name, is_active, avatar_url, email_verified, COALESCE(is_agent, false)
 		FROM users
 		WHERE id = ?
 	`
@@ -145,7 +149,7 @@ func (s *EmailVerificationService) ResendVerification(userID int) error {
 	var user models.User
 	err := s.db.QueryRow(query, userID).Scan(
 		&user.ID, &user.Email, &user.Username, &user.FirstName, &user.LastName,
-		&user.IsActive, &user.AvatarURL, &user.EmailVerified,
+		&user.IsActive, &user.AvatarURL, &user.EmailVerified, &user.IsAgent,
 	)
 	if err != nil {
 		return ErrUserNotFound

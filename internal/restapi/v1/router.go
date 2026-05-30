@@ -365,31 +365,85 @@ func RegisterRoutes(deps restapi.Deps) {
 	v1.HandleWithMiddleware("DELETE /items/{id}/labels/{labelId}", labelHandler.RemoveFromItem, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)
 
 	// ============================================
-	// Test management (Phase 1 — WI-68: read + run lifecycle).
+	// Test management (WI-68 phase 1 + WI-81 phase 2).
 	// Gated by tests:* token scope at the route layer; in-handler
-	// workspace permission checks enforce test.view / test.execute on
-	// top so a tokens:write token can't drive runs in a workspace where
-	// the user lacks test.execute. The full catalog CRUD (folders,
-	// cases, sets, labels, reports) stays cookie-only until a follow-up
-	// ticket; what's here is just enough for `ws test` and MCP to drive
-	// the run lifecycle.
+	// workspace permission checks enforce test.view / test.manage /
+	// test.execute so token scope alone never grants workspace access.
 	// ============================================
+	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-folders", testMgmtHandler.ListTestFolders, bearerAuth.RequirePermission("tests:read"))
+	v1.HandleWithMiddleware("POST /workspaces/{workspaceId}/test-folders", testMgmtHandler.CreateTestFolder, bearerAuth.RequirePermission("tests:write"))
+	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-folders/{id}", testMgmtHandler.GetTestFolder, bearerAuth.RequirePermission("tests:read"))
+	v1.HandleWithMiddleware("PUT /workspaces/{workspaceId}/test-folders/{id}", testMgmtHandler.UpdateTestFolder, bearerAuth.RequirePermission("tests:write"))
+	v1.HandleWithMiddleware("DELETE /workspaces/{workspaceId}/test-folders/{id}", testMgmtHandler.DeleteTestFolder, bearerAuth.RequirePermission("tests:write"))
+	v1.HandleWithMiddleware("PUT /workspaces/{workspaceId}/test-folders/reorder", testMgmtHandler.ReorderTestFolders, bearerAuth.RequirePermission("tests:write"))
+
 	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-cases", testMgmtHandler.ListTestCases, bearerAuth.RequirePermission("tests:read"))
+	v1.HandleWithMiddleware("POST /workspaces/{workspaceId}/test-cases", testMgmtHandler.CreateTestCase, bearerAuth.RequirePermission("tests:write"))
 	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-cases/{id}", testMgmtHandler.GetTestCase, bearerAuth.RequirePermission("tests:read"))
+	v1.HandleWithMiddleware("PUT /workspaces/{workspaceId}/test-cases/{id}", testMgmtHandler.UpdateTestCase, bearerAuth.RequirePermission("tests:write"))
+	v1.HandleWithMiddleware("DELETE /workspaces/{workspaceId}/test-cases/{id}", testMgmtHandler.DeleteTestCase, bearerAuth.RequirePermission("tests:write"))
+	v1.HandleWithMiddleware("PUT /workspaces/{workspaceId}/test-cases/{id}/move", testMgmtHandler.MoveTestCase, bearerAuth.RequirePermission("tests:write"))
+	v1.HandleWithMiddleware("PUT /workspaces/{workspaceId}/test-cases/reorder", testMgmtHandler.ReorderTestCases, bearerAuth.RequirePermission("tests:write"))
+	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-cases/{id}/connections", testMgmtHandler.GetTestCaseConnections, bearerAuth.RequirePermission("tests:read"))
+
 	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-cases/{testCaseId}/steps", testMgmtHandler.GetTestCaseSteps, bearerAuth.RequirePermission("tests:read"))
+	v1.HandleWithMiddleware("POST /workspaces/{workspaceId}/test-cases/{testCaseId}/steps", testMgmtHandler.CreateTestCaseStep, bearerAuth.RequirePermission("tests:write"))
+	v1.HandleWithMiddleware("PUT /workspaces/{workspaceId}/test-cases/{testCaseId}/steps/{stepId}", testMgmtHandler.UpdateTestCaseStep, bearerAuth.RequirePermission("tests:write"))
+	v1.HandleWithMiddleware("DELETE /workspaces/{workspaceId}/test-cases/{testCaseId}/steps/{stepId}", testMgmtHandler.DeleteTestCaseStep, bearerAuth.RequirePermission("tests:write"))
+	v1.HandleWithMiddleware("PUT /workspaces/{workspaceId}/test-cases/{testCaseId}/steps/reorder", testMgmtHandler.ReorderTestCaseSteps, bearerAuth.RequirePermission("tests:write"))
+
+	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-labels", testMgmtHandler.ListTestLabels, bearerAuth.RequirePermission("tests:read"))
+	v1.HandleWithMiddleware("POST /workspaces/{workspaceId}/test-labels", testMgmtHandler.CreateTestLabel, bearerAuth.RequirePermission("tests:write"))
+	v1.HandleWithMiddleware("PUT /workspaces/{workspaceId}/test-labels/{labelId}", testMgmtHandler.UpdateTestLabel, bearerAuth.RequirePermission("tests:write"))
+	v1.HandleWithMiddleware("DELETE /workspaces/{workspaceId}/test-labels/{labelId}", testMgmtHandler.DeleteTestLabel, bearerAuth.RequirePermission("tests:write"))
+	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-cases/{testCaseId}/labels", testMgmtHandler.ListTestCaseLabels, bearerAuth.RequirePermission("tests:read"))
+	v1.HandleWithMiddleware("POST /workspaces/{workspaceId}/test-cases/{testCaseId}/labels", testMgmtHandler.AddTestCaseLabel, bearerAuth.RequirePermission("tests:write"))
+	v1.HandleWithMiddleware("DELETE /workspaces/{workspaceId}/test-cases/{testCaseId}/labels/{labelId}", testMgmtHandler.RemoveTestCaseLabel, bearerAuth.RequirePermission("tests:write"))
 
 	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-sets", testMgmtHandler.ListTestSets, bearerAuth.RequirePermission("tests:read"))
+	v1.HandleWithMiddleware("POST /workspaces/{workspaceId}/test-sets", testMgmtHandler.CreateTestSet, bearerAuth.RequirePermission("tests:write"))
 	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-sets/{id}", testMgmtHandler.GetTestSet, bearerAuth.RequirePermission("tests:read"))
+	v1.HandleWithMiddleware("PUT /workspaces/{workspaceId}/test-sets/{id}", testMgmtHandler.UpdateTestSet, bearerAuth.RequirePermission("tests:write"))
+	v1.HandleWithMiddleware("DELETE /workspaces/{workspaceId}/test-sets/{id}", testMgmtHandler.DeleteTestSet, bearerAuth.RequirePermission("tests:write"))
 	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-sets/{id}/test-cases", testMgmtHandler.GetTestSetCases, bearerAuth.RequirePermission("tests:read"))
+	v1.HandleWithMiddleware("POST /workspaces/{workspaceId}/test-sets/{id}/test-cases", testMgmtHandler.AddTestSetCase, bearerAuth.RequirePermission("tests:write"))
+	v1.HandleWithMiddleware("DELETE /workspaces/{workspaceId}/test-sets/{id}/test-cases/{testCaseId}", testMgmtHandler.RemoveTestSetCase, bearerAuth.RequirePermission("tests:write"))
+	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-sets/{id}/runs", testMgmtHandler.ListTestSetRuns, bearerAuth.RequirePermission("tests:read"))
+
+	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-plans", testMgmtHandler.ListTestPlans, bearerAuth.RequirePermission("tests:read"))
+	v1.HandleWithMiddleware("POST /workspaces/{workspaceId}/test-plans", testMgmtHandler.CreateTestPlan, bearerAuth.RequirePermission("tests:write"))
+	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-plans/{id}", testMgmtHandler.GetTestPlan, bearerAuth.RequirePermission("tests:read"))
+	v1.HandleWithMiddleware("PUT /workspaces/{workspaceId}/test-plans/{id}", testMgmtHandler.UpdateTestPlan, bearerAuth.RequirePermission("tests:write"))
+	v1.HandleWithMiddleware("DELETE /workspaces/{workspaceId}/test-plans/{id}", testMgmtHandler.DeleteTestPlan, bearerAuth.RequirePermission("tests:write"))
+	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-plans/{id}/test-cases", testMgmtHandler.ListTestPlanCases, bearerAuth.RequirePermission("tests:read"))
+	v1.HandleWithMiddleware("POST /workspaces/{workspaceId}/test-plans/{id}/test-cases", testMgmtHandler.AddTestPlanCase, bearerAuth.RequirePermission("tests:write"))
+	v1.HandleWithMiddleware("DELETE /workspaces/{workspaceId}/test-plans/{id}/test-cases/{testCaseId}", testMgmtHandler.RemoveTestPlanCase, bearerAuth.RequirePermission("tests:write"))
+	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-plans/{id}/runs", testMgmtHandler.ListTestPlanRuns, bearerAuth.RequirePermission("tests:read"))
+
+	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-run-templates", testMgmtHandler.ListTestRunTemplates, bearerAuth.RequirePermission("tests:read"))
+	v1.HandleWithMiddleware("POST /workspaces/{workspaceId}/test-run-templates", testMgmtHandler.CreateTestRunTemplate, bearerAuth.RequirePermission("tests:write"))
+	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-run-templates/{id}", testMgmtHandler.GetTestRunTemplate, bearerAuth.RequirePermission("tests:read"))
+	v1.HandleWithMiddleware("PUT /workspaces/{workspaceId}/test-run-templates/{id}", testMgmtHandler.UpdateTestRunTemplate, bearerAuth.RequirePermission("tests:write"))
+	v1.HandleWithMiddleware("DELETE /workspaces/{workspaceId}/test-run-templates/{id}", testMgmtHandler.DeleteTestRunTemplate, bearerAuth.RequirePermission("tests:write"))
+	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-run-templates/{id}/executions", testMgmtHandler.ListTestRunTemplateExecutions, bearerAuth.RequirePermission("tests:read"))
+	v1.HandleWithMiddleware("POST /workspaces/{workspaceId}/test-run-templates/{id}/execute", testMgmtHandler.ExecuteTestRunTemplate, bearerAuth.RequirePermission("tests:write"))
 
 	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-runs", testMgmtHandler.ListTestRuns, bearerAuth.RequirePermission("tests:read"))
 	v1.HandleWithMiddleware("POST /workspaces/{workspaceId}/test-runs", testMgmtHandler.CreateTestRun, bearerAuth.RequirePermission("tests:write"))
 	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-runs/{id}", testMgmtHandler.GetTestRun, bearerAuth.RequirePermission("tests:read"))
+	v1.HandleWithMiddleware("PUT /workspaces/{workspaceId}/test-runs/{id}", testMgmtHandler.UpdateTestRun, bearerAuth.RequirePermission("tests:write"))
+	v1.HandleWithMiddleware("DELETE /workspaces/{workspaceId}/test-runs/{id}", testMgmtHandler.DeleteTestRun, bearerAuth.RequirePermission("tests:write"))
 	v1.HandleWithMiddleware("POST /workspaces/{workspaceId}/test-runs/{id}/end", testMgmtHandler.EndTestRun, bearerAuth.RequirePermission("tests:write"))
 	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-runs/{id}/results", testMgmtHandler.GetTestRunResults, bearerAuth.RequirePermission("tests:read"))
 	v1.HandleWithMiddleware("PUT /workspaces/{workspaceId}/test-runs/{id}/results/{resultId}", testMgmtHandler.UpdateTestRunResult, bearerAuth.RequirePermission("tests:write"))
+	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-runs/{id}/steps", testMgmtHandler.GetTestRunStepResults, bearerAuth.RequirePermission("tests:read"))
+	v1.HandleWithMiddleware("PUT /workspaces/{workspaceId}/test-runs/{id}/steps/{stepId}", testMgmtHandler.UpdateTestRunStepResult, bearerAuth.RequirePermission("tests:write"))
+	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-runs/{id}/summary", testMgmtHandler.GetTestRunSummary, bearerAuth.RequirePermission("tests:read"))
 
-	v1.HandleWithMiddleware("POST /workspaces/{workspaceId}/test-run-templates/{id}/execute", testMgmtHandler.ExecuteTestRunTemplate, bearerAuth.RequirePermission("tests:write"))
+	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-reports/summary", testMgmtHandler.GetTestReportsSummary, bearerAuth.RequirePermission("tests:read"))
+	v1.HandleWithMiddleware("POST /workspaces/{workspaceId}/test-results/{resultId}/items", testMgmtHandler.LinkTestResultItem, bearerAuth.RequirePermission("tests:write"))
+	v1.HandleWithMiddleware("DELETE /workspaces/{workspaceId}/test-results/{resultId}/items/{itemId}", testMgmtHandler.UnlinkTestResultItem, bearerAuth.RequirePermission("tests:write"))
+	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-results/{resultId}/items", testMgmtHandler.ListTestResultItems, bearerAuth.RequirePermission("tests:read"))
 
 	// ============================================
 	// Search

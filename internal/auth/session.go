@@ -265,7 +265,7 @@ func (sm *SessionManager) ClearSessionCookie(w http.ResponseWriter, r *http.Requ
 	sm.clearSessionCookie(w, r, SessionCookieName)
 }
 
-// GetSessionFromRequest extracts session token from cookie or Authorization header
+// GetSessionFromRequest extracts a session token from the session cookie.
 func (sm *SessionManager) GetSessionFromRequest(r *http.Request) (string, error) {
 	return sm.getSessionFromRequest(r, SessionCookieName)
 }

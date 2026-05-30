@@ -339,6 +339,63 @@
     return itemSubset.filter(item => column.status_ids && column.status_ids.includes(item.status_id));
   }
 
+  function parseLaneParentId(value) {
+    if (!groupByItemTypeId) return undefined;
+    if (value == null || value === '') return null;
+    const parsed = parseInt(value, 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function getItemsForLaneParent(parentId) {
+    if (!groupByItemTypeId) return filteredItems;
+    const parentIds = new Set(items
+      .filter(item => item.item_type_id === groupByItemTypeId)
+      .map(item => item.id));
+
+    if (parentId != null) {
+      return filteredItems.filter(item => item.parent_id === parentId && item.id !== parentId);
+    }
+
+    return filteredItems.filter(item => {
+      if (item.item_type_id === groupByItemTypeId) return false;
+      if (item.parent_id && parentIds.has(item.parent_id)) return false;
+      return true;
+    });
+  }
+
+  function wouldChangeLaneParent(item, targetParentId) {
+    if (!groupByItemTypeId || targetParentId === undefined) return false;
+    return (item.parent_id ?? null) !== targetParentId;
+  }
+
+  function warnUnsupportedCombinedBoardMove() {
+    warningToast('Moving between swimlanes and statuses at the same time is not supported yet. Move it in two steps.');
+  }
+
+  async function updateItemParentForLane(item, targetParentId) {
+    if (!groupByItemTypeId || targetParentId === undefined) return item;
+
+    const currentParentId = item.parent_id ?? null;
+    if (currentParentId === targetParentId) return item;
+
+    try {
+      const updatedItem = await api.items.update(item.id, { parent_id: targetParentId });
+      collectionStore.items = collectionStore.items.map(existing =>
+        existing.id === item.id
+          ? { ...existing, ...updatedItem, parent_id: targetParentId }
+          : existing
+      );
+      return { ...item, ...updatedItem, parent_id: targetParentId };
+    } catch (error) {
+      console.error('Failed to move item to swimlane:', error);
+      warningToast('Could not move item to that swimlane');
+      if (error && typeof error === 'object') {
+        error.swimlaneMoveFailed = true;
+      }
+      throw error;
+    }
+  }
+
   // Status badges use an accessible-contrast pass so colours read against the
   // gradient backdrop on the board; the other iteration picker call sites
   // don't need this and keep the simpler hex+15 default.
@@ -652,6 +709,7 @@
 
       const item = items.find(i => i.id === itemId);
       if (!item) return;
+      const targetLaneParentId = parseLaneParentId(element.dataset.swimlaneParentId);
 
       // Initialize drag state for this item
       dragState.set(itemId, { isDragging: false, closestEdge: null });
@@ -734,7 +792,7 @@
           if (data.type === 'work-item' && closestEdge) {
             const targetStatus = getStatusByItemId(itemId);
             if (targetStatus) {
-              handleEdgeBasedDrop(data.item, item, closestEdge, targetStatus);
+              handleEdgeBasedDrop(data.item, item, closestEdge, targetStatus, targetLaneParentId);
             }
           }
         }
@@ -755,6 +813,7 @@
 
       const status = statuses.find(s => s.id === statusId);
       if (!status) return;
+      const targetLaneParentId = parseLaneParentId(element.dataset.swimlaneParentId);
 
       const cleanup = dropTargetForElements({
         element,
@@ -790,15 +849,29 @@
             if (dropTargets.length > 1 && dropTargets[0].element !== element) {
               return;
             }
-            if (isValidTransition(data.item.id, data.item.status_id, statusId)) {
-              try {
-                await api.items.transition(data.item.id, statusId);
-              } catch (err) {
-                console.error('Status transition failed:', err);
+            const isSameStatus = data.item.status_id === statusId;
+            if (!isSameStatus && wouldChangeLaneParent(data.item, targetLaneParentId)) {
+              warnUnsupportedCombinedBoardMove();
+              return;
+            }
+            if (!isSameStatus && !isValidTransition(data.item.id, data.item.status_id, statusId)) {
+              warningToast(t('collections.transition_failed'));
+              return;
+            }
+
+            try {
+              let droppedItem = data.item;
+              if (!isSameStatus) {
+                droppedItem = await api.items.transition(data.item.id, statusId);
+              }
+              await updateItemParentForLane(droppedItem, targetLaneParentId);
+            } catch (err) {
+              console.error('Board drop failed:', err);
+              if (!err?.swimlaneMoveFailed) {
                 warningToast(t('collections.transition_failed'));
               }
-              reloadCollection();
             }
+            reloadCollection();
           }
         }
       });
@@ -854,7 +927,7 @@
     }
   }
 
-  async function handleEdgeBasedDrop(draggedItem, targetItem, closestEdge, targetStatus) {
+  async function handleEdgeBasedDrop(draggedItem, targetItem, closestEdge, targetStatus, targetLaneParentId = undefined) {
     // Create a unique identifier for this drop operation
     const dropId = `${draggedItem.id}-edge-${targetItem.id}-${closestEdge}`;
 
@@ -875,10 +948,23 @@
       // Check if we need to update status
       const isSameStatus = currentStatusId === targetStatusId;
 
+      if (!isSameStatus && wouldChangeLaneParent(draggedItem, targetLaneParentId)) {
+        warnUnsupportedCombinedBoardMove();
+        reloadCollection();
+        return;
+      }
+
+      if (!isSameStatus && !isValidTransition(draggedItem.id, currentStatusId, targetStatusId)) {
+        warningToast(t('collections.transition_failed'));
+        reloadCollection();
+        return;
+      }
+
       // If changing status, update the status first
-      if (!isSameStatus && isValidTransition(draggedItem.id, currentStatusId, targetStatusId)) {
+      if (!isSameStatus) {
         try {
-          await api.items.transition(draggedItem.id, targetStatusId);
+          const transitionedItem = await api.items.transition(draggedItem.id, targetStatusId);
+          draggedItem = { ...draggedItem, ...transitionedItem, status_id: targetStatusId };
         } catch (err) {
           console.error('Status transition failed:', err);
           warningToast(t('collections.transition_failed'));
@@ -894,8 +980,11 @@
         );
       }
 
+      draggedItem = await updateItemParentForLane(draggedItem, targetLaneParentId);
+
       // Get items in the target status for position calculation
-      const statusItems = getItemsByStatus(targetStatusId);
+      const laneItems = targetLaneParentId === undefined ? filteredItems : getItemsForLaneParent(targetLaneParentId);
+      const statusItems = getItemsByStatus(targetStatusId, laneItems);
 
       // Find the target item's position in the sorted status items
       const targetIndex = statusItems.findIndex(item => item.id === targetItem.id);
@@ -962,8 +1051,17 @@
   }
 
 
-  // Setup drag and drop when data changes
+  // Setup drag and drop when data changes. Track grouping/swimlane inputs too,
+  // because switching group-by replaces the board DOM without changing item count.
   $effect(() => {
+    const itemSignature = items.map(item => `${item.id}:${item.status_id ?? ''}:${item.parent_id ?? ''}`).join('|');
+    const laneSignature = boardSwimlanes.map(lane => `${lane.id}:${lane.itemCount}:${isSwimlaneExpanded(lane.id)}`).join('|');
+    const columnSignature = validColumns.map(column => `${column.id}:${(column.status_ids || []).join(',')}`).join('|');
+    groupByItemTypeId;
+    itemSignature;
+    laneSignature;
+    columnSignature;
+
     if (items.length > 0 && statuses.length > 0 && typeof document !== 'undefined') {
       if (setupTimeout) clearTimeout(setupTimeout);
       setupTimeout = setTimeout(() => {
@@ -1159,6 +1257,7 @@
                       data-testid="board-column"
                       data-status-column
                       data-status-column-key={`${lane.id}-${column.id}-${column.status_ids[0]}`}
+                      data-swimlane-parent-id={selectedGroupByItemType && lane.parent ? lane.parent.id : ''}
                       data-status-id={column.status_ids[0]}
                     >
                       <div class="p-4 border-b border-t-4" style="border-bottom-color: var(--ctx-border, var(--ds-border)); border-top-color: {column.color};">
@@ -1229,6 +1328,7 @@
                                 style="{styles.cardStyle(4)}"
                                 data-item-card
                                 data-item-id={item.id}
+                                data-swimlane-parent-id={selectedGroupByItemType && lane.parent ? lane.parent.id : ''}
                                 role="button"
                                 tabindex="0"
                                 onclick={event => openItem(item.id, event)}

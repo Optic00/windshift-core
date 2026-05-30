@@ -472,7 +472,9 @@ func (h *SSOHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		}
 		slog.Debug("session created", slog.String("component", "sso"))
 
-		// Set session cookie
+		// Set a browser session cookie and redirect only to a validated relative
+		// path. Do not return session tokens in redirect fragments; the v1 REST API
+		// accepts only scoped crw_* API tokens, not web session tokens.
 		slog.Debug("setting session cookie", slog.String("component", "sso"))
 		if err := h.sessionManager.SetSessionCookie(w, r, session.Token, rememberMe); err != nil {
 			slog.Error("failed to set session cookie", slog.String("component", "sso"), slog.Any("error", err))

@@ -1,12 +1,23 @@
 package services
 
-import "windshift/internal/smtp"
+import (
+	"errors"
+
+	"windshift/internal/smtp"
+)
 
 // ErrSMTPNotConfigured aliases smtp.ErrSMTPNotConfigured so existing handler
 // code (e.g. internal/handlers/auth.go) that switches on
 // services.ErrSMTPNotConfigured keeps working without an import change.
 // A single equality compare against either symbol resolves to the same var.
 var ErrSMTPNotConfigured = smtp.ErrSMTPNotConfigured
+
+// ErrRecipientIsAgent is returned by transactional senders when the
+// recipient User row is flagged is_agent (owned agent or admin-provisioned
+// service user). Agents do not consume invitation, verification, or other
+// human-facing mail; handlers that race against this should treat the
+// error as a soft skip, not a delivery failure.
+var ErrRecipientIsAgent = errors.New("recipient is an agent or service user; refusing to send")
 
 // TransactionalEmailSender is the surface needed by services that send
 // admin-templated transactional emails (magic-link, email-verification,

@@ -86,6 +86,9 @@ func (s *InvitationService) GenerateInvitation(userID int) (string, error) {
 // was constructed without an SMTP sender (e.g. tests, CLI), this is a no-op
 // rather than a panic — callers already treat a returned error as soft.
 func (s *InvitationService) SendInvitationEmail(user *models.User, token string) error {
+	if user.IsAgent {
+		return ErrRecipientIsAgent
+	}
 	if s.smtpSender == nil {
 		return ErrSMTPNotConfigured
 	}

@@ -481,9 +481,15 @@ func (ns *NotificationService) determineRecipients(event *NotificationEvent, rul
 	// Re-authorize every recipient against current workspace view permission.
 	// Watches, custom-recipient lists and admin roles all outlive permission
 	// changes; without this check a revoked user keeps receiving titles and
-	// action URLs for items they can no longer see.
+	// action URLs for items they can no longer see. Agent / service-user
+	// rows (is_agent = true) are filtered out too — they're non-human API
+	// principals and don't consume notifications even when a rule routes
+	// to them as assignee, watcher, or admin.
 	recipients := make([]int, 0, len(recipientSet))
 	for userID := range recipientSet {
+		if ns.isAgentUser(userID) {
+			continue
+		}
 		if !ns.canViewWorkspace(userID, event.WorkspaceID) {
 			continue
 		}
@@ -491,6 +497,24 @@ func (ns *NotificationService) determineRecipients(event *NotificationEvent, rul
 	}
 
 	return recipients
+}
+
+// isAgentUser returns true when the user row is flagged is_agent (owned
+// agent or admin-provisioned service user). On query error we fail closed
+// — treat the row as an agent and skip — matching canViewWorkspace's
+// fail-closed posture; a missing or unreadable user shouldn't receive a
+// notification anyway.
+func (ns *NotificationService) isAgentUser(userID int) bool {
+	var isAgent bool
+	err := ns.db.QueryRow(`SELECT is_agent FROM users WHERE id = ?`, userID).Scan(&isAgent)
+	if err != nil {
+		slog.Warn("is_agent check failed during recipient filtering; skipping",
+			slog.String("component", "notifications"),
+			slog.Int("user_id", userID),
+			slog.Any("error", err))
+		return true
+	}
+	return isAgent
 }
 
 // canViewWorkspace returns true when the user currently has item-view

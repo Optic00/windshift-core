@@ -82,12 +82,10 @@ const (
 	ScopePagesWrite  = "pages:write"
 	ScopePagesDelete = "pages:delete"
 
-	// Test management (cases, sets, runs, run templates). :write covers
-	// run lifecycle on v1 (create, end, update results, execute template);
-	// the per-workspace test.view / test.execute / test.manage role gates
-	// individual actions in-handler. Mutating the test catalog (create/
-	// update/delete cases / sets / folders) lives on the cookie surface and
-	// will be added under :write in a follow-up.
+	// Test management (folders, cases, labels, sets, runs, run templates,
+	// reports, result↔item links). :write covers mutations; the per-workspace
+	// test.view / test.execute / test.manage role gates individual actions
+	// in-handler.
 	ScopeTestsRead  = "tests:read"
 	ScopeTestsWrite = "tests:write"
 

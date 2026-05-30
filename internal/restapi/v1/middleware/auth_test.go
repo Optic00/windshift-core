@@ -13,6 +13,27 @@ import (
 	"windshift/internal/restapi/v1/middleware"
 )
 
+func TestRequireAuthRejectsSessionBearer(t *testing.T) {
+	ba := middleware.NewBearerAuthWithPermissions(&auth.TokenManager{}, nil)
+	nextCalled := false
+	handler := ba.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		nextCalled = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/rest/api/v1/users/me", nil)
+	req.Header.Set("Authorization", "Bearer browser-session-token")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if nextCalled {
+		t.Fatal("next handler called for session-shaped bearer token")
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("got status %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
 func TestRequirePermission(t *testing.T) {
 	ba := middleware.NewBearerAuthWithPermissions(&auth.TokenManager{}, nil)
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

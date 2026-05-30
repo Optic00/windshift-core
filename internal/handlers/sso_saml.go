@@ -381,8 +381,9 @@ func getFirstSAMLAttribute(info *sso.SAMLAssertionInfo, names ...string) string 
 	return ""
 }
 
-// isValidRedirectURI validates that a redirect URI is safe (relative path only).
-// This prevents open redirect attacks by rejecting absolute URLs and protocol-relative URLs.
+// isValidRedirectURI validates that a post-login redirect URI is safe.
+// Only same-origin relative paths are accepted. This prevents open redirects
+// and avoids handing web session tokens to native custom-scheme handlers.
 func isValidRedirectURI(uri string) bool {
 	if uri == "" {
 		return false

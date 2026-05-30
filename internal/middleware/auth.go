@@ -96,13 +96,11 @@ func (am *AuthMiddleware) tryAuthenticate(r *http.Request) authResult {
 		if strings.HasPrefix(token, "crw_") {
 			return authResult{errorMessage: "API tokens authenticate only on /rest/api/v1/* — see https://docs.windshift.app/api/v1"}
 		}
-		// Anything else passed via "Authorization: Bearer ..." is treated as
-		// a session token by the cookie path below, preserving the legacy
-		// pattern of sending a session token in the bearer header.
 	}
 
-	// Try session cookie (the cookie path also accepts a session token sent
-	// via "Authorization: Bearer <session>" as a legacy fallback).
+	// Try session cookie. Session tokens are intentionally not accepted via
+	// Authorization: Bearer; that header is reserved for scoped API tokens on
+	// /rest/api/v1/*.
 	token, err := am.sessionManager.GetSessionFromRequest(r)
 	if err != nil {
 		// No session found
