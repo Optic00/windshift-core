@@ -331,7 +331,7 @@ func (s *Server) initialize() error {
 
 	// Initialize SMTP and schedulers
 	smtpSender := smtp.NewNotificationSMTPSender(s.db)
-	s.notificationScheduler = scheduler.NewNotificationScheduler(s.db, smtpSender)
+	s.notificationScheduler = scheduler.NewNotificationScheduler(s.db, smtpSender, cfg.Notification.BatchInterval)
 	s.notificationScheduler.Start()
 	slog.Info("notification scheduler started")
 

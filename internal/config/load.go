@@ -218,6 +218,7 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 			FlushInterval: parseDurationEnv("NOTIFICATION_FLUSH_INTERVAL", 0),
 			BatchSize:     parseIntEnv("NOTIFICATION_BATCH_SIZE", 0),
 			SyncInterval:  parseDurationEnv("NOTIFICATION_SYNC_INTERVAL", 0),
+			BatchInterval: parseDurationEnv("WINDSHIFT_NOTIFICATION_BATCH_INTERVAL", 0),
 		},
 		Jira: JiraConfig{
 			CapturePayloadsDir: os.Getenv("JIRA_CAPTURE_PAYLOADS"),

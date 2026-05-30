@@ -3,7 +3,6 @@ package scheduler
 import (
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -15,31 +14,9 @@ import (
 
 // defaultBatchInterval is the production cadence: every 5 minutes the
 // scheduler scans for unread notifications and emails one batch per user.
-// Override via WINDSHIFT_NOTIFICATION_BATCH_INTERVAL (e.g. "5s") for tests
-// or for deployments that want a different cadence.
-// last review: ser, 300526, NOTE: should use unified function to obtain ENV & startup params
+// The interval is supplied by the caller (resolved from config, which reads
+// WINDSHIFT_NOTIFICATION_BATCH_INTERVAL); a non-positive value falls back here.
 const defaultBatchInterval = 5 * time.Minute
-
-// resolveBatchInterval reads the env override and falls back to the default
-// when it's missing, malformed, or non-positive.
-func resolveBatchInterval() time.Duration {
-	raw := strings.TrimSpace(os.Getenv("WINDSHIFT_NOTIFICATION_BATCH_INTERVAL"))
-	if raw == "" {
-		return defaultBatchInterval
-	}
-	d, err := time.ParseDuration(raw)
-	if err != nil || d <= 0 {
-		slog.Warn("invalid WINDSHIFT_NOTIFICATION_BATCH_INTERVAL, using default",
-			slog.String("component", "scheduler"),
-			slog.String("raw", raw),
-			slog.Any("error", err))
-		return defaultBatchInterval
-	}
-	slog.Info("notification batch interval overridden via env",
-		slog.String("component", "scheduler"),
-		slog.String("interval", d.String()))
-	return d
-}
 
 // maxBatchSize caps how many notifications one email can carry. Without this,
 // a user with a thousand unread notifications gets a single oversize email on
@@ -60,10 +37,11 @@ type NotificationScheduler struct {
 	db         database.Database
 	ticker     *time.Ticker
 	stopChan   chan struct{}
-	mu         sync.RWMutex
-	running    bool
-	smtpSender SMTPSender
-	runRepo    *repository.SchedulerRunRepository
+	mu            sync.RWMutex
+	running       bool
+	smtpSender    SMTPSender
+	runRepo       *repository.SchedulerRunRepository
+	batchInterval time.Duration
 
 	// Per-user failure tracking for the circuit breaker. Keyed by user email
 	// (matching how we fan-out batches today). Resets on restart — the goal
@@ -79,17 +57,23 @@ type SMTPSender interface {
 	IsSMTPConfigured() bool
 }
 
-// NewNotificationScheduler creates a new notification scheduler
-func NewNotificationScheduler(db database.Database, smtpSender SMTPSender) *NotificationScheduler {
+// NewNotificationScheduler creates a new notification scheduler. batchInterval
+// is the tick cadence (resolved from config); a non-positive value falls back
+// to defaultBatchInterval.
+func NewNotificationScheduler(db database.Database, smtpSender SMTPSender, batchInterval time.Duration) *NotificationScheduler {
+	if batchInterval <= 0 {
+		batchInterval = defaultBatchInterval
+	}
 	return &NotificationScheduler{
-		db:         db,
-		ticker:     time.NewTicker(resolveBatchInterval()),
-		stopChan:   make(chan struct{}),
-		running:    false,
-		smtpSender: smtpSender,
-		runRepo:    repository.NewSchedulerRunRepository(db),
-		failCounts: make(map[string]int),
-		skipUntil:  make(map[string]time.Time),
+		db:            db,
+		ticker:        time.NewTicker(batchInterval),
+		stopChan:      make(chan struct{}),
+		running:       false,
+		smtpSender:    smtpSender,
+		runRepo:       repository.NewSchedulerRunRepository(db),
+		batchInterval: batchInterval,
+		failCounts:    make(map[string]int),
+		skipUntil:     make(map[string]time.Time),
 	}
 }
 
@@ -103,7 +87,7 @@ func (ns *NotificationScheduler) Start() {
 	}
 
 	ns.running = true
-	slog.Debug("Starting notification scheduler", slog.String("component", "scheduler"), slog.String("interval", "5m"))
+	slog.Debug("Starting notification scheduler", slog.String("component", "scheduler"), slog.String("interval", ns.batchInterval.String()))
 
 	go ns.schedulerLoop()
 }

@@ -147,6 +147,10 @@ type NotificationConfig struct {
 	FlushInterval time.Duration
 	BatchSize     int
 	SyncInterval  time.Duration
+	// BatchInterval is the email-batch scheduler cadence
+	// (WINDSHIFT_NOTIFICATION_BATCH_INTERVAL). Zero means the scheduler uses
+	// its built-in default.
+	BatchInterval time.Duration
 }
 
 // JiraConfig holds Jira-related runtime options.
