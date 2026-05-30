@@ -13,6 +13,7 @@ import (
 // pagePermTestEnv spins up a fully-initialized DB with gated workspace 1
 // (Viewer/Editor/Admin all assigned) so the evaluator can be exercised
 // without the open-by-default mode masking permission bugs.
+// last review: ser, 300526, FIXME: belongs in core-tests
 type pagePermTestEnv struct {
 	db     database.Database
 	perm   *PermissionService

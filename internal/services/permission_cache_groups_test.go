@@ -11,6 +11,7 @@ import (
 // permTestEnv is the minimal setup for exercising group-derived permissions.
 // SQLite in-memory + initialized schema (which seeds the permissions table
 // including 'system.admin' and the default workspace roles).
+// last review: ser, 300526, FIXME: belongs in core-tests
 type permTestEnv struct {
 	t       *testing.T
 	db      database.Database

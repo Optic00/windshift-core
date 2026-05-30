@@ -247,6 +247,7 @@ func (rs *RecurrenceScheduler) generateInstancesForRule(rule *models.RecurrenceR
 }
 
 // createInstance creates a single recurring task instance
+// last review: ser, 300526, FIXME: db operation should not live in the scheduler, possibly reuse item service
 func (rs *RecurrenceScheduler) createInstance(rule *models.RecurrenceRule, template *models.Item, scheduledDate time.Time) error {
 	tx, err := rs.db.Begin()
 	if err != nil {
@@ -315,6 +316,7 @@ func (rs *RecurrenceScheduler) createInstance(rule *models.RecurrenceRule, templ
 	}
 
 	// Insert the new item
+	// last review: ser, 300526, FIXME: major encapsulation violation
 	var itemID int64
 	err = tx.QueryRow(`
 		INSERT INTO items (

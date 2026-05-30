@@ -288,6 +288,7 @@ func (es *EmailScheduler) processChannel(ctx context.Context, ch channelInfo) bo
 	// Seed maxUID from sinceUID (not state.LastUID) so a UIDVALIDITY reset
 	// persists: after a reset sinceUID==0 and we want LastUID to reflect the
 	// new UID space even if processing stops at the first message.
+	// last review: ser, 300526, NOTE: how is the queue cleared then?
 	maxUID := sinceUID
 	processedCount := 0
 	errorCount := 0

@@ -13,13 +13,14 @@ import (
 // stubInvoker is a SchedulePluginInvoker that returns a fixed set of due
 // schedules and records every CallPluginFunction invocation. Used to drive
 // PluginScheduleScheduler tests without spinning up an Extism runtime.
+// last review: ser, 300526, FIXME: belongs in core-tests
 type stubInvoker struct {
-	mu          sync.Mutex
-	due         []plugins.DueSchedule
-	callErr     error
-	calls       int
-	plugins     []string
-	handlers    []string
+	mu       sync.Mutex
+	due      []plugins.DueSchedule
+	callErr  error
+	calls    int
+	plugins  []string
+	handlers []string
 }
 
 func (s *stubInvoker) DueSchedules(time.Time) []plugins.DueSchedule {

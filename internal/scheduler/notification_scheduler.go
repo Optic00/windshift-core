@@ -17,6 +17,7 @@ import (
 // scheduler scans for unread notifications and emails one batch per user.
 // Override via WINDSHIFT_NOTIFICATION_BATCH_INTERVAL (e.g. "5s") for tests
 // or for deployments that want a different cadence.
+// last review: ser, 300526, NOTE: should use unified function to obtain ENV & startup params
 const defaultBatchInterval = 5 * time.Minute
 
 // resolveBatchInterval reads the env override and falls back to the default
@@ -241,6 +242,7 @@ type UserNotificationBatch struct {
 // (say 100k unread) doesn't drag the entire row set across the wire on every
 // tick just to keep 50 of them. Window functions are supported on SQLite 3.25+
 // and on every supported Postgres version.
+// last review: ser, 300526, FIXME: should probably go via notification service
 func (ns *NotificationScheduler) getUnreadNotificationsByUser() (map[string]*UserNotificationBatch, error) {
 	query := `
 		SELECT id, user_id, title, message, type, timestamp, read,

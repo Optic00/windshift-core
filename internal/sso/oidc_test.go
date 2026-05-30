@@ -16,6 +16,7 @@ import (
 // verifier options — if zitadel renames or drops the option, this
 // test will fail at compile time alongside the production code; if
 // someone deletes the line, this still smoke-tests the wiring.
+// last review: ser, 300526, FIXME: belongs in core-tests
 func TestCreateRelyingParty_SmokeWithSignAlgsAllowlist(t *testing.T) {
 	srv := newStubIDPServer(t)
 	defer srv.Close()

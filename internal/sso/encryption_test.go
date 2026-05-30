@@ -10,6 +10,8 @@ import (
 	"testing"
 )
 
+// last review: ser, 300526, FIXME: belongs in core-tests
+
 const testSecret = "test-server-secret-with-sufficient-length-for-derivation"
 
 func TestSecretEncryption_RoundTrip(t *testing.T) {
