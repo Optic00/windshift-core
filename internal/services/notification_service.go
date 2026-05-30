@@ -54,6 +54,95 @@ func DefaultNotificationServiceConfig() NotificationServiceConfig {
 	}
 }
 
+// UserNotificationBatch is a set of unread notifications destined for one
+// user's batched email, along with the contact fields needed to address it.
+type UserNotificationBatch struct {
+	UserID          int
+	UserEmail       string
+	UserName        string
+	Notifications   []models.Notification
+	NotificationIDs []int
+}
+
+// UnreadEmailBatches returns notifications that still need emailing, grouped by
+// user. It filters out in-app-read notifications so a user who reads their tray
+// within the batch window doesn't get a redundant email, and caps each user's
+// batch at maxBatchSize via SQL ROW_NUMBER so a user with a huge backlog (say
+// 100k unread) doesn't drag the entire row set across the wire just to keep a
+// handful of them. Window functions are supported on SQLite 3.25+ and on every
+// supported Postgres version.
+func (ns *NotificationService) UnreadEmailBatches(maxBatchSize int) (map[string]*UserNotificationBatch, error) {
+	query := `
+		SELECT id, user_id, title, message, type, timestamp, read,
+		       sent_at, avatar, action_url, metadata, created_at, updated_at,
+		       email, first_name, last_name
+		FROM (
+			SELECT n.id, n.user_id, n.title, n.message, n.type, n.timestamp, n.read,
+			       n.sent_at, n.avatar, n.action_url, n.metadata, n.created_at, n.updated_at,
+			       u.email, u.first_name, u.last_name,
+			       ROW_NUMBER() OVER (PARTITION BY u.email ORDER BY n.timestamp DESC) AS rn
+			FROM notifications n
+			JOIN users u ON n.user_id = u.id
+			WHERE n.sent_at IS NULL AND n.read = false AND u.email != ''
+		) ranked
+		WHERE rn <= ?
+		ORDER BY email, timestamp DESC
+	`
+
+	rows, err := ns.db.Query(query, maxBatchSize)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query unread notifications: %w", err)
+	}
+	defer rows.Close()
+
+	userBatches := make(map[string]*UserNotificationBatch)
+
+	for rows.Next() {
+		var n models.Notification
+		var avatar, actionURL, metadata *string
+		var email, firstName, lastName string
+
+		err := rows.Scan(
+			&n.ID, &n.UserID, &n.Title, &n.Message, &n.Type,
+			&n.Timestamp, &n.Read, &n.SentAt, &avatar, &actionURL, &metadata,
+			&n.CreatedAt, &n.UpdatedAt, &email, &firstName, &lastName,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		// Set optional fields
+		if avatar != nil {
+			n.Avatar = *avatar
+		}
+		if actionURL != nil {
+			n.ActionURL = *actionURL
+		}
+		if metadata != nil {
+			n.Metadata = *metadata
+		}
+
+		// Get or create user batch
+		batch, exists := userBatches[email]
+		if !exists {
+			userName := fmt.Sprintf("%s %s", firstName, lastName)
+			batch = &UserNotificationBatch{
+				UserID:          n.UserID,
+				UserEmail:       email,
+				UserName:        userName,
+				Notifications:   []models.Notification{},
+				NotificationIDs: []int{},
+			}
+			userBatches[email] = batch
+		}
+
+		batch.Notifications = append(batch.Notifications, n)
+		batch.NotificationIDs = append(batch.NotificationIDs, n.ID)
+	}
+
+	return userBatches, rows.Err()
+}
+
 // NotificationService handles asynchronous notification creation
 type NotificationService struct {
 	db                  database.Database

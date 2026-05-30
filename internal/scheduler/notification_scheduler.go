@@ -10,6 +10,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/services"
 )
 
 // defaultBatchInterval is the production cadence: every 5 minutes the
@@ -41,6 +42,7 @@ type NotificationScheduler struct {
 	running       bool
 	smtpSender    SMTPSender
 	runRepo       *repository.SchedulerRunRepository
+	notifSvc      *services.NotificationService
 	batchInterval time.Duration
 
 	// Per-user failure tracking for the circuit breaker. Keyed by user email
@@ -59,8 +61,9 @@ type SMTPSender interface {
 
 // NewNotificationScheduler creates a new notification scheduler. batchInterval
 // is the tick cadence (resolved from config); a non-positive value falls back
-// to defaultBatchInterval.
-func NewNotificationScheduler(db database.Database, smtpSender SMTPSender, batchInterval time.Duration) *NotificationScheduler {
+// to defaultBatchInterval. notifSvc supplies the unread-notification batches so
+// the scheduler never queries the notifications table directly.
+func NewNotificationScheduler(db database.Database, smtpSender SMTPSender, batchInterval time.Duration, notifSvc *services.NotificationService) *NotificationScheduler {
 	if batchInterval <= 0 {
 		batchInterval = defaultBatchInterval
 	}
@@ -71,6 +74,7 @@ func NewNotificationScheduler(db database.Database, smtpSender SMTPSender, batch
 		running:       false,
 		smtpSender:    smtpSender,
 		runRepo:       repository.NewSchedulerRunRepository(db),
+		notifSvc:      notifSvc,
 		batchInterval: batchInterval,
 		failCounts:    make(map[string]int),
 		skipUntil:     make(map[string]time.Time),
@@ -135,7 +139,7 @@ func (ns *NotificationScheduler) processPendingNotifications() {
 	slog.Debug("Processing notification batches", slog.String("component", "scheduler"))
 
 	// Get all users with unread notifications
-	userBatches, err := ns.getUnreadNotificationsByUser()
+	userBatches, err := ns.notifSvc.UnreadEmailBatches(maxBatchSize)
 	if err != nil {
 		slog.Error("Failed to get unread notifications", slog.String("component", "scheduler"), slog.Any("error", err))
 		runErr = err
@@ -210,95 +214,6 @@ func (ns *NotificationScheduler) processPendingNotifications() {
 	slog.Debug("Processed notification batches", slog.String("component", "scheduler"), slog.Int("batch_count", len(userBatches)))
 }
 
-// UserNotificationBatch represents a batch of notifications for a user
-type UserNotificationBatch struct {
-	UserID          int
-	UserEmail       string
-	UserName        string
-	Notifications   []models.Notification
-	NotificationIDs []int
-}
-
-// getUnreadNotificationsByUser gets notifications that still need emailing,
-// grouped by user. Filters out in-app-read notifications so a user who reads
-// their tray within the batch window doesn't get a redundant email. Caps each
-// user's batch at maxBatchSize via SQL ROW_NUMBER so a user with a huge backlog
-// (say 100k unread) doesn't drag the entire row set across the wire on every
-// tick just to keep 50 of them. Window functions are supported on SQLite 3.25+
-// and on every supported Postgres version.
-// last review: ser, 300526, FIXME: should probably go via notification service
-func (ns *NotificationScheduler) getUnreadNotificationsByUser() (map[string]*UserNotificationBatch, error) {
-	query := `
-		SELECT id, user_id, title, message, type, timestamp, read,
-		       sent_at, avatar, action_url, metadata, created_at, updated_at,
-		       email, first_name, last_name
-		FROM (
-			SELECT n.id, n.user_id, n.title, n.message, n.type, n.timestamp, n.read,
-			       n.sent_at, n.avatar, n.action_url, n.metadata, n.created_at, n.updated_at,
-			       u.email, u.first_name, u.last_name,
-			       ROW_NUMBER() OVER (PARTITION BY u.email ORDER BY n.timestamp DESC) AS rn
-			FROM notifications n
-			JOIN users u ON n.user_id = u.id
-			WHERE n.sent_at IS NULL AND n.read = false AND u.email != ''
-		) ranked
-		WHERE rn <= ?
-		ORDER BY email, timestamp DESC
-	`
-
-	rows, err := ns.db.Query(query, maxBatchSize)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query unread notifications: %w", err)
-	}
-	defer rows.Close()
-
-	userBatches := make(map[string]*UserNotificationBatch)
-
-	for rows.Next() {
-		var n models.Notification
-		var avatar, actionURL, metadata *string
-		var email, firstName, lastName string
-
-		err := rows.Scan(
-			&n.ID, &n.UserID, &n.Title, &n.Message, &n.Type,
-			&n.Timestamp, &n.Read, &n.SentAt, &avatar, &actionURL, &metadata,
-			&n.CreatedAt, &n.UpdatedAt, &email, &firstName, &lastName,
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		// Set optional fields
-		if avatar != nil {
-			n.Avatar = *avatar
-		}
-		if actionURL != nil {
-			n.ActionURL = *actionURL
-		}
-		if metadata != nil {
-			n.Metadata = *metadata
-		}
-
-		// Get or create user batch
-		batch, exists := userBatches[email]
-		if !exists {
-			userName := fmt.Sprintf("%s %s", firstName, lastName)
-			batch = &UserNotificationBatch{
-				UserID:          n.UserID,
-				UserEmail:       email,
-				UserName:        userName,
-				Notifications:   []models.Notification{},
-				NotificationIDs: []int{},
-			}
-			userBatches[email] = batch
-		}
-
-		batch.Notifications = append(batch.Notifications, n)
-		batch.NotificationIDs = append(batch.NotificationIDs, n.ID)
-	}
-
-	return userBatches, rows.Err()
-}
-
 // inCooldown reports whether the user is currently being skipped because of
 // prior consecutive SMTP failures.
 func (ns *NotificationScheduler) inCooldown(userEmail string) bool {
@@ -339,7 +254,7 @@ func (ns *NotificationScheduler) recordSuccess(userEmail string) {
 }
 
 // sendNotificationBatch sends a batch of notifications to a user
-func (ns *NotificationScheduler) sendNotificationBatch(batch *UserNotificationBatch) error {
+func (ns *NotificationScheduler) sendNotificationBatch(batch *services.UserNotificationBatch) error {
 	if len(batch.Notifications) == 0 {
 		return nil
 	}
