@@ -11,7 +11,6 @@ import (
 
 	"windshift/internal/database"
 	"windshift/internal/llm"
-	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/services"
 )
@@ -98,6 +97,7 @@ func (bs *BriefingScheduler) safeGenerateAllBriefings() {
 	bs.generateAllBriefings()
 }
 
+// last review: ser, 300526
 func (bs *BriefingScheduler) generateAllBriefings() {
 	start := time.Now()
 	var usersProcessed int
@@ -171,6 +171,7 @@ func (bs *BriefingScheduler) generateAllBriefings() {
 // generateBriefingForUser returns true on success (or when nothing needs doing).
 // It returns false only when the actual generation step (LLM call or storage)
 // failed, so the caller can roll up failures into the scheduler_run record.
+// last review: ser, 300526
 func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, userID int, firstName, timezone string, regenerate bool) bool {
 	// Compute "today" / "yesterday" + their day boundaries in the *user's*
 	// timezone, not the server's. The previous server-local calculation meant a
@@ -197,8 +198,9 @@ func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, userI
 
 	start := time.Now()
 
-	// Get accessible workspace IDs (inline to avoid import cycle with handlers)
-	accessibleWSIDs, err := bs.getAccessibleWorkspaceIDs(userID)
+	// Get accessible workspace IDs (gated-aware item.view check, shared with the
+	// HTTP and MCP surfaces via PermissionService).
+	accessibleWSIDs, err := bs.permService.AccessibleWorkspaceIDs(userID)
 	if err != nil || len(accessibleWSIDs) == 0 {
 		slog.Info("briefing: no accessible workspaces",
 			slog.Int("user_id", userID),
@@ -210,172 +212,80 @@ func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, userI
 		return err == nil
 	}
 
-	placeholders := make([]string, len(accessibleWSIDs))
-	wsArgs := make([]interface{}, len(accessibleWSIDs))
-	for i, id := range accessibleWSIDs {
-		placeholders[i] = "?"
-		wsArgs[i] = id
-	}
-	wsIn := strings.Join(placeholders, ",")
-
-	lookups := bs.loadLookupMaps()
+	itemRepo := repository.NewItemRepository(bs.db)
+	lookups := repository.NewLookupRepository(bs.db).LoadNameMaps()
 
 	// Gather context: recent activity
 	var activityLines []string
-	changeQuery := fmt.Sprintf(`SELECT ih.field_name, COALESCE(ih.old_value, ''), COALESCE(ih.new_value, ''),
-		w.key || '-' || CAST(i.workspace_item_number AS TEXT) as item_key, i.title,
-		COALESCE(u.first_name || ' ' || u.last_name, 'Unknown') as changed_by
-		FROM item_history ih
-		JOIN items i ON ih.item_id = i.id
-		JOIN workspaces w ON i.workspace_id = w.id
-		LEFT JOIN users u ON ih.user_id = u.id
-		WHERE i.workspace_id IN (%s) AND ih.changed_at >= ?
-		ORDER BY ih.changed_at DESC LIMIT 50`, wsIn)
-	changeArgs := append(append([]interface{}{}, wsArgs...), yesterdayStart)
-	changeRows, err := bs.db.Query(changeQuery, changeArgs...)
+	changes, err := itemRepo.RecentItemChanges(accessibleWSIDs, yesterdayStart, 50)
 	if err != nil {
 		slog.Warn("briefing: changes query failed", slog.Int("user_id", userID), slog.Any("error", err))
-	} else {
-		defer func() { _ = changeRows.Close() }()
-		for changeRows.Next() {
-			var field, oldVal, newVal, itemKey, title, changedBy string
-			if err := changeRows.Scan(&field, &oldVal, &newVal, &itemKey, &title, &changedBy); err == nil {
-				displayField := strings.TrimSuffix(field, "_id")
-				displayOld := lookups.resolve(field, oldVal)
-				displayNew := lookups.resolve(field, newVal)
-				line := fmt.Sprintf("- [%s] %s: %s changed '%s'", itemKey, title, changedBy, displayField)
-				if displayOld != "" || displayNew != "" {
-					line += fmt.Sprintf(" from '%s' to '%s'", displayOld, displayNew)
-				}
-				activityLines = append(activityLines, line)
-			}
+	}
+	for _, c := range changes {
+		displayField := strings.TrimSuffix(c.FieldName, "_id")
+		displayOld := resolveLookup(lookups, c.FieldName, c.OldValue)
+		displayNew := resolveLookup(lookups, c.FieldName, c.NewValue)
+		line := fmt.Sprintf("- [%s] %s: %s changed '%s'", c.ItemKey, c.Title, c.ChangedBy, displayField)
+		if displayOld != "" || displayNew != "" {
+			line += fmt.Sprintf(" from '%s' to '%s'", displayOld, displayNew)
 		}
-		if err := changeRows.Err(); err != nil {
-			slog.Warn("briefing: changes iteration failed", slog.Int("user_id", userID), slog.Any("error", err))
-		}
+		activityLines = append(activityLines, line)
 	}
 
 	// Gather context: recent comments
 	var commentLines []string
-	commentQuery := fmt.Sprintf(`SELECT c.content,
-		w.key || '-' || CAST(i.workspace_item_number AS TEXT) as item_key, i.title,
-		COALESCE(u.first_name || ' ' || u.last_name, 'Unknown') as author
-		FROM comments c
-		JOIN items i ON c.item_id = i.id
-		JOIN workspaces w ON i.workspace_id = w.id
-		LEFT JOIN users u ON c.author_id = u.id
-		WHERE i.workspace_id IN (%s) AND c.created_at >= ? AND c.is_private = false
-		ORDER BY c.created_at DESC LIMIT 30`, wsIn)
-	commentArgs := append(append([]interface{}{}, wsArgs...), yesterdayStart)
-	commentRows, err := bs.db.Query(commentQuery, commentArgs...)
+	comments, err := itemRepo.RecentComments(accessibleWSIDs, yesterdayStart, 30)
 	if err != nil {
 		slog.Warn("briefing: comments query failed", slog.Int("user_id", userID), slog.Any("error", err))
-	} else {
-		defer func() { _ = commentRows.Close() }()
-		for commentRows.Next() {
-			var content, itemKey, title, author string
-			if err := commentRows.Scan(&content, &itemKey, &title, &author); err == nil {
-				if len(content) > 200 {
-					content = content[:200] + "..."
-				}
-				commentLines = append(commentLines, fmt.Sprintf("- [%s] %s commented on '%s': %s", itemKey, author, title, content))
-			}
+	}
+	for _, c := range comments {
+		content := c.Content
+		if len(content) > 200 {
+			content = content[:200] + "..."
 		}
-		if err := commentRows.Err(); err != nil {
-			slog.Warn("briefing: comments iteration failed", slog.Int("user_id", userID), slog.Any("error", err))
-		}
+		commentLines = append(commentLines, fmt.Sprintf("- [%s] %s commented on '%s': %s", c.ItemKey, c.Author, c.Title, content))
 	}
 
-	// Gather context: assigned open items
-	personalWSIDs := []int{}
-	pwsRows, err := bs.db.Query("SELECT id FROM workspaces WHERE is_personal = true AND owner_id = ? AND active = true", userID)
+	// Gather context: assigned open items, plus everything in the user's personal workspaces
+	personalWSIDs, err := repository.NewWorkspaceRepository(bs.db).ListActivePersonalWorkspaceIDs(userID)
 	if err != nil {
 		slog.Warn("briefing: personal workspaces query failed", slog.Int("user_id", userID), slog.Any("error", err))
-	} else {
-		defer func() { _ = pwsRows.Close() }()
-		for pwsRows.Next() {
-			var id int
-			if err := pwsRows.Scan(&id); err == nil {
-				personalWSIDs = append(personalWSIDs, id)
-			}
-		}
-		if err := pwsRows.Err(); err != nil {
-			slog.Warn("briefing: personal workspaces iteration failed", slog.Int("user_id", userID), slog.Any("error", err))
-		}
+		personalWSIDs = nil
 	}
 
 	var itemLines []string
-	itemQuery := fmt.Sprintf(`SELECT w.key, i.workspace_item_number, i.title,
-		COALESCE(st.name, ''), COALESCE(p.name, ''), COALESCE(CAST(i.due_date AS TEXT), ''),
-		COALESCE(m.name, ''), COALESCE(CAST(m.target_date AS TEXT), ''),
-		COALESCE(iter.name, ''), COALESCE(CAST(iter.end_date AS TEXT), '')
-		FROM items i
-		JOIN workspaces w ON i.workspace_id = w.id
-		LEFT JOIN statuses st ON i.status_id = st.id
-		LEFT JOIN priorities p ON i.priority_id = p.id
-		LEFT JOIN item_milestones im ON im.item_id = i.id
-		LEFT JOIN milestones m ON m.id = im.milestone_id
-		LEFT JOIN iterations iter ON i.iteration_id = iter.id
-		LEFT JOIN status_categories sc ON st.category_id = sc.id
-		WHERE i.workspace_id IN (%s) AND (i.assignee_id = ?%s)
-		AND COALESCE(sc.is_completed, FALSE) = FALSE
-		ORDER BY i.due_date ASC NULLS LAST LIMIT 50`, wsIn, func() string {
-		if len(personalWSIDs) > 0 {
-			pph := make([]string, len(personalWSIDs))
-			for i := range personalWSIDs {
-				pph[i] = "?"
-			}
-			return fmt.Sprintf(" OR i.workspace_id IN (%s)", strings.Join(pph, ","))
-		}
-		return ""
-	}())
-	itemArgs := append(append([]interface{}{}, wsArgs...), userID)
-	for _, pid := range personalWSIDs {
-		itemArgs = append(itemArgs, pid)
-	}
-	itemRows, err := bs.db.Query(itemQuery, itemArgs...)
+	openItems, err := itemRepo.OpenItemsForUser(accessibleWSIDs, personalWSIDs, userID, 50)
 	if err != nil {
 		slog.Warn("briefing: items query failed", slog.Int("user_id", userID), slog.Any("error", err))
-	} else {
-		defer func() { _ = itemRows.Close() }()
-		for itemRows.Next() {
-			var wsKey string
-			var itemNum int
-			var title, status, priority, dueDate string
-			var milestoneName, milestoneTargetDate, iterationName, iterationEndDate string
-			if err := itemRows.Scan(&wsKey, &itemNum, &title, &status, &priority, &dueDate, &milestoneName, &milestoneTargetDate, &iterationName, &iterationEndDate); err == nil {
-				line := fmt.Sprintf("- [%s-%d] %s", wsKey, itemNum, title)
-				if priority != "" {
-					line += fmt.Sprintf(" | Priority: %s", priority)
-				}
-				if dueDate != "" {
-					line += fmt.Sprintf(" | Due: %s", dueDate)
-				} else {
-					line += " | Due: none"
-				}
-				if status != "" {
-					line += fmt.Sprintf(" | Status: %s", status)
-				}
-				if milestoneName != "" {
-					ms := fmt.Sprintf(" | Milestone: %s", milestoneName)
-					if milestoneTargetDate != "" {
-						ms += fmt.Sprintf(" (target: %s)", milestoneTargetDate)
-					}
-					line += ms
-				}
-				if iterationName != "" {
-					it := fmt.Sprintf(" | Iteration: %s", iterationName)
-					if iterationEndDate != "" {
-						it += fmt.Sprintf(" (ends: %s)", iterationEndDate)
-					}
-					line += it
-				}
-				itemLines = append(itemLines, line)
+	}
+	for _, it := range openItems {
+		line := fmt.Sprintf("- [%s-%d] %s", it.WorkspaceKey, it.ItemNumber, it.Title)
+		if it.Priority != "" {
+			line += fmt.Sprintf(" | Priority: %s", it.Priority)
+		}
+		if it.DueDate != "" {
+			line += fmt.Sprintf(" | Due: %s", it.DueDate)
+		} else {
+			line += " | Due: none"
+		}
+		if it.Status != "" {
+			line += fmt.Sprintf(" | Status: %s", it.Status)
+		}
+		if it.MilestoneName != "" {
+			ms := fmt.Sprintf(" | Milestone: %s", it.MilestoneName)
+			if it.MilestoneTargetDate != "" {
+				ms += fmt.Sprintf(" (target: %s)", it.MilestoneTargetDate)
 			}
+			line += ms
 		}
-		if err := itemRows.Err(); err != nil {
-			slog.Warn("briefing: items iteration failed", slog.Int("user_id", userID), slog.Any("error", err))
+		if it.IterationName != "" {
+			iter := fmt.Sprintf(" | Iteration: %s", it.IterationName)
+			if it.IterationEndDate != "" {
+				iter += fmt.Sprintf(" (ends: %s)", it.IterationEndDate)
+			}
+			line += iter
 		}
+		itemLines = append(itemLines, line)
 	}
 
 	// Gather context: yesterday's worklogs. time_worklogs.date is INTEGER (Unix
@@ -476,43 +386,10 @@ func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, userI
 	return true
 }
 
-// getAccessibleWorkspaceIDs returns IDs of active workspaces the user can view.
-// This duplicates handlers.GetAccessibleWorkspaceIDs to avoid an import cycle.
-func (bs *BriefingScheduler) getAccessibleWorkspaceIDs(userID int) ([]int, error) {
-	rows, err := bs.db.Query("SELECT id FROM workspaces WHERE active = true")
-	if err != nil {
-		return nil, fmt.Errorf("failed to query workspaces: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	var ids []int
-	for rows.Next() {
-		var id int
-		if err := rows.Scan(&id); err != nil {
-			continue
-		}
-		hasView, err := bs.permService.HasWorkspacePermission(userID, id, models.PermissionItemView)
-		if err != nil {
-			continue
-		}
-		if hasView {
-			ids = append(ids, id)
-		}
-	}
-	return ids, rows.Err()
-}
-
-// briefingLookups holds name maps used to translate raw *_id history values into human-readable strings.
-type briefingLookups struct {
-	statuses   map[int]string
-	priorities map[int]string
-	milestones map[int]string
-	iterations map[int]string
-	users      map[int]string
-}
-
-// resolve returns a human-readable value for the given history field/raw value pair.
-// Non-*_id fields and unparseable values pass through unchanged.
-func (l *briefingLookups) resolve(field, raw string) string {
+// resolveLookup returns a human-readable value for the given history field/raw
+// value pair, using the centralized id→name maps. Non-*_id fields and
+// unparseable values pass through unchanged.
+func resolveLookup(maps *repository.NameMaps, field, raw string) string {
 	if raw == "" {
 		return raw
 	}
@@ -528,54 +405,17 @@ func (l *briefingLookups) resolve(field, raw string) string {
 	}
 	switch field {
 	case "status_id":
-		return lookup(l.statuses)
+		return lookup(maps.Statuses)
 	case "priority_id":
-		return lookup(l.priorities)
+		return lookup(maps.Priorities)
 	case "milestone_id":
-		return lookup(l.milestones)
+		return lookup(maps.Milestones)
 	case "iteration_id":
-		return lookup(l.iterations)
+		return lookup(maps.Iterations)
 	case "assignee_id", "creator_id":
-		return lookup(l.users)
+		return lookup(maps.Users)
 	}
 	return raw
-}
-
-// loadLookupMaps loads id→name maps used to translate *_id history values. Tables are small
-// so we load them in full; failures are logged and produce empty maps (values fall through).
-func (bs *BriefingScheduler) loadLookupMaps() *briefingLookups {
-	l := &briefingLookups{
-		statuses:   map[int]string{},
-		priorities: map[int]string{},
-		milestones: map[int]string{},
-		iterations: map[int]string{},
-		users:      map[int]string{},
-	}
-	load := func(name, query string, target map[int]string) {
-		rows, err := bs.db.Query(query)
-		if err != nil {
-			slog.Warn("briefing: lookup query failed", slog.String("lookup", name), slog.Any("error", err))
-			return
-		}
-		defer func() { _ = rows.Close() }()
-		for rows.Next() {
-			var id int
-			var nameVal string
-			if err := rows.Scan(&id, &nameVal); err != nil {
-				continue
-			}
-			target[id] = nameVal
-		}
-		if err := rows.Err(); err != nil {
-			slog.Warn("briefing: lookup iteration failed", slog.String("lookup", name), slog.Any("error", err))
-		}
-	}
-	load("statuses", "SELECT id, name FROM statuses", l.statuses)
-	load("priorities", "SELECT id, name FROM priorities", l.priorities)
-	load("milestones", "SELECT id, name FROM milestones", l.milestones)
-	load("iterations", "SELECT id, name FROM iterations", l.iterations)
-	load("users", "SELECT id, COALESCE(first_name || ' ' || last_name, '') FROM users", l.users)
-	return l
 }
 
 func (bs *BriefingScheduler) storeBriefing(userID int, date, content string, durationMs int64, errMsg string) {

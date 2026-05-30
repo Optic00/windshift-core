@@ -4,7 +4,6 @@ package handlers
 import (
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strings"
 
@@ -282,22 +281,7 @@ func GetAccessibleWorkspaceIDs(user *models.User, db database.Database,
 	if user == nil || permService == nil {
 		return []int{}, nil
 	}
-	activeIDs, err := repository.NewWorkspaceRepository(db).ListActiveIDs()
-	if err != nil {
-		return nil, fmt.Errorf("failed to query workspaces: %w", err)
-	}
-	var ids []int
-	for _, id := range activeIDs {
-		hasView, err := permService.HasWorkspacePermission(user.ID, id, models.PermissionItemView)
-		if err != nil {
-			slog.Error("error checking view permission", slog.Int("workspace_id", id), slog.Any("error", err))
-			continue
-		}
-		if hasView {
-			ids = append(ids, id)
-		}
-	}
-	return ids, nil
+	return permService.AccessibleWorkspaceIDs(user.ID)
 }
 
 // GetAccessibleWorkspaceKeys returns a set of workspace keys the user can view.
