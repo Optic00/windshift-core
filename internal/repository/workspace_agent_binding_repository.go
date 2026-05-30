@@ -40,12 +40,12 @@ func (r *WorkspaceAgentBindingRepository) Insert(ctx context.Context, b *models.
 	}
 	res, err := r.db.ExecWriteContext(ctx, `
 		INSERT INTO workspace_agent_bindings
-			(workspace_id, acting_user_id, acting_user_kind, repo_slug, repo_remote_url, repo_base_ref,
+			(workspace_id, acting_user_id, acting_user_kind, repo_slug, repo_base_ref,
 			 llm_connection_id, scm_connection_id, token_scopes_json, token_ttl_minutes, max_runs_per_day, created_by_user_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		b.WorkspaceID, b.ActingUserID, b.ActingUserKind,
-		nullStringArg(b.RepoSlug), nullStringArg(b.RepoRemoteURL), nullStringArg(b.RepoBaseRef),
+		nullStringArg(b.RepoSlug), nullStringArg(b.RepoBaseRef),
 		nullIntArg(b.LLMConnectionID), nullIntArg(b.SCMConnectionID),
 		string(scopesJSON), b.TokenTTLMinutes, b.MaxRunsPerDay,
 		b.CreatedByUserID,
@@ -98,10 +98,13 @@ func (r *WorkspaceAgentBindingRepository) FindByActingUser(ctx context.Context, 
 	return b, err
 }
 
-// Delete removes a binding by id. Returns the number of rows affected so
-// the handler can distinguish "deleted" from "no such binding".
-func (r *WorkspaceAgentBindingRepository) Delete(ctx context.Context, id int) (int64, error) {
-	res, err := r.db.ExecWriteContext(ctx, `DELETE FROM workspace_agent_bindings WHERE id = ?`, id)
+// Delete removes a binding by (id, workspace_id). Returns the number of
+// rows affected so the handler can distinguish "deleted" from "no such
+// binding (or wrong workspace)". The workspace filter is required: a
+// workspace admin must not be able to delete a binding belonging to a
+// different workspace by guessing its id.
+func (r *WorkspaceAgentBindingRepository) Delete(ctx context.Context, id, workspaceID int) (int64, error) {
+	res, err := r.db.ExecWriteContext(ctx, `DELETE FROM workspace_agent_bindings WHERE id = ? AND workspace_id = ?`, id, workspaceID)
 	if err != nil {
 		return 0, fmt.Errorf("delete binding: %w", err)
 	}
@@ -111,7 +114,7 @@ func (r *WorkspaceAgentBindingRepository) Delete(ctx context.Context, id int) (i
 
 const bindingSelectSQL = `
 	SELECT id, workspace_id, acting_user_id, acting_user_kind,
-	       repo_slug, repo_remote_url, repo_base_ref,
+	       repo_slug, repo_base_ref,
 	       llm_connection_id, scm_connection_id,
 	       token_scopes_json, token_ttl_minutes, max_runs_per_day,
 	       created_by_user_id, created_at, updated_at
@@ -132,12 +135,12 @@ func scanBindingRows(rows *sql.Rows) (*models.WorkspaceAgentBinding, error) {
 
 func scanBindingFrom(scanner bindingRowScanner) (*models.WorkspaceAgentBinding, error) {
 	b := &models.WorkspaceAgentBinding{}
-	var repoSlug, repoRemoteURL, repoBaseRef sql.NullString
+	var repoSlug, repoBaseRef sql.NullString
 	var llmConn, scmConn sql.NullInt64
 	var scopesJSON string
 	if err := scanner.Scan(
 		&b.ID, &b.WorkspaceID, &b.ActingUserID, &b.ActingUserKind,
-		&repoSlug, &repoRemoteURL, &repoBaseRef,
+		&repoSlug, &repoBaseRef,
 		&llmConn, &scmConn, &scopesJSON, &b.TokenTTLMinutes, &b.MaxRunsPerDay,
 		&b.CreatedByUserID, &b.CreatedAt, &b.UpdatedAt,
 	); err != nil {
@@ -145,9 +148,6 @@ func scanBindingFrom(scanner bindingRowScanner) (*models.WorkspaceAgentBinding, 
 	}
 	if repoSlug.Valid {
 		b.RepoSlug = repoSlug.String
-	}
-	if repoRemoteURL.Valid {
-		b.RepoRemoteURL = repoRemoteURL.String
 	}
 	if repoBaseRef.Valid {
 		b.RepoBaseRef = repoBaseRef.String

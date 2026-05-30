@@ -1974,6 +1974,10 @@ func bootCodingAgentRunService(
 		Image:        cfg.RunnerImage,
 		DockerBinary: cfg.DockerBinary,
 		Env:          staticEnv,
+		Network:      cfg.Network,
+		PidsLimit:    cfg.PidsLimit,
+		Memory:       cfg.Memory,
+		CPUs:         cfg.CPUs,
 		InitialPrompt: "You are an autonomous coding agent. The Windshift item assigned to you is in $WINDSHIFT_ITEM_ID. " +
 			"Start by running `ws task get $WINDSHIFT_ITEM_ID` to read the requirements. " +
 			"The ws CLI is preconfigured (see ~/WINDSHIFT.md for the full surface). " +

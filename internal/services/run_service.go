@@ -261,6 +261,10 @@ func (s *RunService) Start(ctx context.Context, req RunRequest) (int, error) {
 		ItemID:      req.ItemID,
 		Status:      models.AgentRunStatusQueued,
 	}
+	if req.BindingID > 0 {
+		bID := req.BindingID
+		run.BindingID = &bID
+	}
 	runID, err := s.repo.Insert(ctx, run)
 	if err != nil {
 		return 0, fmt.Errorf("insert agent_run: %w", err)
@@ -434,7 +438,11 @@ func (s *RunService) invokePostRunHook(info PostRunInfo) {
 func (s *RunService) finalize(runID int, status, errMsg string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := s.repo.Finalize(ctx, runID, status, errMsg, s.now()); err != nil {
+	// Scrub embedded URL credentials before persistence. errMsg
+	// originates from runner output / git CombinedOutput / exec
+	// failures, any of which may include a `https://user:pass@host`
+	// fragment if a token slipped through somewhere upstream.
+	if err := s.repo.Finalize(ctx, runID, status, RedactString(errMsg), s.now()); err != nil {
 		s.logger.Printf("run service: finalize run=%d status=%s: %v", runID, status, err)
 	}
 }
@@ -476,4 +484,11 @@ func (s *RunService) Wait() {
 // for the run.
 func (s *RunService) HasTokens() bool {
 	return s.tokens != nil
+}
+
+// CountRunsForBindingSince proxies to the repository so BindingService
+// can enforce a binding's max_runs_per_day budget without taking on a
+// direct dependency on the agent_runs repo.
+func (s *RunService) CountRunsForBindingSince(ctx context.Context, bindingID int, since time.Time) (int, error) {
+	return s.repo.CountForBindingSince(ctx, bindingID, since)
 }

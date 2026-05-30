@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"windshift/internal/logger"
 	"windshift/internal/models"
@@ -73,7 +74,6 @@ type bindingResponse struct {
 	ActingUserID    int      `json:"acting_user_id"`
 	ActingUserKind  string   `json:"acting_user_kind"`
 	RepoSlug        string   `json:"repo_slug,omitempty"`
-	RepoRemoteURL   string   `json:"repo_remote_url,omitempty"`
 	RepoBaseRef     string   `json:"repo_base_ref,omitempty"`
 	LLMConnectionID *int     `json:"llm_connection_id,omitempty"`
 	SCMConnectionID *int     `json:"scm_connection_id,omitempty"`
@@ -89,7 +89,6 @@ func toBindingResponse(b *models.WorkspaceAgentBinding) bindingResponse {
 		ActingUserID:    b.ActingUserID,
 		ActingUserKind:  b.ActingUserKind,
 		RepoSlug:        b.RepoSlug,
-		RepoRemoteURL:   b.RepoRemoteURL,
 		RepoBaseRef:     b.RepoBaseRef,
 		LLMConnectionID: b.LLMConnectionID,
 		SCMConnectionID: b.SCMConnectionID,
@@ -102,7 +101,6 @@ func toBindingResponse(b *models.WorkspaceAgentBinding) bindingResponse {
 type createBindingBody struct {
 	ActingUserID    int      `json:"acting_user_id"`
 	RepoSlug        string   `json:"repo_slug,omitempty"`
-	RepoRemoteURL   string   `json:"repo_remote_url,omitempty"`
 	RepoBaseRef     string   `json:"repo_base_ref,omitempty"`
 	LLMConnectionID *int     `json:"llm_connection_id,omitempty"`
 	SCMConnectionID *int     `json:"scm_connection_id,omitempty"`
@@ -166,7 +164,6 @@ func (h *WorkspaceAgentBindingHandler) Create(w http.ResponseWriter, r *http.Req
 		WorkspaceID:     workspaceID,
 		ActingUserID:    body.ActingUserID,
 		RepoSlug:        body.RepoSlug,
-		RepoRemoteURL:   body.RepoRemoteURL,
 		RepoBaseRef:     body.RepoBaseRef,
 		LLMConnectionID: body.LLMConnectionID,
 		SCMConnectionID: body.SCMConnectionID,
@@ -180,6 +177,12 @@ func (h *WorkspaceAgentBindingHandler) Create(w http.ResponseWriter, r *http.Req
 		case errors.Is(err, repository.ErrBindingDuplicate):
 			respondConflict(w, r, err.Error())
 		case errors.Is(err, services.ErrLLMConnectionNotExposed):
+			respondBadRequest(w, r, err.Error())
+		case errors.Is(err, services.ErrBindingTokenTTLOverCap),
+			errors.Is(err, services.ErrBindingRepoNeedsSCMConnection),
+			errors.Is(err, services.ErrBindingInvalidRepoSlug):
+			respondBadRequest(w, r, err.Error())
+		case isAgentScopeError(err):
 			respondBadRequest(w, r, err.Error())
 		case isIdentityGateError(err):
 			respondForbidden(w, r)
@@ -215,7 +218,7 @@ func (h *WorkspaceAgentBindingHandler) Delete(w http.ResponseWriter, r *http.Req
 		respondBadRequest(w, r, "id path param must be a positive integer")
 		return
 	}
-	n, err := h.bindings.Delete(r.Context(), id)
+	n, err := h.bindings.Delete(r.Context(), id, workspaceID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -242,4 +245,12 @@ func isIdentityGateError(err error) bool {
 		errors.Is(err, services.ErrActingIdentityNotOwned) ||
 		errors.Is(err, services.ErrActingIdentityCentralizedGated) ||
 		errors.Is(err, services.ErrActingIdentityNotInAllowlist)
+}
+
+// isAgentScopeError reports whether the wrapped error came from
+// auth.ValidateAgentScopes. The auth package returns a plain
+// fmt.Errorf rather than a sentinel; matching by substring is ugly but
+// localized and preferable to leaking the validation message via 500.
+func isAgentScopeError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "scopes not permitted for coding-agent tokens")
 }

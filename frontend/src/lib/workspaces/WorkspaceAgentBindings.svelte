@@ -37,7 +37,6 @@
   // repo_slug / repo_remote_url, and the run path needs both.
   let addRepositoryId = $state(null);
   let addRepoSlug = $state('');
-  let addRepoRemoteURL = $state('');
   let addRepoBaseRef = $state('');
   let addLLMConnectionId = $state(null);
   let addTokenTTLMinutes = $state(60);
@@ -192,7 +191,6 @@
     addSCMConnectionId = null;
     addRepositoryId = null;
     addRepoSlug = '';
-    addRepoRemoteURL = '';
     addRepoBaseRef = '';
     addLLMConnectionId = null;
     addTokenTTLMinutes = 60;
@@ -210,7 +208,6 @@
     if (addSCMConnectionId) body.scm_connection_id = addSCMConnectionId;
     if (addLLMConnectionId) body.llm_connection_id = addLLMConnectionId;
     if (addRepoSlug.trim()) body.repo_slug = addRepoSlug.trim();
-    if (addRepoRemoteURL.trim()) body.repo_remote_url = addRepoRemoteURL.trim();
     if (addRepoBaseRef.trim()) body.repo_base_ref = addRepoBaseRef.trim();
     adding = true;
     try {
@@ -345,6 +342,7 @@
             <div>
               <label for="binding-repository" class="block text-xs mb-1" style="color: var(--ds-text-subtle);">Repository</label>
               <Select id="binding-repository" bind:value={addRepositoryId} onchange={onRepositoryChange} options={repoOptions} disabled={!addSCMConnectionId || loadingRepos} />
+              <p class="text-xs mt-1" style="color: var(--ds-text-subtle);">Clone URL is derived from the selected SCM connection — the orchestrator never accepts a free-form remote URL.</p>
             </div>
             <div>
               <label for="binding-repo-base" class="block text-xs mb-1" style="color: var(--ds-text-subtle);">Base ref</label>
