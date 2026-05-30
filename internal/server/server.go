@@ -1981,6 +1981,8 @@ func bootCodingAgentRunService(
 		InitialPrompt: "You are an autonomous coding agent. The Windshift item assigned to you is in $WINDSHIFT_ITEM_ID. " +
 			"Start by running `ws task get $WINDSHIFT_ITEM_ID` to read the requirements. " +
 			"The ws CLI is preconfigured (see ~/WINDSHIFT.md for the full surface). " +
+			"You have no general internet egress: outbound network access is filtered, so don't expect to reach arbitrary URLs, install packages from the public internet, or call external APIs — work with what is already in /workspace and the ws API. " +
+			"You cannot chat with the user interactively. To ask a question, report progress, surface a blocker, or hand off, post a comment on the work item with `ws comment add $WINDSHIFT_ITEM_ID -m \"<markdown>\"` — that is your only channel to the human. " +
 			"Complete the work in /workspace, then commit and push your branch — the orchestrator opens the draft PR for you.",
 	}
 
