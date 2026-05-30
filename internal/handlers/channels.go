@@ -1376,13 +1376,17 @@ func (h *ChannelHandler) GetEmailLog(w http.ResponseWriter, r *http.Request) {
 		LastUID       int        `json:"last_uid"`
 		ErrorCount    int        `json:"error_count"`
 		LastError     string     `json:"last_error"`
+		// Healthy is derived: a non-empty last_error means the last poll either
+		// failed or dropped a poison message, so the channel needs attention.
+		Healthy bool `json:"healthy"`
 	}
-	var state emailChannelState
+	state := emailChannelState{Healthy: true}
 	if got, err := h.channelRepo.GetEmailChannelState(ctx, id); err == nil {
 		state.LastUID = got.LastUID
 		state.LastCheckedAt = got.LastCheckedAt
 		state.ErrorCount = got.ErrorCount
 		state.LastError = got.LastError
+		state.Healthy = got.LastError == ""
 	} else if !errors.Is(err, repository.ErrNotFound) {
 		respondInternalError(w, r, err)
 		return

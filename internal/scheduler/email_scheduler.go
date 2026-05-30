@@ -181,6 +181,13 @@ func (es *EmailScheduler) getActiveEmailChannels(ctx context.Context) ([]channel
 	return channels, nil
 }
 
+// maxDeliveryAttempts is how many consecutive polls may fail on the same
+// message before the scheduler gives up on it. Until this is reached the UID
+// watermark is held back so the message is retried (transient failures recover
+// on their own); once reached, the message is treated as poison and skipped so
+// one un-parseable email can't wedge the whole channel forever.
+const maxDeliveryAttempts = 5
+
 // processChannel processes a single email channel. Returns true on success
 // (including the no-new-messages case) and false when any step failed; the caller
 // counts failures so the scheduler_run record reflects partial outages.
@@ -283,16 +290,18 @@ func (es *EmailScheduler) processChannel(ctx context.Context, ch channelInfo) bo
 	// Process messages in UID order and bail at the first failure so we never
 	// advance past a message we haven't successfully handled. Advancing over a
 	// gap would permanently lose the failed UID (next poll searches UID > last,
-	// which skips it). A stuck message will keep failing and hold up the queue,
-	// which is the correct behavior — surface it via errorCount/last_error.
+	// which skips it), so a stuck message is retried on subsequent polls. To
+	// keep one bad message from wedging the channel forever, processChannel
+	// counts consecutive failed polls on it (persisted as error_count) and, once
+	// maxDeliveryAttempts is reached, drops it past the watermark (see below).
 	// Seed maxUID from sinceUID (not state.LastUID) so a UIDVALIDITY reset
 	// persists: after a reset sinceUID==0 and we want LastUID to reflect the
 	// new UID space even if processing stops at the first message.
-	// last review: ser, 300526, NOTE: how is the queue cleared then?
 	maxUID := sinceUID
 	processedCount := 0
 	errorCount := 0
 	var lastBatchError string
+	var offenderUID uint32
 
 	for _, msg := range messages {
 		parsed, err := es.parser.Parse(msg)
@@ -300,6 +309,7 @@ func (es *EmailScheduler) processChannel(ctx context.Context, ch channelInfo) bo
 			slog.Error("failed to parse email, stopping batch to avoid skipping the UID",
 				"channel_id", ch.ID, "uid", msg.UID, "error", err)
 			errorCount++
+			offenderUID = msg.UID
 			lastBatchError = fmt.Sprintf("parse UID %d: %s", msg.UID, err.Error())
 			break
 		}
@@ -313,6 +323,7 @@ func (es *EmailScheduler) processChannel(ctx context.Context, ch channelInfo) bo
 				"error", err,
 			)
 			errorCount++
+			offenderUID = msg.UID
 			lastBatchError = fmt.Sprintf("process UID %d: %s", msg.UID, err.Error())
 			break
 		}
@@ -359,9 +370,41 @@ func (es *EmailScheduler) processChannel(ctx context.Context, ch channelInfo) bo
 		}
 	}
 
+	// Consecutive-failure / poison-message handling. errorCount > 0 means the
+	// loop broke at offenderUID. Because the watermark didn't advance, the same
+	// lowest-UID message is refetched first on every poll. error_count tracks
+	// consecutive failed polls on the channel (recordError bumps it for
+	// connect/fetch failures too, which keeps an outage from looking healthy);
+	// when the channel has been stuck this long and the current blocker is a
+	// specific message, we treat that message as poison and advance the
+	// watermark past it so the channel keeps making progress instead of wedging
+	// forever. The drop is surfaced to admins via the channel's last_error plus
+	// the failed scheduler_run this tick records (processChannel returns false).
+	consecutiveFailures := 0
+	if errorCount > 0 {
+		consecutiveFailures = state.ErrorCount + 1
+		if consecutiveFailures >= maxDeliveryAttempts {
+			slog.Error("dropping poison email after repeated failures; advancing past it",
+				"channel_id", ch.ID,
+				"uid", offenderUID,
+				"attempts", consecutiveFailures,
+				"error", lastBatchError,
+			)
+			if offenderUID > maxUID {
+				maxUID = offenderUID
+			}
+			lastBatchError = fmt.Sprintf("dropped poison message uid=%d after %d failed attempts: %s",
+				offenderUID, consecutiveFailures, lastBatchError)
+			// Watermark advanced past the offender — the counter restarts on the
+			// next message. last_error (set above) keeps the channel flagged
+			// unhealthy until a clean poll clears it.
+			consecutiveFailures = 0
+		}
+	}
+
 	// Update channel state (including the observed UIDVALIDITY so a future
 	// server-side reset is detected on the next tick).
-	es.updateChannelState(ctx, ch.ID, int(maxUID), currentValidity, errorCount, lastBatchError)
+	es.updateChannelState(ctx, ch.ID, int(maxUID), currentValidity, consecutiveFailures, lastBatchError)
 
 	// Update channel last_activity
 	es.updateLastActivity(ctx, ch.ID)
@@ -373,9 +416,9 @@ func (es *EmailScheduler) processChannel(ctx context.Context, ch channelInfo) bo
 	)
 
 	// errorCount > 0 means we hit a parse/process failure mid-batch (the loop above
-	// breaks on the first such failure). The channel's UID watermark didn't advance
-	// past the offender, so the next tick retries — but for diagnostics the tick
-	// should still record as failed so admins see the partial outage.
+	// breaks on the first such failure). Whether we retried or dropped a poison
+	// message, the tick records as failed so admins see it on the diagnostics
+	// surface (scheduler_runs) and via the channel's last_error.
 	return errorCount == 0
 }
 
@@ -430,8 +473,11 @@ func (es *EmailScheduler) getOrCreateChannelState(ctx context.Context, channelID
 // cleared only on a clean run so a previously broken channel can be seen to
 // recover.
 func (es *EmailScheduler) updateChannelState(ctx context.Context, channelID, lastUID int, uidValidity uint32, errorCount int, lastBatchError string) {
+	// last_error is keyed off the message, not the count: a dropped poison
+	// message resets error_count to 0 but still records why, so the channel
+	// stays flagged unhealthy until a clean poll passes lastBatchError == "".
 	var lastError sql.NullString
-	if errorCount > 0 && lastBatchError != "" {
+	if lastBatchError != "" {
 		lastError = sql.NullString{String: lastBatchError, Valid: true}
 	}
 	_, err := es.db.ExecContext(ctx, `
