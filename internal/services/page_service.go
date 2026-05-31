@@ -419,22 +419,41 @@ func (s *PageService) ArchiveChecked(actorID, pageID int, authorize func([]model
 		if len(subtree) == 0 {
 			return ErrPageNotFound
 		}
+
+		// Only pages that are not already archived actually transition state.
+		// Re-touching an already-archived descendant would (a) fail the caller's
+		// admin authorization — archived pages are frozen to every op but
+		// view/restore, so the check returns false and surfaces as a misleading
+		// 404 — and (b) needlessly reset its archived_at and append a spurious
+		// "archived with subtree" revision. So scope authorization and the write
+		// to the live subset.
+		live := make([]models.Page, 0, len(subtree))
+		for i := range subtree {
+			if subtree[i].ArchivedAt == nil {
+				live = append(live, subtree[i])
+			}
+		}
+		if len(live) == 0 {
+			// The whole subtree is already archived; nothing to do.
+			return nil
+		}
 		if authorize != nil {
-			if err := authorize(subtree); err != nil {
+			if err := authorize(live); err != nil {
 				return err
 			}
 		}
 
-		// Archive the page and every descendant by materialized-path prefix.
-		// A single statement keeps the operation atomic and targets the same
-		// locked subtree rows authorized above.
+		// Archive the page and every not-yet-archived descendant by
+		// materialized-path prefix. A single statement keeps the operation
+		// atomic and targets the same locked subtree rows authorized above; the
+		// archived_at IS NULL guard leaves already-archived rows untouched.
 		if _, err := tx.Exec(`
 			UPDATE pages
 			SET archived_at = CURRENT_TIMESTAMP,
 			    archived_by = ?,
 			    updated_at = CURRENT_TIMESTAMP,
 			    updated_by = ?
-			WHERE id = ? OR (workspace_id = ? AND path LIKE ?)
+			WHERE (id = ? OR (workspace_id = ? AND path LIKE ?)) AND archived_at IS NULL
 		`, actorID, actorID, pageID, page.WorkspaceID, pathLike); err != nil {
 			return fmt.Errorf("archive subtree: %w", err)
 		}
@@ -446,10 +465,12 @@ func (s *PageService) ArchiveChecked(actorID, pageID int, authorize func([]model
 			return err
 		}
 
-		// Every archived row gets its own revision entry so descendants have a
-		// local audit trail explaining why/when they disappeared.
-		for i := range subtree {
-			if _, err := s.writeRevisionTx(tx, &subtree[i], actorID, models.PageRevisionChangeTypeArchive, "archived with subtree"); err != nil {
+		// Every newly archived row gets its own revision entry so descendants
+		// have a local audit trail explaining why/when they disappeared.
+		// Already-archived rows are skipped — they kept their original archive
+		// revision and weren't re-touched above.
+		for i := range live {
+			if _, err := s.writeRevisionTx(tx, &live[i], actorID, models.PageRevisionChangeTypeArchive, "archived with subtree"); err != nil {
 				return err
 			}
 		}
