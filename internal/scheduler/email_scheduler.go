@@ -311,15 +311,7 @@ func (es *EmailScheduler) processChannel(ctx context.Context, ch channelInfo) bo
 	var offenderUID uint32
 
 	for _, msg := range messages {
-		parsed, err := es.parser.Parse(msg)
-		if err != nil {
-			slog.Error("failed to parse email, stopping batch to avoid skipping the UID",
-				"channel_id", ch.ID, "uid", msg.UID, "error", err)
-			errorCount++
-			offenderUID = msg.UID
-			lastBatchError = fmt.Sprintf("parse UID %d: %s", msg.UID, err.Error())
-			break
-		}
+		parsed := es.parser.Parse(msg)
 
 		result, err := es.processor.ProcessEmail(ctx, parsed, ch.ID, currentValidity, decryptedConfig)
 		if err != nil {

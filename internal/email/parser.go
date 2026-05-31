@@ -37,8 +37,11 @@ func NewParser() *Parser {
 	}
 }
 
-// Parse parses a fetched IMAP message into a ParsedEmail struct
-func (p *Parser) Parse(msg *FetchedMessage) (*ParsedEmail, error) {
+// Parse converts a fetched IMAP message into a ParsedEmail. It never fails: a
+// body that can't be decoded as MIME falls back to the raw text after the
+// header/body separator (see parseBody below), so callers always get a usable
+// result rather than a hard error on malformed mail.
+func (p *Parser) Parse(msg *FetchedMessage) *ParsedEmail {
 	parsed := &ParsedEmail{
 		UID:        msg.UID,
 		RawHeaders: make(map[string][]string),
@@ -108,7 +111,7 @@ func (p *Parser) Parse(msg *FetchedMessage) (*ParsedEmail, error) {
 		}
 	}
 
-	return parsed, nil
+	return parsed
 }
 
 // parseBody parses the email body, extracting text content and attachments
