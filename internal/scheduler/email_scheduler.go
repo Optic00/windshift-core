@@ -31,21 +31,28 @@ type EmailScheduler struct {
 	running         bool
 	defaultInterval time.Duration
 	attachmentPath  string
+
+	// providerForChannel resolves the IMAP provider + decrypted config for a
+	// channel. Defaults to CredentialManager.GetProviderForChannel; tests
+	// override it to inject a fake provider (the real path dials through an
+	// SSRF-safe, TLS-only client that can't reach an in-process mock server).
+	providerForChannel func(ctx context.Context, channelID int) (email.Provider, *models.ChannelConfig, error)
 }
 
 // NewEmailScheduler creates a new email scheduler
 func NewEmailScheduler(db database.Database, credentials *email.CredentialManager, attachmentPath string) *EmailScheduler {
 	return &EmailScheduler{
-		db:              db,
-		credentials:     credentials,
-		processor:       email.NewProcessor(db, attachmentPath),
-		parser:          email.NewParser(),
-		runRepo:         repository.NewSchedulerRunRepository(db),
-		ticker:          time.NewTicker(5 * time.Minute),
-		stopChan:        make(chan struct{}),
-		running:         false,
-		defaultInterval: 5 * time.Minute,
-		attachmentPath:  attachmentPath,
+		db:                 db,
+		credentials:        credentials,
+		processor:          email.NewProcessor(db, attachmentPath),
+		parser:             email.NewParser(),
+		runRepo:            repository.NewSchedulerRunRepository(db),
+		ticker:             time.NewTicker(5 * time.Minute),
+		stopChan:           make(chan struct{}),
+		running:            false,
+		defaultInterval:    5 * time.Minute,
+		attachmentPath:     attachmentPath,
+		providerForChannel: credentials.GetProviderForChannel,
 	}
 }
 
@@ -212,7 +219,7 @@ func (es *EmailScheduler) processChannel(ctx context.Context, ch channelInfo) bo
 	}
 
 	// Get provider and connect
-	provider, decryptedConfig, err := es.credentials.GetProviderForChannel(ctx, ch.ID)
+	provider, decryptedConfig, err := es.providerForChannel(ctx, ch.ID)
 	if err != nil {
 		slog.Error("failed to get provider for channel", "channel_id", ch.ID, "error", err)
 		es.recordError(ctx, ch.ID, err)

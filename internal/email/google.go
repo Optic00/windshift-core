@@ -120,7 +120,7 @@ func (p *GoogleProvider) GetUserEmail(ctx context.Context, accessToken string) (
 }
 
 // Connect establishes an IMAP connection using OAuth
-func (p *GoogleProvider) Connect(ctx context.Context, config *models.ChannelConfig) (*Client, error) {
+func (p *GoogleProvider) Connect(ctx context.Context, config *models.ChannelConfig) (IMAPClient, error) {
 	if config.EmailOAuthAccessToken == "" {
 		return nil, fmt.Errorf("no OAuth access token configured")
 	}

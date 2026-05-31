@@ -141,7 +141,7 @@ func (p *MicrosoftProvider) GetUserEmail(ctx context.Context, accessToken string
 }
 
 // Connect establishes an IMAP connection using OAuth
-func (p *MicrosoftProvider) Connect(ctx context.Context, config *models.ChannelConfig) (*Client, error) {
+func (p *MicrosoftProvider) Connect(ctx context.Context, config *models.ChannelConfig) (IMAPClient, error) {
 	if config.EmailOAuthAccessToken == "" {
 		return nil, fmt.Errorf("no OAuth access token configured")
 	}

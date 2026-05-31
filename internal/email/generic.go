@@ -63,7 +63,7 @@ func (p *GenericProvider) GetEncryption(config *models.ChannelConfig) string {
 }
 
 // Connect establishes an IMAP connection using basic authentication
-func (p *GenericProvider) Connect(ctx context.Context, config *models.ChannelConfig) (*Client, error) {
+func (p *GenericProvider) Connect(ctx context.Context, config *models.ChannelConfig) (IMAPClient, error) {
 	if config.IMAPUsername == "" {
 		return nil, fmt.Errorf("no IMAP username configured")
 	}

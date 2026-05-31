@@ -4,8 +4,23 @@ import (
 	"context"
 	"time"
 
+	"github.com/emersion/go-imap/v2"
+
 	"windshift/internal/models"
 )
+
+// IMAPClient is the subset of *Client behavior the scheduler and provider
+// connection-tests depend on. It exists so callers (e.g. EmailScheduler) can
+// be driven against a fake in tests without reaching a real IMAP server — the
+// concrete *Client satisfies it.
+type IMAPClient interface {
+	SelectMailbox(name string) (*imap.SelectData, error)
+	FetchMessages(sinceUID uint32, batchSize int) ([]*FetchedMessage, error)
+	MarkAsRead(uid uint32) error
+	DeleteMessage(uid uint32) error
+	Expunge() error
+	Close() error
+}
 
 // ParsedEmail represents a parsed email message from IMAP
 type ParsedEmail struct {
@@ -75,7 +90,7 @@ type Provider interface {
 	GetIMAPServer(config *models.ChannelConfig) (host string, port int)
 
 	// Connect establishes an IMAP connection using the provider's auth method
-	Connect(ctx context.Context, config *models.ChannelConfig) (*Client, error)
+	Connect(ctx context.Context, config *models.ChannelConfig) (IMAPClient, error)
 
 	// TestConnection tests if the IMAP connection can be established
 	TestConnection(ctx context.Context, config *models.ChannelConfig) error
