@@ -71,6 +71,39 @@ type JiraAnalysisResult struct {
 	OpenIssuesOnly bool                          `json:"open_issues_only"`
 }
 
+// JiraReadinessRequest is the body for POST /api/admin/jira-import/readiness.
+type JiraReadinessRequest struct {
+	ConnectionID   string   `json:"connection_id"`
+	ProjectKeys    []string `json:"project_keys"`
+	OpenIssuesOnly bool     `json:"open_issues_only"`
+	SampleSize     int      `json:"sample_size,omitempty"` // issues sampled per project; default 200, capped at 500
+}
+
+// JiraReadinessReport is the full migration-readiness assessment returned by
+// the analyser. Scores and findings are computed from a *sample* of each
+// project's issues — Extrapolated is true whenever any project had more issues
+// than were sampled, so the UI never presents partial coverage as complete.
+type JiraReadinessReport struct {
+	Projects        []JiraProjectReadiness `json:"projects"`
+	OverallScore    int                    `json:"overall_score"`
+	FindingsBySev   map[jira.Severity]int  `json:"findings_by_severity"`
+	TotalIssues     int                    `json:"total_issues"`
+	SampledIssues   int                    `json:"sampled_issues"`
+	Extrapolated    bool                   `json:"extrapolated"`
+	AttachmentBytes int64                  `json:"attachment_bytes_sampled"`
+	OpenIssuesOnly  bool                   `json:"open_issues_only"`
+}
+
+// JiraProjectReadiness is the per-project slice of the readiness assessment.
+type JiraProjectReadiness struct {
+	Key           string         `json:"key"`
+	Name          string         `json:"name"`
+	TotalIssues   int            `json:"total_issues"`
+	SampledIssues int            `json:"sampled_issues"`
+	Score         int            `json:"score"`
+	Findings      []jira.Finding `json:"findings"`
+}
+
 // JiraProjectAnalysis contains analysis for a single project
 type JiraProjectAnalysis struct {
 	Key          string   `json:"key"`

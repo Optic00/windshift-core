@@ -117,6 +117,7 @@ func RegisterAdminRoutes(deps *Deps) {
 	api.HandleH("GET /admin/jira-import/projects", admin(http.HandlerFunc(deps.Admin.JiraImport.GetProjects)))
 	api.HandleH("POST /admin/jira-import/projects/counts", admin(http.HandlerFunc(deps.Admin.JiraImport.GetProjectCounts)))
 	api.HandleH("POST /admin/jira-import/analyze", admin(http.HandlerFunc(deps.Admin.JiraImport.Analyze)))
+	api.HandleH("POST /admin/jira-import/readiness", admin(http.HandlerFunc(deps.Admin.JiraImport.Readiness)))
 	api.HandleH("GET /admin/jira-import/assets", admin(http.HandlerFunc(deps.Admin.JiraImport.GetAssetSchemas)))
 	api.HandleH("GET /admin/jira-import/assets/{schemaId}/types", admin(http.HandlerFunc(deps.Admin.JiraImport.GetAssetTypes)))
 	api.HandleH("GET /admin/jira-import/jobs", admin(http.HandlerFunc(deps.Admin.JiraImport.GetImportJobs)))
