@@ -138,6 +138,11 @@ export default {
       overrideTimesRequired: 'Start and end times are required',
       overrideCreated: 'Override created',
       failedToCreateOverride: 'Failed to create override',
+      overrides: 'Overrides',
+      noOverrides: 'No overrides scheduled',
+      overrideDeleted: 'Override removed',
+      confirmDeleteOverride: 'Remove this override?',
+      failedToDeleteOverride: 'Failed to remove override',
     },
   },
   profile: {

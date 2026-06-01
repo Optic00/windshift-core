@@ -47,7 +47,6 @@ func NewEmailScheduler(db database.Database, credentials *email.CredentialManage
 		processor:          email.NewProcessor(db, attachmentPath),
 		parser:             email.NewParser(),
 		runRepo:            repository.NewSchedulerRunRepository(db),
-		ticker:             time.NewTicker(5 * time.Minute),
 		stopChan:           make(chan struct{}),
 		running:            false,
 		defaultInterval:    5 * time.Minute,
@@ -78,10 +77,12 @@ func (es *EmailScheduler) Start() {
 		return
 	}
 
+	es.ticker = time.NewTicker(es.defaultInterval)
+	es.stopChan = make(chan struct{})
 	es.running = true
 	slog.Info("starting email scheduler (IMAP polling)")
 
-	go es.schedulerLoop()
+	go es.schedulerLoop(es.ticker, es.stopChan)
 }
 
 // Stop stops the email scheduler
@@ -94,21 +95,24 @@ func (es *EmailScheduler) Stop() {
 	}
 
 	es.running = false
-	es.ticker.Stop()
+	if es.ticker != nil {
+		es.ticker.Stop()
+		es.ticker = nil
+	}
 	close(es.stopChan)
 	slog.Info("email scheduler stopped")
 }
 
 // schedulerLoop runs the main scheduler loop
-func (es *EmailScheduler) schedulerLoop() {
+func (es *EmailScheduler) schedulerLoop(ticker *time.Ticker, stopChan <-chan struct{}) {
 	// Run immediately on start
 	es.processEmailChannels()
 
 	for {
 		select {
-		case <-es.ticker.C:
+		case <-ticker.C:
 			es.processEmailChannels()
-		case <-es.stopChan:
+		case <-stopChan:
 			return
 		}
 	}

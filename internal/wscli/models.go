@@ -144,6 +144,12 @@ type TransitionRequest struct {
 	ToStatusID int `json:"to_status_id"`
 }
 
+// ItemTypeChangeRequest is the body for POST /rest/api/v1/items/{id}/change-type.
+type ItemTypeChangeRequest struct {
+	TargetItemTypeID int  `json:"target_item_type_id"`
+	TargetStatusID   *int `json:"target_status_id,omitempty"`
+}
+
 // TransitionResult is the response from a transition call.
 type TransitionResult struct {
 	Item        *Item `json:"item"`

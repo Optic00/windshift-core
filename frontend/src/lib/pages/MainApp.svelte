@@ -448,12 +448,24 @@
     'item-detail': {
       loadingMsg: 'Loading Item Details...',
       errorMsg: 'Failed to load Item Details',
-      getProps: (route) => ({
-        workspaceId: route.path.startsWith('/personal') ? $workspacesStore.personalWorkspace?.id : route.params.id,
-        itemId: route.params.itemId,
-        tab: route.query.tab || 'comments',
-        moduleSettings: $moduleSettings
-      })
+      getProps: (route) => {
+        const personal = route.path.startsWith('/personal');
+        const workspaceParam = route.params.workspaceKey || route.params.id;
+        const itemParam = route.params.itemKey || route.params.itemNumber || route.params.itemId;
+        const fullKeyMatch = !personal ? String(itemParam || '').match(/^([^/\s-]+)-(\d+)$/) : null;
+        const workspaceParamIsKey = !!workspaceParam && !/^\d+$/.test(String(workspaceParam));
+        const keyWorkspace = fullKeyMatch?.[1] || (workspaceParamIsKey ? workspaceParam : null);
+        const keyItemNumber = fullKeyMatch?.[2] || (keyWorkspace ? itemParam : null);
+        return {
+          workspaceId: personal ? $workspacesStore.personalWorkspace?.id : (keyWorkspace ? null : workspaceParam),
+          itemId: keyItemNumber || itemParam,
+          workspaceKey: !personal ? keyWorkspace : null,
+          itemNumber: !personal ? keyItemNumber : null,
+          canonicalizeKeyRoute: !personal && !!keyWorkspace,
+          tab: route.query.tab || 'comments',
+          moduleSettings: $moduleSettings
+        };
+      }
     },
     'personal-task-detail': {
       loadingMsg: 'Loading Task...',
@@ -758,7 +770,7 @@
       }
     }
     // Handle regular workspace routes
-    else if ($currentRoute.params?.id && ($currentRoute.view?.startsWith('workspace-') || $currentRoute.view === 'workspace' || $currentRoute.view === 'item-detail' || $currentRoute.view === 'item' || testViews.has($currentRoute.view))) {
+    else if ($currentRoute.params?.id && /^\d+$/.test(String($currentRoute.params.id)) && ($currentRoute.view?.startsWith('workspace-') || $currentRoute.view === 'workspace' || $currentRoute.view === 'item-detail' || $currentRoute.view === 'item' || testViews.has($currentRoute.view))) {
       currentWorkspace.load($currentRoute.params.id);
       workspaceDataStore.initialize($currentRoute.params.id);
     }

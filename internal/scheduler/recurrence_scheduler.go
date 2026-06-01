@@ -39,7 +39,6 @@ func NewRecurrenceScheduler(db database.Database, workflowService *services.Work
 		itemRepo:        repository.NewItemRepository(db),
 		runRepo:         repository.NewSchedulerRunRepository(db),
 		workflowService: workflowService,
-		ticker:          time.NewTicker(5 * time.Minute),
 		stopChan:        make(chan struct{}),
 		running:         false,
 		checkInterval:   5 * time.Minute,
@@ -56,10 +55,12 @@ func (rs *RecurrenceScheduler) Start() {
 		return
 	}
 
+	rs.ticker = time.NewTicker(rs.checkInterval)
+	rs.stopChan = make(chan struct{})
 	rs.running = true
 	slog.Info("Starting recurrence scheduler (5-minute interval)")
 
-	go rs.schedulerLoop()
+	go rs.schedulerLoop(rs.ticker, rs.stopChan)
 }
 
 // Stop stops the recurrence scheduler
@@ -72,21 +73,24 @@ func (rs *RecurrenceScheduler) Stop() {
 	}
 
 	rs.running = false
-	rs.ticker.Stop()
+	if rs.ticker != nil {
+		rs.ticker.Stop()
+		rs.ticker = nil
+	}
 	close(rs.stopChan)
 	slog.Info("Recurrence scheduler stopped")
 }
 
 // schedulerLoop runs the main scheduler loop
-func (rs *RecurrenceScheduler) schedulerLoop() {
+func (rs *RecurrenceScheduler) schedulerLoop(ticker *time.Ticker, stopChan <-chan struct{}) {
 	// Run immediately on start
 	rs.processRecurrenceRules()
 
 	for {
 		select {
-		case <-rs.ticker.C:
+		case <-ticker.C:
 			rs.processRecurrenceRules()
-		case <-rs.stopChan:
+		case <-stopChan:
 			return
 		}
 	}

@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -50,9 +51,9 @@ type APIError struct {
 	// it under "message"; the v1 REST surface (restapi.ErrorResponse)
 	// puts it under "error". Accept both so we don't fall back to the
 	// machine-readable Code on v1 responses.
-	Message      string            `json:"message"`
-	ErrorMessage string            `json:"error"`
-	Details      map[string]string `json:"details,omitempty"`
+	Message      string      `json:"message"`
+	ErrorMessage string      `json:"error"`
+	Details      interface{} `json:"details,omitempty"`
 }
 
 func (e *APIError) Error() string {
@@ -254,6 +255,16 @@ func (c *Client) TransitionItem(id, toStatusID int) (*TransitionResult, error) {
 		return nil, err
 	}
 	return &result, nil
+}
+
+// ChangeItemType changes an item's item type through the dedicated endpoint.
+func (c *Client) ChangeItemType(id, targetItemTypeID int, targetStatusID *int) (*Item, error) {
+	var item Item
+	req := ItemTypeChangeRequest{TargetItemTypeID: targetItemTypeID, TargetStatusID: targetStatusID}
+	if err := c.POST(fmt.Sprintf("/rest/api/v1/items/%d/change-type", id), req, &item); err != nil {
+		return nil, err
+	}
+	return &item, nil
 }
 
 // ListWorkspaces lists all accessible workspaces
@@ -885,9 +896,9 @@ func (c *Client) DeleteMilestoneInWorkspace(workspaceID, milestoneID int) error 
 // is non-nil the lookup uses the workspace-scoped list endpoint; otherwise it
 // falls back to the global list (which only callers with global access can use).
 func (c *Client) ResolveMilestoneID(nameOrID string, workspaceID *int) (int, error) {
-	// Try parsing as integer first
-	var id int
-	if _, err := fmt.Sscanf(nameOrID, "%d", &id); err == nil {
+	// Try parsing as integer first. Use Atoi so malformed inputs like
+	// "123abc" do not accidentally resolve as ID 123.
+	if id, err := strconv.Atoi(nameOrID); err == nil {
 		return id, nil
 	}
 
@@ -933,9 +944,9 @@ func (c *Client) ResolveMilestoneID(nameOrID string, workspaceID *int) (int, err
 
 // ResolveWorkspaceID resolves a workspace key to an ID
 func (c *Client) ResolveWorkspaceID(keyOrID string) (int, error) {
-	// Try parsing as integer first
-	var id int
-	if _, err := fmt.Sscanf(keyOrID, "%d", &id); err == nil {
+	// Try parsing as integer first. Use Atoi so malformed inputs like
+	// "123abc" do not accidentally resolve as ID 123.
+	if id, err := strconv.Atoi(keyOrID); err == nil {
 		return id, nil
 	}
 
@@ -956,9 +967,9 @@ func (c *Client) ResolveWorkspaceID(keyOrID string) (int, error) {
 
 // ResolveItemID resolves an item key (e.g., PROJ-123) or ID to an item ID
 func (c *Client) ResolveItemID(keyOrID string) (int, error) {
-	// Try parsing as integer first
-	var id int
-	if _, err := fmt.Sscanf(keyOrID, "%d", &id); err == nil {
+	// Try parsing as integer first. Use Atoi so malformed inputs like
+	// "123abc" do not accidentally resolve as ID 123.
+	if id, err := strconv.Atoi(keyOrID); err == nil {
 		return id, nil
 	}
 
@@ -969,8 +980,8 @@ func (c *Client) ResolveItemID(keyOrID string) (int, error) {
 	}
 
 	wsKey := parts[0]
-	var itemNum int
-	if _, err := fmt.Sscanf(parts[1], "%d", &itemNum); err != nil {
+	itemNum, err := strconv.Atoi(parts[1])
+	if err != nil {
 		return 0, fmt.Errorf("invalid item number in: %s", keyOrID)
 	}
 

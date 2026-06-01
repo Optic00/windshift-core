@@ -68,8 +68,7 @@ func NewPluginScheduleSchedulerWithInterval(manager SchedulePluginInvoker, db da
 }
 
 // Start begins the scheduler loop. Calling Start twice is a no-op; calling
-// Start after Stop reuses the same instance is NOT supported (the stop
-// channel is closed and would re-trigger shutdown).
+// Start after Stop recreates the stop channel and starts a fresh loop.
 func (s *PluginScheduleScheduler) Start() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -77,9 +76,10 @@ func (s *PluginScheduleScheduler) Start() {
 	if s.running {
 		return
 	}
+	s.stopChan = make(chan struct{})
 	s.running = true
 	slog.Info("Starting plugin schedule scheduler", "interval", s.interval)
-	go s.loop()
+	go s.loop(s.stopChan)
 }
 
 // Stop signals the scheduler loop to exit. Idempotent for the
@@ -99,7 +99,7 @@ func (s *PluginScheduleScheduler) Stop() {
 // loop runs the periodic tick. We fire once immediately on start (consistent
 // with the other 5 schedulers) so plugins that just declared a schedule don't
 // have to wait a full interval to be invoked once after server startup.
-func (s *PluginScheduleScheduler) loop() {
+func (s *PluginScheduleScheduler) loop(stopChan <-chan struct{}) {
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
 
@@ -109,7 +109,7 @@ func (s *PluginScheduleScheduler) loop() {
 		select {
 		case <-ticker.C:
 			s.processTick()
-		case <-s.stopChan:
+		case <-stopChan:
 			return
 		}
 	}

@@ -145,7 +145,7 @@
 <div class="pt-2">
   {#if editingDescription}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="space-y-3" onkeydown={handleKeydown}>
+    <div class="space-y-3" onkeydown={handleKeydown} data-testid="item-description-editor">
       <MilkdownEditor
         bind:this={milkdownEditor}
         bind:content={editorContent}
@@ -155,7 +155,7 @@
         onImageInsert={handleImageInsert}
       />
       <div class="flex items-center gap-2">
-        <Button variant="primary" onclick={saveDescription} disabled={saving} keyboardHint={getDisplayString(saveShortcut)}>
+        <Button variant="primary" onclick={saveDescription} disabled={saving} keyboardHint={getDisplayString(saveShortcut)} dataTestid="item-description-save">
           {t('common.save')}
         </Button>
         <Button variant="default" onclick={cancelEdit}>
@@ -172,6 +172,7 @@
       class="description-hover text-left w-full rounded cursor-pointer transition-all duration-150"
       style="color: var(--ds-text);"
       title={t('items.clickToEditDescription')}
+      data-testid="item-description-display"
     >
       <MilkdownEditor
         content={item.description}

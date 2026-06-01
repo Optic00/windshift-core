@@ -31,6 +31,11 @@ type ItemHandler struct {
 	approvalSvc  *services.ApprovalService
 }
 
+type itemTypeChangeRequest struct {
+	TargetItemTypeID int  `json:"target_item_type_id"`
+	TargetStatusID   *int `json:"target_status_id,omitempty"`
+}
+
 // NewItemHandler creates a new item handler
 func NewItemHandler(db database.Database, permissionService *services.PermissionService) *ItemHandler {
 	workflowSvc := services.NewWorkflowService(db)
@@ -651,6 +656,85 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 	response := dto.MapItemToResponse(result.Item, baseURL)
 
 	h.RespondOK(w, response)
+}
+
+// ChangeType handles POST /rest/api/v1/items/{id}/change-type.
+// Item type changes use their own service because a target type may imply a
+// different workflow. When the current status is not in the target workflow,
+// clients must provide target_status_id.
+func (h *ItemHandler) ChangeType(w http.ResponseWriter, r *http.Request) {
+	item, user, ok := h.requireItemAccess(w, r, true, h.Perms.CanEditWorkspace)
+	if !ok {
+		return
+	}
+
+	var req itemTypeChangeRequest
+	if !h.DecodeBodyOrRespond(w, r, &req) {
+		return
+	}
+	if req.TargetItemTypeID <= 0 {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeMissingField, "target_item_type_id is required"))
+		return
+	}
+
+	svc := services.NewItemTypeChangeService(h.DB).WithConditionService(h.conditionSvc)
+	analysis, err := svc.Analyze(item, req.TargetItemTypeID)
+	if err != nil {
+		h.respondTypeChangeError(w, r, err)
+		return
+	}
+	if item.ItemTypeID != nil && *item.ItemTypeID == req.TargetItemTypeID && !analysis.RequiresMigration {
+		h.RespondOK(w, dto.MapItemToResponse(item, getBaseURL(r)))
+		return
+	}
+
+	var nextStatusID *int
+	if analysis.RequiresMigration {
+		if req.TargetStatusID == nil {
+			h.RespondError(w, r, restapi.NewAPIError(http.StatusConflict, restapi.ErrCodeConflict, "A target status is required before changing this item type").WithDetails(map[string]any{
+				"reason":   "migration_required",
+				"analysis": analysis,
+			}))
+			return
+		}
+		if analysis.TargetWorkflowID != nil {
+			inWorkflow, err := svc.IsStatusInWorkflow(*req.TargetStatusID, *analysis.TargetWorkflowID)
+			if err != nil {
+				h.RespondInternalError(w, r)
+				return
+			}
+			if !inWorkflow {
+				h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, "target_status_id is not part of the target item type workflow"))
+				return
+			}
+		}
+		if err := svc.ValidateStatusMapping(r.Context(), item, req.TargetItemTypeID, analysis.TargetWorkflowID, req.TargetStatusID); err != nil {
+			h.respondTypeChangeError(w, r, err)
+			return
+		}
+		nextStatusID = req.TargetStatusID
+	}
+
+	if _, err := svc.ApplyChange(item.ID, user.ID, req.TargetItemTypeID, nextStatusID, item); err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+
+	updated, err := h.itemRepo.FindByIDWithDetails(item.ID)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.RespondOK(w, dto.MapItemToResponse(updated, getBaseURL(r)))
+}
+
+func (h *ItemHandler) respondTypeChangeError(w http.ResponseWriter, r *http.Request, err error) {
+	var verr *validation.ValidationError
+	if errors.As(err, &verr) {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, verr.Message).WithDetails(map[string]string{"field": verr.Field}))
+		return
+	}
+	h.RespondInternalError(w, r)
 }
 
 // Transition handles POST /rest/api/v1/items/{id}/transition.

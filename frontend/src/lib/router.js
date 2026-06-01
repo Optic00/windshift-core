@@ -37,6 +37,9 @@ const routes = {
   '/workspaces/:id/actions/:actionId': 'workspace-actions',
   '/workspaces/:id/items/:itemId': 'item-detail',
   '/workspaces/:id/collections/:collectionId/items/:itemId': 'item-detail',
+  // Stable key routes used by CLI/browser deep links.
+  '/workspace/:workspaceKey/item/:itemNumber': 'item-detail',
+  '/item/:itemKey': 'item-detail',
   // Routes without collection (show all workspace items)
   '/workspaces/:id/board': 'workspace-board',
   '/workspaces/:id/board/configure': 'workspace-board-config',

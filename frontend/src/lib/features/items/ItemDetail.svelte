@@ -42,6 +42,9 @@ import Button from '../../components/Button.svelte';
   let {
     workspaceId = null,
     itemId,
+    workspaceKey = null,
+    itemNumber = null,
+    canonicalizeKeyRoute = false,
     tab = 'comments',
     moduleSettings = {
       time_tracking_enabled: true,
@@ -1023,9 +1026,28 @@ import Button from '../../components/Button.svelte';
 
   // Load data using the store
   async function loadData() {
-    await itemDetailStore.loadItem(workspaceId, itemId);
-    // Backfill workspaceId from store if it was derived from the item
-    if (!workspaceId) workspaceId = itemDetailStore.workspaceId;
+    const lookupWorkspaceKey = workspaceKey || (workspaceId && !/^\d+$/.test(String(workspaceId)) ? workspaceId : null);
+    const lookupItemNumber = itemNumber || (lookupWorkspaceKey ? itemId : null);
+
+    await itemDetailStore.loadItem(workspaceId, itemId, {
+      workspaceKey: lookupWorkspaceKey,
+      itemNumber: lookupItemNumber,
+    });
+
+    // Backfill route props from the resolved item when the URL used a stable
+    // key form (/workspace/WI/item/123 or /workspaces/WI/items/123).
+    if (itemDetailStore.item?.id) {
+      workspaceId = itemDetailStore.workspaceId;
+      itemId = itemDetailStore.item.id;
+      previousItemId = itemId;
+    } else if (!workspaceId) {
+      workspaceId = itemDetailStore.workspaceId;
+    }
+
+    if (canonicalizeKeyRoute && !isModal && itemDetailStore.item?.id && itemDetailStore.workspaceId) {
+      const suffix = tab !== 'comments' ? `?tab=${tab}` : '';
+      navigate(`/workspaces/${itemDetailStore.workspaceId}/items/${itemDetailStore.item.id}${suffix}`, { replace: true });
+    }
 
     // Load attachment settings and attachments (still using composable)
     await attachmentManager.loadSettings();

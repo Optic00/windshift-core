@@ -31,10 +31,9 @@
   // Add-form state.
   let addActingUserId = $state(null);
   let addSCMConnectionId = $state(null);
-  // Repo slug + remote URL are no longer typed by hand: they're derived
-  // from the repository the admin picks under the chosen SCM connection
-  // (WI-90). We keep them as plain state because addBinding() still posts
-  // repo_slug / repo_remote_url, and the run path needs both.
+  // Repo slug is no longer typed by hand: it is derived from the repository
+  // the admin picks under the chosen SCM connection (WI-90). The backend
+  // deliberately derives remote URLs from the trusted SCM connection.
   let addRepositoryId = $state(null);
   let addRepoSlug = $state('');
   let addRepoBaseRef = $state('');
@@ -143,7 +142,6 @@
     // different connection.
     addRepositoryId = null;
     addRepoSlug = '';
-    addRepoRemoteURL = '';
     addRepoBaseRef = '';
     linkedRepos = [];
     if (!connId) return;
@@ -167,7 +165,6 @@
     // request posts. The base ref defaults to the repo's default branch
     // but stays editable below.
     addRepoSlug = repo?.repository_name || '';
-    addRepoRemoteURL = repo?.repository_url || '';
     addRepoBaseRef = repo?.default_branch || '';
   }
 

@@ -142,6 +142,14 @@ func (r *OnCallRepository) GetScheduleByID(id int) (*models.OnCallSchedule, erro
 	}
 	s.Layers = layers
 
+	// Load current + upcoming overrides (anything not yet ended) so the
+	// schedule detail view can render them. Past overrides are omitted.
+	overrides, err := r.GetActiveOverrides(s.ID)
+	if err != nil {
+		return nil, err
+	}
+	s.Overrides = overrides
+
 	return &s, nil
 }
 

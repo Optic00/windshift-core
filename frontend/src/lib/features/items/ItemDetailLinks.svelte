@@ -507,10 +507,10 @@
                 {/if}
                 <!-- Item key -->
                 <ItemKey item={childItem} {workspace}
-                  href="/workspaces/{childItem.workspace_id || workspaceId}/items/{childItem.id}" />
+                  href={`/workspaces/${childItem.workspace_id || workspaceId}/items/${childItem.id}`} />
                 <!-- Item title -->
                 <LinkComponent
-                  href="/workspaces/{childItem.workspace_id || workspaceId}/items/{childItem.id}"
+                  href={`/workspaces/${childItem.workspace_id || workspaceId}/items/${childItem.id}`}
                   class="text-sm hover:text-blue-600 cursor-pointer truncate"
                   style="color: var(--ds-text);"
                 >

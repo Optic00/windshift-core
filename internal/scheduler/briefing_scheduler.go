@@ -40,7 +40,6 @@ func NewBriefingScheduler(db database.Database, llmManager *llm.ConnectionManage
 		userService:     userService,
 		promptStore:     promptStore,
 		runRepo:         repository.NewSchedulerRunRepository(db),
-		ticker:          time.NewTicker(6 * time.Hour),
 		stopChan:        make(chan struct{}),
 	}
 }
@@ -54,10 +53,12 @@ func (bs *BriefingScheduler) Start() {
 		return
 	}
 
+	bs.ticker = time.NewTicker(6 * time.Hour)
+	bs.stopChan = make(chan struct{})
 	bs.running = true
 	slog.Info("briefing scheduler started", slog.String("component", "scheduler"), slog.String("interval", "6h"))
 
-	go bs.schedulerLoop()
+	go bs.schedulerLoop(bs.ticker, bs.stopChan)
 }
 
 // Stop stops the briefing scheduler.
@@ -70,19 +71,22 @@ func (bs *BriefingScheduler) Stop() {
 	}
 
 	bs.running = false
-	bs.ticker.Stop()
+	if bs.ticker != nil {
+		bs.ticker.Stop()
+		bs.ticker = nil
+	}
 	close(bs.stopChan)
 	slog.Info("briefing scheduler stopped", slog.String("component", "scheduler"))
 }
 
-func (bs *BriefingScheduler) schedulerLoop() {
+func (bs *BriefingScheduler) schedulerLoop(ticker *time.Ticker, stopChan <-chan struct{}) {
 	bs.safeGenerateAllBriefings()
 
 	for {
 		select {
-		case <-bs.ticker.C:
+		case <-ticker.C:
 			bs.safeGenerateAllBriefings()
-		case <-bs.stopChan:
+		case <-stopChan:
 			return
 		}
 	}

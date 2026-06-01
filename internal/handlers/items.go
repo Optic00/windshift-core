@@ -376,6 +376,74 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.respondItemByID(w, r, user, id)
+}
+
+// GetByKeyAndNumber resolves a stable display key reference, e.g.
+// /api/workspaces/WI/items/123, then returns the same item shape as Get.
+// This lets SPA deep links support both numeric IDs and workspace-key/item-number keys.
+func (h *ItemHandler) GetByKeyAndNumber(w http.ResponseWriter, r *http.Request) {
+	key := strings.TrimSpace(r.PathValue("key"))
+	if key == "" {
+		respondValidationError(w, r, "workspace key is required")
+		return
+	}
+	itemRef := strings.TrimSpace(r.PathValue("number"))
+	if itemRef == "" {
+		respondValidationError(w, r, "item number is required")
+		return
+	}
+
+	lookupKey := key
+	lookupNumber := 0
+	if parts := strings.SplitN(itemRef, "-", 2); len(parts) == 2 {
+		embeddedKey := strings.TrimSpace(parts[0])
+		if embeddedKey == "" {
+			respondValidationError(w, r, "invalid item key")
+			return
+		}
+		// Allow /workspaces/1/items/WI-123 and /workspaces/WI/items/WI-123.
+		// If the path workspace is itself a key and disagrees with the embedded
+		// key, treat the item as not found rather than silently crossing workspaces.
+		if _, numericPathWorkspace := strconv.Atoi(key); numericPathWorkspace != nil && !strings.EqualFold(key, embeddedKey) {
+			respondNotFound(w, r, "item")
+			return
+		}
+		lookupKey = embeddedKey
+		var err error
+		lookupNumber, err = strconv.Atoi(parts[1])
+		if err != nil || lookupNumber <= 0 {
+			respondValidationError(w, r, "invalid item key")
+			return
+		}
+	} else {
+		var err error
+		lookupNumber, err = strconv.Atoi(itemRef)
+		if err != nil || lookupNumber <= 0 {
+			respondValidationError(w, r, "invalid item number")
+			return
+		}
+	}
+
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+
+	id, err := repository.NewItemRepository(h.db).FindIDByKeyAndNumber(lookupKey, lookupNumber)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			respondNotFound(w, r, "item")
+			return
+		}
+		respondInternalError(w, r, err)
+		return
+	}
+
+	h.respondItemByID(w, r, user, id)
+}
+
+func (h *ItemHandler) respondItemByID(w http.ResponseWriter, r *http.Request, user *models.User, id int) {
 	// Get item with all details using service
 	crudService := services.NewItemCRUDService(h.db)
 	result, err := crudService.GetByIDWithWorkspaceStatus(id)

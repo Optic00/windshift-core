@@ -613,9 +613,9 @@ func buildUpdateData(env *Env, args updateItemArgs, wsID int) (data map[string]i
 	switch {
 	case args.MilestoneID != nil:
 		if *args.MilestoneID == 0 {
-			out["milestone_id"] = nil
+			out["milestone_ids"] = []int{}
 		} else {
-			out["milestone_id"] = *args.MilestoneID
+			out["milestone_ids"] = []int{*args.MilestoneID}
 		}
 		changed = append(changed, "milestone")
 	case args.MilestoneName != nil:
@@ -623,7 +623,7 @@ func buildUpdateData(env *Env, args updateItemArgs, wsID int) (data map[string]i
 		if err != nil {
 			return nil, nil, fmt.Errorf("could not resolve milestone name %q: %w", *args.MilestoneName, err)
 		}
-		out["milestone_id"] = id
+		out["milestone_ids"] = []int{id}
 		changed = append(changed, "milestone")
 	}
 	switch {

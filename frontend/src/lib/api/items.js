@@ -6,6 +6,10 @@ export const items = {
     return fetchAPI(`/items${buildQueryString(filters)}`);
   },
   get: (id) => fetchAPI(`/items/${id}`),
+  getByKey: (workspaceKey, itemNumber) =>
+    fetchAPI(
+      `/workspaces/${encodeURIComponent(workspaceKey)}/items/${encodeURIComponent(itemNumber)}`
+    ),
   getMany: (ids = []) => Promise.all([...new Set(ids)].map((id) => fetchAPI(`/items/${id}`))),
   getChanges: (filters = {}) => fetchAPI(`/items/changes${buildQueryString(filters)}`),
   create: (data) =>

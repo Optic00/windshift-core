@@ -226,19 +226,36 @@ export function createWorkItemSearchStore() {
   // raw parser result so callers can branch on `dropped` / null.
   async function parseQlAndApplyBuilderState(qlString) {
     let customFieldsCatalog = [];
+    // Status/priority catalogs let the parser resolve name-based clauses
+    // (`status = "Open"`) back to ids. Prefer the already-loaded reference data;
+    // fetch on demand if it isn't ready yet so recovery doesn't race load order.
+    let statusCatalog = get(allStatuses);
+    let priorityCatalog = get(allPriorities);
     try {
-      const cf = await api.customFields.getAll();
+      const [cf, st, pr] = await Promise.all([
+        api.customFields.getAll(),
+        statusCatalog.length ? null : api.statuses.getAll(),
+        priorityCatalog.length ? null : api.priorities.getAll(),
+      ]);
       customFieldsCatalog = (cf?.data || []).map((field) => ({
         id: `cf_${field.name}`,
         name: field.name,
         type: field.field_type,
       }));
+      if (st) {
+        statusCatalog = (st || []).map((s) => ({ id: s.id, name: s.name || s.key || '' }));
+      }
+      if (pr) {
+        priorityCatalog = (pr || []).map((p) => ({ id: p.id, name: p.name }));
+      }
     } catch (err) {
-      console.warn('Failed to load custom fields for builder recovery:', err);
+      console.warn('Failed to load reference data for builder recovery:', err);
     }
 
     const parsed = QLBuilder.tryParseToBuilder(qlString, {
       customFields: customFieldsCatalog,
+      statuses: statusCatalog,
+      priorities: priorityCatalog,
     });
 
     const wsList = get(workspaces);

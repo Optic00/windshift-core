@@ -986,6 +986,54 @@ export class QLBuilder {
       if (!Number.isNaN(id)) result.priorities = [id];
     }
 
+    // Name-based status / priority clauses (e.g. `status = "Open"`,
+    // `priority IN ("High", "Low")`). The builder emits the *_id form, but
+    // hand-written or imported CQL may reference these fields by name — resolve
+    // the names back to ids via the supplied catalogs so the query still
+    // round-trips into the builder instead of falling back to raw mode. These
+    // patterns run after the *_id clauses are consumed, and `status`/`priority`
+    // without `_id` can't re-match the already-stripped id clauses.
+    const resolveNamesToIds = (names, catalog) => {
+      const ids = [];
+      for (const raw of names) {
+        const name = raw.trim().replace(/["']/g, '');
+        if (!name) continue;
+        const match = (catalog || []).find(
+          (c) => String(c?.name ?? '').toLowerCase() === name.toLowerCase()
+        );
+        if (match?.id != null) {
+          ids.push(match.id);
+        } else {
+          // Matched the clause but can't represent it in the builder — fall
+          // back to raw mode so the filter isn't silently dropped.
+          result.dropped = true;
+        }
+      }
+      return ids;
+    };
+
+    const stNameIn = consume(/status\s+IN\s*\(([^)]+)\)/i);
+    const stNameEq = !stNameIn ? consume(/status\s*=\s*"([^"]+)"/i) : null;
+    if (stNameIn) {
+      result.statuses = result.statuses.concat(
+        resolveNamesToIds(stNameIn[1].split(','), options.statuses)
+      );
+    } else if (stNameEq) {
+      result.statuses = result.statuses.concat(resolveNamesToIds([stNameEq[1]], options.statuses));
+    }
+
+    const prNameIn = consume(/priority\s+IN\s*\(([^)]+)\)/i);
+    const prNameEq = !prNameIn ? consume(/priority\s*=\s*"([^"]+)"/i) : null;
+    if (prNameIn) {
+      result.priorities = result.priorities.concat(
+        resolveNamesToIds(prNameIn[1].split(','), options.priorities)
+      );
+    } else if (prNameEq) {
+      result.priorities = result.priorities.concat(
+        resolveNamesToIds([prNameEq[1]], options.priorities)
+      );
+    }
+
     const title = consume(/title\s*~\s*"([^"]+)"/i);
     if (title) result.search = title[1];
 

@@ -547,10 +547,7 @@ Examples:
 			req.Description = &desc
 			hasChanges = true
 		}
-		if cmd.Flags().Changed("type") {
-			req.ItemTypeID = &editTypeID
-			hasChanges = true
-		}
+		typeChanged := cmd.Flags().Changed("type")
 		if cmd.Flags().Changed("priority") {
 			req.PriorityID = &editPriorityID
 			hasChanges = true
@@ -564,13 +561,32 @@ Examples:
 			hasChanges = true
 		}
 
-		if !hasChanges {
-			return fmt.Errorf("no changes specified. Use flags like -t, -d, --priority, --assignee")
+		if !hasChanges && !typeChanged {
+			return fmt.Errorf("no changes specified. Use flags like -t, -d, --type, --priority, --assignee")
 		}
 
-		item, err := client.UpdateItem(itemID, req)
-		if err != nil {
-			return fmt.Errorf("failed to update item: %w", err)
+		var item *Item
+		if hasChanges {
+			item, err = client.UpdateItem(itemID, req)
+			if err != nil {
+				return fmt.Errorf("failed to update item: %w", err)
+			}
+		}
+		if typeChanged {
+			if editTypeID <= 0 {
+				return fmt.Errorf("--type must be a positive item type ID")
+			}
+			var targetStatusID *int
+			if cmd.Flags().Changed("type-status") {
+				if editTypeStatusID <= 0 {
+					return fmt.Errorf("--type-status must be a positive status ID")
+				}
+				targetStatusID = &editTypeStatusID
+			}
+			item, err = client.ChangeItemType(itemID, editTypeID, targetStatusID)
+			if err != nil {
+				return fmt.Errorf("failed to change item type: %w", err)
+			}
 		}
 
 		if outputFormat == "table" {
@@ -638,12 +654,13 @@ var (
 	createAssigneeID  int
 	createParentID    int
 
-	editTitle       string
-	editDescription string
-	editTypeID      int
-	editPriorityID  int
-	editAssigneeID  int
-	editParentID    int
+	editTitle        string
+	editDescription  string
+	editTypeID       int
+	editTypeStatusID int
+	editPriorityID   int
+	editAssigneeID   int
+	editParentID     int
 )
 
 func init() {
@@ -684,6 +701,7 @@ func init() {
 	taskEditCmd.Flags().StringVarP(&editTitle, "title", "t", "", "new title")
 	taskEditCmd.Flags().StringVarP(&editDescription, "description", "d", "", "new description (supports \\n / \\t / \\\\)")
 	taskEditCmd.Flags().IntVar(&editTypeID, "type", 0, "item type ID")
+	taskEditCmd.Flags().IntVar(&editTypeStatusID, "type-status", 0, "target status ID when changing to a type with a different workflow")
 	taskEditCmd.Flags().IntVar(&editPriorityID, "priority", 0, "priority ID")
 	taskEditCmd.Flags().IntVar(&editAssigneeID, "assignee", 0, "assignee user ID")
 	taskEditCmd.Flags().IntVar(&editParentID, "parent", 0, "parent item ID")

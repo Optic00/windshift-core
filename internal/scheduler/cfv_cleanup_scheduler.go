@@ -74,10 +74,11 @@ func (s *CFVCleanupScheduler) Start() {
 	if s.running {
 		return
 	}
-	s.running = true
 	s.ticker = time.NewTicker(s.checkInterval)
+	s.stopChan = make(chan struct{})
+	s.running = true
 	slog.Info("starting cfv cleanup scheduler", "interval", s.checkInterval, "batch_size", s.batchSize)
-	go s.loop()
+	go s.loop(s.ticker, s.stopChan)
 }
 
 // Stop halts the scheduler. Safe to call multiple times.
@@ -88,20 +89,23 @@ func (s *CFVCleanupScheduler) Stop() {
 		return
 	}
 	s.running = false
-	s.ticker.Stop()
+	if s.ticker != nil {
+		s.ticker.Stop()
+		s.ticker = nil
+	}
 	close(s.stopChan)
 	slog.Info("cfv cleanup scheduler stopped")
 }
 
-func (s *CFVCleanupScheduler) loop() {
+func (s *CFVCleanupScheduler) loop(ticker *time.Ticker, stopChan <-chan struct{}) {
 	// Process immediately on startup so a queued job from a previous
 	// process generation doesn't wait the full interval.
 	s.tick()
 	for {
 		select {
-		case <-s.ticker.C:
+		case <-ticker.C:
 			s.tick()
-		case <-s.stopChan:
+		case <-stopChan:
 			return
 		}
 	}

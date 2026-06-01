@@ -64,6 +64,29 @@ type UserNotificationBatch struct {
 	NotificationIDs []int
 }
 
+// NotificationService handles asynchronous notification creation
+type NotificationService struct {
+	db                  database.Database
+	notificationManager NotificationManager
+	permService         *PermissionService
+	config              NotificationServiceConfig
+
+	// Rule cache
+	ruleCache *RuleCache
+	cacheMu   sync.RWMutex
+
+	// Event processing
+	eventChan chan *NotificationEvent
+	stopChan  chan struct{}
+	wg        sync.WaitGroup
+
+	// Statistics
+	eventsProcessed int64
+	cacheHits       int64
+	cacheMisses     int64
+	errors          int64
+}
+
 // UnreadEmailBatches returns notifications that still need emailing, grouped by
 // user. It filters out in-app-read notifications so a user who reads their tray
 // within the batch window doesn't get a redundant email, and caps each user's
@@ -141,29 +164,6 @@ func (ns *NotificationService) UnreadEmailBatches(maxBatchSize int) (map[string]
 	}
 
 	return userBatches, rows.Err()
-}
-
-// NotificationService handles asynchronous notification creation
-type NotificationService struct {
-	db                  database.Database
-	notificationManager NotificationManager
-	permService         *PermissionService
-	config              NotificationServiceConfig
-
-	// Rule cache
-	ruleCache *RuleCache
-	cacheMu   sync.RWMutex
-
-	// Event processing
-	eventChan chan *NotificationEvent
-	stopChan  chan struct{}
-	wg        sync.WaitGroup
-
-	// Statistics
-	eventsProcessed int64
-	cacheHits       int64
-	cacheMisses     int64
-	errors          int64
 }
 
 // NewNotificationService creates a new notification service. The
