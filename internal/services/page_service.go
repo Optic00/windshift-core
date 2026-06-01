@@ -392,6 +392,9 @@ func (s *PageService) Move(actorID, pageID int, newParentID, prevSiblingID, next
 // reversible by restoring an explicit revision, which unarchives only the
 // addressed page. Use ArchiveChecked from HTTP handlers so descendant ACL
 // checks run inside the archive transaction.
+//
+// deadcode-keep: called by core-tests/internal/services/page_service_test.go;
+// production handlers use ArchiveChecked.
 func (s *PageService) Archive(actorID, pageID int) error {
 	return s.ArchiveChecked(actorID, pageID, nil)
 }
