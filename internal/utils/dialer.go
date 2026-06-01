@@ -21,6 +21,8 @@ var ErrBlockedSSRFAddr = errors.New("dial host resolves to a blocked IP range")
 // also rejects unspecified, multicast, and CGNAT 100.64.0.0/10 (covers cloud
 // metadata endpoints and other internal-only ranges that some
 // IsPrivate-equivalents miss).
+//
+// deadcode-keep: called by core-tests/internal/utils/dialer_test.go
 func IsBlockedSSRFAddr(ip net.IP) bool {
 	return IsBlockedSSRFAddrWithAllowedCIDRs(ip, nil)
 }
