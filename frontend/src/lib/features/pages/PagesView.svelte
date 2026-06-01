@@ -413,6 +413,21 @@
       testid: 'page-menu-history',
       onClick: () => (historyDrawerOpen = true),
     },
+    {
+      id: 'print',
+      type: 'regular',
+      title: t('pages.menuPrint'),
+      testid: 'page-menu-print',
+      // Open the chrome-free print view in a new tab so the editor tab
+      // (and any in-flight autosave) is left untouched; the print tab
+      // auto-opens the browser print dialog once content has rendered.
+      onClick: () =>
+        window.open(
+          `/workspaces/${workspaceId}/pages/${selectedPage.id}/print`,
+          '_blank',
+          'noopener'
+        ),
+    },
     { id: 'divider', type: 'divider' },
     {
       id: 'archive',

@@ -14,6 +14,7 @@
   import SetPassword from './lib/pages/SetPassword.svelte';
   import MainApp from './lib/pages/MainApp.svelte';
   import PublicBoard from './lib/pages/PublicBoard.svelte';
+  import PagePrintView from './lib/features/pages/PagePrintView.svelte';
 
   let showLoginDialog = $state(false);
   let setupCompleted = $state(false);
@@ -194,6 +195,12 @@
   <!-- Empty background during setup - WelcomeAssistant modal will show on top -->
   {:else if !setupCompleted && appInitialized}
     <div class="flex-1"></div>
+  <!-- Chrome-free print/PDF view for a single page (authenticated, no app shell) -->
+  {:else if $authStore.isAuthenticated && appInitialized && $currentRoute.view === 'page-print'}
+    <PagePrintView
+      workspaceId={Number($currentRoute.params.id)}
+      pageId={Number($currentRoute.params.pageId)}
+    />
   <!-- Show main app when user is authenticated -->
   {:else if $authStore.isAuthenticated && appInitialized}
     <MainApp />

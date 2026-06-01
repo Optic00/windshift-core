@@ -24,7 +24,15 @@ export default {
     menuRename: 'Rename',
     menuMove: 'Move',
     menuPermissions: 'Permissions',
+    menuPrint: 'Print',
     menuArchive: 'Archive',
+
+    print: {
+      button: 'Print',
+      back: 'Back to page',
+      loading: 'Preparing page for print…',
+      error: 'Failed to load page.',
+    },
 
     // Page pane
     pageLoading: 'Loading page…',
