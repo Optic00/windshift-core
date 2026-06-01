@@ -90,6 +90,8 @@ export default {
       sourceTypeLiteral: '字面值',
       selectTargetField: '选择目标字段...',
       addMapping: '添加映射',
+      milestonePickerHint: '存储该操作的里程碑 ID；名称仅在编辑时显示。',
+      userPickerHint: '选择特定用户，或在下方输入用户 ID/模板。',
       assetSet: '资产集',
       selectAssetSet: '选择资产集...',
       assetTitle: '资产标题',

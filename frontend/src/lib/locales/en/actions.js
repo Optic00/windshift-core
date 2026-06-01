@@ -64,7 +64,8 @@ export default {
     // Actor override (run-as)
     runAs: 'Run as',
     runAsTriggerUser: 'Run as triggering user',
-    runAsHint: 'The action executes with this user\u2019s permissions. Leave blank to run as whoever triggered it.',
+    runAsHint:
+      'The action executes with this user\u2019s permissions. Leave blank to run as whoever triggered it.',
     runAsReadonlyHint: 'Requires the Set Action Actor permission to change.',
 
     // Node palette and tips
@@ -119,6 +120,8 @@ export default {
       sourceTypeLiteral: 'Literal Value',
       selectTargetField: 'Select target field...',
       addMapping: 'Add Mapping',
+      milestonePickerHint: 'Stores milestone IDs for the action; names are shown only for editing.',
+      userPickerHint: 'Choose a specific user, or type a user ID/template below.',
       // Create Asset config
       assetSet: 'Asset Set',
       selectAssetSet: 'Select asset set...',
@@ -135,7 +138,8 @@ export default {
       // Capability picker (HTTP, Docker, LLM nodes)
       capability: 'Capability',
       selectCapability: 'Select capability...',
-      noCapabilitiesForWorkspace: 'No capabilities available in this workspace. Ask an admin to provision one.',
+      noCapabilitiesForWorkspace:
+        'No capabilities available in this workspace. Ask an admin to provision one.',
       configureRequest: 'Configure HTTP request...',
       configureExtract: 'Configure AI extract...',
       selectModelAndTools: 'Select model and tools...',
@@ -153,7 +157,8 @@ export default {
       model: 'Model',
       tools: 'tools',
       aiPrompt: 'Prompt',
-      aiExtractPromptPlaceholder: 'Extract structured data from the input. Be specific about what to extract.',
+      aiExtractPromptPlaceholder:
+        'Extract structured data from the input. Be specific about what to extract.',
       systemPrompt: 'System Prompt',
       systemPromptPlaceholder: 'You are a helpful assistant. Use the tools to ...',
       inputField: 'Input Field',
@@ -164,7 +169,8 @@ export default {
       outputFieldPlaceholder: 'name of variable to write output to',
       outputSchema: 'Output JSON Schema',
       agentTools: 'Tools',
-      agentToolsHint: 'HTTP-client capabilities the agent may call. Only capabilities scoped to this workspace are listed.',
+      agentToolsHint:
+        'HTTP-client capabilities the agent may call. Only capabilities scoped to this workspace are listed.',
       noToolsAvailable: 'No HTTP-client capabilities available for this workspace.',
       maxSteps: 'Max Iterations',
     },

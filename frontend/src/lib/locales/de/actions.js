@@ -102,6 +102,10 @@ export default {
       sourceTypeLiteral: 'Literalwert',
       selectTargetField: 'Zielfeld auswählen...',
       addMapping: 'Zuordnung hinzufügen',
+      milestonePickerHint:
+        'Speichert Meilenstein-IDs für die Aktion; Namen werden nur beim Bearbeiten angezeigt.',
+      userPickerHint:
+        'Wählen Sie einen bestimmten Benutzer aus oder geben Sie unten eine Benutzer-ID/Vorlage ein.',
       // Asset erstellen Konfiguration
       assetSet: 'Asset-Set',
       selectAssetSet: 'Asset-Set auswählen...',

@@ -106,6 +106,9 @@ export default {
       sourceTypeLiteral: 'Valor Literal',
       selectTargetField: 'Selecionar campo de destino...',
       addMapping: 'Adicionar Mapeamento',
+      milestonePickerHint:
+        'Armazena IDs de marcos para a ação; os nomes são exibidos apenas durante a edição.',
+      userPickerHint: 'Escolha um usuário específico ou digite um ID de usuário/template abaixo.',
       // Create Asset config
       assetSet: 'Conjunto de Ativos',
       selectAssetSet: 'Selecionar conjunto de ativos...',

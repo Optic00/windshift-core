@@ -992,6 +992,7 @@ type SetFieldNodeConfig struct {
 	// Executors ignore them, but the catalog schema must accept them so saving
 	// an edited visual flow does not fail validation.
 	FieldDisplayName string `json:"field_display_name,omitempty"`
+	FieldType        string `json:"field_type,omitempty"`
 	ValueDisplayName string `json:"value_display_name,omitempty"`
 }
 
