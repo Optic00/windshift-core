@@ -47,9 +47,10 @@ type PreparedWorktree struct {
 // is what Phase 2 (WI-85) adds so the per-run container has actual repo
 // content under /workspace.
 type WorktreeManager struct {
-	rootDir   string
-	gitBinary string
-	logger    *log.Logger
+	rootDir      string
+	gitBinary    string
+	logger       *log.Logger
+	allowFileURL bool
 
 	mu        sync.Mutex
 	repoLocks map[string]*sync.Mutex
@@ -61,6 +62,11 @@ type WorktreeManagerOptions struct {
 	RootDir   string
 	GitBinary string
 	Logger    *log.Logger
+	// AllowFileURL relaxes the production-default ban on cloning/fetching
+	// from file:// (and bare local paths, which git treats as file://). It
+	// exists only so unit tests can seed an on-disk origin instead of
+	// spinning up an HTTPS server. Production never sets this.
+	AllowFileURL bool
 }
 
 // NewWorktreeManager constructs a manager. RootDir must be writable; the
@@ -82,10 +88,11 @@ func NewWorktreeManager(opts WorktreeManagerOptions) (*WorktreeManager, error) {
 		logger = log.Default()
 	}
 	return &WorktreeManager{
-		rootDir:   opts.RootDir,
-		gitBinary: gitBin,
-		logger:    logger,
-		repoLocks: make(map[string]*sync.Mutex),
+		rootDir:      opts.RootDir,
+		gitBinary:    gitBin,
+		logger:       logger,
+		allowFileURL: opts.AllowFileURL,
+		repoLocks:    make(map[string]*sync.Mutex),
 	}, nil
 }
 
@@ -281,9 +288,15 @@ func (m *WorktreeManager) runGitOutputEnv(ctx context.Context, dir string, extra
 	// file://, and tar:// remote helpers at the git level removes a
 	// whole class of injection paths if any future caller accidentally
 	// hands worktree_manager a URL it shouldn't.
+	fileAllow := "never"
+	allowedProtocols := "https"
+	if m.allowFileURL {
+		fileAllow = "always"
+		allowedProtocols = "https:file"
+	}
 	prefixed := append([]string{
 		"-c", "protocol.ext.allow=never",
-		"-c", "protocol.file.allow=never",
+		"-c", "protocol.file.allow=" + fileAllow,
 		"-c", "protocol.tar.allow=never",
 	}, args...)
 	// All values reaching args are operator-controlled or
@@ -294,7 +307,7 @@ func (m *WorktreeManager) runGitOutputEnv(ctx context.Context, dir string, extra
 	}
 	// GIT_ALLOW_PROTOCOL bounds the protocols git itself will dial out
 	// over (defense-in-depth alongside the protocol.*.allow config).
-	cmd.Env = append(cmd.Environ(), "GIT_ALLOW_PROTOCOL=https")
+	cmd.Env = append(cmd.Environ(), "GIT_ALLOW_PROTOCOL="+allowedProtocols)
 	cmd.Env = append(cmd.Env, extraEnv...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
