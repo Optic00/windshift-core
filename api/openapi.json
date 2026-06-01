@@ -352,6 +352,20 @@
         },
         "type": "object"
       },
+      "dto.ItemTypeChangeRequest": {
+        "properties": {
+          "target_item_type_id": {
+            "type": "integer"
+          },
+          "target_status_id": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "target_item_type_id"
+        ],
+        "type": "object"
+      },
       "dto.ItemTypeSummary": {
         "properties": {
           "color": {
@@ -5997,6 +6011,115 @@
           }
         ],
         "summary": "List attachments on an item",
+        "tags": [
+          "items"
+        ]
+      }
+    },
+    "/items/{id}/change-type": {
+      "post": {
+        "description": "Reassigns an item to a different item type. If the target type's workflow does not contain the current status, the caller must supply target_status_id; otherwise a 409 lists the candidate statuses.",
+        "parameters": [
+          {
+            "description": "Item ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/dto.ItemTypeChangeRequest"
+              }
+            }
+          },
+          "description": "Target item type and optional target status",
+          "required": true,
+          "x-originalParamName": "body"
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/dto.ItemResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid body or missing target_item_type_id"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the items:write scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Item not found or not visible to caller"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Target status required because the current status is not in the target type's workflow"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Change an item's item type",
         "tags": [
           "items"
         ]

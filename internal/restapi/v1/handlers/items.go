@@ -31,11 +31,6 @@ type ItemHandler struct {
 	approvalSvc  *services.ApprovalService
 }
 
-type itemTypeChangeRequest struct {
-	TargetItemTypeID int  `json:"target_item_type_id"`
-	TargetStatusID   *int `json:"target_status_id,omitempty"`
-}
-
 // NewItemHandler creates a new item handler
 func NewItemHandler(db database.Database, permissionService *services.PermissionService) *ItemHandler {
 	workflowSvc := services.NewWorkflowService(db)
@@ -662,13 +657,30 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 // Item type changes use their own service because a target type may imply a
 // different workflow. When the current status is not in the target workflow,
 // clients must provide target_status_id.
+//
+// @Summary      Change an item's item type
+// @Description  Reassigns an item to a different item type. If the target type's workflow does not contain the current status, the caller must supply target_status_id; otherwise a 409 lists the candidate statuses.
+// @Tags         items
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id    path      int                       true  "Item ID"
+// @Param        body  body      dto.ItemTypeChangeRequest true  "Target item type and optional target status"
+// @Success      200   {object}  dto.ItemResponse
+// @Failure      400   {object}  handlers.ErrorResponse  "Invalid body or missing target_item_type_id"
+// @Failure      401   {object}  handlers.ErrorResponse
+// @Failure      403   {object}  handlers.ErrorResponse  "Token lacks the items:write scope"
+// @Failure      404   {object}  handlers.ErrorResponse  "Item not found or not visible to caller"
+// @Failure      409   {object}  handlers.ErrorResponse  "Target status required because the current status is not in the target type's workflow"
+// @Failure      500   {object}  handlers.ErrorResponse
+// @Router       /items/{id}/change-type [post]
 func (h *ItemHandler) ChangeType(w http.ResponseWriter, r *http.Request) {
 	item, user, ok := h.requireItemAccess(w, r, true, h.Perms.CanEditWorkspace)
 	if !ok {
 		return
 	}
 
-	var req itemTypeChangeRequest
+	var req dto.ItemTypeChangeRequest
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}

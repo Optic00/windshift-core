@@ -164,6 +164,15 @@ type TransitionRequest struct {
 	ToStatusID *int `json:"to_status_id" validate:"required"`
 }
 
+// ItemTypeChangeRequest is the body for POST /rest/api/v1/items/{id}/change-type.
+// TargetStatusID is required when the target type's workflow does not contain
+// the item's current status; otherwise the server returns 409 with the set of
+// candidate statuses.
+type ItemTypeChangeRequest struct {
+	TargetItemTypeID int  `json:"target_item_type_id" validate:"required"`
+	TargetStatusID   *int `json:"target_status_id,omitempty"`
+}
+
 // TransitionResultResponse is returned when an item transition completes.
 type TransitionResultResponse struct {
 	Item        *ItemResponse `json:"item"`
