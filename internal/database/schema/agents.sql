@@ -69,6 +69,24 @@ VALUES (
     'security'
 );
 
+INSERT OR IGNORE INTO system_settings(key, value, value_type, description, category)
+VALUES (
+    'allow_user_managed_agents',
+    'false',
+    'boolean',
+    'Allow non-admin users to create and manage their own agent users from their profile',
+    'security'
+);
+
+INSERT OR IGNORE INTO system_settings(key, value, value_type, description, category)
+VALUES (
+    'max_agents_per_user',
+    '5',
+    'integer',
+    'Maximum number of owned agents a single non-admin user may create',
+    'security'
+);
+
 CREATE TABLE IF NOT EXISTS workspace_agent_bindings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     workspace_id INTEGER NOT NULL,

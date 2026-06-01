@@ -54,6 +54,24 @@ VALUES (
     'security'
 ) ON CONFLICT (key) DO NOTHING;
 
+INSERT INTO system_settings(key, value, value_type, description, category)
+VALUES (
+    'allow_user_managed_agents',
+    'false',
+    'boolean',
+    'Allow non-admin users to create and manage their own agent users from their profile',
+    'security'
+) ON CONFLICT (key) DO NOTHING;
+
+INSERT INTO system_settings(key, value, value_type, description, category)
+VALUES (
+    'max_agents_per_user',
+    '5',
+    'integer',
+    'Maximum number of owned agents a single non-admin user may create',
+    'security'
+) ON CONFLICT (key) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS workspace_agent_bindings (
     id SERIAL PRIMARY KEY,
     workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
