@@ -312,6 +312,26 @@ func (r *AgentRunRepository) GetRunAuthz(ctx context.Context, runID int) (tokenI
 	return int(tid.Int64), workspaceID, grants, status, nil
 }
 
+// GetRunByTokenID resolves the run bound to a given run-token id — used by
+// the git broker, where the run id is not in the URL (the clone URL is
+// stable/repo-scoped) so the presented token is what identifies the run.
+func (r *AgentRunRepository) GetRunByTokenID(ctx context.Context, tokenID int) (runID, workspaceID int, grants *models.RunGrants, status string, err error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT id, workspace_id, grants_json, status FROM agent_runs WHERE run_token_id = ?
+	`, tokenID)
+	var grantsJSON sql.NullString
+	if err := row.Scan(&runID, &workspaceID, &grantsJSON, &status); err != nil {
+		return 0, 0, nil, "", err
+	}
+	if grantsJSON.Valid && grantsJSON.String != "" {
+		grants = &models.RunGrants{}
+		if err := json.Unmarshal([]byte(grantsJSON.String), grants); err != nil {
+			return 0, 0, nil, "", fmt.Errorf("get run by token: unmarshal grants: %w", err)
+		}
+	}
+	return runID, workspaceID, grants, status, nil
+}
+
 // SetContainerID records the spawned container id on an existing run row.
 // MarkRunning's queued→running transition is intentionally guarded by
 // status, so the runner uses this separate path once it actually has a

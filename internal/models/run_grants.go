@@ -18,9 +18,12 @@ type RunGrants struct {
 
 // GitGrant scopes a run's git access to a single repo and the single ref it
 // may push (the agent's run branch). Empty Ref means no push is authorized.
+// ConnectionID is the SCM connection whose credential the git broker injects
+// server-side when proxying to the provider.
 type GitGrant struct {
-	Repo string `json:"repo"`          // "owner/repo"
-	Ref  string `json:"ref,omitempty"` // the branch the run may push
+	Repo         string `json:"repo"`          // "owner/repo"
+	Ref          string `json:"ref,omitempty"` // the branch the run may push
+	ConnectionID int    `json:"connection_id"` // SCM connection for credential injection
 }
 
 // LLMGrant scopes a run's model access to one connection with an optional

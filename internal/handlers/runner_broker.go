@@ -30,12 +30,13 @@ type RunnerBrokerHandler struct {
 	runs     *repository.AgentRunRepository
 	creds    *services.ActionCredentialService
 	llmConns *llm.ConnectionManager
+	scm      services.SCMCredentialResolver
 }
 
 // NewRunnerBrokerHandler constructs the handler. Any nil dependency disables
 // the corresponding broker (503), e.g. when the harness is not configured.
-func NewRunnerBrokerHandler(tokens *auth.TokenManager, runs *repository.AgentRunRepository, creds *services.ActionCredentialService, llmConns *llm.ConnectionManager) *RunnerBrokerHandler {
-	return &RunnerBrokerHandler{tokens: tokens, runs: runs, creds: creds, llmConns: llmConns}
+func NewRunnerBrokerHandler(tokens *auth.TokenManager, runs *repository.AgentRunRepository, creds *services.ActionCredentialService, llmConns *llm.ConnectionManager, scm services.SCMCredentialResolver) *RunnerBrokerHandler {
+	return &RunnerBrokerHandler{tokens: tokens, runs: runs, creds: creds, llmConns: llmConns, scm: scm}
 }
 
 // runFromToken authenticates the per-run token and authorizes it for the run
@@ -161,6 +162,85 @@ func (h *RunnerBrokerHandler) ProxyLLM(w http.ResponseWriter, r *http.Request) {
 			default: // openai-compatible
 				req.Header.Set("Authorization", "Bearer "+apiKey)
 			}
+		},
+	}
+	proxy.ServeHTTP(w, r)
+}
+
+// ProxyGit reverse-proxies a running job's git smart-HTTP traffic to its
+// granted repo on the SCM provider, injecting the real SCM credential
+// server-side so the token never reaches the runner. The clone URL is stable
+// and repo-scoped (/git-proxy/{ws}/{owner}/{repo}/...), so the presented
+// per-run token (git Basic-auth password) is what identifies the run.
+//
+// Authorization is repo-level (the run's git grant must name owner/repo);
+// ref-level push gating (grant.Git.Ref) is a follow-up since the pushed ref
+// lives in the git-receive-pack payload.
+func (h *RunnerBrokerHandler) ProxyGit(w http.ResponseWriter, r *http.Request) {
+	if h.tokens == nil || h.runs == nil || h.scm == nil {
+		respondServiceUnavailable(w, r, "coding-agent harness is disabled on this server")
+		return
+	}
+	owner := r.PathValue("owner")
+	repo := r.PathValue("repo")
+	gitPath := r.PathValue("gitpath")
+
+	// git presents the per-run token via HTTP Basic auth (token as the
+	// password, dummy username); fall back to Bearer. A 401 with
+	// WWW-Authenticate prompts git to (re)send credentials.
+	token := ""
+	if u, p, ok := r.BasicAuth(); ok {
+		if token = p; token == "" {
+			token = u
+		}
+	}
+	if token == "" {
+		token = bearerCredential(r)
+	}
+	if token == "" {
+		w.Header().Set("WWW-Authenticate", `Basic realm="windshift-git-proxy"`)
+		respondUnauthorized(w, r)
+		return
+	}
+	_, apiToken, err := h.tokens.ValidateToken(token)
+	if err != nil || apiToken == nil {
+		w.Header().Set("WWW-Authenticate", `Basic realm="windshift-git-proxy"`)
+		respondUnauthorized(w, r)
+		return
+	}
+	_, _, grants, status, err := h.runs.GetRunByTokenID(r.Context(), apiToken.ID)
+	if err != nil {
+		respondNotFound(w, r, "agent run")
+		return
+	}
+	repoName := owner + "/" + strings.TrimSuffix(repo, ".git")
+	if status != models.AgentRunStatusRunning || grants == nil || grants.Git == nil || grants.Git.Repo != repoName {
+		respondForbidden(w, r)
+		return
+	}
+
+	scmToken, _, scmBase, err := h.scm.ResolveForRun(r.Context(), grants.Git.ConnectionID)
+	if err != nil {
+		respondServiceUnavailable(w, r, "scm credential unavailable")
+		return
+	}
+	target, err := url.Parse(scmBase)
+	if err != nil || target.Host == "" {
+		respondServiceUnavailable(w, r, "scm connection has no base url")
+		return
+	}
+	upstreamPath := singleJoiningSlash(target.Path, owner+"/"+repo+"/"+gitPath)
+	proxy := &httputil.ReverseProxy{
+		Director: func(req *http.Request) {
+			req.URL.Scheme = target.Scheme
+			req.URL.Host = target.Host
+			req.Host = target.Host
+			req.URL.Path = upstreamPath
+			req.URL.RawPath = ""
+			// Swap the run-token for the real SCM credential (provider-
+			// agnostic oauth2:<token> Basic form).
+			req.Header.Del("Authorization")
+			req.SetBasicAuth("oauth2", scmToken)
 		},
 	}
 	proxy.ServeHTTP(w, r)
