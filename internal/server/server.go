@@ -378,7 +378,7 @@ func (s *Server) initialize() error {
 	// remains here because it needs cfg.Port.
 	baseURL := cfg.BaseURL
 	if baseURL == "" {
-		baseURL = fmt.Sprintf("http://localhost:%s", cfg.Port)
+		baseURL = fmt.Sprintf("http://localhost:%s%s", cfg.Port, cfg.ContextPath)
 	}
 
 	// Initialize email verification service
@@ -1367,6 +1367,8 @@ func (s *Server) initialize() error {
 			mux.Handle("GET /remoteEntry.js", revalidatingAssets)
 			mux.Handle("GET /_app/", immutableAssets)
 			mux.Handle("GET /windshift-3.svg", revalidatingAssets)
+			mux.Handle("GET /favicon-32x32.png", revalidatingAssets)
+			mux.Handle("GET /apple-touch-icon.png", revalidatingAssets)
 			mux.Handle("GET /forms/widget.js", revalidatingAssets)
 
 			// Read index.html once at startup for nonce injection
@@ -1375,6 +1377,7 @@ func (s *Server) initialize() error {
 				slog.Warn("could not read index.html from embedded FS", "error", err)
 			}
 
+			contextPath := cfg.ContextPath
 			mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 				// Anything under an API root that hasn't matched a specific
 				// route is a 404 — don't fall through to the SPA shell.
@@ -1390,9 +1393,10 @@ func (s *Server) initialize() error {
 					return
 				}
 
-				// Inject CSP nonce into the inline theme script tag
+				// Inject CSP nonce into the inline theme script tag and expose the
+				// externally visible context path for the SPA translation layer.
 				nonce := CSPNonceFromContext(r.Context())
-				html := bytes.Replace(indexHTML, []byte("<script>"), []byte(`<script nonce="`+nonce+`">`), 1)
+				html := prepareIndexHTML(indexHTML, nonce, contextPath)
 
 				w.Header().Set("Content-Type", "text/html")
 				// Force the SPA shell to revalidate on every load so that a
@@ -1413,6 +1417,7 @@ func (s *Server) initialize() error {
 	securityMiddleware := createSecurityHeaders(enableHTTPS, cfg.UseProxy, additionalProxyIPs, jiraHosts.Allowed)
 	compressionMiddleware := middleware.CreateCompressionMiddleware(cfg.UseProxy)
 	handler := middleware.Recovery(compressionMiddleware(securityMiddleware(mux)))
+	handler = withContextPath(handler, cfg.ContextPath)
 
 	// Create HTTP server
 	s.httpServer = &http.Server{
@@ -1698,9 +1703,9 @@ func (s *Server) cleanup() {
 // deadcode-keep: called by core-tests/tests/helpers.go
 func (s *Server) BaseURL() string {
 	if s.actualPort == 0 {
-		return fmt.Sprintf("http://localhost:%s", s.config.Port)
+		return fmt.Sprintf("http://localhost:%s%s", s.config.Port, s.config.ContextPath)
 	}
-	return fmt.Sprintf("http://localhost:%d", s.actualPort)
+	return fmt.Sprintf("http://localhost:%d%s", s.actualPort, s.config.ContextPath)
 }
 
 // Port returns the actual port the server is listening on.

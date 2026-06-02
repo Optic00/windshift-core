@@ -1162,5 +1162,13 @@ func getBaseURL(r *http.Request) string {
 	if fwdProto := r.Header.Get("X-Forwarded-Proto"); fwdProto == "http" || fwdProto == "https" {
 		scheme = fwdProto
 	}
-	return fmt.Sprintf("%s://%s", scheme, r.Host)
+	prefix := sanitizedContextPrefix(r.Header.Get("X-Windshift-Context-Path"))
+	return fmt.Sprintf("%s://%s%s", scheme, r.Host, prefix)
+}
+
+func sanitizedContextPrefix(prefix string) string {
+	if prefix == "" || prefix == "/" || !strings.HasPrefix(prefix, "/") || strings.ContainsAny(prefix, "?#\\") || strings.Contains(prefix, "//") || strings.Contains(prefix, "..") {
+		return ""
+	}
+	return strings.TrimSuffix(prefix, "/")
 }

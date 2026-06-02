@@ -41,7 +41,7 @@ func getItemURL(r *http.Request, workspaceID, itemID int) string {
 	if fwdHost := r.Header.Get("X-Forwarded-Host"); fwdHost != "" {
 		host = fwdHost
 	}
-	return fmt.Sprintf("%s://%s/workspaces/%d/items/%d", scheme, host, workspaceID, itemID)
+	return fmt.Sprintf("%s://%s%s/workspaces/%d/items/%d", scheme, host, requestContextPrefix(r), workspaceID, itemID)
 }
 
 // ItemSCMLinkResponse represents an SCM link for API responses

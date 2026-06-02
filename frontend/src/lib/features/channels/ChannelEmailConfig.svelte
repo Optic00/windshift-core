@@ -10,6 +10,7 @@
   import WorkspaceSelector from '../../workspaces/WorkspaceSelector.svelte';
   import DescriptionText from '../../components/DescriptionText.svelte';
   import Toggle from '../../components/Toggle.svelte';
+  import { publicBaseURL } from '../../runtime/contextPath.js';
 
   let {
     channelId,
@@ -256,7 +257,7 @@
         <div class="p-3 rounded border" style="background: var(--ds-surface); border-color: var(--ds-border);">
           <div class="text-xs font-medium mb-1" style="color: var(--ds-text-subtle);">{t('channel.redirectUri')}</div>
           <code class="text-xs" style="color: var(--ds-text);">
-            {typeof window !== 'undefined' ? window.location.origin : ''}/api/channels/inline-oauth/callback
+            {publicBaseURL()}/api/channels/inline-oauth/callback
           </code>
         </div>
       </div>

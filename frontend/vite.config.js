@@ -22,6 +22,10 @@ if (process.env.PLUGIN_DEV_PORTS) {
 
 // https://vite.dev/config/
 export default defineConfig({
+  // Emit relative asset URLs. The Go server injects a <base> tag into
+  // index.html so both root deployments and context-path deployments resolve
+  // chunks/assets from the externally visible app root.
+  base: './',
   plugins: [
     svelte(), // Uses svelte.config.js for preprocessors
     tailwindcss(),

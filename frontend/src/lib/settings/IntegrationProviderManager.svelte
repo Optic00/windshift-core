@@ -16,6 +16,7 @@
 	import { t } from '../stores/i18n.svelte.js';
 	import { successToast, errorToast } from '../stores/toasts.svelte.js';
 	import { confirm } from '../composables/useConfirm.js';
+	import { publicBaseURL } from '../runtime/contextPath.js';
 
 	const providerTypes = [
 		{ value: 'notion', label: 'Notion' },
@@ -39,8 +40,7 @@
 	});
 
 	const callbackUrl = $derived(() => {
-		const base = window.location.origin;
-		return `${base}/api/integrations/oauth/${formData.slug || '{slug}'}/callback`;
+		return `${publicBaseURL()}/api/integrations/oauth/${formData.slug || '{slug}'}/callback`;
 	});
 
 	onMount(() => {
