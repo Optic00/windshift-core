@@ -170,8 +170,28 @@
   });
 
 
+  function getCreateQuery() {
+    return ($inputValue || '').trim();
+  }
+
+  function canCreateCurrentInput() {
+    const query = getCreateQuery().toLowerCase();
+    if (!allowCreate || !onCreate || query.length === 0) return false;
+
+    return !options.some((opt) => (opt.label ?? '').trim().toLowerCase() === query);
+  }
+
+  async function handleCreateOption() {
+    const query = getCreateQuery();
+    if (!canCreateCurrentInput()) return;
+
+    await onCreate?.(query);
+    $inputValue = '';
+    $open = false;
+  }
+
   // Handle keyboard navigation
-  function handleKeydown(event) {
+  async function handleKeydown(event) {
     if (event.key === 'Escape') {
       event.preventDefault();
       onCancel();
@@ -188,19 +208,26 @@
     if (!$open) return;
 
     const totalItems = options.length;
-    if (totalItems === 0) return;
 
     if (event.key === 'ArrowDown') {
+      if (totalItems === 0) return;
       event.preventDefault();
       event.stopPropagation();
       highlightedIndex = (highlightedIndex + 1) % totalItems;
     } else if (event.key === 'ArrowUp') {
+      if (totalItems === 0) return;
       event.preventDefault();
       event.stopPropagation();
       highlightedIndex = highlightedIndex === 0 ? totalItems - 1 : highlightedIndex - 1;
     } else if (event.key === 'Enter' || (event.key === ' ' && event.target.tagName !== 'INPUT')) {
       event.preventDefault();
       event.stopPropagation();
+
+      if (event.key === 'Enter' && canCreateCurrentInput()) {
+        await handleCreateOption();
+        return;
+      }
+
       if (highlightedIndex >= 0 && highlightedIndex < totalItems) {
         const opt = options[highlightedIndex];
         // Same selection logic as onclick
@@ -480,19 +507,19 @@
       {/each}
 
       <!-- Inline Create row: lives inside the floating menu so it inherits Melt's positioning. -->
-      {#if allowCreate && $inputValue.trim().length > 0 && !options.some(opt => getLabel(opt.item)?.toLowerCase() === $inputValue.toLowerCase())}
+      {#if canCreateCurrentInput()}
         <div
           role="button"
           tabindex="0"
           class="px-4 py-3 cursor-pointer border-t hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors duration-150 flex items-center gap-2"
           style="border-color: var(--ds-border); color: var(--ds-interactive);"
-          onclick={() => onCreate?.($inputValue)}
-          onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onCreate?.($inputValue); } }}
+          onclick={handleCreateOption}
+          onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleCreateOption(); } }}
         >
           {#if createOptionSnippet}
-            {@render createOptionSnippet({ searchQuery: $inputValue, onCreate })}
+            {@render createOptionSnippet({ searchQuery: getCreateQuery(), onCreate })}
           {:else if onCreate}
-            <span class="text-sm">+ {t('pickers.createItem', { value: $inputValue })}</span>
+            <span class="text-sm">+ {t('pickers.createItem', { value: getCreateQuery() })}</span>
           {/if}
         </div>
       {/if}
