@@ -960,6 +960,18 @@ var Catalog = []Migration{
 			CREATE INDEX IF NOT EXISTS idx_agent_runs_pool_claim ON agent_runs(target_pool_id, status, queued_at);
 		`,
 	},
+	{
+		// agent_runs.cancel_requested_at signals that a running remote run
+		// should abort. The orchestrator sets it (POST /agent-runs/{id}/cancel
+		// for a remote run); the runner learns via its heartbeat response and
+		// cancels the job, then reports canceled.
+		Version:       "20260602_agent_runs_cancel_requested_at",
+		Name:          "Add cancel_requested_at to agent_runs",
+		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('agent_runs') WHERE name='cancel_requested_at'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_name='agent_runs' AND column_name='cancel_requested_at'",
+		SQLite:        `ALTER TABLE agent_runs ADD COLUMN cancel_requested_at DATETIME;`,
+		Postgres:      `ALTER TABLE agent_runs ADD COLUMN cancel_requested_at TIMESTAMPTZ;`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {

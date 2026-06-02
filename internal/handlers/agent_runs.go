@@ -171,6 +171,17 @@ func (h *AgentRunHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 	if !RequireWorkspacePermission(w, r, user.ID, run.WorkspaceID, models.PermissionWorkspaceAdmin, h.permissionService) {
 		return
 	}
+	// Remote runs (claimed by a runner) cancel via a flag the owning runner
+	// observes on its next heartbeat; independent of the local harness.
+	if run.RunnerID != nil {
+		if err := h.repo.RequestCancel(r.Context(), runID, time.Now().UTC()); err != nil {
+			respondInternalError(w, r, err)
+			return
+		}
+		respondJSON(w, http.StatusOK, map[string]any{"canceled": true, "remote": true})
+		return
+	}
+	// Local in-process run: cancel via the RunService registry.
 	if h.runs == nil {
 		respondServiceUnavailable(w, r, "coding-agent harness is disabled on this server")
 		return

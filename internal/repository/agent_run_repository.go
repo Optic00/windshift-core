@@ -191,6 +191,56 @@ func (r *AgentRunRepository) ClaimQueued(ctx context.Context, poolID, runnerID i
 	return nil, nil
 }
 
+// CountQueuedForPool returns the number of queued runs targeted at the given
+// pool — the per-pool queue depth an autoscaler scales on (WI-141).
+func (r *AgentRunRepository) CountQueuedForPool(ctx context.Context, poolID int) (int, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM agent_runs WHERE status = ? AND target_pool_id = ?
+	`, models.AgentRunStatusQueued, poolID)
+	var n int
+	if err := row.Scan(&n); err != nil {
+		return 0, fmt.Errorf("count queued for pool: %w", err)
+	}
+	return n, nil
+}
+
+// RequestCancel flags a running run for cancellation. The runner that owns
+// the run learns via its heartbeat and aborts. Idempotent no-op (zero rows)
+// when the run is not running or is already flagged.
+func (r *AgentRunRepository) RequestCancel(ctx context.Context, runID int, now time.Time) error {
+	_, err := r.db.ExecWriteContext(ctx, `
+		UPDATE agent_runs SET cancel_requested_at = ?, updated_at = ?
+		WHERE id = ? AND status = ? AND cancel_requested_at IS NULL
+	`, now, now, runID, models.AgentRunStatusRunning)
+	if err != nil {
+		return fmt.Errorf("request cancel: %w", err)
+	}
+	return nil
+}
+
+// ListAbortableRuns returns the ids of runs the given runner is executing
+// that have been flagged for cancellation, so the heartbeat handler can tell
+// the runner which jobs to abort.
+func (r *AgentRunRepository) ListAbortableRuns(ctx context.Context, runnerInstanceID int) ([]int, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id FROM agent_runs
+		WHERE runner_id = ? AND status = ? AND cancel_requested_at IS NOT NULL
+	`, runnerInstanceID, models.AgentRunStatusRunning)
+	if err != nil {
+		return nil, fmt.Errorf("list abortable runs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan abortable run: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 // SetContainerID records the spawned container id on an existing run row.
 // MarkRunning's queued→running transition is intentionally guarded by
 // status, so the runner uses this separate path once it actually has a

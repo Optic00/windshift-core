@@ -152,7 +152,10 @@ func (h *RunnerControlHandler) Result(w http.ResponseWriter, r *http.Request) {
 	respondJSONOK(w, map[string]any{"ok": true})
 }
 
-// Heartbeat renews the runner's lease. POST /runner/heartbeat.
+// Heartbeat renews the runner's lease and returns control signals: the run
+// ids the runner should abort (orchestrator-requested cancellations) and the
+// runner pool's current queue depth (the autoscaling signal).
+// POST /runner/heartbeat.
 func (h *RunnerControlHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 	inst, ok := h.requireRunner(w, r)
 	if !ok {
@@ -162,7 +165,17 @@ func (h *RunnerControlHandler) Heartbeat(w http.ResponseWriter, r *http.Request)
 		respondInternalError(w, r, err)
 		return
 	}
-	respondJSONOK(w, map[string]any{"ok": true})
+	abort, err := h.runs.ListAbortableRuns(r.Context(), inst.ID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	depth, err := h.runs.CountQueuedForPool(r.Context(), inst.PoolCapabilityID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	respondJSONOK(w, services.HeartbeatResponse{Abort: abort, QueueDepth: depth})
 }
 
 // requireRunner authenticates the per-instance runner credential. Writes a

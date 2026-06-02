@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -49,6 +50,15 @@ type ReportRequest struct {
 	ContainerID string `json:"container_id,omitempty"`
 }
 
+// HeartbeatResponse is returned from POST /runner/heartbeat. Abort lists the
+// run ids the runner should cancel (the orchestrator requested cancellation);
+// QueueDepth is the runner pool's current queued-run count (the autoscaling
+// signal).
+type HeartbeatResponse struct {
+	Abort      []int `json:"abort,omitempty"`
+	QueueDepth int   `json:"queue_depth"`
+}
+
 // HTTPOrchestratorClient is the remote transport for the shared RunWorker
 // loop: it implements OrchestratorClient by talking to the orchestrator's
 // runner control plane over HTTPS, authenticated with the per-instance
@@ -65,6 +75,12 @@ type HTTPOrchestratorClient struct {
 	// Logger, when set, receives transient Claim errors (which are retried
 	// rather than surfaced, so a network blip never stops the worker).
 	Logger *log.Logger
+
+	// inflight maps an in-flight run id to the cancel func of its per-run
+	// context, so Heartbeat can abort a run when the orchestrator requests
+	// cancellation. The in-process client keeps the analogous registry.
+	mu       sync.Mutex
+	inflight map[int]context.CancelFunc
 }
 
 // NewHTTPOrchestratorClient constructs a client for baseURL (e.g.
@@ -78,6 +94,7 @@ func NewHTTPOrchestratorClient(baseURL, credential string, hc *http.Client) *HTT
 		baseURL:    strings.TrimRight(baseURL, "/"),
 		credential: credential,
 		hc:         hc,
+		inflight:   map[int]context.CancelFunc{},
 	}
 }
 
@@ -122,7 +139,12 @@ func (c *HTTPOrchestratorClient) Claim(ctx context.Context) (*ClaimedJob, error)
 				c.Logger.Printf("runner: claim: %v", err)
 			}
 		} else if out.Job != nil {
-			return &ClaimedJob{Spec: *out.Job}, nil
+			// Give the job a per-run context so Heartbeat can abort it on
+			// an orchestrator cancellation request. Child of the worker ctx
+			// so agent shutdown cancels it too.
+			runCtx, cancel := context.WithCancel(ctx)
+			c.register(out.Job.RunID, cancel)
+			return &ClaimedJob{Spec: *out.Job, Ctx: runCtx}, nil
 		}
 		select {
 		case <-ctx.Done():
@@ -138,15 +160,53 @@ func (c *HTTPOrchestratorClient) Emit(ctx context.Context, runID int, eventType,
 		EmitRequest{Type: eventType, PayloadJSON: payloadJSON}, nil)
 }
 
-// Report implements OrchestratorClient.
+// Report implements OrchestratorClient. It deregisters the run's per-run
+// context and delivers the terminal verdict on a fresh context derived from
+// ctx — the run's own context may already be canceled (abort / shutdown),
+// but the verdict must still reach the orchestrator.
 func (c *HTTPOrchestratorClient) Report(ctx context.Context, runID int, result RunnerResult) error {
-	return doJSON(ctx, c.hc, fmt.Sprintf("%s/runner/runs/%d/result", c.baseURL, runID), c.credential,
+	c.mu.Lock()
+	if cancel := c.inflight[runID]; cancel != nil {
+		cancel()
+	}
+	delete(c.inflight, runID)
+	c.mu.Unlock()
+
+	rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer rcancel()
+	return doJSON(rctx, c.hc, fmt.Sprintf("%s/runner/runs/%d/result", c.baseURL, runID), c.credential,
 		ReportRequest{Status: result.Status, Error: result.Error, ContainerID: result.ContainerID}, nil)
 }
 
-// Heartbeat implements OrchestratorClient: it renews the runner's lease.
+// register stores the cancel func for an in-flight run so Heartbeat can abort
+// it later (the cancel is invoked by Report on completion or Heartbeat on an
+// orchestrator cancellation request).
+func (c *HTTPOrchestratorClient) register(runID int, cancel context.CancelFunc) {
+	c.mu.Lock()
+	c.inflight[runID] = cancel
+	c.mu.Unlock()
+}
+
+// Heartbeat implements OrchestratorClient: it renews the runner's lease and
+// aborts any in-flight run the orchestrator has flagged for cancellation by
+// canceling that run's per-run context (which tears down its container).
 func (c *HTTPOrchestratorClient) Heartbeat(ctx context.Context, _ int) error {
-	return doJSON(ctx, c.hc, c.baseURL+"/runner/heartbeat", c.credential, nil, nil)
+	var resp HeartbeatResponse
+	if err := doJSON(ctx, c.hc, c.baseURL+"/runner/heartbeat", c.credential, nil, &resp); err != nil {
+		return err
+	}
+	for _, id := range resp.Abort {
+		c.mu.Lock()
+		cancel := c.inflight[id]
+		c.mu.Unlock()
+		if cancel != nil {
+			if c.Logger != nil {
+				c.Logger.Printf("runner: aborting run %d (canceled by orchestrator)", id)
+			}
+			cancel()
+		}
+	}
+	return nil
 }
 
 // doJSON sends an optional JSON body via POST and decodes an optional JSON

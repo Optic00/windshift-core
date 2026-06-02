@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     container_id TEXT,
     runner_id INTEGER, -- soft ref to runner_instances; NULL for the in-process local runner (WI-141)
     target_pool_id INTEGER, -- soft ref to action_capabilities (runner_pool); NULL = local in-process pool (WI-141)
+    cancel_requested_at DATETIME, -- set when a running remote run should abort; the runner learns via heartbeat (WI-141)
     error TEXT,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
