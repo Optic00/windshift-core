@@ -540,10 +540,11 @@ func (s *Server) initialize() error {
 	// Wire credential resolution into the action runtime so HTTP capabilities
 	// can reference tokens by ID. The service shares the same SSO_SECRET via
 	// a domain-separated HKDF label (ActionCredentialEncryptionInfo).
-	s.actionService.SetCredentialService(services.NewActionCredentialService(
+	credentialSvc := services.NewActionCredentialService(
 		repository.NewActionCredentialRepository(s.db),
 		cfg.Auth.SessionSecret,
-	))
+	)
+	s.actionService.SetCredentialService(credentialSvc)
 	// One-shot scanner: warn about any legacy capability whose
 	// default_headers still holds a sensitive header value. The scanner logs
 	// capability ID + header name only — never the value.
@@ -705,6 +706,9 @@ func (s *Server) initialize() error {
 	// handler 503s when the registry is unavailable.
 	runnerRegistry := services.NewRunnerRegistryService(repository.NewRunnerRepository(s.db), nil)
 	runnerControlHandler := handlers.NewRunnerControlHandler(runnerRegistry, repository.NewAgentRunRepository(s.db), nil)
+	// Secretless access layer (WI-144): brokers a granted credential to a
+	// running job without it ever living on the runner host.
+	runnerBrokerHandler := handlers.NewRunnerBrokerHandler(tokenManager, repository.NewAgentRunRepository(s.db), credentialSvc)
 	itemHandler.SetBindingTrigger(bindingSvc)
 
 	// Asset management handlers
@@ -1166,6 +1170,7 @@ func (s *Server) initialize() error {
 			AgentBinding:          agentBindingHandler,
 			AgentRun:              agentRunHandler,
 			RunnerControl:         runnerControlHandler,
+			RunnerBroker:          runnerBrokerHandler,
 		},
 		Users: routes.UserHandlers{
 			User:          userHandler,

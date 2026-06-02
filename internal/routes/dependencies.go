@@ -132,6 +132,7 @@ type WorkspaceHandlers struct {
 	AgentBinding          *handlers.WorkspaceAgentBindingHandler
 	AgentRun              *handlers.AgentRunHandler
 	RunnerControl         *handlers.RunnerControlHandler
+	RunnerBroker          *handlers.RunnerBrokerHandler
 }
 
 // UserHandlers groups user-related handlers.

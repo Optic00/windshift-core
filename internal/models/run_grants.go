@@ -12,7 +12,7 @@ import "strings"
 type RunGrants struct {
 	Git     *GitGrant `json:"git,omitempty"`
 	LLM     *LLMGrant `json:"llm,omitempty"`
-	Secrets []string  `json:"secrets,omitempty"` // ActionCredential names the run may fetch
+	Secrets []int     `json:"secrets,omitempty"` // ActionCredential ids the run may fetch
 	HTTP    []string  `json:"http,omitempty"`    // allowed outbound URL prefixes
 }
 
@@ -41,13 +41,14 @@ func (g *RunGrants) AllowsGitPush(repo, ref string) bool {
 	return g.AllowsGitRepo(repo) && g.Git.Ref != "" && g.Git.Ref == ref
 }
 
-// AllowsSecret reports whether the run may fetch the named credential.
-func (g *RunGrants) AllowsSecret(name string) bool {
+// AllowsSecret reports whether the run may fetch the credential with the
+// given id.
+func (g *RunGrants) AllowsSecret(id int) bool {
 	if g == nil {
 		return false
 	}
 	for _, s := range g.Secrets {
-		if s == name {
+		if s == id {
 			return true
 		}
 	}

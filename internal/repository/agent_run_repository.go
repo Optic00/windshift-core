@@ -294,22 +294,22 @@ func (r *AgentRunRepository) SetGrants(ctx context.Context, runID, tokenID int, 
 // the id of the token bound to the run (0 if none), the run's grants (nil if
 // unset), and the run's current status. Brokers verify the presented token's
 // id matches, the status is running, and the resource is in the grants.
-func (r *AgentRunRepository) GetRunAuthz(ctx context.Context, runID int) (tokenID int, grants *models.RunGrants, status string, err error) {
+func (r *AgentRunRepository) GetRunAuthz(ctx context.Context, runID int) (tokenID, workspaceID int, grants *models.RunGrants, status string, err error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT run_token_id, grants_json, status FROM agent_runs WHERE id = ?
+		SELECT run_token_id, workspace_id, grants_json, status FROM agent_runs WHERE id = ?
 	`, runID)
 	var tid sql.NullInt64
 	var grantsJSON sql.NullString
-	if err := row.Scan(&tid, &grantsJSON, &status); err != nil {
-		return 0, nil, "", err
+	if err := row.Scan(&tid, &workspaceID, &grantsJSON, &status); err != nil {
+		return 0, 0, nil, "", err
 	}
 	if grantsJSON.Valid && grantsJSON.String != "" {
 		grants = &models.RunGrants{}
 		if err := json.Unmarshal([]byte(grantsJSON.String), grants); err != nil {
-			return 0, nil, "", fmt.Errorf("get run authz: unmarshal grants: %w", err)
+			return 0, 0, nil, "", fmt.Errorf("get run authz: unmarshal grants: %w", err)
 		}
 	}
-	return int(tid.Int64), grants, status, nil
+	return int(tid.Int64), workspaceID, grants, status, nil
 }
 
 // SetContainerID records the spawned container id on an existing run row.

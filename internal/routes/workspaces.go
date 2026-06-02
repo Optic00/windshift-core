@@ -186,6 +186,12 @@ func RegisterWorkspaceRoutes(deps *Deps) {
 		api.HandleH("POST /runner/heartbeat", http.HandlerFunc(deps.Workspaces.RunnerControl.Heartbeat))
 	}
 
+	// Secretless access layer (WI-144): brokers a granted credential to a
+	// running job, authenticated by the per-run token (inline).
+	if deps.Workspaces.RunnerBroker != nil {
+		api.HandleH("GET /secrets/{run}/{credentialId}", http.HandlerFunc(deps.Workspaces.RunnerBroker.GetSecret))
+	}
+
 	// Actions automation endpoints (workspace-scoped, requires action.manage permission)
 	if deps.Workspaces.Actions != nil {
 		actionManage := deps.PermissionMiddleware.RequireWorkspacePermission(models.PermissionActionManage)
