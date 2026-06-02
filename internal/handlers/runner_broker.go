@@ -246,6 +246,50 @@ func (h *RunnerBrokerHandler) ProxyGit(w http.ResponseWriter, r *http.Request) {
 	proxy.ServeHTTP(w, r)
 }
 
+// ProxyHTTP forwards a running job's outbound HTTP request to an allow-listed
+// external URL (the run's http grant), so egress is governed centrally
+// (WI-145). The target is given in the X-Windshift-Target header and checked
+// against grants.HTTP; the run-token is stripped before forwarding.
+// Per-target credential injection is a follow-up — this slice is allow-listed
+// egress.
+func (h *RunnerBrokerHandler) ProxyHTTP(w http.ResponseWriter, r *http.Request) {
+	if h.tokens == nil || h.runs == nil {
+		respondServiceUnavailable(w, r, "coding-agent harness is disabled on this server")
+		return
+	}
+	runID, ok := requireIDParam(w, r, "run")
+	if !ok {
+		return
+	}
+	grants, _, ok := h.runFromToken(w, r, runID)
+	if !ok {
+		return
+	}
+	target := r.Header.Get("X-Windshift-Target")
+	if target == "" {
+		respondBadRequest(w, r, "X-Windshift-Target header is required")
+		return
+	}
+	if grants == nil || !grants.AllowsHTTP(target) {
+		respondForbidden(w, r)
+		return
+	}
+	tu, err := url.Parse(target)
+	if err != nil || tu.Host == "" {
+		respondBadRequest(w, r, "invalid target url")
+		return
+	}
+	proxy := &httputil.ReverseProxy{
+		Director: func(req *http.Request) {
+			req.URL = tu
+			req.Host = tu.Host
+			req.Header.Del("X-Windshift-Target")
+			req.Header.Del("Authorization") // strip the run-token
+		},
+	}
+	proxy.ServeHTTP(w, r)
+}
+
 // singleJoiningSlash joins two URL path segments with exactly one slash.
 func singleJoiningSlash(a, b string) string {
 	a = strings.TrimSuffix(a, "/")

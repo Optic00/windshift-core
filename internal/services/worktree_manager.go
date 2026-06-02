@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 // RepoSpec identifies a source repository the orchestrator should prepare
@@ -205,6 +207,66 @@ func (m *WorktreeManager) Cleanup(ctx context.Context, pw *PreparedWorktree) err
 		m.logger.Printf("worktree manager: branch -D %s: %v", pw.Branch, err)
 	}
 	return nil
+}
+
+// EvictIdle removes cached bare clones (and their repo trees) that have no
+// active per-run worktree and whose last fetch is older than maxAge — the
+// disk-hygiene backstop for the per-(workspace,repo) bare-clone cache
+// (WI-145). A sweeper calls it on an interval. Eviction takes the per-repo
+// lock so it never races a concurrent Prepare. Returns the number evicted.
+func (m *WorktreeManager) EvictIdle(maxAge time.Duration, now time.Time) (int, error) {
+	if m.rootDir == "" {
+		return 0, nil
+	}
+	// Collect candidate bare-clone dirs during the walk (no filesystem
+	// mutation in the callback — the idle/age check + removal happen after,
+	// under the per-repo lock, to avoid racing a Prepare and any walk-time
+	// TOCTOU).
+	type bareEntry struct{ repoRoot, repoKey, barePath string }
+	var found []bareEntry
+	walkErr := filepath.WalkDir(m.rootDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d == nil {
+			return nil //nolint:nilerr // skip unreadable entries and keep walking
+		}
+		if !d.IsDir() || d.Name() != ".bare" {
+			return nil
+		}
+		repoRoot := filepath.Dir(path)
+		rel, rerr := filepath.Rel(m.rootDir, repoRoot)
+		if rerr != nil {
+			return fs.SkipDir
+		}
+		// The path under rootDir is "{workspaceID}/{repoSlug}".
+		parts := strings.SplitN(rel, string(filepath.Separator), 2)
+		if len(parts) == 2 {
+			found = append(found, bareEntry{repoRoot: repoRoot, repoKey: parts[0] + ":" + parts[1], barePath: path})
+		}
+		return fs.SkipDir // don't descend into .bare internals
+	})
+
+	evicted := 0
+	for _, e := range found {
+		lock := m.lockFor(e.repoKey)
+		lock.Lock()
+		// Never evict a repo with active per-run worktrees.
+		if entries, _ := os.ReadDir(filepath.Join(e.repoRoot, "runs")); len(entries) == 0 {
+			// Last-fetch age: FETCH_HEAD is rewritten on every fetch; fall
+			// back to the .bare dir mtime.
+			info, serr := os.Stat(filepath.Join(e.barePath, "FETCH_HEAD"))
+			if serr != nil {
+				info, serr = os.Stat(e.barePath)
+			}
+			if serr == nil && now.Sub(info.ModTime()) > maxAge {
+				if rmErr := os.RemoveAll(e.repoRoot); rmErr != nil {
+					m.logger.Printf("worktree manager: evict %s: %v", e.repoRoot, rmErr)
+				} else {
+					evicted++
+				}
+			}
+		}
+		lock.Unlock()
+	}
+	return evicted, walkErr
 }
 
 func (m *WorktreeManager) ensureBare(ctx context.Context, bareDir, remoteURL, token string) error {
