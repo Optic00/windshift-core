@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     runner_id INTEGER, -- soft ref to runner_instances; NULL for the in-process local runner (WI-141)
     target_pool_id INTEGER, -- soft ref to action_capabilities (runner_pool); NULL = local in-process pool (WI-141)
     cancel_requested_at DATETIME, -- set when a running remote run should abort; the runner learns via heartbeat (WI-141)
+    grants_json TEXT, -- RunGrants snapshot the access-layer brokers authorize against (WI-144)
+    run_token_id INTEGER, -- api_tokens row that binds a presented credential to this run's grants (WI-144)
     error TEXT,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

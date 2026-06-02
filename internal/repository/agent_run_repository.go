@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"time"
@@ -270,6 +271,45 @@ func (r *AgentRunRepository) ReapStaleRuns(ctx context.Context, staleBefore, now
 		return 0, fmt.Errorf("reap stale runs: rows affected: %w", err)
 	}
 	return int(n), nil
+}
+
+// SetGrants snapshots a run's access-layer grants and binds the run to the
+// minted run-token that authorizes them (WI-144). Called from the claim path
+// once the grants are derived from the binding.
+func (r *AgentRunRepository) SetGrants(ctx context.Context, runID, tokenID int, grants *models.RunGrants, now time.Time) error {
+	b, err := json.Marshal(grants)
+	if err != nil {
+		return fmt.Errorf("set grants: marshal: %w", err)
+	}
+	if _, err := r.db.ExecWriteContext(ctx, `
+		UPDATE agent_runs SET grants_json = ?, run_token_id = ?, updated_at = ?
+		WHERE id = ?
+	`, string(b), tokenID, now, runID); err != nil {
+		return fmt.Errorf("set grants: %w", err)
+	}
+	return nil
+}
+
+// GetRunAuthz returns what a broker needs to authorize a request for a run:
+// the id of the token bound to the run (0 if none), the run's grants (nil if
+// unset), and the run's current status. Brokers verify the presented token's
+// id matches, the status is running, and the resource is in the grants.
+func (r *AgentRunRepository) GetRunAuthz(ctx context.Context, runID int) (tokenID int, grants *models.RunGrants, status string, err error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT run_token_id, grants_json, status FROM agent_runs WHERE id = ?
+	`, runID)
+	var tid sql.NullInt64
+	var grantsJSON sql.NullString
+	if err := row.Scan(&tid, &grantsJSON, &status); err != nil {
+		return 0, nil, "", err
+	}
+	if grantsJSON.Valid && grantsJSON.String != "" {
+		grants = &models.RunGrants{}
+		if err := json.Unmarshal([]byte(grantsJSON.String), grants); err != nil {
+			return 0, nil, "", fmt.Errorf("get run authz: unmarshal grants: %w", err)
+		}
+	}
+	return int(tid.Int64), grants, status, nil
 }
 
 // SetContainerID records the spawned container id on an existing run row.

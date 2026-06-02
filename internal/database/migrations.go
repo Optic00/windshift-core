@@ -972,6 +972,24 @@ var Catalog = []Migration{
 		SQLite:        `ALTER TABLE agent_runs ADD COLUMN cancel_requested_at DATETIME;`,
 		Postgres:      `ALTER TABLE agent_runs ADD COLUMN cancel_requested_at TIMESTAMPTZ;`,
 	},
+	{
+		// agent_runs.grants_json + run_token_id back the secretless access
+		// layer (WI-144): grants_json is the RunGrants snapshot the brokers
+		// authorize against; run_token_id binds a presented credential to
+		// this run's grants. Both nullable/additive.
+		Version:       "20260602_agent_runs_grants",
+		Name:          "Add grants_json + run_token_id to agent_runs",
+		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('agent_runs') WHERE name='grants_json'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_name='agent_runs' AND column_name='grants_json'",
+		SQLite: `
+			ALTER TABLE agent_runs ADD COLUMN grants_json TEXT;
+			ALTER TABLE agent_runs ADD COLUMN run_token_id INTEGER;
+		`,
+		Postgres: `
+			ALTER TABLE agent_runs ADD COLUMN grants_json TEXT;
+			ALTER TABLE agent_runs ADD COLUMN run_token_id INTEGER;
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {
