@@ -356,6 +356,23 @@ func (s *BindingService) MaybeStartRunForAssignee(ctx context.Context, workspace
 		}
 	}
 
+	// Snapshot the run's access-layer grants (WI-144) so the git/llm brokers
+	// can authorize the run server-side. Bound to the minted run-token, so
+	// only meaningful when a token is issued. The git ref is filled at claim
+	// from the worktree branch.
+	if req.Token != nil {
+		grants := &models.RunGrants{}
+		if binding.HasRepo() {
+			grants.Git = &models.GitGrant{Repo: binding.RepoSlug, ConnectionID: *binding.SCMConnectionID}
+		}
+		if binding.LLMConnectionID != nil {
+			grants.LLM = &models.LLMGrant{ConnectionID: *binding.LLMConnectionID}
+		}
+		if grants.Git != nil || grants.LLM != nil {
+			req.Grants = grants
+		}
+	}
+
 	runID, err := s.runs.Start(ctx, req)
 	if err != nil {
 		return fmt.Errorf("start run: %w", err)

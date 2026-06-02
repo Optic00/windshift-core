@@ -95,6 +95,12 @@ type RunRequest struct {
 	Repo        *RepoSpec
 	Token       *TokenSpec
 	Env         map[string]string
+	// Grants, when set, is snapshotted onto the run at claim time and bound
+	// to the minted run-token (WI-144) so the access-layer brokers can
+	// authorize the run's git/llm/secret access. The git ref is filled in at
+	// claim from the prepared worktree branch. Only persisted when a token is
+	// minted (the brokers authorize by the bound token).
+	Grants *models.RunGrants
 }
 
 // TokenSpec is the per-run input to RunTokenService.Mint. Phase 4-5 wire

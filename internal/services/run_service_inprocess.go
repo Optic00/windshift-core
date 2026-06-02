@@ -127,6 +127,7 @@ func (s *RunService) claimNext() *ClaimedJob {
 		for k, v := range job.req.Env {
 			env[k] = v
 		}
+		var mintedTokenID int
 		if job.req.Token != nil {
 			minted, err := s.tokens.Mint(runCtx, MintRequest{
 				ActingUserID: job.req.Token.ActingUserID,
@@ -142,9 +143,27 @@ func (s *RunService) claimNext() *ClaimedJob {
 				continue
 			}
 			env["WS_TOKEN"] = minted.Token
+			mintedTokenID = minted.TokenID
 			_ = s.repo.AppendEvent(runCtx, job.runID, "lifecycle", fmt.Sprintf(
 				`{"phase":"token_minted","token_id":%d,"expires_at":%q}`,
 				minted.TokenID, minted.ExpiresAt.Format(time.RFC3339)))
+		}
+
+		// Snapshot the run's access-layer grants, bound to the minted token,
+		// so the brokers can authorize git/llm/secret access (WI-144). The
+		// git ref is the prepared worktree branch (the only ref the run may
+		// push). Best-effort: a failure here leaves the run without grants,
+		// which the brokers treat as deny — safe, just no brokered access.
+		if job.req.Grants != nil && mintedTokenID > 0 {
+			grants := *job.req.Grants
+			if grants.Git != nil && st.branch != "" {
+				g := *grants.Git
+				g.Ref = st.branch
+				grants.Git = &g
+			}
+			if err := s.repo.SetGrants(runCtx, job.runID, mintedTokenID, &grants, s.now()); err != nil {
+				s.logger.Printf("run service: set grants run=%d: %v", job.runID, err)
+			}
 		}
 
 		s.claimsMu.Lock()
