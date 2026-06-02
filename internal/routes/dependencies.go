@@ -131,6 +131,7 @@ type WorkspaceHandlers struct {
 	TransitionGovernance  *handlers.TransitionGovernanceHandler
 	AgentBinding          *handlers.WorkspaceAgentBindingHandler
 	AgentRun              *handlers.AgentRunHandler
+	RunnerControl         *handlers.RunnerControlHandler
 }
 
 // UserHandlers groups user-related handlers.

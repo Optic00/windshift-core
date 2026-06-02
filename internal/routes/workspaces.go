@@ -173,6 +173,19 @@ func RegisterWorkspaceRoutes(deps *Deps) {
 		api.HandleH("POST /agent-runs/{id}/cancel", auth(http.HandlerFunc(deps.Workspaces.AgentRun.Cancel)))
 	}
 
+	// Remote-runner control plane (WI-141). These are NOT user-session
+	// routes: authentication is the per-instance runner credential, checked
+	// inline in the handler (register exchanges a pool registration token).
+	// So they register without the user `auth` middleware, like other public
+	// endpoints.
+	if deps.Workspaces.RunnerControl != nil {
+		api.HandleH("POST /runner/register", http.HandlerFunc(deps.Workspaces.RunnerControl.Register))
+		api.HandleH("POST /runner/claim", http.HandlerFunc(deps.Workspaces.RunnerControl.Claim))
+		api.HandleH("POST /runner/runs/{id}/events", http.HandlerFunc(deps.Workspaces.RunnerControl.Events))
+		api.HandleH("POST /runner/runs/{id}/result", http.HandlerFunc(deps.Workspaces.RunnerControl.Result))
+		api.HandleH("POST /runner/heartbeat", http.HandlerFunc(deps.Workspaces.RunnerControl.Heartbeat))
+	}
+
 	// Actions automation endpoints (workspace-scoped, requires action.manage permission)
 	if deps.Workspaces.Actions != nil {
 		actionManage := deps.PermissionMiddleware.RequireWorkspacePermission(models.PermissionActionManage)

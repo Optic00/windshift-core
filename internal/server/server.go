@@ -692,6 +692,11 @@ func (s *Server) initialize() error {
 	})
 	agentBindingHandler := handlers.NewWorkspaceAgentBindingHandler(bindingSvc, agentIdentitySvc, permService, logger.NewAuditor(s.db))
 	agentRunHandler := handlers.NewAgentRunHandler(repository.NewAgentRunRepository(s.db), codingRunSvc, permService)
+	// Remote-runner control plane (WI-141). Constructed unconditionally:
+	// remote pools do not require the local CodingAgent.RunnerImage, and the
+	// handler 503s when the registry is unavailable.
+	runnerRegistry := services.NewRunnerRegistryService(repository.NewRunnerRepository(s.db), nil)
+	runnerControlHandler := handlers.NewRunnerControlHandler(runnerRegistry, repository.NewAgentRunRepository(s.db), nil)
 	itemHandler.SetBindingTrigger(bindingSvc)
 
 	// Asset management handlers
@@ -1152,6 +1157,7 @@ func (s *Server) initialize() error {
 			TransitionGovernance:  handlers.NewTransitionGovernanceHandler(repository.NewTransitionRepository(s.db), approvalSetService),
 			AgentBinding:          agentBindingHandler,
 			AgentRun:              agentRunHandler,
+			RunnerControl:         runnerControlHandler,
 		},
 		Users: routes.UserHandlers{
 			User:          userHandler,
