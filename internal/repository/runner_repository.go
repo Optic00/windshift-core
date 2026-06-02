@@ -1,0 +1,181 @@
+package repository
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"time"
+
+	"windshift/internal/database"
+	"windshift/internal/models"
+)
+
+// RunnerRepository persists the remote-runner control-plane tables
+// (runner_registration_tokens, runner_instances) for Initiative WI-141.
+// Only hashes are stored; the service layer owns plaintext generation.
+type RunnerRepository struct {
+	db database.Database
+}
+
+// NewRunnerRepository constructs a new repository.
+func NewRunnerRepository(db database.Database) *RunnerRepository {
+	return &RunnerRepository{db: db}
+}
+
+// nullTimeArg returns a driver-friendly nil for a nil *time.Time.
+func nullTimeArg(t *time.Time) any {
+	if t == nil {
+		return nil
+	}
+	return *t
+}
+
+// InsertRegistrationToken stores a new pool-scoped registration token (by
+// hash) and returns its id.
+func (r *RunnerRepository) InsertRegistrationToken(ctx context.Context, poolID int, tokenHash, tokenPrefix, description string, createdBy *int, expiresAt *time.Time) (int, error) {
+	res, err := r.db.ExecWriteContext(ctx, `
+		INSERT INTO runner_registration_tokens(pool_capability_id, token_hash, token_prefix, description, created_by_user_id, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`,
+		poolID, tokenHash, tokenPrefix, description, nullIntArg(createdBy), nullTimeArg(expiresAt),
+	)
+	if err != nil {
+		return 0, fmt.Errorf("insert runner registration token: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("read insert id: %w", err)
+	}
+	return int(id), nil
+}
+
+// GetActiveRegistrationTokenByHash returns the registration token matching
+// the hash that is neither revoked nor expired as of now. Returns
+// sql.ErrNoRows when no such active token exists.
+func (r *RunnerRepository) GetActiveRegistrationTokenByHash(ctx context.Context, tokenHash string, now time.Time) (*models.RunnerRegistrationToken, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT id, pool_capability_id, token_prefix, description, created_by_user_id, created_at, expires_at, revoked_at
+		FROM runner_registration_tokens
+		WHERE token_hash = ?
+		  AND revoked_at IS NULL
+		  AND (expires_at IS NULL OR expires_at > ?)
+	`, tokenHash, now)
+	return scanRegistrationToken(row)
+}
+
+// RevokeRegistrationToken marks a registration token revoked. Idempotent:
+// re-revoking leaves the original revoked_at in place.
+func (r *RunnerRepository) RevokeRegistrationToken(ctx context.Context, id int, now time.Time) error {
+	_, err := r.db.ExecWriteContext(ctx, `
+		UPDATE runner_registration_tokens SET revoked_at = ?
+		WHERE id = ? AND revoked_at IS NULL
+	`, now, id)
+	if err != nil {
+		return fmt.Errorf("revoke runner registration token: %w", err)
+	}
+	return nil
+}
+
+// InsertInstance stores a newly-registered runner (by credential hash) in
+// the active state and returns its id.
+func (r *RunnerRepository) InsertInstance(ctx context.Context, poolID int, name, credentialHash string, now time.Time) (int, error) {
+	res, err := r.db.ExecWriteContext(ctx, `
+		INSERT INTO runner_instances(pool_capability_id, name, credential_hash, status, registered_at)
+		VALUES (?, ?, ?, ?, ?)
+	`,
+		poolID, name, credentialHash, models.RunnerInstanceStatusActive, now,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("insert runner instance: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("read insert id: %w", err)
+	}
+	return int(id), nil
+}
+
+// GetActiveInstanceByCredentialHash returns the active runner instance whose
+// credential hashes to the given value, or sql.ErrNoRows if none is active.
+func (r *RunnerRepository) GetActiveInstanceByCredentialHash(ctx context.Context, credentialHash string) (*models.RunnerInstance, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT id, pool_capability_id, name, status, registered_at, last_heartbeat_at, revoked_at
+		FROM runner_instances
+		WHERE credential_hash = ? AND status = ? AND revoked_at IS NULL
+	`, credentialHash, models.RunnerInstanceStatusActive)
+	return scanInstance(row)
+}
+
+// TouchHeartbeat records a runner's liveness ping. Only active instances are
+// updated, so a heartbeat from a revoked runner is a no-op.
+func (r *RunnerRepository) TouchHeartbeat(ctx context.Context, id int, now time.Time) error {
+	_, err := r.db.ExecWriteContext(ctx, `
+		UPDATE runner_instances SET last_heartbeat_at = ?
+		WHERE id = ? AND status = ?
+	`, now, id, models.RunnerInstanceStatusActive)
+	if err != nil {
+		return fmt.Errorf("touch runner heartbeat: %w", err)
+	}
+	return nil
+}
+
+// RevokeInstance evicts a single runner. Idempotent.
+func (r *RunnerRepository) RevokeInstance(ctx context.Context, id int, now time.Time) error {
+	_, err := r.db.ExecWriteContext(ctx, `
+		UPDATE runner_instances SET status = ?, revoked_at = ?
+		WHERE id = ? AND status = ?
+	`, models.RunnerInstanceStatusRevoked, now, id, models.RunnerInstanceStatusActive)
+	if err != nil {
+		return fmt.Errorf("revoke runner instance: %w", err)
+	}
+	return nil
+}
+
+func scanRegistrationToken(row interface{ Scan(...any) error }) (*models.RunnerRegistrationToken, error) {
+	tok := &models.RunnerRegistrationToken{}
+	var description sql.NullString
+	var createdBy sql.NullInt64
+	var expiresAt, revokedAt sql.NullTime
+	if err := row.Scan(
+		&tok.ID, &tok.PoolCapabilityID, &tok.TokenPrefix, &description,
+		&createdBy, &tok.CreatedAt, &expiresAt, &revokedAt,
+	); err != nil {
+		return nil, err
+	}
+	if description.Valid {
+		tok.Description = description.String
+	}
+	if createdBy.Valid {
+		v := int(createdBy.Int64)
+		tok.CreatedByUserID = &v
+	}
+	if expiresAt.Valid {
+		tok.ExpiresAt = &expiresAt.Time
+	}
+	if revokedAt.Valid {
+		tok.RevokedAt = &revokedAt.Time
+	}
+	return tok, nil
+}
+
+func scanInstance(row interface{ Scan(...any) error }) (*models.RunnerInstance, error) {
+	inst := &models.RunnerInstance{}
+	var name sql.NullString
+	var lastHeartbeat, revokedAt sql.NullTime
+	if err := row.Scan(
+		&inst.ID, &inst.PoolCapabilityID, &name, &inst.Status,
+		&inst.RegisteredAt, &lastHeartbeat, &revokedAt,
+	); err != nil {
+		return nil, err
+	}
+	if name.Valid {
+		inst.Name = name.String
+	}
+	if lastHeartbeat.Valid {
+		inst.LastHeartbeatAt = &lastHeartbeat.Time
+	}
+	if revokedAt.Valid {
+		inst.RevokedAt = &revokedAt.Time
+	}
+	return inst, nil
+}
