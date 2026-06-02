@@ -51,16 +51,17 @@ type OrchestratorClient interface {
 // back into orchestrator internals — if a runner needs it, it lives here.
 type JobSpec struct {
 	// RunID identifies the agent_runs row this job executes.
-	RunID int
+	RunID int `json:"run_id"`
 
 	// WorkspacePath is the host path of the prepared worktree to mount as
-	// /workspace, or "" when no repo is attached to the run.
-	WorkspacePath string
+	// /workspace, or "" when no repo is attached to the run. For remote
+	// pools the runner prepares its own worktree, so this is "" on the wire.
+	WorkspacePath string `json:"workspace_path,omitempty"`
 
 	// Env is the environment to forward into the container. The
 	// orchestrator has already merged caller-supplied vars with its own
 	// injections (e.g. WS_TOKEN), so the runner forwards it verbatim.
-	Env map[string]string
+	Env map[string]string `json:"env,omitempty"`
 
 	// Later phases extend JobSpec with the admin-curated image + command,
 	// the grant-set / broker endpoints (git / llm / secrets / http), and
@@ -74,13 +75,13 @@ type JobSpec struct {
 // (later phases) so the runner core does not change shape when the
 // transport does.
 type ClaimedJob struct {
-	Spec JobSpec
+	Spec JobSpec `json:"spec"`
 
 	// Ctx is the per-run context the worker drives the runner with. The
 	// client cancels it when the run should abort — in-process via
 	// RunService.Cancel / shutdown, remote when a heartbeat reports the
 	// run was canceled. Runtime-only; never serialized over the wire.
-	Ctx context.Context
+	Ctx context.Context `json:"-"`
 }
 
 // RunWorker is the transport-agnostic runner core (Initiative WI-141,
