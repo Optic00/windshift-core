@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -57,6 +58,13 @@ type HTTPOrchestratorClient struct {
 	baseURL    string
 	credential string
 	hc         *http.Client
+
+	// PollInterval is how long Claim waits between polls when the
+	// orchestrator has no work. Defaults to 2s when zero.
+	PollInterval time.Duration
+	// Logger, when set, receives transient Claim errors (which are retried
+	// rather than surfaced, so a network blip never stops the worker).
+	Logger *log.Logger
 }
 
 // NewHTTPOrchestratorClient constructs a client for baseURL (e.g.
@@ -88,17 +96,40 @@ func RegisterRunner(ctx context.Context, baseURL, registrationToken, name string
 	return &out, nil
 }
 
-// Claim implements OrchestratorClient. Returns (nil, nil) when no work is
-// available so RunWorker treats it as a clean idle, not an error.
+// Claim implements OrchestratorClient. For the remote transport "no work" is
+// an idle condition, not a stop: Claim polls the orchestrator on PollInterval
+// until a job is available, and returns (nil, nil) only when ctx is canceled
+// (the agent is shutting down) — matching the in-process Claim, which also
+// blocks until work or shutdown. Transient request failures are logged and
+// retried on the same interval so a blip never stops the worker.
 func (c *HTTPOrchestratorClient) Claim(ctx context.Context) (*ClaimedJob, error) {
-	var out ClaimResponse
-	if err := doJSON(ctx, c.hc, c.baseURL+"/runner/claim", c.credential, nil, &out); err != nil {
-		return nil, err
+	interval := c.PollInterval
+	if interval <= 0 {
+		interval = 2 * time.Second
 	}
-	if out.Job == nil {
-		return nil, nil
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, nil
+		default:
+		}
+		var out ClaimResponse
+		if err := doJSON(ctx, c.hc, c.baseURL+"/runner/claim", c.credential, nil, &out); err != nil {
+			// Transient failure: log (if shutting down, skip the noise) and
+			// fall through to the idle wait — never surface it, so a blip
+			// cannot stop the worker.
+			if c.Logger != nil && ctx.Err() == nil {
+				c.Logger.Printf("runner: claim: %v", err)
+			}
+		} else if out.Job != nil {
+			return &ClaimedJob{Spec: *out.Job}, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, nil
+		case <-time.After(interval):
+		}
 	}
-	return &ClaimedJob{Spec: *out.Job}, nil
 }
 
 // Emit implements OrchestratorClient.
