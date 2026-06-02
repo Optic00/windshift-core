@@ -1,5 +1,6 @@
 import { derived, writable } from 'svelte/store';
 import { api } from '../api.js';
+import { toExternal } from '../runtime/contextPath.js';
 
 /**
  * SSO Store - manages Single Sign-On status and configuration
@@ -130,7 +131,7 @@ function createSSOStore() {
       }
 
       const url = api.sso.startLogin(slug, type || 'oidc', remember || false);
-      window.location.href = url;
+      window.location.href = toExternal(url);
     },
 
     // Admin: Load providers list

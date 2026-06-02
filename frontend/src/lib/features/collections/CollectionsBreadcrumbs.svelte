@@ -1,5 +1,6 @@
 <script>
   import { navigate } from '../../router.js';
+  import { publicBaseURL } from '../../runtime/contextPath.js';
   import { t } from '../../stores/i18n.svelte.js';
   import { IconLayoutKanban as SquareKanban, IconDeviceFloppy as Save, IconTag as Tag, IconWorld, IconExternalLink, IconLoader2 } from '@tabler/icons-svelte-runes';
   import CopyButton from '../../components/CopyButton.svelte';
@@ -57,7 +58,7 @@
   );
 
   const publicBoardUrl = () =>
-    publicSlug ? `${window.location.origin}/board/${publicSlug}` : '';
+    publicSlug ? `${publicBaseURL()}/board/${publicSlug}` : '';
 
   function handleNavigateWorkspaces() {
     navigate('/workspaces');

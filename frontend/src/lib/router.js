@@ -1,4 +1,5 @@
 import { writable } from 'svelte/store';
+import { toExternal, toLogical } from './runtime/contextPath.js';
 
 export const currentRoute = writable(
   /** @type {{path: string, view: string|null, params: Record<string, string>, query: Record<string, string>}} */ ({
@@ -182,13 +183,15 @@ function parseQuery(search) {
 
 // Navigate to a route
 export function navigate(path, { replace = false } = {}) {
-  if (path === window.location.pathname + window.location.search) {
+  const logicalPath = toLogical(path);
+  const externalPath = toExternal(logicalPath);
+  if (externalPath === window.location.pathname + window.location.search) {
     return;
   }
   if (replace) {
-    window.history.replaceState({}, '', path);
+    window.history.replaceState({}, '', externalPath);
   } else {
-    window.history.pushState({}, '', path);
+    window.history.pushState({}, '', externalPath);
   }
   updateRoute();
 }
@@ -206,7 +209,7 @@ export function updateQueryParams(updates, { push = false } = {}) {
     }
   }
   const qs = params.toString();
-  const path = window.location.pathname + (qs ? `?${qs}` : '');
+  const path = toExternal(toLogical(window.location.pathname) + (qs ? `?${qs}` : ''));
   if (push) {
     window.history.pushState({}, '', path);
   } else {
@@ -217,7 +220,7 @@ export function updateQueryParams(updates, { push = false } = {}) {
 
 // Update current route from URL
 function updateRoute() {
-  const path = window.location.pathname;
+  const path = toLogical(window.location.pathname);
   const search = window.location.search;
 
   // Find matching route
@@ -287,7 +290,7 @@ export function initRouter() {
     if (anchor.hasAttribute('download')) return;
     e.preventDefault();
     const url = new URL(anchor.href);
-    navigate(url.pathname + url.search);
+    navigate(toLogical(url.pathname) + url.search);
   });
 }
 

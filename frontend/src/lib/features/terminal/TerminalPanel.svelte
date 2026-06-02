@@ -8,6 +8,7 @@
   import { dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter';
   import { IconPlus, IconX, IconTerminal, IconFolder, IconCheck, IconAlertTriangle } from '@tabler/icons-svelte-runes';
   import WsTomlProvisioner from './WsTomlProvisioner.svelte';
+  import { publicBaseURL } from '../../runtime/contextPath.js';
 
   let terminalContainer = $state(null);
   let isDropTarget = $state(false);
@@ -612,7 +613,7 @@
       <WsTomlProvisioner
         folderPath={workspacePathStore.path}
         workspaceKey={workspace?.key || ''}
-        serverUrl={typeof window !== 'undefined' ? window.location.origin : ''}
+        serverUrl={publicBaseURL()}
         onComplete={handleProvisionerComplete}
         onCancel={() => { showProvisioner = false; }}
       />

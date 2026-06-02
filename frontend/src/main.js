@@ -1,6 +1,10 @@
 import { mount } from 'svelte';
 import './app.css';
-import App from './App.svelte';
+import { installContextPathTranslation } from './lib/runtime/contextPath.js';
+
+installContextPathTranslation();
+
+const { default: App } = await import('./App.svelte');
 
 const app = mount(App, {
   target: document.getElementById('app'),

@@ -21,6 +21,7 @@
 	import { t } from '../stores/i18n.svelte.js';
 	import { formatDateSimple } from '../utils/dateFormatter.js';
 	import { confirm } from '../composables/useConfirm.js';
+	import { publicBaseURL } from '../runtime/contextPath.js';
 
 	let users = $state([]);
 	let loading = $state(false);
@@ -106,7 +107,7 @@
 				await api.updateUser(editingUser.id, formData);
 			} else if (isInviteMode) {
 				const result = await api.inviteUser(formData);
-				invitationLink = `${window.location.origin}/set-password/${result.token}`;
+				invitationLink = `${publicBaseURL()}/set-password/${result.token}`;
 				emailSent = result.email_sent;
 				showInviteResultModal = true;
 			} else {

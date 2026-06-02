@@ -14,6 +14,7 @@ type Config struct {
 	// HTTP / network
 	Port              string
 	BaseURL           string
+	ContextPath       string
 	AllowedHosts      string
 	AllowedPort       string
 	UseProxy          bool

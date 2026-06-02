@@ -416,5 +416,5 @@ func (h *SSOHandler) getBaseURL(r *http.Request) string {
 	if h.devMode {
 		scheme = "http"
 	}
-	return scheme + "://" + r.Host
+	return scheme + "://" + r.Host + requestContextPrefix(r)
 }

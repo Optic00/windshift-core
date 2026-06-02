@@ -28,6 +28,7 @@
   import EmptyState from '../components/EmptyState.svelte';
   import DescriptionText from '../components/DescriptionText.svelte';
   import { confirm } from '../composables/useConfirm.js';
+  import { publicBaseURL } from '../runtime/contextPath.js';
 
   // Workspace access options
   const workspaceAccessOptions = $derived([
@@ -421,7 +422,7 @@
 
   // Compute OAuth callback URL based on slug
   const oauthCallbackUrl = $derived(formData.slug
-    ? `${window.location.origin}/api/scm/oauth/${formData.slug}/callback`
+    ? `${publicBaseURL()}/api/scm/oauth/${formData.slug}/callback`
     : '');
 
   function handleCopyError() {

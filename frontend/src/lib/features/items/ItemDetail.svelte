@@ -3,6 +3,7 @@
   import { useEventListener } from 'runed';
   import { api } from '../../api.js';
   import { navigate, currentRoute } from '../../router.js';
+  import { publicBaseURL } from '../../runtime/contextPath.js';
   import { workspacePermissions, itemDetailStore } from '../../stores';
   import { t } from '../../stores/i18n.svelte.js';
   import { getShortcut, matchesShortcut, isTypingInField } from '../../utils/keyboardShortcuts.js';
@@ -954,7 +955,7 @@ import Button from '../../components/Button.svelte';
       description: 'Copy a shareable link to this work item',
       keywords: ['copy', 'link', 'share', 'url'],
       action: async () => {
-        const url = `${window.location.origin}/workspaces/${workspaceId}/items/${itemId}`;
+        const url = `${publicBaseURL()}/workspaces/${workspaceId}/items/${itemId}`;
         try {
           await navigator.clipboard.writeText(url);
           successToast(t('items.itemLinkCopied'));

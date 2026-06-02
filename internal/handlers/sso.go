@@ -985,7 +985,7 @@ func (h *SSOHandler) getRedirectURI(r *http.Request, slug string) string {
 		// Default remains HTTPS - never use HTTP in production
 	}
 
-	return fmt.Sprintf("%s://%s/api/sso/callback/%s", scheme, host, slug)
+	return fmt.Sprintf("%s://%s%s/api/sso/callback/%s", scheme, host, requestContextPrefix(r), slug)
 }
 
 // isTrustedRequest checks if the request comes from a trusted proxy

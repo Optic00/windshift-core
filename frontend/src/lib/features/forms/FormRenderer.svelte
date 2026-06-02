@@ -4,6 +4,7 @@
   import CustomFieldRenderer from '../items/CustomFieldRenderer.svelte';
   import Spinner from '../../components/Spinner.svelte';
   import Label from '../../components/Label.svelte';
+  import { toExternal } from '../../runtime/contextPath.js';
 
   let {
     formSlug = '',
@@ -175,7 +176,7 @@
 
       if (redirectUrl) {
         setTimeout(() => {
-          window.location.href = redirectUrl;
+          window.location.href = toExternal(redirectUrl);
         }, 2000);
       }
     } catch (err) {

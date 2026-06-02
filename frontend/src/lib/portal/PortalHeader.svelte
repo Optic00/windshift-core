@@ -139,7 +139,7 @@
             >
               <!-- Back to App -->
               <button
-                onclick={() => { window.location.href = '/'; portalStore.showMainMenu = false; }}
+                onclick={() => { navigate('/'); portalStore.showMainMenu = false; }}
                 class="w-full px-4 py-3 flex items-center gap-3 transition-all text-left"
                 style="color: var(--ds-text);"
                 onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral)'}

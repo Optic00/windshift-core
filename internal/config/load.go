@@ -4,6 +4,7 @@ import (
 	"embed"
 	"flag"
 	"log/slog"
+	"net/url"
 	"os"
 	"strings"
 
@@ -33,6 +34,7 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 		oidcAllowedPrivateCIDRs = flag.String("oidc-allowed-private-cidrs", "", "Comma-separated private/CGNAT CIDRs that OIDC discovery, JWKS, and token calls may dial")
 		useProxy                = flag.Bool("use-proxy", false, "Enable proxy mode (trust X-Forwarded-Proto from private IPs)")
 		baseURL                 = flag.String("base-url", "", "Public URL for the server")
+		contextPath             = flag.String("context-path", "", "Public context path to serve Windshift under, e.g. /windshift")
 		additionalProxies       = flag.String("additional-proxies", "", "Additional proxy IPs to trust")
 		enableSSH               = flag.Bool("ssh", false, "Enable SSH TUI server")
 		enableMCP               = flag.Bool("mcp", false, "Enable MCP server at /mcp")
@@ -87,6 +89,12 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 	if resolvedBaseURL == "" {
 		resolvedBaseURL = os.Getenv("BASE_URL")
 	}
+
+	resolvedContextPath := *contextPath
+	if resolvedContextPath == "" {
+		resolvedContextPath = os.Getenv("WINDSHIFT_CONTEXT_PATH")
+	}
+	resolvedContextPath = normalizeContextPath(resolvedContextPath)
 
 	// Booleans: flag OR env.
 	sshEnabled := *enableSSH || parseBoolEnv("SSH_ENABLED")
@@ -154,6 +162,7 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 	return Config{
 		Port:              port,
 		BaseURL:           resolvedBaseURL,
+		ContextPath:       resolvedContextPath,
 		AllowedHosts:      resolvedAllowedHosts,
 		AllowedPort:       *allowedPort,
 		UseProxy:          proxyVal,
@@ -246,4 +255,25 @@ func postgresEnv() database.PostgresEnv {
 		Password: os.Getenv("POSTGRES_PASSWORD"),
 		Database: firstNonEmpty(os.Getenv("POSTGRES_DB"), "windshift"),
 	}
+}
+
+func normalizeContextPath(raw string) string {
+	p := strings.TrimSpace(raw)
+	if p == "" {
+		return ""
+	}
+	if p == "/" || !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") || strings.HasSuffix(p, "/") {
+		slog.Error("FATAL: WINDSHIFT_CONTEXT_PATH / --context-path must be a non-root absolute path without a trailing slash", "context_path", raw)
+		os.Exit(1)
+	}
+	if strings.ContainsAny(p, "?#\\") || strings.Contains(p, "//") {
+		slog.Error("FATAL: WINDSHIFT_CONTEXT_PATH / --context-path must be a clean URL path", "context_path", raw)
+		os.Exit(1)
+	}
+	decoded, err := url.PathUnescape(p)
+	if err != nil || decoded != p || strings.Contains(decoded, "..") {
+		slog.Error("FATAL: WINDSHIFT_CONTEXT_PATH / --context-path must not contain encoded bytes or traversal", "context_path", raw)
+		os.Exit(1)
+	}
+	return p
 }
