@@ -107,9 +107,10 @@ type TokenSpec struct {
 }
 
 // RunServiceOptions controls construction. GlobalCap caps the number of
-// runs in-flight across the whole process; the queueing semaphore admits
-// goroutines past Start, so a backed-up queue parks here without blocking
-// the HTTP handler that called Start. Worktrees is optional and only
+// runs in-flight across the whole process — it sizes the in-process worker
+// pool (decision #7), which replaced the old admission semaphore. Start
+// enqueues onto a buffered job queue and returns without blocking the HTTP
+// handler that called it. Worktrees is optional and only
 // required when callers actually attach Repo to a RunRequest. Tokens is
 // optional and only required when callers attach a TokenSpec. PostRunHook
 // is optional and fires once per run after the terminal status is
@@ -164,16 +165,19 @@ type RunService struct {
 	worktrees   *WorktreeManager
 	tokens      *RunTokenService
 	postRunHook PostRunHook
-	sem         chan struct{}
+	queue       chan queuedJob
 	now         func() time.Time
 	logger      *log.Logger
 
 	mu         sync.Mutex
 	shutdown   bool
-	wg         sync.WaitGroup
+	wg         sync.WaitGroup // counts runs (queued + in-flight)
+	workerWG   sync.WaitGroup // counts in-process pool workers
 	shutdownCh chan struct{}
 	inflightMu sync.Mutex
 	inflight   map[int]context.CancelFunc
+	claimsMu   sync.Mutex
+	claims     map[int]*claimState
 }
 
 // NewRunService constructs a RunService bound to the given repo. The
@@ -197,18 +201,29 @@ func NewRunService(repo *repository.AgentRunRepository, opts RunServiceOptions) 
 	if logger == nil {
 		logger = log.Default()
 	}
-	return &RunService{
+	s := &RunService{
 		repo:        repo,
 		runner:      opts.Runner,
 		worktrees:   opts.Worktrees,
 		tokens:      opts.Tokens,
 		postRunHook: opts.PostRunHook,
-		sem:         make(chan struct{}, capacity),
+		queue:       make(chan queuedJob, queueBuffer(capacity)),
 		now:         now,
 		logger:      logger,
 		shutdownCh:  make(chan struct{}),
 		inflight:    make(map[int]context.CancelFunc),
-	}, nil
+		claims:      make(map[int]*claimState),
+	}
+	// In-process worker pool (decision #7): `capacity` workers each run
+	// the unified claim -> execute -> report loop. Pool size is the
+	// concurrency cap, which replaced the old global semaphore. Remote
+	// pools (later phases) run the same loop in the agent binary against
+	// the HTTP transport.
+	for i := 0; i < capacity; i++ {
+		s.workerWG.Add(1)
+		go s.worker()
+	}
+	return s, nil
 }
 
 // Cancel marks an in-flight run for cancellation. Returns true if the run
@@ -282,137 +297,25 @@ func (s *RunService) Start(ctx context.Context, req RunRequest) (int, error) {
 		return 0, errors.New("run service: request includes a Token but no RunTokenService is configured")
 	}
 
+	s.mu.Lock()
+	if s.shutdown {
+		s.mu.Unlock()
+		// Lost the race with Shutdown after the row was inserted: no
+		// worker will claim it, so finalize it canceled rather than
+		// leave it dangling in queued.
+		s.finalize(runID, models.AgentRunStatusCanceled, "shutting down")
+		return 0, ErrShuttingDown
+	}
 	s.wg.Add(1)
-	// The caller's ctx is request-scoped; the run must outlive it.
-	// execute() derives a service-scoped ctx wired to shutdownCh so
-	// cancellation flows from process shutdown instead of HTTP request
-	// teardown.
-	go s.execute(runID, req) //nolint:gosec // G118: intentional Background ctx; see comment above.
+	// Enqueue for the worker pool. The run row is already persisted as
+	// queued; a worker claims it (admission), prepares the worktree, mints
+	// the token, and drives the runner — the run outlives the caller's
+	// request ctx. Holding mu across the send orders the enqueue before any
+	// concurrent Shutdown so the job is never orphaned; the queue buffer is
+	// sized so this send does not block under normal load.
+	s.queue <- queuedJob{runID: runID, req: req}
+	s.mu.Unlock()
 	return runID, nil
-}
-
-// execute is the per-run worker. Acquires the global semaphore, marks the
-// run running, invokes the runner with an event sink wired to the repo,
-// then finalizes the run with the runner's verdict.
-func (s *RunService) execute(runID int, req RunRequest) {
-	defer s.wg.Done()
-
-	// Detach from the request ctx but honor service shutdown via cancel
-	// derived from the shutdown channel. The same cancel is registered
-	// in the inflight map so RunService.Cancel can reach the worker.
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	s.registerCancel(runID, cancel)
-	defer s.unregisterCancel(runID)
-	go func() {
-		select {
-		case <-s.shutdownCh:
-			cancel()
-		case <-ctx.Done():
-		}
-	}()
-
-	select {
-	case s.sem <- struct{}{}:
-	case <-ctx.Done():
-		s.finalize(runID, models.AgentRunStatusCanceled, "shutdown before admission")
-		return
-	}
-	defer func() { <-s.sem }()
-
-	now := s.now()
-	if err := s.repo.MarkRunning(ctx, runID, "", now); err != nil {
-		s.logger.Printf("run service: mark running run=%d: %v", runID, err)
-		s.finalize(runID, models.AgentRunStatusFailed, fmt.Sprintf("mark running: %v", err))
-		return
-	}
-	if err := s.repo.AppendEvent(ctx, runID, "lifecycle", `{"phase":"running"}`); err != nil {
-		s.logger.Printf("run service: append running event run=%d: %v", runID, err)
-	}
-
-	sink := func(eventType, payloadJSON string) error {
-		// Sink writes are best-effort but visible: the orchestrator may
-		// want them in audit even if a downstream subscriber failed.
-		return s.repo.AppendEvent(ctx, runID, eventType, payloadJSON)
-	}
-
-	var (
-		workspacePath string
-		runBranch     string
-		runBaseCommit string
-	)
-	if req.Repo != nil {
-		pw, err := s.worktrees.Prepare(ctx, *req.Repo, runID)
-		if err != nil {
-			s.logger.Printf("run service: prepare worktree run=%d: %v", runID, err)
-			s.finalize(runID, models.AgentRunStatusFailed, fmt.Sprintf("prepare worktree: %v", err))
-			s.invokePostRunHook(PostRunInfo{
-				RunID: runID, WorkspaceID: req.WorkspaceID, ItemID: req.ItemID,
-				BindingID: req.BindingID, Status: models.AgentRunStatusFailed,
-			})
-			return
-		}
-		workspacePath = pw.Path
-		runBranch = pw.Branch
-		runBaseCommit = pw.BaseCommit
-		_ = sink("lifecycle", fmt.Sprintf(`{"phase":"worktree_ready","path":%q,"branch":%q,"base_commit":%q}`,
-			pw.Path, pw.Branch, pw.BaseCommit))
-		defer func() {
-			if err := s.worktrees.Cleanup(context.Background(), pw); err != nil {
-				s.logger.Printf("run service: cleanup worktree run=%d: %v", runID, err)
-			}
-		}()
-	}
-
-	// Build the env the runner will see. Caller-supplied keys come
-	// first; the orchestrator's own injections (WS_TOKEN) overwrite on
-	// conflict so a confused caller can't smuggle in their own token.
-	env := make(map[string]string, len(req.Env)+1)
-	for k, v := range req.Env {
-		env[k] = v
-	}
-	if req.Token != nil {
-		minted, err := s.tokens.Mint(ctx, MintRequest{
-			ActingUserID: req.Token.ActingUserID,
-			Scopes:       req.Token.Scopes,
-			TTL:          req.Token.TTL,
-			Name:         req.Token.Name,
-		})
-		if err != nil {
-			s.logger.Printf("run service: mint ws token run=%d: %v", runID, err)
-			s.finalize(runID, models.AgentRunStatusFailed, fmt.Sprintf("mint ws token: %v", err))
-			return
-		}
-		env["WS_TOKEN"] = minted.Token
-		_ = sink("lifecycle", fmt.Sprintf(`{"phase":"token_minted","token_id":%d,"expires_at":%q}`,
-			minted.TokenID, minted.ExpiresAt.Format(time.RFC3339)))
-	}
-
-	result := s.runner.Run(ctx, RunInput{RunID: runID, WorkspacePath: workspacePath, Env: env}, sink)
-	if result.ContainerID != "" {
-		if err := s.repo.SetContainerID(ctx, runID, result.ContainerID); err != nil {
-			s.logger.Printf("run service: set container_id run=%d: %v", runID, err)
-		}
-	}
-	status := result.Status
-	if !models.IsAgentRunTerminal(status) {
-		status = models.AgentRunStatusFailed
-		if result.Error == "" {
-			result.Error = fmt.Sprintf("runner returned non-terminal status %q", result.Status)
-		}
-	}
-	s.finalize(runID, status, result.Error)
-	_ = sink("lifecycle", fmt.Sprintf(`{"phase":%q}`, status))
-
-	s.invokePostRunHook(PostRunInfo{
-		RunID:       runID,
-		WorkspaceID: req.WorkspaceID,
-		ItemID:      req.ItemID,
-		BindingID:   req.BindingID,
-		Status:      status,
-		Branch:      runBranch,
-		BaseCommit:  runBaseCommit,
-	})
 }
 
 // invokePostRunHook fires the post-run callback if one is configured.
@@ -459,9 +362,14 @@ func (s *RunService) Shutdown(ctx context.Context) error {
 	close(s.shutdownCh)
 	s.mu.Unlock()
 
+	// Closing shutdownCh makes the workers drain any still-queued runs as
+	// canceled and then exit; in-flight runs see their ctx canceled and
+	// finalize. wg drops to zero once every run (queued + in-flight) is
+	// accounted for; workerWG drops once the pool has exited.
 	done := make(chan struct{})
 	go func() {
 		s.wg.Wait()
+		s.workerWG.Wait()
 		close(done)
 	}()
 	select {
