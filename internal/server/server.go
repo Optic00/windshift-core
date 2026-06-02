@@ -545,6 +545,8 @@ func (s *Server) initialize() error {
 		cfg.Auth.SessionSecret,
 	)
 	s.actionService.SetCredentialService(credentialSvc)
+	// Lets container_run nodes dispatch to a remote runner pool (WI-146).
+	s.actionService.SetAgentRunRepository(repository.NewAgentRunRepository(s.db))
 	// One-shot scanner: warn about any legacy capability whose
 	// default_headers still holds a sensitive header value. The scanner logs
 	// capability ID + header name only — never the value.

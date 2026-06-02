@@ -85,6 +85,11 @@ type ActionService struct {
 	llmConnectionManager LLMConnectionResolver
 	containerService     *ContainerService
 
+	// agentRuns dispatches container_run nodes to a remote runner pool
+	// (WI-146) when the node names a PoolCapabilityID; nil disables pool
+	// dispatch (container_run then requires containerService for local runs).
+	agentRuns *repository.AgentRunRepository
+
 	// Asset permission checker — consulted before create_asset / update_asset
 	// nodes mutate an asset set the action's actor may not control.
 	assetPermChecker AssetSetPermissionChecker
@@ -186,6 +191,12 @@ func (as *ActionService) SetEventCoordinator(ec *EventCoordinator) {
 // SetLLMConnectionManager sets the LLM connection manager for AI node types.
 func (as *ActionService) SetLLMConnectionManager(m LLMConnectionResolver) {
 	as.llmConnectionManager = m
+}
+
+// SetAgentRunRepository wires remote-runner-pool dispatch for container_run
+// nodes (WI-146).
+func (as *ActionService) SetAgentRunRepository(r *repository.AgentRunRepository) {
+	as.agentRuns = r
 }
 
 // SetContainerService sets the container service for container_run nodes.
@@ -2766,10 +2777,6 @@ func isMutatingAgentHTTPToolCall(name, arguments string) bool {
 
 // executeContainerRun executes a container_run node.
 func (as *ActionService) executeContainerRun(node *models.ActionNode, ctx *models.ExecutionContext, stepResult *models.StepResult) error {
-	if as.containerService == nil {
-		return fmt.Errorf("container service not configured")
-	}
-
 	var config models.ContainerRunNodeConfig
 	if err := json.Unmarshal([]byte(node.NodeConfig), &config); err != nil {
 		return fmt.Errorf("failed to parse container_run config: %w", err)
@@ -2785,6 +2792,40 @@ func (as *ActionService) executeContainerRun(node *models.ActionNode, ctx *model
 		return fmt.Errorf("failed to parse docker_environment config: %w", err)
 	}
 
+	// Remote pool dispatch (WI-146): enqueue an action_container run for the
+	// pool; a runner claims it and runs envConfig.Image. No local container.
+	if config.PoolCapabilityID > 0 {
+		if as.agentRuns == nil {
+			return fmt.Errorf("container_run targets runner pool %d but pool dispatch is not configured", config.PoolCapabilityID)
+		}
+		pool := config.PoolCapabilityID
+		runID, derr := as.agentRuns.Insert(context.Background(), &models.AgentRun{
+			WorkspaceID:  ctx.Event.WorkspaceID,
+			Status:       models.AgentRunStatusQueued,
+			JobKind:      models.JobKindActionContainer,
+			JobImage:     envConfig.Image,
+			TargetPoolID: &pool,
+		})
+		if derr != nil {
+			return fmt.Errorf("enqueue container run for pool %d: %w", pool, derr)
+		}
+		out := map[string]interface{}{"agent_run_id": runID, "dispatched": "pool", "pool_capability_id": pool}
+		if config.OutputField != "" {
+			ctx.Variables[config.OutputField] = out
+		}
+		stepResult.Output = out
+		slog.Debug("container_run dispatched to runner pool",
+			slog.String("component", "actions"),
+			slog.Int("node_id", node.ID),
+			slog.Int("run_id", runID),
+			slog.Int("pool_capability_id", pool),
+		)
+		return nil
+	}
+
+	if as.containerService == nil {
+		return fmt.Errorf("container service not configured")
+	}
 	containerInfo, err := as.containerService.StartContainer(context.Background(), envConfig, config.TimeoutSecs)
 	if err != nil {
 		return fmt.Errorf("failed to start container: %w", err)

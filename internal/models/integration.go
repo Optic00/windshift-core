@@ -1156,6 +1156,10 @@ type ContainerRunNodeConfig struct {
 	CapabilityID int    `json:"capability_id"` // References a docker_environment capability
 	OutputField  string `json:"output_field"`  // Variable storing container info (ID, port, etc.)
 	TimeoutSecs  int    `json:"timeout_secs"`  // Max lifetime before auto-teardown
+	// PoolCapabilityID, when set, dispatches the container to a remote runner
+	// pool (WI-146): an action_container agent_run is enqueued for the pool
+	// instead of running locally. 0 = run locally via ContainerService.
+	PoolCapabilityID int `json:"pool_capability_id,omitempty"`
 }
 
 // HTTPRequestNodeConfig configures an http_request node — scoped HTTP client.
