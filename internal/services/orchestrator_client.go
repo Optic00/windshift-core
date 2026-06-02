@@ -1,6 +1,9 @@
 package services
 
-import "context"
+import (
+	"context"
+	"log"
+)
 
 // OrchestratorClient is the transport seam between a runner and the
 // orchestrator (Initiative WI-141, decision #7: one execution path for
@@ -72,4 +75,54 @@ type JobSpec struct {
 // transport does.
 type ClaimedJob struct {
 	Spec JobSpec
+
+	// Ctx is the per-run context the worker drives the runner with. The
+	// client cancels it when the run should abort — in-process via
+	// RunService.Cancel / shutdown, remote when a heartbeat reports the
+	// run was canceled. Runtime-only; never serialized over the wire.
+	Ctx context.Context
+}
+
+// RunWorker is the transport-agnostic runner core (Initiative WI-141,
+// decision #7). It loops claiming jobs from the orchestrator, driving the
+// Runner, and reporting results — the *same* loop whether `client` is the
+// in-process RunService (local pool) or the HTTPS client in the standalone
+// agent binary (remote pool). It returns when Claim reports the
+// orchestrator is shutting down (a nil job) or ctx is canceled.
+func RunWorker(ctx context.Context, client OrchestratorClient, runner Runner, logger *log.Logger) {
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		job, err := client.Claim(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			// Transient claim failure (e.g. a remote network blip). The
+			// in-process client never errors; remote clients back off
+			// inside Claim, so a bare continue is safe here.
+			logger.Printf("run worker: claim: %v", err)
+			continue
+		}
+		if job == nil {
+			return
+		}
+		runID := job.Spec.RunID
+		jobCtx := job.Ctx
+		if jobCtx == nil {
+			jobCtx = ctx
+		}
+		emit := func(eventType, payloadJSON string) error {
+			return client.Emit(jobCtx, runID, eventType, payloadJSON)
+		}
+		result := runner.Run(jobCtx, RunInput{
+			RunID:         runID,
+			WorkspacePath: job.Spec.WorkspacePath,
+			Env:           job.Spec.Env,
+		}, emit)
+		if err := client.Report(jobCtx, runID, result); err != nil {
+			logger.Printf("run worker: report run=%d: %v", runID, err)
+		}
+	}
 }

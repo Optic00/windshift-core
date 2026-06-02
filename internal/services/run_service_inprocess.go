@@ -51,39 +51,14 @@ func queueBuffer(capacity int) int {
 	return b
 }
 
-// worker is one slot in the in-process pool. It loops claiming admitted
-// jobs and driving the runner until the service shuts down. Pool size is
-// the concurrency cap (it replaced the old global semaphore).
-func (s *RunService) worker() {
-	defer s.workerWG.Done()
-	for {
-		job, runCtx, ok := s.claimNext()
-		if !ok {
-			return
-		}
-		runID := job.Spec.RunID
-		emit := func(eventType, payloadJSON string) error {
-			return s.Emit(runCtx, runID, eventType, payloadJSON)
-		}
-		result := s.runner.Run(runCtx, RunInput{
-			RunID:         runID,
-			WorkspacePath: job.Spec.WorkspacePath,
-			Env:           job.Spec.Env,
-		}, emit)
-		if err := s.Report(runCtx, runID, result); err != nil {
-			s.logger.Printf("run service: report run=%d: %v", runID, err)
-		}
-	}
-}
-
 // claimNext pulls the next admitted job off the queue and runs the
 // orchestrator-side preamble (mark running, worktree prep, token mint),
-// returning the JobSpec plus the per-run context the worker drives the
-// runner with. A job whose preamble fails is finalized in place and the
-// loop moves on to the next. ok is false only when the service is
-// shutting down, at which point any still-queued runs are drained as
+// returning a ClaimedJob whose Ctx is the per-run context the worker
+// drives the runner with. A job whose preamble fails is finalized in place
+// and the loop moves on to the next. It returns nil only when the service
+// is shutting down, at which point any still-queued runs are drained as
 // canceled. This is the in-process realization of OrchestratorClient.Claim.
-func (s *RunService) claimNext() (*ClaimedJob, context.Context, bool) {
+func (s *RunService) claimNext() *ClaimedJob {
 	for {
 		var job queuedJob
 		select {
@@ -98,7 +73,7 @@ func (s *RunService) claimNext() (*ClaimedJob, context.Context, bool) {
 					s.finalize(j.runID, models.AgentRunStatusCanceled, "shutdown before admission")
 					s.wg.Done()
 				default:
-					return nil, nil, false
+					return nil
 				}
 			}
 		}
@@ -176,7 +151,7 @@ func (s *RunService) claimNext() (*ClaimedJob, context.Context, bool) {
 		s.claims[job.runID] = &st
 		s.claimsMu.Unlock()
 
-		return &ClaimedJob{Spec: JobSpec{RunID: job.runID, WorkspacePath: st.path, Env: env}}, runCtx, true
+		return &ClaimedJob{Spec: JobSpec{RunID: job.runID, WorkspacePath: st.path, Env: env}, Ctx: runCtx}
 	}
 }
 
@@ -200,16 +175,12 @@ func (s *RunService) failClaim(job queuedJob, cancel context.CancelFunc, msg str
 	s.wg.Done()
 }
 
-// Claim implements OrchestratorClient. The in-process worker pool uses
-// claimNext directly (it needs the per-run context for cancellation); this
-// adapter exists so RunService satisfies the interface for transport-
-// agnostic callers. It returns (nil, nil) when the service is shutting down.
+// Claim implements OrchestratorClient: the in-process transport for the
+// shared RunWorker loop. It blocks on the in-memory queue (honoring
+// shutdown) and returns (nil, nil) when the service is shutting down. The
+// per-run abort context rides on ClaimedJob.Ctx.
 func (s *RunService) Claim(_ context.Context) (*ClaimedJob, error) {
-	job, _, ok := s.claimNext()
-	if !ok {
-		return nil, nil
-	}
-	return job, nil
+	return s.claimNext(), nil
 }
 
 // Emit implements OrchestratorClient: it appends one event to the run's

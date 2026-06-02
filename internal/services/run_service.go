@@ -215,13 +215,16 @@ func NewRunService(repo *repository.AgentRunRepository, opts RunServiceOptions) 
 		claims:      make(map[int]*claimState),
 	}
 	// In-process worker pool (decision #7): `capacity` workers each run
-	// the unified claim -> execute -> report loop. Pool size is the
-	// concurrency cap, which replaced the old global semaphore. Remote
-	// pools (later phases) run the same loop in the agent binary against
-	// the HTTP transport.
+	// the shared RunWorker loop with RunService itself as the (local)
+	// OrchestratorClient. Pool size is the concurrency cap, which replaced
+	// the old global semaphore. Remote pools (later phases) run the same
+	// RunWorker in the agent binary against the HTTP transport.
 	for i := 0; i < capacity; i++ {
 		s.workerWG.Add(1)
-		go s.worker()
+		go func() {
+			defer s.workerWG.Done()
+			RunWorker(context.Background(), s, s.runner, s.logger)
+		}()
 	}
 	return s, nil
 }
