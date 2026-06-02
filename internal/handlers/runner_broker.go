@@ -2,8 +2,12 @@ package handlers
 
 import (
 	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"strings"
 
 	"windshift/internal/auth"
+	"windshift/internal/llm"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/services"
@@ -22,15 +26,43 @@ import (
 // leaked run-A token cannot reach run-B's resources, and a token cannot
 // reach a credential the run was not granted.
 type RunnerBrokerHandler struct {
-	tokens *auth.TokenManager
-	runs   *repository.AgentRunRepository
-	creds  *services.ActionCredentialService
+	tokens   *auth.TokenManager
+	runs     *repository.AgentRunRepository
+	creds    *services.ActionCredentialService
+	llmConns *llm.ConnectionManager
 }
 
 // NewRunnerBrokerHandler constructs the handler. Any nil dependency disables
-// the broker (503), e.g. when the harness is not configured.
-func NewRunnerBrokerHandler(tokens *auth.TokenManager, runs *repository.AgentRunRepository, creds *services.ActionCredentialService) *RunnerBrokerHandler {
-	return &RunnerBrokerHandler{tokens: tokens, runs: runs, creds: creds}
+// the corresponding broker (503), e.g. when the harness is not configured.
+func NewRunnerBrokerHandler(tokens *auth.TokenManager, runs *repository.AgentRunRepository, creds *services.ActionCredentialService, llmConns *llm.ConnectionManager) *RunnerBrokerHandler {
+	return &RunnerBrokerHandler{tokens: tokens, runs: runs, creds: creds, llmConns: llmConns}
+}
+
+// runFromToken authenticates the per-run token and authorizes it for the run
+// in the URL: the token must be the one bound to the run, and the run must be
+// running. Returns the run's grants + workspace, or writes a 401/403/404 and
+// returns ok=false.
+func (h *RunnerBrokerHandler) runFromToken(w http.ResponseWriter, r *http.Request, runID int) (grants *models.RunGrants, workspaceID int, ok bool) {
+	token := bearerCredential(r)
+	if token == "" {
+		respondUnauthorized(w, r)
+		return nil, 0, false
+	}
+	_, apiToken, err := h.tokens.ValidateToken(token)
+	if err != nil || apiToken == nil {
+		respondUnauthorized(w, r)
+		return nil, 0, false
+	}
+	boundTokenID, ws, g, status, err := h.runs.GetRunAuthz(r.Context(), runID)
+	if err != nil {
+		respondNotFound(w, r, "agent run")
+		return nil, 0, false
+	}
+	if apiToken.ID != boundTokenID || status != models.AgentRunStatusRunning {
+		respondForbidden(w, r)
+		return nil, 0, false
+	}
+	return g, ws, true
 }
 
 // GetSecret resolves a named credential for a run that is granted it, and
@@ -49,26 +81,11 @@ func (h *RunnerBrokerHandler) GetSecret(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Authenticate the per-run token.
-	token := bearerCredential(r)
-	if token == "" {
-		respondUnauthorized(w, r)
+	grants, workspaceID, ok := h.runFromToken(w, r, runID)
+	if !ok {
 		return
 	}
-	_, apiToken, err := h.tokens.ValidateToken(token)
-	if err != nil || apiToken == nil {
-		respondUnauthorized(w, r)
-		return
-	}
-
-	// Authorize against the run: the token must be the one bound to the run,
-	// the run must be running, and the credential must be granted.
-	boundTokenID, workspaceID, grants, status, err := h.runs.GetRunAuthz(r.Context(), runID)
-	if err != nil {
-		respondNotFound(w, r, "agent run")
-		return
-	}
-	if apiToken.ID != boundTokenID || status != models.AgentRunStatusRunning || !grants.AllowsSecret(credID) {
+	if !grants.AllowsSecret(credID) {
 		respondForbidden(w, r)
 		return
 	}
@@ -79,4 +96,82 @@ func (h *RunnerBrokerHandler) GetSecret(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	respondJSON(w, http.StatusOK, map[string]any{"value": plaintext})
+}
+
+// ProxyLLM reverse-proxies a running job's model API calls to the LLM
+// connection it is granted, injecting the real provider credential
+// server-side so the key never reaches the runner. /llm-proxy/{run}/{path...}.
+//
+// Token-quota metering (grants.LLM.QuotaTokens) is a follow-up; this slice
+// establishes key-injecting, run-scoped proxying. Only anthropic and
+// openai-compatible auth conventions are handled; other providers need an
+// added case.
+func (h *RunnerBrokerHandler) ProxyLLM(w http.ResponseWriter, r *http.Request) {
+	if h.tokens == nil || h.runs == nil || h.llmConns == nil {
+		respondServiceUnavailable(w, r, "coding-agent harness is disabled on this server")
+		return
+	}
+	runID, ok := requireIDParam(w, r, "run")
+	if !ok {
+		return
+	}
+	grants, _, ok := h.runFromToken(w, r, runID)
+	if !ok {
+		return
+	}
+	if grants == nil || grants.LLM == nil {
+		respondForbidden(w, r)
+		return
+	}
+	cfg, err := h.llmConns.ConnectionRuntime(r.Context(), grants.LLM.ConnectionID)
+	if err != nil {
+		respondServiceUnavailable(w, r, "llm connection unavailable")
+		return
+	}
+	base := cfg.BaseURL
+	if base == "" {
+		if p := llm.GetProvider(llm.ProviderType(cfg.ProviderType)); p != nil {
+			base = p.BaseURL
+		}
+	}
+	target, err := url.Parse(base)
+	if err != nil || target.Host == "" {
+		respondServiceUnavailable(w, r, "llm connection has no base url")
+		return
+	}
+	upstreamPath := r.PathValue("path")
+	apiKey := cfg.APIKey
+	providerType := strings.ToLower(cfg.ProviderType)
+	proxy := &httputil.ReverseProxy{
+		Director: func(req *http.Request) {
+			req.URL.Scheme = target.Scheme
+			req.URL.Host = target.Host
+			req.Host = target.Host
+			req.URL.Path = singleJoiningSlash(target.Path, upstreamPath)
+			req.URL.RawPath = ""
+			// Replace the run-token with the real provider credential.
+			req.Header.Del("Authorization")
+			req.Header.Del("X-Api-Key")
+			switch providerType {
+			case "anthropic":
+				req.Header.Set("x-api-key", apiKey)
+				if req.Header.Get("anthropic-version") == "" {
+					req.Header.Set("anthropic-version", "2023-06-01")
+				}
+			default: // openai-compatible
+				req.Header.Set("Authorization", "Bearer "+apiKey)
+			}
+		},
+	}
+	proxy.ServeHTTP(w, r)
+}
+
+// singleJoiningSlash joins two URL path segments with exactly one slash.
+func singleJoiningSlash(a, b string) string {
+	a = strings.TrimSuffix(a, "/")
+	b = strings.TrimPrefix(b, "/")
+	if b == "" {
+		return a
+	}
+	return a + "/" + b
 }

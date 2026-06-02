@@ -190,6 +190,8 @@ func RegisterWorkspaceRoutes(deps *Deps) {
 	// running job, authenticated by the per-run token (inline).
 	if deps.Workspaces.RunnerBroker != nil {
 		api.HandleH("GET /secrets/{run}/{credentialId}", http.HandlerFunc(deps.Workspaces.RunnerBroker.GetSecret))
+		api.HandleH("POST /llm-proxy/{run}/{path...}", http.HandlerFunc(deps.Workspaces.RunnerBroker.ProxyLLM))
+		api.HandleH("GET /llm-proxy/{run}/{path...}", http.HandlerFunc(deps.Workspaces.RunnerBroker.ProxyLLM))
 	}
 
 	// Actions automation endpoints (workspace-scoped, requires action.manage permission)
