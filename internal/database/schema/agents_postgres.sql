@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     ended_at TIMESTAMPTZ,
     container_id TEXT,
     runner_id INTEGER, -- soft ref to runner_instances; NULL for the in-process local runner (WI-141)
+    target_pool_id INTEGER, -- soft ref to action_capabilities (runner_pool); NULL = local in-process pool (WI-141)
     error TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -24,6 +25,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON agent_runs(status);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_item_id ON agent_runs(item_id);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_binding_created ON agent_runs(binding_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_runner ON agent_runs(runner_id);
+-- Supports the remote DB-as-queue claim: next queued run for a pool, oldest first.
+CREATE INDEX IF NOT EXISTS idx_agent_runs_pool_claim ON agent_runs(target_pool_id, status, queued_at);
 
 CREATE TABLE IF NOT EXISTS agent_run_events (
     id BIGSERIAL PRIMARY KEY,

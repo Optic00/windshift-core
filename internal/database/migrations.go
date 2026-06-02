@@ -943,6 +943,23 @@ var Catalog = []Migration{
 			CREATE INDEX IF NOT EXISTS idx_agent_runs_runner ON agent_runs(runner_id);
 		`,
 	},
+	{
+		// agent_runs.target_pool_id routes a run to a runner_pool capability
+		// (NULL = local in-process pool). Remote runners claim queued runs
+		// scoped by this value; the index supports that DB-as-queue claim.
+		Version:       "20260602_agent_runs_target_pool_id",
+		Name:          "Add target_pool_id to agent_runs",
+		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('agent_runs') WHERE name='target_pool_id'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_name='agent_runs' AND column_name='target_pool_id'",
+		SQLite: `
+			ALTER TABLE agent_runs ADD COLUMN target_pool_id INTEGER;
+			CREATE INDEX IF NOT EXISTS idx_agent_runs_pool_claim ON agent_runs(target_pool_id, status, queued_at);
+		`,
+		Postgres: `
+			ALTER TABLE agent_runs ADD COLUMN target_pool_id INTEGER;
+			CREATE INDEX IF NOT EXISTS idx_agent_runs_pool_claim ON agent_runs(target_pool_id, status, queued_at);
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {

@@ -33,10 +33,11 @@ func (r *AgentRunRepository) Insert(ctx context.Context, run *models.AgentRun) (
 		status = models.AgentRunStatusQueued
 	}
 	res, err := r.db.ExecWriteContext(ctx, `
-		INSERT INTO agent_runs(workspace_id, item_id, binding_id, status)
-		VALUES (?, ?, ?, ?)
+		INSERT INTO agent_runs(workspace_id, item_id, binding_id, target_pool_id, status)
+		VALUES (?, ?, ?, ?, ?)
 	`,
-		run.WorkspaceID, nullIntArg(run.ItemID), nullIntArg(run.BindingID), status,
+		run.WorkspaceID, nullIntArg(run.ItemID), nullIntArg(run.BindingID),
+		nullIntArg(run.TargetPoolID), status,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("failed to insert agent_run: %w", err)
@@ -52,19 +53,19 @@ func (r *AgentRunRepository) Insert(ctx context.Context, run *models.AgentRun) (
 func (r *AgentRunRepository) Get(ctx context.Context, id int) (*models.AgentRun, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, workspace_id, item_id, binding_id, status, queued_at, started_at, ended_at,
-		       container_id, error, created_at, updated_at
+		       container_id, runner_id, target_pool_id, error, created_at, updated_at
 		FROM agent_runs WHERE id = ?
 	`, id)
 
 	run := &models.AgentRun{}
-	var itemID, bindingID sql.NullInt64
+	var itemID, bindingID, runnerID, targetPoolID sql.NullInt64
 	var startedAt, endedAt sql.NullTime
 	var containerID, errMsg sql.NullString
 
 	if err := row.Scan(
 		&run.ID, &run.WorkspaceID, &itemID, &bindingID, &run.Status,
 		&run.QueuedAt, &startedAt, &endedAt,
-		&containerID, &errMsg, &run.CreatedAt, &run.UpdatedAt,
+		&containerID, &runnerID, &targetPoolID, &errMsg, &run.CreatedAt, &run.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
@@ -75,6 +76,14 @@ func (r *AgentRunRepository) Get(ctx context.Context, id int) (*models.AgentRun,
 	if bindingID.Valid {
 		v := int(bindingID.Int64)
 		run.BindingID = &v
+	}
+	if runnerID.Valid {
+		v := int(runnerID.Int64)
+		run.RunnerID = &v
+	}
+	if targetPoolID.Valid {
+		v := int(targetPoolID.Int64)
+		run.TargetPoolID = &v
 	}
 	if startedAt.Valid {
 		run.StartedAt = &startedAt.Time
@@ -126,6 +135,60 @@ func (r *AgentRunRepository) MarkRunning(ctx context.Context, id int, containerI
 		return fmt.Errorf("failed to mark agent_run running: %w", err)
 	}
 	return nil
+}
+
+// ClaimQueued atomically claims the oldest queued run targeted at the given
+// pool, transitioning it queued→running and stamping the claiming runner +
+// started_at. It is the DB-as-queue primitive a remote runner polls: the
+// agent_runs table itself is the queue (Initiative WI-141). Returns
+// (nil, nil) when no queued run is available for the pool.
+//
+// Atomicity uses the same status-guarded CAS as MarkRunning: pick a
+// candidate, then UPDATE ... WHERE id=? AND status='queued'. If a racing
+// runner won the row first, the guarded update affects zero rows and we
+// retry with the next candidate. This needs no FOR UPDATE / SKIP LOCKED, so
+// it behaves identically on SQLite and Postgres.
+func (r *AgentRunRepository) ClaimQueued(ctx context.Context, poolID, runnerID int, now time.Time) (*models.AgentRun, error) {
+	const maxAttempts = 16
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		row := r.db.QueryRowContext(ctx, `
+			SELECT id FROM agent_runs
+			WHERE status = ? AND target_pool_id = ?
+			ORDER BY queued_at ASC
+			LIMIT 1
+		`, models.AgentRunStatusQueued, poolID)
+		var id int
+		switch err := row.Scan(&id); err {
+		case sql.ErrNoRows:
+			return nil, nil
+		case nil:
+			// fall through to the guarded claim
+		default:
+			return nil, fmt.Errorf("claim queued: select candidate: %w", err)
+		}
+
+		res, err := r.db.ExecWriteContext(ctx, `
+			UPDATE agent_runs
+			SET status = ?, runner_id = ?, started_at = ?, updated_at = ?
+			WHERE id = ? AND status = ?
+		`,
+			models.AgentRunStatusRunning, runnerID, now, now,
+			id, models.AgentRunStatusQueued,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("claim queued: mark running: %w", err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("claim queued: rows affected: %w", err)
+		}
+		if n == 1 {
+			return r.Get(ctx, id)
+		}
+		// Lost the race for this candidate; try the next queued run.
+	}
+	// Heavy contention exhausted the retry budget; the caller polls again.
+	return nil, nil
 }
 
 // SetContainerID records the spawned container id on an existing run row.

@@ -42,8 +42,15 @@ type AgentRun struct {
 	EndedAt     *time.Time `json:"ended_at,omitempty"`
 	ContainerID string     `json:"container_id,omitempty"`
 	Error       string     `json:"error,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	// TargetPoolID is the runner_pool capability this run is dispatched to,
+	// or nil for the local in-process pool (Initiative WI-141). Remote
+	// runners claim queued runs scoped by this value.
+	TargetPoolID *int `json:"target_pool_id,omitempty"`
+	// RunnerID is the runner_instances row that executed this run, or nil
+	// for the in-process local runner. Audit only; soft ref.
+	RunnerID  *int      `json:"runner_id,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // AgentRunEvent is one entry on the NDJSON-style stream pi emits to stdout
