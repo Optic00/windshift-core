@@ -276,21 +276,23 @@ type CommentWithDetails struct {
 // Get retrieves a comment by ID with author details
 func (s *CommentService) Get(commentID int) (*CommentWithDetails, error) {
 	var comment CommentWithDetails
-	var authorID sql.NullInt64
-	var authorFirstName, authorLastName, authorEmail sql.NullString
+	var authorID, portalCustomerID sql.NullInt64
+	var authorName, authorEmail sql.NullString
 
 	err := s.db.QueryRow(`
-		SELECT c.id, c.item_id, c.author_id, c.content, c.is_private, c.created_at, c.updated_at,
-		       u.first_name, u.last_name, u.email,
+		SELECT c.id, c.item_id, c.author_id, c.portal_customer_id, c.content, c.is_private, c.created_at, c.updated_at,
+		       COALESCE(NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), ''), pc.name) AS author_name,
+		       COALESCE(u.email, pc.email) AS author_email,
 		       i.workspace_id, i.title
 		FROM comments c
 		LEFT JOIN users u ON c.author_id = u.id
+		LEFT JOIN portal_customers pc ON c.portal_customer_id = pc.id
 		JOIN items i ON c.item_id = i.id
 		WHERE c.id = ?
 	`, commentID).Scan(
-		&comment.ID, &comment.ItemID, &authorID, &comment.Content, &comment.IsPrivate,
+		&comment.ID, &comment.ItemID, &authorID, &portalCustomerID, &comment.Content, &comment.IsPrivate,
 		&comment.CreatedAt, &comment.UpdatedAt,
-		&authorFirstName, &authorLastName, &authorEmail,
+		&authorName, &authorEmail,
 		&comment.WorkspaceID, &comment.ItemTitle,
 	)
 
@@ -305,8 +307,12 @@ func (s *CommentService) Get(commentID int) (*CommentWithDetails, error) {
 		id := int(authorID.Int64)
 		comment.AuthorID = &id
 	}
-	if authorFirstName.Valid && authorLastName.Valid {
-		comment.AuthorName = fmt.Sprintf("%s %s", authorFirstName.String, authorLastName.String)
+	if portalCustomerID.Valid {
+		id := int(portalCustomerID.Int64)
+		comment.PortalCustomerID = &id
+	}
+	if authorName.Valid {
+		comment.AuthorName = authorName.String
 	}
 	if authorEmail.Valid {
 		comment.AuthorEmail = authorEmail.String
@@ -320,14 +326,15 @@ func (s *CommentService) Update(commentID int, content string, userID int) (*mod
 	// Sanitize content (strips HTML tags + dangerous Markdown URLs)
 	sanitizedContent := utils.SanitizeCommentContent(content)
 
-	// Check if comment exists and get author
-	var authorID int
-	err := s.db.QueryRow("SELECT author_id FROM comments WHERE id = ?", commentID).Scan(&authorID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("comment not found: %d", commentID)
-	}
+	// Check if comment exists. Portal-authored comments have a NULL author_id,
+	// so existence must not depend on scanning author_id into a non-null int.
+	var exists bool
+	err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM comments WHERE id = ?)", commentID).Scan(&exists)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check comment: %w", err)
+	}
+	if !exists {
+		return nil, fmt.Errorf("comment not found: %d", commentID)
 	}
 
 	// Update the comment
@@ -341,19 +348,21 @@ func (s *CommentService) Update(commentID int, content string, userID int) (*mod
 
 	// Fetch and return the updated comment
 	var comment models.Comment
-	var authorFirstName, authorLastName, authorEmail sql.NullString
-	var authorIDNull sql.NullInt64
+	var authorName, authorEmail sql.NullString
+	var authorIDNull, portalCustomerID sql.NullInt64
 
 	err = s.db.QueryRow(`
-		SELECT c.id, c.item_id, c.author_id, c.content, c.is_private, c.created_at, c.updated_at,
-		       u.first_name, u.last_name, u.email
+		SELECT c.id, c.item_id, c.author_id, c.portal_customer_id, c.content, c.is_private, c.created_at, c.updated_at,
+		       COALESCE(NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), ''), pc.name) AS author_name,
+		       COALESCE(u.email, pc.email) AS author_email
 		FROM comments c
 		LEFT JOIN users u ON c.author_id = u.id
+		LEFT JOIN portal_customers pc ON c.portal_customer_id = pc.id
 		WHERE c.id = ?
 	`, commentID).Scan(
-		&comment.ID, &comment.ItemID, &authorIDNull, &comment.Content, &comment.IsPrivate,
+		&comment.ID, &comment.ItemID, &authorIDNull, &portalCustomerID, &comment.Content, &comment.IsPrivate,
 		&comment.CreatedAt, &comment.UpdatedAt,
-		&authorFirstName, &authorLastName, &authorEmail,
+		&authorName, &authorEmail,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch updated comment: %w", err)
@@ -363,8 +372,12 @@ func (s *CommentService) Update(commentID int, content string, userID int) (*mod
 		id := int(authorIDNull.Int64)
 		comment.AuthorID = &id
 	}
-	if authorFirstName.Valid && authorLastName.Valid {
-		comment.AuthorName = fmt.Sprintf("%s %s", authorFirstName.String, authorLastName.String)
+	if portalCustomerID.Valid {
+		id := int(portalCustomerID.Int64)
+		comment.PortalCustomerID = &id
+	}
+	if authorName.Valid {
+		comment.AuthorName = authorName.String
 	}
 	if authorEmail.Valid {
 		comment.AuthorEmail = authorEmail.String
@@ -396,10 +409,12 @@ func (s *CommentService) Delete(commentID int) error {
 // GetByItemID retrieves all comments for an item
 func (s *CommentService) GetByItemID(itemID int) ([]models.Comment, error) {
 	rows, err := s.db.Query(`
-		SELECT c.id, c.item_id, c.author_id, c.content, c.is_private, c.created_at, c.updated_at,
-		       u.first_name || ' ' || u.last_name as author_name, u.email as author_email
+		SELECT c.id, c.item_id, c.author_id, c.portal_customer_id, c.content, c.is_private, c.created_at, c.updated_at,
+		       COALESCE(NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), ''), pc.name) AS author_name,
+		       COALESCE(u.email, pc.email) AS author_email
 		FROM comments c
 		LEFT JOIN users u ON c.author_id = u.id
+		LEFT JOIN portal_customers pc ON c.portal_customer_id = pc.id
 		WHERE c.item_id = ?
 		ORDER BY c.created_at DESC
 	`, itemID)
@@ -411,11 +426,11 @@ func (s *CommentService) GetByItemID(itemID int) ([]models.Comment, error) {
 	var comments []models.Comment
 	for rows.Next() {
 		var c models.Comment
-		var authorID sql.NullInt64
+		var authorID, portalCustomerID sql.NullInt64
 		var authorName, authorEmail sql.NullString
 
 		err := rows.Scan(
-			&c.ID, &c.ItemID, &authorID, &c.Content, &c.IsPrivate,
+			&c.ID, &c.ItemID, &authorID, &portalCustomerID, &c.Content, &c.IsPrivate,
 			&c.CreatedAt, &c.UpdatedAt, &authorName, &authorEmail,
 		)
 		if err != nil {
@@ -425,6 +440,10 @@ func (s *CommentService) GetByItemID(itemID int) ([]models.Comment, error) {
 		if authorID.Valid {
 			id := int(authorID.Int64)
 			c.AuthorID = &id
+		}
+		if portalCustomerID.Valid {
+			id := int(portalCustomerID.Int64)
+			c.PortalCustomerID = &id
 		}
 		if authorName.Valid {
 			c.AuthorName = authorName.String
@@ -464,15 +483,20 @@ func (s *CommentService) GetWorkspaceIDForComment(commentID int) (int, error) {
 	return workspaceID, nil
 }
 
-// GetAuthorID returns the author ID of a comment
-func (s *CommentService) GetAuthorID(commentID int) (int, error) {
-	var authorID int
+// GetAuthorID returns the internal author ID of a comment. Portal-authored
+// comments have no internal author, so they return nil rather than an error.
+func (s *CommentService) GetAuthorID(commentID int) (*int, error) {
+	var authorID sql.NullInt64
 	err := s.db.QueryRow("SELECT author_id FROM comments WHERE id = ?", commentID).Scan(&authorID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, fmt.Errorf("comment not found: %d", commentID)
+		return nil, fmt.Errorf("comment not found: %d", commentID)
 	}
 	if err != nil {
-		return 0, fmt.Errorf("failed to get author ID: %w", err)
+		return nil, fmt.Errorf("failed to get author ID: %w", err)
 	}
-	return authorID, nil
+	if !authorID.Valid {
+		return nil, nil
+	}
+	id := int(authorID.Int64)
+	return &id, nil
 }

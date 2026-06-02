@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"windshift/internal/auth"
+	"windshift/internal/llm"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 )
@@ -65,6 +66,18 @@ type LLMCapabilityResolver interface {
 	WorkspaceLLMConnectionIDs(ctx context.Context, workspaceID int) ([]int, error)
 }
 
+// LLMRuntimeResolver returns the provider runtime config for a connection that
+// Create has already validated against the workspace's exposed capabilities.
+type LLMRuntimeResolver interface {
+	ConnectionRuntime(ctx context.Context, connectionID int) (*llm.ConnectionRuntimeConfig, error)
+}
+
+// AgentRunContextResolver returns workspace/item identifiers the runner needs
+// to render ws.toml and tell the agent which work item it owns.
+type AgentRunContextResolver interface {
+	AgentRunContext(ctx context.Context, workspaceID, itemID int) (repository.AgentRunContext, error)
+}
+
 // ErrLLMConnectionNotExposed is returned by Create when the chosen
 // llm_connection_id is not exposed to the workspace as an action
 // capability. The handler maps it to a 400.
@@ -80,24 +93,30 @@ var ErrLLMConnectionNotExposed = errors.New("binding service: llm connection is 
 // global flag off doesn't auto-purge existing bindings. Operators who
 // want stricter behavior delete the affected rows explicitly.
 type BindingService struct {
-	repo     *repository.WorkspaceAgentBindingRepository
-	identity *AgentActingIdentityService
-	runs     *RunService
-	scmCreds SCMCredentialResolver
-	llmCaps  LLMCapabilityResolver
-	logger   *log.Logger
+	repo       *repository.WorkspaceAgentBindingRepository
+	identity   *AgentActingIdentityService
+	runs       *RunService
+	scmCreds   SCMCredentialResolver
+	llmCaps    LLMCapabilityResolver
+	llmRuntime LLMRuntimeResolver
+	runContext AgentRunContextResolver
+	apiURL     string
+	logger     *log.Logger
 }
 
 // BindingServiceOptions wires the service. Runs is optional: when nil,
 // MaybeStartRunForAssignee logs and no-ops on every call — useful for
 // tests that exercise the binding CRUD path without a RunService.
 type BindingServiceOptions struct {
-	Repo     *repository.WorkspaceAgentBindingRepository
-	Identity *AgentActingIdentityService
-	Runs     *RunService
-	SCMCreds SCMCredentialResolver
-	LLMCaps  LLMCapabilityResolver
-	Logger   *log.Logger
+	Repo       *repository.WorkspaceAgentBindingRepository
+	Identity   *AgentActingIdentityService
+	Runs       *RunService
+	SCMCreds   SCMCredentialResolver
+	LLMCaps    LLMCapabilityResolver
+	LLMRuntime LLMRuntimeResolver
+	RunContext AgentRunContextResolver
+	APIURL     string
+	Logger     *log.Logger
 }
 
 // NewBindingService constructs a BindingService. Repo + Identity are
@@ -114,12 +133,15 @@ func NewBindingService(opts BindingServiceOptions) (*BindingService, error) {
 		logger = log.Default()
 	}
 	return &BindingService{
-		repo:     opts.Repo,
-		identity: opts.Identity,
-		runs:     opts.Runs,
-		scmCreds: opts.SCMCreds,
-		llmCaps:  opts.LLMCaps,
-		logger:   logger,
+		repo:       opts.Repo,
+		identity:   opts.Identity,
+		runs:       opts.Runs,
+		scmCreds:   opts.SCMCreds,
+		llmCaps:    opts.LLMCaps,
+		llmRuntime: opts.LLMRuntime,
+		runContext: opts.RunContext,
+		apiURL:     opts.APIURL,
+		logger:     logger,
 	}, nil
 }
 
@@ -270,10 +292,15 @@ func (s *BindingService) MaybeStartRunForAssignee(ctx context.Context, workspace
 		}
 	}
 
+	env, err := s.buildRunEnv(ctx, workspaceID, itemID)
+	if err != nil {
+		return err
+	}
 	req := RunRequest{
 		WorkspaceID: workspaceID,
 		ItemID:      &itemID,
 		BindingID:   binding.ID,
+		Env:         env,
 	}
 	if binding.HasRepo() {
 		// HasRepo guarantees SCMConnectionID is set; this is the only
@@ -303,6 +330,19 @@ func (s *BindingService) MaybeStartRunForAssignee(ctx context.Context, workspace
 			BaseRef:     binding.RepoBaseRef,
 			Token:       token,
 		}
+		// Forward the same token to the sandbox through the env-file path so
+		// the agent can push its run branch. The entrypoint turns it into a
+		// per-container GIT_ASKPASS helper; it never appears in docker argv or
+		// in .git/config.
+		req.Env["AGENT_GIT_TOKEN"] = token
+		req.Env["GIT_TERMINAL_PROMPT"] = "0"
+	}
+	if binding.LLMConnectionID != nil && s.llmRuntime != nil {
+		llmCfg, err := s.llmRuntime.ConnectionRuntime(ctx, *binding.LLMConnectionID)
+		if err != nil {
+			return fmt.Errorf("resolve llm runtime: %w", err)
+		}
+		applyLLMRuntimeEnv(req.Env, llmCfg)
 	}
 	// Mint a per-run ws token only if the RunService has a token service
 	// configured; otherwise the binding still fires but the container
@@ -322,6 +362,53 @@ func (s *BindingService) MaybeStartRunForAssignee(ctx context.Context, workspace
 	}
 	s.logger.Printf("binding service: started run=%d for item=%d binding=%d acting_user=%d", runID, itemID, binding.ID, binding.ActingUserID)
 	return nil
+}
+
+func (s *BindingService) buildRunEnv(ctx context.Context, workspaceID, itemID int) (map[string]string, error) {
+	env := map[string]string{
+		"WS_WORKSPACE_ID":      fmt.Sprintf("%d", workspaceID),
+		"WINDSHIFT_ITEM_DB_ID": fmt.Sprintf("%d", itemID),
+	}
+	if s.apiURL != "" {
+		env["WS_API_URL"] = s.apiURL
+	}
+	if s.runContext == nil {
+		env["WINDSHIFT_ITEM_ID"] = fmt.Sprintf("%d", itemID)
+		return env, nil
+	}
+	runCtx, err := s.runContext.AgentRunContext(ctx, workspaceID, itemID)
+	if err != nil {
+		return nil, err
+	}
+	if runCtx.WorkspaceKey != "" {
+		env["WS_WORKSPACE_KEY"] = runCtx.WorkspaceKey
+	}
+	if runCtx.ItemNumber > 0 {
+		env["WS_ITEM_NUMBER"] = fmt.Sprintf("%d", runCtx.ItemNumber)
+	}
+	if runCtx.ItemKey != "" {
+		env["WINDSHIFT_ITEM_ID"] = runCtx.ItemKey
+		env["WINDSHIFT_ITEM_KEY"] = runCtx.ItemKey
+	} else {
+		env["WINDSHIFT_ITEM_ID"] = fmt.Sprintf("%d", itemID)
+	}
+	return env, nil
+}
+
+func applyLLMRuntimeEnv(env map[string]string, cfg *llm.ConnectionRuntimeConfig) {
+	if cfg == nil {
+		return
+	}
+	env["LLM_PROVIDER"] = cfg.ProviderType
+	env["LLM_PROVIDER_TYPE"] = cfg.ProviderType
+	env["LLM_API_FORMAT"] = cfg.APIFormat
+	env["LLM_MODEL"] = cfg.Model
+	if cfg.APIKey != "" {
+		env["LLM_API_KEY"] = cfg.APIKey
+	}
+	if cfg.BaseURL != "" {
+		env["LLM_BASE_URL"] = cfg.BaseURL
+	}
 }
 
 // containsInt reports whether xs contains v.

@@ -282,6 +282,13 @@ type UserRoleAssignmentRequest struct {
 	RoleID      int `json:"role_id"`
 }
 
+// GroupRoleAssignmentRequest represents the payload for assigning a role to a group
+type GroupRoleAssignmentRequest struct {
+	GroupID     int `json:"group_id"`
+	WorkspaceID int `json:"workspace_id"`
+	RoleID      int `json:"role_id"`
+}
+
 // UserDirectPermissionRequest represents the payload for granting a direct permission
 type UserDirectPermissionRequest struct {
 	UserID       int `json:"user_id"`

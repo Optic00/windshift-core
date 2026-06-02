@@ -32,18 +32,20 @@ func (h *CommentHandler) checkCommentEditPermission(w http.ResponseWriter, r *ht
 		return false
 	}
 
-	if authorID != userID {
-		workspaceID, err := h.commentService.GetWorkspaceIDForComment(commentID)
-		if err != nil {
-			h.RespondInternalError(w, r)
-			return false
-		}
+	if authorID != nil && *authorID == userID {
+		return true
+	}
 
-		canEdit, permErr := h.Perms.CanEditWorkspace(userID, workspaceID)
-		if permErr != nil || !canEdit {
-			h.RespondNotFound(w, r)
-			return false
-		}
+	workspaceID, err := h.commentService.GetWorkspaceIDForComment(commentID)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return false
+	}
+
+	canEdit, permErr := h.Perms.CanEditWorkspace(userID, workspaceID)
+	if permErr != nil || !canEdit {
+		h.RespondNotFound(w, r)
+		return false
 	}
 
 	return true

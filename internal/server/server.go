@@ -640,6 +640,30 @@ func (s *Server) initialize() error {
 	// below resolve the same overridable prompts.
 	promptStore := llm.NewPromptStore(cfg.LLM.PromptsDir)
 
+	// Load LLM provider definitions before coding-agent bindings are wired: the
+	// binding trigger resolves per-binding llm_connection_id rows into pi runtime
+	// env, and that requires the same provider registry the AI handlers use.
+	if cfg.LLM.ProvidersFile != "" {
+		if err := llm.LoadProviders(cfg.LLM.ProvidersFile); err != nil {
+			slog.Error("failed to load custom LLM providers file, falling back to built-in defaults", "path", cfg.LLM.ProvidersFile, "error", err)
+			llm.LoadDefaultProviders()
+		} else {
+			slog.Info("loaded custom LLM providers", "path", cfg.LLM.ProvidersFile)
+		}
+	} else {
+		llm.LoadDefaultProviders()
+	}
+
+	fallbackLLMClient := llm.NewClient(llm.Config{Endpoint: cfg.LLM.Endpoint})
+	if fallbackLLMClient.Available() {
+		slog.Info("LLM fallback service configured", slog.String("endpoint", cfg.LLM.Endpoint))
+	} else {
+		slog.Info("LLM fallback service not configured")
+	}
+	llmManager := llm.NewConnectionManager(s.db, scmProviderHandler.GetEncryption(), fallbackLLMClient)
+	llmModelCache := llm.NewModelCache(s.db)
+	llmModelRefresher := llm.NewModelRefresher(llmModelCache)
+
 	var codingRunSvc *services.RunService
 	if cfg.CodingAgent.RunnerImage != "" {
 		var bootErr error
@@ -652,12 +676,19 @@ func (s *Server) initialize() error {
 		}
 	}
 
+	agentAPIURL := cfg.CodingAgent.WSAPIURL
+	if agentAPIURL == "" {
+		agentAPIURL = baseURL
+	}
 	bindingSvc, _ := services.NewBindingService(services.BindingServiceOptions{
-		Repo:     agentBindingRepo,
-		Identity: agentIdentitySvc,
-		Runs:     codingRunSvc,
-		SCMCreds: &scmCredsAdapter{cr: scmCredResolver},
-		LLMCaps:  repository.NewActionRepository(s.db),
+		Repo:       agentBindingRepo,
+		Identity:   agentIdentitySvc,
+		Runs:       codingRunSvc,
+		SCMCreds:   &scmCredsAdapter{cr: scmCredResolver},
+		LLMCaps:    repository.NewActionRepository(s.db),
+		LLMRuntime: llmManager,
+		RunContext: agentBindingRepo,
+		APIURL:     agentAPIURL,
 	})
 	agentBindingHandler := handlers.NewWorkspaceAgentBindingHandler(bindingSvc, agentIdentitySvc, permService, logger.NewAuditor(s.db))
 	agentRunHandler := handlers.NewAgentRunHandler(repository.NewAgentRunRepository(s.db), codingRunSvc, permService)
@@ -963,28 +994,7 @@ func (s *Server) initialize() error {
 	}
 	systemHandler := handlers.NewSystemHandler(shutdownChan)
 
-	// Load LLM provider definitions
-	if cfg.LLM.ProvidersFile != "" {
-		if err := llm.LoadProviders(cfg.LLM.ProvidersFile); err != nil {
-			slog.Error("failed to load custom LLM providers file, falling back to built-in defaults", "path", cfg.LLM.ProvidersFile, "error", err)
-			llm.LoadDefaultProviders()
-		} else {
-			slog.Info("loaded custom LLM providers", "path", cfg.LLM.ProvidersFile)
-		}
-	} else {
-		llm.LoadDefaultProviders()
-	}
-
 	// LLM connection manager and AI handler
-	fallbackLLMClient := llm.NewClient(llm.Config{Endpoint: cfg.LLM.Endpoint})
-	if fallbackLLMClient.Available() {
-		slog.Info("LLM fallback service configured", slog.String("endpoint", cfg.LLM.Endpoint))
-	} else {
-		slog.Info("LLM fallback service not configured")
-	}
-	llmManager := llm.NewConnectionManager(s.db, scmProviderHandler.GetEncryption(), fallbackLLMClient)
-	llmModelCache := llm.NewModelCache(s.db)
-	llmModelRefresher := llm.NewModelRefresher(llmModelCache)
 	llmConnHandler := handlers.NewLLMConnectionHandler(llmManager, logger.NewAuditor(s.db), llmModelCache, llmModelRefresher)
 	aiHandler := handlers.NewAIHandler(s.db, llmManager, permService, timePermissionService, timerService, promptStore, s.actionService)
 

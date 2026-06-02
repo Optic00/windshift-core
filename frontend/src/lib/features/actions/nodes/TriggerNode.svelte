@@ -60,7 +60,7 @@
 <GenericTriggerNode
   {data}
   {selected}
-  flowStore={actionFlowStore}
+  flowStore={data.flowStore || actionFlowStore}
   {triggerLabels}
   title={t('actions.nodes.trigger')}
   {configSummaryFn}

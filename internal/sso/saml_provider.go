@@ -171,9 +171,12 @@ func fetchIDPMetadata(metadataURL string) (*saml.EntityDescriptor, error) {
 		return nil, fmt.Errorf("invalid metadata URL: %w", err)
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), oidcHTTPTimeout)
+	defer cancel()
+
 	metadata, err := samlsp.FetchMetadata(
-		context.TODO(),
-		http.DefaultClient,
+		ctx,
+		newSSRFSafeOIDCClient(oidcHTTPTimeout, nil),
 		*mdURL,
 	)
 	if err != nil {

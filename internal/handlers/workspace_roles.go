@@ -171,6 +171,24 @@ func (h *WorkspaceRoleHandler) AssignRoleToUser(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// Check that the target workspace exists and is active. Without this the
+	// INSERT below would surface a FK violation as a generic 500; validate up
+	// front so the caller gets a clean not-found / bad-request instead.
+	var workspaceActive bool
+	err = readDB.QueryRow("SELECT active FROM workspaces WHERE id = ?", req.WorkspaceID).Scan(&workspaceActive)
+	if errors.Is(err, sql.ErrNoRows) {
+		respondNotFound(w, r, "workspace")
+		return
+	}
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	if !workspaceActive {
+		respondBadRequest(w, r, "cannot assign roles in an inactive workspace")
+		return
+	}
+
 	// Count existing assignments for this role+workspace before the operation
 	var countBefore int
 	_ = readDB.QueryRow(`
@@ -497,6 +515,323 @@ func (h *WorkspaceRoleHandler) GetWorkspaceRoleAssignments(w http.ResponseWriter
 	})
 
 	respondJSONOK(w, users)
+}
+
+// AssignRoleToGroup assigns a workspace role to a group. Mirrors AssignRoleToUser
+// but writes group_workspace_roles; the cache builder already joins this table on
+// every permission path, so the only missing piece was a write surface.
+func (h *WorkspaceRoleHandler) AssignRoleToGroup(w http.ResponseWriter, r *http.Request) {
+	readDB, ok := h.requireReadDB(w, r)
+	if !ok {
+		return
+	}
+	writeDB, ok := h.requireWriteDB(w, r)
+	if !ok {
+		return
+	}
+
+	req, ok := decodeJSON[models.GroupRoleAssignmentRequest](w, r)
+	if !ok {
+		return
+	}
+
+	granterID := h.getSessionUserID(r)
+	if granterID == 0 {
+		respondUnauthorized(w, r)
+		return
+	}
+
+	// Check that the role exists
+	var roleExists bool
+	err := readDB.QueryRow("SELECT EXISTS(SELECT 1 FROM workspace_roles WHERE id = ?)", req.RoleID).Scan(&roleExists)
+	if err != nil || !roleExists {
+		respondNotFound(w, r, "role")
+		return
+	}
+
+	// Check that the group exists
+	var groupExists bool
+	err = readDB.QueryRow("SELECT EXISTS(SELECT 1 FROM groups WHERE id = ?)", req.GroupID).Scan(&groupExists)
+	if err != nil || !groupExists {
+		respondNotFound(w, r, "group")
+		return
+	}
+
+	// Check that the target workspace exists and is active (see AssignRoleToUser).
+	var workspaceActive bool
+	err = readDB.QueryRow("SELECT active FROM workspaces WHERE id = ?", req.WorkspaceID).Scan(&workspaceActive)
+	if errors.Is(err, sql.ErrNoRows) {
+		respondNotFound(w, r, "workspace")
+		return
+	}
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	if !workspaceActive {
+		respondBadRequest(w, r, "cannot assign roles in an inactive workspace")
+		return
+	}
+
+	// Count existing assignments for this role+workspace before the operation
+	var countBefore int
+	_ = readDB.QueryRow(`
+		SELECT COUNT(*) FROM user_workspace_roles WHERE workspace_id = ? AND role_id = ?
+		UNION ALL
+		SELECT COUNT(*) FROM group_workspace_roles WHERE workspace_id = ? AND role_id = ?
+	`, req.WorkspaceID, req.RoleID, req.WorkspaceID, req.RoleID).Scan(&countBefore)
+
+	_, err = writeDB.Exec(`
+		INSERT INTO group_workspace_roles (group_id, workspace_id, role_id, granted_by, granted_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(group_id, workspace_id, role_id) DO UPDATE SET granted_by = ?, granted_at = ?
+	`, req.GroupID, req.WorkspaceID, req.RoleID, granterID, time.Now(), granterID, time.Now())
+
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+
+	// Invalidate cache: if this is the first assignment for this role+workspace,
+	// everyone's implicit access changed → full cache reset. Otherwise only the
+	// group's members are affected.
+	var warnings []models.APIWarning
+	if h.permissionService != nil {
+		if countBefore == 0 {
+			h.permissionService.OnEveryoneAccessChanged()
+		} else if err := h.permissionService.OnGroupPermissionChanged(req.GroupID); err != nil {
+			warnings = append(warnings, createCacheWarning("permission", err, fmt.Sprintf("group_id:%d", req.GroupID)))
+		}
+	}
+
+	// Log audit event
+	currentUser := utils.GetCurrentUser(r)
+	if currentUser != nil {
+		var roleName, groupName, workspaceName string
+		_ = readDB.QueryRow("SELECT name FROM workspace_roles WHERE id = ?", req.RoleID).Scan(&roleName)
+		_ = readDB.QueryRow("SELECT name FROM groups WHERE id = ?", req.GroupID).Scan(&groupName)
+		_ = readDB.QueryRow("SELECT name FROM workspaces WHERE id = ?", req.WorkspaceID).Scan(&workspaceName)
+
+		_ = logger.LogAudit(h.db, logger.AuditEvent{
+			UserID:       currentUser.ID,
+			Username:     currentUser.Username,
+			IPAddress:    utils.GetClientIP(r),
+			UserAgent:    r.UserAgent(),
+			ActionType:   logger.ActionRoleAssign,
+			ResourceType: logger.ResourceRole,
+			ResourceID:   &req.RoleID,
+			ResourceName: roleName,
+			Details: map[string]interface{}{
+				"target_group_id":   req.GroupID,
+				"target_group_name": groupName,
+				"role_id":           req.RoleID,
+				"role_name":         roleName,
+				"workspace_id":      req.WorkspaceID,
+				"workspace_name":    workspaceName,
+			},
+			Success: true,
+		})
+	}
+
+	respondJSONCreatedWithWarnings(w, map[string]string{"message": "Role assigned to group successfully"}, warnings)
+}
+
+// RevokeRoleFromGroup revokes a workspace role from a group. Mirrors RevokeRoleFromUser.
+func (h *WorkspaceRoleHandler) RevokeRoleFromGroup(w http.ResponseWriter, r *http.Request) {
+	readDB, ok := h.requireReadDB(w, r)
+	if !ok {
+		return
+	}
+	writeDB, ok := h.requireWriteDB(w, r)
+	if !ok {
+		return
+	}
+
+	groupID, ok := requireIDParam(w, r, "groupId")
+	if !ok {
+		return
+	}
+
+	workspaceID, ok := requireIDParam(w, r, "workspaceId")
+	if !ok {
+		return
+	}
+
+	roleID, ok := requireIDParam(w, r, "roleId")
+	if !ok {
+		return
+	}
+
+	// Count existing assignments for this role+workspace before the operation
+	var countBefore int
+	_ = readDB.QueryRow(`
+		SELECT (SELECT COUNT(*) FROM user_workspace_roles WHERE workspace_id = ? AND role_id = ?)
+		     + (SELECT COUNT(*) FROM group_workspace_roles WHERE workspace_id = ? AND role_id = ?)
+	`, workspaceID, roleID, workspaceID, roleID).Scan(&countBefore)
+
+	result, err := writeDB.Exec(`
+		DELETE FROM group_workspace_roles
+		WHERE group_id = ? AND workspace_id = ? AND role_id = ?
+	`, groupID, workspaceID, roleID)
+
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		respondNotFound(w, r, "role_assignment")
+		return
+	}
+
+	// Invalidate cache: if this was the last assignment for this role+workspace,
+	// everyone's implicit access changed → full cache reset. Otherwise only the
+	// group's members are affected.
+	var warnings []models.APIWarning
+	if h.permissionService != nil {
+		if countBefore == 1 {
+			h.permissionService.OnEveryoneAccessChanged()
+		} else if err := h.permissionService.OnGroupPermissionChanged(groupID); err != nil {
+			warnings = append(warnings, createCacheWarning("permission", err, fmt.Sprintf("group_id:%d", groupID)))
+		}
+	}
+
+	// Log audit event
+	currentUser := utils.GetCurrentUser(r)
+	if currentUser != nil {
+		var roleName, groupName, workspaceName string
+		_ = readDB.QueryRow("SELECT name FROM workspace_roles WHERE id = ?", roleID).Scan(&roleName)
+		_ = readDB.QueryRow("SELECT name FROM groups WHERE id = ?", groupID).Scan(&groupName)
+		_ = readDB.QueryRow("SELECT name FROM workspaces WHERE id = ?", workspaceID).Scan(&workspaceName)
+
+		_ = logger.LogAudit(h.db, logger.AuditEvent{
+			UserID:       currentUser.ID,
+			Username:     currentUser.Username,
+			IPAddress:    utils.GetClientIP(r),
+			UserAgent:    r.UserAgent(),
+			ActionType:   logger.ActionRoleRevoke,
+			ResourceType: logger.ResourceRole,
+			ResourceID:   &roleID,
+			ResourceName: roleName,
+			Details: map[string]interface{}{
+				"target_group_id":   groupID,
+				"target_group_name": groupName,
+				"role_id":           roleID,
+				"role_name":         roleName,
+				"workspace_id":      workspaceID,
+				"workspace_name":    workspaceName,
+			},
+			Success: true,
+		})
+	}
+
+	if len(warnings) > 0 {
+		respondJSONOKWithWarnings(w, map[string]string{"message": "Role revoked from group successfully"}, warnings)
+	} else {
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// GetWorkspaceGroupRoleAssignments returns all groups with their role assignments
+// for a workspace. Group analog of GetWorkspaceRoleAssignments.
+func (h *WorkspaceRoleHandler) GetWorkspaceGroupRoleAssignments(w http.ResponseWriter, r *http.Request) {
+	db, ok := h.requireReadDB(w, r)
+	if !ok {
+		return
+	}
+
+	workspaceID, ok := requireIDParam(w, r, "workspaceId")
+	if !ok {
+		return
+	}
+
+	rows, err := db.Query(`
+		SELECT
+			g.id, g.name, g.description,
+			wr.id, wr.name, wr.description,
+			gwr.id, gwr.granted_at
+		FROM group_workspace_roles gwr
+		JOIN groups g ON gwr.group_id = g.id
+		JOIN workspace_roles wr ON gwr.role_id = wr.id
+		WHERE gwr.workspace_id = ?
+		ORDER BY g.name, wr.display_order
+	`, workspaceID)
+
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	defer func() { _ = rows.Close() }()
+
+	type Role struct {
+		RoleID          int    `json:"role_id"`
+		RoleName        string `json:"role_name"`
+		RoleDescription string `json:"role_description"`
+		AssignmentID    int    `json:"assignment_id"`
+	}
+
+	type GroupWithRoles struct {
+		GroupID          int    `json:"group_id"`
+		GroupName        string `json:"group_name"`
+		GroupDescription string `json:"group_description"`
+		Roles            []Role `json:"roles"`
+	}
+
+	groupMap := make(map[int]*GroupWithRoles)
+
+	for rows.Next() {
+		var groupID, roleID, assignmentID int
+		var groupName, roleName, roleDescription string
+		var groupDescription *string
+		var grantedAt time.Time
+
+		err := rows.Scan(
+			&groupID, &groupName, &groupDescription,
+			&roleID, &roleName, &roleDescription,
+			&assignmentID, &grantedAt,
+		)
+		if err != nil {
+			continue
+		}
+
+		group, exists := groupMap[groupID]
+		if !exists {
+			desc := ""
+			if groupDescription != nil {
+				desc = *groupDescription
+			}
+			group = &GroupWithRoles{
+				GroupID:          groupID,
+				GroupName:        groupName,
+				GroupDescription: desc,
+				Roles:            []Role{},
+			}
+			groupMap[groupID] = group
+		}
+
+		group.Roles = append(group.Roles, Role{
+			RoleID:          roleID,
+			RoleName:        roleName,
+			RoleDescription: roleDescription,
+			AssignmentID:    assignmentID,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+
+	groups := make([]GroupWithRoles, 0, len(groupMap))
+	for _, group := range groupMap {
+		groups = append(groups, *group)
+	}
+
+	sort.Slice(groups, func(i, j int) bool {
+		return groups[i].GroupName < groups[j].GroupName
+	})
+
+	respondJSONOK(w, groups)
 }
 
 // getSessionUserID extracts user ID from session context

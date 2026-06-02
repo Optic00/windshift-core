@@ -4,12 +4,12 @@
 # Per-run sandbox the coding-agent harness spawns to execute pi-coding-agent
 # against a mounted worktree. Phase 3 (WI-86) is the first variant that
 # bakes the real ws CLI + pi-coding-agent + windshift-guard.ts extension +
-# ws.toml.template; Phase 1-2 (WI-84 / WI-85) shipped a node-only skeleton.
+# ws.toml.template; the entrypoint now execs pi in RPC mode for live runs.
 #
 # Built from the *repo root* (the build context needs cmd/ws + go.mod):
 #
 #   docker build -f deploy/coding-agent/Dockerfile \
-#     -t windshift/coding-agent:wi-86-skeleton \
+#     -t windshift/coding-agent:local \
 #     [--build-arg INSTALL_PI=false] [--build-arg PI_VERSION=<tag>] \
 #     .
 #
@@ -49,9 +49,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # pi-coding-agent install. PI_VERSION must resolve to a published tag on
-# @earendil-works/pi-coding-agent. WI-89 (Phase 6) is where the
-# orchestrator actually drives `pi --mode rpc`; until then the binary is
-# along for the ride.
+# @earendil-works/pi-coding-agent. The entrypoint execs `pi --mode rpc`;
+# set INSTALL_PI=false only when testing the ws/env setup path locally.
 ARG INSTALL_PI=true
 ARG PI_VERSION=latest
 RUN if [ "${INSTALL_PI}" = "true" ]; then \

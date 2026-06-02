@@ -66,7 +66,7 @@ func (h *PortalHandler) getPortalCustomerID(ctx context.Context, r *http.Request
 	if h.portalSessionManager != nil {
 		portalToken, err := h.portalSessionManager.GetPortalSessionFromRequest(r)
 		if err == nil && portalToken != "" {
-			portalSession, err := h.portalSessionManager.ValidatePortalSession(portalToken)
+			portalSession, err := h.portalSessionManager.ValidatePortalSession(portalToken, clientIP)
 			if err == nil && portalSession != nil {
 				slog.Debug("portal customer authenticated via portal session", slog.String("component", "portal"), slog.Int("portal_customer_id", portalSession.PortalCustomerID))
 				return &portalSession.PortalCustomerID, nil
@@ -196,7 +196,8 @@ func (h *PortalHandler) getPortalVisibilityContext(ctx context.Context, r *http.
 	if h.portalSessionManager != nil {
 		portalToken, err := h.portalSessionManager.GetPortalSessionFromRequest(r)
 		if err == nil && portalToken != "" {
-			portalSession, err := h.portalSessionManager.ValidatePortalSession(portalToken)
+			clientIP := h.getClientIP(r)
+			portalSession, err := h.portalSessionManager.ValidatePortalSession(portalToken, clientIP)
 			if err == nil && portalSession != nil && portalSession.ChannelID != nil && *portalSession.ChannelID == channelID {
 				vc.customerOrgID = h.getPortalCustomerOrgID(ctx, portalSession.PortalCustomerID)
 			}

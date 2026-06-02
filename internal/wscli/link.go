@@ -292,13 +292,19 @@ func linkTypeAllows(lt *LinkType, srcType, tgtType string) bool {
 	if len(lt.AllowedEntityTypes) == 0 {
 		return true
 	}
-	// The server's check is a budget: it accepts the link iff each
-	// endpoint's type can be drawn from AllowedEntityTypes such that
-	// the multiset matches. For all current system types that's
-	// equivalent to "both endpoint types are in the allowed set".
-	allowed := map[string]bool{}
+	// Mirror the server's budget check exactly: each endpoint consumes one
+	// slot from allowed_entity_types. This intentionally stays as a thin
+	// client-side preflight; the server remains authoritative.
+	budget := make(map[string]int, len(lt.AllowedEntityTypes))
 	for _, t := range lt.AllowedEntityTypes {
-		allowed[t] = true
+		budget[t]++
 	}
-	return allowed[srcType] && allowed[tgtType]
+	need := map[string]int{srcType: 1}
+	need[tgtType]++
+	for t, n := range need {
+		if budget[t] < n {
+			return false
+		}
+	}
+	return true
 }

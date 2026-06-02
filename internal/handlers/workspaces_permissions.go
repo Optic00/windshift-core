@@ -9,16 +9,20 @@ import (
 
 // Helper functions for permission checking
 
+// The can* helpers fail closed when the permission service is unavailable, then
+// delegate the actual permission resolution to the shared authz.Authz primitives
+// so the semantic mapping (view→item.view, admin→workspace.admin, …) lives in one
+// place. The nil-guard stays here on purpose: authz falls back to a permissive
+// legacy SQL check when its permission service is nil, which would defeat the
+// fail-closed guarantee these handlers rely on.
+
 // canViewWorkspace checks if a user can view a workspace (has item.view permission)
 func (h *WorkspaceHandler) canViewWorkspace(userID, workspaceID int) (bool, error) {
 	if h.permissionService == nil {
 		slog.Error("permission service unavailable, denying access", slog.String("component", "workspaces"))
 		return false, nil
 	}
-
-	// HasWorkspacePermission now handles checking if workspace has restrictions
-	// and returns true if workspace has no restrictions (accessible to all)
-	return h.permissionService.HasWorkspacePermission(userID, workspaceID, models.PermissionItemView)
+	return h.authz.CanViewWorkspace(userID, workspaceID)
 }
 
 // canAdminWorkspace checks if a user can administer a workspace (has workspace.admin permission)
@@ -27,8 +31,7 @@ func (h *WorkspaceHandler) canAdminWorkspace(userID, workspaceID int) (bool, err
 		slog.Error("permission service unavailable, denying access", slog.String("component", "workspaces"))
 		return false, nil
 	}
-
-	return h.permissionService.HasWorkspacePermission(userID, workspaceID, models.PermissionWorkspaceAdmin)
+	return h.authz.HasWorkspacePermission(userID, workspaceID, models.PermissionWorkspaceAdmin)
 }
 
 // canAccessInactiveWorkspace checks if a user can access an inactive workspace
@@ -38,9 +41,8 @@ func (h *WorkspaceHandler) canAccessInactiveWorkspace(user *models.User, workspa
 		// If permission service is not available, deny access to inactive workspaces
 		return false, nil
 	}
-
 	// Check if user has workspace admin permission (system admins pass automatically)
-	return h.permissionService.HasWorkspacePermission(user.ID, workspaceID, models.PermissionWorkspaceAdmin)
+	return h.authz.HasWorkspacePermission(user.ID, workspaceID, models.PermissionWorkspaceAdmin)
 }
 
 // canCreateWorkspace checks if a user can create workspaces (has global workspace.create permission)
@@ -49,8 +51,7 @@ func (h *WorkspaceHandler) canCreateWorkspace(userID int) (bool, error) {
 		slog.Error("permission service unavailable, denying access", slog.String("component", "workspaces"))
 		return false, nil
 	}
-
-	return h.permissionService.HasGlobalPermission(userID, models.PermissionWorkspaceCreate)
+	return h.authz.HasGlobalPermission(userID, models.PermissionWorkspaceCreate)
 }
 
 // filterWorkspacesByPermissions filters a list of workspaces based on user's view permissions

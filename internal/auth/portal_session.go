@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -75,6 +76,12 @@ func NewPortalSessionManager(db database.Database, useSecureCookies, useProxy bo
 // rejected if presented on a different portal slug.
 // last review: ser, 210426, TODO: Remove inline sql
 func (sm *PortalSessionManager) CreatePortalSession(portalCustomerID, channelID int, ipAddress, userAgent string) (*PortalSession, error) {
+	// Normalise to host-only so validation can compare consistently even if a
+	// caller accidentally passes host:port.
+	if host, _, err := net.SplitHostPort(ipAddress); err == nil {
+		ipAddress = host
+	}
+
 	slog.Debug("creating portal session", slog.String("component", "portal_auth"), slog.Int("portal_customer_id", portalCustomerID), slog.Int("channel_id", channelID), slog.String("ip_address", ipAddress))
 
 	token, err := generateSessionToken()
@@ -114,9 +121,12 @@ func (sm *PortalSessionManager) CreatePortalSession(portalCustomerID, channelID 
 
 // ValidatePortalSession validates a session token and returns the session with customer info
 // last review: ser, 210426, TODO: Remove inline sql
-func (sm *PortalSessionManager) ValidatePortalSession(token string) (*PortalSession, error) {
+func (sm *PortalSessionManager) ValidatePortalSession(token, ipAddress string) (*PortalSession, error) {
 	if token == "" {
 		return nil, ErrPortalSessionInvalid
+	}
+	if host, _, err := net.SplitHostPort(ipAddress); err == nil {
+		ipAddress = host
 	}
 
 	//nolint:misspell // database column name uses British spelling
@@ -153,6 +163,29 @@ func (sm *PortalSessionManager) ValidatePortalSession(token string) (*PortalSess
 		// Clean up expired session
 		_ = sm.DeletePortalSession(token)
 		return nil, ErrPortalSessionExpired
+	}
+
+	// Validate IP address for security. Portal sessions store the client IP at
+	// creation; subsequent validations must match the same binding used by
+	// internal user sessions. Legacy rows with no recorded IP are accepted but
+	// logged so operators can investigate. Missing request IP or mismatch fails
+	// closed.
+	switch {
+	case session.IPAddress == "":
+		slog.Warn("portal session has no recorded IP, skipping bind check",
+			slog.Int("portal_customer_id", session.PortalCustomerID),
+			slog.Int("session_id", session.ID))
+	case ipAddress == "":
+		slog.Warn("request has no client IP, rejecting IP-bound portal session",
+			slog.Int("portal_customer_id", session.PortalCustomerID),
+			slog.String("session_ip", session.IPAddress))
+		return nil, ErrPortalSessionInvalid
+	case session.IPAddress != ipAddress:
+		slog.Warn("portal session IP mismatch",
+			slog.Int("portal_customer_id", session.PortalCustomerID),
+			slog.String("session_ip", session.IPAddress),
+			slog.String("request_ip", ipAddress))
+		return nil, ErrPortalSessionInvalid
 	}
 
 	if channelID.Valid {

@@ -514,7 +514,7 @@ func (pam *PortalAuthMiddleware) tryPortalAuthenticate(r *http.Request) (context
 
 	if pam.portalSessionManager != nil {
 		if token, err := pam.portalSessionManager.GetPortalSessionFromRequest(r); err == nil && token != "" {
-			if portalSession, err := pam.portalSessionManager.ValidatePortalSession(token); err == nil {
+			if portalSession, err := pam.portalSessionManager.ValidatePortalSession(token, clientIP); err == nil {
 				ctx := context.WithValue(r.Context(), ContextKeyPortalSession, portalSession)
 				ctx = context.WithValue(ctx, ContextKeyPortalCustomerID, portalSession.PortalCustomerID)
 				ctx = context.WithValue(ctx, ContextKeyAuthMethod, "portal-session")

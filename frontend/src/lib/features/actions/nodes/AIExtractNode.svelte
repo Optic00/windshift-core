@@ -7,7 +7,7 @@
   let { data = {}, selected = false } = $props();
 </script>
 
-<GenericActionNode {data} {selected} flowStore={actionFlowStore} icon={Sparkles} title={t('actions.nodes.aiExtract')} accentColor="purple">
+<GenericActionNode {data} {selected} flowStore={data.flowStore || actionFlowStore} icon={Sparkles} title={t('actions.nodes.aiExtract')} accentColor="purple">
   {#snippet body()}
     {#if data.config?.input_field && data.config?.output_field}
       <div class="ai-info">

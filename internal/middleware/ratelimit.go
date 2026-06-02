@@ -279,11 +279,12 @@ func (rl *RateLimiter) Stop() {
 
 // getClientIP extracts the client IP from request headers with proxy validation
 func (rl *RateLimiter) getClientIP(r *http.Request) string {
-	// Get the immediate client IP (could be proxy)
-	remoteAddr := r.RemoteAddr
-	// Remove port if present
-	if colonIndex := strings.LastIndex(remoteAddr, ":"); colonIndex != -1 {
-		remoteAddr = remoteAddr[:colonIndex]
+	// Get the immediate client IP (could be proxy). SplitHostPort handles both
+	// "1.2.3.4:5678" and "[::1]:5678" forms; the bare-host fallback covers the
+	// rare case where RemoteAddr has no port at all.
+	remoteAddr, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		remoteAddr = r.RemoteAddr
 	}
 
 	clientIP := net.ParseIP(remoteAddr)

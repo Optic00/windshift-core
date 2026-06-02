@@ -1,16 +1,21 @@
 package auth
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
+	"windshift/internal/cacheutil"
 	"windshift/internal/database"
 	"windshift/internal/models"
 
+	"github.com/allegro/bigcache/v3"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -20,15 +25,33 @@ const (
 	// Final token: scim_ (5) + 64 hex chars = 69 bytes (under bcrypt's 72 byte limit)
 )
 
+type scimTokenCacheEntry struct {
+	Token models.SCIMToken `json:"token"`
+}
+
 // SCIMTokenManager handles SCIM token operations
 type SCIMTokenManager struct {
-	db database.Database
+	db    database.Database
+	cache *bigcache.BigCache
 }
 
 // NewSCIMTokenManager creates a new SCIM token manager
 // last review: ser
 func NewSCIMTokenManager(db database.Database) *SCIMTokenManager {
-	return &SCIMTokenManager{db: db}
+	cacheConfig := cacheutil.NewBigCacheConfig(cacheutil.BigCacheOptions{
+		TTL:          30 * time.Second,
+		MaxCacheMB:   16,
+		MaxEntrySize: 1024,
+		Shards:       128,
+		CleanWindow:  10 * time.Second,
+	})
+
+	cache, err := bigcache.New(context.Background(), cacheConfig)
+	if err != nil {
+		slog.Warn("failed to create SCIM token validation cache, continuing without cache", "error", err)
+	}
+
+	return &SCIMTokenManager{db: db, cache: cache}
 }
 
 // GenerateToken creates a cryptographically secure SCIM token
@@ -74,6 +97,25 @@ func (tm *SCIMTokenManager) ValidateToken(token string) (*models.SCIMToken, erro
 		return nil, err
 	}
 
+	cacheKey := tokenCacheKey(token)
+	if tm.cache != nil {
+		if data, err := tm.cache.Get(cacheKey); err == nil {
+			var entry scimTokenCacheEntry
+			if err := json.Unmarshal(data, &entry); err == nil {
+				switch {
+				case !entry.Token.IsActive:
+					tm.cache.Delete(cacheKey) //nolint:errcheck // best-effort cache eviction
+				case entry.Token.ExpiresAt != nil && entry.Token.ExpiresAt.Before(time.Now()):
+					tm.cache.Delete(cacheKey) //nolint:errcheck // best-effort cache eviction
+				default:
+					go tm.updateLastUsed(entry.Token.ID)
+					cached := entry.Token
+					return &cached, nil
+				}
+			}
+		}
+	}
+
 	// Extract token prefix for efficient database lookup
 	tokenPrefix := tm.GetTokenPrefix(token)
 
@@ -108,6 +150,14 @@ func (tm *SCIMTokenManager) ValidateToken(token string) (*models.SCIMToken, erro
 		// Check if token hash matches
 		if verifyTokenHash(tokenHash, token) != nil {
 			continue // Hash doesn't match, try next token
+		}
+
+		if tm.cache != nil {
+			entry := scimTokenCacheEntry{Token: scimToken}
+			if data, err := json.Marshal(entry); err == nil {
+				tm.cache.Set(cacheKey, data)                                             //nolint:errcheck // best-effort cache population
+				tm.cache.Set(fmt.Sprintf("scim_tid:%d", scimToken.ID), []byte(cacheKey)) //nolint:errcheck // best-effort reverse-lookup cache
+			}
 		}
 
 		// Update last used timestamp asynchronously
@@ -235,6 +285,14 @@ func (tm *SCIMTokenManager) RevokeToken(tokenID int) error {
 	if rowsAffected == 0 {
 		return fmt.Errorf("token not found")
 	}
+	if tm.cache != nil {
+		if cacheKeyBytes, err := tm.cache.Get(fmt.Sprintf("scim_tid:%d", tokenID)); err == nil {
+			tm.cache.Delete(string(cacheKeyBytes))               //nolint:errcheck // best-effort cache eviction
+			tm.cache.Delete(fmt.Sprintf("scim_tid:%d", tokenID)) //nolint:errcheck // best-effort reverse-lookup eviction
+		} else {
+			tm.cache.Reset() //nolint:errcheck // best-effort fallback invalidation
+		}
+	}
 
 	return nil
 }
@@ -324,6 +382,9 @@ func (tm *SCIMTokenManager) DisconnectSCIM() (DisconnectSummary, error) {
 
 	if err := tx.Commit(); err != nil {
 		return DisconnectSummary{}, fmt.Errorf("failed to commit SCIM disconnect: %w", err)
+	}
+	if tm.cache != nil {
+		tm.cache.Reset() //nolint:errcheck // best-effort bulk cache invalidation
 	}
 
 	return preview, nil

@@ -13,7 +13,7 @@
   }
 </script>
 
-<GenericActionNode {data} {selected} flowStore={actionFlowStore} icon={MessageSquare} title={t('actions.nodes.addComment')} accentColor="orange">
+<GenericActionNode {data} {selected} flowStore={data.flowStore || actionFlowStore} icon={MessageSquare} title={t('actions.nodes.addComment')} accentColor="orange">
   {#snippet body()}
     {#if data.config?.content}
       <div class="comment-preview">

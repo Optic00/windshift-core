@@ -33,4 +33,13 @@ export const workspaceRoles = {
     fetchAPI(`/users/${userId}/workspaces/${workspaceId}/roles/${roleId}`, { method: 'DELETE' }),
   getUserRoles: (userId, workspaceId) =>
     fetchAPI(`/users/${userId}/workspaces/${workspaceId}/roles`),
+  getWorkspaceGroupAssignments: (workspaceId) =>
+    fetchAPI(`/workspaces/${workspaceId}/group-role-assignments`),
+  assignToGroup: (data) =>
+    fetchAPI('/workspace-roles/assign-group', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  revokeFromGroup: (groupId, workspaceId, roleId) =>
+    fetchAPI(`/groups/${groupId}/workspaces/${workspaceId}/roles/${roleId}`, { method: 'DELETE' }),
 };

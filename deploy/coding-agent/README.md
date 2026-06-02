@@ -1,9 +1,18 @@
 # Coding-agent runner deployment
 
 The coding-agent harness spawns one ephemeral container per run via
-`docker run`. The container image lives in this directory
-(`Dockerfile`); the orchestrator (`internal/services/pi_runner.go`)
-assembles a hardened `docker run` argv around it.
+`docker run`. The runner image is built from this directory (`Dockerfile`)
+and published as `ghcr.io/windshiftapp/coding-agent-runner`; the
+orchestrator (`internal/services/pi_runner.go`) assembles a hardened
+`docker run` argv around it.
+
+For local development, build the image with either:
+
+```bash
+make coding-agent-image
+# or
+docker compose --profile coding-agent-image build coding-agent-runner
+```
 
 ## Hardening baked into every run
 
@@ -28,9 +37,10 @@ flags in the table above.
 
 | Env var                       | Default              | Effect                                                   |
 |-------------------------------|----------------------|----------------------------------------------------------|
-| `CODING_AGENT_RUNNER_IMAGE`   | (unset → disabled)   | Required to enable the harness at all.                   |
+| `CODING_AGENT_RUNNER_IMAGE`   | (unset → disabled)   | Required to enable the harness at all, e.g. `ghcr.io/windshiftapp/coding-agent-runner:latest`. |
 | `CODING_AGENT_DOCKER_BINARY`  | `docker`             | Path to the docker CLI to invoke.                        |
-| `CODING_AGENT_WORKTREE_ROOT`  | (required)           | Host directory where per-run worktrees are created.      |
+| `CODING_AGENT_WORKTREE_ROOT`  | (required)           | Host directory where per-run worktrees are created. If Windshift itself runs in Docker while using the host docker socket, mount this same absolute host path into the Windshift container. |
+| `CODING_AGENT_WS_API_URL`     | `BASE_URL`           | URL the runner container uses for the `ws` CLI. Override when `BASE_URL` is browser-facing (for example `localhost`) but not reachable from containers. |
 | `CODING_AGENT_NETWORK`        | `coding-agent-egress` | docker `--network`. See "Egress network" below.          |
 | `CODING_AGENT_PIDS_LIMIT`     | `512`                | docker `--pids-limit`.                                   |
 | `CODING_AGENT_MEMORY`         | `4g`                 | docker `--memory` (also applied to `--memory-swap`).     |

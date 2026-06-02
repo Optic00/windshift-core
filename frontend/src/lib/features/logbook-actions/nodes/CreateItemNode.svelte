@@ -12,7 +12,7 @@
   };
 </script>
 
-<GenericActionNode {data} {selected} flowStore={logbookActionFlowStore} icon={FileText} title="Create Item" {colorVars}>
+<GenericActionNode {data} {selected} flowStore={data.flowStore || logbookActionFlowStore} icon={FileText} title="Create Item" {colorVars}>
   {#snippet body()}
     {#if data.config?.title}
       <div class="config-line">{data.config.title}</div>

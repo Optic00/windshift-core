@@ -7,7 +7,7 @@
   let { data = {}, selected = false } = $props();
 </script>
 
-<GenericActionNode {data} {selected} flowStore={actionFlowStore} icon={Globe} title={t('actions.nodes.httpRequest')} accentColor="cyan">
+<GenericActionNode {data} {selected} flowStore={data.flowStore || actionFlowStore} icon={Globe} title={t('actions.nodes.httpRequest')} accentColor="cyan">
   {#snippet body()}
     {#if data.config?.url_template}
       <div class="http-info">

@@ -973,14 +973,16 @@ func (c *Client) ResolveItemID(keyOrID string) (int, error) {
 		return id, nil
 	}
 
-	// Parse as workspace key + item number (e.g., PROJ-123)
-	parts := strings.SplitN(keyOrID, "-", 2)
-	if len(parts) != 2 {
+	// Parse as workspace key + item number (e.g., PROJ-123). Split on
+	// the last dash so workspace keys that themselves contain dashes (notably
+	// personal workspace keys) still resolve correctly.
+	dash := strings.LastIndex(keyOrID, "-")
+	if dash <= 0 || dash == len(keyOrID)-1 {
 		return 0, fmt.Errorf("invalid item identifier: %s (expected ID or KEY-NUMBER format)", keyOrID)
 	}
 
-	wsKey := parts[0]
-	itemNum, err := strconv.Atoi(parts[1])
+	wsKey := keyOrID[:dash]
+	itemNum, err := strconv.Atoi(keyOrID[dash+1:])
 	if err != nil {
 		return 0, fmt.Errorf("invalid item number in: %s", keyOrID)
 	}

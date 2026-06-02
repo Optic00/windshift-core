@@ -198,10 +198,9 @@
 		if (matchesShortcut(event, submitShortcut)) {
 			event.preventDefault();
 			submitComment();
-		} else if (event.key === 'Escape') {
-			event.preventDefault();
-			editorRef?.blur?.();
 		}
+		// Escape intentionally not handled here — let it bubble so the
+		// enclosing modal (or page-level handler) can close as expected.
 	}
 
 	async function deleteComment(commentId) {

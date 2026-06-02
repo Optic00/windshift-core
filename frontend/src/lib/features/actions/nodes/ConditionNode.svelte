@@ -20,7 +20,7 @@
 <GenericConditionNode
   {data}
   {selected}
-  flowStore={actionFlowStore}
+  flowStore={data.flowStore || actionFlowStore}
   {operatorSymbols}
   title={t('actions.nodes.condition')}
   placeholderText={t('actions.config.setCondition')}

@@ -21,6 +21,37 @@ func NewWorkspaceAgentBindingRepository(db database.Database) *WorkspaceAgentBin
 	return &WorkspaceAgentBindingRepository{db: db}
 }
 
+// AgentRunContext returns the workspace key and workspace-scoped item number
+// for environment variables injected into the coding-agent container. itemID
+// may be zero for future manual runs; in that case ItemKey is empty.
+type AgentRunContext struct {
+	WorkspaceKey string
+	ItemNumber   int
+	ItemKey      string
+}
+
+func (r *WorkspaceAgentBindingRepository) AgentRunContext(ctx context.Context, workspaceID, itemID int) (AgentRunContext, error) {
+	var out AgentRunContext
+	if itemID > 0 {
+		err := r.db.QueryRowContext(ctx, `
+			SELECT w.key, i.workspace_item_number
+			FROM workspaces w
+			JOIN items i ON i.workspace_id = w.id AND i.id = ?
+			WHERE w.id = ?
+		`, itemID, workspaceID).Scan(&out.WorkspaceKey, &out.ItemNumber)
+		if err != nil {
+			return out, fmt.Errorf("load agent run workspace/item context: %w", err)
+		}
+		out.ItemKey = fmt.Sprintf("%s-%d", out.WorkspaceKey, out.ItemNumber)
+		return out, nil
+	}
+	err := r.db.QueryRowContext(ctx, `SELECT key FROM workspaces WHERE id = ?`, workspaceID).Scan(&out.WorkspaceKey)
+	if err != nil {
+		return out, fmt.Errorf("load agent run workspace context: %w", err)
+	}
+	return out, nil
+}
+
 // ErrBindingDuplicate is returned when a caller tries to create a second
 // binding for the same (workspace, acting_user). The handler layer maps
 // this to a 409 Conflict.

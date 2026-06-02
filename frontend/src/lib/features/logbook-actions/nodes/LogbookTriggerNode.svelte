@@ -24,7 +24,7 @@
 <GenericTriggerNode
   {data}
   {selected}
-  flowStore={logbookActionFlowStore}
+  flowStore={data.flowStore || logbookActionFlowStore}
   {triggerLabels}
   {configSummaryFn}
 />

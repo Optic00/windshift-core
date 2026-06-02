@@ -82,8 +82,17 @@ func (a *Authz) IsSystemAdmin(userID int) (bool, error) {
 	return false, nil
 }
 
-// GetAccessibleWorkspaceIDs returns all workspace IDs the user can access.
+// GetAccessibleWorkspaceIDs returns the IDs of active workspaces the user can
+// view. It is gated-aware: a workspace flipped into gated mode (by any explicit
+// role assignment) is hidden from non-members, matching the cookie-API
+// handlers.GetAccessibleWorkspaceIDs path. The bearer-token v1 API relies on
+// this list as the sole workspace filter when listing/searching items, so it
+// MUST honor gated mode — the ungated repository.GetAccessibleWorkspaceIDs is
+// only used as a fallback when the permission service is unavailable (test paths).
 func (a *Authz) GetAccessibleWorkspaceIDs(userID int) ([]int, error) {
+	if a.permissionService != nil {
+		return a.permissionService.AccessibleWorkspaceIDs(userID)
+	}
 	return repository.GetAccessibleWorkspaceIDs(a.db, userID)
 }
 

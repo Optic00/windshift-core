@@ -62,6 +62,10 @@ func validateConnectionRequest(w http.ResponseWriter, r *http.Request, name stri
 		respondBadRequest(w, r, "name, provider_type, and model are required")
 		return false
 	}
+	if llm.GetProvider(providerType) == nil {
+		respondBadRequest(w, r, fmt.Sprintf("unknown provider_type %q", providerType))
+		return false
+	}
 	if baseURL != "" {
 		if err := utils.ValidateHTTPBaseURL(baseURL); err != nil {
 			respondBadRequest(w, r, "invalid base URL: "+err.Error())

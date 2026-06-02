@@ -7,7 +7,7 @@
   let { data = {}, selected = false } = $props();
 </script>
 
-<GenericActionNode {data} {selected} flowStore={actionFlowStore} icon={Box} title={t('actions.nodes.containerRun')} accentColor="blue">
+<GenericActionNode {data} {selected} flowStore={data.flowStore || actionFlowStore} icon={Box} title={t('actions.nodes.containerRun')} accentColor="blue">
   {#snippet body()}
     {#if data.config?.capability_id}
       <div class="cap-info">

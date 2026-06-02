@@ -6,7 +6,7 @@
   let { data = {}, selected = false } = $props();
 </script>
 
-<GenericActionNode {data} {selected} flowStore={actionFlowStore} icon={Milestone} title="Create milestone" accentColor="green">
+<GenericActionNode {data} {selected} flowStore={data.flowStore || actionFlowStore} icon={Milestone} title="Create milestone" accentColor="green">
   {#snippet body()}
     {#if data.config?.upsert_key_template}
       <div class="cm-info">

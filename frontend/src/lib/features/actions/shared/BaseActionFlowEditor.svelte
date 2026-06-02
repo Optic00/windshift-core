@@ -1,13 +1,12 @@
 <script>
-  import { onMount, untrack } from 'svelte';
+  import { untrack } from 'svelte';
   import {
     SvelteFlow,
     Controls,
     MiniMap,
     Background,
     BackgroundVariant,
-    ConnectionMode,
-    addEdge
+    ConnectionMode
   } from '@xyflow/svelte';
   import '@xyflow/svelte/dist/style.css';
   import { Zap, ArrowRight, ArrowDown } from '@lucide/svelte';
@@ -73,9 +72,78 @@
     flowViewport = viewport;
   }
 
+  let lastInitializedActionKey = $state(null);
+
+  function comparableNodeData(data = {}) {
+    const { flowStore: _flowStore, ...rest } = data || {};
+    return rest;
+  }
+
+  function storeNodesVersion(storeNodes) {
+    return JSON.stringify(storeNodes.map((n) => ({
+      id: n.id,
+      type: n.type,
+      data: comparableNodeData(n.data),
+    })));
+  }
+
+  function cloneNodes(storeNodes) {
+    return storeNodes.map((node) => ({
+      ...node,
+      position: { ...node.position },
+      data: { ...node.data },
+    }));
+  }
+
+  function cloneEdges(storeEdges) {
+    return storeEdges.map((edge) => ({
+      ...edge,
+      data: { ...edge.data },
+    }));
+  }
+
+  function stableKeyPart(value) {
+    if (typeof value === 'string') return value;
+    if (value === null || value === undefined) return '';
+    return JSON.stringify(value);
+  }
+
+  function actionHydrationKey(currentAction) {
+    if (!currentAction) return 'empty';
+    const nodeSignature = (currentAction.nodes || [])
+      .map((n) => `${n.id}:${n.node_type}:${stableKeyPart(n.node_config)}:${n.position_x}:${n.position_y}`)
+      .join('|');
+    const edgeSignature = (currentAction.edges || [])
+      .map((e) => `${e.id}:${e.source_node_id}:${e.target_node_id}:${e.source_handle}:${e.target_handle}:${e.edge_type}`)
+      .join('|');
+    return JSON.stringify({
+      id: currentAction.id ?? null,
+      workspaceId: currentAction.workspace_id ?? null,
+      name: currentAction.name ?? '',
+      triggerType: currentAction.trigger_type ?? '',
+      triggerConfig: currentAction.trigger_config ?? '',
+      updatedAt: currentAction.updated_at ?? currentAction.updatedAt ?? '',
+      nodeSignature,
+      edgeSignature,
+    });
+  }
+
+  $effect(() => {
+    const currentKey = actionHydrationKey(action);
+    if (currentKey === lastInitializedActionKey) return;
+
+    lastInitializedActionKey = currentKey;
+    flowStore.init(action, ...initArgs);
+    nodes = cloneNodes(flowStore.nodes);
+    edges = cloneEdges(flowStore.edges);
+    selectedNodeId = flowStore.selectedNodeId;
+    saving = flowStore.saving;
+    lastStoreNodesVersion = storeNodesVersion(flowStore.nodes);
+  });
+
   $effect(() => {
     const storeNodes = flowStore.nodes;
-    const currentVersion = storeNodes.length + JSON.stringify(storeNodes.map(n => n.data));
+    const currentVersion = storeNodesVersion(storeNodes);
     const lastVersion = untrack(() => lastStoreNodesVersion);
     const localNodes = untrack(() => nodes);
 
@@ -84,14 +152,14 @@
       nodes = storeNodes.map(storeNode => {
         const localNode = localNodes.find(n => n.id === storeNode.id);
         if (localNode) {
-          return { ...storeNode, position: localNode.position };
+          return { ...storeNode, position: { ...localNode.position }, data: { ...storeNode.data } };
         }
-        return storeNode;
+        return { ...storeNode, position: { ...storeNode.position }, data: { ...storeNode.data } };
       });
     }
   });
 
-  $effect(() => { edges = flowStore.edges; });
+  $effect(() => { edges = cloneEdges(flowStore.edges); });
   $effect(() => { selectedNodeId = flowStore.selectedNodeId; });
   $effect(() => { saving = flowStore.saving; });
 
@@ -112,13 +180,8 @@
     defaultEdgeOptions: { type: 'action' }
   };
 
-  onMount(() => {
-    flowStore.init(action, ...initArgs);
-  });
-
   function handleConnect(params) {
-    const newEdge = flowStore.addEdge(params);
-    flowStore.setEdges(addEdge(newEdge, flowStore.edges));
+    flowStore.addEdge(params);
   }
 
   function syncLocalFlowFromStore() {
@@ -126,11 +189,11 @@
     nodes = flowStore.nodes.map(storeNode => {
       const localNode = localNodes.find(n => n.id === storeNode.id);
       if (localNode) {
-        return { ...storeNode, position: localNode.position };
+        return { ...storeNode, position: { ...localNode.position }, data: { ...storeNode.data } };
       }
-      return storeNode;
+      return { ...storeNode, position: { ...storeNode.position }, data: { ...storeNode.data } };
     });
-    edges = flowStore.edges;
+    edges = cloneEdges(flowStore.edges);
   }
 
   function handleDelete({ nodes: deletedNodes = [], edges: deletedEdges = [] } = {}) {
@@ -326,7 +389,7 @@
       <div class="action-header px-3 py-2 rounded-lg border">
         <div class="text-sm font-medium">{action?.name || newActionLabel}</div>
         <div class="text-xs sidebar-subtitle">
-          {triggerTypes.find(tt => tt.value === action?.trigger_type)?.label || action?.trigger_type}
+          {triggerTypes.find(tt => tt.value === flowStore.triggerType)?.label || flowStore.triggerType || action?.trigger_type}
         </div>
       </div>
       <button
@@ -345,25 +408,27 @@
 
   <!-- Config Panel (shown when node is selected) -->
   {#if selectedNode}
-    <div class="w-80 sidebar border-l p-4 overflow-y-auto flex-shrink-0">
-      <div class="flex items-center justify-between mb-4">
-        <h3 class="text-sm font-medium sidebar-title">{nodeConfigLabel}</h3>
-        <button
-          class="text-sm text-gray-500 hover:text-gray-700"
-          onclick={handleClearSelection}
-        >
-          &times;
-        </button>
-      </div>
+    {#key selectedNode.id}
+      <div class="w-80 sidebar border-l p-4 overflow-y-auto flex-shrink-0">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-sm font-medium sidebar-title">{nodeConfigLabel}</h3>
+          <button
+            class="text-sm text-gray-500 hover:text-gray-700"
+            onclick={handleClearSelection}
+          >
+            &times;
+          </button>
+        </div>
 
-      <div class="space-y-4">
-        {#if selectedNode.type === 'trigger' && triggerConfig}
-          {@render triggerConfig(selectedNode, flowStore)}
-        {:else if selectedNode.type !== 'trigger' && nodeConfig}
-          {@render nodeConfig(selectedNode, flowStore, handleDeleteNode)}
-        {/if}
+        <div class="space-y-4">
+          {#if selectedNode.type === 'trigger' && triggerConfig}
+            {@render triggerConfig(selectedNode, flowStore)}
+          {:else if selectedNode.type !== 'trigger' && nodeConfig}
+            {@render nodeConfig(selectedNode, flowStore, handleDeleteNode)}
+          {/if}
+        </div>
       </div>
-    </div>
+    {/key}
   {/if}
 </div>
 

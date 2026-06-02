@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"windshift/internal/authz"
 	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
@@ -17,6 +18,7 @@ type WorkspaceHandler struct {
 	db                database.Database
 	repo              *repository.WorkspaceRepository
 	permissionService *services.PermissionService
+	authz             *authz.Authz
 	activityTracker   *services.ActivityTracker
 	keyCache          *WorkspaceKeyCache
 }
@@ -58,6 +60,7 @@ func NewWorkspaceHandler(db database.Database, permissionService *services.Permi
 		db:                db,
 		repo:              repository.NewWorkspaceRepository(db),
 		permissionService: permissionService,
+		authz:             authz.New(db, permissionService),
 		activityTracker:   activityTracker,
 		keyCache:          keyCache,
 	}

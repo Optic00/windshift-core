@@ -100,6 +100,51 @@ func (m *ConnectionManager) Resolve(connectionID int) (Client, error) {
 	}), nil
 }
 
+// ConnectionRuntimeConfig contains the decrypted runtime fields needed by the
+// coding-agent runner to invoke pi with the admin-selected provider.
+type ConnectionRuntimeConfig struct {
+	ProviderType string
+	APIFormat    string
+	Model        string
+	APIKey       string
+	BaseURL      string
+}
+
+// ConnectionRuntime returns the runtime config for one enabled connection. It
+// is intentionally narrower than GetConnection and is only used after callers
+// have already authorized access to the selected connection.
+func (m *ConnectionManager) ConnectionRuntime(ctx context.Context, connectionID int) (*ConnectionRuntimeConfig, error) {
+	cfg := &ConnectionRuntimeConfig{}
+	var apiKeyEncrypted, baseURLNull sql.NullString
+	err := m.db.QueryRowContext(ctx,
+		`SELECT provider_type, model, api_key_encrypted, base_url
+		 FROM llm_connections
+		 WHERE id = ? AND is_enabled = true`,
+		connectionID,
+	).Scan(&cfg.ProviderType, &cfg.Model, &apiKeyEncrypted, &baseURLNull)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("LLM connection %d not found or disabled", connectionID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to query connection runtime: %w", err)
+	}
+	provider := GetProvider(ProviderType(cfg.ProviderType))
+	if provider == nil {
+		return nil, fmt.Errorf("unknown LLM provider type %q", cfg.ProviderType)
+	}
+	cfg.APIFormat = provider.APIFormat
+	if apiKeyEncrypted.Valid && apiKeyEncrypted.String != "" {
+		cfg.APIKey, err = m.encryption.Decrypt(apiKeyEncrypted.String)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt API key: %w", err)
+		}
+	}
+	if baseURLNull.Valid {
+		cfg.BaseURL = baseURLNull.String
+	}
+	return cfg, nil
+}
+
 // ListConnections returns all connections (without secrets) for admin listing.
 func (m *ConnectionManager) ListConnections() ([]ConnectionInfo, error) {
 	rows, err := m.db.Query(

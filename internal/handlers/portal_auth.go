@@ -337,7 +337,8 @@ func (h *PortalAuthHandler) GetCurrentCustomer(w http.ResponseWriter, r *http.Re
 	// the customer did not authenticate to.
 	token, err := h.portalSessionManager.GetPortalSessionFromRequest(r)
 	if err == nil {
-		session, err := h.portalSessionManager.ValidatePortalSession(token)
+		clientIP := h.getClientIP(r)
+		session, err := h.portalSessionManager.ValidatePortalSession(token, clientIP)
 		if err == nil && session.ChannelID != nil && *session.ChannelID == channel.ID {
 			// Look up passkey state used by the frontend to drive both the
 			// "set up a passkey" banner and the login modal's passkey button.

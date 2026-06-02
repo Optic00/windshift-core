@@ -9,7 +9,7 @@
 <GenericActionNode
   {data}
   {selected}
-  flowStore={actionFlowStore}
+  flowStore={data.flowStore || actionFlowStore}
   icon={UsersRound}
   title="Round-robin assign"
   accentColor="magenta"

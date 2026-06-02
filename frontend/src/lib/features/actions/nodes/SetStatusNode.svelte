@@ -15,7 +15,7 @@
   let status = $derived(data.config?.status_id ? getStatus(data.config.status_id) : null);
 </script>
 
-<GenericActionNode {data} {selected} flowStore={actionFlowStore} icon={RefreshCw} title={t('actions.nodes.setStatus')} accentColor="teal">
+<GenericActionNode {data} {selected} flowStore={data.flowStore || actionFlowStore} icon={RefreshCw} title={t('actions.nodes.setStatus')} accentColor="teal">
   {#snippet body()}
     {#if status}
       <StatusBadge {status} />

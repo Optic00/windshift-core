@@ -39,8 +39,18 @@ services:
       # - DB_SSLMODE=disable
       # --- LLM (uncomment when using llm service) ---
       # - LLM_ENDPOINT=http://llm:8081
+      # --- Coding agents (requires docker socket + worktree volume below) ---
+      # - CODING_AGENT_RUNNER_IMAGE=ghcr.io/windshiftapp/coding-agent-runner:latest
+      # - CODING_AGENT_WORKTREE_ROOT=/var/lib/windshift/coding-agent-worktrees
+      # - CODING_AGENT_WS_API_URL=https://${DOMAIN}
     volumes:
       - windshift-data:/data
+      # Coding-agent harness (uncomment with CODING_AGENT_* env above): lets
+      # Windshift spawn the published pi runner image. The worktree path must
+      # be the same absolute host path inside Windshift because the host docker
+      # daemon later bind-mounts that path into the runner container.
+      # - /var/run/docker.sock:/var/run/docker.sock
+      # - /var/lib/windshift/coding-agent-worktrees:/var/lib/windshift/coding-agent-worktrees
       # tmpfs for /tmp - needed for SQLite WAL mode in scratch containers
       - type: tmpfs
         target: /tmp

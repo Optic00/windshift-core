@@ -206,6 +206,7 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 			GlobalCap:    parseIntEnv("CODING_AGENT_GLOBAL_CAP", 0),
 			LLMProvider:  os.Getenv("CODING_AGENT_LLM_PROVIDER"),
 			LLMModel:     os.Getenv("CODING_AGENT_LLM_MODEL"),
+			WSAPIURL:     os.Getenv("CODING_AGENT_WS_API_URL"),
 			Network:      os.Getenv("CODING_AGENT_NETWORK"),
 			PidsLimit:    parseIntEnv("CODING_AGENT_PIDS_LIMIT", 0),
 			Memory:       os.Getenv("CODING_AGENT_MEMORY"),

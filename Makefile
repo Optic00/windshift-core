@@ -19,7 +19,7 @@ BUILD_TAGS=-tags="!test"
 # Directories
 FRONTEND_DIR=frontend
 
-.PHONY: all build build-linux build-windows clean deps frontend help hooks lint dev-build release openapi openapi-check
+.PHONY: all build build-linux build-windows clean deps frontend help hooks lint dev-build release openapi openapi-check coding-agent-image
 
 # Tooling. swag is a tool dependency tracked in go.mod (see `tool` directive),
 # so the version is pinned and CI / dev installs always agree. `go tool swag`
@@ -97,6 +97,10 @@ openapi:
 # `make openapi` locally to refresh it (e.g., before a release).
 #
 # This target writes to a tempdir so it doesn't touch the committed spec.
+coding-agent-image:
+	@echo "Building coding-agent runner image..."
+	docker build -f deploy/coding-agent/Dockerfile -t windshift/coding-agent:local .
+
 openapi-check:
 	@echo "Validating OpenAPI generation..."
 	@tmpdir=$$(mktemp -d) && trap "rm -rf $$tmpdir" EXIT && \
@@ -159,4 +163,5 @@ help:
 	@echo "  make hooks          - Install git pre-commit hook"
 	@echo "  make openapi        - Regenerate api/openapi.{yaml,json} from handler annotations"
 	@echo "  make openapi-check  - Verify api/openapi.{yaml,json} is up to date (used by hooks/CI)"
+	@echo "  make coding-agent-image - Build the pi-based coding-agent runner image"
 	@echo "  make help           - Show this help message"

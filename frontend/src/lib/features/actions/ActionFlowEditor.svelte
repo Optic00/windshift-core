@@ -51,7 +51,15 @@
   // change this; others see a read-only display of the current value.
   // svelte-ignore state_referenced_locally
   let actorUserId = $state(action?.actor_user_id ?? null);
+  let lastActorSource = $state(null);
   let canSetActor = $derived(permissionStore.hasPermissionKey('action.set_actor'));
+
+  $effect(() => {
+    const source = `${action?.id ?? 'new'}:${action?.actor_user_id ?? ''}`;
+    if (source === lastActorSource) return;
+    lastActorSource = source;
+    actorUserId = action?.actor_user_id ?? null;
+  });
 
   const nodeTypes = {
     trigger: TriggerNode,
@@ -244,7 +252,7 @@
       if (!action?.id) return;
       try {
         const fresh = await api.get(`/workspaces/${action.workspace_id}/actions/${action.id}`);
-        actionFlowStore.init(fresh);
+        actionFlowStore.init(fresh, statuses);
         infoToast(t('actions.aiUpdated', 'Action updated by AI'));
       } catch (err) {
         console.error('Failed to reload action after agent run:', err);
@@ -748,11 +756,11 @@
         size="small"
       />
     {:else if selectedNode.type === 'update_asset'}
-      <UpdateAssetConfigPanel {selectedNode} bind:showPlaceholderModal />
+      <UpdateAssetConfigPanel {selectedNode} flowStore={store} bind:showPlaceholderModal />
     {:else if selectedNode.type === 'create_asset'}
-      <CreateAssetConfigPanel {selectedNode} bind:showPlaceholderModal />
+      <CreateAssetConfigPanel {selectedNode} flowStore={store} bind:showPlaceholderModal />
     {:else if selectedNode.type === 'create_milestone'}
-      <CreateMilestoneConfigPanel {selectedNode} bind:showPlaceholderModal />
+      <CreateMilestoneConfigPanel {selectedNode} flowStore={store} bind:showPlaceholderModal />
     {:else if selectedNode.type === 'related_items'}
       <div>
         <label for="config-related-relation" class="block text-xs font-medium mb-1">Relation</label>

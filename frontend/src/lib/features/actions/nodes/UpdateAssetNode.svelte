@@ -7,7 +7,7 @@
   let { data = {}, selected = false } = $props();
 </script>
 
-<GenericActionNode {data} {selected} flowStore={actionFlowStore} icon={Database} title={t('actions.nodes.updateAsset')} accentColor="teal">
+<GenericActionNode {data} {selected} flowStore={data.flowStore || actionFlowStore} icon={Database} title={t('actions.nodes.updateAsset')} accentColor="teal">
   {#snippet body()}
     {#if data.config?.source_field_id}
       <div class="field-info">

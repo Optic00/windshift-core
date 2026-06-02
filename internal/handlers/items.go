@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"windshift/internal/authz"
 	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
@@ -27,6 +28,7 @@ type ItemHandler struct {
 	db                  database.Database
 	hierarchyService    *services.HierarchyService
 	permissionService   *services.PermissionService
+	authz               *authz.Authz
 	itemCache           *services.ItemCacheService
 	activityTracker     *services.ActivityTracker
 	idResolver          *services.IDResolverService
@@ -63,6 +65,7 @@ func NewItemHandler(db database.Database, permissionService *services.Permission
 		db:                  db,
 		hierarchyService:    services.NewHierarchyService(db),
 		permissionService:   permissionService,
+		authz:               authz.New(db, permissionService),
 		itemCache:           itemCache,
 		activityTracker:     activityTracker,
 		idResolver:          services.NewIDResolverService(db),

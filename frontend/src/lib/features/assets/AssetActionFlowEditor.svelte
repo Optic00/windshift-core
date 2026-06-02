@@ -165,7 +165,7 @@
 
   {#snippet nodeConfig(selectedNode, store, handleDeleteNode)}
     {#if selectedNode.type === 'create_item'}
-      <CreateItemConfigPanel {selectedNode} />
+      <CreateItemConfigPanel {selectedNode} flowStore={store} />
       <Button variant="ghost" size="small" onclick={handleDeleteNode}>Delete Node</Button>
     {:else if selectedNode.type === 'set_field'}
       <div>

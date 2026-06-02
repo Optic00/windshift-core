@@ -16,7 +16,7 @@
   let status = $derived(target.mode === 'explicit' ? getStatus(target.status_id) : null);
 </script>
 
-<GenericActionNode {data} {selected} flowStore={actionFlowStore} icon={ArrowRightCircle} title={t('actions.nodes.transitionItem', 'Transition item')} accentColor="teal">
+<GenericActionNode {data} {selected} flowStore={data.flowStore || actionFlowStore} icon={ArrowRightCircle} title={t('actions.nodes.transitionItem', 'Transition item')} accentColor="teal">
   {#snippet body()}
     {#if target.mode === 'explicit'}
       {#if status}

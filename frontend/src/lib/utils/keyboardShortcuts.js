@@ -75,6 +75,7 @@ const shortcuts = {
   },
   workspaceMembers: {
     addMember: { key: 'a' },
+    addGroup: { key: 'g' },
     submitForm: { key: 'Enter' },
     cancelForm: { key: 'Escape' },
   },

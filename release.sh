@@ -7,6 +7,7 @@ set -euo pipefail
 
 # Configuration
 GHCR_REGISTRY="ghcr.io/windshiftapp/windshift"
+CODING_AGENT_GHCR_REGISTRY="ghcr.io/windshiftapp/coding-agent-runner"
 GITHUB_REPO="Windshiftapp/windshift"
 DOCKER_PLATFORMS="linux/amd64,linux/arm64"
 
@@ -607,13 +608,18 @@ write_release_provenance() {
         echo ""
         echo "Docker base image references"
         echo "----------------------------"
+        echo "Dockerfile:"
         grep '^FROM ' Dockerfile || true
+        echo ""
+        echo "deploy/coding-agent/Dockerfile:"
+        grep '^FROM ' deploy/coding-agent/Dockerfile || true
         if command -v docker >/dev/null 2>&1; then
             echo ""
             echo "Resolved base image digests at build time"
             echo "-----------------------------------------"
-            docker buildx imagetools inspect node:25-alpine 2>/dev/null | grep -E 'Name:|Digest:' || true
-            docker buildx imagetools inspect golang:1.26.3-alpine 2>/dev/null | grep -E 'Name:|Digest:' || true
+            for image in node:25-alpine golang:1.26.3-alpine golang:1.26-bookworm node:lts-slim; do
+                docker buildx imagetools inspect "$image" 2>/dev/null | grep -E 'Name:|Digest:' || true
+            done
         fi
     } > "$provenance"
 
@@ -652,41 +658,61 @@ ensure_buildx() {
     fi
 }
 
+build_docker_image() {
+    local image="$1"
+    local dockerfile="$2"
+    local label="$3"
+    local include_version_args="$4"
+
+    local tags=("-t" "${image}:${VERSION}")
+
+    # Only tag as latest for official releases (not dev/test versions)
+    if [[ ! "$VERSION" =~ -dev|-test|-rc ]]; then
+        tags+=("-t" "${image}:latest")
+    fi
+
+    log_info "Building ${label}: ${image}:${VERSION}"
+    log_info "  Dockerfile: ${dockerfile}"
+
+    if [ "$DRY_RUN" = true ]; then
+        log_info "[DRY-RUN] Would build and push ${label} Docker image (${image}:${VERSION})"
+        return 0
+    fi
+
+    local args=(
+        "buildx" "build"
+        "--platform" "$DOCKER_PLATFORMS"
+        "-f" "$dockerfile"
+    )
+
+    if [ "$include_version_args" = true ]; then
+        local git_commit=$(git rev-parse --short HEAD)
+        local build_date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+        args+=(
+            "--build-arg" "VERSION=${VERSION}"
+            "--build-arg" "RELEASE_NAME=${RELEASE_NAME}"
+            "--build-arg" "COMMIT=${git_commit}"
+            "--build-arg" "BUILD_DATE=${build_date}"
+        )
+    fi
+
+    docker "${args[@]}" "${tags[@]}" --push .
+
+    log_success "${label} Docker image pushed to ${image}"
+}
+
 build_docker() {
     log_step "8/9" "Building Docker images..."
 
     check_docker
     ensure_buildx
 
-    local tags="-t ${GHCR_REGISTRY}:${VERSION}"
-
-    # Only tag as latest for official releases (not dev/test versions)
-    if [[ ! "$VERSION" =~ -dev|-test|-rc ]]; then
-        tags="$tags -t ${GHCR_REGISTRY}:latest"
-    fi
-
     log_info "Platforms: ${DOCKER_PLATFORMS}"
-    log_info "Tags: ${GHCR_REGISTRY}:${VERSION}"
+    log_info "Server tags: ${GHCR_REGISTRY}:${VERSION}"
+    log_info "Coding-agent runner tags: ${CODING_AGENT_GHCR_REGISTRY}:${VERSION}"
 
-    if [ "$DRY_RUN" = true ]; then
-        log_info "[DRY-RUN] Would build and push Docker images"
-        return 0
-    fi
-
-    local git_commit=$(git rev-parse --short HEAD)
-    local build_date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-
-    docker buildx build \
-        --platform "$DOCKER_PLATFORMS" \
-        --build-arg VERSION="${VERSION}" \
-        --build-arg RELEASE_NAME="$RELEASE_NAME" \
-        --build-arg COMMIT="$git_commit" \
-        --build-arg BUILD_DATE="$build_date" \
-        $tags \
-        --push \
-        .
-
-    log_success "Docker images pushed to ${GHCR_REGISTRY}"
+    build_docker_image "$GHCR_REGISTRY" "Dockerfile" "Windshift server" true
+    build_docker_image "$CODING_AGENT_GHCR_REGISTRY" "deploy/coding-agent/Dockerfile" "coding-agent runner" false
 }
 
 create_github_release() {
@@ -763,7 +789,7 @@ cmd_push() {
         echo "=============================="
         echo "This will:"
         echo "  - Build frontend"
-        echo "  - Build and push Docker images to ${GHCR_REGISTRY}"
+        echo "  - Build and push Docker images to ${GHCR_REGISTRY} and ${CODING_AGENT_GHCR_REGISTRY}"
         echo ""
         echo "Note: This does NOT create a GitHub release."
         echo ""
@@ -781,7 +807,9 @@ cmd_push() {
     echo ""
     log_success "Push complete!"
     echo ""
-    echo "Docker image: ${GHCR_REGISTRY}:${VERSION}"
+    echo "Docker images:"
+    echo "  ${GHCR_REGISTRY}:${VERSION}"
+    echo "  ${CODING_AGENT_GHCR_REGISTRY}:${VERSION}"
 }
 
 cmd_release() {
@@ -812,7 +840,7 @@ cmd_release() {
         if [ "$SKIP_DESKTOP" != true ] && [ "$(uname)" = "Darwin" ]; then
             echo "  - Build macOS desktop DMG (arm64)"
         fi
-        echo "  - Build and push Docker image"
+        echo "  - Build and push Docker images (server + coding-agent runner)"
         echo "  - Create git tag and push"
         echo "  - Create GitHub release with assets"
         echo ""
@@ -842,7 +870,9 @@ cmd_release() {
     log_success "Release $VERSION complete!"
     echo ""
     echo "GitHub: https://github.com/${GITHUB_REPO}/releases/tag/${VERSION}"
-    echo "Docker: docker pull ${GHCR_REGISTRY}:${VERSION}"
+    echo "Docker:"
+    echo "  docker pull ${GHCR_REGISTRY}:${VERSION}"
+    echo "  docker pull ${CODING_AGENT_GHCR_REGISTRY}:${VERSION}"
 }
 
 # =============================================================================

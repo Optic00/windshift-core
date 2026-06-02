@@ -130,7 +130,8 @@ type CodingAgentConfig struct {
 	WorktreeRoot string // absolute host path; required if RunnerImage is set
 	GlobalCap    int    // RunService.GlobalCap; defaults to 8
 	LLMProvider  string // env LLM_PROVIDER for the container
-	LLMModel     string // env LLM_MODEL for the container
+	LLMModel     string // fallback env LLM_MODEL for the container when a binding has no llm_connection_id
+	WSAPIURL     string // URL the runner container uses to reach this Windshift API; defaults to BASE_URL
 	Network      string // docker --network value; defaults to "coding-agent-egress" (operator-created, egress-filtered)
 	PidsLimit    int    // docker --pids-limit; defaults to 512
 	Memory       string // docker --memory + --memory-swap; defaults to "4g"

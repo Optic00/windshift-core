@@ -31,7 +31,7 @@
   }
 </script>
 
-<GenericActionNode {data} {selected} flowStore={actionFlowStore} icon={GitFork} title={t('actions.nodes.relatedItems', 'For each related item')} accentColor="indigo">
+<GenericActionNode {data} {selected} flowStore={data.flowStore || actionFlowStore} icon={GitFork} title={t('actions.nodes.relatedItems', 'For each related item')} accentColor="indigo">
   {#snippet body()}
     <div class="related-summary">
       <div class="row"><span class="label">Relation:</span> {relationLabels[relation] || relation}</div>

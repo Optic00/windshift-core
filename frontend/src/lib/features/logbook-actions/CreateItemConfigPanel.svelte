@@ -5,7 +5,7 @@
   import WorkspacePicker from '../../pickers/WorkspacePicker.svelte';
   import ItemPicker from '../../pickers/ItemPicker.svelte';
 
-  let { selectedNode } = $props();
+  let { selectedNode, flowStore = logbookActionFlowStore } = $props();
 
   let itemTypes = $state([]);
   let loading = $state(true);
@@ -21,26 +21,26 @@
   });
 
   function handleWorkspaceSelect(workspace) {
-    logbookActionFlowStore.updateNodeConfig(selectedNode.id, {
+    flowStore.updateNodeConfig(selectedNode.id, {
       workspace_id: workspace?.id ?? 0,
       item_type_id: 0
     });
   }
 
   function handleItemTypeSelect(itemType) {
-    logbookActionFlowStore.updateNodeConfig(selectedNode.id, {
+    flowStore.updateNodeConfig(selectedNode.id, {
       item_type_id: itemType?.id ?? 0
     });
   }
 
   function handleTitleChange(e) {
-    logbookActionFlowStore.updateNodeConfig(selectedNode.id, {
+    flowStore.updateNodeConfig(selectedNode.id, {
       title: e.target.value
     });
   }
 
   function handleDescriptionChange(e) {
-    logbookActionFlowStore.updateNodeConfig(selectedNode.id, {
+    flowStore.updateNodeConfig(selectedNode.id, {
       description: e.target.value
     });
   }

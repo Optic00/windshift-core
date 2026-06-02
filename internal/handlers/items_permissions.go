@@ -7,6 +7,12 @@ import (
 	"windshift/internal/models"
 )
 
+// The can* helpers fail closed when the permission service is unavailable, then
+// delegate to the shared authz.Authz primitives so the semantic mapping lives in
+// one place (mirrors WorkspaceHandler). The nil-guard stays here on purpose:
+// authz falls back to a permissive legacy SQL check when its permission service
+// is nil, which would defeat the fail-closed guarantee.
+
 // canViewItem checks if a user can view an item in a specific workspace
 func (h *ItemHandler) canViewItem(userID, workspaceID int) (bool, error) {
 	if h.permissionService == nil {
@@ -14,8 +20,7 @@ func (h *ItemHandler) canViewItem(userID, workspaceID int) (bool, error) {
 		slog.Error("permission service unavailable, denying view access", slog.String("component", "items_permissions"))
 		return false, nil
 	}
-
-	return h.permissionService.HasWorkspacePermission(userID, workspaceID, models.PermissionItemView)
+	return h.authz.CanViewWorkspace(userID, workspaceID)
 }
 
 // canViewItemAsActor extends canViewItem with the approver-pool fallback. See
@@ -35,8 +40,7 @@ func (h *ItemHandler) canEditItem(userID, workspaceID int) (bool, error) {
 		slog.Error("permission service unavailable, denying edit access", slog.String("component", "items_permissions"))
 		return false, nil
 	}
-
-	return h.permissionService.HasWorkspacePermission(userID, workspaceID, models.PermissionItemEdit)
+	return h.authz.CanEditWorkspace(userID, workspaceID)
 }
 
 // canDeleteItem checks if a user can delete an item in a specific workspace
@@ -46,8 +50,7 @@ func (h *ItemHandler) canDeleteItem(userID, workspaceID int) (bool, error) {
 		slog.Error("permission service unavailable, denying delete access", slog.String("component", "items_permissions"))
 		return false, nil
 	}
-
-	return h.permissionService.HasWorkspacePermission(userID, workspaceID, models.PermissionItemDelete)
+	return h.authz.HasWorkspacePermission(userID, workspaceID, models.PermissionItemDelete)
 }
 
 // filterItemsByPermissions filters a list of items based on user's workspace view permissions
@@ -99,9 +102,8 @@ func (h *ItemHandler) canAccessInactiveWorkspace(user *models.User, workspaceID 
 	if h.permissionService == nil {
 		return false, nil
 	}
-
 	// Check if user has workspace admin permission (system admins pass automatically)
-	return h.permissionService.HasWorkspacePermission(user.ID, workspaceID, models.PermissionWorkspaceAdmin)
+	return h.authz.HasWorkspacePermission(user.ID, workspaceID, models.PermissionWorkspaceAdmin)
 }
 
 // getAccessibleWorkspaceIDs returns all workspace IDs the user can access
