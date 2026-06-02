@@ -241,6 +241,37 @@ func (r *AgentRunRepository) ListAbortableRuns(ctx context.Context, runnerInstan
 	return ids, rows.Err()
 }
 
+// ReapStaleRuns fails any running run whose owning runner has gone stale —
+// revoked, or with a heartbeat older than staleBefore (or never seen and
+// registered before staleBefore). It is the liveness backstop for remote
+// runs whose runner died mid-execution (WI-141). Returns the number reaped.
+func (r *AgentRunRepository) ReapStaleRuns(ctx context.Context, staleBefore, now time.Time) (int, error) {
+	res, err := r.db.ExecWriteContext(ctx, `
+		UPDATE agent_runs
+		SET status = ?, error = ?, ended_at = ?, updated_at = ?
+		WHERE status = ?
+		  AND runner_id IS NOT NULL
+		  AND runner_id IN (
+		    SELECT id FROM runner_instances
+		    WHERE status = ?
+		       OR (last_heartbeat_at IS NOT NULL AND last_heartbeat_at < ?)
+		       OR (last_heartbeat_at IS NULL AND registered_at < ?)
+		  )
+	`,
+		models.AgentRunStatusFailed, "runner lease expired (missed heartbeat)", now, now,
+		models.AgentRunStatusRunning,
+		models.RunnerInstanceStatusRevoked, staleBefore, staleBefore,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("reap stale runs: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("reap stale runs: rows affected: %w", err)
+	}
+	return int(n), nil
+}
+
 // SetContainerID records the spawned container id on an existing run row.
 // MarkRunning's queued→running transition is intentionally guarded by
 // status, so the runner uses this separate path once it actually has a

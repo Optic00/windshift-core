@@ -131,6 +131,31 @@ func (r *RunnerRepository) RevokeInstance(ctx context.Context, id int, now time.
 	return nil
 }
 
+// RevokeStaleInstances marks active runners whose heartbeat has gone stale
+// (older than staleBefore, or never seen and registered before staleBefore)
+// as revoked. Returns the number evicted. Pairs with
+// AgentRunRepository.ReapStaleRuns in the lease reaper (WI-141).
+func (r *RunnerRepository) RevokeStaleInstances(ctx context.Context, staleBefore, now time.Time) (int, error) {
+	res, err := r.db.ExecWriteContext(ctx, `
+		UPDATE runner_instances
+		SET status = ?, revoked_at = ?
+		WHERE status = ?
+		  AND ((last_heartbeat_at IS NOT NULL AND last_heartbeat_at < ?)
+		    OR (last_heartbeat_at IS NULL AND registered_at < ?))
+	`,
+		models.RunnerInstanceStatusRevoked, now,
+		models.RunnerInstanceStatusActive, staleBefore, staleBefore,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("revoke stale instances: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("revoke stale instances: rows affected: %w", err)
+	}
+	return int(n), nil
+}
+
 func scanRegistrationToken(row interface{ Scan(...any) error }) (*models.RunnerRegistrationToken, error) {
 	tok := &models.RunnerRegistrationToken{}
 	var description sql.NullString

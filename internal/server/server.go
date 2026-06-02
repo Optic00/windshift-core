@@ -66,6 +66,7 @@ type Server struct {
 	notificationScheduler     *scheduler.NotificationScheduler
 	recurrenceScheduler       *scheduler.RecurrenceScheduler
 	cfvCleanupScheduler       *scheduler.CFVCleanupScheduler
+	runnerLeaseReaper         *scheduler.RunnerLeaseReaper
 	workflowService           *services.WorkflowService
 	actionService             *services.ActionService
 	assetActionService        *services.AssetActionService
@@ -349,6 +350,13 @@ func (s *Server) initialize() error {
 	// immediately even when the workspace has millions of items.
 	s.cfvCleanupScheduler = scheduler.NewCFVCleanupScheduler(s.db)
 	s.cfvCleanupScheduler.Start()
+	// Liveness backstop for remote agent runs (WI-141): fail runs whose
+	// runner's heartbeat went stale and revoke the dead runner instances.
+	s.runnerLeaseReaper = scheduler.NewRunnerLeaseReaper(
+		repository.NewAgentRunRepository(s.db),
+		repository.NewRunnerRepository(s.db),
+	)
+	s.runnerLeaseReaper.Start()
 	slog.Info("recurrence scheduler started")
 
 	// Initialize shared execution chain store for cross-application loop prevention
@@ -1526,6 +1534,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.cfvCleanupScheduler != nil {
 		slog.Info("stopping cfv cleanup scheduler")
 		s.cfvCleanupScheduler.Stop()
+	}
+
+	if s.runnerLeaseReaper != nil {
+		slog.Info("stopping runner lease reaper")
+		s.runnerLeaseReaper.Stop()
 	}
 
 	if s.actionService != nil {
