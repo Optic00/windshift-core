@@ -23,17 +23,36 @@ type RunnerControlHandler struct {
 	registry *services.RunnerRegistryService
 	runs     *repository.AgentRunRepository
 	runSvc   *services.RunService
+	caps     *repository.ActionRepository
 	now      func() time.Time
 }
 
 // NewRunnerControlHandler constructs the handler. registry/runs may be nil
 // when the coding-agent harness is disabled, in which case endpoints return
 // 503 rather than panicking.
-func NewRunnerControlHandler(registry *services.RunnerRegistryService, runs *repository.AgentRunRepository, runSvc *services.RunService, now func() time.Time) *RunnerControlHandler {
+func NewRunnerControlHandler(registry *services.RunnerRegistryService, runs *repository.AgentRunRepository, runSvc *services.RunService, caps *repository.ActionRepository, now func() time.Time) *RunnerControlHandler {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return &RunnerControlHandler{registry: registry, runs: runs, runSvc: runSvc, now: now}
+	return &RunnerControlHandler{registry: registry, runs: runs, runSvc: runSvc, caps: caps, now: now}
+}
+
+// poolMaxConcurrent reads the runner_pool capability's MaxConcurrentRuns quota
+// (0 = unlimited). Any resolution failure is treated as unlimited so a
+// transient lookup error never wedges claims.
+func (h *RunnerControlHandler) poolMaxConcurrent(poolID int) int {
+	if h.caps == nil {
+		return 0
+	}
+	capRow, err := h.caps.GetCapabilityByID(poolID)
+	if err != nil || capRow == nil || capRow.CapabilityType != models.CapabilityRunnerPool {
+		return 0
+	}
+	var cfg models.RunnerPoolConfig
+	if json.Unmarshal([]byte(capRow.Config), &cfg) != nil {
+		return 0
+	}
+	return cfg.MaxConcurrentRuns
 }
 
 // Register exchanges a pool registration token for a per-instance runner
@@ -69,6 +88,21 @@ func (h *RunnerControlHandler) Claim(w http.ResponseWriter, r *http.Request) {
 	inst, ok := h.requireRunner(w, r)
 	if !ok {
 		return
+	}
+	// Enforce the pool's max-concurrency quota before handing out work
+	// (WI-147). Soft cap: count + claim aren't atomic, so a burst of
+	// concurrent claimers can overshoot by at most their count — acceptable
+	// for a fairness/back-pressure bound.
+	if maxRuns := h.poolMaxConcurrent(inst.PoolCapabilityID); maxRuns > 0 {
+		running, err := h.runs.CountRunningForPool(r.Context(), inst.PoolCapabilityID)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return
+		}
+		if running >= maxRuns {
+			respondJSONOK(w, services.ClaimResponse{Job: nil}) // pool at capacity
+			return
+		}
 	}
 	run, err := h.runs.ClaimQueued(r.Context(), inst.PoolCapabilityID, inst.ID, h.now())
 	if err != nil {

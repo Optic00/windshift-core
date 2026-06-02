@@ -205,6 +205,20 @@ func (r *AgentRunRepository) CountQueuedForPool(ctx context.Context, poolID int)
 	return n, nil
 }
 
+// CountRunningForPool returns how many runs are currently running on the
+// given pool — used to enforce the pool's max-concurrency quota (WI-147)
+// before handing out another claim.
+func (r *AgentRunRepository) CountRunningForPool(ctx context.Context, poolID int) (int, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM agent_runs WHERE status = ? AND target_pool_id = ?
+	`, models.AgentRunStatusRunning, poolID)
+	var n int
+	if err := row.Scan(&n); err != nil {
+		return 0, fmt.Errorf("count running for pool: %w", err)
+	}
+	return n, nil
+}
+
 // RequestCancel flags a running run for cancellation. The runner that owns
 // the run learns via its heartbeat and aborts. Idempotent no-op (zero rows)
 // when the run is not running or is already flagged.
