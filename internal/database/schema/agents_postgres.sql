@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     started_at TIMESTAMPTZ,
     ended_at TIMESTAMPTZ,
     container_id TEXT,
+    runner_id INTEGER, -- soft ref to runner_instances; NULL for the in-process local runner (WI-141)
     error TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -22,6 +23,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_runs_workspace_queued ON agent_runs(workspa
 CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON agent_runs(status);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_item_id ON agent_runs(item_id);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_binding_created ON agent_runs(binding_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_runner ON agent_runs(runner_id);
 
 CREATE TABLE IF NOT EXISTS agent_run_events (
     id BIGSERIAL PRIMARY KEY,
@@ -95,3 +97,34 @@ CREATE INDEX IF NOT EXISTS idx_workspace_agent_bindings_workspace
     ON workspace_agent_bindings(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_workspace_agent_bindings_scm_connection
     ON workspace_agent_bindings(scm_connection_id);
+
+-- Remote runner pools (Initiative WI-141). A pool is an action_capabilities
+-- row of type 'runner_pool'; these tables hang off it by soft ref (no FK,
+-- mirroring the agent-table convention).
+CREATE TABLE IF NOT EXISTS runner_registration_tokens (
+    id SERIAL PRIMARY KEY,
+    pool_capability_id INTEGER NOT NULL, -- soft ref to action_capabilities (runner_pool)
+    token_hash TEXT NOT NULL UNIQUE,
+    token_prefix TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    created_by_user_id INTEGER,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMPTZ,
+    revoked_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_runner_registration_tokens_pool
+    ON runner_registration_tokens(pool_capability_id);
+
+CREATE TABLE IF NOT EXISTS runner_instances (
+    id SERIAL PRIMARY KEY,
+    pool_capability_id INTEGER NOT NULL, -- soft ref to action_capabilities (runner_pool)
+    name TEXT NOT NULL DEFAULT '',
+    credential_hash TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active','revoked')),
+    registered_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_heartbeat_at TIMESTAMPTZ,
+    revoked_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_runner_instances_pool ON runner_instances(pool_capability_id);
+CREATE INDEX IF NOT EXISTS idx_runner_instances_status ON runner_instances(status);

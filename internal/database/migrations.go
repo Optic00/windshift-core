@@ -855,6 +855,94 @@ var Catalog = []Migration{
 				ON workspace_agent_bindings(scm_connection_id);
 		`,
 	},
+	{
+		// Remote runner pools (Initiative WI-141). A pool is an
+		// action_capabilities row of type 'runner_pool'; these tables hang
+		// off it by soft ref (no FK), mirroring the agent-table convention.
+		// runner_registration_tokens: reusable, revocable, pool-scoped
+		// tokens a runner presents to register; runner_instances: one
+		// registered runner with its per-instance credential + heartbeat.
+		// Fresh installs get these from schema/agents{,_postgres}.sql; this
+		// entry upgrades existing DBs (its Check stamps without re-running
+		// once runner_instances exists).
+		Version:       "20260602_runner_pool_tables",
+		Name:          "Create runner_registration_tokens + runner_instances",
+		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='runner_instances'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='runner_instances'",
+		SQLite: `
+			CREATE TABLE IF NOT EXISTS runner_registration_tokens (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				pool_capability_id INTEGER NOT NULL,
+				token_hash TEXT NOT NULL UNIQUE,
+				token_prefix TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				created_by_user_id INTEGER,
+				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				expires_at DATETIME,
+				revoked_at DATETIME
+			);
+			CREATE INDEX IF NOT EXISTS idx_runner_registration_tokens_pool
+				ON runner_registration_tokens(pool_capability_id);
+			CREATE TABLE IF NOT EXISTS runner_instances (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				pool_capability_id INTEGER NOT NULL,
+				name TEXT NOT NULL DEFAULT '',
+				credential_hash TEXT NOT NULL UNIQUE,
+				status TEXT NOT NULL DEFAULT 'active'
+					CHECK (status IN ('active','revoked')),
+				registered_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				last_heartbeat_at DATETIME,
+				revoked_at DATETIME
+			);
+			CREATE INDEX IF NOT EXISTS idx_runner_instances_pool ON runner_instances(pool_capability_id);
+			CREATE INDEX IF NOT EXISTS idx_runner_instances_status ON runner_instances(status);
+		`,
+		Postgres: `
+			CREATE TABLE IF NOT EXISTS runner_registration_tokens (
+				id SERIAL PRIMARY KEY,
+				pool_capability_id INTEGER NOT NULL,
+				token_hash TEXT NOT NULL UNIQUE,
+				token_prefix TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				created_by_user_id INTEGER,
+				created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				expires_at TIMESTAMPTZ,
+				revoked_at TIMESTAMPTZ
+			);
+			CREATE INDEX IF NOT EXISTS idx_runner_registration_tokens_pool
+				ON runner_registration_tokens(pool_capability_id);
+			CREATE TABLE IF NOT EXISTS runner_instances (
+				id SERIAL PRIMARY KEY,
+				pool_capability_id INTEGER NOT NULL,
+				name TEXT NOT NULL DEFAULT '',
+				credential_hash TEXT NOT NULL UNIQUE,
+				status TEXT NOT NULL DEFAULT 'active'
+					CHECK (status IN ('active','revoked')),
+				registered_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				last_heartbeat_at TIMESTAMPTZ,
+				revoked_at TIMESTAMPTZ
+			);
+			CREATE INDEX IF NOT EXISTS idx_runner_instances_pool ON runner_instances(pool_capability_id);
+			CREATE INDEX IF NOT EXISTS idx_runner_instances_status ON runner_instances(status);
+		`,
+	},
+	{
+		// agent_runs.runner_id records which remote runner executed a run
+		// (NULL for the in-process local runner). Soft ref to
+		// runner_instances; runs outlive instances for audit.
+		Version:       "20260602_agent_runs_runner_id",
+		Name:          "Add runner_id to agent_runs",
+		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('agent_runs') WHERE name='runner_id'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_name='agent_runs' AND column_name='runner_id'",
+		SQLite: `
+			ALTER TABLE agent_runs ADD COLUMN runner_id INTEGER;
+			CREATE INDEX IF NOT EXISTS idx_agent_runs_runner ON agent_runs(runner_id);
+		`,
+		Postgres: `
+			ALTER TABLE agent_runs ADD COLUMN runner_id INTEGER;
+			CREATE INDEX IF NOT EXISTS idx_agent_runs_runner ON agent_runs(runner_id);
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {

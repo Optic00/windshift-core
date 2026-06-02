@@ -1175,6 +1175,13 @@ const (
 	CapabilityDockerEnvironment CapabilityType = "docker_environment"
 	CapabilityHTTPClient        CapabilityType = "http_client"
 	CapabilityLLMConnection     CapabilityType = "llm_connection"
+	// CapabilityRunnerPool is an admin-provisioned pool of runners that
+	// jobs are dispatched to (Initiative WI-141). It reuses the same
+	// scoping as every other capability — applies_to_all_workspaces plus
+	// the action_capability_workspaces join table — so "which workspaces
+	// may dispatch to this pool" is the same resolveCapability gate as
+	// "which workspaces may use this docker image".
+	CapabilityRunnerPool CapabilityType = "runner_pool"
 )
 
 // ActionCapability represents an admin-provisioned resource that action nodes can reference.
@@ -1205,6 +1212,23 @@ type DockerEnvironmentConfig struct {
 	NetworkMode    string             `json:"network_mode"`
 	EnvVars        map[string]string  `json:"env_vars,omitempty"`
 	HealthCheck    *HealthCheckConfig `json:"health_check,omitempty"`
+}
+
+// RunnerPoolConfig is the config blob for a runner_pool capability. Pool
+// membership/scoping rides the shared ActionCapability fields
+// (applies_to_all_workspaces + WorkspaceIDs); this struct holds only the
+// pool's own behavior. Registration tokens and runner instances live in
+// their own tables (runner_registration_tokens, runner_instances), not here.
+type RunnerPoolConfig struct {
+	// MaxConcurrentRuns caps how many runs this pool executes at once
+	// (0 = unlimited). It is the per-pool quota referenced by the
+	// scheduler in WI-161.
+	MaxConcurrentRuns int `json:"max_concurrent_runs,omitempty"`
+	// Ephemeral, when true, opts the pool into the truly-ephemeral-agent
+	// mode (re-register + exit per job) instead of the default
+	// persistent-agent / ephemeral-container model (decision #5). Default
+	// false; honored by the agent binary in a later phase.
+	Ephemeral bool `json:"ephemeral,omitempty"`
 }
 
 // ResourceLimits defines resource constraints for a Docker container.
