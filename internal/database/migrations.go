@@ -990,6 +990,24 @@ var Catalog = []Migration{
 			ALTER TABLE agent_runs ADD COLUMN run_token_id INTEGER;
 		`,
 	},
+	{
+		// agent_runs.job_kind + job_image let non-coding-agent jobs
+		// (action_container, ci_task) ride the same runner substrate (WI-146):
+		// the runner picks its execution mode by kind and runs job_image for
+		// container jobs (the fixed runner image is used for coding_agent).
+		Version:       "20260602_agent_runs_job_kind",
+		Name:          "Add job_kind + job_image to agent_runs",
+		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('agent_runs') WHERE name='job_kind'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_name='agent_runs' AND column_name='job_kind'",
+		SQLite: `
+			ALTER TABLE agent_runs ADD COLUMN job_kind TEXT NOT NULL DEFAULT 'coding_agent';
+			ALTER TABLE agent_runs ADD COLUMN job_image TEXT;
+		`,
+		Postgres: `
+			ALTER TABLE agent_runs ADD COLUMN job_kind TEXT NOT NULL DEFAULT 'coding_agent';
+			ALTER TABLE agent_runs ADD COLUMN job_image TEXT;
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {

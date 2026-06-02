@@ -63,6 +63,13 @@ type JobSpec struct {
 	// injections (e.g. WS_TOKEN), so the runner forwards it verbatim.
 	Env map[string]string `json:"env,omitempty"`
 
+	// Kind selects how the runner executes the job (WI-146): "coding_agent"
+	// (default; pi harness on the fixed runner image) vs "action_container" /
+	// "ci_task" (run Image as a plain container). Image is the admin image
+	// for the container kinds.
+	Kind  string `json:"kind,omitempty"`
+	Image string `json:"image,omitempty"`
+
 	// Later phases extend JobSpec with the admin-curated image + command,
 	// the grant-set / broker endpoints (git / llm / secrets / http), and
 	// the sandbox spec. Keeping them here preserves the "runner is a thin
@@ -121,6 +128,8 @@ func RunWorker(ctx context.Context, client OrchestratorClient, runner Runner, lo
 			RunID:         runID,
 			WorkspacePath: job.Spec.WorkspacePath,
 			Env:           job.Spec.Env,
+			Kind:          job.Spec.Kind,
+			Image:         job.Spec.Image,
 		}, emit)
 		if err := client.Report(jobCtx, runID, result); err != nil {
 			logger.Printf("run worker: report run=%d: %v", runID, err)

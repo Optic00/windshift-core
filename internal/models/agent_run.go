@@ -13,6 +13,15 @@ const (
 	AgentRunStatusKilled    = "killed"
 )
 
+// Agent-run job kinds. coding_agent is the default (the pi coding harness on
+// the fixed runner image); action_container + ci_task run an admin-chosen
+// image on the same runner substrate (WI-146).
+const (
+	JobKindCodingAgent     = "coding_agent"
+	JobKindActionContainer = "action_container"
+	JobKindCITask          = "ci_task"
+)
+
 // IsAgentRunTerminal reports whether the status represents a final state
 // (no further transitions will be made by the orchestrator).
 func IsAgentRunTerminal(status string) bool {
@@ -48,7 +57,12 @@ type AgentRun struct {
 	TargetPoolID *int `json:"target_pool_id,omitempty"`
 	// RunnerID is the runner_instances row that executed this run, or nil
 	// for the in-process local runner. Audit only; soft ref.
-	RunnerID  *int      `json:"runner_id,omitempty"`
+	RunnerID *int `json:"runner_id,omitempty"`
+	// JobKind selects how the runner executes this run (WI-146); defaults to
+	// JobKindCodingAgent. JobImage is the admin image for container jobs
+	// (action_container / ci_task), empty for coding_agent.
+	JobKind   string    `json:"job_kind,omitempty"`
+	JobImage  string    `json:"job_image,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

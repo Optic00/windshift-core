@@ -114,8 +114,9 @@ func (h *RunnerControlHandler) Claim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Env / worktree are enriched by the access layer (WI-144); for now the
-	// runner receives the run id and prepares its own workspace.
-	respondJSONOK(w, services.ClaimResponse{Job: &services.JobSpec{RunID: run.ID}})
+	// runner receives the run id, its job kind, and (for container jobs) the
+	// image to run.
+	respondJSONOK(w, services.ClaimResponse{Job: &services.JobSpec{RunID: run.ID, Kind: run.JobKind, Image: run.JobImage}})
 }
 
 // Events appends one event to a run the caller owns.

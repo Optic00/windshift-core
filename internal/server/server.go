@@ -2009,15 +2009,28 @@ func bootCodingAgentRunService(
 		staticEnv["LLM_MODEL"] = cfg.LLMModel
 	}
 
-	runner := &services.DockerPiRunner{
-		Image:         cfg.RunnerImage,
-		DockerBinary:  cfg.DockerBinary,
-		Env:           staticEnv,
-		Network:       cfg.Network,
-		PidsLimit:     cfg.PidsLimit,
-		Memory:        cfg.Memory,
-		CPUs:          cfg.CPUs,
-		InitialPrompt: promptStore.Get(llm.PromptCodingAgentInitial),
+	var containerArgs []string
+	if cfg.Network != "" {
+		containerArgs = append(containerArgs, "--network="+cfg.Network)
+	}
+	// Kind-dispatching runner (WI-146): coding_agent runs the pi harness on
+	// the fixed runner image; action_container / ci_task run the job's admin
+	// image as a plain container, with the same sandbox network.
+	runner := &services.KindDispatchRunner{
+		CodingAgent: &services.DockerPiRunner{
+			Image:         cfg.RunnerImage,
+			DockerBinary:  cfg.DockerBinary,
+			Env:           staticEnv,
+			Network:       cfg.Network,
+			PidsLimit:     cfg.PidsLimit,
+			Memory:        cfg.Memory,
+			CPUs:          cfg.CPUs,
+			InitialPrompt: promptStore.Get(llm.PromptCodingAgentInitial),
+		},
+		Container: &services.ContainerImageRunner{
+			DockerBinary: cfg.DockerBinary,
+			ExtraArgs:    containerArgs,
+		},
 	}
 
 	// PR-creation post-run hook. cr is the same CredentialResolver

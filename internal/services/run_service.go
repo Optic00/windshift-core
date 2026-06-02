@@ -53,6 +53,11 @@ type RunInput struct {
 	RunID         int
 	WorkspacePath string
 	Env           map[string]string
+	// Kind + Image let a kind-dispatching runner pick its execution mode
+	// (WI-146): coding_agent (pi) vs action_container / ci_task (run Image as
+	// a plain container). Empty Kind means coding_agent.
+	Kind  string
+	Image string
 }
 
 // Runner executes the actual work of a run: spawning a container, driving
@@ -107,6 +112,11 @@ type RunRequest struct {
 	// claim from the prepared worktree branch. Only persisted when a token is
 	// minted (the brokers authorize by the bound token).
 	Grants *models.RunGrants
+	// JobKind + JobImage select the runner execution mode (WI-146). Empty
+	// JobKind defaults to coding_agent; action_container / ci_task run
+	// JobImage as a plain container.
+	JobKind  string
+	JobImage string
 }
 
 // TokenSpec is the per-run input to RunTokenService.Mint. Phase 4-5 wire

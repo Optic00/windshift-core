@@ -68,10 +68,16 @@ func main() {
 
 	go heartbeatLoop(ctx, client, heartbeatInterval, logger)
 
-	runner := &services.DockerPiRunner{
-		Image:         image,
-		DockerBinary:  dockerBin,
-		InitialPrompt: initialPrompt,
+	// Kind-dispatching runner (WI-146): coding_agent jobs run the pi harness;
+	// action_container / ci_task jobs run the job's admin image as a plain
+	// container.
+	runner := &services.KindDispatchRunner{
+		CodingAgent: &services.DockerPiRunner{
+			Image:         image,
+			DockerBinary:  dockerBin,
+			InitialPrompt: initialPrompt,
+		},
+		Container: &services.ContainerImageRunner{DockerBinary: dockerBin},
 	}
 
 	logger.Printf("worker started (poll=%s heartbeat=%s image=%q)", pollInterval, heartbeatInterval, image)

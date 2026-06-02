@@ -33,12 +33,16 @@ func (r *AgentRunRepository) Insert(ctx context.Context, run *models.AgentRun) (
 	if status == "" {
 		status = models.AgentRunStatusQueued
 	}
+	jobKind := run.JobKind
+	if jobKind == "" {
+		jobKind = models.JobKindCodingAgent
+	}
 	res, err := r.db.ExecWriteContext(ctx, `
-		INSERT INTO agent_runs(workspace_id, item_id, binding_id, target_pool_id, status)
-		VALUES (?, ?, ?, ?, ?)
+		INSERT INTO agent_runs(workspace_id, item_id, binding_id, target_pool_id, job_kind, job_image, status)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`,
 		run.WorkspaceID, nullIntArg(run.ItemID), nullIntArg(run.BindingID),
-		nullIntArg(run.TargetPoolID), status,
+		nullIntArg(run.TargetPoolID), jobKind, nullStringArg(run.JobImage), status,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("failed to insert agent_run: %w", err)
@@ -54,21 +58,24 @@ func (r *AgentRunRepository) Insert(ctx context.Context, run *models.AgentRun) (
 func (r *AgentRunRepository) Get(ctx context.Context, id int) (*models.AgentRun, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, workspace_id, item_id, binding_id, status, queued_at, started_at, ended_at,
-		       container_id, runner_id, target_pool_id, error, created_at, updated_at
+		       container_id, runner_id, target_pool_id, job_kind, job_image, error, created_at, updated_at
 		FROM agent_runs WHERE id = ?
 	`, id)
 
 	run := &models.AgentRun{}
 	var itemID, bindingID, runnerID, targetPoolID sql.NullInt64
 	var startedAt, endedAt sql.NullTime
-	var containerID, errMsg sql.NullString
+	var containerID, jobImage, errMsg sql.NullString
 
 	if err := row.Scan(
 		&run.ID, &run.WorkspaceID, &itemID, &bindingID, &run.Status,
 		&run.QueuedAt, &startedAt, &endedAt,
-		&containerID, &runnerID, &targetPoolID, &errMsg, &run.CreatedAt, &run.UpdatedAt,
+		&containerID, &runnerID, &targetPoolID, &run.JobKind, &jobImage, &errMsg, &run.CreatedAt, &run.UpdatedAt,
 	); err != nil {
 		return nil, err
+	}
+	if jobImage.Valid {
+		run.JobImage = jobImage.String
 	}
 	if itemID.Valid {
 		v := int(itemID.Int64)
