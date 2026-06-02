@@ -48,6 +48,8 @@ type ReportRequest struct {
 	Status      string `json:"status"`
 	Error       string `json:"error,omitempty"`
 	ContainerID string `json:"container_id,omitempty"`
+	Branch      string `json:"branch,omitempty"`
+	BaseCommit  string `json:"base_commit,omitempty"`
 }
 
 // HeartbeatResponse is returned from POST /runner/heartbeat. Abort lists the
@@ -175,7 +177,13 @@ func (c *HTTPOrchestratorClient) Report(ctx context.Context, runID int, result R
 	rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer rcancel()
 	return doJSON(rctx, c.hc, fmt.Sprintf("%s/runner/runs/%d/result", c.baseURL, runID), c.credential,
-		ReportRequest{Status: result.Status, Error: result.Error, ContainerID: result.ContainerID}, nil)
+		ReportRequest{
+			Status:      result.Status,
+			Error:       result.Error,
+			ContainerID: result.ContainerID,
+			Branch:      result.Branch,
+			BaseCommit:  result.BaseCommit,
+		}, nil)
 }
 
 // register stores the cancel func for an in-flight run so Heartbeat can abort

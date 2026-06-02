@@ -705,7 +705,7 @@ func (s *Server) initialize() error {
 	// remote pools do not require the local CodingAgent.RunnerImage, and the
 	// handler 503s when the registry is unavailable.
 	runnerRegistry := services.NewRunnerRegistryService(repository.NewRunnerRepository(s.db), nil)
-	runnerControlHandler := handlers.NewRunnerControlHandler(runnerRegistry, repository.NewAgentRunRepository(s.db), nil)
+	runnerControlHandler := handlers.NewRunnerControlHandler(runnerRegistry, repository.NewAgentRunRepository(s.db), codingRunSvc, nil)
 	// Secretless access layer (WI-144): brokers a granted credential to a
 	// running job without it ever living on the runner host.
 	runnerBrokerHandler := handlers.NewRunnerBrokerHandler(tokenManager, repository.NewAgentRunRepository(s.db), credentialSvc, llmManager, &scmCredsAdapter{cr: scmCredResolver})

@@ -22,17 +22,18 @@ import (
 type RunnerControlHandler struct {
 	registry *services.RunnerRegistryService
 	runs     *repository.AgentRunRepository
+	runSvc   *services.RunService
 	now      func() time.Time
 }
 
 // NewRunnerControlHandler constructs the handler. registry/runs may be nil
 // when the coding-agent harness is disabled, in which case endpoints return
 // 503 rather than panicking.
-func NewRunnerControlHandler(registry *services.RunnerRegistryService, runs *repository.AgentRunRepository, now func() time.Time) *RunnerControlHandler {
+func NewRunnerControlHandler(registry *services.RunnerRegistryService, runs *repository.AgentRunRepository, runSvc *services.RunService, now func() time.Time) *RunnerControlHandler {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return &RunnerControlHandler{registry: registry, runs: runs, now: now}
+	return &RunnerControlHandler{registry: registry, runs: runs, runSvc: runSvc, now: now}
 }
 
 // Register exchanges a pool registration token for a per-instance runner
@@ -136,6 +137,24 @@ func (h *RunnerControlHandler) Result(w http.ResponseWriter, r *http.Request) {
 	status := req.Status
 	if !models.IsAgentRunTerminal(status) {
 		respondBadRequest(w, r, "status must be a terminal agent-run state")
+		return
+	}
+	// Prefer the RunService path: it finalizes, emits the terminal event, and
+	// fires the post-run hook (PR creation + ItemSCMLink writeback) with the
+	// branch/base-commit the runner reported — same as a local run. Fall back
+	// to a plain repo finalize when the harness's RunService isn't wired.
+	if h.runSvc != nil {
+		if err := h.runSvc.FinalizeRemote(r.Context(), runID, services.RunnerResult{
+			Status:      status,
+			Error:       req.Error,
+			ContainerID: req.ContainerID,
+			Branch:      req.Branch,
+			BaseCommit:  req.BaseCommit,
+		}, req.Branch, req.BaseCommit); err != nil {
+			respondInternalError(w, r, err)
+			return
+		}
+		respondJSONOK(w, map[string]any{"ok": true})
 		return
 	}
 	if req.ContainerID != "" {

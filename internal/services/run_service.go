@@ -37,6 +37,12 @@ type RunnerResult struct {
 	ContainerID string
 	Status      string
 	Error       string
+	// Branch + BaseCommit are reported by a remote runner that prepared its
+	// own worktree, so the orchestrator can create the PR on result (the
+	// in-process path already has these from the worktree it prepared). Empty
+	// for runs that produced no branch.
+	Branch     string
+	BaseCommit string
 }
 
 // RunInput is what RunService hands to a Runner when work is admitted:
@@ -357,6 +363,49 @@ func (s *RunService) finalize(runID int, status, errMsg string) {
 	if err := s.repo.Finalize(ctx, runID, status, RedactString(errMsg), s.now()); err != nil {
 		s.logger.Printf("run service: finalize run=%d status=%s: %v", runID, status, err)
 	}
+}
+
+// FinalizeRemote records the terminal verdict for a run executed by a remote
+// runner (the in-process path uses Report). It normalizes + finalizes the
+// status, emits the terminal event, and fires the post-run hook with the
+// branch / base commit the runner reported — so remote runs get the same
+// PR-creation + ItemSCMLink writeback as local ones (WI-144). Worktree
+// cleanup is the runner's responsibility, so there's none here.
+func (s *RunService) FinalizeRemote(ctx context.Context, runID int, result RunnerResult, branch, baseCommit string) error {
+	run, err := s.repo.Get(ctx, runID)
+	if err != nil {
+		return fmt.Errorf("finalize remote: load run %d: %w", runID, err)
+	}
+	if result.ContainerID != "" {
+		if err := s.repo.SetContainerID(ctx, runID, result.ContainerID); err != nil {
+			s.logger.Printf("run service: set container_id run=%d: %v", runID, err)
+		}
+	}
+	status := result.Status
+	if !models.IsAgentRunTerminal(status) {
+		status = models.AgentRunStatusFailed
+		if result.Error == "" {
+			result.Error = fmt.Sprintf("runner returned non-terminal status %q", result.Status)
+		}
+	}
+	s.finalize(runID, status, result.Error)
+	if err := s.repo.AppendEvent(ctx, runID, "lifecycle", fmt.Sprintf(`{"phase":%q}`, status)); err != nil {
+		s.logger.Printf("run service: append terminal event run=%d: %v", runID, err)
+	}
+	bindingID := 0
+	if run.BindingID != nil {
+		bindingID = *run.BindingID
+	}
+	s.invokePostRunHook(PostRunInfo{
+		RunID:       runID,
+		WorkspaceID: run.WorkspaceID,
+		ItemID:      run.ItemID,
+		BindingID:   bindingID,
+		Status:      status,
+		Branch:      branch,
+		BaseCommit:  baseCommit,
+	})
+	return nil
 }
 
 // Shutdown stops accepting new runs and waits for in-flight runs to drain.
