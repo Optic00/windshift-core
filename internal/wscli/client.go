@@ -1276,3 +1276,118 @@ func (c *Client) ListLinksForEntity(entityType string, id int) (*LinkListRespons
 func (c *Client) DeleteLink(id int) error {
 	return c.DELETE(fmt.Sprintf("/rest/api/v1/links/%d", id))
 }
+
+// ----------------------------------------------------------------------
+// Assets — v1 surface
+// ----------------------------------------------------------------------
+
+// ListAssets returns a page of assets in setID, filtered by ?type_id /
+// ?category_id / ?status_id / ?q. Pagination flows through the standard
+// PaginatedResponse envelope.
+func (c *Client) ListAssets(setID int, filters map[string]string) (*PaginatedResponse[Asset], error) {
+	path := fmt.Sprintf("/rest/api/v1/asset-sets/%d/assets", setID)
+	if len(filters) > 0 {
+		params := url.Values{}
+		for k, v := range filters {
+			if v != "" {
+				params.Set(k, v)
+			}
+		}
+		if encoded := params.Encode(); encoded != "" {
+			path += "?" + encoded
+		}
+	}
+	var resp PaginatedResponse[Asset]
+	if err := c.GET(path, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// GetAsset fetches a single asset by id.
+func (c *Client) GetAsset(id int) (*Asset, error) {
+	var a Asset
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/assets/%d", id), &a); err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+// CreateAsset creates a new asset in setID.
+func (c *Client) CreateAsset(setID int, req AssetCreateRequest) (*Asset, error) {
+	var a Asset
+	if err := c.POST(fmt.Sprintf("/rest/api/v1/asset-sets/%d/assets", setID), req, &a); err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+// UpdateAsset partial-updates an asset. Only non-nil pointer fields in
+// req are written; everything else is preserved.
+func (c *Client) UpdateAsset(id int, req AssetUpdateRequest) (*Asset, error) {
+	var a Asset
+	if err := c.PUT(fmt.Sprintf("/rest/api/v1/assets/%d", id), req, &a); err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+// DeleteAsset removes an asset and any item↔asset links pointing at it.
+// Requires assets:delete scope on the token.
+func (c *Client) DeleteAsset(id int) error {
+	return c.DELETE(fmt.Sprintf("/rest/api/v1/assets/%d", id))
+}
+
+// ListAssetSets lists asset sets visible to the caller.
+func (c *Client) ListAssetSets() ([]AssetSet, error) {
+	var sets []AssetSet
+	if err := c.GET("/rest/api/v1/asset-sets", &sets); err != nil {
+		return nil, err
+	}
+	return sets, nil
+}
+
+// GetAssetSet fetches an asset set by id.
+func (c *Client) GetAssetSet(id int) (*AssetSet, error) {
+	var s AssetSet
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/asset-sets/%d", id), &s); err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+// ListAssetTypes lists the asset types defined on setID.
+func (c *Client) ListAssetTypes(setID int) ([]AssetType, error) {
+	var types []AssetType
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/asset-sets/%d/types", setID), &types); err != nil {
+		return nil, err
+	}
+	return types, nil
+}
+
+// GetAssetType fetches an asset type by id (including its field definitions).
+func (c *Client) GetAssetType(id int) (*AssetType, error) {
+	var t AssetType
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/asset-types/%d", id), &t); err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+// ListAssetCategories lists categories defined on setID.
+func (c *Client) ListAssetCategories(setID int) ([]AssetCategory, error) {
+	var cats []AssetCategory
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/asset-sets/%d/categories", setID), &cats); err != nil {
+		return nil, err
+	}
+	return cats, nil
+}
+
+// ListAssetStatuses lists statuses defined on setID.
+func (c *Client) ListAssetStatuses(setID int) ([]AssetStatus, error) {
+	var statuses []AssetStatus
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/asset-sets/%d/statuses", setID), &statuses); err != nil {
+		return nil, err
+	}
+	return statuses, nil
+}
