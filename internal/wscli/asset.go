@@ -190,30 +190,12 @@ Examples:
 	},
 }
 
-var assetDeleteCmd = &cobra.Command{
-	Use:   "rm <id>",
-	Short: "Delete an asset",
-	Long: `Delete an asset. Requires a token minted with --scopes assets:delete
-(default agent tokens omit :delete to match the items:delete precedent).`,
-	Args: cobra.ExactArgs(1),
-	RunE: func(_ *cobra.Command, args []string) error {
-		client, err := NewClient()
-		if err != nil {
-			return err
-		}
-		id, err := strconv.Atoi(args[0])
-		if err != nil {
-			return fmt.Errorf("invalid asset id %q: %w", args[0], err)
-		}
-		if err := client.DeleteAsset(id); err != nil {
-			return fmt.Errorf("failed to delete asset: %w", err)
-		}
-		if outputFormat == "" || outputFormat == "table" {
-			_, _ = fmt.Fprintf(stdout, "Deleted asset %d\n", id)
-		}
-		return nil
-	},
-}
+// Note on ws asset rm: deliberately not exposed. Asset delete requires
+// assets:delete, which isn't in DefaultAgentScopes — a CLI verb that
+// 403s out of the box for the default token is a footgun. Operators who
+// have minted a token with `--scopes assets:delete` can call
+// DELETE /rest/api/v1/assets/{id} via curl, or use the cookie-auth
+// admin UI. Client.DeleteAsset stays available for embedders.
 
 // Flags for asset commands.
 var (
@@ -273,7 +255,6 @@ func init() {
 	assetCmd.AddCommand(assetGetCmd)
 	assetCmd.AddCommand(assetCreateCmd)
 	assetCmd.AddCommand(assetEditCmd)
-	assetCmd.AddCommand(assetDeleteCmd)
 
 	// --set / -s applies to every verb that addresses a set.
 	for _, c := range []*cobra.Command{assetListCmd, assetCreateCmd} {
