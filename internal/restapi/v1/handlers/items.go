@@ -917,6 +917,12 @@ func (h *ItemHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	// Sanitize at the handler boundary in addition to CommentService.Create:
+	// the response body below is built from req.Content (not the stored
+	// row), so without sanitizing here the response would echo back the
+	// raw payload even though the stored row is clean. Sanitize is
+	// idempotent — double-coverage is fine.
+	sanitize.Apply(&req.Content, sanitize.Comment)
 
 	if !h.ValidateRequiredString(w, r, req.Content, "content") {
 		return
