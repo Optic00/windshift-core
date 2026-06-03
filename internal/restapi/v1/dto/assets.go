@@ -254,10 +254,13 @@ func MapAssetToResponse(a *models.Asset, baseURL string) AssetResponse {
 			Color: a.StatusColor,
 		}
 	}
-	if a.CreatedBy != nil && a.CreatorEmail != "" {
+	// Creator email is deliberately omitted: assets:read alone shouldn't
+	// expose user emails (that's what users:read gates). Callers that
+	// need the email join a /users/{id} lookup using the creator id.
+	// See docs/asset-api-v1-security-review-2026-06-03.md finding 2.
+	if a.CreatedBy != nil {
 		resp.Creator = &UserSummary{
 			ID:       *a.CreatedBy,
-			Email:    a.CreatorEmail,
 			FullName: a.CreatorName,
 		}
 	}
