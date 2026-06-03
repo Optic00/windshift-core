@@ -102,7 +102,10 @@ type ItemUpdateRequest struct {
 	CustomFields map[string]interface{} `json:"custom_fields,omitempty"`
 }
 
-// CommentResponse is the public API representation of a Comment
+// CommentResponse is the public API representation of a Comment.
+// Warnings surfaces sanitize mutations from create / update so the
+// frontend can toast them at info severity. omitempty when nothing
+// was modified.
 type CommentResponse struct {
 	ID        int          `json:"id"`
 	ItemID    int          `json:"item_id"`
@@ -110,6 +113,7 @@ type CommentResponse struct {
 	Author    *UserSummary `json:"author,omitempty"`
 	CreatedAt time.Time    `json:"created_at"`
 	UpdatedAt time.Time    `json:"updated_at"`
+	Warnings  []string     `json:"warnings,omitempty"`
 }
 
 // CommentCreateRequest is the request body for creating a comment

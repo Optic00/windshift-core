@@ -922,7 +922,9 @@ func (h *ItemHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	// row), so without sanitizing here the response would echo back the
 	// raw payload even though the stored row is clean. Sanitize is
 	// idempotent — double-coverage is fine.
-	sanitize.Apply(&req.Content, sanitize.Comment)
+	commentWarnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Content, Policy: sanitize.Comment, Label: "Comment"},
+	)
 
 	if !h.ValidateRequiredString(w, r, req.Content, "content") {
 		return
@@ -958,6 +960,7 @@ func (h *ItemHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 			FullName:  fullName,
 			AvatarURL: user.AvatarURL,
 		},
+		Warnings: commentWarnings,
 	}
 	h.RespondCreated(w, response)
 }

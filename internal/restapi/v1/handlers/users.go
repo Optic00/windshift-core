@@ -24,19 +24,23 @@ func NewUserHandler(db database.Database, permissionService *services.Permission
 	}
 }
 
-// UserResponse is the public API representation of a User
+// UserResponse is the public API representation of a User.
+// Warnings carries the user-facing strings the frontend surfaces at
+// info severity for any field sanitize had to modify at decode time
+// (only populated by admin Update today; List omits it via omitempty).
 type UserResponse struct {
-	ID        int    `json:"id"`
-	Email     string `json:"email"`
-	Username  string `json:"username"`
-	FirstName string `json:"first_name"`
-	LastName  string `json:"last_name"`
-	FullName  string `json:"full_name"`
-	IsActive  bool   `json:"is_active"`
-	AvatarURL string `json:"avatar_url,omitempty"`
-	Timezone  string `json:"timezone,omitempty"`
-	Language  string `json:"language,omitempty"`
-	CreatedAt string `json:"created_at"`
+	ID        int      `json:"id"`
+	Email     string   `json:"email"`
+	Username  string   `json:"username"`
+	FirstName string   `json:"first_name"`
+	LastName  string   `json:"last_name"`
+	FullName  string   `json:"full_name"`
+	IsActive  bool     `json:"is_active"`
+	AvatarURL string   `json:"avatar_url,omitempty"`
+	Timezone  string   `json:"timezone,omitempty"`
+	Language  string   `json:"language,omitempty"`
+	CreatedAt string   `json:"created_at"`
+	Warnings  []string `json:"warnings,omitempty"`
 }
 
 // List handles GET /rest/api/v1/users
