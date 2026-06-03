@@ -133,10 +133,10 @@ func (h *AssetStatusHandler) CreateAssetStatus(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
-	sanitize.ApplyAll(
-		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
-		sanitize.Pair{Target: &req.Color, Policy: sanitize.ShortIdentifier},
-		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &req.Color, Policy: sanitize.ShortIdentifier, Label: "Color"},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
 	)
 
 	if req.Name == "" {
@@ -176,7 +176,10 @@ func (h *AssetStatusHandler) CreateAssetStatus(w http.ResponseWriter, r *http.Re
 	status.ID = id
 	h.auditor.Log(r, currentUser, logger.ActionAssetStatusCreate, logger.ResourceAssetStatus, &id, req.Name)
 
-	respondJSONCreated(w, status)
+	respondJSONCreated(w, struct {
+		models.AssetStatus
+		Warnings []string `json:"warnings,omitempty"`
+	}{status, warnings})
 }
 
 // UpdateAssetStatusRequest represents the request body for updating an asset status
@@ -199,10 +202,10 @@ func (h *AssetStatusHandler) UpdateAssetStatus(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
-	sanitize.ApplyAll(
-		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
-		sanitize.Pair{Target: &req.Color, Policy: sanitize.ShortIdentifier},
-		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &req.Color, Policy: sanitize.ShortIdentifier, Label: "Color"},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
 	)
 
 	if req.Name == "" {
@@ -241,7 +244,10 @@ func (h *AssetStatusHandler) UpdateAssetStatus(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	respondJSONOK(w, status)
+	respondJSONOK(w, struct {
+		*models.AssetStatus
+		Warnings []string `json:"warnings,omitempty"`
+	}{status, warnings})
 }
 
 // DeleteAssetStatus deletes an asset status

@@ -88,9 +88,9 @@ func (h *EmailTemplateHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// text for outbound mail, and stripping HTML here would break every
 	// legitimate template. Authoring an email template is an admin-only
 	// trusted-author surface.
-	sanitize.ApplyAll(
-		sanitize.Pair{Target: &req.Subject, Policy: sanitize.PlainTextField},
-		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Subject, Policy: sanitize.PlainTextField, Label: "Subject"},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
 	)
 
 	if req.Subject == "" || req.HTMLBody == "" {
@@ -113,7 +113,10 @@ func (h *EmailTemplateHandler) Update(w http.ResponseWriter, r *http.Request) {
 		h.auditor.Log(r, user, logger.ActionEmailTemplateUpdate, logger.ResourceEmailTemplate, &idCopy, updated.Name)
 	}
 
-	respondJSONOK(w, updated)
+	respondJSONOK(w, struct {
+		*models.EmailTemplate
+		Warnings []string `json:"warnings,omitempty"`
+	}{updated, warnings})
 }
 
 // previewRequest carries the template sources to render plus the name of a

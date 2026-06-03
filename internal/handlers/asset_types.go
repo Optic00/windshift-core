@@ -160,11 +160,11 @@ func (h *AssetTypeHandler) CreateAssetType(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	sanitize.ApplyAll(
-		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
-		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
-		sanitize.Pair{Target: &req.Icon, Policy: sanitize.ShortIdentifier},
-		sanitize.Pair{Target: &req.Color, Policy: sanitize.ShortIdentifier},
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
+		sanitize.Pair{Target: &req.Icon, Policy: sanitize.ShortIdentifier, Label: "Icon"},
+		sanitize.Pair{Target: &req.Color, Policy: sanitize.ShortIdentifier, Label: "Color"},
 	)
 
 	if req.Name == "" {
@@ -205,7 +205,10 @@ func (h *AssetTypeHandler) CreateAssetType(w http.ResponseWriter, r *http.Reques
 	assetType.ID = id
 	h.auditor.Log(r, currentUser, logger.ActionAssetTypeCreate, logger.ResourceAssetType, &id, req.Name)
 
-	respondJSONCreated(w, assetType)
+	respondJSONCreated(w, struct {
+		models.AssetType
+		Warnings []string `json:"warnings,omitempty"`
+	}{assetType, warnings})
 }
 
 // UpdateAssetTypeRequest represents the request body for updating an asset type
@@ -229,11 +232,11 @@ func (h *AssetTypeHandler) UpdateAssetType(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	sanitize.ApplyAll(
-		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
-		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
-		sanitize.Pair{Target: &req.Icon, Policy: sanitize.ShortIdentifier},
-		sanitize.Pair{Target: &req.Color, Policy: sanitize.ShortIdentifier},
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
+		sanitize.Pair{Target: &req.Icon, Policy: sanitize.ShortIdentifier, Label: "Icon"},
+		sanitize.Pair{Target: &req.Color, Policy: sanitize.ShortIdentifier, Label: "Color"},
 	)
 
 	if req.Name == "" {
@@ -266,7 +269,10 @@ func (h *AssetTypeHandler) UpdateAssetType(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	respondJSONOK(w, assetType)
+	respondJSONOK(w, struct {
+		*models.AssetType
+		Warnings []string `json:"warnings,omitempty"`
+	}{assetType, warnings})
 }
 
 // DeleteAssetType deletes an asset type
