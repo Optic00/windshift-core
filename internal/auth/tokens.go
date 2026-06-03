@@ -124,11 +124,15 @@ var DefaultAgentScopes = []string{
 	ScopeMilestonesRead, ScopeIterationsRead, ScopeProjectsRead,
 	ScopePagesRead, ScopePagesWrite, ScopePagesDelete,
 	ScopeTestsRead, ScopeTestsWrite,
-	// assets:* are intentionally NOT in the default mint. The asset domain
-	// has its own per-set role model + audit trail; an agent token that
-	// doesn't need it shouldn't carry it. Pass --scopes assets:read /
-	// assets:write / assets:delete explicitly at mint time when needed.
-	// See docs/asset-api-v1-security-review-2026-06-03.md finding 1.
+	// assets:read + assets:write are default-on; the per-set asset role
+	// model (Viewer / Editor / Administrator on each asset_management_set,
+	// enforced by services.AssetPermissionService) is the real guard, so
+	// the scope flag alone never grants access to a set the user can't
+	// already act on. assets:delete is opt-in only — matches items:delete
+	// posture and the original asset-api-v1-security-review-2026-06-03
+	// finding 1 concern that legacy 'write' shouldn't silently grant
+	// destructive ops.
+	ScopeAssetsRead, ScopeAssetsWrite,
 	ScopeMCPAccess,
 }
 
@@ -155,23 +159,25 @@ var AllValidScopes = []string{
 }
 
 // allNonAdminReadScopes is the set of non-admin :read scopes (for legacy "read" mapping).
-// assets:read is deliberately excluded so legacy-scoped tokens (`read`) don't
-// gain read access to assets without an explicit opt-in. Same precedent as
-// the rejected "auto-grant assets:* in default mints" pattern — see
-// docs/asset-api-v1-security-review-2026-06-03.md finding 1.
+// assets:read is included: the per-set asset role model is the real guard,
+// so a legacy read-scoped token can never reach a set the user isn't
+// authorized on. (Legacy 'read' still can't reach assets:write or
+// assets:delete — those require an explicit upgrade.)
 var allNonAdminReadScopes = []string{
 	ScopeItemsRead, ScopeWorkspacesRead, ScopeStatusesRead,
 	ScopeWorkflowsRead, ScopeItemTypesRead, ScopePrioritiesRead,
 	ScopeCustomFieldsRead, ScopeUsersRead, ScopeMilestonesRead,
 	ScopeIterationsRead, ScopeProjectsRead, ScopeCollectionsRead,
 	ScopeActionsRead, ScopePagesRead, ScopeTestsRead,
+	ScopeAssetsRead,
 }
 
 // allNonAdminScopes is the set of all non-admin scopes (for legacy "write" mapping).
-// assets:* are deliberately excluded for the same reason allNonAdminReadScopes
-// excludes assets:read — legacy `write` must not silently grant asset write
-// or delete access. Per docs/asset-api-v1-security-review-2026-06-03.md
-// finding 1.
+// assets:read + assets:write are included (the per-set role guard applies).
+// assets:delete is deliberately excluded so legacy 'write' doesn't silently
+// grant destructive ops — matches the items posture and the spirit of
+// asset-api-v1-security-review-2026-06-03 finding 1 around destructive
+// auto-grants.
 var allNonAdminScopes = []string{
 	ScopeItemsRead, ScopeItemsWrite, ScopeItemsDelete,
 	ScopeWorkspacesRead, ScopeWorkspacesWrite, ScopeWorkspacesDelete,
@@ -186,6 +192,7 @@ var allNonAdminScopes = []string{
 	ScopeActionsRead, ScopeActionsWrite,
 	ScopePagesRead, ScopePagesWrite, ScopePagesDelete,
 	ScopeTestsRead, ScopeTestsWrite,
+	ScopeAssetsRead, ScopeAssetsWrite,
 }
 
 // AdminScopes returns the set of scopes that require system admin role.
