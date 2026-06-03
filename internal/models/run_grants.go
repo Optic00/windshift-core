@@ -1,6 +1,9 @@
 package models
 
-import "strings"
+import (
+	"net/url"
+	"strings"
+)
 
 // RunGrants is the set of brokered resources a single agent run may reach
 // through the secretless access layer (Initiative WI-141 / WI-144). It is
@@ -58,16 +61,54 @@ func (g *RunGrants) AllowsSecret(id int) bool {
 	return false
 }
 
-// AllowsHTTP reports whether rawURL matches one of the run's allowed
-// prefixes. Deny-by-default: a nil grant or empty pattern never matches.
+// AllowsHTTP reports whether rawURL matches one of the run's allowed grants.
+// Deny-by-default: a nil grant or empty pattern never matches.
+//
+// Matching is on URL-component boundaries, not raw string prefix (WI-168):
+// scheme and host:port must be equal and the target path must be the grant
+// path or a "/"-delimited sub-path of it. This prevents a grant such as
+// "https://api.example.com" from also permitting "https://api.example.com.evil/"
+// or "https://api.example.com@169.254.169.254/". A target carrying userinfo
+// (user:pass@host) is always rejected.
 func (g *RunGrants) AllowsHTTP(rawURL string) bool {
 	if g == nil {
 		return false
 	}
+	target, err := url.Parse(rawURL)
+	if err != nil || target.Host == "" || target.User != nil {
+		return false
+	}
 	for _, p := range g.HTTP {
-		if p != "" && strings.HasPrefix(rawURL, p) {
+		if p == "" {
+			continue
+		}
+		pat, err := url.Parse(p)
+		if err != nil || pat.Host == "" {
+			continue
+		}
+		if !strings.EqualFold(target.Scheme, pat.Scheme) {
+			continue
+		}
+		if !strings.EqualFold(target.Host, pat.Host) { // Host includes :port
+			continue
+		}
+		if pathWithinGrant(target.EscapedPath(), pat.EscapedPath()) {
 			return true
 		}
 	}
 	return false
+}
+
+// pathWithinGrant reports whether targetPath is the grant path or a
+// slash-delimited descendant of it. An empty or "/" grant path matches any
+// target path (host-level grant).
+func pathWithinGrant(targetPath, grantPath string) bool {
+	grantPath = strings.TrimSuffix(grantPath, "/")
+	if grantPath == "" {
+		return true
+	}
+	if targetPath == grantPath {
+		return true
+	}
+	return strings.HasPrefix(targetPath, grantPath+"/")
 }
