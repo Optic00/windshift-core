@@ -13,7 +13,6 @@ import (
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/services"
-	"windshift/internal/utils"
 )
 
 // validateResourceBelongsToSet checks that a resource (by table name) with resourceID belongs to setID.
@@ -215,9 +214,9 @@ func (h *AssetHandler) CreateAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Sanitize user input to prevent XSS
-	req.Title = utils.StripHTMLTags(req.Title)
-	req.Description = utils.SanitizeDescription(req.Description)
+	// Input sanitization (XSS) happens in AssetService so the v1 (bearer)
+	// and cookie-auth surfaces share one policy; see sanitizeAssetText
+	// in internal/services/asset_service.go.
 
 	if req.CategoryID != nil {
 		if !h.validateResourceBelongsToSet(w, r, "asset_categories", *req.CategoryID, setID, "Category") {
@@ -326,9 +325,9 @@ func (h *AssetHandler) UpdateAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Sanitize user input to prevent XSS
-	req.Title = utils.StripHTMLTags(req.Title)
-	req.Description = utils.SanitizeDescription(req.Description)
+	// Input sanitization (XSS) happens in AssetService so the v1 (bearer)
+	// and cookie-auth surfaces share one policy; see sanitizeAssetText
+	// in internal/services/asset_service.go.
 
 	if !h.validateResourceBelongsToSet(w, r, "asset_types", req.AssetTypeID, snap.SetID, "Asset type") {
 		return

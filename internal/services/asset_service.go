@@ -18,6 +18,24 @@ import (
 	"windshift/internal/utils"
 )
 
+// sanitizeAssetText applies the input policy shared between the cookie-auth
+// and v1 surfaces: titles + asset tags pass through StripHTMLTags (any HTML
+// is an injection attempt — these fields are plain-text on every renderer
+// we have), descriptions through SanitizeDescription (HTML except <br />
+// stripped, dangerous Markdown URLs filtered, length-capped). Mutates
+// in-place so callers don't have to re-thread the values back out.
+func sanitizeAssetText(title, description, assetTag *string) {
+	if title != nil {
+		*title = utils.StripHTMLTags(*title)
+	}
+	if description != nil {
+		*description = utils.SanitizeDescription(*description)
+	}
+	if assetTag != nil {
+		*assetTag = utils.StripHTMLTags(*assetTag)
+	}
+}
+
 // AuditActor carries the actor + transport context an audit event needs.
 // Both the cookie-auth and bearer-auth surfaces build this from their
 // *http.Request before calling into AssetService so the service layer
@@ -139,6 +157,7 @@ func (s *AssetService) CreateAsset(actor AuditActor, in repository.CreateAssetIn
 	if err := s.ValidateCustomFieldsSchema(in.AssetTypeID, customFieldValues); err != nil {
 		return nil, err
 	}
+	sanitizeAssetText(&in.Title, &in.Description, &in.AssetTag)
 	assetID, err := s.repo.CreateAsset(in)
 	if err != nil {
 		return nil, fmt.Errorf("create asset: %w", err)
@@ -174,6 +193,7 @@ func (s *AssetService) UpdateAsset(actor AuditActor, assetID int, oldSnap reposi
 	if err := s.ValidateCustomFieldsSchema(in.AssetTypeID, customFieldValues); err != nil {
 		return nil, err
 	}
+	sanitizeAssetText(&in.Title, &in.Description, &in.AssetTag)
 	if err := s.repo.UpdateAsset(assetID, in); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return nil, err
@@ -330,14 +350,17 @@ func (s *AssetService) ImportAssetsCSV(actor AuditActor, setID, assetTypeID int,
 			continue
 		}
 		cfJSON, _ := encodeCustomFieldValuesJSON(row.customFields)
+		description := row.description
+		assetTag := row.assetTag
+		sanitizeAssetText(&title, &description, &assetTag)
 		if _, err := s.repo.CreateAsset(repository.CreateAssetInput{
 			SetID:                 setID,
 			AssetTypeID:           assetTypeID,
 			CategoryID:            defaults.CategoryID,
 			StatusID:              defaults.StatusID,
 			Title:                 title,
-			Description:           row.description,
-			AssetTag:              row.assetTag,
+			Description:           description,
+			AssetTag:              assetTag,
 			CustomFieldValuesJSON: cfJSON,
 			CreatedBy:             actor.UserID,
 			CreatedAt:             time.Now().UTC(),
