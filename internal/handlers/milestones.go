@@ -8,9 +8,9 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
 	"windshift/internal/scm"
 	"windshift/internal/services"
-	"windshift/internal/utils"
 )
 
 type MilestoneHandler struct {
@@ -212,8 +212,8 @@ func (h *MilestoneHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Sanitize user input to prevent XSS
-	milestone.Name = utils.StripHTMLTags(milestone.Name)
-	milestone.Description = utils.SanitizeCommentContent(milestone.Description)
+	milestone.Name = sanitize.PlainTextField.Sanitize(milestone.Name)
+	milestone.Description = sanitize.Comment.Sanitize(milestone.Description)
 
 	// Use service to create milestone
 	result, err := h.planningService.CreateMilestone(services.CreateMilestoneParams{
@@ -282,8 +282,8 @@ func (h *MilestoneHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Sanitize user input to prevent XSS
-	milestone.Name = utils.StripHTMLTags(milestone.Name)
-	milestone.Description = utils.SanitizeCommentContent(milestone.Description)
+	milestone.Name = sanitize.PlainTextField.Sanitize(milestone.Name)
+	milestone.Description = sanitize.Comment.Sanitize(milestone.Description)
 
 	result, err := h.planningService.UpdateMilestone(services.UpdateMilestoneParams{
 		ID:          id,

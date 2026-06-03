@@ -7,8 +7,8 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
-	"windshift/internal/utils"
 )
 
 type TimeCustomerHandler struct {
@@ -136,8 +136,8 @@ func (h *TimeCustomerHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c.Name = utils.SanitizeTitle(c.Name)
-	c.Description = utils.SanitizeCommentContent(c.Description)
+	c.Name = sanitize.PlainTextField.Sanitize(c.Name)
+	c.Description = sanitize.Comment.Sanitize(c.Description)
 
 	id, now, err := h.repo.Create(&c)
 	if err != nil {
@@ -172,8 +172,8 @@ func (h *TimeCustomerHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c.Name = utils.SanitizeTitle(c.Name)
-	c.Description = utils.SanitizeCommentContent(c.Description)
+	c.Name = sanitize.PlainTextField.Sanitize(c.Name)
+	c.Description = sanitize.Comment.Sanitize(c.Description)
 
 	now, err := h.repo.Update(id, &c)
 	if errors.Is(err, repository.ErrNotFound) {

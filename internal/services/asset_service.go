@@ -16,25 +16,23 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/utils"
 )
 
-// sanitizeAssetText applies the input policy shared between the cookie-auth
-// and v1 surfaces: titles + asset tags pass through StripHTMLTags (any HTML
-// is an injection attempt — these fields are plain-text on every renderer
-// we have), descriptions through SanitizeDescription (HTML except <br />
-// stripped, dangerous Markdown URLs filtered, length-capped). Mutates
-// in-place so callers don't have to re-thread the values back out.
+// sanitizeAssetText runs the asset-text input policy in one call:
+// PlainTextField on the title, RichText on the description (HTML except
+// <br /> stripped, dangerous Markdown URLs filtered, length-capped),
+// ShortIdentifier on the asset tag (tighter 100-rune cap matching the
+// db column shape for identifier-like fields). Both the cookie-auth
+// and bearer-auth surfaces flow through this so the input policy lives
+// in exactly one place.
 func sanitizeAssetText(title, description, assetTag *string) {
-	if title != nil {
-		*title = utils.StripHTMLTags(*title)
-	}
-	if description != nil {
-		*description = utils.SanitizeDescription(*description)
-	}
-	if assetTag != nil {
-		*assetTag = utils.StripHTMLTags(*assetTag)
-	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: title, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: description, Policy: sanitize.RichText},
+		sanitize.Pair{Target: assetTag, Policy: sanitize.ShortIdentifier},
+	)
 }
 
 // AuditActor carries the actor + transport context an audit event needs.

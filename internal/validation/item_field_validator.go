@@ -12,7 +12,7 @@ import (
 
 	"windshift/internal/database"
 	"windshift/internal/models"
-	"windshift/internal/utils"
+	"windshift/internal/sanitize"
 )
 
 // WorkspacePermissionChecker lets the validator ask whether a user holds a
@@ -93,7 +93,7 @@ func (v *ItemFieldValidator) ValidateAndApplyUpdates(
 ) error {
 	// Title validation and sanitization
 	if title, ok := updateData["title"].(string); ok {
-		sanitizedTitle := utils.SanitizeTitle(title)
+		sanitizedTitle := sanitize.PlainTextField.Sanitize(title)
 		if strings.TrimSpace(sanitizedTitle) == "" {
 			return &ValidationError{Field: "title", Message: "Title is required"}
 		}
@@ -102,7 +102,7 @@ func (v *ItemFieldValidator) ValidateAndApplyUpdates(
 
 	// Description validation and sanitization
 	if description, ok := updateData["description"].(string); ok {
-		item.Description = utils.SanitizeDescription(description)
+		item.Description = sanitize.RichText.Sanitize(description)
 	}
 
 	// is_task validation - can only be true for personal workspaces

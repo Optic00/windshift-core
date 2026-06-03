@@ -16,6 +16,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 	"windshift/internal/webhook"
@@ -261,7 +262,7 @@ func (h *CommentHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 			slog.String("component", "comment"),
 			slog.Int("item_id", itemID))
 
-		sanitizedContent := utils.SanitizeCommentContent(reqBody.Content)
+		sanitizedContent := sanitize.Comment.Sanitize(reqBody.Content)
 		now := time.Now()
 		err = h.db.QueryRow(`
 			INSERT INTO comments (item_id, author_id, content, created_at, updated_at)
@@ -401,7 +402,7 @@ func (h *CommentHandler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Sanitize comment content to prevent XSS (strips HTML tags + dangerous Markdown URLs)
-	sanitizedContent := utils.SanitizeCommentContent(reqBody.Content)
+	sanitizedContent := sanitize.Comment.Sanitize(reqBody.Content)
 
 	// Update the comment
 	now := time.Now()

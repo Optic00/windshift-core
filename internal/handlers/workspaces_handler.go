@@ -10,6 +10,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
@@ -213,9 +214,9 @@ func (h *WorkspaceHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Sanitize for defense in depth
-	req.Name = utils.SanitizeName(req.Name)
-	req.Key = utils.SanitizeName(req.Key)
-	req.Description = utils.SanitizeDescription(req.Description)
+	req.Name = sanitize.ShortIdentifier.Sanitize(req.Name)
+	req.Key = sanitize.ShortIdentifier.Sanitize(req.Key)
+	req.Description = sanitize.RichText.Sanitize(req.Description)
 
 	// Post-sanitization validation: ensure name and key are not empty after sanitization
 	if req.Name == "" {
@@ -324,11 +325,11 @@ func (h *WorkspaceHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Sanitize user input for defense in depth
-	req.Name = utils.SanitizeName(req.Name)
-	req.Description = utils.SanitizeDescription(req.Description)
+	req.Name = sanitize.ShortIdentifier.Sanitize(req.Name)
+	req.Description = sanitize.RichText.Sanitize(req.Description)
 
 	// Sanitize key to match Create behavior
-	req.Key = utils.SanitizeName(req.Key)
+	req.Key = sanitize.ShortIdentifier.Sanitize(req.Key)
 
 	// If key is not provided, use the existing key
 	keyToUse := req.Key

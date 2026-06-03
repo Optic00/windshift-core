@@ -15,6 +15,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
@@ -360,8 +361,8 @@ func decodePortalCustomerInput(w http.ResponseWriter, r *http.Request) (portalCu
 		return portalCustomerInput{}, false
 	}
 
-	requestData.Name = utils.SanitizeName(requestData.Name)
-	requestData.Phone = utils.SanitizeName(requestData.Phone)
+	requestData.Name = sanitize.ShortIdentifier.Sanitize(requestData.Name)
+	requestData.Phone = sanitize.ShortIdentifier.Sanitize(requestData.Phone)
 
 	if requestData.Name == "" {
 		respondValidationError(w, r, "Name is required")

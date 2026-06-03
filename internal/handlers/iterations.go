@@ -8,8 +8,8 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
-	"windshift/internal/utils"
 )
 
 type IterationHandler struct {
@@ -140,8 +140,8 @@ func (h *IterationHandler) validateAndPrepareIteration(w http.ResponseWriter, r 
 	if !h.validateIterationReferences(w, r, iteration.TypeID, iteration.WorkspaceID) {
 		return false
 	}
-	iteration.Name = utils.SanitizeTitle(iteration.Name)
-	iteration.Description = utils.SanitizeCommentContent(iteration.Description)
+	iteration.Name = sanitize.PlainTextField.Sanitize(iteration.Name)
+	iteration.Description = sanitize.Comment.Sanitize(iteration.Description)
 	return true
 }
 
@@ -271,8 +271,8 @@ func (h *IterationHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !h.validateIterationReferences(w, r, iteration.TypeID, workspaceID) {
 		return
 	}
-	iteration.Name = utils.SanitizeTitle(iteration.Name)
-	iteration.Description = utils.SanitizeCommentContent(iteration.Description)
+	iteration.Name = sanitize.PlainTextField.Sanitize(iteration.Name)
+	iteration.Description = sanitize.Comment.Sanitize(iteration.Description)
 
 	result, err := h.planningService.UpdateIteration(services.UpdateIterationParams{
 		ID:          id,

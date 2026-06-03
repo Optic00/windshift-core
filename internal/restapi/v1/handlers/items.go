@@ -14,8 +14,8 @@ import (
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
 	"windshift/internal/restapi/v1/dto"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
-	"windshift/internal/utils"
 	"windshift/internal/validation"
 )
 
@@ -443,8 +443,8 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Sanitize user input to prevent XSS
-	req.Title = utils.StripHTMLTags(req.Title)
-	req.Description = utils.SanitizeCommentContent(req.Description)
+	req.Title = sanitize.PlainTextField.Sanitize(req.Title)
+	req.Description = sanitize.Comment.Sanitize(req.Description)
 
 	// Convert custom field values to JSON
 	var customFieldValuesJSON string
@@ -565,10 +565,10 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return ok && string(raw) == "null"
 	}
 	if req.Title != nil {
-		updateData["title"] = utils.StripHTMLTags(*req.Title)
+		updateData["title"] = sanitize.PlainTextField.Sanitize(*req.Title)
 	}
 	if req.Description != nil {
-		updateData["description"] = utils.SanitizeCommentContent(*req.Description)
+		updateData["description"] = sanitize.Comment.Sanitize(*req.Description)
 	}
 	if req.PriorityID != nil {
 		updateData["priority_id"] = *req.PriorityID

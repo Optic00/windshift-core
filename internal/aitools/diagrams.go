@@ -9,8 +9,8 @@ import (
 
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
-	"windshift/internal/utils"
 )
 
 // Storage contract: item_diagrams.diagram_data is opaque TEXT. Existing rows
@@ -229,7 +229,7 @@ func init() {
 		Name:        "create_diagram",
 		Description: "Attach a new diagram to a work item. Provide either `mermaid` (a mermaid source string, stored as a seed and converted on first open) or `excalidraw` (a fully-formed Excalidraw scene JSON, stored as-is).",
 		Run: func(_ context.Context, env *Env, args createDiagramArgs) (any, error) {
-			name := utils.SanitizeName(args.Name)
+			name := sanitize.ShortIdentifier.Sanitize(args.Name)
 			if name == "" {
 				return map[string]string{"error": "name is required"}, nil
 			}
@@ -305,7 +305,7 @@ func init() {
 
 			newName := existing.Name
 			if strings.TrimSpace(args.Name) != "" {
-				newName = utils.SanitizeName(args.Name)
+				newName = sanitize.ShortIdentifier.Sanitize(args.Name)
 				if newName == "" {
 					return map[string]string{"error": "name cannot be blank"}, nil
 				}

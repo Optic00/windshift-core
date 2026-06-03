@@ -15,8 +15,8 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
-	"windshift/internal/utils"
 
 	"github.com/google/uuid"
 )
@@ -432,8 +432,8 @@ func (p *Processor) createItemFromEmail( //nolint:unparam // ctx reserved for fu
 	// these here with a global query, which failed for custom workflows.
 	params := services.ItemCreationParams{
 		WorkspaceID:             config.EmailWorkspaceID,
-		Title:                   utils.StripHTMLTags(email.GetSubjectForItem()),
-		Description:             utils.SanitizeCommentContent(StripSignature(email.GetBodyText())),
+		Title:                   sanitize.PlainTextField.Sanitize(email.GetSubjectForItem()),
+		Description:             sanitize.Comment.Sanitize(StripSignature(email.GetBodyText())),
 		ItemTypeID:              config.EmailItemTypeID,
 		PriorityID:              config.EmailDefaultPriorityID,
 		CreatorPortalCustomerID: &customerID,

@@ -9,8 +9,8 @@ import (
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
-	"windshift/internal/utils"
 )
 
 // DiagramHandler exposes item-diagram CRUD on the bearer-token v1 surface so
@@ -126,7 +126,7 @@ func (h *DiagramHandler) decodeWriteRequest(w http.ResponseWriter, r *http.Reque
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return "", "", false
 	}
-	name = utils.SanitizeName(req.Name)
+	name = sanitize.ShortIdentifier.Sanitize(req.Name)
 	if name == "" {
 		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeMissingField, "name is required"))
 		return "", "", false

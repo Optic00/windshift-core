@@ -14,8 +14,8 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
-	"windshift/internal/utils"
 )
 
 type PersonalLabelHandler struct {
@@ -118,7 +118,7 @@ func (h *PersonalLabelHandler) validatePersonalLabel(w http.ResponseWriter, r *h
 		return false
 	}
 
-	label.Name = utils.SanitizeTitle(label.Name)
+	label.Name = sanitize.PlainTextField.Sanitize(label.Name)
 
 	// Preserve the caller's color when valid; default only when missing/invalid.
 	if strings.TrimSpace(label.Color) == "" || !hexColorRE.MatchString(label.Color) {

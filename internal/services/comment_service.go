@@ -10,6 +10,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/utils"
 )
 
@@ -100,7 +101,7 @@ func (s *CommentService) SetEmailReplyService(ers EmailReplyHandler) {
 // activity tracking, notifications, mentions, and webhooks.
 func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResult, error) {
 	// 1. Sanitize content (XSS prevention — strips HTML tags + dangerous Markdown URLs)
-	sanitizedContent := utils.SanitizeCommentContent(params.Content)
+	sanitizedContent := sanitize.Comment.Sanitize(params.Content)
 
 	// 2. Get item details for notifications
 	var workspaceID int
@@ -324,7 +325,7 @@ func (s *CommentService) Get(commentID int) (*CommentWithDetails, error) {
 // Update updates a comment's content
 func (s *CommentService) Update(commentID int, content string, userID int) (*models.Comment, error) {
 	// Sanitize content (strips HTML tags + dangerous Markdown URLs)
-	sanitizedContent := utils.SanitizeCommentContent(content)
+	sanitizedContent := sanitize.Comment.Sanitize(content)
 
 	// Check if comment exists. Portal-authored comments have a NULL author_id,
 	// so existence must not depend on scanning author_id into a non-null int.

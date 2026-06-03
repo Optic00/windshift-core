@@ -14,6 +14,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/scheduler"
 	"windshift/internal/utils"
 )
@@ -217,8 +218,8 @@ func (h *CustomFieldHandler) validateAndNormalizeCustomField(w http.ResponseWrit
 	}
 
 	// Sanitize user input to prevent XSS.
-	cf.Name = utils.SanitizeName(cf.Name)
-	cf.Description = utils.SanitizeCommentContent(cf.Description)
+	cf.Name = sanitize.ShortIdentifier.Sanitize(cf.Name)
+	cf.Description = sanitize.Comment.Sanitize(cf.Description)
 
 	return linkingOpts, true
 }

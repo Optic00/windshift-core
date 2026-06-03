@@ -7,6 +7,7 @@ import (
 
 	"windshift/internal/logger"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
@@ -106,8 +107,8 @@ func (h *TestCaseHandler) CreateTestCase(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	input.Title = utils.SanitizeTitle(input.Title)
-	input.Preconditions = utils.SanitizeCommentContent(input.Preconditions)
+	input.Title = sanitize.PlainTextField.Sanitize(input.Title)
+	input.Preconditions = sanitize.Comment.Sanitize(input.Preconditions)
 
 	if input.Title == "" {
 		respondValidationError(w, r, "Test case title is required")
@@ -160,8 +161,8 @@ func (h *TestCaseHandler) UpdateTestCase(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	input.Title = utils.SanitizeTitle(input.Title)
-	input.Preconditions = utils.SanitizeCommentContent(input.Preconditions)
+	input.Title = sanitize.PlainTextField.Sanitize(input.Title)
+	input.Preconditions = sanitize.Comment.Sanitize(input.Preconditions)
 
 	if input.Title == "" {
 		respondValidationError(w, r, "Test case title is required")
@@ -478,8 +479,8 @@ func decodeTestLabelInput(w http.ResponseWriter, r *http.Request) (testLabelInpu
 		return testLabelInput{}, false
 	}
 
-	raw.Name = utils.SanitizeName(raw.Name)
-	raw.Description = utils.SanitizeDescription(raw.Description)
+	raw.Name = sanitize.ShortIdentifier.Sanitize(raw.Name)
+	raw.Description = sanitize.RichText.Sanitize(raw.Description)
 
 	if raw.Name == "" {
 		respondValidationError(w, r, "Label name is required")

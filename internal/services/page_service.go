@@ -19,7 +19,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
-	"windshift/internal/utils"
+	"windshift/internal/sanitize"
 )
 
 // PageService is the entry point for all page CRUD and tree operations.
@@ -98,12 +98,12 @@ type CreatePageInput struct {
 // Create inserts a new page after sanitizing inputs and computing derived
 // columns. Returns the persisted page.
 func (s *PageService) Create(actorID int, in CreatePageInput) (*models.Page, error) {
-	title := utils.SanitizeTitle(in.Title)
+	title := sanitize.PlainTextField.Sanitize(in.Title)
 	if title == "" {
 		return nil, ErrPageTitleRequired
 	}
 
-	content := utils.SanitizePageMarkdown(in.Content)
+	content := sanitize.LongDocument.Sanitize(in.Content)
 	excerpt := deriveExcerpt(content)
 	hash := contentHash(content)
 
@@ -198,11 +198,11 @@ type UpdatePageInput struct {
 // admin-gated call so the audit trail and handler authorization paths
 // stay distinct.
 func (s *PageService) Update(actorID int, in UpdatePageInput) (*models.Page, error) {
-	title := utils.SanitizeTitle(in.Title)
+	title := sanitize.PlainTextField.Sanitize(in.Title)
 	if title == "" {
 		return nil, ErrPageTitleRequired
 	}
-	content := utils.SanitizePageMarkdown(in.Content)
+	content := sanitize.LongDocument.Sanitize(in.Content)
 	excerpt := deriveExcerpt(content)
 	hash := contentHash(content)
 

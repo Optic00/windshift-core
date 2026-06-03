@@ -8,8 +8,8 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
-	"windshift/internal/utils"
 )
 
 // PageLabelHandler serves the workspace page-label API and the
@@ -100,7 +100,7 @@ func (h *PageLabelHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	input.Name = utils.SanitizeName(input.Name)
+	input.Name = sanitize.ShortIdentifier.Sanitize(input.Name)
 	if input.Name == "" {
 		respondValidationError(w, r, "Label name is required")
 		return
@@ -175,7 +175,7 @@ func (h *PageLabelHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	input.Name = utils.SanitizeName(input.Name)
+	input.Name = sanitize.ShortIdentifier.Sanitize(input.Name)
 	if input.Name == "" {
 		respondValidationError(w, r, "Label name is required")
 		return

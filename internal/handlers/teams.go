@@ -8,6 +8,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
@@ -163,8 +164,8 @@ func (h *TeamHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Name = utils.SanitizeName(req.Name)
-	req.Description = utils.SanitizeDescription(req.Description)
+	req.Name = sanitize.ShortIdentifier.Sanitize(req.Name)
+	req.Description = sanitize.RichText.Sanitize(req.Description)
 
 	if req.Name == "" {
 		respondValidationError(w, r, "Name is required")
@@ -221,8 +222,8 @@ func (h *TeamHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Name = utils.SanitizeName(req.Name)
-	req.Description = utils.SanitizeDescription(req.Description)
+	req.Name = sanitize.ShortIdentifier.Sanitize(req.Name)
+	req.Description = sanitize.RichText.Sanitize(req.Description)
 
 	if req.Name == "" {
 		respondValidationError(w, r, "Name is required")
