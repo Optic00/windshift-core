@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -136,31 +137,49 @@ func (s *AssetService) actions() *AssetActionService {
 	return s.actionService.Load()
 }
 
-// ValidateCustomFieldsSchema rejects keys in values that aren't declared
-// on the asset type. Accepts both legacy field-id-string keys (the UI
-// surface uses these) and field-name keys (CSV import normalizes to
-// these). Type/option enforcement is deliberately out of scope for this
-// pass — name validation is the minimum bar called for by the asset API
-// v1 security review (finding 4).
-func (s *AssetService) ValidateCustomFieldsSchema(assetTypeID int, values map[string]interface{}) error {
-	if len(values) == 0 {
+// CustomFieldsValidationOpts toggles required-field enforcement.
+// EnforceRequired is on for creates (the caller has to satisfy the
+// asset type's required-field set up front) and for updates that
+// replace the custom_field_values map. Partial updates that don't
+// touch custom_field_values leave it off.
+type CustomFieldsValidationOpts struct {
+	EnforceRequired bool
+}
+
+// ValidateCustomFieldsSchema enforces the asset type's custom-field
+// schema against the supplied values. Three checks run in order:
+//
+//  1. Unknown keys (keys not declared on the type) are rejected.
+//  2. Each supplied value is type-checked against the declared
+//     field_type (text / textarea / number / boolean / date / select
+//     / multiselect / user). Select/multiselect values are checked
+//     against the field's Options whitelist.
+//  3. When opts.EnforceRequired is set, every required field on the
+//     type must be present (non-empty) in values.
+//
+// Both legacy field-id-string keys ("12") and lower-cased field-name
+// keys ("hostname") are accepted, matching the UI + CSV import
+// conventions.
+func (s *AssetService) ValidateCustomFieldsSchema(assetTypeID int, values map[string]interface{}, opts CustomFieldsValidationOpts) error {
+	if len(values) == 0 && !opts.EnforceRequired {
 		return nil
 	}
 	fields, err := s.repo.FindAssetTypeFields(assetTypeID)
 	if err != nil {
 		return fmt.Errorf("load asset type fields: %w", err)
 	}
-	allowed := make(map[string]bool, len(fields)*2)
+	byKey := make(map[string]models.AssetTypeField, len(fields)*2)
 	for _, f := range fields {
-		allowed[fmt.Sprintf("%d", f.CustomFieldID)] = true
-		allowed[strings.ToLower(f.FieldName)] = true
+		byKey[fmt.Sprintf("%d", f.CustomFieldID)] = f
+		byKey[strings.ToLower(f.FieldName)] = f
 	}
+
 	var unknown []string
 	for k := range values {
-		if allowed[k] {
+		if _, ok := byKey[k]; ok {
 			continue
 		}
-		if allowed[strings.ToLower(k)] {
+		if _, ok := byKey[strings.ToLower(k)]; ok {
 			continue
 		}
 		unknown = append(unknown, k)
@@ -170,14 +189,171 @@ func (s *AssetService) ValidateCustomFieldsSchema(assetTypeID int, values map[st
 			Msg: "custom_field_values contains key(s) not declared on the asset type: " + strings.Join(unknown, ", "),
 		}
 	}
+
+	for k, v := range values {
+		f, ok := byKey[k]
+		if !ok {
+			f = byKey[strings.ToLower(k)]
+		}
+		if err := validateAssetFieldValue(f, v); err != nil {
+			return &AssetValidationError{Msg: fmt.Sprintf("custom_field_values[%q]: %s", k, err.Error())}
+		}
+	}
+
+	if opts.EnforceRequired {
+		for _, f := range fields {
+			if !f.IsRequired {
+				continue
+			}
+			if !customFieldValuePresent(values, f) {
+				return &AssetValidationError{Msg: fmt.Sprintf("custom field %q is required", f.FieldName)}
+			}
+		}
+	}
 	return nil
+}
+
+// validateAssetFieldValue type-checks a single field value. Returns
+// nil for empty / null values — required-field presence is enforced
+// separately by ValidateCustomFieldsSchema when opts.EnforceRequired
+// is set, so a value of explicit-null here just means "not set this
+// time", not "schema violation".
+func validateAssetFieldValue(f models.AssetTypeField, v interface{}) error {
+	if v == nil {
+		return nil
+	}
+	switch f.FieldType {
+	case "text", "textarea", "":
+		// Empty FieldType (unknown legacy types) accept anything stringy.
+		if _, ok := v.(string); !ok {
+			return fmt.Errorf("expected string for %s field", f.FieldType)
+		}
+	case "number":
+		switch x := v.(type) {
+		case float64, int, int64:
+			return nil
+		case string:
+			if _, err := strconv.ParseFloat(x, 64); err != nil {
+				return fmt.Errorf("expected numeric value, got %q", x)
+			}
+		default:
+			return fmt.Errorf("expected number")
+		}
+	case "boolean":
+		if _, ok := v.(bool); !ok {
+			return fmt.Errorf("expected boolean")
+		}
+	case "date":
+		s, ok := v.(string)
+		if !ok {
+			return fmt.Errorf("expected date string")
+		}
+		if _, err := time.Parse("2006-01-02", s); err == nil {
+			return nil
+		}
+		if _, err := time.Parse(time.RFC3339, s); err == nil {
+			return nil
+		}
+		return fmt.Errorf("expected YYYY-MM-DD or RFC3339 date, got %q", s)
+	case "select":
+		s, ok := v.(string)
+		if !ok {
+			return fmt.Errorf("expected string for select field")
+		}
+		if !assetFieldOptionAllowed(f, s) {
+			return fmt.Errorf("value %q is not an allowed option for this field", s)
+		}
+	case "multiselect":
+		arr, ok := v.([]interface{})
+		if !ok {
+			return fmt.Errorf("expected array for multiselect field")
+		}
+		for _, elem := range arr {
+			s, ok := elem.(string)
+			if !ok {
+				return fmt.Errorf("expected string elements in multiselect array")
+			}
+			if !assetFieldOptionAllowed(f, s) {
+				return fmt.Errorf("value %q is not an allowed option for this field", s)
+			}
+		}
+	case "user":
+		switch x := v.(type) {
+		case float64, int, int64:
+			return nil
+		case map[string]interface{}:
+			if _, ok := x["id"]; ok {
+				return nil
+			}
+			return fmt.Errorf("user object missing 'id' key")
+		default:
+			return fmt.Errorf("expected user id (int) or {id: int}")
+		}
+	}
+	return nil
+}
+
+// assetFieldOptionAllowed reports whether the given value matches any
+// option in the field's declared option whitelist. Returns true when
+// no options are declared (the field accepts any string) or when the
+// stored options JSON is malformed (fail-open — better to accept than
+// to block legitimate writes against a misconfigured field; the
+// schema is logged at write time).
+func assetFieldOptionAllowed(f models.AssetTypeField, value string) bool {
+	if f.Options == "" {
+		return true
+	}
+	var opts []string
+	if err := json.Unmarshal([]byte(f.Options), &opts); err != nil {
+		return true
+	}
+	for _, o := range opts {
+		if o == value {
+			return true
+		}
+	}
+	return false
+}
+
+// customFieldValuePresent reports whether the values map carries a
+// non-empty value for the given field. Accepts the field-id-string
+// key, the lowercased field-name key, and the raw field-name key
+// (so an editor that sends mixed-case names is satisfied).
+func customFieldValuePresent(values map[string]interface{}, f models.AssetTypeField) bool {
+	keys := []string{
+		fmt.Sprintf("%d", f.CustomFieldID),
+		strings.ToLower(f.FieldName),
+		f.FieldName,
+	}
+	for _, k := range keys {
+		if v, ok := values[k]; ok && !isEmptyCustomFieldValue(v) {
+			return true
+		}
+	}
+	return false
+}
+
+func isEmptyCustomFieldValue(v interface{}) bool {
+	if v == nil {
+		return true
+	}
+	switch x := v.(type) {
+	case string:
+		return strings.TrimSpace(x) == ""
+	case []interface{}:
+		return len(x) == 0
+	}
+	return false
 }
 
 // CreateAsset writes the asset, validates custom field schema, emits the
 // audit event, and emits an asset_created automation event when an
 // action service is wired. Returns the freshly-loaded row.
+//
+// All required fields declared on the asset type must be present in
+// customFieldValues (EnforceRequired is on for creates).
 func (s *AssetService) CreateAsset(actor AuditActor, in repository.CreateAssetInput, customFieldValues map[string]interface{}) (*models.Asset, error) {
-	if err := s.ValidateCustomFieldsSchema(in.AssetTypeID, customFieldValues); err != nil {
+	if err := s.ValidateCustomFieldsSchema(in.AssetTypeID, customFieldValues, CustomFieldsValidationOpts{EnforceRequired: true}); err != nil {
 		return nil, err
 	}
 	sanitizeAssetText(&in.Title, &in.Description, &in.AssetTag)
@@ -213,7 +389,22 @@ func (s *AssetService) CreateAsset(actor AuditActor, in repository.CreateAssetIn
 // from repo.GetAssetUpdateSnapshot before the call) is used to detect
 // the status transition.
 func (s *AssetService) UpdateAsset(actor AuditActor, assetID int, oldSnap repository.AssetUpdateSnapshot, in repository.UpdateAssetInput, customFieldValues map[string]interface{}) (*models.Asset, error) {
-	if err := s.ValidateCustomFieldsSchema(in.AssetTypeID, customFieldValues); err != nil {
+	// Type change: any persisted custom field that's incompatible with
+	// the new type would slip through if we only validated the supplied
+	// values map (which the caller may have omitted on a partial-update
+	// PUT). Force a re-validation pass — caller-supplied values win,
+	// otherwise we run the persisted values through the new type's
+	// schema so stale or required-but-missing fields surface as 400.
+	typeChanged := oldSnap.AssetTypeID != 0 && oldSnap.AssetTypeID != in.AssetTypeID
+	toValidate := customFieldValues
+	enforceRequired := customFieldValues != nil
+	if typeChanged {
+		if toValidate == nil {
+			toValidate = loadStoredCustomFieldValues(in.CustomFieldValuesJSON)
+		}
+		enforceRequired = true
+	}
+	if err := s.ValidateCustomFieldsSchema(in.AssetTypeID, toValidate, CustomFieldsValidationOpts{EnforceRequired: enforceRequired}); err != nil {
 		return nil, err
 	}
 	sanitizeAssetText(&in.Title, &in.Description, &in.AssetTag)
@@ -504,6 +695,22 @@ func buildCSVRow(headers, record []string, customFieldByName map[string]string) 
 		}
 	}
 	return row
+}
+
+// loadStoredCustomFieldValues unmarshals the persisted CFV column the
+// handler re-encoded onto in.CustomFieldValuesJSON for a partial
+// update. Returns nil for nil / empty / unparseable JSON — callers
+// fall back to "empty map" semantics, which the validator then runs
+// against the new type's required-field set.
+func loadStoredCustomFieldValues(stored *string) map[string]interface{} {
+	if stored == nil || *stored == "" {
+		return nil
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal([]byte(*stored), &m); err != nil {
+		return nil
+	}
+	return m
 }
 
 // encodeCustomFieldValuesJSON marshals the values map for storage.
