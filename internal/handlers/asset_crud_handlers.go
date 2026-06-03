@@ -54,48 +54,6 @@ func (h *AssetHandler) serializeCustomFields(w http.ResponseWriter, r *http.Requ
 	return &s, true
 }
 
-// assetRowToModel converts a repository.AssetRow into the models.Asset returned by the API.
-// Parses custom_field_values JSON; on failure, sets Warnings and leaves the map empty.
-func assetRowToModel(row repository.AssetRow) models.Asset {
-	asset := models.Asset{
-		ID:              row.ID,
-		SetID:           row.SetID,
-		AssetTypeID:     row.AssetTypeID,
-		CategoryID:      utils.NullInt64ToPtr(row.CategoryID),
-		StatusID:        utils.NullInt64ToPtr(row.StatusID),
-		Title:           row.Title,
-		Description:     row.Description.String,
-		AssetTag:        row.AssetTag.String,
-		FracIndex:       utils.NullStringToPtr(row.FracIndex),
-		CreatedBy:       row.CreatedBy,
-		CreatedAt:       row.CreatedAt,
-		UpdatedAt:       row.UpdatedAt,
-		SetName:         row.SetName.String,
-		AssetTypeName:   row.AssetTypeName.String,
-		AssetTypeIcon:   row.AssetTypeIcon.String,
-		AssetTypeColor:  row.AssetTypeColor.String,
-		CategoryName:    row.CategoryName.String,
-		CategoryPath:    row.CategoryPath.String,
-		StatusName:      row.StatusName.String,
-		StatusColor:     row.StatusColor.String,
-		CreatorName:     row.CreatorName.String,
-		CreatorEmail:    row.CreatorEmail.String,
-		LinkedItemCount: row.LinkedItemCount,
-	}
-
-	if row.CustomFieldValues.Valid && row.CustomFieldValues.String != "" {
-		if err := json.Unmarshal([]byte(row.CustomFieldValues.String), &asset.CustomFieldValues); err != nil {
-			slog.Error("failed to unmarshal asset custom_field_values",
-				slog.Int("asset_id", asset.ID),
-				slog.String("raw", row.CustomFieldValues.String),
-				slog.Any("error", err))
-			asset.CustomFieldValues = make(map[string]interface{})
-			asset.Warnings = append(asset.Warnings, "custom field values could not be parsed")
-		}
-	}
-	return asset
-}
-
 // GetAssets returns all assets in a set with pagination and subcategory support
 func (h *AssetHandler) GetAssets(w http.ResponseWriter, r *http.Request) {
 	user, setID, ok := h.requireSetViewAccess(w, r)
@@ -168,7 +126,7 @@ func (h *AssetHandler) GetAssets(w http.ResponseWriter, r *http.Request) {
 
 	assets := make([]models.Asset, 0, len(rows))
 	for _, row := range rows {
-		asset := assetRowToModel(row)
+		asset := repository.AssetRowToModel(row)
 		if err := h.enrichUserCustomFields(&asset); err != nil {
 			continue
 		}
@@ -191,7 +149,7 @@ func (h *AssetHandler) loadFullAsset(assetID int) (models.Asset, error) {
 	if err != nil {
 		return models.Asset{}, err
 	}
-	asset := assetRowToModel(*row)
+	asset := repository.AssetRowToModel(*row)
 	if err := h.enrichUserCustomFields(&asset); err != nil {
 		slog.Debug("failed to enrich user custom fields", slog.Any("error", err))
 	}

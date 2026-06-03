@@ -2,14 +2,17 @@ package repository
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
 	"windshift/internal/cql"
 	"windshift/internal/database"
 	"windshift/internal/models"
+	"windshift/internal/utils"
 )
 
 // AssetRepository provides data access methods for asset management
@@ -1604,6 +1607,49 @@ func scanAssetCategoryCoreRow(scanner interface{ Scan(...interface{}) error }) (
 // ============================================================================
 // Asset CRUD
 // ============================================================================
+
+// AssetRowToModel converts an AssetRow into the models.Asset shape returned
+// by the API. Parses custom_field_values JSON; on failure, stamps a warning
+// and leaves the map empty. Canonical home so both cookie-auth and v1
+// handlers map rows the same way.
+func AssetRowToModel(row AssetRow) models.Asset {
+	asset := models.Asset{
+		ID:              row.ID,
+		SetID:           row.SetID,
+		AssetTypeID:     row.AssetTypeID,
+		CategoryID:      utils.NullInt64ToPtr(row.CategoryID),
+		StatusID:        utils.NullInt64ToPtr(row.StatusID),
+		Title:           row.Title,
+		Description:     row.Description.String,
+		AssetTag:        row.AssetTag.String,
+		FracIndex:       utils.NullStringToPtr(row.FracIndex),
+		CreatedBy:       row.CreatedBy,
+		CreatedAt:       row.CreatedAt,
+		UpdatedAt:       row.UpdatedAt,
+		SetName:         row.SetName.String,
+		AssetTypeName:   row.AssetTypeName.String,
+		AssetTypeIcon:   row.AssetTypeIcon.String,
+		AssetTypeColor:  row.AssetTypeColor.String,
+		CategoryName:    row.CategoryName.String,
+		CategoryPath:    row.CategoryPath.String,
+		StatusName:      row.StatusName.String,
+		StatusColor:     row.StatusColor.String,
+		CreatorName:     row.CreatorName.String,
+		CreatorEmail:    row.CreatorEmail.String,
+		LinkedItemCount: row.LinkedItemCount,
+	}
+	if row.CustomFieldValues.Valid && row.CustomFieldValues.String != "" {
+		if err := json.Unmarshal([]byte(row.CustomFieldValues.String), &asset.CustomFieldValues); err != nil {
+			slog.Error("failed to unmarshal asset custom_field_values",
+				slog.Int("asset_id", asset.ID),
+				slog.String("raw", row.CustomFieldValues.String),
+				slog.Any("error", err))
+			asset.CustomFieldValues = make(map[string]interface{})
+			asset.Warnings = append(asset.Warnings, "custom field values could not be parsed")
+		}
+	}
+	return asset
+}
 
 // AssetRow captures the full projection returned by the assets list/detail queries.
 type AssetRow struct {
