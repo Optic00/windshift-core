@@ -1,11 +1,8 @@
 package handlers
 
 import (
-	"encoding/csv"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -26,21 +23,28 @@ import (
 // / Administrator with asset.view/create/edit/delete/admin keys) to
 // services.AssetPermissionService. 404 (not 403) on permission failures
 // so set/asset existence isn't leaked, matching the items convention.
+//
+// Mutations route through services.AssetService so both surfaces emit
+// identical audit + automation events for the same operation; no audit
+// code lives in this file.
 type AssetHandler struct {
 	BaseHandler
-	repo      *repository.AssetRepository
-	assetPerm *services.AssetPermissionService
+	repo         *repository.AssetRepository
+	assetPerm    *services.AssetPermissionService
+	assetService *services.AssetService
 }
 
 // NewAssetHandler constructs a v1 AssetHandler. The caller should pass the
-// same AssetPermissionService instance the cookie-auth AssetHandler uses
-// (via legacyhandlers.AssetHandler.AssetPermissionService()) so both
-// surfaces share one role-check pipeline.
-func NewAssetHandler(db database.Database, permissionService *services.PermissionService, assetPerm *services.AssetPermissionService) *AssetHandler {
+// same AssetPermissionService + AssetService instances the cookie-auth
+// AssetHandler uses (via legacyhandlers.AssetHandler.AssetPermissionService()
+// and .AssetService()) so both surfaces share one role-check pipeline and
+// one mutation/audit/automation pipeline.
+func NewAssetHandler(db database.Database, permissionService *services.PermissionService, assetPerm *services.AssetPermissionService, assetService *services.AssetService) *AssetHandler {
 	return &AssetHandler{
-		BaseHandler: NewBaseHandler(db, permissionService),
-		repo:        repository.NewAssetRepository(db),
-		assetPerm:   assetPerm,
+		BaseHandler:  NewBaseHandler(db, permissionService),
+		repo:         repository.NewAssetRepository(db),
+		assetPerm:    assetPerm,
+		assetService: assetService,
 	}
 }
 
@@ -72,37 +76,38 @@ func (h *AssetHandler) requireSetAccess(w http.ResponseWriter, r *http.Request, 
 
 // requireAssetAccess authenticates the request, parses the asset ID from
 // the {id} path param, resolves the asset's set, and verifies the caller
-// has permissionKey on that set. Returns the asset row (fully joined) so
-// callers don't refetch. 404 on any failure so non-visible assets are
+// has permissionKey on that set. Returns the asset row (fully joined) +
+// the authenticated user so callers can stamp the audit actor without
+// refetching. 404 on any failure so non-visible assets are
 // indistinguishable from missing ones.
-func (h *AssetHandler) requireAssetAccess(w http.ResponseWriter, r *http.Request, permissionKey string) (*repository.AssetRow, bool) {
+func (h *AssetHandler) requireAssetAccess(w http.ResponseWriter, r *http.Request, permissionKey string) (*repository.AssetRow, *models.User, bool) {
 	user, ok := h.RequireAuth(w, r)
 	if !ok {
-		return nil, false
+		return nil, nil, false
 	}
 	assetID, ok := h.ParsePathID(w, r, "id", "asset ID")
 	if !ok {
-		return nil, false
+		return nil, nil, false
 	}
 	row, err := h.repo.FindAssetFullByID(assetID)
 	if errors.Is(err, repository.ErrNotFound) {
 		h.RespondError(w, r, restapi.ErrAssetNotFound)
-		return nil, false
+		return nil, nil, false
 	}
 	if err != nil {
 		h.RespondInternalError(w, r)
-		return nil, false
+		return nil, nil, false
 	}
 	allowed, err := h.assetPerm.HasAssetSetPermission(user.ID, row.SetID, permissionKey)
 	if err != nil {
 		h.RespondInternalError(w, r)
-		return nil, false
+		return nil, nil, false
 	}
 	if !allowed {
 		h.RespondError(w, r, restapi.ErrAssetNotFound)
-		return nil, false
+		return nil, nil, false
 	}
-	return row, true
+	return row, user, true
 }
 
 // requireEntityAccess resolves an arbitrary asset-domain entity (type /
@@ -212,7 +217,7 @@ func (h *AssetHandler) List(w http.ResponseWriter, r *http.Request) {
 // @Failure      404  {object}  restapi.ErrorResponse  "Asset not found"
 // @Router       /assets/{id} [get]
 func (h *AssetHandler) Get(w http.ResponseWriter, r *http.Request) {
-	row, ok := h.requireAssetAccess(w, r, services.AssetPermissionKeyView)
+	row, _, ok := h.requireAssetAccess(w, r, services.AssetPermissionKeyView)
 	if !ok {
 		return
 	}
@@ -267,29 +272,31 @@ func (h *AssetHandler) Create(w http.ResponseWriter, r *http.Request) {
 		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid custom_field_values"))
 		return
 	}
-	id, err := h.repo.CreateAsset(repository.CreateAssetInput{
-		SetID:                 setID,
-		AssetTypeID:           req.AssetTypeID,
-		CategoryID:            req.CategoryID,
-		StatusID:              req.StatusID,
-		Title:                 strings.TrimSpace(req.Title),
-		Description:           req.Description,
-		AssetTag:              req.AssetTag,
-		CustomFieldValuesJSON: cfJSON,
-		CreatedBy:             user.ID,
-		CreatedAt:             time.Now().UTC(),
-	})
+	asset, err := h.assetService.CreateAsset(
+		services.NewAuditActorFromRequest(r, user),
+		repository.CreateAssetInput{
+			SetID:                 setID,
+			AssetTypeID:           req.AssetTypeID,
+			CategoryID:            req.CategoryID,
+			StatusID:              req.StatusID,
+			Title:                 strings.TrimSpace(req.Title),
+			Description:           req.Description,
+			AssetTag:              req.AssetTag,
+			CustomFieldValuesJSON: cfJSON,
+			CreatedBy:             user.ID,
+			CreatedAt:             time.Now().UTC(),
+		},
+		req.CustomFieldValues,
+	)
+	if ve, ok := services.IsAssetValidationError(err); ok {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, ve.Msg))
+		return
+	}
 	if err != nil {
 		h.RespondInternalError(w, r)
 		return
 	}
-	row, err := h.repo.FindAssetFullByID(id)
-	if err != nil {
-		h.RespondInternalError(w, r)
-		return
-	}
-	asset := repository.AssetRowToModel(*row)
-	h.RespondCreated(w, dto.MapAssetToResponse(&asset, getBaseURL(r)))
+	h.RespondCreated(w, dto.MapAssetToResponse(asset, getBaseURL(r)))
 }
 
 // Update handles PUT /rest/api/v1/assets/{id}. Partial — only fields present
@@ -306,7 +313,7 @@ func (h *AssetHandler) Create(w http.ResponseWriter, r *http.Request) {
 // @Failure      404   {object}  restapi.ErrorResponse  "Asset not found"
 // @Router       /assets/{id} [put]
 func (h *AssetHandler) Update(w http.ResponseWriter, r *http.Request) {
-	row, ok := h.requireAssetAccess(w, r, services.AssetPermissionKeyEdit)
+	row, user, ok := h.requireAssetAccess(w, r, services.AssetPermissionKeyEdit)
 	if !ok {
 		return
 	}
@@ -369,6 +376,11 @@ func (h *AssetHandler) Update(w http.ResponseWriter, r *http.Request) {
 			in.StatusID = &sid
 		}
 	}
+	// suppliedCustomFields is the map the service validates schema against.
+	// On a partial update where the caller omitted custom_field_values, we
+	// pass nil (skip schema check) and re-encode the row's current values
+	// so the stored JSON doesn't drift across writes.
+	var suppliedCustomFields map[string]interface{}
 	if req.CustomFieldValues != nil {
 		cfJSON, err := encodeCustomFieldValues(*req.CustomFieldValues)
 		if err != nil {
@@ -376,26 +388,41 @@ func (h *AssetHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		in.CustomFieldValuesJSON = cfJSON
+		suppliedCustomFields = *req.CustomFieldValues
 	} else if current.CustomFieldValues != nil {
-		// Re-encode the current values so UpdateAsset overwrites the column
-		// with what we read; otherwise the stored JSON could drift if a
-		// later schema migration changes encoding.
 		cfJSON, err := encodeCustomFieldValues(current.CustomFieldValues)
 		if err == nil {
 			in.CustomFieldValuesJSON = cfJSON
 		}
 	}
-	if err := h.repo.UpdateAsset(row.ID, in); err != nil {
-		h.RespondInternalError(w, r)
+	// requireAssetAccess gave us the *full* asset row; build the update
+	// snapshot the service needs (set_id, status_id, asset_type_id) from
+	// that so we don't re-roundtrip the DB.
+	snap := repository.AssetUpdateSnapshot{
+		SetID:       row.SetID,
+		StatusID:    row.StatusID,
+		AssetTypeID: row.AssetTypeID,
+	}
+	asset, err := h.assetService.UpdateAsset(
+		services.NewAuditActorFromRequest(r, user),
+		row.ID,
+		snap,
+		in,
+		suppliedCustomFields,
+	)
+	if errors.Is(err, repository.ErrNotFound) {
+		h.RespondError(w, r, restapi.ErrAssetNotFound)
 		return
 	}
-	updated, err := h.repo.FindAssetFullByID(row.ID)
+	if ve, ok := services.IsAssetValidationError(err); ok {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, ve.Msg))
+		return
+	}
 	if err != nil {
 		h.RespondInternalError(w, r)
 		return
 	}
-	asset := repository.AssetRowToModel(*updated)
-	h.RespondOK(w, dto.MapAssetToResponse(&asset, getBaseURL(r)))
+	h.RespondOK(w, dto.MapAssetToResponse(asset, getBaseURL(r)))
 }
 
 // Delete handles DELETE /rest/api/v1/assets/{id}. Removes the asset and
@@ -409,11 +436,16 @@ func (h *AssetHandler) Update(w http.ResponseWriter, r *http.Request) {
 // @Failure      404  {object}  restapi.ErrorResponse  "Asset not found"
 // @Router       /assets/{id} [delete]
 func (h *AssetHandler) Delete(w http.ResponseWriter, r *http.Request) {
-	row, ok := h.requireAssetAccess(w, r, services.AssetPermissionKeyDelete)
+	row, user, ok := h.requireAssetAccess(w, r, services.AssetPermissionKeyDelete)
 	if !ok {
 		return
 	}
-	if err := h.repo.DeleteAssetWithLinks(row.ID); err != nil {
+	err := h.assetService.DeleteAsset(services.NewAuditActorFromRequest(r, user), row.ID)
+	if errors.Is(err, repository.ErrNotFound) {
+		h.RespondError(w, r, restapi.ErrAssetNotFound)
+		return
+	}
+	if err != nil {
 		h.RespondInternalError(w, r)
 		return
 	}
@@ -493,139 +525,42 @@ func (h *AssetHandler) ImportCSV(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = file.Close() }()
 
-	// Resolve the type's declared custom fields so we can route CSV columns.
-	fields, err := h.repo.FindAssetTypeFields(assetTypeID)
+	filename := ""
+	if header != nil {
+		filename = header.Filename
+	}
+	summary, err := h.assetService.ImportAssetsCSV(
+		services.NewAuditActorFromRequest(r, user),
+		setID,
+		assetTypeID,
+		services.ImportCSVDefaults{StatusID: statusID, CategoryID: categoryID},
+		file,
+		filename,
+	)
+	if ve, ok := services.IsAssetValidationError(err); ok {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, ve.Msg))
+		return
+	}
 	if err != nil {
 		h.RespondInternalError(w, r)
 		return
 	}
-	fieldByName := make(map[string]string, len(fields)) // lowercase header -> canonical field_name
-	for _, f := range fields {
-		fieldByName[strings.ToLower(f.FieldName)] = f.FieldName
-	}
-
-	reader := csv.NewReader(file)
-	reader.FieldsPerRecord = -1 // tolerate ragged rows; we'll handle by mapping
-	headers, err := reader.Read()
-	if err != nil {
-		if errors.Is(err, io.EOF) {
-			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "CSV is empty"))
-			return
-		}
-		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, fmt.Sprintf("CSV parse error: %v", err)))
-		return
-	}
-
-	startedAt := time.Now().UTC()
+	startedAt := summary.StartedAt
+	completedAt := summary.CompletedAt
 	job := dto.AssetImportJobResponse{
-		SetID:       setID,
-		AssetTypeID: assetTypeID,
-		Status:      "running",
-		CreatedAt:   startedAt,
-		StartedAt:   &startedAt,
-	}
-
-	for {
-		record, err := reader.Read()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			job.ErrorRows++
-			job.TotalRows++
-			job.ProcessedRows++
-			continue
-		}
-		job.TotalRows++
-		job.ProcessedRows++
-
-		row := buildImportRow(headers, record, fieldByName)
-		title := strings.TrimSpace(row.title)
-		if title == "" {
-			job.ErrorRows++
-			continue
-		}
-		cfJSON, _ := encodeCustomFieldValues(row.customFields)
-		if _, err := h.repo.CreateAsset(repository.CreateAssetInput{
-			SetID:                 setID,
-			AssetTypeID:           assetTypeID,
-			CategoryID:            categoryID,
-			StatusID:              statusID,
-			Title:                 title,
-			Description:           row.description,
-			AssetTag:              row.assetTag,
-			CustomFieldValuesJSON: cfJSON,
-			CreatedBy:             user.ID,
-			CreatedAt:             time.Now().UTC(),
-		}); err != nil {
-			job.ErrorRows++
-			continue
-		}
-		job.CreatedRows++
-	}
-
-	completedAt := time.Now().UTC()
-	job.CompletedAt = &completedAt
-	switch {
-	case job.TotalRows == 0:
-		job.Status = "empty"
-		job.ErrorMessage = "no data rows in CSV"
-	case job.ErrorRows == 0:
-		job.Status = "succeeded"
-	case job.CreatedRows == 0:
-		job.Status = "failed"
-	default:
-		job.Status = "partial"
-	}
-	// Filename is informational only — surface it so the CLI can echo it
-	// back to the user without holding onto the upload.
-	if header != nil && job.ErrorMessage == "" && header.Filename != "" {
-		// Stash filename in a clean line of error_message when status is
-		// not an error — small abuse but avoids growing the DTO for one
-		// metadata field. Skip when there's a real error message.
-		if job.Status == "succeeded" || job.Status == "partial" {
-			// Leave ErrorMessage empty; the filename is recoverable from the
-			// upload itself if the CLI needs it.
-			_ = header
-		}
+		SetID:         summary.SetID,
+		AssetTypeID:   summary.AssetTypeID,
+		Status:        summary.Status,
+		TotalRows:     summary.TotalRows,
+		ProcessedRows: summary.ProcessedRows,
+		CreatedRows:   summary.CreatedRows,
+		ErrorRows:     summary.ErrorRows,
+		ErrorMessage:  summary.ErrorMessage,
+		CreatedAt:     startedAt,
+		StartedAt:     &startedAt,
+		CompletedAt:   &completedAt,
 	}
 	h.RespondCreated(w, job)
-}
-
-// csvRow holds the field values for a single CSV row, split by where they
-// route on the asset model.
-type csvRow struct {
-	title        string
-	description  string
-	assetTag     string
-	customFields map[string]interface{}
-}
-
-// buildImportRow walks the CSV record against its header row and routes
-// each cell to either a built-in column or a custom field on the type,
-// matched case-insensitively by header name.
-func buildImportRow(headers, record []string, customFieldByName map[string]string) csvRow {
-	row := csvRow{customFields: map[string]interface{}{}}
-	for i, h := range headers {
-		if i >= len(record) {
-			break
-		}
-		key := strings.ToLower(strings.TrimSpace(h))
-		val := strings.TrimSpace(record[i])
-		switch key {
-		case "title":
-			row.title = val
-		case "description":
-			row.description = val
-		case "asset_tag", "tag":
-			row.assetTag = val
-		default:
-			if canonical, ok := customFieldByName[key]; ok && val != "" {
-				row.customFields[canonical] = val
-			}
-		}
-	}
-	return row
 }
 
 // --- asset sets ---

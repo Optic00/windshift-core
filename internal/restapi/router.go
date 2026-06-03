@@ -37,6 +37,14 @@ type Deps struct {
 	// a fresh instance when nil so embedders that haven't wired this yet
 	// still serve asset routes correctly.
 	AssetPermissionService *services.AssetPermissionService
+	// AssetService owns the asset mutation pipeline: repo writes, audit
+	// emission, automation-event emission, and custom-field schema
+	// validation. Shared with the cookie-auth handler so the two surfaces
+	// emit identical audit + automation events. The v1 router constructs
+	// a fresh instance when nil so embedders boot, but a nil-AssetService
+	// path produces orphaned audit rows (no automation hook); production
+	// should always pass the cookie-auth handler's shared instance.
+	AssetService *services.AssetService
 }
 
 // SetupRoutesFunc is a function type for setting up v1 routes
