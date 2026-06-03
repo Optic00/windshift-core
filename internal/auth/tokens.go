@@ -124,7 +124,11 @@ var DefaultAgentScopes = []string{
 	ScopeMilestonesRead, ScopeIterationsRead, ScopeProjectsRead,
 	ScopePagesRead, ScopePagesWrite, ScopePagesDelete,
 	ScopeTestsRead, ScopeTestsWrite,
-	ScopeAssetsRead, ScopeAssetsWrite,
+	// assets:* are intentionally NOT in the default mint. The asset domain
+	// has its own per-set role model + audit trail; an agent token that
+	// doesn't need it shouldn't carry it. Pass --scopes assets:read /
+	// assets:write / assets:delete explicitly at mint time when needed.
+	// See docs/asset-api-v1-security-review-2026-06-03.md finding 1.
 	ScopeMCPAccess,
 }
 
@@ -151,16 +155,23 @@ var AllValidScopes = []string{
 }
 
 // allNonAdminReadScopes is the set of non-admin :read scopes (for legacy "read" mapping).
+// assets:read is deliberately excluded so legacy-scoped tokens (`read`) don't
+// gain read access to assets without an explicit opt-in. Same precedent as
+// the rejected "auto-grant assets:* in default mints" pattern — see
+// docs/asset-api-v1-security-review-2026-06-03.md finding 1.
 var allNonAdminReadScopes = []string{
 	ScopeItemsRead, ScopeWorkspacesRead, ScopeStatusesRead,
 	ScopeWorkflowsRead, ScopeItemTypesRead, ScopePrioritiesRead,
 	ScopeCustomFieldsRead, ScopeUsersRead, ScopeMilestonesRead,
 	ScopeIterationsRead, ScopeProjectsRead, ScopeCollectionsRead,
 	ScopeActionsRead, ScopePagesRead, ScopeTestsRead,
-	ScopeAssetsRead,
 }
 
 // allNonAdminScopes is the set of all non-admin scopes (for legacy "write" mapping).
+// assets:* are deliberately excluded for the same reason allNonAdminReadScopes
+// excludes assets:read — legacy `write` must not silently grant asset write
+// or delete access. Per docs/asset-api-v1-security-review-2026-06-03.md
+// finding 1.
 var allNonAdminScopes = []string{
 	ScopeItemsRead, ScopeItemsWrite, ScopeItemsDelete,
 	ScopeWorkspacesRead, ScopeWorkspacesWrite, ScopeWorkspacesDelete,
@@ -175,7 +186,6 @@ var allNonAdminScopes = []string{
 	ScopeActionsRead, ScopeActionsWrite,
 	ScopePagesRead, ScopePagesWrite, ScopePagesDelete,
 	ScopeTestsRead, ScopeTestsWrite,
-	ScopeAssetsRead, ScopeAssetsWrite, ScopeAssetsDelete,
 }
 
 // AdminScopes returns the set of scopes that require system admin role.
