@@ -198,8 +198,17 @@ func (h *RunnerControlHandler) Result(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := h.runs.Finalize(r.Context(), runID, status, services.RedactString(req.Error), h.now()); err != nil {
+	// Compare-and-swap finalize (WI-168): only stamp the terminal status if
+	// the run is still running, and only emit the terminal event when this
+	// call actually performed the transition — a replayed/late Result on an
+	// already-finalized run is a no-op, not a rewrite.
+	transitioned, err := h.runs.FinalizeRunning(r.Context(), runID, status, services.RedactString(req.Error), h.now())
+	if err != nil {
 		respondInternalError(w, r, err)
+		return
+	}
+	if !transitioned {
+		respondConflict(w, r, "agent run is not running")
 		return
 	}
 	_ = h.runs.AppendEvent(r.Context(), runID, "lifecycle", `{"phase":"`+status+`"}`)
@@ -252,8 +261,13 @@ func (h *RunnerControlHandler) requireRunner(w http.ResponseWriter, r *http.Requ
 	return inst, true
 }
 
-// ownsRun enforces that the run exists and was claimed by this runner.
-// Returns false (after writing a response) otherwise.
+// ownsRun enforces that the run exists, was claimed by this runner, and is
+// still running. Returns false (after writing a response) otherwise.
+//
+// The running-state gate (WI-168) stops a runner credential from emitting
+// events or rewriting the verdict of a run that has already finalized (or was
+// canceled by the orchestrator): such a run is no longer the runner's to
+// mutate, so historical runs it once claimed can't be retriggered.
 func (h *RunnerControlHandler) ownsRun(w http.ResponseWriter, r *http.Request, inst *models.RunnerInstance, runID int) bool {
 	run, err := h.runs.Get(r.Context(), runID)
 	if err != nil {
@@ -263,6 +277,10 @@ func (h *RunnerControlHandler) ownsRun(w http.ResponseWriter, r *http.Request, i
 	if run.RunnerID == nil || *run.RunnerID != inst.ID {
 		// The run was not claimed by this runner; treat as forbidden.
 		respondForbidden(w, r)
+		return false
+	}
+	if run.Status != models.AgentRunStatusRunning {
+		respondConflict(w, r, "agent run is not running")
 		return false
 	}
 	return true
