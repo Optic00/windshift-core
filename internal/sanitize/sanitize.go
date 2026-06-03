@@ -9,6 +9,25 @@
 // would lose the contract; what we centralize is the policy library
 // itself so a new entity-handling service doesn't reinvent the bundle.
 //
+// # Length caps
+//
+// Each policy enforces a maximum length. The schema is unbounded TEXT
+// everywhere, the frontend has near-zero maxlength attributes — these
+// caps are the PRIMARY length defense in the stack, not defense-in-depth
+// on top of the DB. Numbers are picked from how the field is rendered:
+//
+//   - PlainTextField — 256 runes. Titles + names surface across the
+//     frontend in board cards, breadcrumbs, picker chips, browser tabs;
+//     pathological lengths break layout. 256 is roomy enough for any
+//     legitimate human-written title without breaking the renderers.
+//   - ShortIdentifier — 100 runes. Asset tags, slugs, codes. Intentionally
+//     tighter than PlainTextField because these are identifier-shaped:
+//     "LAP-001", URL slugs, link-type names.
+//   - RichText / LongDocument / Comment — 256 KiB each. The unified
+//     "any long-form user text" cap. Comfortably accommodates rich
+//     descriptions, wiki-style pages, and long discussion comments
+//     without enabling DOS via unbounded payloads.
+//
 // Every policy is stateless and safe for concurrent use.
 package sanitize
 
@@ -68,33 +87,35 @@ func ApplyAll(pairs ...Pair) {
 // PlainTextField — short, single-line user-facing label or title:
 // item / asset / milestone / workspace / page / label names + titles.
 // Strips every HTML tag (any HTML here is an injection attempt), trims
-// surrounding whitespace, and caps at 200 runes (the standard
-// length-budget for these fields across the app).
+// surrounding whitespace, caps at 256 runes (titles surface across
+// board cards, breadcrumbs, picker chips, browser tabs — pathological
+// lengths break layout).
 var PlainTextField Policy = PolicyFunc(plainTextField)
 
 // ShortIdentifier — short identifier-like value (asset_tag, slug, code,
-// link-type name). Same shape as PlainTextField with a 100-rune cap to
-// match the tighter db column limits these fields tend to have.
+// link-type name). Same shape as PlainTextField with a 100-rune cap;
+// intentionally tighter because these fields are identifier-shaped
+// (e.g. "LAP-001", URL slugs) rather than free-form titles.
 var ShortIdentifier Policy = PolicyFunc(shortIdentifier)
 
-// RichText — medium-length multi-line body content: asset / item /
-// workspace / team descriptions, test-step actual results, test-step
-// notes. Strips HTML except <br /> (Milkdown uses this to preserve
-// blank lines on round-trip), decodes HTML entities back to plain
-// text, neutralizes dangerous Markdown URL schemes (javascript:,
-// vbscript:, data:), caps at 10 KiB.
+// RichText — multi-line body content (descriptions, notes, test-step
+// actual results). Strips HTML except <br /> (Milkdown uses this to
+// preserve blank lines on round-trip), decodes HTML entities back to
+// plain text, neutralizes dangerous Markdown URL schemes
+// (javascript:, vbscript:, data:), caps at 256 KiB.
 var RichText Policy = PolicyFunc(richText)
 
 // LongDocument — long-form Markdown document (workspace knowledge
-// pages, runbooks). Same policy shape as RichText with a 256 KiB cap
-// — page content is meaningfully larger than item descriptions, so
-// the tighter cap would clip legitimate content.
+// pages, runbooks). Same policy shape as RichText, same 256 KiB cap.
+// Kept as a distinct policy from RichText so callers can express the
+// intent ("this is a document, not a description") at the call site,
+// and so the cap can diverge in future without churning every caller.
 var LongDocument Policy = PolicyFunc(longDocument)
 
 // Comment — user-submitted comment content (Markdown editor input).
-// Strips every HTML tag + neutralizes dangerous Markdown URLs. No
-// length cap; the comments table bounds the column size at the schema
-// layer.
+// Strips every HTML tag + neutralizes dangerous Markdown URLs.
+// Caps at 256 KiB (matches RichText / LongDocument — one uniform
+// upper bound for any long-form user text).
 var Comment Policy = PolicyFunc(commentPolicy)
 
 // MarkdownURLOnly neutralizes dangerous URL schemes in Markdown
@@ -140,8 +161,24 @@ func stripAndCap(input string, maxRunes int) string {
 	return s
 }
 
-func plainTextField(s string) string  { return stripAndCap(s, 200) }
-func shortIdentifier(s string) string { return stripAndCap(s, 100) }
+// Length caps — see the package doc + per-policy comments for rationale.
+const (
+	// PlainTextFieldMaxRunes bounds titles + names. 256 runes keeps
+	// pathological lengths from breaking board cards / breadcrumbs /
+	// picker chips that render these fields verbatim.
+	PlainTextFieldMaxRunes = 256
+	// ShortIdentifierMaxRunes bounds identifier-shaped values
+	// (asset_tag, slug, link-type name). Tighter on purpose — these
+	// aren't free-form titles.
+	ShortIdentifierMaxRunes = 100
+	// LongTextMaxBytes is the unified upper bound on any long-form
+	// user-supplied text (descriptions, page bodies, comments). One
+	// number, one place to evolve it.
+	LongTextMaxBytes = 256 * 1024
+)
+
+func plainTextField(s string) string  { return stripAndCap(s, PlainTextFieldMaxRunes) }
+func shortIdentifier(s string) string { return stripAndCap(s, ShortIdentifierMaxRunes) }
 
 // brAllowAndCap is the common path for RichText + LongDocument: strip
 // HTML except <br />, decode entities, normalize the bluemonday <br/>
@@ -161,14 +198,18 @@ func brAllowAndCap(input string, maxBytes int) string {
 	return s
 }
 
-func richText(s string) string     { return brAllowAndCap(s, 10*1024) }
-func longDocument(s string) string { return brAllowAndCap(s, 256*1024) }
+func richText(s string) string     { return brAllowAndCap(s, LongTextMaxBytes) }
+func longDocument(s string) string { return brAllowAndCap(s, LongTextMaxBytes) }
 
 func commentPolicy(s string) string {
 	if s == "" {
 		return ""
 	}
-	return markdownURLOnly(html.UnescapeString(strictPolicy.Sanitize(s)))
+	out := markdownURLOnly(html.UnescapeString(strictPolicy.Sanitize(s)))
+	if len(out) > LongTextMaxBytes {
+		out = out[:LongTextMaxBytes]
+	}
+	return out
 }
 
 func markdownURLOnly(s string) string {
