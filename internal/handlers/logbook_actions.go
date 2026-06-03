@@ -194,7 +194,7 @@ func (h *LogbookNodeExecutionHandler) executeCreateAsset(nodeConfig string, even
 	// Authorize: the action config may target any asset set, so verify the
 	// acting user has create permission on the target set before inserting.
 	if h.assetHandler != nil {
-		hasPerm, permErr := h.assetHandler.HasAssetSetPermission(event.ActorUserID, config.AssetSetID, AssetPermissionKeyCreate)
+		hasPerm, permErr := h.assetHandler.HasAssetSetPermission(event.ActorUserID, config.AssetSetID, services.AssetPermissionKeyCreate)
 		if permErr != nil {
 			return nil, fmt.Errorf("failed to check asset set permission: %w", permErr)
 		}

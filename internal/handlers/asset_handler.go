@@ -10,27 +10,37 @@ import (
 	"windshift/internal/utils"
 )
 
-// AssetHandler handles asset management operations.
-// db is held on the struct because the asset domain spans several files
-// (asset_crud_handlers.go, asset_link_handlers.go, asset_import.go, etc.)
-// that still run their own SQL; they migrate together with this one when
-// the rest of the asset surface is repo-shaped.
+// AssetHandler handles asset management operations on the cookie-auth
+// surface. The per-set role check now lives on services.AssetPermissionService
+// so both this handler and the bearer-auth v1 handler share one source of
+// truth; this struct keeps thin delegates so existing call sites and the
+// services.AssetSetPermissionChecker interface stay valid.
 type AssetHandler struct {
 	db                 database.Database
 	repo               *repository.AssetRepository
 	permissionService  *services.PermissionService
+	assetPerm          *services.AssetPermissionService
 	attachmentPath     string
 	assetActionService *services.AssetActionService
 }
 
 // NewAssetHandler creates a new asset handler
 func NewAssetHandler(db database.Database, permissionService *services.PermissionService, attachmentPath string) *AssetHandler {
+	repo := repository.NewAssetRepository(db)
 	return &AssetHandler{
 		db:                db,
-		repo:              repository.NewAssetRepository(db),
+		repo:              repo,
 		permissionService: permissionService,
+		assetPerm:         services.NewAssetPermissionService(repo, permissionService),
 		attachmentPath:    attachmentPath,
 	}
+}
+
+// AssetPermissionService returns the per-set permission service this handler
+// delegates to, so callers wiring up the v1 surface can share the same
+// instance instead of constructing a parallel one.
+func (h *AssetHandler) AssetPermissionService() *services.AssetPermissionService {
+	return h.assetPerm
 }
 
 // SetAssetActionService sets the asset action service for emitting automation events
@@ -38,16 +48,8 @@ func (h *AssetHandler) SetAssetActionService(s *services.AssetActionService) {
 	h.assetActionService = s
 }
 
-// Asset permission key constants
-const (
-	AssetPermissionKeyView   = "asset.view"
-	AssetPermissionKeyCreate = "asset.create"
-	AssetPermissionKeyEdit   = "asset.edit"
-	AssetPermissionKeyDelete = "asset.delete"
-	AssetPermissionKeyAdmin  = "asset.admin"
-)
-
-// Role name constants
+// Role name constants — these are response-shape strings, not used by the
+// permission service. Kept here next to the only callers that need them.
 const (
 	AssetRoleViewer        = "Viewer"
 	AssetRoleEditor        = "Editor"
@@ -59,39 +61,21 @@ func (h *AssetHandler) createDefaultStatuses(setID int) error {
 	return h.repo.CreateDefaultStatuses(setID)
 }
 
-// getUserSetRole returns the role a user has for an asset set
-// Priority: System Admin > Direct User Role > Group Role > Everyone Default
+// getUserSetRole delegates to AssetPermissionService.
 func (h *AssetHandler) getUserSetRole(userID, setID int) (*models.AssetRole, error) {
-	isAdmin, err := h.permissionService.HasGlobalPermission(userID, "system.admin")
-	if err != nil {
-		return nil, err
-	}
-	if isAdmin {
-		return &models.AssetRole{
-			ID:   -1, // Virtual admin role
-			Name: AssetRoleAdministrator,
-		}, nil
-	}
-	return h.repo.GetUserSetRole(userID, setID)
+	return h.assetPerm.GetUserSetRole(userID, setID)
 }
 
-// hasAssetPermission checks if a user has a specific asset permission for a set
+// hasAssetPermission delegates to AssetPermissionService.
 func (h *AssetHandler) hasAssetPermission(userID, setID int, permissionKey string) (bool, error) {
-	role, err := h.getUserSetRole(userID, setID)
-	if err != nil {
-		return false, err
-	}
-	if role == nil {
-		return false, nil
-	}
-	return h.repo.RoleHasPermission(role.ID, permissionKey)
+	return h.assetPerm.HasAssetSetPermission(userID, setID, permissionKey)
 }
 
-// HasAssetSetPermission is the exported form of hasAssetPermission, for use by
-// other packages (e.g. the logbook node executor) that need to verify that a
-// user is authorized to act on an asset set before performing a write.
+// HasAssetSetPermission satisfies services.AssetSetPermissionChecker so the
+// action service and item-link orchestration can keep accepting this handler
+// as a permission source — they now transparently hit the shared service.
 func (h *AssetHandler) HasAssetSetPermission(userID, setID int, permissionKey string) (bool, error) {
-	return h.hasAssetPermission(userID, setID, permissionKey)
+	return h.assetPerm.HasAssetSetPermission(userID, setID, permissionKey)
 }
 
 // getUserSetRoleName returns the role name (for API responses)
@@ -108,17 +92,17 @@ func (h *AssetHandler) getUserSetRoleName(userID, setID int) (string, error) {
 
 // requireSetViewAccess checks auth, parses setId, and verifies view permission.
 func (h *AssetHandler) requireSetViewAccess(w http.ResponseWriter, r *http.Request) (*models.User, int, bool) {
-	return h.requireSetAccess(w, r, AssetPermissionKeyView)
+	return h.requireSetAccess(w, r, services.AssetPermissionKeyView)
 }
 
 // requireSetEditAccess checks auth, parses setId, and verifies edit permission.
 func (h *AssetHandler) requireSetEditAccess(w http.ResponseWriter, r *http.Request) (*models.User, int, bool) {
-	return h.requireSetAccess(w, r, AssetPermissionKeyEdit)
+	return h.requireSetAccess(w, r, services.AssetPermissionKeyEdit)
 }
 
 // requireSetAdminAccess checks auth, parses setId, and verifies admin permission.
 func (h *AssetHandler) requireSetAdminAccess(w http.ResponseWriter, r *http.Request) (*models.User, int, bool) {
-	return h.requireSetAccess(w, r, AssetPermissionKeyAdmin)
+	return h.requireSetAccess(w, r, services.AssetPermissionKeyAdmin)
 }
 
 // requireSetAccess checks auth, parses setId, and verifies the given permission.
@@ -129,7 +113,7 @@ func (h *AssetHandler) requireSetAccess(w http.ResponseWriter, r *http.Request, 
 // requireSetAdminByID checks auth, parses the "id" path param, and verifies admin permission.
 // Use this for routes where the set ID param is named "id" (e.g. /asset-sets/{id}/roles).
 func (h *AssetHandler) requireSetAdminByID(w http.ResponseWriter, r *http.Request) (*models.User, int, bool) {
-	return h.requireSetAccessByParam(w, r, "id", AssetPermissionKeyAdmin)
+	return h.requireSetAccessByParam(w, r, "id", services.AssetPermissionKeyAdmin)
 }
 
 // requireSetAccessByParam checks auth, parses the given path param as a set ID, and verifies the given permission.
@@ -157,15 +141,15 @@ func (h *AssetHandler) requireSetAccessByParam(w http.ResponseWriter, r *http.Re
 
 // canViewSet checks if user can view a set
 func (h *AssetHandler) canViewSet(userID, setID int) (bool, error) {
-	return h.hasAssetPermission(userID, setID, AssetPermissionKeyView)
+	return h.hasAssetPermission(userID, setID, services.AssetPermissionKeyView)
 }
 
 // canEditSet checks if user can edit assets in a set
 func (h *AssetHandler) canEditSet(userID, setID int) (bool, error) {
-	return h.hasAssetPermission(userID, setID, AssetPermissionKeyEdit)
+	return h.hasAssetPermission(userID, setID, services.AssetPermissionKeyEdit)
 }
 
 // canAdminSet checks if user can administer a set
 func (h *AssetHandler) canAdminSet(userID, setID int) (bool, error) {
-	return h.hasAssetPermission(userID, setID, AssetPermissionKeyAdmin)
+	return h.hasAssetPermission(userID, setID, services.AssetPermissionKeyAdmin)
 }
