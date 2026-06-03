@@ -444,7 +444,7 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// Sanitize user input to prevent XSS
 	req.Title = sanitize.PlainTextField.Sanitize(req.Title)
-	req.Description = sanitize.Comment.Sanitize(req.Description)
+	req.Description = sanitize.RichText.Sanitize(req.Description)
 
 	// Convert custom field values to JSON
 	var customFieldValuesJSON string
@@ -568,7 +568,7 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 		updateData["title"] = sanitize.PlainTextField.Sanitize(*req.Title)
 	}
 	if req.Description != nil {
-		updateData["description"] = sanitize.Comment.Sanitize(*req.Description)
+		updateData["description"] = sanitize.RichText.Sanitize(*req.Description)
 	}
 	if req.PriorityID != nil {
 		updateData["priority_id"] = *req.PriorityID
