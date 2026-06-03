@@ -1391,3 +1391,63 @@ func (c *Client) ListAssetStatuses(setID int) ([]AssetStatus, error) {
 	}
 	return statuses, nil
 }
+
+// ImportAssetsCSV uploads a CSV to /asset-sets/{setID}/assets/import. assetTypeID
+// is required; statusID and categoryID are optional defaults for every row.
+// Returns a synthetic AssetImportJob summarizing the run (the v1 endpoint is
+// synchronous one-shot, not the cookie-auth async flow).
+func (c *Client) ImportAssetsCSV(setID, assetTypeID int, statusID, categoryID *int, filename string, body io.Reader) (*AssetImportJob, error) {
+	var buf bytes.Buffer
+	mp := multipart.NewWriter(&buf)
+	if err := mp.WriteField("asset_type_id", fmt.Sprintf("%d", assetTypeID)); err != nil {
+		return nil, fmt.Errorf("multipart write asset_type_id: %w", err)
+	}
+	if statusID != nil {
+		if err := mp.WriteField("status_id", fmt.Sprintf("%d", *statusID)); err != nil {
+			return nil, fmt.Errorf("multipart write status_id: %w", err)
+		}
+	}
+	if categoryID != nil {
+		if err := mp.WriteField("category_id", fmt.Sprintf("%d", *categoryID)); err != nil {
+			return nil, fmt.Errorf("multipart write category_id: %w", err)
+		}
+	}
+	part, err := mp.CreateFormFile("file", filename)
+	if err != nil {
+		return nil, fmt.Errorf("multipart create file: %w", err)
+	}
+	if _, err := io.Copy(part, body); err != nil {
+		return nil, fmt.Errorf("multipart copy file: %w", err)
+	}
+	if err := mp.Close(); err != nil {
+		return nil, fmt.Errorf("multipart close: %w", err)
+	}
+
+	endpoint := fmt.Sprintf("%s/rest/api/v1/asset-sets/%d/assets/import", c.baseURL, setID)
+	req, err := http.NewRequest(http.MethodPost, endpoint, &buf)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", mp.FormDataContentType())
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response body: %w", err)
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("import failed (status %d): %s", resp.StatusCode, string(respBody))
+	}
+	var job AssetImportJob
+	if err := json.Unmarshal(respBody, &job); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	return &job, nil
+}

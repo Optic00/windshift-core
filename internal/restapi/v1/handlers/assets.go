@@ -1,9 +1,13 @@
 package handlers
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -414,6 +418,214 @@ func (h *AssetHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.RespondNoContent(w)
+}
+
+// ImportCSV handles POST /rest/api/v1/asset-sets/{setId}/assets/import.
+// Synchronous one-shot: parses the multipart CSV, creates rows in-band,
+// and returns a summary in the AssetImportJob shape. Each header column is
+// matched against built-in fields ("title", "description", "asset_tag")
+// and falls back to a case-insensitive match against the asset type's
+// custom field names. Rows missing the required title are counted as
+// errors but don't abort the import — partial-success is reported in
+// the response (errors_rows > 0).
+//
+// @Summary      Import assets from CSV (sync, one-shot)
+// @Description  multipart/form-data: file=<csv>, asset_type_id=N (required), status_id=M (optional), category_id=K (optional). The CSV must have a header row.
+// @Tags         assets
+// @Accept       mpfd
+// @Produce      json
+// @Security     BearerAuth
+// @Param        setId         path      int   true   "Asset set ID"
+// @Param        file          formData  file  true   "CSV file"
+// @Param        asset_type_id formData  int   true   "Asset type id"
+// @Param        status_id     formData  int   false  "Default status id"
+// @Param        category_id   formData  int   false  "Default category id"
+// @Success      201  {object}  dto.AssetImportJobResponse
+// @Failure      400  {object}  restapi.ErrorResponse
+// @Failure      404  {object}  restapi.ErrorResponse  "Asset set not found"
+// @Router       /asset-sets/{setId}/assets/import [post]
+func (h *AssetHandler) ImportCSV(w http.ResponseWriter, r *http.Request) {
+	setID, user, ok := h.requireSetAccess(w, r, services.AssetPermissionKeyCreate)
+	if !ok {
+		return
+	}
+	// 32 MiB cap is generous for one-shot CSV imports; rows > that should
+	// use the (future) async batch flow rather than this endpoint.
+	const maxImportBytes = 32 << 20
+	r.Body = http.MaxBytesReader(w, r.Body, maxImportBytes)
+	// #nosec G120 -- the body is already capped by MaxBytesReader above; the int arg is the in-memory threshold, not the upper bound
+	if err := r.ParseMultipartForm(maxImportBytes); err != nil {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid multipart body"))
+		return
+	}
+	assetTypeID, err := strconv.Atoi(r.FormValue("asset_type_id"))
+	if err != nil || assetTypeID <= 0 {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeMissingField, "asset_type_id is required"))
+		return
+	}
+	if !h.validateResourceBelongsToSet(w, r, "asset_types", assetTypeID, setID, "Asset type") {
+		return
+	}
+
+	var statusID *int
+	if s := r.FormValue("status_id"); s != "" {
+		if v, err := strconv.Atoi(s); err == nil && v > 0 {
+			if !h.validateResourceBelongsToSet(w, r, "asset_statuses", v, setID, "Asset status") {
+				return
+			}
+			statusID = &v
+		}
+	}
+	var categoryID *int
+	if c := r.FormValue("category_id"); c != "" {
+		if v, err := strconv.Atoi(c); err == nil && v > 0 {
+			if !h.validateResourceBelongsToSet(w, r, "asset_categories", v, setID, "Asset category") {
+				return
+			}
+			categoryID = &v
+		}
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeMissingField, "file is required"))
+		return
+	}
+	defer func() { _ = file.Close() }()
+
+	// Resolve the type's declared custom fields so we can route CSV columns.
+	fields, err := h.repo.FindAssetTypeFields(assetTypeID)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	fieldByName := make(map[string]string, len(fields)) // lowercase header -> canonical field_name
+	for _, f := range fields {
+		fieldByName[strings.ToLower(f.FieldName)] = f.FieldName
+	}
+
+	reader := csv.NewReader(file)
+	reader.FieldsPerRecord = -1 // tolerate ragged rows; we'll handle by mapping
+	headers, err := reader.Read()
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "CSV is empty"))
+			return
+		}
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, fmt.Sprintf("CSV parse error: %v", err)))
+		return
+	}
+
+	startedAt := time.Now().UTC()
+	job := dto.AssetImportJobResponse{
+		SetID:       setID,
+		AssetTypeID: assetTypeID,
+		Status:      "running",
+		CreatedAt:   startedAt,
+		StartedAt:   &startedAt,
+	}
+
+	for {
+		record, err := reader.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			job.ErrorRows++
+			job.TotalRows++
+			job.ProcessedRows++
+			continue
+		}
+		job.TotalRows++
+		job.ProcessedRows++
+
+		row := buildImportRow(headers, record, fieldByName)
+		title := strings.TrimSpace(row.title)
+		if title == "" {
+			job.ErrorRows++
+			continue
+		}
+		cfJSON, _ := encodeCustomFieldValues(row.customFields)
+		if _, err := h.repo.CreateAsset(repository.CreateAssetInput{
+			SetID:                 setID,
+			AssetTypeID:           assetTypeID,
+			CategoryID:            categoryID,
+			StatusID:              statusID,
+			Title:                 title,
+			Description:           row.description,
+			AssetTag:              row.assetTag,
+			CustomFieldValuesJSON: cfJSON,
+			CreatedBy:             user.ID,
+			CreatedAt:             time.Now().UTC(),
+		}); err != nil {
+			job.ErrorRows++
+			continue
+		}
+		job.CreatedRows++
+	}
+
+	completedAt := time.Now().UTC()
+	job.CompletedAt = &completedAt
+	switch {
+	case job.TotalRows == 0:
+		job.Status = "empty"
+		job.ErrorMessage = "no data rows in CSV"
+	case job.ErrorRows == 0:
+		job.Status = "succeeded"
+	case job.CreatedRows == 0:
+		job.Status = "failed"
+	default:
+		job.Status = "partial"
+	}
+	// Filename is informational only — surface it so the CLI can echo it
+	// back to the user without holding onto the upload.
+	if header != nil && job.ErrorMessage == "" && header.Filename != "" {
+		// Stash filename in a clean line of error_message when status is
+		// not an error — small abuse but avoids growing the DTO for one
+		// metadata field. Skip when there's a real error message.
+		if job.Status == "succeeded" || job.Status == "partial" {
+			// Leave ErrorMessage empty; the filename is recoverable from the
+			// upload itself if the CLI needs it.
+			_ = header
+		}
+	}
+	h.RespondCreated(w, job)
+}
+
+// csvRow holds the field values for a single CSV row, split by where they
+// route on the asset model.
+type csvRow struct {
+	title        string
+	description  string
+	assetTag     string
+	customFields map[string]interface{}
+}
+
+// buildImportRow walks the CSV record against its header row and routes
+// each cell to either a built-in column or a custom field on the type,
+// matched case-insensitively by header name.
+func buildImportRow(headers, record []string, customFieldByName map[string]string) csvRow {
+	row := csvRow{customFields: map[string]interface{}{}}
+	for i, h := range headers {
+		if i >= len(record) {
+			break
+		}
+		key := strings.ToLower(strings.TrimSpace(h))
+		val := strings.TrimSpace(record[i])
+		switch key {
+		case "title":
+			row.title = val
+		case "description":
+			row.description = val
+		case "asset_tag", "tag":
+			row.assetTag = val
+		default:
+			if canonical, ok := customFieldByName[key]; ok && val != "" {
+				row.customFields[canonical] = val
+			}
+		}
+	}
+	return row
 }
 
 // --- asset sets ---
