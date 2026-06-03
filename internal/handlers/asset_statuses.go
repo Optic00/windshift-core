@@ -8,6 +8,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 )
 
 // AssetStatusHandler handles asset status operations
@@ -132,6 +133,11 @@ func (h *AssetStatusHandler) CreateAssetStatus(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Color, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
+	)
 
 	if req.Name == "" {
 		respondValidationError(w, r, "Name is required")
@@ -193,6 +199,11 @@ func (h *AssetStatusHandler) UpdateAssetStatus(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Color, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
+	)
 
 	if req.Name == "" {
 		respondValidationError(w, r, "Name is required")

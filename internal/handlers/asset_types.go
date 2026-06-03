@@ -9,6 +9,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/utils"
 )
 
@@ -159,6 +160,12 @@ func (h *AssetTypeHandler) CreateAssetType(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
+		sanitize.Pair{Target: &req.Icon, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.Color, Policy: sanitize.ShortIdentifier},
+	)
 
 	if req.Name == "" {
 		respondValidationError(w, r, "Name is required")
@@ -222,6 +229,12 @@ func (h *AssetTypeHandler) UpdateAssetType(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
+		sanitize.Pair{Target: &req.Icon, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.Color, Policy: sanitize.ShortIdentifier},
+	)
 
 	if req.Name == "" {
 		respondValidationError(w, r, "Name is required")
