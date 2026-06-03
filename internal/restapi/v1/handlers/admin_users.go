@@ -5,6 +5,7 @@ import (
 
 	"windshift/internal/database"
 	"windshift/internal/restapi"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
 
@@ -133,6 +134,14 @@ func (h *AdminUserHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	// Email is intentionally not sanitized — it's format-validated as an
+	// email address by the user service before write; running it through
+	// PlainTextField would silently turn "<script>@evil.com" into
+	// "@evil.com" rather than rejecting it as malformed.
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: req.FirstName, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: req.LastName, Policy: sanitize.PlainTextField},
+	)
 
 	b := NewDynamicUpdateBuilder()
 	b.AddString("first_name", req.FirstName)
