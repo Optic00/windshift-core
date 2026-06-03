@@ -8,6 +8,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/utils"
 )
 
@@ -80,6 +81,17 @@ func (h *EmailTemplateHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Subject + Description run through sanitize — Subject renders verbatim
+	// in mail clients (no HTML allowed there) and Description surfaces in
+	// the admin UI. HTMLBody + TextBody are intentionally NOT sanitized:
+	// the entire point of an email template is to author HTML / plain
+	// text for outbound mail, and stripping HTML here would break every
+	// legitimate template. Authoring an email template is an admin-only
+	// trusted-author surface.
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Subject, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
+	)
 
 	if req.Subject == "" || req.HTMLBody == "" {
 		respondValidationError(w, r, "subject and html_body are required")
@@ -128,6 +140,14 @@ func (h *EmailTemplateHandler) Preview(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Same rationale as Update: Subject + Name are user-facing labels and
+	// run through sanitize; HTMLBody + TextBody are template sources the
+	// admin is composing and are passed through unchanged so the preview
+	// reflects what would actually be sent.
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Subject, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+	)
 
 	data := emailutil.SampleData(req.Name)
 
