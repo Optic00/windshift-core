@@ -8,6 +8,7 @@ import (
 	"windshift/internal/models"
 	"windshift/internal/restapi"
 	"windshift/internal/restapi/v1/dto"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
 
@@ -182,6 +183,13 @@ func (h *WorkspaceHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Key, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
+		sanitize.Pair{Target: &req.Icon, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.Color, Policy: sanitize.ShortIdentifier},
+	)
 
 	if !h.ValidateRequiredString(w, r, req.Name, "name") {
 		return
@@ -249,6 +257,12 @@ func (h *WorkspaceHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: req.Description, Policy: sanitize.RichText},
+		sanitize.Pair{Target: req.Icon, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: req.Color, Policy: sanitize.ShortIdentifier},
+	)
 
 	ws, err := h.workspaceService.Update(services.UpdateWorkspaceParams{
 		ID:          wsID,

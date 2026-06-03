@@ -7,6 +7,7 @@ import (
 	"windshift/internal/models"
 	"windshift/internal/restapi"
 	"windshift/internal/restapi/v1/dto"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
 
@@ -168,6 +169,10 @@ func (h *MilestoneHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
+	)
 
 	if !h.ValidateRequiredString(w, r, req.Name, "name") {
 		return
@@ -276,6 +281,10 @@ func (h *MilestoneHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
+	)
 
 	var updateTargetDate *string
 	if req.TargetDate != "" {
@@ -608,6 +617,10 @@ func (h *MilestoneHandler) CreateInWorkspace(w http.ResponseWriter, r *http.Requ
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
+	)
 
 	if !h.ValidateRequiredString(w, r, req.Name, "name") {
 		return
@@ -698,6 +711,10 @@ func (h *MilestoneHandler) UpdateInWorkspace(w http.ResponseWriter, r *http.Requ
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
+	)
 
 	var updateTargetDate *string
 	if req.TargetDate != "" {
@@ -1053,6 +1070,10 @@ func (h *IterationHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
+	)
 
 	if !h.ValidateRequiredString(w, r, req.Name, "name") {
 		return
@@ -1111,6 +1132,10 @@ func (h *IterationHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
+	)
 
 	iter, err := h.planningService.UpdateIteration(services.UpdateIterationParams{
 		ID:          id,
@@ -1258,6 +1283,10 @@ func (h *IterationHandler) CreateInWorkspace(w http.ResponseWriter, r *http.Requ
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
+	)
 
 	if !h.ValidateRequiredString(w, r, req.Name, "name") {
 		return
@@ -1344,6 +1373,10 @@ func (h *IterationHandler) UpdateInWorkspace(w http.ResponseWriter, r *http.Requ
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
+	)
 
 	// WorkspaceID scopes the SQL UPDATE to this workspace as defense-in-depth
 	// beyond the URL match above.
