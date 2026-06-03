@@ -14,6 +14,7 @@ import (
 	"windshift/internal/repository"
 	"windshift/internal/repository/actionutil"
 	"windshift/internal/restapi"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/services/actioncatalog"
 	"windshift/internal/utils"
@@ -253,6 +254,10 @@ func (h *ActionsHandler) CreateAction(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
+	)
 
 	// Unified validator covers required fields, trigger/node config schemas,
 	// edge sanity, graph cycles, iterator-body containment, and capability
@@ -372,6 +377,10 @@ func (h *ActionsHandler) UpdateAction(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: req.Description, Policy: sanitize.RichText},
+	)
 
 	currentUser := utils.GetCurrentUser(r)
 
@@ -878,6 +887,7 @@ func (h *ActionsHandler) CreateCapability(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	sanitize.Apply(&req.Name, sanitize.PlainTextField)
 
 	if req.Name == "" {
 		respondValidationError(w, r, "Name is required")
@@ -968,6 +978,7 @@ func (h *ActionsHandler) UpdateCapability(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	sanitize.Apply(req.Name, sanitize.PlainTextField)
 
 	if req.Name != nil {
 		capability.Name = *req.Name
