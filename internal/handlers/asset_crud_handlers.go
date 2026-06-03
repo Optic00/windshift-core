@@ -241,7 +241,7 @@ func (h *AssetHandler) CreateAsset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	asset, err := h.assetService.CreateAsset(
-		services.NewAuditActorFromRequest(r, currentUser),
+		services.NewAuditActorFromRequest(r, currentUser, nil, "cookie"),
 		repository.CreateAssetInput{
 			SetID:                 setID,
 			AssetTypeID:           req.AssetTypeID,
@@ -349,7 +349,7 @@ func (h *AssetHandler) UpdateAsset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	asset, err := h.assetService.UpdateAsset(
-		services.NewAuditActorFromRequest(r, currentUser),
+		services.NewAuditActorFromRequest(r, currentUser, nil, "cookie"),
 		assetID,
 		*snap,
 		repository.UpdateAssetInput{
@@ -384,7 +384,7 @@ func (h *AssetHandler) DeleteAsset(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	err := h.assetService.DeleteAsset(services.NewAuditActorFromRequest(r, currentUser), assetID)
+	err := h.assetService.DeleteAsset(services.NewAuditActorFromRequest(r, currentUser, nil, "cookie"), assetID)
 	if errors.Is(err, repository.ErrNotFound) {
 		respondNotFound(w, r, "asset")
 		return

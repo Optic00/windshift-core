@@ -13,6 +13,7 @@ import (
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
 	"windshift/internal/restapi/v1/dto"
+	"windshift/internal/restapi/v1/middleware"
 	"windshift/internal/services"
 )
 
@@ -273,7 +274,7 @@ func (h *AssetHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	asset, err := h.assetService.CreateAsset(
-		services.NewAuditActorFromRequest(r, user),
+		services.NewAuditActorFromRequest(r, user, middleware.GetAPIToken(r.Context()), "bearer"),
 		repository.CreateAssetInput{
 			SetID:                 setID,
 			AssetTypeID:           req.AssetTypeID,
@@ -404,7 +405,7 @@ func (h *AssetHandler) Update(w http.ResponseWriter, r *http.Request) {
 		AssetTypeID: row.AssetTypeID,
 	}
 	asset, err := h.assetService.UpdateAsset(
-		services.NewAuditActorFromRequest(r, user),
+		services.NewAuditActorFromRequest(r, user, middleware.GetAPIToken(r.Context()), "bearer"),
 		row.ID,
 		snap,
 		in,
@@ -440,7 +441,7 @@ func (h *AssetHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	err := h.assetService.DeleteAsset(services.NewAuditActorFromRequest(r, user), row.ID)
+	err := h.assetService.DeleteAsset(services.NewAuditActorFromRequest(r, user, middleware.GetAPIToken(r.Context()), "bearer"), row.ID)
 	if errors.Is(err, repository.ErrNotFound) {
 		h.RespondError(w, r, restapi.ErrAssetNotFound)
 		return
@@ -530,7 +531,7 @@ func (h *AssetHandler) ImportCSV(w http.ResponseWriter, r *http.Request) {
 		filename = header.Filename
 	}
 	summary, err := h.assetService.ImportAssetsCSV(
-		services.NewAuditActorFromRequest(r, user),
+		services.NewAuditActorFromRequest(r, user, middleware.GetAPIToken(r.Context()), "bearer"),
 		setID,
 		assetTypeID,
 		services.ImportCSVDefaults{StatusID: statusID, CategoryID: categoryID},

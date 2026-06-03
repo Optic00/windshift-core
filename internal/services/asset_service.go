@@ -41,25 +41,48 @@ func sanitizeAssetText(title, description, assetTag *string) {
 // *http.Request before calling into AssetService so the service layer
 // stays HTTP-agnostic and the two surfaces produce identical audit rows
 // for equivalent operations.
+//
+// AuthMethod / APITokenID / APITokenPrefix / APITokenName are populated
+// when the request was bearer-token authenticated; cookie-auth requests
+// leave them zero. Compromised-token investigations switch on these to
+// identify the specific token that drove a mutation under a user the
+// attacker may share with many tokens.
 type AuditActor struct {
-	UserID    int
-	Username  string
-	IPAddress string
-	UserAgent string
+	UserID         int
+	Username       string
+	IPAddress      string
+	UserAgent      string
+	AuthMethod     string
+	APITokenID     int
+	APITokenPrefix string
+	APITokenName   string
 }
 
 // NewAuditActorFromRequest extracts the audit fields from a request +
-// authenticated user. Convenience shared by both surfaces.
-func NewAuditActorFromRequest(r *http.Request, user *models.User) AuditActor {
-	if user == nil {
-		return AuditActor{IPAddress: utils.GetClientIP(r), UserAgent: r.UserAgent()}
+// authenticated user. Convenience shared by both surfaces. authMethod
+// is "cookie" or "bearer" (handlers know which they are); apiToken is
+// non-nil only on the bearer path and gets unpacked into the actor's
+// token-attribution fields. Passing both args explicitly keeps the
+// services package off the restapi import path (no context-key dep).
+func NewAuditActorFromRequest(r *http.Request, user *models.User, apiToken *models.APIToken, authMethod string) AuditActor {
+	actor := AuditActor{
+		IPAddress:  utils.GetClientIP(r),
+		UserAgent:  r.UserAgent(),
+		AuthMethod: authMethod,
 	}
-	return AuditActor{
-		UserID:    user.ID,
-		Username:  user.Username,
-		IPAddress: utils.GetClientIP(r),
-		UserAgent: r.UserAgent(),
+	if user != nil {
+		actor.UserID = user.ID
+		actor.Username = user.Username
 	}
+	if apiToken != nil {
+		actor.APITokenID = apiToken.ID
+		actor.APITokenPrefix = apiToken.TokenPrefix
+		actor.APITokenName = apiToken.Name
+		if actor.AuthMethod == "" {
+			actor.AuthMethod = "bearer"
+		}
+	}
+	return actor
 }
 
 // AssetValidationError signals a user-facing validation failure (400 at
@@ -399,7 +422,13 @@ func (s *AssetService) ImportAssetsCSV(actor AuditActor, setID, assetTypeID int,
 // underlying logger.LogAudit already swallows + slog-warns marshal
 // failures, and an audit-write failure should never fail the mutation
 // it's recording.
+//
+// Bearer-token attribution (auth_method / api_token_id / api_token_prefix
+// / api_token_name) is folded into Details so a single token's footprint
+// is queryable from the audit table even when the same user has
+// minted many.
 func (s *AssetService) emitAudit(actor AuditActor, action string, resourceID *int, resourceName string, extra map[string]interface{}) {
+	details := mergeAuditDetails(extra, actor)
 	_ = logger.LogAudit(s.db, logger.AuditEvent{
 		UserID:       actor.UserID,
 		Username:     actor.Username,
@@ -409,9 +438,36 @@ func (s *AssetService) emitAudit(actor AuditActor, action string, resourceID *in
 		ResourceType: logger.ResourceAsset,
 		ResourceID:   resourceID,
 		ResourceName: resourceName,
-		Details:      extra,
+		Details:      details,
 		Success:      true,
 	})
+}
+
+// mergeAuditDetails composes the caller's extra map with the auth/token
+// attribution stamped onto every row. Caller-supplied keys win on a
+// collision so route-specific context (e.g. csv_import totals) isn't
+// clobbered by the actor stamp.
+func mergeAuditDetails(extra map[string]interface{}, actor AuditActor) map[string]interface{} {
+	if actor.AuthMethod == "" && actor.APITokenID == 0 && len(extra) == 0 {
+		return nil
+	}
+	merged := make(map[string]interface{}, len(extra)+4)
+	if actor.AuthMethod != "" {
+		merged["auth_method"] = actor.AuthMethod
+	}
+	if actor.APITokenID != 0 {
+		merged["api_token_id"] = actor.APITokenID
+	}
+	if actor.APITokenPrefix != "" {
+		merged["api_token_prefix"] = actor.APITokenPrefix
+	}
+	if actor.APITokenName != "" {
+		merged["api_token_name"] = actor.APITokenName
+	}
+	for k, v := range extra {
+		merged[k] = v
+	}
+	return merged
 }
 
 // csvRow holds the field values for a single CSV row, split by where
