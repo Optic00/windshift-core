@@ -32,6 +32,7 @@
 package sanitize
 
 import (
+	"fmt"
 	"html"
 	"regexp"
 	"strings"
@@ -65,9 +66,16 @@ func Apply(target *string, policy Policy) {
 
 // Pair binds a target pointer with the policy that should clean it.
 // Use with ApplyAll to express a service's input policy declaratively.
+//
+// Label is the user-facing name for the field ("Title", "Description",
+// "Group name"). It's optional — ApplyAll ignores it entirely;
+// ApplyAllWithWarnings uses it to build the user-friendly warning
+// strings handlers can stamp on a response.warnings field. Empty
+// label means no warning is produced even if the value was modified.
 type Pair struct {
 	Target *string
 	Policy Policy
+	Label  string
 }
 
 // ApplyAll runs each (target, policy) pair in order. The canonical
@@ -81,6 +89,58 @@ type Pair struct {
 func ApplyAll(pairs ...Pair) {
 	for _, p := range pairs {
 		Apply(p.Target, p.Policy)
+	}
+}
+
+// ApplyAllWithWarnings runs each policy and returns user-friendly
+// warning strings for every field that was modified AND has a
+// non-empty Label. Returned warnings are safe to drop directly into a
+// response.warnings field so the frontend toast machinery can surface
+// them at info severity. Empty slice when nothing changed.
+//
+// Callers that don't yet want warning surfacing should keep using
+// ApplyAll — the value semantics are identical, ApplyAll just throws
+// the warning information away.
+func ApplyAllWithWarnings(pairs ...Pair) []string {
+	var warnings []string
+	for _, p := range pairs {
+		if p.Target == nil {
+			continue
+		}
+		before := *p.Target
+		*p.Target = p.Policy.Sanitize(before)
+		if p.Label == "" || *p.Target == before {
+			continue
+		}
+		warnings = append(warnings, describeMutation(before, *p.Target, p.Label))
+	}
+	return warnings
+}
+
+// describeMutation classifies a sanitize-time change into the
+// user-facing warning copy the frontend will toast. Three buckets:
+//
+//   - Truncated (output shorter than input, no HTML markers in input)
+//   - HTML stripped (input had < / > / & markers, output differs)
+//   - Both (truncated + HTML stripped)
+//
+// HTML detection is a heuristic (presence of HTML markers in input);
+// false-positives just downgrade to the generic "was modified" copy
+// rather than mislabel the change.
+func describeMutation(before, after, label string) string {
+	beforeRunes := utf8.RuneCountInString(before)
+	afterRunes := utf8.RuneCountInString(after)
+	truncated := afterRunes < beforeRunes
+	hadHTMLMarkers := strings.ContainsAny(before, "<>&")
+	switch {
+	case truncated && hadHTMLMarkers:
+		return fmt.Sprintf("%s had HTML formatting removed and was shortened to %d characters.", label, afterRunes)
+	case truncated:
+		return fmt.Sprintf("%s was shortened to %d characters to fit the maximum length.", label, afterRunes)
+	case hadHTMLMarkers:
+		return fmt.Sprintf("%s had HTML formatting removed.", label)
+	default:
+		return fmt.Sprintf("%s was cleaned up for safe storage.", label)
 	}
 }
 

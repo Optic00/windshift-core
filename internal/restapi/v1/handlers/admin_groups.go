@@ -26,12 +26,19 @@ func NewAdminGroupHandler(db database.Database, permissionService *services.Perm
 }
 
 // AdminGroupResponse is the admin representation of a group.
+//
+// Warnings carries user-facing strings the frontend toast machinery
+// surfaces at info severity — e.g. "Group name had HTML formatting
+// removed." Stamped by the handler from sanitize.ApplyAllWithWarnings
+// when input was modified at decode time. omitempty so the field
+// disappears entirely when there's nothing to report.
 type AdminGroupResponse struct {
-	ID          int    `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	MemberCount int    `json:"member_count"`
-	CreatedAt   string `json:"created_at"`
+	ID          int      `json:"id"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	MemberCount int      `json:"member_count"`
+	CreatedAt   string   `json:"created_at"`
+	Warnings    []string `json:"warnings,omitempty"`
 }
 
 // AdminGroupCreateRequest is the request body for creating a group.
@@ -139,9 +146,9 @@ func (h *AdminGroupHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
-	sanitize.ApplyAll(
-		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
-		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Group name"},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
 	)
 
 	if req.Name == "" {
@@ -166,6 +173,7 @@ func (h *AdminGroupHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Description: req.Description,
 		MemberCount: 0,
 		CreatedAt:   time.Now().Format("2006-01-02T15:04:05Z07:00"),
+		Warnings:    warnings,
 	})
 }
 
