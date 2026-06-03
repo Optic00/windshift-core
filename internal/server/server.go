@@ -1317,13 +1317,14 @@ func (s *Server) initialize() error {
 
 	// REST API v1
 	restapi.SetupRoutes(restapi.Deps{
-		Mux:               mux,
-		DB:                s.db,
-		TokenManager:      tokenManager,
-		PermissionService: permService,
-		ActionService:     s.actionService,
-		AttachmentPath:    cfg.AttachmentPath,
-		ItemLinkService:   itemLinkHandler.LinkService(),
+		Mux:                    mux,
+		DB:                     s.db,
+		TokenManager:           tokenManager,
+		PermissionService:      permService,
+		ActionService:          s.actionService,
+		AttachmentPath:         cfg.AttachmentPath,
+		ItemLinkService:        itemLinkHandler.LinkService(),
+		AssetPermissionService: assetHandler.AssetPermissionService(),
 	}, v1.RegisterRoutes)
 
 	// MCP Server (Model Context Protocol) — opt-in via --mcp or MCP_ENABLED=true

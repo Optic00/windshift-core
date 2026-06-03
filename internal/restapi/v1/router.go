@@ -51,6 +51,7 @@ package v1
 
 import (
 	legacyhandlers "windshift/internal/handlers"
+	"windshift/internal/repository"
 	"windshift/internal/restapi"
 	"windshift/internal/restapi/v1/handlers"
 	"windshift/internal/restapi/v1/middleware"
@@ -445,6 +446,49 @@ func RegisterRoutes(deps restapi.Deps) {
 	v1.HandleWithMiddleware("POST /workspaces/{workspaceId}/test-results/{resultId}/items", testMgmtHandler.LinkTestResultItem, bearerAuth.RequirePermission("tests:write"))
 	v1.HandleWithMiddleware("DELETE /workspaces/{workspaceId}/test-results/{resultId}/items/{itemId}", testMgmtHandler.UnlinkTestResultItem, bearerAuth.RequirePermission("tests:write"))
 	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-results/{resultId}/items", testMgmtHandler.ListTestResultItems, bearerAuth.RequirePermission("tests:read"))
+
+	// ============================================
+	// Assets. Gated by assets:* at the route layer; the handler still asks
+	// the per-set asset role (Viewer / Editor / Administrator with the
+	// asset.view/create/edit/delete/admin keys) via AssetPermissionService
+	// so a token can't reach a set the user can't see. 404 (not 403) on
+	// any permission failure mirrors the items convention — set / asset
+	// existence is never leaked.
+	//
+	// Mutating sets / types / categories / statuses / role assignments and
+	// the asset-actions automation graphs stay admin-UI-only in this slice;
+	// follow-ups can promote subsets behind explicit asset-sets:write etc.
+	// ============================================
+	assetPermSvc := deps.AssetPermissionService
+	if assetPermSvc == nil {
+		// Nil-safe fallback for embedders that haven't wired the shared
+		// service yet — construct a fresh one so asset routes still serve.
+		assetPermSvc = services.NewAssetPermissionService(repository.NewAssetRepository(db), permissionService)
+	}
+	assetHandler := handlers.NewAssetHandler(db, permissionService, assetPermSvc)
+
+	// Asset entities
+	v1.HandleWithMiddleware("GET /asset-sets/{setId}/assets", assetHandler.List, bearerAuth.RequirePermission("assets:read"))
+	v1.HandleWithMiddleware("POST /asset-sets/{setId}/assets", assetHandler.Create, bearerAuth.RequirePermission("assets:write"))
+	v1.HandleWithMiddleware("GET /assets/{id}", assetHandler.Get, bearerAuth.RequirePermission("assets:read"), router.RequireNumericID)
+	v1.HandleWithMiddleware("PUT /assets/{id}", assetHandler.Update, bearerAuth.RequirePermission("assets:write"), router.RequireNumericID)
+	v1.HandleWithMiddleware("DELETE /assets/{id}", assetHandler.Delete, bearerAuth.RequirePermission("assets:delete"), router.RequireNumericID)
+
+	// Asset sets (read-only on v1)
+	v1.HandleWithMiddleware("GET /asset-sets", assetHandler.ListSets, bearerAuth.RequirePermission("assets:read"))
+	v1.HandleWithMiddleware("GET /asset-sets/{setId}", assetHandler.GetSet, bearerAuth.RequirePermission("assets:read"))
+
+	// Asset types (read-only on v1)
+	v1.HandleWithMiddleware("GET /asset-sets/{setId}/types", assetHandler.ListTypes, bearerAuth.RequirePermission("assets:read"))
+	v1.HandleWithMiddleware("GET /asset-types/{id}", assetHandler.GetType, bearerAuth.RequirePermission("assets:read"), router.RequireNumericID)
+
+	// Asset categories (read-only on v1)
+	v1.HandleWithMiddleware("GET /asset-sets/{setId}/categories", assetHandler.ListCategories, bearerAuth.RequirePermission("assets:read"))
+	v1.HandleWithMiddleware("GET /asset-categories/{id}", assetHandler.GetCategory, bearerAuth.RequirePermission("assets:read"), router.RequireNumericID)
+
+	// Asset statuses (read-only on v1)
+	v1.HandleWithMiddleware("GET /asset-sets/{setId}/statuses", assetHandler.ListStatuses, bearerAuth.RequirePermission("assets:read"))
+	v1.HandleWithMiddleware("GET /asset-statuses/{id}", assetHandler.GetStatus, bearerAuth.RequirePermission("assets:read"), router.RequireNumericID)
 
 	// ============================================
 	// Search

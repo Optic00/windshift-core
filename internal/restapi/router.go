@@ -31,6 +31,12 @@ type Deps struct {
 	// embedders that haven't wired this yet still work for everything
 	// EXCEPT link endpoints.
 	ItemLinkService *services.ItemLinkService
+	// AssetPermissionService gates the v1 asset surface against the
+	// per-set role model. Shared with the cookie-auth handler so both
+	// surfaces consult one role-check pipeline. The v1 router constructs
+	// a fresh instance when nil so embedders that haven't wired this yet
+	// still serve asset routes correctly.
+	AssetPermissionService *services.AssetPermissionService
 }
 
 // SetupRoutesFunc is a function type for setting up v1 routes
