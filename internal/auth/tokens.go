@@ -89,6 +89,17 @@ const (
 	ScopeTestsRead  = "tests:read"
 	ScopeTestsWrite = "tests:write"
 
+	// Assets (sets, types, categories, statuses, asset entities). :write
+	// covers mutations to asset entities and CSV import; :delete is required
+	// for hard-delete. Mutating sets / types / categories / statuses / actions
+	// stays admin-UI-only. The per-set asset role (Viewer / Editor /
+	// Administrator, asset.view / edit / delete / admin keys) still gates
+	// individual actions in-handler via AssetPermissionService — token scope
+	// alone never grants access to a set the user can't see.
+	ScopeAssetsRead   = "assets:read"
+	ScopeAssetsWrite  = "assets:write"
+	ScopeAssetsDelete = "assets:delete"
+
 	// Admin scopes (require system admin role AND scope on token)
 	ScopeAdminUsersRead      = "admin:users:read"
 	ScopeAdminUsersWrite     = "admin:users:write"
@@ -113,6 +124,7 @@ var DefaultAgentScopes = []string{
 	ScopeMilestonesRead, ScopeIterationsRead, ScopeProjectsRead,
 	ScopePagesRead, ScopePagesWrite, ScopePagesDelete,
 	ScopeTestsRead, ScopeTestsWrite,
+	ScopeAssetsRead, ScopeAssetsWrite,
 	ScopeMCPAccess,
 }
 
@@ -131,6 +143,7 @@ var AllValidScopes = []string{
 	ScopeActionsRead, ScopeActionsWrite,
 	ScopePagesRead, ScopePagesWrite, ScopePagesDelete,
 	ScopeTestsRead, ScopeTestsWrite,
+	ScopeAssetsRead, ScopeAssetsWrite, ScopeAssetsDelete,
 	ScopeAdminUsersRead, ScopeAdminUsersWrite,
 	ScopeAdminGroupsRead, ScopeAdminGroupsWrite,
 	ScopeAdminAuditLogsRead,
@@ -144,6 +157,7 @@ var allNonAdminReadScopes = []string{
 	ScopeCustomFieldsRead, ScopeUsersRead, ScopeMilestonesRead,
 	ScopeIterationsRead, ScopeProjectsRead, ScopeCollectionsRead,
 	ScopeActionsRead, ScopePagesRead, ScopeTestsRead,
+	ScopeAssetsRead,
 }
 
 // allNonAdminScopes is the set of all non-admin scopes (for legacy "write" mapping).
@@ -161,6 +175,7 @@ var allNonAdminScopes = []string{
 	ScopeActionsRead, ScopeActionsWrite,
 	ScopePagesRead, ScopePagesWrite, ScopePagesDelete,
 	ScopeTestsRead, ScopeTestsWrite,
+	ScopeAssetsRead, ScopeAssetsWrite, ScopeAssetsDelete,
 }
 
 // AdminScopes returns the set of scopes that require system admin role.
