@@ -9,6 +9,7 @@ import (
 	"windshift/internal/repository"
 	"windshift/internal/repository/actionutil"
 	"windshift/internal/restapi"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/services/actioncatalog"
 )
@@ -292,6 +293,10 @@ func (h *ActionHandler) CreateAction(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
+	)
 
 	def := req.toDefinition()
 	if errs := actioncatalog.Validate(actioncatalog.Default(), def, workspaceID, h); len(errs) > 0 {
@@ -378,6 +383,10 @@ func (h *ActionHandler) UpdateAction(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
+	)
 
 	def := req.toDefinition()
 	if errs := actioncatalog.Validate(actioncatalog.Default(), def, workspaceID, h); len(errs) > 0 {
@@ -435,6 +444,10 @@ func (h *ActionHandler) ValidateAction(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
+	)
 	errs := actioncatalog.Validate(actioncatalog.Default(), req.toDefinition(), workspaceID, h)
 	if errs == nil {
 		errs = actioncatalog.ValidationErrors{}
