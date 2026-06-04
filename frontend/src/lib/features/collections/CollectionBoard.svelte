@@ -20,6 +20,7 @@
   import ViewHeader from '../../layout/ViewHeader.svelte';
   import StaticViewBackground from '../../layout/StaticViewBackground.svelte';
   import Button from '../../components/Button.svelte';
+  import SearchInput from '../../components/SearchInput.svelte';
   import SubFilterBar from './SubFilterBar.svelte';
   import ItemKey from '../items/ItemKey.svelte';
   import CollectionViewSwitcher from './CollectionViewSwitcher.svelte';
@@ -63,6 +64,7 @@
   let pendingDrops = new Set(); // Track pending drop operations to prevent duplicates
   let showItemModal = $state(false);
   let selectedItemId = $state(null);
+  let searchQuery = $state('');
 
   // Quick-add state per column
   let quickAddState = $state({});
@@ -327,9 +329,22 @@
     });
   });
 
-  let filteredItems = $derived(
-    iterationFilterId ? items.filter(i => i.iteration_id === iterationFilterId) : items
-  );
+  let filteredItems = $derived.by(() => {
+    let nextItems = iterationFilterId
+      ? items.filter(item => item.iteration_id === iterationFilterId)
+      : items;
+
+    if (!searchQuery.trim()) return nextItems;
+
+    const query = searchQuery.toLowerCase();
+    return nextItems.filter(item => {
+      if (item.title?.toLowerCase().includes(query)) return true;
+      if (item.description?.toLowerCase().includes(query)) return true;
+      const itemKey = `${item.workspace_key || ''}-${item.workspace_item_number}`.toLowerCase();
+      if (itemKey.includes(query)) return true;
+      return false;
+    });
+  });
 
   function getItemsByStatus(statusId, itemSubset = filteredItems) {
     return itemSubset.filter(item => item.status_id === statusId);
@@ -1168,7 +1183,11 @@
       </div>
 
       <!-- Controls Bar -->
-      <div class="flex items-center mb-6">
+      <div class="flex items-center gap-4 mb-6">
+        <SearchInput
+          bind:value={searchQuery}
+          placeholder={t('common.search')}
+        />
         <SubFilterBar {workspaceId} />
       </div>
 
