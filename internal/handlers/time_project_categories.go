@@ -10,6 +10,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/utils"
 )
 
@@ -61,6 +62,11 @@ func (h *TimeProjectCategoryHandler) CreateCategory(w http.ResponseWriter, r *ht
 	if !ok {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &c.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &c.Description, Policy: sanitize.RichText, Label: "Description"},
+		sanitize.Pair{Target: &c.Color, Policy: sanitize.ShortIdentifier, Label: "Color"},
+	)
 
 	if c.Name == "" {
 		respondValidationError(w, r, "Category name is required")
@@ -78,7 +84,10 @@ func (h *TimeProjectCategoryHandler) CreateCategory(w http.ResponseWriter, r *ht
 		h.auditor.Log(r, currentUser, logger.ActionTimeCategoryCreate, logger.ResourceTimeCategory, &categoryID, c.Name)
 	}
 
-	respondJSONCreated(w, c)
+	respondJSONCreated(w, struct {
+		models.TimeProjectCategory
+		Warnings []string `json:"warnings,omitempty"`
+	}{c, warnings})
 }
 
 // UpdateCategory updates an existing time project category
@@ -92,6 +101,11 @@ func (h *TimeProjectCategoryHandler) UpdateCategory(w http.ResponseWriter, r *ht
 	if !ok {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &c.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &c.Description, Policy: sanitize.RichText, Label: "Description"},
+		sanitize.Pair{Target: &c.Color, Policy: sanitize.ShortIdentifier, Label: "Color"},
+	)
 
 	if c.Name == "" {
 		respondValidationError(w, r, "Category name is required")
@@ -118,7 +132,10 @@ func (h *TimeProjectCategoryHandler) UpdateCategory(w http.ResponseWriter, r *ht
 		h.auditor.Log(r, currentUser, logger.ActionTimeCategoryUpdate, logger.ResourceTimeCategory, &id, c.Name)
 	}
 
-	respondJSONOK(w, c)
+	respondJSONOK(w, struct {
+		models.TimeProjectCategory
+		Warnings []string `json:"warnings,omitempty"`
+	}{c, warnings})
 }
 
 // DeleteCategory deletes a time project category

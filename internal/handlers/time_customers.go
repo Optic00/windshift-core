@@ -136,8 +136,10 @@ func (h *TimeCustomerHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c.Name = sanitize.PlainTextField.Sanitize(c.Name)
-	c.Description = sanitize.Comment.Sanitize(c.Description)
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &c.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &c.Description, Policy: sanitize.Comment, Label: "Description"},
+	)
 
 	id, now, err := h.repo.Create(&c)
 	if err != nil {
@@ -153,7 +155,10 @@ func (h *TimeCustomerHandler) Create(w http.ResponseWriter, r *http.Request) {
 		h.auditor.Log(r, user, logger.ActionTimeCustomerCreate, logger.ResourceTimeCustomer, &id, c.Name)
 	}
 
-	respondJSONCreated(w, c)
+	respondJSONCreated(w, struct {
+		models.CustomerOrganisation
+		Warnings []string `json:"warnings,omitempty"`
+	}{c, warnings})
 }
 
 func (h *TimeCustomerHandler) Update(w http.ResponseWriter, r *http.Request) {
@@ -172,8 +177,10 @@ func (h *TimeCustomerHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c.Name = sanitize.PlainTextField.Sanitize(c.Name)
-	c.Description = sanitize.Comment.Sanitize(c.Description)
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &c.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &c.Description, Policy: sanitize.Comment, Label: "Description"},
+	)
 
 	now, err := h.repo.Update(id, &c)
 	if errors.Is(err, repository.ErrNotFound) {
@@ -192,7 +199,10 @@ func (h *TimeCustomerHandler) Update(w http.ResponseWriter, r *http.Request) {
 		h.auditor.Log(r, user, logger.ActionTimeCustomerUpdate, logger.ResourceTimeCustomer, &id, c.Name)
 	}
 
-	respondJSONOK(w, c)
+	respondJSONOK(w, struct {
+		models.CustomerOrganisation
+		Warnings []string `json:"warnings,omitempty"`
+	}{c, warnings})
 }
 
 func (h *TimeCustomerHandler) Delete(w http.ResponseWriter, r *http.Request) {
