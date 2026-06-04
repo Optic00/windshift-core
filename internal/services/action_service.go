@@ -2798,6 +2798,13 @@ func (as *ActionService) executeContainerRun(node *models.ActionNode, ctx *model
 		if as.agentRuns == nil {
 			return fmt.Errorf("container_run targets runner pool %d but pool dispatch is not configured", config.PoolCapabilityID)
 		}
+		// Resolve the pool as a runner_pool capability for this workspace
+		// before enqueueing (WI-168). Without this an action could target an
+		// arbitrary capability id — including a disabled pool, a non-pool
+		// capability, or another workspace's pool — purely by number.
+		if _, err := as.resolveCapability(ctx.Event.WorkspaceID, config.PoolCapabilityID, models.CapabilityRunnerPool); err != nil {
+			return fmt.Errorf("container_run pool dispatch: %w", err)
+		}
 		pool := config.PoolCapabilityID
 		runID, derr := as.agentRuns.Insert(context.Background(), &models.AgentRun{
 			WorkspaceID:  ctx.Event.WorkspaceID,

@@ -393,6 +393,35 @@ func (r *AgentRunRepository) Finalize(ctx context.Context, id int, status, errMs
 	return nil
 }
 
+// FinalizeRunning is the compare-and-swap finalize for the untrusted remote
+// path (WI-168): it stamps a terminal status only if the run is still
+// 'running', and reports whether the transition actually happened. A remote
+// runner credential can therefore not rewrite a run that has already
+// finalized (or been canceled by the orchestrator) — the UPDATE matches zero
+// rows and transitioned is false, so the caller can skip re-firing terminal
+// events / the post-run PR hook. Trusted in-process finalization uses the
+// unconditional Finalize.
+func (r *AgentRunRepository) FinalizeRunning(ctx context.Context, id int, status, errMsg string, now time.Time) (transitioned bool, err error) {
+	if !models.IsAgentRunTerminal(status) {
+		return false, fmt.Errorf("agent_run finalize: %q is not a terminal status", status)
+	}
+	res, err := r.db.ExecWriteContext(ctx, `
+		UPDATE agent_runs
+		SET status = ?, ended_at = ?, error = ?, updated_at = ?
+		WHERE id = ? AND status = ?
+	`,
+		status, now, nullStringArg(errMsg), now, id, models.AgentRunStatusRunning,
+	)
+	if err != nil {
+		return false, fmt.Errorf("failed to finalize agent_run: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to read finalize result: %w", err)
+	}
+	return n > 0, nil
+}
+
 // AppendEvent records one entry on the run's event stream. payloadJSON must
 // be a JSON document (valid object, array, or scalar); the column type is
 // JSONB on Postgres and TEXT on SQLite, but we treat it as opaque here.

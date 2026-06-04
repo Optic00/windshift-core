@@ -1,16 +1,24 @@
 package handlers
 
 import (
+	"bytes"
+	"compress/gzip"
+	"context"
+	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"time"
 
 	"windshift/internal/auth"
 	"windshift/internal/llm"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/services"
+	"windshift/internal/utils"
 )
 
 // RunnerBrokerHandler is the secretless access layer's server side
@@ -219,6 +227,22 @@ func (h *RunnerBrokerHandler) ProxyGit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Ref-level push gating (WI-168): the repo grant authorizes reads (clone /
+	// fetch via git-upload-pack), but a push (git-receive-pack) may only touch
+	// the single ref named in grants.Git.Ref. The injected SCM credential can
+	// write any ref, so we parse the pushed ref-update commands and reject the
+	// request unless every update is for the granted ref. The packfile is left
+	// un-buffered: we replay the consumed pkt-line prefix ahead of the rest of
+	// the body when proxying.
+	if r.Method == http.MethodPost && strings.TrimPrefix(gitPath, "/") == "git-receive-pack" {
+		replay, perr := h.authorizeGitPush(r, grants, repoName)
+		if perr != nil {
+			respondForbidden(w, r)
+			return
+		}
+		r.Body = replay
+	}
+
 	scmToken, _, scmBase, err := h.scm.ResolveForRun(r.Context(), grants.Git.ConnectionID)
 	if err != nil {
 		respondServiceUnavailable(w, r, "scm credential unavailable")
@@ -280,6 +304,11 @@ func (h *RunnerBrokerHandler) ProxyHTTP(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	proxy := &httputil.ReverseProxy{
+		// Block egress to private/loopback/link-local addresses (SSRF guard,
+		// WI-168) so the broker can't be coerced into reaching the cloud
+		// metadata endpoint or internal services. The dialer re-resolves and
+		// re-checks at connect time, which also defends against DNS rebinding.
+		Transport: ssrfSafeTransport(),
 		Director: func(req *http.Request) {
 			req.URL = tu
 			req.Host = tu.Host
@@ -289,6 +318,82 @@ func (h *RunnerBrokerHandler) ProxyHTTP(w http.ResponseWriter, r *http.Request) 
 	}
 	proxy.ServeHTTP(w, r)
 }
+
+// ssrfSafeTransport is an http.RoundTripper whose dialer rejects connections
+// to private/loopback/link-local IPs (checked post-resolution to defeat DNS
+// rebinding). Used by the HTTP egress broker.
+func ssrfSafeTransport() http.RoundTripper {
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
+	return &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, port, err := net.SplitHostPort(addr)
+			if err != nil {
+				return nil, err
+			}
+			ips, err := net.LookupIP(host)
+			if err != nil {
+				return nil, err
+			}
+			for _, ip := range ips {
+				if utils.IsPrivateIP(ip) {
+					return nil, fmt.Errorf("blocked egress to non-public address %s", ip)
+				}
+			}
+			return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].String(), port))
+		},
+	}
+}
+
+// authorizeGitPush parses the pushed ref-update commands from a
+// git-receive-pack request and verifies every update targets the run's
+// granted ref. It returns a replayable body (the consumed pkt-line prefix
+// followed by the still-unread remainder) so the proxy can forward the
+// packfile without it being buffered, or an error if the push is
+// unauthorized or unparseable (callers must fail closed).
+//
+// The body is captured through a TeeReader, so whether the client sent the
+// commands gzip-compressed or not, the exact original bytes are replayed
+// upstream — only the decompressed view is used for parsing.
+func (h *RunnerBrokerHandler) authorizeGitPush(r *http.Request, grants *models.RunGrants, repoName string) (io.ReadCloser, error) {
+	var captured bytes.Buffer
+	tee := io.TeeReader(r.Body, &captured)
+
+	parseSrc := tee // io.Reader; swapped to a gzip reader below when needed
+	if strings.EqualFold(r.Header.Get("Content-Encoding"), "gzip") {
+		gz, err := gzip.NewReader(tee)
+		if err != nil {
+			return nil, fmt.Errorf("git push: invalid gzip body: %w", err)
+		}
+		defer func() { _ = gz.Close() }()
+		parseSrc = gz
+	}
+
+	cmds, err := parseReceivePackCommands(parseSrc)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range cmds {
+		if !grants.AllowsGitPush(repoName, c.Ref) {
+			return nil, fmt.Errorf("git push: ref %q is not in the run's grant", c.Ref)
+		}
+	}
+
+	// captured holds every raw byte already pulled from r.Body; the rest is
+	// still on r.Body. Concatenated, they are the untouched original body.
+	body := io.MultiReader(bytes.NewReader(captured.Bytes()), r.Body)
+	return &replayBody{r: body, orig: r.Body}, nil
+}
+
+// replayBody adapts a reconstructed (prefix + remainder) reader back into an
+// io.ReadCloser whose Close closes the original request body.
+type replayBody struct {
+	r    io.Reader
+	orig io.ReadCloser
+}
+
+func (b *replayBody) Read(p []byte) (int, error) { return b.r.Read(p) }
+func (b *replayBody) Close() error               { return b.orig.Close() }
 
 // singleJoiningSlash joins two URL path segments with exactly one slash.
 func singleJoiningSlash(a, b string) string {

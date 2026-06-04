@@ -398,7 +398,19 @@ func (s *RunService) FinalizeRemote(ctx context.Context, runID int, result Runne
 			result.Error = fmt.Sprintf("runner returned non-terminal status %q", result.Status)
 		}
 	}
-	s.finalize(runID, status, result.Error)
+	// Compare-and-swap finalize (WI-168): a remote runner credential must not
+	// be able to rewrite a run that already finalized or was canceled. If this
+	// call did not perform the running→terminal transition, treat the report
+	// as a no-op and — crucially — do not re-emit the terminal event or re-run
+	// the post-run hook (which would create a duplicate PR).
+	transitioned, err := s.repo.FinalizeRunning(ctx, runID, status, RedactString(result.Error), s.now())
+	if err != nil {
+		return fmt.Errorf("finalize remote: run %d: %w", runID, err)
+	}
+	if !transitioned {
+		s.logger.Printf("run service: ignoring remote result for run=%d (not running)", runID)
+		return nil
+	}
 	if err := s.repo.AppendEvent(ctx, runID, "lifecycle", fmt.Sprintf(`{"phase":%q}`, status)); err != nil {
 		s.logger.Printf("run service: append terminal event run=%d: %v", runID, err)
 	}
