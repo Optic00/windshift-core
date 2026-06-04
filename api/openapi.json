@@ -15,6 +15,448 @@
         },
         "type": "object"
       },
+      "dto.AssetCategoryResponse": {
+        "properties": {
+          "asset_count": {
+            "type": "integer"
+          },
+          "children_count": {
+            "type": "integer"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "descendants_count": {
+            "type": "integer"
+          },
+          "description": {
+            "type": "string"
+          },
+          "has_children": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "parent_id": {
+            "type": "integer"
+          },
+          "path": {
+            "type": "string"
+          },
+          "set_id": {
+            "type": "integer"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "dto.AssetCategorySummary": {
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "dto.AssetCreateRequest": {
+        "properties": {
+          "asset_tag": {
+            "type": "string"
+          },
+          "asset_type_id": {
+            "type": "integer"
+          },
+          "category_id": {
+            "type": "integer"
+          },
+          "custom_field_values": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "description": {
+            "type": "string"
+          },
+          "status_id": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "dto.AssetImportJobResponse": {
+        "properties": {
+          "asset_type_id": {
+            "type": "integer"
+          },
+          "completed_at": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "created_rows": {
+            "type": "integer"
+          },
+          "error_message": {
+            "type": "string"
+          },
+          "error_rows": {
+            "type": "integer"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "processed_rows": {
+            "type": "integer"
+          },
+          "set_id": {
+            "type": "integer"
+          },
+          "started_at": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "total_rows": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "dto.AssetLinks": {
+        "properties": {
+          "self": {
+            "type": "string"
+          },
+          "set": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "dto.AssetResponse": {
+        "properties": {
+          "_links": {
+            "$ref": "#/components/schemas/dto.AssetLinks"
+          },
+          "asset_tag": {
+            "type": "string"
+          },
+          "asset_type": {
+            "$ref": "#/components/schemas/dto.AssetTypeSummary"
+          },
+          "asset_type_id": {
+            "type": "integer"
+          },
+          "category": {
+            "$ref": "#/components/schemas/dto.AssetCategorySummary"
+          },
+          "category_id": {
+            "type": "integer"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "created_by": {
+            "type": "integer"
+          },
+          "creator": {
+            "$ref": "#/components/schemas/dto.UserSummary"
+          },
+          "custom_field_values": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "linked_item_count": {
+            "description": "LinkedItemCount is the number of item↔asset links for this asset\n(0 when the underlying query didn't ask for the rollup).",
+            "type": "integer"
+          },
+          "set": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/dto.AssetSetSummary"
+              }
+            ],
+            "description": "Nested summaries — populated from the row's joined columns when the\nunderlying query asks for them, otherwise omitted."
+          },
+          "set_id": {
+            "type": "integer"
+          },
+          "status": {
+            "$ref": "#/components/schemas/dto.AssetStatusSummary"
+          },
+          "status_id": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "warnings": {
+            "description": "Warnings carries non-fatal anomalies surfaced by the query layer\n(e.g. corrupt custom_field_values JSON). Always serialized as an\narray (never null) so CLI consumers don't need to null-check.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "dto.AssetSetLinks": {
+        "properties": {
+          "assets": {
+            "type": "string"
+          },
+          "categories": {
+            "type": "string"
+          },
+          "self": {
+            "type": "string"
+          },
+          "statuses": {
+            "type": "string"
+          },
+          "types": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "dto.AssetSetResponse": {
+        "properties": {
+          "_links": {
+            "$ref": "#/components/schemas/dto.AssetSetLinks"
+          },
+          "asset_count": {
+            "type": "integer"
+          },
+          "asset_type_count": {
+            "type": "integer"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "created_by": {
+            "type": "integer"
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "is_default": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "user_permission": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "dto.AssetSetSummary": {
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "dto.AssetStatusResponse": {
+        "properties": {
+          "color": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "display_order": {
+            "type": "integer"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "is_default": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "set_id": {
+            "type": "integer"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "dto.AssetStatusSummary": {
+        "properties": {
+          "color": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "dto.AssetTypeFieldResponse": {
+        "properties": {
+          "custom_field_id": {
+            "type": "integer"
+          },
+          "display_order": {
+            "type": "integer"
+          },
+          "field_description": {
+            "type": "string"
+          },
+          "field_name": {
+            "type": "string"
+          },
+          "field_type": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "is_required": {
+            "type": "boolean"
+          },
+          "options": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "dto.AssetTypeResponse": {
+        "properties": {
+          "asset_count": {
+            "type": "integer"
+          },
+          "color": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "display_order": {
+            "type": "integer"
+          },
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/dto.AssetTypeFieldResponse"
+            },
+            "type": "array"
+          },
+          "icon": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "set_id": {
+            "type": "integer"
+          },
+          "updated_at": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "dto.AssetTypeSummary": {
+        "properties": {
+          "color": {
+            "type": "string"
+          },
+          "icon": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "dto.AssetUpdateRequest": {
+        "properties": {
+          "asset_tag": {
+            "type": "string"
+          },
+          "asset_type_id": {
+            "type": "integer"
+          },
+          "category_id": {
+            "type": "integer"
+          },
+          "custom_field_values": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "description": {
+            "type": "string"
+          },
+          "status_id": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "dto.AttachmentResponse": {
         "properties": {
           "created_at": {
@@ -83,6 +525,12 @@
           },
           "updated_at": {
             "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           }
         },
         "type": "object"
@@ -774,6 +1222,12 @@
           },
           "name": {
             "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           }
         },
         "type": "object"
@@ -829,6 +1283,12 @@
           },
           "username": {
             "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           }
         },
         "type": "object"
@@ -1083,6 +1543,12 @@
           "updated_at": {
             "type": "string"
           },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "workspace_id": {
             "type": "integer"
           }
@@ -1228,6 +1694,12 @@
           },
           "updated_at": {
             "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           }
         },
         "type": "object"
@@ -1426,6 +1898,12 @@
           },
           "updated_at": {
             "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           }
         },
         "type": "object"
@@ -2165,13 +2643,15 @@
         "enum": [
           "docker_environment",
           "http_client",
-          "llm_connection"
+          "llm_connection",
+          "runner_pool"
         ],
         "type": "string",
         "x-enum-varnames": [
           "CapabilityDockerEnvironment",
           "CapabilityHTTPClient",
-          "CapabilityLLMConnection"
+          "CapabilityLLMConnection",
+          "CapabilityRunnerPool"
         ]
       },
       "models.Item": {
@@ -3134,6 +3614,35 @@
         },
         "type": "object"
       },
+      "restapi.ErrorResponse": {
+        "properties": {
+          "code": {
+            "description": "Machine-readable error code",
+            "type": "string"
+          },
+          "details": {
+            "description": "Additional error details"
+          },
+          "error": {
+            "description": "Human-readable message",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "Request correlation ID",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "restapi.PaginatedResponse": {
+        "properties": {
+          "data": {},
+          "pagination": {
+            "$ref": "#/components/schemas/restapi.PaginationMeta"
+          }
+        },
+        "type": "object"
+      },
       "restapi.PaginationMeta": {
         "properties": {
           "has_more": {
@@ -3205,6 +3714,12 @@
           },
           "username": {
             "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           }
         },
         "type": "object"
@@ -4147,6 +4662,778 @@
         "summary": "Update a user (admin)",
         "tags": [
           "admin"
+        ]
+      }
+    },
+    "/asset-categories/{id}": {
+      "get": {
+        "parameters": [
+          {
+            "description": "Asset category ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/dto.AssetCategoryResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/restapi.ErrorResponse"
+                }
+              }
+            },
+            "description": "Asset category not found"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Get an asset category",
+        "tags": [
+          "assets"
+        ]
+      }
+    },
+    "/asset-sets": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/dto.AssetSetResponse"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/restapi.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List asset sets visible to the caller",
+        "tags": [
+          "assets"
+        ]
+      }
+    },
+    "/asset-sets/{setId}": {
+      "get": {
+        "parameters": [
+          {
+            "description": "Asset set ID",
+            "in": "path",
+            "name": "setId",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/dto.AssetSetResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/restapi.ErrorResponse"
+                }
+              }
+            },
+            "description": "Asset set not found"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Get an asset set",
+        "tags": [
+          "assets"
+        ]
+      }
+    },
+    "/asset-sets/{setId}/assets": {
+      "get": {
+        "description": "Paginated list of assets in the set, filtered by optional type/category/status/search query params. Returns 404 if the set is missing or the caller can't view it.",
+        "parameters": [
+          {
+            "description": "Asset set ID",
+            "in": "path",
+            "name": "setId",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Filter by asset type ID",
+            "in": "query",
+            "name": "type_id",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Filter by asset category ID",
+            "in": "query",
+            "name": "category_id",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Filter by asset status ID",
+            "in": "query",
+            "name": "status_id",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Free-text title search",
+            "in": "query",
+            "name": "q",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Page (1-indexed)",
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Page size",
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/restapi.PaginatedResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/restapi.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/restapi.ErrorResponse"
+                }
+              }
+            },
+            "description": "Asset set not found"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List assets in a set",
+        "tags": [
+          "assets"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "description": "Asset set ID",
+            "in": "path",
+            "name": "setId",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/dto.AssetCreateRequest"
+              }
+            }
+          },
+          "description": "Create payload",
+          "required": true,
+          "x-originalParamName": "body"
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/dto.AssetResponse"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/restapi.ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/restapi.ErrorResponse"
+                }
+              }
+            },
+            "description": "Asset set not found"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Create an asset",
+        "tags": [
+          "assets"
+        ]
+      }
+    },
+    "/asset-sets/{setId}/assets/import": {
+      "post": {
+        "description": "multipart/form-data: file=\u003ccsv\u003e, asset_type_id=N (required), status_id=M (optional), category_id=K (optional). The CSV must have a header row.",
+        "parameters": [
+          {
+            "description": "Asset set ID",
+            "in": "path",
+            "name": "setId",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "properties": {
+                  "asset_type_id": {
+                    "description": "Asset type id",
+                    "type": "integer",
+                    "x-formData-name": "asset_type_id"
+                  },
+                  "category_id": {
+                    "description": "Default category id",
+                    "type": "integer",
+                    "x-formData-name": "category_id"
+                  },
+                  "file": {
+                    "description": "CSV file",
+                    "format": "binary",
+                    "type": "string",
+                    "x-formData-name": "file"
+                  },
+                  "status_id": {
+                    "description": "Default status id",
+                    "type": "integer",
+                    "x-formData-name": "status_id"
+                  }
+                },
+                "required": [
+                  "asset_type_id",
+                  "file"
+                ],
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/dto.AssetImportJobResponse"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/restapi.ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/restapi.ErrorResponse"
+                }
+              }
+            },
+            "description": "Asset set not found"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Import assets from CSV (sync, one-shot)",
+        "tags": [
+          "assets"
+        ]
+      }
+    },
+    "/asset-sets/{setId}/categories": {
+      "get": {
+        "parameters": [
+          {
+            "description": "Asset set ID",
+            "in": "path",
+            "name": "setId",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/dto.AssetCategoryResponse"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/restapi.ErrorResponse"
+                }
+              }
+            },
+            "description": "Asset set not found"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List asset categories in a set",
+        "tags": [
+          "assets"
+        ]
+      }
+    },
+    "/asset-sets/{setId}/statuses": {
+      "get": {
+        "parameters": [
+          {
+            "description": "Asset set ID",
+            "in": "path",
+            "name": "setId",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/dto.AssetStatusResponse"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/restapi.ErrorResponse"
+                }
+              }
+            },
+            "description": "Asset set not found"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List asset statuses in a set",
+        "tags": [
+          "assets"
+        ]
+      }
+    },
+    "/asset-sets/{setId}/types": {
+      "get": {
+        "parameters": [
+          {
+            "description": "Asset set ID",
+            "in": "path",
+            "name": "setId",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/dto.AssetTypeResponse"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/restapi.ErrorResponse"
+                }
+              }
+            },
+            "description": "Asset set not found"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List asset types in a set",
+        "tags": [
+          "assets"
+        ]
+      }
+    },
+    "/asset-statuses/{id}": {
+      "get": {
+        "parameters": [
+          {
+            "description": "Asset status ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/dto.AssetStatusResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/restapi.ErrorResponse"
+                }
+              }
+            },
+            "description": "Asset status not found"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Get an asset status",
+        "tags": [
+          "assets"
+        ]
+      }
+    },
+    "/asset-types/{id}": {
+      "get": {
+        "parameters": [
+          {
+            "description": "Asset type ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/dto.AssetTypeResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/restapi.ErrorResponse"
+                }
+              }
+            },
+            "description": "Asset type not found"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Get an asset type",
+        "tags": [
+          "assets"
+        ]
+      }
+    },
+    "/assets/{id}": {
+      "delete": {
+        "parameters": [
+          {
+            "description": "Asset ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/restapi.ErrorResponse"
+                }
+              }
+            },
+            "description": "Asset not found"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Delete an asset",
+        "tags": [
+          "assets"
+        ]
+      },
+      "get": {
+        "parameters": [
+          {
+            "description": "Asset ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/dto.AssetResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/restapi.ErrorResponse"
+                }
+              }
+            },
+            "description": "Asset not found"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Get an asset",
+        "tags": [
+          "assets"
+        ]
+      },
+      "put": {
+        "parameters": [
+          {
+            "description": "Asset ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/dto.AssetUpdateRequest"
+              }
+            }
+          },
+          "description": "Partial-update payload",
+          "required": true,
+          "x-originalParamName": "body"
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/dto.AssetResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/restapi.ErrorResponse"
+                }
+              }
+            },
+            "description": "Asset not found"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Update an asset",
+        "tags": [
+          "assets"
         ]
       }
     },
