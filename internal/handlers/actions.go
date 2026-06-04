@@ -763,6 +763,16 @@ func (h *ActionsHandler) validateCapabilityConfig(w http.ResponseWriter, r *http
 			respondValidationError(w, r, fmt.Sprintf("LLM connection %d does not exist or is disabled", config.ConnectionID))
 			return false
 		}
+	case models.CapabilityRunnerPool:
+		var config models.RunnerPoolConfig
+		if err := json.Unmarshal([]byte(configStr), &config); err != nil {
+			respondValidationError(w, r, fmt.Sprintf("Invalid runner_pool config: %v", err))
+			return false
+		}
+		if config.MaxConcurrentRuns < 0 {
+			respondValidationError(w, r, "max_concurrent_runs cannot be negative (0 = unlimited)")
+			return false
+		}
 	}
 	return true
 }
@@ -905,7 +915,7 @@ func (h *ActionsHandler) CreateCapability(w http.ResponseWriter, r *http.Request
 	}
 	// Validate capability type
 	switch req.CapabilityType {
-	case models.CapabilityDockerEnvironment, models.CapabilityHTTPClient, models.CapabilityLLMConnection:
+	case models.CapabilityDockerEnvironment, models.CapabilityHTTPClient, models.CapabilityLLMConnection, models.CapabilityRunnerPool:
 		// valid
 	default:
 		respondValidationError(w, r, fmt.Sprintf("Invalid capability type: %s", req.CapabilityType))
@@ -1064,7 +1074,7 @@ func (h *ActionsHandler) ListWorkspaceCapabilities(w http.ResponseWriter, r *htt
 	capType := r.URL.Query().Get("type")
 	if capType != "" {
 		switch models.CapabilityType(capType) {
-		case models.CapabilityDockerEnvironment, models.CapabilityHTTPClient, models.CapabilityLLMConnection:
+		case models.CapabilityDockerEnvironment, models.CapabilityHTTPClient, models.CapabilityLLMConnection, models.CapabilityRunnerPool:
 			// valid
 		default:
 			respondValidationError(w, r, fmt.Sprintf("Invalid capability type: %s", capType))
