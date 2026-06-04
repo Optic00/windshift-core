@@ -177,14 +177,14 @@ func (h *CustomFieldHandler) Get(w http.ResponseWriter, r *http.Request) {
 // Create and Update. It returns the linking-field options parsed during
 // validation (nil unless FieldType == "linking") and false if an HTTP error was
 // already written to w.
-func (h *CustomFieldHandler) validateAndNormalizeCustomField(w http.ResponseWriter, r *http.Request, cf *models.CustomFieldDefinition) (*linkingFieldOptions, bool) {
+func (h *CustomFieldHandler) validateAndNormalizeCustomField(w http.ResponseWriter, r *http.Request, cf *models.CustomFieldDefinition) (*linkingFieldOptions, []string, bool) {
 	if strings.TrimSpace(cf.Name) == "" {
 		respondValidationError(w, r, "Field name is required")
-		return nil, false
+		return nil, nil, false
 	}
 	if !isValidFieldType(cf.FieldType) {
 		respondValidationError(w, r, "Invalid field type")
-		return nil, false
+		return nil, nil, false
 	}
 
 	var linkingOpts *linkingFieldOptions
@@ -193,14 +193,14 @@ func (h *CustomFieldHandler) validateAndNormalizeCustomField(w http.ResponseWrit
 		linkingOpts, linkErr = h.validateLinkingOptions(cf.Options)
 		if linkErr != nil {
 			respondValidationError(w, r, linkErr.Error())
-			return nil, false
+			return nil, nil, false
 		}
 	}
 
 	if cf.FieldType == "asset" {
 		if err := validateAssetFieldOptions(cf.Options); err != nil {
 			respondValidationError(w, r, err.Error())
-			return nil, false
+			return nil, nil, false
 		}
 	}
 
@@ -212,16 +212,21 @@ func (h *CustomFieldHandler) validateAndNormalizeCustomField(w http.ResponseWrit
 			} else {
 				respondInternalError(w, r, errors.New(vErr.msg))
 			}
-			return nil, false
+			return nil, nil, false
 		}
 		cf.Options = normalized
 	}
 
-	// Sanitize user input to prevent XSS.
-	cf.Name = sanitize.ShortIdentifier.Sanitize(cf.Name)
-	cf.Description = sanitize.Comment.Sanitize(cf.Description)
+	// Sanitize user input to prevent XSS. Name is identifier-shaped
+	// (referenced by the screen builder + workspace config sets);
+	// Description is admin-facing help text rendered in the field
+	// directory.
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &cf.Name, Policy: sanitize.ShortIdentifier, Label: "Name"},
+		sanitize.Pair{Target: &cf.Description, Policy: sanitize.Comment, Label: "Description"},
+	)
 
-	return linkingOpts, true
+	return linkingOpts, warnings, true
 }
 
 func (h *CustomFieldHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -230,7 +235,7 @@ func (h *CustomFieldHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	linkingOpts, ok := h.validateAndNormalizeCustomField(w, r, &cf)
+	linkingOpts, warnings, ok := h.validateAndNormalizeCustomField(w, r, &cf)
 	if !ok {
 		return
 	}
@@ -286,7 +291,10 @@ func (h *CustomFieldHandler) Create(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	respondJSONCreated(w, createdCF)
+	respondJSONCreated(w, struct {
+		*models.CustomFieldDefinition
+		Warnings []string `json:"warnings,omitempty"`
+	}{createdCF, warnings})
 }
 
 // updateRequest extends the custom field definition with optional indexing control
@@ -326,7 +334,8 @@ func (h *CustomFieldHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	cf := req.CustomFieldDefinition
 
-	if _, ok := h.validateAndNormalizeCustomField(w, r, &cf); !ok {
+	_, warnings, ok := h.validateAndNormalizeCustomField(w, r, &cf)
+	if !ok {
 		return
 	}
 
@@ -423,14 +432,20 @@ func (h *CustomFieldHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if indexingDeferred {
-		respondJSONOK(w, updateResponse{
+		respondJSONOK(w, struct {
+			updateResponse
+			Warnings []string `json:"warnings,omitempty"`
+		}{updateResponse{
 			CustomFieldDefinition: *updatedCF,
 			IndexingDeferred:      deferredIndexes,
-		})
+		}, warnings})
 		return
 	}
 
-	respondJSONOK(w, updatedCF)
+	respondJSONOK(w, struct {
+		*models.CustomFieldDefinition
+		Warnings []string `json:"warnings,omitempty"`
+	}{updatedCF, warnings})
 }
 
 func (h *CustomFieldHandler) Delete(w http.ResponseWriter, r *http.Request) {

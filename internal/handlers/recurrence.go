@@ -8,6 +8,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/scheduler"
 	"windshift/internal/services"
 
@@ -133,6 +134,18 @@ func (h *RecurrenceHandler) CreateRecurrence(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
+	// RRule, Timezone, DtStart, DtEnd are identifier-shaped strings the
+	// rrule + time parsers will reject anything bogus from. Stripping
+	// HTML markers defensively here closes the gap before parse error
+	// strings get echoed back in user-facing validation errors.
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.RRule, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.Timezone, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.DtStart, Policy: sanitize.ShortIdentifier},
+	)
+	if req.DtEnd != nil {
+		sanitize.Apply(req.DtEnd, sanitize.ShortIdentifier)
+	}
 
 	// Validate RRULE
 	if req.RRule == "" {
@@ -249,6 +262,14 @@ func (h *RecurrenceHandler) UpdateRecurrence(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
+	// All free-form fields are *string — sanitize.Apply on nil is a
+	// no-op, so unset PATCH fields stay untouched.
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: req.RRule, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: req.Timezone, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: req.DtStart, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: req.DtEnd, Policy: sanitize.ShortIdentifier},
+	)
 
 	// Apply updates
 	if req.RRule != nil {
@@ -441,6 +462,10 @@ func (h *RecurrenceHandler) PreviewRRule(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.RRule, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.DtStart, Policy: sanitize.ShortIdentifier},
+	)
 
 	if req.RRule == "" {
 		respondValidationError(w, r, "rrule is required")
