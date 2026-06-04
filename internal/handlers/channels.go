@@ -21,6 +21,7 @@ import (
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
+	"windshift/internal/sanitize"
 	"windshift/internal/scheduler"
 	"windshift/internal/services"
 	windshiftsmtp "windshift/internal/smtp"
@@ -171,6 +172,16 @@ func (h *ChannelHandler) CreateChannel(w http.ResponseWriter, r *http.Request) {
 		respondValidationError(w, r, "Invalid JSON")
 		return
 	}
+	// Channel Name renders in the channel directory, picker chips, and
+	// the workspace admin UI; Description shows in the channel list and
+	// detail views. Both are user-supplied free-form text. Type +
+	// Direction + Status are enums the service validates; Config is a
+	// JSON blob handled by UpdateChannelConfig + the catalog work
+	// tracked under the WI-180 follow-up.
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
+	)
 
 	channel, err := h.service.Create(ctx, services.ChannelCreateRequest{
 		Name:        req.Name,
@@ -198,7 +209,10 @@ func (h *ChannelHandler) CreateChannel(w http.ResponseWriter, r *http.Request) {
 		h.auditor.Log(r, currentUser, logger.ActionChannelCreate, logger.ResourceChannel, &channelID, channel.Name)
 	}
 
-	respondJSONCreated(w, channel)
+	respondJSONCreated(w, struct {
+		*models.Channel
+		Warnings []string `json:"warnings,omitempty"`
+	}{channel, warnings})
 }
 
 // GetChannel returns a specific channel by ID
@@ -253,6 +267,13 @@ func (h *ChannelHandler) UpdateChannel(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Channel Name + Description are the user-facing free-form fields on
+	// the model; everything else is enum/ID/JSON-blob. See CreateChannel
+	// for the full rationale.
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &updates.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &updates.Description, Policy: sanitize.RichText, Label: "Description"},
+	)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
@@ -331,7 +352,10 @@ func (h *ChannelHandler) UpdateChannel(w http.ResponseWriter, r *http.Request) {
 		h.auditor.Log(r, currentUser, logger.ActionChannelUpdate, logger.ResourceChannel, &id, updates.Name)
 	}
 
-	respondJSONOK(w, updated)
+	respondJSONOK(w, struct {
+		*models.Channel
+		Warnings []string `json:"warnings,omitempty"`
+	}{updated, warnings})
 }
 
 // DeleteChannel deletes a channel
