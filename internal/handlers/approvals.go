@@ -9,6 +9,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
 
@@ -132,6 +133,12 @@ func (h *ApprovalHandler) Decide(w http.ResponseWriter, r *http.Request) {
 		respondValidationError(w, r, "Invalid request body")
 		return
 	}
+	// Approval comments are user-supplied reasoning that surfaces on the
+	// approval timeline and audit log; RichText scrubs HTML while keeping
+	// the multi-line markdown body intact.
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &body.Comment, Policy: sanitize.RichText, Label: "Comment"},
+	)
 	switch body.Decision {
 	case models.ApprovalDecisionApprove, models.ApprovalDecisionReject, models.ApprovalDecisionComment:
 		// ok
@@ -160,10 +167,14 @@ func (h *ApprovalHandler) Decide(w http.ResponseWriter, r *http.Request) {
 	}
 	logAudit(h.db, r, user, logger.ActionApprovalDecide, logger.ResourceApprovalRequest, &requestID, body.Decision)
 
-	respondJSONOK(w, map[string]any{
+	resp := map[string]any{
 		"decision": decision,
 		"request":  req,
-	})
+	}
+	if len(warnings) > 0 {
+		resp["warnings"] = warnings
+	}
+	respondJSONOK(w, resp)
 }
 
 // cancelRequestBody is the JSON payload for POST /api/approvals/{id}/cancel.
@@ -192,6 +203,9 @@ func (h *ApprovalHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &body.Comment, Policy: sanitize.RichText, Label: "Comment"},
+	)
 
 	req, err := h.approvalService.GetRequest(requestID)
 	if err != nil {
@@ -244,7 +258,10 @@ func (h *ApprovalHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
-	respondJSONOK(w, out)
+	respondJSONOK(w, struct {
+		*models.ApprovalRequest
+		Warnings []string `json:"warnings,omitempty"`
+	}{out, warnings})
 }
 
 // delegateRequestBody is the JSON payload for POST /api/approvals/{id}/delegate.
@@ -271,6 +288,9 @@ func (h *ApprovalHandler) Delegate(w http.ResponseWriter, r *http.Request) {
 		respondValidationError(w, r, "Invalid request body")
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &body.Comment, Policy: sanitize.RichText, Label: "Comment"},
+	)
 	if body.ToUserID == 0 {
 		respondValidationError(w, r, "to_user_id is required")
 		return
@@ -298,7 +318,10 @@ func (h *ApprovalHandler) Delegate(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
-	respondJSONOK(w, out)
+	respondJSONOK(w, struct {
+		*models.ApprovalRequest
+		Warnings []string `json:"warnings,omitempty"`
+	}{out, warnings})
 }
 
 // RefreshApprovers re-resolves the configured approver_source for a pending
@@ -342,6 +365,9 @@ func (h *ApprovalHandler) RefreshApprovers(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &body.Comment, Policy: sanitize.RichText, Label: "Comment"},
+	)
 
 	if err := h.approvalService.RefreshApprovers(r.Context(), stepInstanceID, user.ID, body.Comment); err != nil {
 		respondValidationError(w, r, err.Error())
@@ -354,7 +380,10 @@ func (h *ApprovalHandler) RefreshApprovers(w http.ResponseWriter, r *http.Reques
 		respondInternalError(w, r, err)
 		return
 	}
-	respondJSONOK(w, out)
+	respondJSONOK(w, struct {
+		*models.ApprovalRequest
+		Warnings []string `json:"warnings,omitempty"`
+	}{out, warnings})
 }
 
 // EscalateNow runs the configured escalation policy for a pending step

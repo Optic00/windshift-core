@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
 
@@ -107,6 +108,11 @@ func (h *PortalHandler) DecideAsPortalCustomer(w http.ResponseWriter, r *http.Re
 		respondValidationError(w, r, "Invalid request body")
 		return
 	}
+	// Portal decision comments surface on the same approval timeline as
+	// the internal Decide path. Mirror the policy.
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &body.Comment, Policy: sanitize.RichText, Label: "Comment"},
+	)
 	switch body.Decision {
 	case models.ApprovalDecisionApprove, models.ApprovalDecisionReject, models.ApprovalDecisionComment:
 	default:
@@ -132,10 +138,14 @@ func (h *PortalHandler) DecideAsPortalCustomer(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	respondJSONOK(w, map[string]any{
+	resp := map[string]any{
 		"decision": decision,
 		"request":  req,
-	})
+	}
+	if len(warnings) > 0 {
+		resp["warnings"] = warnings
+	}
+	respondJSONOK(w, resp)
 }
 
 type portalApprovalActor struct {
