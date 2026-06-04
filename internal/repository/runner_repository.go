@@ -76,6 +76,55 @@ func (r *RunnerRepository) RevokeRegistrationToken(ctx context.Context, id int, 
 	return nil
 }
 
+// ListRegistrationTokensForPool returns every registration token for a pool
+// (including revoked/expired ones) newest-first, for the admin lifecycle
+// surface. Plaintext is never stored, so only the prefix is exposed.
+func (r *RunnerRepository) ListRegistrationTokensForPool(ctx context.Context, poolID int) ([]*models.RunnerRegistrationToken, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, pool_capability_id, token_prefix, description, created_by_user_id, created_at, expires_at, revoked_at
+		FROM runner_registration_tokens
+		WHERE pool_capability_id = ?
+		ORDER BY created_at DESC, id DESC
+	`, poolID)
+	if err != nil {
+		return nil, fmt.Errorf("list runner registration tokens: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*models.RunnerRegistrationToken
+	for rows.Next() {
+		tok, err := scanRegistrationToken(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan runner registration token: %w", err)
+		}
+		out = append(out, tok)
+	}
+	return out, rows.Err()
+}
+
+// ListInstancesForPool returns every runner instance for a pool (including
+// revoked ones) newest-first, for the admin lifecycle surface.
+func (r *RunnerRepository) ListInstancesForPool(ctx context.Context, poolID int) ([]*models.RunnerInstance, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, pool_capability_id, name, status, registered_at, last_heartbeat_at, revoked_at
+		FROM runner_instances
+		WHERE pool_capability_id = ?
+		ORDER BY registered_at DESC, id DESC
+	`, poolID)
+	if err != nil {
+		return nil, fmt.Errorf("list runner instances: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*models.RunnerInstance
+	for rows.Next() {
+		inst, err := scanInstance(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan runner instance: %w", err)
+		}
+		out = append(out, inst)
+	}
+	return out, rows.Err()
+}
+
 // InsertInstance stores a newly-registered runner (by credential hash) in
 // the active state and returns its id.
 func (r *RunnerRepository) InsertInstance(ctx context.Context, poolID int, name, credentialHash string, now time.Time) (int, error) {

@@ -236,6 +236,16 @@ func RegisterWorkspaceRoutes(deps *Deps) {
 		api.HandleH("PUT /admin/action-capabilities/{capabilityId}", admin(http.HandlerFunc(deps.Workspaces.Actions.UpdateCapability)))
 		api.HandleH("DELETE /admin/action-capabilities/{capabilityId}", admin(http.HandlerFunc(deps.Workspaces.Actions.DeleteCapability)))
 
+		// Runner-pool lifecycle (WI-177): registration tokens + runner
+		// instances managed as child resources of a runner_pool capability.
+		if deps.Workspaces.RunnerControl != nil {
+			api.HandleH("POST /admin/action-capabilities/{capabilityId}/runner-tokens", admin(http.HandlerFunc(deps.Workspaces.RunnerControl.MintRunnerToken)))
+			api.HandleH("GET /admin/action-capabilities/{capabilityId}/runner-tokens", admin(http.HandlerFunc(deps.Workspaces.RunnerControl.ListRunnerTokens)))
+			api.HandleH("DELETE /admin/action-capabilities/{capabilityId}/runner-tokens/{tokenId}", admin(http.HandlerFunc(deps.Workspaces.RunnerControl.RevokeRunnerToken)))
+			api.HandleH("GET /admin/action-capabilities/{capabilityId}/runner-instances", admin(http.HandlerFunc(deps.Workspaces.RunnerControl.ListRunnerInstances)))
+			api.HandleH("DELETE /admin/action-capabilities/{capabilityId}/runner-instances/{instanceId}", admin(http.HandlerFunc(deps.Workspaces.RunnerControl.RevokeRunnerInstance)))
+		}
+
 		// Action credentials (encrypted API tokens referenced by HTTP capabilities)
 		if deps.Workspaces.ActionCredentials != nil {
 			// Global credentials — system-admin only.

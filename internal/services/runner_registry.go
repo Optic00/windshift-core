@@ -138,6 +138,18 @@ func (s *RunnerRegistryService) Heartbeat(ctx context.Context, instanceID int) e
 	return s.repo.TouchHeartbeat(ctx, instanceID, s.now())
 }
 
+// ListRegistrationTokens returns every registration token for a pool (active,
+// revoked, and expired), newest-first. For the admin lifecycle surface.
+func (s *RunnerRegistryService) ListRegistrationTokens(ctx context.Context, poolID int) ([]*models.RunnerRegistrationToken, error) {
+	return s.repo.ListRegistrationTokensForPool(ctx, poolID)
+}
+
+// ListInstances returns every runner instance registered against a pool
+// (active and revoked), newest-first. For the admin lifecycle surface.
+func (s *RunnerRegistryService) ListInstances(ctx context.Context, poolID int) ([]*models.RunnerInstance, error) {
+	return s.repo.ListInstancesForPool(ctx, poolID)
+}
+
 // RevokeRegistrationToken disables a registration token (stops new
 // registrations; does not evict already-registered runners).
 func (s *RunnerRegistryService) RevokeRegistrationToken(ctx context.Context, id int) error {
