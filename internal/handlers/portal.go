@@ -22,6 +22,7 @@ import (
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
@@ -530,8 +531,8 @@ func (h *PortalHandler) SubmitToPortal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Sanitize user input to prevent XSS
-	submission.Title = utils.StripHTMLTags(submission.Title)
-	submission.Description = utils.SanitizeCommentContent(submission.Description)
+	submission.Title = sanitize.PlainTextField.Sanitize(submission.Title)
+	submission.Description = sanitize.Comment.Sanitize(submission.Description)
 
 	// Get auth info from context (middleware already validated)
 	authenticatedUserID, portalCustomerID := h.getAuthFromContext(r)
@@ -609,7 +610,7 @@ func (h *PortalHandler) SubmitToPortal(w http.ResponseWriter, r *http.Request) {
 			respondValidationError(w, r, "request type is misconfigured: title field is hidden but no title template is set")
 			return
 		}
-		submission.Title = utils.StripHTMLTags(rendered)
+		submission.Title = sanitize.PlainTextField.Sanitize(rendered)
 	}
 
 	// Get target workspace (use first workspace for submission)

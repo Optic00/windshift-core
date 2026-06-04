@@ -32,8 +32,8 @@ import (
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
-	"windshift/internal/utils"
 )
 
 // TestManagementHandler bundles the read + run-lifecycle endpoints into
@@ -487,7 +487,7 @@ func (h *TestManagementHandler) CreateTestRun(w http.ResponseWriter, r *http.Req
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
-	req.Name = utils.SanitizeTitle(req.Name)
+	req.Name = sanitize.PlainTextField.Sanitize(req.Name)
 	run, err := h.runSvc.Create(workspaceID, services.TestRunCreateRequest{
 		Name:       req.Name,
 		TemplateID: req.TemplateID,
@@ -632,8 +632,8 @@ func (h *TestManagementHandler) UpdateTestRunResult(w http.ResponseWriter, r *ht
 	}
 	// Match the cookie surface's XSS handling: SanitizeDescription
 	// preserves the <br /> markers MilkdownEditor emits for blank lines.
-	req.ActualResult = utils.SanitizeDescription(req.ActualResult)
-	req.Notes = utils.SanitizeDescription(req.Notes)
+	req.ActualResult = sanitize.RichText.Sanitize(req.ActualResult)
+	req.Notes = sanitize.RichText.Sanitize(req.Notes)
 	if err := h.runSvc.UpdateResult(runID, resultID, services.TestResultUpdateRequest{
 		Status:       req.Status,
 		ActualResult: req.ActualResult,

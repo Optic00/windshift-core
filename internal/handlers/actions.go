@@ -14,6 +14,7 @@ import (
 	"windshift/internal/repository"
 	"windshift/internal/repository/actionutil"
 	"windshift/internal/restapi"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/services/actioncatalog"
 	"windshift/internal/utils"
@@ -253,6 +254,10 @@ func (h *ActionsHandler) CreateAction(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
+	)
 
 	// Unified validator covers required fields, trigger/node config schemas,
 	// edge sanity, graph cycles, iterator-body containment, and capability
@@ -336,7 +341,10 @@ func (h *ActionsHandler) CreateAction(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	respondJSONCreated(w, createdAction)
+	respondJSONCreated(w, struct {
+		*models.Action
+		Warnings []string `json:"warnings,omitempty"`
+	}{createdAction, warnings})
 }
 
 // applyActionUpdateFields applies non-nil fields from the update request to the action.
@@ -372,6 +380,10 @@ func (h *ActionsHandler) UpdateAction(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: req.Description, Policy: sanitize.RichText, Label: "Description"},
+	)
 
 	currentUser := utils.GetCurrentUser(r)
 
@@ -462,7 +474,10 @@ func (h *ActionsHandler) UpdateAction(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	respondJSONOK(w, updatedAction)
+	respondJSONOK(w, struct {
+		*models.Action
+		Warnings []string `json:"warnings,omitempty"`
+	}{updatedAction, warnings})
 }
 
 // equalIntPtr returns true when both pointers are nil or both point to the same int.
@@ -878,6 +893,7 @@ func (h *ActionsHandler) CreateCapability(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	sanitize.Apply(&req.Name, sanitize.PlainTextField)
 
 	if req.Name == "" {
 		respondValidationError(w, r, "Name is required")
@@ -968,6 +984,7 @@ func (h *ActionsHandler) UpdateCapability(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	sanitize.Apply(req.Name, sanitize.PlainTextField)
 
 	if req.Name != nil {
 		capability.Name = *req.Name

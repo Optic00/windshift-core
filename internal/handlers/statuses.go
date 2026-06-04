@@ -10,6 +10,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/utils"
 )
 
@@ -112,8 +113,8 @@ func (h *StatusHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status.Name = utils.SanitizeTitle(status.Name)
-	status.Description = utils.SanitizeCommentContent(status.Description)
+	status.Name = sanitize.PlainTextField.Sanitize(status.Name)
+	status.Description = sanitize.Comment.Sanitize(status.Description)
 
 	id, _, err := h.repo.Create(&status)
 	if err != nil {
@@ -164,8 +165,8 @@ func (h *StatusHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status.Name = utils.SanitizeTitle(status.Name)
-	status.Description = utils.SanitizeCommentContent(status.Description)
+	status.Name = sanitize.PlainTextField.Sanitize(status.Name)
+	status.Description = sanitize.Comment.Sanitize(status.Description)
 
 	if err := h.repo.Update(id, &status); err != nil {
 		respondInternalError(w, r, err)

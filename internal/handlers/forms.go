@@ -15,6 +15,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/middleware"
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
@@ -285,8 +286,8 @@ func (h *FormHandler) SubmitForm(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Sanitize user input
-	submission.Title = utils.StripHTMLTags(submission.Title)
-	submission.Description = utils.SanitizeCommentContent(submission.Description)
+	submission.Title = sanitize.PlainTextField.Sanitize(submission.Title)
+	submission.Description = sanitize.Comment.Sanitize(submission.Description)
 
 	// Check if this form requires auth and belongs to this channel.
 	var rtChannelID int

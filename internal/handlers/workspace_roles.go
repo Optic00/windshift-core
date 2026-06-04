@@ -12,6 +12,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
@@ -866,6 +867,13 @@ func (h *WorkspaceRoleHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Role Name renders in every member list, role picker, and assignment
+	// dialog — a short user-facing label. Description shows in the role
+	// directory and is multi-line free-form text.
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &body.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &body.Description, Policy: sanitize.RichText, Label: "Description"},
+	)
 	name := strings.TrimSpace(body.Name)
 	if name == "" {
 		respondValidationError(w, r, "name is required")
@@ -904,7 +912,10 @@ func (h *WorkspaceRoleHandler) Create(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:          now,
 		Permissions:        []models.Permission{},
 	}
-	respondJSONCreated(w, out)
+	respondJSONCreated(w, struct {
+		models.WorkspaceRole
+		Warnings []string `json:"warnings,omitempty"`
+	}{out, warnings})
 }
 
 // Delete removes a custom workspace role. System roles (is_system=true) cannot

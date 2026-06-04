@@ -10,8 +10,44 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
+
+// sanitizeScheduleRequest scrubs the user-facing fields on a schedule
+// payload. Name + Description render in oncall directories + rotation
+// pickers; Timezone is the IANA zone identifier.
+func sanitizeScheduleRequest(req *models.OnCallScheduleRequest) {
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
+		sanitize.Pair{Target: &req.Timezone, Policy: sanitize.ShortIdentifier},
+	)
+}
+
+// sanitizeLayerRequest scrubs the rotation-layer payload. Name labels
+// the layer in the rotation editor; rotation_type and handoff_time are
+// short identifier-shaped strings.
+func sanitizeLayerRequest(req *models.OnCallScheduleLayerRequest) {
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.RotationType, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.HandoffTime, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.StartDate, Policy: sanitize.ShortIdentifier},
+	)
+	if req.EndDate != nil {
+		sanitize.Apply(req.EndDate, sanitize.ShortIdentifier)
+	}
+}
+
+// sanitizeEscalationPolicy scrubs the policy payload. Name + Description
+// render in policy directories + the escalation chain editor.
+func sanitizeEscalationPolicy(req *models.OnCallEscalationPolicyRequest) {
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
+	)
+}
 
 // OnCallHandler handles HTTP requests for on-call schedule management
 type OnCallHandler struct {
@@ -200,6 +236,7 @@ func (h *OnCallHandler) CreateSchedule(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	sanitizeScheduleRequest(&req)
 
 	if !validateScheduleRequest(w, r, req) {
 		return
@@ -258,6 +295,7 @@ func (h *OnCallHandler) UpdateSchedule(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	sanitizeScheduleRequest(&req)
 
 	if !validateScheduleRequest(w, r, req) {
 		return
@@ -312,6 +350,7 @@ func (h *OnCallHandler) AddLayer(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	sanitizeLayerRequest(&req)
 
 	if strings.TrimSpace(req.Name) == "" {
 		respondValidationError(w, r, "name is required")
@@ -352,6 +391,7 @@ func (h *OnCallHandler) UpdateLayer(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	sanitizeLayerRequest(&req)
 
 	if err := h.onCallRepo.UpdateLayer(layerID, req.Name, req.Priority, req.RotationType, req.RotationIntervalDays, req.HandoffTime, req.StartDate, req.EndDate); err != nil {
 		respondInternalError(w, r, err)
@@ -429,6 +469,14 @@ func (h *OnCallHandler) CreateOverride(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Reason renders on the schedule timeline + audit log. StartTime/
+	// EndTime are ISO 8601 (identifier-shaped); the time.Parse below
+	// rejects anything malformed.
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Reason, Policy: sanitize.RichText},
+		sanitize.Pair{Target: &req.StartTime, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.EndTime, Policy: sanitize.ShortIdentifier},
+	)
 
 	startTime, err := time.Parse(time.RFC3339, req.StartTime)
 	if err != nil {
@@ -567,6 +615,12 @@ func (h *OnCallHandler) CreateSwapRequest(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	// Both timestamps are ISO 8601 — defensive scrub keeps any HTML
+	// markers out of the validation error echoed back to the caller.
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.SwapStart, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.SwapEnd, Policy: sanitize.ShortIdentifier},
+	)
 
 	// Target user must also be on the team. Otherwise a swap could redirect
 	// on-call to an arbitrary user the team has no relationship with.
@@ -705,6 +759,7 @@ func (h *OnCallHandler) CreatePolicy(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	sanitizeEscalationPolicy(&req)
 
 	if strings.TrimSpace(req.Name) == "" {
 		respondValidationError(w, r, "name is required")
@@ -758,6 +813,7 @@ func (h *OnCallHandler) UpdatePolicy(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	sanitizeEscalationPolicy(&req)
 
 	if strings.TrimSpace(req.Name) == "" {
 		respondValidationError(w, r, "name is required")

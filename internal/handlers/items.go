@@ -18,6 +18,7 @@ import (
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 	"windshift/internal/validation"
@@ -558,8 +559,8 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Sanitize user input to prevent XSS
-	item.Title = utils.SanitizeTitle(item.Title)
-	item.Description = utils.SanitizeDescription(item.Description)
+	item.Title = sanitize.PlainTextField.Sanitize(item.Title)
+	item.Description = sanitize.RichText.Sanitize(item.Description)
 
 	// Convert item type ID to *int for validation
 	var itemTypeIDPtr *int
@@ -1431,7 +1432,7 @@ func (h *ItemHandler) Copy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create copy title
-	copyTitle := utils.SanitizeTitle(fmt.Sprintf("COPY - %s", originalItem.Title))
+	copyTitle := sanitize.PlainTextField.Sanitize(fmt.Sprintf("COPY - %s", originalItem.Title))
 
 	result, err := services.NewItemCRUDService(h.db).Copy(id, services.CopyOptions{
 		NewTitle:  copyTitle,

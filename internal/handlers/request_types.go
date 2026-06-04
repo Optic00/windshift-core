@@ -9,9 +9,42 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
+
+// sanitizeRequestType applies the canonical sanitize policies to the
+// free-form fields on a request type payload (Name, Description, Icon,
+// Color, TitleTemplate). Returns labeled warnings the handler surfaces
+// on the response.
+func sanitizeRequestType(rt *models.RequestType) []string {
+	return sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &rt.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &rt.Description, Policy: sanitize.RichText, Label: "Description"},
+		sanitize.Pair{Target: &rt.Icon, Policy: sanitize.ShortIdentifier, Label: "Icon"},
+		sanitize.Pair{Target: &rt.Color, Policy: sanitize.ShortIdentifier, Label: "Color"},
+		sanitize.Pair{Target: &rt.TitleTemplate, Policy: sanitize.PlainTextField, Label: "Title template"},
+	)
+}
+
+// sanitizeRequestTypeFields scrubs the per-row portal-customization
+// fields the form picker exposes. DisplayName + Description override
+// the field's stock label/help text in the portal; both render as
+// plain copy near the form input. JSON pointers on RequestTypeField
+// are *string, so missing values stay missing rather than getting
+// silently created.
+func sanitizeRequestTypeFields(fields []models.RequestTypeField) []string {
+	var warnings []string
+	for i := range fields {
+		w := sanitize.ApplyAllWithWarnings(
+			sanitize.Pair{Target: fields[i].DisplayName, Policy: sanitize.PlainTextField, Label: "Field display name"},
+			sanitize.Pair{Target: fields[i].Description, Policy: sanitize.RichText, Label: "Field help text"},
+		)
+		warnings = append(warnings, w...)
+	}
+	return warnings
+}
 
 type RequestTypeHandler struct {
 	repo           *repository.RequestTypeRepository
@@ -100,6 +133,7 @@ func (h *RequestTypeHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	warnings := sanitizeRequestType(&rt)
 
 	rt.ChannelID = channelID
 
@@ -181,7 +215,10 @@ func (h *RequestTypeHandler) Create(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 
-	respondJSONCreated(w, rt)
+	respondJSONCreated(w, struct {
+		models.RequestType
+		Warnings []string `json:"warnings,omitempty"`
+	}{rt, warnings})
 }
 
 // Update updates an existing request type. The route is
@@ -214,6 +251,7 @@ func (h *RequestTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	warnings := sanitizeRequestType(&rt)
 
 	if strings.TrimSpace(rt.Name) == "" {
 		respondValidationError(w, r, "Request type name is required")
@@ -286,7 +324,10 @@ func (h *RequestTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 
-	respondJSONOK(w, rt)
+	respondJSONOK(w, struct {
+		models.RequestType
+		Warnings []string `json:"warnings,omitempty"`
+	}{rt, warnings})
 }
 
 // Delete deletes a request type. Route is DELETE /channels/{channel_id}/request-types/{id};
@@ -422,6 +463,14 @@ func (h *RequestTypeHandler) UpdateFields(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	// Per-row Display name + Description override the field's stock label
+	// and help text in the portal — both render as plain copy near the
+	// form input. Warnings are stamped but the legacy response shape of
+	// UpdateFields (delegating to GetFields) doesn't include them yet;
+	// sanitize at decode is the primary guard, the surfaced warnings
+	// will land when UpdateFields gets its own dedicated response in a
+	// future slice.
+	_ = sanitizeRequestTypeFields(fields)
 
 	if err := h.repo.ReplaceFields(requestTypeID, fields); err != nil {
 		respondInternalError(w, r, err)

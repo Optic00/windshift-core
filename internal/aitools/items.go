@@ -10,8 +10,8 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
-	"windshift/internal/utils"
 )
 
 // itemSummaryDTO is the trimmed shape used in list responses.
@@ -293,8 +293,8 @@ func init() {
 			if !ok {
 				return map[string]string{"error": "permission denied"}, nil
 			}
-			title := utils.StripHTMLTags(args.Title)
-			desc := utils.SanitizeCommentContent(args.Description)
+			title := sanitize.PlainTextField.Sanitize(args.Title)
+			desc := sanitize.Comment.Sanitize(args.Description)
 			itemID, err := services.CreateItem(env.DB, services.ItemCreationParams{
 				WorkspaceID: args.WorkspaceID,
 				Title:       title,

@@ -13,6 +13,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
@@ -458,7 +459,9 @@ func (h *TimeWorklogHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// Debug: Log the received request
 	slog.Debug("received worklog request", slog.String("component", "time_tracking"), slog.Int("project_id", req.ProjectID), slog.String("description", req.Description))
 
-	req.Description = utils.SanitizeCommentContent(req.Description)
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.Comment, Label: "Description"},
+	)
 
 	customerID, date, startTime, endTime, durationMins, err := h.validateAndParseWorklog(req)
 	if err != nil {
@@ -498,7 +501,10 @@ func (h *TimeWorklogHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSONCreated(w, wl)
+	respondJSONCreated(w, struct {
+		models.Worklog
+		Warnings []string `json:"warnings,omitempty"`
+	}{wl, warnings})
 }
 
 func (h *TimeWorklogHandler) Update(w http.ResponseWriter, r *http.Request) {
@@ -535,7 +541,9 @@ func (h *TimeWorklogHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Description = utils.SanitizeCommentContent(req.Description)
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.Comment, Label: "Description"},
+	)
 
 	customerID, date, startTime, endTime, durationMins, err := h.validateAndParseWorklog(req)
 	if err != nil {
@@ -569,7 +577,10 @@ func (h *TimeWorklogHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSONOK(w, wl)
+	respondJSONOK(w, struct {
+		models.Worklog
+		Warnings []string `json:"warnings,omitempty"`
+	}{wl, warnings})
 }
 
 func (h *TimeWorklogHandler) Delete(w http.ResponseWriter, r *http.Request) {

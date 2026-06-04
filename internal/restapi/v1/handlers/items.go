@@ -14,8 +14,8 @@ import (
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
 	"windshift/internal/restapi/v1/dto"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
-	"windshift/internal/utils"
 	"windshift/internal/validation"
 )
 
@@ -443,8 +443,8 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Sanitize user input to prevent XSS
-	req.Title = utils.StripHTMLTags(req.Title)
-	req.Description = utils.SanitizeCommentContent(req.Description)
+	req.Title = sanitize.PlainTextField.Sanitize(req.Title)
+	req.Description = sanitize.RichText.Sanitize(req.Description)
 
 	// Convert custom field values to JSON
 	var customFieldValuesJSON string
@@ -565,10 +565,10 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return ok && string(raw) == "null"
 	}
 	if req.Title != nil {
-		updateData["title"] = utils.StripHTMLTags(*req.Title)
+		updateData["title"] = sanitize.PlainTextField.Sanitize(*req.Title)
 	}
 	if req.Description != nil {
-		updateData["description"] = utils.SanitizeCommentContent(*req.Description)
+		updateData["description"] = sanitize.RichText.Sanitize(*req.Description)
 	}
 	if req.PriorityID != nil {
 		updateData["priority_id"] = *req.PriorityID
@@ -917,6 +917,14 @@ func (h *ItemHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	// Sanitize at the handler boundary in addition to CommentService.Create:
+	// the response body below is built from req.Content (not the stored
+	// row), so without sanitizing here the response would echo back the
+	// raw payload even though the stored row is clean. Sanitize is
+	// idempotent — double-coverage is fine.
+	commentWarnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Content, Policy: sanitize.Comment, Label: "Comment"},
+	)
 
 	if !h.ValidateRequiredString(w, r, req.Content, "content") {
 		return
@@ -952,6 +960,7 @@ func (h *ItemHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 			FullName:  fullName,
 			AvatarURL: user.AvatarURL,
 		},
+		Warnings: commentWarnings,
 	}
 	h.RespondCreated(w, response)
 }

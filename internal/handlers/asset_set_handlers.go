@@ -8,6 +8,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 )
 
 // GetAssetSets returns all asset sets the user has access to
@@ -109,6 +110,10 @@ func (h *AssetHandler) CreateAssetSet(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
+	)
 
 	if req.Name == "" {
 		respondValidationError(w, r, "Name is required")
@@ -152,15 +157,21 @@ func (h *AssetHandler) CreateAssetSet(w http.ResponseWriter, r *http.Request) {
 
 	logAudit(h.db, r, currentUser, logger.ActionAssetSetCreate, logger.ResourceAssetSet, &setID, req.Name)
 
-	respondJSONCreated(w, models.AssetManagementSet{
-		ID:             setID,
-		Name:           req.Name,
-		Description:    req.Description,
-		IsDefault:      req.IsDefault,
-		CreatedBy:      &currentUser.ID,
-		CreatedAt:      now,
-		UpdatedAt:      now,
-		UserPermission: AssetRoleAdministrator,
+	respondJSONCreated(w, struct {
+		models.AssetManagementSet
+		Warnings []string `json:"warnings,omitempty"`
+	}{
+		AssetManagementSet: models.AssetManagementSet{
+			ID:             setID,
+			Name:           req.Name,
+			Description:    req.Description,
+			IsDefault:      req.IsDefault,
+			CreatedBy:      &currentUser.ID,
+			CreatedAt:      now,
+			UpdatedAt:      now,
+			UserPermission: AssetRoleAdministrator,
+		},
+		Warnings: warnings,
 	})
 }
 
@@ -182,6 +193,10 @@ func (h *AssetHandler) UpdateAssetSet(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
+	)
 
 	if req.Name == "" {
 		respondValidationError(w, r, "Name is required")
@@ -219,7 +234,10 @@ func (h *AssetHandler) UpdateAssetSet(w http.ResponseWriter, r *http.Request) {
 	}
 	set.UserPermission = AssetRoleAdministrator
 
-	respondJSONOK(w, set)
+	respondJSONOK(w, struct {
+		*models.AssetManagementSet
+		Warnings []string `json:"warnings,omitempty"`
+	}{set, warnings})
 }
 
 // DeleteAssetSet deletes an asset management set

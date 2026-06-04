@@ -7,6 +7,7 @@ import (
 	"windshift/internal/models"
 	"windshift/internal/restapi"
 	"windshift/internal/restapi/v1/dto"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
 
@@ -28,17 +29,21 @@ func NewMilestoneHandler(db database.Database, permissionService *services.Permi
 	}
 }
 
+// MilestoneResponse — Warnings carries the user-facing strings the
+// frontend surfaces at info severity for any field sanitize had to
+// modify at decode time. omitempty when nothing was modified.
 type MilestoneResponse struct {
-	ID            int    `json:"id"`
-	Name          string `json:"name"`
-	Description   string `json:"description,omitempty"`
-	TargetDate    string `json:"target_date,omitempty"`
-	Status        string `json:"status"`
-	CategoryID    *int   `json:"category_id,omitempty"`
-	CategoryName  string `json:"category_name,omitempty"`
-	CategoryColor string `json:"category_color,omitempty"`
-	CreatedAt     string `json:"created_at"`
-	UpdatedAt     string `json:"updated_at"`
+	ID            int      `json:"id"`
+	Name          string   `json:"name"`
+	Description   string   `json:"description,omitempty"`
+	TargetDate    string   `json:"target_date,omitempty"`
+	Status        string   `json:"status"`
+	CategoryID    *int     `json:"category_id,omitempty"`
+	CategoryName  string   `json:"category_name,omitempty"`
+	CategoryColor string   `json:"category_color,omitempty"`
+	CreatedAt     string   `json:"created_at"`
+	UpdatedAt     string   `json:"updated_at"`
+	Warnings      []string `json:"warnings,omitempty"`
 }
 
 type MilestoneCreateRequest struct {
@@ -168,6 +173,10 @@ func (h *MilestoneHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
+	)
 
 	if !h.ValidateRequiredString(w, r, req.Name, "name") {
 		return
@@ -190,7 +199,9 @@ func (h *MilestoneHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.RespondCreated(w, toMilestoneResponse(m))
+	resp := toMilestoneResponse(m)
+	resp.Warnings = warnings
+	h.RespondCreated(w, resp)
 }
 
 // requireMilestoneAccessByID is the scope-aware permission check for the
@@ -276,6 +287,10 @@ func (h *MilestoneHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
+	)
 
 	var updateTargetDate *string
 	if req.TargetDate != "" {
@@ -300,7 +315,9 @@ func (h *MilestoneHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.RespondOK(w, toMilestoneResponse(m))
+	resp := toMilestoneResponse(m)
+	resp.Warnings = warnings
+	h.RespondOK(w, resp)
 }
 
 // Delete handles DELETE /rest/api/v1/milestones/{id}
@@ -608,6 +625,10 @@ func (h *MilestoneHandler) CreateInWorkspace(w http.ResponseWriter, r *http.Requ
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
+	)
 
 	if !h.ValidateRequiredString(w, r, req.Name, "name") {
 		return
@@ -632,7 +653,9 @@ func (h *MilestoneHandler) CreateInWorkspace(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	h.RespondCreated(w, toMilestoneResponse(m))
+	resp := toMilestoneResponse(m)
+	resp.Warnings = warnings
+	h.RespondCreated(w, resp)
 }
 
 // GetInWorkspace handles GET /rest/api/v1/workspaces/{id}/milestones/{milestoneId}
@@ -698,6 +721,10 @@ func (h *MilestoneHandler) UpdateInWorkspace(w http.ResponseWriter, r *http.Requ
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
+	)
 
 	var updateTargetDate *string
 	if req.TargetDate != "" {
@@ -720,7 +747,9 @@ func (h *MilestoneHandler) UpdateInWorkspace(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	h.RespondOK(w, toMilestoneResponse(updated))
+	resp := toMilestoneResponse(updated)
+	resp.Warnings = warnings
+	h.RespondOK(w, resp)
 }
 
 // DeleteInWorkspace handles DELETE /rest/api/v1/workspaces/{id}/milestones/{milestoneId}
@@ -863,20 +892,22 @@ func NewIterationHandler(db database.Database, permissionService *services.Permi
 	}
 }
 
+// IterationResponse — Warnings: same shape as MilestoneResponse.
 type IterationResponse struct {
-	ID          int    `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	StartDate   string `json:"start_date"`
-	EndDate     string `json:"end_date"`
-	Status      string `json:"status"`
-	TypeID      *int   `json:"type_id,omitempty"`
-	TypeName    string `json:"type_name,omitempty"`
-	TypeColor   string `json:"type_color,omitempty"`
-	IsGlobal    bool   `json:"is_global"`
-	WorkspaceID *int   `json:"workspace_id,omitempty"`
-	CreatedAt   string `json:"created_at"`
-	UpdatedAt   string `json:"updated_at"`
+	ID          int      `json:"id"`
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	StartDate   string   `json:"start_date"`
+	EndDate     string   `json:"end_date"`
+	Status      string   `json:"status"`
+	TypeID      *int     `json:"type_id,omitempty"`
+	TypeName    string   `json:"type_name,omitempty"`
+	TypeColor   string   `json:"type_color,omitempty"`
+	IsGlobal    bool     `json:"is_global"`
+	WorkspaceID *int     `json:"workspace_id,omitempty"`
+	CreatedAt   string   `json:"created_at"`
+	UpdatedAt   string   `json:"updated_at"`
+	Warnings    []string `json:"warnings,omitempty"`
 }
 
 type IterationCreateRequest struct {
@@ -1053,6 +1084,10 @@ func (h *IterationHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
+	)
 
 	if !h.ValidateRequiredString(w, r, req.Name, "name") {
 		return
@@ -1079,7 +1114,9 @@ func (h *IterationHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.RespondCreated(w, toIterationResponse(iter))
+	resp := toIterationResponse(iter)
+	resp.Warnings = warnings
+	h.RespondCreated(w, resp)
 }
 
 // Update handles PUT /rest/api/v1/iterations/{id}
@@ -1111,6 +1148,10 @@ func (h *IterationHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
+	)
 
 	iter, err := h.planningService.UpdateIteration(services.UpdateIterationParams{
 		ID:          id,
@@ -1127,7 +1168,9 @@ func (h *IterationHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.RespondOK(w, toIterationResponse(iter))
+	resp := toIterationResponse(iter)
+	resp.Warnings = warnings
+	h.RespondOK(w, resp)
 }
 
 // Delete handles DELETE /rest/api/v1/iterations/{id}
@@ -1258,6 +1301,10 @@ func (h *IterationHandler) CreateInWorkspace(w http.ResponseWriter, r *http.Requ
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
+	)
 
 	if !h.ValidateRequiredString(w, r, req.Name, "name") {
 		return
@@ -1278,7 +1325,9 @@ func (h *IterationHandler) CreateInWorkspace(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	h.RespondCreated(w, toIterationResponse(iter))
+	resp := toIterationResponse(iter)
+	resp.Warnings = warnings
+	h.RespondCreated(w, resp)
 }
 
 // GetInWorkspace handles GET /rest/api/v1/workspaces/{id}/iterations/{iterationId}
@@ -1344,6 +1393,10 @@ func (h *IterationHandler) UpdateInWorkspace(w http.ResponseWriter, r *http.Requ
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
+	)
 
 	// WorkspaceID scopes the SQL UPDATE to this workspace as defense-in-depth
 	// beyond the URL match above.
@@ -1362,7 +1415,9 @@ func (h *IterationHandler) UpdateInWorkspace(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	h.RespondOK(w, toIterationResponse(updated))
+	resp := toIterationResponse(updated)
+	resp.Warnings = warnings
+	h.RespondOK(w, resp)
 }
 
 // DeleteInWorkspace handles DELETE /rest/api/v1/workspaces/{id}/iterations/{iterationId}

@@ -7,6 +7,7 @@ import (
 
 	"windshift/internal/database"
 	"windshift/internal/restapi"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
 
@@ -25,12 +26,19 @@ func NewAdminGroupHandler(db database.Database, permissionService *services.Perm
 }
 
 // AdminGroupResponse is the admin representation of a group.
+//
+// Warnings carries user-facing strings the frontend toast machinery
+// surfaces at info severity — e.g. "Group name had HTML formatting
+// removed." Stamped by the handler from sanitize.ApplyAllWithWarnings
+// when input was modified at decode time. omitempty so the field
+// disappears entirely when there's nothing to report.
 type AdminGroupResponse struct {
-	ID          int    `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	MemberCount int    `json:"member_count"`
-	CreatedAt   string `json:"created_at"`
+	ID          int      `json:"id"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	MemberCount int      `json:"member_count"`
+	CreatedAt   string   `json:"created_at"`
+	Warnings    []string `json:"warnings,omitempty"`
 }
 
 // AdminGroupCreateRequest is the request body for creating a group.
@@ -68,7 +76,7 @@ func (h *AdminGroupHandler) List(w http.ResponseWriter, r *http.Request) {
 	pagination := h.ParsePagination(r)
 
 	var total int
-	if err := h.db.QueryRow("SELECT COUNT(*) FROM team_groups").Scan(&total); err != nil {
+	if err := h.db.QueryRow("SELECT COUNT(*) FROM groups").Scan(&total); err != nil {
 		h.RespondInternalError(w, r)
 		return
 	}
@@ -77,7 +85,7 @@ func (h *AdminGroupHandler) List(w http.ResponseWriter, r *http.Request) {
 		SELECT g.id, g.name, g.description,
 		       (SELECT COUNT(*) FROM group_members gm WHERE gm.group_id = g.id) AS member_count,
 		       g.created_at
-		FROM team_groups g
+		FROM groups g
 		ORDER BY g.name ASC
 		LIMIT ? OFFSET ?
 	`, pagination.Limit, pagination.Offset)
@@ -138,6 +146,10 @@ func (h *AdminGroupHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Group name"},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
+	)
 
 	if req.Name == "" {
 		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeMissingField, "Group name is required"))
@@ -146,7 +158,7 @@ func (h *AdminGroupHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	var id int
 	err := h.db.QueryRow(`
-		INSERT INTO team_groups (name, description, created_by, created_at, updated_at)
+		INSERT INTO groups (name, description, created_by, created_at, updated_at)
 		VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		RETURNING id
 	`, req.Name, req.Description, user.ID).Scan(&id)
@@ -161,6 +173,7 @@ func (h *AdminGroupHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Description: req.Description,
 		MemberCount: 0,
 		CreatedAt:   time.Now().Format("2006-01-02T15:04:05Z07:00"),
+		Warnings:    warnings,
 	})
 }
 
@@ -195,6 +208,10 @@ func (h *AdminGroupHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: req.Description, Policy: sanitize.RichText},
+	)
 
 	b := NewDynamicUpdateBuilder()
 	b.AddString("name", req.Name)
@@ -205,7 +222,7 @@ func (h *AdminGroupHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	b.AddTimestamp()
 
-	query, args := b.BuildUpdateByID("team_groups", id)
+	query, args := b.BuildUpdateByID("groups", id)
 
 	result, err := h.db.ExecWrite(query, args...)
 	if err != nil {
@@ -250,7 +267,7 @@ func (h *AdminGroupHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// Delete members first, then group
 	_, _ = h.db.ExecWrite("DELETE FROM group_members WHERE group_id = ?", id)
 
-	result, err := h.db.ExecWrite("DELETE FROM team_groups WHERE id = ?", id)
+	result, err := h.db.ExecWrite("DELETE FROM groups WHERE id = ?", id)
 	if err != nil {
 		h.RespondInternalError(w, r)
 		return

@@ -1325,6 +1325,7 @@ func (s *Server) initialize() error {
 		AttachmentPath:         cfg.AttachmentPath,
 		ItemLinkService:        itemLinkHandler.LinkService(),
 		AssetPermissionService: assetHandler.AssetPermissionService(),
+		AssetService:           assetHandler.AssetService(),
 	}, v1.RegisterRoutes)
 
 	// MCP Server (Model Context Protocol) — opt-in via --mcp or MCP_ENABLED=true

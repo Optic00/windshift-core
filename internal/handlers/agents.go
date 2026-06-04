@@ -13,6 +13,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
@@ -288,6 +289,14 @@ func (h *AgentHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Agent first/last name render in mentions, item author bylines,
+	// and the agent picker. Username is identifier-shaped (mention
+	// slug). Email is validated separately as an email address.
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.FirstName, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.LastName, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Username, Policy: sanitize.ShortIdentifier},
+	)
 
 	agent, err := h.CreateOwnedAgent(currentUser.ID, isAdmin, req)
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/utils"
 )
 
@@ -83,8 +84,8 @@ func (h *TestSetHandler) decodeTestSetWrite(w http.ResponseWriter, r *http.Reque
 		return 0, nil, models.TestSet{}, false
 	}
 
-	set.Name = utils.SanitizeTitle(set.Name)
-	set.Description = utils.SanitizeCommentContent(set.Description)
+	set.Name = sanitize.PlainTextField.Sanitize(set.Name)
+	set.Description = sanitize.Comment.Sanitize(set.Description)
 
 	if set.MilestoneID != nil {
 		exists, err := h.repo.MilestoneUsableInWorkspace(*set.MilestoneID, workspaceID)

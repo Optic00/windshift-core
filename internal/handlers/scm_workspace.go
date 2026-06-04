@@ -18,6 +18,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/restapi"
+	"windshift/internal/sanitize"
 	"windshift/internal/scm"
 	"windshift/internal/services"
 	"windshift/internal/sso"
@@ -192,6 +193,13 @@ func (h *SCMWorkspaceHandler) CreateWorkspaceSCMConnection(w http.ResponseWriter
 	if !ok {
 		return
 	}
+	// Branch / item-key patterns are short identifier-shaped strings
+	// (templates like "feature/{{key}}-{{title}}" — placeholders survive
+	// PlainText / ShortIdentifier; only HTML markers get stripped).
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.DefaultBranchPattern, Policy: sanitize.ShortIdentifier, Label: "Default branch pattern"},
+		sanitize.Pair{Target: &req.ItemKeyPattern, Policy: sanitize.ShortIdentifier, Label: "Item key pattern"},
+	)
 
 	if req.SCMProviderID == 0 {
 		respondValidationError(w, r, "scm_provider_id is required")
@@ -257,7 +265,10 @@ func (h *SCMWorkspaceHandler) CreateWorkspaceSCMConnection(w http.ResponseWriter
 		return
 	}
 
-	respondJSONCreated(w, conn)
+	respondJSONCreated(w, struct {
+		*WorkspaceSCMConnectionResponse
+		Warnings []string `json:"warnings,omitempty"`
+	}{conn, warnings})
 }
 
 // GetWorkspaceSCMConnection returns a single SCM connection
@@ -307,6 +318,13 @@ func (h *SCMWorkspaceHandler) UpdateWorkspaceSCMConnection(w http.ResponseWriter
 	if !ok {
 		return
 	}
+	// Pointer fields: sanitize the underlying string if it's set (nil
+	// means "leave unchanged" — sanitize.Apply on a nil pointer is a
+	// no-op).
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: req.DefaultBranchPattern, Policy: sanitize.ShortIdentifier, Label: "Default branch pattern"},
+		sanitize.Pair{Target: req.ItemKeyPattern, Policy: sanitize.ShortIdentifier, Label: "Item key pattern"},
+	)
 
 	// Verify connection exists and belongs to this workspace
 	conn, err := h.getConnectionByID(connID)
@@ -364,7 +382,10 @@ func (h *SCMWorkspaceHandler) UpdateWorkspaceSCMConnection(w http.ResponseWriter
 		return
 	}
 
-	respondJSONOK(w, conn)
+	respondJSONOK(w, struct {
+		*WorkspaceSCMConnectionResponse
+		Warnings []string `json:"warnings,omitempty"`
+	}{conn, warnings})
 }
 
 // DeleteWorkspaceSCMConnection deletes an SCM connection
@@ -656,6 +677,14 @@ func (h *SCMWorkspaceHandler) LinkRepository(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
+	// RepositoryName renders in repo picker / item link panels; the
+	// branch ref is identifier-shaped. ExternalID + URL are SCM-side
+	// values validated separately.
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.RepositoryName, Policy: sanitize.PlainTextField, Label: "Repository name"},
+		sanitize.Pair{Target: &req.DefaultBranch, Policy: sanitize.ShortIdentifier, Label: "Default branch"},
+	)
+	_ = warnings // response is built ad-hoc below; warnings surfacing is a follow-up.
 
 	if req.RepositoryExternalID == "" || req.RepositoryName == "" || req.RepositoryURL == "" {
 		respondValidationError(w, r, "repository_external_id, repository_name, and repository_url are required")
@@ -817,6 +846,13 @@ func (h *SCMWorkspaceHandler) UpdateRepository(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
+	// Milestone tag/branch patterns are short identifier-shaped globs
+	// (e.g. "v*", "release/{{milestone}}"). Sanitize in place; nil
+	// pointers are no-ops.
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: req.MilestoneTagPattern, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: req.MilestoneBranchPattern, Policy: sanitize.ShortIdentifier},
+	)
 
 	// Build a dynamic UPDATE so unset fields aren't overwritten. Reject
 	// empty strings explicitly — they would disable detection silently.

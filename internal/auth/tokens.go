@@ -124,6 +124,14 @@ var DefaultAgentScopes = []string{
 	ScopeMilestonesRead, ScopeIterationsRead, ScopeProjectsRead,
 	ScopePagesRead, ScopePagesWrite, ScopePagesDelete,
 	ScopeTestsRead, ScopeTestsWrite,
+	// assets:read + assets:write are default-on; the per-set asset role
+	// model (Viewer / Editor / Administrator on each asset_management_set,
+	// enforced by services.AssetPermissionService) is the real guard, so
+	// the scope flag alone never grants access to a set the user can't
+	// already act on. assets:delete is opt-in only — matches items:delete
+	// posture and the original asset-api-v1-security-review-2026-06-03
+	// finding 1 concern that legacy 'write' shouldn't silently grant
+	// destructive ops.
 	ScopeAssetsRead, ScopeAssetsWrite,
 	ScopeMCPAccess,
 }
@@ -151,6 +159,10 @@ var AllValidScopes = []string{
 }
 
 // allNonAdminReadScopes is the set of non-admin :read scopes (for legacy "read" mapping).
+// assets:read is included: the per-set asset role model is the real guard,
+// so a legacy read-scoped token can never reach a set the user isn't
+// authorized on. (Legacy 'read' still can't reach assets:write or
+// assets:delete — those require an explicit upgrade.)
 var allNonAdminReadScopes = []string{
 	ScopeItemsRead, ScopeWorkspacesRead, ScopeStatusesRead,
 	ScopeWorkflowsRead, ScopeItemTypesRead, ScopePrioritiesRead,
@@ -161,6 +173,11 @@ var allNonAdminReadScopes = []string{
 }
 
 // allNonAdminScopes is the set of all non-admin scopes (for legacy "write" mapping).
+// assets:read + assets:write are included (the per-set role guard applies).
+// assets:delete is deliberately excluded so legacy 'write' doesn't silently
+// grant destructive ops — matches the items posture and the spirit of
+// asset-api-v1-security-review-2026-06-03 finding 1 around destructive
+// auto-grants.
 var allNonAdminScopes = []string{
 	ScopeItemsRead, ScopeItemsWrite, ScopeItemsDelete,
 	ScopeWorkspacesRead, ScopeWorkspacesWrite, ScopeWorkspacesDelete,
@@ -175,7 +192,7 @@ var allNonAdminScopes = []string{
 	ScopeActionsRead, ScopeActionsWrite,
 	ScopePagesRead, ScopePagesWrite, ScopePagesDelete,
 	ScopeTestsRead, ScopeTestsWrite,
-	ScopeAssetsRead, ScopeAssetsWrite, ScopeAssetsDelete,
+	ScopeAssetsRead, ScopeAssetsWrite,
 }
 
 // AdminScopes returns the set of scopes that require system admin role.

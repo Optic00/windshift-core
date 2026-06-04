@@ -7,6 +7,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/utils"
 )
 
@@ -65,10 +66,10 @@ func (h *LinkTypeHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Sanitize user input
-	lt.Name = utils.SanitizeTitle(lt.Name)
-	lt.Description = utils.SanitizeCommentContent(lt.Description)
-	lt.ForwardLabel = utils.SanitizeTitle(lt.ForwardLabel)
-	lt.ReverseLabel = utils.SanitizeTitle(lt.ReverseLabel)
+	lt.Name = sanitize.PlainTextField.Sanitize(lt.Name)
+	lt.Description = sanitize.Comment.Sanitize(lt.Description)
+	lt.ForwardLabel = sanitize.PlainTextField.Sanitize(lt.ForwardLabel)
+	lt.ReverseLabel = sanitize.PlainTextField.Sanitize(lt.ReverseLabel)
 
 	// Set defaults
 	if lt.Color == "" {
@@ -112,10 +113,10 @@ func (h *LinkTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lt.Name = utils.SanitizeTitle(lt.Name)
-	lt.Description = utils.SanitizeCommentContent(lt.Description)
-	lt.ForwardLabel = utils.SanitizeTitle(lt.ForwardLabel)
-	lt.ReverseLabel = utils.SanitizeTitle(lt.ReverseLabel)
+	lt.Name = sanitize.PlainTextField.Sanitize(lt.Name)
+	lt.Description = sanitize.Comment.Sanitize(lt.Description)
+	lt.ForwardLabel = sanitize.PlainTextField.Sanitize(lt.ForwardLabel)
+	lt.ReverseLabel = sanitize.PlainTextField.Sanitize(lt.ReverseLabel)
 
 	now, err := h.repo.Update(id, &lt)
 	if err != nil {

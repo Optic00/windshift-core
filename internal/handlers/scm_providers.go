@@ -11,6 +11,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
 	"windshift/internal/scm"
 	"windshift/internal/sso"
 	"windshift/internal/utils"
@@ -120,6 +121,14 @@ func (h *SCMProviderHandler) CreateProvider(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
+	// Name + Slug are user-facing labels on the provider admin surface
+	// and routing keys. Secrets (OAuthClientSecret, PersonalAccessToken,
+	// GitHubAppPrivateKey) and ProviderType / AuthMethod enums are
+	// deliberately untouched.
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &req.Slug, Policy: sanitize.ShortIdentifier, Label: "Slug"},
+	)
 
 	// Validate required fields
 	if req.Slug == "" || req.Name == "" || req.ProviderType == "" || req.AuthMethod == "" {
@@ -231,7 +240,10 @@ func (h *SCMProviderHandler) CreateProvider(w http.ResponseWriter, r *http.Reque
 		providerID := int(id)
 		logAudit(h.db, r, user, logger.ActionSCMProviderCreate, logger.ResourceSCMProvider, &providerID, provider.Name)
 	}
-	respondJSONCreated(w, provider)
+	respondJSONCreated(w, struct {
+		*SCMProviderResponse
+		Warnings []string `json:"warnings,omitempty"`
+	}{provider, warnings})
 }
 
 // UpdateProvider updates an existing SCM provider
@@ -247,6 +259,10 @@ func (h *SCMProviderHandler) UpdateProvider(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &req.Slug, Policy: sanitize.ShortIdentifier, Label: "Slug"},
+	)
 
 	// Check if provider exists
 	_, err = h.getProviderByID(id)
@@ -383,7 +399,10 @@ func (h *SCMProviderHandler) UpdateProvider(w http.ResponseWriter, r *http.Reque
 	if user := utils.GetCurrentUser(r); user != nil {
 		logAudit(h.db, r, user, logger.ActionSCMProviderUpdate, logger.ResourceSCMProvider, &id, provider.Name)
 	}
-	respondJSONOK(w, provider)
+	respondJSONOK(w, struct {
+		*SCMProviderResponse
+		Warnings []string `json:"warnings,omitempty"`
+	}{provider, warnings})
 }
 
 // DeleteProvider deletes an SCM provider

@@ -12,6 +12,7 @@ import (
 
 	"windshift/internal/database"
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
@@ -262,6 +263,10 @@ func (h *BoardConfigurationHandler) CreateForCollection(w http.ResponseWriter, r
 	if !ok {
 		return
 	}
+	// Each board column carries a user-facing Name + Color. Color is
+	// a CSS value (hex / rgb) — ShortIdentifier matches the slice 1
+	// precedent for asset types.
+	sanitizeBoardColumnRequests(req.Columns)
 
 	slog.Info("creating board configuration", "id", id, "columns_count", len(req.Columns), "backlog_status_ids", req.BacklogStatusIDs)
 
@@ -380,6 +385,7 @@ func (h *BoardConfigurationHandler) UpdateForCollection(w http.ResponseWriter, r
 	if !ok {
 		return
 	}
+	sanitizeBoardColumnRequests(req.Columns)
 
 	slog.Info("updating board configuration", "config_id", configID, "columns_count", len(req.Columns), "backlog_status_ids", req.BacklogStatusIDs)
 
@@ -768,4 +774,17 @@ func (h *BoardConfigurationHandler) createColumns(tx database.Tx, configID int, 
 		}
 	}
 	return nil
+}
+
+// sanitizeBoardColumnRequests scrubs the user-facing fields on each
+// column in a Create/Update payload. Name is the column label; Color is
+// a CSS hex/rgb value (ShortIdentifier matches the slice-1 precedent
+// for asset types and statuses).
+func sanitizeBoardColumnRequests(cols []models.BoardColumnRequest) {
+	for i := range cols {
+		sanitize.ApplyAll(
+			sanitize.Pair{Target: &cols[i].Name, Policy: sanitize.PlainTextField},
+			sanitize.Pair{Target: &cols[i].Color, Policy: sanitize.ShortIdentifier},
+		)
+	}
 }

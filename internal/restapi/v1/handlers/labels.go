@@ -8,8 +8,8 @@ import (
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
-	"windshift/internal/utils"
 )
 
 // LabelHandler exposes workspace item-label CRUD and item↔label attachment
@@ -117,7 +117,7 @@ func (h *LabelHandler) CreateInWorkspace(w http.ResponseWriter, r *http.Request)
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
-	name := utils.SanitizeName(req.Name)
+	name := sanitize.ShortIdentifier.Sanitize(req.Name)
 	if !h.ValidateRequiredString(w, r, name, "name") {
 		return
 	}
@@ -226,7 +226,7 @@ func (h *LabelHandler) UpdateInWorkspace(w http.ResponseWriter, r *http.Request)
 
 	name := existing.Name
 	if req.Name != nil {
-		name = utils.SanitizeName(*req.Name)
+		name = sanitize.ShortIdentifier.Sanitize(*req.Name)
 		if name == "" {
 			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeMissingField, "name is required"))
 			return

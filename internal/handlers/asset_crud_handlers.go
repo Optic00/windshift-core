@@ -10,10 +10,9 @@ import (
 	"time"
 
 	"windshift/internal/cql"
-	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
-	"windshift/internal/utils"
+	"windshift/internal/services"
 )
 
 // validateResourceBelongsToSet checks that a resource (by table name) with resourceID belongs to setID.
@@ -215,9 +214,9 @@ func (h *AssetHandler) CreateAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Sanitize user input to prevent XSS
-	req.Title = utils.StripHTMLTags(req.Title)
-	req.Description = utils.SanitizeDescription(req.Description)
+	// Input sanitization (XSS) happens in AssetService so the v1 (bearer)
+	// and cookie-auth surfaces share one policy; see sanitizeAssetText
+	// in internal/services/asset_service.go.
 
 	if req.CategoryID != nil {
 		if !h.validateResourceBelongsToSet(w, r, "asset_categories", *req.CategoryID, setID, "Category") {
@@ -241,55 +240,31 @@ func (h *AssetHandler) CreateAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := time.Now()
-	assetID, err := h.repo.CreateAsset(repository.CreateAssetInput{
-		SetID:                 setID,
-		AssetTypeID:           req.AssetTypeID,
-		CategoryID:            req.CategoryID,
-		StatusID:              statusID,
-		Title:                 req.Title,
-		Description:           req.Description,
-		AssetTag:              req.AssetTag,
-		CustomFieldValuesJSON: customFieldValuesJSON,
-		CreatedBy:             currentUser.ID,
-		CreatedAt:             now,
-	})
+	asset, err := h.assetService.CreateAsset(
+		services.NewAuditActorFromRequest(r, currentUser, nil, "cookie"),
+		repository.CreateAssetInput{
+			SetID:                 setID,
+			AssetTypeID:           req.AssetTypeID,
+			CategoryID:            req.CategoryID,
+			StatusID:              statusID,
+			Title:                 req.Title,
+			Description:           req.Description,
+			AssetTag:              req.AssetTag,
+			CustomFieldValuesJSON: customFieldValuesJSON,
+			CreatedBy:             currentUser.ID,
+			CreatedAt:             time.Now(),
+		},
+		req.CustomFieldValues,
+	)
+	if ve, ok := services.IsAssetValidationError(err); ok {
+		respondValidationError(w, r, ve.Msg)
+		return
+	}
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
-
-	logAudit(h.db, r, currentUser, logger.ActionAssetCreate, logger.ResourceAsset, &assetID, req.Title)
-
-	// Emit asset action event for automation
-	if h.assetActionService != nil {
-		h.assetActionService.EmitAssetActionEvent(&models.AssetActionEvent{
-			EventType:   models.AssetTriggerAssetCreated,
-			SetID:       setID,
-			AssetID:     assetID,
-			ActorUserID: currentUser.ID,
-			NewValues: map[string]interface{}{
-				"title":         req.Title,
-				"asset_type_id": req.AssetTypeID,
-				"status_id":     statusID,
-			},
-		})
-	}
-
-	respondJSONCreated(w, models.Asset{
-		ID:                assetID,
-		SetID:             setID,
-		AssetTypeID:       req.AssetTypeID,
-		CategoryID:        req.CategoryID,
-		StatusID:          statusID,
-		Title:             req.Title,
-		Description:       req.Description,
-		AssetTag:          req.AssetTag,
-		CustomFieldValues: req.CustomFieldValues,
-		CreatedBy:         &currentUser.ID,
-		CreatedAt:         now,
-		UpdatedAt:         now,
-	})
+	respondJSONCreated(w, asset)
 }
 
 // UpdateAssetRequest represents the request body for updating an asset
@@ -350,9 +325,9 @@ func (h *AssetHandler) UpdateAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Sanitize user input to prevent XSS
-	req.Title = utils.StripHTMLTags(req.Title)
-	req.Description = utils.SanitizeDescription(req.Description)
+	// Input sanitization (XSS) happens in AssetService so the v1 (bearer)
+	// and cookie-auth surfaces share one policy; see sanitizeAssetText
+	// in internal/services/asset_service.go.
 
 	if !h.validateResourceBelongsToSet(w, r, "asset_types", req.AssetTypeID, snap.SetID, "Asset type") {
 		return
@@ -373,63 +348,29 @@ func (h *AssetHandler) UpdateAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.repo.UpdateAsset(assetID, repository.UpdateAssetInput{
-		AssetTypeID:           req.AssetTypeID,
-		CategoryID:            req.CategoryID,
-		StatusID:              req.StatusID,
-		Title:                 req.Title,
-		Description:           req.Description,
-		AssetTag:              req.AssetTag,
-		CustomFieldValuesJSON: customFieldValuesJSON,
-	})
+	asset, err := h.assetService.UpdateAsset(
+		services.NewAuditActorFromRequest(r, currentUser, nil, "cookie"),
+		assetID,
+		*snap,
+		repository.UpdateAssetInput{
+			AssetTypeID:           req.AssetTypeID,
+			CategoryID:            req.CategoryID,
+			StatusID:              req.StatusID,
+			Title:                 req.Title,
+			Description:           req.Description,
+			AssetTag:              req.AssetTag,
+			CustomFieldValuesJSON: customFieldValuesJSON,
+		},
+		req.CustomFieldValues,
+	)
 	if errors.Is(err, repository.ErrNotFound) {
 		respondNotFound(w, r, "asset")
 		return
 	}
-	if err != nil {
-		respondInternalError(w, r, err)
+	if ve, ok := services.IsAssetValidationError(err); ok {
+		respondValidationError(w, r, ve.Msg)
 		return
 	}
-
-	logAudit(h.db, r, currentUser, logger.ActionAssetUpdate, logger.ResourceAsset, &assetID, req.Title)
-
-	// Emit asset action events for automation
-	if h.assetActionService != nil {
-		oldSID := 0
-		if snap.StatusID.Valid {
-			oldSID = int(snap.StatusID.Int64)
-		}
-		newSID := 0
-		if req.StatusID != nil {
-			newSID = *req.StatusID
-		}
-		statusChanged := oldSID != newSID
-
-		if statusChanged {
-			h.assetActionService.EmitAssetActionEvent(&models.AssetActionEvent{
-				EventType:   models.AssetTriggerAssetStatusChanged,
-				SetID:       snap.SetID,
-				AssetID:     assetID,
-				ActorUserID: currentUser.ID,
-				OldValues:   map[string]interface{}{"status_id": oldSID},
-				NewValues:   map[string]interface{}{"status_id": newSID},
-			})
-		}
-
-		h.assetActionService.EmitAssetActionEvent(&models.AssetActionEvent{
-			EventType:   models.AssetTriggerAssetUpdated,
-			SetID:       snap.SetID,
-			AssetID:     assetID,
-			ActorUserID: currentUser.ID,
-			NewValues: map[string]interface{}{
-				"title":         req.Title,
-				"asset_type_id": req.AssetTypeID,
-				"status_id":     req.StatusID,
-			},
-		})
-	}
-
-	asset, err := h.loadFullAsset(assetID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -443,8 +384,7 @@ func (h *AssetHandler) DeleteAsset(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-
-	setID, title, err := h.repo.GetAssetSetAndTitle(assetID)
+	err := h.assetService.DeleteAsset(services.NewAuditActorFromRequest(r, currentUser, nil, "cookie"), assetID)
 	if errors.Is(err, repository.ErrNotFound) {
 		respondNotFound(w, r, "asset")
 		return
@@ -453,29 +393,5 @@ func (h *AssetHandler) DeleteAsset(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
-
-	if err := h.repo.DeleteAssetWithLinks(assetID); err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			respondNotFound(w, r, "asset")
-			return
-		}
-		respondInternalError(w, r, err)
-		return
-	}
-
-	logAudit(h.db, r, currentUser, logger.ActionAssetDelete, logger.ResourceAsset, &assetID, title)
-
-	if h.assetActionService != nil {
-		h.assetActionService.EmitAssetActionEvent(&models.AssetActionEvent{
-			EventType:   models.AssetTriggerAssetDeleted,
-			SetID:       setID,
-			AssetID:     assetID,
-			ActorUserID: currentUser.ID,
-			OldValues: map[string]interface{}{
-				"title": title,
-			},
-		})
-	}
-
 	w.WriteHeader(http.StatusNoContent)
 }

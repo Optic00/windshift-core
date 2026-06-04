@@ -1215,7 +1215,13 @@ func (o *Output) printAssetDetailTable(w *tabwriter.Writer, a *Asset) {
 		_, _ = fmt.Fprintf(w, "Category:\t%s\n", a.Category.Name)
 	}
 	if a.Creator != nil {
-		_, _ = fmt.Fprintf(w, "Creator:\t%s\n", a.Creator.Email)
+		// v1 asset surface no longer exposes creator.email under
+		// assets:read; render the display name (id as fallback) instead.
+		name := a.Creator.Name
+		if name == "" {
+			name = fmt.Sprintf("#%d", a.Creator.ID)
+		}
+		_, _ = fmt.Fprintf(w, "Creator:\t%s\n", name)
 	}
 	if a.LinkedItemCount > 0 {
 		_, _ = fmt.Fprintf(w, "Linked items:\t%d\n", a.LinkedItemCount)

@@ -459,13 +459,18 @@ func RegisterRoutes(deps restapi.Deps) {
 	// the asset-actions automation graphs stay admin-UI-only in this slice;
 	// follow-ups can promote subsets behind explicit asset-sets:write etc.
 	// ============================================
+	assetRepo := repository.NewAssetRepository(db)
 	assetPermSvc := deps.AssetPermissionService
 	if assetPermSvc == nil {
 		// Nil-safe fallback for embedders that haven't wired the shared
 		// service yet — construct a fresh one so asset routes still serve.
-		assetPermSvc = services.NewAssetPermissionService(repository.NewAssetRepository(db), permissionService)
+		assetPermSvc = services.NewAssetPermissionService(assetRepo, permissionService)
 	}
-	assetHandler := handlers.NewAssetHandler(db, permissionService, assetPermSvc)
+	assetSvc := deps.AssetService
+	if assetSvc == nil {
+		assetSvc = services.NewAssetService(db, assetRepo)
+	}
+	assetHandler := handlers.NewAssetHandler(db, permissionService, assetPermSvc, assetSvc)
 
 	// Asset entities
 	v1.HandleWithMiddleware("GET /asset-sets/{setId}/assets", assetHandler.List, bearerAuth.RequirePermission("assets:read"))

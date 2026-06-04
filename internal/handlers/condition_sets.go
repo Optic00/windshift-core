@@ -13,6 +13,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
 )
 
 // ConditionSetHandler handles CRUD for condition sets
@@ -401,6 +402,12 @@ func (h *ConditionSetHandler) getConditionSetForEdit(w http.ResponseWriter, r *h
 		respondValidationError(w, r, "Invalid request body")
 		return nil, models.ConditionSet{}, false
 	}
+	// Condition set Name labels the gating rule in workflow editors;
+	// Description surfaces in the condition-set directory.
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &input.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &input.Description, Policy: sanitize.RichText},
+	)
 
 	if input.Name == "" {
 		respondValidationError(w, r, "Name is required")

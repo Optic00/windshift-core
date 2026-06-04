@@ -12,6 +12,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
@@ -362,6 +363,11 @@ func (h *TimeProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &p.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &p.Description, Policy: sanitize.RichText, Label: "Description"},
+		sanitize.Pair{Target: &p.Color, Policy: sanitize.ShortIdentifier, Label: "Color"},
+	)
 
 	// Set default status if not provided
 	if p.Status == "" {
@@ -396,7 +402,10 @@ func (h *TimeProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 		logAudit(h.db, r, currentUser, logger.ActionTimeProjectCreate, logger.ResourceTimeProject, &projectID, p.Name)
 	}
 
-	respondJSONCreated(w, p)
+	respondJSONCreated(w, struct {
+		models.TimeProject
+		Warnings []string `json:"warnings,omitempty"`
+	}{p, warnings})
 }
 
 func (h *TimeProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
@@ -428,6 +437,11 @@ func (h *TimeProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &p.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &p.Description, Policy: sanitize.RichText, Label: "Description"},
+		sanitize.Pair{Target: &p.Color, Policy: sanitize.ShortIdentifier, Label: "Color"},
+	)
 
 	// Validate customer and category references
 	if !h.validateTimeProjectReferences(w, r, p.CustomerID, p.CategoryID) {
@@ -457,7 +471,10 @@ func (h *TimeProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
 		logAudit(h.db, r, currentUser, logger.ActionTimeProjectUpdate, logger.ResourceTimeProject, &id, p.Name)
 	}
 
-	respondJSONOK(w, p)
+	respondJSONOK(w, struct {
+		models.TimeProject
+		Warnings []string `json:"warnings,omitempty"`
+	}{p, warnings})
 }
 
 func (h *TimeProjectHandler) Delete(w http.ResponseWriter, r *http.Request) {

@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
-	"windshift/internal/utils"
 )
 
 // resolvePortalRequest is a shared preamble for handlers that operate on a
@@ -224,7 +224,7 @@ func (h *PortalHandler) AddRequestComment(w http.ResponseWriter, r *http.Request
 	}
 
 	// Sanitize comment content to prevent XSS (strips HTML tags + dangerous Markdown URLs)
-	sanitizedContent := utils.SanitizeCommentContent(commentData.Content)
+	sanitizedContent := sanitize.Comment.Sanitize(commentData.Content)
 
 	comment, err := h.portalService.CreateRequestComment(ctx, itemID, sanitizedContent, internalUserID, portalCustomerID)
 	if err != nil {

@@ -10,6 +10,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
 
@@ -167,6 +168,12 @@ func (h *ApprovalSetHandler) decodeForEdit(w http.ResponseWriter, r *http.Reques
 		respondValidationError(w, r, "Invalid request body")
 		return nil, models.ApprovalSet{}, false
 	}
+	// Approval set Name labels gating templates in workflow editors;
+	// Description renders in the approval-set directory.
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &input.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &input.Description, Policy: sanitize.RichText},
+	)
 	if input.Name == "" {
 		respondValidationError(w, r, "Name is required")
 		return nil, models.ApprovalSet{}, false

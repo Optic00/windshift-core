@@ -10,6 +10,7 @@ import (
 
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
+	"windshift/internal/sanitize"
 )
 
 // draftIdentityFromContext converts the (internalUserID, portalCustomerID)
@@ -94,6 +95,14 @@ func (h *PortalHandler) SaveDraft(w http.ResponseWriter, r *http.Request) {
 		respondBadRequest(w, r, "Invalid draft body")
 		return
 	}
+	// Drafts are submitted by portal customers and stored; both fields
+	// surface in the portal draft preview and on the eventual ticket
+	// once submitted. CustomFields is an opaque JSON blob — sanitized
+	// when the draft is promoted to an item, not here.
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &body.Title, Policy: sanitize.PlainTextField, Label: "Title"},
+		sanitize.Pair{Target: &body.Description, Policy: sanitize.RichText, Label: "Description"},
+	)
 	if body.RequestTypeID == nil {
 		respondValidationError(w, r, "request_type_id is required")
 		return
@@ -116,7 +125,11 @@ func (h *PortalHandler) SaveDraft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSONOK(w, draftResponse(draft))
+	resp := draftResponse(draft)
+	if len(warnings) > 0 {
+		resp["warnings"] = warnings
+	}
+	respondJSONOK(w, resp)
 }
 
 // GetMyDrafts returns every draft the caller has open in this portal,

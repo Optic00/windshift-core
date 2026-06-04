@@ -12,6 +12,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 
@@ -173,6 +174,14 @@ func (h *UserHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Names render in member lists, mentions, comment author bylines,
+	// and audit log entries. Username is identifier-shaped (URL slug
+	// for @mentions). AvatarURL is validated separately as a URL.
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.FirstName, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.LastName, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Username, Policy: sanitize.ShortIdentifier},
+	)
 
 	if err := utils.Validate(req); err != nil {
 		respondValidationError(w, r, err.Error())
@@ -263,6 +272,11 @@ func (h *UserHandler) InviteUser(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.FirstName, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.LastName, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Username, Policy: sanitize.ShortIdentifier},
+	)
 
 	if err := utils.Validate(req); err != nil {
 		respondValidationError(w, r, err.Error())
@@ -349,6 +363,13 @@ func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.FirstName, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.LastName, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Username, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.Timezone, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.Language, Policy: sanitize.ShortIdentifier},
+	)
 
 	if err := utils.Validate(req); err != nil {
 		respondValidationError(w, r, err.Error())
@@ -543,6 +564,10 @@ func (h *UserHandler) UpdateRegionalSettings(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Timezone, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.Language, Policy: sanitize.ShortIdentifier},
+	)
 
 	old, err := h.repo.GetRegionalSnapshot(id)
 	if errors.Is(err, repository.ErrNotFound) {
