@@ -292,6 +292,27 @@ func (s *BindingService) MaybeStartRunForAssignee(ctx context.Context, workspace
 		}
 	}
 
+	// Remote pool binding: persist a queued run for the pool and stop. The
+	// per-run token, grants, and runner env are derived at claim time by the
+	// remote claim path (RunService.PrepareRemoteClaim → ResolveRunInputs);
+	// none of the local worktree/clone-URL/secret resolution below applies,
+	// since a remote runner reaches git/llm/secrets through the brokers, not
+	// host-side credentials (WI-195).
+	if binding.TargetPoolID != nil {
+		runID, err := s.runs.Start(ctx, RunRequest{
+			WorkspaceID:  workspaceID,
+			ItemID:       &itemID,
+			BindingID:    binding.ID,
+			TargetPoolID: binding.TargetPoolID,
+			JobKind:      models.JobKindCodingAgent,
+		})
+		if err != nil {
+			return fmt.Errorf("start remote run: %w", err)
+		}
+		s.logger.Printf("binding service: queued remote run=%d for item=%d binding=%d pool=%d", runID, itemID, binding.ID, *binding.TargetPoolID)
+		return nil
+	}
+
 	env, err := s.buildRunEnv(ctx, workspaceID, itemID)
 	if err != nil {
 		return err
@@ -344,34 +365,11 @@ func (s *BindingService) MaybeStartRunForAssignee(ctx context.Context, workspace
 		}
 		applyLLMRuntimeEnv(req.Env, llmCfg)
 	}
-	// Mint a per-run ws token only if the RunService has a token service
-	// configured; otherwise the binding still fires but the container
-	// runs without WS_TOKEN. Phase 6 (WI-89) wires the full env path.
-	if binding.ActingUserID > 0 && s.runs.HasTokens() {
-		req.Token = &TokenSpec{
-			ActingUserID: binding.ActingUserID,
-			Scopes:       binding.TokenScopes,
-			TTL:          time.Duration(binding.TokenTTLMinutes) * time.Minute,
-			Name:         fmt.Sprintf("agent-run:item-%d:binding-%d", itemID, binding.ID),
-		}
-	}
-
-	// Snapshot the run's access-layer grants (WI-144) so the git/llm brokers
-	// can authorize the run server-side. Bound to the minted run-token, so
-	// only meaningful when a token is issued. The git ref is filled at claim
-	// from the worktree branch.
-	if req.Token != nil {
-		grants := &models.RunGrants{}
-		if binding.HasRepo() {
-			grants.Git = &models.GitGrant{Repo: binding.RepoSlug, ConnectionID: *binding.SCMConnectionID}
-		}
-		if binding.LLMConnectionID != nil {
-			grants.LLM = &models.LLMGrant{ConnectionID: *binding.LLMConnectionID}
-		}
-		if grants.Git != nil || grants.LLM != nil {
-			req.Grants = grants
-		}
-	}
+	// Mint a per-run ws token + snapshot the run's access-layer grants
+	// (WI-144). Shared with the remote claim path via bindingTokenAndGrants so
+	// both transports derive identical inputs (WI-195). The git ref is filled
+	// at claim from the prepared worktree branch.
+	req.Token, req.Grants = s.bindingTokenAndGrants(binding, itemID)
 
 	runID, err := s.runs.Start(ctx, req)
 	if err != nil {
@@ -379,6 +377,62 @@ func (s *BindingService) MaybeStartRunForAssignee(ctx context.Context, workspace
 	}
 	s.logger.Printf("binding service: started run=%d for item=%d binding=%d acting_user=%d", runID, itemID, binding.ID, binding.ActingUserID)
 	return nil
+}
+
+// bindingTokenAndGrants derives the per-run token spec and access-layer
+// grants from a binding, shared by the local Start path and the remote claim
+// enrichment (WI-195). Returns (nil, nil) when the binding mints no token (no
+// acting user, or no token service configured) — grants are meaningful only
+// when bound to a token. The git grant's Ref is left empty here; the claim
+// path fills it (the worktree branch locally, the run-branch namespace
+// remotely).
+func (s *BindingService) bindingTokenAndGrants(b *models.WorkspaceAgentBinding, itemID int) (*TokenSpec, *models.RunGrants) {
+	if b.ActingUserID <= 0 || !s.runs.HasTokens() {
+		return nil, nil
+	}
+	spec := &TokenSpec{
+		ActingUserID: b.ActingUserID,
+		Scopes:       b.TokenScopes,
+		TTL:          time.Duration(b.TokenTTLMinutes) * time.Minute,
+		Name:         fmt.Sprintf("agent-run:item-%d:binding-%d", itemID, b.ID),
+	}
+	grants := &models.RunGrants{}
+	if b.HasRepo() {
+		grants.Git = &models.GitGrant{Repo: b.RepoSlug, ConnectionID: *b.SCMConnectionID}
+	}
+	if b.LLMConnectionID != nil {
+		grants.LLM = &models.LLMGrant{ConnectionID: *b.LLMConnectionID}
+	}
+	if grants.Git == nil && grants.LLM == nil {
+		return spec, nil
+	}
+	return spec, grants
+}
+
+// ResolveRunInputs implements RunService.BindingInputsResolver: it derives a
+// binding-backed run's token spec, access grants, and runner context env at
+// remote claim time, mirroring the local Start derivation. Secrets are NOT
+// injected into env — a remote runner reaches git/llm/secrets through the
+// brokers using its per-run token (WI-195). Returns (nil, nil, nil, nil) for
+// a run with no binding (e.g. action_container).
+func (s *BindingService) ResolveRunInputs(ctx context.Context, run *models.AgentRun) (*TokenSpec, *models.RunGrants, map[string]string, error) {
+	if run == nil || run.BindingID == nil {
+		return nil, nil, nil, nil
+	}
+	binding, err := s.repo.Get(ctx, *run.BindingID)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("resolve run inputs: load binding %d: %w", *run.BindingID, err)
+	}
+	itemID := 0
+	if run.ItemID != nil {
+		itemID = *run.ItemID
+	}
+	env, err := s.buildRunEnv(ctx, run.WorkspaceID, itemID)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("resolve run inputs: build env: %w", err)
+	}
+	spec, grants := s.bindingTokenAndGrants(binding, itemID)
+	return spec, grants, env, nil
 }
 
 func (s *BindingService) buildRunEnv(ctx context.Context, workspaceID, itemID int) (map[string]string, error) {

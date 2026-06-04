@@ -701,6 +701,12 @@ func (s *Server) initialize() error {
 		RunContext: agentBindingRepo,
 		APIURL:     agentAPIURL,
 	})
+	// Let the run service enrich remote claims from the binding (WI-195): a
+	// remote runner's claim mints the per-run token + grants the same way the
+	// local path does. Wired post-construction to break the service cycle.
+	if codingRunSvc != nil && bindingSvc != nil {
+		codingRunSvc.SetBindingInputsResolver(bindingSvc)
+	}
 	agentBindingHandler := handlers.NewWorkspaceAgentBindingHandler(bindingSvc, agentIdentitySvc, permService, logger.NewAuditor(s.db))
 	agentRunHandler := handlers.NewAgentRunHandler(repository.NewAgentRunRepository(s.db), codingRunSvc, permService)
 	// Remote-runner control plane (WI-141). Constructed unconditionally:

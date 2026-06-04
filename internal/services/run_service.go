@@ -117,6 +117,12 @@ type RunRequest struct {
 	// JobImage as a plain container.
 	JobKind  string
 	JobImage string
+	// TargetPoolID, when set, routes the run to a remote runner_pool instead
+	// of the local in-process pool (WI-195). A remote run is persisted queued
+	// for the pool and enriched (token + grants + env) at claim time by the
+	// remote claim path, so Repo/Token/Grants/Env on this request are ignored
+	// for remote runs — the orchestrator never sees the work locally.
+	TargetPoolID *int
 }
 
 // TokenSpec is the per-run input to RunTokenService.Mint. Phase 4-5 wire
@@ -162,6 +168,16 @@ type PostRunInfo struct {
 	BaseCommit  string
 }
 
+// BindingInputsResolver derives a binding-backed run's per-run token spec,
+// access grants, and runner env at remote claim time, so a remote claim
+// prepares the run the same way the local Start path does (WI-195).
+// BindingService implements it. It returns (nil, nil, env, nil) for a run
+// whose binding mints no token, and (nil, nil, nil, nil) for a run with no
+// binding (e.g. action_container) — neither gets token/grant enrichment.
+type BindingInputsResolver interface {
+	ResolveRunInputs(ctx context.Context, run *models.AgentRun) (*TokenSpec, *models.RunGrants, map[string]string, error)
+}
+
 // PostRunHook is the optional post-finalize callback. Errors are logged
 // and swallowed by RunService — a misbehaving hook must not affect the
 // run's recorded status.
@@ -200,6 +216,17 @@ type RunService struct {
 	inflight   map[int]context.CancelFunc
 	claimsMu   sync.Mutex
 	claims     map[int]*claimState
+
+	// bindingInputs derives token/grants/env for a binding-backed run at
+	// remote claim time (WI-195). Optional; set via SetBindingInputsResolver
+	// after construction to break the BindingService<->RunService cycle.
+	bindingInputs BindingInputsResolver
+}
+
+// SetBindingInputsResolver wires the binding-input resolver used to enrich
+// remote claims. Called once at boot after both services are constructed.
+func (s *RunService) SetBindingInputsResolver(r BindingInputsResolver) {
+	s.bindingInputs = r
 }
 
 // NewRunService constructs a RunService bound to the given repo. The
@@ -305,6 +332,10 @@ func (s *RunService) Start(ctx context.Context, req RunRequest) (int, error) {
 		bID := req.BindingID
 		run.BindingID = &bID
 	}
+	if req.TargetPoolID != nil {
+		run.TargetPoolID = req.TargetPoolID
+		run.JobKind = req.JobKind
+	}
 	runID, err := s.repo.Insert(ctx, run)
 	if err != nil {
 		return 0, fmt.Errorf("insert agent_run: %w", err)
@@ -313,6 +344,13 @@ func (s *RunService) Start(ctx context.Context, req RunRequest) (int, error) {
 	// the run from proceeding.
 	if err := s.repo.AppendEvent(ctx, runID, "lifecycle", `{"phase":"queued"}`); err != nil {
 		s.logger.Printf("run service: append queued event: %v", err)
+	}
+
+	// Remote pool: the run is now queued for a remote runner to claim. The
+	// in-process worker pool must not touch it — enrichment (token, grants,
+	// env) happens in PrepareRemoteClaim when a runner claims it (WI-195).
+	if req.TargetPoolID != nil {
+		return runID, nil
 	}
 
 	if req.Repo != nil && s.worktrees == nil {
@@ -428,6 +466,68 @@ func (s *RunService) FinalizeRemote(ctx context.Context, runID int, result Runne
 		BaseCommit:  baseCommit,
 	})
 	return nil
+}
+
+// mintTokenAndGrants mints the per-run ws token and persists the run's
+// access-layer grants bound to it, returning the plaintext token for
+// $WS_TOKEN. Shared by the local claim preamble (claimNext) and the remote
+// claim enrichment (PrepareRemoteClaim) so both prepare a run identically
+// (WI-195, findings 1 & 7). grants may be nil (no brokered access). ref, when
+// non-empty, sets the git grant's single pushable ref — the prepared worktree
+// branch for local runs, the run-branch namespace for remote runs. Grant
+// persistence is best-effort: a failure leaves the run without grants, which
+// the brokers treat as deny — safe, just no brokered access.
+func (s *RunService) mintTokenAndGrants(ctx context.Context, runID int, spec TokenSpec, grants *models.RunGrants, ref string) (string, error) {
+	minted, err := s.tokens.Mint(ctx, MintRequest(spec))
+	if err != nil {
+		return "", err
+	}
+	_ = s.repo.AppendEvent(ctx, runID, "lifecycle", fmt.Sprintf(
+		`{"phase":"token_minted","token_id":%d,"expires_at":%q}`,
+		minted.TokenID, minted.ExpiresAt.Format(time.RFC3339)))
+	if grants != nil {
+		g := *grants
+		if g.Git != nil && ref != "" {
+			gg := *g.Git
+			gg.Ref = ref
+			g.Git = &gg
+		}
+		if err := s.repo.SetGrants(ctx, runID, minted.TokenID, &g, s.now()); err != nil {
+			s.logger.Printf("run service: set grants run=%d: %v", runID, err)
+		}
+	}
+	return minted.Token, nil
+}
+
+// PrepareRemoteClaim enriches a run a remote runner just claimed: it derives
+// the run's token + grants from its binding (via the resolver), mints the
+// per-run token, persists the grants bound to it (git ref = the run-branch
+// namespace the remote runner pushes to), and returns the JobSpec the runner
+// executes — with $WS_TOKEN and run/workspace/item context in Env. A run with
+// no binding (e.g. action_container) is returned with no enrichment. This is
+// the remote counterpart of the local claimNext preamble (WI-195).
+func (s *RunService) PrepareRemoteClaim(ctx context.Context, run *models.AgentRun) (JobSpec, error) {
+	spec := JobSpec{RunID: run.ID, Kind: run.JobKind, Image: run.JobImage}
+	if s.bindingInputs == nil || s.tokens == nil || run.BindingID == nil {
+		return spec, nil
+	}
+	tokenSpec, grants, env, err := s.bindingInputs.ResolveRunInputs(ctx, run)
+	if err != nil {
+		return JobSpec{}, fmt.Errorf("remote claim: resolve run inputs: %w", err)
+	}
+	if env == nil {
+		env = map[string]string{}
+	}
+	env["AGENT_RUN_ID"] = fmt.Sprintf("%d", run.ID)
+	if tokenSpec != nil {
+		token, err := s.mintTokenAndGrants(ctx, run.ID, *tokenSpec, grants, fmt.Sprintf("agent-runs/run-%d", run.ID))
+		if err != nil {
+			return JobSpec{}, fmt.Errorf("remote claim: mint token run=%d: %w", run.ID, err)
+		}
+		env["WS_TOKEN"] = token
+	}
+	spec.Env = env
+	return spec, nil
 }
 
 // Shutdown stops accepting new runs and waits for in-flight runs to drain.

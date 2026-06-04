@@ -113,9 +113,19 @@ func (h *RunnerControlHandler) Claim(w http.ResponseWriter, r *http.Request) {
 		respondJSONOK(w, services.ClaimResponse{Job: nil})
 		return
 	}
-	// Env / worktree are enriched by the access layer (WI-144); for now the
-	// runner receives the run id, its job kind, and (for container jobs) the
-	// image to run.
+	// Enrich the claim: a binding-backed coding-agent run gets its per-run
+	// token minted, grants persisted, and runner context env populated, the
+	// same preamble the local path runs (WI-195). Runs with no binding (e.g.
+	// action_container) come back with just {RunID, Kind, Image}.
+	if h.runSvc != nil {
+		spec, err := h.runSvc.PrepareRemoteClaim(r.Context(), run)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return
+		}
+		respondJSONOK(w, services.ClaimResponse{Job: &spec})
+		return
+	}
 	respondJSONOK(w, services.ClaimResponse{Job: &services.JobSpec{RunID: run.ID, Kind: run.JobKind, Image: run.JobImage}})
 }
 
