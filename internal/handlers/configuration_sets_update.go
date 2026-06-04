@@ -8,6 +8,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/utils"
 )
 
@@ -32,6 +33,10 @@ func (h *ConfigurationSetHandler) Update(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &cs.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &cs.Description, Policy: sanitize.RichText},
+	)
 
 	// Validate required fields
 	if strings.TrimSpace(cs.Name) == "" {

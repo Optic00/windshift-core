@@ -8,6 +8,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
@@ -65,6 +66,10 @@ func (h *PermissionSetHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
+	)
 
 	if req.Name == "" {
 		respondValidationError(w, r, "Name is required")
@@ -102,7 +107,10 @@ func (h *PermissionSetHandler) Create(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 
-	respondJSONCreated(w, ps)
+	respondJSONCreated(w, struct {
+		*models.PermissionSet
+		Warnings []string `json:"warnings,omitempty"`
+	}{ps, warnings})
 }
 
 // Update updates a permission set
@@ -126,6 +134,13 @@ func (h *PermissionSetHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Update uses the existing APIWarning cache-invalidation channel
+	// below — keep the sanitize warnings silent here (call sites still
+	// scrub the input). The XSS contract is pinned by the guard test.
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
+	)
 
 	userID := h.getSessionUserID(r)
 

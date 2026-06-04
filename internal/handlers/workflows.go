@@ -12,6 +12,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
@@ -109,6 +110,12 @@ func (h *WorkflowHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Workflow Name is the user-facing label on the workflow editor +
+	// config-set picker; Description renders in the workflow directory.
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &workflow.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &workflow.Description, Policy: sanitize.RichText, Label: "Description"},
+	)
 
 	// Validate required fields
 	if strings.TrimSpace(workflow.Name) == "" {
@@ -169,7 +176,10 @@ func (h *WorkflowHandler) Create(w http.ResponseWriter, r *http.Request) {
 		logAudit(h.db, r, currentUser, logger.ActionWorkflowCreate, logger.ResourceWorkflow, &intID, workflow.Name)
 	}
 
-	respondJSONCreated(w, createdWorkflow)
+	respondJSONCreated(w, struct {
+		models.Workflow
+		Warnings []string `json:"warnings,omitempty"`
+	}{createdWorkflow, warnings})
 }
 
 func (h *WorkflowHandler) Update(w http.ResponseWriter, r *http.Request) {
@@ -182,6 +192,10 @@ func (h *WorkflowHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &workflow.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &workflow.Description, Policy: sanitize.RichText, Label: "Description"},
+	)
 
 	// Validate required fields
 	if strings.TrimSpace(workflow.Name) == "" {
@@ -245,7 +259,10 @@ func (h *WorkflowHandler) Update(w http.ResponseWriter, r *http.Request) {
 		h.workflowService.InvalidateInitialStatusCache()
 	}
 
-	respondJSONOK(w, updatedWorkflow)
+	respondJSONOK(w, struct {
+		models.Workflow
+		Warnings []string `json:"warnings,omitempty"`
+	}{updatedWorkflow, warnings})
 }
 
 func (h *WorkflowHandler) Delete(w http.ResponseWriter, r *http.Request) {

@@ -11,6 +11,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
 	"windshift/internal/utils"
 )
 
@@ -99,6 +100,12 @@ func (h *ScreenHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Screen Name labels the create/edit form picker; Description shows
+	// in the screen directory.
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &screen.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &screen.Description, Policy: sanitize.RichText, Label: "Description"},
+	)
 
 	// Validate required fields
 	if strings.TrimSpace(screen.Name) == "" {
@@ -154,7 +161,10 @@ func (h *ScreenHandler) Create(w http.ResponseWriter, r *http.Request) {
 		logAudit(h.db, r, currentUser, logger.ActionScreenCreate, logger.ResourceScreen, &intID, screen.Name)
 	}
 
-	respondJSONCreated(w, screen)
+	respondJSONCreated(w, struct {
+		models.Screen
+		Warnings []string `json:"warnings,omitempty"`
+	}{screen, warnings})
 }
 
 func (h *ScreenHandler) Update(w http.ResponseWriter, r *http.Request) {
@@ -167,6 +177,10 @@ func (h *ScreenHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &screen.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &screen.Description, Policy: sanitize.RichText, Label: "Description"},
+	)
 
 	now := time.Now()
 	_, err := h.db.ExecWrite(`
@@ -196,7 +210,10 @@ func (h *ScreenHandler) Update(w http.ResponseWriter, r *http.Request) {
 		logAudit(h.db, r, currentUser, logger.ActionScreenUpdate, logger.ResourceScreen, &id, screen.Name)
 	}
 
-	respondJSONOK(w, screen)
+	respondJSONOK(w, struct {
+		models.Screen
+		Warnings []string `json:"warnings,omitempty"`
+	}{screen, warnings})
 }
 
 func (h *ScreenHandler) Delete(w http.ResponseWriter, r *http.Request) {
