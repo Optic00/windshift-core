@@ -856,6 +856,19 @@ var Catalog = []Migration{
 		`,
 	},
 	{
+		// workspace_agent_bindings.target_pool_id routes a binding's
+		// coding-agent runs to a runner_pool capability instead of the local
+		// in-process pool (WI-195). Soft ref to action_capabilities (no FK),
+		// mirroring agent_runs.target_pool_id: NULL = local. Fresh installs get
+		// it from schema/agents{,_postgres}.sql; this upgrades existing DBs.
+		Version:       "20260604_workspace_agent_bindings_target_pool_id",
+		Name:          "Add target_pool_id to workspace_agent_bindings",
+		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('workspace_agent_bindings') WHERE name='target_pool_id'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_name='workspace_agent_bindings' AND column_name='target_pool_id'",
+		SQLite:        "ALTER TABLE workspace_agent_bindings ADD COLUMN target_pool_id INTEGER",
+		Postgres:      "ALTER TABLE workspace_agent_bindings ADD COLUMN target_pool_id INTEGER",
+	},
+	{
 		// Remote runner pools (Initiative WI-141). A pool is an
 		// action_capabilities row of type 'runner_pool'; these tables hang
 		// off it by soft ref (no FK), mirroring the agent-table convention.

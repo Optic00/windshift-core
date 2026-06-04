@@ -72,12 +72,12 @@ func (r *WorkspaceAgentBindingRepository) Insert(ctx context.Context, b *models.
 	res, err := r.db.ExecWriteContext(ctx, `
 		INSERT INTO workspace_agent_bindings
 			(workspace_id, acting_user_id, acting_user_kind, repo_slug, repo_base_ref,
-			 llm_connection_id, scm_connection_id, token_scopes_json, token_ttl_minutes, max_runs_per_day, created_by_user_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 llm_connection_id, scm_connection_id, target_pool_id, token_scopes_json, token_ttl_minutes, max_runs_per_day, created_by_user_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		b.WorkspaceID, b.ActingUserID, b.ActingUserKind,
 		nullStringArg(b.RepoSlug), nullStringArg(b.RepoBaseRef),
-		nullIntArg(b.LLMConnectionID), nullIntArg(b.SCMConnectionID),
+		nullIntArg(b.LLMConnectionID), nullIntArg(b.SCMConnectionID), nullIntArg(b.TargetPoolID),
 		string(scopesJSON), b.TokenTTLMinutes, b.MaxRunsPerDay,
 		b.CreatedByUserID,
 	)
@@ -146,7 +146,7 @@ func (r *WorkspaceAgentBindingRepository) Delete(ctx context.Context, id, worksp
 const bindingSelectSQL = `
 	SELECT id, workspace_id, acting_user_id, acting_user_kind,
 	       repo_slug, repo_base_ref,
-	       llm_connection_id, scm_connection_id,
+	       llm_connection_id, scm_connection_id, target_pool_id,
 	       token_scopes_json, token_ttl_minutes, max_runs_per_day,
 	       created_by_user_id, created_at, updated_at
 	FROM workspace_agent_bindings
@@ -167,12 +167,12 @@ func scanBindingRows(rows *sql.Rows) (*models.WorkspaceAgentBinding, error) {
 func scanBindingFrom(scanner bindingRowScanner) (*models.WorkspaceAgentBinding, error) {
 	b := &models.WorkspaceAgentBinding{}
 	var repoSlug, repoBaseRef sql.NullString
-	var llmConn, scmConn sql.NullInt64
+	var llmConn, scmConn, targetPool sql.NullInt64
 	var scopesJSON string
 	if err := scanner.Scan(
 		&b.ID, &b.WorkspaceID, &b.ActingUserID, &b.ActingUserKind,
 		&repoSlug, &repoBaseRef,
-		&llmConn, &scmConn, &scopesJSON, &b.TokenTTLMinutes, &b.MaxRunsPerDay,
+		&llmConn, &scmConn, &targetPool, &scopesJSON, &b.TokenTTLMinutes, &b.MaxRunsPerDay,
 		&b.CreatedByUserID, &b.CreatedAt, &b.UpdatedAt,
 	); err != nil {
 		return nil, err
@@ -190,6 +190,10 @@ func scanBindingFrom(scanner bindingRowScanner) (*models.WorkspaceAgentBinding, 
 	if scmConn.Valid {
 		v := int(scmConn.Int64)
 		b.SCMConnectionID = &v
+	}
+	if targetPool.Valid {
+		v := int(targetPool.Int64)
+		b.TargetPoolID = &v
 	}
 	if scopesJSON != "" {
 		_ = json.Unmarshal([]byte(scopesJSON), &b.TokenScopes)

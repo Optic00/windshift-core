@@ -110,6 +110,7 @@ CREATE TABLE IF NOT EXISTS workspace_agent_bindings (
     token_ttl_minutes INTEGER NOT NULL DEFAULT 60,
     max_runs_per_day INTEGER NOT NULL DEFAULT 0,
     scm_connection_id INTEGER REFERENCES workspace_scm_connections(id) ON DELETE SET NULL,
+    target_pool_id INTEGER, -- soft ref to action_capabilities (runner_pool); NULL = local in-process run (WI-195)
     created_by_user_id INTEGER NOT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
