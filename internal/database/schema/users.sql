@@ -15,7 +15,7 @@
 		email_verification_expires DATETIME, -- Expiry time for verification token
 		scim_external_id TEXT, -- SCIM externalId from identity provider
 		scim_managed BOOLEAN DEFAULT false, -- If true, user is managed via SCIM
-		is_agent BOOLEAN DEFAULT false, -- If true, user is a non-human agent (API-only; cannot log in)
+		is_agent BOOLEAN DEFAULT 0, -- If true, user is a non-human agent (API-only; cannot log in)
 		agent_owner_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, -- NULL = service user (admin-provisioned); non-NULL = owned agent (inherits owner permissions)
 		-- Distinguishes how an agent row got created. 'user' covers both the
 		-- profile-page agent UI and CLI onboarding (both are gated by

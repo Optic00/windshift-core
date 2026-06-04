@@ -129,6 +129,7 @@ func init() {
 	Catalog = append(Catalog, seedMigrations()...)
 	Catalog = append(Catalog, miscMigrations()...)
 	Catalog = append(Catalog, schemaRerunMigrations()...)
+	Catalog = append(Catalog, driftFixMigrations()...)
 }
 
 // baselineMigration stamps schema_migrations with a "this database has
@@ -1719,6 +1720,127 @@ func miscMigrations() []Migration {
 					FOREIGN KEY (workspace_repository_id) REFERENCES workspace_repositories(id) ON DELETE CASCADE
 				);
 			`,
+		},
+	}
+}
+
+// driftFixMigrations close gaps where the base schema/default data had moved
+// ahead of the upgrade path. They intentionally run after the schema re-runs
+// and legacy column-add catalog entries so their checks see the final shape of
+// an upgraded database.
+func driftFixMigrations() []Migration {
+	return []Migration{
+		{
+			Version:       "drift_email_message_tracking_direction",
+			Name:          "email_message_tracking.direction",
+			CheckSQLite:   sqliteColumnCheck("email_message_tracking", "direction"),
+			CheckPostgres: pgColumnCheck("email_message_tracking", "direction"),
+			SQLite:        "ALTER TABLE email_message_tracking ADD COLUMN direction TEXT DEFAULT 'inbound' CHECK(direction IN ('inbound', 'outbound'))",
+			Postgres:      "ALTER TABLE email_message_tracking ADD COLUMN direction TEXT DEFAULT 'inbound' CHECK(direction IN ('inbound', 'outbound'))",
+		},
+		{
+			Version: "drift_email_message_tracking_attachments_status_check",
+			Name:    "email_message_tracking.attachments_status CHECK",
+			CheckSQLite: `SELECT CASE WHEN EXISTS (
+				SELECT 1 FROM sqlite_master
+				WHERE type='table'
+				  AND name='email_message_tracking'
+				  AND sql LIKE '%attachments_status TEXT CHECK(attachments_status IN%'
+			) THEN 1 ELSE 0 END`,
+			CheckPostgres: "SELECT COUNT(*) FROM pg_constraint WHERE conname = 'email_message_tracking_attachments_status_check'",
+			SQLite: `
+				UPDATE email_message_tracking
+				SET attachments_status = NULL
+				WHERE attachments_status IS NOT NULL
+				  AND attachments_status NOT IN ('ok','partial','failed');
+
+				CREATE TABLE email_message_tracking_new (
+					id INTEGER PRIMARY KEY AUTOINCREMENT,
+					channel_id INTEGER NOT NULL,
+					message_id TEXT NOT NULL,
+					dedup_key TEXT NOT NULL DEFAULT '',
+					in_reply_to TEXT,
+					from_email TEXT NOT NULL,
+					from_name TEXT,
+					subject TEXT,
+					item_id INTEGER,
+					comment_id INTEGER,
+					attachments_status TEXT CHECK(attachments_status IN ('ok','partial','failed') OR attachments_status IS NULL),
+					direction TEXT DEFAULT 'inbound' CHECK(direction IN ('inbound', 'outbound')),
+					processed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+					FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+					FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE SET NULL,
+					FOREIGN KEY (comment_id) REFERENCES comments(id) ON DELETE SET NULL
+				);
+				INSERT INTO email_message_tracking_new
+					(id, channel_id, message_id, dedup_key, in_reply_to, from_email, from_name, subject,
+					 item_id, comment_id, attachments_status, direction, processed_at)
+				SELECT id, channel_id, message_id, dedup_key, in_reply_to, from_email, from_name, subject,
+					   item_id, comment_id, attachments_status, COALESCE(direction, 'inbound'), processed_at
+				FROM email_message_tracking;
+				DROP TABLE email_message_tracking;
+				ALTER TABLE email_message_tracking_new RENAME TO email_message_tracking;
+				CREATE INDEX IF NOT EXISTS idx_email_message_tracking_channel_id ON email_message_tracking(channel_id);
+				CREATE INDEX IF NOT EXISTS idx_email_message_tracking_message_id ON email_message_tracking(message_id);
+				CREATE INDEX IF NOT EXISTS idx_email_message_tracking_in_reply_to ON email_message_tracking(in_reply_to);
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_email_message_tracking_dedup ON email_message_tracking(channel_id, dedup_key);
+			`,
+			Postgres: `
+				UPDATE email_message_tracking
+				SET attachments_status = NULL
+				WHERE attachments_status IS NOT NULL
+				  AND attachments_status NOT IN ('ok','partial','failed');
+				ALTER TABLE email_message_tracking
+					ADD CONSTRAINT email_message_tracking_attachments_status_check
+					CHECK (attachments_status IN ('ok','partial','failed') OR attachments_status IS NULL);
+			`,
+		},
+		{
+			Version: "drift_active_timers_user_id_not_null",
+			Name:    "active_timers.user_id NOT NULL",
+			CheckSQLite: `SELECT CASE WHEN EXISTS (
+				SELECT 1 FROM pragma_table_info('active_timers')
+				WHERE name='user_id' AND [notnull] = 1
+			) THEN 1 ELSE 0 END`,
+			CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='active_timers' AND column_name='user_id' AND is_nullable='NO'",
+			SQLite: `
+				DELETE FROM active_timers WHERE user_id IS NULL;
+				CREATE TABLE active_timers_new (
+					id INTEGER PRIMARY KEY AUTOINCREMENT,
+					workspace_id INTEGER NOT NULL,
+					item_id INTEGER,
+					project_id INTEGER NOT NULL,
+					user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+					description TEXT NOT NULL,
+					start_time_utc INTEGER NOT NULL,
+					created_at INTEGER NOT NULL,
+					FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+					FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE SET NULL,
+					FOREIGN KEY (project_id) REFERENCES time_projects(id) ON DELETE CASCADE
+				);
+				INSERT INTO active_timers_new
+					(id, workspace_id, item_id, project_id, user_id, description, start_time_utc, created_at)
+				SELECT id, workspace_id, item_id, project_id, user_id, description, start_time_utc, created_at
+				FROM active_timers;
+				DROP TABLE active_timers;
+				ALTER TABLE active_timers_new RENAME TO active_timers;
+				CREATE INDEX IF NOT EXISTS idx_active_timers_workspace_id ON active_timers(workspace_id);
+				CREATE INDEX IF NOT EXISTS idx_active_timers_item_id ON active_timers(item_id);
+				CREATE INDEX IF NOT EXISTS idx_active_timers_project_id ON active_timers(project_id);
+				CREATE INDEX IF NOT EXISTS idx_active_timers_user_id ON active_timers(user_id);
+			`,
+			Postgres: `
+				DELETE FROM active_timers WHERE user_id IS NULL;
+				ALTER TABLE active_timers ALTER COLUMN user_id SET NOT NULL;
+			`,
+		},
+		{
+			Version:       "drift_screen_field_labels_postgres",
+			Name:          "screen_fields.labels (screen 1, Postgres)",
+			CheckSQLite:   "SELECT COUNT(*) FROM screen_fields WHERE screen_id = 1 AND field_identifier = 'labels'",
+			CheckPostgres: "SELECT COUNT(*) FROM screen_fields WHERE screen_id = 1 AND field_identifier = 'labels'",
+			SQLite:        "INSERT INTO screen_fields (screen_id, field_type, field_identifier, display_order, is_required, field_width) VALUES (1, 'system', 'labels', 11, false, 'full')",
+			Postgres:      "INSERT INTO screen_fields (screen_id, field_type, field_identifier, display_order, is_required, field_width) VALUES (1, 'system', 'labels', 11, false, 'full')",
 		},
 	}
 }

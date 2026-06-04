@@ -1733,9 +1733,10 @@ func (db *DB) migrateDefaultConfigurationSet() error {
 			{"system", "assignee", 5, false, "half"},
 			{"system", "due_date", 6, false, "half"},
 			{"system", "milestone", 7, false, "half"},
-			{"system", "start_date", 8, false, "half"},
-			{"system", "end_date", 9, false, "half"},
-			{"system", "labels", 10, false, "full"},
+			{"system", "iteration", 8, false, "half"},
+			{"system", "start_date", 9, false, "half"},
+			{"system", "end_date", 10, false, "half"},
+			{"system", "labels", 11, false, "full"},
 		}
 
 		for _, field := range screenFields {
