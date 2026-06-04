@@ -14,6 +14,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/sso"
 	"windshift/internal/utils"
@@ -155,6 +156,14 @@ func (h *IntegrationItemLinksHandler) CreateItemLink(w http.ResponseWriter, r *h
 	if !ok {
 		return
 	}
+	// Title surfaces in item link chips + tooltips. Icon is a short
+	// identifier (Lucide name or emoji). ExternalID + ExternalURL are
+	// opaque to us; the URL gets schema validated separately by the
+	// integration code.
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Title, Policy: sanitize.PlainTextField, Label: "Title"},
+		sanitize.Pair{Target: &req.Icon, Policy: sanitize.ShortIdentifier, Label: "Icon"},
+	)
 
 	if req.ProviderID == "" || req.ExternalID == "" || req.Title == "" || req.LinkType == "" {
 		respondValidationError(w, r, "Missing required fields: provider_id, external_id, title, link_type")
@@ -196,7 +205,10 @@ func (h *IntegrationItemLinksHandler) CreateItemLink(w http.ResponseWriter, r *h
 	}
 
 	h.auditItemLink(r, user, logger.ActionIntegrationItemLinkCreate, link)
-	respondJSONCreated(w, link)
+	respondJSONCreated(w, struct {
+		ItemIntegrationLinkResponse
+		Warnings []string `json:"warnings,omitempty"`
+	}{link, warnings})
 }
 
 // DeleteItemLink removes an integration link

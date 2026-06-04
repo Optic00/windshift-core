@@ -13,6 +13,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/scm"
 	"windshift/internal/services"
 	"windshift/internal/sso"
@@ -222,6 +223,15 @@ func (h *SCMItemLinksHandler) CreateItemSCMLink(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
+	// Title + AuthorName render in item link chips and the SCM panel;
+	// State is a short status string (e.g. "open", "merged"). External
+	// URL/ID stay raw — they're SCM-side identifiers validated by the
+	// integration.
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Title, Policy: sanitize.PlainTextField, Label: "Title"},
+		sanitize.Pair{Target: &req.AuthorName, Policy: sanitize.PlainTextField, Label: "Author name"},
+		sanitize.Pair{Target: &req.State, Policy: sanitize.ShortIdentifier, Label: "State"},
+	)
 
 	// Validate required fields
 	if req.WorkspaceRepositoryID == 0 {
@@ -309,7 +319,10 @@ func (h *SCMItemLinksHandler) CreateItemSCMLink(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	respondJSONCreated(w, link)
+	respondJSONCreated(w, struct {
+		*ItemSCMLinkResponse
+		Warnings []string `json:"warnings,omitempty"`
+	}{link, warnings})
 }
 
 // getItemIDForLink looks up the item_id for a given SCM link ID
@@ -568,6 +581,18 @@ func (h *SCMItemLinksHandler) CreateBranchForItem(w http.ResponseWriter, r *http
 	if !ok {
 		return
 	}
+	// BranchName + BaseBranch are git refs (identifier-shaped). PRTitle
+	// renders in the SCM panel + the eventual GitHub PR list (plain
+	// text); PRBody is multi-line markdown that surfaces in the same
+	// places. Sanitizing here also keeps the SCM API call from posting
+	// crafted HTML to GitHub on our behalf.
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.BranchName, Policy: sanitize.ShortIdentifier, Label: "Branch name"},
+		sanitize.Pair{Target: &req.BaseBranch, Policy: sanitize.ShortIdentifier, Label: "Base branch"},
+		sanitize.Pair{Target: &req.PRTitle, Policy: sanitize.PlainTextField, Label: "PR title"},
+		sanitize.Pair{Target: &req.PRBody, Policy: sanitize.RichText, Label: "PR body"},
+	)
+	_ = warnings // CreateBranchForItemResponse predates WI-186 — sanitize lands; warnings surfacing is a follow-up.
 
 	// Validate required fields
 	if req.WorkspaceRepositoryID == 0 {
@@ -730,6 +755,14 @@ func (h *SCMItemLinksHandler) CreatePRFromBranch(w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
+	// Same field shapes as CreateBranchForItem — see that handler for
+	// rationale. Sanitize at decode; response is the existing
+	// CreatePRFromBranchResponse without warnings (follow-up).
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.PRTitle, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.PRBody, Policy: sanitize.RichText},
+		sanitize.Pair{Target: &req.BaseBranch, Policy: sanitize.ShortIdentifier},
+	)
 
 	// Get the branch link details
 	var itemID, workspaceRepoID, itemWorkspaceID int
