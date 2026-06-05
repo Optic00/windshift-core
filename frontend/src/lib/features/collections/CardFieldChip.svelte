@@ -1,4 +1,5 @@
 <script>
+  import { CornerLeftUp } from '@lucide/svelte';
   import { formatDateShort } from '../../utils/dateFormatter.js';
   import { resolveOptionLabel } from '../../utils/optionUtils.js';
   import { durationToString } from '../../utils/timeUtils.js';
@@ -112,6 +113,23 @@
         {proj.name}
       </span>
     {/if}
+  {:else if cardField.field_identifier === 'parent' && item.parent_id}
+    {@const parentKey = item.parent_workspace_item_number != null && item.workspace_key
+      ? `${item.workspace_key}-${item.parent_workspace_item_number}`
+      : null}
+    <span
+      class="{CHIP_CLASS} max-w-[12rem]"
+      style={CHIP_STYLE}
+      title={item.parent_title || parentKey || 'Parent'}
+    >
+      <CornerLeftUp class="w-3 h-3 flex-shrink-0" />
+      {#if parentKey}
+        <span class="font-mono flex-shrink-0">{parentKey}</span>
+      {/if}
+      {#if item.parent_title}
+        <span class="truncate">{item.parent_title}</span>
+      {/if}
+    </span>
   {/if}
 {:else if cardField.field_type === 'custom'}
   {#if customFieldDef && customFieldValue}

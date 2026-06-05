@@ -61,7 +61,8 @@ type Item struct {
 	PriorityName     string `json:"priority_name,omitempty"`
 	PriorityIcon     string `json:"priority_icon,omitempty"`
 	PriorityColor    string `json:"priority_color,omitempty"`
-	ParentTitle      string `json:"parent_title,omitempty"`
+	ParentTitle               string `json:"parent_title,omitempty"`
+	ParentWorkspaceItemNumber *int   `json:"parent_workspace_item_number,omitempty"` // Parent's workspace-scoped number, for rendering the parent key
 	StatusName       string `json:"status_name,omitempty"`  // Name from statuses table (joined field)
 	StatusColor      string `json:"status_color,omitempty"` // Color from the status category (joined field)
 	IterationName    string `json:"iteration_name,omitempty"`

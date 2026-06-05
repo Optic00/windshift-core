@@ -95,7 +95,7 @@ func (r *ItemRepository) FindAllWithDetails(params ItemListParams) ([]models.Ite
 		i.iteration_id, i.project_id, i.inherit_project, i.time_project_id, i.assignee_id, i.creator_id, i.custom_field_values, i.calendar_data, i.parent_id,
 		i.story_points, i.estimate_minutes, i.frac_index, i.created_at, i.updated_at,
 		w.name as workspace_name, w.key as workspace_key, it.name as item_type_name,
-		p.title as parent_title, iter.name as iteration_name, COALESCE(CAST(iter.end_date AS TEXT), '') as iteration_end_date, proj.name as project_name, tp.name as time_project_name,
+		p.title as parent_title, p.workspace_item_number as parent_workspace_item_number, iter.name as iteration_name, COALESCE(CAST(iter.end_date AS TEXT), '') as iteration_end_date, proj.name as project_name, tp.name as time_project_name,
 		assignee.first_name || ' ' || assignee.last_name as assignee_name, assignee.email as assignee_email, assignee.avatar_url as assignee_avatar,
 		creator.first_name || ' ' || creator.last_name as creator_name, creator.email as creator_email,
 		st.name as status_name, pri.name as priority_name, pri.icon as priority_icon, pri.color as priority_color
@@ -397,7 +397,7 @@ func (r *ItemRepository) scanItemList(rows *sql.Rows) ([]models.Item, error) {
 	for rows.Next() {
 		var item models.Item
 		var customFieldValuesJSON, calendarDataJSON sql.NullString
-		var itemTypeID, parentID, iterationID, projectID, timeProjectID, assigneeID, creatorID, statusID, priorityID sql.NullInt64
+		var itemTypeID, parentID, parentWorkspaceItemNumber, iterationID, projectID, timeProjectID, assigneeID, creatorID, statusID, priorityID sql.NullInt64
 		var dueDate, startDate, endDate sql.NullTime
 		var itemTypeName, parentTitle, iterationName, iterationEndDate, projectName, timeProjectName sql.NullString
 		var assigneeName, assigneeEmail, assigneeAvatar, creatorName, creatorEmail, statusName sql.NullString
@@ -410,7 +410,7 @@ func (r *ItemRepository) scanItemList(rows *sql.Rows) ([]models.Item, error) {
 		err := rows.Scan(
 			&item.ID, &item.WorkspaceID, &item.WorkspaceItemNumber, &itemTypeID, &item.Title, &item.Description,
 			&statusID, &priorityID, &dueDate, &startDate, &endDate, &item.IsTask, &iterationID, &projectID, &inheritProject, &timeProjectID, &assigneeID, &creatorID, &customFieldValuesJSON, &calendarDataJSON, &parentID,
-			&storyPoints, &estimateMinutes, &fracIndex, &item.CreatedAt, &item.UpdatedAt, &item.WorkspaceName, &item.WorkspaceKey, &itemTypeName, &parentTitle, &iterationName, &iterationEndDate, &projectName, &timeProjectName,
+			&storyPoints, &estimateMinutes, &fracIndex, &item.CreatedAt, &item.UpdatedAt, &item.WorkspaceName, &item.WorkspaceKey, &itemTypeName, &parentTitle, &parentWorkspaceItemNumber, &iterationName, &iterationEndDate, &projectName, &timeProjectName,
 			&assigneeName, &assigneeEmail, &assigneeAvatar, &creatorName, &creatorEmail, &statusName, &priorityName, &priorityIcon, &priorityColor,
 		)
 		if err != nil {
@@ -420,6 +420,7 @@ func (r *ItemRepository) scanItemList(rows *sql.Rows) ([]models.Item, error) {
 		// Handle nullable fields
 		assignNullableInt(&item.ItemTypeID, itemTypeID)
 		assignNullableInt(&item.ParentID, parentID)
+		assignNullableInt(&item.ParentWorkspaceItemNumber, parentWorkspaceItemNumber)
 		assignNullableInt(&item.IterationID, iterationID)
 		assignNullableInt(&item.StatusID, statusID)
 		assignNullableInt(&item.ProjectID, projectID)

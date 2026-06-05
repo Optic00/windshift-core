@@ -99,6 +99,13 @@ export const SYSTEM_FIELDS = [
     listColumn: { required: false },
   },
   {
+    identifier: 'parent',
+    name: 'Parent',
+    type: 'text',
+    cardSelectable: true,
+    listColumn: null,
+  },
+  {
     identifier: 'story_points',
     name: 'Story Points',
     type: 'number',
