@@ -416,13 +416,13 @@ func (s *BindingService) bindingTokenAndGrants(b *models.WorkspaceAgentBinding, 
 // injected into env — a remote runner reaches git/llm/secrets through the
 // brokers using its per-run token (WI-195). Returns (nil, nil, nil, nil) for
 // a run with no binding (e.g. action_container).
-func (s *BindingService) ResolveRunInputs(ctx context.Context, run *models.AgentRun) (*TokenSpec, *models.RunGrants, map[string]string, error) {
+func (s *BindingService) ResolveRunInputs(ctx context.Context, run *models.AgentRun) (*TokenSpec, *models.RunGrants, *JobRepo, map[string]string, error) {
 	if run == nil || run.BindingID == nil {
-		return nil, nil, nil, nil
+		return nil, nil, nil, nil, nil
 	}
 	binding, err := s.repo.Get(ctx, *run.BindingID)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("resolve run inputs: load binding %d: %w", *run.BindingID, err)
+		return nil, nil, nil, nil, fmt.Errorf("resolve run inputs: load binding %d: %w", *run.BindingID, err)
 	}
 	itemID := 0
 	if run.ItemID != nil {
@@ -430,10 +430,26 @@ func (s *BindingService) ResolveRunInputs(ctx context.Context, run *models.Agent
 	}
 	env, err := s.buildRunEnv(ctx, run.WorkspaceID, itemID)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("resolve run inputs: build env: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("resolve run inputs: build env: %w", err)
 	}
 	spec, grants := s.bindingTokenAndGrants(binding, itemID)
-	return spec, grants, env, nil
+
+	// Repo-prep inputs for a remote runner: only when the binding is repo-
+	// backed. Unlike the local path, no SCM token travels here — the remote
+	// runner clones + pushes through the git-proxy with its per-run token.
+	var repo *JobRepo
+	if binding.HasRepo() {
+		baseRef := binding.RepoBaseRef
+		if baseRef == "" {
+			baseRef = "main"
+		}
+		repo = &JobRepo{
+			WorkspaceID: run.WorkspaceID,
+			Slug:        binding.RepoSlug,
+			BaseRef:     baseRef,
+		}
+	}
+	return spec, grants, repo, env, nil
 }
 
 func (s *BindingService) buildRunEnv(ctx context.Context, workspaceID, itemID int) (map[string]string, error) {

@@ -59,6 +59,10 @@ type RunInput struct {
 	// a plain container). Empty Kind means coding_agent.
 	Kind  string
 	Image string
+	// Repo, when set, asks a repo-preparing runner (the remote TriageRunner)
+	// to materialize its own checkout and push the run branch via the
+	// git-proxy. Nil for local runs (WorkspacePath is already prepared).
+	Repo *JobRepo
 }
 
 // Runner executes the actual work of a run: spawning a container, driving
@@ -176,7 +180,7 @@ type PostRunInfo struct {
 // whose binding mints no token, and (nil, nil, nil, nil) for a run with no
 // binding (e.g. action_container) — neither gets token/grant enrichment.
 type BindingInputsResolver interface {
-	ResolveRunInputs(ctx context.Context, run *models.AgentRun) (*TokenSpec, *models.RunGrants, map[string]string, error)
+	ResolveRunInputs(ctx context.Context, run *models.AgentRun) (*TokenSpec, *models.RunGrants, *JobRepo, map[string]string, error)
 }
 
 // PostRunHook is the optional post-finalize callback. Errors are logged
@@ -512,7 +516,7 @@ func (s *RunService) PrepareRemoteClaim(ctx context.Context, run *models.AgentRu
 	if s.bindingInputs == nil || s.tokens == nil || run.BindingID == nil {
 		return spec, nil
 	}
-	tokenSpec, grants, env, err := s.bindingInputs.ResolveRunInputs(ctx, run)
+	tokenSpec, grants, repo, env, err := s.bindingInputs.ResolveRunInputs(ctx, run)
 	if err != nil {
 		return JobSpec{}, fmt.Errorf("remote claim: resolve run inputs: %w", err)
 	}
@@ -528,6 +532,9 @@ func (s *RunService) PrepareRemoteClaim(ctx context.Context, run *models.AgentRu
 		env["WS_TOKEN"] = token
 	}
 	spec.Env = env
+	// A remote runner prepares its own checkout from this; the host
+	// WorkspacePath stays empty on the wire.
+	spec.Repo = repo
 	return spec, nil
 }
 

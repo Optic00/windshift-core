@@ -43,6 +43,8 @@ func main() {
 	name := envOr("WSRUNNER_NAME", hostnameOr("windshift-runner"))
 	image := os.Getenv("WSRUNNER_IMAGE")
 	dockerBin := envOr("WSRUNNER_DOCKER", "docker")
+	triageBin := envOr("WSRUNNER_TRIAGE_BIN", "windshift-triage")
+	cacheRoot := envOr("WSRUNNER_CACHE_ROOT", "/var/lib/windshift-runner/cache")
 	pollInterval := envDuration(logger, "WSRUNNER_POLL_INTERVAL", 2*time.Second)
 	heartbeatInterval := envDuration(logger, "WSRUNNER_HEARTBEAT_INTERVAL", 30*time.Second)
 	initialPrompt := envOr("WSRUNNER_INITIAL_PROMPT", "Work the item described in your environment.")
@@ -71,7 +73,7 @@ func main() {
 	// Kind-dispatching runner (WI-146): coding_agent jobs run the pi harness;
 	// action_container / ci_task jobs run the job's admin image as a plain
 	// container.
-	runner := &services.KindDispatchRunner{
+	kindRunner := &services.KindDispatchRunner{
 		CodingAgent: &services.DockerPiRunner{
 			Image:         image,
 			DockerBinary:  dockerBin,
@@ -80,7 +82,21 @@ func main() {
 		Container: &services.ContainerImageRunner{DockerBinary: dockerBin},
 	}
 
-	logger.Printf("worker started (poll=%s heartbeat=%s image=%q)", pollInterval, heartbeatInterval, image)
+	// On a remote host the runner — never the agent — owns git (WI-215): for a
+	// job carrying a JobRepo, TriageRunner execs windshift-triage to prepare a
+	// per-run checkout and to push the run branch through the git-proxy, so the
+	// agent container holds no SCM credential. Jobs without a JobRepo pass
+	// straight through to the kind runner.
+	runner := &services.TriageRunner{
+		Inner:     kindRunner,
+		TriageBin: triageBin,
+		CacheRoot: cacheRoot,
+		APIBase:   baseURL,
+		Logger:    logger,
+	}
+
+	logger.Printf("worker started (poll=%s heartbeat=%s image=%q triage=%q cache=%q)",
+		pollInterval, heartbeatInterval, image, triageBin, cacheRoot)
 	services.RunWorker(ctx, client, runner, logger)
 	logger.Println("shut down")
 }

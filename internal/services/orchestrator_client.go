@@ -70,10 +70,30 @@ type JobSpec struct {
 	Kind  string `json:"kind,omitempty"`
 	Image string `json:"image,omitempty"`
 
+	// Repo, when set, tells a REMOTE runner to prepare its own per-run
+	// checkout (via the triage binary) instead of receiving a host
+	// WorkspacePath. It carries only what the runner needs to clone + push
+	// through the git-proxy; the run token travels in Env (WS_TOKEN). Nil for
+	// local runs (the orchestrator already prepared WorkspacePath) and for
+	// runs with no repo.
+	Repo *JobRepo `json:"repo,omitempty"`
+
 	// Later phases extend JobSpec with the admin-curated image + command,
 	// the grant-set / broker endpoints (git / llm / secrets / http), and
 	// the sandbox spec. Keeping them here preserves the "runner is a thin
 	// shim" property as the protocol grows.
+}
+
+// JobRepo is the repo-prep input a remote runner needs to materialize a
+// per-run checkout and push the run branch through the git-proxy. The runner
+// builds the proxy URL as {WS_API_URL}/git-proxy/{WorkspaceID}/{owner}/{repo}
+// from Slug, and authenticates with the per-run token (WS_TOKEN). It holds no
+// SCM credentials and no real remote URL — the git-proxy injects the cred
+// server-side.
+type JobRepo struct {
+	WorkspaceID int    `json:"workspace_id"`
+	Slug        string `json:"slug"`     // "owner/repo"
+	BaseRef     string `json:"base_ref"` // branch to cut the run branch from
 }
 
 // ClaimedJob pairs a JobSpec with the lease the runner holds while it
@@ -130,6 +150,7 @@ func RunWorker(ctx context.Context, client OrchestratorClient, runner Runner, lo
 			Env:           job.Spec.Env,
 			Kind:          job.Spec.Kind,
 			Image:         job.Spec.Image,
+			Repo:          job.Spec.Repo,
 		}, emit)
 		if err := client.Report(jobCtx, runID, result); err != nil {
 			logger.Printf("run worker: report run=%d: %v", runID, err)
