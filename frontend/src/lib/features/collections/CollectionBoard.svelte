@@ -22,6 +22,7 @@
   import Button from '../../components/Button.svelte';
   import SearchInput from '../../components/SearchInput.svelte';
   import SubFilterBar from './SubFilterBar.svelte';
+  import CardFieldChip from './CardFieldChip.svelte';
   import ItemKey from '../items/ItemKey.svelte';
   import CollectionViewSwitcher from './CollectionViewSwitcher.svelte';
   import Tooltip from '../../components/Tooltip.svelte';
@@ -30,8 +31,6 @@
   import { useWorkItemPoller } from '../../composables/useWorkItemPoller.svelte.js';
   import { agentRuns } from '../../stores/agentRuns.svelte.js';
   import { getVisibleColor, hexToRgb } from '../../utils/colorUtils.js';
-  import { formatDateShort } from '../../utils/dateFormatter.js';
-  import { resolveOptionLabel } from '../../utils/optionUtils.js';
   import { showCreatedItemToast } from '../../utils/createdItemToast.js';
 
   // Props
@@ -1437,82 +1436,16 @@
                                     {#if cardFields.length > 0}
                                       <div class="flex flex-wrap gap-1.5 mt-1 mb-1.5">
                                         {#each cardFields as cardField}
-                                          {#if cardField.field_type === 'system'}
-                                            {#if cardField.field_identifier === 'priority' && item.priority_id}
-                                              {@const prio = priorities.find(p => p.id === item.priority_id)}
-                                              {#if prio}
-                                                <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium" style="background: {prio.color}20; color: {prio.color};">
-                                                  {prio.name}
-                                                </span>
-                                              {/if}
-                                            {:else if cardField.field_identifier === 'due_date' && item.due_date}
-                                              <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]" style="background: var(--ds-surface); color: var(--ds-text-subtle);">
-                                                {formatDateShort(item.due_date)}
-                                              </span>
-                                            {:else if cardField.field_identifier === 'milestone' && (item.milestones?.length ?? 0) > 0}
-                                              {#each item.milestones as ms (ms.id)}
-                                                <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]" style="background: var(--ds-surface); color: var(--ds-text-subtle);">
-                                                  <span class="w-2 h-2 rounded-full flex-shrink-0" style="background-color: {ms.category_color || '#6b7280'};"></span>
-                                                  {ms.name}
-                                                </span>
-                                              {/each}
-                                            {:else if cardField.field_identifier === 'iteration' && item.iteration_id}
-                                              {@const iter = iterations.find(i => i.id === item.iteration_id)}
-                                              {#if iter}
-                                                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px]" style="background: var(--ds-surface); color: var(--ds-text-subtle);">
-                                                  {iter.name}
-                                                </span>
-                                              {/if}
-                                            {:else if cardField.field_identifier === 'labels' && item.label_ids?.length > 0}
-                                              {#each item.label_ids.slice(0, 3) as labelId}
-                                                {@const lbl = wdsLabels.find(l => l.id === labelId)}
-                                                {#if lbl}
-                                                  <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] text-white font-medium" style="background-color: {lbl.color || '#6b7280'};">
-                                                    {lbl.name}
-                                                  </span>
-                                                {/if}
-                                              {/each}
-                                              {#if item.label_ids.length > 3}
-                                                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px]" style="background: var(--ds-surface); color: var(--ds-text-subtle);">
-                                                  +{item.label_ids.length - 3}
-                                                </span>
-                                              {/if}
-                                            {:else if cardField.field_identifier === 'status' && item.status_id}
-                                              {@const st = statuses.find(s => s.id === item.status_id)}
-                                              {#if st}
-                                                <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]" style="background: var(--ds-surface); color: var(--ds-text-subtle);">
-                                                  <span class="w-2 h-2 rounded-full flex-shrink-0" style="background-color: {st.color || st.category_color || '#6b7280'};"></span>
-                                                  {st.name}
-                                                </span>
-                                              {/if}
-                                            {:else if cardField.field_identifier === 'created_at' && item.created_at}
-                                              <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px]" style="background: var(--ds-surface); color: var(--ds-text-subtle);">
-                                                {formatDateShort(item.created_at)}
-                                              </span>
-                                            {:else if cardField.field_identifier === 'project' && item.project_id}
-                                              {@const proj = projects.find(p => p.id === item.project_id)}
-                                              {#if proj}
-                                                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px]" style="background: var(--ds-surface); color: var(--ds-text-subtle);">
-                                                  {proj.name}
-                                                </span>
-                                              {/if}
-                                            {/if}
-                                          {:else if cardField.field_type === 'custom'}
-                                            {@const cfId = parseInt(cardField.field_identifier.replace('custom_field_', ''))}
-                                            {@const cfDef = customFieldDefinitions.find(d => d.id === cfId)}
-                                            {@const cfVal = item.custom_field_values?.[cfId] ?? item.custom_field_values?.[String(cfId)]}
-                                            {#if cfDef && cfVal}
-                                              <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px]" style="background: var(--ds-surface); color: var(--ds-text-subtle);">
-                                                {#if cfDef.field_type === 'date'}
-                                                  {formatDateShort(cfVal)}
-                                                {:else if (cfDef.field_type === 'select' || cfDef.field_type === 'multiselect') && cfDef.options}
-                                                  {resolveOptionLabel(cfDef.options, cfVal) || cfVal}
-                                                {:else}
-                                                  {cfVal}
-                                                {/if}
-                                              </span>
-                                            {/if}
-                                          {/if}
+                                          <CardFieldChip
+                                            {cardField}
+                                            {item}
+                                            {priorities}
+                                            {statuses}
+                                            {iterations}
+                                            {projects}
+                                            labels={wdsLabels}
+                                            {customFieldDefinitions}
+                                          />
                                         {/each}
                                       </div>
                                     {/if}
