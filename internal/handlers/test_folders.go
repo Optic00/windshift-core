@@ -5,78 +5,37 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"time"
 
-	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/services"
 	"windshift/internal/utils"
 )
 
 type TestFolderHandler struct {
-	*BaseHandler
+	service *services.TestFolderService
+	auditor *logger.Auditor
 }
 
-var (
-	errParentFolderNotFound = errors.New("parent folder not found")
-	errNestedDepthExceeded  = errors.New("nested folders deeper than two levels are not allowed")
-	errParentSelfReference  = errors.New("folder cannot be its own parent")
-	errParentHasChildren    = errors.New("folders with subfolders cannot be nested under another folder")
-)
-
-func NewTestFolderHandlerWithPool(db database.Database) *TestFolderHandler {
+func NewTestFolderHandler(service *services.TestFolderService, auditor *logger.Auditor) *TestFolderHandler {
 	return &TestFolderHandler{
-		BaseHandler: NewBaseHandler(db),
+		service: service,
+		auditor: auditor,
 	}
 }
 
-func (h *TestFolderHandler) validateParentFolder(db database.Database, workspaceID int, parentID, currentFolderID *int) error {
-	if parentID == nil {
-		return nil
-	}
-
-	if currentFolderID != nil && *parentID == *currentFolderID {
-		return errParentSelfReference
-	}
-
-	repo := repository.NewTestFolderRepository(db)
-
-	parentParentID, err := repo.GetParentID(*parentID, workspaceID)
-	if errors.Is(err, repository.ErrNotFound) {
-		return errParentFolderNotFound
-	}
-	if err != nil {
-		return err
-	}
-
-	if parentParentID.Valid {
-		return errNestedDepthExceeded
-	}
-
-	if currentFolderID != nil {
-		childCount, err := repo.CountChildren(*currentFolderID, workspaceID)
-		if err != nil {
-			return err
-		}
-		if childCount > 0 {
-			return errParentHasChildren
-		}
-	}
-
-	return nil
-}
-
-func (h *TestFolderHandler) writeParentValidationError(w http.ResponseWriter, r *http.Request, err error) {
+func (h *TestFolderHandler) writeFolderServiceError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
-	case errors.Is(err, errParentFolderNotFound):
-		respondValidationError(w, r, errParentFolderNotFound.Error())
-	case errors.Is(err, errNestedDepthExceeded):
-		respondValidationError(w, r, errNestedDepthExceeded.Error())
-	case errors.Is(err, errParentSelfReference):
-		respondValidationError(w, r, errParentSelfReference.Error())
-	case errors.Is(err, errParentHasChildren):
-		respondValidationError(w, r, errParentHasChildren.Error())
+	case errors.Is(err, repository.ErrNotFound):
+		respondNotFound(w, r, "test_folder")
+	case errors.Is(err, services.ErrTestFolderNameRequired):
+		respondValidationError(w, r, "Folder name is required")
+	case errors.Is(err, services.ErrTestFolderParentNotFound),
+		errors.Is(err, services.ErrTestFolderNestedDepth),
+		errors.Is(err, services.ErrTestFolderParentSelf),
+		errors.Is(err, services.ErrTestFolderParentHasChildren):
+		respondValidationError(w, r, err.Error())
 	default:
 		respondInternalError(w, r, err)
 	}
@@ -89,12 +48,7 @@ func (h *TestFolderHandler) GetAllFolders(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	db, ok := h.requireReadDB(w, r)
-	if !ok {
-		return
-	}
-
-	folders, err := repository.NewTestFolderRepository(db).FindAllWithCounts(workspaceID)
+	folders, err := h.service.List(workspaceID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -115,12 +69,7 @@ func (h *TestFolderHandler) GetFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db, ok := h.requireReadDB(w, r)
-	if !ok {
-		return
-	}
-
-	folder, err := repository.NewTestFolderRepository(db).FindByIDWithCount(id, workspaceID)
+	folder, err := h.service.Get(workspaceID, id)
 	if errors.Is(err, repository.ErrNotFound) {
 		respondNotFound(w, r, "test_folder")
 		return
@@ -147,50 +96,15 @@ func (h *TestFolderHandler) CreateFolder(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if folder.Name == "" {
-		respondValidationError(w, r, "Folder name is required")
-		return
-	}
-
-	folder.WorkspaceID = workspaceID
-
-	readDB, ok := h.requireReadDB(w, r)
-	if !ok {
-		return
-	}
-
-	if err := h.validateParentFolder(readDB, workspaceID, folder.ParentID, nil); err != nil {
-		h.writeParentValidationError(w, r, err)
-		return
-	}
-
-	maxSortOrder, err := repository.NewTestFolderRepository(readDB).MaxSortOrder(workspaceID)
+	created, err := h.service.Create(workspaceID, folder)
 	if err != nil {
-		respondInternalError(w, r, err)
+		h.writeFolderServiceError(w, r, err)
 		return
 	}
 
-	folder.SortOrder = maxSortOrder + 1000 // Leave room for reordering
-	folder.CreatedAt = time.Now()
-	folder.UpdatedAt = time.Now()
+	h.auditor.Log(r, user, logger.ActionTestFolderCreate, logger.ResourceTestFolder, &created.ID, created.Name)
 
-	writeDB, ok := h.requireWriteDB(w, r)
-	if !ok {
-		return
-	}
-
-	id, err := repository.NewTestFolderRepository(writeDB).Create(&folder)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-
-	folder.ID = id
-	folder.TestCaseCount = 0
-
-	logAudit(h.db, r, user, logger.ActionTestFolderCreate, logger.ResourceTestFolder, &id, folder.Name)
-
-	respondJSONCreated(w, folder)
+	respondJSONCreated(w, created)
 }
 
 // UpdateFolder updates an existing test folder
@@ -225,76 +139,32 @@ func (h *TestFolderHandler) UpdateFolder(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if folder.Name == "" {
-		respondValidationError(w, r, "Folder name is required")
-		return
-	}
-
-	readDB, ok := h.requireReadDB(w, r)
-	if !ok {
-		return
-	}
-
-	existingParent, existingSortOrder, err := repository.NewTestFolderRepository(readDB).FindParentAndSortOrder(id, workspaceID)
-	if errors.Is(err, repository.ErrNotFound) {
-		respondNotFound(w, r, "test_folder")
-		return
-	}
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-
 	_, parentProvided := rawPayload["parent_id"]
 	_, sortOrderProvided := rawPayload["sort_order"]
 
-	if !parentProvided && existingParent.Valid {
-		parentID := int(existingParent.Int64)
-		folder.ParentID = &parentID
-	}
-	if !sortOrderProvided {
-		folder.SortOrder = existingSortOrder
-	}
-
-	if parentProvided && folder.ParentID != nil {
-		if err = h.validateParentFolder(readDB, workspaceID, folder.ParentID, &id); err != nil {
-			h.writeParentValidationError(w, r, err)
-			return
-		}
-	}
-
-	folder.UpdatedAt = time.Now()
-
-	writeDB, ok := h.requireWriteDB(w, r)
-	if !ok {
+	updated, err := h.service.Update(workspaceID, id, services.TestFolderUpdateInput{
+		Folder:            folder,
+		ParentProvided:    parentProvided,
+		SortOrderProvided: sortOrderProvided,
+	})
+	if err != nil {
+		h.writeFolderServiceError(w, r, err)
 		return
 	}
 
-	if err := repository.NewTestFolderRepository(writeDB).Update(id, workspaceID, &folder); err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			respondNotFound(w, r, "test_folder")
-			return
-		}
-		respondInternalError(w, r, err)
-		return
-	}
+	h.auditor.Log(r, user, logger.ActionTestFolderUpdate, logger.ResourceTestFolder, &id, updated.Name)
 
-	folder.ID = id
-	folder.WorkspaceID = workspaceID
-
-	logAudit(h.db, r, user, logger.ActionTestFolderUpdate, logger.ResourceTestFolder, &id, folder.Name)
-
-	respondJSONOK(w, folder)
+	respondJSONOK(w, updated)
 }
 
 // DeleteFolder deletes a test folder (test cases will be moved to no folder)
 func (h *TestFolderHandler) DeleteFolder(w http.ResponseWriter, r *http.Request) {
-	workspaceID, id, user, db, ok := h.requireWorkspaceIDAndIDForWrite(w, r)
+	workspaceID, id, user, ok := requireWorkspaceIDAndID(w, r)
 	if !ok {
 		return
 	}
 
-	if err := repository.NewTestFolderRepository(db).DeleteWithCascade(id, workspaceID); err != nil {
+	if err := h.service.Delete(workspaceID, id); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			respondNotFound(w, r, "test_folder")
 			return
@@ -303,7 +173,7 @@ func (h *TestFolderHandler) DeleteFolder(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	logAudit(h.db, r, user, logger.ActionTestFolderDelete, logger.ResourceTestFolder, &id, "")
+	h.auditor.Log(r, user, logger.ActionTestFolderDelete, logger.ResourceTestFolder, &id, "")
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -324,12 +194,7 @@ func (h *TestFolderHandler) ReorderFolders(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	db, ok := h.requireWriteDB(w, r)
-	if !ok {
-		return
-	}
-
-	if err := repository.NewTestFolderRepository(db).Reorder(workspaceID, reorderData.FolderIDs); err != nil {
+	if err := h.service.Reorder(workspaceID, reorderData.FolderIDs); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}

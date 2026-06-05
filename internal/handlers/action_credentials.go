@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net/http"
 
-	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
@@ -25,20 +24,19 @@ import (
 // response uses the sanitized DTO so ciphertext and plaintext never leave
 // the server.
 type ActionCredentialsHandler struct {
-	db                database.Database
 	service           *services.ActionCredentialService
 	permissionService *services.PermissionService
 	keyCache          *WorkspaceKeyCache
+	auditor           *logger.Auditor
 }
 
-// NewActionCredentialsHandler builds the handler. serverSecret is the shared
-// SSO_SECRET; the service binds it to the action-credentials HKDF realm.
-func NewActionCredentialsHandler(db database.Database, permissionService *services.PermissionService, keyCache *WorkspaceKeyCache, serverSecret string) *ActionCredentialsHandler {
+// NewActionCredentialsHandler builds the handler from injected services.
+func NewActionCredentialsHandler(service *services.ActionCredentialService, permissionService *services.PermissionService, keyCache *WorkspaceKeyCache, auditor *logger.Auditor) *ActionCredentialsHandler {
 	return &ActionCredentialsHandler{
-		db:                db,
-		service:           services.NewActionCredentialService(repository.NewActionCredentialRepository(db), serverSecret),
+		service:           service,
 		permissionService: permissionService,
 		keyCache:          keyCache,
+		auditor:           auditor,
 	}
 }
 
@@ -350,7 +348,7 @@ func (h *ActionCredentialsHandler) auditCredential(r *http.Request, user *models
 	// Details intentionally hold only non-sensitive metadata. The audit
 	// pipeline's sanitizeAuditDetails additionally redacts any key that
 	// looks like a secret, but we don't put plaintext here either way.
-	logAuditWithDetails(h.db, r, user, action, logger.ResourceActionCredential, &cred.ID, cred.Name, map[string]interface{}{
+	h.auditor.LogWithDetails(r, user, action, logger.ResourceActionCredential, &cred.ID, cred.Name, map[string]interface{}{
 		"credential_type": cred.CredentialType,
 		"scope":           scope,
 		"workspace_ids":   cred.WorkspaceIDs,

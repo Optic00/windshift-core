@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
@@ -22,10 +21,10 @@ type CredentialHandler struct {
 	sshEnabled        bool
 }
 
-func NewCredentialHandler(db database.Database, permissionService *services.PermissionService, sshEnabled bool) *CredentialHandler {
+func NewCredentialHandler(repo *repository.CredentialRepository, auditor *logger.Auditor, permissionService *services.PermissionService, sshEnabled bool) *CredentialHandler {
 	return &CredentialHandler{
-		repo:              repository.NewCredentialRepository(db),
-		auditor:           logger.NewAuditor(db),
+		repo:              repo,
+		auditor:           auditor,
 		permissionService: permissionService,
 		sshEnabled:        sshEnabled,
 	}

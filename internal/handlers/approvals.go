@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 
-	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
@@ -17,17 +16,19 @@ import (
 // canceling in-flight approval requests. Approval-set CRUD is in
 // ApprovalSetHandler; this handler is the user-facing decision surface.
 type ApprovalHandler struct {
-	db              database.Database
 	permService     *services.PermissionService
 	approvalService *services.ApprovalService
+	itemRepo        *repository.ItemRepository
+	auditor         *logger.Auditor
 }
 
 // NewApprovalHandler constructs the runtime approval handler.
-func NewApprovalHandler(db database.Database, permService *services.PermissionService, approvalService *services.ApprovalService) *ApprovalHandler {
+func NewApprovalHandler(permService *services.PermissionService, approvalService *services.ApprovalService, itemRepo *repository.ItemRepository, auditor *logger.Auditor) *ApprovalHandler {
 	return &ApprovalHandler{
-		db:              db,
 		permService:     permService,
 		approvalService: approvalService,
+		itemRepo:        itemRepo,
+		auditor:         auditor,
 	}
 }
 
@@ -42,7 +43,7 @@ func (h *ApprovalHandler) GetForItem(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !CheckItemPermissionAsActor(w, r, repository.NewItemRepository(h.db), h.permService, h.approvalService, itemID, models.PermissionItemView) {
+	if !CheckItemPermissionAsActor(w, r, h.itemRepo, h.permService, h.approvalService, itemID, models.PermissionItemView) {
 		return
 	}
 
@@ -165,7 +166,7 @@ func (h *ApprovalHandler) Decide(w http.ResponseWriter, r *http.Request) {
 		respondValidationError(w, r, err.Error())
 		return
 	}
-	logAudit(h.db, r, user, logger.ActionApprovalDecide, logger.ResourceApprovalRequest, &requestID, body.Decision)
+	h.auditor.Log(r, user, logger.ActionApprovalDecide, logger.ResourceApprovalRequest, &requestID, body.Decision)
 
 	resp := map[string]any{
 		"decision": decision,
@@ -223,7 +224,7 @@ func (h *ApprovalHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 	// policy in MEMORY.md: unauthorized → 404, never 409.
 	authorized := req.TriggeredByUserID == user.ID
 	if !authorized {
-		workspaceID, err := repository.NewItemRepository(h.db).GetWorkspaceID(req.ItemID)
+		workspaceID, err := h.itemRepo.GetWorkspaceID(req.ItemID)
 		if err != nil {
 			respondNotFound(w, r, "Approval request")
 			return
@@ -251,7 +252,7 @@ func (h *ApprovalHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
-	logAudit(h.db, r, user, logger.ActionApprovalCancel, logger.ResourceApprovalRequest, &requestID, "")
+	h.auditor.Log(r, user, logger.ActionApprovalCancel, logger.ResourceApprovalRequest, &requestID, "")
 
 	out, err := h.approvalService.GetRequest(requestID)
 	if err != nil {
@@ -303,7 +304,7 @@ func (h *ApprovalHandler) Delegate(w http.ResponseWriter, r *http.Request) {
 	// Allow approvers without workspace item.view to delegate their seat — they
 	// already passed the active-pool gate at request creation, and delegation
 	// is a strictly approver-scoped action.
-	if !CheckItemPermissionAsActor(w, r, repository.NewItemRepository(h.db), h.permService, h.approvalService, itemID, models.PermissionItemView) {
+	if !CheckItemPermissionAsActor(w, r, h.itemRepo, h.permService, h.approvalService, itemID, models.PermissionItemView) {
 		return
 	}
 
@@ -311,7 +312,7 @@ func (h *ApprovalHandler) Delegate(w http.ResponseWriter, r *http.Request) {
 		respondValidationError(w, r, err.Error())
 		return
 	}
-	logAudit(h.db, r, user, logger.ActionApprovalDelegate, logger.ResourceApprovalRequest, &requestID, "")
+	h.auditor.Log(r, user, logger.ActionApprovalDelegate, logger.ResourceApprovalRequest, &requestID, "")
 
 	out, err := h.approvalService.GetRequest(requestID)
 	if err != nil {
@@ -347,7 +348,7 @@ func (h *ApprovalHandler) RefreshApprovers(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	if !CheckItemPermission(w, r, repository.NewItemRepository(h.db), h.permService, itemID, models.PermissionItemEdit) {
+	if !CheckItemPermission(w, r, h.itemRepo, h.permService, itemID, models.PermissionItemEdit) {
 		return
 	}
 
@@ -373,7 +374,7 @@ func (h *ApprovalHandler) RefreshApprovers(w http.ResponseWriter, r *http.Reques
 		respondValidationError(w, r, err.Error())
 		return
 	}
-	logAudit(h.db, r, user, logger.ActionApprovalRefresh, logger.ResourceApprovalRequest, &requestID, "")
+	h.auditor.Log(r, user, logger.ActionApprovalRefresh, logger.ResourceApprovalRequest, &requestID, "")
 
 	out, err := h.approvalService.GetRequest(requestID)
 	if err != nil {
@@ -408,7 +409,7 @@ func (h *ApprovalHandler) EscalateNow(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !CheckItemPermission(w, r, repository.NewItemRepository(h.db), h.permService, itemID, models.PermissionItemEdit) {
+	if !CheckItemPermission(w, r, h.itemRepo, h.permService, itemID, models.PermissionItemEdit) {
 		return
 	}
 
@@ -422,7 +423,7 @@ func (h *ApprovalHandler) EscalateNow(w http.ResponseWriter, r *http.Request) {
 		respondValidationError(w, r, err.Error())
 		return
 	}
-	logAudit(h.db, r, user, logger.ActionApprovalEscalate, logger.ResourceApprovalRequest, &requestID, "manual")
+	h.auditor.Log(r, user, logger.ActionApprovalEscalate, logger.ResourceApprovalRequest, &requestID, "manual")
 
 	out, err := h.approvalService.GetRequest(requestID)
 	if err != nil {
@@ -439,7 +440,7 @@ func (h *ApprovalHandler) EscalateNow(w http.ResponseWriter, r *http.Request) {
 // case where a user has been added as an approver via a custom-field reference
 // without otherwise having a workspace role.
 func (h *ApprovalHandler) userCanViewRequest(user *models.User, req *models.ApprovalRequest) bool {
-	workspaceID, err := repository.NewItemRepository(h.db).GetWorkspaceID(req.ItemID)
+	workspaceID, err := h.itemRepo.GetWorkspaceID(req.ItemID)
 	if err == nil {
 		hasView, _ := h.permService.HasWorkspacePermission(user.ID, workspaceID, models.PermissionItemView)
 		if hasView {

@@ -11,6 +11,11 @@ cd "$REPO_ROOT"
 ALLOWLIST="scripts/.handler-db-access-allowlist"
 [[ -f "$ALLOWLIST" ]] || touch "$ALLOWLIST"
 
+HANDLER_DIRS=(
+    "internal/handlers"
+    "internal/restapi/v1/handlers"
+)
+
 # Match direct DB methods while avoiding URL query parsing (`r.URL.Query()`).
 # Plain `.Query(...)` is only counted when it has at least one argument.
 PATTERN='\.(QueryRowContext|QueryContext|ExecWriteContext|ExecContext|QueryRow|ExecWrite|Exec|BeginTx|Begin)[[:space:]]*\(|\.Query[[:space:]]*\([[:space:]]*[^)]'
@@ -33,7 +38,7 @@ while IFS= read -r file; do
         [[ "$has_ops" -eq 1 ]] && reasons+=("calls direct DB methods")
         violations+=("$file (${reasons[*]})")
     fi
-done < <(find internal/handlers -name '*.go' ! -name '*_test.go' | sort)
+done < <(find "${HANDLER_DIRS[@]}" -name '*.go' ! -name '*_test.go' | sort)
 
 if [[ "${#violations[@]}" -gt 0 ]]; then
     echo "FAIL: handler DB access is forbidden outside $ALLOWLIST:" >&2

@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"strings"
 
-	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/sanitize"
@@ -13,16 +12,16 @@ import (
 )
 
 type IterationHandler struct {
-	db                database.Database
 	permissionService *services.PermissionService
 	planningService   *services.PlanningService
+	auditor           *logger.Auditor
 }
 
-func NewIterationHandler(db database.Database, permissionService *services.PermissionService) *IterationHandler {
+func NewIterationHandler(planningService *services.PlanningService, permissionService *services.PermissionService, auditor *logger.Auditor) *IterationHandler {
 	return &IterationHandler{
-		db:                db,
 		permissionService: permissionService,
-		planningService:   services.NewPlanningService(db),
+		planningService:   planningService,
+		auditor:           auditor,
 	}
 }
 
@@ -206,7 +205,7 @@ func (h *IterationHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// Convert service result to model for response
 	createdIteration := iterationResultToModel(result)
 
-	logAudit(h.db, r, user, logger.ActionIterationCreate, logger.ResourceIteration, &createdIteration.ID, createdIteration.Name)
+	h.auditor.Log(r, user, logger.ActionIterationCreate, logger.ResourceIteration, &createdIteration.ID, createdIteration.Name)
 	respondJSONCreated(w, createdIteration)
 }
 
@@ -294,7 +293,7 @@ func (h *IterationHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	updatedIteration := iterationResultToModel(result)
-	logAudit(h.db, r, user, logger.ActionIterationUpdate, logger.ResourceIteration, &updatedIteration.ID, updatedIteration.Name)
+	h.auditor.Log(r, user, logger.ActionIterationUpdate, logger.ResourceIteration, &updatedIteration.ID, updatedIteration.Name)
 	respondJSONOK(w, updatedIteration)
 }
 
@@ -331,7 +330,7 @@ func (h *IterationHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logAudit(h.db, r, user, logger.ActionIterationDelete, logger.ResourceIteration, &id, "")
+	h.auditor.Log(r, user, logger.ActionIterationDelete, logger.ResourceIteration, &id, "")
 	w.WriteHeader(http.StatusNoContent)
 }
 

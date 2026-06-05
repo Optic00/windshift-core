@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"time"
 
-	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/sanitize"
@@ -17,7 +16,6 @@ import (
 
 // RecurrenceHandler handles recurrence rule API endpoints
 type RecurrenceHandler struct {
-	db                database.Database
 	recurrenceRepo    *repository.RecurrenceRepository
 	itemRepo          *repository.ItemRepository
 	scheduler         *scheduler.RecurrenceScheduler
@@ -25,11 +23,10 @@ type RecurrenceHandler struct {
 }
 
 // NewRecurrenceHandler creates a new recurrence handler
-func NewRecurrenceHandler(db database.Database, sched *scheduler.RecurrenceScheduler, permissionService *services.PermissionService) *RecurrenceHandler {
+func NewRecurrenceHandler(recurrenceRepo *repository.RecurrenceRepository, itemRepo *repository.ItemRepository, sched *scheduler.RecurrenceScheduler, permissionService *services.PermissionService) *RecurrenceHandler {
 	return &RecurrenceHandler{
-		db:                db,
-		recurrenceRepo:    repository.NewRecurrenceRepository(db),
-		itemRepo:          repository.NewItemRepository(db),
+		recurrenceRepo:    recurrenceRepo,
+		itemRepo:          itemRepo,
 		scheduler:         sched,
 		permissionService: permissionService,
 	}
@@ -37,7 +34,7 @@ func NewRecurrenceHandler(db database.Database, sched *scheduler.RecurrenceSched
 
 // checkItemEditPermission checks if the current user can edit the given item
 func (h *RecurrenceHandler) checkItemEditPermission(w http.ResponseWriter, r *http.Request, itemID int) bool {
-	return CheckItemPermission(w, r, repository.NewItemRepository(h.db), h.permissionService, itemID, models.PermissionItemEdit)
+	return CheckItemPermission(w, r, h.itemRepo, h.permissionService, itemID, models.PermissionItemEdit)
 }
 
 // resolveRuleForItem extracts the item ID from the URL, enforces permission, and
@@ -48,7 +45,7 @@ func (h *RecurrenceHandler) resolveRuleForItem(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return nil, false
 	}
-	if !CheckItemPermission(w, r, repository.NewItemRepository(h.db), h.permissionService, itemID, permission) {
+	if !CheckItemPermission(w, r, h.itemRepo, h.permissionService, itemID, permission) {
 		return nil, false
 	}
 
@@ -80,7 +77,7 @@ func (h *RecurrenceHandler) GetRecurrence(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	if !CheckItemPermission(w, r, repository.NewItemRepository(h.db), h.permissionService, itemID, models.PermissionItemView) {
+	if !CheckItemPermission(w, r, h.itemRepo, h.permissionService, itemID, models.PermissionItemView) {
 		return
 	}
 

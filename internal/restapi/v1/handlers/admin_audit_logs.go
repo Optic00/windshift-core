@@ -1,8 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
@@ -75,17 +73,9 @@ func (h *AdminAuditLogHandler) List(w http.ResponseWriter, r *http.Request) {
 	pagination := h.ParsePagination(r)
 	q := r.URL.Query()
 
-	// Build filter
-	where := "WHERE 1=1"
-	var args []interface{}
-
-	if v := q.Get("action_type"); v != "" {
-		where += " AND action_type = ?"
-		args = append(args, v)
-	}
-	if v := q.Get("resource_type"); v != "" {
-		where += " AND resource_type = ?"
-		args = append(args, v)
+	filters := repository.AuditLogFilters{
+		ActionType:   q.Get("action_type"),
+		ResourceType: q.Get("resource_type"),
 	}
 	if v := q.Get("user_id"); v != "" {
 		uid, err := strconv.Atoi(v)
@@ -93,8 +83,7 @@ func (h *AdminAuditLogHandler) List(w http.ResponseWriter, r *http.Request) {
 			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid user_id"))
 			return
 		}
-		where += " AND user_id = ?"
-		args = append(args, uid)
+		filters.UserID = &uid
 	}
 	if v := q.Get("from"); v != "" {
 		t, err := time.Parse(time.RFC3339, v)
@@ -102,8 +91,7 @@ func (h *AdminAuditLogHandler) List(w http.ResponseWriter, r *http.Request) {
 			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid from (expected RFC3339)"))
 			return
 		}
-		where += " AND timestamp >= ?"
-		args = append(args, t)
+		filters.From = &t
 	}
 	if v := q.Get("to"); v != "" {
 		t, err := time.Parse(time.RFC3339, v)
@@ -111,85 +99,17 @@ func (h *AdminAuditLogHandler) List(w http.ResponseWriter, r *http.Request) {
 			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid to (expected RFC3339)"))
 			return
 		}
-		where += " AND timestamp <= ?"
-		args = append(args, t)
+		filters.To = &t
 	}
 
-	// Count
-	var total int
-	if err := h.DB.QueryRow("SELECT COUNT(*) FROM audit_logs "+where, args...).Scan(&total); err != nil {
-		h.RespondInternalError(w, r)
-		return
-	}
-
-	// Fetch
-	fetchArgs := make([]interface{}, len(args), len(args)+2)
-	copy(fetchArgs, args)
-	fetchArgs = append(fetchArgs, pagination.Limit, pagination.Offset)
-	rows, err := h.DB.Query(`
-		SELECT id, timestamp, user_id, username, ip_address, user_agent, action_type,
-		       resource_type, resource_id, resource_name, details, success, error_message
-		FROM audit_logs `+where+`
-		ORDER BY timestamp DESC
-		LIMIT ? OFFSET ?
-	`, fetchArgs...)
+	repo := repository.NewAuditLogRepository(h.DB)
+	rows, total, err := repo.List(filters, pagination.Page, pagination.Limit)
 	if err != nil {
 		h.RespondInternalError(w, r)
 		return
 	}
-	defer rows.Close()
 
-	var entries []AuditLogEntryResponse
-	for rows.Next() {
-		var e AuditLogEntryResponse
-		var ts time.Time
-		var userID sql.NullInt64
-		var resourceID sql.NullInt64
-		var ipAddr, userAgent, resourceName, errorMessage sql.NullString
-		var detailsJSON sql.NullString
-
-		if err := rows.Scan(&e.ID, &ts, &userID, &e.Username, &ipAddr, &userAgent,
-			&e.ActionType, &e.ResourceType, &resourceID, &resourceName,
-			&detailsJSON, &e.Success, &errorMessage); err != nil {
-			h.RespondInternalError(w, r)
-			return
-		}
-
-		e.Timestamp = ts.Format(time.RFC3339)
-		if userID.Valid {
-			uid := int(userID.Int64)
-			e.UserID = &uid
-		}
-		if ipAddr.Valid {
-			e.IPAddress = ipAddr.String
-		}
-		if userAgent.Valid {
-			e.UserAgent = userAgent.String
-		}
-		if resourceID.Valid {
-			rid := int(resourceID.Int64)
-			e.ResourceID = &rid
-		}
-		if resourceName.Valid {
-			e.ResourceName = resourceName.String
-		}
-		if detailsJSON.Valid && detailsJSON.String != "" {
-			_ = json.Unmarshal([]byte(detailsJSON.String), &e.Details)
-		}
-		if errorMessage.Valid {
-			e.ErrorMessage = errorMessage.String
-		}
-
-		entries = append(entries, e)
-	}
-	if err := rows.Err(); err != nil {
-		h.RespondInternalError(w, r)
-		return
-	}
-
-	if entries == nil {
-		entries = []AuditLogEntryResponse{}
-	}
+	entries := mapAuditLogRowsToResponses(rows)
 
 	h.RespondPaginated(w, entries, pagination, total)
 }
@@ -256,6 +176,21 @@ func (h *AdminAuditLogHandler) ListSince(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	entries := mapAuditLogRowsToResponses(rows)
+
+	nextAfterID := afterID
+	if len(entries) > 0 {
+		nextAfterID = entries[len(entries)-1].ID
+	}
+
+	h.RespondOK(w, AuditLogStreamResponse{
+		Entries:     entries,
+		NextAfterID: nextAfterID,
+		HasMore:     len(entries) == limit,
+	})
+}
+
+func mapAuditLogRowsToResponses(rows []repository.AuditLogRow) []AuditLogEntryResponse {
 	entries := make([]AuditLogEntryResponse, 0, len(rows))
 	for _, e := range rows {
 		entries = append(entries, AuditLogEntryResponse{
@@ -274,15 +209,5 @@ func (h *AdminAuditLogHandler) ListSince(w http.ResponseWriter, r *http.Request)
 			ErrorMessage: e.ErrorMessage,
 		})
 	}
-
-	nextAfterID := afterID
-	if len(entries) > 0 {
-		nextAfterID = entries[len(entries)-1].ID
-	}
-
-	h.RespondOK(w, AuditLogStreamResponse{
-		Entries:     entries,
-		NextAfterID: nextAfterID,
-		HasMore:     len(entries) == limit,
-	})
+	return entries
 }

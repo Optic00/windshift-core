@@ -2,9 +2,9 @@
 //
 // This file exposes the cookie test-management surface on /rest/api/v1:
 // folders, cases, steps, labels, sets/plans, run templates, runs, reports,
-// and result↔item links. The handlers reuse the existing service /
-// repository / cookie-handler layer where possible; only the bearer-token
-// HTTP surface and scope checks are new.
+// and result↔item links. The handlers use shared services/repositories so
+// bearer-token and cookie-auth surfaces keep matching semantics without v1
+// importing the legacy cookie-handler layer.
 //
 // Permission model: token-scope gating happens at the route layer
 // (tests:read / tests:write). The handler additionally checks the caller's
@@ -19,21 +19,26 @@
 package handlers
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
-	"windshift/internal/contextkeys"
 	"windshift/internal/database"
-	legacyhandlers "windshift/internal/handlers"
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
 	"windshift/internal/sanitize"
 	"windshift/internal/services"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 // TestManagementHandler bundles the read + run-lifecycle endpoints into
@@ -42,21 +47,15 @@ import (
 type TestManagementHandler struct {
 	BaseHandler
 	caseSvc          *services.TestCaseService
+	folderSvc        *services.TestFolderService
 	runSvc           *services.TestRunService
 	setRepo          *repository.TestSetRepository
 	runRepo          *repository.TestRunRepository
 	runTemplateRepo  *repository.TestRunTemplateRepository
+	summaryRepo      *repository.TestSummaryRepository
+	itemRepo         *repository.ItemRepository
 	workspaceChecker *repository.WorkspaceResourceRepository
-	legacy           legacyTestManagementHandlers
-}
-
-type legacyTestManagementHandlers struct {
-	folder      *legacyhandlers.TestFolderHandler
-	caseHandler *legacyhandlers.TestCaseHandler
-	set         *legacyhandlers.TestSetHandler
-	runTemplate *legacyhandlers.TestRunTemplateHandler
-	run         *legacyhandlers.TestRunHandler
-	summary     *legacyhandlers.TestSummaryHandler
+	auditor          *logger.Auditor
 }
 
 // NewTestManagementHandler wires the v1 test-management handler. db /
@@ -73,19 +72,15 @@ func NewTestManagementHandler(db database.Database, permissionService *services.
 	return &TestManagementHandler{
 		BaseHandler:      NewBaseHandler(db, permissionService),
 		caseSvc:          caseSvc,
+		folderSvc:        services.NewTestFolderService(db),
 		runSvc:           runSvc,
 		setRepo:          setRepo,
 		runRepo:          runRepo,
 		runTemplateRepo:  runTemplateRepo,
+		summaryRepo:      repository.NewTestSummaryRepository(db),
+		itemRepo:         repository.NewItemRepository(db),
 		workspaceChecker: workspaceChecker,
-		legacy: legacyTestManagementHandlers{
-			folder:      legacyhandlers.NewTestFolderHandlerWithPool(db),
-			caseHandler: legacyhandlers.NewTestCaseHandlerWithPool(caseSvc, auditor),
-			set:         legacyhandlers.NewTestSetHandlerWithPool(setRepo, workspaceChecker, auditor),
-			runTemplate: legacyhandlers.NewTestRunTemplateHandlerWithPool(runTemplateRepo, workspaceChecker),
-			run:         legacyhandlers.NewTestRunHandlerWithPool(runSvc, runRepo, repository.NewItemRepository(db), auditor),
-			summary:     legacyhandlers.NewTestSummaryHandlerWithPool(repository.NewTestSummaryRepository(db)),
-		},
+		auditor:          auditor,
 	}
 }
 
@@ -145,17 +140,51 @@ func (h *TestManagementHandler) requireTestWorkspaceUser(w http.ResponseWriter, 
 	return workspaceID, user, true
 }
 
-func (h *TestManagementHandler) serveLegacy(w http.ResponseWriter, r *http.Request, permission string, next http.HandlerFunc) {
-	_, user, ok := h.requireTestWorkspaceUser(w, r, permission)
-	if !ok {
-		return
+func (h *TestManagementHandler) requireV1ResourceInWorkspace(w http.ResponseWriter, r *http.Request, table string, resourceID, workspaceID int) bool {
+	exists, err := h.workspaceChecker.ExistsInWorkspace(table, resourceID, workspaceID)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return false
 	}
+	if !exists {
+		h.RespondNotFound(w, r)
+		return false
+	}
+	return true
+}
 
-	// The cookie handlers reuse the same repository / service code and response
-	// shapes. Project the bearer-authenticated user into the legacy context key
-	// so audit logging via utils.GetCurrentUser continues to work.
-	ctx := context.WithValue(r.Context(), contextkeys.User, user)
-	next(w, r.Clone(ctx))
+func (h *TestManagementHandler) requireV1TestSetInWorkspace(w http.ResponseWriter, r *http.Request, permission string) (workspaceID, setID int, ok bool) {
+	workspaceID, ok = h.requireTestWorkspace(w, r, permission)
+	if !ok {
+		return 0, 0, false
+	}
+	setID, ok = h.ParsePathID(w, r, "id", "test set ID")
+	if !ok {
+		return 0, 0, false
+	}
+	if !h.requireV1ResourceInWorkspace(w, r, "test_sets", setID, workspaceID) {
+		return 0, 0, false
+	}
+	return workspaceID, setID, true
+}
+
+func (h *TestManagementHandler) requireV1RunTemplateInWorkspace(w http.ResponseWriter, r *http.Request, permission string) (workspaceID, templateID int, ok bool) {
+	workspaceID, ok = h.requireTestWorkspace(w, r, permission)
+	if !ok {
+		return 0, 0, false
+	}
+	templateID, ok = h.ParsePathID(w, r, "id", "test run template ID")
+	if !ok {
+		return 0, 0, false
+	}
+	if !h.requireV1ResourceInWorkspace(w, r, "test_run_templates", templateID, workspaceID) {
+		return 0, 0, false
+	}
+	return workspaceID, templateID, true
+}
+
+func (h *TestManagementHandler) respondV1Validation(w http.ResponseWriter, r *http.Request, message string) {
+	h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, message))
 }
 
 // --- test cases ---
@@ -196,12 +225,12 @@ func (h *TestManagementHandler) ListTestCases(w http.ResponseWriter, r *http.Req
 		params.FolderID = &folderID
 	}
 
-	cases, err := h.caseSvc.List(params)
+	testCases, err := h.caseSvc.List(params)
 	if err != nil {
 		h.RespondInternalError(w, r)
 		return
 	}
-	h.RespondOK(w, cases)
+	h.RespondOK(w, testCases)
 }
 
 // GetTestCase handles GET /rest/api/v1/workspaces/{workspaceId}/test-cases/{id}
@@ -371,7 +400,7 @@ func (h *TestManagementHandler) GetTestSetCases(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
-	cases, err := h.setRepo.FindTestCases(setID, workspaceID)
+	testCases, err := h.setRepo.FindTestCases(setID, workspaceID)
 	if errors.Is(err, repository.ErrNotFound) {
 		h.RespondNotFound(w, r)
 		return
@@ -380,7 +409,7 @@ func (h *TestManagementHandler) GetTestSetCases(w http.ResponseWriter, r *http.R
 		h.RespondInternalError(w, r)
 		return
 	}
-	h.RespondOK(w, cases)
+	h.RespondOK(w, testCases)
 }
 
 // --- test runs ---
@@ -699,7 +728,7 @@ func (h *TestManagementHandler) ExecuteTestRunTemplate(w http.ResponseWriter, r 
 	h.RespondCreated(w, run)
 }
 
-// --- phase 2 delegated routes (WI-81) ---
+// --- test folders ---
 
 // ListTestFolders handles GET /rest/api/v1/workspaces/{workspaceId}/test-folders
 //
@@ -716,7 +745,16 @@ func (h *TestManagementHandler) ExecuteTestRunTemplate(w http.ResponseWriter, r 
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-folders [get]
 func (h *TestManagementHandler) ListTestFolders(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestView, h.legacy.folder.GetAllFolders)
+	workspaceID, ok := h.requireTestWorkspace(w, r, models.PermissionTestView)
+	if !ok {
+		return
+	}
+	folders, err := h.folderSvc.List(workspaceID)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.RespondOK(w, folders)
 }
 
 // CreateTestFolder handles POST /rest/api/v1/workspaces/{workspaceId}/test-folders
@@ -736,7 +774,21 @@ func (h *TestManagementHandler) ListTestFolders(w http.ResponseWriter, r *http.R
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-folders [post]
 func (h *TestManagementHandler) CreateTestFolder(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestManage, h.legacy.folder.CreateFolder)
+	workspaceID, user, ok := h.requireTestWorkspaceUser(w, r, models.PermissionTestManage)
+	if !ok {
+		return
+	}
+	var folder models.TestFolder
+	if !h.DecodeBodyOrRespond(w, r, &folder) {
+		return
+	}
+	created, err := h.folderSvc.Create(workspaceID, folder)
+	if err != nil {
+		h.respondTestFolderServiceError(w, r, err)
+		return
+	}
+	h.auditor.Log(r, user, logger.ActionTestFolderCreate, logger.ResourceTestFolder, &created.ID, created.Name)
+	h.RespondCreated(w, created)
 }
 
 // GetTestFolder handles GET /rest/api/v1/workspaces/{workspaceId}/test-folders/{id}
@@ -755,7 +807,24 @@ func (h *TestManagementHandler) CreateTestFolder(w http.ResponseWriter, r *http.
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-folders/{id} [get]
 func (h *TestManagementHandler) GetTestFolder(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestView, h.legacy.folder.GetFolder)
+	workspaceID, ok := h.requireTestWorkspace(w, r, models.PermissionTestView)
+	if !ok {
+		return
+	}
+	id, ok := h.ParsePathID(w, r, "id", "test folder ID")
+	if !ok {
+		return
+	}
+	folder, err := h.folderSvc.Get(workspaceID, id)
+	if errors.Is(err, repository.ErrNotFound) {
+		h.RespondNotFound(w, r)
+		return
+	}
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.RespondOK(w, folder)
 }
 
 // UpdateTestFolder handles PUT /rest/api/v1/workspaces/{workspaceId}/test-folders/{id}
@@ -776,7 +845,40 @@ func (h *TestManagementHandler) GetTestFolder(w http.ResponseWriter, r *http.Req
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-folders/{id} [put]
 func (h *TestManagementHandler) UpdateTestFolder(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestManage, h.legacy.folder.UpdateFolder)
+	workspaceID, user, ok := h.requireTestWorkspaceUser(w, r, models.PermissionTestManage)
+	if !ok {
+		return
+	}
+	id, ok := h.ParsePathID(w, r, "id", "test folder ID")
+	if !ok {
+		return
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid request body"))
+		return
+	}
+	var folder models.TestFolder
+	if err := json.Unmarshal(body, &folder); err != nil {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid request body"))
+		return
+	}
+	var rawPayload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &rawPayload); err != nil {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid request body"))
+		return
+	}
+	updated, err := h.folderSvc.Update(workspaceID, id, services.TestFolderUpdateInput{
+		Folder:            folder,
+		ParentProvided:    rawPayloadHas(rawPayload, "parent_id"),
+		SortOrderProvided: rawPayloadHas(rawPayload, "sort_order"),
+	})
+	if err != nil {
+		h.respondTestFolderServiceError(w, r, err)
+		return
+	}
+	h.auditor.Log(r, user, logger.ActionTestFolderUpdate, logger.ResourceTestFolder, &id, updated.Name)
+	h.RespondOK(w, updated)
 }
 
 // DeleteTestFolder handles DELETE /rest/api/v1/workspaces/{workspaceId}/test-folders/{id}
@@ -796,7 +898,24 @@ func (h *TestManagementHandler) UpdateTestFolder(w http.ResponseWriter, r *http.
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-folders/{id} [delete]
 func (h *TestManagementHandler) DeleteTestFolder(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestManage, h.legacy.folder.DeleteFolder)
+	workspaceID, user, ok := h.requireTestWorkspaceUser(w, r, models.PermissionTestManage)
+	if !ok {
+		return
+	}
+	id, ok := h.ParsePathID(w, r, "id", "test folder ID")
+	if !ok {
+		return
+	}
+	if err := h.folderSvc.Delete(workspaceID, id); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			h.RespondNotFound(w, r)
+			return
+		}
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.auditor.Log(r, user, logger.ActionTestFolderDelete, logger.ResourceTestFolder, &id, "")
+	h.RespondNoContent(w)
 }
 
 // ReorderTestFolders handles PUT /rest/api/v1/workspaces/{workspaceId}/test-folders/reorder
@@ -817,7 +936,179 @@ func (h *TestManagementHandler) DeleteTestFolder(w http.ResponseWriter, r *http.
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-folders/reorder [put]
 func (h *TestManagementHandler) ReorderTestFolders(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestManage, h.legacy.folder.ReorderFolders)
+	workspaceID, ok := h.requireTestWorkspace(w, r, models.PermissionTestManage)
+	if !ok {
+		return
+	}
+	var reorderData struct {
+		FolderIDs []int `json:"folder_ids"`
+	}
+	if !h.DecodeBodyOrRespond(w, r, &reorderData) {
+		return
+	}
+	if err := h.folderSvc.Reorder(workspaceID, reorderData.FolderIDs); err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.RespondOK(w, map[string]bool{"success": true})
+}
+
+func rawPayloadHas(rawPayload map[string]json.RawMessage, key string) bool {
+	_, ok := rawPayload[key]
+	return ok
+}
+
+func (h *TestManagementHandler) respondTestFolderServiceError(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case errors.Is(err, repository.ErrNotFound):
+		h.RespondNotFound(w, r)
+	case errors.Is(err, services.ErrTestFolderNameRequired):
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, "Folder name is required"))
+	case errors.Is(err, services.ErrTestFolderParentNotFound),
+		errors.Is(err, services.ErrTestFolderNestedDepth),
+		errors.Is(err, services.ErrTestFolderParentSelf),
+		errors.Is(err, services.ErrTestFolderParentHasChildren):
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, err.Error()))
+	default:
+		h.RespondInternalError(w, r)
+	}
+}
+
+func (h *TestManagementHandler) respondTestCaseServiceError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, repository.ErrNotFound) {
+		h.RespondNotFound(w, r)
+		return
+	}
+	h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, err.Error()))
+}
+
+func (h *TestManagementHandler) requireV1TestCaseInWorkspace(w http.ResponseWriter, r *http.Request, permission string) (workspaceID, testCaseID int, ok bool) {
+	workspaceID, ok = h.requireTestWorkspace(w, r, permission)
+	if !ok {
+		return 0, 0, false
+	}
+	testCaseID, ok = h.ParsePathID(w, r, "testCaseId", "test case ID")
+	if !ok {
+		return 0, 0, false
+	}
+	exists, err := h.caseSvc.Exists(testCaseID, workspaceID)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return 0, 0, false
+	}
+	if !exists {
+		h.RespondNotFound(w, r)
+		return 0, 0, false
+	}
+	return workspaceID, testCaseID, true
+}
+
+func (h *TestManagementHandler) decodeV1TestSetWrite(w http.ResponseWriter, r *http.Request, permission string) (int, *models.User, models.TestSet, bool) {
+	workspaceID, user, ok := h.requireTestWorkspaceUser(w, r, permission)
+	if !ok {
+		return 0, nil, models.TestSet{}, false
+	}
+	var set models.TestSet
+	if !h.DecodeBodyOrRespond(w, r, &set) {
+		return 0, nil, models.TestSet{}, false
+	}
+	set.Name = sanitize.PlainTextField.Sanitize(set.Name)
+	set.Description = sanitize.Comment.Sanitize(set.Description)
+	if set.MilestoneID != nil {
+		exists, err := h.setRepo.MilestoneUsableInWorkspace(*set.MilestoneID, workspaceID)
+		if err != nil {
+			h.RespondInternalError(w, r)
+			return 0, nil, models.TestSet{}, false
+		}
+		if !exists {
+			h.respondV1Validation(w, r, "Milestone not found in workspace")
+			return 0, nil, models.TestSet{}, false
+		}
+	}
+	return workspaceID, user, set, true
+}
+
+func (h *TestManagementHandler) decodeV1RunTemplateWrite(w http.ResponseWriter, r *http.Request, permission string) (int, models.TestRunTemplate, bool) {
+	workspaceID, ok := h.requireTestWorkspace(w, r, permission)
+	if !ok {
+		return 0, models.TestRunTemplate{}, false
+	}
+	var template models.TestRunTemplate
+	if !h.DecodeBodyOrRespond(w, r, &template) {
+		return 0, models.TestRunTemplate{}, false
+	}
+	if template.SetID > 0 && !h.requireV1ResourceInWorkspace(w, r, "test_sets", template.SetID, workspaceID) {
+		return 0, models.TestRunTemplate{}, false
+	}
+	return workspaceID, template, true
+}
+
+func (h *TestManagementHandler) updateV1TestCaseStatusFromSteps(testResultID int) error {
+	stepStatuses, err := h.runRepo.FindStepResultStatuses(testResultID)
+	if err != nil {
+		return err
+	}
+	if len(stepStatuses) == 0 {
+		return nil
+	}
+
+	var finalStatus string
+	hasBlocked := false
+	hasFailed := false
+	hasSkipped := false
+	allPassed := true
+	for _, status := range stepStatuses {
+		switch status {
+		case "failed":
+			hasFailed = true
+			allPassed = false
+		case "blocked":
+			hasBlocked = true
+			allPassed = false
+		case "skipped":
+			hasSkipped = true
+			allPassed = false
+		case "not_run":
+			allPassed = false
+		}
+	}
+	switch {
+	case hasFailed:
+		finalStatus = "failed"
+	case hasBlocked:
+		finalStatus = "blocked"
+	case hasSkipped:
+		finalStatus = "skipped"
+	case allPassed:
+		finalStatus = "passed"
+	default:
+		finalStatus = "not_run"
+	}
+	return h.runRepo.SetTestResultStatus(testResultID, finalStatus)
+}
+
+type v1TestLabelInput struct {
+	Name        string
+	Color       string
+	Description string
+}
+
+func (h *TestManagementHandler) decodeV1TestLabelInput(w http.ResponseWriter, r *http.Request) (v1TestLabelInput, bool) {
+	var raw struct {
+		Name        string `json:"name"`
+		Color       string `json:"color"`
+		Description string `json:"description"`
+	}
+	if !h.DecodeBodyOrRespond(w, r, &raw) {
+		return v1TestLabelInput{}, false
+	}
+	raw.Name = sanitize.ShortIdentifier.Sanitize(raw.Name)
+	raw.Description = sanitize.RichText.Sanitize(raw.Description)
+	if raw.Name == "" {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, "Label name is required"))
+		return v1TestLabelInput{}, false
+	}
+	return v1TestLabelInput{Name: raw.Name, Color: raw.Color, Description: raw.Description}, true
 }
 
 // CreateTestCase handles POST /rest/api/v1/workspaces/{workspaceId}/test-cases
@@ -837,7 +1128,39 @@ func (h *TestManagementHandler) ReorderTestFolders(w http.ResponseWriter, r *htt
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-cases [post]
 func (h *TestManagementHandler) CreateTestCase(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestManage, h.legacy.caseHandler.CreateTestCase)
+	workspaceID, user, ok := h.requireTestWorkspaceUser(w, r, models.PermissionTestManage)
+	if !ok {
+		return
+	}
+	var input struct {
+		Title             string `json:"title"`
+		Preconditions     string `json:"preconditions"`
+		Priority          string `json:"priority"`
+		Status            string `json:"status"`
+		EstimatedDuration int    `json:"estimated_duration"`
+		FolderID          *int   `json:"folder_id"`
+	}
+	if !h.DecodeBodyOrRespond(w, r, &input) {
+		return
+	}
+	if sanitize.PlainTextField.Sanitize(input.Title) == "" {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, "Test case title is required"))
+		return
+	}
+	testCase, err := h.caseSvc.Create(workspaceID, services.TestCaseCreateRequest{
+		Title:             input.Title,
+		Preconditions:     input.Preconditions,
+		Priority:          input.Priority,
+		Status:            input.Status,
+		EstimatedDuration: input.EstimatedDuration,
+		FolderID:          input.FolderID,
+	})
+	if err != nil {
+		h.respondTestCaseServiceError(w, r, err)
+		return
+	}
+	h.auditor.Log(r, user, logger.ActionTestCaseCreate, logger.ResourceTestCase, &testCase.ID, testCase.Title)
+	h.RespondCreated(w, testCase)
 }
 
 // UpdateTestCase handles PUT /rest/api/v1/workspaces/{workspaceId}/test-cases/{id}
@@ -858,7 +1181,45 @@ func (h *TestManagementHandler) CreateTestCase(w http.ResponseWriter, r *http.Re
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-cases/{id} [put]
 func (h *TestManagementHandler) UpdateTestCase(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestManage, h.legacy.caseHandler.UpdateTestCase)
+	workspaceID, user, ok := h.requireTestWorkspaceUser(w, r, models.PermissionTestManage)
+	if !ok {
+		return
+	}
+	id, ok := h.ParsePathID(w, r, "id", "test case ID")
+	if !ok {
+		return
+	}
+	var input struct {
+		Title             string `json:"title"`
+		Preconditions     string `json:"preconditions"`
+		Priority          string `json:"priority"`
+		Status            string `json:"status"`
+		EstimatedDuration int    `json:"estimated_duration"`
+		FolderID          *int   `json:"folder_id"`
+		SortOrder         int    `json:"sort_order"`
+	}
+	if !h.DecodeBodyOrRespond(w, r, &input) {
+		return
+	}
+	if sanitize.PlainTextField.Sanitize(input.Title) == "" {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, "Test case title is required"))
+		return
+	}
+	testCase, err := h.caseSvc.Update(id, workspaceID, services.TestCaseUpdateRequest{
+		Title:             input.Title,
+		Preconditions:     input.Preconditions,
+		Priority:          input.Priority,
+		Status:            input.Status,
+		EstimatedDuration: input.EstimatedDuration,
+		FolderID:          input.FolderID,
+		SortOrder:         input.SortOrder,
+	})
+	if err != nil {
+		h.respondTestCaseServiceError(w, r, err)
+		return
+	}
+	h.auditor.Log(r, user, logger.ActionTestCaseUpdate, logger.ResourceTestCase, &testCase.ID, testCase.Title)
+	h.RespondOK(w, testCase)
 }
 
 // DeleteTestCase handles DELETE /rest/api/v1/workspaces/{workspaceId}/test-cases/{id}
@@ -877,7 +1238,24 @@ func (h *TestManagementHandler) UpdateTestCase(w http.ResponseWriter, r *http.Re
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-cases/{id} [delete]
 func (h *TestManagementHandler) DeleteTestCase(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestManage, h.legacy.caseHandler.DeleteTestCase)
+	workspaceID, user, ok := h.requireTestWorkspaceUser(w, r, models.PermissionTestManage)
+	if !ok {
+		return
+	}
+	id, ok := h.ParsePathID(w, r, "id", "test case ID")
+	if !ok {
+		return
+	}
+	if err := h.caseSvc.Delete(id, workspaceID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			h.RespondNotFound(w, r)
+			return
+		}
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.auditor.Log(r, user, logger.ActionTestCaseDelete, logger.ResourceTestCase, &id, "")
+	h.RespondNoContent(w)
 }
 
 // MoveTestCase handles PUT /rest/api/v1/workspaces/{workspaceId}/test-cases/{id}/move
@@ -899,7 +1277,30 @@ func (h *TestManagementHandler) DeleteTestCase(w http.ResponseWriter, r *http.Re
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-cases/{id}/move [put]
 func (h *TestManagementHandler) MoveTestCase(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestManage, h.legacy.caseHandler.MoveTestCase)
+	workspaceID, ok := h.requireTestWorkspace(w, r, models.PermissionTestManage)
+	if !ok {
+		return
+	}
+	id, ok := h.ParsePathID(w, r, "id", "test case ID")
+	if !ok {
+		return
+	}
+	var moveData struct {
+		FolderID  *int `json:"folder_id"`
+		SortOrder int  `json:"sort_order"`
+	}
+	if !h.DecodeBodyOrRespond(w, r, &moveData) {
+		return
+	}
+	if err := h.caseSvc.Move(id, workspaceID, moveData.FolderID, moveData.SortOrder); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			h.RespondNotFound(w, r)
+			return
+		}
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.RespondOK(w, map[string]bool{"success": true})
 }
 
 // ReorderTestCases handles PUT /rest/api/v1/workspaces/{workspaceId}/test-cases/reorder
@@ -920,7 +1321,22 @@ func (h *TestManagementHandler) MoveTestCase(w http.ResponseWriter, r *http.Requ
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-cases/reorder [put]
 func (h *TestManagementHandler) ReorderTestCases(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestManage, h.legacy.caseHandler.ReorderTestCases)
+	workspaceID, ok := h.requireTestWorkspace(w, r, models.PermissionTestManage)
+	if !ok {
+		return
+	}
+	var reorderData struct {
+		FolderID    *int  `json:"folder_id"`
+		TestCaseIDs []int `json:"test_case_ids"`
+	}
+	if !h.DecodeBodyOrRespond(w, r, &reorderData) {
+		return
+	}
+	if err := h.caseSvc.Reorder(workspaceID, reorderData.TestCaseIDs); err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.RespondOK(w, map[string]bool{"success": true})
 }
 
 // GetTestCaseConnections handles GET /rest/api/v1/workspaces/{workspaceId}/test-cases/{id}/connections
@@ -939,7 +1355,29 @@ func (h *TestManagementHandler) ReorderTestCases(w http.ResponseWriter, r *http.
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-cases/{id}/connections [get]
 func (h *TestManagementHandler) GetTestCaseConnections(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestView, h.legacy.caseHandler.GetTestCaseConnections)
+	workspaceID, ok := h.requireTestWorkspace(w, r, models.PermissionTestView)
+	if !ok {
+		return
+	}
+	id, ok := h.ParsePathID(w, r, "id", "test case ID")
+	if !ok {
+		return
+	}
+	exists, err := h.caseSvc.Exists(id, workspaceID)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	if !exists {
+		h.RespondNotFound(w, r)
+		return
+	}
+	connections, err := h.caseSvc.GetConnections(id, workspaceID)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.RespondOK(w, connections)
 }
 
 // CreateTestCaseStep handles POST /rest/api/v1/workspaces/{workspaceId}/test-cases/{testCaseId}/steps
@@ -960,7 +1398,28 @@ func (h *TestManagementHandler) GetTestCaseConnections(w http.ResponseWriter, r 
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-cases/{testCaseId}/steps [post]
 func (h *TestManagementHandler) CreateTestCaseStep(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestManage, h.legacy.caseHandler.CreateTestStep)
+	_, testCaseID, ok := h.requireV1TestCaseInWorkspace(w, r, models.PermissionTestManage)
+	if !ok {
+		return
+	}
+	var input struct {
+		Action   string `json:"action"`
+		Data     string `json:"data"`
+		Expected string `json:"expected"`
+	}
+	if !h.DecodeBodyOrRespond(w, r, &input) {
+		return
+	}
+	if input.Action == "" {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, "Test step action is required"))
+		return
+	}
+	step, err := h.caseSvc.CreateStep(testCaseID, services.TestStepCreateRequest{Action: input.Action, Data: input.Data, Expected: input.Expected})
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.RespondCreated(w, step)
 }
 
 // UpdateTestCaseStep handles PUT /rest/api/v1/workspaces/{workspaceId}/test-cases/{testCaseId}/steps/{stepId}
@@ -982,7 +1441,37 @@ func (h *TestManagementHandler) CreateTestCaseStep(w http.ResponseWriter, r *htt
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-cases/{testCaseId}/steps/{stepId} [put]
 func (h *TestManagementHandler) UpdateTestCaseStep(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestManage, h.legacy.caseHandler.UpdateTestStep)
+	_, testCaseID, ok := h.requireV1TestCaseInWorkspace(w, r, models.PermissionTestManage)
+	if !ok {
+		return
+	}
+	stepID, ok := h.ParsePathID(w, r, "stepId", "test step ID")
+	if !ok {
+		return
+	}
+	var input struct {
+		StepNumber int    `json:"step_number"`
+		Action     string `json:"action"`
+		Data       string `json:"data"`
+		Expected   string `json:"expected"`
+	}
+	if !h.DecodeBodyOrRespond(w, r, &input) {
+		return
+	}
+	if input.Action == "" {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, "Test step action is required"))
+		return
+	}
+	step, err := h.caseSvc.UpdateStep(stepID, testCaseID, services.TestStepUpdateRequest{StepNumber: input.StepNumber, Action: input.Action, Data: input.Data, Expected: input.Expected})
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			h.RespondNotFound(w, r)
+			return
+		}
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.RespondOK(w, step)
 }
 
 // DeleteTestCaseStep handles DELETE /rest/api/v1/workspaces/{workspaceId}/test-cases/{testCaseId}/steps/{stepId}
@@ -1002,7 +1491,23 @@ func (h *TestManagementHandler) UpdateTestCaseStep(w http.ResponseWriter, r *htt
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-cases/{testCaseId}/steps/{stepId} [delete]
 func (h *TestManagementHandler) DeleteTestCaseStep(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestManage, h.legacy.caseHandler.DeleteTestStep)
+	_, testCaseID, ok := h.requireV1TestCaseInWorkspace(w, r, models.PermissionTestManage)
+	if !ok {
+		return
+	}
+	stepID, ok := h.ParsePathID(w, r, "stepId", "test step ID")
+	if !ok {
+		return
+	}
+	if err := h.caseSvc.DeleteStep(stepID, testCaseID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			h.RespondNotFound(w, r)
+			return
+		}
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.RespondNoContent(w)
 }
 
 // ReorderTestCaseSteps handles PUT /rest/api/v1/workspaces/{workspaceId}/test-cases/{testCaseId}/steps/reorder
@@ -1024,7 +1529,21 @@ func (h *TestManagementHandler) DeleteTestCaseStep(w http.ResponseWriter, r *htt
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-cases/{testCaseId}/steps/reorder [put]
 func (h *TestManagementHandler) ReorderTestCaseSteps(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestManage, h.legacy.caseHandler.ReorderTestSteps)
+	_, testCaseID, ok := h.requireV1TestCaseInWorkspace(w, r, models.PermissionTestManage)
+	if !ok {
+		return
+	}
+	var reorderData struct {
+		StepIDs []int `json:"step_ids"`
+	}
+	if !h.DecodeBodyOrRespond(w, r, &reorderData) {
+		return
+	}
+	if err := h.caseSvc.ReorderSteps(testCaseID, reorderData.StepIDs); err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.RespondOK(w, map[string]bool{"success": true})
 }
 
 // ListTestLabels handles GET /rest/api/v1/workspaces/{workspaceId}/test-labels
@@ -1042,7 +1561,16 @@ func (h *TestManagementHandler) ReorderTestCaseSteps(w http.ResponseWriter, r *h
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-labels [get]
 func (h *TestManagementHandler) ListTestLabels(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestView, h.legacy.caseHandler.GetAllTestLabels)
+	workspaceID, ok := h.requireTestWorkspace(w, r, models.PermissionTestView)
+	if !ok {
+		return
+	}
+	labels, err := h.caseSvc.GetAllLabels(workspaceID)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.RespondOK(w, labels)
 }
 
 // CreateTestLabel handles POST /rest/api/v1/workspaces/{workspaceId}/test-labels
@@ -1062,7 +1590,20 @@ func (h *TestManagementHandler) ListTestLabels(w http.ResponseWriter, r *http.Re
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-labels [post]
 func (h *TestManagementHandler) CreateTestLabel(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestManage, h.legacy.caseHandler.CreateTestLabel)
+	workspaceID, ok := h.requireTestWorkspace(w, r, models.PermissionTestManage)
+	if !ok {
+		return
+	}
+	input, ok := h.decodeV1TestLabelInput(w, r)
+	if !ok {
+		return
+	}
+	label, err := h.caseSvc.CreateLabel(workspaceID, services.TestLabelCreateRequest{Name: input.Name, Color: input.Color, Description: input.Description})
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.RespondCreated(w, label)
 }
 
 // UpdateTestLabel handles PUT /rest/api/v1/workspaces/{workspaceId}/test-labels/{labelId}
@@ -1083,7 +1624,28 @@ func (h *TestManagementHandler) CreateTestLabel(w http.ResponseWriter, r *http.R
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-labels/{labelId} [put]
 func (h *TestManagementHandler) UpdateTestLabel(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestManage, h.legacy.caseHandler.UpdateTestLabel)
+	workspaceID, ok := h.requireTestWorkspace(w, r, models.PermissionTestManage)
+	if !ok {
+		return
+	}
+	labelID, ok := h.ParsePathID(w, r, "labelId", "test label ID")
+	if !ok {
+		return
+	}
+	input, ok := h.decodeV1TestLabelInput(w, r)
+	if !ok {
+		return
+	}
+	label, err := h.caseSvc.UpdateLabel(labelID, workspaceID, services.TestLabelUpdateRequest{Name: input.Name, Color: input.Color, Description: input.Description})
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			h.RespondNotFound(w, r)
+			return
+		}
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.RespondOK(w, label)
 }
 
 // DeleteTestLabel handles DELETE /rest/api/v1/workspaces/{workspaceId}/test-labels/{labelId}
@@ -1102,7 +1664,19 @@ func (h *TestManagementHandler) UpdateTestLabel(w http.ResponseWriter, r *http.R
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-labels/{labelId} [delete]
 func (h *TestManagementHandler) DeleteTestLabel(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestManage, h.legacy.caseHandler.DeleteTestLabel)
+	workspaceID, ok := h.requireTestWorkspace(w, r, models.PermissionTestManage)
+	if !ok {
+		return
+	}
+	labelID, ok := h.ParsePathID(w, r, "labelId", "test label ID")
+	if !ok {
+		return
+	}
+	if err := h.caseSvc.DeleteLabel(labelID, workspaceID); err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.RespondNoContent(w)
 }
 
 // ListTestCaseLabels handles GET /rest/api/v1/workspaces/{workspaceId}/test-cases/{testCaseId}/labels
@@ -1121,7 +1695,16 @@ func (h *TestManagementHandler) DeleteTestLabel(w http.ResponseWriter, r *http.R
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-cases/{testCaseId}/labels [get]
 func (h *TestManagementHandler) ListTestCaseLabels(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestView, h.legacy.caseHandler.GetTestCaseLabels)
+	_, testCaseID, ok := h.requireV1TestCaseInWorkspace(w, r, models.PermissionTestView)
+	if !ok {
+		return
+	}
+	labels, err := h.caseSvc.GetLabelsForTestCase(testCaseID)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.RespondOK(w, labels)
 }
 
 // AddTestCaseLabel handles POST /rest/api/v1/workspaces/{workspaceId}/test-cases/{testCaseId}/labels
@@ -1143,7 +1726,25 @@ func (h *TestManagementHandler) ListTestCaseLabels(w http.ResponseWriter, r *htt
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-cases/{testCaseId}/labels [post]
 func (h *TestManagementHandler) AddTestCaseLabel(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestManage, h.legacy.caseHandler.AddTestCaseLabel)
+	workspaceID, testCaseID, ok := h.requireV1TestCaseInWorkspace(w, r, models.PermissionTestManage)
+	if !ok {
+		return
+	}
+	var data struct {
+		LabelID int `json:"label_id"`
+	}
+	if !h.DecodeBodyOrRespond(w, r, &data) {
+		return
+	}
+	if err := h.caseSvc.AddLabelToTestCase(testCaseID, data.LabelID, workspaceID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			h.RespondNotFound(w, r)
+			return
+		}
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.RespondCreated(w, map[string]bool{"success": true})
 }
 
 // RemoveTestCaseLabel handles DELETE /rest/api/v1/workspaces/{workspaceId}/test-cases/{testCaseId}/labels/{labelId}
@@ -1163,7 +1764,19 @@ func (h *TestManagementHandler) AddTestCaseLabel(w http.ResponseWriter, r *http.
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-cases/{testCaseId}/labels/{labelId} [delete]
 func (h *TestManagementHandler) RemoveTestCaseLabel(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestManage, h.legacy.caseHandler.RemoveTestCaseLabel)
+	_, testCaseID, ok := h.requireV1TestCaseInWorkspace(w, r, models.PermissionTestManage)
+	if !ok {
+		return
+	}
+	labelID, ok := h.ParsePathID(w, r, "labelId", "test label ID")
+	if !ok {
+		return
+	}
+	if err := h.caseSvc.RemoveLabelFromTestCase(testCaseID, labelID); err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.RespondNoContent(w)
 }
 
 // CreateTestSet handles POST /rest/api/v1/workspaces/{workspaceId}/test-sets
@@ -1183,7 +1796,21 @@ func (h *TestManagementHandler) RemoveTestCaseLabel(w http.ResponseWriter, r *ht
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-sets [post]
 func (h *TestManagementHandler) CreateTestSet(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestManage, h.legacy.set.Create)
+	workspaceID, user, set, ok := h.decodeV1TestSetWrite(w, r, models.PermissionTestManage)
+	if !ok {
+		return
+	}
+	id, createdAt, err := h.setRepo.Create(workspaceID, &set)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	set.ID = id
+	set.WorkspaceID = workspaceID
+	set.CreatedAt = createdAt
+	set.UpdatedAt = createdAt
+	h.auditor.Log(r, user, logger.ActionTestSetCreate, logger.ResourceTestSet, &id, set.Name)
+	h.RespondCreated(w, set)
 }
 
 // UpdateTestSet handles PUT /rest/api/v1/workspaces/{workspaceId}/test-sets/{id}
@@ -1204,7 +1831,28 @@ func (h *TestManagementHandler) CreateTestSet(w http.ResponseWriter, r *http.Req
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-sets/{id} [put]
 func (h *TestManagementHandler) UpdateTestSet(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestManage, h.legacy.set.Update)
+	workspaceID, user, set, ok := h.decodeV1TestSetWrite(w, r, models.PermissionTestManage)
+	if !ok {
+		return
+	}
+	id, ok := h.ParsePathID(w, r, "id", "test set ID")
+	if !ok {
+		return
+	}
+	updatedAt, err := h.setRepo.Update(id, workspaceID, &set)
+	if errors.Is(err, repository.ErrNotFound) {
+		h.RespondNotFound(w, r)
+		return
+	}
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	set.ID = id
+	set.WorkspaceID = workspaceID
+	set.UpdatedAt = updatedAt
+	h.auditor.Log(r, user, logger.ActionTestSetUpdate, logger.ResourceTestSet, &id, set.Name)
+	h.RespondOK(w, set)
 }
 
 // DeleteTestSet handles DELETE /rest/api/v1/workspaces/{workspaceId}/test-sets/{id}
@@ -1223,7 +1871,27 @@ func (h *TestManagementHandler) UpdateTestSet(w http.ResponseWriter, r *http.Req
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-sets/{id} [delete]
 func (h *TestManagementHandler) DeleteTestSet(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestManage, h.legacy.set.Delete)
+	workspaceID, user, ok := h.requireTestWorkspaceUser(w, r, models.PermissionTestManage)
+	if !ok {
+		return
+	}
+	id, ok := h.ParsePathID(w, r, "id", "test set ID")
+	if !ok {
+		return
+	}
+	if !h.requireV1ResourceInWorkspace(w, r, "test_sets", id, workspaceID) {
+		return
+	}
+	if err := h.setRepo.Delete(id, workspaceID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			h.RespondNotFound(w, r)
+			return
+		}
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.auditor.Log(r, user, logger.ActionTestSetDelete, logger.ResourceTestSet, &id, "")
+	h.RespondNoContent(w)
 }
 
 // AddTestSetCase handles POST /rest/api/v1/workspaces/{workspaceId}/test-sets/{id}/test-cases
@@ -1245,7 +1913,24 @@ func (h *TestManagementHandler) DeleteTestSet(w http.ResponseWriter, r *http.Req
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-sets/{id}/test-cases [post]
 func (h *TestManagementHandler) AddTestSetCase(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestManage, h.legacy.set.AddTestCase)
+	workspaceID, setID, ok := h.requireV1TestSetInWorkspace(w, r, models.PermissionTestManage)
+	if !ok {
+		return
+	}
+	var request struct {
+		TestCaseID int `json:"test_case_id"`
+	}
+	if !h.DecodeBodyOrRespond(w, r, &request) {
+		return
+	}
+	if !h.requireV1ResourceInWorkspace(w, r, "test_cases", request.TestCaseID, workspaceID) {
+		return
+	}
+	if err := h.setRepo.AddTestCase(setID, request.TestCaseID); err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.RespondCreated(w, nil)
 }
 
 // RemoveTestSetCase handles DELETE /rest/api/v1/workspaces/{workspaceId}/test-sets/{id}/test-cases/{testCaseId}
@@ -1265,7 +1950,19 @@ func (h *TestManagementHandler) AddTestSetCase(w http.ResponseWriter, r *http.Re
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-sets/{id}/test-cases/{testCaseId} [delete]
 func (h *TestManagementHandler) RemoveTestSetCase(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestManage, h.legacy.set.RemoveTestCase)
+	_, setID, ok := h.requireV1TestSetInWorkspace(w, r, models.PermissionTestManage)
+	if !ok {
+		return
+	}
+	testCaseID, ok := h.ParsePathID(w, r, "testCaseId", "test case ID")
+	if !ok {
+		return
+	}
+	if err := h.setRepo.RemoveTestCase(setID, testCaseID); err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.RespondNoContent(w)
 }
 
 // ListTestSetRuns handles GET /rest/api/v1/workspaces/{workspaceId}/test-sets/{id}/runs
@@ -1284,7 +1981,16 @@ func (h *TestManagementHandler) RemoveTestSetCase(w http.ResponseWriter, r *http
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-sets/{id}/runs [get]
 func (h *TestManagementHandler) ListTestSetRuns(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestView, h.legacy.set.GetRuns)
+	workspaceID, setID, ok := h.requireV1TestSetInWorkspace(w, r, models.PermissionTestView)
+	if !ok {
+		return
+	}
+	runs, err := h.setRepo.FindRuns(setID, workspaceID)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.RespondOK(w, runs)
 }
 
 // ListTestPlans handles GET /rest/api/v1/workspaces/{workspaceId}/test-plans
@@ -1303,7 +2009,7 @@ func (h *TestManagementHandler) ListTestSetRuns(w http.ResponseWriter, r *http.R
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-plans [get]
 func (h *TestManagementHandler) ListTestPlans(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestView, h.legacy.set.GetAll)
+	h.ListTestSets(w, r)
 }
 
 // CreateTestPlan handles POST /rest/api/v1/workspaces/{workspaceId}/test-plans
@@ -1324,7 +2030,7 @@ func (h *TestManagementHandler) ListTestPlans(w http.ResponseWriter, r *http.Req
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-plans [post]
 func (h *TestManagementHandler) CreateTestPlan(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestManage, h.legacy.set.Create)
+	h.CreateTestSet(w, r)
 }
 
 // GetTestPlan handles GET /rest/api/v1/workspaces/{workspaceId}/test-plans/{id}
@@ -1343,7 +2049,7 @@ func (h *TestManagementHandler) CreateTestPlan(w http.ResponseWriter, r *http.Re
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-plans/{id} [get]
 func (h *TestManagementHandler) GetTestPlan(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestView, h.legacy.set.Get)
+	h.GetTestSet(w, r)
 }
 
 // UpdateTestPlan handles PUT /rest/api/v1/workspaces/{workspaceId}/test-plans/{id}
@@ -1364,7 +2070,7 @@ func (h *TestManagementHandler) GetTestPlan(w http.ResponseWriter, r *http.Reque
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-plans/{id} [put]
 func (h *TestManagementHandler) UpdateTestPlan(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestManage, h.legacy.set.Update)
+	h.UpdateTestSet(w, r)
 }
 
 // DeleteTestPlan handles DELETE /rest/api/v1/workspaces/{workspaceId}/test-plans/{id}
@@ -1383,7 +2089,7 @@ func (h *TestManagementHandler) UpdateTestPlan(w http.ResponseWriter, r *http.Re
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-plans/{id} [delete]
 func (h *TestManagementHandler) DeleteTestPlan(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestManage, h.legacy.set.Delete)
+	h.DeleteTestSet(w, r)
 }
 
 // ListTestPlanCases handles GET /rest/api/v1/workspaces/{workspaceId}/test-plans/{id}/test-cases
@@ -1402,7 +2108,16 @@ func (h *TestManagementHandler) DeleteTestPlan(w http.ResponseWriter, r *http.Re
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-plans/{id}/test-cases [get]
 func (h *TestManagementHandler) ListTestPlanCases(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestView, h.legacy.set.GetTestCases)
+	workspaceID, setID, ok := h.requireV1TestSetInWorkspace(w, r, models.PermissionTestView)
+	if !ok {
+		return
+	}
+	testCases, err := h.setRepo.FindTestCases(setID, workspaceID)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.RespondOK(w, testCases)
 }
 
 // AddTestPlanCase handles POST /rest/api/v1/workspaces/{workspaceId}/test-plans/{id}/test-cases
@@ -1424,7 +2139,7 @@ func (h *TestManagementHandler) ListTestPlanCases(w http.ResponseWriter, r *http
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-plans/{id}/test-cases [post]
 func (h *TestManagementHandler) AddTestPlanCase(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestManage, h.legacy.set.AddTestCase)
+	h.AddTestSetCase(w, r)
 }
 
 // RemoveTestPlanCase handles DELETE /rest/api/v1/workspaces/{workspaceId}/test-plans/{id}/test-cases/{testCaseId}
@@ -1444,7 +2159,7 @@ func (h *TestManagementHandler) AddTestPlanCase(w http.ResponseWriter, r *http.R
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-plans/{id}/test-cases/{testCaseId} [delete]
 func (h *TestManagementHandler) RemoveTestPlanCase(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestManage, h.legacy.set.RemoveTestCase)
+	h.RemoveTestSetCase(w, r)
 }
 
 // ListTestPlanRuns handles GET /rest/api/v1/workspaces/{workspaceId}/test-plans/{id}/runs
@@ -1463,7 +2178,7 @@ func (h *TestManagementHandler) RemoveTestPlanCase(w http.ResponseWriter, r *htt
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-plans/{id}/runs [get]
 func (h *TestManagementHandler) ListTestPlanRuns(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestView, h.legacy.set.GetRuns)
+	h.ListTestSetRuns(w, r)
 }
 
 // ListTestRunTemplates handles GET /rest/api/v1/workspaces/{workspaceId}/test-run-templates
@@ -1481,7 +2196,16 @@ func (h *TestManagementHandler) ListTestPlanRuns(w http.ResponseWriter, r *http.
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-run-templates [get]
 func (h *TestManagementHandler) ListTestRunTemplates(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestView, h.legacy.runTemplate.GetAll)
+	workspaceID, ok := h.requireTestWorkspace(w, r, models.PermissionTestView)
+	if !ok {
+		return
+	}
+	templates, err := h.runTemplateRepo.FindAll(workspaceID)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.RespondOK(w, templates)
 }
 
 // CreateTestRunTemplate handles POST /rest/api/v1/workspaces/{workspaceId}/test-run-templates
@@ -1501,7 +2225,20 @@ func (h *TestManagementHandler) ListTestRunTemplates(w http.ResponseWriter, r *h
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-run-templates [post]
 func (h *TestManagementHandler) CreateTestRunTemplate(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestManage, h.legacy.runTemplate.Create)
+	workspaceID, template, ok := h.decodeV1RunTemplateWrite(w, r, models.PermissionTestManage)
+	if !ok {
+		return
+	}
+	id, createdAt, err := h.runTemplateRepo.Create(workspaceID, &template)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	template.ID = id
+	template.WorkspaceID = workspaceID
+	template.CreatedAt = createdAt
+	template.UpdatedAt = createdAt
+	h.RespondCreated(w, template)
 }
 
 // GetTestRunTemplate handles GET /rest/api/v1/workspaces/{workspaceId}/test-run-templates/{id}
@@ -1520,7 +2257,24 @@ func (h *TestManagementHandler) CreateTestRunTemplate(w http.ResponseWriter, r *
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-run-templates/{id} [get]
 func (h *TestManagementHandler) GetTestRunTemplate(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestView, h.legacy.runTemplate.Get)
+	workspaceID, ok := h.requireTestWorkspace(w, r, models.PermissionTestView)
+	if !ok {
+		return
+	}
+	id, ok := h.ParsePathID(w, r, "id", "test run template ID")
+	if !ok {
+		return
+	}
+	template, err := h.runTemplateRepo.FindByID(id, workspaceID)
+	if errors.Is(err, repository.ErrNotFound) {
+		h.RespondNotFound(w, r)
+		return
+	}
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.RespondOK(w, template)
 }
 
 // UpdateTestRunTemplate handles PUT /rest/api/v1/workspaces/{workspaceId}/test-run-templates/{id}
@@ -1541,7 +2295,27 @@ func (h *TestManagementHandler) GetTestRunTemplate(w http.ResponseWriter, r *htt
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-run-templates/{id} [put]
 func (h *TestManagementHandler) UpdateTestRunTemplate(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestManage, h.legacy.runTemplate.Update)
+	workspaceID, template, ok := h.decodeV1RunTemplateWrite(w, r, models.PermissionTestManage)
+	if !ok {
+		return
+	}
+	id, ok := h.ParsePathID(w, r, "id", "test run template ID")
+	if !ok {
+		return
+	}
+	updatedAt, err := h.runTemplateRepo.Update(id, workspaceID, &template)
+	if errors.Is(err, repository.ErrNotFound) {
+		h.RespondNotFound(w, r)
+		return
+	}
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	template.ID = id
+	template.WorkspaceID = workspaceID
+	template.UpdatedAt = updatedAt
+	h.RespondOK(w, template)
 }
 
 // DeleteTestRunTemplate handles DELETE /rest/api/v1/workspaces/{workspaceId}/test-run-templates/{id}
@@ -1560,7 +2334,23 @@ func (h *TestManagementHandler) UpdateTestRunTemplate(w http.ResponseWriter, r *
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-run-templates/{id} [delete]
 func (h *TestManagementHandler) DeleteTestRunTemplate(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestManage, h.legacy.runTemplate.Delete)
+	workspaceID, ok := h.requireTestWorkspace(w, r, models.PermissionTestManage)
+	if !ok {
+		return
+	}
+	id, ok := h.ParsePathID(w, r, "id", "test run template ID")
+	if !ok {
+		return
+	}
+	if err := h.runTemplateRepo.Delete(id, workspaceID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			h.RespondNotFound(w, r)
+			return
+		}
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.RespondNoContent(w)
 }
 
 // ListTestRunTemplateExecutions handles GET /rest/api/v1/workspaces/{workspaceId}/test-run-templates/{id}/executions
@@ -1579,7 +2369,16 @@ func (h *TestManagementHandler) DeleteTestRunTemplate(w http.ResponseWriter, r *
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-run-templates/{id}/executions [get]
 func (h *TestManagementHandler) ListTestRunTemplateExecutions(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestView, h.legacy.runTemplate.GetExecutions)
+	workspaceID, templateID, ok := h.requireV1RunTemplateInWorkspace(w, r, models.PermissionTestView)
+	if !ok {
+		return
+	}
+	runs, err := h.runTemplateRepo.FindExecutions(templateID, workspaceID)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.RespondOK(w, runs)
 }
 
 // UpdateTestRun handles PUT /rest/api/v1/workspaces/{workspaceId}/test-runs/{id}
@@ -1600,7 +2399,32 @@ func (h *TestManagementHandler) ListTestRunTemplateExecutions(w http.ResponseWri
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-runs/{id} [put]
 func (h *TestManagementHandler) UpdateTestRun(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestExecute, h.legacy.run.Update)
+	workspaceID, user, ok := h.requireTestWorkspaceUser(w, r, models.PermissionTestExecute)
+	if !ok {
+		return
+	}
+	id, ok := h.ParsePathID(w, r, "id", "test run ID")
+	if !ok {
+		return
+	}
+	var input struct {
+		Name       string `json:"name"`
+		AssigneeID *int   `json:"assignee_id"`
+	}
+	if !h.DecodeBodyOrRespond(w, r, &input) {
+		return
+	}
+	input.Name = sanitize.PlainTextField.Sanitize(input.Name)
+	if _, err := h.runSvc.Update(id, workspaceID, services.TestRunUpdateRequest{Name: input.Name, AssigneeID: input.AssigneeID}); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			h.RespondNotFound(w, r)
+			return
+		}
+		h.respondV1Validation(w, r, err.Error())
+		return
+	}
+	h.auditor.Log(r, user, logger.ActionTestRunUpdate, logger.ResourceTestRun, &id, "")
+	h.RespondOK(w, map[string]bool{"success": true})
 }
 
 // DeleteTestRun handles DELETE /rest/api/v1/workspaces/{workspaceId}/test-runs/{id}
@@ -1619,7 +2443,24 @@ func (h *TestManagementHandler) UpdateTestRun(w http.ResponseWriter, r *http.Req
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-runs/{id} [delete]
 func (h *TestManagementHandler) DeleteTestRun(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestManage, h.legacy.run.Delete)
+	workspaceID, user, ok := h.requireTestWorkspaceUser(w, r, models.PermissionTestManage)
+	if !ok {
+		return
+	}
+	id, ok := h.ParsePathID(w, r, "id", "test run ID")
+	if !ok {
+		return
+	}
+	if err := h.runSvc.Delete(id, workspaceID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			h.RespondNotFound(w, r)
+			return
+		}
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.auditor.Log(r, user, logger.ActionTestRunDelete, logger.ResourceTestRun, &id, "")
+	w.WriteHeader(http.StatusOK)
 }
 
 // GetTestRunStepResults handles GET /rest/api/v1/workspaces/{workspaceId}/test-runs/{id}/steps
@@ -1639,7 +2480,42 @@ func (h *TestManagementHandler) DeleteTestRun(w http.ResponseWriter, r *http.Req
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-runs/{id}/steps [get]
 func (h *TestManagementHandler) GetTestRunStepResults(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestView, h.legacy.run.GetStepResults)
+	workspaceID, ok := h.requireTestWorkspace(w, r, models.PermissionTestView)
+	if !ok {
+		return
+	}
+	runID, ok := h.ParsePathID(w, r, "id", "test run ID")
+	if !ok {
+		return
+	}
+	exists, err := h.runSvc.Exists(runID, workspaceID)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	if !exists {
+		h.RespondNotFound(w, r)
+		return
+	}
+	rows, err := h.runRepo.FindStepResultsForRun(runID, workspaceID)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	stepResults := make(map[string]interface{}, len(rows))
+	for _, row := range rows {
+		compositeKey := fmt.Sprintf("%d_%d", row.TestCaseID, row.StepID)
+		stepResults[compositeKey] = map[string]interface{}{
+			"step_id":       row.StepID,
+			"test_case_id":  row.TestCaseID,
+			"status":        row.Status,
+			"actual_result": row.ActualResult,
+			"notes":         row.Notes,
+			"item_id":       row.ItemID,
+			"executed_at":   row.ExecutedAt,
+		}
+	}
+	h.RespondOK(w, stepResults)
 }
 
 // UpdateTestRunStepResult handles PUT /rest/api/v1/workspaces/{workspaceId}/test-runs/{id}/steps/{stepId}
@@ -1662,7 +2538,70 @@ func (h *TestManagementHandler) GetTestRunStepResults(w http.ResponseWriter, r *
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-runs/{id}/steps/{stepId} [put]
 func (h *TestManagementHandler) UpdateTestRunStepResult(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestExecute, h.legacy.run.UpdateStepResult)
+	workspaceID, ok := h.requireTestWorkspace(w, r, models.PermissionTestExecute)
+	if !ok {
+		return
+	}
+	runID, ok := h.ParsePathID(w, r, "id", "test run ID")
+	if !ok {
+		return
+	}
+	stepID, ok := h.ParsePathID(w, r, "stepId", "test step ID")
+	if !ok {
+		return
+	}
+	var update struct {
+		Status       string `json:"status"`
+		ActualResult string `json:"actual_result"`
+		Notes        string `json:"notes"`
+		ItemID       *int   `json:"item_id,omitempty"`
+	}
+	if !h.DecodeBodyOrRespond(w, r, &update) {
+		return
+	}
+	update.ActualResult = sanitize.RichText.Sanitize(update.ActualResult)
+	update.Notes = sanitize.RichText.Sanitize(update.Notes)
+	if update.ItemID != nil {
+		itemWorkspaceID, err := h.itemRepo.GetWorkspaceID(*update.ItemID)
+		if err != nil || itemWorkspaceID != workspaceID {
+			h.RespondNotFound(w, r)
+			return
+		}
+	}
+	testResultID, err := h.runRepo.FindTestResultIDForStep(runID, stepID, workspaceID)
+	if errors.Is(err, repository.ErrNotFound) {
+		h.RespondNotFound(w, r)
+		return
+	}
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	existingID, findErr := h.runRepo.FindStepResultID(testResultID, stepID)
+	input := repository.StepResultInput{
+		TestResultID: testResultID,
+		StepID:       stepID,
+		Status:       update.Status,
+		ActualResult: update.ActualResult,
+		Notes:        update.Notes,
+		ItemID:       update.ItemID,
+	}
+	switch {
+	case errors.Is(findErr, repository.ErrNotFound):
+		err = h.runRepo.CreateStepResult(input)
+	case findErr == nil:
+		err = h.runRepo.UpdateStepResult(existingID, input)
+	default:
+		err = findErr
+	}
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	if err := h.updateV1TestCaseStatusFromSteps(testResultID); err != nil {
+		slog.Warn("failed to update test case status", slog.Any("error", err), slog.Int("test_result_id", testResultID))
+	}
+	h.RespondOK(w, map[string]string{"status": "success"})
 }
 
 // GetTestRunSummary handles GET /rest/api/v1/workspaces/{workspaceId}/test-runs/{id}/summary
@@ -1682,7 +2621,113 @@ func (h *TestManagementHandler) UpdateTestRunStepResult(w http.ResponseWriter, r
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-runs/{id}/summary [get]
 func (h *TestManagementHandler) GetTestRunSummary(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestView, h.legacy.summary.GetMarkdownSummary)
+	workspaceID, ok := h.requireTestWorkspace(w, r, models.PermissionTestView)
+	if !ok {
+		return
+	}
+	runID, ok := h.ParsePathID(w, r, "id", "test run ID")
+	if !ok {
+		return
+	}
+	header, err := h.summaryRepo.FindMarkdownRunHeader(runID, workspaceID)
+	if errors.Is(err, repository.ErrNotFound) {
+		h.RespondNotFound(w, r)
+		return
+	}
+	if err != nil {
+		h.RespondNotFound(w, r)
+		return
+	}
+	results, err := h.summaryRepo.FindMarkdownResults(runID, workspaceID)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	stats := map[string]int{"total": 0, "passed": 0, "failed": 0, "blocked": 0, "skipped": 0, "not_run": 0}
+	for _, res := range results {
+		stats["total"]++
+		stats[res.Status]++
+	}
+
+	var markdown strings.Builder
+	fmt.Fprintf(&markdown, "# Test Run Summary: %s\n\n", header.RunName) //nolint:gosec // G705: written to strings.Builder, returned as JSON
+	fmt.Fprintf(&markdown, "**Test Set:** %s\n\n", header.SetName)       //nolint:gosec // G705: written to strings.Builder, returned as JSON
+	if header.StartedAt.Valid {
+		fmt.Fprintf(&markdown, "**Started:** %s\n\n", header.StartedAt.Time.Format("2006-01-02 15:04:05")) //nolint:gosec // G705: written to strings.Builder, returned as JSON
+	}
+	if header.EndedAt.Valid {
+		fmt.Fprintf(&markdown, "**Ended:** %s\n\n", header.EndedAt.Time.Format("2006-01-02 15:04:05")) //nolint:gosec // G705: written to strings.Builder, returned as JSON
+		if header.StartedAt.Valid {
+			duration := header.EndedAt.Time.Sub(header.StartedAt.Time)
+			fmt.Fprintf(&markdown, "**Duration:** %s\n\n", duration.Round(time.Second)) //nolint:gosec // G705: written to strings.Builder, returned as JSON
+		}
+	}
+	markdown.WriteString("## Statistics\n\n")
+	markdown.WriteString("| Status | Count | Percentage |\n")
+	markdown.WriteString("|--------|-------|------------|\n")
+	if stats["total"] > 0 {
+		fmt.Fprintf(&markdown, "| ✅ Passed | %d | %.1f%% |\n", stats["passed"], float64(stats["passed"])/float64(stats["total"])*100)
+		fmt.Fprintf(&markdown, "| ❌ Failed | %d | %.1f%% |\n", stats["failed"], float64(stats["failed"])/float64(stats["total"])*100)
+		fmt.Fprintf(&markdown, "| ⚠️ Blocked | %d | %.1f%% |\n", stats["blocked"], float64(stats["blocked"])/float64(stats["total"])*100)
+		fmt.Fprintf(&markdown, "| ⏭️ Skipped | %d | %.1f%% |\n", stats["skipped"], float64(stats["skipped"])/float64(stats["total"])*100)
+		fmt.Fprintf(&markdown, "| ⏸️ Not Run | %d | %.1f%% |\n", stats["not_run"], float64(stats["not_run"])/float64(stats["total"])*100)
+		fmt.Fprintf(&markdown, "| **Total** | **%d** | **100%%** |\n\n", stats["total"])
+		passRate := float64(stats["passed"]) / float64(stats["total"]) * 100
+		fmt.Fprintf(&markdown, "**Overall Pass Rate:** %.1f%%\n\n", passRate)
+	}
+	if stats["failed"] > 0 {
+		markdown.WriteString("## Failed Tests\n\n")
+		for _, result := range results {
+			if result.Status == "failed" {
+				fmt.Fprintf(&markdown, "### ❌ %s\n\n", result.Title) //nolint:gosec // G705: written to strings.Builder, returned as JSON
+				if result.ActualResult != "" {
+					fmt.Fprintf(&markdown, "**Actual Result:**\n%s\n\n", result.ActualResult) //nolint:gosec // G705: written to strings.Builder, returned as JSON
+				}
+				if result.Notes != "" {
+					fmt.Fprintf(&markdown, "**Notes:**\n%s\n\n", result.Notes) //nolint:gosec // G705: written to strings.Builder, returned as JSON
+				}
+				markdown.WriteString("---\n\n")
+			}
+		}
+	}
+	if stats["blocked"] > 0 {
+		markdown.WriteString("## Blocked Tests\n\n")
+		for _, result := range results {
+			if result.Status == "blocked" {
+				fmt.Fprintf(&markdown, "### ⚠️ %s\n", result.Title) //nolint:gosec // G705: written to strings.Builder, returned as JSON
+				if result.Notes != "" {
+					fmt.Fprintf(&markdown, "**Reason:** %s\n", result.Notes) //nolint:gosec // G705: written to strings.Builder, returned as JSON
+				}
+				markdown.WriteString("\n")
+			}
+		}
+	}
+	markdown.WriteString("## All Test Results\n\n")
+	markdown.WriteString("| Test Case | Status | Notes |\n")
+	markdown.WriteString("|-----------|--------|-------|\n")
+	for _, result := range results {
+		statusIcon := "⏸️"
+		switch result.Status {
+		case "passed":
+			statusIcon = "✅"
+		case "failed":
+			statusIcon = "❌"
+		case "blocked":
+			statusIcon = "⚠️"
+		case "skipped":
+			statusIcon = "⏭️"
+		}
+		notes := result.Notes
+		if notes == "" {
+			notes = "-"
+		}
+		fmt.Fprintf(&markdown, "| %s | %s %s | %s |\n", //nolint:gosec // G705: written to strings.Builder, returned as JSON
+			escapeMarkdownTableCell(result.Title),
+			statusIcon,
+			escapeMarkdownTableCell(cases.Title(language.English).String(result.Status)),
+			escapeMarkdownTableCell(notes))
+	}
+	h.RespondOK(w, map[string]string{"markdown": markdown.String()})
 }
 
 // GetTestReportsSummary handles GET /rest/api/v1/workspaces/{workspaceId}/test-reports/summary
@@ -1703,7 +2748,64 @@ func (h *TestManagementHandler) GetTestRunSummary(w http.ResponseWriter, r *http
 // @Failure      500           {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-reports/summary [get]
 func (h *TestManagementHandler) GetTestReportsSummary(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestView, h.legacy.summary.GetReportsSummary)
+	workspaceID, ok := h.requireTestWorkspace(w, r, models.PermissionTestView)
+	if !ok {
+		return
+	}
+	var milestoneID *int
+	if milestoneIDStr := r.URL.Query().Get("milestone_id"); milestoneIDStr != "" {
+		mid, err := strconv.Atoi(milestoneIDStr)
+		if err != nil {
+			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid milestone_id"))
+			return
+		}
+		milestoneID = &mid
+	}
+	days := 30
+	if daysStr := r.URL.Query().Get("days"); daysStr != "" {
+		d, err := strconv.Atoi(daysStr)
+		if err != nil || d < 1 || d > 365 {
+			h.respondV1Validation(w, r, "Invalid days parameter (must be 1-365)")
+			return
+		}
+		days = d
+	}
+	filter := repository.ReportFilter{WorkspaceID: workspaceID, MilestoneID: milestoneID, StartDate: time.Now().AddDate(0, 0, -days)}
+	stats, err := h.summaryRepo.GetOverallStats(filter)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	trend, err := h.summaryRepo.GetTrend(filter)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	failures, err := h.summaryRepo.GetRecentFailures(filter, 20)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	blocked, err := h.summaryRepo.GetRecentBlocked(filter, 20)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.RespondOK(w, map[string]interface{}{
+		"overall": map[string]interface{}{
+			"total_runs":  stats.TotalRuns,
+			"total_tests": stats.TotalTests,
+			"passed":      stats.Passed,
+			"failed":      stats.Failed,
+			"blocked":     stats.Blocked,
+			"skipped":     stats.Skipped,
+			"not_run":     stats.NotRun,
+			"pass_rate":   stats.PassRate(),
+		},
+		"trend":           trend,
+		"recent_failures": failures,
+		"recent_blocked":  blocked,
+	})
 }
 
 // LinkTestResultItem handles POST /rest/api/v1/workspaces/{workspaceId}/test-results/{resultId}/items
@@ -1725,7 +2827,35 @@ func (h *TestManagementHandler) GetTestReportsSummary(w http.ResponseWriter, r *
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-results/{resultId}/items [post]
 func (h *TestManagementHandler) LinkTestResultItem(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestExecute, h.legacy.run.LinkItemToTestResult)
+	workspaceID, ok := h.requireTestWorkspace(w, r, models.PermissionTestExecute)
+	if !ok {
+		return
+	}
+	resultID, ok := h.ParsePathID(w, r, "resultId", "test result ID")
+	if !ok {
+		return
+	}
+	var data struct {
+		ItemID int `json:"item_id"`
+	}
+	if !h.DecodeBodyOrRespond(w, r, &data) {
+		return
+	}
+	itemWorkspaceID, err := h.itemRepo.GetWorkspaceID(data.ItemID)
+	if err != nil || itemWorkspaceID != workspaceID {
+		h.RespondNotFound(w, r)
+		return
+	}
+	owned, err := h.runRepo.TestResultBelongsToWorkspace(resultID, workspaceID)
+	if err != nil || !owned {
+		h.RespondNotFound(w, r)
+		return
+	}
+	if err := h.runRepo.LinkResultToItem(resultID, data.ItemID); err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.RespondCreated(w, map[string]bool{"success": true})
 }
 
 // UnlinkTestResultItem handles DELETE /rest/api/v1/workspaces/{workspaceId}/test-results/{resultId}/items/{itemId}
@@ -1745,7 +2875,28 @@ func (h *TestManagementHandler) LinkTestResultItem(w http.ResponseWriter, r *htt
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-results/{resultId}/items/{itemId} [delete]
 func (h *TestManagementHandler) UnlinkTestResultItem(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestExecute, h.legacy.run.UnlinkItemFromTestResult)
+	workspaceID, ok := h.requireTestWorkspace(w, r, models.PermissionTestExecute)
+	if !ok {
+		return
+	}
+	resultID, ok := h.ParsePathID(w, r, "resultId", "test result ID")
+	if !ok {
+		return
+	}
+	itemID, ok := h.ParsePathID(w, r, "itemId", "item ID")
+	if !ok {
+		return
+	}
+	owned, err := h.runRepo.TestResultBelongsToWorkspace(resultID, workspaceID)
+	if err != nil || !owned {
+		h.RespondNotFound(w, r)
+		return
+	}
+	if err := h.runRepo.UnlinkResultFromItem(resultID, itemID); err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.RespondNoContent(w)
 }
 
 // ListTestResultItems handles GET /rest/api/v1/workspaces/{workspaceId}/test-results/{resultId}/items
@@ -1764,5 +2915,31 @@ func (h *TestManagementHandler) UnlinkTestResultItem(w http.ResponseWriter, r *h
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{workspaceId}/test-results/{resultId}/items [get]
 func (h *TestManagementHandler) ListTestResultItems(w http.ResponseWriter, r *http.Request) {
-	h.serveLegacy(w, r, models.PermissionTestView, h.legacy.run.GetTestResultItems)
+	workspaceID, ok := h.requireTestWorkspace(w, r, models.PermissionTestView)
+	if !ok {
+		return
+	}
+	resultID, ok := h.ParsePathID(w, r, "resultId", "test result ID")
+	if !ok {
+		return
+	}
+	owned, err := h.runRepo.TestResultBelongsToWorkspace(resultID, workspaceID)
+	if err != nil || !owned {
+		h.RespondNotFound(w, r)
+		return
+	}
+	items, err := h.itemRepo.ListItemsLinkedToTestResult(resultID, workspaceID)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.RespondOK(w, items)
+}
+
+func escapeMarkdownTableCell(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", " ")
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	s = strings.ReplaceAll(s, "|", `\|`)
+	return s
 }

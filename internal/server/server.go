@@ -473,7 +473,7 @@ func (s *Server) initialize() error {
 		},
 	)
 	groupHandler := handlers.NewGroupHandler(s.db, permService)
-	credentialHandler := handlers.NewCredentialHandler(s.db, permService, cfg.SSH.Enabled)
+	credentialHandler := handlers.NewCredentialHandler(repository.NewCredentialRepository(s.db), logger.NewAuditor(s.db), permService, cfg.SSH.Enabled)
 	webAuthnHandler := handlers.NewWebAuthnHandler(s.db, permService, sessionManager, webAuthnConfig, ipExtractor)
 	collectionHandler := handlers.NewCollectionHandler(s.db, permService)
 	boardConfigHandler := handlers.NewBoardConfigurationHandler(s.db, permService)
@@ -506,7 +506,7 @@ func (s *Server) initialize() error {
 	customerOrgPermissionHandler := handlers.NewCustomerOrganisationPermissionHandler(logger.NewAuditor(s.db), customerOrgPermissionService)
 
 	// Test management handlers
-	testFolderHandler := handlers.NewTestFolderHandlerWithPool(s.db)
+	testFolderHandler := handlers.NewTestFolderHandler(services.NewTestFolderService(s.db), logger.NewAuditor(s.db))
 	testCaseHandler := handlers.NewTestCaseHandlerWithPool(services.NewTestCaseService(s.db), logger.NewAuditor(s.db))
 	workspaceResourceRepo := repository.NewWorkspaceResourceRepository(s.db)
 	testSetHandler := handlers.NewTestSetHandlerWithPool(repository.NewTestSetRepository(s.db), workspaceResourceRepo, logger.NewAuditor(s.db))
@@ -533,11 +533,12 @@ func (s *Server) initialize() error {
 	pageLabelHandler := handlers.NewPageLabelHandler(pageLabelRepo, pagePermissionService, logger.NewAuditor(s.db))
 
 	// Recurrence handler
-	recurrenceHandler := handlers.NewRecurrenceHandler(s.db, s.recurrenceScheduler, permService)
+	recurrenceHandler := handlers.NewRecurrenceHandler(repository.NewRecurrenceRepository(s.db), repository.NewItemRepository(s.db), s.recurrenceScheduler, permService)
 
 	// Actions handler
 	actionsHandler := handlers.NewActionsHandler(s.db, s.actionService, permService, workspaceKeyCache)
-	actionCredentialsHandler := handlers.NewActionCredentialsHandler(s.db, permService, workspaceKeyCache, cfg.Auth.SessionSecret)
+	actionCredentialService := services.NewActionCredentialService(repository.NewActionCredentialRepository(s.db), cfg.Auth.SessionSecret)
+	actionCredentialsHandler := handlers.NewActionCredentialsHandler(actionCredentialService, permService, workspaceKeyCache, logger.NewAuditor(s.db))
 	// Wire credential resolution into the action runtime so HTTP capabilities
 	// can reference tokens by ID. The service shares the same SSO_SECRET via
 	// a domain-separated HKDF label (ActionCredentialEncryptionInfo).
@@ -559,9 +560,9 @@ func (s *Server) initialize() error {
 	onCallRepo := repository.NewOnCallRepository(s.db)
 	teamService := services.NewTeamService(s.db, teamRepo, leaveRepo)
 	onCallService := services.NewOnCallService(s.db, onCallRepo, leaveRepo)
-	teamHandler := handlers.NewTeamHandler(s.db, teamRepo, leaveRepo, permService)
+	teamHandler := handlers.NewTeamHandler(teamRepo, leaveRepo, permService, logger.NewAuditor(s.db))
 	leaveHandler := handlers.NewLeaveHandler(leaveRepo, repository.NewUserRepository(s.db), permService)
-	onCallHandler := handlers.NewOnCallHandler(s.db, onCallRepo, teamRepo, onCallService, permService)
+	onCallHandler := handlers.NewOnCallHandler(onCallRepo, teamRepo, onCallService, permService)
 	s.actionService.SetTeamService(teamService)
 
 	milestoneCategoryConfig := services.NewMilestoneCategoryConfig()
@@ -584,7 +585,7 @@ func (s *Server) initialize() error {
 	iterationTypeHandler := handlers.NewEnumHandler(
 		services.NewEnumService(s.db, iterationTypeConfig),
 		func() interface{} { return &models.IterationType{} })
-	iterationHandler := handlers.NewIterationHandler(s.db, permService)
+	iterationHandler := handlers.NewIterationHandler(services.NewPlanningService(s.db), permService, logger.NewAuditor(s.db))
 	personalLabelHandler := handlers.NewPersonalLabelHandler(s.db, permService)
 	commentHandler := handlers.NewCommentHandler(s.db, permService, s.activityTracker, s.notificationService)
 	reviewHandler := handlers.NewReviewHandler(s.db)
@@ -631,7 +632,7 @@ func (s *Server) initialize() error {
 	scmWorkspaceHandler := handlers.NewSCMWorkspaceHandler(s.db, scmProviderHandler.GetEncryption(), scmProviderHandler, permService, baseURL)
 	scmItemLinksHandler := handlers.NewSCMItemLinksHandler(s.db, scmProviderHandler.GetEncryption(), permService)
 	userSCMTokenHandler := handlers.NewUserSCMTokenHandler(s.db, scmProviderHandler.GetEncryption())
-	milestoneHandler := handlers.NewMilestoneHandler(s.db, permService, scm.NewCredentialResolver(s.db, scmProviderHandler.GetEncryption()))
+	milestoneHandler := handlers.NewMilestoneHandler(services.NewPlanningService(s.db), permService, scm.NewCredentialResolver(s.db, scmProviderHandler.GetEncryption()), logger.NewAuditor(s.db))
 
 	// WI-87/88/89/90 coding-agent harness stack. The acting-identity
 	// chokepoint (WI-87) is constructed first; both the workspace-binding
@@ -1000,7 +1001,7 @@ func (s *Server) initialize() error {
 		slog.Info("plugin system disabled")
 	}
 
-	pluginHandler := handlers.NewPluginHandler(s.db, s.pluginManager, cfg.Plugins.Disabled)
+	pluginHandler := handlers.NewPluginHandler(s.pluginManager, repository.NewPluginRegistryRepository(s.db), logger.NewAuditor(s.db), cfg.Plugins.Disabled)
 
 	// Audit log handler
 	auditLogHandler := handlers.NewAuditLogHandler(repository.NewAuditLogRepository(s.db))
@@ -1174,7 +1175,7 @@ func (s *Server) initialize() error {
 			Analytics:             handlers.NewAnalyticsHandler(services.NewAnalyticsService(s.db), permService, workspaceKeyCache),
 			ConditionSet:          handlers.NewConditionSetHandler(s.db),
 			ApprovalSet:           handlers.NewApprovalSetHandler(approvalSetService, logger.NewAuditor(s.db)),
-			Approval:              handlers.NewApprovalHandler(s.db, permService, approvalService),
+			Approval:              handlers.NewApprovalHandler(permService, approvalService, repository.NewItemRepository(s.db), logger.NewAuditor(s.db)),
 			TransitionGovernance:  handlers.NewTransitionGovernanceHandler(repository.NewTransitionRepository(s.db), approvalSetService),
 			AgentBinding:          agentBindingHandler,
 			AgentRun:              agentRunHandler,
@@ -1312,8 +1313,8 @@ func (s *Server) initialize() error {
 	// action chain can be exercised end-to-end without standing up a
 	// real GitHub or pushing real refs. Production never sets this env.
 	if os.Getenv("WINDSHIFT_E2E_TEST_HOOKS") == "1" {
-		mux.Handle("POST /api/test/scm/setup-mock-repo", handlers.NewTestSetupMockRepo(s.db))
-		mux.Handle("POST /api/test/scm/inject-ref", handlers.NewTestSCMInjectRef(s.db, s.actionService))
+		mux.Handle("POST /api/test/scm/setup-mock-repo", handlers.NewTestSetupMockRepo(services.NewTestSCMHookService(s.db, nil)))
+		mux.Handle("POST /api/test/scm/inject-ref", handlers.NewTestSCMInjectRef(services.NewTestSCMHookService(s.db, s.actionService)))
 		slog.Warn("WINDSHIFT_E2E_TEST_HOOKS enabled — test hook routes are mounted; never enable in production")
 	}
 

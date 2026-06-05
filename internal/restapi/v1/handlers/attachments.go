@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -27,6 +26,7 @@ import (
 type AttachmentHandler struct {
 	BaseHandler
 	attachmentPath string
+	repo           *repository.AttachmentRepository
 }
 
 // NewAttachmentHandler constructs the v1 attachment handler. attachmentPath is
@@ -36,6 +36,7 @@ func NewAttachmentHandler(db database.Database, permissionService *services.Perm
 	return &AttachmentHandler{
 		BaseHandler:    NewBaseHandler(db, permissionService),
 		attachmentPath: attachmentPath,
+		repo:           repository.NewAttachmentRepository(db),
 	}
 }
 
@@ -119,21 +120,9 @@ func (h *AttachmentHandler) Download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var (
-		itemID           sql.NullInt64
-		entityType       sql.NullString
-		filename         string
-		originalFilename string
-		filePath         string
-		mimeType         string
-		fileSize         int64
-	)
-	err := h.DB.QueryRow(`
-		SELECT item_id, entity_type, filename, original_filename, file_path, mime_type, file_size
-		FROM attachments WHERE id = ?
-	`, attachmentID).Scan(&itemID, &entityType, &filename, &originalFilename, &filePath, &mimeType, &fileSize)
+	record, err := h.repo.GetItemDownloadRecord(attachmentID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, repository.ErrNotFound) {
 			restapi.RespondError(w, r, restapi.ErrItemNotFound)
 			return
 		}
@@ -142,30 +131,7 @@ func (h *AttachmentHandler) Download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Only item-scoped attachments are exposed on this route. test_result and
-	// other entity types still have their own paths off the cookie-auth
-	// surface; routing them through items:read here would let an items token
-	// pull bytes from unrelated resources.
-	if entityType.Valid && entityType.String != "" && entityType.String != "item" {
-		restapi.RespondError(w, r, restapi.ErrItemNotFound)
-		return
-	}
-	if !itemID.Valid {
-		restapi.RespondError(w, r, restapi.ErrItemNotFound)
-		return
-	}
-
-	workspaceID, err := repository.NewItemRepository(h.DB).GetWorkspaceID(int(itemID.Int64))
-	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			restapi.RespondError(w, r, restapi.ErrItemNotFound)
-			return
-		}
-		restapi.RespondError(w, r, restapi.ErrInternalError)
-		return
-	}
-
-	canView, err := h.Perms.CanViewWorkspace(user.ID, workspaceID)
+	canView, err := h.Perms.CanViewWorkspace(user.ID, record.WorkspaceID)
 	if err != nil || !canView {
 		restapi.RespondError(w, r, restapi.ErrItemNotFound)
 		return
@@ -174,9 +140,9 @@ func (h *AttachmentHandler) Download(w http.ResponseWriter, r *http.Request) {
 	// Path traversal guard: the resolved file path must live under the
 	// configured attachment directory. Relative rows from older email ingestion
 	// are resolved against that root before the guard is applied.
-	resolvedFilePath, err := h.resolveStoredAttachmentPath(filePath)
+	resolvedFilePath, err := h.resolveStoredAttachmentPath(record.FilePath)
 	if err != nil {
-		slog.Warn("attachment path traversal blocked", slog.String("component", "v1/attachments"), slog.Int("attachment_id", attachmentID), slog.String("file_path", filePath))
+		slog.Warn("attachment path traversal blocked", slog.String("component", "v1/attachments"), slog.Int("attachment_id", attachmentID), slog.String("file_path", record.FilePath))
 		restapi.RespondError(w, r, restapi.ErrItemNotFound)
 		return
 	}
@@ -193,15 +159,15 @@ func (h *AttachmentHandler) Download(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = file.Close() }()
 
-	w.Header().Set("Content-Type", mimeType)
-	w.Header().Set("Content-Length", strconv.FormatInt(fileSize, 10))
+	w.Header().Set("Content-Type", record.MimeType)
+	w.Header().Set("Content-Length", strconv.FormatInt(record.FileSize, 10))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
 	// CLI consumers always want a download; force the disposition rather than
 	// inheriting the legacy "inline for safe MIME types" branch (the legacy
 	// handler serves the same files to browsers, which is the only case where
 	// inline display matters).
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", originalFilename))
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", record.OriginalFilename))
 
 	if _, err := io.Copy(w, file); err != nil {
 		slog.Error("failed to stream attachment", slog.String("component", "v1/attachments"), slog.Any("error", err))
@@ -237,18 +203,9 @@ func (h *AttachmentHandler) Thumbnail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var (
-		itemID        sql.NullInt64
-		entityType    sql.NullString
-		hasThumbnail  bool
-		thumbnailPath sql.NullString
-	)
-	err := h.DB.QueryRow(`
-		SELECT item_id, entity_type, has_thumbnail, thumbnail_path
-		FROM attachments WHERE id = ?
-	`, attachmentID).Scan(&itemID, &entityType, &hasThumbnail, &thumbnailPath)
+	record, err := h.repo.GetItemThumbnailRecord(attachmentID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, repository.ErrNotFound) {
 			restapi.RespondError(w, r, restapi.ErrItemNotFound)
 			return
 		}
@@ -257,34 +214,15 @@ func (h *AttachmentHandler) Thumbnail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if entityType.Valid && entityType.String != "" && entityType.String != "item" {
-		restapi.RespondError(w, r, restapi.ErrItemNotFound)
-		return
-	}
-	if !itemID.Valid || !hasThumbnail || !thumbnailPath.Valid || thumbnailPath.String == "" {
-		restapi.RespondError(w, r, restapi.ErrItemNotFound)
-		return
-	}
-
-	workspaceID, err := repository.NewItemRepository(h.DB).GetWorkspaceID(int(itemID.Int64))
-	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			restapi.RespondError(w, r, restapi.ErrItemNotFound)
-			return
-		}
-		restapi.RespondError(w, r, restapi.ErrInternalError)
-		return
-	}
-
-	canView, err := h.Perms.CanViewWorkspace(user.ID, workspaceID)
+	canView, err := h.Perms.CanViewWorkspace(user.ID, record.WorkspaceID)
 	if err != nil || !canView {
 		restapi.RespondError(w, r, restapi.ErrItemNotFound)
 		return
 	}
 
-	resolvedThumbnailPath, err := h.resolveStoredAttachmentPath(thumbnailPath.String)
+	resolvedThumbnailPath, err := h.resolveStoredAttachmentPath(record.ThumbnailPath)
 	if err != nil {
-		slog.Warn("attachment thumbnail path traversal blocked", slog.String("component", "v1/attachments"), slog.Int("attachment_id", attachmentID), slog.String("thumbnail_path", thumbnailPath.String))
+		slog.Warn("attachment thumbnail path traversal blocked", slog.String("component", "v1/attachments"), slog.Int("attachment_id", attachmentID), slog.String("thumbnail_path", record.ThumbnailPath))
 		restapi.RespondError(w, r, restapi.ErrItemNotFound)
 		return
 	}

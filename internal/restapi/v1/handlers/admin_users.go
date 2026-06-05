@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 
 	"windshift/internal/database"
@@ -12,7 +13,6 @@ import (
 // AdminUserHandler handles admin user management in REST API v1.
 type AdminUserHandler struct {
 	BaseHandler
-	db      database.Database
 	userSvc *services.UserReadService
 }
 
@@ -20,7 +20,6 @@ type AdminUserHandler struct {
 func NewAdminUserHandler(db database.Database, permissionService *services.PermissionService) *AdminUserHandler {
 	return &AdminUserHandler{
 		BaseHandler: NewBaseHandler(db, permissionService),
-		db:          db,
 		userSvc:     services.NewUserReadService(db),
 	}
 }
@@ -148,28 +147,23 @@ func (h *AdminUserHandler) Update(w http.ResponseWriter, r *http.Request) {
 		sanitize.Pair{Target: req.LastName, Policy: sanitize.PlainTextField, Label: "Last name"},
 	)
 
-	b := NewDynamicUpdateBuilder()
-	b.AddString("first_name", req.FirstName)
-	b.AddString("last_name", req.LastName)
-	b.AddString("email", req.Email)
-	b.AddBool("is_active", req.IsActive)
-
-	if !h.ValidateNoFields(w, r, b) {
+	update := services.AdminUserUpdate{
+		FirstName: req.FirstName,
+		LastName:  req.LastName,
+		Email:     req.Email,
+		IsActive:  req.IsActive,
+	}
+	if update.IsEmpty() {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "No fields to update"))
 		return
 	}
-	b.AddTimestamp()
 
-	query, args := b.BuildUpdateByID("users", id)
-
-	result, err := h.db.ExecWrite(query, args...)
-	if err != nil {
+	if err := h.userSvc.UpdateAdmin(id, update); err != nil {
+		if errors.Is(err, services.ErrUserNotFound) {
+			h.RespondError(w, r, restapi.ErrUserNotFound)
+			return
+		}
 		h.RespondInternalError(w, r)
-		return
-	}
-
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		h.RespondError(w, r, restapi.ErrUserNotFound)
 		return
 	}
 
@@ -185,23 +179,8 @@ func (h *AdminUserHandler) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AdminUserHandler) getUserGroupIDs(userID int) []int {
-	rows, err := h.db.Query("SELECT group_id FROM group_members WHERE user_id = ?", userID)
+	ids, err := h.userSvc.GetGroupIDs(userID)
 	if err != nil {
-		return []int{}
-	}
-	defer rows.Close()
-
-	var ids []int
-	for rows.Next() {
-		var id int
-		if rows.Scan(&id) == nil {
-			ids = append(ids, id)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return []int{}
-	}
-	if ids == nil {
 		return []int{}
 	}
 	return ids

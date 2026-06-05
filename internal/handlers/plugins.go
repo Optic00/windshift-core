@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strings"
 
-	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/plugins"
 	"windshift/internal/repository"
@@ -24,11 +23,11 @@ type PluginHandler struct {
 }
 
 // NewPluginHandler creates a new plugin handler
-func NewPluginHandler(db database.Database, manager *plugins.Manager, disabled bool) *PluginHandler {
+func NewPluginHandler(manager *plugins.Manager, registry *repository.PluginRegistryRepository, auditor *logger.Auditor, disabled bool) *PluginHandler {
 	return &PluginHandler{
 		manager:         manager,
-		registry:        repository.NewPluginRegistryRepository(db),
-		auditor:         logger.NewAuditor(db),
+		registry:        registry,
+		auditor:         auditor,
 		pluginsDisabled: disabled,
 	}
 }

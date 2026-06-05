@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/sanitize"
@@ -51,7 +50,6 @@ func sanitizeEscalationPolicy(req *models.OnCallEscalationPolicyRequest) {
 
 // OnCallHandler handles HTTP requests for on-call schedule management
 type OnCallHandler struct {
-	db                database.Database
 	onCallRepo        *repository.OnCallRepository
 	teamRepo          *repository.TeamRepository
 	onCallService     *services.OnCallService
@@ -59,9 +57,8 @@ type OnCallHandler struct {
 }
 
 // NewOnCallHandler creates a new on-call handler
-func NewOnCallHandler(db database.Database, onCallRepo *repository.OnCallRepository, teamRepo *repository.TeamRepository, onCallService *services.OnCallService, permissionService *services.PermissionService) *OnCallHandler {
+func NewOnCallHandler(onCallRepo *repository.OnCallRepository, teamRepo *repository.TeamRepository, onCallService *services.OnCallService, permissionService *services.PermissionService) *OnCallHandler {
 	return &OnCallHandler{
-		db:                db,
 		onCallRepo:        onCallRepo,
 		teamRepo:          teamRepo,
 		onCallService:     onCallService,
