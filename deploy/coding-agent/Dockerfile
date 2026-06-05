@@ -20,7 +20,7 @@
 # --------------------------------------------------------------------
 # Stage 1: cross-compile the ws CLI for linux/<TARGETARCH>
 # --------------------------------------------------------------------
-FROM golang:1.26-bookworm AS ws-build
+FROM golang:1.26.4-bookworm AS ws-build
 
 WORKDIR /src
 
@@ -39,14 +39,12 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
 # --------------------------------------------------------------------
 # Stage 2: runner image
 # --------------------------------------------------------------------
-FROM node:lts-slim AS runner
+FROM node:24-alpine AS runner
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
+RUN apk add --no-cache \
         ca-certificates \
-        gettext-base \
-        git \
-    && rm -rf /var/lib/apt/lists/*
+        gettext \
+        git
 
 # pi-coding-agent install. PI_VERSION must resolve to a published tag on
 # @earendil-works/pi-coding-agent. The entrypoint execs `pi --mode rpc`;
@@ -54,12 +52,15 @@ RUN apt-get update \
 ARG INSTALL_PI=true
 ARG PI_VERSION=latest
 RUN if [ "${INSTALL_PI}" = "true" ]; then \
-        npm install -g --omit=dev --ignore-scripts \
+        npm install -g --omit=dev --omit=optional --ignore-scripts \
             "@earendil-works/pi-coding-agent@${PI_VERSION}"; \
     fi
 
-RUN groupadd --gid 1000 agent \
-    && useradd --uid 1000 --gid 1000 --create-home --home-dir /home/agent agent
+# The DockerPiRunner forces --user=1000:1000 at runtime. The official Node
+# Alpine image already reserves that uid/gid for its non-root user, so keep the
+# image user numeric and make /home/agent writable by 1000:1000 instead of
+# creating or renaming passwd/group entries.
+RUN install -d -o 1000 -g 1000 -m 0750 /home/agent
 
 # ws binary, baked extension, ws.toml template, entrypoint.
 COPY --from=ws-build /out/ws /usr/local/bin/ws
@@ -67,18 +68,19 @@ COPY deploy/coding-agent/ws.toml.template /etc/windshift/ws.toml.template
 COPY deploy/coding-agent/windshift-guard.ts /opt/windshift/extensions/windshift-guard.ts
 COPY deploy/coding-agent/windshift-entrypoint.sh /usr/local/bin/windshift-entrypoint.sh
 
-# Per-user state: agent owns its ~/.config/ws and ~/.pi tree. The
-# extension is copied (not bind-symlinked) so the agent user owns it
+# Per-user state: uid 1000 owns its ~/.config/ws and ~/.pi tree. The
+# extension is copied (not bind-symlinked) so the runtime user owns it
 # without giving write access to /opt/windshift.
-RUN install -d -o agent -g agent -m 0750 /home/agent/.config/ws \
-    && install -d -o agent -g agent -m 0750 /home/agent/.pi/agent/extensions \
+RUN install -d -o 1000 -g 1000 -m 0750 /home/agent/.config/ws \
+    && install -d -o 1000 -g 1000 -m 0750 /home/agent/.pi/agent/extensions \
     && cp /opt/windshift/extensions/windshift-guard.ts /home/agent/.pi/agent/extensions/windshift-guard.ts \
-    && chown -R agent:agent /home/agent \
+    && chown -R 1000:1000 /home/agent \
     && chmod +x /usr/local/bin/windshift-entrypoint.sh /usr/local/bin/ws \
     && chmod 0644 /etc/windshift/ws.toml.template
 
-USER agent
+USER 1000:1000
 WORKDIR /home/agent
+ENV HOME=/home/agent
 ENV PATH=/usr/local/bin:$PATH
 
 ENTRYPOINT ["/usr/local/bin/windshift-entrypoint.sh"]
