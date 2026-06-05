@@ -207,16 +207,60 @@ func (p *Preparer) Prepare(ctx context.Context, spec RepoSpec, runID int) (*Prep
 // Push pushes the run branch from the per-run checkout to origin (the real
 // remote). The token is injected via askpass; an empty token assumes ambient
 // credentials (or, later, a git-proxy that needs none). It pushes exactly the
-// single run branch — never anything else.
+// single run branch — never anything else. It delegates to PushBranch so the
+// in-process and separate-process (triage binary) push paths are identical.
 func (p *Preparer) Push(ctx context.Context, pr *Prepared, token string) error {
 	if pr == nil {
 		return errors.New("repoprep: nil prepared checkout")
 	}
-	refspec := fmt.Sprintf("refs/heads/%s:refs/heads/%s", pr.Branch, pr.Branch)
-	if err := p.runGitWithToken(ctx, pr.Path, token, "push", "origin", refspec); err != nil {
-		return fmt.Errorf("push %s: %w", pr.Branch, err)
+	_, err := PushBranch(ctx, PushOptions{
+		Dest:         pr.Path,
+		Branch:       pr.Branch,
+		Token:        token,
+		GitBinary:    p.gitBinary,
+		AllowFileURL: p.allowFileURL,
+	})
+	return err
+}
+
+// PushOptions configures a stateless push of a single branch from an existing
+// checkout — what the triage binary's `push` subcommand needs, since prepare
+// and push run as separate processes that share no in-memory state.
+type PushOptions struct {
+	Dest         string // the per-run checkout directory
+	Branch       string // run branch to push (e.g. agent-runs/run-123)
+	RemoteURL    string // optional: rewrite origin before pushing (proxy transport)
+	Token        string // optional: askpass token
+	GitBinary    string // default "git"
+	AllowFileURL bool
+}
+
+// PushBranch pushes exactly Branch from Dest to origin and returns the pushed
+// head SHA. When RemoteURL is set it first rewrites origin (the proxy transport
+// points origin at the git-proxy). It never pushes any other ref — the single
+// granted ref is the contract the git-proxy enforces server-side (WI-168).
+func PushBranch(ctx context.Context, opts PushOptions) (string, error) {
+	if opts.Dest == "" || opts.Branch == "" {
+		return "", errors.New("repoprep: Dest and Branch are required")
 	}
-	return nil
+	gitBin := opts.GitBinary
+	if gitBin == "" {
+		gitBin = "git"
+	}
+	if opts.RemoteURL != "" {
+		if _, err := gitOutputEnv(ctx, gitBin, opts.AllowFileURL, opts.Dest, nil, "remote", "set-url", "origin", opts.RemoteURL); err != nil {
+			return "", fmt.Errorf("set origin url: %w", err)
+		}
+	}
+	refspec := fmt.Sprintf("refs/heads/%s:refs/heads/%s", opts.Branch, opts.Branch)
+	if err := gitWithToken(ctx, gitBin, opts.AllowFileURL, opts.Dest, opts.Token, "push", "origin", refspec); err != nil {
+		return "", fmt.Errorf("push %s: %w", opts.Branch, err)
+	}
+	sha, err := gitOutputEnv(ctx, gitBin, opts.AllowFileURL, opts.Dest, nil, "rev-parse", "refs/heads/"+opts.Branch)
+	if err != nil {
+		return "", fmt.Errorf("rev-parse %s: %w", opts.Branch, err)
+	}
+	return strings.TrimSpace(sha), nil
 }
 
 // Cleanup removes the per-run checkout. Best-effort: a stale checkout is wasted
@@ -317,23 +361,35 @@ func (p *Preparer) revParse(ctx context.Context, dir, ref string) (string, error
 }
 
 func (p *Preparer) runGit(ctx context.Context, dir string, args ...string) error {
-	_, err := p.runGitOutput(ctx, dir, args...)
+	_, err := gitOutputEnv(ctx, p.gitBinary, p.allowFileURL, dir, nil, args...)
 	return err
 }
 
-// runGitWithToken runs git with token injected via a per-invocation GIT_ASKPASS
-// helper. The token reaches the helper through an env var only — never argv,
-// never .git/config. An empty token behaves exactly like runGit.
 func (p *Preparer) runGitWithToken(ctx context.Context, dir, token string, args ...string) error {
+	return gitWithToken(ctx, p.gitBinary, p.allowFileURL, dir, token, args...)
+}
+
+func (p *Preparer) runGitOutput(ctx context.Context, dir string, args ...string) (string, error) {
+	return gitOutputEnv(ctx, p.gitBinary, p.allowFileURL, dir, nil, args...)
+}
+
+// --- package-level git plumbing (shared by Preparer and PushBranch so the
+// in-process and triage-binary paths run byte-identical git) ---
+
+// gitWithToken runs git with token injected via a per-invocation GIT_ASKPASS
+// helper. The token reaches the helper through an env var only — never argv,
+// never .git/config. An empty token behaves exactly like a plain run.
+func gitWithToken(ctx context.Context, gitBinary string, allowFileURL bool, dir, token string, args ...string) error {
 	if token == "" {
-		return p.runGit(ctx, dir, args...)
+		_, err := gitOutputEnv(ctx, gitBinary, allowFileURL, dir, nil, args...)
+		return err
 	}
 	dirPath, askpassPath, err := writeAskpassHelper()
 	if err != nil {
 		return fmt.Errorf("setup askpass: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(dirPath) }()
-	_, err = p.runGitOutputEnv(ctx, dir, []string{
+	_, err = gitOutputEnv(ctx, gitBinary, allowFileURL, dir, []string{
 		"GIT_ASKPASS=" + askpassPath,
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_CONFIG_NOSYSTEM=1",
@@ -342,17 +398,13 @@ func (p *Preparer) runGitWithToken(ctx context.Context, dir, token string, args 
 	return err
 }
 
-func (p *Preparer) runGitOutput(ctx context.Context, dir string, args ...string) (string, error) {
-	return p.runGitOutputEnv(ctx, dir, nil, args...)
-}
-
-func (p *Preparer) runGitOutputEnv(ctx context.Context, dir string, extraEnv []string, args ...string) (string, error) {
+func gitOutputEnv(ctx context.Context, gitBinary string, allowFileURL bool, dir string, extraEnv []string, args ...string) (string, error) {
 	// Defense-in-depth: disable ext::/file://(unless allowed)/tar:// remote
 	// helpers on every invocation so a future caller can't smuggle in a URL
 	// that reaches a dangerous transport.
 	fileAllow := "never"
 	allowedProtocols := "https"
-	if p.allowFileURL {
+	if allowFileURL {
 		fileAllow = "always"
 		allowedProtocols = "https:file"
 	}
@@ -363,7 +415,7 @@ func (p *Preparer) runGitOutputEnv(ctx context.Context, dir string, extraEnv []s
 	}, args...)
 	// All args are operator-controlled or orchestrator-derived; no
 	// user-supplied data is in scope.
-	cmd := exec.CommandContext(ctx, p.gitBinary, prefixed...) //nolint:gosec // G204: see comment above.
+	cmd := exec.CommandContext(ctx, gitBinary, prefixed...) //nolint:gosec // G204: see comment above.
 	if dir != "" {
 		cmd.Dir = dir
 	}
