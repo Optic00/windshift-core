@@ -79,6 +79,7 @@
 
   // Swimlane grouping state
   let groupByItemTypeId = $state(null);
+  let excludeRightmostSwimlaneParents = $state(false);
   let swimlaneCollapsed = $state({});
 
   // Edge-based drag state
@@ -270,6 +271,10 @@
       if (savedGroupById) {
         groupByItemTypeId = savedGroupById;
       }
+      const savedExcludeRightmost = localStorage.getItem(excludeRightmostSwimlaneParentsStorageKey());
+      if (savedExcludeRightmost !== null) {
+        excludeRightmostSwimlaneParents = savedExcludeRightmost === 'true';
+      }
     } catch (e) { /* ignore storage errors */ }
     loading = false;
   });
@@ -361,10 +366,18 @@
     return Number.isFinite(parsed) ? parsed : null;
   }
 
+  function isExcludedRightmostSwimlaneParent(item) {
+    return Boolean(excludeRightmostSwimlaneParents && rightmostBoardColumnStatusIds.has(item.status_id));
+  }
+
+  function isEligibleSwimlaneParent(item) {
+    return item.item_type_id === groupByItemTypeId && !isExcludedRightmostSwimlaneParent(item);
+  }
+
   function getItemsForLaneParent(parentId) {
     if (!groupByItemTypeId) return filteredItems;
     const parentIds = new Set(items
-      .filter(item => item.item_type_id === groupByItemTypeId)
+      .filter(isEligibleSwimlaneParent)
       .map(item => item.id));
 
     if (parentId != null) {
@@ -442,8 +455,16 @@
     }
   }
 
+  function boardPreferenceScope() {
+    return collectionId ? `collection-${collectionId}` : `workspace-${workspaceId || 'global'}`;
+  }
+
   function groupByStorageKey() {
-    return `board-group-by-item-type-${collectionId ? `collection-${collectionId}` : `workspace-${workspaceId || 'global'}`}`;
+    return `board-group-by-item-type-${boardPreferenceScope()}`;
+  }
+
+  function excludeRightmostSwimlaneParentsStorageKey() {
+    return `board-exclude-rightmost-swimlane-parents-${boardPreferenceScope()}`;
   }
 
   function setGroupByItemType(itemTypeId) {
@@ -455,6 +476,14 @@
       } else {
         localStorage.removeItem(groupByStorageKey());
       }
+    } catch (e) { /* ignore storage errors */ }
+  }
+
+  function setExcludeRightmostSwimlaneParents(value) {
+    excludeRightmostSwimlaneParents = value;
+    swimlaneCollapsed = {};
+    try {
+      localStorage.setItem(excludeRightmostSwimlaneParentsStorageKey(), String(value));
     } catch (e) { /* ignore storage errors */ }
   }
 
@@ -510,6 +539,8 @@
   });
 
   let validColumns = $derived(displayColumns.filter(col => col.status_ids?.length > 0));
+  let rightmostBoardColumn = $derived(validColumns[validColumns.length - 1] ?? null);
+  let rightmostBoardColumnStatusIds = $derived(new Set(rightmostBoardColumn?.status_ids || []));
 
   function shouldLimitRightmostColumn(columnIndex, columnsForBoard = validColumns) {
     return Boolean(boardConfig?.show_rightmost_column_last_50 && columnIndex === columnsForBoard.length - 1);
@@ -533,8 +564,14 @@
     groupByItemTypeId ? itemTypes.find(type => type.id === groupByItemTypeId) : null
   );
 
+  let hiddenRightmostSwimlaneParentCount = $derived.by(() => {
+    if (!groupByItemTypeId || !excludeRightmostSwimlaneParents || !rightmostBoardColumn) return 0;
+    return items.filter(item => item.item_type_id === groupByItemTypeId && isExcludedRightmostSwimlaneParent(item)).length;
+  });
+
   let groupByMenuItems = $derived.by(() => {
     const sortedTypes = (itemTypes || []).slice().sort((a, b) => (a.hierarchy_level ?? 999) - (b.hierarchy_level ?? 999) || (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.name.localeCompare(b.name));
+    const rightmostColumnName = rightmostBoardColumn?.name || 'rightmost column';
     return [
       {
         id: 'group-none',
@@ -543,6 +580,21 @@
         badge: groupByItemTypeId ? '' : 'Selected',
         onClick: () => setGroupByItemType(null)
       },
+      ...(groupByItemTypeId ? [
+        { id: 'group-rightmost-toggle-divider', type: 'divider' },
+        {
+          id: 'group-rightmost-toggle',
+          type: 'checkbox',
+          title: `Hide ${rightmostColumnName} swimlanes`,
+          subtitle: selectedGroupByItemType
+            ? `Only group by ${selectedGroupByItemType.name} items outside ${rightmostColumnName}`
+            : `Only group by items outside ${rightmostColumnName}`,
+          badge: hiddenRightmostSwimlaneParentCount > 0 ? `${hiddenRightmostSwimlaneParentCount} hidden` : '',
+          checked: excludeRightmostSwimlaneParents,
+          closeOnSelect: false,
+          onChange: setExcludeRightmostSwimlaneParents
+        }
+      ] : []),
       ...(sortedTypes.length > 0 ? [{ id: 'group-divider', type: 'divider' }] : []),
       ...sortedTypes.map(type => {
         const TypeIcon = itemTypeIconMap[type.icon] || itemTypeIconMap.FileText;
@@ -573,7 +625,7 @@
       }];
     }
 
-    const parentItems = items.filter(item => item.item_type_id === groupByItemTypeId);
+    const parentItems = items.filter(isEligibleSwimlaneParent);
     const parentIds = new Set(parentItems.map(item => item.id));
     const visibleItemIds = new Set(filteredItems.map(item => item.id));
 
@@ -1251,7 +1303,7 @@
                         </span>
                       {:else}
                         <span class="block text-xs font-normal truncate" style="color: var(--ds-text-subtle);">
-                          Items without a {selectedGroupByItemType.name} parent
+                          Items without {excludeRightmostSwimlaneParents ? 'a visible' : 'a'} {selectedGroupByItemType.name} parent
                         </span>
                       {/if}
                     </span>
