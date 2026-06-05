@@ -17,6 +17,8 @@
     defaultOpen = false,
   } = $props();
 
+  // Initial expansion is intentionally captured once; user toggles own the state after mount.
+  // svelte-ignore state_referenced_locally
   let open = $state(defaultOpen || depth === 0);
 
   // $ref pointer: resolve once, then render that target. The user-visible

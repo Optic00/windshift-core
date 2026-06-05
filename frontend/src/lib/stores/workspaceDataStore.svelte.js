@@ -212,7 +212,7 @@ class WorkspaceDataStore {
       api.workspaces.getStatuses(workspaceId),
       api.statusCategories.getAll(),
       api.getUsers(),
-      api.milestones.getAll({ workspace_id: workspaceId }),
+      api.milestones.getAll({ workspace_id: workspaceId, include_global: true }),
       api.iterations.getAll({ workspace_id: workspaceId }),
       api.priorities.getAll(),
       api.workspaces.getProjects ? api.workspaces.getProjects(workspaceId) : Promise.resolve([]),
@@ -290,7 +290,10 @@ class WorkspaceDataStore {
       statusCategories: () => api.statusCategories.getAll(),
       itemTypes: () => api.itemTypes.getAll(),
       users: () => api.getUsers(),
-      milestones: () => api.milestones.getAll(),
+      milestones: () =>
+        workspaceId === 'global'
+          ? api.milestones.getAll()
+          : api.milestones.getAll({ workspace_id: workspaceId, include_global: true }),
       iterations: () => api.iterations.getAll(),
       priorities: () => api.priorities.getAll(),
       projects: () =>

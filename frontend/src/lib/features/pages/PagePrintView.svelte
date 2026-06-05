@@ -11,7 +11,7 @@
    * `/workspaces/:id/pages/:pageId/print` route — typically opened in a
    * new tab from the page kebab. Reuses the read-only Milkdown renderer so
    * fidelity (diagrams, mentions, code highlighting) matches the read view,
-   * then layers smart page-break CSS (see <style>) so the document flows
+   * then layers smart page-break CSS (see the stylesheet below) so the document flows
    * cleanly across paper pages. Auto-opens the browser print dialog once
    * content + diagrams have settled.
    */

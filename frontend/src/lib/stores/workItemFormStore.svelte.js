@@ -46,6 +46,7 @@ class WorkItemFormStore {
   milestones = $state([]);
   milestonesLoading = $state(false);
   milestonesLoaded = $state(false);
+  milestonesLoadedForKey = $state(null);
 
   itemTypes = $state([]);
   hierarchyLevels = $state([]);
@@ -77,6 +78,7 @@ class WorkItemFormStore {
 
   // === Initialization Flag ===
   #initialized = false;
+  #milestonesLoadToken = 0;
 
   // === Derived Values (getters) ===
 
@@ -186,34 +188,49 @@ class WorkItemFormStore {
   /**
    * Load all milestones.
    */
-  async loadMilestones() {
-    if (this.milestonesLoading || this.milestonesLoaded) return;
+  async loadMilestones(workspaceId = null, forceReload = false) {
+    const numericWorkspaceId = workspaceId ? Number(workspaceId) : null;
+    const loadKey = numericWorkspaceId || 'global';
+    if (!forceReload && this.milestonesLoaded && this.milestonesLoadedForKey === loadKey) return;
+
+    const token = ++this.#milestonesLoadToken;
     try {
       this.milestonesLoading = true;
-      const result = await api.milestones.getAll();
+      const filters = numericWorkspaceId
+        ? { workspace_id: numericWorkspaceId, include_global: true }
+        : {};
+      const result = await api.milestones.getAll(filters);
+      if (token !== this.#milestonesLoadToken) return;
+
       this.allMilestones = result || [];
-      this.#filterMilestones();
       this.milestonesLoaded = true;
+      this.milestonesLoadedForKey = loadKey;
+      this.#filterMilestones();
     } catch (error) {
+      if (token !== this.#milestonesLoadToken) return;
       console.error('Failed to load milestones:', error);
       this.allMilestones = [];
       this.milestones = [];
       this.milestonesLoaded = true;
+      this.milestonesLoadedForKey = loadKey;
     } finally {
-      this.milestonesLoading = false;
+      if (token === this.#milestonesLoadToken) {
+        this.milestonesLoading = false;
+      }
     }
   }
 
   /**
-   * Filter milestones based on workspace categories.
+   * Filter milestones based on workspace categories, while always keeping
+   * global milestones available in workspace-scoped forms.
    */
   #filterMilestones() {
     if (!this.workspaceDetails?.milestone_categories?.length) {
       this.milestones = this.allMilestones;
     } else {
       const allowedCategoryIds = this.workspaceDetails.milestone_categories;
-      this.milestones = this.allMilestones.filter((m) =>
-        allowedCategoryIds.includes(m.category_id)
+      this.milestones = this.allMilestones.filter(
+        (m) => m.is_global || allowedCategoryIds.includes(m.category_id)
       );
     }
   }
@@ -229,7 +246,7 @@ class WorkItemFormStore {
     }
     try {
       this.workspaceDetails = await api.workspaces.get(workspaceId);
-      this.#filterMilestones();
+      await this.loadMilestones(workspaceId);
     } catch (error) {
       console.error('Failed to load workspace details:', error);
       this.workspaceDetails = null;
@@ -670,6 +687,7 @@ class WorkItemFormStore {
     this.milestones = [];
     this.milestonesLoading = false;
     this.milestonesLoaded = false;
+    this.milestonesLoadedForKey = null;
     this.itemTypes = [];
     this.hierarchyLevels = [];
     this.availableItemTypes = [];

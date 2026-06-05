@@ -1,6 +1,5 @@
 <script>
   import ItemPicker from './ItemPicker.svelte';
-  import { onMount } from 'svelte';
   import { api } from '../api.js';
   import { t } from '../stores/i18n.svelte.js';
 
@@ -29,36 +28,36 @@
 
   let milestones = $state([]);
   let loading = $state(false);
+  let loadToken = 0;
 
-  // Load milestones on mount
-  onMount(async () => {
-    await loadMilestones();
-  });
-
-  // Reload when workspaceId changes
+  // Reload when workspaceId changes. Capture the ID for this request so an
+  // earlier global load cannot overwrite a later workspace-scoped result.
   $effect(() => {
-    if (workspaceId !== undefined) {
-      loadMilestones();
-    }
+    loadMilestones(workspaceId);
   });
 
-  async function loadMilestones() {
+  async function loadMilestones(currentWorkspaceId) {
+    const token = ++loadToken;
     loading = true;
 
     try {
       const filters = {};
-      if (workspaceId) {
-        filters.workspace_id = workspaceId;
+      if (currentWorkspaceId) {
+        filters.workspace_id = currentWorkspaceId;
         filters.include_global = true;
       }
 
       const response = await api.milestones.getAll(filters);
+      if (token !== loadToken) return;
       milestones = response || [];
     } catch (err) {
+      if (token !== loadToken) return;
       console.error('Failed to load milestones:', err);
       milestones = [];
     } finally {
-      loading = false;
+      if (token === loadToken) {
+        loading = false;
+      }
     }
   }
 
