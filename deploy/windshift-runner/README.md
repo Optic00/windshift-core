@@ -1,0 +1,171 @@
+# windshift-runner — host setup
+
+`windshift-runner` is the worker that executes coding-agent jobs on a host you
+control. It self-registers with the orchestrator, then loops: **claim** a queued
+run → **prepare** its source → **run** the agent in a throwaway container →
+**push** the result branch → **report**. Many hosts can join the same pool; the
+orchestrator load-balances claims across them.
+
+This directory provides an installer (`install.sh`), a systemd unit, and an env
+template for standing up a runner host.
+
+## How it fits together
+
+```
+orchestrator (windshift core)            runner host
+  RunService, control plane                windshift-runner  (this)
+  brokers: git-proxy . llm-proxy            ├─ execs windshift-triage  (git: clone/push)
+        ▲  claim / report / heartbeat       ├─ docker run ─► agent container
+        │  broker calls (HTTPS)             │                 windshift-agent (edits code)
+        └───────────────────────────────────┘                 git . ws CLI . no creds
+```
+
+Three trust tiers: the **orchestrator** is trusted; the **runner host** is
+untrusted-but-credential-light (it holds a per-instance credential and per-run
+tokens, never raw SCM/LLM secrets); the **agent container** is fully untrusted
+(no credentials, sandboxed by docker). git reads and the final push flow through
+the orchestrator's **git-proxy**, which injects the real SCM credential
+server-side and gates the push to the run's single granted ref.
+
+## Prerequisites
+
+- A Linux host with **systemd**.
+- **Docker Engine** — the runner spawns one container per job. (The runner's
+  user needs docker access, which is **root-equivalent** on the host; isolate
+  runner hosts accordingly.)
+- **git** on `PATH` — `windshift-triage` shells out to it for clone/fetch/push.
+- **Outbound HTTPS** to your orchestrator's `WS_API_URL`.
+- The **agent image** (`WSRUNNER_IMAGE`) must be pullable by the local daemon.
+- A **pool registration token** (`wsrt_…`) from a workspace admin (see below).
+
+The runner and triage binaries are static Go binaries; the host needs no Go
+toolchain unless you build with `--core`.
+
+## Get a registration token
+
+A workspace admin mints a pool registration token in Windshift (the runner-pool
+admin surface). It is a one-time bootstrap secret: on first start the runner
+exchanges it for a per-instance credential and heartbeats with that thereafter.
+One token can register many instances into its pool.
+
+## Install
+
+Build the binaries on a build machine (or in CI):
+
+```bash
+cd core
+CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o dist/windshift-runner  ./windshift-runner
+CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o dist/windshift-triage ./cmd/windshift-triage
+```
+
+Then on the runner host, either copy this `deploy/windshift-runner/` directory
+plus the two binaries and run:
+
+```bash
+# prebuilt binaries sitting next to install.sh (or pass --bin-dir DIR)
+sudo ./install.sh --bin-dir /path/to/dist
+
+# …or build from a core checkout present on the host (needs Go):
+sudo ./install.sh --core /path/to/core
+```
+
+`install.sh` checks docker/git, installs both binaries to `/usr/local/bin`,
+creates the `windshift-runner` system user (added to the `docker` group),
+creates the cache dir, and installs the env file + systemd unit. It is
+idempotent — re-run it to upgrade binaries; it never overwrites an existing
+`runner.env`.
+
+Then configure and start:
+
+```bash
+sudo "$EDITOR" /etc/windshift-runner/runner.env   # set WS_API_URL, token, image
+docker pull <WSRUNNER_IMAGE>
+sudo systemctl start windshift-runner
+journalctl -u windshift-runner -f                 # watch it register + claim
+```
+
+### install.sh options
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--core DIR` | — | build the binaries from a core checkout (needs Go) |
+| `--bin-dir DIR` | script dir | use prebuilt `windshift-runner` + `windshift-triage` from DIR |
+| `--prefix DIR` | `/usr/local/bin` | where to install the binaries |
+| `--cache-dir DIR` | `/var/lib/windshift-runner/cache` | bare-clone cache root |
+| `--user NAME` | `windshift-runner` | service user |
+| `--no-enable` | — | install without enabling the unit |
+
+## Configuration
+
+All config is environment-only, in `/etc/windshift-runner/runner.env`
+(see `runner.env.example`).
+
+| Variable | Req | Default | Purpose |
+|----------|-----|---------|---------|
+| `WS_API_URL` | ✅ | — | orchestrator base URL **incl. API prefix**; used for control + brokers (git-proxy) |
+| `WSRUNNER_REGISTRATION_TOKEN` | ✅ | — | pool registration token (`wsrt_…`); exchanged for a per-instance credential on first start |
+| `WSRUNNER_IMAGE` | ✅ | — | coding-agent container image to spawn per job |
+| `WSRUNNER_NAME` | | hostname | runner display name |
+| `WSRUNNER_DOCKER` | | `docker` | docker binary |
+| `WSRUNNER_TRIAGE_BIN` | | `windshift-triage` | path to the triage binary the runner execs for git prep/push |
+| `WSRUNNER_CACHE_ROOT` | | `/var/lib/windshift-runner/cache` | host-local bare-clone cache (fetch accelerator; never mounted into a container) |
+| `WSRUNNER_POLL_INTERVAL` | | `2s` | claim poll interval when idle |
+| `WSRUNNER_HEARTBEAT_INTERVAL` | | `30s` | lease heartbeat interval |
+| `WSRUNNER_INITIAL_PROMPT` | | generic | fallback initial prompt |
+
+## Verify
+
+```bash
+systemctl status windshift-runner
+journalctl -u windshift-runner -f
+```
+
+You should see `registered as instance N in pool M` then `worker started`.
+Trigger a run for the pool from Windshift and watch it claim, prepare, run, and
+report.
+
+## Security notes
+
+- **No SCM/LLM secrets on the host.** The runner authenticates with a
+  per-instance credential and per-run tokens. git and LLM access flow through
+  the orchestrator's brokers; raw provider credentials never leave the
+  orchestrator.
+- **Push is ref-gated.** A run may push only its single granted ref
+  (`agent-runs/run-<id>`), enforced by the git-proxy regardless of what the
+  runner claims.
+- **The agent container has no credentials** and is sandboxed (cap-drop,
+  read-only rootfs, non-root uid, restricted egress).
+- **docker group is root-equivalent.** Anyone who can reach this runner's docker
+  socket effectively controls the host. Run runner hosts as dedicated,
+  disposable machines.
+- The **bare-clone cache** is host-local and never bind-mounted into a
+  container; each run gets its own private object-store clone.
+
+## Upgrading
+
+Re-run `install.sh` with the new binaries (or `--core` against an updated
+checkout), then `systemctl restart windshift-runner`. The unit drains the
+in-flight job on stop (up to `TimeoutStopSec`).
+
+## Uninstall
+
+```bash
+sudo systemctl disable --now windshift-runner
+sudo rm /etc/systemd/system/windshift-runner.service /usr/local/bin/windshift-{runner,triage}
+sudo rm -rf /etc/windshift-runner /var/lib/windshift-runner
+sudo systemctl daemon-reload
+# optionally: sudo userdel windshift-runner
+```
+
+## Troubleshooting
+
+- **`required environment variable WS_API_URL is not set`** — edit `runner.env`.
+- **Registers but jobs fail immediately** — check `WSRUNNER_IMAGE` is pulled and
+  the daemon can run it; `docker run --rm <image> windshift-agent` should print a
+  config error, not an exec error.
+- **git prep/push errors** — confirm `git` is installed and `WSRUNNER_TRIAGE_BIN`
+  points at the installed `windshift-triage`; check outbound HTTPS to the
+  git-proxy under `WS_API_URL`.
+- **Permission denied talking to docker** — the runner user must be in the
+  `docker` group (re-run `install.sh` or `usermod -aG docker windshift-runner`,
+  then restart the service).
