@@ -8,8 +8,14 @@ set -euo pipefail
 # Configuration
 GHCR_REGISTRY="ghcr.io/windshiftapp/windshift"
 CODING_AGENT_GHCR_REGISTRY="ghcr.io/windshiftapp/coding-agent-runner"
+AGENT_GHCR_REGISTRY="ghcr.io/windshiftapp/windshift-agent"
 GITHUB_REPO="Windshiftapp/windshift"
 DOCKER_PLATFORMS="linux/amd64,linux/arm64"
+# The thin no-node coding agent lives in a sibling repo; its image is built
+# from that checkout, lifting `ws` from the coding-agent-runner image this
+# release just built. Override the path if your layout differs; the build is
+# skipped (with a warning) when the checkout is absent.
+WINDSHIFT_AGENT_DIR="${WINDSHIFT_AGENT_DIR:-../windshift-agent}"
 
 # Build configurations: GOOS/GOARCH
 PLATFORMS=(
@@ -701,6 +707,42 @@ build_docker_image() {
     log_success "${label} Docker image pushed to ${image}"
 }
 
+# build_agent_image builds the thin no-node windshift-agent image from the
+# sibling repo (WINDSHIFT_AGENT_DIR), lifting `ws` from the coding-agent-runner
+# image this release just built (so the agent and runner ship matched). Skips
+# with a warning when the checkout is absent so a server-only release still
+# completes.
+build_agent_image() {
+    local image="$AGENT_GHCR_REGISTRY"
+    local ws_image="${CODING_AGENT_GHCR_REGISTRY}:${VERSION}"
+    local ctx="$WINDSHIFT_AGENT_DIR"
+
+    if [ ! -d "$ctx" ]; then
+        log_warn "windshift-agent checkout not found at ${ctx}; skipping agent image (set WINDSHIFT_AGENT_DIR)"
+        return 0
+    fi
+
+    local tags=("-t" "${image}:${VERSION}")
+    if [[ ! "$VERSION" =~ -dev|-test|-rc ]]; then
+        tags+=("-t" "${image}:latest")
+    fi
+
+    log_info "Building windshift-agent: ${image}:${VERSION}"
+    log_info "  Context: ${ctx}  (WS_IMAGE=${ws_image})"
+
+    if [ "$DRY_RUN" = true ]; then
+        log_info "[DRY-RUN] Would build and push windshift-agent image (${image}:${VERSION}) from ${ctx}"
+        return 0
+    fi
+
+    docker buildx build \
+        --platform "$DOCKER_PLATFORMS" \
+        --build-arg "WS_IMAGE=${ws_image}" \
+        "${tags[@]}" --push "$ctx"
+
+    log_success "windshift-agent Docker image pushed to ${image}"
+}
+
 build_docker() {
     log_step "8/9" "Building Docker images..."
 
@@ -710,9 +752,12 @@ build_docker() {
     log_info "Platforms: ${DOCKER_PLATFORMS}"
     log_info "Server tags: ${GHCR_REGISTRY}:${VERSION}"
     log_info "Coding-agent runner tags: ${CODING_AGENT_GHCR_REGISTRY}:${VERSION}"
+    log_info "Agent tags: ${AGENT_GHCR_REGISTRY}:${VERSION}"
 
     build_docker_image "$GHCR_REGISTRY" "Dockerfile" "Windshift server" true
     build_docker_image "$CODING_AGENT_GHCR_REGISTRY" "deploy/coding-agent/Dockerfile" "coding-agent runner" false
+    # Built last: it lifts ws from the coding-agent-runner image pushed above.
+    build_agent_image
 }
 
 create_github_release() {
@@ -789,7 +834,7 @@ cmd_push() {
         echo "=============================="
         echo "This will:"
         echo "  - Build frontend"
-        echo "  - Build and push Docker images to ${GHCR_REGISTRY} and ${CODING_AGENT_GHCR_REGISTRY}"
+        echo "  - Build and push Docker images to ${GHCR_REGISTRY}, ${CODING_AGENT_GHCR_REGISTRY}, and ${AGENT_GHCR_REGISTRY}"
         echo ""
         echo "Note: This does NOT create a GitHub release."
         echo ""
@@ -810,6 +855,7 @@ cmd_push() {
     echo "Docker images:"
     echo "  ${GHCR_REGISTRY}:${VERSION}"
     echo "  ${CODING_AGENT_GHCR_REGISTRY}:${VERSION}"
+    echo "  ${AGENT_GHCR_REGISTRY}:${VERSION}"
 }
 
 cmd_release() {
@@ -840,7 +886,7 @@ cmd_release() {
         if [ "$SKIP_DESKTOP" != true ] && [ "$(uname)" = "Darwin" ]; then
             echo "  - Build macOS desktop DMG (arm64)"
         fi
-        echo "  - Build and push Docker images (server + coding-agent runner)"
+        echo "  - Build and push Docker images (server + coding-agent runner + windshift-agent)"
         echo "  - Create git tag and push"
         echo "  - Create GitHub release with assets"
         echo ""
@@ -873,6 +919,7 @@ cmd_release() {
     echo "Docker:"
     echo "  docker pull ${GHCR_REGISTRY}:${VERSION}"
     echo "  docker pull ${CODING_AGENT_GHCR_REGISTRY}:${VERSION}"
+    echo "  docker pull ${AGENT_GHCR_REGISTRY}:${VERSION}"
 }
 
 # =============================================================================
