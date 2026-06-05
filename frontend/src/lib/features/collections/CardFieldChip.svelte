@@ -1,6 +1,6 @@
 <script>
-  import { CornerLeftUp } from '@lucide/svelte';
-  import { formatDateShort } from '../../utils/dateFormatter.js';
+  import { Clock, CornerLeftUp } from '@lucide/svelte';
+  import { formatDate, formatDateShort, formatStatusAge } from '../../utils/dateFormatter.js';
   import { resolveOptionLabel } from '../../utils/optionUtils.js';
   import { durationToString } from '../../utils/timeUtils.js';
 
@@ -130,6 +130,18 @@
         <span class="truncate">{item.parent_title}</span>
       {/if}
     </span>
+  {:else if cardField.field_identifier === 'time_in_status' && item.status_since}
+    {@const age = formatStatusAge(item.status_since)}
+    {#if age}
+      <span
+        class={CHIP_CLASS}
+        style={CHIP_STYLE}
+        title="In current status since {formatDate(item.status_since)}"
+      >
+        <Clock class="w-3 h-3 flex-shrink-0" />
+        {age}
+      </span>
+    {/if}
   {/if}
 {:else if cardField.field_type === 'custom'}
   {#if customFieldDef && customFieldValue}

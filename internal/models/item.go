@@ -55,20 +55,23 @@ type Item struct {
 	UpdatedAt   time.Time  `json:"updated_at"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
 	// Joined fields for API responses
-	WorkspaceName    string `json:"workspace_name,omitempty"`
-	WorkspaceKey     string `json:"workspace_key,omitempty"`
-	ItemTypeName     string `json:"item_type_name,omitempty"`
-	PriorityName     string `json:"priority_name,omitempty"`
-	PriorityIcon     string `json:"priority_icon,omitempty"`
-	PriorityColor    string `json:"priority_color,omitempty"`
+	WorkspaceName             string `json:"workspace_name,omitempty"`
+	WorkspaceKey              string `json:"workspace_key,omitempty"`
+	ItemTypeName              string `json:"item_type_name,omitempty"`
+	PriorityName              string `json:"priority_name,omitempty"`
+	PriorityIcon              string `json:"priority_icon,omitempty"`
+	PriorityColor             string `json:"priority_color,omitempty"`
 	ParentTitle               string `json:"parent_title,omitempty"`
 	ParentWorkspaceItemNumber *int   `json:"parent_workspace_item_number,omitempty"` // Parent's workspace-scoped number, for rendering the parent key
-	StatusName       string `json:"status_name,omitempty"`  // Name from statuses table (joined field)
-	StatusColor      string `json:"status_color,omitempty"` // Color from the status category (joined field)
-	IterationName    string `json:"iteration_name,omitempty"`
-	IterationEndDate string `json:"iteration_end_date,omitempty"`
-	ProjectName      string `json:"project_name,omitempty"`      // Name of the time-tracking project this item belongs to (joined from time_projects via ProjectID)
-	TimeProjectName  string `json:"time_project_name,omitempty"` // Name of the time-tracking project overriding worklog defaults (joined from time_projects via TimeProjectID)
+	StatusName                string `json:"status_name,omitempty"`                  // Name from statuses table (joined field)
+	StatusColor               string `json:"status_color,omitempty"`                 // Color from the status category (joined field)
+	// StatusSince is when the item last entered its current status, derived from
+	// item_history (falls back to created_at when there is no recorded change).
+	StatusSince      *time.Time `json:"status_since,omitempty"`
+	IterationName    string     `json:"iteration_name,omitempty"`
+	IterationEndDate string     `json:"iteration_end_date,omitempty"`
+	ProjectName      string     `json:"project_name,omitempty"`      // Name of the time-tracking project this item belongs to (joined from time_projects via ProjectID)
+	TimeProjectName  string     `json:"time_project_name,omitempty"` // Name of the time-tracking project overriding worklog defaults (joined from time_projects via TimeProjectID)
 	// EffectiveProjectID is the resolved project after walking InheritProject
 	// up the parent chain. Consumers that need "which time-tracking project
 	// applies to this item" should read this, not ProjectID directly.

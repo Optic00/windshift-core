@@ -27,6 +27,7 @@ import {
   formatHistoryTimestamp,
   formatRelativeCompact,
   formatRelativeTime,
+  formatStatusAge,
   getDaysOverdue,
   getDueBadgeClass,
   getUserTimezone,
@@ -170,6 +171,28 @@ describe('formatRelativeCompact', () => {
 
   test('falls back to short date past 7 days', () => {
     expect(formatRelativeCompact('2026-04-01T12:00:00Z')).toBe('Apr 1');
+  });
+});
+
+describe('formatStatusAge', () => {
+  test('returns null for falsy or invalid input', () => {
+    expect(formatStatusAge(null)).toBeNull();
+    expect(formatStatusAge('')).toBeNull();
+    expect(formatStatusAge('not-a-date')).toBeNull();
+  });
+
+  test('"now" within the first minute', () => {
+    expect(formatStatusAge('2026-05-12T11:59:30Z')).toBe('now');
+  });
+
+  test('minute, hour and day buckets express elapsed duration (no "ago")', () => {
+    expect(formatStatusAge('2026-05-12T11:55:00Z')).toBe('5m');
+    expect(formatStatusAge('2026-05-12T09:00:00Z')).toBe('3h');
+    expect(formatStatusAge('2026-05-09T12:00:00Z')).toBe('3d');
+  });
+
+  test('switches to weeks at 14 days', () => {
+    expect(formatStatusAge('2026-04-28T12:00:00Z')).toBe('2w');
   });
 });
 

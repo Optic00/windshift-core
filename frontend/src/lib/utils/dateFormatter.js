@@ -258,6 +258,32 @@ export function formatRelativeCompact(date) {
 }
 
 /**
+ * Format how long something has been in a state as a compact age label.
+ * Unlike formatRelativeCompact this expresses an elapsed duration ("3d", "2w")
+ * rather than a point in time ("3d ago"), suitable for "time in status" chips.
+ * @param {Date|string} since - Timestamp the state was entered
+ * @returns {string|null} Compact age (e.g. "now", "5m", "3h", "4d", "2w"), or null
+ */
+export function formatStatusAge(since) {
+  if (!since) return null;
+
+  const d = since instanceof Date ? since : new Date(since);
+  if (Number.isNaN(d.getTime())) return null;
+
+  const diffMs = serverNow().getTime() - d.getTime();
+  if (diffMs < 60000) return 'now';
+
+  const minutes = Math.floor(diffMs / 60000);
+  const hours = Math.floor(diffMs / 3600000);
+  const days = Math.floor(diffMs / 86400000);
+
+  if (minutes < 60) return `${minutes}m`;
+  if (hours < 24) return `${hours}h`;
+  if (days < 14) return `${days}d`;
+  return `${Math.floor(days / 7)}w`;
+}
+
+/**
  * Format a due date for display with contextual text
  * @param {Date|string} dueDate - Due date
  * @returns {string} Formatted due date text (e.g., "Due today", "Overdue by 3 days")
