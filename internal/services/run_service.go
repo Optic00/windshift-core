@@ -83,8 +83,8 @@ func (f RunnerFunc) Run(ctx context.Context, input RunInput, emit EventSink) Run
 
 // RunRequest is the minimum payload required to start a run.
 //
-// Repo is optional: when set, RunService asks the WorktreeManager to
-// prepare a worktree before the runner sees the run; when nil, the runner
+// Repo is optional: when set, RunService asks the repoprep.Preparer to
+// prepare a per-run checkout before the runner sees the run; when nil, the runner
 // runs without a /workspace mount.
 //
 // Token is optional: when set, RunService mints a short-lived `ws` API
@@ -139,7 +139,7 @@ type TokenSpec struct {
 // runs in-flight across the whole process — it sizes the in-process worker
 // pool (decision #7), which replaced the old admission semaphore. Start
 // enqueues onto a buffered job queue and returns without blocking the HTTP
-// handler that called it. Worktrees is optional and only
+// handler that called it. Preparer is optional and only
 // required when callers actually attach Repo to a RunRequest. Tokens is
 // optional and only required when callers attach a TokenSpec. PostRunHook
 // is optional and fires once per run after the terminal status is

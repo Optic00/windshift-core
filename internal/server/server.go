@@ -637,7 +637,7 @@ func (s *Server) initialize() error {
 	// chokepoint (WI-87) is constructed first; both the workspace-binding
 	// service and the admin AgentSecurity handler share its repo handle.
 	// When CodingAgent.RunnerImage is configured, the harness boots a
-	// production RunService (WI-89): WorktreeManager → RunTokenService →
+	// production RunService (WI-89): repoprep.Preparer → RunTokenService →
 	// DockerPiRunner → AgentPRService (WI-90, opens draft PRs on GitHub or
 	// Gitea via scm.Provider). Without it the harness stays in observer
 	// mode — bindings can still be created, the trigger logs but no run

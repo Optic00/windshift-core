@@ -39,7 +39,7 @@ type WorkspaceAgentBinding struct {
 }
 
 // HasRepo reports whether the binding is configured with enough source-
-// control info to ask the WorktreeManager for a prepared worktree.
+// control info to ask the repoprep.Preparer for a prepared checkout.
 // Requires both a RepoSlug and an SCMConnectionID: the connection
 // supplies the trusted provider host that the clone URL is derived
 // from.
