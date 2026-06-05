@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"windshift/internal/models"
+	"windshift/internal/repoprep"
 )
 
 // This file is the in-process (local) transport for the unified runner
@@ -32,7 +33,7 @@ type queuedJob struct {
 // without re-deriving anything.
 type claimState struct {
 	req        RunRequest
-	worktree   *PreparedWorktree
+	checkout   *repoprep.Prepared
 	path       string
 	branch     string
 	baseCommit string
@@ -102,15 +103,15 @@ func (s *RunService) claimNext() *ClaimedJob {
 		st := claimState{req: job.req, cancel: cancel}
 
 		if job.req.Repo != nil {
-			pw, err := s.worktrees.Prepare(runCtx, *job.req.Repo, job.runID)
+			pw, err := s.preparer.Prepare(runCtx, *job.req.Repo, job.runID)
 			if err != nil {
-				s.logger.Printf("run service: prepare worktree run=%d: %v", job.runID, err)
-				// Worktree-prep failure fires the post-run hook (matches
+				s.logger.Printf("run service: prepare checkout run=%d: %v", job.runID, err)
+				// Checkout-prep failure fires the post-run hook (matches
 				// the prior inline behavior).
-				s.failClaim(job, cancel, fmt.Sprintf("prepare worktree: %v", err), true)
+				s.failClaim(job, cancel, fmt.Sprintf("prepare checkout: %v", err), true)
 				continue
 			}
-			st.worktree = pw
+			st.checkout = pw
 			st.path = pw.Path
 			st.branch = pw.Branch
 			st.baseCommit = pw.BaseCommit
@@ -219,9 +220,9 @@ func (s *RunService) Report(ctx context.Context, runID int, result RunnerResult)
 		branch = st.branch
 		baseCommit = st.baseCommit
 		cancel = st.cancel
-		if st.worktree != nil {
-			if err := s.worktrees.Cleanup(context.Background(), st.worktree); err != nil {
-				s.logger.Printf("run service: cleanup worktree run=%d: %v", runID, err)
+		if st.checkout != nil {
+			if err := s.preparer.Cleanup(context.Background(), st.checkout); err != nil {
+				s.logger.Printf("run service: cleanup checkout run=%d: %v", runID, err)
 			}
 		}
 	}

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"windshift/internal/models"
+	"windshift/internal/repoprep"
 	"windshift/internal/repository"
 )
 
@@ -103,7 +104,7 @@ type RunRequest struct {
 	WorkspaceID int
 	ItemID      *int
 	BindingID   int
-	Repo        *RepoSpec
+	Repo        *repoprep.RepoSpec
 	Token       *TokenSpec
 	Env         map[string]string
 	// Grants, when set, is snapshotted onto the run at claim time and bound
@@ -147,7 +148,7 @@ type TokenSpec struct {
 type RunServiceOptions struct {
 	GlobalCap   int
 	Runner      Runner
-	Worktrees   *WorktreeManager
+	Preparer    *repoprep.Preparer
 	Tokens      *RunTokenService
 	PostRunHook PostRunHook
 	Now         func() time.Time // injected for deterministic tests
@@ -200,7 +201,7 @@ var ErrShuttingDown = errors.New("run service is shutting down")
 type RunService struct {
 	repo        *repository.AgentRunRepository
 	runner      Runner
-	worktrees   *WorktreeManager
+	preparer    *repoprep.Preparer
 	tokens      *RunTokenService
 	postRunHook PostRunHook
 	queue       chan queuedJob
@@ -253,7 +254,7 @@ func NewRunService(repo *repository.AgentRunRepository, opts RunServiceOptions) 
 	s := &RunService{
 		repo:        repo,
 		runner:      opts.Runner,
-		worktrees:   opts.Worktrees,
+		preparer:    opts.Preparer,
 		tokens:      opts.Tokens,
 		postRunHook: opts.PostRunHook,
 		queue:       make(chan queuedJob, queueBuffer(capacity)),
@@ -353,8 +354,8 @@ func (s *RunService) Start(ctx context.Context, req RunRequest) (int, error) {
 		return runID, nil
 	}
 
-	if req.Repo != nil && s.worktrees == nil {
-		return 0, errors.New("run service: request includes a Repo but no WorktreeManager is configured")
+	if req.Repo != nil && s.preparer == nil {
+		return 0, errors.New("run service: request includes a Repo but no Preparer is configured")
 	}
 	if req.Token != nil && s.tokens == nil {
 		return 0, errors.New("run service: request includes a Token but no RunTokenService is configured")

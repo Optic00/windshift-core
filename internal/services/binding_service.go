@@ -12,6 +12,7 @@ import (
 	"windshift/internal/auth"
 	"windshift/internal/llm"
 	"windshift/internal/models"
+	"windshift/internal/repoprep"
 	"windshift/internal/repository"
 )
 
@@ -342,9 +343,9 @@ func (s *BindingService) MaybeStartRunForAssignee(ctx context.Context, workspace
 		}
 		s.logger.Printf("binding service: derived %s clone url for binding=%d slug=%s", providerType, binding.ID, binding.RepoSlug)
 		// Token travels on RepoSpec as a separate field — never embed
-		// it in RemoteURL. WorktreeManager injects it via a per-clone
-		// GIT_ASKPASS helper so it never appears in argv or .git/config.
-		req.Repo = &RepoSpec{
+		// it in RemoteURL. repoprep injects it via a per-clone GIT_ASKPASS
+		// helper so it never appears in argv or .git/config.
+		req.Repo = &repoprep.RepoSpec{
 			WorkspaceID: workspaceID,
 			RepoSlug:    binding.RepoSlug,
 			RemoteURL:   cloneURL,

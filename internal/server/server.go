@@ -33,6 +33,7 @@ import (
 	"windshift/internal/models"
 	"windshift/internal/plugins"
 	"windshift/internal/portalwebauthn"
+	"windshift/internal/repoprep"
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
 	v1 "windshift/internal/restapi/v1"
@@ -2007,9 +2008,9 @@ func bootCodingAgentRunService(
 	if cfg.WorktreeRoot == "" {
 		return nil, fmt.Errorf("coding-agent: WorktreeRoot is required when RunnerImage is set")
 	}
-	wm, err := services.NewWorktreeManager(services.WorktreeManagerOptions{RootDir: cfg.WorktreeRoot})
+	prep, err := repoprep.New(repoprep.Options{RootDir: cfg.WorktreeRoot})
 	if err != nil {
-		return nil, fmt.Errorf("coding-agent worktree manager: %w", err)
+		return nil, fmt.Errorf("coding-agent repo preparer: %w", err)
 	}
 	tokens, err := services.NewRunTokenService(tm)
 	if err != nil {
@@ -2064,7 +2065,7 @@ func bootCodingAgentRunService(
 	runRepo := repository.NewAgentRunRepository(db)
 	runSvc, err := services.NewRunService(runRepo, services.RunServiceOptions{
 		Runner:      runner,
-		Worktrees:   wm,
+		Preparer:    prep,
 		Tokens:      tokens,
 		PostRunHook: prSvc,
 		GlobalCap:   cfg.GlobalCap,
