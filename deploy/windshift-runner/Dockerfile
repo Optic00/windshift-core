@@ -1,0 +1,60 @@
+# syntax=docker/dockerfile:1
+# =============================================================================
+# windshift-runner image
+#
+# Runs the remote runner as a container instead of via the host install script.
+# It talks to the HOST Docker daemon over the mounted socket and asks it to
+# spawn sibling agent containers (Docker-out-of-Docker) — the agent never runs
+# nested inside this container.
+#
+# Built from the repo root (needs go.mod + windshift-runner/ + cmd/windshift-triage):
+#   docker build -f deploy/windshift-runner/Dockerfile -t windshift/runner:local .
+#
+# Run (see deploy/windshift-runner/runner-compose.yml for the full example):
+#   docker run -d \
+#     -e WS_API_URL=... -e WSRUNNER_REGISTRATION_TOKEN=wsrt_... \
+#     -e WSRUNNER_IMAGE=ghcr.io/windshiftapp/windshift-agent:latest \
+#     -v /var/run/docker.sock:/var/run/docker.sock \
+#     -v /var/lib/windshift-runner:/var/lib/windshift-runner \
+#     ghcr.io/windshiftapp/windshift-runner:latest
+#
+# The /var/lib/windshift-runner same-path mount matters: the host daemon (not
+# this container) bind-mounts each prepared checkout into the agent container,
+# so the checkout must exist on the host at the path this container sees.
+# =============================================================================
+
+# --------------------------------------------------------------------
+# Stage 1: build windshift-runner + windshift-triage
+# --------------------------------------------------------------------
+FROM golang:1.26.4-alpine AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o /out/windshift-runner ./windshift-runner
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o /out/windshift-triage ./cmd/windshift-triage
+
+# --------------------------------------------------------------------
+# Stage 2: runtime — runner + triage + git + docker CLI
+# --------------------------------------------------------------------
+FROM alpine:3.21
+
+# git: triage shells out to it. docker-cli: drive the host daemon via the
+# mounted socket. ca-certificates: TLS to the orchestrator.
+RUN apk add --no-cache ca-certificates git docker-cli
+
+COPY --from=build /out/windshift-runner  /usr/local/bin/windshift-runner
+COPY --from=build /out/windshift-triage /usr/local/bin/windshift-triage
+
+# Defaults; the cache root is expected to be a host bind-mount (same path).
+ENV WSRUNNER_TRIAGE_BIN=/usr/local/bin/windshift-triage \
+    WSRUNNER_CACHE_ROOT=/var/lib/windshift-runner/cache
+RUN mkdir -p /var/lib/windshift-runner/cache
+
+# Runs as root so it can reach the mounted Docker socket; the agent containers
+# it spawns are the sandboxed, non-root ones.
+ENTRYPOINT ["/usr/local/bin/windshift-runner"]

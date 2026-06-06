@@ -9,6 +9,7 @@ set -euo pipefail
 GHCR_REGISTRY="ghcr.io/windshiftapp/windshift"
 CODING_AGENT_GHCR_REGISTRY="ghcr.io/windshiftapp/coding-agent-runner"
 AGENT_GHCR_REGISTRY="ghcr.io/windshiftapp/windshift-agent"
+RUNNER_GHCR_REGISTRY="ghcr.io/windshiftapp/windshift-runner"
 GITHUB_REPO="Windshiftapp/windshift"
 DOCKER_PLATFORMS="linux/amd64,linux/arm64"
 # The thin no-node coding agent lives in a sibling repo; its image is built
@@ -752,10 +753,12 @@ build_docker() {
     log_info "Platforms: ${DOCKER_PLATFORMS}"
     log_info "Server tags: ${GHCR_REGISTRY}:${VERSION}"
     log_info "Coding-agent runner tags: ${CODING_AGENT_GHCR_REGISTRY}:${VERSION}"
+    log_info "Runner tags: ${RUNNER_GHCR_REGISTRY}:${VERSION}"
     log_info "Agent tags: ${AGENT_GHCR_REGISTRY}:${VERSION}"
 
     build_docker_image "$GHCR_REGISTRY" "Dockerfile" "Windshift server" true
     build_docker_image "$CODING_AGENT_GHCR_REGISTRY" "deploy/coding-agent/Dockerfile" "coding-agent runner" false
+    build_docker_image "$RUNNER_GHCR_REGISTRY" "deploy/windshift-runner/Dockerfile" "windshift-runner" false
     # Built last: it lifts ws from the coding-agent-runner image pushed above.
     build_agent_image
 }
@@ -834,7 +837,7 @@ cmd_push() {
         echo "=============================="
         echo "This will:"
         echo "  - Build frontend"
-        echo "  - Build and push Docker images to ${GHCR_REGISTRY}, ${CODING_AGENT_GHCR_REGISTRY}, and ${AGENT_GHCR_REGISTRY}"
+        echo "  - Build and push Docker images to ${GHCR_REGISTRY}, ${CODING_AGENT_GHCR_REGISTRY}, ${RUNNER_GHCR_REGISTRY}, and ${AGENT_GHCR_REGISTRY}"
         echo ""
         echo "Note: This does NOT create a GitHub release."
         echo ""
@@ -855,6 +858,7 @@ cmd_push() {
     echo "Docker images:"
     echo "  ${GHCR_REGISTRY}:${VERSION}"
     echo "  ${CODING_AGENT_GHCR_REGISTRY}:${VERSION}"
+    echo "  ${RUNNER_GHCR_REGISTRY}:${VERSION}"
     echo "  ${AGENT_GHCR_REGISTRY}:${VERSION}"
 }
 
@@ -886,7 +890,7 @@ cmd_release() {
         if [ "$SKIP_DESKTOP" != true ] && [ "$(uname)" = "Darwin" ]; then
             echo "  - Build macOS desktop DMG (arm64)"
         fi
-        echo "  - Build and push Docker images (server + coding-agent runner + windshift-agent)"
+        echo "  - Build and push Docker images (server + coding-agent runner + windshift-runner + windshift-agent)"
         echo "  - Create git tag and push"
         echo "  - Create GitHub release with assets"
         echo ""
@@ -919,6 +923,7 @@ cmd_release() {
     echo "Docker:"
     echo "  docker pull ${GHCR_REGISTRY}:${VERSION}"
     echo "  docker pull ${CODING_AGENT_GHCR_REGISTRY}:${VERSION}"
+    echo "  docker pull ${RUNNER_GHCR_REGISTRY}:${VERSION}"
     echo "  docker pull ${AGENT_GHCR_REGISTRY}:${VERSION}"
 }
 

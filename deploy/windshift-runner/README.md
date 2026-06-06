@@ -84,6 +84,24 @@ sudo systemctl start windshift-runner
 journalctl -u windshift-runner -f                 # watch it register + claim
 ```
 
+### Run as a container instead
+
+You can skip the install script and run the runner as a container — it drives
+the host Docker daemon through the mounted socket (Docker-out-of-Docker). See
+`runner-compose.yml` and `Dockerfile` in this directory. Key points:
+
+- Mount the Docker socket: `/var/run/docker.sock:/var/run/docker.sock`.
+- Mount the cache root at the **same path** on host and container
+  (`/var/lib/windshift-runner:/var/lib/windshift-runner`) — the host daemon
+  bind-mounts each prepared checkout into the agent container, so the path must
+  resolve identically on the host.
+- Podman: works with the rootful socket (`/run/podman/podman.sock`); rootless
+  Podman needs UID-mapping care on the checkout mount.
+
+```bash
+docker compose -f runner-compose.yml up -d
+```
+
 ### install.sh options
 
 | Flag | Default | Meaning |
