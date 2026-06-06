@@ -112,6 +112,10 @@ type LLMConfig struct {
 	Endpoint      string
 	ProvidersFile string
 	PromptsDir    string
+	// AllowedPrivateCIDRs is a comma-separated list of private / loopback /
+	// CGNAT CIDRs that admin-configured LLM inference and model-list calls may
+	// dial. Empty keeps the SSRF guard public-internet-only.
+	AllowedPrivateCIDRs string
 }
 
 // CodingAgentConfig configures the coding-agent harness (WI-89). When

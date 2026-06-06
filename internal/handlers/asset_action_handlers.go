@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 
-	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
@@ -15,10 +14,10 @@ import (
 
 // AssetActionHandler handles asset action automation API endpoints
 type AssetActionHandler struct {
-	db            database.Database
 	repo          *repository.AssetActionRepository
 	assetHandler  *AssetHandler
 	actionService *services.AssetActionService
+	auditor       *logger.Auditor
 }
 
 // NewAssetActionHandler creates a new asset action handler
@@ -36,12 +35,12 @@ func (h *AssetActionHandler) requireAssetAction(w http.ResponseWriter, r *http.R
 	return action, true
 }
 
-func NewAssetActionHandler(db database.Database, assetHandler *AssetHandler, actionService *services.AssetActionService) *AssetActionHandler {
+func NewAssetActionHandler(repo *repository.AssetActionRepository, assetHandler *AssetHandler, actionService *services.AssetActionService, auditor *logger.Auditor) *AssetActionHandler {
 	return &AssetActionHandler{
-		db:            db,
-		repo:          repository.NewAssetActionRepository(db),
+		repo:          repo,
 		assetHandler:  assetHandler,
 		actionService: actionService,
+		auditor:       auditor,
 	}
 }
 
@@ -157,7 +156,7 @@ func (h *AssetActionHandler) CreateAction(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	logAudit(h.db, r, currentUser, logger.ActionAutomationCreate, logger.ResourceAutomation, &createdAction.ID, createdAction.Name)
+	h.auditor.Log(r, currentUser, logger.ActionAutomationCreate, logger.ResourceAutomation, &createdAction.ID, createdAction.Name)
 
 	respondJSONCreated(w, createdAction)
 }
@@ -239,7 +238,7 @@ func (h *AssetActionHandler) UpdateAction(w http.ResponseWriter, r *http.Request
 	}
 
 	if currentUser != nil {
-		logAudit(h.db, r, currentUser, logger.ActionAutomationUpdate, logger.ResourceAutomation, &actionID, updatedAction.Name)
+		h.auditor.Log(r, currentUser, logger.ActionAutomationUpdate, logger.ResourceAutomation, &actionID, updatedAction.Name)
 	}
 
 	respondJSONOK(w, updatedAction)
@@ -271,7 +270,7 @@ func (h *AssetActionHandler) DeleteAction(w http.ResponseWriter, r *http.Request
 	}
 
 	if currentUser != nil {
-		logAudit(h.db, r, currentUser, logger.ActionAutomationDelete, logger.ResourceAutomation, &actionID, "")
+		h.auditor.Log(r, currentUser, logger.ActionAutomationDelete, logger.ResourceAutomation, &actionID, "")
 	}
 
 	w.WriteHeader(http.StatusNoContent)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -26,14 +27,14 @@ type ModelRefresher struct {
 	http  *http.Client
 }
 
-// NewModelRefresher constructs a ModelRefresher that uses the SSRF-safe HTTP
-// client shared with the inference clients.
-func NewModelRefresher(cache *ModelCache) *ModelRefresher {
-	return newModelRefresherWithClient(cache, utils.NewSSRFSafeHTTPClient(30*time.Second))
+// NewModelRefresher constructs a ModelRefresher for admin-configured provider
+// catalog URLs. Private/loopback endpoints are blocked unless explicitly
+// enabled by operator config.
+func NewModelRefresher(cache *ModelCache, allowedPrivateCIDRs []*net.IPNet) *ModelRefresher {
+	return newModelRefresherWithClient(cache, newAdminConfiguredHTTPClient(30*time.Second, allowedPrivateCIDRs))
 }
 
-// newModelRefresherWithClient lets tests substitute the SSRF-safe client
-// (which blocks loopback) with a vanilla one so httptest servers work.
+// newModelRefresherWithClient lets tests substitute the HTTP client.
 func newModelRefresherWithClient(cache *ModelCache, client *http.Client) *ModelRefresher {
 	return &ModelRefresher{cache: cache, http: client}
 }
@@ -73,11 +74,11 @@ type geminiModelsResponse struct {
 // Refresh fetches and caches the model list for one provider. On failure it
 // also writes the error string to the cache so the UI can render "Last attempt
 // failed: …" without losing the previously cached models.
-func (r *ModelRefresher) Refresh(ctx context.Context, provider ProviderInfo, apiKey string) ([]ModelInfo, error) {
+func (r *ModelRefresher) Refresh(ctx context.Context, provider ProviderInfo, apiKey, baseURLOverride string) ([]ModelInfo, error) {
 	if !provider.HasDynamicModels() {
 		return nil, fmt.Errorf("provider %q has no models_endpoint configured", provider.Type)
 	}
-	url := provider.ModelsURL()
+	url := provider.ModelsURLForBase(baseURLOverride)
 	if err := utils.ValidateHTTPBaseURL(url); err != nil {
 		return nil, fmt.Errorf("invalid models URL: %w", err)
 	}

@@ -8,11 +8,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
-
-	"windshift/internal/utils"
 )
 
 // anthropicClient implements Client for the Anthropic Messages API.
@@ -92,16 +91,13 @@ type anthropicUsage struct {
 }
 
 // newAnthropicClient creates a client for the Anthropic Messages API.
-func newAnthropicClient(baseURL, model, apiKey string, timeout time.Duration) *anthropicClient {
+func newAnthropicClient(baseURL, model, apiKey string, timeout time.Duration, allowedPrivateCIDRs []*net.IPNet) *anthropicClient {
 	endpoint := strings.TrimSuffix(baseURL, "/")
-	if timeout == 0 {
-		timeout = 120 * time.Second
-	}
 	return &anthropicClient{
 		endpoint: endpoint,
 		model:    model,
 		apiKey:   apiKey,
-		http:     utils.NewSSRFSafeHTTPClient(timeout),
+		http:     newAdminConfiguredHTTPClient(timeout, allowedPrivateCIDRs),
 	}
 }
 
@@ -232,7 +228,7 @@ func (c *anthropicClient) ChatCompletion(ctx context.Context, req ChatCompletion
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.endpoint+"/v1/messages", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", joinProviderPath(c.endpoint, "/v1/messages"), bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrConnectionFailed, err)
 	}

@@ -4,11 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"time"
-
-	"windshift/internal/utils"
 )
 
 // openaiClient implements Client for OpenAI-compatible APIs (OpenAI, Z.AI, local).
@@ -22,11 +21,8 @@ type openaiClient struct {
 
 // newOpenAIClient creates a client for OpenAI-compatible endpoints.
 // chatPath overrides the default "/v1/chat/completions" path appended to the base URL.
-func newOpenAIClient(baseURL, model, apiKey string, timeout time.Duration, chatPath string) *openaiClient {
+func newOpenAIClient(baseURL, model, apiKey string, timeout time.Duration, chatPath string, allowedPrivateCIDRs []*net.IPNet) *openaiClient {
 	endpoint := strings.TrimSuffix(baseURL, "/")
-	if timeout == 0 {
-		timeout = 120 * time.Second
-	}
 	if chatPath == "" {
 		chatPath = "/v1/chat/completions"
 	}
@@ -35,7 +31,7 @@ func newOpenAIClient(baseURL, model, apiKey string, timeout time.Duration, chatP
 		chatPath: chatPath,
 		model:    model,
 		apiKey:   apiKey,
-		http:     utils.NewSSRFSafeHTTPClient(timeout),
+		http:     newAdminConfiguredHTTPClient(timeout, allowedPrivateCIDRs),
 	}
 }
 
@@ -57,7 +53,7 @@ func (c *openaiClient) ChatCompletion(ctx context.Context, req ChatCompletionReq
 		}
 	}
 
-	return postChatCompletion(ctx, c.http, c.endpoint+c.chatPath, c.apiKey, body)
+	return postChatCompletion(ctx, c.http, joinProviderPath(c.endpoint, c.chatPath), c.apiKey, body)
 }
 
 func (c *openaiClient) Health(ctx context.Context) error {

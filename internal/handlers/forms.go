@@ -321,7 +321,7 @@ func (h *FormHandler) SubmitForm(w http.ResponseWriter, r *http.Request) {
 	authenticatedUserID, portalCustomerID := h.getAuthFromContext(r)
 
 	// Validate and separate fields (reuse portal logic)
-	validationResult, err := validateAndSeparateFields(ctx, h.db, submission.RequestTypeID, submission.Title, submission.Description, submission.CustomFields)
+	validationResult, err := services.ValidateAndSeparateRequestFields(ctx, h.db, submission.RequestTypeID, submission.Title, submission.Description, submission.CustomFields)
 	if err != nil {
 		respondValidationError(w, r, err.Error())
 		return
@@ -336,10 +336,10 @@ func (h *FormHandler) SubmitForm(w http.ResponseWriter, r *http.Request) {
 
 	// Determine initial status
 	initialStatus := defaultItemStatus
-	if validationResult.itemTypeID != nil {
-		status, err := services.GetInitialStatusForItemType(h.db, *validationResult.itemTypeID)
+	if validationResult.ItemTypeID != nil {
+		status, err := services.GetInitialStatusForItemType(h.db, *validationResult.ItemTypeID)
 		if err != nil {
-			slog.Warn("could not determine initial status for item type", slog.String("component", "forms"), slog.Int("item_type_id", *validationResult.itemTypeID), slog.Any("error", err))
+			slog.Warn("could not determine initial status for item type", slog.String("component", "forms"), slog.Int("item_type_id", *validationResult.ItemTypeID), slog.Any("error", err))
 		} else {
 			initialStatus = status
 		}
@@ -351,7 +351,7 @@ func (h *FormHandler) SubmitForm(w http.ResponseWriter, r *http.Request) {
 		Title:                   submission.Title,
 		Description:             submission.Description,
 		Status:                  initialStatus,
-		ItemTypeID:              validationResult.itemTypeID,
+		ItemTypeID:              validationResult.ItemTypeID,
 		Priority:                "medium",
 		CreatorID:               authenticatedUserID,
 		CreatorPortalCustomerID: portalCustomerID,
@@ -364,8 +364,8 @@ func (h *FormHandler) SubmitForm(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Store custom and virtual field values
-	storeCustomFieldValues(ctx, h.db, "forms", itemID, validationResult.customFieldValues)
-	storeVirtualFieldValues(ctx, h.db, "forms", itemID, validationResult.virtualFieldValues)
+	services.StoreCustomFieldValues(ctx, h.db, "forms", itemID, validationResult.CustomFieldValues)
+	services.StoreVirtualFieldValues(ctx, h.db, "forms", itemID, validationResult.VirtualFieldValues)
 
 	// Update channel last activity
 	if _, err := h.db.ExecWriteContext(ctx, `UPDATE channels SET last_activity = ? WHERE id = ?`, time.Now(), channel.ID); err != nil {

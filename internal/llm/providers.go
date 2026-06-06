@@ -60,14 +60,23 @@ func (p *ProviderInfo) HasDynamicModels() bool {
 // ModelsURL returns the absolute URL of the provider's catalog endpoint,
 // preferring ModelsBaseURL when set (Gemini) and falling back to BaseURL.
 func (p *ProviderInfo) ModelsURL() string {
+	return p.ModelsURLForBase("")
+}
+
+// ModelsURLForBase returns the catalog URL using baseOverride when provided.
+// This is used for local/custom LLM connections and provider base URL overrides.
+func (p *ProviderInfo) ModelsURLForBase(baseOverride string) string {
 	if p == nil || p.ModelsEndpoint == "" {
 		return ""
 	}
-	base := p.ModelsBaseURL
+	base := baseOverride
+	if base == "" {
+		base = p.ModelsBaseURL
+	}
 	if base == "" {
 		base = p.BaseURL
 	}
-	return trimSlash(base) + p.ModelsEndpoint
+	return joinProviderPath(base, p.ModelsEndpoint)
 }
 
 // AuthScheme returns the auth scheme used for the catalog request; defaults
@@ -86,13 +95,6 @@ func (p *ProviderInfo) ResponseFormat() string {
 		return "openai"
 	}
 	return p.ModelsResponseFormat
-}
-
-func trimSlash(s string) string {
-	for s != "" && s[len(s)-1] == '/' {
-		s = s[:len(s)-1]
-	}
-	return s
 }
 
 // providersFile is the JSON structure for the providers file.

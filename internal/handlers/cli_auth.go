@@ -11,12 +11,10 @@ import (
 	"time"
 
 	"windshift/internal/auth"
-	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/services"
-	"windshift/internal/utils"
 )
 
 // cliAuthCodeTTL bounds how long an approved code can sit waiting for the
@@ -29,8 +27,8 @@ const cliAuthCodeTTL = 2 * time.Minute
 // "Allow" in the browser and have a ws-cli-* agent + token materialize on
 // the machine that started the flow.
 type CLIAuthHandler struct {
-	db                database.Database
 	cliAuthRepo       *repository.CLIAuthRepository
+	auditor           *logger.Auditor
 	agent             *AgentHandler
 	tokenManager      *auth.TokenManager
 	apiToken          *APITokenHandler
@@ -39,10 +37,10 @@ type CLIAuthHandler struct {
 
 // NewCLIAuthHandler wires the handler. All four deps must be non-nil — the
 // flow refuses to register routes otherwise (see routes/users.go).
-func NewCLIAuthHandler(db database.Database, agent *AgentHandler, tm *auth.TokenManager, apiToken *APITokenHandler, permService *services.PermissionService) *CLIAuthHandler {
+func NewCLIAuthHandler(cliAuthRepo *repository.CLIAuthRepository, auditor *logger.Auditor, agent *AgentHandler, tm *auth.TokenManager, apiToken *APITokenHandler, permService *services.PermissionService) *CLIAuthHandler {
 	return &CLIAuthHandler{
-		db:                db,
-		cliAuthRepo:       repository.NewCLIAuthRepository(db),
+		cliAuthRepo:       cliAuthRepo,
+		auditor:           auditor,
 		agent:             agent,
 		tokenManager:      tm,
 		apiToken:          apiToken,
@@ -188,22 +186,11 @@ func (h *CLIAuthHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		}
 		agent = created
 
-		_ = logger.LogAudit(h.db, logger.AuditEvent{
-			UserID:       currentUser.ID,
-			Username:     currentUser.Username,
-			IPAddress:    utils.GetClientIP(r),
-			UserAgent:    r.UserAgent(),
-			ActionType:   logger.ActionAgentCreate,
-			ResourceType: logger.ResourceUser,
-			ResourceID:   &agent.ID,
-			ResourceName: agent.Username,
-			Details: map[string]interface{}{
-				"agent_kind":    "owned",
-				"origin":        "cli_onboarding",
-				"owner_user_id": currentUser.ID,
-				"hostname":      req.Hostname,
-			},
-			Success: true,
+		h.auditor.LogWithDetails(r, currentUser, logger.ActionAgentCreate, logger.ResourceUser, &agent.ID, agent.Username, map[string]interface{}{
+			"agent_kind":    "owned",
+			"origin":        "cli_onboarding",
+			"owner_user_id": currentUser.ID,
+			"hostname":      req.Hostname,
 		})
 	}
 
@@ -248,22 +235,11 @@ func (h *CLIAuthHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = logger.LogAudit(h.db, logger.AuditEvent{
-		UserID:       currentUser.ID,
-		Username:     currentUser.Username,
-		IPAddress:    utils.GetClientIP(r),
-		UserAgent:    r.UserAgent(),
-		ActionType:   logger.ActionAPITokenCreate,
-		ResourceType: logger.ResourceAPIToken,
-		ResourceID:   &tokenResp.APIToken.ID,
-		ResourceName: tokenResp.APIToken.Name,
-		Details: map[string]interface{}{
-			"origin":         "cli_onboarding",
-			"target_user_id": agent.ID,
-			"hostname":       req.Hostname,
-			"token_prefix":   tokenResp.APIToken.TokenPrefix,
-		},
-		Success: true,
+	h.auditor.LogWithDetails(r, currentUser, logger.ActionAPITokenCreate, logger.ResourceAPIToken, &tokenResp.APIToken.ID, tokenResp.APIToken.Name, map[string]interface{}{
+		"origin":         "cli_onboarding",
+		"target_user_id": agent.ID,
+		"hostname":       req.Hostname,
+		"token_prefix":   tokenResp.APIToken.TokenPrefix,
 	})
 
 	respondJSONOK(w, map[string]interface{}{
@@ -287,18 +263,9 @@ func (h *CLIAuthHandler) Deny(w http.ResponseWriter, r *http.Request) {
 	}
 	req, _ := decodeJSON[ApproveRequest](w, r) // best-effort body, optional fields
 
-	_ = logger.LogAudit(h.db, logger.AuditEvent{
-		UserID:       currentUser.ID,
-		Username:     currentUser.Username,
-		IPAddress:    utils.GetClientIP(r),
-		UserAgent:    r.UserAgent(),
-		ActionType:   "cli_onboarding.deny",
-		ResourceType: logger.ResourceUser,
-		Details: map[string]interface{}{
-			"hostname":   req.Hostname,
-			"agent_name": sanitizeAgentName(req.AgentName),
-		},
-		Success: true,
+	h.auditor.LogWithDetails(r, currentUser, "cli_onboarding.deny", logger.ResourceUser, nil, "", map[string]interface{}{
+		"hostname":   req.Hostname,
+		"agent_name": sanitizeAgentName(req.AgentName),
 	})
 
 	w.WriteHeader(http.StatusNoContent)
@@ -448,16 +415,5 @@ func cliAuthAgentID(code *repository.CLIAuthCode) int64 {
 }
 
 func (h *CLIAuthHandler) auditApproveFailure(r *http.Request, user *models.User, agentName, reason string) {
-	_ = logger.LogAudit(h.db, logger.AuditEvent{
-		UserID:       user.ID,
-		Username:     user.Username,
-		IPAddress:    utils.GetClientIP(r),
-		UserAgent:    r.UserAgent(),
-		ActionType:   "cli_onboarding.approve",
-		ResourceType: logger.ResourceUser,
-		ResourceName: agentName,
-		Details:      map[string]interface{}{"reason": reason},
-		Success:      false,
-		ErrorMessage: reason,
-	})
+	h.auditor.LogFailure(r, user, "cli_onboarding.approve", logger.ResourceUser, nil, agentName, reason, map[string]interface{}{"reason": reason})
 }

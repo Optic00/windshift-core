@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"time"
 
-	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/services"
@@ -24,21 +23,25 @@ import (
 // acting user is authorized against the target workspace or asset set before
 // performing a write.
 type LogbookNodeExecutionHandler struct {
-	db                database.Database
 	secret            string
 	eventCoordinator  *services.EventCoordinator
 	permissionService *services.PermissionService
 	assetHandler      *AssetHandler
+	createItem        func(services.ItemCreationParams) (int64, error)
+	workspaceRepo     *repository.WorkspaceRepository
+	assetRepo         *repository.AssetRepository
 }
 
 // NewLogbookNodeExecutionHandler creates a new node execution handler.
-func NewLogbookNodeExecutionHandler(db database.Database, secret string, eventCoordinator *services.EventCoordinator, permissionService *services.PermissionService, assetHandler *AssetHandler) *LogbookNodeExecutionHandler {
+func NewLogbookNodeExecutionHandler(secret string, eventCoordinator *services.EventCoordinator, permissionService *services.PermissionService, assetHandler *AssetHandler, createItem func(services.ItemCreationParams) (int64, error), workspaceRepo *repository.WorkspaceRepository, assetRepo *repository.AssetRepository) *LogbookNodeExecutionHandler {
 	return &LogbookNodeExecutionHandler{
-		db:                db,
 		secret:            secret,
 		eventCoordinator:  eventCoordinator,
 		permissionService: permissionService,
 		assetHandler:      assetHandler,
+		createItem:        createItem,
+		workspaceRepo:     workspaceRepo,
+		assetRepo:         assetRepo,
 	}
 }
 
@@ -134,7 +137,7 @@ func (h *LogbookNodeExecutionHandler) executeCreateItem(nodeConfig string, event
 		slog.Int("creator_id", creatorID),
 	)
 
-	itemID, err := services.CreateItem(h.db, services.ItemCreationParams{
+	itemID, err := h.createItem(services.ItemCreationParams{
 		WorkspaceID: config.WorkspaceID,
 		Title:       title,
 		Description: config.Description,
@@ -161,7 +164,7 @@ func (h *LogbookNodeExecutionHandler) executeCreateItem(nodeConfig string, event
 			CreatorID:   &creatorID,
 		}
 		// Load workspace key for event emission
-		if key, err := repository.NewWorkspaceRepository(h.db).GetKey(config.WorkspaceID); err == nil {
+		if key, err := h.workspaceRepo.GetKey(config.WorkspaceID); err == nil {
 			item.WorkspaceKey = key
 		}
 
@@ -204,7 +207,7 @@ func (h *LogbookNodeExecutionHandler) executeCreateAsset(nodeConfig string, even
 	}
 
 	createdAt := time.Now()
-	assetID, err := repository.NewAssetRepository(h.db).CreateAsset(repository.CreateAssetInput{
+	assetID, err := h.assetRepo.CreateAsset(repository.CreateAssetInput{
 		SetID:       config.AssetSetID,
 		AssetTypeID: config.AssetTypeID,
 		CategoryID:  config.CategoryID,

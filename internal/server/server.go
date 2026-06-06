@@ -480,7 +480,13 @@ func (s *Server) initialize() error {
 	testCoverageHandler := handlers.NewTestCoverageHandler(repository.NewTestCoverageRepository(s.db), permService)
 	publicBoardHandler := handlers.NewPublicBoardHandler(s.db, permService, cfg.AttachmentPath)
 	permissionHandler := handlers.NewPermissionHandlerWithCache(s.db, permService)
-	apiTokenHandler := handlers.NewAPITokenHandler(s.db, tokenManager, permService)
+	apiTokenHandler := handlers.NewAPITokenHandler(
+		tokenManager,
+		repository.NewAPITokenPolicyRepository(s.db),
+		repository.NewWorkspaceRepository(s.db),
+		logger.NewAuditor(s.db),
+		permService,
+	)
 	agentHandler := handlers.NewAgentHandler(s.db, permService)
 
 	// SCIM handlers
@@ -536,7 +542,15 @@ func (s *Server) initialize() error {
 	recurrenceHandler := handlers.NewRecurrenceHandler(repository.NewRecurrenceRepository(s.db), repository.NewItemRepository(s.db), s.recurrenceScheduler, permService)
 
 	// Actions handler
-	actionsHandler := handlers.NewActionsHandler(s.db, s.actionService, permService, workspaceKeyCache)
+	actionsHandler := handlers.NewActionsHandler(
+		repository.NewActionRepository(s.db),
+		repository.NewActionCredentialRepository(s.db),
+		repository.NewItemRepository(s.db),
+		logger.NewAuditor(s.db),
+		s.actionService,
+		permService,
+		workspaceKeyCache,
+	)
 	actionCredentialService := services.NewActionCredentialService(repository.NewActionCredentialRepository(s.db), cfg.Auth.SessionSecret)
 	actionCredentialsHandler := handlers.NewActionCredentialsHandler(actionCredentialService, permService, workspaceKeyCache, logger.NewAuditor(s.db))
 	// Wire credential resolution into the action runtime so HTTP capabilities
@@ -606,7 +620,18 @@ func (s *Server) initialize() error {
 	authPolicyHandler := handlers.NewAuthPolicyHandlerWithFallback(s.db, cfg.EnableAdminFallback, logger.NewAuditor(s.db))
 
 	// Initialize auth handler
-	authHandler := handlers.NewAuthHandler(s.db, sessionManager, s.loginRateLimiter, permService, emailVerificationService, ipExtractor, authPolicyHandler, adminRateLimiter)
+	authHandler := handlers.NewAuthHandler(
+		repository.NewUserRepository(s.db),
+		repository.NewCredentialRepository(s.db),
+		logger.NewAuditor(s.db),
+		sessionManager,
+		s.loginRateLimiter,
+		permService,
+		emailVerificationService,
+		ipExtractor,
+		authPolicyHandler,
+		adminRateLimiter,
+	)
 
 	// Initialize invitation handler
 	invitationHandler := handlers.NewInvitationHandler(invitationService)
@@ -631,7 +656,7 @@ func (s *Server) initialize() error {
 	scmProviderHandler := handlers.NewSCMProviderHandler(s.db, cfg.Auth.SessionSecret, baseURL)
 	scmWorkspaceHandler := handlers.NewSCMWorkspaceHandler(s.db, scmProviderHandler.GetEncryption(), scmProviderHandler, permService, baseURL)
 	scmItemLinksHandler := handlers.NewSCMItemLinksHandler(s.db, scmProviderHandler.GetEncryption(), permService)
-	userSCMTokenHandler := handlers.NewUserSCMTokenHandler(s.db, scmProviderHandler.GetEncryption())
+	userSCMTokenHandler := handlers.NewUserSCMTokenHandler(repository.NewUserSCMTokenRepository(s.db), scmProviderHandler.GetEncryption())
 	milestoneHandler := handlers.NewMilestoneHandler(services.NewPlanningService(s.db), permService, scm.NewCredentialResolver(s.db, scmProviderHandler.GetEncryption()), logger.NewAuditor(s.db))
 
 	// WI-87/88/89/90 coding-agent harness stack. The acting-identity
@@ -673,9 +698,17 @@ func (s *Server) initialize() error {
 	} else {
 		slog.Info("LLM fallback service not configured")
 	}
-	llmManager := llm.NewConnectionManager(s.db, scmProviderHandler.GetEncryption(), fallbackLLMClient)
+	llmAllowedPrivateCIDRs, err := utils.ParseCIDRList(cfg.LLM.AllowedPrivateCIDRs)
+	if err != nil {
+		slog.Error("FATAL: invalid LLM_ALLOWED_PRIVATE_CIDRS", slog.Any("error", err))
+		os.Exit(1)
+	}
+	if len(llmAllowedPrivateCIDRs) > 0 {
+		slog.Info("LLM private/loopback dial allowlist configured", slog.Int("cidr_count", len(llmAllowedPrivateCIDRs)))
+	}
+	llmManager := llm.NewConnectionManager(s.db, scmProviderHandler.GetEncryption(), fallbackLLMClient, llmAllowedPrivateCIDRs)
 	llmModelCache := llm.NewModelCache(s.db)
-	llmModelRefresher := llm.NewModelRefresher(llmModelCache)
+	llmModelRefresher := llm.NewModelRefresher(llmModelCache, llmAllowedPrivateCIDRs)
 
 	var codingRunSvc *services.RunService
 	if cfg.CodingAgent.RunnerImage != "" {
@@ -741,7 +774,7 @@ func (s *Server) initialize() error {
 		logger.NewAuditor(s.db),
 		channelService,
 	)
-	assetActionHandler := handlers.NewAssetActionHandler(s.db, assetHandler, s.assetActionService)
+	assetActionHandler := handlers.NewAssetActionHandler(repository.NewAssetActionRepository(s.db), assetHandler, s.assetActionService, logger.NewAuditor(s.db))
 
 	// Jira import handler
 	jiraImportHandler := handlers.NewJiraImportHandler(s.db, cfg.Auth.SessionSecret, cfg.Jira.CapturePayloadsDir)
@@ -905,7 +938,7 @@ func (s *Server) initialize() error {
 	webhookHandler := handlers.NewWebhookHandler(repository.NewChannelRepository(s.db), repository.NewItemRepository(s.db), webhookSender, permService, channelService)
 	portalHandler := handlers.NewPortalHandler(s.db, sessionManager, portalSessionManager, ipExtractor, cfg.AttachmentPath)
 	portalHandler.SetApprovalService(approvalService)
-	portalAuthHandler := handlers.NewPortalAuthHandler(s.db, portalSessionManager, sessionManager, magicLinkService, ipExtractor)
+	portalAuthHandler := handlers.NewPortalAuthHandler(repository.NewPortalAuthRepository(s.db), portalSessionManager, sessionManager, magicLinkService, ipExtractor)
 	portalWebAuthnHandler := handlers.NewPortalWebAuthnHandler(
 		portalSessionManager,
 		portalWebAuthnConfig,
@@ -1064,7 +1097,15 @@ func (s *Server) initialize() error {
 			slog.Info("internal LLM proxy enabled for logbook article generation")
 
 			// Node execution endpoint for logbook actions (create_item, create_asset on SQLite)
-			nodeExecHandler := handlers.NewLogbookNodeExecutionHandler(s.db, ssoSecret, eventCoordinator, permService, assetHandler)
+			nodeExecHandler := handlers.NewLogbookNodeExecutionHandler(
+				ssoSecret,
+				eventCoordinator,
+				permService,
+				assetHandler,
+				func(params services.ItemCreationParams) (int64, error) { return services.CreateItem(s.db, params) },
+				repository.NewWorkspaceRepository(s.db),
+				repository.NewAssetRepository(s.db),
+			)
 			mux.Handle("POST /api/internal/logbook/execute-node", http.HandlerFunc(nodeExecHandler.HandleNodeExecution))
 			slog.Info("internal logbook node execution endpoint enabled")
 		}
@@ -1191,7 +1232,7 @@ func (s *Server) initialize() error {
 			Credential:    credentialHandler,
 			APIToken:      apiTokenHandler,
 			Agent:         agentHandler,
-			CLIAuth:       handlers.NewCLIAuthHandler(s.db, agentHandler, tokenManager, apiTokenHandler, permService),
+			CLIAuth:       handlers.NewCLIAuthHandler(repository.NewCLIAuthRepository(s.db), logger.NewAuditor(s.db), agentHandler, tokenManager, apiTokenHandler, permService),
 			OAuth:         handlers.NewOAuthHandler(s.db, agentHandler, tokenManager, apiTokenHandler, permService),
 		},
 		Admin: routes.AdminHandlers{

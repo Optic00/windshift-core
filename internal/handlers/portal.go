@@ -595,7 +595,7 @@ func (h *PortalHandler) SubmitToPortal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate and separate fields
-	validationResult, err := validateAndSeparateFields(ctx, h.db, submission.RequestTypeID, submission.Title, submission.Description, submission.CustomFields)
+	validationResult, err := services.ValidateAndSeparateRequestFields(ctx, h.db, submission.RequestTypeID, submission.Title, submission.Description, submission.CustomFields)
 	if err != nil {
 		respondValidationError(w, r, err.Error())
 		return
@@ -604,7 +604,7 @@ func (h *PortalHandler) SubmitToPortal(w http.ResponseWriter, r *http.Request) {
 	// Title fallback: when the request type hides the title field from the
 	// form, render its title_template. Items have a NOT NULL title, so we
 	// reject when the template is missing or renders to empty.
-	if requestType != nil && !validationResult.titleFieldInForm {
+	if requestType != nil && !validationResult.TitleFieldInForm {
 		rendered := h.renderPortalTitle(ctx, requestType, submission.Description, submission.CustomFields, authenticatedUserID, portalCustomerID)
 		if rendered == "" {
 			respondValidationError(w, r, "request type is misconfigured: title field is hidden but no title template is set")
@@ -622,11 +622,11 @@ func (h *PortalHandler) SubmitToPortal(w http.ResponseWriter, r *http.Request) {
 
 	// Determine initial status from workflow if item type is specified
 	initialStatus := defaultItemStatus // Default fallback status
-	if validationResult.itemTypeID != nil {
+	if validationResult.ItemTypeID != nil {
 		var status string
-		status, err = services.GetInitialStatusForItemType(h.db, *validationResult.itemTypeID)
+		status, err = services.GetInitialStatusForItemType(h.db, *validationResult.ItemTypeID)
 		if err != nil {
-			slog.Warn("could not determine initial status for item type", slog.String("component", "portal"), slog.Int("item_type_id", *validationResult.itemTypeID), slog.Any("error", err))
+			slog.Warn("could not determine initial status for item type", slog.String("component", "portal"), slog.Int("item_type_id", *validationResult.ItemTypeID), slog.Any("error", err))
 		} else {
 			initialStatus = status
 		}
@@ -638,7 +638,7 @@ func (h *PortalHandler) SubmitToPortal(w http.ResponseWriter, r *http.Request) {
 		Title:                   submission.Title,
 		Description:             submission.Description,
 		Status:                  initialStatus,
-		ItemTypeID:              validationResult.itemTypeID,
+		ItemTypeID:              validationResult.ItemTypeID,
 		Priority:                "medium",
 		CreatorID:               authenticatedUserID,
 		CreatorPortalCustomerID: portalCustomerID, // nil for internal users, set for portal customers
@@ -651,8 +651,8 @@ func (h *PortalHandler) SubmitToPortal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Store custom and virtual field values
-	storeCustomFieldValues(ctx, h.db, "portal", itemID, validationResult.customFieldValues)
-	storeVirtualFieldValues(ctx, h.db, "portal", itemID, validationResult.virtualFieldValues)
+	services.StoreCustomFieldValues(ctx, h.db, "portal", itemID, validationResult.CustomFieldValues)
+	services.StoreVirtualFieldValues(ctx, h.db, "portal", itemID, validationResult.VirtualFieldValues)
 
 	// Update channel last activity
 	if _, err := h.db.ExecWriteContext(ctx, `UPDATE channels SET last_activity = ? WHERE id = ?`, time.Now(), channel.ID); err != nil {

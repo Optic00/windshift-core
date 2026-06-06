@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"windshift/internal/aitools"
 	"windshift/internal/llm"
 	"windshift/internal/models"
 	"windshift/internal/repository"
@@ -620,7 +621,18 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build tool executor
-	executor := NewToolExecutor(h.db, accessibleWSIDs, user.ID, user.FullName, h.timePermService, h.permService, services.NewCommentService(h.db), h.timerService, h.actionService)
+	executor := NewToolExecutor(&aitools.Env{
+		DB:                     h.db,
+		UserID:                 user.ID,
+		Username:               user.FullName,
+		Source:                 aitools.SourceAIChat,
+		AccessibleWorkspaceIDs: accessibleWSIDs,
+		PermService:            h.permService,
+		TimePermService:        h.timePermService,
+		TimerService:           h.timerService,
+		CommentService:         services.NewCommentService(h.db),
+		ActionService:          h.actionService,
+	})
 
 	// Determine current date in user's timezone
 	chatTimezone := user.Timezone

@@ -97,20 +97,6 @@ func requireWorkspaceIDAndID(w http.ResponseWriter, r *http.Request) (workspaceI
 	return
 }
 
-// requireWorkspaceIDAndIDForWrite parses {workspaceId} and {id} path params,
-// pulls the current user, and resolves the write DB. Used by any mutating
-// handler that follows the standard "workspace-scoped resource with id" shape.
-func (h *BaseHandler) requireWorkspaceIDAndIDForWrite(
-	w http.ResponseWriter, r *http.Request,
-) (workspaceID, id int, user *models.User, db database.Database, ok bool) {
-	workspaceID, id, user, ok = requireWorkspaceIDAndID(w, r)
-	if !ok {
-		return
-	}
-	db, ok = h.requireWriteDB(w, r)
-	return
-}
-
 // RequireAuth checks if a user is authenticated and returns the user.
 // If not authenticated, it writes a 401 Unauthorized response.
 // Returns the user and true if authenticated, nil and false otherwise.

@@ -1,4 +1,3 @@
-internal/handlers/actions.go
 internal/handlers/admin_oauth_clients.go
 internal/handlers/agents.go
 internal/handlers/ai.go
@@ -7,7 +6,6 @@ internal/handlers/ai_helpers.go
 internal/handlers/ai_items.go
 internal/handlers/ai_test_sets.go
 internal/handlers/analytics.go
-internal/handlers/api_tokens.go
 internal/handlers/approval_sets.go
 internal/handlers/approvals.go
 internal/handlers/asset_categories.go
@@ -16,7 +14,6 @@ internal/handlers/asset_link_handlers.go
 internal/handlers/asset_set_role_handlers.go
 internal/handlers/attachment.go
 internal/handlers/audit_log.go
-internal/handlers/auth.go
 internal/handlers/auth_policy.go
 internal/handlers/base.go
 internal/handlers/board_configuration.go
@@ -33,7 +30,6 @@ internal/handlers/configuration_sets_update_helpers.go
 internal/handlers/credentials.go
 internal/handlers/diagnostics.go
 internal/handlers/email_providers.go
-internal/handlers/field_validation.go
 internal/handlers/forms.go
 internal/handlers/groups.go
 internal/handlers/helpers.go
@@ -59,7 +55,6 @@ internal/handlers/jira_importer.go
 internal/handlers/labels.go
 internal/handlers/ldap.go
 internal/handlers/link_types.go
-internal/handlers/logbook_actions.go
 internal/handlers/milestones.go
 internal/handlers/notification.go
 internal/handlers/oauth.go
@@ -71,7 +66,6 @@ internal/handlers/plugins.go
 internal/handlers/portal.go
 internal/handlers/portal_approvals.go
 internal/handlers/portal_assets.go
-internal/handlers/portal_auth.go
 internal/handlers/portal_customers.go
 internal/handlers/portal_requests.go
 internal/handlers/portal_title.go
@@ -99,7 +93,6 @@ internal/handlers/time_projects.go
 internal/handlers/time_worklogs.go
 internal/handlers/user_dashboard_layout.go
 internal/handlers/user_preferences.go
-internal/handlers/user_scm_tokens.go
 internal/handlers/webauthn.go
 internal/handlers/workflows.go
 internal/handlers/workspace_roles.go

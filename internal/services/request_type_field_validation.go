@@ -1,4 +1,4 @@
-package handlers
+package services
 
 import (
 	"context"
@@ -12,14 +12,14 @@ import (
 	"windshift/internal/database"
 )
 
-// isBlankSubmittedField reports whether a value submitted in a portal/form
+// IsBlankSubmittedField reports whether a value submitted in a portal/form
 // payload should be treated as "no value" by required-field validation. JSON
 // unmarshalling produces []interface{} / map[string]interface{} for empty
 // arrays and objects respectively, and the old `== nil || == ""` check let
 // those slip through, allowing required multiselect/object fields to be
 // satisfied by `[]` or `{}`. Scalars `false` and `0` (and `0.0`) are NOT
 // blank — they're legitimate values.
-func isBlankSubmittedField(value interface{}) bool {
+func IsBlankSubmittedField(value interface{}) bool {
 	if value == nil {
 		return true
 	}
@@ -35,22 +35,21 @@ func isBlankSubmittedField(value interface{}) bool {
 	}
 }
 
-// requestTypeValidationResult contains the result of request type field validation
-type requestTypeValidationResult struct {
-	itemTypeID         *int
-	virtualFieldValues map[string]interface{}
-	customFieldValues  map[string]interface{}
-	// titleFieldInForm is true when the request type's field config includes
+// RequestTypeValidationResult contains the result of request type field validation.
+type RequestTypeValidationResult struct {
+	ItemTypeID         *int
+	VirtualFieldValues map[string]interface{}
+	CustomFieldValues  map[string]interface{}
+	// TitleFieldInForm is true when the request type's field config includes
 	// the default "title" field — meaning the submitter saw a title input on
 	// the form. Callers that need a title (every item create) use this to
 	// decide between trusting submission.Title vs. rendering a title template.
-	titleFieldInForm bool
+	TitleFieldInForm bool
 }
 
-// validateAndSeparateFields validates request type fields and separates virtual from custom fields.
-// The component parameter is used for log attribution (e.g. "forms", "portal").
-func validateAndSeparateFields(ctx context.Context, db database.Database, requestTypeID *int, title, description string, customFields map[string]interface{}) (*requestTypeValidationResult, error) {
-	result := &requestTypeValidationResult{}
+// ValidateAndSeparateRequestFields validates request type fields and separates virtual from custom fields.
+func ValidateAndSeparateRequestFields(ctx context.Context, db database.Database, requestTypeID *int, title, description string, customFields map[string]interface{}) (*RequestTypeValidationResult, error) {
+	result := &RequestTypeValidationResult{}
 
 	if requestTypeID == nil {
 		if title == "" {
@@ -68,7 +67,7 @@ func validateAndSeparateFields(ctx context.Context, db database.Database, reques
 	if err != nil {
 		return nil, fmt.Errorf("invalid request type (ID: %d): %w", *requestTypeID, err)
 	}
-	result.itemTypeID = &itemTypeID
+	result.ItemTypeID = &itemTypeID
 
 	virtualFieldIDs := make(map[string]bool)
 	configuredCustomFieldIDs := make(map[string]bool)
@@ -97,7 +96,7 @@ func validateAndSeparateFields(ctx context.Context, db database.Database, reques
 		// portal's title-template fallback only applies when the field is
 		// hidden entirely.
 		if fieldType == "default" && fieldID == "title" {
-			result.titleFieldInForm = true
+			result.TitleFieldInForm = true
 			if title == "" {
 				return nil, fmt.Errorf("title is required")
 			}
@@ -110,7 +109,7 @@ func validateAndSeparateFields(ctx context.Context, db database.Database, reques
 					return nil, fmt.Errorf("description is required")
 				}
 			case "custom", "virtual":
-				if customFields == nil || isBlankSubmittedField(customFields[fieldID]) {
+				if customFields == nil || IsBlankSubmittedField(customFields[fieldID]) {
 					return nil, fmt.Errorf("field %s is required", fieldID)
 				}
 			}
@@ -123,23 +122,23 @@ func validateAndSeparateFields(ctx context.Context, db database.Database, reques
 	// Partition submitted fields. Keys that are neither configured custom fields
 	// nor virtual fields are dropped silently — a 400 would act as an oracle
 	// telling probers which field IDs exist on the request type.
-	result.virtualFieldValues = make(map[string]interface{})
-	result.customFieldValues = make(map[string]interface{})
+	result.VirtualFieldValues = make(map[string]interface{})
+	result.CustomFieldValues = make(map[string]interface{})
 	for fieldID, value := range customFields {
 		switch {
 		case virtualFieldIDs[fieldID]:
-			result.virtualFieldValues[fieldID] = value
+			result.VirtualFieldValues[fieldID] = value
 		case configuredCustomFieldIDs[fieldID]:
-			result.customFieldValues[fieldID] = value
+			result.CustomFieldValues[fieldID] = value
 		}
 	}
 
 	return result, nil
 }
 
-// storeCustomFieldValues stores custom field values for an item.
+// StoreCustomFieldValues stores custom field values for an item.
 // The component parameter is used for log attribution (e.g. "forms", "portal").
-func storeCustomFieldValues(ctx context.Context, db database.Database, component string, itemID int64, customFields map[string]interface{}) {
+func StoreCustomFieldValues(ctx context.Context, db database.Database, component string, itemID int64, customFields map[string]interface{}) {
 	if len(customFields) == 0 {
 		return
 	}
@@ -184,9 +183,9 @@ func storeCustomFieldValues(ctx context.Context, db database.Database, component
 	}
 }
 
-// storeVirtualFieldValues stores virtual field values for an item.
+// StoreVirtualFieldValues stores virtual field values for an item.
 // The component parameter is used for log attribution (e.g. "forms", "portal").
-func storeVirtualFieldValues(ctx context.Context, db database.Database, component string, itemID int64, virtualFields map[string]interface{}) {
+func StoreVirtualFieldValues(ctx context.Context, db database.Database, component string, itemID int64, virtualFields map[string]interface{}) {
 	if len(virtualFields) == 0 {
 		return
 	}

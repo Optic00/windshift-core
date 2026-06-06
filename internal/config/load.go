@@ -51,6 +51,7 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 		disableIPRateLimit      = flag.Bool("disable-ip-rate-limit", false, "Disable IP-based rate limiting")
 		enableAdminFallback     = flag.Bool("enable-fallback", false, "Enable admin password fallback")
 		llmProvidersFile        = flag.String("llm-providers", "", "Path to custom LLM providers JSON file")
+		llmAllowedPrivateCIDRs  = flag.String("llm-allowed-private-cidrs", "", "Comma-separated private/loopback/CGNAT CIDRs that admin-configured LLM providers may dial")
 		aiPromptsDir            = flag.String("ai-prompts-dir", "", "Directory of custom AI prompt override files")
 	)
 	flag.Parse()
@@ -136,6 +137,7 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 	if resolvedLLMProviders == "" {
 		resolvedLLMProviders = os.Getenv("LLM_PROVIDERS_FILE")
 	}
+	resolvedLLMAllowedPrivateCIDRs := firstNonEmpty(os.Getenv("LLM_ALLOWED_PRIVATE_CIDRS"), *llmAllowedPrivateCIDRs)
 	resolvedAIPromptsDir := *aiPromptsDir
 	if resolvedAIPromptsDir == "" {
 		resolvedAIPromptsDir = os.Getenv("AI_PROMPTS_DIR")
@@ -204,9 +206,10 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 			ExtraDirs: extraPluginDirs,
 		},
 		LLM: LLMConfig{
-			Endpoint:      os.Getenv("LLM_ENDPOINT"),
-			ProvidersFile: resolvedLLMProviders,
-			PromptsDir:    resolvedAIPromptsDir,
+			Endpoint:            os.Getenv("LLM_ENDPOINT"),
+			ProvidersFile:       resolvedLLMProviders,
+			PromptsDir:          resolvedAIPromptsDir,
+			AllowedPrivateCIDRs: resolvedLLMAllowedPrivateCIDRs,
 		},
 		CodingAgent: CodingAgentConfig{
 			RunnerImage:  os.Getenv("CODING_AGENT_RUNNER_IMAGE"),

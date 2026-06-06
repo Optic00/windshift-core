@@ -60,10 +60,11 @@
   );
   const isLocalProvider = $derived(form.provider_type === 'local');
   const isDynamicProvider = $derived(!!selectedProvider?.models_endpoint);
+  let refreshingModels = $state(false);
+  const refreshModelsDisabled = $derived(refreshingModels || (isLocalProvider && !form.base_url.trim()));
   const cachedModels = $derived(selectedProvider?.cached_models || []);
   const lastRefreshedAt = $derived(selectedProvider?.last_refreshed_at || null);
   const lastRefreshError = $derived(selectedProvider?.last_error || '');
-  let refreshingModels = $state(false);
 
   function formatLastRefreshed(iso) {
     if (!iso) return 'Never refreshed';
@@ -80,10 +81,14 @@
   }
 
   async function refreshModels() {
-    if (!selectedProvider || !isDynamicProvider) return;
+    if (!selectedProvider || !isDynamicProvider || refreshModelsDisabled) return;
     refreshingModels = true;
     try {
-      const result = await api.llmProviders.refreshModels(selectedProvider.type);
+      const result = await api.llmProviders.refreshModels(selectedProvider.type, {
+        ...(editingConnection?.id ? { connection_id: editingConnection.id } : {}),
+        ...(form.base_url ? { base_url: form.base_url } : {}),
+        ...(form.api_key ? { api_key: form.api_key } : {}),
+      });
       successToast(`Fetched ${result.models?.length ?? 0} models from ${selectedProvider.name}`);
       await loadProviders();
     } catch (err) {
@@ -429,19 +434,38 @@
     />
   </div>
 
-  <!-- Model -->
-  <div>
-    <label for="llm-connection-model" class="block text-xs font-medium mb-1" style="color: var(--ds-text-subtle);">Model</label>
-    {#if isLocalProvider}
+  <!-- Base URL (only for local/custom) -->
+  {#if isLocalProvider}
+    <div>
+      <label for="llm-connection-base-url" class="block text-xs font-medium mb-1" style="color: var(--ds-text-subtle);">Base URL</label>
       <input
-        id="llm-connection-model"
+        id="llm-connection-base-url"
         type="text"
-        bind:value={form.model}
-        placeholder="e.g. llama-3.1-8b"
+        bind:value={form.base_url}
+        placeholder="e.g. http://localhost:11434 or http://localhost:11434/v1"
         class="w-full px-3 py-2 text-sm rounded-md border"
         style="border-color: var(--ds-border); background: var(--ds-surface); color: var(--ds-text);"
       />
-    {:else if isDynamicProvider}
+    </div>
+  {/if}
+
+  <!-- API Key -->
+  <div>
+    <label for="llm-connection-api-key" class="block text-xs font-medium mb-1" style="color: var(--ds-text-subtle);">API Key</label>
+    <input
+      id="llm-connection-api-key"
+      type="password"
+      bind:value={form.api_key}
+      placeholder={editingConnection?.has_api_key ? 'Key configured (leave blank to keep)' : 'Enter API key'}
+      class="w-full px-3 py-2 text-sm rounded-md border"
+      style="border-color: var(--ds-border); background: var(--ds-surface); color: var(--ds-text);"
+    />
+  </div>
+
+  <!-- Model -->
+  <div>
+    <label for="llm-connection-model" class="block text-xs font-medium mb-1" style="color: var(--ds-text-subtle);">Model</label>
+    {#if isDynamicProvider}
       <div class="space-y-2">
         <BasePicker
           id="llm-connection-model"
@@ -463,13 +487,17 @@
               {formatLastRefreshed(lastRefreshedAt)}{cachedModels.length ? ` · ${cachedModels.length} cached` : ''}
             {/if}
           </span>
-          <Button variant="ghost" size="small" onclick={refreshModels} disabled={refreshingModels}>
+          <Button variant="ghost" size="small" onclick={refreshModels} disabled={refreshModelsDisabled}>
             {refreshingModels ? 'Refreshing…' : 'Refresh'}
           </Button>
         </div>
         {#if !cachedModels.length && !lastRefreshError}
           <div class="text-xs" style="color: var(--ds-text-subtle);">
-            No cached models. Click Refresh to fetch from {selectedProvider?.name}, or type a model ID above to use it without browsing.
+            {#if isLocalProvider && !form.base_url.trim()}
+              Enter a base URL to fetch models, or type a model ID above to use it without browsing.
+            {:else}
+              No cached models. Click Refresh to fetch from {selectedProvider?.name}, or type a model ID above to use it without browsing.
+            {/if}
           </div>
         {/if}
       </div>
@@ -482,34 +510,6 @@
       />
     {/if}
   </div>
-
-  <!-- API Key -->
-  <div>
-    <label for="llm-connection-api-key" class="block text-xs font-medium mb-1" style="color: var(--ds-text-subtle);">API Key</label>
-    <input
-      id="llm-connection-api-key"
-      type="password"
-      bind:value={form.api_key}
-      placeholder={editingConnection?.has_api_key ? 'Key configured (leave blank to keep)' : 'Enter API key'}
-      class="w-full px-3 py-2 text-sm rounded-md border"
-      style="border-color: var(--ds-border); background: var(--ds-surface); color: var(--ds-text);"
-    />
-  </div>
-
-  <!-- Base URL (only for local) -->
-  {#if isLocalProvider}
-    <div>
-      <label for="llm-connection-base-url" class="block text-xs font-medium mb-1" style="color: var(--ds-text-subtle);">Base URL</label>
-      <input
-        id="llm-connection-base-url"
-        type="text"
-        bind:value={form.base_url}
-        placeholder="e.g. https://llm.example.com"
-        class="w-full px-3 py-2 text-sm rounded-md border"
-        style="border-color: var(--ds-border); background: var(--ds-surface); color: var(--ds-text);"
-      />
-    </div>
-  {/if}
 
   <!-- Toggles -->
   <div class="flex items-center gap-6">

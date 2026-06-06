@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strings"
 
-	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
@@ -22,20 +21,22 @@ import (
 
 // ActionsHandler handles action automation API endpoints
 type ActionsHandler struct {
-	db                database.Database
 	repo              *repository.ActionRepository
 	credentialRepo    *repository.ActionCredentialRepository
+	itemRepo          *repository.ItemRepository
+	auditor           *logger.Auditor
 	actionService     *services.ActionService
 	permissionService *services.PermissionService
 	keyCache          *WorkspaceKeyCache
 }
 
 // NewActionsHandler creates a new actions handler
-func NewActionsHandler(db database.Database, actionService *services.ActionService, permissionService *services.PermissionService, keyCache *WorkspaceKeyCache) *ActionsHandler {
+func NewActionsHandler(repo *repository.ActionRepository, credentialRepo *repository.ActionCredentialRepository, itemRepo *repository.ItemRepository, auditor *logger.Auditor, actionService *services.ActionService, permissionService *services.PermissionService, keyCache *WorkspaceKeyCache) *ActionsHandler {
 	return &ActionsHandler{
-		db:                db,
-		repo:              repository.NewActionRepository(db),
-		credentialRepo:    repository.NewActionCredentialRepository(db),
+		repo:              repo,
+		credentialRepo:    credentialRepo,
+		itemRepo:          itemRepo,
+		auditor:           auditor,
 		actionService:     actionService,
 		permissionService: permissionService,
 		keyCache:          keyCache,
@@ -333,9 +334,9 @@ func (h *ActionsHandler) CreateAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logAudit(h.db, r, currentUser, logger.ActionAutomationCreate, logger.ResourceAutomation, &createdAction.ID, createdAction.Name)
+	h.auditor.Log(r, currentUser, logger.ActionAutomationCreate, logger.ResourceAutomation, &createdAction.ID, createdAction.Name)
 	if createdAction.ActorUserID != nil {
-		logAuditWithDetails(h.db, r, currentUser, logger.ActionAutomationSetActor, logger.ResourceAutomation, &createdAction.ID, createdAction.Name, map[string]interface{}{
+		h.auditor.LogWithDetails(r, currentUser, logger.ActionAutomationSetActor, logger.ResourceAutomation, &createdAction.ID, createdAction.Name, map[string]interface{}{
 			"actor_user_id": *createdAction.ActorUserID,
 			"context":       "create",
 		})
@@ -463,14 +464,14 @@ func (h *ActionsHandler) UpdateAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if currentUser != nil {
-		logAudit(h.db, r, currentUser, logger.ActionAutomationUpdate, logger.ResourceAutomation, &actionID, updatedAction.Name)
+		h.auditor.Log(r, currentUser, logger.ActionAutomationUpdate, logger.ResourceAutomation, &actionID, updatedAction.Name)
 		if actorChanging {
 			details := map[string]interface{}{
 				"previous_actor_user_id": intPtrForAudit(previousActor),
 				"new_actor_user_id":      intPtrForAudit(req.ActorUserID.Value),
 				"context":                "update",
 			}
-			logAuditWithDetails(h.db, r, currentUser, logger.ActionAutomationSetActor, logger.ResourceAutomation, &actionID, updatedAction.Name, details)
+			h.auditor.LogWithDetails(r, currentUser, logger.ActionAutomationSetActor, logger.ResourceAutomation, &actionID, updatedAction.Name, details)
 		}
 	}
 
@@ -524,7 +525,7 @@ func (h *ActionsHandler) DeleteAction(w http.ResponseWriter, r *http.Request) {
 
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
-		logAudit(h.db, r, currentUser, logger.ActionAutomationDelete, logger.ResourceAutomation, &actionID, "")
+		h.auditor.Log(r, currentUser, logger.ActionAutomationDelete, logger.ResourceAutomation, &actionID, "")
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -570,7 +571,7 @@ func (h *ActionsHandler) ToggleAction(w http.ResponseWriter, r *http.Request) {
 
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
-		logAudit(h.db, r, currentUser, logger.ActionAutomationToggle, logger.ResourceAutomation, &actionID, updatedAction.Name)
+		h.auditor.Log(r, currentUser, logger.ActionAutomationToggle, logger.ResourceAutomation, &actionID, updatedAction.Name)
 	}
 
 	respondJSONOK(w, updatedAction)
@@ -668,7 +669,7 @@ func (h *ActionsHandler) ExecuteAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify user has edit permission on the item's workspace
-	if !CheckItemPermission(w, r, repository.NewItemRepository(h.db), h.permissionService, req.ItemID, models.PermissionItemEdit) {
+	if !CheckItemPermission(w, r, h.itemRepo, h.permissionService, req.ItemID, models.PermissionItemEdit) {
 		return
 	}
 
@@ -1198,7 +1199,7 @@ func (h *ActionsHandler) auditCapability(r *http.Request, user *models.User, act
 	if user == nil || capability == nil {
 		return
 	}
-	logAuditWithDetails(h.db, r, user, action, logger.ResourceAutomationCapability, &capability.ID, capability.Name, map[string]interface{}{
+	h.auditor.LogWithDetails(r, user, action, logger.ResourceAutomationCapability, &capability.ID, capability.Name, map[string]interface{}{
 		"capability_type":           capability.CapabilityType,
 		"is_enabled":                capability.IsEnabled,
 		"applies_to_all_workspaces": capability.AppliesToAllWorkspaces,

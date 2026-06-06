@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"time"
 
 	"windshift/internal/database"
@@ -32,17 +33,19 @@ type ConnectionInfo struct {
 
 // ConnectionManager bridges the database and the LLM client layer.
 type ConnectionManager struct {
-	db         database.Database
-	encryption *sso.SecretEncryption
-	fallback   Client
+	db                  database.Database
+	encryption          *sso.SecretEncryption
+	fallback            Client
+	allowedPrivateCIDRs []*net.IPNet
 }
 
 // NewConnectionManager creates a new connection manager.
-func NewConnectionManager(db database.Database, encryption *sso.SecretEncryption, fallback Client) *ConnectionManager {
+func NewConnectionManager(db database.Database, encryption *sso.SecretEncryption, fallback Client, allowedPrivateCIDRs []*net.IPNet) *ConnectionManager {
 	return &ConnectionManager{
-		db:         db,
-		encryption: encryption,
-		fallback:   fallback,
+		db:                  db,
+		encryption:          encryption,
+		fallback:            fallback,
+		allowedPrivateCIDRs: allowedPrivateCIDRs,
 	}
 }
 
@@ -93,10 +96,11 @@ func (m *ConnectionManager) Resolve(connectionID int) (Client, error) {
 	}
 
 	return NewProviderClient(ConnectionConfig{
-		ProviderType: ProviderType(providerType),
-		Model:        model,
-		APIKey:       apiKey,
-		BaseURL:      baseURL.String,
+		ProviderType:        ProviderType(providerType),
+		Model:               model,
+		APIKey:              apiKey,
+		BaseURL:             baseURL.String,
+		AllowedPrivateCIDRs: m.allowedPrivateCIDRs,
 	}), nil
 }
 
@@ -333,27 +337,84 @@ func (m *ConnectionManager) DeleteConnection(id int) error {
 // exists — the handler then decides whether the provider requires a key
 // (everything except OpenRouter does today).
 func (m *ConnectionManager) GetAnyAPIKeyForProvider(providerType ProviderType) (string, error) {
-	var apiKeyEncrypted sql.NullString
-	err := m.db.QueryRow(
-		`SELECT api_key_encrypted FROM llm_connections
-		 WHERE provider_type = ? AND is_enabled = true AND api_key_encrypted IS NOT NULL AND api_key_encrypted <> ''
-		 ORDER BY is_default DESC, id ASC LIMIT 1`,
+	runtime, err := m.GetCatalogRuntimeForProvider(providerType)
+	if err != nil {
+		return "", err
+	}
+	if runtime == nil {
+		return "", nil
+	}
+	return runtime.APIKey, nil
+}
+
+// CatalogRuntime contains endpoint/auth material used to refresh a provider's
+// model catalog. It intentionally excludes model names and other unrelated
+// connection fields.
+type CatalogRuntime struct {
+	ConnectionID int
+	APIKey       string
+	BaseURL      string
+}
+
+// GetCatalogRuntimeForProvider returns auth/base URL from the preferred enabled
+// connection for a provider. It returns nil when no enabled connection exists.
+func (m *ConnectionManager) GetCatalogRuntimeForProvider(providerType ProviderType) (*CatalogRuntime, error) {
+	return m.catalogRuntimeFromRow(m.db.QueryRow(
+		`SELECT id, api_key_encrypted, base_url FROM llm_connections
+		 WHERE provider_type = ? AND is_enabled = true
+		 ORDER BY CASE WHEN api_key_encrypted IS NOT NULL AND api_key_encrypted <> '' THEN 0 ELSE 1 END,
+		          is_default DESC, id ASC LIMIT 1`,
 		string(providerType),
-	).Scan(&apiKeyEncrypted)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
+	), fmt.Sprintf("%q", providerType))
+}
+
+// GetCatalogRuntimeForConnection returns auth/base URL for one enabled
+// connection, and the connection's provider type so callers can validate it
+// against route parameters.
+func (m *ConnectionManager) GetCatalogRuntimeForConnection(connectionID int) (ProviderType, *CatalogRuntime, error) {
+	var providerType string
+	row := m.db.QueryRow(
+		`SELECT provider_type, id, api_key_encrypted, base_url FROM llm_connections
+		 WHERE id = ? AND is_enabled = true`,
+		connectionID,
+	)
+	var id int
+	var apiKeyEncrypted, baseURL sql.NullString
+	if err := row.Scan(&providerType, &id, &apiKeyEncrypted, &baseURL); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil, nil
+		}
+		return "", nil, fmt.Errorf("lookup catalog runtime for connection %d: %w", connectionID, err)
 	}
-	if err != nil {
-		return "", fmt.Errorf("lookup api key for %q: %w", providerType, err)
+	runtime, err := m.decryptCatalogRuntime(id, apiKeyEncrypted, baseURL, fmt.Sprintf("connection %d", connectionID))
+	return ProviderType(providerType), runtime, err
+}
+
+func (m *ConnectionManager) catalogRuntimeFromRow(row *sql.Row, label string) (*CatalogRuntime, error) {
+	var id int
+	var apiKeyEncrypted, baseURL sql.NullString
+	if err := row.Scan(&id, &apiKeyEncrypted, &baseURL); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("lookup catalog runtime for %s: %w", label, err)
 	}
-	if !apiKeyEncrypted.Valid || apiKeyEncrypted.String == "" {
-		return "", nil
+	return m.decryptCatalogRuntime(id, apiKeyEncrypted, baseURL, label)
+}
+
+func (m *ConnectionManager) decryptCatalogRuntime(id int, apiKeyEncrypted, baseURL sql.NullString, label string) (*CatalogRuntime, error) {
+	runtime := &CatalogRuntime{ConnectionID: id}
+	if apiKeyEncrypted.Valid && apiKeyEncrypted.String != "" {
+		apiKey, err := m.encryption.Decrypt(apiKeyEncrypted.String)
+		if err != nil {
+			return nil, fmt.Errorf("decrypt api key for %s: %w", label, err)
+		}
+		runtime.APIKey = apiKey
 	}
-	apiKey, err := m.encryption.Decrypt(apiKeyEncrypted.String)
-	if err != nil {
-		return "", fmt.Errorf("decrypt api key for %q: %w", providerType, err)
+	if baseURL.Valid {
+		runtime.BaseURL = baseURL.String
 	}
-	return apiKey, nil
+	return runtime, nil
 }
 
 // TestConnection tests a connection by creating a client and calling Health.
@@ -376,11 +437,12 @@ func (m *ConnectionManager) TestConnection(id int) error {
 	}
 
 	client := NewProviderClient(ConnectionConfig{
-		ProviderType: ProviderType(providerType),
-		Model:        model,
-		APIKey:       apiKey,
-		BaseURL:      baseURL.String,
-		Timeout:      30 * time.Second,
+		ProviderType:        ProviderType(providerType),
+		Model:               model,
+		APIKey:              apiKey,
+		BaseURL:             baseURL.String,
+		Timeout:             30 * time.Second,
+		AllowedPrivateCIDRs: m.allowedPrivateCIDRs,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
