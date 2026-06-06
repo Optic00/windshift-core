@@ -81,6 +81,13 @@ jobs:
           file: ${{ matrix.image.dockerfile }}
           # Don't specify platforms - let Docker build for native platform
           # This avoids QEMU emulation issues on arm64 runners
+          # Provenance/SBOM off: with push-by-digest they make each arch a
+          # manifest LIST (image + attestation), whose index digest the
+          # downstream `imagetools create` could not resolve for the large
+          # server image (a 110s+ layer push). Plain per-arch manifests merge
+          # reliably. (See the manifest-merge job.)
+          provenance: false
+          sbom: false
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.image.short }}-${{ matrix.platform.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image.short }}-${{ matrix.platform.arch }}
