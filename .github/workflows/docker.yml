@@ -113,6 +113,8 @@ jobs:
     if: github.event_name != 'pull_request'
     needs: build
     strategy:
+      # One image's merge hiccup must not cancel the others' publishes.
+      fail-fast: false
       matrix:
         image:
           - name: windshiftapp/windshift
@@ -155,8 +157,25 @@ jobs:
       - name: Create manifest list
         working-directory: /tmp/digests
         run: |
-          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf '${{ env.REGISTRY }}/${{ matrix.image.name }}@sha256:%s ' *)
+          # Retry: a large image's by-digest push can briefly lag ghcr's
+          # registry index, so the just-pushed per-arch digest can 404 here for
+          # a few seconds even though the build job succeeded. The smaller
+          # images rarely hit it; the server image (frontend + go) reliably did.
+          create() {
+            docker buildx imagetools create \
+              $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+              $(printf '${{ env.REGISTRY }}/${{ matrix.image.name }}@sha256:%s ' *)
+          }
+          for attempt in 1 2 3 4 5 6; do
+            if create; then
+              echo "manifest created (attempt ${attempt})"
+              exit 0
+            fi
+            echo "imagetools create failed (attempt ${attempt}); retrying in 15s..."
+            sleep 15
+          done
+          echo "imagetools create still failing after retries"
+          exit 1
 
       - name: Inspect image
         run: |
