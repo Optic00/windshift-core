@@ -69,25 +69,27 @@ func (r *WorkspaceAgentBindingRepository) Insert(ctx context.Context, b *models.
 	if err != nil {
 		return 0, fmt.Errorf("marshal token scopes: %w", err)
 	}
-	res, err := r.db.ExecWriteContext(ctx, `
+	// RETURNING id (not LastInsertId) for Postgres compatibility.
+	var id int64
+	err = r.db.QueryRowContext(ctx, `
 		INSERT INTO workspace_agent_bindings
 			(workspace_id, acting_user_id, acting_user_kind, repo_slug, repo_base_ref,
 			 llm_connection_id, scm_connection_id, target_pool_id, token_scopes_json, token_ttl_minutes, max_runs_per_day, created_by_user_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		RETURNING id
 	`,
 		b.WorkspaceID, b.ActingUserID, b.ActingUserKind,
 		nullStringArg(b.RepoSlug), nullStringArg(b.RepoBaseRef),
 		nullIntArg(b.LLMConnectionID), nullIntArg(b.SCMConnectionID), nullIntArg(b.TargetPoolID),
 		string(scopesJSON), b.TokenTTLMinutes, b.MaxRunsPerDay,
 		b.CreatedByUserID,
-	)
+	).Scan(&id)
 	if err != nil {
 		if database.IsUniqueConstraintError(err) {
 			return 0, ErrBindingDuplicate
 		}
 		return 0, fmt.Errorf("insert binding: %w", err)
 	}
-	id, _ := res.LastInsertId()
 	return int(id), nil
 }
 

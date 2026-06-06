@@ -37,19 +37,18 @@ func (r *AgentRunRepository) Insert(ctx context.Context, run *models.AgentRun) (
 	if jobKind == "" {
 		jobKind = models.JobKindCodingAgent
 	}
-	res, err := r.db.ExecWriteContext(ctx, `
+	// RETURNING id (not LastInsertId) for Postgres compatibility.
+	var id int64
+	err := r.db.QueryRowContext(ctx, `
 		INSERT INTO agent_runs(workspace_id, item_id, binding_id, target_pool_id, job_kind, job_image, status)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
+		RETURNING id
 	`,
 		run.WorkspaceID, nullIntArg(run.ItemID), nullIntArg(run.BindingID),
 		nullIntArg(run.TargetPoolID), jobKind, nullStringArg(run.JobImage), status,
-	)
+	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("failed to insert agent_run: %w", err)
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		return 0, fmt.Errorf("failed to read insert id: %w", err)
 	}
 	return int(id), nil
 }
