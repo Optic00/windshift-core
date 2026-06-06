@@ -12,7 +12,7 @@ services:
     image: ghcr.io/windshiftapp/windshift-runner:latest
     restart: unless-stopped
     environment:
-      WS_API_URL: https://windshift.example.com
+      WS_API_URL: https://windshift.example.com/api   # control plane + brokers live under /api
       WSRUNNER_REGISTRATION_TOKEN: wsrt_replace_me
       # WSRUNNER_IMAGE is the agent image. The runner pulls it on the host
       # daemon the first time it spawns an agent container (per job); there is
