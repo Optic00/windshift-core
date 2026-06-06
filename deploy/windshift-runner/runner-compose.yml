@@ -25,3 +25,18 @@ services:
       # root) into the agent container as /workspace, so the path must resolve
       # identically on the host.
       - /var/lib/windshift-runner:/var/lib/windshift-runner
+    depends_on:
+      agent-image:
+        condition: service_completed_successfully
+
+  # The agent is NOT a long-running service: the runner launches a fresh,
+  # sandboxed agent container per job (on the host daemon) and it exits when the
+  # job finishes. This one-shot just pre-pulls the agent image onto the host
+  # daemon so the first job doesn't wait on a pull — it reuses the runner image
+  # (which already ships the docker CLI), pulls, and exits.
+  agent-image:
+    image: ghcr.io/windshiftapp/windshift-runner:latest
+    entrypoint: ["docker", "pull", "ghcr.io/windshiftapp/windshift-agent:latest"]
+    restart: "no"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
