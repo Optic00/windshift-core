@@ -33,18 +33,18 @@ func nullTimeArg(t *time.Time) any {
 // InsertRegistrationToken stores a new pool-scoped registration token (by
 // hash) and returns its id.
 func (r *RunnerRepository) InsertRegistrationToken(ctx context.Context, poolID int, tokenHash, tokenPrefix, description string, createdBy *int, expiresAt *time.Time) (int, error) {
-	res, err := r.db.ExecWriteContext(ctx, `
+	// RETURNING id (not LastInsertId) so this works on Postgres as well as
+	// SQLite — the pq/pgx driver does not support LastInsertId.
+	var id int64
+	err := r.db.QueryRowContext(ctx, `
 		INSERT INTO runner_registration_tokens(pool_capability_id, token_hash, token_prefix, description, created_by_user_id, expires_at)
 		VALUES (?, ?, ?, ?, ?, ?)
+		RETURNING id
 	`,
 		poolID, tokenHash, tokenPrefix, description, nullIntArg(createdBy), nullTimeArg(expiresAt),
-	)
+	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("insert runner registration token: %w", err)
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		return 0, fmt.Errorf("read insert id: %w", err)
 	}
 	return int(id), nil
 }
@@ -128,18 +128,17 @@ func (r *RunnerRepository) ListInstancesForPool(ctx context.Context, poolID int)
 // InsertInstance stores a newly-registered runner (by credential hash) in
 // the active state and returns its id.
 func (r *RunnerRepository) InsertInstance(ctx context.Context, poolID int, name, credentialHash string, now time.Time) (int, error) {
-	res, err := r.db.ExecWriteContext(ctx, `
+	// RETURNING id (not LastInsertId) for Postgres compatibility.
+	var id int64
+	err := r.db.QueryRowContext(ctx, `
 		INSERT INTO runner_instances(pool_capability_id, name, credential_hash, status, registered_at)
 		VALUES (?, ?, ?, ?, ?)
+		RETURNING id
 	`,
 		poolID, name, credentialHash, models.RunnerInstanceStatusActive, now,
-	)
+	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("insert runner instance: %w", err)
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		return 0, fmt.Errorf("read insert id: %w", err)
 	}
 	return int(id), nil
 }
