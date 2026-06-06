@@ -19,6 +19,23 @@ var csrfExemptPaths = map[string]bool{
 	"/api/cli/auth/exchange": true,
 }
 
+// csrfExemptPrefixes lists API path prefixes for machine-to-machine control
+// planes. These authenticate with their own non-cookie credentials (a pool
+// registration token in the body, a wsrc_ runner credential, or a per-run
+// token) — not crw_ bearer tokens, so the bearer-token exemption above doesn't
+// cover them — and are never invoked from a browser, so CSRF does not apply.
+var csrfExemptPrefixes = []string{
+	// Remote-runner control plane: register (pool token in body) +
+	// claim/heartbeat/result/events (wsrc_ runner credential).
+	"/api/runner/",
+	// Secretless access-layer brokers, authenticated by the per-run token /
+	// (for git) HTTP Basic from non-browser clients.
+	"/api/git-proxy/",
+	"/api/llm-proxy/",
+	"/api/http-proxy/",
+	"/api/secrets/",
+}
+
 // CSRFProtection is a stateless CSRF middleware that uses the browser's
 // Sec-Fetch-Site header as the primary check and falls back to Origin/Referer
 // validation when the header is missing (e.g. reverse proxies stripping it).
@@ -59,6 +76,12 @@ func CSRFProtection(allowedOrigins []string) func(http.Handler) http.Handler {
 			if csrfExemptPaths[r.URL.Path] {
 				next.ServeHTTP(w, r)
 				return
+			}
+			for _, prefix := range csrfExemptPrefixes {
+				if strings.HasPrefix(r.URL.Path, prefix) {
+					next.ServeHTTP(w, r)
+					return
+				}
 			}
 
 			secFetchSite := r.Header.Get("Sec-Fetch-Site")
