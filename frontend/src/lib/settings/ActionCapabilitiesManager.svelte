@@ -2,17 +2,19 @@
   import Tabs from '../components/Tabs.svelte';
   import CapabilityManager from './CapabilityManager.svelte';
   import ActionCredentialManager from './ActionCredentialManager.svelte';
+  import RunnerPoolManager from './RunnerPoolManager.svelte';
   import { currentRoute, updateQueryParams } from '../router.js';
-  import { Bolt, KeyRound } from '@lucide/svelte';
+  import { Bolt, KeyRound, Server } from '@lucide/svelte';
   import { useEventListener } from 'runed';
 
-  const VALID_TABS = new Set(['capabilities', 'credentials']);
+  const VALID_TABS = new Set(['capabilities', 'credentials', 'runners']);
 
   let activeTab = $state('capabilities');
 
   const tabs = [
     { id: 'capabilities', label: 'Capabilities', icon: Bolt },
     { id: 'credentials', label: 'Credentials', icon: KeyRound },
+    { id: 'runners', label: 'Runner Pools', icon: Server },
   ];
 
   function tabFromRoute(route) {
@@ -40,6 +42,8 @@
       <CapabilityManager />
     {:else if activeTab === 'credentials'}
       <ActionCredentialManager />
+    {:else if activeTab === 'runners'}
+      <RunnerPoolManager />
     {/if}
   </Tabs>
 </div>

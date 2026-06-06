@@ -68,6 +68,21 @@ export const actionCapabilities = {
   },
 };
 
+// Runner pools (WI-177). A runner_pool is an ActionCapability; these manage its
+// child resources — registration tokens (mint/list/revoke) and registered
+// runner instances (list/revoke). The plaintext token is returned once on mint.
+export const runnerPools = {
+  listTokens: (capabilityId) => get(`/admin/action-capabilities/${capabilityId}/runner-tokens`),
+  mintToken: (capabilityId, data = {}) =>
+    post(`/admin/action-capabilities/${capabilityId}/runner-tokens`, data),
+  revokeToken: (capabilityId, tokenId) =>
+    del(`/admin/action-capabilities/${capabilityId}/runner-tokens/${tokenId}`),
+  listInstances: (capabilityId) =>
+    get(`/admin/action-capabilities/${capabilityId}/runner-instances`),
+  revokeInstance: (capabilityId, instanceId) =>
+    del(`/admin/action-capabilities/${capabilityId}/runner-instances/${instanceId}`),
+};
+
 // actionCredentials: workspace-aware credential store referenced by HTTP
 // capabilities. The plaintext secret travels only on create/rotate; every
 // response is the sanitized DTO (has_secret + prefix; no ciphertext).

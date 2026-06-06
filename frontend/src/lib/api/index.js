@@ -9,6 +9,7 @@ import {
   aiFeatures,
   llmConnections,
   llmProviders,
+  runnerPools,
 } from './ai.js';
 import { analytics } from './analytics.js';
 import { approvalSets } from './approvalSets.js';
@@ -428,6 +429,9 @@ export const api = {
 
   // Action Capabilities (admin)
   actionCapabilities,
+
+  // Runner pools (admin; runner_pool capability tokens + instances)
+  runnerPools,
 
   // Action Credentials (admin + workspace; encrypted API tokens)
   actionCredentials,
