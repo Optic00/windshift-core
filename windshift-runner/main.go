@@ -10,8 +10,10 @@
 //
 // Configuration is environment-only (operators bake it into the deployment):
 //
-//	WS_API_URL                   orchestrator base URL incl. API prefix (required)
+//	WS_API_URL                   orchestrator base URL incl. API prefix (required, https://)
 //	WSRUNNER_REGISTRATION_TOKEN  pool registration token, wsrt_… (required)
+//	WSRUNNER_ALLOW_INSECURE      set to 1 to permit a plaintext http:// WS_API_URL (dev only)
+//	WSRUNNER_CREDENTIAL_FILE     path to persist the per-instance credential (default: <cache>/credential)
 //	WSRUNNER_NAME                runner display name (default: hostname)
 //	WSRUNNER_IMAGE               windshift-agent container image (required to run jobs)
 //	WSRUNNER_DOCKER              docker binary (default: docker)
@@ -29,6 +31,8 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -39,12 +43,14 @@ func main() {
 	logger := log.New(os.Stderr, "windshift-runner ", log.LstdFlags|log.LUTC)
 
 	baseURL := mustEnv(logger, "WS_API_URL")
+	requireHTTPS(logger, baseURL)
 	regToken := mustEnv(logger, "WSRUNNER_REGISTRATION_TOKEN")
 	name := envOr("WSRUNNER_NAME", hostnameOr("windshift-runner"))
 	image := os.Getenv("WSRUNNER_IMAGE")
 	dockerBin := envOr("WSRUNNER_DOCKER", "docker")
 	triageBin := envOr("WSRUNNER_TRIAGE_BIN", "windshift-triage")
 	cacheRoot := envOr("WSRUNNER_CACHE_ROOT", "/var/lib/windshift-runner/cache")
+	credFile := envOr("WSRUNNER_CREDENTIAL_FILE", filepath.Join(cacheRoot, "credential"))
 	pollInterval := envDuration(logger, "WSRUNNER_POLL_INTERVAL", 2*time.Second)
 	heartbeatInterval := envDuration(logger, "WSRUNNER_HEARTBEAT_INTERVAL", 30*time.Second)
 	initialPrompt := envOr("WSRUNNER_INITIAL_PROMPT", "Work the item described in your environment.")
@@ -58,13 +64,12 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	reg, err := services.RegisterRunner(ctx, baseURL, regToken, name, nil)
-	if err != nil {
-		logger.Fatalf("register with %s: %v", baseURL, err)
-	}
-	logger.Printf("registered as instance %d in pool %d (name %q)", reg.InstanceID, reg.PoolID, name)
-
-	client := services.NewHTTPOrchestratorClient(baseURL, reg.Credential, nil)
+	// Persist the per-instance credential across restarts (WI-238 security
+	// Phase 6): once registered, reuse the stored credential instead of
+	// replaying the pool registration token on every boot. Re-register only
+	// when there is no stored credential or the stored one no longer
+	// authenticates.
+	client := loadOrRegister(ctx, logger, baseURL, credFile, regToken, name)
 	client.PollInterval = pollInterval
 	client.Logger = logger
 
@@ -115,6 +120,70 @@ func heartbeatLoop(ctx context.Context, client *services.HTTPOrchestratorClient,
 			}
 		}
 	}
+}
+
+// requireHTTPS rejects a plaintext control-plane URL unless the operator
+// explicitly opts into insecure transport for local development (WI-238
+// security Phase 6). Runner credentials and per-run tokens ride this
+// connection, so HTTP would expose them on the wire.
+func requireHTTPS(logger *log.Logger, baseURL string) {
+	if strings.HasPrefix(strings.ToLower(baseURL), "https://") {
+		return
+	}
+	if envOr("WSRUNNER_ALLOW_INSECURE", "") == "1" {
+		logger.Printf("warning: WS_API_URL is not https; allowed only because WSRUNNER_ALLOW_INSECURE=1")
+		return
+	}
+	logger.Fatalf("WS_API_URL must be https:// (got %q); set WSRUNNER_ALLOW_INSECURE=1 to override in development", baseURL)
+}
+
+// loadOrRegister returns an authenticated orchestrator client, reusing a
+// persisted per-instance credential when one is present and still valid, and
+// registering (then persisting the credential) otherwise. This stops the runner
+// from replaying the pool registration token on every restart (WI-238 security
+// Phase 6). A persisted credential is validated with a single heartbeat; if the
+// orchestrator rejects it, the runner falls back to a fresh registration.
+func loadOrRegister(ctx context.Context, logger *log.Logger, baseURL, credFile, regToken, name string) *services.HTTPOrchestratorClient {
+	if stored := readCredential(credFile); stored != "" {
+		client := services.NewHTTPOrchestratorClient(baseURL, stored, nil)
+		err := client.Heartbeat(ctx, 0)
+		if err == nil {
+			logger.Printf("reusing persisted runner credential from %s", credFile)
+			return client
+		}
+		logger.Printf("persisted credential at %s rejected (%v); re-registering", credFile, err)
+	}
+
+	reg, err := services.RegisterRunner(ctx, baseURL, regToken, name, nil)
+	if err != nil {
+		logger.Fatalf("register with %s: %v", baseURL, err)
+	}
+	logger.Printf("registered as instance %d in pool %d (name %q)", reg.InstanceID, reg.PoolID, name)
+	if err := writeCredential(credFile, reg.Credential); err != nil {
+		logger.Printf("warning: could not persist credential to %s: %v (will re-register next restart)", credFile, err)
+	}
+	return services.NewHTTPOrchestratorClient(baseURL, reg.Credential, nil)
+}
+
+// readCredential returns the trimmed credential stored at path, or "" if the
+// file is absent or empty.
+func readCredential(path string) string {
+	// path is operator config (WSRUNNER_CREDENTIAL_FILE), not user-supplied.
+	b, err := os.ReadFile(path) //nolint:gosec // G304: operator-controlled path
+
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// writeCredential persists the credential with 0600 permissions, creating the
+// parent directory if needed.
+func writeCredential(path, credential string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(credential+"\n"), 0o600)
 }
 
 func mustEnv(logger *log.Logger, key string) string {
