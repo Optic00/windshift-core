@@ -259,9 +259,9 @@ func (s *UserReadService) ListOwnedAgents(ctx context.Context, ownerID int) ([]m
 		       avatar_url, timezone, language,
 		       COALESCE(is_agent, false), agent_owner_user_id, created_at
 		FROM users
-		WHERE COALESCE(is_agent, 0) = 1
+		WHERE COALESCE(is_agent, false) = true
 		  AND agent_owner_user_id = ?
-		  AND COALESCE(is_active, 1) = 1
+		  AND COALESCE(is_active, true) = true
 		ORDER BY first_name, last_name, username
 	`, ownerID)
 	if err != nil {
@@ -347,7 +347,7 @@ func (s *UserReadService) IsCentralizedServiceUser(ctx context.Context, userID i
 		hasOwner bool
 	)
 	err := s.db.QueryRowContext(ctx, `
-		SELECT COALESCE(is_agent, 0), agent_owner_user_id IS NOT NULL
+		SELECT COALESCE(is_agent, false), agent_owner_user_id IS NOT NULL
 		FROM users WHERE id = ?
 	`, userID).Scan(&isAgent, &hasOwner)
 	if errors.Is(err, sql.ErrNoRows) {
