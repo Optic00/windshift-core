@@ -389,10 +389,11 @@ func gitWithToken(ctx context.Context, gitBinary string, allowFileURL bool, dir,
 		return fmt.Errorf("setup askpass: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(dirPath) }()
+	// GIT_TERMINAL_PROMPT / GIT_CONFIG_NOSYSTEM and the config-hardening -c
+	// flags are applied centrally by gitOutputEnv; here we add only the
+	// per-invocation askpass that feeds the token to git over an env var.
 	_, err = gitOutputEnv(ctx, gitBinary, allowFileURL, dir, []string{
 		"GIT_ASKPASS=" + askpassPath,
-		"GIT_TERMINAL_PROMPT=0",
-		"GIT_CONFIG_NOSYSTEM=1",
 		"AGENT_GIT_TOKEN=" + token,
 	}, args...)
 	return err
@@ -412,6 +413,19 @@ func gitOutputEnv(ctx context.Context, gitBinary string, allowFileURL bool, dir 
 		"-c", "protocol.ext.allow=never",
 		"-c", "protocol.file.allow=" + fileAllow,
 		"-c", "protocol.tar.allow=never",
+		// Neutralize agent-controllable repo-local config that can execute code
+		// or hijack credentials when the host runs git inside the agent-mutated
+		// checkout (security Phase 1, WI-238). Command-line `-c` has the highest
+		// config precedence, so these override any value the agent wrote into
+		// the checkout's .git/config:
+		//   - core.hooksPath=/dev/null  → agent-written .git/hooks/* never run
+		//     (pre-push, post-checkout, etc.).
+		//   - credential.helper=        → reset the helper list to empty so no
+		//     agent-named helper binary is executed (askpass still answers auth).
+		//   - core.fsmonitor=           → no agent-named fsmonitor hook process.
+		"-c", "core.hooksPath=/dev/null",
+		"-c", "credential.helper=",
+		"-c", "core.fsmonitor=",
 	}, args...)
 	// All args are operator-controlled or orchestrator-derived; no
 	// user-supplied data is in scope.
@@ -419,7 +433,16 @@ func gitOutputEnv(ctx context.Context, gitBinary string, allowFileURL bool, dir 
 	if dir != "" {
 		cmd.Dir = dir
 	}
-	cmd.Env = append(cmd.Environ(), "GIT_ALLOW_PROTOCOL="+allowedProtocols)
+	// Isolate from inherited and agent-mutated git config: ignore the system
+	// config (NOSYSTEM) and pin the global config to /dev/null so neither the
+	// host user's ~/.gitconfig nor an injected global is read. Repo-local config
+	// is still read by git, but the dangerous keys are overridden above.
+	cmd.Env = append(cmd.Environ(),
+		"GIT_ALLOW_PROTOCOL="+allowedProtocols,
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_TERMINAL_PROMPT=0",
+	)
 	cmd.Env = append(cmd.Env, extraEnv...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
