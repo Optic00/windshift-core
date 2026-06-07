@@ -1,7 +1,7 @@
 <script>
   // Workspace agent bindings (WI-88). The page workspace admins use to
-  // wire up coding-agent runners: pick an acting identity (own agent
-  // or allowlisted centralized service user), point it at a repo via
+  // wire up coding-agent runners: pick an acting identity (an
+  // allowlisted centralized service user), point it at a repo via
   // one of the workspace's SCM connections, set token budget knobs.
   // Backend chokepoint re-validates the identity at create time; the
   // candidates endpoint just keeps the picker honest.
@@ -80,7 +80,7 @@
     { value: null, label: 'Pick an acting identity', disabled: true },
     ...(candidates || []).map((c) => ({
       value: c.user_id,
-      label: `${c.name || c.username || `User #${c.user_id}`} — ${c.kind === 'agent' ? 'your agent' : 'centralized service user'}`,
+      label: `${c.name || c.username || `User #${c.user_id}`} — service user`,
       disabled: false,
     })),
   ]);
@@ -252,9 +252,9 @@
     <div>
       <h3 class="text-base font-medium" style="color: var(--ds-text);">Agents</h3>
       <p class="text-sm mt-1" style="color: var(--ds-text-subtle);">
-        Wire an acting identity (one of your agents, or a centralized service user the global
-        admin allowlisted) to a repo. When a work item gets assigned to that identity the
-        orchestrator spawns a coding-agent run scoped to this workspace's SCM connection.
+        Wire a centralized service user (allowlisted by a global admin) to a repo. When a work
+        item gets assigned to that identity the orchestrator spawns a coding-agent run scoped to
+        this workspace's SCM connection.
       </p>
     </div>
   </div>
@@ -325,7 +325,7 @@
       <Panel padding="spacious">
         <h4 class="text-sm font-medium mb-3" style="color: var(--ds-text);">Add a binding</h4>
         {#if candidates.length === 0}
-          <AlertBox variant="warning" message="No acting identities are available. Create an agent user from your profile, or ask a global admin to enable centralized service users via the Security settings." />
+          <AlertBox variant="warning" message="No acting identities are available. Ask a global admin to create a service user (User management → Create user → Service user), enable centralized service users in Security settings, and allowlist it for this workspace." />
         {:else}
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
