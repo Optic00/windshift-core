@@ -448,7 +448,7 @@ export default {
       members: 'Mitglieder',
       configurationSets: 'Konfigurationssets',
       sourceControl: 'Versionskontrolle',
-      codingAgents: 'Programmier-Agenten',
+      codingAgents: 'Agenten',
       removeWorkspace: 'Arbeitsbereich entfernen',
       issueSync: 'Issue-Synchronisierung',
     },

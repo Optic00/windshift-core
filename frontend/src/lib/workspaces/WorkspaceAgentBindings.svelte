@@ -250,7 +250,7 @@
   <div class="flex items-start gap-3 mb-4">
     <Bot class="w-5 h-5 mt-1" style="color: var(--ds-icon);" />
     <div>
-      <h3 class="text-base font-medium" style="color: var(--ds-text);">Coding agents</h3>
+      <h3 class="text-base font-medium" style="color: var(--ds-text);">Agents</h3>
       <p class="text-sm mt-1" style="color: var(--ds-text-subtle);">
         Wire an acting identity (one of your agents, or a centralized service user the global
         admin allowlisted) to a repo. When a work item gets assigned to that identity the
