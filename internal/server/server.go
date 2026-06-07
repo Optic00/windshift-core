@@ -2068,13 +2068,10 @@ func bootCodingAgentRunService(
 		staticEnv["LLM_MODEL"] = cfg.LLMModel
 	}
 
-	var containerArgs []string
-	if cfg.Network != "" {
-		containerArgs = append(containerArgs, "--network="+cfg.Network)
-	}
 	// Kind-dispatching runner (WI-146): coding_agent runs the windshift-agent
 	// harness on the fixed runner image; action_container / ci_task run the
-	// job's admin image as a plain container, with the same sandbox network.
+	// job's admin image as a plain container. Both get the same baseline
+	// sandbox flags + tunables (WI-238 security Phase 2).
 	runner := &services.KindDispatchRunner{
 		CodingAgent: &services.DockerAgentRunner{
 			Image:         cfg.RunnerImage,
@@ -2088,7 +2085,10 @@ func bootCodingAgentRunService(
 		},
 		Container: &services.ContainerImageRunner{
 			DockerBinary: cfg.DockerBinary,
-			ExtraArgs:    containerArgs,
+			Network:      cfg.Network,
+			PidsLimit:    cfg.PidsLimit,
+			Memory:       cfg.Memory,
+			CPUs:         cfg.CPUs,
 		},
 	}
 

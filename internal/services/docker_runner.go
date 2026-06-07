@@ -14,34 +14,60 @@ import (
 	"windshift/internal/models"
 )
 
-// DockerRunner is the Phase 1 walking-skeleton container runner: it shells
-// out to the `docker` CLI to spawn the windshift/coding-agent image, pipes
-// stdout/stderr back through the EventSink as NDJSON events, and reports
-// the exit code as a terminal agent_run status.
+// DockerRunner runs a plain container image to completion: it shells out to
+// the `docker` CLI, pipes stdout/stderr back through the EventSink as NDJSON
+// events, and reports the exit code as a terminal agent_run status. It is the
+// execution mode for action_container / ci_task jobs (an admin-chosen image
+// with no agent RPC), driven through ContainerImageRunner.
 //
-// Phase 6 (WI-89) replaces this with a goroutine that drives pi's RPC mode
-// directly over a long-lived stdin/stdout pipe (no docker-cli subshell, no
-// per-call container churn for streaming events). DockerRunner stays as a
-// reference + fallback path until that lands.
+// Every spawn gets the same baseline sandbox flags as the coding agent
+// (baselineSandboxArgs, WI-238 security Phase 2) and passes secrets via an
+// --env-file rather than -e KEY=VALUE argv, so tokens never appear in
+// /proc/<pid>/cmdline or `docker inspect`.
 type DockerRunner struct {
-	// Image is the runner image to spawn, e.g.
-	// "windshift/coding-agent:wi-84-skeleton". Required.
+	// Image is the container image to spawn. Required.
 	Image string
 
 	// DockerBinary is the path to the docker CLI. Defaults to "docker"
 	// from $PATH.
 	DockerBinary string
 
-	// Env are environment variables forwarded into the container as
-	// -e KEY=VALUE arguments. Values are passed verbatim; the caller is
-	// responsible for not leaking secrets to logs upstream.
+	// Env are environment variables forwarded into the container via an
+	// --env-file (0600), merged under per-run RunInput.Env.
 	Env map[string]string
 
 	// ExtraArgs are appended to the docker-run command line before the
-	// image name. Use for --memory, --cpus, --network, --workdir, etc.
-	// Phase 5 wires real cgroup caps in here; the skeleton leaves it
-	// empty.
+	// image name, on top of (never replacing) the baseline sandbox flags.
 	ExtraArgs []string
+
+	// Sandbox tunables. Empty / zero values fall back to sandboxDefaults.
+	Network   string // docker --network value
+	PidsLimit int    // docker --pids-limit
+	Memory    string // docker --memory + --memory-swap
+	CPUs      string // docker --cpus
+}
+
+// buildDockerArgs assembles the docker-run argv for a plain container job:
+// `run --rm` + the shared baseline sandbox flags + the env-file + optional
+// workspace mount + ExtraArgs + image. Pure function so the baseline can be
+// unit-tested without a live docker daemon.
+func (r *DockerRunner) buildDockerArgs(input RunInput, envFilePath string) []string {
+	args := []string{"run", "--rm"}
+	args = append(args, baselineSandboxArgs(sandboxConfig{
+		Network:   r.Network,
+		PidsLimit: r.PidsLimit,
+		Memory:    r.Memory,
+		CPUs:      r.CPUs,
+	})...)
+	if envFilePath != "" {
+		args = append(args, "--env-file", envFilePath)
+	}
+	if input.WorkspacePath != "" {
+		args = append(args, "-v", fmt.Sprintf("%s:/workspace", input.WorkspacePath))
+	}
+	args = append(args, r.ExtraArgs...)
+	args = append(args, r.Image)
+	return args
 }
 
 // Run implements Runner. Each stdout line becomes a "stdout" event; each
@@ -58,33 +84,21 @@ func (r *DockerRunner) Run(ctx context.Context, input RunInput, emit EventSink) 
 		bin = "docker"
 	}
 
-	args := []string{"run", "--rm"}
-	// Static env from the runner config plus per-run env from RunInput.
-	// Per-run wins on key collision (the RunService is the authoritative
-	// source for run-scoped values).
-	mergedEnv := make(map[string]string, len(r.Env)+len(input.Env))
-	for k, v := range r.Env {
-		mergedEnv[k] = v
+	// Secrets (per-run env may include WS_TOKEN / brokered tokens) go through a
+	// 0600 --env-file, never -e KEY=VALUE argv where they'd be visible via
+	// /proc/<pid>/cmdline and `docker inspect`. writeDockerEnvFile merges
+	// r.Env (static) under input.Env (per-run wins) and stamps AGENT_RUN_ID.
+	envFile, cleanup, err := writeDockerEnvFile(r.Env, input.Env, input.RunID)
+	if err != nil {
+		return RunnerResult{Status: models.AgentRunStatusFailed, Error: fmt.Sprintf("docker runner: env file: %v", err)}
 	}
-	for k, v := range input.Env {
-		mergedEnv[k] = v
-	}
-	for k, v := range mergedEnv {
-		args = append(args, "-e", fmt.Sprintf("%s=%s", k, v))
-	}
-	// Stamp the run id so a baked entrypoint can echo it back without the
-	// orchestrator having to inject it from outside.
-	args = append(args, "-e", fmt.Sprintf("AGENT_RUN_ID=%d", input.RunID))
-	if input.WorkspacePath != "" {
-		args = append(args, "-v", fmt.Sprintf("%s:/workspace", input.WorkspacePath))
-	}
-	args = append(args, r.ExtraArgs...)
-	args = append(args, r.Image)
+	defer cleanup()
+	args := r.buildDockerArgs(input, envFile)
 
-	// The docker binary path is config-controlled (DockerBinary), the
-	// args contain only operator-set env keys/values + ExtraArgs the
-	// service vets at construction time. There's no user-supplied data
-	// reaching the command line.
+	// The docker binary path is config-controlled (DockerBinary); args contain
+	// only the baseline sandbox flags, the env-file path, ExtraArgs the service
+	// vets at construction time, and the job image. No user-supplied data
+	// reaches the command line.
 	cmd := exec.CommandContext(ctx, bin, args...) //nolint:gosec // G204: see comment above.
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

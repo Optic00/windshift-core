@@ -246,6 +246,60 @@ var sandboxDefaults = struct {
 	CPUs:      "2",
 }
 
+// sandboxConfig carries the operator-tunable resource knobs that layer onto the
+// non-negotiable baseline sandbox flags. Empty / zero fields fall back to
+// sandboxDefaults.
+type sandboxConfig struct {
+	Network   string
+	PidsLimit int
+	Memory    string
+	CPUs      string
+}
+
+// baselineSandboxArgs returns the non-negotiable hardening flags plus the
+// resolved resource limits applied to EVERY job kind — the coding agent and the
+// action_container / ci_task plain-container path alike (WI-238 security Phase
+// 2). A job kind may add its own flags/mounts/image around these, but cannot
+// remove them. It does NOT include `run`, `-i`, the env-file, the workspace
+// mount, ExtraArgs, or the image; callers append those.
+func baselineSandboxArgs(cfg sandboxConfig) []string {
+	args := []string{
+		"--cap-drop=ALL",
+		"--security-opt=no-new-privileges",
+		"--user=1000:1000", // non-root; matches the agent uid pinned in the agent image
+		"--read-only",
+		"--tmpfs=/tmp:rw,nosuid,nodev,size=256m",
+	}
+
+	network := cfg.Network
+	if network == "" {
+		network = sandboxDefaults.Network
+	}
+	args = append(args, "--network="+network)
+
+	pids := cfg.PidsLimit
+	if pids <= 0 {
+		pids = sandboxDefaults.PidsLimit
+	}
+	args = append(args, fmt.Sprintf("--pids-limit=%d", pids))
+
+	memory := cfg.Memory
+	if memory == "" {
+		memory = sandboxDefaults.Memory
+	}
+	// --memory-swap matches --memory so the container can't swap past
+	// its memory cap (docker default: swap = 2*memory).
+	args = append(args, "--memory="+memory, "--memory-swap="+memory)
+
+	cpus := cfg.CPUs
+	if cpus == "" {
+		cpus = sandboxDefaults.CPUs
+	}
+	args = append(args, "--cpus="+cpus)
+
+	return args
+}
+
 // buildDockerArgs assembles the full docker-run argv for a single agent
 // run. Pure function over the runner config + RunInput so it can be
 // unit-tested without a live docker daemon. The flags it emits are
@@ -256,43 +310,17 @@ var sandboxDefaults = struct {
 // argv. Run() always supplies a real path; tests may pass "" to assert
 // the conditional.
 func (r *DockerAgentRunner) buildDockerArgs(input RunInput, envFilePath string) []string {
-	args := []string{
-		"run",
-		"-i",
-		"--rm",
-		"--cap-drop=ALL",
-		"--security-opt=no-new-privileges",
-		"--user=1000:1000", // matches the agent uid pinned in deploy/coding-agent/Dockerfile
-		"--read-only",
-		"--tmpfs=/tmp:rw,nosuid,nodev,size=256m",
-		"--tmpfs=/home/agent:rw,nosuid,nodev,size=512m", // /home/agent is the agent user's home; agent + ws state lives there at runtime
-	}
-
-	network := r.Network
-	if network == "" {
-		network = sandboxDefaults.Network
-	}
-	args = append(args, "--network="+network)
-
-	pids := r.PidsLimit
-	if pids <= 0 {
-		pids = sandboxDefaults.PidsLimit
-	}
-	args = append(args, fmt.Sprintf("--pids-limit=%d", pids))
-
-	memory := r.Memory
-	if memory == "" {
-		memory = sandboxDefaults.Memory
-	}
-	// --memory-swap matches --memory so the container can't swap past
-	// its memory cap (docker default: swap = 2*memory).
-	args = append(args, "--memory="+memory, "--memory-swap="+memory)
-
-	cpus := r.CPUs
-	if cpus == "" {
-		cpus = sandboxDefaults.CPUs
-	}
-	args = append(args, "--cpus="+cpus)
+	args := []string{"run", "-i", "--rm"}
+	args = append(args, baselineSandboxArgs(sandboxConfig{
+		Network:   r.Network,
+		PidsLimit: r.PidsLimit,
+		Memory:    r.Memory,
+		CPUs:      r.CPUs,
+	})...)
+	// /home/agent is the agent user's home; agent + ws state lives there at
+	// runtime. Specific to the coding-agent image, so it is added on top of the
+	// shared baseline rather than inside it.
+	args = append(args, "--tmpfs=/home/agent:rw,nosuid,nodev,size=512m")
 
 	if envFilePath != "" {
 		args = append(args, "--env-file", envFilePath)

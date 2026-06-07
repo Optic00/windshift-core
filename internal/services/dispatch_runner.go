@@ -38,11 +38,20 @@ func (r *KindDispatchRunner) Run(ctx context.Context, input RunInput, emit Event
 // ContainerImageRunner runs RunInput.Image as a plain container (no JSONL RPC),
 // streaming its output and reporting its exit — the execution mode for
 // action_container / ci_task jobs. The image is per-job; static Env / ExtraArgs
-// are operator sandbox defaults merged under the job's env.
+// are operator sandbox defaults merged under the job's env. It delegates to
+// DockerRunner, which applies the same baseline sandbox flags as the coding
+// agent (WI-238 security Phase 2) — a job kind cannot opt out of the baseline.
 type ContainerImageRunner struct {
 	DockerBinary string
 	Env          map[string]string
 	ExtraArgs    []string
+
+	// Sandbox tunables forwarded to DockerRunner; empty / zero fall back to
+	// sandboxDefaults.
+	Network   string
+	PidsLimit int
+	Memory    string
+	CPUs      string
 }
 
 // Run implements Runner.
@@ -50,18 +59,15 @@ func (r *ContainerImageRunner) Run(ctx context.Context, input RunInput, emit Eve
 	if input.Image == "" {
 		return RunnerResult{Status: models.AgentRunStatusFailed, Error: "container job has no image"}
 	}
-	env := make(map[string]string, len(r.Env)+len(input.Env))
-	for k, v := range r.Env {
-		env[k] = v
-	}
-	for k, v := range input.Env {
-		env[k] = v
-	}
 	dr := &DockerRunner{
 		Image:        input.Image,
 		DockerBinary: r.DockerBinary,
-		Env:          env,
+		Env:          r.Env, // DockerRunner merges r.Env under input.Env
 		ExtraArgs:    r.ExtraArgs,
+		Network:      r.Network,
+		PidsLimit:    r.PidsLimit,
+		Memory:       r.Memory,
+		CPUs:         r.CPUs,
 	}
 	return dr.Run(ctx, input, emit)
 }
