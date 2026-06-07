@@ -757,7 +757,7 @@ build_docker() {
     log_info "Agent tags: ${AGENT_GHCR_REGISTRY}:${VERSION}"
 
     build_docker_image "$GHCR_REGISTRY" "Dockerfile" "Windshift server" true
-    build_docker_image "$CODING_AGENT_GHCR_REGISTRY" "deploy/coding-agent/Dockerfile" "coding-agent runner" false
+    build_docker_image "$CODING_AGENT_GHCR_REGISTRY" "deploy/coding-agent/Dockerfile" "ws-carrier (WS_IMAGE for windshift-agent)" false
     build_docker_image "$RUNNER_GHCR_REGISTRY" "deploy/windshift-runner/Dockerfile" "windshift-runner" false
     # Built last: it lifts ws from the coding-agent-runner image pushed above.
     build_agent_image

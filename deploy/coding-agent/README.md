@@ -1,12 +1,21 @@
 # Coding-agent runner deployment
 
-The coding-agent harness spawns one ephemeral container per run via
-`docker run`. The runner image is built from this directory (`Dockerfile`)
-and published as `ghcr.io/windshiftapp/coding-agent-runner`; the
-orchestrator (`internal/services/pi_runner.go`) assembles a hardened
-`docker run` argv around it.
+The coding agent is the node-free **windshift-agent** (a stripped codehamr
+fork, WI-204), built and published from the sibling `windshift-agent` repo as
+`ghcr.io/windshiftapp/windshift-agent`. The orchestrator
+(`internal/services/agent_runner.go`) spawns one ephemeral container per run via
+`docker run`, assembling a hardened argv around that image.
 
-For local development, build the image with either:
+## What this directory builds
+
+`Dockerfile` here builds only the thin **ws-carrier** image
+(`ghcr.io/windshiftapp/coding-agent-runner`): it cross-compiles the `ws` CLI
+(which lives in this repo) and ships it at `/usr/local/bin/ws`. The
+windshift-agent image lifts `ws` from it via its `WS_IMAGE` build arg. It no
+longer bakes pi-coding-agent, Node/npm, the `windshift-guard` extension, or an
+RPC entrypoint — the agent owns its own entrypoint and tool sandbox now.
+
+For local development, build the ws-carrier with either:
 
 ```bash
 make coding-agent-image
@@ -14,18 +23,24 @@ make coding-agent-image
 docker compose --profile coding-agent-image build coding-agent-runner
 ```
 
+…then build the agent from the sibling repo, lifting `ws` from it:
+
+```bash
+cd ../windshift-agent && make image WS_IMAGE=windshift/coding-agent:local
+```
+
 ## Hardening baked into every run
 
-`DockerPiRunner.buildDockerArgs` (in `internal/services/pi_runner.go`)
-emits these flags for every spawn. They are **not** configurable from
-outside the file — operator-tunable knobs (network, CPU/memory/pids
-budgets) are separate fields:
+`DockerAgentRunner.buildDockerArgs` (in `internal/services/agent_runner.go`)
+emits these flags for every spawn, regardless of which agent image is
+configured. They are **not** configurable from outside the file —
+operator-tunable knobs (network, CPU/memory/pids budgets) are separate fields:
 
 | Flag                             | Purpose                                                                |
 |----------------------------------|------------------------------------------------------------------------|
 | `--cap-drop=ALL`                 | Container starts with no Linux capabilities.                           |
 | `--security-opt=no-new-privileges` | Prevents the container from gaining additional capabilities mid-run. |
-| `--user=1000:1000`               | Runs as the unprivileged `agent` user pinned in the Dockerfile.        |
+| `--user=1000:1000`               | Runs as the unprivileged agent user pinned in the agent image.         |
 | `--read-only`                    | Root filesystem is read-only. Writable paths come from tmpfs mounts.   |
 | `--tmpfs=/tmp` / `/home/agent`   | Per-run writable scratch space; size-capped, `nosuid,nodev`.           |
 
@@ -37,10 +52,11 @@ flags in the table above.
 
 | Env var                       | Default              | Effect                                                   |
 |-------------------------------|----------------------|----------------------------------------------------------|
-| `CODING_AGENT_RUNNER_IMAGE`   | (unset → disabled)   | Required to enable the harness at all, e.g. `ghcr.io/windshiftapp/coding-agent-runner:latest`. |
+| `CODING_AGENT_RUNNER_IMAGE`   | (unset → disabled)   | Required to enable the harness at all, e.g. `ghcr.io/windshiftapp/windshift-agent:latest`. |
 | `CODING_AGENT_DOCKER_BINARY`  | `docker`             | Path to the docker CLI to invoke.                        |
 | `CODING_AGENT_WORKTREE_ROOT`  | (required)           | Host directory where per-run worktrees are created. If Windshift itself runs in Docker while using the host docker socket, mount this same absolute host path into the Windshift container. |
-| `CODING_AGENT_WS_API_URL`     | `BASE_URL`           | URL the runner container uses for the `ws` CLI. Override when `BASE_URL` is browser-facing (for example `localhost`) but not reachable from containers. |
+| `CODING_AGENT_WS_API_URL`     | `BASE_URL`           | URL the runner container uses for the `ws` CLI and the run-scoped `llm-proxy`. Override when `BASE_URL` is browser-facing (for example `localhost`) but not reachable from containers. Must end in `/api`. |
+| `CODING_AGENT_LLM_MODEL`      | (unset)              | Fallback model id when a binding carries no `llm_connection_id`. |
 | `CODING_AGENT_NETWORK`        | `coding-agent-egress` | docker `--network`. See "Egress network" below.          |
 | `CODING_AGENT_PIDS_LIMIT`     | `512`                | docker `--pids-limit`.                                   |
 | `CODING_AGENT_MEMORY`         | `4g`                 | docker `--memory` (also applied to `--memory-swap`).     |
@@ -77,6 +93,11 @@ sudo iptables -I DOCKER-USER -i "$BRIDGE_IF" -d api.github.com    -j ACCEPT
 A sidecar HTTP proxy with an allowlist (mitmproxy, envoy, squid) is the
 other common shape — point `coding-agent-egress` at the proxy and
 firewall everything else.
+
+> Note: because the agent reaches the model through the orchestrator's
+> `llm-proxy` and git through the `git-proxy`, the egress allowlist for the
+> agent network only needs to reach the Windshift API host itself, not the LLM
+> or SCM providers directly.
 
 ### Opting out (NOT recommended)
 

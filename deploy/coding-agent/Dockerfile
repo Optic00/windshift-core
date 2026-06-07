@@ -1,20 +1,21 @@
 # =============================================================================
-# Windshift Coding Agent Runner
+# Windshift ws-carrier image
 #
-# Per-run sandbox the coding-agent harness spawns to execute pi-coding-agent
-# against a mounted worktree. Phase 3 (WI-86) is the first variant that
-# bakes the real ws CLI + pi-coding-agent + windshift-guard.ts extension +
-# ws.toml.template; the entrypoint now execs pi in RPC mode for live runs.
+# A thin image whose ONLY purpose is to ship the cross-built `ws` CLI at
+# /usr/local/bin/ws. The windshift-agent image (the node-free codehamr fork,
+# WI-204 — the actual coding agent) lifts `ws` from here via its WS_IMAGE build
+# arg, because `ws` lives in this repo while the agent lives in the sibling
+# windshift-agent repo.
+#
+# This image no longer bakes pi-coding-agent, Node/npm, the windshift-guard
+# extension, or an RPC entrypoint — those moved out when the coding agent was
+# replaced by windshift-agent (WI-238). The hardened `docker run` sandbox is
+# still assembled by the orchestrator (DockerAgentRunner) around whichever agent
+# image the operator points CODING_AGENT_RUNNER_IMAGE / WSRUNNER_IMAGE at.
 #
 # Built from the *repo root* (the build context needs cmd/ws + go.mod):
 #
-#   docker build -f deploy/coding-agent/Dockerfile \
-#     -t windshift/coding-agent:local \
-#     [--build-arg INSTALL_PI=false] [--build-arg PI_VERSION=<tag>] \
-#     .
-#
-# Set INSTALL_PI=false when iterating on the ws/env path locally — it skips
-# the multi-MB npm install. Production builds keep INSTALL_PI=true (default).
+#   docker build -f deploy/coding-agent/Dockerfile -t coding-agent-runner:local .
 # =============================================================================
 
 # --------------------------------------------------------------------
@@ -37,50 +38,16 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w" -o /out/ws ./cmd/ws
 
 # --------------------------------------------------------------------
-# Stage 2: runner image
+# Stage 2: thin ws-carrier
 # --------------------------------------------------------------------
-FROM node:24-alpine AS runner
+FROM alpine:3.21
 
-RUN apk add --no-cache \
-        ca-certificates \
-        gettext \
-        git
+RUN apk add --no-cache ca-certificates
 
-# pi-coding-agent install. PI_VERSION must resolve to a published tag on
-# @earendil-works/pi-coding-agent. The entrypoint execs `pi --mode rpc`;
-# set INSTALL_PI=false only when testing the ws/env setup path locally.
-ARG INSTALL_PI=true
-ARG PI_VERSION=latest
-RUN if [ "${INSTALL_PI}" = "true" ]; then \
-        npm install -g --omit=dev --omit=optional --ignore-scripts \
-            "@earendil-works/pi-coding-agent@${PI_VERSION}"; \
-    fi
-
-# The DockerPiRunner forces --user=1000:1000 at runtime. The official Node
-# Alpine image already reserves that uid/gid for its non-root user, so keep the
-# image user numeric and make /home/agent writable by 1000:1000 instead of
-# creating or renaming passwd/group entries.
-RUN install -d -o 1000 -g 1000 -m 0750 /home/agent
-
-# ws binary, baked extension, ws.toml template, entrypoint.
 COPY --from=ws-build /out/ws /usr/local/bin/ws
-COPY deploy/coding-agent/ws.toml.template /etc/windshift/ws.toml.template
-COPY deploy/coding-agent/windshift-guard.ts /opt/windshift/extensions/windshift-guard.ts
-COPY deploy/coding-agent/windshift-entrypoint.sh /usr/local/bin/windshift-entrypoint.sh
+RUN chmod +x /usr/local/bin/ws
 
-# Per-user state: uid 1000 owns its ~/.config/ws and ~/.pi tree. The
-# extension is copied (not bind-symlinked) so the runtime user owns it
-# without giving write access to /opt/windshift.
-RUN install -d -o 1000 -g 1000 -m 0750 /home/agent/.config/ws \
-    && install -d -o 1000 -g 1000 -m 0750 /home/agent/.pi/agent/extensions \
-    && cp /opt/windshift/extensions/windshift-guard.ts /home/agent/.pi/agent/extensions/windshift-guard.ts \
-    && chown -R 1000:1000 /home/agent \
-    && chmod +x /usr/local/bin/windshift-entrypoint.sh /usr/local/bin/ws \
-    && chmod 0644 /etc/windshift/ws.toml.template
-
+# Numeric non-root user matching the agent images that consume this CLI.
 USER 1000:1000
-WORKDIR /home/agent
-ENV HOME=/home/agent
-ENV PATH=/usr/local/bin:$PATH
 
-ENTRYPOINT ["/usr/local/bin/windshift-entrypoint.sh"]
+ENTRYPOINT ["/usr/local/bin/ws"]

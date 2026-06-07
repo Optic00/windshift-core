@@ -98,7 +98,7 @@ openapi:
 #
 # This target writes to a tempdir so it doesn't touch the committed spec.
 coding-agent-image:
-	@echo "Building coding-agent runner image..."
+	@echo "Building ws-carrier image (WS_IMAGE source for windshift-agent)..."
 	docker build -f deploy/coding-agent/Dockerfile -t windshift/coding-agent:local .
 
 openapi-check:
@@ -163,5 +163,5 @@ help:
 	@echo "  make hooks          - Install git pre-commit hook"
 	@echo "  make openapi        - Regenerate api/openapi.{yaml,json} from handler annotations"
 	@echo "  make openapi-check  - Verify api/openapi.{yaml,json} is up to date (used by hooks/CI)"
-	@echo "  make coding-agent-image - Build the pi-based coding-agent runner image"
+	@echo "  make coding-agent-image - Build the thin ws-carrier image (WS_IMAGE for windshift-agent)"
 	@echo "  make help           - Show this help message"
