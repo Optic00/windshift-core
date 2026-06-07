@@ -61,7 +61,10 @@ type mintRunnerTokenResponse struct {
 
 // MintRunnerToken mints a pool-scoped registration token a runner uses to
 // self-register. POST /admin/action-capabilities/{capabilityId}/runner-tokens.
-// The plaintext token is returned once and never again.
+// The plaintext token is returned once and never again. The token is single-use
+// (consumed on the first successful registration) and expires by default
+// (WI-238 security Phase 6), so mint one token per runner or inject credentials
+// directly for a fleet.
 func (h *RunnerControlHandler) MintRunnerToken(w http.ResponseWriter, r *http.Request) {
 	poolID, ok := h.resolveRunnerPool(w, r)
 	if !ok {

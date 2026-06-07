@@ -76,6 +76,27 @@ func (r *RunnerRepository) RevokeRegistrationToken(ctx context.Context, id int, 
 	return nil
 }
 
+// ConsumeRegistrationToken atomically marks an active registration token used
+// (revoked) and reports whether THIS call performed the transition. A false
+// return means the token was already used/revoked — a single-use registration
+// token bootstraps exactly one runner, so the caller must then reject the
+// registration (WI-238 security Phase 6). Race-safe: the UPDATE's
+// `revoked_at IS NULL` guard means only one concurrent registration wins.
+func (r *RunnerRepository) ConsumeRegistrationToken(ctx context.Context, id int, now time.Time) (bool, error) {
+	res, err := r.db.ExecWriteContext(ctx, `
+		UPDATE runner_registration_tokens SET revoked_at = ?
+		WHERE id = ? AND revoked_at IS NULL
+	`, now, id)
+	if err != nil {
+		return false, fmt.Errorf("consume runner registration token: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("consume runner registration token: rows affected: %w", err)
+	}
+	return n == 1, nil
+}
+
 // ListRegistrationTokensForPool returns every registration token for a pool
 // (including revoked/expired ones) newest-first, for the admin lifecycle
 // surface. Plaintext is never stored, so only the prefix is exposed.

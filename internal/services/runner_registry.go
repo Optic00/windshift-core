@@ -54,9 +54,11 @@ var ErrInvalidRegistrationToken = errors.New("runner registry: invalid or expire
 // does not match an active runner instance.
 var ErrRunnerUnauthenticated = errors.New("runner registry: unauthenticated runner")
 
-// MintRegistrationToken creates a reusable, pool-scoped registration token.
-// The plaintext is returned exactly once; only its hash is persisted. ttl<=0
-// mints a non-expiring token (revoke to disable).
+// MintRegistrationToken creates a single-use, pool-scoped registration token
+// (consumed on the first successful registration; see Register). The plaintext
+// is returned exactly once; only its hash is persisted. ttl<=0 mints a
+// non-expiring token, but the handler applies a default TTL so tokens expire by
+// default (WI-238 security Phase 6).
 func (s *RunnerRegistryService) MintRegistrationToken(ctx context.Context, poolID int, createdBy *int, description string, ttl time.Duration) (string, *models.RunnerRegistrationToken, error) {
 	full, hash, prefix, err := generateRunnerToken(runnerRegistrationTokenPrefix)
 	if err != nil {
@@ -86,6 +88,13 @@ func (s *RunnerRegistryService) MintRegistrationToken(ctx context.Context, poolI
 // runner credential bound to the token's pool. The plaintext credential is
 // returned exactly once. Returns ErrInvalidRegistrationToken if the token is
 // not currently valid.
+//
+// Registration tokens are single-use (WI-238 security Phase 6): the token is
+// consumed (revoked) atomically as part of registering, so a leaked or shared
+// token cannot be replayed to register additional instances. A runner reuses
+// its per-instance credential across restarts, so it never needs the token
+// again; scaling a fleet means one token per runner, or injecting credentials
+// directly.
 func (s *RunnerRegistryService) Register(ctx context.Context, registrationToken, name string) (string, *models.RunnerInstance, error) {
 	if !strings.HasPrefix(registrationToken, runnerRegistrationTokenPrefix) {
 		return "", nil, ErrInvalidRegistrationToken
@@ -96,6 +105,17 @@ func (s *RunnerRegistryService) Register(ctx context.Context, registrationToken,
 	}
 	if err != nil {
 		return "", nil, fmt.Errorf("register runner: lookup token: %w", err)
+	}
+
+	// Claim the token single-use before minting anything. If we didn't win the
+	// claim (already used / concurrent registration), reject — the token is
+	// spent.
+	consumed, err := s.repo.ConsumeRegistrationToken(ctx, tok.ID, s.now())
+	if err != nil {
+		return "", nil, fmt.Errorf("register runner: consume token: %w", err)
+	}
+	if !consumed {
+		return "", nil, ErrInvalidRegistrationToken
 	}
 
 	cred, credHash, _, err := generateRunnerToken(runnerCredentialPrefix)

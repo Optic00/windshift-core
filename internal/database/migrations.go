@@ -872,9 +872,10 @@ var Catalog = []Migration{
 		// Remote runner pools (Initiative WI-141). A pool is an
 		// action_capabilities row of type 'runner_pool'; these tables hang
 		// off it by soft ref (no FK), mirroring the agent-table convention.
-		// runner_registration_tokens: reusable, revocable, pool-scoped
-		// tokens a runner presents to register; runner_instances: one
-		// registered runner with its per-instance credential + heartbeat.
+		// runner_registration_tokens: single-use (consumed on first
+		// registration), revocable, pool-scoped tokens a runner presents to
+		// register; runner_instances: one registered runner with its
+		// per-instance credential + heartbeat.
 		// Fresh installs get these from schema/agents{,_postgres}.sql; this
 		// entry upgrades existing DBs (its Check stamps without re-running
 		// once runner_instances exists).
