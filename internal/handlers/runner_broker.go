@@ -21,6 +21,16 @@ import (
 	"windshift/internal/utils"
 )
 
+// Broker request-body caps (WI-238 security Phase 7): bound how much a runner
+// can push through a broker endpoint so a compromised container can't use the
+// broker as an unbounded-upload amplifier. LLM/HTTP requests are small; git
+// packfiles can be large, so its cap is generous but still finite.
+const (
+	maxLLMBrokerBody  = 16 << 20 // 16 MiB
+	maxHTTPBrokerBody = 16 << 20 // 16 MiB
+	maxGitBrokerBody  = 2 << 30  // 2 GiB
+)
+
 // RunnerBrokerHandler is the secretless access layer's server side
 // (Initiative WI-141 / WI-144): the broker endpoints a running job calls to
 // reach credentials it is granted, without those credentials ever living on
@@ -149,6 +159,16 @@ func (h *RunnerBrokerHandler) ProxyLLM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	upstreamPath := r.PathValue("path")
+	// Restrict the run token to the provider's inference API surface (WI-238
+	// security Phase 7): only the versioned API paths (v1/chat/completions,
+	// v1/messages, v1/models, …) are reachable, so a leaked run token can't be
+	// used to drive non-inference provider endpoints through the injected key.
+	if !strings.HasPrefix(upstreamPath, "v1/") {
+		respondForbidden(w, r)
+		return
+	}
+	// Bound the request body (WI-238 security Phase 7).
+	r.Body = http.MaxBytesReader(w, r.Body, maxLLMBrokerBody)
 	apiKey := cfg.APIKey
 	providerType := strings.ToLower(cfg.ProviderType)
 	proxy := &httputil.ReverseProxy{
@@ -227,6 +247,10 @@ func (h *RunnerBrokerHandler) ProxyGit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Bound the request body (WI-238 security Phase 7). Generous for git
+	// packfiles but finite, so a push can't stream unboundedly through the proxy.
+	r.Body = http.MaxBytesReader(w, r.Body, maxGitBrokerBody)
+
 	// Ref-level push gating (WI-168): the repo grant authorizes reads (clone /
 	// fetch via git-upload-pack), but a push (git-receive-pack) may only touch
 	// the single ref named in grants.Git.Ref. The injected SCM credential can
@@ -298,6 +322,8 @@ func (h *RunnerBrokerHandler) ProxyHTTP(w http.ResponseWriter, r *http.Request) 
 		respondForbidden(w, r)
 		return
 	}
+	// Bound the request body (WI-238 security Phase 7).
+	r.Body = http.MaxBytesReader(w, r.Body, maxHTTPBrokerBody)
 	tu, err := url.Parse(target)
 	if err != nil || tu.Host == "" {
 		respondBadRequest(w, r, "invalid target url")
@@ -325,7 +351,14 @@ func (h *RunnerBrokerHandler) ProxyHTTP(w http.ResponseWriter, r *http.Request) 
 func ssrfSafeTransport() http.RoundTripper {
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	return &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
+		// No ProxyFromEnvironment (WI-238 security Phase 7): an env-configured
+		// HTTP(S)_PROXY would be dialed directly, bypassing the post-resolution
+		// private-IP check below and reopening the SSRF hole the dialer closes.
+		// The broker always connects to the validated target itself.
+		Proxy:                 nil,
+		ResponseHeaderTimeout: 30 * time.Second,
+		IdleConnTimeout:       60 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			host, port, err := net.SplitHostPort(addr)
 			if err != nil {
