@@ -664,7 +664,7 @@ func (s *Server) initialize() error {
 	// service and the admin AgentSecurity handler share its repo handle.
 	// When CodingAgent.RunnerImage is configured, the harness boots a
 	// production RunService (WI-89): repoprep.Preparer → RunTokenService →
-	// DockerPiRunner → AgentPRService (WI-90, opens draft PRs on GitHub or
+	// DockerAgentRunner → AgentPRService (WI-90, opens draft PRs on GitHub or
 	// Gitea via scm.Provider). Without it the harness stays in observer
 	// mode — bindings can still be created, the trigger logs but no run
 	// starts.
@@ -679,7 +679,7 @@ func (s *Server) initialize() error {
 	promptStore := llm.NewPromptStore(cfg.LLM.PromptsDir)
 
 	// Load LLM provider definitions before coding-agent bindings are wired: the
-	// binding trigger resolves per-binding llm_connection_id rows into pi runtime
+	// binding trigger resolves per-binding llm_connection_id rows into agent runtime
 	// env, and that requires the same provider registry the AI handlers use.
 	if cfg.LLM.ProvidersFile != "" {
 		if err := llm.LoadProviders(cfg.LLM.ProvidersFile); err != nil {
@@ -2076,7 +2076,7 @@ func bootCodingAgentRunService(
 	// harness on the fixed runner image; action_container / ci_task run the
 	// job's admin image as a plain container, with the same sandbox network.
 	runner := &services.KindDispatchRunner{
-		CodingAgent: &services.DockerPiRunner{
+		CodingAgent: &services.DockerAgentRunner{
 			Image:         cfg.RunnerImage,
 			DockerBinary:  cfg.DockerBinary,
 			Env:           staticEnv,

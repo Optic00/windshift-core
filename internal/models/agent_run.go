@@ -13,8 +13,8 @@ const (
 	AgentRunStatusKilled    = "killed"
 )
 
-// Agent-run job kinds. coding_agent is the default (the pi coding harness on
-// the fixed runner image); action_container + ci_task run an admin-chosen
+// Agent-run job kinds. coding_agent is the default (the windshift-agent harness
+// on the fixed runner image); action_container + ci_task run an admin-chosen
 // image on the same runner substrate (WI-146).
 const (
 	JobKindCodingAgent     = "coding_agent"
@@ -36,7 +36,7 @@ func IsAgentRunTerminal(status string) bool {
 }
 
 // AgentRun records one execution of the coding-agent harness: a per-run
-// Docker container that mounts a worktree, runs the pi coding agent, and
+// Docker container that mounts a worktree, runs the windshift-agent, and
 // produces a PR. BindingID is optional — set when the run was triggered
 // by an assignee change matching a workspace_agent_binding, nil for
 // manually-started runs.
@@ -67,10 +67,10 @@ type AgentRun struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// AgentRunEvent is one entry on the NDJSON-style stream pi emits to stdout
-// during a run, plus orchestrator-emitted lifecycle entries (queued,
+// AgentRunEvent is one entry on the NDJSON-style stream the agent emits to
+// stdout during a run, plus orchestrator-emitted lifecycle entries (queued,
 // running, succeeded, …). PayloadJSON is stored verbatim so future readers
-// can interpret newer pi event shapes without a schema migration.
+// can interpret newer agent event shapes without a schema migration.
 type AgentRunEvent struct {
 	ID          int       `json:"id"`
 	RunID       int       `json:"run_id"`

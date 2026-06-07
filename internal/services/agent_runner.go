@@ -16,8 +16,8 @@ import (
 	"windshift/internal/models"
 )
 
-// PiRunner drives a pi-coding-agent subprocess in RPC mode (or any other
-// JSONL stdin/stdout process — the fake-pi fixture used by the tests is
+// AgentRunner drives the windshift-agent subprocess in JSONL RPC mode (or any other
+// JSONL stdin/stdout process — the fake-agent fixture used by the tests is
 // the same shape). Lifecycle for one run:
 //
 //  1. Start the subprocess via exec.CommandContext.
@@ -32,13 +32,13 @@ import (
 //     run is recorded as canceled. If the subprocess hasn't exited after
 //     ShutdownGrace, the context's CommandContext kills it.
 //
-// PiRunner doesn't know whether the subprocess is `pi --mode rpc`, a
+// AgentRunner doesn't know whether the subprocess is the windshift-agent binary, a
 // shell script, or a docker invocation that wraps either — Command +
 // Args carry the whole story. Production wires `docker run -i --rm
-// <image>` with the right env; tests wire a Go-binary fake-pi.
-type PiRunner struct {
+// <image>` with the right env; tests wire a Go-binary fake-agent.
+type AgentRunner struct {
 	// Command + Args build the subprocess invocation. Command is the
-	// executable (e.g. "docker" or "/path/to/fake-pi"); Args are the
+	// executable (e.g. "docker" or "/path/to/fake-agent"); Args are the
 	// arguments. Both are required.
 	Command string
 	Args    []string
@@ -55,8 +55,8 @@ type PiRunner struct {
 
 	// IdleEventType is the event-type string the runner looks for to
 	// know the agent has finished and it should send abort. Defaults to
-	// "session_idle". The pi RPC docs spell out the event vocabulary;
-	// tests can override this to match the fake-pi script.
+	// "session_idle". The JSONL contract spells out the event vocabulary;
+	// tests can override this to match the fake-agent script.
 	IdleEventType string
 
 	// ShutdownGrace bounds how long the runner waits for the subprocess
@@ -66,26 +66,26 @@ type PiRunner struct {
 }
 
 const (
-	defaultPiIdleEventType = "session_idle"
-	defaultPiShutdownGrace = 10 * time.Second
-	maxPiLine              = 1 << 20 // 1 MiB; matches docker_runner
+	defaultAgentIdleEventType = "session_idle"
+	defaultAgentShutdownGrace = 10 * time.Second
+	maxAgentLine              = 1 << 20 // 1 MiB; matches docker_runner
 )
 
 // Run implements Runner. See the type comment for the lifecycle.
-func (r *PiRunner) Run(ctx context.Context, input RunInput, emit EventSink) RunnerResult {
+func (r *AgentRunner) Run(ctx context.Context, input RunInput, emit EventSink) RunnerResult {
 	if r.Command == "" {
-		return RunnerResult{Status: models.AgentRunStatusFailed, Error: "pi runner: Command is required"}
+		return RunnerResult{Status: models.AgentRunStatusFailed, Error: "agent runner: Command is required"}
 	}
 	if r.InitialPrompt == "" {
-		return RunnerResult{Status: models.AgentRunStatusFailed, Error: "pi runner: InitialPrompt is required"}
+		return RunnerResult{Status: models.AgentRunStatusFailed, Error: "agent runner: InitialPrompt is required"}
 	}
 	idleEvent := r.IdleEventType
 	if idleEvent == "" {
-		idleEvent = defaultPiIdleEventType
+		idleEvent = defaultAgentIdleEventType
 	}
 	grace := r.ShutdownGrace
 	if grace <= 0 {
-		grace = defaultPiShutdownGrace
+		grace = defaultAgentShutdownGrace
 	}
 
 	// Subprocess ctx is independent of the orchestrator ctx so we can
@@ -94,25 +94,25 @@ func (r *PiRunner) Run(ctx context.Context, input RunInput, emit EventSink) Runn
 	cmdCtx, cancelCmd := context.WithCancel(context.Background())
 	defer cancelCmd()
 
-	// All values reaching args come from operator config (PiRunner
+	// All values reaching args come from operator config (AgentRunner
 	// fields) or orchestrator-managed env keys — no user-supplied data
 	// hits the command line.
 	cmd := exec.CommandContext(cmdCtx, r.Command, r.Args...) //nolint:gosec // G204: see comment above.
-	cmd.Env = buildPiEnv(r.Env, input.Env)
+	cmd.Env = buildAgentEnv(r.Env, input.Env)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return RunnerResult{Status: models.AgentRunStatusFailed, Error: fmt.Sprintf("pi stdin pipe: %v", err)}
+		return RunnerResult{Status: models.AgentRunStatusFailed, Error: fmt.Sprintf("agent stdin pipe: %v", err)}
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return RunnerResult{Status: models.AgentRunStatusFailed, Error: fmt.Sprintf("pi stdout pipe: %v", err)}
+		return RunnerResult{Status: models.AgentRunStatusFailed, Error: fmt.Sprintf("agent stdout pipe: %v", err)}
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return RunnerResult{Status: models.AgentRunStatusFailed, Error: fmt.Sprintf("pi stderr pipe: %v", err)}
+		return RunnerResult{Status: models.AgentRunStatusFailed, Error: fmt.Sprintf("agent stderr pipe: %v", err)}
 	}
 	if err := cmd.Start(); err != nil {
-		return RunnerResult{Status: models.AgentRunStatusFailed, Error: fmt.Sprintf("pi start: %v", err)}
+		return RunnerResult{Status: models.AgentRunStatusFailed, Error: fmt.Sprintf("agent start: %v", err)}
 	}
 
 	// Stderr drain — same JSON-or-wrap convention as docker_runner.
@@ -130,7 +130,7 @@ func (r *PiRunner) Run(ctx context.Context, input RunInput, emit EventSink) Runn
 	if err := writeJSONLine(stdin, promptCmd); err != nil {
 		_ = stdin.Close()
 		_ = cmd.Process.Kill()
-		return RunnerResult{Status: models.AgentRunStatusFailed, Error: fmt.Sprintf("pi write prompt: %v", err)}
+		return RunnerResult{Status: models.AgentRunStatusFailed, Error: fmt.Sprintf("agent write prompt: %v", err)}
 	}
 
 	// Stream events. We need both "the subprocess emitted an idle
@@ -141,7 +141,7 @@ func (r *PiRunner) Run(ctx context.Context, input RunInput, emit EventSink) Runn
 	streamDone := make(chan struct{})
 	go func() {
 		defer close(streamDone)
-		drainPiStdout(stdout, idleEvent, emit, sawIdle)
+		drainAgentStdout(stdout, idleEvent, emit, sawIdle)
 	}()
 
 	// Shutdown trigger: whichever fires first — idle from the
@@ -197,14 +197,14 @@ func (r *PiRunner) Run(ctx context.Context, input RunInput, emit EventSink) Runn
 	}
 	return RunnerResult{
 		Status: models.AgentRunStatusFailed,
-		Error:  fmt.Sprintf("pi subprocess exited with code %d: %v", exitCode, waitErr),
+		Error:  fmt.Sprintf("agent subprocess exited with code %d: %v", exitCode, waitErr),
 	}
 }
 
-// DockerPiRunner spawns the runner image via `docker run` and delegates
-// the JSONL stdio orchestration to PiRunner. The wrapper exists because
+// DockerAgentRunner spawns the runner image via `docker run` and delegates
+// the JSONL stdio orchestration to AgentRunner. The wrapper exists because
 // docker args (env, volume mounts, sandbox flags) depend on RunInput,
-// while PiRunner.Args is static — splitting concerns keeps the JSONL
+// while AgentRunner.Args is static — splitting concerns keeps the JSONL
 // logic independent of the container layer.
 //
 // The sandbox flags baked by buildDockerArgs are not configurable from
@@ -212,7 +212,7 @@ func (r *PiRunner) Run(ctx context.Context, input RunInput, emit EventSink) Runn
 // memory, cpus) are exposed through the named fields below, but flags
 // like --cap-drop=ALL or --security-opt=no-new-privileges are part of
 // the contract and cannot be turned off.
-type DockerPiRunner struct {
+type DockerAgentRunner struct {
 	Image         string
 	DockerBinary  string
 	Env           map[string]string
@@ -255,7 +255,7 @@ var sandboxDefaults = struct {
 // values (which may include WS_TOKEN) do not appear in the docker
 // argv. Run() always supplies a real path; tests may pass "" to assert
 // the conditional.
-func (r *DockerPiRunner) buildDockerArgs(input RunInput, envFilePath string) []string {
+func (r *DockerAgentRunner) buildDockerArgs(input RunInput, envFilePath string) []string {
 	args := []string{
 		"run",
 		"-i",
@@ -265,7 +265,7 @@ func (r *DockerPiRunner) buildDockerArgs(input RunInput, envFilePath string) []s
 		"--user=1000:1000", // matches the agent uid pinned in deploy/coding-agent/Dockerfile
 		"--read-only",
 		"--tmpfs=/tmp:rw,nosuid,nodev,size=256m",
-		"--tmpfs=/home/agent:rw,nosuid,nodev,size=512m", // /home/agent is the agent user's home; pi + ws state lives there at runtime
+		"--tmpfs=/home/agent:rw,nosuid,nodev,size=512m", // /home/agent is the agent user's home; agent + ws state lives there at runtime
 	}
 
 	network := r.Network
@@ -306,10 +306,10 @@ func (r *DockerPiRunner) buildDockerArgs(input RunInput, envFilePath string) []s
 }
 
 // Run implements Runner. Builds docker args from the runner's static
-// config + RunInput.Env, then dispatches through PiRunner.
-func (r *DockerPiRunner) Run(ctx context.Context, input RunInput, emit EventSink) RunnerResult {
+// config + RunInput.Env, then dispatches through AgentRunner.
+func (r *DockerAgentRunner) Run(ctx context.Context, input RunInput, emit EventSink) RunnerResult {
 	if r.Image == "" {
-		return RunnerResult{Status: models.AgentRunStatusFailed, Error: "docker pi runner: Image is required"}
+		return RunnerResult{Status: models.AgentRunStatusFailed, Error: "docker agent runner: Image is required"}
 	}
 	bin := r.DockerBinary
 	if bin == "" {
@@ -322,11 +322,11 @@ func (r *DockerPiRunner) Run(ctx context.Context, input RunInput, emit EventSink
 	// /proc/<pid>/cmdline and `docker inspect`.
 	envFile, cleanup, err := writeDockerEnvFile(r.Env, input.Env, input.RunID)
 	if err != nil {
-		return RunnerResult{Status: models.AgentRunStatusFailed, Error: fmt.Sprintf("docker pi runner: env file: %v", err)}
+		return RunnerResult{Status: models.AgentRunStatusFailed, Error: fmt.Sprintf("docker agent runner: env file: %v", err)}
 	}
 	defer cleanup()
 
-	inner := &PiRunner{
+	inner := &AgentRunner{
 		Command:       bin,
 		Args:          r.buildDockerArgs(input, envFile),
 		InitialPrompt: r.InitialPrompt,
@@ -381,10 +381,10 @@ func writeDockerEnvFile(static, perRun map[string]string, runID int) (path strin
 	return path, cleanup, nil
 }
 
-// buildPiEnv composes a "key=value" slice from the runner's static Env
+// buildAgentEnv composes a "key=value" slice from the runner's static Env
 // plus per-run env carried in RunInput. Per-run wins on conflict, same
 // as DockerRunner.
-func buildPiEnv(static, perRun map[string]string) []string {
+func buildAgentEnv(static, perRun map[string]string) []string {
 	merged := make(map[string]string, len(static)+len(perRun))
 	for k, v := range static {
 		merged[k] = v
@@ -412,14 +412,14 @@ func writeJSONLine(w io.Writer, obj any) error {
 	return err
 }
 
-// drainPiStdout reads NDJSON events from stdout and forwards each to the
+// drainAgentStdout reads NDJSON events from stdout and forwards each to the
 // sink. JSON-parseable lines pass through verbatim; non-JSON lines are
 // wrapped as {"line": "<raw>"}. When the parsed event's "type" matches
 // idleEvent, sawIdle is signaled (non-blocking — only the first idle
 // event needs to wake the orchestrator).
-func drainPiStdout(rd io.Reader, idleEvent string, emit EventSink, sawIdle chan<- struct{}) {
+func drainAgentStdout(rd io.Reader, idleEvent string, emit EventSink, sawIdle chan<- struct{}) {
 	scanner := bufio.NewScanner(rd)
-	scanner.Buffer(make([]byte, 64*1024), maxPiLine)
+	scanner.Buffer(make([]byte, 64*1024), maxAgentLine)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.TrimSpace(line) == "" {

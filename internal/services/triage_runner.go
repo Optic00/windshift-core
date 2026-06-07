@@ -27,7 +27,7 @@ import (
 // prepared WorkspacePath, and non-repo container jobs) TriageRunner is a pass-
 // through to the inner Runner.
 type TriageRunner struct {
-	Inner     Runner // the real execution (DockerPiRunner)
+	Inner     Runner // the real execution (DockerAgentRunner)
 	TriageBin string // path to the windshift-triage binary
 	CacheRoot string // --root for the bare-clone cache
 	APIBase   string // orchestrator base incl. API prefix (for the git-proxy URL)

@@ -104,8 +104,9 @@ func (m *ConnectionManager) Resolve(connectionID int) (Client, error) {
 	}), nil
 }
 
-// ConnectionRuntimeConfig contains the decrypted runtime fields needed by the
-// coding-agent runner to invoke pi with the admin-selected provider.
+// ConnectionRuntimeConfig contains the decrypted runtime fields needed to
+// resolve the admin-selected provider for a coding-agent run (the model id for
+// the agent container; the key + base URL stay server-side in the llm-proxy).
 type ConnectionRuntimeConfig struct {
 	ProviderType string
 	APIFormat    string

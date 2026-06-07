@@ -17,7 +17,7 @@
 //	WSRUNNER_DOCKER              docker binary (default: docker)
 //	WSRUNNER_POLL_INTERVAL       claim poll interval when idle (default: 2s)
 //	WSRUNNER_HEARTBEAT_INTERVAL  lease heartbeat interval (default: 30s)
-//	WSRUNNER_INITIAL_PROMPT      pi initial prompt (default: generic instruction)
+//	WSRUNNER_INITIAL_PROMPT      agent initial prompt (default: generic instruction)
 //
 // NOTE: until the secretless access layer (WI-144) enriches the claimed
 // JobSpec with per-run env (item id, brokered tokens) and worktree, a claimed
@@ -74,7 +74,7 @@ func main() {
 	// harness; action_container / ci_task jobs run the job's admin image as a
 	// plain container.
 	kindRunner := &services.KindDispatchRunner{
-		CodingAgent: &services.DockerPiRunner{
+		CodingAgent: &services.DockerAgentRunner{
 			Image:         image,
 			DockerBinary:  dockerBin,
 			InitialPrompt: initialPrompt,

@@ -10,7 +10,7 @@ import (
 // claimed job to the right execution mode by its kind (WI-146), keeping the
 // substrate (claim / brokers / quota / reaping) kind-agnostic:
 //
-//   - coding_agent (default) → CodingAgent runner: the pi harness on the
+//   - coding_agent (default) → CodingAgent runner: the windshift-agent harness on the
 //     fixed runner image.
 //   - action_container / ci_task → Container runner: the job's admin image
 //     run as a plain container.
@@ -35,7 +35,7 @@ func (r *KindDispatchRunner) Run(ctx context.Context, input RunInput, emit Event
 	}
 }
 
-// ContainerImageRunner runs RunInput.Image as a plain container (no pi RPC),
+// ContainerImageRunner runs RunInput.Image as a plain container (no JSONL RPC),
 // streaming its output and reporting its exit — the execution mode for
 // action_container / ci_task jobs. The image is per-job; static Env / ExtraArgs
 // are operator sandbox defaults merged under the job's env.

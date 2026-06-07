@@ -629,7 +629,7 @@ var Catalog = []Migration{
 		// agent_runs records one execution of the coding-agent harness:
 		// admission → container spawn → exit. agent_run_events captures the
 		// per-run stdio / lifecycle stream that the orchestrator reads from
-		// pi's RPC mode and forwards to the SSE hub. binding_id is the FK
+		// the agent's JSONL RPC mode and forwards to the SSE hub. binding_id is the FK
 		// back to the workspace_agent_binding that triggered the run (NULL
 		// for manually-started runs); the (binding_id, created_at) index
 		// supports per-binding budget enforcement (WI-134).
