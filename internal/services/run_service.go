@@ -527,6 +527,27 @@ func applyLLMProxyEnv(env map[string]string, grants *models.RunGrants, runID int
 	env["LLM_API_KEY"] = token
 }
 
+// FailRemoteClaim marks a just-claimed remote run failed when claim enrichment
+// could not complete (e.g. PrepareRemoteClaim errored after ClaimQueued already
+// moved the run to running). Without this the run would sit in `running` with no
+// token or grants, holding a pool slot indefinitely (WI-238 security Phase 8).
+// CAS-guarded via FinalizeRunning so it never overwrites a run that already
+// reached a terminal state; the reason is redacted before it is persisted or
+// emitted. No post-run hook fires — no work was produced.
+func (s *RunService) FailRemoteClaim(ctx context.Context, runID int, reason string) {
+	red := RedactString(reason)
+	transitioned, err := s.repo.FinalizeRunning(ctx, runID, models.AgentRunStatusFailed, red, s.now())
+	if err != nil {
+		s.logger.Printf("run service: fail remote claim run=%d: %v", runID, err)
+		return
+	}
+	if transitioned {
+		if err := s.repo.AppendEvent(ctx, runID, "lifecycle", fmt.Sprintf(`{"phase":"failed","reason":%q}`, red)); err != nil {
+			s.logger.Printf("run service: append claim-fail event run=%d: %v", runID, err)
+		}
+	}
+}
+
 // PrepareRemoteClaim enriches a run a remote runner just claimed: it derives
 // the run's token + grants from its binding (via the resolver), mints the
 // per-run token, persists the grants bound to it (git ref = the run-branch

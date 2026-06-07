@@ -120,6 +120,10 @@ func (h *RunnerControlHandler) Claim(w http.ResponseWriter, r *http.Request) {
 	if h.runSvc != nil {
 		spec, err := h.runSvc.PrepareRemoteClaim(r.Context(), run)
 		if err != nil {
+			// ClaimQueued already moved the run to running; if enrichment fails
+			// we must not leave it stranded there with no token/grants holding a
+			// pool slot. Fail it so the slot frees up (WI-238 Phase 8).
+			h.runSvc.FailRemoteClaim(r.Context(), run.ID, err.Error())
 			respondInternalError(w, r, err)
 			return
 		}
