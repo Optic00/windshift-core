@@ -205,6 +205,20 @@ func (s *RunService) Report(ctx context.Context, runID int, result RunnerResult)
 			result.Error = fmt.Sprintf("runner returned non-terminal status %q", result.Status)
 		}
 	}
+
+	// Host-side push of the run branch (WI-238). The windshift-agent holds no
+	// SCM credential and does not push; the orchestrator owns delivery, the
+	// same way the remote TriageRunner pushes runner-side before reporting. A
+	// push failure downgrades the run to failed so the PR hook does not try to
+	// open a PR for a branch that never reached the remote.
+	if status == models.AgentRunStatusSucceeded && st != nil && st.checkout != nil && st.req.Repo != nil && s.preparer != nil {
+		if err := s.preparer.Push(context.Background(), st.checkout, st.req.Repo.Token); err != nil {
+			s.logger.Printf("run service: push run branch run=%d: %v", runID, err)
+			status = models.AgentRunStatusFailed
+			result.Error = fmt.Sprintf("push run branch: %v", err)
+		}
+	}
+
 	s.finalize(runID, status, result.Error)
 	if err := s.repo.AppendEvent(ctx, runID, "lifecycle", fmt.Sprintf(`{"phase":%q}`, status)); err != nil {
 		s.logger.Printf("run service: append terminal event run=%d: %v", runID, err)

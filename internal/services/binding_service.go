@@ -352,11 +352,12 @@ func (s *BindingService) MaybeStartRunForAssignee(ctx context.Context, workspace
 			BaseRef:     binding.RepoBaseRef,
 			Token:       token,
 		}
-		// Forward the same token to the sandbox through the env-file path so
-		// the agent can push its run branch. The entrypoint turns it into a
-		// per-container GIT_ASKPASS helper; it never appears in docker argv or
-		// in .git/config.
-		req.Env["AGENT_GIT_TOKEN"] = token
+		// The SCM token stays host-side: repoprep uses it (via a per-clone
+		// GIT_ASKPASS helper) to clone the worktree and, after the run, to push
+		// the run branch. It is NOT injected into the container — the
+		// windshift-agent holds no SCM credential and never pushes (WI-238).
+		// GIT_TERMINAL_PROMPT=0 only keeps the agent's local `git commit` from
+		// blocking on a credential prompt.
 		req.Env["GIT_TERMINAL_PROMPT"] = "0"
 	}
 	if binding.LLMConnectionID != nil && s.llmRuntime != nil {
