@@ -11,9 +11,12 @@
 // Configuration is environment-only (operators bake it into the deployment):
 //
 //	WS_API_URL                   orchestrator base URL incl. API prefix (required, https://)
-//	WSRUNNER_REGISTRATION_TOKEN  pool registration token, wsrt_… (required)
+//	WSRUNNER_REGISTRATION_TOKEN  pool registration token, wsrt_… (required only at first
+//	                             bootstrap — when no injected/persisted credential exists)
+//	WSRUNNER_CREDENTIAL          per-instance credential, wsrc_… (optional; injected directly
+//	                             for immutable deploys, skips registration entirely)
+//	WSRUNNER_CREDENTIAL_FILE     path to persist/reuse the per-instance credential (default: <cache>/credential)
 //	WSRUNNER_ALLOW_INSECURE      set to 1 to permit a plaintext http:// WS_API_URL (dev only)
-//	WSRUNNER_CREDENTIAL_FILE     path to persist the per-instance credential (default: <cache>/credential)
 //	WSRUNNER_NAME                runner display name (default: hostname)
 //	WSRUNNER_IMAGE               windshift-agent container image (required to run jobs)
 //	WSRUNNER_DOCKER              docker binary (default: docker)
@@ -44,7 +47,6 @@ func main() {
 
 	baseURL := mustEnv(logger, "WS_API_URL")
 	requireHTTPS(logger, baseURL)
-	regToken := mustEnv(logger, "WSRUNNER_REGISTRATION_TOKEN")
 	name := envOr("WSRUNNER_NAME", hostnameOr("windshift-runner"))
 	image := os.Getenv("WSRUNNER_IMAGE")
 	dockerBin := envOr("WSRUNNER_DOCKER", "docker")
@@ -64,12 +66,12 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// Persist the per-instance credential across restarts (WI-238 security
-	// Phase 6): once registered, reuse the stored credential instead of
-	// replaying the pool registration token on every boot. Re-register only
-	// when there is no stored credential or the stored one no longer
-	// authenticates.
-	client := loadOrRegister(ctx, logger, baseURL, credFile, regToken, name)
+	// Resolve an authenticated client without re-registering on every restart
+	// (WI-238 security Phase 6): reuse an injected (WSRUNNER_CREDENTIAL) or
+	// persisted per-instance credential, and only fall back to registering with
+	// the pool token when no usable credential exists. So the registration token
+	// is needed only at first bootstrap and can be single-use.
+	client := loadOrRegister(ctx, logger, baseURL, credFile, name)
 	client.PollInterval = pollInterval
 	client.Logger = logger
 
@@ -137,23 +139,31 @@ func requireHTTPS(logger *log.Logger, baseURL string) {
 	logger.Fatalf("WS_API_URL must be https:// (got %q); set WSRUNNER_ALLOW_INSECURE=1 to override in development", baseURL)
 }
 
-// loadOrRegister returns an authenticated orchestrator client, reusing a
-// persisted per-instance credential when one is present and still valid, and
-// registering (then persisting the credential) otherwise. This stops the runner
-// from replaying the pool registration token on every restart (WI-238 security
-// Phase 6). A persisted credential is validated with a single heartbeat; if the
-// orchestrator rejects it, the runner falls back to a fresh registration.
-func loadOrRegister(ctx context.Context, logger *log.Logger, baseURL, credFile, regToken, name string) *services.HTTPOrchestratorClient {
-	if stored := readCredential(credFile); stored != "" {
-		client := services.NewHTTPOrchestratorClient(baseURL, stored, nil)
-		err := client.Heartbeat(ctx, 0)
-		if err == nil {
-			logger.Printf("reusing persisted runner credential from %s", credFile)
+// loadOrRegister returns an authenticated orchestrator client without
+// re-registering on every restart (WI-238 security Phase 6). It tries, in
+// order: a credential injected via WSRUNNER_CREDENTIAL (for immutable
+// deployments that bootstrap out of band), then the persisted credential file.
+// Only when neither yields a usable credential does it register with the pool
+// token — so WSRUNNER_REGISTRATION_TOKEN is required just at first bootstrap and
+// may be single-use. A reused credential is probed with one heartbeat: a
+// definitive 401/403 means it is stale and triggers a re-register; a transient
+// failure is trusted (the worker loop retries) so a boot-time blip never burns
+// the registration token.
+func loadOrRegister(ctx context.Context, logger *log.Logger, baseURL, credFile, name string) *services.HTTPOrchestratorClient {
+	if injected := strings.TrimSpace(os.Getenv("WSRUNNER_CREDENTIAL")); injected != "" {
+		if client, ok := useCredential(ctx, logger, baseURL, injected, "WSRUNNER_CREDENTIAL"); ok {
 			return client
 		}
-		logger.Printf("persisted credential at %s rejected (%v); re-registering", credFile, err)
+	}
+	if stored := readCredential(credFile); stored != "" {
+		if client, ok := useCredential(ctx, logger, baseURL, stored, credFile); ok {
+			return client
+		}
 	}
 
+	// No usable credential — register. Only here is the registration token
+	// needed.
+	regToken := mustEnv(logger, "WSRUNNER_REGISTRATION_TOKEN")
 	reg, err := services.RegisterRunner(ctx, baseURL, regToken, name, nil)
 	if err != nil {
 		logger.Fatalf("register with %s: %v", baseURL, err)
@@ -163,6 +173,26 @@ func loadOrRegister(ctx context.Context, logger *log.Logger, baseURL, credFile, 
 		logger.Printf("warning: could not persist credential to %s: %v (will re-register next restart)", credFile, err)
 	}
 	return services.NewHTTPOrchestratorClient(baseURL, reg.Credential, nil)
+}
+
+// useCredential probes a candidate credential with one heartbeat. It returns
+// (client, true) when the credential works or the control plane is only
+// transiently unreachable (trust it; the worker retries), and (nil, false) when
+// the orchestrator definitively rejected it (stale → caller re-registers).
+func useCredential(ctx context.Context, logger *log.Logger, baseURL, credential, source string) (*services.HTTPOrchestratorClient, bool) {
+	client := services.NewHTTPOrchestratorClient(baseURL, credential, nil)
+	err := client.Heartbeat(ctx, 0)
+	switch {
+	case err == nil:
+		logger.Printf("using runner credential from %s", source)
+		return client, true
+	case services.IsAuthRejection(err):
+		logger.Printf("runner credential from %s was rejected (%v); re-registering", source, err)
+		return nil, false
+	default:
+		logger.Printf("runner credential from %s: control plane unreachable (%v); proceeding, worker will retry", source, err)
+		return client, true
+	}
 }
 
 // readCredential returns the trimmed credential stored at path, or "" if the

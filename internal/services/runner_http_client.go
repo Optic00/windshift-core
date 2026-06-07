@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -16,6 +17,31 @@ import (
 // Wire DTOs for the remote-runner control plane (Initiative WI-141). Shared
 // by HTTPOrchestratorClient (the agent-binary side) and RunnerControlHandler
 // (the orchestrator side) so the contract lives in one place.
+
+// HTTPStatusError is returned by the control-plane client for a non-2xx
+// response. It carries the status code so callers can distinguish a definitive
+// auth rejection (the credential is stale and the runner should re-register)
+// from a transient/network failure (which should be retried, not re-registered).
+type HTTPStatusError struct {
+	StatusCode int
+	URL        string
+	Body       string
+}
+
+func (e *HTTPStatusError) Error() string {
+	return fmt.Sprintf("POST %s: status %d: %s", e.URL, e.StatusCode, e.Body)
+}
+
+// IsAuthRejection reports whether err is a control-plane response that rejected
+// the presented credential (401/403) — as opposed to a transient failure or a
+// network error, which leave it false.
+func IsAuthRejection(err error) bool {
+	var se *HTTPStatusError
+	if errors.As(err, &se) {
+		return se.StatusCode == http.StatusUnauthorized || se.StatusCode == http.StatusForbidden
+	}
+	return false
+}
 
 // RegisterRequest is the body of POST /runner/register.
 type RegisterRequest struct {
@@ -246,7 +272,7 @@ func doJSON(ctx context.Context, hc *http.Client, url, bearer string, body, out 
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("POST %s: status %d: %s", url, resp.StatusCode, strings.TrimSpace(string(msg)))
+		return &HTTPStatusError{StatusCode: resp.StatusCode, URL: url, Body: strings.TrimSpace(string(msg))}
 	}
 	if out != nil {
 		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
