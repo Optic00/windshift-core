@@ -41,10 +41,16 @@ func (h *RunnerControlHandler) resolveRunnerPool(w http.ResponseWriter, r *http.
 
 type mintRunnerTokenRequest struct {
 	Description string `json:"description"`
-	// TTLHours bounds the token's validity; 0 mints a non-expiring token
-	// (revoke to disable).
+	// TTLHours bounds the token's validity. 0 (unspecified) applies
+	// defaultRunnerTokenTTLHours so a token always expires by default (WI-238
+	// security Phase 6); set a large value for a long-lived token.
 	TTLHours int `json:"ttl_hours"`
 }
+
+// defaultRunnerTokenTTLHours is the validity applied to a registration token
+// when the caller does not specify one — 30 days. Registration tokens should
+// expire by default rather than live forever (WI-238 security Phase 6).
+const defaultRunnerTokenTTLHours = 24 * 30
 
 // mintRunnerTokenResponse returns the plaintext token exactly once, alongside
 // the persisted (hash-only) metadata.
@@ -76,9 +82,13 @@ func (h *RunnerControlHandler) MintRunnerToken(w http.ResponseWriter, r *http.Re
 		respondBadRequest(w, r, "ttl_hours cannot be negative")
 		return
 	}
+	ttlHours := req.TTLHours
+	if ttlHours == 0 {
+		ttlHours = defaultRunnerTokenTTLHours
+	}
 	createdBy := user.ID
 	full, tok, err := h.registry.MintRegistrationToken(
-		r.Context(), poolID, &createdBy, req.Description, time.Duration(req.TTLHours)*time.Hour,
+		r.Context(), poolID, &createdBy, req.Description, time.Duration(ttlHours)*time.Hour,
 	)
 	if err != nil {
 		respondInternalError(w, r, err)
