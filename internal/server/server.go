@@ -2033,10 +2033,10 @@ func openPRViaCredentialResolver(cr *scm.CredentialResolver) services.OpenPRFn {
 }
 
 // bootCodingAgentRunService builds the production WI-89 + WI-90 RunService
-// when cfg.CodingAgent.RunnerImage is configured: a DockerPiRunner spawning
-// pi-coding-agent containers, the worktree manager, the per-run token
-// minter, and the post-run hook that opens a draft PR (via either GitHub
-// or Gitea, transparently) and writes back an item_scm_links row.
+// when cfg.CodingAgent.RunnerImage is configured: a DockerAgentRunner
+// spawning windshift-agent containers, the worktree manager, the per-run
+// token minter, and the post-run hook that opens a draft PR (via either
+// GitHub or Gitea, transparently) and writes back an item_scm_links row.
 // Returns an error for any misconfig so the rest of the server still
 // comes up with the harness disabled.
 func bootCodingAgentRunService(
@@ -2059,10 +2059,11 @@ func bootCodingAgentRunService(
 		return nil, fmt.Errorf("coding-agent token service: %w", err)
 	}
 
+	// The windshift-agent reaches the model only through the run-scoped
+	// llm-proxy; per-run LLM env (LLM_BASE_URL + brokered token) is layered
+	// on by BindingService. LLMModel is the only static fallback, used when
+	// a binding carries no llm_connection_id.
 	staticEnv := map[string]string{}
-	if cfg.LLMProvider != "" {
-		staticEnv["LLM_PROVIDER"] = cfg.LLMProvider
-	}
 	if cfg.LLMModel != "" {
 		staticEnv["LLM_MODEL"] = cfg.LLMModel
 	}
@@ -2071,9 +2072,9 @@ func bootCodingAgentRunService(
 	if cfg.Network != "" {
 		containerArgs = append(containerArgs, "--network="+cfg.Network)
 	}
-	// Kind-dispatching runner (WI-146): coding_agent runs the pi harness on
-	// the fixed runner image; action_container / ci_task run the job's admin
-	// image as a plain container, with the same sandbox network.
+	// Kind-dispatching runner (WI-146): coding_agent runs the windshift-agent
+	// harness on the fixed runner image; action_container / ci_task run the
+	// job's admin image as a plain container, with the same sandbox network.
 	runner := &services.KindDispatchRunner{
 		CodingAgent: &services.DockerPiRunner{
 			Image:         cfg.RunnerImage,

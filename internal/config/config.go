@@ -120,21 +120,26 @@ type LLMConfig struct {
 
 // CodingAgentConfig configures the coding-agent harness (WI-89). When
 // RunnerImage is non-empty the server constructs a production RunService
-// that spawns pi-coding-agent inside that container image, wires it
-// through the BindingService, and the assignee-change trigger fires
-// real runs. When empty the harness stays in observer mode — bindings
-// can still be created, the trigger logs but no-ops.
+// that spawns the windshift-agent harness (the node-free codehamr fork,
+// WI-204) inside that container image, wires it through the
+// BindingService, and the assignee-change trigger fires real runs. When
+// empty the harness stays in observer mode — bindings can still be
+// created, the trigger logs but no-ops.
+//
+// The agent reaches the model only through the llm-proxy broker, so no
+// provider key or provider selection is injected into the container; it
+// needs only an LLM_BASE_URL (set per-run to the run-scoped proxy) and a
+// model id.
 //
 // Sandbox knobs (Network/PidsLimit/Memory/CPUs) layer onto the hardened
-// `docker run` defaults baked into DockerPiRunner. They are tunables for
-// operator-specific resource budgets, NOT switches that can turn the
+// `docker run` defaults baked into DockerAgentRunner. They are tunables
+// for operator-specific resource budgets, NOT switches that can turn the
 // hardening off.
 type CodingAgentConfig struct {
-	RunnerImage  string // e.g. "windshift/coding-agent:wi-89"
+	RunnerImage  string // e.g. "ghcr.io/windshiftapp/windshift-agent:latest"
 	DockerBinary string // defaults to "docker"
 	WorktreeRoot string // absolute host path; required if RunnerImage is set
 	GlobalCap    int    // RunService.GlobalCap; defaults to 8
-	LLMProvider  string // env LLM_PROVIDER for the container
 	LLMModel     string // fallback env LLM_MODEL for the container when a binding has no llm_connection_id
 	WSAPIURL     string // URL the runner container uses to reach this Windshift API; defaults to BASE_URL
 	Network      string // docker --network value; defaults to "coding-agent-egress" (operator-created, egress-filtered)

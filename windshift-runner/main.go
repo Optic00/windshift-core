@@ -3,7 +3,7 @@
 //
 // On start it self-registers with the orchestrator using a pool registration
 // token, exchanges it for a per-instance credential, then runs the shared
-// services.RunWorker loop against the HTTP transport with a DockerPiRunner
+// services.RunWorker loop against the HTTP transport with a DockerAgentRunner
 // core: claim a queued run for its pool, execute it in a throwaway container,
 // report the result. It heartbeats on an interval to keep its lease alive and
 // shuts down gracefully on SIGINT/SIGTERM (finishing any in-flight job first).
@@ -13,7 +13,7 @@
 //	WS_API_URL                   orchestrator base URL incl. API prefix (required)
 //	WSRUNNER_REGISTRATION_TOKEN  pool registration token, wsrt_… (required)
 //	WSRUNNER_NAME                runner display name (default: hostname)
-//	WSRUNNER_IMAGE               coding-agent container image (required to run jobs)
+//	WSRUNNER_IMAGE               windshift-agent container image (required to run jobs)
 //	WSRUNNER_DOCKER              docker binary (default: docker)
 //	WSRUNNER_POLL_INTERVAL       claim poll interval when idle (default: 2s)
 //	WSRUNNER_HEARTBEAT_INTERVAL  lease heartbeat interval (default: 30s)
@@ -70,9 +70,9 @@ func main() {
 
 	go heartbeatLoop(ctx, client, heartbeatInterval, logger)
 
-	// Kind-dispatching runner (WI-146): coding_agent jobs run the pi harness;
-	// action_container / ci_task jobs run the job's admin image as a plain
-	// container.
+	// Kind-dispatching runner (WI-146): coding_agent jobs run the windshift-agent
+	// harness; action_container / ci_task jobs run the job's admin image as a
+	// plain container.
 	kindRunner := &services.KindDispatchRunner{
 		CodingAgent: &services.DockerPiRunner{
 			Image:         image,
