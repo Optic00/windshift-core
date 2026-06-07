@@ -139,6 +139,7 @@ func (s *RunService) claimNext() *ClaimedJob {
 				continue
 			}
 			env["WS_TOKEN"] = token
+			applyLLMProxyEnv(env, job.req.Grants, job.runID, token)
 		}
 
 		s.claimsMu.Lock()

@@ -364,7 +364,7 @@ func (s *BindingService) MaybeStartRunForAssignee(ctx context.Context, workspace
 		if err != nil {
 			return fmt.Errorf("resolve llm runtime: %w", err)
 		}
-		applyLLMRuntimeEnv(req.Env, llmCfg)
+		applyLLMModelEnv(req.Env, llmCfg)
 	}
 	// Mint a per-run ws token + snapshot the run's access-layer grants
 	// (WI-144). Shared with the remote claim path via bindingTokenAndGrants so
@@ -432,6 +432,17 @@ func (s *BindingService) ResolveRunInputs(ctx context.Context, run *models.Agent
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("resolve run inputs: build env: %w", err)
 	}
+	// Model id for the agent (same as the local path); the broker token and
+	// llm-proxy base URL are layered on at claim by applyLLMProxyEnv. No raw
+	// provider key travels to a remote runner — it reaches the model only
+	// through the llm-proxy with its per-run token (WI-238).
+	if binding.LLMConnectionID != nil && s.llmRuntime != nil {
+		llmCfg, err := s.llmRuntime.ConnectionRuntime(ctx, *binding.LLMConnectionID)
+		if err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("resolve run inputs: llm runtime: %w", err)
+		}
+		applyLLMModelEnv(env, llmCfg)
+	}
 	spec, grants := s.bindingTokenAndGrants(binding, itemID)
 
 	// Repo-prep inputs for a remote runner: only when the binding is repo-
@@ -483,20 +494,17 @@ func (s *BindingService) buildRunEnv(ctx context.Context, workspaceID, itemID in
 	return env, nil
 }
 
-func applyLLMRuntimeEnv(env map[string]string, cfg *llm.ConnectionRuntimeConfig) {
+// applyLLMModelEnv sets only the model id for the agent container. The agent
+// reaches the provider exclusively through the run-scoped llm-proxy, so no raw
+// provider key, base URL, provider type, or API format is ever injected into
+// the (untrusted) container — those stay server-side in ProxyLLM, which the
+// agent calls with its per-run token (WI-238). LLM_BASE_URL + LLM_API_KEY (the
+// run token) are layered on at claim time by applyLLMProxyEnv.
+func applyLLMModelEnv(env map[string]string, cfg *llm.ConnectionRuntimeConfig) {
 	if cfg == nil {
 		return
 	}
-	env["LLM_PROVIDER"] = cfg.ProviderType
-	env["LLM_PROVIDER_TYPE"] = cfg.ProviderType
-	env["LLM_API_FORMAT"] = cfg.APIFormat
 	env["LLM_MODEL"] = cfg.Model
-	if cfg.APIKey != "" {
-		env["LLM_API_KEY"] = cfg.APIKey
-	}
-	if cfg.BaseURL != "" {
-		env["LLM_BASE_URL"] = cfg.BaseURL
-	}
 }
 
 // containsInt reports whether xs contains v.

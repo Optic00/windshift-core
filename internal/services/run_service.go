@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -504,6 +505,28 @@ func (s *RunService) mintTokenAndGrants(ctx context.Context, runID int, spec Tok
 	return minted.Token, nil
 }
 
+// applyLLMProxyEnv wires the agent container to reach the model only through
+// the run-scoped llm-proxy broker (WI-238): LLM_BASE_URL points at
+// <WS_API_URL>/llm-proxy/<runID> (the agent appends /v1/chat/completions) and
+// LLM_API_KEY carries the per-run token, which ProxyLLM validates and swaps for
+// the real provider credential server-side. No raw provider key ever reaches
+// the (untrusted) container. A no-op when the run has no LLM grant, or when no
+// API base URL is known (the agent then fails loudly with no LLM_BASE_URL
+// rather than silently falling back to a direct provider call). Shared by the
+// local claim preamble and the remote claim enrichment so both transports
+// build identical LLM env.
+func applyLLMProxyEnv(env map[string]string, grants *models.RunGrants, runID int, token string) {
+	if grants == nil || grants.LLM == nil {
+		return
+	}
+	base := strings.TrimRight(env["WS_API_URL"], "/")
+	if base == "" {
+		return
+	}
+	env["LLM_BASE_URL"] = fmt.Sprintf("%s/llm-proxy/%d", base, runID)
+	env["LLM_API_KEY"] = token
+}
+
 // PrepareRemoteClaim enriches a run a remote runner just claimed: it derives
 // the run's token + grants from its binding (via the resolver), mints the
 // per-run token, persists the grants bound to it (git ref = the run-branch
@@ -530,6 +553,7 @@ func (s *RunService) PrepareRemoteClaim(ctx context.Context, run *models.AgentRu
 			return JobSpec{}, fmt.Errorf("remote claim: mint token run=%d: %w", run.ID, err)
 		}
 		env["WS_TOKEN"] = token
+		applyLLMProxyEnv(env, grants, run.ID, token)
 	}
 	spec.Env = env
 	// A remote runner prepares its own checkout from this; the host
