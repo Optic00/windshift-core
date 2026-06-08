@@ -8,4 +8,4 @@
   };
 </script>
 
-<img src="/windshift-3.svg" alt="Windshift" class="{sizes[size] || sizes.medium}" />
+<img src="windshift-3.svg" alt="Windshift" class="{sizes[size] || sizes.medium}" />

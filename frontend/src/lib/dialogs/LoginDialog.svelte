@@ -213,7 +213,7 @@
     <!-- Header -->
     <div class="text-center mb-6">
       <div class="flex justify-center mb-4">
-        <img src="/windshift-3.svg" alt={APP_NAME} class="w-12 h-12" />
+        <img src="windshift-3.svg" alt={APP_NAME} class="w-12 h-12" />
       </div>
       <h2 class="text-xl font-semibold text-[var(--ds-text)]">{t('auth.signIn')}</h2>
       <p class="text-sm text-[var(--ds-text-subtle)] mt-1">{t('auth.loginSubtitle')}</p>

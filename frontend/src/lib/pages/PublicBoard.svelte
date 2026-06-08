@@ -64,7 +64,7 @@
   <!-- Header -->
   <header class="public-board-header" style="background-color: var(--ds-surface-raised); border-bottom: 1px solid var(--ds-border); padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; gap: 16px;">
     <div style="display: flex; align-items: center; gap: 12px;">
-      <img src="/windshift-3.svg" alt="Windshift" style="width: 28px; height: 28px;" />
+      <img src="windshift-3.svg" alt="Windshift" style="width: 28px; height: 28px;" />
       {#if board}
         <div>
           <h1 style="font-size: 18px; font-weight: 600; margin: 0; line-height: 1.3;">{board.collection.name}</h1>
@@ -233,7 +233,7 @@
   <!-- Footer -->
   <footer style="padding: 12px 24px; text-align: center; border-top: 1px solid var(--ds-border); background-color: var(--ds-surface-raised);">
     <div style="display: flex; align-items: center; justify-content: center; gap: 8px;">
-      <img src="/windshift-3.svg" alt="Windshift" style="width: 16px; height: 16px; opacity: 0.5;" />
+      <img src="windshift-3.svg" alt="Windshift" style="width: 16px; height: 16px; opacity: 0.5;" />
       <span style="font-size: 12px; color: var(--ds-text-subtle);">Powered by Windshift</span>
     </div>
   </footer>

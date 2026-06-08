@@ -117,7 +117,7 @@
       <!-- Header -->
       <div class="flex items-center gap-4 mb-6">
         <div class="flex-shrink-0">
-          <img src="/windshift-3.svg" alt="Windshift" class="w-14 h-14" />
+          <img src="windshift-3.svg" alt="Windshift" class="w-14 h-14" />
         </div>
         <div class="flex-1">
           <h1 class="text-2xl font-semibold mb-1" style="color: var(--ds-text);">
