@@ -3,10 +3,8 @@ package handlers
 import (
 	"bytes"
 	"compress/gzip"
-	"context"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -147,11 +145,10 @@ func (h *RunnerBrokerHandler) ProxyLLM(w http.ResponseWriter, r *http.Request) {
 		respondServiceUnavailable(w, r, "llm connection unavailable")
 		return
 	}
+	provider := llm.GetProvider(llm.ProviderType(cfg.ProviderType))
 	base := cfg.BaseURL
-	if base == "" {
-		if p := llm.GetProvider(llm.ProviderType(cfg.ProviderType)); p != nil {
-			base = p.BaseURL
-		}
+	if base == "" && provider != nil {
+		base = provider.BaseURL
 	}
 	target, err := url.Parse(base)
 	if err != nil || target.Host == "" {
@@ -159,24 +156,38 @@ func (h *RunnerBrokerHandler) ProxyLLM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	upstreamPath := r.PathValue("path")
-	// Restrict the run token to the provider's inference API surface (WI-238
-	// security Phase 7): only the versioned API paths (v1/chat/completions,
-	// v1/messages, v1/models, …) are reachable, so a leaked run token can't be
-	// used to drive non-inference provider endpoints through the injected key.
-	if !strings.HasPrefix(upstreamPath, "v1/") {
+	providerType := strings.ToLower(cfg.ProviderType)
+	// The Go agent speaks OpenAI-compatible /v1/chat/completions. Until the
+	// broker implements OpenAI→Anthropic translation, reject Anthropic bindings
+	// clearly instead of forwarding an incompatible request shape.
+	if providerType == "anthropic" {
+		respondServiceUnavailable(w, r, "anthropic coding-agent bindings require broker translation that is not enabled")
+		return
+	}
+	// Restrict the run token to the exact inference API surface the Go agent
+	// needs. A leaked run token must not be usable to drive files, fine-tuning,
+	// batch, or arbitrary provider APIs through the injected key.
+	if !allowedLLMProxyEndpoint(r.Method, upstreamPath) {
 		respondForbidden(w, r)
 		return
 	}
 	// Bound the request body (WI-238 security Phase 7).
 	r.Body = http.MaxBytesReader(w, r.Body, maxLLMBrokerBody)
 	apiKey := cfg.APIKey
-	providerType := strings.ToLower(cfg.ProviderType)
+	providerChatPath := "/v1/chat/completions"
+	if provider != nil && provider.ChatPath != "" {
+		providerChatPath = provider.ChatPath
+	}
 	proxy := &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
 			req.URL.Scheme = target.Scheme
 			req.URL.Host = target.Host
 			req.Host = target.Host
-			req.URL.Path = singleJoiningSlash(target.Path, upstreamPath)
+			outPath := upstreamPath
+			if strings.TrimPrefix(upstreamPath, "/") == "v1/chat/completions" {
+				outPath = strings.TrimPrefix(providerChatPath, "/")
+			}
+			req.URL.Path = singleJoiningSlash(target.Path, outPath)
 			req.URL.RawPath = ""
 			// Replace the run-token with the real provider credential.
 			req.Header.Del("Authorization")
@@ -191,8 +202,37 @@ func (h *RunnerBrokerHandler) ProxyLLM(w http.ResponseWriter, r *http.Request) {
 				req.Header.Set("Authorization", "Bearer "+apiKey)
 			}
 		},
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			respondServiceUnavailable(w, r, services.RedactString(err.Error()))
+		},
 	}
 	proxy.ServeHTTP(w, r)
+}
+
+// allowedGitProxyPath reports whether the {gitpath...} tail is one of the three
+// endpoints a git smart-HTTP client uses. Anything else (notably a "../"
+// traversal tail) is rejected so the proxied upstream path cannot escape the
+// grant-validated owner/repo. The tail is the decoded PathValue, so an encoded
+// "%2e%2e" already appears here as "..".
+func allowedGitProxyPath(path string) bool {
+	switch strings.TrimPrefix(path, "/") {
+	case "info/refs", "git-upload-pack", "git-receive-pack":
+		return true
+	default:
+		return false
+	}
+}
+
+func allowedLLMProxyEndpoint(method, path string) bool {
+	path = strings.TrimPrefix(path, "/")
+	switch {
+	case method == http.MethodPost && path == "v1/chat/completions":
+		return true
+	case method == http.MethodGet && path == "v1/models":
+		return true
+	default:
+		return false
+	}
 }
 
 // ProxyGit reverse-proxies a running job's git smart-HTTP traffic to its
@@ -243,6 +283,19 @@ func (h *RunnerBrokerHandler) ProxyGit(w http.ResponseWriter, r *http.Request) {
 	}
 	repoName := owner + "/" + strings.TrimSuffix(repo, ".git")
 	if status != models.AgentRunStatusRunning || grants == nil || grants.Git == nil || grants.Git.Repo != repoName {
+		respondForbidden(w, r)
+		return
+	}
+
+	// Restrict the git tail to the three git smart-HTTP endpoints (WI-238).
+	// The repo grant is enforced via owner/repo above, but gitPath is appended
+	// raw into the upstream URL path, and a URL-encoded "%2e%2e" tail decodes to
+	// "../" *after* ServeMux's cleanPath redirect runs — so a tail like
+	// "%2e%2e/%2e%2e/other/repo/git-upload-pack" keeps owner/repo (and thus the
+	// grant check) intact while making the proxied path traverse to a different
+	// repo on the SCM host, abusing the injected credential. Allow-listing the
+	// exact endpoints closes that traversal regardless of encoding.
+	if !allowedGitProxyPath(gitPath) {
 		respondForbidden(w, r)
 		return
 	}
@@ -346,35 +399,24 @@ func (h *RunnerBrokerHandler) ProxyHTTP(w http.ResponseWriter, r *http.Request) 
 }
 
 // ssrfSafeTransport is an http.RoundTripper whose dialer rejects connections
-// to private/loopback/link-local IPs (checked post-resolution to defeat DNS
-// rebinding). Used by the HTTP egress broker.
+// to non-public IPs. It reuses utils.SafeNetDialer, which checks the resolved
+// address post-resolution but pre-handshake (via ControlContext), so the guard
+// is robust against DNS rebinding. The blocklist is the conservative SSRF
+// superset (loopback, RFC1918, CGNAT 100.64/10, link-local, multicast and the
+// unspecified 0.0.0.0/:: addresses that route to localhost) — broader than the
+// plain IsPrivateIP check, which misses several localhost-reachable ranges.
+// Used by the HTTP egress broker.
 func ssrfSafeTransport() http.RoundTripper {
-	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	return &http.Transport{
 		// No ProxyFromEnvironment (WI-238 security Phase 7): an env-configured
 		// HTTP(S)_PROXY would be dialed directly, bypassing the post-resolution
-		// private-IP check below and reopening the SSRF hole the dialer closes.
-		// The broker always connects to the validated target itself.
+		// blocklist below and reopening the SSRF hole the dialer closes. The
+		// broker always connects to the validated target itself.
 		Proxy:                 nil,
 		ResponseHeaderTimeout: 30 * time.Second,
 		IdleConnTimeout:       60 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			host, port, err := net.SplitHostPort(addr)
-			if err != nil {
-				return nil, err
-			}
-			ips, err := net.LookupIP(host)
-			if err != nil {
-				return nil, err
-			}
-			for _, ip := range ips {
-				if utils.IsPrivateIP(ip) {
-					return nil, fmt.Errorf("blocked egress to non-public address %s", ip)
-				}
-			}
-			return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].String(), port))
-		},
+		DialContext:           utils.SafeNetDialer(10 * time.Second).DialContext,
 	}
 }
 

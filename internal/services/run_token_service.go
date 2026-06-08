@@ -22,8 +22,8 @@ const MaxAgentTokenTTL = 60 * time.Minute
 // MintRequest describes a short-lived API token to issue for a coding-agent
 // run. ActingUserID is the user the run runs as (the agent or centralized
 // service user per the binding's identity gate, WI-87). Scopes default to
-// auth.DefaultAgentScopes when nil; TTL defaults to 1 hour. Name is a free-
-// form label stored on the api_tokens row for forensics (e.g.
+// auth.DefaultCodingAgentRunScopes when nil; TTL defaults to 1 hour. Name is a
+// free-form label stored on the api_tokens row for forensics (e.g.
 // "agent-run:42:WI-71").
 type MintRequest struct {
 	ActingUserID int
@@ -63,18 +63,18 @@ func NewRunTokenService(tm *auth.TokenManager) (*RunTokenService, error) {
 	return &RunTokenService{tm: tm, logger: log.Default()}, nil
 }
 
-// Mint issues a short-lived, IsTemporary=true API token for the given
-// acting user. Scopes are restricted to auth.DefaultAgentScopes (no
-// admin:* and no legacy scope strings); TTL is capped at
-// MaxAgentTokenTTL. The token never appears in the user-facing token
-// list (the IsTemporary flag is what gates that).
+// Mint issues a short-lived, IsTemporary=true API token for the given acting
+// user. Scopes are restricted to auth.DefaultCodingAgentRunScopes (no admin:*,
+// broad write/delete, MCP, or legacy scope strings); TTL is capped at
+// MaxAgentTokenTTL. The token never appears in the user-facing token list (the
+// IsTemporary flag is what gates that).
 func (s *RunTokenService) Mint(ctx context.Context, req MintRequest) (*MintResult, error) {
 	if req.ActingUserID <= 0 {
 		return nil, errors.New("run token service: ActingUserID is required")
 	}
 	scopes := req.Scopes
 	if len(scopes) == 0 {
-		scopes = append(scopes, auth.DefaultAgentScopes...)
+		scopes = append(scopes, auth.DefaultCodingAgentRunScopes...)
 	}
 	if err := auth.ValidateAgentScopes(scopes); err != nil {
 		return nil, fmt.Errorf("run token service: %w", err)

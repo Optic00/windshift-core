@@ -5,11 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"time"
 
 	"windshift/internal/database"
 	"windshift/internal/models"
+	"windshift/internal/redact"
 )
 
 // AgentRunRepository persists coding-agent runs and their event streams.
@@ -425,10 +425,10 @@ func (r *AgentRunRepository) FinalizeRunning(ctx context.Context, id int, status
 // be a JSON document (valid object, array, or scalar); the column type is
 // JSONB on Postgres and TEXT on SQLite, but we treat it as opaque here.
 //
-// payloadJSON is scrubbed via redactURLCredentials before persistence so
-// any token-bearing URL fragment (e.g. an upstream git error containing
-// https://oauth2:<token>@host/...) cannot leak into the event stream
-// that's visible to every item viewer in the workspace.
+// payloadJSON is scrubbed before persistence so token-bearing output (URL
+// credentials, bearer headers, env assignments, broker tokens, JSON secret
+// fields, etc.) cannot leak into the event stream that's visible to every item
+// viewer in the workspace.
 func (r *AgentRunRepository) AppendEvent(ctx context.Context, runID int, eventType, payloadJSON string) error {
 	if payloadJSON == "" {
 		payloadJSON = "{}"
@@ -436,24 +436,11 @@ func (r *AgentRunRepository) AppendEvent(ctx context.Context, runID int, eventTy
 	_, err := r.db.ExecWriteContext(ctx, `
 		INSERT INTO agent_run_events(run_id, type, payload_json)
 		VALUES (?, ?, ?)
-	`, runID, eventType, redactURLCredentials(payloadJSON))
+	`, runID, eventType, redact.String(payloadJSON))
 	if err != nil {
 		return fmt.Errorf("failed to append agent_run_event: %w", err)
 	}
 	return nil
-}
-
-// redactURLCredentials is the package-local mirror of
-// services.RedactString. Kept here rather than imported because the
-// repository layer must not depend on services (layer guard); the
-// pattern is short enough to duplicate.
-var urlCredRE = regexp.MustCompile(`(https?://)[^@/\s:]+:[^@/\s]+@`)
-
-func redactURLCredentials(s string) string {
-	if s == "" {
-		return s
-	}
-	return urlCredRE.ReplaceAllString(s, "${1}[REDACTED]@")
 }
 
 // ListForWorkspace returns the most recent N runs in the workspace,

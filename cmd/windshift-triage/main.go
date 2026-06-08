@@ -99,6 +99,7 @@ func runPush(args []string) error {
 	tokenFile := fs.String("token-file", "", "file holding the SCM token (askpass)")
 	transport := fs.String("git-transport", "askpass", "askpass|proxy")
 	proxyURL := fs.String("proxy-url", "", "git-proxy URL (proxy transport)")
+	remoteURL := fs.String("remote-url", "", "trusted push URL (askpass transport)")
 	allowFileURL := fs.Bool("allow-file-url", false, "permit file:// remotes (tests only)")
 	_ = fs.Parse(args)
 
@@ -110,15 +111,18 @@ func runPush(args []string) error {
 		return err
 	}
 
-	// In proxy transport, origin is rewritten to the git-proxy, which enforces
-	// the single granted ref server-side. In askpass transport, origin already
-	// points at the real remote (set during prepare) and the token authenticates.
-	remoteOverride := ""
+	// PushBranch never trusts origin from the agent-mutated checkout; every
+	// transport must provide a trusted target URL. Proxy transport uses the
+	// git-proxy, which enforces the single granted ref server-side.
+	remoteOverride := *remoteURL
 	if *transport == "proxy" {
 		if *proxyURL == "" {
 			return fmt.Errorf("--proxy-url is required for --git-transport=proxy")
 		}
 		remoteOverride = *proxyURL
+	}
+	if remoteOverride == "" {
+		return fmt.Errorf("--remote-url is required for --git-transport=askpass")
 	}
 
 	head, err := repoprep.PushBranch(context.Background(), repoprep.PushOptions{

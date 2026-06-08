@@ -59,8 +59,8 @@ var ErrBindingDuplicate = errors.New("workspace agent binding: a binding for thi
 
 // Insert persists a new binding and returns its id. token_ttl_minutes
 // defaults to 60 when caller passes <= 0; scopes default to an empty array
-// (the BindingService merges with auth.DefaultAgentScopes at trigger time
-// if needed).
+// (RunTokenService expands that to auth.DefaultCodingAgentRunScopes at mint
+// time).
 func (r *WorkspaceAgentBindingRepository) Insert(ctx context.Context, b *models.WorkspaceAgentBinding) (int, error) {
 	if b.TokenTTLMinutes <= 0 {
 		b.TokenTTLMinutes = 60

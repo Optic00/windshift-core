@@ -47,6 +47,7 @@ type Prepared struct {
 	Path       string
 	Branch     string
 	BaseCommit string
+	RemoteURL  string
 
 	// internal: retained so Push/Cleanup need not recompute.
 	cacheDir string
@@ -199,6 +200,7 @@ func (p *Preparer) Prepare(ctx context.Context, spec RepoSpec, runID int) (*Prep
 		Path:       dest,
 		Branch:     branch,
 		BaseCommit: baseCommit,
+		RemoteURL:  spec.RemoteURL,
 		cacheDir:   cacheDir,
 		repoKey:    repoKey,
 	}, nil
@@ -216,6 +218,7 @@ func (p *Preparer) Push(ctx context.Context, pr *Prepared, token string) error {
 	_, err := PushBranch(ctx, PushOptions{
 		Dest:         pr.Path,
 		Branch:       pr.Branch,
+		RemoteURL:    pr.RemoteURL,
 		Token:        token,
 		GitBinary:    p.gitBinary,
 		AllowFileURL: p.allowFileURL,
@@ -235,32 +238,58 @@ type PushOptions struct {
 	AllowFileURL bool
 }
 
-// PushBranch pushes exactly Branch from Dest to origin and returns the pushed
-// head SHA. When RemoteURL is set it first rewrites origin (the proxy transport
-// points origin at the git-proxy). It never pushes any other ref — the single
-// granted ref is the contract the git-proxy enforces server-side (WI-168).
+// PushBranch pushes exactly Branch from Dest to RemoteURL and returns the
+// pushed head SHA. The push itself is performed from a fresh host-owned
+// temporary repository, never from the agent-mutated checkout. That keeps
+// agent-written .git/config (url.*.insteadOf, remotes, credential helpers,
+// includeIf, fsmonitor, hooks, etc.) out of the credentialed push path; the
+// only target used is the server-derived RemoteURL supplied by the caller.
 func PushBranch(ctx context.Context, opts PushOptions) (string, error) {
 	if opts.Dest == "" || opts.Branch == "" {
 		return "", errors.New("repoprep: Dest and Branch are required")
+	}
+	if opts.RemoteURL == "" {
+		return "", errors.New("repoprep: RemoteURL is required for sanitized push")
 	}
 	gitBin := opts.GitBinary
 	if gitBin == "" {
 		gitBin = "git"
 	}
-	if opts.RemoteURL != "" {
-		if _, err := gitOutputEnv(ctx, gitBin, opts.AllowFileURL, opts.Dest, nil, "remote", "set-url", "origin", opts.RemoteURL); err != nil {
-			return "", fmt.Errorf("set origin url: %w", err)
-		}
+	destAbs, err := filepath.Abs(opts.Dest)
+	if err != nil {
+		return "", fmt.Errorf("abs dest: %w", err)
 	}
-	refspec := fmt.Sprintf("refs/heads/%s:refs/heads/%s", opts.Branch, opts.Branch)
-	if err := gitWithToken(ctx, gitBin, opts.AllowFileURL, opts.Dest, opts.Token, "push", "origin", refspec); err != nil {
-		return "", fmt.Errorf("push %s: %w", opts.Branch, err)
-	}
-	sha, err := gitOutputEnv(ctx, gitBin, opts.AllowFileURL, opts.Dest, nil, "rev-parse", "refs/heads/"+opts.Branch)
+	shaOut, err := gitOutputEnv(ctx, gitBin, opts.AllowFileURL, destAbs, nil, "rev-parse", "refs/heads/"+opts.Branch+"^{commit}")
 	if err != nil {
 		return "", fmt.Errorf("rev-parse %s: %w", opts.Branch, err)
 	}
-	return strings.TrimSpace(sha), nil
+	sha := strings.TrimSpace(shaOut)
+
+	tmp, err := os.MkdirTemp("", "windshift-sanitized-push-*")
+	if err != nil {
+		return "", fmt.Errorf("temp push repo: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(tmp) }()
+	if _, err := gitOutputEnv(ctx, gitBin, opts.AllowFileURL, tmp, nil, "init", "."); err != nil {
+		return "", fmt.Errorf("init sanitized push repo: %w", err)
+	}
+	fetchSpec := fmt.Sprintf("+refs/heads/%s:refs/heads/%s", opts.Branch, opts.Branch)
+	if _, err := gitOutputEnv(ctx, gitBin, true, tmp, nil, "fetch", "--no-tags", "--no-recurse-submodules", destAbs, fetchSpec); err != nil {
+		return "", fmt.Errorf("fetch branch into sanitized push repo: %w", err)
+	}
+	fetchedOut, err := gitOutputEnv(ctx, gitBin, opts.AllowFileURL, tmp, nil, "rev-parse", "refs/heads/"+opts.Branch+"^{commit}")
+	if err != nil {
+		return "", fmt.Errorf("rev-parse sanitized %s: %w", opts.Branch, err)
+	}
+	if fetched := strings.TrimSpace(fetchedOut); fetched != sha {
+		return "", fmt.Errorf("sanitized push repo fetched %s, expected %s", fetched, sha)
+	}
+
+	refspec := fmt.Sprintf("%s:refs/heads/%s", sha, opts.Branch)
+	if err := gitWithToken(ctx, gitBin, opts.AllowFileURL, tmp, opts.Token, "push", opts.RemoteURL, refspec); err != nil {
+		return "", fmt.Errorf("push %s: %w", opts.Branch, err)
+	}
+	return sha, nil
 }
 
 // Cleanup removes the per-run checkout. Best-effort: a stale checkout is wasted
