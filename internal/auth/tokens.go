@@ -136,6 +136,21 @@ var DefaultAgentScopes = []string{
 	ScopeMCPAccess,
 }
 
+// DefaultCodingAgentRunScopes is the narrowed scope set granted to short-lived
+// per-run coding-agent tokens when a binding does not explicitly request
+// scopes. It is intentionally smaller than DefaultAgentScopes: no workspace
+// write, no pages delete/write, no assets write, no tests write, and no MCP.
+var DefaultCodingAgentRunScopes = []string{
+	ScopeItemsRead, ScopeItemsWrite,
+	ScopeWorkspacesRead,
+	ScopeUsersRead,
+	ScopeItemTypesRead, ScopeWorkflowsRead,
+	ScopeStatusesRead, ScopePrioritiesRead, ScopeCustomFieldsRead,
+	ScopeMilestonesRead, ScopeIterationsRead, ScopeProjectsRead,
+	ScopePagesRead,
+	ScopeTestsRead,
+}
+
 // AllValidScopes is the complete set of valid scope strings for validation.
 var AllValidScopes = []string{
 	ScopeItemsRead, ScopeItemsWrite, ScopeItemsDelete,
@@ -234,15 +249,15 @@ func ValidateScopes(scopes []string) error {
 	return nil
 }
 
-// ValidateAgentScopes restricts coding-agent run tokens to the
-// DefaultAgentScopes set: no admin:* scopes, no legacy "read"/"write"/
-// "admin" strings, no items:delete or planning :write/:delete scopes that
-// the default set deliberately excludes. The harness mints tokens that
-// run inside an attacker-reachable container, so the surface must stay
-// narrow regardless of what the binding's workspace admin requested.
+// ValidateAgentScopes restricts coding-agent run tokens to the narrowed
+// DefaultCodingAgentRunScopes set: no admin:* scopes, no legacy
+// "read"/"write"/"admin" strings, no destructive scopes, no broad workspace
+// writes, and no MCP. The harness mints tokens that run inside an
+// attacker-reachable container, so the surface must stay narrow regardless of
+// what the binding's workspace admin requested.
 func ValidateAgentScopes(scopes []string) error {
-	allowed := make(map[string]bool, len(DefaultAgentScopes))
-	for _, s := range DefaultAgentScopes {
+	allowed := make(map[string]bool, len(DefaultCodingAgentRunScopes))
+	for _, s := range DefaultCodingAgentRunScopes {
 		allowed[s] = true
 	}
 	var rejected []string
