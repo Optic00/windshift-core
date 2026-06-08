@@ -7,6 +7,8 @@ import (
 	"windshift/internal/database"
 )
 
+// last review: ser, 080626, NOTE: is this file still used?
+
 // StatusBreakdown represents item counts per status category in a progress report.
 // Used by both milestones and iterations.
 type StatusBreakdown struct {
@@ -45,6 +47,7 @@ type progressAccumulator struct {
 // Each row must supply the 14-column shape: id, title, workspace_id, workspace_key,
 // item_number, category_name, category_color, is_completed, status_name, status_color,
 // priority_name, priority_color, assignee_name, assignee_avatar.
+// last review: ser, 080626, FIXME: please use the ItemHandler / Service
 func buildProgressReport(rows *sql.Rows) (*progressAccumulator, error) { //nolint:unparam // error is always nil but kept for consistency with scan pattern
 	acc := &progressAccumulator{
 		ItemsByCategory: make(map[string][]ProgressItem),
@@ -103,6 +106,7 @@ func buildProgressReport(rows *sql.Rows) (*progressAccumulator, error) { //nolin
 // queryProgressItems runs the standard progress-items query, filtering by the
 // given WHERE clause (e.g. "i.iteration_id = ?" or an EXISTS subquery against
 // item_milestones), and returns the computed progress accumulator.
+// last review: ser, 080626, FIXME: Should use item handler
 func queryProgressItems(db database.Database, whereClause string, arg int) (*progressAccumulator, error) {
 	rows, err := db.Query(`
 		SELECT
