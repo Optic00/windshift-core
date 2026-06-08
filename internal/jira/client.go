@@ -40,6 +40,8 @@ type Client interface {
 	// Issues (Legacy - uses deprecated GET /rest/api/3/search)
 	SearchIssues(ctx context.Context, opts SearchOptions) (*SearchResult, error)
 	GetIssue(ctx context.Context, issueKey string, expand []string) (*JiraIssue, error)
+	GetIssueComments(ctx context.Context, issueKey string, startAt, maxResults int) (*JiraCommentContainer, error)
+	GetIssueWorklogs(ctx context.Context, issueKey string, startAt, maxResults int) (*JiraWorklogContainer, error)
 	GetIssueCount(ctx context.Context, projectKey string, openOnly bool) (int, error)
 
 	// Issues (Enhanced - uses POST /rest/api/3/search/jql)
@@ -51,6 +53,11 @@ type Client interface {
 	GetProjectVersions(ctx context.Context, projectKey string) ([]JiraVersion, error)
 	ListBoards(ctx context.Context, projectKey string) (*BoardListResult, error)
 	GetBoardSprints(ctx context.Context, boardID int) (*SprintListResult, error)
+	GetBoardConfiguration(ctx context.Context, boardID int) (*JiraBoardConfiguration, error)
+
+	// Filters
+	ListFilters(ctx context.Context, projectKey string) (*FilterSearchResult, error)
+	GetFilter(ctx context.Context, filterID string) (*JiraFilter, error)
 
 	// Attachments
 	DownloadAttachment(ctx context.Context, attachmentURL string) (io.ReadCloser, string, error)
@@ -791,6 +798,52 @@ func (c *cloudClient) GetIssue(ctx context.Context, issueKey string, expand []st
 	return &issue, nil
 }
 
+func (c *cloudClient) GetIssueComments(ctx context.Context, issueKey string, startAt, maxResults int) (*JiraCommentContainer, error) {
+	params := url.Values{}
+	params.Set("startAt", fmt.Sprintf("%d", startAt))
+	if maxResults <= 0 {
+		maxResults = 100
+	}
+	params.Set("maxResults", fmt.Sprintf("%d", maxResults))
+
+	resp, err := c.do(ctx, "GET", c.baseURL+"/issue/"+url.PathEscape(issueKey)+"/comment?"+params.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.handleErrorResponse(resp)
+	}
+	var result JiraCommentContainer
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+func (c *cloudClient) GetIssueWorklogs(ctx context.Context, issueKey string, startAt, maxResults int) (*JiraWorklogContainer, error) {
+	params := url.Values{}
+	params.Set("startAt", fmt.Sprintf("%d", startAt))
+	if maxResults <= 0 {
+		maxResults = 100
+	}
+	params.Set("maxResults", fmt.Sprintf("%d", maxResults))
+
+	resp, err := c.do(ctx, "GET", c.baseURL+"/issue/"+url.PathEscape(issueKey)+"/worklog?"+params.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.handleErrorResponse(resp)
+	}
+	var result JiraWorklogContainer
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // GetIssueCount gets the total number of issues in a project using the new JQL search endpoint
 func (c *cloudClient) GetIssueCount(ctx context.Context, projectKey string, openOnly bool) (int, error) {
 	jql := fmt.Sprintf("project = %s", projectKey)
@@ -939,47 +992,191 @@ func (c *cloudClient) GetProjectVersions(ctx context.Context, projectKey string)
 	return versions, nil
 }
 
-// ListBoards lists all Agile boards for a project
+// ListBoards lists all Agile boards for a project.
+//
+// Jira's Agile API is paginated. Returning only the first page would silently
+// miss boards on larger projects, which in turn drops every sprint that lives on
+// later boards from the Windshift iteration import.
 func (c *cloudClient) ListBoards(ctx context.Context, projectKey string) (*BoardListResult, error) {
-	params := url.Values{}
-	if projectKey != "" {
-		params.Set("projectKeyOrId", projectKey)
-	}
+	const defaultMaxResults = 50
 
-	resp, err := c.do(ctx, "GET", c.agileURL+"/board?"+params.Encode(), nil)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
+	aggregate := &BoardListResult{MaxResults: defaultMaxResults, IsLast: true}
+	for startAt := 0; ; {
+		params := url.Values{}
+		params.Set("startAt", fmt.Sprintf("%d", startAt))
+		params.Set("maxResults", fmt.Sprintf("%d", defaultMaxResults))
+		if projectKey != "" {
+			params.Set("projectKeyOrId", projectKey)
+		}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.handleErrorResponse(resp)
-	}
+		resp, err := c.do(ctx, "GET", c.agileURL+"/board?"+params.Encode(), nil)
+		if err != nil {
+			return nil, err
+		}
 
-	var result BoardListResult
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
+		var page BoardListResult
+		decodeErr := func() error {
+			defer func() { _ = resp.Body.Close() }()
+			if resp.StatusCode != http.StatusOK {
+				return c.handleErrorResponse(resp)
+			}
+			return json.NewDecoder(resp.Body).Decode(&page)
+		}()
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+
+		aggregate.Values = append(aggregate.Values, page.Values...)
+		aggregate.Total = page.Total
+		aggregate.IsLast = page.IsLast
+		if page.MaxResults > 0 {
+			aggregate.MaxResults = page.MaxResults
+		}
+		if page.IsLast || len(page.Values) == 0 || (page.Total > 0 && len(aggregate.Values) >= page.Total) {
+			break
+		}
+		if page.StartAt+len(page.Values) > startAt {
+			startAt = page.StartAt + len(page.Values)
+		} else {
+			startAt += defaultMaxResults
+		}
 	}
-	return &result, nil
+	return aggregate, nil
 }
 
-// GetBoardSprints gets all sprints for a board
-func (c *cloudClient) GetBoardSprints(ctx context.Context, boardID int) (*SprintListResult, error) {
-	resp, err := c.do(ctx, "GET", fmt.Sprintf("%s/board/%d/sprint", c.agileURL, boardID), nil)
+// GetBoardConfiguration gets Agile board columns, status mappings, and backing filter metadata.
+func (c *cloudClient) GetBoardConfiguration(ctx context.Context, boardID int) (*JiraBoardConfiguration, error) {
+	resp, err := c.do(ctx, "GET", fmt.Sprintf("%s/board/%d/configuration", c.agileURL, boardID), nil)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-
 	if resp.StatusCode != http.StatusOK {
 		return nil, c.handleErrorResponse(resp)
 	}
-
-	var result SprintListResult
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	var config JiraBoardConfiguration
+	if err := json.NewDecoder(resp.Body).Decode(&config); err != nil {
 		return nil, err
 	}
-	return &result, nil
+	return &config, nil
+}
+
+// ListFilters lists saved filters associated with a project.
+func (c *cloudClient) ListFilters(ctx context.Context, projectKey string) (*FilterSearchResult, error) {
+	project, err := c.GetProject(ctx, projectKey)
+	if err != nil {
+		return nil, err
+	}
+	const defaultMaxResults = 50
+	aggregate := &FilterSearchResult{MaxResults: defaultMaxResults, IsLast: true}
+	for startAt := 0; ; {
+		params := url.Values{}
+		params.Set("startAt", fmt.Sprintf("%d", startAt))
+		params.Set("maxResults", fmt.Sprintf("%d", defaultMaxResults))
+		params.Set("expand", "jql,description,owner,viewUrl")
+		if project != nil && strings.TrimSpace(project.ID) != "" {
+			params.Set("projectId", project.ID)
+		}
+
+		resp, err := c.do(ctx, "GET", c.baseURL+"/filter/search?"+params.Encode(), nil)
+		if err != nil {
+			return nil, err
+		}
+		var page FilterSearchResult
+		decodeErr := func() error {
+			defer func() { _ = resp.Body.Close() }()
+			if resp.StatusCode != http.StatusOK {
+				return c.handleErrorResponse(resp)
+			}
+			return json.NewDecoder(resp.Body).Decode(&page)
+		}()
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+
+		aggregate.Values = append(aggregate.Values, page.Values...)
+		aggregate.Total = page.Total
+		aggregate.IsLast = page.IsLast
+		if page.MaxResults > 0 {
+			aggregate.MaxResults = page.MaxResults
+		}
+		if page.IsLast || len(page.Values) == 0 || (page.Total > 0 && len(aggregate.Values) >= page.Total) {
+			break
+		}
+		if page.StartAt+len(page.Values) > startAt {
+			startAt = page.StartAt + len(page.Values)
+		} else {
+			startAt += defaultMaxResults
+		}
+	}
+	return aggregate, nil
+}
+
+// GetFilter gets a saved filter with expanded JQL where available.
+func (c *cloudClient) GetFilter(ctx context.Context, filterID string) (*JiraFilter, error) {
+	params := url.Values{}
+	params.Set("expand", "jql,description,owner,viewUrl")
+	resp, err := c.do(ctx, "GET", c.baseURL+"/filter/"+url.PathEscape(filterID)+"?"+params.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.handleErrorResponse(resp)
+	}
+	var filter JiraFilter
+	if err := json.NewDecoder(resp.Body).Decode(&filter); err != nil {
+		return nil, err
+	}
+	return &filter, nil
+}
+
+// GetBoardSprints gets all sprints for a board.
+//
+// Jira embeds sprint results in pages too; importers need the full set so issue
+// sprint custom fields can always resolve to a Windshift iteration.
+func (c *cloudClient) GetBoardSprints(ctx context.Context, boardID int) (*SprintListResult, error) {
+	const defaultMaxResults = 50
+
+	aggregate := &SprintListResult{MaxResults: defaultMaxResults, IsLast: true}
+	for startAt := 0; ; {
+		params := url.Values{}
+		params.Set("startAt", fmt.Sprintf("%d", startAt))
+		params.Set("maxResults", fmt.Sprintf("%d", defaultMaxResults))
+
+		resp, err := c.do(ctx, "GET", fmt.Sprintf("%s/board/%d/sprint?%s", c.agileURL, boardID, params.Encode()), nil)
+		if err != nil {
+			return nil, err
+		}
+
+		var page SprintListResult
+		decodeErr := func() error {
+			defer func() { _ = resp.Body.Close() }()
+			if resp.StatusCode != http.StatusOK {
+				return c.handleErrorResponse(resp)
+			}
+			return json.NewDecoder(resp.Body).Decode(&page)
+		}()
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+
+		aggregate.Values = append(aggregate.Values, page.Values...)
+		aggregate.Total = page.Total
+		aggregate.IsLast = page.IsLast
+		if page.MaxResults > 0 {
+			aggregate.MaxResults = page.MaxResults
+		}
+		if page.IsLast || len(page.Values) == 0 || (page.Total > 0 && len(aggregate.Values) >= page.Total) {
+			break
+		}
+		if page.StartAt+len(page.Values) > startAt {
+			startAt = page.StartAt + len(page.Values)
+		} else {
+			startAt += defaultMaxResults
+		}
+	}
+	return aggregate, nil
 }
 
 // ================================================================

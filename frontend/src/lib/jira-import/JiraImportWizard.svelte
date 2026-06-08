@@ -180,7 +180,7 @@
     } else if (currentStepId === 'projects') {
       handleAnalyze();
     } else if (currentStepId === 'preview') {
-      jiraImport.startImport();
+      await jiraImport.startImport();
     } else if (currentStepId === 'import') {
       handleClose();
     } else {
@@ -926,12 +926,48 @@
         <!-- Import Step -->
         <div class="flex flex-col items-center justify-center py-12">
           {#if importData.error}
-            <AlertBox variant="error" message={importData.error} />
-            <div class="mt-4">
-              <Button variant="secondary" onclick={() => jiraImport.startImport()}>
-                {t('jiraImport.buttons.retryImport')}
-              </Button>
-            </div>
+            {#if importData.errorCode === 'JIRA_IMPORT_CONFLICT'}
+              <div class="w-full max-w-2xl space-y-4">
+                <AlertBox variant="warning" message={importData.error} />
+                <div class="rounded-lg border p-4 text-left space-y-3" style="border-color: var(--ds-border); background: var(--ds-surface);">
+                  <div class="flex items-start gap-3">
+                    <AlertCircle class="w-5 h-5 mt-0.5 flex-shrink-0" style="color: var(--ds-text-warning);" />
+                    <div>
+                      <p class="font-medium" style="color: var(--ds-text);">Previous Jira import data exists</p>
+                      <p class="text-sm mt-1" style="color: var(--ds-text-subtle);">
+                        Close this wizard, use Import History to delete the previous import data, then start the import again. This protects against accidentally duplicating projects and deleting multiple workspaces without review.
+                      </p>
+                    </div>
+                  </div>
+                  {#if importData.conflictingImports?.length}
+                    <div class="space-y-2">
+                      {#each importData.conflictingImports as conflict}
+                        <div class="rounded border px-3 py-2" style="border-color: var(--ds-border); background: var(--ds-surface-raised);">
+                          <div class="flex items-center justify-between gap-3">
+                            <span class="font-mono text-xs" style="color: var(--ds-text);">{conflict.job_id}</span>
+                            <span class="text-xs capitalize" style="color: var(--ds-text-subtle);">{conflict.status?.replace('_', ' ')}</span>
+                          </div>
+                          {#if conflict.project_keys?.length}
+                            <p class="text-xs mt-1" style="color: var(--ds-text-subtle);">Projects: {conflict.project_keys.join(', ')}</p>
+                          {/if}
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
+                <div class="flex justify-center gap-3">
+                  <Button variant="secondary" onclick={handleClose}>Close and manage imports</Button>
+                  <Button variant="ghost" onclick={() => jiraImport.goToStep(3)}>Back to preview</Button>
+                </div>
+              </div>
+            {:else}
+              <AlertBox variant="error" message={importData.error} />
+              <div class="mt-4">
+                <Button variant="secondary" onclick={() => jiraImport.startImport()}>
+                  {t('jiraImport.buttons.retryImport')}
+                </Button>
+              </div>
+            {/if}
           {:else if importData.result}
             <div class="text-center">
               <Check class="w-16 h-16 mx-auto" style="color: var(--ds-text-success);" />

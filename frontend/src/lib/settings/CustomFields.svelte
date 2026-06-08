@@ -75,6 +75,7 @@
     { value: 'number', label: 'Number', icon: Hash, iconColor: '#4CAF7D' },
     { value: 'date', label: 'Date', icon: Calendar, iconColor: '#9B6DB7' },
     { value: 'user', label: 'User', icon: User, iconColor: '#5BA4C9' },
+    { value: 'multi_user', label: 'Multi User', icon: User, iconColor: '#4D9DC5' },
     { value: 'iteration', label: 'Iteration', icon: Repeat, iconColor: '#D95B5B' },
     { value: 'milestone', label: 'Milestone', icon: Flag, iconColor: '#C9A84C' },
     { value: 'asset', label: 'Asset', icon: Box, iconColor: '#7B8A9E' },
@@ -88,6 +89,7 @@
   // Asset field configuration
   let assetSetId = $state(null);
   let assetQlQuery = $state('');
+  let assetMulti = $state(false);
   let assetSets = $state([]);
 
   // Linking field configuration
@@ -222,14 +224,17 @@
       try {
         const config = JSON.parse(field.options);
         assetSetId = config.asset_set_id || null;
-        assetQlQuery = config.ql_query || '';
+        assetQlQuery = config.ql_query || config.cql_query || '';
+        assetMulti = config.multi === true;
       } catch (e) {
         assetSetId = null;
         assetQlQuery = '';
+        assetMulti = false;
       }
     } else {
       assetSetId = null;
       assetQlQuery = '';
+      assetMulti = false;
     }
 
     // Parse linking field config
@@ -276,6 +281,7 @@
     nextOptionId = 1;
     assetSetId = null;
     assetQlQuery = '';
+    assetMulti = false;
     indexedItems = false;
     indexedAssets = false;
     linkingLinkTypeId = null;
@@ -322,6 +328,7 @@
       }
       config.asset_set_id = assetSetId;
       config.ql_query = assetQlQuery || '';
+      config.multi = assetMulti;
     } else if (formData.field_type === 'linking') {
       if (!linkingLinkTypeId) {
         throw new Error('Linking fields require a link type');
@@ -364,7 +371,8 @@
         // Asset fields store config as JSON in options
         data.options = JSON.stringify({
           asset_set_id: processedConfig.asset_set_id,
-          ql_query: processedConfig.ql_query
+          ql_query: processedConfig.ql_query,
+          multi: processedConfig.multi
         });
       } else if (formData.field_type === 'linking') {
         const linkOpts = {
@@ -615,7 +623,10 @@
             } else if (field.field_type === 'asset' && options.asset_set_id) {
               const set = assetSets.find(s => s.id === options.asset_set_id);
               const setName = set ? set.name : `Set #${options.asset_set_id}`;
-              return options.ql_query ? `${setName} (filtered)` : setName;
+              const parts = [setName];
+              if (options.multi === true) parts.push('multiple');
+              if (options.ql_query || options.cql_query) parts.push('filtered');
+              return parts.join(', ');
             }
             return '—';
           } catch (e) {
@@ -832,6 +843,14 @@
         <div class="mt-6">
           <Label for="asset-set" required class="mb-2">Asset Set</Label>
           <Select id="asset-set" bind:value={assetSetId} required options={[{ value: null, label: 'Select asset set...' }, ...assetSets.map(set => ({ value: set.id, label: set.name }))]} />
+        </div>
+
+        <div class="mt-4 flex items-center gap-4">
+          <Toggle
+            bind:checked={assetMulti}
+            label="Allow multiple values"
+            size="small"
+          />
         </div>
 
         <div class="mt-4">

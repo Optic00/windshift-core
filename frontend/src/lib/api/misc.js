@@ -270,4 +270,10 @@ export const jiraImport = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
+  // Delete all data mapped to an import job after explicit confirmation
+  deleteImportedData: (jobId, confirmation) =>
+    fetchAPI(`/admin/jira-import/jobs/${jobId}/data`, {
+      method: 'DELETE',
+      body: JSON.stringify(confirmation),
+    }),
 };

@@ -991,6 +991,7 @@ var validFieldTypes = map[string]bool{
 	"milestone":            true,
 	"date":                 true,
 	"user":                 true,
+	"multi_user":           true,
 	"iteration":            true,
 	"asset":                true,
 	"portalcustomer":       true,

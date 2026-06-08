@@ -380,24 +380,41 @@ type ItemRefByCustomField struct {
 }
 
 // ListItemsReferencingAssetInCustomField scans items whose
-// custom_field_values JSON contains the given asset ID, either as a plain int
-// value or as an object with an `id` key, for the given custom-field key.
-// fieldKey and assetIDStr must already be stringified by the caller.
+// custom_field_values JSON contains the given asset ID, either as a plain int,
+// as an object with an `id` key, or inside a multi-asset array for the given
+// custom-field key. fieldKey and assetIDStr must already be stringified by the
+// caller.
 func (r *ItemRepository) ListItemsReferencingAssetInCustomField(fieldKey, assetIDStr string) ([]ItemRefByCustomField, error) {
-	var directExpr, nestedExpr string
+	var query string
 	if r.db.GetDriverName() == "postgres" {
-		directExpr = fmt.Sprintf("i.custom_field_values->>'%s'", fieldKey)
-		nestedExpr = fmt.Sprintf("i.custom_field_values->'%s'->>'id'", fieldKey)
+		directExpr := fmt.Sprintf("i.custom_field_values->>'%s'", fieldKey)
+		nestedExpr := fmt.Sprintf("i.custom_field_values->'%s'->>'id'", fieldKey)
+		arrayExpr := fmt.Sprintf(`EXISTS (
+			SELECT 1 FROM jsonb_array_elements(CASE
+				WHEN jsonb_typeof(i.custom_field_values->'%s') = 'array' THEN i.custom_field_values->'%s'
+				ELSE '[]'::jsonb
+			END) AS elem
+			WHERE elem #>> '{}' = ? OR elem->>'id' = ?
+		)`, fieldKey, fieldKey)
+		query = fmt.Sprintf(`
+			SELECT i.id, i.title, i.workspace_id
+			FROM items i
+			WHERE (%s = ? OR %s = ? OR %s)
+		`, directExpr, nestedExpr, arrayExpr)
 	} else {
-		directExpr = fmt.Sprintf(`NULLIF(i.custom_field_values,'') ->> '$."%s"'`, fieldKey)    //nolint:gocritic // SQL JSON path, not Go quoting
-		nestedExpr = fmt.Sprintf(`NULLIF(i.custom_field_values,'') ->> '$."%s".id'`, fieldKey) //nolint:gocritic // SQL JSON path, not Go quoting
+		directExpr := fmt.Sprintf(`NULLIF(i.custom_field_values,'') ->> '$."%s"'`, fieldKey)    //nolint:gocritic // SQL JSON path, not Go quoting
+		nestedExpr := fmt.Sprintf(`NULLIF(i.custom_field_values,'') ->> '$."%s".id'`, fieldKey) //nolint:gocritic // SQL JSON path, not Go quoting
+		arrayExpr := fmt.Sprintf(`EXISTS (
+			SELECT 1 FROM json_each(NULLIF(i.custom_field_values,'') -> '$."%s"') AS elem
+			WHERE CAST(elem.value AS TEXT) = ? OR elem.value ->> '$.id' = ?
+		)`, fieldKey) //nolint:gocritic // SQL JSON path, not Go quoting
+		query = fmt.Sprintf(`
+			SELECT i.id, i.title, i.workspace_id
+			FROM items i
+			WHERE (%s = ? OR %s = ? OR %s)
+		`, directExpr, nestedExpr, arrayExpr)
 	}
-	query := fmt.Sprintf(`
-		SELECT i.id, i.title, i.workspace_id
-		FROM items i
-		WHERE (%s = ? OR %s = ?)
-	`, directExpr, nestedExpr)
-	rows, err := r.db.Query(query, assetIDStr, assetIDStr)
+	rows, err := r.db.Query(query, assetIDStr, assetIDStr, assetIDStr, assetIDStr)
 	if err != nil {
 		return nil, fmt.Errorf("list items referencing asset in custom field: %w", err)
 	}

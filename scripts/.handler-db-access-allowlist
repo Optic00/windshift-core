@@ -49,6 +49,8 @@ internal/handlers/items_search.go
 internal/handlers/iterations.go
 internal/handlers/jira_analyzer.go
 internal/handlers/jira_connector.go
+internal/handlers/jira_import_assets.go
+internal/handlers/jira_import_boards.go
 internal/handlers/jira_import_entities.go
 internal/handlers/jira_import_execution.go
 internal/handlers/jira_importer.go

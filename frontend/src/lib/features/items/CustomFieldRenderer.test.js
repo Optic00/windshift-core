@@ -384,6 +384,17 @@ describe('asset field', () => {
     });
     expect(screen.getByText('Asset #42')).toBeInTheDocument();
   });
+
+  test('multi-asset values are formatted as a comma-separated list', () => {
+    renderReadonly({
+      field: { field_type: 'asset', name: 'Machines', options: JSON.stringify({ multi: true }) },
+      value: [
+        { id: 1, asset_tag: 'A-001', title: 'Forklift' },
+        { id: 2, title: 'Conveyor' },
+      ],
+    });
+    expect(screen.getByText('A-001 - Forklift, Conveyor')).toBeInTheDocument();
+  });
 });
 
 describe('portalcustomer field', () => {

@@ -2,6 +2,7 @@ package jira
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -43,7 +44,7 @@ const (
 	FieldTypeMultiselect WindshiftFieldType = "multiselect"
 	FieldTypeDate        WindshiftFieldType = "date"
 	FieldTypeUser        WindshiftFieldType = "user"
-	FieldTypeUsers       WindshiftFieldType = "users" // Array of user IDs (multi-user picker)
+	FieldTypeMultiUser   WindshiftFieldType = "multi_user"
 	FieldTypeMilestone   WindshiftFieldType = "milestone"
 	FieldTypeIteration   WindshiftFieldType = "iteration"
 	FieldTypeAsset       WindshiftFieldType = "asset"
@@ -90,7 +91,7 @@ var jiraFieldTypeMap = map[string]WindshiftFieldType{
 	"com.atlassian.jira.plugin.system.customfieldtypes:datetime":         FieldTypeDate,
 	"com.atlassian.jira.plugin.system.customfieldtypes:url":              FieldTypeText,
 	"com.atlassian.jira.plugin.system.customfieldtypes:userpicker":       FieldTypeUser,
-	"com.atlassian.jira.plugin.system.customfieldtypes:multiuserpicker":  FieldTypeUsers, // Multi-user picker (array of user IDs)
+	"com.atlassian.jira.plugin.system.customfieldtypes:multiuserpicker":  FieldTypeMultiUser,
 	"com.atlassian.jira.plugin.system.customfieldtypes:grouppicker":      FieldTypeText,
 	"com.atlassian.jira.plugin.system.customfieldtypes:multigrouppicker": FieldTypeMultiselect,
 	"com.atlassian.jira.plugin.system.customfieldtypes:cascadingselect":  FieldTypeSelect,
@@ -182,8 +183,8 @@ func MapJiraFieldToWindshift(field JiraCustomField) FieldMappingSuggestion {
 			case "option":
 				suggestion.WindshiftFieldType = FieldTypeMultiselect
 			case "user":
-				suggestion.WindshiftFieldType = FieldTypeUsers
-				suggestion.Notes = "Multi-user field will be stored as array of user IDs"
+				suggestion.WindshiftFieldType = FieldTypeMultiUser
+				suggestion.Notes = "Multi-user field will be stored as an array of user IDs"
 			case "string":
 				suggestion.WindshiftFieldType = FieldTypeMultiselect
 			default:
@@ -341,6 +342,26 @@ func convertADFNodeWithResolver(node interface{}, resolver MentionResolver) stri
 			quoted.WriteString("> " + line + "\n")
 		}
 		return quoted.String() + "\n"
+	case "table":
+		return convertADFTableWithResolver(nodeMap, resolver)
+	case "panel":
+		return convertADFPanelWithResolver(nodeMap, resolver)
+	case "taskList":
+		return convertADFTaskListWithResolver(nodeMap, resolver)
+	case "inlineCard", "blockCard":
+		return convertADFCard(nodeMap)
+	case "mediaSingle", "mediaGroup":
+		return convertADFContentWithResolver(nodeMap, resolver)
+	case "media":
+		return convertADFMedia(nodeMap)
+	case "expand", "nestedExpand":
+		return convertADFExpandWithResolver(nodeMap, resolver)
+	case "status":
+		return convertADFStatus(nodeMap)
+	case "emoji":
+		return convertADFEmoji(nodeMap)
+	case "date":
+		return convertADFDate(nodeMap)
 	case "rule":
 		return "---\n\n"
 	case "text":
@@ -396,6 +417,232 @@ func convertADFNodeWithResolver(node interface{}, resolver MentionResolver) stri
 		// For unknown types, try to extract content
 		return convertADFContentWithResolver(nodeMap, resolver)
 	}
+}
+
+func convertADFTableWithResolver(nodeMap map[string]interface{}, resolver MentionResolver) string {
+	rowsRaw, ok := nodeMap["content"].([]interface{})
+	if !ok || len(rowsRaw) == 0 {
+		return ""
+	}
+
+	rows := make([][]string, 0, len(rowsRaw))
+	for _, rowRaw := range rowsRaw {
+		rowMap, ok := rowRaw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		cellsRaw, ok := rowMap["content"].([]interface{})
+		if !ok {
+			continue
+		}
+		row := make([]string, 0, len(cellsRaw))
+		for _, cellRaw := range cellsRaw {
+			cellMap, ok := cellRaw.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			row = append(row, markdownTableCell(convertADFContentWithResolver(cellMap, resolver)))
+		}
+		if len(row) > 0 {
+			rows = append(rows, row)
+		}
+	}
+	if len(rows) == 0 {
+		return ""
+	}
+
+	maxCols := 0
+	for _, row := range rows {
+		if len(row) > maxCols {
+			maxCols = len(row)
+		}
+	}
+	for i := range rows {
+		for len(rows[i]) < maxCols {
+			rows[i] = append(rows[i], "")
+		}
+	}
+
+	var out strings.Builder
+	writeMarkdownTableRow(&out, rows[0])
+	separator := make([]string, maxCols)
+	for i := range separator {
+		separator[i] = "---"
+	}
+	writeMarkdownTableRow(&out, separator)
+	for _, row := range rows[1:] {
+		writeMarkdownTableRow(&out, row)
+	}
+	out.WriteString("\n")
+	return out.String()
+}
+
+func markdownTableCell(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.ReplaceAll(value, "\r\n", "\n")
+	value = strings.ReplaceAll(value, "\r", "\n")
+	lines := strings.Split(value, "\n")
+	clean := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			clean = append(clean, strings.ReplaceAll(line, "|", "\\|"))
+		}
+	}
+	return strings.Join(clean, "<br>")
+}
+
+func writeMarkdownTableRow(out *strings.Builder, cells []string) {
+	out.WriteString("| ")
+	out.WriteString(strings.Join(cells, " | "))
+	out.WriteString(" |\n")
+}
+
+func convertADFPanelWithResolver(nodeMap map[string]interface{}, resolver MentionResolver) string {
+	panelType := "info"
+	if attrs, ok := nodeMap["attrs"].(map[string]interface{}); ok {
+		if raw, _ := attrs["panelType"].(string); raw != "" {
+			panelType = raw
+		}
+	}
+	content := strings.TrimSpace(convertADFContentWithResolver(nodeMap, resolver))
+	if content == "" {
+		return ""
+	}
+	var out strings.Builder
+	fmt.Fprintf(&out, "> [!%s]\n", strings.ToUpper(panelType))
+	for _, line := range strings.Split(content, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		out.WriteString("> " + line + "\n")
+	}
+	out.WriteString("\n")
+	return out.String()
+}
+
+func convertADFTaskListWithResolver(nodeMap map[string]interface{}, resolver MentionResolver) string {
+	items, ok := nodeMap["content"].([]interface{})
+	if !ok {
+		return ""
+	}
+	var out strings.Builder
+	for _, item := range items {
+		itemMap, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		state := "TODO"
+		if attrs, ok := itemMap["attrs"].(map[string]interface{}); ok {
+			state, _ = attrs["state"].(string)
+		}
+		checkbox := "[ ]"
+		if strings.EqualFold(state, "DONE") || strings.EqualFold(state, "checked") {
+			checkbox = "[x]"
+		}
+		content := strings.TrimSpace(convertADFContentWithResolver(itemMap, resolver))
+		if content == "" {
+			continue
+		}
+		fmt.Fprintf(&out, "- %s %s\n", checkbox, collapseMarkdownWhitespace(content))
+	}
+	out.WriteString("\n")
+	return out.String()
+}
+
+func convertADFCard(nodeMap map[string]interface{}) string {
+	attrs, ok := nodeMap["attrs"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	url, _ := attrs["url"].(string)
+	if url == "" {
+		return ""
+	}
+	return "[" + url + "](" + url + ")"
+}
+
+func convertADFMedia(nodeMap map[string]interface{}) string {
+	attrs, ok := nodeMap["attrs"].(map[string]interface{})
+	if !ok {
+		return "[media]"
+	}
+	alt := firstADFAttrString(attrs, "alt", "id", "type")
+	if alt == "" {
+		return "[media]"
+	}
+	return "[media: " + alt + "]"
+}
+
+func convertADFExpandWithResolver(nodeMap map[string]interface{}, resolver MentionResolver) string {
+	title := "Details"
+	if attrs, ok := nodeMap["attrs"].(map[string]interface{}); ok {
+		if raw, _ := attrs["title"].(string); strings.TrimSpace(raw) != "" {
+			title = strings.TrimSpace(raw)
+		}
+	}
+	content := strings.TrimSpace(convertADFContentWithResolver(nodeMap, resolver))
+	if content == "" {
+		return ""
+	}
+	return "<details>\n<summary>" + title + "</summary>\n\n" + content + "\n\n</details>\n\n"
+}
+
+func convertADFStatus(nodeMap map[string]interface{}) string {
+	attrs, ok := nodeMap["attrs"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	text, _ := attrs["text"].(string)
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+	return "[" + strings.TrimSpace(text) + "]"
+}
+
+func convertADFEmoji(nodeMap map[string]interface{}) string {
+	attrs, ok := nodeMap["attrs"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	return firstADFAttrString(attrs, "text", "shortName", "id")
+}
+
+func convertADFDate(nodeMap map[string]interface{}) string {
+	attrs, ok := nodeMap["attrs"].(map[string]interface{})
+	if !ok {
+		return ""
+	}
+	timestamp, _ := attrs["timestamp"].(string)
+	if timestamp == "" {
+		return ""
+	}
+	millis, err := strconv.ParseInt(timestamp, 10, 64)
+	if err != nil {
+		return timestamp
+	}
+	return time.UnixMilli(millis).UTC().Format("2006-01-02")
+}
+
+func firstADFAttrString(attrs map[string]interface{}, keys ...string) string {
+	for _, key := range keys {
+		if raw, _ := attrs[key].(string); strings.TrimSpace(raw) != "" {
+			return strings.TrimSpace(raw)
+		}
+	}
+	return ""
+}
+
+func collapseMarkdownWhitespace(value string) string {
+	lines := strings.Split(strings.TrimSpace(value), "\n")
+	clean := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			clean = append(clean, line)
+		}
+	}
+	return strings.Join(clean, " ")
 }
 
 func convertADFContentWithResolver(nodeMap map[string]interface{}, resolver MentionResolver) string {

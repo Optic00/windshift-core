@@ -683,20 +683,37 @@ func (h *AssetHandler) findCustomFieldReferences(assetID int, wsSet map[int]bool
 			}
 		}
 
-		// Check assets: same pattern
-		var directExpr, nestedExpr string
+		// Check assets: value can be plain int, {id:N}, or a multi-asset array.
+		var assetQuery string
 		if h.db.GetDriverName() == "postgres" {
-			directExpr = fmt.Sprintf("a.custom_field_values->>'%s'", fieldKey)
-			nestedExpr = fmt.Sprintf("a.custom_field_values->'%s'->>'id'", fieldKey)
+			directExpr := fmt.Sprintf("a.custom_field_values->>'%s'", fieldKey)
+			nestedExpr := fmt.Sprintf("a.custom_field_values->'%s'->>'id'", fieldKey)
+			arrayExpr := fmt.Sprintf(`EXISTS (
+				SELECT 1 FROM jsonb_array_elements(CASE
+					WHEN jsonb_typeof(a.custom_field_values->'%s') = 'array' THEN a.custom_field_values->'%s'
+					ELSE '[]'::jsonb
+				END) AS elem
+				WHERE elem #>> '{}' = ? OR elem->>'id' = ?
+			)`, fieldKey, fieldKey)
+			assetQuery = fmt.Sprintf(`
+				SELECT a.id, a.title, a.set_id
+				FROM assets a
+				WHERE (%s = ? OR %s = ? OR %s)
+			`, directExpr, nestedExpr, arrayExpr)
 		} else {
-			directExpr = fmt.Sprintf(`NULLIF(a.custom_field_values,'') ->> '$."%s"'`, fieldKey)    //nolint:gocritic // SQL JSON path, not Go quoting
-			nestedExpr = fmt.Sprintf(`NULLIF(a.custom_field_values,'') ->> '$."%s".id'`, fieldKey) //nolint:gocritic // SQL JSON path, not Go quoting
+			directExpr := fmt.Sprintf(`NULLIF(a.custom_field_values,'') ->> '$."%s"'`, fieldKey)    //nolint:gocritic // SQL JSON path, not Go quoting
+			nestedExpr := fmt.Sprintf(`NULLIF(a.custom_field_values,'') ->> '$."%s".id'`, fieldKey) //nolint:gocritic // SQL JSON path, not Go quoting
+			arrayExpr := fmt.Sprintf(`EXISTS (
+				SELECT 1 FROM json_each(NULLIF(a.custom_field_values,'') -> '$."%s"') AS elem
+				WHERE CAST(elem.value AS TEXT) = ? OR elem.value ->> '$.id' = ?
+			)`, fieldKey) //nolint:gocritic // SQL JSON path, not Go quoting
+			assetQuery = fmt.Sprintf(`
+				SELECT a.id, a.title, a.set_id
+				FROM assets a
+				WHERE (%s = ? OR %s = ? OR %s)
+			`, directExpr, nestedExpr, arrayExpr)
 		}
-		assetRows, err := h.db.Query(fmt.Sprintf(`
-			SELECT a.id, a.title, a.set_id
-			FROM assets a
-			WHERE (%s = ? OR %s = ?)
-		`, directExpr, nestedExpr), assetIDStr, assetIDStr)
+		assetRows, err := h.db.Query(assetQuery, assetIDStr, assetIDStr, assetIDStr, assetIDStr)
 		if err != nil {
 			continue
 		}

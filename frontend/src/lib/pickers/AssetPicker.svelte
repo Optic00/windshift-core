@@ -16,9 +16,11 @@
     allowClear = true,
     showUnassigned = false,
     autoOpen = false,
+    multiple = false,
     class: className = '',
     onSelect = () => {},
-    onCancel = () => {}
+    onCancel = () => {},
+    onChange = () => {}
   } = $props();
 
   const resolvedPlaceholder = $derived(placeholder || t('pickers.selectAsset'));
@@ -47,6 +49,24 @@
   function handleSearchChange(query) {
     searchQuery = query;
   }
+
+  function assetSummary(asset) {
+    if (!asset) return null;
+    return {
+      id: asset.id,
+      title: asset.title,
+      asset_tag: asset.asset_tag || ''
+    };
+  }
+
+  function handleMultiChange(ids) {
+    const selectedIDs = Array.isArray(ids) ? ids : [];
+    const selectedAssets = selectedIDs.map((id) => {
+      const asset = (assets.data || []).find((entry) => entry.id === id);
+      return assetSummary(asset) || { id };
+    });
+    onChange(selectedAssets);
+  }
 </script>
 
 <BasePicker
@@ -59,6 +79,7 @@
   {allowClear}
   {showUnassigned}
   unassignedLabel={t('common.none')}
+  {multiple}
   class={className}
   serverSearch
   onSearchChange={handleSearchChange}
@@ -70,6 +91,7 @@
   }}
   onSelect={onSelect}
   onCancel={onCancel}
+  onChange={handleMultiChange}
 >
   {#snippet itemSnippet({ item: asset, isSelected })}
     <div class="flex items-center gap-3 flex-1 min-w-0">

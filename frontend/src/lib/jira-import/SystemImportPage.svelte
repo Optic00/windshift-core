@@ -6,9 +6,13 @@
   import Button from '../components/Button.svelte';
   import Spinner from '../components/Spinner.svelte';
   import AlertBox from '../components/AlertBox.svelte';
+  import Input from '../components/Input.svelte';
+  import Modal from '../dialogs/Modal.svelte';
+  import ModalHeader from '../dialogs/ModalHeader.svelte';
+  import DialogFooter from '../dialogs/DialogFooter.svelte';
   import {
     Cloud, Plus, Trash2, ExternalLink, Link, Clock,
-    CheckCircle, XCircle, Loader, PlayCircle
+    CheckCircle, XCircle, Loader, PlayCircle, AlertTriangle
   } from '@lucide/svelte';
   import PageHeader from '../layout/PageHeader.svelte';
   import { addToast } from '../stores/toasts.svelte.js';
@@ -20,10 +24,14 @@
   // State
   let showWizard = $state(false);
   let selectedConnectionId = $state(null);
+  let deleteJob = $state(null);
+  let deleteConfirmation = $state('');
+  let isDeletingImportedData = $state(false);
 
   // Derived state from store
   let savedConnections = $derived(jiraImport.savedConnections);
   let importJobs = $derived(jiraImport.importJobs);
+  let canConfirmDeleteImportData = $derived(deleteJob && deleteConfirmation.trim() === deleteJob.id);
 
   onMount(() => {
     jiraImport.loadSavedConnections();
@@ -75,8 +83,9 @@
   function getStatusColor(status) {
     switch (status) {
       case 'completed': return 'var(--ds-text-success)';
-      case 'in_progress': return 'var(--ds-text-accent-blue)';
+      case 'running': return 'var(--ds-text-accent-blue)';
       case 'failed': return 'var(--ds-text-danger)';
+      case 'data_deleted': return 'var(--ds-text-subtle)';
       case 'queued': return 'var(--ds-text-subtle)';
       default: return 'var(--ds-text-subtle)';
     }
@@ -85,10 +94,43 @@
   function getStatusIcon(status) {
     switch (status) {
       case 'completed': return CheckCircle;
-      case 'in_progress': return Loader;
+      case 'running': return Loader;
       case 'failed': return XCircle;
+      case 'data_deleted': return Trash2;
       case 'queued': return Clock;
       default: return Clock;
+    }
+  }
+
+  function canDeleteImportedData(job) {
+    return job && !['queued', 'running', 'data_deleted'].includes(job.status);
+  }
+
+  function openDeleteImportedData(job) {
+    deleteJob = job;
+    deleteConfirmation = '';
+  }
+
+  function closeDeleteImportedData() {
+    if (isDeletingImportedData) return;
+    deleteJob = null;
+    deleteConfirmation = '';
+  }
+
+  async function deleteImportedData() {
+    if (!deleteJob || !canConfirmDeleteImportData) return;
+    isDeletingImportedData = true;
+    const result = await jiraImport.deleteImportedData(deleteJob.id, {
+      confirm_job_id: deleteConfirmation.trim(),
+      confirm_workspace_count: deleteJob.imported_workspace_count || 0,
+      confirm_delete_imported_data: true
+    });
+    isDeletingImportedData = false;
+    if (result.success) {
+      addToast({ message: 'Imported Jira data deleted. You can re-run this import now.', variant: 'success' });
+      closeDeleteImportedData();
+    } else {
+      addToast({ message: result.error, variant: 'error' });
     }
   }
 </script>
@@ -221,6 +263,8 @@
                     style="color: var(--ds-text);">Started</th>
                 <th class="text-left py-3 px-4 text-xs font-semibold tracking-wide"
                     style="color: var(--ds-text);">Completed</th>
+                <th class="text-left py-3 px-4 text-xs font-semibold tracking-wide"
+                    style="color: var(--ds-text);">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -230,12 +274,12 @@
                   <td class="py-3 px-4">
                     <div class="flex items-center gap-2">
                       <StatusIcon size={16} style="color: {getStatusColor(job.status)};"
-                                  class={job.status === 'in_progress' ? 'animate-spin' : ''} />
+                                  class={job.status === 'running' ? 'animate-spin' : ''} />
                       <span class="text-sm capitalize" style="color: {getStatusColor(job.status)};">
                         {job.status.replace('_', ' ')}
                       </span>
                     </div>
-                    {#if job.phase && job.status === 'in_progress'}
+                    {#if job.phase && job.status === 'running'}
                       <span class="text-xs mt-1 block" style="color: var(--ds-text-subtle);">
                         {job.phase}
                       </span>
@@ -252,10 +296,20 @@
                     </span>
                   </td>
                   <td class="py-3 px-4">
-                    <span class="text-xs px-2 py-1 rounded capitalize"
-                          style="background: var(--ds-background-neutral); color: var(--ds-text-subtle);">
-                      {job.scope.replace('_', ' ')}
-                    </span>
+                    <div class="flex flex-col gap-1">
+                      <span class="text-xs px-2 py-1 rounded capitalize w-fit"
+                            style="background: var(--ds-background-neutral); color: var(--ds-text-subtle);">
+                        {job.scope.replace('_', ' ')}
+                      </span>
+                      {#if job.project_keys?.length}
+                        <span class="text-xs" style="color: var(--ds-text-subtle);">
+                          Projects: {job.project_keys.join(', ')}
+                        </span>
+                      {/if}
+                      <span class="text-xs" style="color: var(--ds-text-subtle);">
+                        {job.imported_workspace_count || 0} workspace(s), {job.imported_item_count || 0} item(s)
+                      </span>
+                    </div>
                   </td>
                   <td class="py-3 px-4">
                     <span class="text-sm" style="color: var(--ds-text-subtle);">
@@ -267,6 +321,18 @@
                       {formatDate(job.completed_at)}
                     </span>
                   </td>
+                  <td class="py-3 px-4">
+                    {#if canDeleteImportedData(job)}
+                      <Button variant="ghost" size="small" onclick={() => openDeleteImportedData(job)}>
+                        <Trash2 size={14} style="color: var(--ds-text-danger);" class="mr-1" />
+                        Delete data
+                      </Button>
+                    {:else if job.status === 'data_deleted'}
+                      <span class="text-xs" style="color: var(--ds-text-subtle);">Deleted</span>
+                    {:else}
+                      <span class="text-xs" style="color: var(--ds-text-subtle);">Unavailable</span>
+                    {/if}
+                  </td>
                 </tr>
               {/each}
             </tbody>
@@ -276,6 +342,77 @@
     </div>
   </div>
 </div>
+
+{#if deleteJob}
+  <Modal
+    isOpen={!!deleteJob}
+    preventClose={isDeletingImportedData}
+    maxWidth="max-w-2xl"
+    onclose={closeDeleteImportedData}
+    onSubmit={deleteImportedData}
+    submitDisabled={!canConfirmDeleteImportData || isDeletingImportedData}
+  >
+    <ModalHeader title="Delete imported Jira data" showCloseButton={!isDeletingImportedData} />
+    <div class="px-6 py-5 space-y-4">
+      <div class="flex gap-3 rounded-lg border p-4" style="border-color: var(--ds-border-warning); background: var(--ds-background-warning-subtle);">
+        <AlertTriangle class="w-5 h-5 flex-shrink-0" style="color: var(--ds-text-warning);" />
+        <div class="space-y-2">
+          <p class="font-medium" style="color: var(--ds-text);">This can delete multiple Windshift workspaces.</p>
+          <p class="text-sm" style="color: var(--ds-text-subtle);">
+            Windshift will delete all entities recorded in this Jira import job, including mapped workspaces, items, comments, attachments, links, milestones, and related import data. This cannot be undone.
+          </p>
+        </div>
+      </div>
+
+      <div class="rounded-lg border p-4 space-y-3" style="border-color: var(--ds-border); background: var(--ds-surface);">
+        <div class="grid grid-cols-2 gap-4 text-sm">
+          <div>
+            <p class="text-xs font-medium uppercase" style="color: var(--ds-text-subtle);">Job ID</p>
+            <p class="font-mono" style="color: var(--ds-text);">{deleteJob.id}</p>
+          </div>
+          <div>
+            <p class="text-xs font-medium uppercase" style="color: var(--ds-text-subtle);">Imported scope</p>
+            <p style="color: var(--ds-text);">{deleteJob.imported_workspace_count || 0} workspace(s), {deleteJob.imported_item_count || 0} item(s)</p>
+          </div>
+        </div>
+
+        {#if deleteJob.imported_workspaces?.length}
+          <div>
+            <p class="text-xs font-medium uppercase mb-2" style="color: var(--ds-text-subtle);">Workspaces that may be removed</p>
+            <div class="flex flex-wrap gap-2">
+              {#each deleteJob.imported_workspaces as workspace}
+                <span class="text-xs px-2 py-1 rounded border" style="border-color: var(--ds-border); color: var(--ds-text); background: var(--ds-surface-raised);">
+                  {workspace.key} — {workspace.name}
+                </span>
+              {/each}
+            </div>
+          </div>
+        {/if}
+      </div>
+
+      <div class="space-y-2">
+        <label for="delete-import-confirmation" class="text-sm font-medium" style="color: var(--ds-text);">
+          Type the job ID to confirm deletion
+        </label>
+        <Input
+          id="delete-import-confirmation"
+          bind:value={deleteConfirmation}
+          placeholder={deleteJob.id}
+          disabled={isDeletingImportedData}
+        />
+      </div>
+    </div>
+    <DialogFooter
+      onCancel={closeDeleteImportedData}
+      onConfirm={deleteImportedData}
+      confirmLabel="Delete imported data"
+      variant="danger"
+      loading={isDeletingImportedData}
+      confirmDisabled={!canConfirmDeleteImportData}
+      showKeyboardHint={true}
+    />
+  </Modal>
+{/if}
 
 <!-- Import Wizard Modal -->
 <JiraImportWizard
