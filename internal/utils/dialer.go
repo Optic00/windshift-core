@@ -42,6 +42,17 @@ func IsBlockedSSRFAddrWithAllowedCIDRs(ip net.IP, allowedCIDRs []*net.IPNet) boo
 	if isPrivateOrCGNAT(ip) {
 		return !ipInCIDRs(ip, allowedCIDRs)
 	}
+	// Encoding-safe: unwrap IPv4-compatible / 6to4 / NAT64 forms and re-check
+	// the embedded IPv4, so e.g. ::127.0.0.1 or 2002:0a00:0001:: can't smuggle a
+	// blocked target past the predicates above (which only normalize IPv4-mapped).
+	if v4 := embeddedIPv4(ip); v4 != nil {
+		if isAlwaysBlockedSSRFAddr(v4) {
+			return true
+		}
+		if isPrivateOrCGNAT(v4) {
+			return !ipInCIDRs(v4, allowedCIDRs)
+		}
+	}
 	return false
 }
 
