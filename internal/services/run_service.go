@@ -462,6 +462,12 @@ func (s *RunService) FinalizeRemote(ctx context.Context, runID int, result Runne
 	if run.BindingID != nil {
 		bindingID = *run.BindingID
 	}
+	// WI-197 (finding 6): a remote runner prepares its own worktree off-box and
+	// reports the branch + base commit it pushed. The PR hook uses the branch as
+	// the PR head ref, so these are untrusted assertions, not facts — validate
+	// them here, the single point where remote-reported SCM state reaches the
+	// hook (the local in-process path derives both server-side and is trusted).
+	branch, baseCommit = s.validateRemoteSCMRefs(ctx, runID, branch, baseCommit)
 	s.invokePostRunHook(PostRunInfo{
 		RunID:       runID,
 		WorkspaceID: run.WorkspaceID,
@@ -472,6 +478,68 @@ func (s *RunService) FinalizeRemote(ctx context.Context, runID int, result Runne
 		BaseCommit:  baseCommit,
 	})
 	return nil
+}
+
+// validateRemoteSCMRefs constrains the branch + base commit a remote runner
+// reports for run runID before they reach the post-run PR hook (WI-197,
+// finding 6). A non-empty branch must equal the run's canonical push ref
+// (agent-runs/run-<id>) — the same ref the git-proxy gates pushes to — so a PR
+// head can only ever be that branch; any other value is dropped together with
+// the base commit, since opening a PR from an unverified ref is exactly what
+// this guards against. A non-empty base commit must be a git object id (40- or
+// 64-char hex); a malformed one is dropped on its own, leaving a valid branch
+// intact. An empty branch/base is legitimate (the agent produced nothing to
+// push) and passes through — the hook treats an empty branch as "no PR". Every
+// rejection is logged and emitted as a warning event so the anomaly is visible
+// on the run timeline.
+func (s *RunService) validateRemoteSCMRefs(ctx context.Context, runID int, branch, baseCommit string) (validBranch, validBase string) {
+	if branch != "" {
+		expected := fmt.Sprintf("agent-runs/run-%d", runID)
+		if branch != expected {
+			s.logger.Printf("run service: remote run=%d reported branch %q, expected %q; dropping branch + base (no PR)",
+				runID, clipForEvent(branch), expected)
+			_ = s.repo.AppendEvent(ctx, runID, "warning", fmt.Sprintf(
+				`{"phase":"scm_ref_rejected","field":"branch","reported":%q,"expected":%q}`,
+				clipForEvent(branch), expected))
+			return "", ""
+		}
+	}
+	if baseCommit != "" && !isGitObjectID(baseCommit) {
+		s.logger.Printf("run service: remote run=%d reported malformed base commit %q; dropping base",
+			runID, clipForEvent(baseCommit))
+		_ = s.repo.AppendEvent(ctx, runID, "warning", fmt.Sprintf(
+			`{"phase":"scm_ref_rejected","field":"base_commit","reported":%q}`, clipForEvent(baseCommit)))
+		return branch, ""
+	}
+	return branch, baseCommit
+}
+
+// isGitObjectID reports whether s is a full git object id: 40 hex chars
+// (SHA-1) or 64 (SHA-256). Abbreviated ids are rejected — the runner reports
+// the full rev-parse output, so anything shorter is anomalous.
+func isGitObjectID(s string) bool {
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		isHex := c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F'
+		if !isHex {
+			return false
+		}
+	}
+	return true
+}
+
+// clipForEvent bounds an untrusted runner-reported value before it is written
+// to a log line or persisted as an event payload, so a hostile runner can't
+// inflate either with a multi-megabyte string.
+func clipForEvent(s string) string {
+	const maxLen = 120
+	if len(s) > maxLen {
+		return s[:maxLen] + "..."
+	}
+	return s
 }
 
 // mintTokenAndGrants mints the per-run ws token and persists the run's
