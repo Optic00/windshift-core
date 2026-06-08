@@ -263,13 +263,14 @@ type sandboxConfig struct {
 // remove them. It does NOT include `run`, `-i`, the env-file, the workspace
 // mount, ExtraArgs, or the image; callers append those.
 func baselineSandboxArgs(cfg sandboxConfig) []string {
-	args := []string{
+	args := make([]string, 0, 10)
+	args = append(args,
 		"--cap-drop=ALL",
 		"--security-opt=no-new-privileges",
 		"--user=1000:1000", // non-root; matches the agent uid pinned in the agent image
 		"--read-only",
 		"--tmpfs=/tmp:rw,nosuid,nodev,size=256m",
-	}
+	)
 
 	network := cfg.Network
 	if network == "" {
@@ -354,10 +355,14 @@ func (r *DockerAgentRunner) Run(ctx context.Context, input RunInput, emit EventS
 	}
 	defer cleanup()
 
+	initialPrompt := input.InitialPrompt
+	if initialPrompt == "" {
+		initialPrompt = r.InitialPrompt
+	}
 	inner := &AgentRunner{
 		Command:       bin,
 		Args:          r.buildDockerArgs(input, envFile),
-		InitialPrompt: r.InitialPrompt,
+		InitialPrompt: initialPrompt,
 		IdleEventType: r.IdleEventType,
 		ShutdownGrace: r.ShutdownGrace,
 	}

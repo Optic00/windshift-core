@@ -22,11 +22,10 @@
 //	WSRUNNER_DOCKER              docker binary (default: docker)
 //	WSRUNNER_POLL_INTERVAL       claim poll interval when idle (default: 2s)
 //	WSRUNNER_HEARTBEAT_INTERVAL  lease heartbeat interval (default: 30s)
-//	WSRUNNER_INITIAL_PROMPT      agent initial prompt (default: generic instruction)
+//	WSRUNNER_INITIAL_PROMPT      optional fallback only; normal runs use JobSpec.initial_prompt
 //
-// NOTE: until the secretless access layer (WI-144) enriches the claimed
-// JobSpec with per-run env (item id, brokered tokens) and worktree, a claimed
-// job runs with minimal env; meaningful execution depends on that phase.
+// Claimed JobSpecs are enriched by the control plane with per-run env,
+// brokered tokens, repo instructions, and the server-managed initial prompt.
 package main
 
 import (
@@ -55,7 +54,7 @@ func main() {
 	credFile := envOr("WSRUNNER_CREDENTIAL_FILE", filepath.Join(cacheRoot, "credential"))
 	pollInterval := envDuration(logger, "WSRUNNER_POLL_INTERVAL", 2*time.Second)
 	heartbeatInterval := envDuration(logger, "WSRUNNER_HEARTBEAT_INTERVAL", 30*time.Second)
-	initialPrompt := envOr("WSRUNNER_INITIAL_PROMPT", "Work the item described in your environment.")
+	initialPrompt := os.Getenv("WSRUNNER_INITIAL_PROMPT")
 
 	if image == "" {
 		logger.Println("warning: WSRUNNER_IMAGE is unset; claimed jobs will fail until it is configured")
@@ -79,7 +78,7 @@ func main() {
 
 	// Kind-dispatching runner (WI-146): coding_agent jobs run the windshift-agent
 	// harness; action_container / ci_task jobs run the job's admin image as a
-	// plain container.
+	// plain container. Both receive the same sandbox tunables.
 	kindRunner := &services.KindDispatchRunner{
 		CodingAgent: &services.DockerAgentRunner{
 			Image:         image,

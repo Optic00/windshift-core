@@ -146,7 +146,7 @@ func (s *RunService) claimNext() *ClaimedJob {
 		s.claims[job.runID] = &st
 		s.claimsMu.Unlock()
 
-		return &ClaimedJob{Spec: JobSpec{RunID: job.runID, WorkspacePath: st.path, Env: env, Kind: job.req.JobKind, Image: job.req.JobImage}, Ctx: runCtx}
+		return &ClaimedJob{Spec: JobSpec{RunID: job.runID, WorkspacePath: st.path, Env: env, InitialPrompt: s.initialPrompt, Kind: job.req.JobKind, Image: job.req.JobImage}, Ctx: runCtx}
 	}
 }
 

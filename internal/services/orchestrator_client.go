@@ -63,8 +63,13 @@ type JobSpec struct {
 	// injections (e.g. WS_TOKEN), so the runner forwards it verbatim.
 	Env map[string]string `json:"env,omitempty"`
 
+	// InitialPrompt is the server-managed prompt for coding-agent jobs. Remote
+	// runners must use this instead of a runner-host default so local and remote
+	// policy stays identical.
+	InitialPrompt string `json:"initial_prompt,omitempty"`
+
 	// Kind selects how the runner executes the job (WI-146): "coding_agent"
-	// (default; pi harness on the fixed runner image) vs "action_container" /
+	// (default; windshift-agent harness on the fixed runner image) vs "action_container" /
 	// "ci_task" (run Image as a plain container). Image is the admin image
 	// for the container kinds.
 	Kind  string `json:"kind,omitempty"`
@@ -148,6 +153,7 @@ func RunWorker(ctx context.Context, client OrchestratorClient, runner Runner, lo
 			RunID:         runID,
 			WorkspacePath: job.Spec.WorkspacePath,
 			Env:           job.Spec.Env,
+			InitialPrompt: job.Spec.InitialPrompt,
 			Kind:          job.Spec.Kind,
 			Image:         job.Spec.Image,
 			Repo:          job.Spec.Repo,

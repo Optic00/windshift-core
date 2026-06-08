@@ -2106,12 +2106,14 @@ func bootCodingAgentRunService(
 	}
 
 	runRepo := repository.NewAgentRunRepository(db)
+	initialPrompt := promptStore.Get(llm.PromptCodingAgentInitial)
 	runSvc, err := services.NewRunService(runRepo, services.RunServiceOptions{
-		Runner:      runner,
-		Preparer:    prep,
-		Tokens:      tokens,
-		PostRunHook: prSvc,
-		GlobalCap:   cfg.GlobalCap,
+		Runner:        runner,
+		Preparer:      prep,
+		Tokens:        tokens,
+		PostRunHook:   prSvc,
+		InitialPrompt: initialPrompt,
+		GlobalCap:     cfg.GlobalCap,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("coding-agent run service: %w", err)

@@ -55,8 +55,9 @@ type RunInput struct {
 	RunID         int
 	WorkspacePath string
 	Env           map[string]string
+	InitialPrompt string
 	// Kind + Image let a kind-dispatching runner pick its execution mode
-	// (WI-146): coding_agent (pi) vs action_container / ci_task (run Image as
+	// (WI-146): coding_agent vs action_container / ci_task (run Image as
 	// a plain container). Empty Kind means coding_agent.
 	Kind  string
 	Image string
@@ -67,7 +68,7 @@ type RunInput struct {
 }
 
 // Runner executes the actual work of a run: spawning a container, driving
-// pi via RPC, and streaming events back through the sink. The skeleton
+// the JSONL agent contract, and streaming events back through the sink. The skeleton
 // uses a func adapter; the container-backed implementation lives in later
 // phases.
 type Runner interface {
@@ -151,13 +152,14 @@ type TokenSpec struct {
 // finalized — that's where WI-90's PR creation + ItemSCMLink writeback
 // live.
 type RunServiceOptions struct {
-	GlobalCap   int
-	Runner      Runner
-	Preparer    *repoprep.Preparer
-	Tokens      *RunTokenService
-	PostRunHook PostRunHook
-	Now         func() time.Time // injected for deterministic tests
-	Logger      *log.Logger
+	GlobalCap     int
+	Runner        Runner
+	Preparer      *repoprep.Preparer
+	Tokens        *RunTokenService
+	PostRunHook   PostRunHook
+	InitialPrompt string
+	Now           func() time.Time // injected for deterministic tests
+	Logger        *log.Logger
 }
 
 // PostRunInfo is what RunService hands to PostRunHook.AfterRun once the
@@ -204,14 +206,15 @@ var ErrShuttingDown = errors.New("run service is shutting down")
 
 // RunService orchestrates agent runs against the agent_runs table.
 type RunService struct {
-	repo        *repository.AgentRunRepository
-	runner      Runner
-	preparer    *repoprep.Preparer
-	tokens      *RunTokenService
-	postRunHook PostRunHook
-	queue       chan queuedJob
-	now         func() time.Time
-	logger      *log.Logger
+	repo          *repository.AgentRunRepository
+	runner        Runner
+	preparer      *repoprep.Preparer
+	tokens        *RunTokenService
+	postRunHook   PostRunHook
+	queue         chan queuedJob
+	now           func() time.Time
+	logger        *log.Logger
+	initialPrompt string
 
 	mu         sync.Mutex
 	shutdown   bool
@@ -257,17 +260,18 @@ func NewRunService(repo *repository.AgentRunRepository, opts RunServiceOptions) 
 		logger = log.Default()
 	}
 	s := &RunService{
-		repo:        repo,
-		runner:      opts.Runner,
-		preparer:    opts.Preparer,
-		tokens:      opts.Tokens,
-		postRunHook: opts.PostRunHook,
-		queue:       make(chan queuedJob, queueBuffer(capacity)),
-		now:         now,
-		logger:      logger,
-		shutdownCh:  make(chan struct{}),
-		inflight:    make(map[int]context.CancelFunc),
-		claims:      make(map[int]*claimState),
+		repo:          repo,
+		runner:        opts.Runner,
+		preparer:      opts.Preparer,
+		tokens:        opts.Tokens,
+		postRunHook:   opts.PostRunHook,
+		initialPrompt: opts.InitialPrompt,
+		queue:         make(chan queuedJob, queueBuffer(capacity)),
+		now:           now,
+		logger:        logger,
+		shutdownCh:    make(chan struct{}),
+		inflight:      make(map[int]context.CancelFunc),
+		claims:        make(map[int]*claimState),
 	}
 	// In-process worker pool (decision #7): `capacity` workers each run
 	// the shared RunWorker loop with RunService itself as the (local)
@@ -624,7 +628,7 @@ func (s *RunService) FailRemoteClaim(ctx context.Context, runID int, reason stri
 // no binding (e.g. action_container) is returned with no enrichment. This is
 // the remote counterpart of the local claimNext preamble (WI-195).
 func (s *RunService) PrepareRemoteClaim(ctx context.Context, run *models.AgentRun) (JobSpec, error) {
-	spec := JobSpec{RunID: run.ID, Kind: run.JobKind, Image: run.JobImage}
+	spec := JobSpec{RunID: run.ID, Kind: run.JobKind, Image: run.JobImage, InitialPrompt: s.initialPrompt}
 	if s.bindingInputs == nil || s.tokens == nil || run.BindingID == nil {
 		return spec, nil
 	}
