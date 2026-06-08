@@ -406,6 +406,20 @@
             },
             // Handle DOM events for mention detection
             handleDOMEvents: {
+              keydown: (_view, event) => {
+                // ProseMirror's own keydown handler calls preventDefault() on a
+                // bare Escape. That makes Escape-to-close bail in any enclosing
+                // modal whose handler guards on `defaultPrevented` (e.g. the
+                // item-detail modal). Returning true here skips ProseMirror's
+                // keydown handler entirely, so Escape bubbles un-prevented and
+                // the modal closes. When the mention picker is open, Escape
+                // should dismiss the picker instead, so leave that to the
+                // normal editor handling.
+                if (event.key === 'Escape' && !mentionPickerOpen) {
+                  return true;
+                }
+                return false;
+              },
               keyup: (view, event) => {
                 if (!readonly) {
                   checkForMentionTrigger(view);
