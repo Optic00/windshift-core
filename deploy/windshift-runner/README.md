@@ -122,7 +122,7 @@ All config is environment-only, in `/etc/windshift-runner/runner.env`
 |----------|-----|---------|---------|
 | `WS_API_URL` | ✅ | — | orchestrator base URL ending in **`/api`** (e.g. `https://host/api`) — the runner control plane + brokers live there (`/api/runner/register`, `/api/git-proxy/...`). **Not** the v1 REST API (`/rest/api/v1`) and not the bare host. |
 | `WSRUNNER_REGISTRATION_TOKEN` | ✅ | — | pool registration token (`wsrt_…`); exchanged for a per-instance credential on first start |
-| `WSRUNNER_IMAGE` | ✅ | — | coding-agent container image to spawn per job |
+| `WSRUNNER_IMAGE` | ✅ | — | `ghcr.io/windshiftapp/windshift-agent` image to spawn per coding-agent job |
 | `WSRUNNER_NAME` | | hostname | runner display name |
 | `WSRUNNER_DOCKER` | | `docker` | docker binary |
 | `WSRUNNER_TRIAGE_BIN` | | `windshift-triage` | path to the triage binary the runner execs for git prep/push |

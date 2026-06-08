@@ -99,7 +99,7 @@ openapi:
 # This target writes to a tempdir so it doesn't touch the committed spec.
 coding-agent-image:
 	@echo "Building ws-carrier image (WS_IMAGE source for windshift-agent)..."
-	docker build -f deploy/coding-agent/Dockerfile -t windshift/coding-agent:local .
+	docker build -f deploy/coding-agent/Dockerfile -t windshift/ws-carrier:local .
 
 openapi-check:
 	@echo "Validating OpenAPI generation..."

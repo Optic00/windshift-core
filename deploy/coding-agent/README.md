@@ -9,24 +9,24 @@ fork, WI-204), built and published from the sibling `windshift-agent` repo as
 ## What this directory builds
 
 `Dockerfile` here builds only the thin **ws-carrier** image
-(`ghcr.io/windshiftapp/coding-agent-runner`): it cross-compiles the `ws` CLI
+(`ghcr.io/windshiftapp/ws-carrier`): it cross-compiles the `ws` CLI
 (which lives in this repo) and ships it at `/usr/local/bin/ws`. The
 windshift-agent image lifts `ws` from it via its `WS_IMAGE` build arg. It no
-longer bakes pi-coding-agent, Node/npm, the `windshift-guard` extension, or an
-RPC entrypoint — the agent owns its own entrypoint and tool sandbox now.
+longer bakes the retired Node agent, Node/npm, the `windshift-guard` extension,
+or an RPC entrypoint — the agent owns its own entrypoint and tool sandbox now.
 
 For local development, build the ws-carrier with either:
 
 ```bash
 make coding-agent-image
 # or
-docker compose --profile coding-agent-image build coding-agent-runner
+docker build -f deploy/coding-agent/Dockerfile -t windshift/ws-carrier:local .
 ```
 
 …then build the agent from the sibling repo, lifting `ws` from it:
 
 ```bash
-cd ../windshift-agent && make image WS_IMAGE=windshift/coding-agent:local
+cd ../windshift-agent && make image WS_IMAGE=windshift/ws-carrier:local
 ```
 
 ## Hardening baked into every run

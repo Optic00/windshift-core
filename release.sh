@@ -7,13 +7,13 @@ set -euo pipefail
 
 # Configuration
 GHCR_REGISTRY="ghcr.io/windshiftapp/windshift"
-CODING_AGENT_GHCR_REGISTRY="ghcr.io/windshiftapp/coding-agent-runner"
+WS_CARRIER_GHCR_REGISTRY="ghcr.io/windshiftapp/ws-carrier"
 AGENT_GHCR_REGISTRY="ghcr.io/windshiftapp/windshift-agent"
 RUNNER_GHCR_REGISTRY="ghcr.io/windshiftapp/windshift-runner"
 GITHUB_REPO="Windshiftapp/windshift"
 DOCKER_PLATFORMS="linux/amd64,linux/arm64"
-# The thin no-node coding agent lives in a sibling repo; its image is built
-# from that checkout, lifting `ws` from the coding-agent-runner image this
+# The thin no-node windshift-agent lives in a sibling repo; its image is built
+# from that checkout, lifting `ws` from the ws-carrier image this
 # release just built. Override the path if your layout differs; the build is
 # skipped (with a warning) when the checkout is absent.
 WINDSHIFT_AGENT_DIR="${WINDSHIFT_AGENT_DIR:-../windshift-agent}"
@@ -709,13 +709,13 @@ build_docker_image() {
 }
 
 # build_agent_image builds the thin no-node windshift-agent image from the
-# sibling repo (WINDSHIFT_AGENT_DIR), lifting `ws` from the coding-agent-runner
+# sibling repo (WINDSHIFT_AGENT_DIR), lifting `ws` from the ws-carrier
 # image this release just built (so the agent and runner ship matched). Skips
 # with a warning when the checkout is absent so a server-only release still
 # completes.
 build_agent_image() {
     local image="$AGENT_GHCR_REGISTRY"
-    local ws_image="${CODING_AGENT_GHCR_REGISTRY}:${VERSION}"
+    local ws_image="${WS_CARRIER_GHCR_REGISTRY}:${VERSION}"
     local ctx="$WINDSHIFT_AGENT_DIR"
 
     if [ ! -d "$ctx" ]; then
@@ -752,14 +752,14 @@ build_docker() {
 
     log_info "Platforms: ${DOCKER_PLATFORMS}"
     log_info "Server tags: ${GHCR_REGISTRY}:${VERSION}"
-    log_info "Coding-agent runner tags: ${CODING_AGENT_GHCR_REGISTRY}:${VERSION}"
+    log_info "ws-carrier tags: ${WS_CARRIER_GHCR_REGISTRY}:${VERSION}"
     log_info "Runner tags: ${RUNNER_GHCR_REGISTRY}:${VERSION}"
     log_info "Agent tags: ${AGENT_GHCR_REGISTRY}:${VERSION}"
 
     build_docker_image "$GHCR_REGISTRY" "Dockerfile" "Windshift server" true
-    build_docker_image "$CODING_AGENT_GHCR_REGISTRY" "deploy/coding-agent/Dockerfile" "ws-carrier (WS_IMAGE for windshift-agent)" false
+    build_docker_image "$WS_CARRIER_GHCR_REGISTRY" "deploy/coding-agent/Dockerfile" "ws-carrier (WS_IMAGE for windshift-agent)" false
     build_docker_image "$RUNNER_GHCR_REGISTRY" "deploy/windshift-runner/Dockerfile" "windshift-runner" false
-    # Built last: it lifts ws from the coding-agent-runner image pushed above.
+    # Built last: it lifts ws from the ws-carrier image pushed above.
     build_agent_image
 }
 
@@ -837,7 +837,7 @@ cmd_push() {
         echo "=============================="
         echo "This will:"
         echo "  - Build frontend"
-        echo "  - Build and push Docker images to ${GHCR_REGISTRY}, ${CODING_AGENT_GHCR_REGISTRY}, ${RUNNER_GHCR_REGISTRY}, and ${AGENT_GHCR_REGISTRY}"
+        echo "  - Build and push Docker images to ${GHCR_REGISTRY}, ${WS_CARRIER_GHCR_REGISTRY}, ${RUNNER_GHCR_REGISTRY}, and ${AGENT_GHCR_REGISTRY}"
         echo ""
         echo "Note: This does NOT create a GitHub release."
         echo ""
@@ -857,7 +857,7 @@ cmd_push() {
     echo ""
     echo "Docker images:"
     echo "  ${GHCR_REGISTRY}:${VERSION}"
-    echo "  ${CODING_AGENT_GHCR_REGISTRY}:${VERSION}"
+    echo "  ${WS_CARRIER_GHCR_REGISTRY}:${VERSION}"
     echo "  ${RUNNER_GHCR_REGISTRY}:${VERSION}"
     echo "  ${AGENT_GHCR_REGISTRY}:${VERSION}"
 }
@@ -922,7 +922,7 @@ cmd_release() {
     echo "GitHub: https://github.com/${GITHUB_REPO}/releases/tag/${VERSION}"
     echo "Docker:"
     echo "  docker pull ${GHCR_REGISTRY}:${VERSION}"
-    echo "  docker pull ${CODING_AGENT_GHCR_REGISTRY}:${VERSION}"
+    echo "  docker pull ${WS_CARRIER_GHCR_REGISTRY}:${VERSION}"
     echo "  docker pull ${RUNNER_GHCR_REGISTRY}:${VERSION}"
     echo "  docker pull ${AGENT_GHCR_REGISTRY}:${VERSION}"
 }

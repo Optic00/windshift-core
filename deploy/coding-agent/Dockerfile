@@ -7,7 +7,7 @@
 # arg, because `ws` lives in this repo while the agent lives in the sibling
 # windshift-agent repo.
 #
-# This image no longer bakes pi-coding-agent, Node/npm, the windshift-guard
+# This image no longer bakes the retired Node agent, Node/npm, the windshift-guard
 # extension, or an RPC entrypoint — those moved out when the coding agent was
 # replaced by windshift-agent (WI-238). The hardened `docker run` sandbox is
 # still assembled by the orchestrator (DockerAgentRunner) around whichever agent
@@ -15,7 +15,7 @@
 #
 # Built from the *repo root* (the build context needs cmd/ws + go.mod):
 #
-#   docker build -f deploy/coding-agent/Dockerfile -t coding-agent-runner:local .
+#   docker build -f deploy/coding-agent/Dockerfile -t windshift/ws-carrier:local .
 # =============================================================================
 
 # --------------------------------------------------------------------
