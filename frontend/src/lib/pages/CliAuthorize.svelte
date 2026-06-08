@@ -21,6 +21,7 @@
 		'workspaces:read': 'Read workspaces and configuration',
 		'workspaces:write': 'Modify workspaces and configuration',
 		'workspaces:delete': 'Delete workspaces',
+		'collections:read': 'Read collections and reports',
 		'users:read': 'Read user directory',
 	};
 

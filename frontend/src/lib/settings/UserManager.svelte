@@ -69,6 +69,7 @@
 		{ value: 'items:write', label: 'Create/update items' },
 		{ value: 'workspaces:read', label: 'Read workspaces' },
 		{ value: 'workspaces:write', label: 'Modify workspaces' },
+		{ value: 'collections:read', label: 'Read collections and reports' },
 		{ value: 'pages:read', label: 'Read pages' },
 		{ value: 'pages:write', label: 'Create/update pages' },
 		{ value: 'pages:delete', label: 'Archive pages' },
