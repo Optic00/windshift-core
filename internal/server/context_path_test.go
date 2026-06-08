@@ -55,6 +55,54 @@ func TestWithContextPathRedirectsBarePrefix(t *testing.T) {
 	}
 }
 
+func TestWithContextPathPrefixesRedirectLocation(t *testing.T) {
+	cases := []struct {
+		name string
+		loc  string
+		want string
+	}{
+		{"root relative", "/?sso_error=boom", "/windshift/?sso_error=boom"},
+		{"spa route", "/profile?tab=connected-accounts", "/windshift/profile?tab=connected-accounts"},
+		{"already prefixed", "/windshift/profile", "/windshift/profile"},
+		{"bare prefix", "/windshift", "/windshift"},
+		{"absolute url untouched", "https://idp.example.test/authorize?x=1", "https://idp.example.test/authorize?x=1"},
+		{"protocol relative untouched", "//evil.example.test/phish", "//evil.example.test/phish"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, tc.loc, http.StatusFound)
+			})
+
+			r := httptest.NewRequest(http.MethodGet, "http://example.test/windshift/api/sso/callback/acme", nil)
+			w := httptest.NewRecorder()
+			withContextPath(next, "/windshift").ServeHTTP(w, r)
+
+			if w.Code != http.StatusFound {
+				t.Fatalf("status = %d, want 302", w.Code)
+			}
+			if got := w.Header().Get("Location"); got != tc.want {
+				t.Fatalf("Location = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestWithContextPathDisabledLeavesLocationAlone(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/?sso_error=boom", http.StatusFound)
+	})
+
+	r := httptest.NewRequest(http.MethodGet, "http://example.test/api/sso/callback/acme", nil)
+	w := httptest.NewRecorder()
+	withContextPath(next, "").ServeHTTP(w, r)
+
+	if got := w.Header().Get("Location"); got != "/?sso_error=boom" {
+		t.Fatalf("Location = %q, want unchanged", got)
+	}
+}
+
 func TestPrepareIndexHTMLPrefixesRootAssetsAndInjectsContextPath(t *testing.T) {
 	input := []byte(`<!doctype html><head><script>theme()</script><script type="module" src="/_app/app.js"></script><link href="/_app/app.css"><link href="/windshift-3.svg"></head><body></body>`)
 	got := string(prepareIndexHTML(input, "nonce123", "/windshift"))
