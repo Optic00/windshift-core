@@ -232,9 +232,10 @@
     }
   }
 
-  // Round-trip a quick prompt through the binding's LLM connection and show
-  // the model's reply inline. Proves the connection (key + model) is reachable
-  // before assigning real work.
+  // Round-trip a quick prompt through the binding's LLM connection and, when
+  // the binding is repo-backed, clone its worktree and list the project root —
+  // proving the whole chain (model + SCM connection + clone) is reachable and
+  // points at the right repo before assigning real work.
   async function testBinding(b) {
     testing = { ...testing, [b.id]: true };
     testResults = { ...testResults, [b.id]: null };
@@ -242,13 +243,19 @@
       const res = await agentBindings.testLLM(workspaceId, b.id);
       testResults = {
         ...testResults,
-        [b.id]: { answer: res?.answer || '(empty response)', prompt: res?.prompt },
+        [b.id]: { answer: res?.answer || '(empty response)', prompt: res?.prompt, repo: res?.repo || null },
       };
     } catch (err) {
-      testResults = { ...testResults, [b.id]: { error: err?.message || 'LLM test failed' } };
+      testResults = { ...testResults, [b.id]: { error: err?.message || 'Agent test failed' } };
     } finally {
       testing = { ...testing, [b.id]: false };
     }
+  }
+
+  // Render a worktree listing as "file, dir/, ..." with folders marked.
+  function formatRepoEntries(entries) {
+    if (!entries || entries.length === 0) return '(empty)';
+    return entries.map((e) => (e.is_dir ? `${e.name}/` : e.name)).join(', ');
   }
 
   function openDeleteDialog(binding) {
@@ -341,9 +348,9 @@
                       class="inline-flex items-center justify-center p-1 rounded hover:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
                       style="color: var(--ds-icon);"
                       title={b.llm_connection_id
-                        ? 'Test the agent LLM with a quick prompt'
+                        ? 'Test the agent: prompt the LLM and list the cloned repo root'
                         : 'No LLM connection on this binding to test'}
-                      aria-label="Test LLM for {displayActingUser(b.acting_user_id)}"
+                      aria-label="Test agent for {displayActingUser(b.acting_user_id)}"
                     >
                       {#if testing[b.id]}
                         <Loader2 class="w-4 h-4 animate-spin" />
@@ -375,11 +382,30 @@
                         </div>
                       {:else}
                         <div
-                          class="text-xs rounded p-2"
+                          class="text-xs rounded p-2 space-y-1"
                           style="background-color: var(--ds-background-neutral); color: var(--ds-text);"
                         >
-                          <span style="color: var(--ds-text-subtle);">Model reply:</span>
-                          {testResults[b.id].answer}
+                          <div>
+                            <span style="color: var(--ds-text-subtle);">Model reply:</span>
+                            {testResults[b.id].answer}
+                          </div>
+                          {#if testResults[b.id].repo}
+                            {#if testResults[b.id].repo.error}
+                              <div style="color: var(--ds-text-danger);">
+                                ✗ {testResults[b.id].repo.error}
+                              </div>
+                            {:else}
+                              <div>
+                                <span style="color: var(--ds-text-subtle);">
+                                  Repo {testResults[b.id].repo.repo_slug}{testResults[b.id].repo
+                                    .base_ref
+                                    ? ` @ ${testResults[b.id].repo.base_ref}`
+                                    : ''}:
+                                </span>
+                                {formatRepoEntries(testResults[b.id].repo.entries)}
+                              </div>
+                            {/if}
+                          {/if}
                         </div>
                       {/if}
                     </td>

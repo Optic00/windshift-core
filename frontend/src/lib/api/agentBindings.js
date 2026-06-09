@@ -41,9 +41,14 @@ export const agentBindings = {
 
   /**
    * Round-trip a prompt through the binding's LLM connection and return the
-   * model's reply ({ prompt, answer }). A blank prompt uses a server default.
-   * 502 means the provider/connection failed; 400 means the binding has no
-   * LLM connection.
+   * model's reply, plus — when the binding is repo-backed — a snapshot of the
+   * cloned worktree's project root:
+   *   { prompt, answer, repo?: { repo_slug, base_ref, entries: [{name, is_dir}], error? } }
+   * A blank prompt uses a server default. 502 means the provider/connection
+   * failed; 400 means the binding has no LLM connection. The repo block is
+   * reported inline (its own `error`) so a working model reply still returns
+   * even when the SCM/clone leg is broken; `repo` is absent for bindings with
+   * no repo configured.
    */
   testLLM: (workspaceId, id, prompt) =>
     fetchAPI(`/workspaces/${workspaceId}/agent-bindings/${id}/test-llm`, {

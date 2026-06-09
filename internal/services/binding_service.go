@@ -292,6 +292,95 @@ func (s *BindingService) TestLLM(ctx context.Context, bindingID, workspaceID int
 	return s.llmRuntime.PromptConnection(ctx, *binding.LLMConnectionID, prompt)
 }
 
+// ErrBindingNoRepo is returned by TestRepo when the binding has no repo
+// configured (HasRepo is false), so there is nothing to clone. The handler
+// treats it as "not applicable" rather than an error.
+var ErrBindingNoRepo = errors.New("binding service: binding has no repo configured")
+
+// ErrBindingRunnerNotConfigured is returned by TestRepo when a repo test is
+// requested but no RunService (which owns the worktree preparer) is wired —
+// the coding-agent harness is disabled on this server.
+var ErrBindingRunnerNotConfigured = errors.New("binding service: coding-agent runner not configured")
+
+// repoTestCheckoutTimeout bounds a single TestRepo clone+list so the admin's
+// button can't hang indefinitely on a huge or unreachable repo. The first
+// clone of a large repo is the slow case; later tests hit the warm bare cache.
+const repoTestCheckoutTimeout = 2 * time.Minute
+
+// RepoTestResult reports what TestRepo cloned: the repo + ref it resolved and
+// the first few entries in the project root, so an admin can confirm at a
+// glance that the binding points at the right project.
+type RepoTestResult struct {
+	RepoSlug string
+	BaseRef  string
+	Entries  []RepoEntry
+}
+
+// TestRepo prepares a throwaway worktree for the binding's repo — reusing the
+// exact SCM-credential resolution and clone-URL derivation a real run uses
+// (ResolveForRun + deriveCloneURL) and the same repoprep.Preparer — and returns
+// the first max entries of the project root. This is the SCM half of the
+// binding "test" chain: it proves the SCM connection decrypts, the clone URL
+// resolves, and the worktree materializes against the right repo, which a bare
+// LLM prompt cannot exercise.
+//
+// Workspace-scoped like TestLLM (an admin of one workspace can't probe
+// another's binding by id). Returns ErrBindingNoRepo when the binding isn't
+// repo-backed and ErrBindingRunnerNotConfigured when the harness is disabled.
+func (s *BindingService) TestRepo(ctx context.Context, bindingID, workspaceID, maxEntries int) (*RepoTestResult, error) {
+	binding, err := s.repo.Get(ctx, bindingID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrBindingNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load binding: %w", err)
+	}
+	if binding.WorkspaceID != workspaceID {
+		return nil, ErrBindingNotFound
+	}
+	if !binding.HasRepo() {
+		return nil, ErrBindingNoRepo
+	}
+	if s.scmCreds == nil {
+		return nil, errors.New("binding service: scm credential resolver not configured")
+	}
+	if s.runs == nil {
+		return nil, ErrBindingRunnerNotConfigured
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, repoTestCheckoutTimeout)
+	defer cancel()
+
+	// Same derivation as the live run path (MaybeStartRunForAssignee): the
+	// clone URL comes from the trusted SCM connection record + the binding's
+	// slug, and the token travels on RepoSpec for askpass injection — never
+	// embedded in the URL.
+	token, providerType, baseURL, err := s.scmCreds.ResolveForRun(ctx, *binding.SCMConnectionID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve scm credentials: %w", err)
+	}
+	cloneURL, derr := deriveCloneURL(providerType, baseURL, binding.RepoSlug)
+	if derr != nil {
+		return nil, fmt.Errorf("derive clone url: %w", derr)
+	}
+
+	entries, err := s.runs.InspectRepoRoot(ctx, repoprep.RepoSpec{
+		WorkspaceID: workspaceID,
+		RepoSlug:    binding.RepoSlug,
+		RemoteURL:   cloneURL,
+		BaseRef:     binding.RepoBaseRef,
+		Token:       token,
+	}, maxEntries)
+	if err != nil {
+		return nil, err
+	}
+	return &RepoTestResult{
+		RepoSlug: binding.RepoSlug,
+		BaseRef:  binding.RepoBaseRef,
+		Entries:  entries,
+	}, nil
+}
+
 // MaybeStartRunForAssignee is the assignee-change trigger. Hot path: if
 // the assignee did not actually change or no binding matches the new
 // assignee, this is a no-op (one indexed lookup). Otherwise it builds a

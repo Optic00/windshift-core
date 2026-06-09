@@ -19,6 +19,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"windshift/internal/models"
@@ -230,6 +231,12 @@ type RunService struct {
 	// remote claim time (WI-195). Optional; set via SetBindingInputsResolver
 	// after construction to break the BindingService<->RunService cycle.
 	bindingInputs BindingInputsResolver
+
+	// testCheckoutSeq hands out unique, monotonically decreasing run ids for
+	// throwaway worktrees prepared by InspectRepoRoot (the binding "test"
+	// button). Negative ids keep these checkouts' runs/<id> dirs and branches
+	// out of the real run-id space and unique across concurrent tests.
+	testCheckoutSeq atomic.Int64
 }
 
 // SetBindingInputsResolver wires the binding-input resolver used to enrich

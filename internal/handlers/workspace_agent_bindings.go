@@ -241,10 +241,26 @@ type testLLMRequest struct {
 	Prompt string `json:"prompt,omitempty"`
 }
 
-// testLLMResponse carries the model's reply back to the admin.
+// testLLMResponse carries the model's reply back to the admin, plus — when the
+// binding is repo-backed — a snapshot of the cloned worktree's project root so
+// the admin can confirm the whole chain (LLM + SCM + clone) works and points at
+// the right repo.
 type testLLMResponse struct {
-	Prompt string `json:"prompt"`
-	Answer string `json:"answer"`
+	Prompt string         `json:"prompt"`
+	Answer string         `json:"answer"`
+	Repo   *repoTestBlock `json:"repo,omitempty"`
+}
+
+// repoTestBlock is the repo half of the test result. On success Entries lists
+// the first few project-root entries; on failure Error explains which part of
+// the SCM/clone chain broke (e.g. the SSO_SECRET-derived decrypt). It is
+// reported inline rather than failing the whole request so a working model
+// reply still surfaces even when the repo leg is broken.
+type repoTestBlock struct {
+	RepoSlug string               `json:"repo_slug,omitempty"`
+	BaseRef  string               `json:"base_ref,omitempty"`
+	Entries  []services.RepoEntry `json:"entries,omitempty"`
+	Error    string               `json:"error,omitempty"`
 }
 
 // TestLLM round-trips a prompt through a binding's LLM connection and returns
@@ -290,7 +306,25 @@ func (h *WorkspaceAgentBindingHandler) TestLLM(w http.ResponseWriter, r *http.Re
 	if strings.TrimSpace(prompt) == "" {
 		prompt = services.DefaultLLMTestPrompt
 	}
-	respondJSONOK(w, testLLMResponse{Prompt: prompt, Answer: answer})
+	respondJSONOK(w, testLLMResponse{Prompt: prompt, Answer: answer, Repo: h.repoTest(r, id, workspaceID)})
+}
+
+// repoTest runs the SCM/clone half of the binding test and shapes it into the
+// response block. A binding with no repo yields nil (nothing to show); every
+// other failure is reported inline as an Error so a broken SCM leg is
+// pinpointed without 502-ing a request whose model reply succeeded.
+func (h *WorkspaceAgentBindingHandler) repoTest(r *http.Request, id, workspaceID int) *repoTestBlock {
+	res, err := h.bindings.TestRepo(r.Context(), id, workspaceID, 5)
+	switch {
+	case errors.Is(err, services.ErrBindingNoRepo):
+		return nil
+	case errors.Is(err, services.ErrBindingRunnerNotConfigured), errors.Is(err, services.ErrNoPreparer):
+		return &repoTestBlock{Error: "repo check unavailable: coding-agent runner is not configured on this server"}
+	case err != nil:
+		return &repoTestBlock{Error: "repo clone failed: " + err.Error()}
+	default:
+		return &repoTestBlock{RepoSlug: res.RepoSlug, BaseRef: res.BaseRef, Entries: res.Entries}
+	}
 }
 
 // isIdentityGateError reports whether the error came from the WI-87
