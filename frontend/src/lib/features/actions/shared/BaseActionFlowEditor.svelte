@@ -333,7 +333,10 @@
         <h4 class="text-xs font-medium sidebar-subtitle mb-2">{tipsLabel}</h4>
         <ul class="text-xs space-y-1 sidebar-hints">
           {#each tips as tip}
-            <li>{@html tip}</li>
+            <!-- Tips are static i18n strings with no markup; render as plain
+                 text so this never becomes a stored-XSS sink if a caller later
+                 feeds it user/server content. -->
+            <li>{tip}</li>
           {/each}
         </ul>
         {#if sidebarExtra}
