@@ -530,6 +530,11 @@
                             {/if}
                           </div>
                           {#if testResults[b.id].lines?.length}
+                            <!-- XSS: this is agent + repo-derived output (e.g. a
+                                 file named "<img onerror=...>"). It MUST stay a
+                                 plain {…} interpolation so Svelte HTML-escapes it.
+                                 Never switch this to {@html}/markdown without
+                                 routing through sanitizeHtml (utils/sanitize). -->
                             <pre
                               class="whitespace-pre-wrap break-words rounded p-2 m-0"
                               style="background-color: var(--ds-surface-sunken, var(--ds-background)); color: var(--ds-text); max-height: 12rem; overflow: auto;"
