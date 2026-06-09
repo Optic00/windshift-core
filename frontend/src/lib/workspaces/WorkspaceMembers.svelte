@@ -319,7 +319,8 @@
         const role = roles.find((r) => r.name === roleName);
         if (!role) return null;
         const roleMembers = members.filter((m) => m.roles.some((r) => r.role_name === roleName));
-        return { name: roleName, role, members: roleMembers, access: getEffectiveAccess(roleName, roleMembers) };
+        const roleGroups = groupAssignments.filter((g) => g.roles.some((r) => r.role_name === roleName));
+        return { name: roleName, role, members: roleMembers, groups: roleGroups, access: getEffectiveAccess(roleName, roleMembers) };
       })
       .filter(Boolean)
   );
@@ -378,10 +379,13 @@
         {/if}
       {/snippet}
       {#snippet members(row)}
-        {#if row.members.length > 0}
+        {#if row.members.length > 0 || row.groups.length > 0}
           <div class="flex flex-wrap gap-2">
             {#each row.members as m}
               <Chip color="blue">{m.first_name} {m.last_name}</Chip>
+            {/each}
+            {#each row.groups as g}
+              <Chip color="purple" icon={Users}>{g.group_name}</Chip>
             {/each}
           </div>
         {:else}
@@ -398,10 +402,22 @@
       placeholder="Search members by name or email..."
       className="flex-1"
     />
-    <Button variant="primary" size="medium" onclick={() => showModal = true} keyboardHint="A" hotkeyConfig={{ key: toHotkeyString('workspaceMembers', 'addMember'), guard: () => !showModal }}>
-      <UserPlus class="w-4 h-4 mr-2" />
-      Add Member
-    </Button>
+    <div class="flex items-center gap-2">
+      <Button variant="primary" size="medium" onclick={() => showModal = true} keyboardHint="A" hotkeyConfig={{ key: toHotkeyString('workspaceMembers', 'addMember'), guard: () => !showModal }}>
+        <UserPlus class="w-4 h-4 mr-2" />
+        Add Member
+      </Button>
+      <Button
+        variant="default"
+        size="medium"
+        onclick={openGroupModal}
+        keyboardHint="G"
+        hotkeyConfig={{ key: toHotkeyString('workspaceMembers', 'addGroup'), guard: canOpenGroupModal }}
+      >
+        <Users class="w-4 h-4 mr-2" />
+        Add Group
+      </Button>
+    </div>
   </div>
 
   <!-- Members Table -->
@@ -466,26 +482,14 @@
     {/if}
 
     <!-- Group Assignments -->
-    <div class="flex items-center justify-between gap-4 mt-10 mb-4">
-      <div class="flex items-start gap-3">
-        <Users class="w-4 h-4 text-blue-600 mt-0.5" />
-        <div>
-          <h3 class="text-sm font-semibold" style="color: var(--ds-text);">Groups</h3>
-          <p class="text-sm mt-1" style="color: var(--ds-text-subtle);">
-            Roles assigned to a group apply to every member of that group.
-          </p>
-        </div>
+    <div class="flex items-start gap-3 mt-10 mb-4">
+      <Users class="w-4 h-4 text-blue-600 mt-0.5" />
+      <div>
+        <h3 class="text-sm font-semibold" style="color: var(--ds-text);">Groups</h3>
+        <p class="text-sm mt-1" style="color: var(--ds-text-subtle);">
+          Roles assigned to a group apply to every member of that group.
+        </p>
       </div>
-      <Button
-        variant="default"
-        size="medium"
-        onclick={openGroupModal}
-        keyboardHint="G"
-        hotkeyConfig={{ key: toHotkeyString('workspaceMembers', 'addGroup'), guard: canOpenGroupModal }}
-      >
-        <Users class="w-4 h-4 mr-2" />
-        Add Group
-      </Button>
     </div>
 
     <DataTable
