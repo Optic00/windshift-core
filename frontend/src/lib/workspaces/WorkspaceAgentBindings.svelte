@@ -7,7 +7,7 @@
   // candidates endpoint just keeps the picker honest.
 
   import { onMount } from 'svelte';
-  import { Bot, Loader2, Plus, Trash2 } from '@lucide/svelte';
+  import { Bot, FlaskConical, Loader2, Plus, Trash2 } from '@lucide/svelte';
   import { agentBindings, api } from '../api.js';
   import Panel from '../components/Panel.svelte';
   import Select from '../components/Select.svelte';
@@ -49,6 +49,10 @@
   // Delete confirmation dialog.
   let deleteDialogOpen = $state(false);
   let pendingDelete = $state(null); // { id, label }
+
+  // Per-binding "Test LLM" state, keyed by binding id.
+  let testing = $state({}); // id -> bool
+  let testResults = $state({}); // id -> { answer?: string, prompt?: string, error?: string }
 
   onMount(load);
 
@@ -228,6 +232,25 @@
     }
   }
 
+  // Round-trip a quick prompt through the binding's LLM connection and show
+  // the model's reply inline. Proves the connection (key + model) is reachable
+  // before assigning real work.
+  async function testBinding(b) {
+    testing = { ...testing, [b.id]: true };
+    testResults = { ...testResults, [b.id]: null };
+    try {
+      const res = await agentBindings.testLLM(workspaceId, b.id);
+      testResults = {
+        ...testResults,
+        [b.id]: { answer: res?.answer || '(empty response)', prompt: res?.prompt },
+      };
+    } catch (err) {
+      testResults = { ...testResults, [b.id]: { error: err?.message || 'LLM test failed' } };
+    } finally {
+      testing = { ...testing, [b.id]: false };
+    }
+  }
+
   function openDeleteDialog(binding) {
     pendingDelete = {
       id: binding.id,
@@ -310,7 +333,24 @@
                   <td class="px-3 py-2" style="color: var(--ds-text-subtle);">
                     {b.max_runs_per_day > 0 ? `${b.max_runs_per_day}/day` : 'unlimited'} · token {b.token_ttl_minutes}m
                   </td>
-                  <td class="px-3 py-2 text-right">
+                  <td class="px-3 py-2 text-right whitespace-nowrap">
+                    <button
+                      type="button"
+                      onclick={() => testBinding(b)}
+                      disabled={testing[b.id] || !b.llm_connection_id}
+                      class="inline-flex items-center justify-center p-1 rounded hover:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
+                      style="color: var(--ds-icon);"
+                      title={b.llm_connection_id
+                        ? 'Test the agent LLM with a quick prompt'
+                        : 'No LLM connection on this binding to test'}
+                      aria-label="Test LLM for {displayActingUser(b.acting_user_id)}"
+                    >
+                      {#if testing[b.id]}
+                        <Loader2 class="w-4 h-4 animate-spin" />
+                      {:else}
+                        <FlaskConical class="w-4 h-4" />
+                      {/if}
+                    </button>
                     <button
                       type="button"
                       onclick={() => openDeleteDialog(b)}
@@ -323,6 +363,28 @@
                     </button>
                   </td>
                 </tr>
+                {#if testResults[b.id]}
+                  <tr style="border-color: var(--ds-border);">
+                    <td colspan="7" class="px-3 pb-3">
+                      {#if testResults[b.id].error}
+                        <div
+                          class="text-xs rounded p-2"
+                          style="background-color: var(--ds-background-danger-subtle, var(--ds-background-neutral)); color: var(--ds-text-danger);"
+                        >
+                          ✗ {testResults[b.id].error}
+                        </div>
+                      {:else}
+                        <div
+                          class="text-xs rounded p-2"
+                          style="background-color: var(--ds-background-neutral); color: var(--ds-text);"
+                        >
+                          <span style="color: var(--ds-text-subtle);">Model reply:</span>
+                          {testResults[b.id].answer}
+                        </div>
+                      {/if}
+                    </td>
+                  </tr>
+                {/if}
               {/each}
             </tbody>
           </table>

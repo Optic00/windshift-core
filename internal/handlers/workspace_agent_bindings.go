@@ -10,6 +10,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/restapi"
 	"windshift/internal/services"
 )
 
@@ -232,6 +233,64 @@ func (h *WorkspaceAgentBindingHandler) Delete(w http.ResponseWriter, r *http.Req
 		"workspace_id": workspaceID,
 	})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// testLLMRequest is the optional body for TestLLM. A blank/absent prompt
+// falls back to the service default.
+type testLLMRequest struct {
+	Prompt string `json:"prompt,omitempty"`
+}
+
+// testLLMResponse carries the model's reply back to the admin.
+type testLLMResponse struct {
+	Prompt string `json:"prompt"`
+	Answer string `json:"answer"`
+}
+
+// TestLLM round-trips a prompt through a binding's LLM connection and returns
+// the model's reply, so a workspace admin can confirm the agent's model is
+// reachable before assigning real work. Workspace-admin gated, like the other
+// mutations. A provider/connection failure is surfaced as 502 so the admin
+// sees the upstream message rather than an opaque 500.
+func (h *WorkspaceAgentBindingHandler) TestLLM(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := requireIDParam(w, r, "workspaceId")
+	if !ok {
+		return
+	}
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+	if !RequireWorkspacePermission(w, r, user.ID, workspaceID, models.PermissionWorkspaceAdmin, h.permissionService) {
+		return
+	}
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil || id <= 0 {
+		respondBadRequest(w, r, "id path param must be a positive integer")
+		return
+	}
+	body, ok := decodeOptionalJSON[testLLMRequest](w, r)
+	if !ok {
+		return
+	}
+	answer, err := h.bindings.TestLLM(r.Context(), id, workspaceID, body.Prompt)
+	if err != nil {
+		switch {
+		case errors.Is(err, services.ErrBindingNotFound):
+			respondNotFound(w, r, "agent binding")
+		case errors.Is(err, services.ErrLLMConnectionRequired):
+			respondBadRequest(w, r, "this binding has no LLM connection — edit it to choose one")
+		default:
+			respondError(w, r, restapi.NewAPIError(http.StatusBadGateway, restapi.ErrCodeConnectionTestFailed,
+				"LLM test failed: "+err.Error()))
+		}
+		return
+	}
+	prompt := body.Prompt
+	if strings.TrimSpace(prompt) == "" {
+		prompt = services.DefaultLLMTestPrompt
+	}
+	respondJSONOK(w, testLLMResponse{Prompt: prompt, Answer: answer})
 }
 
 // isIdentityGateError reports whether the error came from the WI-87

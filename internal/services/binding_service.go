@@ -2,11 +2,13 @@ package services
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log"
 	"net/url"
 	"regexp"
+	"strings"
 	"time"
 
 	"windshift/internal/auth"
@@ -57,13 +59,16 @@ type SCMCredentialResolver interface {
 	ResolveForRun(ctx context.Context, connectionID int) (token string, providerType string, baseURL string, err error)
 }
 
-// LLMRuntimeResolver returns the provider runtime config for a connection.
-// Create uses it to validate a chosen llm_connection_id (ConnectionRuntime
-// only resolves enabled connections), and the run path uses it to derive the
-// agent's model. LLM connections are global, not workspace-scoped: any
-// enabled connection may back any workspace's binding.
+// LLMRuntimeResolver returns the provider runtime config for a connection and
+// runs one-shot test prompts against it. Create uses ConnectionRuntime to
+// validate a chosen llm_connection_id (it only resolves enabled connections),
+// the run path uses it to derive the agent's model, and TestLLM uses
+// PromptConnection to round-trip a prompt through the provider. LLM
+// connections are global, not workspace-scoped: any enabled connection may
+// back any workspace's binding.
 type LLMRuntimeResolver interface {
 	ConnectionRuntime(ctx context.Context, connectionID int) (*llm.ConnectionRuntimeConfig, error)
+	PromptConnection(ctx context.Context, connectionID int, prompt string) (string, error)
 }
 
 // AgentRunContextResolver returns workspace/item identifiers the runner needs
@@ -82,6 +87,14 @@ var ErrLLMConnectionRequired = errors.New("binding service: an llm connection is
 // llm_connection_id does not resolve to an enabled connection (missing or
 // disabled). The handler maps it to a 400.
 var ErrLLMConnectionInvalid = errors.New("binding service: llm connection not found or disabled")
+
+// ErrBindingNotFound is returned when a binding id doesn't exist in the given
+// workspace. The handler maps it to a 404.
+var ErrBindingNotFound = errors.New("binding service: binding not found")
+
+// DefaultLLMTestPrompt is the prompt TestLLM sends when the caller supplies
+// none — short enough to be cheap, open enough to prove the model replies.
+const DefaultLLMTestPrompt = "Reply in one short sentence to confirm you are reachable."
 
 // BindingService owns the workspace_agent_bindings lifecycle from the
 // orchestrator's side: workspace-admin CRUD goes through Create / Delete
@@ -245,6 +258,38 @@ func (s *BindingService) ListForWorkspace(ctx context.Context, workspaceID int) 
 // in workspace B by guessing its id.
 func (s *BindingService) Delete(ctx context.Context, id, workspaceID int) (int64, error) {
 	return s.repo.Delete(ctx, id, workspaceID)
+}
+
+// TestLLM round-trips a prompt through the binding's LLM connection and
+// returns the model's reply, so a workspace admin can confirm the agent's
+// model actually responds before assigning real work. The workspace scope is
+// required (an admin of workspace A must not probe a binding in workspace B by
+// guessing its id). A blank prompt falls back to DefaultLLMTestPrompt.
+//
+// Note this exercises the provider directly, not the coding-agent's llm-proxy
+// path — it validates the connection (key + model reachable), which is a
+// superset of what a run needs but doesn't itself spin up a container.
+func (s *BindingService) TestLLM(ctx context.Context, bindingID, workspaceID int, prompt string) (string, error) {
+	binding, err := s.repo.Get(ctx, bindingID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrBindingNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("load binding: %w", err)
+	}
+	if binding.WorkspaceID != workspaceID {
+		return "", ErrBindingNotFound
+	}
+	if binding.LLMConnectionID == nil {
+		return "", ErrLLMConnectionRequired
+	}
+	if s.llmRuntime == nil {
+		return "", errors.New("binding service: llm runtime not configured")
+	}
+	if strings.TrimSpace(prompt) == "" {
+		prompt = DefaultLLMTestPrompt
+	}
+	return s.llmRuntime.PromptConnection(ctx, *binding.LLMConnectionID, prompt)
 }
 
 // MaybeStartRunForAssignee is the assignee-change trigger. Hot path: if

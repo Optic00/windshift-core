@@ -40,6 +40,18 @@ export const agentBindings = {
     }),
 
   /**
+   * Round-trip a prompt through the binding's LLM connection and return the
+   * model's reply ({ prompt, answer }). A blank prompt uses a server default.
+   * 502 means the provider/connection failed; 400 means the binding has no
+   * LLM connection.
+   */
+  testLLM: (workspaceId, id, prompt) =>
+    fetchAPI(`/workspaces/${workspaceId}/agent-bindings/${id}/test-llm`, {
+      method: 'POST',
+      body: JSON.stringify(prompt ? { prompt } : {}),
+    }),
+
+  /**
    * List the acting-identity options the workspace admin may pick:
    * owned agent users + allowlisted centralized service users (when the
    * WI-87 master flag is on). The chokepoint re-validates at create

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"windshift/internal/database"
@@ -449,6 +450,34 @@ func (m *ConnectionManager) TestConnection(id int) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	return client.Health(ctx)
+}
+
+// PromptConnection runs a one-shot chat completion against an enabled
+// connection and returns the model's reply text. Unlike TestConnection's
+// Health ping, this exercises the full inference path — provider, key, and
+// model — which is what a "test this agent's LLM" button needs. The connection
+// must be enabled (Resolve only returns enabled rows); a disabled or missing
+// id errors. The resolved client carries the manager's private-CIDR allowlist
+// so a self-hosted base URL can't be turned into an SSRF probe.
+func (m *ConnectionManager) PromptConnection(ctx context.Context, connectionID int, prompt string) (string, error) {
+	if connectionID <= 0 {
+		return "", fmt.Errorf("a connection id is required")
+	}
+	client, err := m.Resolve(connectionID)
+	if err != nil {
+		return "", err
+	}
+	resp, err := client.ChatCompletion(ctx, ChatCompletionRequest{
+		Messages:  []Message{{Role: "user", Content: prompt}},
+		MaxTokens: 256,
+	})
+	if err != nil {
+		return "", err
+	}
+	if len(resp.Choices) == 0 {
+		return "", fmt.Errorf("model returned no choices")
+	}
+	return strings.TrimSpace(resp.Choices[0].Message.Content), nil
 }
 
 // LoadAIFeaturesConfig reads the per-feature AI configuration from system_settings.
