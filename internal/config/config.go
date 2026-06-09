@@ -124,17 +124,23 @@ type LLMConfig struct {
 // override it to pin a custom build.
 const DefaultCodingAgentRunnerImage = "ghcr.io/windshiftapp/windshift-agent:latest"
 
-// CodingAgentConfig configures the coding-agent harness (WI-89). The harness is
-// activated by WorktreeRoot — the one genuinely host-specific knob (a writable
-// host path bind-mounted into the agent container, which can't be guessed). When
-// it is set the server constructs a production RunService that spawns the
-// windshift-agent harness (the node-free codehamr fork, WI-204) inside
-// RunnerImage, wires it through the BindingService, and the assignee-change
-// trigger fires real runs. When WorktreeRoot is empty the harness stays in
-// observer mode — bindings can still be created, the trigger logs but no-ops.
+// DefaultCodingAgentWorktreeRoot is where the in-process runner prepares per-run
+// checkouts when CODING_AGENT_WORKTREE_ROOT is unset — under the conventional
+// container data dir. Override for a different host layout.
+const DefaultCodingAgentWorktreeRoot = "/data/worktrees"
+
+// CodingAgentConfig configures the coding-agent harness (WI-89). RunnerImage and
+// WorktreeRoot both carry built-in defaults (DefaultCodingAgentRunnerImage and
+// DefaultCodingAgentWorktreeRoot), so the harness is active out of the box: the
+// server constructs a production RunService that spawns the windshift-agent
+// harness (the node-free codehamr fork, WI-204) inside RunnerImage, wires it
+// through the BindingService, and the assignee-change trigger fires real runs.
 //
-// RunnerImage defaults to DefaultCodingAgentRunnerImage; set
-// CODING_AGENT_RUNNER_IMAGE only to pin a custom agent build.
+// The activation gate is still WorktreeRoot != "" — left in place so a future
+// remote-only control plane can opt out of the in-process runner — but since it
+// defaults non-empty, the in-process runner is on unless that default is
+// explicitly cleared. Override CODING_AGENT_RUNNER_IMAGE to pin a custom agent
+// build and CODING_AGENT_WORKTREE_ROOT to relocate the per-run checkouts.
 //
 // The agent reaches the model only through the llm-proxy broker, so no
 // provider key or provider selection is injected into the container; it
