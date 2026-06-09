@@ -29,6 +29,7 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 		postgresConnShort       = flag.String("pg-conn", "", "PostgreSQL connection string (shorthand)")
 		attachmentPath          = flag.String("attachment-path", "", "Path to store attachments")
 		disableCSRF             = flag.Bool("no-csrf", false, "Disable CSRF protection (development only)")
+		allowLocalConnections   = flag.Bool("allow-local-connections", false, "Allow server-side HTTP clients (SCM, Jira, LLM, webhooks) to reach loopback/private IPs — for self-hosted/internal endpoints")
 		allowedHosts            = flag.String("allowed-hosts", "", "Comma-separated allowed hostnames for CSRF")
 		allowedPort             = flag.String("allowed-port", "", "Port for CORS/WebAuthn trusted origins")
 		oidcAllowedPrivateCIDRs = flag.String("oidc-allowed-private-cidrs", "", "Comma-separated private/CGNAT CIDRs that OIDC discovery, JWKS, and token calls may dial")
@@ -173,6 +174,8 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 		TLSCertPath:       *tlsCertPath,
 		TLSKeyPath:        *tlsKeyPath,
 		DisableCSRF:       *disableCSRF,
+
+		AllowLocalConnections: *allowLocalConnections || parseBoolEnv("ALLOW_LOCAL_CONNECTIONS"),
 
 		DB: DBConfig{
 			PostgresConn:  pgConn,

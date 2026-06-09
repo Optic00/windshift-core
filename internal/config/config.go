@@ -24,6 +24,13 @@ type Config struct {
 	TLSKeyPath        string
 	DisableCSRF       bool
 
+	// AllowLocalConnections, when true, lets every server-side SSRF-safe HTTP
+	// client/dialer reach loopback and private/RFC1918 destinations. It is the
+	// single switch operators flip to run self-hosted SCM (Gitea / GitHub
+	// Enterprise), Jira Data Center, or a local LLM gateway on a private
+	// network — instead of allowlisting each endpoint's CIDR. Off by default.
+	AllowLocalConnections bool
+
 	// Sub-configs grouped by concern
 	DB           DBConfig
 	SSH          SSHConfig

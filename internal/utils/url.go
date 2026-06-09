@@ -99,7 +99,7 @@ func ValidateExternalURL(rawURL string) error {
 	}
 
 	for _, ip := range ips {
-		if IsPrivateIP(ip) {
+		if !AllowLocalConnections() && IsPrivateIP(ip) {
 			return fmt.Errorf("URL must not resolve to a private or internal address")
 		}
 	}
@@ -127,7 +127,7 @@ func NewSSRFSafeHTTPClient(timeout time.Duration) *http.Client {
 			}
 
 			for _, ip := range ips {
-				if IsPrivateIP(ip) {
+				if !AllowLocalConnections() && IsPrivateIP(ip) {
 					return nil, fmt.Errorf("connection refused")
 				}
 			}
