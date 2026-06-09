@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"strings"
 	"time"
@@ -55,6 +56,31 @@ func NewConnectionManager(db database.Database, encryption *sso.SecretEncryption
 // Otherwise, picks the default enabled connection (or the first enabled one).
 // Falls back to the env-var-based client if no DB connections exist.
 func (m *ConnectionManager) Resolve(connectionID int) (Client, error) {
+	rc, err := m.resolve(connectionID)
+	if err != nil {
+		return nil, err
+	}
+	return rc.client, nil
+}
+
+// resolvedConnection bundles a ready Client with the non-secret connection
+// metadata (provider, model, effective endpoint) so callers that want to log
+// or report what they're talking to don't have to re-query. The fallback
+// env-var client has no DB row, so usedFallback flags that provider/model are
+// unknown.
+type resolvedConnection struct {
+	client       Client
+	connectionID int
+	providerType ProviderType
+	model        string
+	baseURL      string // effective endpoint (provider default when none stored)
+	usedFallback bool
+}
+
+// resolve is the metadata-returning core behind Resolve. Keeping Resolve's
+// signature narrow (just a Client) avoids churning its many callers while
+// still letting PromptConnection name the provider/model in its logs.
+func (m *ConnectionManager) resolve(connectionID int) (*resolvedConnection, error) {
 	var row *sql.Row
 	if connectionID > 0 {
 		row = m.db.QueryRow(
@@ -82,7 +108,7 @@ func (m *ConnectionManager) Resolve(connectionID int) (Client, error) {
 			return nil, fmt.Errorf("LLM connection %d not found or disabled", connectionID)
 		}
 		// No DB connections configured — fall back to the env-var client
-		return m.fallback, nil
+		return &resolvedConnection{client: m.fallback, usedFallback: true}, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to query connection: %w", err)
@@ -96,13 +122,26 @@ func (m *ConnectionManager) Resolve(connectionID int) (Client, error) {
 		}
 	}
 
-	return NewProviderClient(ConnectionConfig{
-		ProviderType:        ProviderType(providerType),
-		Model:               model,
-		APIKey:              apiKey,
-		BaseURL:             baseURL.String,
-		AllowedPrivateCIDRs: m.allowedPrivateCIDRs,
-	}), nil
+	effectiveBaseURL := baseURL.String
+	if effectiveBaseURL == "" {
+		if p := GetProvider(ProviderType(providerType)); p != nil {
+			effectiveBaseURL = p.BaseURL
+		}
+	}
+
+	return &resolvedConnection{
+		client: NewProviderClient(ConnectionConfig{
+			ProviderType:        ProviderType(providerType),
+			Model:               model,
+			APIKey:              apiKey,
+			BaseURL:             baseURL.String,
+			AllowedPrivateCIDRs: m.allowedPrivateCIDRs,
+		}),
+		connectionID: id,
+		providerType: ProviderType(providerType),
+		model:        model,
+		baseURL:      effectiveBaseURL,
+	}, nil
 }
 
 // ConnectionRuntimeConfig contains the decrypted runtime fields needed to
@@ -463,21 +502,54 @@ func (m *ConnectionManager) PromptConnection(ctx context.Context, connectionID i
 	if connectionID <= 0 {
 		return "", fmt.Errorf("a connection id is required")
 	}
-	client, err := m.Resolve(connectionID)
+	rc, err := m.resolve(connectionID)
 	if err != nil {
+		slog.Warn("llm test prompt: resolve failed",
+			slog.Int("connection_id", connectionID),
+			slog.String("error", err.Error()),
+		)
 		return "", err
 	}
-	resp, err := client.ChatCompletion(ctx, ChatCompletionRequest{
+
+	log := slog.With(
+		slog.Int("connection_id", connectionID),
+		slog.String("provider", string(rc.providerType)),
+		slog.String("model", rc.model),
+		slog.String("base_url", rc.baseURL),
+		slog.Bool("fallback_client", rc.usedFallback),
+		slog.Int("prompt_chars", len(prompt)),
+	)
+	log.Info("llm test prompt: sending to provider")
+
+	start := time.Now()
+	resp, err := rc.client.ChatCompletion(ctx, ChatCompletionRequest{
 		Messages:  []Message{{Role: "user", Content: prompt}},
 		MaxTokens: 256,
 	})
 	if err != nil {
+		log.Warn("llm test prompt: provider call failed",
+			slog.Duration("duration", time.Since(start)),
+			slog.String("error", err.Error()),
+		)
 		return "", err
 	}
 	if len(resp.Choices) == 0 {
+		log.Warn("llm test prompt: provider returned no choices",
+			slog.Duration("duration", time.Since(start)),
+		)
 		return "", fmt.Errorf("model returned no choices")
 	}
-	return strings.TrimSpace(resp.Choices[0].Message.Content), nil
+
+	answer := strings.TrimSpace(resp.Choices[0].Message.Content)
+	log.Info("llm test prompt: reply received",
+		slog.Duration("duration", time.Since(start)),
+		slog.Int("answer_chars", len(answer)),
+		slog.String("finish_reason", resp.Choices[0].FinishReason),
+		slog.Int("prompt_tokens", resp.Usage.PromptTokens),
+		slog.Int("completion_tokens", resp.Usage.CompletionTokens),
+		slog.Int("total_tokens", resp.Usage.TotalTokens),
+	)
+	return answer, nil
 }
 
 // LoadAIFeaturesConfig reads the per-feature AI configuration from system_settings.
