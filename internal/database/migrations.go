@@ -1022,6 +1022,26 @@ var Catalog = []Migration{
 			ALTER TABLE agent_runs ADD COLUMN job_image TEXT;
 		`,
 	},
+	{
+		// agent_runs.binding_id is a soft ref to workspace_agent_bindings (a run
+		// outlives its binding for audit). It has always been in the CREATE TABLE
+		// but never had an ADD-COLUMN migration, so a database created before
+		// binding_id entered the schema never got the column and the run insert
+		// fails. This backfills it; on a DB that already has the column the Check
+		// matches and the migration is stamped without re-running the DDL.
+		Version:       "20260609_agent_runs_binding_id",
+		Name:          "Add binding_id to agent_runs",
+		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('agent_runs') WHERE name='binding_id'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_name='agent_runs' AND column_name='binding_id'",
+		SQLite: `
+			ALTER TABLE agent_runs ADD COLUMN binding_id INTEGER;
+			CREATE INDEX IF NOT EXISTS idx_agent_runs_binding_created ON agent_runs(binding_id, created_at DESC);
+		`,
+		Postgres: `
+			ALTER TABLE agent_runs ADD COLUMN binding_id INTEGER;
+			CREATE INDEX IF NOT EXISTS idx_agent_runs_binding_created ON agent_runs(binding_id, created_at DESC);
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {
