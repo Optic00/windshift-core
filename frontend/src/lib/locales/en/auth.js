@@ -22,6 +22,7 @@ export default {
     currentPassword: 'Current Password',
     newPassword: 'New Password',
     confirmPassword: 'Confirm Password',
+    passwordRequired: 'Password is required',
     rememberMe: 'Remember Me',
     staySignedIn: 'Stay signed in',
     emailOrUsername: 'Email or Username',

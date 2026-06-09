@@ -23,6 +23,7 @@ export default {
     currentPassword: 'كلمة المرور الحالية',
     newPassword: 'كلمة المرور الجديدة',
     confirmPassword: 'تأكيد كلمة المرور',
+    passwordRequired: 'كلمة المرور مطلوبة',
     rememberMe: 'تذكرني',
     staySignedIn: 'البقاء مسجل الدخول',
     emailOrUsername: 'البريد الإلكتروني أو اسم المستخدم',

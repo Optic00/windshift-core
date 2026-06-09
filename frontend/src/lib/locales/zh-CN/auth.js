@@ -12,6 +12,7 @@ export default {
     currentPassword: '当前密码',
     newPassword: '新密码',
     confirmPassword: '确认密码',
+    passwordRequired: '密码为必填项',
     rememberMe: '记住我',
     staySignedIn: '保持登录状态',
     emailOrUsername: '电子邮件或用户名',

@@ -99,7 +99,9 @@
 	}
 
 	async function saveUser() {
-		if (!editingUser && !isInviteMode && !formData.password.trim()) {
+		// Service users (agents) authenticate via API token only, so a password is
+		// never required for them; only interactive users need one at creation.
+		if (!editingUser && !isInviteMode && !formData.is_agent && !formData.password.trim()) {
 			errorToast(t('auth.passwordRequired'));
 			return;
 		}

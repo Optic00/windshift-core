@@ -22,6 +22,7 @@ export default {
     currentPassword: 'Senha Atual',
     newPassword: 'Nova Senha',
     confirmPassword: 'Confirmar Senha',
+    passwordRequired: 'A senha é obrigatória',
     rememberMe: 'Lembrar de mim',
     staySignedIn: 'Permanecer conectado',
     emailOrUsername: 'E-mail ou Nome de Usuário',

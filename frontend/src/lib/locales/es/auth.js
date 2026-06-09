@@ -22,6 +22,7 @@ export default {
     currentPassword: 'Contrasena actual',
     newPassword: 'Nueva contrasena',
     confirmPassword: 'Confirmar contrasena',
+    passwordRequired: 'La contrasena es obligatoria',
     rememberMe: 'Recordarme',
     staySignedIn: 'Mantener sesion iniciada',
     emailOrUsername: 'Correo electronico o nombre de usuario',
