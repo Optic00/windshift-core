@@ -176,7 +176,8 @@ func (h *WorkspaceAgentBindingHandler) Create(w http.ResponseWriter, r *http.Req
 		switch {
 		case errors.Is(err, repository.ErrBindingDuplicate):
 			respondConflict(w, r, err.Error())
-		case errors.Is(err, services.ErrLLMConnectionNotExposed):
+		case errors.Is(err, services.ErrLLMConnectionRequired),
+			errors.Is(err, services.ErrLLMConnectionInvalid):
 			respondBadRequest(w, r, err.Error())
 		case errors.Is(err, services.ErrBindingTokenTTLOverCap),
 			errors.Is(err, services.ErrBindingRepoNeedsSCMConnection),

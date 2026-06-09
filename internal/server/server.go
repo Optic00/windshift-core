@@ -731,7 +731,6 @@ func (s *Server) initialize() error {
 		Identity:   agentIdentitySvc,
 		Runs:       codingRunSvc,
 		SCMCreds:   &scmCredsAdapter{cr: scmCredResolver},
-		LLMCaps:    repository.NewActionRepository(s.db),
 		LLMRuntime: llmManager,
 		RunContext: agentBindingRepo,
 		APIURL:     agentAPIURL,

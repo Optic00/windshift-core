@@ -22,11 +22,11 @@
   let bindings = $state([]);
   let candidates = $state([]);
   let scmConnections = $state([]);
-  // LLM connections exposed to this workspace as action capabilities
-  // (CapabilityType "llm_connection"). The binding's llm_connection_id is
-  // limited to these so admins can't bind to a connection the workspace
-  // was never granted.
-  let llmCapabilities = $state([]);
+  // Enabled LLM connections (global — not workspace-scoped). Any enabled
+  // connection can back any workspace's binding; the binding stores the
+  // connection id directly. A binding requires one: a run with no LLM can't
+  // reach a model (the llm-proxy 403s a run with no LLM grant).
+  let llmConnections = $state([]);
 
   // Add-form state.
   let addActingUserId = $state(null);
@@ -55,19 +55,19 @@
   async function load() {
     loading = true;
     try {
-      const [list, cands, conns, llmCaps] = await Promise.all([
+      const [list, cands, conns, llmConns] = await Promise.all([
         agentBindings.listForWorkspace(workspaceId),
         agentBindings.getCandidates(workspaceId),
         api.workspaceSCM.getConnections(workspaceId).catch(() => []),
-        // action.manage gates this endpoint; the Administrator role carries
-        // it alongside workspace.admin, but a custom admin role might not —
-        // fall back to an empty list rather than breaking the whole form.
-        api.actionCapabilities.getForWorkspace(workspaceId, 'llm_connection').catch(() => []),
+        // Global enabled LLM connections — any authenticated user may list the
+        // slim public view. Fall back to an empty list rather than breaking
+        // the whole form if it fails.
+        api.llmProviders.getEnabled().catch(() => []),
       ]);
       bindings = list ?? [];
       candidates = cands ?? [];
       scmConnections = conns ?? [];
-      llmCapabilities = llmCaps ?? [];
+      llmConnections = llmConns ?? [];
     } catch (err) {
       console.error('Failed to load agent bindings:', err);
       errorToast(err?.message || 'Failed to load agent bindings');
@@ -94,27 +94,28 @@
     })),
   ]);
 
-  // LLM picker: limited to the connections exposed to this workspace as
-  // "llm_connection" action capabilities. The capability wraps a raw LLM
-  // connection id in its config JSON; we post that id as llm_connection_id
-  // (the binding stores the connection, not the capability). Dedupe by
-  // connection id in case two capabilities point at the same connection.
+  // LLM picker: every enabled connection (global — not workspace-scoped). The
+  // binding stores the connection id directly. The connection is required, so
+  // there is no "use defaults" option. The default connection is labelled as
+  // such (the endpoint already returns it first).
   let llmOptions = $derived.by(() => {
-    const opts = [{ value: null, label: 'Use workspace defaults', disabled: false }];
-    const seen = new Set();
-    for (const cap of llmCapabilities || []) {
-      let connId = null;
-      try {
-        connId = JSON.parse(cap.config || '{}')?.connection_id ?? null;
-      } catch {
-        connId = null;
-      }
-      if (!connId || seen.has(connId)) continue;
-      seen.add(connId);
-      opts.push({ value: connId, label: cap.name || `Connection #${connId}`, disabled: false });
+    const opts = [{ value: null, label: 'Select an LLM connection', disabled: true }];
+    for (const c of llmConnections || []) {
+      const tags = [c.is_default ? 'default' : null, c.model].filter(Boolean).join(' · ');
+      opts.push({
+        value: c.id,
+        label: tags ? `${c.name} (${tags})` : c.name || `Connection #${c.id}`,
+        disabled: false,
+      });
     }
     return opts;
   });
+
+  // The Go coding-agent speaks OpenAI-compatible chat completions; the broker
+  // rejects Anthropic-backed runs until translation lands. Warn at bind time.
+  let selectedLLMIsAnthropic = $derived(
+    (llmConnections || []).find((c) => c.id === addLLMConnectionId)?.provider_type === 'anthropic'
+  );
 
   // Repository picker: populated from the linked repos of the selected
   // SCM connection. Disabled (with an explanatory placeholder) until a
@@ -181,7 +182,14 @@
     return c?.provider_name || c?.provider_slug || `Connection #${connId}`;
   });
 
-  let canAdd = $derived(!!addActingUserId && !adding);
+  let displayLLMConnection = $derived((connId) => {
+    if (!connId) return '—';
+    const c = (llmConnections || []).find((c) => c.id === connId);
+    if (!c) return `Connection #${connId}`;
+    return c.model ? `${c.name} · ${c.model}` : c.name;
+  });
+
+  let canAdd = $derived(!!addActingUserId && !!addLLMConnectionId && !adding);
 
   function resetForm() {
     addActingUserId = null;
@@ -282,6 +290,7 @@
                 <th class="text-left px-3 py-2 font-medium" style="color: var(--ds-text);">Kind</th>
                 <th class="text-left px-3 py-2 font-medium" style="color: var(--ds-text);">Repo</th>
                 <th class="text-left px-3 py-2 font-medium" style="color: var(--ds-text);">SCM</th>
+                <th class="text-left px-3 py-2 font-medium" style="color: var(--ds-text);">LLM</th>
                 <th class="text-left px-3 py-2 font-medium" style="color: var(--ds-text);">Budget</th>
                 <th class="px-3 py-2"></th>
               </tr>
@@ -297,6 +306,7 @@
                     {b.repo_slug ? `${b.repo_slug}${b.repo_base_ref ? ` @ ${b.repo_base_ref}` : ''}` : '—'}
                   </td>
                   <td class="px-3 py-2" style="color: var(--ds-text-subtle);">{displaySCMConnection(b.scm_connection_id)}</td>
+                  <td class="px-3 py-2" style="color: var(--ds-text-subtle);">{displayLLMConnection(b.llm_connection_id)}</td>
                   <td class="px-3 py-2" style="color: var(--ds-text-subtle);">
                     {b.max_runs_per_day > 0 ? `${b.max_runs_per_day}/day` : 'unlimited'} · token {b.token_ttl_minutes}m
                   </td>
@@ -346,8 +356,13 @@
               <Input id="binding-repo-base" bind:value={addRepoBaseRef} placeholder="main" />
             </div>
             <div>
-              <label for="binding-llm" class="block text-xs mb-1" style="color: var(--ds-text-subtle);">LLM (optional)</label>
+              <label for="binding-llm" class="block text-xs mb-1" style="color: var(--ds-text-subtle);">LLM connection (required)</label>
               <Select id="binding-llm" bind:value={addLLMConnectionId} options={llmOptions} />
+              {#if llmConnections.length === 0}
+                <p class="text-xs mt-1" style="color: var(--ds-text-danger);">No enabled LLM connections. Ask a global admin to add one under Admin → AI Connections.</p>
+              {:else if selectedLLMIsAnthropic}
+                <p class="text-xs mt-1" style="color: var(--ds-text-warning, var(--ds-text-subtle));">Anthropic connections aren't usable by the coding agent yet — it speaks OpenAI-compatible APIs. Pick an OpenAI-compatible provider (e.g. OpenRouter).</p>
+              {/if}
             </div>
             <div>
               <label for="binding-ttl" class="block text-xs mb-1" style="color: var(--ds-text-subtle);">Per-run token TTL (minutes)</label>

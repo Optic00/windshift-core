@@ -57,18 +57,11 @@ type SCMCredentialResolver interface {
 	ResolveForRun(ctx context.Context, connectionID int) (token string, providerType string, baseURL string, err error)
 }
 
-// LLMCapabilityResolver reports which LLM connections a workspace is
-// allowed to bind to: the connection ids exposed to it as enabled
-// "llm_connection" action capabilities. Create validates a chosen
-// llm_connection_id against this list so the limit holds even when a
-// caller bypasses the UI and POSTs directly. Kept as an interface so
-// production wires the action repository while tests supply a fake.
-type LLMCapabilityResolver interface {
-	WorkspaceLLMConnectionIDs(ctx context.Context, workspaceID int) ([]int, error)
-}
-
-// LLMRuntimeResolver returns the provider runtime config for a connection that
-// Create has already validated against the workspace's exposed capabilities.
+// LLMRuntimeResolver returns the provider runtime config for a connection.
+// Create uses it to validate a chosen llm_connection_id (ConnectionRuntime
+// only resolves enabled connections), and the run path uses it to derive the
+// agent's model. LLM connections are global, not workspace-scoped: any
+// enabled connection may back any workspace's binding.
 type LLMRuntimeResolver interface {
 	ConnectionRuntime(ctx context.Context, connectionID int) (*llm.ConnectionRuntimeConfig, error)
 }
@@ -79,10 +72,16 @@ type AgentRunContextResolver interface {
 	AgentRunContext(ctx context.Context, workspaceID, itemID int) (repository.AgentRunContext, error)
 }
 
-// ErrLLMConnectionNotExposed is returned by Create when the chosen
-// llm_connection_id is not exposed to the workspace as an action
-// capability. The handler maps it to a 400.
-var ErrLLMConnectionNotExposed = errors.New("binding service: llm connection is not available to this workspace")
+// ErrLLMConnectionRequired is returned by Create when no llm_connection_id is
+// supplied. A binding with no LLM can't run an agent (the llm-proxy 403s a run
+// with no LLM grant), so the connection is mandatory. The handler maps it to a
+// 400.
+var ErrLLMConnectionRequired = errors.New("binding service: an llm connection is required")
+
+// ErrLLMConnectionInvalid is returned by Create when the chosen
+// llm_connection_id does not resolve to an enabled connection (missing or
+// disabled). The handler maps it to a 400.
+var ErrLLMConnectionInvalid = errors.New("binding service: llm connection not found or disabled")
 
 // BindingService owns the workspace_agent_bindings lifecycle from the
 // orchestrator's side: workspace-admin CRUD goes through Create / Delete
@@ -98,7 +97,6 @@ type BindingService struct {
 	identity   *AgentActingIdentityService
 	runs       *RunService
 	scmCreds   SCMCredentialResolver
-	llmCaps    LLMCapabilityResolver
 	llmRuntime LLMRuntimeResolver
 	runContext AgentRunContextResolver
 	apiURL     string
@@ -113,7 +111,6 @@ type BindingServiceOptions struct {
 	Identity   *AgentActingIdentityService
 	Runs       *RunService
 	SCMCreds   SCMCredentialResolver
-	LLMCaps    LLMCapabilityResolver
 	LLMRuntime LLMRuntimeResolver
 	RunContext AgentRunContextResolver
 	APIURL     string
@@ -138,7 +135,6 @@ func NewBindingService(opts BindingServiceOptions) (*BindingService, error) {
 		identity:   opts.Identity,
 		runs:       opts.Runs,
 		scmCreds:   opts.SCMCreds,
-		llmCaps:    opts.LLMCaps,
 		llmRuntime: opts.LLMRuntime,
 		runContext: opts.RunContext,
 		apiURL:     opts.APIURL,
@@ -205,17 +201,17 @@ func (s *BindingService) Create(ctx context.Context, req CreateBindingRequest) (
 	if err != nil {
 		return nil, err
 	}
-	// An LLM, when chosen, must be one the workspace was granted via an
-	// "llm_connection" action capability. The UI already limits the
-	// picker to these; re-check here so a direct API call can't bind to a
-	// connection the workspace was never exposed to.
-	if req.LLMConnectionID != nil && s.llmCaps != nil {
-		allowed, err := s.llmCaps.WorkspaceLLMConnectionIDs(ctx, req.WorkspaceID)
-		if err != nil {
-			return nil, fmt.Errorf("resolve llm capabilities: %w", err)
-		}
-		if !containsInt(allowed, *req.LLMConnectionID) {
-			return nil, ErrLLMConnectionNotExposed
+	// An LLM connection is mandatory: a binding with no LLM can't run an
+	// agent (the llm-proxy 403s a run with no LLM grant). LLM connections are
+	// global, not workspace-scoped — any enabled connection is fair game.
+	// ConnectionRuntime only resolves enabled connections, so a successful
+	// call doubles as an existence + enabled check against direct API callers.
+	if req.LLMConnectionID == nil {
+		return nil, ErrLLMConnectionRequired
+	}
+	if s.llmRuntime != nil {
+		if _, err := s.llmRuntime.ConnectionRuntime(ctx, *req.LLMConnectionID); err != nil {
+			return nil, ErrLLMConnectionInvalid
 		}
 	}
 	binding := &models.WorkspaceAgentBinding{
@@ -506,16 +502,6 @@ func applyLLMModelEnv(env map[string]string, cfg *llm.ConnectionRuntimeConfig) {
 		return
 	}
 	env["LLM_MODEL"] = cfg.Model
-}
-
-// containsInt reports whether xs contains v.
-func containsInt(xs []int, v int) bool {
-	for _, x := range xs {
-		if x == v {
-			return true
-		}
-	}
-	return false
 }
 
 // deriveCloneURL constructs an https git remote from the trusted SCM
