@@ -662,12 +662,15 @@ func (s *Server) initialize() error {
 	// WI-87/88/89/90 coding-agent harness stack. The acting-identity
 	// chokepoint (WI-87) is constructed first; both the workspace-binding
 	// service and the admin AgentSecurity handler share its repo handle.
-	// When CodingAgent.RunnerImage is configured, the harness boots a
+	// When CodingAgent.WorktreeRoot is configured, the harness boots a
 	// production RunService (WI-89): repoprep.Preparer → RunTokenService →
 	// DockerAgentRunner → AgentPRService (WI-90, opens draft PRs on GitHub or
-	// Gitea via scm.Provider). Without it the harness stays in observer
-	// mode — bindings can still be created, the trigger logs but no run
-	// starts.
+	// Gitea via scm.Provider). WorktreeRoot is the activation knob — the one
+	// genuinely host-specific value (a writable, bind-mountable host path); the
+	// agent image name defaults in the binary (config.DefaultCodingAgentRunnerImage,
+	// override via CODING_AGENT_RUNNER_IMAGE). Without WorktreeRoot the harness
+	// stays in observer mode — bindings can still be created, the trigger logs
+	// but no run starts.
 	agentSecurityRepo := repository.NewAgentSecurityRepository(s.db)
 	agentIdentitySvc, _ := services.NewAgentActingIdentityService(services.NewUserReadService(s.db), agentSecurityRepo)
 	agentBindingRepo := repository.NewWorkspaceAgentBindingRepository(s.db)
@@ -711,7 +714,7 @@ func (s *Server) initialize() error {
 	llmModelRefresher := llm.NewModelRefresher(llmModelCache, llmAllowedPrivateCIDRs)
 
 	var codingRunSvc *services.RunService
-	if cfg.CodingAgent.RunnerImage != "" {
+	if cfg.CodingAgent.WorktreeRoot != "" {
 		var bootErr error
 		codingRunSvc, bootErr = bootCodingAgentRunService(s.db, tokenManager, agentBindingRepo, scmCredResolver, cfg.CodingAgent, promptStore)
 		if bootErr != nil {

@@ -118,13 +118,23 @@ type LLMConfig struct {
 	AllowedPrivateCIDRs string
 }
 
-// CodingAgentConfig configures the coding-agent harness (WI-89). When
-// RunnerImage is non-empty the server constructs a production RunService
-// that spawns the windshift-agent harness (the node-free codehamr fork,
-// WI-204) inside that container image, wires it through the
-// BindingService, and the assignee-change trigger fires real runs. When
-// empty the harness stays in observer mode — bindings can still be
-// created, the trigger logs but no-ops.
+// DefaultCodingAgentRunnerImage is the windshift-agent image the in-process
+// runner spawns when CODING_AGENT_RUNNER_IMAGE is unset. The image name is a
+// standard, non-host-specific value, so it lives in the binary; operators only
+// override it to pin a custom build.
+const DefaultCodingAgentRunnerImage = "ghcr.io/windshiftapp/windshift-agent:latest"
+
+// CodingAgentConfig configures the coding-agent harness (WI-89). The harness is
+// activated by WorktreeRoot — the one genuinely host-specific knob (a writable
+// host path bind-mounted into the agent container, which can't be guessed). When
+// it is set the server constructs a production RunService that spawns the
+// windshift-agent harness (the node-free codehamr fork, WI-204) inside
+// RunnerImage, wires it through the BindingService, and the assignee-change
+// trigger fires real runs. When WorktreeRoot is empty the harness stays in
+// observer mode — bindings can still be created, the trigger logs but no-ops.
+//
+// RunnerImage defaults to DefaultCodingAgentRunnerImage; set
+// CODING_AGENT_RUNNER_IMAGE only to pin a custom agent build.
 //
 // The agent reaches the model only through the llm-proxy broker, so no
 // provider key or provider selection is injected into the container; it

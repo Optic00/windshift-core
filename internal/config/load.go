@@ -212,7 +212,7 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 			AllowedPrivateCIDRs: resolvedLLMAllowedPrivateCIDRs,
 		},
 		CodingAgent: CodingAgentConfig{
-			RunnerImage:  os.Getenv("CODING_AGENT_RUNNER_IMAGE"),
+			RunnerImage:  firstNonEmpty(os.Getenv("CODING_AGENT_RUNNER_IMAGE"), DefaultCodingAgentRunnerImage),
 			DockerBinary: os.Getenv("CODING_AGENT_DOCKER_BINARY"),
 			WorktreeRoot: os.Getenv("CODING_AGENT_WORKTREE_ROOT"),
 			GlobalCap:    parseIntEnv("CODING_AGENT_GLOBAL_CAP", 0),
