@@ -183,7 +183,13 @@ func (p *Preparer) Prepare(ctx context.Context, spec RepoSpec, runID int) (*Prep
 	// hardlink them, so the run owns an independent object store. A local
 	// clone never uses alternates (only --shared would), so nothing in dest
 	// references the cache after this returns.
-	if err := p.runGit(ctx, "", "clone", "--no-hardlinks", cacheDir, dest); err != nil {
+	//
+	// The source is the trusted host-local bare cache, so this clone uses git's
+	// "file" transport — which the default https-only hardening blocks. Permit
+	// file for this one local-source clone (ext/tar stay disabled; the remote
+	// clone/fetch above still run https-only), mirroring PushBranch's local
+	// fetch from the per-run checkout.
+	if err := p.runGitLocalSource(ctx, "", "clone", "--no-hardlinks", cacheDir, dest); err != nil {
 		return nil, fmt.Errorf("clone cache -> checkout: %w", err)
 	}
 	// Cut the run branch at the fetched base commit.
@@ -391,6 +397,15 @@ func (p *Preparer) revParse(ctx context.Context, dir, ref string) (string, error
 
 func (p *Preparer) runGit(ctx context.Context, dir string, args ...string) error {
 	_, err := gitOutputEnv(ctx, p.gitBinary, p.allowFileURL, dir, nil, args...)
+	return err
+}
+
+// runGitLocalSource runs git for an operation whose source is a trusted
+// host-local path (the per-run clone of the bare cache), permitting the "file"
+// transport that the default https-only hardening blocks. Used only where the
+// source path is orchestrator-derived — never a caller- or remote-supplied URL.
+func (p *Preparer) runGitLocalSource(ctx context.Context, dir string, args ...string) error {
+	_, err := gitOutputEnv(ctx, p.gitBinary, true, dir, nil, args...)
 	return err
 }
 
