@@ -2,8 +2,10 @@ package services
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -12,6 +14,16 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/emailutil"
 )
+
+// hashMagicLinkToken returns the at-rest representation of a magic-link token.
+// The token is high-entropy (32 random bytes) and single-use, so a fast hash is
+// sufficient — its only job is to ensure a read-only DB compromise (leaked
+// backup, read replica, blind SQLi) yields no directly usable sign-in links.
+// The hash is deterministic, so the indexed equality lookup is preserved.
+func hashMagicLinkToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
 
 var (
 	ErrMagicLinkExpired          = errors.New("magic link has expired")
@@ -84,11 +96,13 @@ func (s *MagicLinkService) generateMagicLink(portalCustomerID int, channelID *in
 
 	expiresAt := time.Now().Add(expiry)
 
+	// Store only the hash; the plaintext token leaves this process solely in
+	// the emailed verify URL.
 	query := `
 		INSERT INTO portal_customer_magic_links (portal_customer_id, token, channel_id, expires_at, created_at)
 		VALUES (?, ?, ?, ?, ?)
 	`
-	_, err := s.db.ExecWrite(query, portalCustomerID, token, channelID, expiresAt, time.Now())
+	_, err := s.db.ExecWrite(query, portalCustomerID, hashMagicLinkToken(token), channelID, expiresAt, time.Now())
 	if err != nil {
 		return "", fmt.Errorf("failed to store magic link token: %w", err)
 	}
@@ -163,7 +177,7 @@ func (s *MagicLinkService) ValidateMagicLink(token string, expectedChannelID int
 	var usedAt sql.NullTime
 	var email, name string
 
-	err := s.db.QueryRow(query, token).Scan(
+	err := s.db.QueryRow(query, hashMagicLinkToken(token)).Scan(
 		&linkID, &portalCustomerID, &channelID, &expiresAt, &usedAt,
 		&email, &name,
 	)
