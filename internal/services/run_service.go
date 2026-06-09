@@ -19,7 +19,6 @@ import (
 	"log"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"windshift/internal/models"
@@ -125,6 +124,16 @@ type RunRequest struct {
 	// JobImage as a plain container.
 	JobKind  string
 	JobImage string
+	// InitialPrompt overrides the runner's static coding-agent prompt for
+	// this one run. Empty falls back to RunService.initialPrompt. The binding
+	// "test run" uses it to drive a one-shot read-only prompt instead of the
+	// real work-item prompt.
+	InitialPrompt string
+	// Ephemeral marks a throwaway run that must not mutate the remote: the
+	// host-side run-branch push and the post-run PR hook are both skipped at
+	// finalize. The binding "test run" sets this so simulating an assignment
+	// can never open a PR or push a branch.
+	Ephemeral bool
 	// TargetPoolID, when set, routes the run to a remote runner_pool instead
 	// of the local in-process pool (WI-195). A remote run is persisted queued
 	// for the pool and enriched (token + grants + env) at claim time by the
@@ -231,12 +240,6 @@ type RunService struct {
 	// remote claim time (WI-195). Optional; set via SetBindingInputsResolver
 	// after construction to break the BindingService<->RunService cycle.
 	bindingInputs BindingInputsResolver
-
-	// testCheckoutSeq hands out unique, monotonically decreasing run ids for
-	// throwaway worktrees prepared by InspectRepoRoot (the binding "test"
-	// button). Negative ids keep these checkouts' runs/<id> dirs and branches
-	// out of the real run-id space and unique across concurrent tests.
-	testCheckoutSeq atomic.Int64
 }
 
 // SetBindingInputsResolver wires the binding-input resolver used to enrich

@@ -57,6 +57,20 @@ export const agentBindings = {
     }),
 
   /**
+   * Provision a real, ephemeral coding-agent container run for the binding —
+   * the same machinery a work-item assignment drives, but with no work item and
+   * a read-only prompt, marked so it can never push a branch or open a PR. Use
+   * it to verify the full chain end-to-end: model reachable + repo checked out +
+   * the agent can read its files. Returns { run_id }; watch it via the agentRuns
+   * events endpoints. 400 = binding has no repo; 409 = runner not configured on
+   * this server; 404 = no such binding.
+   */
+  testRun: (workspaceId, id) =>
+    fetchAPI(`/workspaces/${workspaceId}/agent-bindings/${id}/test-run`, {
+      method: 'POST',
+    }),
+
+  /**
    * List the acting-identity options the workspace admin may pick:
    * owned agent users + allowlisted centralized service users (when the
    * WI-87 master flag is on). The chokepoint re-validates at create

@@ -241,26 +241,12 @@ type testLLMRequest struct {
 	Prompt string `json:"prompt,omitempty"`
 }
 
-// testLLMResponse carries the model's reply back to the admin, plus — when the
-// binding is repo-backed — a snapshot of the cloned worktree's project root so
-// the admin can confirm the whole chain (LLM + SCM + clone) works and points at
-// the right repo.
+// testLLMResponse carries the model's reply back to the admin. It proves only
+// that the binding's LLM connection is reachable; the full chain (repo checked
+// out, agent can read its files) is exercised by the heavier TestRun.
 type testLLMResponse struct {
-	Prompt string         `json:"prompt"`
-	Answer string         `json:"answer"`
-	Repo   *repoTestBlock `json:"repo,omitempty"`
-}
-
-// repoTestBlock is the repo half of the test result. On success Entries lists
-// the first few project-root entries; on failure Error explains which part of
-// the SCM/clone chain broke (e.g. the SSO_SECRET-derived decrypt). It is
-// reported inline rather than failing the whole request so a working model
-// reply still surfaces even when the repo leg is broken.
-type repoTestBlock struct {
-	RepoSlug string               `json:"repo_slug,omitempty"`
-	BaseRef  string               `json:"base_ref,omitempty"`
-	Entries  []services.RepoEntry `json:"entries,omitempty"`
-	Error    string               `json:"error,omitempty"`
+	Prompt string `json:"prompt"`
+	Answer string `json:"answer"`
 }
 
 // TestLLM round-trips a prompt through a binding's LLM connection and returns
@@ -306,25 +292,60 @@ func (h *WorkspaceAgentBindingHandler) TestLLM(w http.ResponseWriter, r *http.Re
 	if strings.TrimSpace(prompt) == "" {
 		prompt = services.DefaultLLMTestPrompt
 	}
-	respondJSONOK(w, testLLMResponse{Prompt: prompt, Answer: answer, Repo: h.repoTest(r, id, workspaceID)})
+	respondJSONOK(w, testLLMResponse{Prompt: prompt, Answer: answer})
 }
 
-// repoTest runs the SCM/clone half of the binding test and shapes it into the
-// response block. A binding with no repo yields nil (nothing to show); every
-// other failure is reported inline as an Error so a broken SCM leg is
-// pinpointed without 502-ing a request whose model reply succeeded.
-func (h *WorkspaceAgentBindingHandler) repoTest(r *http.Request, id, workspaceID int) *repoTestBlock {
-	res, err := h.bindings.TestRepo(r.Context(), id, workspaceID, 5)
-	switch {
-	case errors.Is(err, services.ErrBindingNoRepo):
-		return nil
-	case errors.Is(err, services.ErrBindingRunnerNotConfigured), errors.Is(err, services.ErrNoPreparer):
-		return &repoTestBlock{Error: "repo check unavailable: coding-agent runner is not configured on this server"}
-	case err != nil:
-		return &repoTestBlock{Error: "repo clone failed: " + err.Error()}
-	default:
-		return &repoTestBlock{RepoSlug: res.RepoSlug, BaseRef: res.BaseRef, Entries: res.Entries}
+// testRunResponse returns the id of the provisioned test run so the UI can
+// watch it via the agent-runs events endpoints.
+type testRunResponse struct {
+	RunID int `json:"run_id"`
+}
+
+// TestRun provisions a real, ephemeral coding-agent container run for the
+// binding (no work item, read-only prompt) so a workspace admin can confirm the
+// full chain end-to-end: the model is reachable, the repo clones into a
+// worktree, and the agent can read its files. Workspace-admin gated. The run
+// executes asynchronously; the response carries its id for event polling.
+//
+// 404 when the binding is absent, 400 when it has no repo configured, and 409
+// when the coding-agent runner isn't configured on this server.
+func (h *WorkspaceAgentBindingHandler) TestRun(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := requireIDParam(w, r, "workspaceId")
+	if !ok {
+		return
 	}
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+	if !RequireWorkspacePermission(w, r, user.ID, workspaceID, models.PermissionWorkspaceAdmin, h.permissionService) {
+		return
+	}
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil || id <= 0 {
+		respondBadRequest(w, r, "id path param must be a positive integer")
+		return
+	}
+	runID, err := h.bindings.StartTestRun(r.Context(), id, workspaceID)
+	if err != nil {
+		switch {
+		case errors.Is(err, services.ErrBindingNotFound):
+			respondNotFound(w, r, "agent binding")
+		case errors.Is(err, services.ErrBindingNoRepo):
+			respondBadRequest(w, r, "this binding has no repo configured — a test run needs a repo to check out")
+		case errors.Is(err, services.ErrBindingRunnerNotConfigured):
+			respondConflict(w, r, "the coding-agent runner is not configured on this server")
+		default:
+			respondError(w, r, restapi.NewAPIError(http.StatusBadGateway, restapi.ErrCodeConnectionTestFailed,
+				"failed to start test run: "+err.Error()))
+		}
+		return
+	}
+	h.auditor.LogWithDetails(r, user, "agent_binding.test_run", "workspace_agent_binding", &id, "", map[string]interface{}{
+		"workspace_id": workspaceID,
+		"run_id":       runID,
+	})
+	respondJSONOK(w, testRunResponse{RunID: runID})
 }
 
 // isIdentityGateError reports whether the error came from the WI-87

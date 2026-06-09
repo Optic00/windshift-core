@@ -37,6 +37,7 @@ type claimState struct {
 	path       string
 	branch     string
 	baseCommit string
+	ephemeral  bool
 	cancel     context.CancelFunc
 }
 
@@ -100,7 +101,7 @@ func (s *RunService) claimNext() *ClaimedJob {
 			s.logger.Printf("run service: append running event run=%d: %v", job.runID, err)
 		}
 
-		st := claimState{req: job.req, cancel: cancel}
+		st := claimState{req: job.req, ephemeral: job.req.Ephemeral, cancel: cancel}
 
 		if job.req.Repo != nil {
 			pw, err := s.preparer.Prepare(runCtx, *job.req.Repo, job.runID)
@@ -146,7 +147,11 @@ func (s *RunService) claimNext() *ClaimedJob {
 		s.claims[job.runID] = &st
 		s.claimsMu.Unlock()
 
-		return &ClaimedJob{Spec: JobSpec{RunID: job.runID, WorkspacePath: st.path, Env: env, InitialPrompt: s.initialPrompt, Kind: job.req.JobKind, Image: job.req.JobImage}, Ctx: runCtx}
+		initialPrompt := s.initialPrompt
+		if job.req.InitialPrompt != "" {
+			initialPrompt = job.req.InitialPrompt
+		}
+		return &ClaimedJob{Spec: JobSpec{RunID: job.runID, WorkspacePath: st.path, Env: env, InitialPrompt: initialPrompt, Kind: job.req.JobKind, Image: job.req.JobImage}, Ctx: runCtx}
 	}
 }
 
@@ -211,7 +216,7 @@ func (s *RunService) Report(ctx context.Context, runID int, result RunnerResult)
 	// same way the remote TriageRunner pushes runner-side before reporting. A
 	// push failure downgrades the run to failed so the PR hook does not try to
 	// open a PR for a branch that never reached the remote.
-	if status == models.AgentRunStatusSucceeded && st != nil && st.checkout != nil && st.req.Repo != nil && s.preparer != nil {
+	if status == models.AgentRunStatusSucceeded && st != nil && !st.ephemeral && st.checkout != nil && st.req.Repo != nil && s.preparer != nil {
 		if err := s.preparer.Push(context.Background(), st.checkout, st.req.Repo.Token); err != nil {
 			s.logger.Printf("run service: push run branch run=%d: %v", runID, err)
 			status = models.AgentRunStatusFailed
@@ -242,15 +247,20 @@ func (s *RunService) Report(ctx context.Context, runID int, result RunnerResult)
 		}
 	}
 
-	s.invokePostRunHook(PostRunInfo{
-		RunID:       runID,
-		WorkspaceID: req.WorkspaceID,
-		ItemID:      req.ItemID,
-		BindingID:   req.BindingID,
-		Status:      status,
-		Branch:      branch,
-		BaseCommit:  baseCommit,
-	})
+	// Ephemeral (binding "test") runs never feed the PR hook: there is no item
+	// to link and no branch should reach the remote (the push above is skipped
+	// too), so opening a PR would be wrong.
+	if st == nil || !st.ephemeral {
+		s.invokePostRunHook(PostRunInfo{
+			RunID:       runID,
+			WorkspaceID: req.WorkspaceID,
+			ItemID:      req.ItemID,
+			BindingID:   req.BindingID,
+			Status:      status,
+			Branch:      branch,
+			BaseCommit:  baseCommit,
+		})
+	}
 
 	if cancel != nil {
 		cancel()

@@ -162,6 +162,7 @@ func RegisterWorkspaceRoutes(deps *Deps) {
 		api.HandleH("POST /workspaces/{workspaceId}/agent-bindings", auth(http.HandlerFunc(deps.Workspaces.AgentBinding.Create)))
 		api.HandleH("DELETE /workspaces/{workspaceId}/agent-bindings/{id}", auth(http.HandlerFunc(deps.Workspaces.AgentBinding.Delete)))
 		api.HandleH("POST /workspaces/{workspaceId}/agent-bindings/{id}/test-llm", auth(http.HandlerFunc(deps.Workspaces.AgentBinding.TestLLM)))
+		api.HandleH("POST /workspaces/{workspaceId}/agent-bindings/{id}/test-run", auth(http.HandlerFunc(deps.Workspaces.AgentBinding.TestRun)))
 		api.HandleH("GET /workspaces/{workspaceId}/agent-binding-candidates", auth(http.HandlerFunc(deps.Workspaces.AgentBinding.Candidates)))
 	}
 

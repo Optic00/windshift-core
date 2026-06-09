@@ -6,9 +6,9 @@
   // Backend chokepoint re-validates the identity at create time; the
   // candidates endpoint just keeps the picker honest.
 
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { Bot, FlaskConical, Loader2, Plus, Trash2 } from '@lucide/svelte';
-  import { agentBindings, api } from '../api.js';
+  import { agentBindings, agentRuns, api } from '../api.js';
   import Panel from '../components/Panel.svelte';
   import Select from '../components/Select.svelte';
   import Input from '../components/Input.svelte';
@@ -50,9 +50,79 @@
   let deleteDialogOpen = $state(false);
   let pendingDelete = $state(null); // { id, label }
 
-  // Per-binding "Test LLM" state, keyed by binding id.
+  // Per-binding "Test run" state, keyed by binding id.
   let testing = $state({}); // id -> bool
-  let testResults = $state({}); // id -> { answer?: string, prompt?: string, error?: string }
+  let testResults = $state({}); // id -> { runId?, status?, lines?: string[], error?: string }
+  // Cancellation tokens so a new test (or unmount) abandons a stale poll loop.
+  const watchTokens = {}; // id -> Symbol
+  onDestroy(() => {
+    for (const id of Object.keys(watchTokens)) delete watchTokens[id];
+  });
+
+  const TEST_RUN_POLL_MS = 1500;
+  const TEST_RUN_TIMEOUT_MS = 5 * 60 * 1000;
+  const TEST_RUN_TERMINAL = ['succeeded', 'failed', 'canceled', 'killed'];
+
+  function isTerminalTestStatus(status) {
+    return TEST_RUN_TERMINAL.includes(status);
+  }
+
+  function testRunStatusLabel(status) {
+    switch (status) {
+      case 'starting':
+        return 'starting…';
+      case 'queued':
+        return 'queued…';
+      case 'running':
+        return 'running…';
+      case 'succeeded':
+        return '✓ succeeded';
+      case 'failed':
+        return '✗ failed';
+      case 'canceled':
+        return 'canceled';
+      case 'killed':
+        return 'killed';
+      case 'timeout':
+        return 'still running (stopped watching)';
+      default:
+        return status || '…';
+    }
+  }
+
+  function testRunStatusColor(status) {
+    if (status === 'succeeded') return 'var(--ds-text-success, var(--ds-text))';
+    if (status === 'failed' || status === 'killed') return 'var(--ds-text-danger)';
+    return 'var(--ds-text-subtle)';
+  }
+
+  // Pull a human line out of a run event. The agent streams NDJSON on stdout;
+  // surface a message/text/content/line field when present, else the raw
+  // payload. Lifecycle events are conveyed via the status badge, not the
+  // transcript, so they're dropped here.
+  function eventText(ev) {
+    if (ev.type === 'lifecycle') return null;
+    let payload;
+    try {
+      payload = JSON.parse(ev.payload_json);
+    } catch {
+      return ev.payload_json;
+    }
+    const msg = payload.message ?? payload.text ?? payload.content ?? payload.line;
+    return typeof msg === 'string' ? msg : ev.payload_json;
+  }
+
+  function appendLines(id, events) {
+    const fresh = (events || [])
+      .map(eventText)
+      .filter((t) => typeof t === 'string' && t.trim() !== '');
+    if (!fresh.length) return;
+    const cur = testResults[id] || {};
+    testResults = {
+      ...testResults,
+      [id]: { ...cur, lines: [...(cur.lines || []), ...fresh].slice(-40) },
+    };
+  }
 
   onMount(load);
 
@@ -232,30 +302,67 @@
     }
   }
 
-  // Round-trip a quick prompt through the binding's LLM connection and, when
-  // the binding is repo-backed, clone its worktree and list the project root —
-  // proving the whole chain (model + SCM connection + clone) is reachable and
-  // points at the right repo before assigning real work.
+  // Provision a real (but ephemeral, item-less) coding-agent container run for
+  // the binding and watch it to completion — proving the full chain: the model
+  // is reachable, the repo checks out into a worktree, and the agent can read
+  // its files. The run can never push a branch or open a PR (server marks it
+  // ephemeral); the agent's prompt is read-only.
   async function testBinding(b) {
+    const token = Symbol('test-run');
+    watchTokens[b.id] = token;
     testing = { ...testing, [b.id]: true };
-    testResults = { ...testResults, [b.id]: null };
+    testResults = { ...testResults, [b.id]: { status: 'starting', lines: [] } };
     try {
-      const res = await agentBindings.testLLM(workspaceId, b.id);
-      testResults = {
-        ...testResults,
-        [b.id]: { answer: res?.answer || '(empty response)', prompt: res?.prompt, repo: res?.repo || null },
-      };
-    } catch (err) {
-      testResults = { ...testResults, [b.id]: { error: err?.message || 'Agent test failed' } };
-    } finally {
-      testing = { ...testing, [b.id]: false };
-    }
-  }
+      const { run_id: runId } = await agentBindings.testRun(workspaceId, b.id);
+      if (watchTokens[b.id] !== token) return;
+      testResults = { ...testResults, [b.id]: { runId, status: 'queued', lines: [] } };
 
-  // Render a worktree listing as "file, dir/, ..." with folders marked.
-  function formatRepoEntries(entries) {
-    if (!entries || entries.length === 0) return '(empty)';
-    return entries.map((e) => (e.is_dir ? `${e.name}/` : e.name)).join(', ');
+      let afterId = 0;
+      const deadline = Date.now() + TEST_RUN_TIMEOUT_MS;
+      while (watchTokens[b.id] === token) {
+        const events = await agentRuns.listEventsAfter(runId, afterId, 200);
+        if (watchTokens[b.id] !== token) return;
+        if (events?.length) {
+          afterId = events[events.length - 1].id;
+          appendLines(b.id, events);
+        }
+
+        const run = await agentRuns.get(runId);
+        if (watchTokens[b.id] !== token) return;
+        const cur = testResults[b.id] || {};
+        testResults = { ...testResults, [b.id]: { ...cur, status: run.status, error: run.error || '' } };
+
+        if (isTerminalTestStatus(run.status)) {
+          // Final drain so the agent's last output isn't lost to timing.
+          const tail = await agentRuns.listEventsAfter(runId, afterId, 200);
+          if (watchTokens[b.id] === token && tail?.length) appendLines(b.id, tail);
+          break;
+        }
+        if (Date.now() > deadline) {
+          const c = testResults[b.id] || {};
+          testResults = {
+            ...testResults,
+            [b.id]: {
+              ...c,
+              status: 'timeout',
+              error: 'Stopped watching after 5 min — see the Agent runs panel for the rest.',
+            },
+          };
+          break;
+        }
+        await new Promise((r) => setTimeout(r, TEST_RUN_POLL_MS));
+      }
+    } catch (err) {
+      if (watchTokens[b.id] === token) {
+        const cur = testResults[b.id] || {};
+        testResults = {
+          ...testResults,
+          [b.id]: { ...cur, status: cur.status || 'error', error: err?.message || 'Test run failed to start' },
+        };
+      }
+    } finally {
+      if (watchTokens[b.id] === token) testing = { ...testing, [b.id]: false };
+    }
   }
 
   function openDeleteDialog(binding) {
@@ -344,13 +451,15 @@
                     <button
                       type="button"
                       onclick={() => testBinding(b)}
-                      disabled={testing[b.id] || !b.llm_connection_id}
+                      disabled={testing[b.id] || !b.llm_connection_id || !b.repo_slug}
                       class="inline-flex items-center justify-center p-1 rounded hover:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
                       style="color: var(--ds-icon);"
-                      title={b.llm_connection_id
-                        ? 'Test the agent: prompt the LLM and list the cloned repo root'
-                        : 'No LLM connection on this binding to test'}
-                      aria-label="Test agent for {displayActingUser(b.acting_user_id)}"
+                      title={!b.llm_connection_id
+                        ? 'No LLM connection on this binding to test'
+                        : !b.repo_slug
+                          ? 'This binding has no repo — a test run needs one to check out'
+                          : 'Test run: provision a real container, check out the repo, have the agent list its files'}
+                      aria-label="Test run for {displayActingUser(b.acting_user_id)}"
                     >
                       {#if testing[b.id]}
                         <Loader2 class="w-4 h-4 animate-spin" />
@@ -373,7 +482,7 @@
                 {#if testResults[b.id]}
                   <tr style="border-color: var(--ds-border);">
                     <td colspan="7" class="px-3 pb-3">
-                      {#if testResults[b.id].error}
+                      {#if testResults[b.id].error && !testResults[b.id].lines?.length}
                         <div
                           class="text-xs rounded p-2"
                           style="background-color: var(--ds-background-danger-subtle, var(--ds-background-neutral)); color: var(--ds-text-danger);"
@@ -385,26 +494,23 @@
                           class="text-xs rounded p-2 space-y-1"
                           style="background-color: var(--ds-background-neutral); color: var(--ds-text);"
                         >
-                          <div>
-                            <span style="color: var(--ds-text-subtle);">Model reply:</span>
-                            {testResults[b.id].answer}
-                          </div>
-                          {#if testResults[b.id].repo}
-                            {#if testResults[b.id].repo.error}
-                              <div style="color: var(--ds-text-danger);">
-                                ✗ {testResults[b.id].repo.error}
-                              </div>
-                            {:else}
-                              <div>
-                                <span style="color: var(--ds-text-subtle);">
-                                  Repo {testResults[b.id].repo.repo_slug}{testResults[b.id].repo
-                                    .base_ref
-                                    ? ` @ ${testResults[b.id].repo.base_ref}`
-                                    : ''}:
-                                </span>
-                                {formatRepoEntries(testResults[b.id].repo.entries)}
-                              </div>
+                          <div class="flex items-center gap-2" style="color: var(--ds-text-subtle);">
+                            <span>Test run{testResults[b.id].runId ? ` #${testResults[b.id].runId}` : ''}:</span>
+                            <span style="color: {testRunStatusColor(testResults[b.id].status)};">
+                              {testRunStatusLabel(testResults[b.id].status)}
+                            </span>
+                            {#if !isTerminalTestStatus(testResults[b.id].status)}
+                              <Loader2 class="w-3 h-3 animate-spin" />
                             {/if}
+                          </div>
+                          {#if testResults[b.id].lines?.length}
+                            <pre
+                              class="whitespace-pre-wrap break-words rounded p-2 m-0"
+                              style="background-color: var(--ds-surface-sunken, var(--ds-background)); color: var(--ds-text); max-height: 12rem; overflow: auto;"
+                            >{testResults[b.id].lines.join('\n')}</pre>
+                          {/if}
+                          {#if testResults[b.id].error}
+                            <div style="color: var(--ds-text-danger);">✗ {testResults[b.id].error}</div>
                           {/if}
                         </div>
                       {/if}
