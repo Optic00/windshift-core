@@ -22,38 +22,36 @@ import (
 func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 	// Flag definitions mirror the historic main.go flags verbatim.
 	var (
-		portFlag                = flag.String("port", "8080", "Port to run the HTTP server on")
-		portShort               = flag.String("p", "8080", "Port to run the HTTP server on (shorthand)")
-		dbPath                  = flag.String("db", "windshift.db", "Database file path (SQLite)")
-		postgresConn            = flag.String("postgres-connection-string", "", "PostgreSQL connection string")
-		postgresConnShort       = flag.String("pg-conn", "", "PostgreSQL connection string (shorthand)")
-		attachmentPath          = flag.String("attachment-path", "", "Path to store attachments")
-		disableCSRF             = flag.Bool("no-csrf", false, "Disable CSRF protection (development only)")
-		allowLocalConnections   = flag.Bool("allow-local-connections", false, "Allow server-side HTTP clients (SCM, Jira, LLM, webhooks) to reach loopback/private IPs — for self-hosted/internal endpoints")
-		allowedHosts            = flag.String("allowed-hosts", "", "Comma-separated allowed hostnames for CSRF")
-		allowedPort             = flag.String("allowed-port", "", "Port for CORS/WebAuthn trusted origins")
-		oidcAllowedPrivateCIDRs = flag.String("oidc-allowed-private-cidrs", "", "Comma-separated private/CGNAT CIDRs that OIDC discovery, JWKS, and token calls may dial")
-		useProxy                = flag.Bool("use-proxy", false, "Enable proxy mode (trust X-Forwarded-Proto from private IPs)")
-		baseURL                 = flag.String("base-url", "", "Public URL for the server")
-		contextPath             = flag.String("context-path", "", "Public context path to serve Windshift under, e.g. /windshift")
-		additionalProxies       = flag.String("additional-proxies", "", "Additional proxy IPs to trust")
-		enableSSH               = flag.Bool("ssh", false, "Enable SSH TUI server")
-		enableMCP               = flag.Bool("mcp", false, "Enable MCP server at /mcp")
-		sshPort                 = flag.String("ssh-port", "23234", "SSH server port")
-		sshHost                 = flag.String("ssh-host", "localhost", "SSH server host")
-		sshKeyPath              = flag.String("ssh-key", ".ssh/windshift_host_key", "SSH host key file path")
-		maxReadConns            = flag.Int("max-read-conns", 120, "Max read connections")
-		maxWriteConns           = flag.Int("max-write-conns", 1, "Max write connections")
-		logLevel                = flag.String("log-level", "info", "Log level (debug, info, warn, error)")
-		logFormat               = flag.String("log-format", "text", "Log format (text, json, logfmt)")
-		tlsCertPath             = flag.String("tls-cert", "", "TLS certificate file path")
-		tlsKeyPath              = flag.String("tls-key", "", "TLS key file path")
-		disablePlugins          = flag.Bool("disable-plugins", false, "Disable the plugin system")
-		disableIPRateLimit      = flag.Bool("disable-ip-rate-limit", false, "Disable IP-based rate limiting")
-		enableAdminFallback     = flag.Bool("enable-fallback", false, "Enable admin password fallback")
-		llmProvidersFile        = flag.String("llm-providers", "", "Path to custom LLM providers JSON file")
-		llmAllowedPrivateCIDRs  = flag.String("llm-allowed-private-cidrs", "", "Comma-separated private/loopback/CGNAT CIDRs that admin-configured LLM providers may dial")
-		aiPromptsDir            = flag.String("ai-prompts-dir", "", "Directory of custom AI prompt override files")
+		portFlag              = flag.String("port", "8080", "Port to run the HTTP server on")
+		portShort             = flag.String("p", "8080", "Port to run the HTTP server on (shorthand)")
+		dbPath                = flag.String("db", "windshift.db", "Database file path (SQLite)")
+		postgresConn          = flag.String("postgres-connection-string", "", "PostgreSQL connection string")
+		postgresConnShort     = flag.String("pg-conn", "", "PostgreSQL connection string (shorthand)")
+		attachmentPath        = flag.String("attachment-path", "", "Path to store attachments")
+		disableCSRF           = flag.Bool("no-csrf", false, "Disable CSRF protection (development only)")
+		allowLocalConnections = flag.Bool("allow-local-connections", false, "Allow server-side HTTP clients (SCM, Jira, LLM, webhooks) to reach loopback/private IPs — for self-hosted/internal endpoints")
+		allowedHosts          = flag.String("allowed-hosts", "", "Comma-separated allowed hostnames for CSRF")
+		allowedPort           = flag.String("allowed-port", "", "Port for CORS/WebAuthn trusted origins")
+		useProxy              = flag.Bool("use-proxy", false, "Enable proxy mode (trust X-Forwarded-Proto from private IPs)")
+		baseURL               = flag.String("base-url", "", "Public URL for the server")
+		contextPath           = flag.String("context-path", "", "Public context path to serve Windshift under, e.g. /windshift")
+		additionalProxies     = flag.String("additional-proxies", "", "Additional proxy IPs to trust")
+		enableSSH             = flag.Bool("ssh", false, "Enable SSH TUI server")
+		enableMCP             = flag.Bool("mcp", false, "Enable MCP server at /mcp")
+		sshPort               = flag.String("ssh-port", "23234", "SSH server port")
+		sshHost               = flag.String("ssh-host", "localhost", "SSH server host")
+		sshKeyPath            = flag.String("ssh-key", ".ssh/windshift_host_key", "SSH host key file path")
+		maxReadConns          = flag.Int("max-read-conns", 120, "Max read connections")
+		maxWriteConns         = flag.Int("max-write-conns", 1, "Max write connections")
+		logLevel              = flag.String("log-level", "info", "Log level (debug, info, warn, error)")
+		logFormat             = flag.String("log-format", "text", "Log format (text, json, logfmt)")
+		tlsCertPath           = flag.String("tls-cert", "", "TLS certificate file path")
+		tlsKeyPath            = flag.String("tls-key", "", "TLS key file path")
+		disablePlugins        = flag.Bool("disable-plugins", false, "Disable the plugin system")
+		disableIPRateLimit    = flag.Bool("disable-ip-rate-limit", false, "Disable IP-based rate limiting")
+		enableAdminFallback   = flag.Bool("enable-fallback", false, "Enable admin password fallback")
+		llmProvidersFile      = flag.String("llm-providers", "", "Path to custom LLM providers JSON file")
+		aiPromptsDir          = flag.String("ai-prompts-dir", "", "Directory of custom AI prompt override files")
 	)
 	flag.Parse()
 
@@ -122,7 +120,6 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 		useProxyExplicit = true
 	}
 	resolvedAdditionalProxies := firstNonEmpty(os.Getenv("ADDITIONAL_PROXIES"), *additionalProxies)
-	resolvedOIDCAllowedPrivateCIDRs := firstNonEmpty(os.Getenv("OIDC_ALLOWED_PRIVATE_CIDRS"), *oidcAllowedPrivateCIDRs)
 
 	resolvedPluginDir := firstNonEmpty(os.Getenv("PLUGIN_DIR"), "")
 	var extraPluginDirs []string
@@ -138,7 +135,6 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 	if resolvedLLMProviders == "" {
 		resolvedLLMProviders = os.Getenv("LLM_PROVIDERS_FILE")
 	}
-	resolvedLLMAllowedPrivateCIDRs := firstNonEmpty(os.Getenv("LLM_ALLOWED_PRIVATE_CIDRS"), *llmAllowedPrivateCIDRs)
 	resolvedAIPromptsDir := *aiPromptsDir
 	if resolvedAIPromptsDir == "" {
 		resolvedAIPromptsDir = os.Getenv("AI_PROMPTS_DIR")
@@ -192,9 +188,6 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 		Auth: AuthConfig{
 			SessionSecret: sessionSecret,
 		},
-		SSO: SSOConfig{
-			OIDCAllowedPrivateCIDRs: resolvedOIDCAllowedPrivateCIDRs,
-		},
 		WebAuthn: WebAuthnConfig{
 			RPID:   rpID,
 			RPName: rpName,
@@ -209,10 +202,9 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 			ExtraDirs: extraPluginDirs,
 		},
 		LLM: LLMConfig{
-			Endpoint:            os.Getenv("LLM_ENDPOINT"),
-			ProvidersFile:       resolvedLLMProviders,
-			PromptsDir:          resolvedAIPromptsDir,
-			AllowedPrivateCIDRs: resolvedLLMAllowedPrivateCIDRs,
+			Endpoint:      os.Getenv("LLM_ENDPOINT"),
+			ProvidersFile: resolvedLLMProviders,
+			PromptsDir:    resolvedAIPromptsDir,
 		},
 		CodingAgent: CodingAgentConfig{
 			RunnerImage:  firstNonEmpty(os.Getenv("CODING_AGENT_RUNNER_IMAGE"), DefaultCodingAgentRunnerImage),

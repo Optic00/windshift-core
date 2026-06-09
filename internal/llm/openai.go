@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -21,7 +20,7 @@ type openaiClient struct {
 
 // newOpenAIClient creates a client for OpenAI-compatible endpoints.
 // chatPath overrides the default "/v1/chat/completions" path appended to the base URL.
-func newOpenAIClient(baseURL, model, apiKey string, timeout time.Duration, chatPath string, allowedPrivateCIDRs []*net.IPNet) *openaiClient {
+func newOpenAIClient(baseURL, model, apiKey string, timeout time.Duration, chatPath string) *openaiClient {
 	endpoint := strings.TrimSuffix(baseURL, "/")
 	if chatPath == "" {
 		chatPath = "/v1/chat/completions"
@@ -31,7 +30,7 @@ func newOpenAIClient(baseURL, model, apiKey string, timeout time.Duration, chatP
 		chatPath: chatPath,
 		model:    model,
 		apiKey:   apiKey,
-		http:     newAdminConfiguredHTTPClient(timeout, allowedPrivateCIDRs),
+		http:     newAdminConfiguredHTTPClient(timeout),
 	}
 }
 

@@ -176,7 +176,7 @@ func fetchIDPMetadata(metadataURL string) (*saml.EntityDescriptor, error) {
 
 	metadata, err := samlsp.FetchMetadata(
 		ctx,
-		newSSRFSafeOIDCClient(oidcHTTPTimeout, nil),
+		newSSRFSafeOIDCClient(oidcHTTPTimeout),
 		*mdURL,
 	)
 	if err != nil {

@@ -1,11 +1,12 @@
 package llm
 
 import (
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"windshift/internal/utils"
 )
 
 func TestJoinProviderPathAvoidsDuplicateOpenAIVersion(t *testing.T) {
@@ -76,7 +77,7 @@ func TestAdminConfiguredHTTPClientBlocksLocalhostByDefault(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newAdminConfiguredHTTPClient(time.Second, nil)
+	client := newAdminConfiguredHTTPClient(time.Second)
 	resp, err := client.Get(server.URL)
 	if resp != nil {
 		_ = resp.Body.Close()
@@ -86,20 +87,22 @@ func TestAdminConfiguredHTTPClientBlocksLocalhostByDefault(t *testing.T) {
 	}
 }
 
-func TestAdminConfiguredHTTPClientAllowsLocalhostWithOverride(t *testing.T) {
+func TestAdminConfiguredHTTPClientAllowsLocalhostWithGlobalOverride(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))
 	}))
 	defer server.Close()
 
-	_, loopback, err := net.ParseCIDR("127.0.0.1/32")
-	if err != nil {
-		t.Fatal(err)
-	}
-	client := newAdminConfiguredHTTPClient(time.Second, []*net.IPNet{loopback})
+	// The global --allow-local-connections switch (replacing the old
+	// per-endpoint CIDR allowlist) lets the admin LLM client reach a loopback
+	// endpoint — e.g. a local Ollama gateway.
+	utils.SetAllowLocalConnections(true)
+	defer utils.SetAllowLocalConnections(false)
+
+	client := newAdminConfiguredHTTPClient(time.Second)
 	resp, err := client.Get(server.URL)
 	if err != nil {
-		t.Fatalf("expected override LLM HTTP client to allow loopback endpoint: %v", err)
+		t.Fatalf("expected LLM HTTP client to allow loopback with the global override: %v", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {

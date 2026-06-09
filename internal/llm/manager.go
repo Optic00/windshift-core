@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"strings"
 	"time"
 
@@ -35,19 +34,17 @@ type ConnectionInfo struct {
 
 // ConnectionManager bridges the database and the LLM client layer.
 type ConnectionManager struct {
-	db                  database.Database
-	encryption          *sso.SecretEncryption
-	fallback            Client
-	allowedPrivateCIDRs []*net.IPNet
+	db         database.Database
+	encryption *sso.SecretEncryption
+	fallback   Client
 }
 
 // NewConnectionManager creates a new connection manager.
-func NewConnectionManager(db database.Database, encryption *sso.SecretEncryption, fallback Client, allowedPrivateCIDRs []*net.IPNet) *ConnectionManager {
+func NewConnectionManager(db database.Database, encryption *sso.SecretEncryption, fallback Client) *ConnectionManager {
 	return &ConnectionManager{
-		db:                  db,
-		encryption:          encryption,
-		fallback:            fallback,
-		allowedPrivateCIDRs: allowedPrivateCIDRs,
+		db:         db,
+		encryption: encryption,
+		fallback:   fallback,
 	}
 }
 
@@ -131,11 +128,10 @@ func (m *ConnectionManager) resolve(connectionID int) (*resolvedConnection, erro
 
 	return &resolvedConnection{
 		client: NewProviderClient(ConnectionConfig{
-			ProviderType:        ProviderType(providerType),
-			Model:               model,
-			APIKey:              apiKey,
-			BaseURL:             baseURL.String,
-			AllowedPrivateCIDRs: m.allowedPrivateCIDRs,
+			ProviderType: ProviderType(providerType),
+			Model:        model,
+			APIKey:       apiKey,
+			BaseURL:      baseURL.String,
 		}),
 		connectionID: id,
 		providerType: ProviderType(providerType),
@@ -478,12 +474,11 @@ func (m *ConnectionManager) TestConnection(id int) error {
 	}
 
 	client := NewProviderClient(ConnectionConfig{
-		ProviderType:        ProviderType(providerType),
-		Model:               model,
-		APIKey:              apiKey,
-		BaseURL:             baseURL.String,
-		Timeout:             30 * time.Second,
-		AllowedPrivateCIDRs: m.allowedPrivateCIDRs,
+		ProviderType: ProviderType(providerType),
+		Model:        model,
+		APIKey:       apiKey,
+		BaseURL:      baseURL.String,
+		Timeout:      30 * time.Second,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
