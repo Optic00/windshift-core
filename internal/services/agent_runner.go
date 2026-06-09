@@ -269,7 +269,11 @@ func baselineSandboxArgs(cfg sandboxConfig) []string {
 		"--security-opt=no-new-privileges",
 		"--user=1000:1000", // non-root; matches the agent uid pinned in the agent image
 		"--read-only",
-		"--tmpfs=/tmp:rw,nosuid,nodev,size=256m",
+		// mode=1777: a Docker tmpfs is created root-owned 0750 by default, which
+		// the non-root agent (uid 1000) can't write — and with --read-only the
+		// tmpfs mounts are the only writable paths. Sticky world-writable (like a
+		// real /tmp) lets the agent write; the mount is per-run and discarded.
+		"--tmpfs=/tmp:rw,nosuid,nodev,size=256m,mode=1777",
 	)
 
 	network := cfg.Network
@@ -320,8 +324,10 @@ func (r *DockerAgentRunner) buildDockerArgs(input RunInput, envFilePath string) 
 	})...)
 	// /home/agent is the agent user's home; agent + ws state lives there at
 	// runtime. Specific to the coding-agent image, so it is added on top of the
-	// shared baseline rather than inside it.
-	args = append(args, "--tmpfs=/home/agent:rw,nosuid,nodev,size=512m")
+	// shared baseline rather than inside it. mode=1777 for the same reason as
+	// /tmp above: the default root-owned 0750 tmpfs is unwritable by uid 1000,
+	// so $HOME (e.g. ~/.config) couldn't be created under --read-only.
+	args = append(args, "--tmpfs=/home/agent:rw,nosuid,nodev,size=512m,mode=1777")
 
 	if envFilePath != "" {
 		args = append(args, "--env-file", envFilePath)
