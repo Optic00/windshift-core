@@ -139,6 +139,17 @@ LLM-proxy item.
   — preserving redirect-following while blocking private targets on every hop.
 - `ProxyLLM` now sets `Transport: ssrfSafeTransport()`, matching `ProxyHTTP`.
 
+**Self-hosted / local escape hatch.** SCM (Gitea / GitHub Enterprise), Jira Data
+Center, and local LLM gateways legitimately run on private networks or
+localhost, which the dialer would otherwise block. Rather than per-endpoint CIDR
+allowlists (`--llm-allowed-private-cidrs`, `--oidc-allowed-private-cidrs`), a
+single global switch — `--allow-local-connections` / `ALLOW_LOCAL_CONNECTIONS`
+(off by default, mirrors `--no-csrf`) — relaxes every SSRF-safe dialer/client at
+once for these deployments. Wired in `internal/utils/dialer.go` (consulted by
+`IsBlockedSSRFAddrWithAllowedCIDRs`, `NewSSRFSafeHTTPClient`,
+`ValidateExternalURL`) and set once at startup from config; logs a warning when
+enabled.
+
 ---
 
 ## F-5 — Portal magic-link tokens stored in plaintext (Low)
