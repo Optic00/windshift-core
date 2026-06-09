@@ -78,6 +78,7 @@ type bindingResponse struct {
 	RepoBaseRef     string   `json:"repo_base_ref,omitempty"`
 	LLMConnectionID *int     `json:"llm_connection_id,omitempty"`
 	SCMConnectionID *int     `json:"scm_connection_id,omitempty"`
+	TargetPoolID    *int     `json:"target_pool_id,omitempty"`
 	TokenScopes     []string `json:"token_scopes,omitempty"`
 	TokenTTLMinutes int      `json:"token_ttl_minutes"`
 	MaxRunsPerDay   int      `json:"max_runs_per_day"`
@@ -93,6 +94,7 @@ func toBindingResponse(b *models.WorkspaceAgentBinding) bindingResponse {
 		RepoBaseRef:     b.RepoBaseRef,
 		LLMConnectionID: b.LLMConnectionID,
 		SCMConnectionID: b.SCMConnectionID,
+		TargetPoolID:    b.TargetPoolID,
 		TokenScopes:     b.TokenScopes,
 		TokenTTLMinutes: b.TokenTTLMinutes,
 		MaxRunsPerDay:   b.MaxRunsPerDay,
@@ -105,6 +107,7 @@ type createBindingBody struct {
 	RepoBaseRef     string   `json:"repo_base_ref,omitempty"`
 	LLMConnectionID *int     `json:"llm_connection_id,omitempty"`
 	SCMConnectionID *int     `json:"scm_connection_id,omitempty"`
+	TargetPoolID    *int     `json:"target_pool_id,omitempty"`
 	TokenScopes     []string `json:"token_scopes,omitempty"`
 	TokenTTLMinutes int      `json:"token_ttl_minutes,omitempty"`
 	MaxRunsPerDay   int      `json:"max_runs_per_day,omitempty"`
@@ -168,6 +171,7 @@ func (h *WorkspaceAgentBindingHandler) Create(w http.ResponseWriter, r *http.Req
 		RepoBaseRef:     body.RepoBaseRef,
 		LLMConnectionID: body.LLMConnectionID,
 		SCMConnectionID: body.SCMConnectionID,
+		TargetPoolID:    body.TargetPoolID,
 		TokenScopes:     body.TokenScopes,
 		TokenTTLMinutes: body.TokenTTLMinutes,
 		MaxRunsPerDay:   body.MaxRunsPerDay,
@@ -182,7 +186,8 @@ func (h *WorkspaceAgentBindingHandler) Create(w http.ResponseWriter, r *http.Req
 			respondBadRequest(w, r, err.Error())
 		case errors.Is(err, services.ErrBindingTokenTTLOverCap),
 			errors.Is(err, services.ErrBindingRepoNeedsSCMConnection),
-			errors.Is(err, services.ErrBindingInvalidRepoSlug):
+			errors.Is(err, services.ErrBindingInvalidRepoSlug),
+			errors.Is(err, services.ErrBindingInvalidPool):
 			respondBadRequest(w, r, err.Error())
 		case isAgentScopeError(err):
 			respondBadRequest(w, r, err.Error())

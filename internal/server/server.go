@@ -736,6 +736,7 @@ func (s *Server) initialize() error {
 		SCMCreds:   &scmCredsAdapter{cr: scmCredResolver},
 		LLMRuntime: llmManager,
 		RunContext: agentBindingRepo,
+		Pools:      repository.NewActionRepository(s.db),
 		APIURL:     agentAPIURL,
 	})
 	// Let the run service enrich remote claims from the binding (WI-195): a

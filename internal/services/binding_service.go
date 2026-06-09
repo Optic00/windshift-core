@@ -77,6 +77,15 @@ type AgentRunContextResolver interface {
 	AgentRunContext(ctx context.Context, workspaceID, itemID int) (repository.AgentRunContext, error)
 }
 
+// RunnerPoolLister lists the runner_pool capabilities a workspace may dispatch
+// to (enabled + applies-to-all OR explicitly scoped). Create uses it to
+// validate a binding's chosen target_pool_id. Satisfied by
+// repository.ActionRepository; an interface so tests can fake it and the
+// service doesn't depend on the whole action stack.
+type RunnerPoolLister interface {
+	ListCapabilitiesForWorkspace(workspaceID int, capType string) ([]*models.ActionCapability, error)
+}
+
 // ErrLLMConnectionRequired is returned by Create when no llm_connection_id is
 // supplied. A binding with no LLM can't run an agent (the llm-proxy 403s a run
 // with no LLM grant), so the connection is mandatory. The handler maps it to a
@@ -91,6 +100,11 @@ var ErrLLMConnectionInvalid = errors.New("binding service: llm connection not fo
 // ErrBindingNotFound is returned when a binding id doesn't exist in the given
 // workspace. The handler maps it to a 404.
 var ErrBindingNotFound = errors.New("binding service: binding not found")
+
+// ErrBindingInvalidPool is returned by Create when target_pool_id is set but is
+// not an enabled runner_pool capability the workspace may dispatch to. The
+// handler maps it to a 400.
+var ErrBindingInvalidPool = errors.New("binding service: target pool is not a runner pool available to this workspace")
 
 // DefaultLLMTestPrompt is the prompt TestLLM sends when the caller supplies
 // none — short enough to be cheap, open enough to prove the model replies.
@@ -112,6 +126,7 @@ type BindingService struct {
 	scmCreds   SCMCredentialResolver
 	llmRuntime LLMRuntimeResolver
 	runContext AgentRunContextResolver
+	pools      RunnerPoolLister
 	apiURL     string
 	logger     *log.Logger
 }
@@ -126,6 +141,7 @@ type BindingServiceOptions struct {
 	SCMCreds   SCMCredentialResolver
 	LLMRuntime LLMRuntimeResolver
 	RunContext AgentRunContextResolver
+	Pools      RunnerPoolLister
 	APIURL     string
 	Logger     *log.Logger
 }
@@ -150,6 +166,7 @@ func NewBindingService(opts BindingServiceOptions) (*BindingService, error) {
 		scmCreds:   opts.SCMCreds,
 		llmRuntime: opts.LLMRuntime,
 		runContext: opts.RunContext,
+		pools:      opts.Pools,
 		apiURL:     opts.APIURL,
 		logger:     logger,
 	}, nil
@@ -171,6 +188,10 @@ type CreateBindingRequest struct {
 	RepoBaseRef     string
 	LLMConnectionID *int
 	SCMConnectionID *int
+	// TargetPoolID routes this binding's runs to a remote runner_pool instead of
+	// the local in-process runner. nil = local. Validated against the pools the
+	// workspace may dispatch to.
+	TargetPoolID    *int
 	TokenScopes     []string
 	TokenTTLMinutes int
 	MaxRunsPerDay   int
@@ -227,6 +248,13 @@ func (s *BindingService) Create(ctx context.Context, req CreateBindingRequest) (
 			return nil, ErrLLMConnectionInvalid
 		}
 	}
+	// A target pool, when chosen, must be an enabled runner_pool capability this
+	// workspace may dispatch to. nil = local in-process runner (the default).
+	if req.TargetPoolID != nil {
+		if err := s.validateTargetPool(req.WorkspaceID, *req.TargetPoolID); err != nil {
+			return nil, err
+		}
+	}
 	binding := &models.WorkspaceAgentBinding{
 		WorkspaceID:     req.WorkspaceID,
 		ActingUserID:    identity.UserID,
@@ -235,6 +263,7 @@ func (s *BindingService) Create(ctx context.Context, req CreateBindingRequest) (
 		RepoBaseRef:     req.RepoBaseRef,
 		LLMConnectionID: req.LLMConnectionID,
 		SCMConnectionID: req.SCMConnectionID,
+		TargetPoolID:    req.TargetPoolID,
 		TokenScopes:     req.TokenScopes,
 		TokenTTLMinutes: req.TokenTTLMinutes,
 		MaxRunsPerDay:   req.MaxRunsPerDay,
@@ -246,6 +275,26 @@ func (s *BindingService) Create(ctx context.Context, req CreateBindingRequest) (
 	}
 	binding.ID = id
 	return binding, nil
+}
+
+// validateTargetPool confirms poolID is an enabled runner_pool capability the
+// workspace may dispatch to. It reuses the same workspace-scoping the action
+// stack enforces (applies-to-all OR explicitly scoped), so a binding can't pin
+// a pool the workspace isn't allowed to use.
+func (s *BindingService) validateTargetPool(workspaceID, poolID int) error {
+	if s.pools == nil {
+		return ErrBindingInvalidPool
+	}
+	pools, err := s.pools.ListCapabilitiesForWorkspace(workspaceID, string(models.CapabilityRunnerPool))
+	if err != nil {
+		return fmt.Errorf("list runner pools: %w", err)
+	}
+	for _, p := range pools {
+		if p.ID == poolID {
+			return nil
+		}
+	}
+	return ErrBindingInvalidPool
 }
 
 // ListForWorkspace returns every binding configured in the workspace.

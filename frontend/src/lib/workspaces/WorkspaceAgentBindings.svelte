@@ -27,9 +27,14 @@
   // connection id directly. A binding requires one: a run with no LLM can't
   // reach a model (the llm-proxy 403s a run with no LLM grant).
   let llmConnections = $state([]);
+  // Runner pools (action_capabilities of type runner_pool) this workspace may
+  // dispatch to. A binding runs on a pool (remote) or the local in-process
+  // runtime (null target).
+  let runnerPools = $state([]);
 
   // Add-form state.
   let addActingUserId = $state(null);
+  let addTargetPoolId = $state(null); // null = local in-process runtime
   let addSCMConnectionId = $state(null);
   // Repo slug is no longer typed by hand: it is derived from the repository
   // the admin picks under the chosen SCM connection (WI-90). The backend
@@ -155,7 +160,7 @@
   async function load() {
     loading = true;
     try {
-      const [list, cands, conns, llmConns] = await Promise.all([
+      const [list, cands, conns, llmConns, pools] = await Promise.all([
         agentBindings.listForWorkspace(workspaceId),
         agentBindings.getCandidates(workspaceId),
         api.workspaceSCM.getConnections(workspaceId).catch(() => []),
@@ -163,11 +168,14 @@
         // slim public view. Fall back to an empty list rather than breaking
         // the whole form if it fails.
         api.llmProviders.getEnabled().catch(() => []),
+        // Runner pools this workspace can target (empty if none / not allowed).
+        api.actionCapabilities.getForWorkspace(workspaceId, 'runner_pool').catch(() => []),
       ]);
       bindings = list ?? [];
       candidates = cands ?? [];
       scmConnections = conns ?? [];
       llmConnections = llmConns ?? [];
+      runnerPools = pools ?? [];
     } catch (err) {
       console.error('Failed to load agent bindings:', err);
       errorToast(err?.message || 'Failed to load agent bindings');
@@ -289,10 +297,25 @@
     return c.model ? `${c.name} · ${c.model}` : c.name;
   });
 
+  // Where a binding runs: a named pool, or the local in-process runtime.
+  let displayTarget = $derived((poolId) => {
+    if (!poolId) return 'Local';
+    const p = (runnerPools || []).find((p) => p.id === poolId);
+    return p?.name || `Pool #${poolId}`;
+  });
+
+  // "Run on" options: local runtime (null) + each runner pool this workspace
+  // may target.
+  let targetPoolOptions = $derived([
+    { value: null, label: 'Local (in-process)' },
+    ...(runnerPools || []).map((p) => ({ value: p.id, label: `Pool: ${p.name}` })),
+  ]);
+
   let canAdd = $derived(!!addActingUserId && !!addLLMConnectionId && !adding);
 
   function resetForm() {
     addActingUserId = null;
+    addTargetPoolId = null;
     addSCMConnectionId = null;
     addRepositoryId = null;
     addRepoSlug = '';
@@ -310,6 +333,7 @@
       token_ttl_minutes: addTokenTTLMinutes || 60,
       max_runs_per_day: addMaxRunsPerDay || 0,
     };
+    if (addTargetPoolId) body.target_pool_id = addTargetPoolId;
     if (addSCMConnectionId) body.scm_connection_id = addSCMConnectionId;
     if (addLLMConnectionId) body.llm_connection_id = addLLMConnectionId;
     if (addRepoSlug.trim()) body.repo_slug = addRepoSlug.trim();
@@ -451,6 +475,7 @@
               <tr style="background-color: var(--ds-background-neutral);">
                 <th class="text-left px-3 py-2 font-medium" style="color: var(--ds-text);">Acting identity</th>
                 <th class="text-left px-3 py-2 font-medium" style="color: var(--ds-text);">Kind</th>
+                <th class="text-left px-3 py-2 font-medium" style="color: var(--ds-text);">Runs on</th>
                 <th class="text-left px-3 py-2 font-medium" style="color: var(--ds-text);">Repo</th>
                 <th class="text-left px-3 py-2 font-medium" style="color: var(--ds-text);">SCM</th>
                 <th class="text-left px-3 py-2 font-medium" style="color: var(--ds-text);">LLM</th>
@@ -465,6 +490,7 @@
                   <td class="px-3 py-2" style="color: var(--ds-text-subtle);">
                     {b.acting_user_kind === 'agent' ? 'Owned agent' : 'Centralized service user'}
                   </td>
+                  <td class="px-3 py-2" style="color: var(--ds-text-subtle);">{displayTarget(b.target_pool_id)}</td>
                   <td class="px-3 py-2" style="color: var(--ds-text-subtle);">
                     {b.repo_slug ? `${b.repo_slug}${b.repo_base_ref ? ` @ ${b.repo_base_ref}` : ''}` : '—'}
                   </td>
@@ -507,7 +533,7 @@
                 </tr>
                 {#if testResults[b.id]}
                   <tr style="border-color: var(--ds-border);">
-                    <td colspan="7" class="px-3 pb-3">
+                    <td colspan="8" class="px-3 pb-3">
                       {#if testResults[b.id].error && !testResults[b.id].lines?.length}
                         <div
                           class="text-xs rounded p-2"
@@ -566,6 +592,15 @@
             <div>
               <label for="binding-acting-user" class="block text-xs mb-1" style="color: var(--ds-text-subtle);">Acting identity</label>
               <Select id="binding-acting-user" bind:value={addActingUserId} options={candidateOptions} />
+            </div>
+            <div>
+              <label for="binding-target-pool" class="block text-xs mb-1" style="color: var(--ds-text-subtle);">Runs on</label>
+              <Select id="binding-target-pool" bind:value={addTargetPoolId} options={targetPoolOptions} />
+              <p class="text-xs mt-1" style="color: var(--ds-text-subtle);">
+                {runnerPools.length === 0
+                  ? 'No runner pools available — runs use the local in-process runtime.'
+                  : 'Local runs the agent on this server; a pool dispatches to a registered remote runner.'}
+              </p>
             </div>
             <div>
               <label for="binding-scm-connection" class="block text-xs mb-1" style="color: var(--ds-text-subtle);">SCM connection (for git + PR auth)</label>
