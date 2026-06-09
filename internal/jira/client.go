@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"windshift/internal/utils"
+
 	"golang.org/x/time/rate"
 )
 
@@ -135,8 +137,14 @@ func NewClient(cfg Config) (Client, error) {
 		rateLimit = 10
 	}
 
+	// The instance URL is operator-supplied and used as the base for every
+	// request (plus the pre-auth tenant_info probe and attachment downloads).
+	// Dial through the SSRF-safe dialer so a base URL — or a redirect — that
+	// resolves to a private/internal host cannot receive the Basic-auth
+	// credential. Redirect-following is preserved; each hop is re-checked.
 	httpClient := &http.Client{
-		Timeout: timeout,
+		Timeout:   timeout,
+		Transport: &http.Transport{DialContext: utils.SafeNetDialer(timeout).DialContext},
 	}
 	limiter := rate.NewLimiter(rate.Limit(rateLimit), rateLimit)
 
