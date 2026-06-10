@@ -9,9 +9,194 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
+
+// sanitizeConfigSetTemplate bounds every user-supplied string in an uploaded
+// configuration-set bundle. Policies mirror the live CRUD handlers for the
+// same columns (config set / screen / workflow / condition-set / approval-set
+// descriptions are RichText; custom-field names are ShortIdentifier with a
+// Comment description) so a sanitized bundle round-trips the way direct API
+// writes would. Name-shaped cross-references get the same policy as their
+// defining entity so by-name resolution inside the bundle stays intact.
+// Enum-shaped machine tokens (kind, field_type, quorum_mode, ...) and the
+// free-form per-condition Config blob stay untouched.
+func sanitizeConfigSetTemplate(tpl *services.ConfigSetTemplate) {
+	if tpl.ExportedBy != nil {
+		sanitizeConfigSetExportBy(tpl.ExportedBy)
+	}
+	p := &tpl.Payload
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &p.ConfigurationSet.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &p.ConfigurationSet.Description, Policy: sanitize.RichText},
+		sanitize.Pair{Target: &p.ConfigurationSet.DefaultItemTypeName, Policy: sanitize.PlainTextField},
+	)
+	for i := range p.StatusCategories {
+		sanitize.Apply(&p.StatusCategories[i].Name, sanitize.PlainTextField)
+	}
+	for i := range p.CustomFields {
+		sanitize.ApplyAll(
+			sanitize.Pair{Target: &p.CustomFields[i].Name, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: &p.CustomFields[i].Description, Policy: sanitize.Comment},
+			sanitize.Pair{Target: &p.CustomFields[i].Options, Policy: sanitize.Comment},
+		)
+	}
+	for i := range p.Statuses {
+		sanitize.ApplyAll(
+			sanitize.Pair{Target: &p.Statuses[i].Name, Policy: sanitize.PlainTextField},
+			sanitize.Pair{Target: &p.Statuses[i].Description, Policy: sanitize.PlainTextField},
+			sanitize.Pair{Target: &p.Statuses[i].CategoryName, Policy: sanitize.PlainTextField},
+		)
+	}
+	for i := range p.ItemTypes {
+		sanitize.ApplyAll(
+			sanitize.Pair{Target: &p.ItemTypes[i].Name, Policy: sanitize.PlainTextField},
+			sanitize.Pair{Target: &p.ItemTypes[i].Description, Policy: sanitize.PlainTextField},
+			sanitize.Pair{Target: &p.ItemTypes[i].Icon, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: &p.ItemTypes[i].Color, Policy: sanitize.ShortIdentifier},
+		)
+	}
+	for i := range p.Priorities {
+		sanitize.ApplyAll(
+			sanitize.Pair{Target: &p.Priorities[i].Name, Policy: sanitize.PlainTextField},
+			sanitize.Pair{Target: &p.Priorities[i].Description, Policy: sanitize.PlainTextField},
+			sanitize.Pair{Target: &p.Priorities[i].Icon, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: &p.Priorities[i].Color, Policy: sanitize.ShortIdentifier},
+		)
+	}
+	for i := range p.Screens {
+		sc := &p.Screens[i]
+		sanitize.ApplyAll(
+			sanitize.Pair{Target: &sc.Name, Policy: sanitize.PlainTextField},
+			sanitize.Pair{Target: &sc.Description, Policy: sanitize.RichText},
+		)
+		for j := range sc.Fields {
+			sanitize.ApplyAll(
+				sanitize.Pair{Target: &sc.Fields[j].FieldIdentifier, Policy: sanitize.ShortIdentifier},
+				sanitize.Pair{Target: &sc.Fields[j].CustomFieldName, Policy: sanitize.ShortIdentifier},
+			)
+		}
+		for j := range sc.SystemFields {
+			sanitize.Apply(&sc.SystemFields[j], sanitize.ShortIdentifier)
+		}
+	}
+	for i := range p.Workflows {
+		wf := &p.Workflows[i]
+		sanitize.ApplyAll(
+			sanitize.Pair{Target: &wf.Name, Policy: sanitize.PlainTextField},
+			sanitize.Pair{Target: &wf.Description, Policy: sanitize.RichText},
+		)
+		for j := range wf.Transitions {
+			t := &wf.Transitions[j]
+			sanitize.ApplyAll(
+				sanitize.Pair{Target: t.FromStatusName, Policy: sanitize.PlainTextField},
+				sanitize.Pair{Target: &t.ToStatusName, Policy: sanitize.PlainTextField},
+				sanitize.Pair{Target: &t.SourceHandle, Policy: sanitize.ShortIdentifier},
+				sanitize.Pair{Target: &t.TargetHandle, Policy: sanitize.ShortIdentifier},
+			)
+		}
+	}
+	for i := range p.ConditionSets {
+		cs := &p.ConditionSets[i]
+		sanitize.ApplyAll(
+			sanitize.Pair{Target: &cs.Name, Policy: sanitize.PlainTextField},
+			sanitize.Pair{Target: &cs.Description, Policy: sanitize.RichText},
+			sanitize.Pair{Target: &cs.WorkflowName, Policy: sanitize.PlainTextField},
+		)
+		for j := range cs.TransitionConditions {
+			tc := &cs.TransitionConditions[j]
+			sanitize.ApplyAll(
+				sanitize.Pair{Target: tc.FromStatusName, Policy: sanitize.PlainTextField},
+				sanitize.Pair{Target: &tc.ToStatusName, Policy: sanitize.PlainTextField},
+			)
+			for k := range tc.Conditions {
+				sanitize.Apply(&tc.Conditions[k].ErrorMessage, sanitize.PlainTextField)
+			}
+		}
+	}
+	for i := range p.ApprovalSets {
+		as := &p.ApprovalSets[i]
+		sanitize.ApplyAll(
+			sanitize.Pair{Target: &as.Name, Policy: sanitize.PlainTextField},
+			sanitize.Pair{Target: &as.Description, Policy: sanitize.RichText},
+			sanitize.Pair{Target: &as.WorkflowName, Policy: sanitize.PlainTextField},
+		)
+		for j := range as.SetStatuses {
+			ss := &as.SetStatuses[j]
+			sanitize.ApplyAll(
+				sanitize.Pair{Target: &ss.StatusName, Policy: sanitize.PlainTextField},
+				sanitize.Pair{Target: ss.ApproveTransition.FromStatusName, Policy: sanitize.PlainTextField},
+				sanitize.Pair{Target: &ss.ApproveTransition.ToStatusName, Policy: sanitize.PlainTextField},
+				sanitize.Pair{Target: ss.DenyTransition.FromStatusName, Policy: sanitize.PlainTextField},
+				sanitize.Pair{Target: &ss.DenyTransition.ToStatusName, Policy: sanitize.PlainTextField},
+			)
+			for k := range ss.Steps {
+				sanitizeConfigSetApprovalStep(&ss.Steps[k])
+			}
+		}
+	}
+	sanitizeConfigSetLinks(&p.Links)
+}
+
+// sanitizeConfigSetApprovalStep scrubs the name / identifier / email refs on
+// one approval step. Role + group names render in the approval chain editor
+// and echo back via UnresolvedRef on a 422; field identifiers + emails are
+// identifier-shaped.
+func sanitizeConfigSetApprovalStep(st *services.ConfigSetTplApprovalStep) {
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &st.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &st.ApproverFieldIdentifier, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &st.ApproverCustomFieldName, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &st.ApproverRoleName, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &st.ApproverGroupName, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &st.ApproverUserEmail, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &st.EscalationTargetFieldIdentifier, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &st.EscalationTargetCustomFieldName, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &st.EscalationTargetRoleName, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &st.EscalationTargetGroupName, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &st.EscalationTargetUserEmail, Policy: sanitize.ShortIdentifier},
+	)
+}
+
+// sanitizeConfigSetLinks scrubs the by-name glue section so its references
+// keep matching the (equally sanitized) defining entities above.
+func sanitizeConfigSetLinks(links *services.ConfigSetTplLinks) {
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &links.WorkflowName, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &links.ConditionSetName, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &links.ApprovalSetName, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &links.CreateScreenName, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &links.EditScreenName, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &links.ViewScreenName, Policy: sanitize.PlainTextField},
+	)
+	for i := range links.PriorityNames {
+		sanitize.Apply(&links.PriorityNames[i], sanitize.PlainTextField)
+	}
+	for i := range links.ItemTypeConfigs {
+		itc := &links.ItemTypeConfigs[i]
+		sanitize.ApplyAll(
+			sanitize.Pair{Target: &itc.ItemTypeName, Policy: sanitize.PlainTextField},
+			sanitize.Pair{Target: &itc.WorkflowName, Policy: sanitize.PlainTextField},
+			sanitize.Pair{Target: &itc.ConditionSetName, Policy: sanitize.PlainTextField},
+			sanitize.Pair{Target: &itc.ApprovalSetName, Policy: sanitize.PlainTextField},
+			sanitize.Pair{Target: &itc.CreateScreenName, Policy: sanitize.PlainTextField},
+			sanitize.Pair{Target: &itc.EditScreenName, Policy: sanitize.PlainTextField},
+			sanitize.Pair{Target: &itc.ViewScreenName, Policy: sanitize.PlainTextField},
+		)
+	}
+}
+
+// sanitizeConfigSetExportBy scrubs the provenance stamp. On export, Instance
+// derives from the request Host header; on import the whole struct arrives
+// inside the uploaded bundle.
+func sanitizeConfigSetExportBy(by *services.ConfigSetExportBy) {
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &by.Username, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &by.Instance, Policy: sanitize.PlainTextField},
+	)
+}
 
 // configSetImportMaxBytes caps the upload size for /configuration-sets/import.
 // Sufficient headroom for an ITSM-style bundle (custom fields, screens, a
@@ -107,6 +292,7 @@ func (h *ConfigurationSetHandler) Import(w http.ResponseWriter, r *http.Request)
 		respondBadRequest(w, r, "Invalid template JSON: "+err.Error())
 		return
 	}
+	sanitizeConfigSetTemplate(&tpl)
 
 	importSvc := services.NewConfigSetImportService(h.db, h.repo)
 	newID, warnings, err := importSvc.Import(r.Context(), &tpl)
@@ -171,10 +357,12 @@ func exportedByFromRequest(r *http.Request) *services.ConfigSetExportBy {
 	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
 		scheme = "https"
 	}
-	return &services.ConfigSetExportBy{
+	by := &services.ConfigSetExportBy{
 		Username: user.Username,
 		Instance: scheme + "://" + host,
 	}
+	sanitizeConfigSetExportBy(by)
+	return by
 }
 
 // configSetExportFilename produces a safe download filename derived from the
