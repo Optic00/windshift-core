@@ -848,6 +848,15 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 	originalItem := result.OriginalItem
 	updatedItem := result.Item
 
+	// Invalidate the cached effective project for this item and its descendants
+	// when a project-affecting field changed. The cache keys only on item ID and
+	// stores the resolved project, so a change to project_id / inherit_project /
+	// parent_id here would otherwise leave this item and every descendant that
+	// inherits from it serving a stale effective project for up to the cache TTL.
+	if h.itemCache != nil && projectResolutionChanged(originalItem, updatedItem) {
+		h.invalidateEffectiveProjectSubtree(updatedItem.ID)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 
 	// Check if assignee changed (compare originalItem with updatedItem)
@@ -1015,6 +1024,40 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSONOK(w, updatedItem)
+}
+
+// projectResolutionChanged reports whether an update touched a field that can
+// change an item's (or its descendants') effective project: the direct project,
+// the inherit flag, or the parent link.
+func projectResolutionChanged(original, updated *models.Item) bool {
+	if original.InheritProject != updated.InheritProject {
+		return true
+	}
+	if !intPtrEqual(original.ProjectID, updated.ProjectID) {
+		return true
+	}
+	if !intPtrEqual(original.ParentID, updated.ParentID) {
+		return true
+	}
+	return false
+}
+
+// invalidateEffectiveProjectSubtree drops the cached hierarchy entry for an item
+// and all of its descendants, since each descendant may resolve its effective
+// project through this item.
+func (h *ItemHandler) invalidateEffectiveProjectSubtree(itemID int) {
+	_ = h.itemCache.InvalidateItemHierarchy(itemID, nil)
+	if h.hierarchyService == nil {
+		return
+	}
+	descendants, err := h.hierarchyService.GetDescendants(itemID, 0)
+	if err != nil {
+		slog.Warn("failed to load descendants for cache invalidation", slog.Int("item_id", itemID), slog.Any("error", err))
+		return
+	}
+	for i := range descendants {
+		_ = h.itemCache.InvalidateItemHierarchy(descendants[i].ID, nil)
+	}
 }
 
 func (h *ItemHandler) Delete(w http.ResponseWriter, r *http.Request) {
