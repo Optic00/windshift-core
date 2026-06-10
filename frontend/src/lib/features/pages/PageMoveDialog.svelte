@@ -100,7 +100,7 @@
   }
 </script>
 
-<Modal bind:isOpen maxWidth="max-w-lg">
+<Modal bind:isOpen maxWidth="max-w-lg" onSubmit={confirmMove} submitDisabled={!selectionMade || saving}>
   <ModalHeader
     title={t('pages.moveTitle', { title: page?.title || '' })}
     subtitle={t('pages.moveSubtitle')}
@@ -132,6 +132,7 @@
     cancelTestid="page-move-cancel"
     confirmDisabled={!selectionMade}
     loading={saving}
+    showKeyboardHint={true}
     onCancel={() => (isOpen = false)}
     onConfirm={confirmMove}
   />
