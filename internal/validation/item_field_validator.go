@@ -32,11 +32,20 @@ type HierarchyCycleChecker interface {
 	WouldCreateCycle(ancestorCandidateID, newParentID int) (bool, error)
 }
 
+// ProjectAccessChecker lets the validator ask whether a user may assign a
+// given time project to an item. Declared as an interface here for the same
+// reason as the checkers above — avoid importing services.
+// *services.TimePermissionService satisfies it by duck typing.
+type ProjectAccessChecker interface {
+	CanViewProject(userID, projectID int) (bool, error)
+}
+
 // ItemFieldValidator provides validation for item fields during create/update operations
 type ItemFieldValidator struct {
-	db           database.Database
-	permChecker  WorkspacePermissionChecker
-	cycleChecker HierarchyCycleChecker
+	db             database.Database
+	permChecker    WorkspacePermissionChecker
+	cycleChecker   HierarchyCycleChecker
+	projectChecker ProjectAccessChecker
 }
 
 // allowedEntityTables is a whitelist of valid table names for EntityExists checks
@@ -73,6 +82,41 @@ func (v *ItemFieldValidator) WithPermissionChecker(checker WorkspacePermissionCh
 func (v *ItemFieldValidator) WithCycleChecker(checker HierarchyCycleChecker) *ItemFieldValidator {
 	v.cycleChecker = checker
 	return v
+}
+
+// WithProjectAccessChecker attaches a time-project access checker so the
+// validator can enforce that the caller may assign a given project_id /
+// time_project_id. User-facing callers must set this; internal callers that
+// don't mutate those fields may omit it. Returns the receiver for chaining.
+func (v *ItemFieldValidator) WithProjectAccessChecker(checker ProjectAccessChecker) *ItemFieldValidator {
+	v.projectChecker = checker
+	return v
+}
+
+// checkProjectAssignable verifies the caller may attach the given time project
+// to an item. Existence is checked first (CanViewProject treats an unrestricted
+// non-existent project as viewable), then access. Both the not-found and
+// no-access cases return the same "<field> not found" error so the response
+// can't be used to enumerate which project IDs exist.
+func (v *ItemFieldValidator) checkProjectAssignable(field string, userID, projectID int) error {
+	exists, err := v.EntityExists("time_projects", projectID)
+	if err != nil {
+		return fmt.Errorf("failed to validate project: %w", err)
+	}
+	if !exists {
+		return &ValidationError{Field: field, Message: "Project not found"}
+	}
+	if v.projectChecker != nil {
+		hasAccess, accErr := v.projectChecker.CanViewProject(userID, projectID)
+		if accErr != nil {
+			return fmt.Errorf("failed to check project access: %w", accErr)
+		}
+		if !hasAccess {
+			// Mirror the not-found message to avoid leaking project existence.
+			return &ValidationError{Field: field, Message: "Project not found"}
+		}
+	}
+	return nil
 }
 
 // ValidationError represents a field validation error
@@ -227,17 +271,40 @@ func (v *ItemFieldValidator) ValidateAndApplyUpdates(
 				return &ValidationError{Field: "project_id", Message: "Invalid project_id type"}
 			}
 			if newProjectID > 0 {
-				// Validate project exists
-				exists, err := v.EntityExists("time_projects", newProjectID)
-				if err != nil {
-					return fmt.Errorf("failed to validate project: %w", err)
-				}
-				if !exists {
-					return &ValidationError{Field: "project_id", Message: "Project not found"}
+				// Validate the project exists AND the caller may assign it.
+				if err := v.checkProjectAssignable("project_id", userID, newProjectID); err != nil {
+					return err
 				}
 				item.ProjectID = &newProjectID
 				// When setting a direct project, clear inherit flag
 				item.InheritProject = false
+			}
+		}
+	}
+
+	// Time-project override validation. time_project_id overrides the project
+	// used when logging time on the item; it is independent of inherit_project.
+	if timeProjectIDValue, ok := updateData["time_project_id"]; ok {
+		if timeProjectIDValue == nil {
+			item.TimeProjectID = nil
+		} else {
+			var newTimeProjectID int
+			switch tv := timeProjectIDValue.(type) {
+			case float64:
+				newTimeProjectID = int(tv)
+			case int:
+				newTimeProjectID = tv
+			default:
+				return &ValidationError{Field: "time_project_id", Message: "Invalid time_project_id type"}
+			}
+			if newTimeProjectID > 0 {
+				if err := v.checkProjectAssignable("time_project_id", userID, newTimeProjectID); err != nil {
+					return err
+				}
+				item.TimeProjectID = &newTimeProjectID
+			} else {
+				// 0 means clear, consistent with the aitools convention.
+				item.TimeProjectID = nil
 			}
 		}
 	}

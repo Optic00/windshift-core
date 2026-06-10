@@ -35,6 +35,10 @@ func NewItemUpdateService(db database.Database) *ItemUpdateService {
 // that don't touch parent_id may omit it.
 func (s *ItemUpdateService) WithPermissionService(permService *PermissionService) *ItemUpdateService {
 	s.validator = s.validator.WithPermissionChecker(permService)
+	// Also enforce that the caller may assign the project_id / time_project_id
+	// they pass. CanViewProject is pure-SQL plus the global-admin check on the
+	// supplied permission service, so this reuses the same identity.
+	s.validator = s.validator.WithProjectAccessChecker(NewTimePermissionService(s.db, permService))
 	return s
 }
 
@@ -252,6 +256,7 @@ func (s *ItemUpdateService) compareAndGenerateHistory(original, updated *models.
 	addHistory("priority_id", intPtrToString(original.PriorityID), intPtrToString(updated.PriorityID))
 	addHistory("iteration_id", intPtrToString(original.IterationID), intPtrToString(updated.IterationID))
 	addHistory("project_id", intPtrToString(original.ProjectID), intPtrToString(updated.ProjectID))
+	addHistory("time_project_id", intPtrToString(original.TimeProjectID), intPtrToString(updated.TimeProjectID))
 	addHistory("assignee_id", intPtrToString(original.AssigneeID), intPtrToString(updated.AssigneeID))
 	addHistory("creator_id", intPtrToString(original.CreatorID), intPtrToString(updated.CreatorID))
 	addHistory("parent_id", intPtrToString(original.ParentID), intPtrToString(updated.ParentID))
@@ -334,6 +339,7 @@ func (s *ItemUpdateService) recordItemCreationHistory(db database.Database, item
 	addHistory("priority_id", intPtrToString(item.PriorityID))
 	addHistory("iteration_id", intPtrToString(item.IterationID))
 	addHistory("project_id", intPtrToString(item.ProjectID))
+	addHistory("time_project_id", intPtrToString(item.TimeProjectID))
 	addHistory("assignee_id", intPtrToString(item.AssigneeID))
 	addHistory("creator_id", intPtrToString(item.CreatorID))
 	addHistory("parent_id", intPtrToString(item.ParentID))
@@ -343,6 +349,11 @@ func (s *ItemUpdateService) recordItemCreationHistory(db database.Database, item
 	addHistory("workspace_id", fmt.Sprintf("%d", item.WorkspaceID))
 	addHistory("story_points", float64PtrToString(item.StoryPoints))
 	addHistory("estimate_minutes", intPtrToString(item.EstimateMinutes))
+	// Only record inherit_project when set; the default (false) on root items
+	// would otherwise add a no-op entry to every creation event.
+	if item.InheritProject {
+		addHistory("inherit_project", "true")
+	}
 
 	// Record history entries directly (no transaction needed here, caller should manage)
 	for _, entry := range history {

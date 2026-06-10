@@ -29,6 +29,7 @@ type ItemHandler struct {
 	workflowSvc  *services.WorkflowService
 	conditionSvc *services.ConditionService
 	approvalSvc  *services.ApprovalService
+	permSvc      *services.PermissionService
 }
 
 // NewItemHandler creates a new item handler
@@ -44,6 +45,7 @@ func NewItemHandler(db database.Database, permissionService *services.Permission
 		workflowSvc:  workflowSvc,
 		conditionSvc: services.NewConditionService(db, permissionService, services.NewScriptEngine()),
 		approvalSvc:  services.NewApprovalService(db, permissionService, leaveRepo, workflowSvc),
+		permSvc:      permissionService,
 	}
 }
 
@@ -478,9 +480,11 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 		StartDate:             req.StartDate,
 		EndDate:               req.EndDate,
 		CustomFieldValuesJSON: customFieldValuesJSON,
+		ValidatingUserID:      user.ID,
+		PermService:           h.permSvc,
 	})
 	if err != nil {
-		if errors.Is(err, services.ErrMissingItemType) {
+		if errors.Is(err, services.ErrMissingItemType) || errors.Is(err, services.ErrProjectNotFound) {
 			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, err.Error()))
 			return
 		}

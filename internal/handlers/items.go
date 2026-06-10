@@ -590,6 +590,7 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 		IsTask:            item.IsTask,
 		RelatedWorkItemID: relatedWorkItemIDPtr,
 		UserID:            user.ID,
+		PermService:       h.permissionService,
 	})
 
 	if !validationResult.Valid {
@@ -656,9 +657,11 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 		StoryPoints:           item.StoryPoints,
 		EstimateMinutes:       item.EstimateMinutes,
 		CustomFieldValuesJSON: customFieldValuesJSON,
+		ValidatingUserID:      user.ID,
+		PermService:           h.permissionService,
 	})
 	if err != nil {
-		if errors.Is(err, services.ErrMissingItemType) {
+		if errors.Is(err, services.ErrMissingItemType) || errors.Is(err, services.ErrProjectNotFound) {
 			respondValidationError(w, r, err.Error())
 			return
 		}
