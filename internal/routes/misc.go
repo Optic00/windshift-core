@@ -62,6 +62,11 @@ func RegisterMiscRoutes(deps *Deps) {
 	// Version endpoint — public, no auth required. Returns build-time
 	// metadata so clients can detect when a newer release is available.
 	api.HandleH("GET /version", http.HandlerFunc(versionHandler))
+
+	// Hosted runner install script (WI-313) — public, no auth required: it
+	// contains no secrets, just the server's public URL + image references.
+	// The registration token travels as a flag the operator passes to bash.
+	api.HandleH("GET /runner-install.sh", http.HandlerFunc(deps.Misc.RunnerInstall.ServeScript))
 }
 
 func versionHandler(w http.ResponseWriter, _ *http.Request) {

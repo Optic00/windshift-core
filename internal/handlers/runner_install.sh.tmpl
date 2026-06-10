@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+# runner-install.sh — provision a Windshift remote-runner host (container flavor).
+#
+# Served by the Windshift orchestrator with its own public URL and image tags
+# matching the server's version baked in (WI-313). One-liner onboarding:
+#
+#   curl -fsSL __SCRIPT_URL__ | sudo bash -s -- --token wsrt_...
+#
+# What it does (idempotently re-runnable):
+#   * verifies docker is present and the daemon is reachable
+#   * creates the data dir (per-instance credential + bare-clone cache)
+#   * detects SELinux enforcing and applies --security-opt label=disable
+#   * writes the env file with 0600 permissions
+#   * (re)starts the runner container via plain `docker run` — no compose
+#     dependency (the compose plugin is often absent, e.g. on Fedora)
+#   * waits for registration and verifies the credential persisted
+#
+# Re-running replaces the container (upgrades in place); an existing
+# credential is reused and --token becomes optional. For a systemd-managed
+# binary install instead, see deploy/windshift-runner/install.sh in the repo.
+set -euo pipefail
+
+WS_API_URL="__WS_API_URL__"
+AGENT_IMAGE="__AGENT_IMAGE__"
+RUNNER_IMAGE="__RUNNER_IMAGE__"
+
+TOKEN=""
+NAME="$(hostname 2>/dev/null || echo windshift-runner)"
+DATA_DIR=/var/lib/windshift-runner
+ENV_DIR=/etc/windshift-runner
+CONTAINER=windshift-runner
+
+die() { echo "runner-install: $*" >&2; exit 1; }
+
+usage() {
+  cat <<USAGE
+Usage: curl -fsSL __SCRIPT_URL__ | sudo bash -s -- --token wsrt_...
+
+Options:
+  --token TOKEN        pool registration token (wsrt_…) — required on first
+                       install, optional when a credential is already persisted
+  --name NAME          runner display name           (default: hostname)
+  --agent-image IMG    agent image the runner spawns (default: $AGENT_IMAGE)
+  --runner-image IMG   runner container image        (default: $RUNNER_IMAGE)
+  --data-dir DIR       credential + cache dir        (default: $DATA_DIR)
+  --container NAME     container name                (default: $CONTAINER)
+  -h, --help
+USAGE
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --token)        TOKEN="${2:?}"; shift 2 ;;
+    --name)         NAME="${2:?}"; shift 2 ;;
+    --agent-image)  AGENT_IMAGE="${2:?}"; shift 2 ;;
+    --runner-image) RUNNER_IMAGE="${2:?}"; shift 2 ;;
+    --data-dir)     DATA_DIR="${2:?}"; shift 2 ;;
+    --container)    CONTAINER="${2:?}"; shift 2 ;;
+    -h|--help)      usage; exit 0 ;;
+    *)              die "unknown option: $1 (try --help)" ;;
+  esac
+done
+
+[ "$(id -u)" -eq 0 ] || die "must run as root (pipe to: sudo bash -s -- ...)"
+command -v docker >/dev/null 2>&1 || die "docker not found. Install Docker Engine first (https://docs.docker.com/engine/install/)."
+docker info >/dev/null 2>&1 || die "docker daemon not reachable (is the docker service running?)"
+
+CRED_FILE="$DATA_DIR/cache/credential"
+if [ -z "$TOKEN" ] && [ ! -s "$CRED_FILE" ]; then
+  die "no --token given and no persisted credential at $CRED_FILE — mint a registration token (Admin → Runner Pools) and re-run with --token wsrt_..."
+fi
+
+echo "==> control plane: $WS_API_URL"
+echo "==> data dir: $DATA_DIR"
+install -d -m 0750 "$DATA_DIR" "$DATA_DIR/cache"
+
+# SELinux: container-selinux relabels deny the runner the docker socket and
+# the credential write (a denial here burns the single-use registration
+# token). The runner drives the HOST docker daemon, so per-container
+# labeling buys nothing here — disable it for this container only.
+SECURITY_OPTS=()
+if command -v getenforce >/dev/null 2>&1 && [ "$(getenforce 2>/dev/null)" = "Enforcing" ]; then
+  echo "==> SELinux enforcing: starting the runner with --security-opt label=disable"
+  SECURITY_OPTS=(--security-opt label=disable)
+fi
+
+install -d -m 0755 "$ENV_DIR"
+ENV_FILE="$ENV_DIR/runner.env"
+if [ -f "$ENV_FILE" ] && [ -z "$TOKEN" ]; then
+  echo "==> keeping existing $ENV_FILE"
+else
+  echo "==> writing $ENV_FILE (0600)"
+  umask 077
+  {
+    echo "WS_API_URL=$WS_API_URL"
+    echo "WSRUNNER_IMAGE=$AGENT_IMAGE"
+    echo "WSRUNNER_NAME=$NAME"
+    [ -n "$TOKEN" ] && echo "WSRUNNER_REGISTRATION_TOKEN=$TOKEN"
+  } > "$ENV_FILE"
+  chmod 0600 "$ENV_FILE"
+fi
+
+echo "==> pulling $RUNNER_IMAGE"
+docker pull "$RUNNER_IMAGE"
+
+if docker inspect "$CONTAINER" >/dev/null 2>&1; then
+  echo "==> replacing existing container $CONTAINER"
+  docker rm -f "$CONTAINER" >/dev/null
+fi
+
+# Docker-out-of-Docker: the runner drives the host daemon through the socket
+# and spawns sibling agent containers. The data dir is mounted at the SAME
+# path on host and in-container because the host daemon — not the runner
+# container — bind-mounts prepared checkouts (under the cache root) into the
+# agent containers; the path must resolve identically on the host.
+echo "==> starting $CONTAINER"
+docker run -d --name "$CONTAINER" --restart unless-stopped \
+  ${SECURITY_OPTS[@]+"${SECURITY_OPTS[@]}"} \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$DATA_DIR":"$DATA_DIR" \
+  --env-file "$ENV_FILE" \
+  "$RUNNER_IMAGE" >/dev/null
+
+echo "==> waiting for registration"
+for _ in $(seq 1 30); do
+  sleep 2
+  if ! docker ps -q -f "name=^${CONTAINER}\$" | grep -q .; then
+    echo "runner container exited during startup; last log lines:" >&2
+    docker logs --tail 40 "$CONTAINER" >&2 || true
+    die "startup failed (see logs above)"
+  fi
+  if [ -s "$CRED_FILE" ]; then
+    echo "==> registered; credential persisted at $CRED_FILE"
+    echo ""
+    echo "Done. Follow the runner:  docker logs -f $CONTAINER"
+    exit 0
+  fi
+done
+echo "credential not persisted after 60s; last log lines:" >&2
+docker logs --tail 40 "$CONTAINER" >&2 || true
+die "registration did not complete (see logs above)"

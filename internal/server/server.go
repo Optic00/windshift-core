@@ -1336,10 +1336,11 @@ func (s *Server) initialize() error {
 			LLMConnection: llmConnHandler,
 		},
 		Misc: routes.MiscHandlers{
-			Homepage:     homepageHandler,
-			Review:       reviewHandler,
-			CalendarFeed: calendarFeedHandler,
-			CustomField:  customFieldHandler,
+			Homepage:      homepageHandler,
+			Review:        reviewHandler,
+			CalendarFeed:  calendarFeedHandler,
+			CustomField:   customFieldHandler,
+			RunnerInstall: handlers.NewRunnerInstallHandler(baseURL),
 		},
 		Teams: routes.TeamHandlers{
 			Team:   teamHandler,

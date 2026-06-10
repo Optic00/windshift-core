@@ -9,6 +9,19 @@ orchestrator load-balances claims across them.
 This directory provides an installer (`install.sh`), a systemd unit, and an env
 template for standing up a runner host.
 
+> **Fastest path — hosted install script (WI-313).** The orchestrator serves a
+> container-flavor installer at `GET <WS_API_URL>/runner-install.sh` with its
+> own public URL and version-matched image tags baked in; the mint-token dialog
+> in Admin → Runner Pools emits the complete one-liner:
+>
+> ```bash
+> curl -fsSL https://windshift.example.com/api/runner-install.sh | sudo bash -s -- --token wsrt_...
+> ```
+>
+> It handles SELinux (`label=disable`), data dirs, the env file, and waits for
+> registration. Use the systemd flavor below when you prefer host binaries
+> over the runner container.
+
 ## How it fits together
 
 ```
