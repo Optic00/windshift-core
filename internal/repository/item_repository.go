@@ -848,6 +848,26 @@ func (r *ItemRepository) FindIDByKeyAndNumber(workspaceKey string, itemNumber in
 	return id, nil
 }
 
+// FindIDByKeyAndNumberInWorkspace resolves an item by workspace key + number,
+// additionally constrained to the given workspace — the key must belong to
+// that workspace or the lookup returns ErrNotFound. Used by SCM sync, where
+// commit/PR references may only resolve inside the repository's bound
+// workspace.
+func (r *ItemRepository) FindIDByKeyAndNumberInWorkspace(workspaceID int, workspaceKey string, itemNumber int) (int, error) {
+	var id int
+	err := r.db.QueryRow(
+		"SELECT i.id FROM items i JOIN workspaces w ON i.workspace_id = w.id WHERE i.workspace_id = ? AND i.workspace_item_number = ? AND UPPER(w.key) = UPPER(?)",
+		workspaceID, itemNumber, workspaceKey,
+	).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("failed to resolve item by key in workspace: %w", err)
+	}
+	return id, nil
+}
+
 // GetFracIndex returns the fractional-index (used for drag-and-drop ordering)
 // of an item. Returns nil when the column is NULL; ErrNotFound when the item
 // doesn't exist.
