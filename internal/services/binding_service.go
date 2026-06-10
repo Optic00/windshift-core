@@ -564,6 +564,18 @@ func (s *BindingService) StartTestRun(ctx context.Context, bindingID, workspaceI
 // the binding's OAuth connection. Shown verbatim in the runs UI.
 const triggerUserNotConnectedReason = "the user who triggered this run has no connected SCM account for the binding's OAuth connection; connect your GitHub/Gitea account under profile settings, or switch the connection to a PAT / GitHub App"
 
+// startFailureReason renders a trigger-time resolution failure as the error
+// recorded on the failed run. Every misconfiguration a run would otherwise
+// hit minutes later (proxy 503, clone failure, claim enrichment error) — or
+// worse, never surface at all — fails visibly in the runs panel instead.
+// RecordFailedStart redacts, but redact here too so callers can also log it.
+func startFailureReason(what string, err error) string {
+	if errors.Is(err, ErrTriggerUserSCMNotConnected) {
+		return triggerUserNotConnectedReason
+	}
+	return "could not resolve the binding's " + what + " at start time: " + RedactString(err.Error())
+}
+
 // MaybeStartRunForAssignee is the assignee-change trigger. Hot path: if
 // the assignee did not actually change or no binding matches the new
 // assignee, this is a no-op (one indexed lookup). Otherwise it builds a
@@ -742,13 +754,29 @@ func (s *BindingService) startRunForBinding(ctx context.Context, binding *models
 			JobKind:           models.JobKindCodingAgent,
 			TriggeredByUserID: triggeredByUserID,
 		}
-		// Pre-validate the credential principal now rather than letting the
-		// run sit queued until a runner claims it and the git proxy 401s:
-		// "fail visibly at start time" (WI-275). The resolved token is
-		// discarded — remote runners reach git only through the proxy.
+		// Pre-validate the full SCM resolution now — credential principal AND
+		// clone-host config — rather than letting the run sit queued until a
+		// runner claims it and the git proxy 401s/503s: "fail visibly at
+		// start time" (WI-275). The resolved token is discarded — remote
+		// runners reach git only through the proxy — and deriveCloneURL is
+		// the same base-URL validation the proxy applies at claim time.
 		if binding.HasRepo() && s.scmCreds != nil {
-			if _, _, _, err := s.scmCreds.ResolveForRunAsUser(ctx, *binding.SCMConnectionID, triggeredByUserID); errors.Is(err, ErrTriggerUserSCMNotConnected) {
-				if _, rerr := s.runs.RecordFailedStart(ctx, remoteReq, triggerUserNotConnectedReason); rerr != nil {
+			_, providerType, baseURL, err := s.scmCreds.ResolveForRunAsUser(ctx, *binding.SCMConnectionID, triggeredByUserID)
+			if err == nil {
+				_, err = deriveCloneURL(providerType, baseURL, binding.RepoSlug)
+			}
+			if err != nil {
+				if _, rerr := s.runs.RecordFailedStart(ctx, remoteReq, startFailureReason("SCM connection", err)); rerr != nil {
+					s.logger.Printf("binding service: record failed remote run for item=%d binding=%d: %v", itemID, binding.ID, rerr)
+				}
+				return err
+			}
+		}
+		// Same fail-visibly treatment for the LLM connection the claim-time
+		// enrichment will resolve.
+		if binding.LLMConnectionID != nil && s.llmRuntime != nil {
+			if _, err := s.llmRuntime.ConnectionRuntime(ctx, *binding.LLMConnectionID); err != nil {
+				if _, rerr := s.runs.RecordFailedStart(ctx, remoteReq, startFailureReason("LLM connection", err)); rerr != nil {
 					s.logger.Printf("binding service: record failed remote run for item=%d binding=%d: %v", itemID, binding.ID, rerr)
 				}
 				return err
@@ -786,18 +814,18 @@ func (s *BindingService) startRunForBinding(ctx context.Context, binding *models
 			return nil
 		}
 		token, providerType, baseURL, err := s.scmCreds.ResolveForRunAsUser(ctx, *binding.SCMConnectionID, triggeredByUserID)
-		if err != nil {
-			if errors.Is(err, ErrTriggerUserSCMNotConnected) {
-				if _, rerr := s.runs.RecordFailedStart(ctx, req, triggerUserNotConnectedReason); rerr != nil {
-					s.logger.Printf("binding service: record failed run for item=%d binding=%d: %v", itemID, binding.ID, rerr)
-				}
-				return err
-			}
-			return fmt.Errorf("resolve scm credentials: %w", err)
+		var cloneURL string
+		if err == nil {
+			cloneURL, err = deriveCloneURL(providerType, baseURL, binding.RepoSlug)
 		}
-		cloneURL, derr := deriveCloneURL(providerType, baseURL, binding.RepoSlug)
-		if derr != nil {
-			return fmt.Errorf("derive clone url: %w", derr)
+		if err != nil {
+			// Fail visibly: without a run row the trigger evaporates and the
+			// assigner sees nothing at all (WI-275, extended past the
+			// not-connected case after the git-proxy 503 incident).
+			if _, rerr := s.runs.RecordFailedStart(ctx, req, startFailureReason("SCM connection", err)); rerr != nil {
+				s.logger.Printf("binding service: record failed run for item=%d binding=%d: %v", itemID, binding.ID, rerr)
+			}
+			return err
 		}
 		s.logger.Printf("binding service: derived %s clone url for binding=%d slug=%s", providerType, binding.ID, binding.RepoSlug)
 		// Token travels on RepoSpec as a separate field — never embed
@@ -821,7 +849,10 @@ func (s *BindingService) startRunForBinding(ctx context.Context, binding *models
 	if binding.LLMConnectionID != nil && s.llmRuntime != nil {
 		llmCfg, err := s.llmRuntime.ConnectionRuntime(ctx, *binding.LLMConnectionID)
 		if err != nil {
-			return fmt.Errorf("resolve llm runtime: %w", err)
+			if _, rerr := s.runs.RecordFailedStart(ctx, req, startFailureReason("LLM connection", err)); rerr != nil {
+				s.logger.Printf("binding service: record failed run for item=%d binding=%d: %v", itemID, binding.ID, rerr)
+			}
+			return err
 		}
 		applyLLMModelEnv(req.Env, llmCfg)
 	}
