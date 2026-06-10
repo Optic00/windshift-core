@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
@@ -9,24 +8,26 @@ import (
 	"strings"
 	"time"
 
-	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	"windshift/internal/repository"
 	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
 
 type WorkspaceRoleHandler struct {
-	*BaseHandler
+	repo              *repository.WorkspaceRoleRepository
 	permissionService *services.PermissionService
 	approvalService   *services.ApprovalService
+	auditor           *logger.Auditor
 }
 
-func NewWorkspaceRoleHandlerWithPool(db database.Database, permissionService *services.PermissionService) *WorkspaceRoleHandler {
+func NewWorkspaceRoleHandlerWithPool(repo *repository.WorkspaceRoleRepository, permissionService *services.PermissionService, auditor *logger.Auditor) *WorkspaceRoleHandler {
 	return &WorkspaceRoleHandler{
-		BaseHandler:       NewBaseHandler(db),
+		repo:              repo,
 		permissionService: permissionService,
+		auditor:           auditor,
 	}
 }
 
@@ -39,41 +40,10 @@ func (h *WorkspaceRoleHandler) SetApprovalService(svc *services.ApprovalService)
 
 // GetAll returns all workspace roles
 func (h *WorkspaceRoleHandler) GetAll(w http.ResponseWriter, r *http.Request) {
-	db, ok := h.requireReadDB(w, r)
-	if !ok {
-		return
-	}
-
-	query := `
-		SELECT id, name, description, is_system, permissions_enabled, display_order, created_at, updated_at
-		FROM workspace_roles
-		ORDER BY display_order ASC, name ASC`
-
-	rows, err := db.Query(query)
+	roles, err := h.repo.List()
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
-	}
-	defer func() { _ = rows.Close() }()
-
-	var roles []models.WorkspaceRole
-	for rows.Next() {
-		var role models.WorkspaceRole
-		err := rows.Scan(&role.ID, &role.Name, &role.Description, &role.IsSystem,
-			&role.PermissionsEnabled, &role.DisplayOrder, &role.CreatedAt, &role.UpdatedAt)
-		if err != nil {
-			respondInternalError(w, r, err)
-			return
-		}
-		roles = append(roles, role)
-	}
-	if err := rows.Err(); err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-
-	if roles == nil {
-		roles = []models.WorkspaceRole{}
 	}
 
 	respondJSONOK(w, roles)
@@ -81,27 +51,13 @@ func (h *WorkspaceRoleHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 
 // Get returns a single workspace role with its permissions
 func (h *WorkspaceRoleHandler) Get(w http.ResponseWriter, r *http.Request) {
-	db, ok := h.requireReadDB(w, r)
-	if !ok {
-		return
-	}
-
 	id, ok := requireIDParam(w, r, "id")
 	if !ok {
 		return
 	}
 
-	var err error
-
-	var role models.WorkspaceRole
-	err = db.QueryRow(`
-		SELECT id, name, description, is_system, permissions_enabled, display_order, created_at, updated_at
-		FROM workspace_roles
-		WHERE id = ?
-	`, id).Scan(&role.ID, &role.Name, &role.Description, &role.IsSystem,
-		&role.PermissionsEnabled, &role.DisplayOrder, &role.CreatedAt, &role.UpdatedAt)
-
-	if errors.Is(err, sql.ErrNoRows) {
+	role, err := h.repo.GetByID(id)
+	if errors.Is(err, repository.ErrNotFound) {
 		respondNotFound(w, r, "workspace_role")
 		return
 	}
@@ -111,47 +67,18 @@ func (h *WorkspaceRoleHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Load permissions for this role
-	permRows, err := db.Query(`
-		SELECT p.id, p.permission_key, p.permission_name, p.description, p.scope, p.is_system, p.created_at, p.updated_at
-		FROM permissions p
-		JOIN role_permissions rp ON p.id = rp.permission_id
-		WHERE rp.role_id = ?
-		ORDER BY p.scope, p.permission_name
-	`, id)
+	permissions, err := h.repo.GetPermissions(id)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
-	defer func() { _ = permRows.Close() }()
-
-	role.Permissions = []models.Permission{}
-	for permRows.Next() {
-		var perm models.Permission
-		err := permRows.Scan(&perm.ID, &perm.PermissionKey, &perm.PermissionName,
-			&perm.Description, &perm.Scope, &perm.IsSystem, &perm.CreatedAt, &perm.UpdatedAt)
-		if err == nil {
-			role.Permissions = append(role.Permissions, perm)
-		}
-	}
-	if err := permRows.Err(); err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
+	role.Permissions = permissions
 
 	respondJSONOK(w, role)
 }
 
 // AssignRoleToUser assigns a role to a user in a workspace
 func (h *WorkspaceRoleHandler) AssignRoleToUser(w http.ResponseWriter, r *http.Request) {
-	readDB, ok := h.requireReadDB(w, r)
-	if !ok {
-		return
-	}
-	writeDB, ok := h.requireWriteDB(w, r)
-	if !ok {
-		return
-	}
-
 	req, ok := decodeJSON[models.UserRoleAssignmentRequest](w, r)
 	if !ok {
 		return
@@ -165,8 +92,7 @@ func (h *WorkspaceRoleHandler) AssignRoleToUser(w http.ResponseWriter, r *http.R
 	}
 
 	// Check if role exists
-	var roleExists bool
-	err := readDB.QueryRow("SELECT EXISTS(SELECT 1 FROM workspace_roles WHERE id = ?)", req.RoleID).Scan(&roleExists)
+	roleExists, err := h.repo.Exists(req.RoleID)
 	if err != nil || !roleExists {
 		respondNotFound(w, r, "role")
 		return
@@ -175,9 +101,8 @@ func (h *WorkspaceRoleHandler) AssignRoleToUser(w http.ResponseWriter, r *http.R
 	// Check that the target workspace exists and is active. Without this the
 	// INSERT below would surface a FK violation as a generic 500; validate up
 	// front so the caller gets a clean not-found / bad-request instead.
-	var workspaceActive bool
-	err = readDB.QueryRow("SELECT active FROM workspaces WHERE id = ?", req.WorkspaceID).Scan(&workspaceActive)
-	if errors.Is(err, sql.ErrNoRows) {
+	workspaceActive, err := h.repo.WorkspaceActive(req.WorkspaceID)
+	if errors.Is(err, repository.ErrNotFound) {
 		respondNotFound(w, r, "workspace")
 		return
 	}
@@ -191,21 +116,10 @@ func (h *WorkspaceRoleHandler) AssignRoleToUser(w http.ResponseWriter, r *http.R
 	}
 
 	// Count existing assignments for this role+workspace before the operation
-	var countBefore int
-	_ = readDB.QueryRow(`
-		SELECT COUNT(*) FROM user_workspace_roles WHERE workspace_id = ? AND role_id = ?
-		UNION ALL
-		SELECT COUNT(*) FROM group_workspace_roles WHERE workspace_id = ? AND role_id = ?
-	`, req.WorkspaceID, req.RoleID, req.WorkspaceID, req.RoleID).Scan(&countBefore)
+	countBefore, _ := h.repo.CountAssignmentsPreAssign(req.WorkspaceID, req.RoleID)
 
 	// Insert or update role assignment
-	_, err = writeDB.Exec(`
-		INSERT INTO user_workspace_roles (user_id, workspace_id, role_id, granted_by, granted_at)
-		VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT(user_id, workspace_id, role_id) DO UPDATE SET granted_by = ?, granted_at = ?
-	`, req.UserID, req.WorkspaceID, req.RoleID, granterID, time.Now(), granterID, time.Now())
-
-	if err != nil {
+	if err := h.repo.AssignToUser(req.UserID, req.WorkspaceID, req.RoleID, granterID); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
@@ -227,30 +141,19 @@ func (h *WorkspaceRoleHandler) AssignRoleToUser(w http.ResponseWriter, r *http.R
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
 		// Get role, target user, and workspace details for audit log
-		var roleName, targetUsername, workspaceName string
-		_ = readDB.QueryRow("SELECT name FROM workspace_roles WHERE id = ?", req.RoleID).Scan(&roleName)
-		_ = readDB.QueryRow("SELECT username FROM users WHERE id = ?", req.UserID).Scan(&targetUsername)
-		_ = readDB.QueryRow("SELECT name FROM workspaces WHERE id = ?", req.WorkspaceID).Scan(&workspaceName)
+		roleName := h.repo.RoleName(req.RoleID)
+		targetUsername := h.repo.Username(req.UserID)
+		workspaceName := h.repo.WorkspaceName(req.WorkspaceID)
 
-		_ = logger.LogAudit(h.db, logger.AuditEvent{
-			UserID:       currentUser.ID,
-			Username:     currentUser.Username,
-			IPAddress:    utils.GetClientIP(r),
-			UserAgent:    r.UserAgent(),
-			ActionType:   logger.ActionRoleAssign,
-			ResourceType: logger.ResourceRole,
-			ResourceID:   &req.RoleID,
-			ResourceName: roleName,
-			Details: map[string]interface{}{
+		h.auditor.LogWithDetails(r, currentUser, logger.ActionRoleAssign, logger.ResourceRole, &req.RoleID, roleName,
+			map[string]interface{}{
 				"target_user_id":  req.UserID,
 				"target_username": targetUsername,
 				"role_id":         req.RoleID,
 				"role_name":       roleName,
 				"workspace_id":    req.WorkspaceID,
 				"workspace_name":  workspaceName,
-			},
-			Success: true,
-		})
+			})
 	}
 
 	respondJSONCreatedWithWarnings(w, map[string]string{"message": "Role assigned successfully"}, warnings)
@@ -258,15 +161,6 @@ func (h *WorkspaceRoleHandler) AssignRoleToUser(w http.ResponseWriter, r *http.R
 
 // RevokeRoleFromUser revokes a role from a user in a workspace
 func (h *WorkspaceRoleHandler) RevokeRoleFromUser(w http.ResponseWriter, r *http.Request) {
-	readDB, ok := h.requireReadDB(w, r)
-	if !ok {
-		return
-	}
-	writeDB, ok := h.requireWriteDB(w, r)
-	if !ok {
-		return
-	}
-
 	userID, ok := requireIDParam(w, r, "userId")
 	if !ok {
 		return
@@ -283,23 +177,14 @@ func (h *WorkspaceRoleHandler) RevokeRoleFromUser(w http.ResponseWriter, r *http
 	}
 
 	// Count existing assignments for this role+workspace before the operation
-	var countBefore int
-	_ = readDB.QueryRow(`
-		SELECT (SELECT COUNT(*) FROM user_workspace_roles WHERE workspace_id = ? AND role_id = ?)
-		     + (SELECT COUNT(*) FROM group_workspace_roles WHERE workspace_id = ? AND role_id = ?)
-	`, workspaceID, roleID, workspaceID, roleID).Scan(&countBefore)
+	countBefore, _ := h.repo.CountAssignments(workspaceID, roleID)
 
-	result, err := writeDB.Exec(`
-		DELETE FROM user_workspace_roles
-		WHERE user_id = ? AND workspace_id = ? AND role_id = ?
-	`, userID, workspaceID, roleID)
-
+	rowsAffected, err := h.repo.RevokeFromUser(userID, workspaceID, roleID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
 
-	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
 		respondNotFound(w, r, "role_assignment")
 		return
@@ -323,30 +208,19 @@ func (h *WorkspaceRoleHandler) RevokeRoleFromUser(w http.ResponseWriter, r *http
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
 		// Get role, target user, and workspace details for audit log
-		var roleName, targetUsername, workspaceName string
-		_ = readDB.QueryRow("SELECT name FROM workspace_roles WHERE id = ?", roleID).Scan(&roleName)
-		_ = readDB.QueryRow("SELECT username FROM users WHERE id = ?", userID).Scan(&targetUsername)
-		_ = readDB.QueryRow("SELECT name FROM workspaces WHERE id = ?", workspaceID).Scan(&workspaceName)
+		roleName := h.repo.RoleName(roleID)
+		targetUsername := h.repo.Username(userID)
+		workspaceName := h.repo.WorkspaceName(workspaceID)
 
-		_ = logger.LogAudit(h.db, logger.AuditEvent{
-			UserID:       currentUser.ID,
-			Username:     currentUser.Username,
-			IPAddress:    utils.GetClientIP(r),
-			UserAgent:    r.UserAgent(),
-			ActionType:   logger.ActionRoleRevoke,
-			ResourceType: logger.ResourceRole,
-			ResourceID:   &roleID,
-			ResourceName: roleName,
-			Details: map[string]interface{}{
+		h.auditor.LogWithDetails(r, currentUser, logger.ActionRoleRevoke, logger.ResourceRole, &roleID, roleName,
+			map[string]interface{}{
 				"target_user_id":  userID,
 				"target_username": targetUsername,
 				"role_id":         roleID,
 				"role_name":       roleName,
 				"workspace_id":    workspaceID,
 				"workspace_name":  workspaceName,
-			},
-			Success: true,
-		})
+			})
 	}
 
 	// Note: RevokeRoleFromUser returns 204 No Content on success
@@ -360,11 +234,6 @@ func (h *WorkspaceRoleHandler) RevokeRoleFromUser(w http.ResponseWriter, r *http
 
 // GetUserRolesInWorkspace returns all roles assigned to a user in a workspace
 func (h *WorkspaceRoleHandler) GetUserRolesInWorkspace(w http.ResponseWriter, r *http.Request) {
-	db, ok := h.requireReadDB(w, r)
-	if !ok {
-		return
-	}
-
 	userID, ok := requireIDParam(w, r, "userId")
 	if !ok {
 		return
@@ -375,36 +244,10 @@ func (h *WorkspaceRoleHandler) GetUserRolesInWorkspace(w http.ResponseWriter, r 
 		return
 	}
 
-	rows, err := db.Query(`
-		SELECT wr.id, wr.name, wr.description, wr.is_system, wr.display_order, wr.created_at, wr.updated_at
-		FROM workspace_roles wr
-		JOIN user_workspace_roles uwr ON wr.id = uwr.role_id
-		WHERE uwr.user_id = ? AND uwr.workspace_id = ?
-		ORDER BY wr.display_order ASC
-	`, userID, workspaceID)
-
+	roles, err := h.repo.ListUserRoles(userID, workspaceID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
-	}
-	defer func() { _ = rows.Close() }()
-
-	var roles []models.WorkspaceRole
-	for rows.Next() {
-		var role models.WorkspaceRole
-		err := rows.Scan(&role.ID, &role.Name, &role.Description, &role.IsSystem,
-			&role.DisplayOrder, &role.CreatedAt, &role.UpdatedAt)
-		if err == nil {
-			roles = append(roles, role)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-
-	if roles == nil {
-		roles = []models.WorkspaceRole{}
 	}
 
 	respondJSONOK(w, roles)
@@ -412,34 +255,17 @@ func (h *WorkspaceRoleHandler) GetUserRolesInWorkspace(w http.ResponseWriter, r 
 
 // GetWorkspaceRoleAssignments returns all users with their role assignments for a workspace
 func (h *WorkspaceRoleHandler) GetWorkspaceRoleAssignments(w http.ResponseWriter, r *http.Request) {
-	db, ok := h.requireReadDB(w, r)
-	if !ok {
-		return
-	}
-
 	workspaceID, ok := requireIDParam(w, r, "workspaceId")
 	if !ok {
 		return
 	}
 
 	// Get all role assignments for this workspace with user details
-	rows, err := db.Query(`
-		SELECT
-			u.id, u.username, u.email, u.first_name, u.last_name, u.avatar_url,
-			wr.id, wr.name, wr.description,
-			uwr.id, uwr.granted_at
-		FROM user_workspace_roles uwr
-		JOIN users u ON uwr.user_id = u.id
-		JOIN workspace_roles wr ON uwr.role_id = wr.id
-		WHERE uwr.workspace_id = ?
-		ORDER BY u.username, wr.display_order
-	`, workspaceID)
-
+	assignments, err := h.repo.ListUserAssignments(workspaceID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
-	defer func() { _ = rows.Close() }()
 
 	type Role struct {
 		RoleID          int    `json:"role_id"`
@@ -461,47 +287,29 @@ func (h *WorkspaceRoleHandler) GetWorkspaceRoleAssignments(w http.ResponseWriter
 	// Map to group roles by user
 	userMap := make(map[int]*UserWithRoles)
 
-	for rows.Next() {
-		var userID, roleID, assignmentID int
-		var username, email, roleName, roleDescription string
-		var firstName, lastName, avatarURL *string
-		var grantedAt time.Time
-
-		err := rows.Scan(
-			&userID, &username, &email, &firstName, &lastName, &avatarURL,
-			&roleID, &roleName, &roleDescription,
-			&assignmentID, &grantedAt,
-		)
-		if err != nil {
-			continue
-		}
-
+	for _, a := range assignments {
 		// Get or create user entry
-		user, exists := userMap[userID]
+		user, exists := userMap[a.UserID]
 		if !exists {
 			user = &UserWithRoles{
-				UserID:    userID,
-				Username:  username,
-				Email:     email,
-				FirstName: firstName,
-				LastName:  lastName,
-				AvatarURL: avatarURL,
+				UserID:    a.UserID,
+				Username:  a.Username,
+				Email:     a.Email,
+				FirstName: a.FirstName,
+				LastName:  a.LastName,
+				AvatarURL: a.AvatarURL,
 				Roles:     []Role{},
 			}
-			userMap[userID] = user
+			userMap[a.UserID] = user
 		}
 
 		// Add role to user
 		user.Roles = append(user.Roles, Role{
-			RoleID:          roleID,
-			RoleName:        roleName,
-			RoleDescription: roleDescription,
-			AssignmentID:    assignmentID,
+			RoleID:          a.RoleID,
+			RoleName:        a.RoleName,
+			RoleDescription: a.RoleDescription,
+			AssignmentID:    a.AssignmentID,
 		})
-	}
-	if err := rows.Err(); err != nil {
-		respondInternalError(w, r, err)
-		return
 	}
 
 	// Convert map to slice
@@ -522,15 +330,6 @@ func (h *WorkspaceRoleHandler) GetWorkspaceRoleAssignments(w http.ResponseWriter
 // but writes group_workspace_roles; the cache builder already joins this table on
 // every permission path, so the only missing piece was a write surface.
 func (h *WorkspaceRoleHandler) AssignRoleToGroup(w http.ResponseWriter, r *http.Request) {
-	readDB, ok := h.requireReadDB(w, r)
-	if !ok {
-		return
-	}
-	writeDB, ok := h.requireWriteDB(w, r)
-	if !ok {
-		return
-	}
-
 	req, ok := decodeJSON[models.GroupRoleAssignmentRequest](w, r)
 	if !ok {
 		return
@@ -543,25 +342,22 @@ func (h *WorkspaceRoleHandler) AssignRoleToGroup(w http.ResponseWriter, r *http.
 	}
 
 	// Check that the role exists
-	var roleExists bool
-	err := readDB.QueryRow("SELECT EXISTS(SELECT 1 FROM workspace_roles WHERE id = ?)", req.RoleID).Scan(&roleExists)
+	roleExists, err := h.repo.Exists(req.RoleID)
 	if err != nil || !roleExists {
 		respondNotFound(w, r, "role")
 		return
 	}
 
 	// Check that the group exists
-	var groupExists bool
-	err = readDB.QueryRow("SELECT EXISTS(SELECT 1 FROM groups WHERE id = ?)", req.GroupID).Scan(&groupExists)
+	groupExists, err := h.repo.GroupExists(req.GroupID)
 	if err != nil || !groupExists {
 		respondNotFound(w, r, "group")
 		return
 	}
 
 	// Check that the target workspace exists and is active (see AssignRoleToUser).
-	var workspaceActive bool
-	err = readDB.QueryRow("SELECT active FROM workspaces WHERE id = ?", req.WorkspaceID).Scan(&workspaceActive)
-	if errors.Is(err, sql.ErrNoRows) {
+	workspaceActive, err := h.repo.WorkspaceActive(req.WorkspaceID)
+	if errors.Is(err, repository.ErrNotFound) {
 		respondNotFound(w, r, "workspace")
 		return
 	}
@@ -575,20 +371,9 @@ func (h *WorkspaceRoleHandler) AssignRoleToGroup(w http.ResponseWriter, r *http.
 	}
 
 	// Count existing assignments for this role+workspace before the operation
-	var countBefore int
-	_ = readDB.QueryRow(`
-		SELECT COUNT(*) FROM user_workspace_roles WHERE workspace_id = ? AND role_id = ?
-		UNION ALL
-		SELECT COUNT(*) FROM group_workspace_roles WHERE workspace_id = ? AND role_id = ?
-	`, req.WorkspaceID, req.RoleID, req.WorkspaceID, req.RoleID).Scan(&countBefore)
+	countBefore, _ := h.repo.CountAssignmentsPreAssign(req.WorkspaceID, req.RoleID)
 
-	_, err = writeDB.Exec(`
-		INSERT INTO group_workspace_roles (group_id, workspace_id, role_id, granted_by, granted_at)
-		VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT(group_id, workspace_id, role_id) DO UPDATE SET granted_by = ?, granted_at = ?
-	`, req.GroupID, req.WorkspaceID, req.RoleID, granterID, time.Now(), granterID, time.Now())
-
-	if err != nil {
+	if err := h.repo.AssignToGroup(req.GroupID, req.WorkspaceID, req.RoleID, granterID); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
@@ -608,30 +393,19 @@ func (h *WorkspaceRoleHandler) AssignRoleToGroup(w http.ResponseWriter, r *http.
 	// Log audit event
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
-		var roleName, groupName, workspaceName string
-		_ = readDB.QueryRow("SELECT name FROM workspace_roles WHERE id = ?", req.RoleID).Scan(&roleName)
-		_ = readDB.QueryRow("SELECT name FROM groups WHERE id = ?", req.GroupID).Scan(&groupName)
-		_ = readDB.QueryRow("SELECT name FROM workspaces WHERE id = ?", req.WorkspaceID).Scan(&workspaceName)
+		roleName := h.repo.RoleName(req.RoleID)
+		groupName := h.repo.GroupName(req.GroupID)
+		workspaceName := h.repo.WorkspaceName(req.WorkspaceID)
 
-		_ = logger.LogAudit(h.db, logger.AuditEvent{
-			UserID:       currentUser.ID,
-			Username:     currentUser.Username,
-			IPAddress:    utils.GetClientIP(r),
-			UserAgent:    r.UserAgent(),
-			ActionType:   logger.ActionRoleAssign,
-			ResourceType: logger.ResourceRole,
-			ResourceID:   &req.RoleID,
-			ResourceName: roleName,
-			Details: map[string]interface{}{
+		h.auditor.LogWithDetails(r, currentUser, logger.ActionRoleAssign, logger.ResourceRole, &req.RoleID, roleName,
+			map[string]interface{}{
 				"target_group_id":   req.GroupID,
 				"target_group_name": groupName,
 				"role_id":           req.RoleID,
 				"role_name":         roleName,
 				"workspace_id":      req.WorkspaceID,
 				"workspace_name":    workspaceName,
-			},
-			Success: true,
-		})
+			})
 	}
 
 	respondJSONCreatedWithWarnings(w, map[string]string{"message": "Role assigned to group successfully"}, warnings)
@@ -639,15 +413,6 @@ func (h *WorkspaceRoleHandler) AssignRoleToGroup(w http.ResponseWriter, r *http.
 
 // RevokeRoleFromGroup revokes a workspace role from a group. Mirrors RevokeRoleFromUser.
 func (h *WorkspaceRoleHandler) RevokeRoleFromGroup(w http.ResponseWriter, r *http.Request) {
-	readDB, ok := h.requireReadDB(w, r)
-	if !ok {
-		return
-	}
-	writeDB, ok := h.requireWriteDB(w, r)
-	if !ok {
-		return
-	}
-
 	groupID, ok := requireIDParam(w, r, "groupId")
 	if !ok {
 		return
@@ -664,23 +429,14 @@ func (h *WorkspaceRoleHandler) RevokeRoleFromGroup(w http.ResponseWriter, r *htt
 	}
 
 	// Count existing assignments for this role+workspace before the operation
-	var countBefore int
-	_ = readDB.QueryRow(`
-		SELECT (SELECT COUNT(*) FROM user_workspace_roles WHERE workspace_id = ? AND role_id = ?)
-		     + (SELECT COUNT(*) FROM group_workspace_roles WHERE workspace_id = ? AND role_id = ?)
-	`, workspaceID, roleID, workspaceID, roleID).Scan(&countBefore)
+	countBefore, _ := h.repo.CountAssignments(workspaceID, roleID)
 
-	result, err := writeDB.Exec(`
-		DELETE FROM group_workspace_roles
-		WHERE group_id = ? AND workspace_id = ? AND role_id = ?
-	`, groupID, workspaceID, roleID)
-
+	rowsAffected, err := h.repo.RevokeFromGroup(groupID, workspaceID, roleID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
 
-	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
 		respondNotFound(w, r, "role_assignment")
 		return
@@ -701,30 +457,19 @@ func (h *WorkspaceRoleHandler) RevokeRoleFromGroup(w http.ResponseWriter, r *htt
 	// Log audit event
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
-		var roleName, groupName, workspaceName string
-		_ = readDB.QueryRow("SELECT name FROM workspace_roles WHERE id = ?", roleID).Scan(&roleName)
-		_ = readDB.QueryRow("SELECT name FROM groups WHERE id = ?", groupID).Scan(&groupName)
-		_ = readDB.QueryRow("SELECT name FROM workspaces WHERE id = ?", workspaceID).Scan(&workspaceName)
+		roleName := h.repo.RoleName(roleID)
+		groupName := h.repo.GroupName(groupID)
+		workspaceName := h.repo.WorkspaceName(workspaceID)
 
-		_ = logger.LogAudit(h.db, logger.AuditEvent{
-			UserID:       currentUser.ID,
-			Username:     currentUser.Username,
-			IPAddress:    utils.GetClientIP(r),
-			UserAgent:    r.UserAgent(),
-			ActionType:   logger.ActionRoleRevoke,
-			ResourceType: logger.ResourceRole,
-			ResourceID:   &roleID,
-			ResourceName: roleName,
-			Details: map[string]interface{}{
+		h.auditor.LogWithDetails(r, currentUser, logger.ActionRoleRevoke, logger.ResourceRole, &roleID, roleName,
+			map[string]interface{}{
 				"target_group_id":   groupID,
 				"target_group_name": groupName,
 				"role_id":           roleID,
 				"role_name":         roleName,
 				"workspace_id":      workspaceID,
 				"workspace_name":    workspaceName,
-			},
-			Success: true,
-		})
+			})
 	}
 
 	if len(warnings) > 0 {
@@ -737,33 +482,16 @@ func (h *WorkspaceRoleHandler) RevokeRoleFromGroup(w http.ResponseWriter, r *htt
 // GetWorkspaceGroupRoleAssignments returns all groups with their role assignments
 // for a workspace. Group analog of GetWorkspaceRoleAssignments.
 func (h *WorkspaceRoleHandler) GetWorkspaceGroupRoleAssignments(w http.ResponseWriter, r *http.Request) {
-	db, ok := h.requireReadDB(w, r)
-	if !ok {
-		return
-	}
-
 	workspaceID, ok := requireIDParam(w, r, "workspaceId")
 	if !ok {
 		return
 	}
 
-	rows, err := db.Query(`
-		SELECT
-			g.id, g.name, g.description,
-			wr.id, wr.name, wr.description,
-			gwr.id, gwr.granted_at
-		FROM group_workspace_roles gwr
-		JOIN groups g ON gwr.group_id = g.id
-		JOIN workspace_roles wr ON gwr.role_id = wr.id
-		WHERE gwr.workspace_id = ?
-		ORDER BY g.name, wr.display_order
-	`, workspaceID)
-
+	assignments, err := h.repo.ListGroupAssignments(workspaceID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
-	defer func() { _ = rows.Close() }()
 
 	type Role struct {
 		RoleID          int    `json:"role_id"`
@@ -781,46 +509,28 @@ func (h *WorkspaceRoleHandler) GetWorkspaceGroupRoleAssignments(w http.ResponseW
 
 	groupMap := make(map[int]*GroupWithRoles)
 
-	for rows.Next() {
-		var groupID, roleID, assignmentID int
-		var groupName, roleName, roleDescription string
-		var groupDescription *string
-		var grantedAt time.Time
-
-		err := rows.Scan(
-			&groupID, &groupName, &groupDescription,
-			&roleID, &roleName, &roleDescription,
-			&assignmentID, &grantedAt,
-		)
-		if err != nil {
-			continue
-		}
-
-		group, exists := groupMap[groupID]
+	for _, a := range assignments {
+		group, exists := groupMap[a.GroupID]
 		if !exists {
 			desc := ""
-			if groupDescription != nil {
-				desc = *groupDescription
+			if a.GroupDescription != nil {
+				desc = *a.GroupDescription
 			}
 			group = &GroupWithRoles{
-				GroupID:          groupID,
-				GroupName:        groupName,
+				GroupID:          a.GroupID,
+				GroupName:        a.GroupName,
 				GroupDescription: desc,
 				Roles:            []Role{},
 			}
-			groupMap[groupID] = group
+			groupMap[a.GroupID] = group
 		}
 
 		group.Roles = append(group.Roles, Role{
-			RoleID:          roleID,
-			RoleName:        roleName,
-			RoleDescription: roleDescription,
-			AssignmentID:    assignmentID,
+			RoleID:          a.RoleID,
+			RoleName:        a.RoleName,
+			RoleDescription: a.RoleDescription,
+			AssignmentID:    a.AssignmentID,
 		})
-	}
-	if err := rows.Err(); err != nil {
-		respondInternalError(w, r, err)
-		return
 	}
 
 	groups := make([]GroupWithRoles, 0, len(groupMap))
@@ -882,25 +592,19 @@ func (h *WorkspaceRoleHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// Workspace_roles.name is UNIQUE — short-circuit with a friendly conflict
 	// before letting the DB raise a generic constraint error.
-	var nameTaken bool
-	if err := h.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM workspace_roles WHERE name = ?)`, name).Scan(&nameTaken); err == nil && nameTaken {
+	if nameTaken, err := h.repo.NameExists(name); err == nil && nameTaken {
 		respondConflict(w, r, fmt.Sprintf("A role named %q already exists", name))
 		return
 	}
 
 	now := time.Now()
-	var id64 int64
-	if err := h.db.QueryRow(`
-		INSERT INTO workspace_roles (name, description, is_system, permissions_enabled, display_order, created_at, updated_at)
-		VALUES (?, ?, false, false, COALESCE((SELECT MAX(display_order) + 1 FROM workspace_roles), 1), ?, ?)
-		RETURNING id
-	`, name, body.Description, now, now).Scan(&id64); err != nil {
+	id, err := h.repo.CreateCustomRole(name, body.Description, now)
+	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
-	id := int(id64)
 
-	logAudit(h.db, r, user, logger.ActionWorkspaceRoleCreate, logger.ResourceRole, &id, name)
+	h.auditor.Log(r, user, logger.ActionWorkspaceRoleCreate, logger.ResourceRole, &id, name)
 
 	out := models.WorkspaceRole{
 		ID:                 id,
@@ -934,10 +638,8 @@ func (h *WorkspaceRoleHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var name string
-	var isSystem bool
-	err := h.db.QueryRow(`SELECT name, is_system FROM workspace_roles WHERE id = ?`, id).Scan(&name, &isSystem)
-	if errors.Is(err, sql.ErrNoRows) {
+	role, err := h.repo.GetByID(id)
+	if errors.Is(err, repository.ErrNotFound) {
 		respondNotFound(w, r, "workspace_role")
 		return
 	}
@@ -945,7 +647,7 @@ func (h *WorkspaceRoleHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
-	if isSystem {
+	if role.IsSystem {
 		respondValidationError(w, r, "System roles cannot be deleted")
 		return
 	}
@@ -961,39 +663,14 @@ func (h *WorkspaceRoleHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Snapshot affected users for cache invalidation before the DELETE cascades.
-	affected := make(map[int]bool)
-	if rows, err := h.db.Query(`SELECT user_id FROM user_workspace_roles WHERE role_id = ?`, id); err == nil {
-		for rows.Next() {
-			var uid int
-			if scanErr := rows.Scan(&uid); scanErr == nil {
-				affected[uid] = true
-			}
-		}
-		_ = rows.Err()
-		_ = rows.Close()
-	}
-	if rows, err := h.db.Query(`
-		SELECT DISTINCT gm.user_id
-		FROM group_workspace_roles gwr
-		JOIN group_members gm ON gm.group_id = gwr.group_id
-		WHERE gwr.role_id = ?
-	`, id); err == nil {
-		for rows.Next() {
-			var uid int
-			if scanErr := rows.Scan(&uid); scanErr == nil {
-				affected[uid] = true
-			}
-		}
-		_ = rows.Err()
-		_ = rows.Close()
-	}
+	affected := h.repo.AffectedUserIDs(id)
 
-	if _, err := h.db.Exec(`DELETE FROM workspace_roles WHERE id = ?`, id); err != nil {
+	if err := h.repo.Delete(id); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
 
-	logAudit(h.db, r, user, logger.ActionWorkspaceRoleDelete, logger.ResourceRole, &id, name)
+	h.auditor.Log(r, user, logger.ActionWorkspaceRoleDelete, logger.ResourceRole, &id, role.Name)
 
 	if h.permissionService != nil && len(affected) > 0 {
 		ids := make([]int, 0, len(affected))

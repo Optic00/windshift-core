@@ -97,7 +97,6 @@ internal/handlers/user_dashboard_layout.go
 internal/handlers/user_preferences.go
 internal/handlers/webauthn.go
 internal/handlers/workflows.go
-internal/handlers/workspace_roles.go
 internal/handlers/workspaces_handler.go
 internal/handlers/workspaces_internal.go
 internal/handlers/workspaces_personal.go
