@@ -11,7 +11,7 @@
   import { agentBindings, agentRuns, agentSkills, api } from '../api.js';
   import Panel from '../components/Panel.svelte';
   import Button from '../components/Button.svelte';
-  import Checkbox from '../components/Checkbox.svelte';
+  import { BasePicker } from '../pickers';
   import Select from '../components/Select.svelte';
   import Input from '../components/Input.svelte';
   import Textarea from '../components/Textarea.svelte';
@@ -64,8 +64,9 @@
   let configSkillIds = $state([]);
   let configSaving = $state(false);
 
-  function toggleSkill(list, id) {
-    return list.includes(id) ? list.filter((s) => s !== id) : [...list, id];
+  function skillLabel(skill) {
+    if (!skill) return '';
+    return skill.enabled ? skill.name : `${skill.name} (disabled)`;
   }
 
   function openConfig(b) {
@@ -506,6 +507,16 @@
   }
 </script>
 
+<!-- Dropdown row for the skill attach-pickers (config editor + add form). -->
+{#snippet skillOption({ item: skill })}
+  <div class="flex flex-col min-w-0">
+    <span class="font-medium truncate">{skillLabel(skill)}</span>
+    {#if skill.description}
+      <span class="text-xs truncate" style="color: var(--ds-text-subtle);">{skill.description}</span>
+    {/if}
+  </div>
+{/snippet}
+
 <div>
   <div class="flex items-start gap-3 mb-4">
     <Bot class="w-5 h-5 mt-1" style="color: var(--ds-icon);" />
@@ -603,20 +614,18 @@
                           <Textarea id="config-instructions-{b.id}" bind:value={configInstructions} rows={3} size="small" />
                         </div>
                         {#if workspaceSkills.length > 0}
-                          <div>
+                          <div data-testid="binding-agent-config-skills">
                             <span class="block text-xs mb-1" style="color: var(--ds-text-subtle);">Skills</span>
-                            <div class="flex flex-wrap gap-3">
-                              {#each workspaceSkills as skill (skill.id)}
-                                <span title={skill.description}>
-                                  <Checkbox
-                                    size="small"
-                                    checked={configSkillIds.includes(skill.id)}
-                                    onchange={() => (configSkillIds = toggleSkill(configSkillIds, skill.id))}
-                                    label="{skill.name}{skill.enabled ? '' : ' (disabled)'}"
-                                  />
-                                </span>
-                              {/each}
-                            </div>
+                            <BasePicker
+                              bind:value={configSkillIds}
+                              items={workspaceSkills}
+                              multiple={true}
+                              placeholder="Attach skills…"
+                              searchFields={['name', 'description']}
+                              getValue={(s) => s?.id}
+                              getLabel={skillLabel}
+                              itemSnippet={skillOption}
+                            />
                           </div>
                         {:else}
                           <p class="text-xs" style="color: var(--ds-text-subtle);">No skills in this workspace yet — create them in the Agent skills panel below.</p>
@@ -754,20 +763,18 @@
             />
           </div>
           {#if workspaceSkills.length > 0}
-            <div class="mt-3">
+            <div class="mt-3 max-w-xl" data-testid="binding-add-skills">
               <span class="block text-xs mb-1" style="color: var(--ds-text-subtle);">Skills</span>
-              <div class="flex flex-wrap gap-3">
-                {#each workspaceSkills as skill (skill.id)}
-                  <span title={skill.description}>
-                    <Checkbox
-                      size="small"
-                      checked={addSkillIds.includes(skill.id)}
-                      onchange={() => (addSkillIds = toggleSkill(addSkillIds, skill.id))}
-                      label="{skill.name}{skill.enabled ? '' : ' (disabled)'}"
-                    />
-                  </span>
-                {/each}
-              </div>
+              <BasePicker
+                bind:value={addSkillIds}
+                items={workspaceSkills}
+                multiple={true}
+                placeholder="Attach skills…"
+                searchFields={['name', 'description']}
+                getValue={(s) => s?.id}
+                getLabel={skillLabel}
+                itemSnippet={skillOption}
+              />
             </div>
           {/if}
           <div class="mt-4 flex justify-end">
