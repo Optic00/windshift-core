@@ -366,7 +366,10 @@ func (s *AnalyticsService) GetAnalytics(params ResolveDatasetParams) (*Analytics
 		return nil, err
 	}
 
-	velocity := s.computeVelocity(ds)
+	velocity, err := s.computeVelocity(ds)
+	if err != nil {
+		return nil, err
+	}
 	cfd := s.computeCumulativeFlow(ds, params.StartDate, params.EndDate)
 	cycleTime := s.computeCycleTime(ds, params.StartDate, params.EndDate)
 	forecast := s.computeForecast(ds)
@@ -410,13 +413,34 @@ type VelocityResult struct {
 	DataQuality DataQuality         `json:"data_quality"`
 }
 
-func (s *AnalyticsService) computeVelocity(ds *dataset) VelocityResult {
+// worklogDateBounds converts an iteration's 'YYYY-MM-DD' start/end strings into
+// the unix-epoch-second bounds used by the time_worklogs.date column. The dates
+// are interpreted in UTC to match the worklog write path
+// (time.Parse("2006-01-02", date).Unix(), which parses in UTC). The returned
+// bounds are [start, end) — start at midnight UTC of the start date, end at
+// midnight UTC of the day *after* the end date — so worklogs logged on the
+// iteration's last day are included. Returns ok=false if either date fails to
+// parse, in which case the caller skips the worklog sum rather than over- or
+// under-counting.
+func worklogDateBounds(startDate, endDate string) (start, end int64, ok bool) {
+	startT, err := time.Parse("2006-01-02", startDate)
+	if err != nil {
+		return 0, 0, false
+	}
+	endT, err := time.Parse("2006-01-02", endDate)
+	if err != nil {
+		return 0, 0, false
+	}
+	return startT.Unix(), endT.AddDate(0, 0, 1).Unix(), true
+}
+
+func (s *AnalyticsService) computeVelocity(ds *dataset) (VelocityResult, error) {
 	if len(ds.IterationIDs) == 0 {
 		dq := DataQuality{Sufficient: false, Reason: "no_items"}
 		if ds.Summary.TotalItems > 0 {
 			dq = DataQuality{Sufficient: false, Reason: "no_iterations"}
 		}
-		return VelocityResult{DataQuality: dq}
+		return VelocityResult{DataQuality: dq}, nil
 	}
 
 	// Build item ID set for filtering.
@@ -495,24 +519,35 @@ func (s *AnalyticsService) computeVelocity(ds *dataset) VelocityResult {
 		vi.CompletedPoints = completedPoints.Float64
 
 		// Completed hours from worklogs.
+		//
+		// time_worklogs stores time as duration_minutes (INTEGER) and the
+		// calendar day as date (INTEGER unix-epoch seconds for midnight UTC of
+		// that day — see handlers/time_worklogs.go, which does
+		// time.Parse("2006-01-02", date).Unix()). The iteration StartDate/EndDate
+		// are 'YYYY-MM-DD' strings, so convert them to the same UTC unix-second
+		// bounds and filter with an inclusive start / exclusive next-day end so
+		// worklogs dated on the iteration's final day are counted.
+		startUnix, endUnix, boundsOK := worklogDateBounds(vi.StartDate, vi.EndDate)
 		var completedHours sql.NullFloat64
-		if len(ds.ItemIDs) > 0 {
+		if len(ds.ItemIDs) > 0 && boundsOK {
 			placeholders := make([]string, len(ds.ItemIDs))
 			args := make([]interface{}, len(ds.ItemIDs)+3)
 			args[0] = iterID
-			args[1] = vi.StartDate
-			args[2] = vi.EndDate
+			args[1] = startUnix
+			args[2] = endUnix
 			for j, id := range ds.ItemIDs {
 				placeholders[j] = "?"
 				args[j+3] = id
 			}
-			_ = s.db.QueryRow(fmt.Sprintf(`
-				SELECT COALESCE(SUM(tw.hours), 0)
+			if err := s.db.QueryRow(fmt.Sprintf(`
+				SELECT COALESCE(SUM(tw.duration_minutes), 0) / 60.0 AS hours
 				FROM time_worklogs tw
 				JOIN items i ON tw.item_id = i.id
-				WHERE i.iteration_id = ? AND tw.log_date >= ? AND tw.log_date <= ?
+				WHERE i.iteration_id = ? AND tw.date >= ? AND tw.date < ?
 				  AND i.id IN (%s)
-			`, strings.Join(placeholders, ",")), args...).Scan(&completedHours)
+			`, strings.Join(placeholders, ",")), args...).Scan(&completedHours); err != nil {
+				return VelocityResult{}, fmt.Errorf("velocity: sum worklog hours for iteration %d: %w", iterID, err)
+			}
 		}
 
 		if completedHours.Valid {
@@ -566,7 +601,7 @@ func (s *AnalyticsService) computeVelocity(ds *dataset) VelocityResult {
 		Iterations:  iterations,
 		Averages:    avgResult,
 		DataQuality: dq,
-	}
+	}, nil
 }
 
 // --- Cumulative Flow Diagram ---
