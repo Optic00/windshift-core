@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -21,17 +20,17 @@ import (
 const oidcHTTPTimeout = 15 * time.Second
 
 // newSSRFSafeOIDCClient returns an *http.Client whose Transport refuses
-// to dial loopback / RFC1918 / link-local / CGNAT addresses unless explicitly
-// allowlisted for this OIDC use case. Used as a
-// defense-in-depth layer beneath upfront IssuerURL validation: closes the
-// validate-then-dial gap (DNS rebinding) and also covers the JWKS URL and
-// token endpoint that the IdP advertises via discovery — those are not
-// validated upfront because we don't see them until discovery runs.
-func newSSRFSafeOIDCClient(timeout time.Duration, allowedPrivateCIDRs []*net.IPNet) *http.Client {
+// to dial loopback / RFC1918 / link-local / CGNAT addresses unless the global
+// --allow-local-connections switch is set. Used as a defense-in-depth layer
+// beneath upfront IssuerURL validation: closes the validate-then-dial gap (DNS
+// rebinding) and also covers the JWKS URL and token endpoint that the IdP
+// advertises via discovery — those are not validated upfront because we don't
+// see them until discovery runs.
+func newSSRFSafeOIDCClient(timeout time.Duration) *http.Client {
 	return &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
-			DialContext: utils.SafeNetDialerWithAllowedCIDRs(timeout, allowedPrivateCIDRs).DialContext,
+			DialContext: utils.SafeNetDialer(timeout).DialContext,
 		},
 	}
 }
@@ -63,16 +62,11 @@ type OIDCService struct {
 	httpClient *http.Client
 }
 
-// NewOIDCService creates a new OIDC service
-// cookieKey should be a 32-byte key for secure cookie encryption
+// NewOIDCService creates a new OIDC service.
+// cookieKey should be a 32-byte key for secure cookie encryption. Discovery /
+// JWKS / token calls are SSRF-safe (private/loopback blocked) unless the global
+// --allow-local-connections switch is set.
 func NewOIDCService(cookieKey []byte) *OIDCService {
-	return NewOIDCServiceWithAllowedPrivateCIDRs(cookieKey, nil)
-}
-
-// NewOIDCServiceWithAllowedPrivateCIDRs creates a new OIDC service and permits
-// discovery / JWKS / token calls to private or CGNAT IPs only when the resolved
-// address falls inside one of the operator-supplied CIDRs.
-func NewOIDCServiceWithAllowedPrivateCIDRs(cookieKey []byte, allowedPrivateCIDRs []*net.IPNet) *OIDCService {
 	if len(cookieKey) < 32 {
 		// Pad key if too short (should not happen in production)
 		padded := make([]byte, 32)
@@ -81,7 +75,7 @@ func NewOIDCServiceWithAllowedPrivateCIDRs(cookieKey []byte, allowedPrivateCIDRs
 	}
 	return &OIDCService{
 		cookieKey:  cookieKey[:32],
-		httpClient: newSSRFSafeOIDCClient(oidcHTTPTimeout, allowedPrivateCIDRs),
+		httpClient: newSSRFSafeOIDCClient(oidcHTTPTimeout),
 	}
 }
 

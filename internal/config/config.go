@@ -24,11 +24,17 @@ type Config struct {
 	TLSKeyPath        string
 	DisableCSRF       bool
 
+	// AllowLocalConnections, when true, lets every server-side SSRF-safe HTTP
+	// client/dialer reach loopback and private/RFC1918 destinations. It is the
+	// single switch operators flip to run self-hosted SCM (Gitea / GitHub
+	// Enterprise), Jira Data Center, or a local LLM gateway on a private
+	// network — instead of allowlisting each endpoint's CIDR. Off by default.
+	AllowLocalConnections bool
+
 	// Sub-configs grouped by concern
 	DB           DBConfig
 	SSH          SSHConfig
 	Auth         AuthConfig
-	SSO          SSOConfig
 	WebAuthn     WebAuthnConfig
 	Logging      LoggingConfig
 	Plugins      PluginsConfig
@@ -76,14 +82,6 @@ type AuthConfig struct {
 	SessionSecret string
 }
 
-// SSOConfig holds SSO-specific runtime options.
-type SSOConfig struct {
-	// OIDCAllowedPrivateCIDRs is a comma-separated list of private / CGNAT CIDRs
-	// that OIDC discovery, JWKS, and token HTTP calls may dial. Empty keeps the
-	// SSRF guard fully public-internet-only.
-	OIDCAllowedPrivateCIDRs string
-}
-
 // WebAuthnConfig holds WebAuthn relying-party identity.
 type WebAuthnConfig struct {
 	// RPID is the relying party ID (usually the hostname). In production it is
@@ -112,10 +110,6 @@ type LLMConfig struct {
 	Endpoint      string
 	ProvidersFile string
 	PromptsDir    string
-	// AllowedPrivateCIDRs is a comma-separated list of private / loopback /
-	// CGNAT CIDRs that admin-configured LLM inference and model-list calls may
-	// dial. Empty keeps the SSRF guard public-internet-only.
-	AllowedPrivateCIDRs string
 }
 
 // DefaultCodingAgentRunnerImage is the windshift-agent image the in-process

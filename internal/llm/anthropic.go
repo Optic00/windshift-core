@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -91,13 +90,13 @@ type anthropicUsage struct {
 }
 
 // newAnthropicClient creates a client for the Anthropic Messages API.
-func newAnthropicClient(baseURL, model, apiKey string, timeout time.Duration, allowedPrivateCIDRs []*net.IPNet) *anthropicClient {
+func newAnthropicClient(baseURL, model, apiKey string, timeout time.Duration) *anthropicClient {
 	endpoint := strings.TrimSuffix(baseURL, "/")
 	return &anthropicClient{
 		endpoint: endpoint,
 		model:    model,
 		apiKey:   apiKey,
-		http:     newAdminConfiguredHTTPClient(timeout, allowedPrivateCIDRs),
+		http:     newAdminConfiguredHTTPClient(timeout),
 	}
 }
 

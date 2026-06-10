@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -32,10 +33,15 @@ type managedContainer struct {
 // Network mode defaults to "none" and is always passed explicitly. The earlier
 // "skip --network when mode is none" shortcut caused Docker to fall back to
 // its default bridge, defeating isolation.
-func buildDockerRunArgs(envConfig models.DockerEnvironmentConfig, hostPort int) []string {
+//
+// Env vars are passed via envFilePath (a 0600 --env-file) rather than
+// `-e KEY=VALUE` argv, so any secret in a capability's env_vars never appears
+// in /proc/<pid>/cmdline or `docker inspect`. envFilePath is empty when the
+// config has no env vars. This matches DockerRunner / agent_runner.
+func buildDockerRunArgs(envConfig models.DockerEnvironmentConfig, hostPort int, envFilePath string) []string {
 	// Fixed args: run, -d, --memory <v>, --cpus <v>, -p <v>, --network <v> (10)
-	// + 2 per env var (-e <k=v>) + 1 for the image at the tail.
-	args := make([]string, 0, 10+2*len(envConfig.EnvVars)+1)
+	// + 2 for --env-file <path> + 1 for the image at the tail.
+	args := make([]string, 0, 13)
 	args = append(args,
 		"run", "-d",
 		"--memory", envConfig.ResourceLimits.Memory,
@@ -49,12 +55,56 @@ func buildDockerRunArgs(envConfig models.DockerEnvironmentConfig, hostPort int) 
 	}
 	args = append(args, "--network", networkMode)
 
-	for k, v := range envConfig.EnvVars {
-		args = append(args, "-e", fmt.Sprintf("%s=%s", k, v))
+	if envFilePath != "" {
+		args = append(args, "--env-file", envFilePath)
 	}
 
 	args = append(args, envConfig.Image)
 	return args
+}
+
+// writeContainerEnvFile writes the capability env map to a 0600 temp file in
+// docker's --env-file format. Returns the path plus a cleanup the caller must
+// defer; both are empty/no-op when there are no env vars. Keeping secrets in a
+// file (read by docker at create time) rather than on the command line keeps
+// them out of process listings and `docker inspect`.
+func writeContainerEnvFile(env map[string]string) (path string, cleanup func(), err error) {
+	cleanup = func() {}
+	if len(env) == 0 {
+		return "", cleanup, nil
+	}
+
+	f, ferr := os.CreateTemp("", "windshift-container-env-*.env")
+	if ferr != nil {
+		return "", cleanup, ferr
+	}
+	path = f.Name()
+	cleanup = func() { _ = os.Remove(path) }
+	if err = f.Chmod(0o600); err != nil {
+		_ = f.Close()
+		cleanup()
+		return "", func() {}, err
+	}
+	for k, v := range env {
+		// docker --env-file is line-based KEY=value; a newline in a value
+		// would let one entry inject another, so reject it rather than
+		// silently truncate.
+		if strings.ContainsAny(v, "\n\r") {
+			_ = f.Close()
+			cleanup()
+			return "", func() {}, fmt.Errorf("env var %q has a newline in its value", k)
+		}
+		if _, err = f.WriteString(k + "=" + v + "\n"); err != nil {
+			_ = f.Close()
+			cleanup()
+			return "", func() {}, err
+		}
+	}
+	if err = f.Close(); err != nil {
+		cleanup()
+		return "", func() {}, err
+	}
+	return path, cleanup, nil
 }
 
 // StartContainer starts an ephemeral Docker container from the given environment config.
@@ -67,7 +117,14 @@ func (cs *ContainerService) StartContainer(ctx context.Context, envConfig models
 	// Pick a random high port for the container
 	hostPort := 30000 + rand.IntN(30000) //nolint:gosec // non-security random port selection
 
-	args := buildDockerRunArgs(envConfig, hostPort)
+	// Secrets in the capability env go through a 0600 --env-file, never argv.
+	envFilePath, cleanupEnv, err := writeContainerEnvFile(envConfig.EnvVars)
+	if err != nil {
+		return nil, fmt.Errorf("failed to write container env file: %w", err)
+	}
+	defer cleanupEnv()
+
+	args := buildDockerRunArgs(envConfig, hostPort, envFilePath)
 
 	slog.Debug("starting container",
 		slog.String("component", "container_service"),

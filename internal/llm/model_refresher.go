@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -28,10 +27,10 @@ type ModelRefresher struct {
 }
 
 // NewModelRefresher constructs a ModelRefresher for admin-configured provider
-// catalog URLs. Private/loopback endpoints are blocked unless explicitly
-// enabled by operator config.
-func NewModelRefresher(cache *ModelCache, allowedPrivateCIDRs []*net.IPNet) *ModelRefresher {
-	return newModelRefresherWithClient(cache, newAdminConfiguredHTTPClient(30*time.Second, allowedPrivateCIDRs))
+// catalog URLs. Private/loopback endpoints are blocked unless the global
+// --allow-local-connections switch is enabled.
+func NewModelRefresher(cache *ModelCache) *ModelRefresher {
+	return newModelRefresherWithClient(cache, newAdminConfiguredHTTPClient(30*time.Second))
 }
 
 // newModelRefresherWithClient lets tests substitute the HTTP client.

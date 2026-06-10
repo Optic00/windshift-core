@@ -179,6 +179,11 @@ func (h *RunnerBrokerHandler) ProxyLLM(w http.ResponseWriter, r *http.Request) {
 		providerChatPath = provider.ChatPath
 	}
 	proxy := &httputil.ReverseProxy{
+		// Match ProxyHTTP: refuse to dial private/loopback/link-local/metadata
+		// targets even if an LLM connection's base URL is misconfigured or
+		// rebinds between write-time validation and use (Phase 8 of the
+		// agent-runner security fix plan).
+		Transport: ssrfSafeTransport(),
 		Director: func(req *http.Request) {
 			req.URL.Scheme = target.Scheme
 			req.URL.Host = target.Host

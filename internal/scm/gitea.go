@@ -58,7 +58,7 @@ func NewGiteaProvider(cfg ProviderConfig) (*GiteaProvider, error) {
 		clientSecret: cfg.OAuthClientSecret,
 	}
 	provider.baseProvider = baseProvider{
-		httpClient:          &http.Client{Timeout: 30 * time.Second},
+		httpClient:          newSCMHTTPClient(30 * time.Second),
 		setAuthHeader:       provider.setAuthHeader,
 		handleErrorResponse: provider.handleErrorResponse,
 	}

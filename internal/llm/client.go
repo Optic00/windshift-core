@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -100,12 +99,11 @@ func (c *httpClient) Available() bool {
 
 // ConnectionConfig holds configuration for creating a provider-specific client.
 type ConnectionConfig struct {
-	ProviderType        ProviderType
-	Model               string
-	APIKey              string
-	BaseURL             string
-	Timeout             time.Duration
-	AllowedPrivateCIDRs []*net.IPNet
+	ProviderType ProviderType
+	Model        string
+	APIKey       string
+	BaseURL      string
+	Timeout      time.Duration
 }
 
 // NewProviderClient creates a Client for a specific LLM provider.
@@ -122,8 +120,8 @@ func NewProviderClient(cfg ConnectionConfig) Client {
 
 	switch provider.APIFormat {
 	case "anthropic":
-		return newAnthropicClient(baseURL, cfg.Model, cfg.APIKey, cfg.Timeout, cfg.AllowedPrivateCIDRs)
+		return newAnthropicClient(baseURL, cfg.Model, cfg.APIKey, cfg.Timeout)
 	default:
-		return newOpenAIClient(baseURL, cfg.Model, cfg.APIKey, cfg.Timeout, provider.ChatPath, cfg.AllowedPrivateCIDRs)
+		return newOpenAIClient(baseURL, cfg.Model, cfg.APIKey, cfg.Timeout, provider.ChatPath)
 	}
 }

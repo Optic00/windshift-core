@@ -140,8 +140,7 @@ type SSOProviderRequest struct {
 // pluginManager: plugin manager for capability checks (can be nil)
 // useProxy: whether to trust proxy headers from trusted sources
 // additionalProxiesStr: comma-separated list of additional trusted proxy IPs
-// oidcAllowedPrivateCIDRs: comma-separated private / CGNAT CIDRs that OIDC may dial
-func NewSSOHandler(db database.Database, sessionManager *auth.SessionManager, permissionService *services.PermissionService, emailVerificationService *services.EmailVerificationService, pluginManager *plugins.Manager, sessionSecret, baseURL, allowedHostsStr string, devMode bool, ipExtractor *utils.IPExtractor, useProxy bool, additionalProxiesStr []string, oidcAllowedPrivateCIDRs string) *SSOHandler {
+func NewSSOHandler(db database.Database, sessionManager *auth.SessionManager, permissionService *services.PermissionService, emailVerificationService *services.EmailVerificationService, pluginManager *plugins.Manager, sessionSecret, baseURL, allowedHostsStr string, devMode bool, ipExtractor *utils.IPExtractor, useProxy bool, additionalProxiesStr []string) *SSOHandler {
 	// Defensive: config.Load guarantees non-empty, but a wiring bug upstream
 	// would silently break session encryption — fail fast instead.
 	if sessionSecret == "" {
@@ -165,14 +164,6 @@ func NewSSOHandler(db database.Database, sessionManager *auth.SessionManager, pe
 		if ip := net.ParseIP(strings.TrimSpace(proxyStr)); ip != nil {
 			additionalProxies = append(additionalProxies, ip)
 		}
-	}
-
-	oidcAllowedCIDRs, err := utils.ParseCIDRList(oidcAllowedPrivateCIDRs)
-	if err != nil {
-		log.Fatalf("FATAL: invalid OIDC_ALLOWED_PRIVATE_CIDRS: %v", err)
-	}
-	if len(oidcAllowedCIDRs) > 0 {
-		slog.Info("OIDC private/CGNAT dial allowlist configured", slog.Int("cidr_count", len(oidcAllowedCIDRs)))
 	}
 
 	// Log warning for production without BASE_URL
@@ -200,7 +191,7 @@ func NewSSOHandler(db database.Database, sessionManager *auth.SessionManager, pe
 		pluginManager:            pluginManager,
 		providerStore:            sso.NewProviderStore(db),
 		userStore:                sso.NewUserStore(db),
-		oidcService:              sso.NewOIDCServiceWithAllowedPrivateCIDRs(cookieKey, oidcAllowedCIDRs),
+		oidcService:              sso.NewOIDCService(cookieKey),
 		encryption:               sso.NewSecretEncryption(serverSecret),
 		baseURL:                  baseURL,
 		allowedHosts:             allowedHosts,

@@ -38,7 +38,7 @@ require (
 	github.com/teambition/rrule-go v1.8.2
 	github.com/zitadel/oidc/v3 v3.45.3
 	golang.org/x/crypto v0.52.0
-	golang.org/x/image v0.39.0
+	golang.org/x/image v0.41.0
 	golang.org/x/text v0.37.0
 	golang.org/x/time v0.15.0
 	gopkg.in/yaml.v3 v3.0.1

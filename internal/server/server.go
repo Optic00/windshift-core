@@ -650,7 +650,7 @@ func (s *Server) initialize() error {
 	setupHandler := handlers.NewSetupHandler(s.db, sessionManager, authMiddleware)
 
 	// SSO handler
-	ssoHandler := handlers.NewSSOHandler(s.db, sessionManager, permService, emailVerificationService, s.pluginManager, cfg.Auth.SessionSecret, baseURL, cfg.AllowedHosts, cfg.DisableCSRF, ipExtractor, cfg.UseProxy, additionalProxyList, cfg.SSO.OIDCAllowedPrivateCIDRs)
+	ssoHandler := handlers.NewSSOHandler(s.db, sessionManager, permService, emailVerificationService, s.pluginManager, cfg.Auth.SessionSecret, baseURL, cfg.AllowedHosts, cfg.DisableCSRF, ipExtractor, cfg.UseProxy, additionalProxyList)
 
 	// SCM provider handler
 	scmProviderHandler := handlers.NewSCMProviderHandler(s.db, cfg.Auth.SessionSecret, baseURL)
@@ -701,17 +701,9 @@ func (s *Server) initialize() error {
 	} else {
 		slog.Info("LLM fallback service not configured")
 	}
-	llmAllowedPrivateCIDRs, err := utils.ParseCIDRList(cfg.LLM.AllowedPrivateCIDRs)
-	if err != nil {
-		slog.Error("FATAL: invalid LLM_ALLOWED_PRIVATE_CIDRS", slog.Any("error", err))
-		os.Exit(1)
-	}
-	if len(llmAllowedPrivateCIDRs) > 0 {
-		slog.Info("LLM private/loopback dial allowlist configured", slog.Int("cidr_count", len(llmAllowedPrivateCIDRs)))
-	}
-	llmManager := llm.NewConnectionManager(s.db, scmProviderHandler.GetEncryption(), fallbackLLMClient, llmAllowedPrivateCIDRs)
+	llmManager := llm.NewConnectionManager(s.db, scmProviderHandler.GetEncryption(), fallbackLLMClient)
 	llmModelCache := llm.NewModelCache(s.db)
-	llmModelRefresher := llm.NewModelRefresher(llmModelCache, llmAllowedPrivateCIDRs)
+	llmModelRefresher := llm.NewModelRefresher(llmModelCache)
 
 	var codingRunSvc *services.RunService
 	if cfg.CodingAgent.WorktreeRoot != "" {
