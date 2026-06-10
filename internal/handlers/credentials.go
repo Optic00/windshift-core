@@ -37,6 +37,13 @@ type SSHKeyRequest struct {
 	PublicKey      string `json:"public_key"`
 }
 
+// maxSSHPublicKeyBytes bounds the stored key material (WI-185). A sanitize
+// policy would mangle the base64 blob, so this is a pure length cap that
+// rejects instead of truncating: even an RSA-16384 key with a generous
+// comment trailer stays under 4 KiB, so 16 KiB is pathological by
+// definition.
+const maxSSHPublicKeyBytes = 16 * 1024
+
 // GetUserCredentials returns all credentials for a user (both legacy and WebAuthn)
 func (h *CredentialHandler) GetUserCredentials(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireIDParam(w, r, "userId")
@@ -99,6 +106,10 @@ func (h *CredentialHandler) CreateSSHKey(w http.ResponseWriter, r *http.Request)
 
 	// Basic SSH public key validation
 	req.PublicKey = strings.TrimSpace(req.PublicKey)
+	if len(req.PublicKey) > maxSSHPublicKeyBytes {
+		respondValidationError(w, r, "Public key is too long")
+		return
+	}
 	if !isValidSSHPublicKey(req.PublicKey) {
 		respondValidationError(w, r, "Invalid SSH public key format")
 		return

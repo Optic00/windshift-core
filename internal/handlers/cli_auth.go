@@ -87,7 +87,9 @@ type ApproveRequest struct {
 // payload. Hostname surfaces in token names + audit details, FirstName /
 // LastName seed the agent profile; State is identifier-shaped (opaque
 // random from the CLI). CallbackURL goes through the strict loopback
-// validator and AgentName through sanitizeAgentName instead.
+// validator (which also length-caps it — a sanitize policy would silently
+// rewrite a redirect target) and AgentName through sanitizeAgentName
+// instead.
 func sanitizeApproveRequest(req *ApproveRequest) {
 	sanitize.ApplyAll(
 		sanitize.Pair{Target: &req.State, Policy: sanitize.ShortIdentifier},
@@ -362,13 +364,24 @@ func (h *CLIAuthHandler) Exchange(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// maxCallbackURLBytes bounds the callback_url persisted into
+// cli_auth_codes and echoed in the Approve response (WI-185). The CLI
+// generates tiny loopback URLs; rejecting overlong input (rather than
+// truncating through a sanitize policy) keeps a redirect target from
+// being silently rewritten.
+const maxCallbackURLBytes = 512
+
 // validateLoopbackCallback rejects anything that isn't http(s)://127.0.0.1
 // or http(s)://localhost with a non-empty path — i.e. it keeps the minted
 // token inside the user's machine. Preventing open redirect + exfiltration
-// to an attacker-controlled URL is the whole point of this check.
+// to an attacker-controlled URL is the whole point of this check. It also
+// length-caps the URL so the stored + echoed value is bounded.
 func validateLoopbackCallback(raw string) error {
 	if strings.TrimSpace(raw) == "" {
 		return fmt.Errorf("callback_url is required")
+	}
+	if len(raw) > maxCallbackURLBytes {
+		return fmt.Errorf("callback_url is too long")
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
