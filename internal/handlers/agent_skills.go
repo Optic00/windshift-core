@@ -10,6 +10,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
 
@@ -38,6 +39,14 @@ type skillBody struct {
 	Description string `json:"description"`
 	Body        string `json:"body"`
 	Enabled     *bool  `json:"enabled,omitempty"`
+}
+
+func (b *skillBody) sanitize() {
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &b.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &b.Description, Policy: sanitize.RichText},
+		sanitize.Pair{Target: &b.Body, Policy: sanitize.LongDocument},
+	)
 }
 
 func (b skillBody) validate() string {
@@ -99,6 +108,7 @@ func (h *AgentSkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 		respondBadRequest(w, r, "invalid request body")
 		return
 	}
+	body.sanitize()
 	if msg := body.validate(); msg != "" {
 		respondBadRequest(w, r, msg)
 		return
@@ -145,6 +155,7 @@ func (h *AgentSkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 		respondBadRequest(w, r, "invalid request body")
 		return
 	}
+	body.sanitize()
 	if msg := body.validate(); msg != "" {
 		respondBadRequest(w, r, msg)
 		return
