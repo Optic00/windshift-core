@@ -21,6 +21,7 @@ import (
 	"windshift/internal/middleware"
 	"windshift/internal/plugins"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/sso"
 	"windshift/internal/utils"
@@ -126,6 +127,24 @@ type SSOProviderRequest struct {
 	SAMLIdPCertificate string `json:"saml_idp_certificate,omitempty"`
 	SAMLSPEntityID     string `json:"saml_sp_entity_id,omitempty"`
 	SAMLSignRequests   bool   `json:"saml_sign_requests"`
+}
+
+// sanitizeSSOProviderRequest bounds the user-supplied text fields shared by
+// CreateProvider and UpdateProvider. ProviderType is a strict enum and
+// ClientSecret is an opaque machine token — both stay untouched.
+func sanitizeSSOProviderRequest(req *SSOProviderRequest) {
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Slug, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.IssuerURL, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.ClientID, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.Scopes, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.AttributeMapping, Policy: sanitize.RichText},
+		sanitize.Pair{Target: &req.SAMLIdPMetadataURL, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.SAMLIdPSSOURL, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.SAMLIdPCertificate, Policy: sanitize.RichText},
+		sanitize.Pair{Target: &req.SAMLSPEntityID, Policy: sanitize.PlainTextField},
+	)
 }
 
 // NewSSOHandler creates a new SSO handler.
@@ -528,6 +547,7 @@ func (h *SSOHandler) CreateProvider(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	sanitizeSSOProviderRequest(&req)
 
 	// Validate required fields
 	if req.Slug == "" {
@@ -692,6 +712,7 @@ func (h *SSOHandler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	sanitizeSSOProviderRequest(&req)
 
 	// Update fields
 	if req.Slug != "" {
