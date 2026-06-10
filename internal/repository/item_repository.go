@@ -530,6 +530,59 @@ func (r *ItemRepository) ListCustomFieldValuesPageByKey(afterID int, fieldKey st
 	return out, rows.Err()
 }
 
+// itemRemapColumns lists the reference columns that configuration-set
+// migration may bulk-remap across workspaces.
+var itemRemapColumns = map[string]bool{
+	"status_id":    true,
+	"priority_id":  true,
+	"item_type_id": true,
+}
+
+// RemapFieldForWorkspacesTx bulk-updates one reference column from one value
+// (nil meaning NULL) to another across the given workspaces, optionally
+// restricted to a single item type. Returns the number of rows updated.
+func (r *ItemRepository) RemapFieldForWorkspacesTx(tx database.Tx, column string, fromID *int, toID int, itemTypeID *int, workspaceIDs []int, now time.Time) (int, error) {
+	if !itemRemapColumns[column] {
+		return 0, fmt.Errorf("RemapFieldForWorkspacesTx: column %q is not in the allow-list", column)
+	}
+	if len(workspaceIDs) == 0 {
+		return 0, nil
+	}
+	// The column name is validated against the fixed allow-list above, so the
+	// fmt.Sprintf cannot splice attacker-controlled input.
+	query := fmt.Sprintf("UPDATE items SET %s = ?, updated_at = ?", column)
+	args := []interface{}{toID, now}
+	if fromID == nil {
+		query += fmt.Sprintf(" WHERE %s IS NULL", column)
+	} else {
+		query += fmt.Sprintf(" WHERE %s = ?", column)
+		args = append(args, *fromID)
+	}
+	if itemTypeID != nil {
+		query += " AND item_type_id = ?"
+		args = append(args, *itemTypeID)
+	}
+	ph, wsArgs := inPlaceholders(workspaceIDs)
+	query += " AND workspace_id IN (" + ph + ")"
+	args = append(args, wsArgs...)
+
+	res, err := tx.Exec(query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("remap %s: %w", column, err)
+	}
+	rows, _ := res.RowsAffected()
+	return int(rows), nil
+}
+
+// SetCustomFieldValuesRawTx replaces an item's custom_field_values JSON and
+// bumps updated_at inside the caller's transaction.
+func (r *ItemRepository) SetCustomFieldValuesRawTx(tx database.Tx, itemID int, raw string, now time.Time) error {
+	if _, err := tx.Exec(`UPDATE items SET custom_field_values = ?, updated_at = ? WHERE id = ?`, raw, now, itemID); err != nil {
+		return fmt.Errorf("set custom field values: %w", err)
+	}
+	return nil
+}
+
 // DeleteByWorkspaceTx deletes every item in the given workspace. Used by user
 // offboarding to tear down personal workspaces.
 func (r *ItemRepository) DeleteByWorkspaceTx(tx database.Tx, workspaceID int) error {
