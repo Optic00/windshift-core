@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"windshift/internal/models"
@@ -220,8 +221,21 @@ func (s *RunService) Report(ctx context.Context, runID int, result RunnerResult)
 	// same way the remote TriageRunner pushes runner-side before reporting. A
 	// push failure downgrades the run to failed so the PR hook does not try to
 	// open a PR for a branch that never reached the remote.
+	//
+	// A commit-less run is a legitimate success with nothing to deliver (the
+	// agent answered via a work-item comment, or found nothing to change):
+	// skip the push and clear the branch below so the PR hook sees "no
+	// branch" instead of the remote growing an empty branch and the PR
+	// create call 422-ing.
+	noChanges := false
 	if status == models.AgentRunStatusSucceeded && st != nil && !st.ephemeral && st.checkout != nil && st.req.Repo != nil && s.preparer != nil {
-		if err := s.preparer.Push(context.Background(), st.checkout, st.req.Repo.Token); err != nil {
+		switch err := s.preparer.Push(context.Background(), st.checkout, st.req.Repo.Token); {
+		case errors.Is(err, repoprep.ErrNoNewCommits):
+			noChanges = true
+			if err := s.repo.AppendEvent(ctx, runID, "lifecycle", `{"phase":"no_changes"}`); err != nil {
+				s.logger.Printf("run service: append no_changes event run=%d: %v", runID, err)
+			}
+		case err != nil:
 			s.logger.Printf("run service: push run branch run=%d: %v", runID, err)
 			status = models.AgentRunStatusFailed
 			result.Error = fmt.Sprintf("push run branch: %v", err)
@@ -241,8 +255,10 @@ func (s *RunService) Report(ctx context.Context, runID int, result RunnerResult)
 	)
 	if st != nil {
 		req = st.req
-		branch = st.branch
-		baseCommit = st.baseCommit
+		if !noChanges {
+			branch = st.branch
+			baseCommit = st.baseCommit
+		}
 		cancel = st.cancel
 		if st.checkout != nil {
 			if err := s.preparer.Cleanup(context.Background(), st.checkout); err != nil {
