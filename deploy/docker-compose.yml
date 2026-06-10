@@ -51,7 +51,8 @@ services:
       # daemon later bind-mounts that path into the runner container.
       # - /var/run/docker.sock:/var/run/docker.sock
       # - /var/lib/windshift/coding-agent-worktrees:/var/lib/windshift/coding-agent-worktrees
-      # tmpfs for /tmp - needed for SQLite WAL mode in scratch containers
+      # tmpfs for /tmp - the scratch image has no /tmp. Needed for SQLite WAL
+      # mode and for the coding-agent runner's git askpass/push scratch dirs.
       - type: tmpfs
         target: /tmp
         tmpfs:
