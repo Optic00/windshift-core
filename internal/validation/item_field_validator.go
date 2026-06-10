@@ -12,6 +12,7 @@ import (
 
 	"windshift/internal/database"
 	"windshift/internal/models"
+	"windshift/internal/repository"
 	"windshift/internal/sanitize"
 )
 
@@ -297,9 +298,8 @@ func (v *ItemFieldValidator) ValidateAndApplyUpdates(
 
 			// Validate parent item exists and capture its workspace for the
 			// cross-workspace view-permission check below.
-			var parentWorkspaceID int
-			err := v.db.QueryRow("SELECT workspace_id FROM items WHERE id = ?", newParentID).Scan(&parentWorkspaceID)
-			if errors.Is(err, sql.ErrNoRows) {
+			parentWorkspaceID, err := repository.NewItemRepository(v.db).GetWorkspaceID(newParentID)
+			if errors.Is(err, repository.ErrNotFound) {
 				return &ValidationError{Field: "parent_id", Message: "Parent item not found"}
 			}
 			if err != nil {
@@ -377,8 +377,7 @@ func (v *ItemFieldValidator) ValidateAndApplyUpdates(
 			}
 
 			// Verify the related work item exists
-			var relatedWorkspaceID int
-			err := v.db.QueryRow("SELECT workspace_id FROM items WHERE id = ?", newRelatedWorkItemID).Scan(&relatedWorkspaceID)
+			_, err := repository.NewItemRepository(v.db).GetWorkspaceID(newRelatedWorkItemID)
 			if err != nil {
 				return &ValidationError{Field: "related_work_item_id", Message: "Related work item not found or access denied"}
 			}
