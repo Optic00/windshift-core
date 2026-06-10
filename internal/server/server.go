@@ -2116,6 +2116,13 @@ func bootCodingAgentRunService(
 			)
 		}
 	}
+	// Ensure the agent egress network exists (WI-311): in-process runs spawn
+	// containers on the same network a remote runner would, and a fresh host
+	// otherwise fails every spawn until the operator hand-creates it.
+	services.EnsureAgentNetwork(context.Background(), func(format string, args ...any) {
+		slog.Warn(fmt.Sprintf(format, args...), slog.String("component", "coding-agent"))
+	}, dockerBin, cfg.Network)
+
 	prep, err := repoprep.New(repoprep.Options{RootDir: cfg.WorktreeRoot})
 	if err != nil {
 		return nil, fmt.Errorf("coding-agent repo preparer: %w", err)

@@ -74,6 +74,12 @@ func main() {
 	// later as an opaque registration or claim error.
 	preflightAPIURL(ctx, logger, baseURL)
 
+	// Ensure the agent egress network exists (WI-311) so the very first
+	// claimed job doesn't fail with "network coding-agent-egress not found"
+	// on a fresh host. Creation is a plain bridge and warns loudly that
+	// egress is unfiltered.
+	services.EnsureAgentNetwork(ctx, logger.Printf, dockerBin, "")
+
 	// Resolve an authenticated client without re-registering on every restart
 	// (WI-238 security Phase 6): reuse an injected (WSRUNNER_CREDENTIAL) or
 	// persisted per-instance credential, and only fall back to registering with
