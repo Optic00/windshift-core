@@ -40,12 +40,13 @@ func (r *AgentRunRepository) Insert(ctx context.Context, run *models.AgentRun) (
 	// RETURNING id (not LastInsertId) for Postgres compatibility.
 	var id int64
 	err := r.db.QueryRowContext(ctx, `
-		INSERT INTO agent_runs(workspace_id, item_id, binding_id, target_pool_id, job_kind, job_image, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO agent_runs(workspace_id, item_id, binding_id, target_pool_id, job_kind, job_image, status, triggered_by_user_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		RETURNING id
 	`,
 		run.WorkspaceID, nullIntArg(run.ItemID), nullIntArg(run.BindingID),
 		nullIntArg(run.TargetPoolID), jobKind, nullStringArg(run.JobImage), status,
+		nullIntArg(run.TriggeredByUserID),
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("failed to insert agent_run: %w", err)
@@ -57,21 +58,25 @@ func (r *AgentRunRepository) Insert(ctx context.Context, run *models.AgentRun) (
 func (r *AgentRunRepository) Get(ctx context.Context, id int) (*models.AgentRun, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, workspace_id, item_id, binding_id, status, queued_at, started_at, ended_at,
-		       container_id, runner_id, target_pool_id, job_kind, job_image, error, created_at, updated_at
+		       container_id, runner_id, target_pool_id, job_kind, job_image, error, triggered_by_user_id, created_at, updated_at
 		FROM agent_runs WHERE id = ?
 	`, id)
 
 	run := &models.AgentRun{}
-	var itemID, bindingID, runnerID, targetPoolID sql.NullInt64
+	var itemID, bindingID, runnerID, targetPoolID, triggeredBy sql.NullInt64
 	var startedAt, endedAt sql.NullTime
 	var containerID, jobImage, errMsg sql.NullString
 
 	if err := row.Scan(
 		&run.ID, &run.WorkspaceID, &itemID, &bindingID, &run.Status,
 		&run.QueuedAt, &startedAt, &endedAt,
-		&containerID, &runnerID, &targetPoolID, &run.JobKind, &jobImage, &errMsg, &run.CreatedAt, &run.UpdatedAt,
+		&containerID, &runnerID, &targetPoolID, &run.JobKind, &jobImage, &errMsg, &triggeredBy, &run.CreatedAt, &run.UpdatedAt,
 	); err != nil {
 		return nil, err
+	}
+	if triggeredBy.Valid {
+		v := int(triggeredBy.Int64)
+		run.TriggeredByUserID = &v
 	}
 	if jobImage.Valid {
 		run.JobImage = jobImage.String
@@ -453,7 +458,7 @@ func (r *AgentRunRepository) ListForWorkspace(ctx context.Context, workspaceID, 
 	}
 	query := `
 		SELECT id, workspace_id, item_id, binding_id, status, queued_at, started_at, ended_at,
-		       container_id, error, created_at, updated_at
+		       container_id, error, triggered_by_user_id, created_at, updated_at
 		FROM agent_runs
 		WHERE workspace_id = ?
 	`
@@ -474,19 +479,23 @@ func (r *AgentRunRepository) ListForWorkspace(ctx context.Context, workspaceID, 
 	var out []*models.AgentRun
 	for rows.Next() {
 		run := &models.AgentRun{}
-		var itemID, bindingID sql.NullInt64
+		var itemID, bindingID, triggeredBy sql.NullInt64
 		var startedAt, endedAt sql.NullTime
 		var containerID, errMsg sql.NullString
 		if err := rows.Scan(
 			&run.ID, &run.WorkspaceID, &itemID, &bindingID, &run.Status,
 			&run.QueuedAt, &startedAt, &endedAt,
-			&containerID, &errMsg, &run.CreatedAt, &run.UpdatedAt,
+			&containerID, &errMsg, &triggeredBy, &run.CreatedAt, &run.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan run row: %w", err)
 		}
 		if itemID.Valid {
 			v := int(itemID.Int64)
 			run.ItemID = &v
+		}
+		if triggeredBy.Valid {
+			v := int(triggeredBy.Int64)
+			run.TriggeredByUserID = &v
 		}
 		if bindingID.Valid {
 			v := int(bindingID.Int64)

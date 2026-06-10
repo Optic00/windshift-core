@@ -22,11 +22,15 @@ type RunGrants struct {
 // GitGrant scopes a run's git access to a single repo and the single ref it
 // may push (the agent's run branch). Empty Ref means no push is authorized.
 // ConnectionID is the SCM connection whose credential the git broker injects
-// server-side when proxying to the provider.
+// server-side when proxying to the provider. UserID is the credential
+// principal: on OAuth connections the broker injects this user's personal
+// token (the run's triggering user, WI-275); 0 means the connection-level
+// credential (PAT / GitHub App connections, and legacy runs).
 type GitGrant struct {
 	Repo         string `json:"repo"`          // "owner/repo"
 	Ref          string `json:"ref,omitempty"` // the branch the run may push
 	ConnectionID int    `json:"connection_id"` // SCM connection for credential injection
+	UserID       int    `json:"user_id,omitempty"`
 }
 
 // LLMGrant scopes a run's model access to one connection with an optional

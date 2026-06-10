@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     cancel_requested_at DATETIME, -- set when a running remote run should abort; the runner learns via heartbeat (WI-141)
     grants_json TEXT, -- RunGrants snapshot the access-layer brokers authorize against (WI-144)
     run_token_id INTEGER, -- api_tokens row that binds a presented credential to this run's grants (WI-144)
+    triggered_by_user_id INTEGER, -- soft ref to users: who fired the trigger; credential principal for OAuth SCM connections (WI-275)
     job_kind TEXT NOT NULL DEFAULT 'coding_agent', -- coding_agent | action_container | ci_task (WI-146)
     job_image TEXT, -- admin image for action_container/ci_task jobs; NULL for coding_agent (fixed runner image)
     error TEXT,

@@ -1042,6 +1042,23 @@ var Catalog = []Migration{
 			CREATE INDEX IF NOT EXISTS idx_agent_runs_binding_created ON agent_runs(binding_id, created_at DESC);
 		`,
 	},
+	{
+		// agent_runs.triggered_by_user_id records who caused the run (the
+		// user whose assignment fired the binding trigger, or the admin who
+		// started a test run). On OAuth SCM connections this user's personal
+		// token is the credential for the run's git traffic and PR creation
+		// (WI-275). Soft ref to users: runs must outlive users for audit.
+		Version:       "20260610_agent_runs_triggered_by",
+		Name:          "Add triggered_by_user_id to agent_runs",
+		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('agent_runs') WHERE name='triggered_by_user_id'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_name='agent_runs' AND column_name='triggered_by_user_id'",
+		SQLite: `
+			ALTER TABLE agent_runs ADD COLUMN triggered_by_user_id INTEGER;
+		`,
+		Postgres: `
+			ALTER TABLE agent_runs ADD COLUMN triggered_by_user_id INTEGER;
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {

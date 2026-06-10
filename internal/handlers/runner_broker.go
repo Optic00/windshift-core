@@ -325,7 +325,16 @@ func (h *RunnerBrokerHandler) ProxyGit(w http.ResponseWriter, r *http.Request) {
 		r.Body = replay
 	}
 
-	scmToken, _, scmBase, err := h.scm.ResolveForRun(r.Context(), grants.Git.ConnectionID)
+	// The grant's UserID is the credential principal (WI-275): on OAuth
+	// connections the proxy injects that user's personal token (the run's
+	// triggering user). 0 — legacy runs queued before the field existed —
+	// keeps the connection-level credential.
+	var scmToken, scmBase string
+	if grants.Git.UserID > 0 {
+		scmToken, _, scmBase, err = h.scm.ResolveForRunAsUser(r.Context(), grants.Git.ConnectionID, grants.Git.UserID)
+	} else {
+		scmToken, _, scmBase, err = h.scm.ResolveForRun(r.Context(), grants.Git.ConnectionID)
+	}
 	if err != nil {
 		respondServiceUnavailable(w, r, "scm credential unavailable")
 		return

@@ -98,7 +98,7 @@ func (h *ItemHandler) SetActionService(actionService interface {
 // starts a run. The interface stays small so the items handler can stay
 // ignorant of the binding service's internals (and so tests can stub it).
 type BindingTrigger interface {
-	MaybeStartRunForAssignee(ctx context.Context, workspaceID, itemID int, oldAssignee, newAssignee *int) error
+	MaybeStartRunForAssignee(ctx context.Context, workspaceID, itemID int, oldAssignee, newAssignee *int, triggeredByUserID int) error
 }
 
 // SetBindingTrigger wires the optional coding-agent binding trigger
@@ -863,7 +863,7 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// safe to call eagerly. Errors are logged-and-swallowed: a failed
 	// trigger must not block the item update from succeeding.
 	if assigneeChanged && h.bindingTrigger != nil {
-		if err := h.bindingTrigger.MaybeStartRunForAssignee(r.Context(), updatedItem.WorkspaceID, updatedItem.ID, originalItem.AssigneeID, updatedItem.AssigneeID); err != nil {
+		if err := h.bindingTrigger.MaybeStartRunForAssignee(r.Context(), updatedItem.WorkspaceID, updatedItem.ID, originalItem.AssigneeID, updatedItem.AssigneeID, user.ID); err != nil {
 			slog.Warn("coding-agent binding trigger failed",
 				slog.Int("workspace_id", updatedItem.WorkspaceID),
 				slog.Int("item_id", updatedItem.ID),

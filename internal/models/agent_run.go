@@ -61,10 +61,17 @@ type AgentRun struct {
 	// JobKind selects how the runner executes this run (WI-146); defaults to
 	// JobKindCodingAgent. JobImage is the admin image for container jobs
 	// (action_container / ci_task), empty for coding_agent.
-	JobKind   string    `json:"job_kind,omitempty"`
-	JobImage  string    `json:"job_image,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	JobKind  string `json:"job_kind,omitempty"`
+	JobImage string `json:"job_image,omitempty"`
+	// TriggeredByUserID is who caused the run: the user whose assignment
+	// fired the binding trigger, or the admin who started a test run. On
+	// OAuth SCM connections this user's personal token is the credential
+	// for the run's git traffic and PR creation (WI-275). Nil on runs
+	// queued before the column existed — those use the connection-level
+	// credential.
+	TriggeredByUserID *int      `json:"triggered_by_user_id,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 // AgentRunEvent is one entry on the NDJSON-style stream the agent emits to
