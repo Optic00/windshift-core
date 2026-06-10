@@ -11,6 +11,7 @@ import (
 
 	"windshift/internal/jira"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 )
 
 // projectCountConcurrency caps parallel Jira count requests. Picked to stay
@@ -103,6 +104,10 @@ func (h *JiraImportHandler) GetProjectCounts(w http.ResponseWriter, r *http.Requ
 	req, ok := decodeJSON[GetProjectCountsRequest](w, r)
 	if !ok {
 		return
+	}
+	sanitize.Apply(&req.ConnectionID, sanitize.ShortIdentifier)
+	for i := range req.Keys {
+		sanitize.Apply(&req.Keys[i], sanitize.ShortIdentifier)
 	}
 	if req.ConnectionID == "" {
 		respondValidationError(w, r, "connection_id is required")
@@ -202,6 +207,10 @@ func (h *JiraImportHandler) Analyze(w http.ResponseWriter, r *http.Request) {
 	req, ok := decodeJSON[JiraAnalyzeRequest](w, r)
 	if !ok {
 		return
+	}
+	sanitize.Apply(&req.ConnectionID, sanitize.ShortIdentifier)
+	for i := range req.ProjectKeys {
+		sanitize.Apply(&req.ProjectKeys[i], sanitize.ShortIdentifier)
 	}
 
 	if req.ConnectionID == "" || len(req.ProjectKeys) == 0 {

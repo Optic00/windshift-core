@@ -15,6 +15,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
+	"windshift/internal/sanitize"
 	"windshift/internal/utils"
 
 	"github.com/google/uuid"
@@ -176,6 +177,61 @@ func (h *JiraImportHandler) importJobWorkspaces(jobID string) []ImportedWorkspac
 	return workspaces
 }
 
+// sanitizeStartImportRequest scrubs the user-supplied strings on the import
+// payload. Jira keys/IDs/types are identifier-shaped; the Jira-side names
+// render in the wizard + job summaries and become workspace / item-type /
+// status / milestone names on import. ConnectionID is a UUID and the numeric
+// Windshift IDs are ints — both stay untouched.
+func sanitizeStartImportRequest(req *StartImportRequest) {
+	for i := range req.ProjectKeys {
+		sanitize.Apply(&req.ProjectKeys[i], sanitize.ShortIdentifier)
+	}
+	m := &req.Mappings
+	for i := range m.Workspaces {
+		sanitize.ApplyAll(
+			sanitize.Pair{Target: &m.Workspaces[i].JiraKey, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: &m.Workspaces[i].JiraName, Policy: sanitize.PlainTextField},
+			sanitize.Pair{Target: &m.Workspaces[i].NewWorkspaceName, Policy: sanitize.PlainTextField},
+			sanitize.Pair{Target: &m.Workspaces[i].NewWorkspaceKey, Policy: sanitize.ShortIdentifier},
+		)
+	}
+	for i := range m.IssueTypes {
+		for j := range m.IssueTypes[i].JiraIDs {
+			sanitize.Apply(&m.IssueTypes[i].JiraIDs[j], sanitize.ShortIdentifier)
+		}
+		sanitize.Apply(&m.IssueTypes[i].JiraName, sanitize.PlainTextField)
+	}
+	for i := range m.Statuses {
+		for j := range m.Statuses[i].JiraIDs {
+			sanitize.Apply(&m.Statuses[i].JiraIDs[j], sanitize.ShortIdentifier)
+		}
+		sanitize.ApplyAll(
+			sanitize.Pair{Target: &m.Statuses[i].JiraName, Policy: sanitize.PlainTextField},
+			sanitize.Pair{Target: &m.Statuses[i].CategoryKey, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: &m.Statuses[i].CategoryName, Policy: sanitize.PlainTextField},
+			sanitize.Pair{Target: &m.Statuses[i].Color, Policy: sanitize.ShortIdentifier},
+		)
+	}
+	for i := range m.CustomFields {
+		sanitize.ApplyAll(
+			sanitize.Pair{Target: &m.CustomFields[i].JiraID, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: &m.CustomFields[i].JiraName, Policy: sanitize.PlainTextField},
+			sanitize.Pair{Target: &m.CustomFields[i].JiraType, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: &m.CustomFields[i].WindshiftType, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: &m.CustomFields[i].Notes, Policy: sanitize.PlainTextField},
+			sanitize.Pair{Target: &m.CustomFields[i].Action, Policy: sanitize.ShortIdentifier},
+		)
+	}
+	for i := range m.Versions {
+		sanitize.ApplyAll(
+			sanitize.Pair{Target: &m.Versions[i].JiraID, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: &m.Versions[i].JiraName, Policy: sanitize.PlainTextField},
+			sanitize.Pair{Target: &m.Versions[i].ProjectKey, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: &m.Versions[i].ReleaseDate, Policy: sanitize.ShortIdentifier},
+		)
+	}
+}
+
 // StartImport handles POST /api/admin/jira-import/start
 // Starts a background import job and returns immediately with the job ID
 func (h *JiraImportHandler) StartImport(w http.ResponseWriter, r *http.Request) {
@@ -183,6 +239,7 @@ func (h *JiraImportHandler) StartImport(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
+	sanitizeStartImportRequest(&req)
 
 	if req.ConnectionID == "" || len(req.ProjectKeys) == 0 {
 		respondValidationError(w, r, "connection_id and project_keys are required")
