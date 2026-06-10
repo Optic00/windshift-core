@@ -76,7 +76,6 @@ internal/handlers/projects.go
 internal/handlers/public_board.go
 internal/handlers/recurrence.go
 internal/handlers/reviews.go
-internal/handlers/scim.go
 internal/handlers/scm_item_links.go
 internal/handlers/scm_providers.go
 internal/handlers/scm_providers_oauth.go

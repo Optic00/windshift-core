@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"bytes"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -11,26 +10,43 @@ import (
 	"strconv"
 	"strings"
 
-	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/middleware"
 	"windshift/internal/models"
+	"windshift/internal/repository"
 	"windshift/internal/services"
 )
 
 // SCIMHandler handles SCIM 2.0 endpoints
 type SCIMHandler struct {
-	db                database.Database
+	repo              *repository.SCIMRepository
 	baseURL           string
 	permissionService *services.PermissionService
+	auditor           *logger.Auditor
+	// deactivateCascade and activeSystemAdminIDs are dependency-injected
+	// closures over services.DeactivateOwnedAgentsAndTokens and
+	// services.ActiveSystemAdminIDs; injecting them at construction lets the
+	// handler stay free of the database import (same pattern as UserHandler).
+	deactivateCascade    func(ownerID int) (services.AgentDeactivationResult, error)
+	activeSystemAdminIDs func() ([]int, error)
 }
 
 // NewSCIMHandler creates a new SCIM handler
-func NewSCIMHandler(db database.Database, baseURL string, permissionService *services.PermissionService) *SCIMHandler {
+func NewSCIMHandler(
+	repo *repository.SCIMRepository,
+	baseURL string,
+	permissionService *services.PermissionService,
+	auditor *logger.Auditor,
+	deactivateCascade func(ownerID int) (services.AgentDeactivationResult, error),
+	activeSystemAdminIDs func() ([]int, error),
+) *SCIMHandler {
 	return &SCIMHandler{
-		db:                db,
-		baseURL:           baseURL,
-		permissionService: permissionService,
+		repo:                 repo,
+		baseURL:              baseURL,
+		permissionService:    permissionService,
+		auditor:              auditor,
+		deactivateCascade:    deactivateCascade,
+		activeSystemAdminIDs: activeSystemAdminIDs,
 	}
 }
 
@@ -40,16 +56,6 @@ func NewSCIMHandler(db database.Database, baseURL string, permissionService *ser
 
 // scimMaxBodySize limits request body size to prevent memory exhaustion (1MB)
 const scimMaxBodySize = 1 * 1024 * 1024
-
-// nullIfEmpty converts an empty string to nil (SQL NULL) so that partial unique
-// indexes on scim_external_id (WHERE scim_external_id IS NOT NULL) are not
-// violated when the field is omitted from the SCIM request.
-func nullIfEmpty(s string) interface{} {
-	if s == "" {
-		return nil
-	}
-	return s
-}
 
 // =============================================================================
 // Response Helpers
@@ -91,7 +97,7 @@ func (h *SCIMHandler) logSCIMAuditEvent(r *http.Request, actionType, resourceTyp
 	}
 
 	// Fire and forget - don't block on audit logging
-	go func() { _ = logger.LogAudit(h.db, event) }()
+	go h.auditor.LogEvent(event)
 }
 
 // attrChange records a single attribute mutation inside a SCIM PATCH request.
@@ -246,50 +252,17 @@ func (h *SCIMHandler) listUsersFiltered(filter string, startIndex, count int) (*
 		return nil, fmt.Errorf("invalid filter: %w", err)
 	}
 
-	// SCIM represents the IdP-provisioned surface. Agent users and locally
-	// managed humans must stay invisible here: if the IdP ever sees them in a
-	// GET /Users sweep it records their IDs in its shadow and then tries to
-	// DELETE them on the next sync tick, producing audit noise forever even
-	// after the write-side guard refuses every attempt.
-	baseQuery := `SELECT id, email, username, first_name, last_name, is_active,
-	              COALESCE(scim_external_id, '') as scim_external_id, created_at, updated_at
-	              FROM users WHERE is_agent = false AND scim_managed = true`
-	countQuery := `SELECT COUNT(*) FROM users WHERE is_agent = false AND scim_managed = true`
-
-	args := []interface{}{}
-	if filterResult.WhereClause != "" {
-		baseQuery += " AND " + filterResult.WhereClause
-		countQuery += " AND " + filterResult.WhereClause
-		args = filterResult.Args
-	}
-
-	var totalResults int
-	if err = h.db.QueryRow(countQuery, args...).Scan(&totalResults); err != nil {
-		return nil, fmt.Errorf("failed to count users: %w", err)
-	}
-
+	// The repository scopes the query to the IdP-provisioned surface (no
+	// agents, no locally-managed humans) — see SCIMRepository.ListUsersFiltered.
 	offset := startIndex - 1
-	baseQuery += fmt.Sprintf(" ORDER BY id LIMIT %d OFFSET %d", count, offset)
-
-	rows, err := h.db.Query(baseQuery, args...)
+	users, totalResults, err := h.repo.ListUsersFiltered(filterResult.WhereClause, filterResult.Args, count, offset)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query users: %w", err)
+		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
 
 	resources := make([]interface{}, 0)
-	for rows.Next() {
-		var user models.User
-		var scimExternalID string
-		if err := rows.Scan(&user.ID, &user.Email, &user.Username, &user.FirstName,
-			&user.LastName, &user.IsActive, &scimExternalID, &user.CreatedAt, &user.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("scan user row: %w", err)
-		}
-		user.SCIMExternalID = scimExternalID
-		resources = append(resources, h.userToSCIM(&user))
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate users: %w", err)
+	for i := range users {
+		resources = append(resources, h.userToSCIM(&users[i]))
 	}
 
 	return &models.SCIMListResponse{
@@ -308,51 +281,22 @@ func (h *SCIMHandler) listGroupsFiltered(filter string, startIndex, count int) (
 		return nil, fmt.Errorf("invalid filter: %w", err)
 	}
 
-	// Mirror listUsersFiltered: SCIM only sees what the IdP provisioned.
-	// Returning locally-managed groups here would let a SCIM client enumerate
-	// them, then take them over via PUT/PATCH or destroy them via DELETE.
-	baseQuery := `SELECT id, name, description, COALESCE(scim_external_id, '') as scim_external_id,
-	              created_at, updated_at FROM groups WHERE scim_managed = true`
-	countQuery := `SELECT COUNT(*) FROM groups WHERE scim_managed = true`
-
-	args := []interface{}{}
-	if filterResult.WhereClause != "" {
-		baseQuery += " AND " + filterResult.WhereClause
-		countQuery += " AND " + filterResult.WhereClause
-		args = filterResult.Args
-	}
-
-	var totalResults int
-	if err = h.db.QueryRow(countQuery, args...).Scan(&totalResults); err != nil {
-		return nil, fmt.Errorf("failed to count groups: %w", err)
-	}
-
+	// The repository scopes the query so SCIM only sees what the IdP
+	// provisioned — see SCIMRepository.ListGroupsFiltered.
 	offset := startIndex - 1
-	baseQuery += fmt.Sprintf(" ORDER BY id LIMIT %d OFFSET %d", count, offset)
-
-	rows, err := h.db.Query(baseQuery, args...)
+	groups, totalResults, err := h.repo.ListGroupsFiltered(filterResult.WhereClause, filterResult.Args, count, offset)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query groups: %w", err)
+		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
 
 	resources := make([]interface{}, 0)
-	for rows.Next() {
-		var group models.TeamGroup
-		var scimExternalID string
-		if err := rows.Scan(&group.ID, &group.Name, &group.Description, &scimExternalID,
-			&group.CreatedAt, &group.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("scan group row: %w", err)
-		}
-		group.SCIMExternalID = scimExternalID
+	for i := range groups {
+		group := &groups[i]
 		members, mErr := h.getGroupMembers(group.ID)
 		if mErr != nil {
 			return nil, fmt.Errorf("load members for group %d: %w", group.ID, mErr)
 		}
-		resources = append(resources, h.groupToSCIM(&group, members))
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate groups: %w", err)
+		resources = append(resources, h.groupToSCIM(group, members))
 	}
 
 	return &models.SCIMListResponse{
@@ -438,32 +382,21 @@ func (h *SCIMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check for existing user by email (adopt into SCIM if matched)
-	var existingUser models.User
-	err := h.db.QueryRow(`
-		SELECT id, email, username, first_name, last_name, is_active,
-		       COALESCE(scim_managed, false), created_at, updated_at
-		FROM users WHERE email = ?
-	`, email).Scan(&existingUser.ID, &existingUser.Email, &existingUser.Username,
-		&existingUser.FirstName, &existingUser.LastName, &existingUser.IsActive,
-		&existingUser.SCIMManaged, &existingUser.CreatedAt, &existingUser.UpdatedAt)
+	existingUser, err := h.repo.GetUserByEmail(email)
 	if err == nil {
 		// Adopt existing user: link to SCIM
 		username := scimUser.UserName
 		if username == "" {
 			username = existingUser.Username
 		}
-		_, err = h.db.Exec(`
-			UPDATE users SET username = ?, scim_managed = true, scim_external_id = ?,
-			                 is_active = ?, updated_at = CURRENT_TIMESTAMP
-			WHERE id = ?
-		`, username, nullIfEmpty(scimUser.ExternalID), isActive, existingUser.ID)
+		err = h.repo.AdoptUser(existingUser.ID, username, scimUser.ExternalID, isActive)
 		if err != nil {
 			slog.Error("SCIM: failed to adopt existing user", slog.Any("error", err), slog.String("email", email))
 			respondSCIMErrorMsg(w, http.StatusInternalServerError, "Failed to adopt existing user", "")
 			return
 		}
 
-		user, err := h.getUserByID(existingUser.ID)
+		user, err := h.repo.GetUserByID(existingUser.ID)
 		if err != nil {
 			respondSCIMErrorMsg(w, http.StatusInternalServerError, "Failed to retrieve adopted user", "")
 			return
@@ -482,9 +415,7 @@ func (h *SCIMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check for username collision (email didn't match, but username might)
-	var collidingID int
-	err = h.db.QueryRow(`SELECT id FROM users WHERE username = ?`, scimUser.UserName).Scan(&collidingID)
-	if err == nil {
+	if h.repo.UsernameExists(scimUser.UserName) {
 		respondSCIMErrorMsg(w, http.StatusConflict, "User with this username already exists", "uniqueness")
 		return
 	}
@@ -508,12 +439,7 @@ func (h *SCIMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Insert user
-	var userID int64
-	err = h.db.QueryRow(`
-		INSERT INTO users (email, username, first_name, last_name, is_active,
-		                   scim_external_id, scim_managed, email_verified)
-		VALUES (?, ?, ?, ?, ?, ?, true, true) RETURNING id
-	`, email, scimUser.UserName, firstName, lastName, isActive, nullIfEmpty(scimUser.ExternalID)).Scan(&userID)
+	userID, err := h.repo.CreateUser(email, scimUser.UserName, firstName, lastName, isActive, scimUser.ExternalID)
 	if err != nil {
 		slog.Error("SCIM: failed to create user", slog.Any("error", err), slog.String("email", email))
 		respondSCIMErrorMsg(w, http.StatusInternalServerError, "Failed to create user", "")
@@ -521,15 +447,14 @@ func (h *SCIMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fetch created user
-	user, err := h.getUserByID(int(userID))
+	user, err := h.repo.GetUserByID(userID)
 	if err != nil {
 		respondSCIMErrorMsg(w, http.StatusInternalServerError, "Failed to retrieve created user", "")
 		return
 	}
 
 	// Audit log: SCIM user created
-	userIDInt := int(userID)
-	h.logSCIMAuditEvent(r, logger.ActionSCIMUserCreate, logger.ResourceUser, &userIDInt, email,
+	h.logSCIMAuditEvent(r, logger.ActionSCIMUserCreate, logger.ResourceUser, &userID, email,
 		map[string]interface{}{"username": scimUser.UserName, "email": email}, true, "")
 
 	respondSCIMJSON(w, http.StatusCreated, h.userToSCIM(user))
@@ -543,7 +468,7 @@ func (h *SCIMHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.getUserByID(id)
+	user, err := h.repo.GetUserByID(id)
 	if err != nil {
 		respondSCIMErrorMsg(w, http.StatusNotFound, "User not found", "")
 		return
@@ -571,7 +496,7 @@ func (h *SCIMHandler) ReplaceUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify user exists
-	existingUser, err := h.getUserByID(id)
+	existingUser, err := h.repo.GetUserByID(id)
 	if err != nil {
 		respondSCIMErrorMsg(w, http.StatusNotFound, "User not found", "")
 		return
@@ -631,19 +556,14 @@ func (h *SCIMHandler) ReplaceUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Update user
-	_, err = h.db.Exec(`
-		UPDATE users SET email = ?, username = ?, first_name = ?, last_name = ?,
-		                 is_active = ?, scim_external_id = ?, scim_managed = true,
-		                 updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?
-	`, email, scimUser.UserName, firstName, lastName, isActive, nullIfEmpty(scimUser.ExternalID), id)
+	err = h.repo.ReplaceUser(id, email, scimUser.UserName, firstName, lastName, isActive, scimUser.ExternalID)
 	if err != nil {
 		respondSCIMErrorMsg(w, http.StatusInternalServerError, "Failed to update user", "")
 		return
 	}
 
 	// Fetch updated user
-	user, err := h.getUserByID(id)
+	user, err := h.repo.GetUserByID(id)
 	if err != nil {
 		respondSCIMErrorMsg(w, http.StatusInternalServerError, "Failed to retrieve updated user", "")
 		return
@@ -681,7 +601,7 @@ func (h *SCIMHandler) PatchUser(w http.ResponseWriter, r *http.Request) {
 	// Capture a snapshot so applyUserPatchOp can record old/new values per attribute.
 	// The snapshot is mutated in place as each op applies, so subsequent ops on the
 	// same attribute still see the prior-op value as "old".
-	snapshot, err := h.getUserByID(id)
+	snapshot, err := h.repo.GetUserByID(id)
 	if err != nil {
 		respondSCIMErrorMsg(w, http.StatusNotFound, "User not found", "")
 		return
@@ -721,7 +641,7 @@ func (h *SCIMHandler) PatchUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fetch updated user
-	user, err := h.getUserByID(id)
+	user, err := h.repo.GetUserByID(id)
 	if err != nil {
 		respondSCIMErrorMsg(w, http.StatusInternalServerError, "Failed to retrieve updated user", "")
 		return
@@ -759,7 +679,7 @@ func (h *SCIMHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get user info for audit logging before deactivation
-	user, err := h.getUserByID(id)
+	user, err := h.repo.GetUserByID(id)
 	if err != nil {
 		respondSCIMErrorMsg(w, http.StatusNotFound, "User not found", "")
 		return
@@ -780,7 +700,7 @@ func (h *SCIMHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Deactivate rather than delete
-	_, err = h.db.Exec(`UPDATE users SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, id)
+	err = h.repo.DeactivateUser(id)
 	if err != nil {
 		respondSCIMErrorMsg(w, http.StatusInternalServerError, "Failed to delete user", "")
 		return
@@ -854,26 +774,19 @@ func (h *SCIMHandler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check for existing group with same name
-	var existingID int
-	err := h.db.QueryRow(`SELECT id FROM groups WHERE name = ?`, scimGroup.DisplayName).Scan(&existingID)
-	if err == nil {
+	if h.repo.GroupNameExists(scimGroup.DisplayName) {
 		respondSCIMErrorMsg(w, http.StatusConflict, "Group with this name already exists", "uniqueness")
 		return
 	}
 
 	// Insert group
-	var groupID int64
-	err = h.db.QueryRow(`
-		INSERT INTO groups (name, description, scim_external_id, scim_managed, is_active)
-		VALUES (?, '', ?, true, true) RETURNING id
-	`, scimGroup.DisplayName, nullIfEmpty(scimGroup.ExternalID)).Scan(&groupID)
+	groupIDInt, err := h.repo.CreateGroup(scimGroup.DisplayName, scimGroup.ExternalID)
 	if err != nil {
 		slog.Error("SCIM: failed to create group", slog.Any("error", err), slog.String("name", scimGroup.DisplayName))
 		respondSCIMErrorMsg(w, http.StatusInternalServerError, "Failed to create group", "")
 		return
 	}
 
-	groupIDInt := int(groupID)
 	groupRef := &models.TeamGroup{ID: groupIDInt, Name: scimGroup.DisplayName}
 
 	// Add members. Each insert is audited individually so the trail shows exactly
@@ -885,15 +798,12 @@ func (h *SCIMHandler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 		}
 		// Reject members that aren't SCIM-visible. Without this check, a SCIM
 		// client could attach local/admin/service users by guessing their IDs.
-		if !h.isUserSCIMVisible(memberID) {
+		if !h.repo.IsUserSCIMVisible(memberID) {
 			h.logGroupMemberChange(r, logger.ActionSCIMGroupAddMember, groupRef, memberID,
 				fmt.Errorf("user not SCIM-managed"))
 			continue
 		}
-		_, execErr := h.db.Exec(`
-			INSERT INTO group_members (group_id, user_id, scim_managed, added_at)
-			VALUES (?, ?, true, CURRENT_TIMESTAMP)
-		`, groupID, memberID)
+		execErr := h.repo.AddGroupMember(groupIDInt, memberID)
 		h.logGroupMemberChange(r, logger.ActionSCIMGroupAddMember, groupRef, memberID, execErr)
 	}
 
@@ -903,7 +813,7 @@ func (h *SCIMHandler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fetch created group
-	group, err := h.getGroupByID(groupIDInt)
+	group, err := h.repo.GetGroupByID(groupIDInt)
 	if err != nil {
 		respondSCIMErrorMsg(w, http.StatusInternalServerError, "Failed to retrieve created group", "")
 		return
@@ -926,7 +836,7 @@ func (h *SCIMHandler) GetGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	group, err := h.getGroupByID(id)
+	group, err := h.repo.GetGroupByID(id)
 	if err != nil {
 		respondSCIMErrorMsg(w, http.StatusNotFound, "Group not found", "")
 		return
@@ -954,7 +864,7 @@ func (h *SCIMHandler) ReplaceGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existingGroup, err := h.getGroupByID(id)
+	existingGroup, err := h.repo.GetGroupByID(id)
 	if err != nil {
 		respondSCIMErrorMsg(w, http.StatusNotFound, "Group not found", "")
 		return
@@ -1010,76 +920,20 @@ func (h *SCIMHandler) ReplaceGroup(w http.ResponseWriter, r *http.Request) {
 		// Reject members that aren't SCIM-visible. Without this guard, the
 		// ON CONFLICT clause would flip a local membership into scim_managed
 		// state, effectively letting a SCIM token adopt local users.
-		if !h.isUserSCIMVisible(memberID) {
+		if !h.repo.IsUserSCIMVisible(memberID) {
 			skippedMembers = append(skippedMembers, memberSkip{id: memberID, err: fmt.Errorf("user not SCIM-managed")})
 			continue
 		}
 		acceptedMembers = append(acceptedMembers, memberID)
 	}
 
-	// Wrap the rename + member-set rewrite in a single transaction so a
-	// failure mid-flight cannot leave the group renamed-but-empty (or with
-	// only some of the new members applied). All cache invalidation and
-	// audit logging happens after a successful Commit; on rollback the
-	// caller observes no externally visible change.
-	tx, err := h.db.BeginTx(r.Context(), nil)
+	// The rename + member-set rewrite runs in a single transaction inside the
+	// repository so a failure mid-flight cannot leave the group renamed-but-
+	// empty (or with only some of the new members applied). All cache
+	// invalidation and audit logging happens after a successful Commit; on
+	// rollback the caller observes no externally visible change.
+	priorMemberIDs, err := h.repo.ReplaceGroup(r.Context(), id, scimGroup.DisplayName, scimGroup.ExternalID, acceptedMembers)
 	if err != nil {
-		respondSCIMErrorMsg(w, http.StatusInternalServerError, "Failed to update group", "")
-		return
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if _, err = tx.Exec(`
-		UPDATE groups SET name = ?, scim_external_id = ?, scim_managed = true,
-		                  updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?
-	`, scimGroup.DisplayName, nullIfEmpty(scimGroup.ExternalID), id); err != nil {
-		respondSCIMErrorMsg(w, http.StatusInternalServerError, "Failed to update group", "")
-		return
-	}
-
-	// Capture existing SCIM-managed member IDs so we can emit a remove audit
-	// entry per departing user. Done inside the tx so the priorMemberIDs
-	// snapshot reflects the same state we then DELETE from.
-	var priorMemberIDs []int
-	priorRows, selErr := tx.Query(`SELECT user_id FROM group_members WHERE group_id = ? AND scim_managed = true`, id)
-	if selErr != nil {
-		respondSCIMErrorMsg(w, http.StatusInternalServerError, "Failed to update group", "")
-		return
-	}
-	for priorRows.Next() {
-		var uid int
-		if scanErr := priorRows.Scan(&uid); scanErr != nil {
-			_ = priorRows.Close()
-			respondSCIMErrorMsg(w, http.StatusInternalServerError, "Failed to update group", "")
-			return
-		}
-		priorMemberIDs = append(priorMemberIDs, uid)
-	}
-	if iterErr := priorRows.Err(); iterErr != nil {
-		_ = priorRows.Close()
-		respondSCIMErrorMsg(w, http.StatusInternalServerError, "Failed to update group", "")
-		return
-	}
-	_ = priorRows.Close()
-
-	if _, err = tx.Exec(`DELETE FROM group_members WHERE group_id = ? AND scim_managed = true`, id); err != nil {
-		respondSCIMErrorMsg(w, http.StatusInternalServerError, "Failed to update group", "")
-		return
-	}
-
-	for _, memberID := range acceptedMembers {
-		if _, err = tx.Exec(`
-			INSERT INTO group_members (group_id, user_id, scim_managed, added_at)
-			VALUES (?, ?, true, CURRENT_TIMESTAMP)
-			ON CONFLICT(group_id, user_id) DO UPDATE SET scim_managed = true
-		`, id, memberID); err != nil {
-			respondSCIMErrorMsg(w, http.StatusInternalServerError, "Failed to update group", "")
-			return
-		}
-	}
-
-	if err = tx.Commit(); err != nil {
 		respondSCIMErrorMsg(w, http.StatusInternalServerError, "Failed to update group", "")
 		return
 	}
@@ -1098,7 +952,7 @@ func (h *SCIMHandler) ReplaceGroup(w http.ResponseWriter, r *http.Request) {
 		h.logGroupMemberChange(r, logger.ActionSCIMGroupAddMember, groupRef, skip.id, skip.err)
 	}
 
-	group, err := h.getGroupByID(id)
+	group, err := h.repo.GetGroupByID(id)
 	if err != nil {
 		respondSCIMErrorMsg(w, http.StatusInternalServerError, "Failed to retrieve updated group", "")
 		return
@@ -1128,7 +982,7 @@ func (h *SCIMHandler) PatchGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	snapshot, err := h.getGroupByID(id)
+	snapshot, err := h.repo.GetGroupByID(id)
 	if err != nil {
 		respondSCIMErrorMsg(w, http.StatusNotFound, "Group not found", "")
 		return
@@ -1175,7 +1029,7 @@ func (h *SCIMHandler) PatchGroup(w http.ResponseWriter, r *http.Request) {
 		_ = h.permissionService.InvalidateGroupMemberCaches(id)
 	}
 
-	group, err := h.getGroupByID(id)
+	group, err := h.repo.GetGroupByID(id)
 	if err != nil {
 		respondSCIMErrorMsg(w, http.StatusInternalServerError, "Failed to retrieve updated group", "")
 		return
@@ -1202,7 +1056,7 @@ func (h *SCIMHandler) DeleteGroup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get group info for audit logging before deletion
-	group, err := h.getGroupByID(id)
+	group, err := h.repo.GetGroupByID(id)
 	if err != nil {
 		respondSCIMErrorMsg(w, http.StatusNotFound, "Group not found", "")
 		return
@@ -1223,7 +1077,7 @@ func (h *SCIMHandler) DeleteGroup(w http.ResponseWriter, r *http.Request) {
 	// Invalidate permission caches for group members before deletion
 	_ = h.permissionService.InvalidateGroupMemberCaches(id)
 
-	_, err = h.db.Exec(`DELETE FROM groups WHERE id = ?`, id)
+	err = h.repo.DeleteGroup(id)
 	if err != nil {
 		respondSCIMErrorMsg(w, http.StatusInternalServerError, "Failed to delete group", "")
 		return
@@ -1628,92 +1482,27 @@ func (h *SCIMHandler) routeBulkOperation(method, path string) http.HandlerFunc {
 // Helper Methods
 // =============================================================================
 
-func (h *SCIMHandler) getUserByID(id int) (*models.User, error) {
-	var user models.User
-	var scimExternalID sql.NullString
-	err := h.db.QueryRow(`
-		SELECT id, email, username, first_name, last_name, is_active,
-		       scim_external_id, COALESCE(scim_managed, false), COALESCE(is_agent, false),
-		       created_at, updated_at
-		FROM users WHERE id = ?
-	`, id).Scan(&user.ID, &user.Email, &user.Username, &user.FirstName, &user.LastName,
-		&user.IsActive, &scimExternalID, &user.SCIMManaged, &user.IsAgent,
-		&user.CreatedAt, &user.UpdatedAt)
-	if err != nil {
-		return nil, err
-	}
-	if scimExternalID.Valid {
-		user.SCIMExternalID = scimExternalID.String
-	}
-	return &user, nil
-}
-
-// isUserSCIMVisible reports whether a user ID can be referenced as a SCIM
-// group member: must exist, be SCIM-managed, and not be an agent. Mirrors
-// the listUsersFiltered scope so SCIM only ever wires up users it can also
-// see via GET /Users. Without this check, a SCIM client could attach
-// arbitrary local/admin/service users to SCIM-managed groups by guessing IDs.
-func (h *SCIMHandler) isUserSCIMVisible(userID int) bool {
-	var ok bool
-	err := h.db.QueryRow(`
-		SELECT COALESCE(scim_managed, false) = true AND COALESCE(is_agent, false) = false
-		FROM users WHERE id = ?
-	`, userID).Scan(&ok)
-	return err == nil && ok
-}
-
-func (h *SCIMHandler) getGroupByID(id int) (*models.TeamGroup, error) {
-	var group models.TeamGroup
-	var scimExternalID sql.NullString
-	err := h.db.QueryRow(`
-		SELECT id, name, description, scim_external_id, COALESCE(scim_managed, false),
-		       created_at, updated_at
-		FROM groups WHERE id = ?
-	`, id).Scan(&group.ID, &group.Name, &group.Description, &scimExternalID,
-		&group.SCIMManaged, &group.CreatedAt, &group.UpdatedAt)
-	if err != nil {
-		return nil, err
-	}
-	if scimExternalID.Valid {
-		group.SCIMExternalID = scimExternalID.String
-	}
-	return &group, nil
-}
-
 func (h *SCIMHandler) getGroupMembers(groupID int) ([]models.SCIMGroupMember, error) {
-	// Only return SCIM-managed memberships. A locally-added member of an
-	// otherwise SCIM-managed group must stay invisible to the IdP; otherwise
-	// it'll record the ID in its shadow and try to remove it on the next sync.
-	rows, err := h.db.Query(`
-		SELECT u.id, u.first_name, u.last_name, u.username
-		FROM group_members gm
-		JOIN users u ON gm.user_id = u.id
-		WHERE gm.group_id = ? AND gm.scim_managed = true
-	`, groupID)
+	// Only SCIM-managed memberships come back from the repository. A
+	// locally-added member of an otherwise SCIM-managed group must stay
+	// invisible to the IdP; otherwise it'll record the ID in its shadow and
+	// try to remove it on the next sync.
+	rows, err := h.repo.GetGroupMembers(groupID)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
 
 	var members []models.SCIMGroupMember
-	for rows.Next() {
-		var userID int
-		var firstName, lastName, username string
-		if err := rows.Scan(&userID, &firstName, &lastName, &username); err != nil {
-			return nil, fmt.Errorf("scan group member row: %w", err)
-		}
-		displayName := strings.TrimSpace(firstName + " " + lastName)
+	for _, row := range rows {
+		displayName := strings.TrimSpace(row.FirstName + " " + row.LastName)
 		if displayName == "" {
-			displayName = username
+			displayName = row.Username
 		}
 		members = append(members, models.SCIMGroupMember{
-			Value:   strconv.Itoa(userID),
-			Ref:     h.baseURL + "/scim/v2/Users/" + strconv.Itoa(userID),
+			Value:   strconv.Itoa(row.UserID),
+			Ref:     h.baseURL + "/scim/v2/Users/" + strconv.Itoa(row.UserID),
 			Display: displayName,
 		})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate group members: %w", err)
 	}
 	return members, nil
 }
@@ -1791,7 +1580,7 @@ func (h *SCIMHandler) applyUserPatchOp(snapshot *models.User, op models.SCIMPatc
 					active = strings.EqualFold(strVal, "true")
 				}
 			}
-			_, err := h.db.Exec(`UPDATE users SET is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, active, userID)
+			err := h.repo.SetUserActive(userID, active)
 			if err != nil {
 				return nil, err
 			}
@@ -1801,7 +1590,7 @@ func (h *SCIMHandler) applyUserPatchOp(snapshot *models.User, op models.SCIMPatc
 
 		case "username":
 			if strVal, ok := op.Value.(string); ok {
-				_, err := h.db.Exec(`UPDATE users SET username = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, strVal, userID)
+				err := h.repo.SetUserUsername(userID, strVal)
 				if err != nil {
 					return nil, err
 				}
@@ -1812,7 +1601,7 @@ func (h *SCIMHandler) applyUserPatchOp(snapshot *models.User, op models.SCIMPatc
 
 		case "name.givenname":
 			if strVal, ok := op.Value.(string); ok {
-				_, err := h.db.Exec(`UPDATE users SET first_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, strVal, userID)
+				err := h.repo.SetUserFirstName(userID, strVal)
 				if err != nil {
 					return nil, err
 				}
@@ -1823,7 +1612,7 @@ func (h *SCIMHandler) applyUserPatchOp(snapshot *models.User, op models.SCIMPatc
 
 		case "name.familyname":
 			if strVal, ok := op.Value.(string); ok {
-				_, err := h.db.Exec(`UPDATE users SET last_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, strVal, userID)
+				err := h.repo.SetUserLastName(userID, strVal)
 				if err != nil {
 					return nil, err
 				}
@@ -1834,7 +1623,7 @@ func (h *SCIMHandler) applyUserPatchOp(snapshot *models.User, op models.SCIMPatc
 
 		case "externalid":
 			if strVal, ok := op.Value.(string); ok {
-				_, err := h.db.Exec(`UPDATE users SET scim_external_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, strVal, userID)
+				err := h.repo.SetUserExternalID(userID, strVal)
 				if err != nil {
 					return nil, err
 				}
@@ -1861,7 +1650,7 @@ func (h *SCIMHandler) applyUserPatchOp(snapshot *models.User, op models.SCIMPatc
 
 	case "remove":
 		if strings.EqualFold(op.Path, "externalId") {
-			_, err := h.db.Exec(`UPDATE users SET scim_external_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, userID)
+			err := h.repo.ClearUserExternalID(userID)
 			if err != nil {
 				return nil, err
 			}
@@ -1890,7 +1679,7 @@ func (h *SCIMHandler) applyGroupPatchOp(r *http.Request, snapshot *models.TeamGr
 		switch path {
 		case "displayname":
 			if strVal, ok := op.Value.(string); ok {
-				_, err := h.db.Exec(`UPDATE groups SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, strVal, groupID)
+				err := h.repo.UpdateGroupName(groupID, strVal)
 				if err != nil {
 					return nil, err
 				}
@@ -1901,7 +1690,7 @@ func (h *SCIMHandler) applyGroupPatchOp(r *http.Request, snapshot *models.TeamGr
 
 		case "externalid":
 			if strVal, ok := op.Value.(string); ok {
-				_, err := h.db.Exec(`UPDATE groups SET scim_external_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, strVal, groupID)
+				err := h.repo.UpdateGroupExternalID(groupID, strVal)
 				if err != nil {
 					return nil, err
 				}
@@ -1927,16 +1716,12 @@ func (h *SCIMHandler) applyGroupPatchOp(r *http.Request, snapshot *models.TeamGr
 					}
 					// Reject members that aren't SCIM-visible — same rationale
 					// as the CreateGroup/ReplaceGroup member loops.
-					if !h.isUserSCIMVisible(memberID) {
+					if !h.repo.IsUserSCIMVisible(memberID) {
 						h.logGroupMemberChange(r, logger.ActionSCIMGroupAddMember, snapshot, memberID,
 							fmt.Errorf("user not SCIM-managed"))
 						continue
 					}
-					_, execErr := h.db.Exec(`
-						INSERT INTO group_members (group_id, user_id, scim_managed, added_at)
-						VALUES (?, ?, true, CURRENT_TIMESTAMP)
-						ON CONFLICT(group_id, user_id) DO UPDATE SET scim_managed = true
-					`, groupID, memberID)
+					execErr := h.repo.UpsertGroupMember(groupID, memberID)
 					h.logGroupMemberChange(r, logger.ActionSCIMGroupAddMember, snapshot, memberID, execErr)
 				}
 			}
@@ -1965,10 +1750,10 @@ func (h *SCIMHandler) applyGroupPatchOp(r *http.Request, snapshot *models.TeamGr
 				if err != nil {
 					continue
 				}
-				// Scope the delete to SCIM-managed memberships so a SCIM PATCH
-				// can't wipe a locally-added row. Matches the bulk DELETE in
-				// ReplaceGroup.
-				_, execErr := h.db.Exec(`DELETE FROM group_members WHERE group_id = ? AND user_id = ? AND scim_managed = true`, groupID, memberID)
+				// The repository scopes the delete to SCIM-managed memberships
+				// so a SCIM PATCH can't wipe a locally-added row. Matches the
+				// bulk DELETE in ReplaceGroup.
+				execErr := h.repo.RemoveGroupMember(groupID, memberID)
 				h.logGroupMemberChange(r, logger.ActionSCIMGroupRemoveMember, snapshot, memberID, execErr)
 			}
 			return nil, nil
@@ -1997,7 +1782,7 @@ func (h *SCIMHandler) applyGroupPatchOp(r *http.Request, snapshot *models.TeamGr
 // Callers guard the active→inactive transition; this function always cascades
 // (no-op if nothing is owned/active).
 func (h *SCIMHandler) handleSCIMUserDeactivation(r *http.Request, userID int, username, trigger string, scimManaged bool) {
-	cascade, err := services.DeactivateOwnedAgentsAndTokens(h.db, userID)
+	cascade, err := h.deactivateCascade(userID)
 	if err != nil {
 		slog.Error("scim: offboarding cascade failed",
 			slog.Int("owner_id", userID),
@@ -2062,7 +1847,7 @@ func (h *SCIMHandler) handleSCIMUserDeactivation(r *http.Request, userID int, us
 // per-admin opt-in/out. Failure to write a notification never blocks the
 // cascade; it is logged and the caller proceeds.
 func (h *SCIMHandler) notifyAdminsOfSCIMCascade(ownerID int, ownerUsername, trigger string, scimManaged bool, cascade services.AgentDeactivationResult) {
-	adminIDs, err := services.ActiveSystemAdminIDs(h.db)
+	adminIDs, err := h.activeSystemAdminIDs()
 	if err != nil {
 		slog.Warn("scim: failed to load system admins for cascade notification",
 			slog.Int("owner_id", ownerID), slog.Any("error", err))
@@ -2105,10 +1890,7 @@ func (h *SCIMHandler) notifyAdminsOfSCIMCascade(ownerID int, ownerUsername, trig
 	})
 
 	for _, aid := range adminIDs {
-		if _, err := h.db.Exec(`
-			INSERT INTO notifications (user_id, title, message, type, metadata)
-			VALUES (?, ?, ?, 'warning', ?)
-		`, aid, title, message, string(meta)); err != nil {
+		if err := h.repo.InsertWarningNotification(aid, title, message, string(meta)); err != nil {
 			slog.Warn("scim: failed to insert admin notification",
 				slog.Int("admin_id", aid), slog.Any("error", err))
 		}

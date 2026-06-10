@@ -493,7 +493,18 @@ func (s *Server) initialize() error {
 	// SCIM handlers
 	scimTokenManager := auth.NewSCIMTokenManager(s.db)
 	scimAuthMiddleware := middleware.NewSCIMAuthMiddleware(scimTokenManager)
-	scimHandler := handlers.NewSCIMHandler(s.db, baseURL, permService)
+	scimHandler := handlers.NewSCIMHandler(
+		repository.NewSCIMRepository(s.db),
+		baseURL,
+		permService,
+		logger.NewAuditor(s.db),
+		func(id int) (services.AgentDeactivationResult, error) {
+			return services.DeactivateOwnedAgentsAndTokens(s.db, id)
+		},
+		func() ([]int, error) {
+			return services.ActiveSystemAdminIDs(s.db)
+		},
+	)
 	scimTokenHandler := handlers.NewSCIMTokenHandler(scimTokenManager, logger.NewAuditor(s.db))
 
 	permissionSetHandler := handlers.NewPermissionSetHandlerWithPool(repository.NewPermissionSetRepository(s.db), permService, logger.NewAuditor(s.db))

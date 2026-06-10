@@ -1,0 +1,482 @@
+package repository
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+
+	"windshift/internal/database"
+	"windshift/internal/models"
+)
+
+// SCIMRepository contains the persistence helpers used by the SCIM 2.0
+// provisioning handler. Keeping the raw SQL here lets the handler stay free
+// of direct database access while preserving the exact SCIM visibility
+// scoping (scim_managed / is_agent guards) documented on each query.
+type SCIMRepository struct {
+	db database.Database
+}
+
+// NewSCIMRepository creates a new SCIM repository.
+func NewSCIMRepository(db database.Database) *SCIMRepository {
+	return &SCIMRepository{db: db}
+}
+
+// scimNullIfEmpty converts an empty string to nil (SQL NULL) so that partial
+// unique indexes on scim_external_id (WHERE scim_external_id IS NOT NULL) are
+// not violated when the field is omitted from the SCIM request.
+func scimNullIfEmpty(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// SCIMGroupMemberRow is one SCIM-managed group membership row joined with the
+// user fields needed to render a SCIM member entry.
+type SCIMGroupMemberRow struct {
+	UserID    int
+	FirstName string
+	LastName  string
+	Username  string
+}
+
+// =============================================================================
+// Users
+// =============================================================================
+
+// ListUsersFiltered returns the SCIM-visible users matching an optional
+// pre-built filter WHERE clause, plus the unpaginated total count.
+//
+// SCIM represents the IdP-provisioned surface. Agent users and locally
+// managed humans must stay invisible here: if the IdP ever sees them in a
+// GET /Users sweep it records their IDs in its shadow and then tries to
+// DELETE them on the next sync tick, producing audit noise forever even
+// after the write-side guard refuses every attempt.
+func (r *SCIMRepository) ListUsersFiltered(whereClause string, filterArgs []interface{}, count, offset int) ([]models.User, int, error) {
+	baseQuery := `SELECT id, email, username, first_name, last_name, is_active,
+	              COALESCE(scim_external_id, '') as scim_external_id, created_at, updated_at
+	              FROM users WHERE is_agent = false AND scim_managed = true`
+	countQuery := `SELECT COUNT(*) FROM users WHERE is_agent = false AND scim_managed = true`
+
+	args := []interface{}{}
+	if whereClause != "" {
+		baseQuery += " AND " + whereClause
+		countQuery += " AND " + whereClause
+		args = filterArgs
+	}
+
+	var totalResults int
+	if err := r.db.QueryRow(countQuery, args...).Scan(&totalResults); err != nil {
+		return nil, 0, fmt.Errorf("failed to count users: %w", err)
+	}
+
+	baseQuery += fmt.Sprintf(" ORDER BY id LIMIT %d OFFSET %d", count, offset)
+
+	rows, err := r.db.Query(baseQuery, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query users: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	users := make([]models.User, 0)
+	for rows.Next() {
+		var user models.User
+		var scimExternalID string
+		if err := rows.Scan(&user.ID, &user.Email, &user.Username, &user.FirstName,
+			&user.LastName, &user.IsActive, &scimExternalID, &user.CreatedAt, &user.UpdatedAt); err != nil {
+			return nil, 0, fmt.Errorf("scan user row: %w", err)
+		}
+		user.SCIMExternalID = scimExternalID
+		users = append(users, user)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate users: %w", err)
+	}
+
+	return users, totalResults, nil
+}
+
+// GetUserByID loads a single user with the SCIM-relevant flags.
+func (r *SCIMRepository) GetUserByID(id int) (*models.User, error) {
+	var user models.User
+	var scimExternalID sql.NullString
+	err := r.db.QueryRow(`
+		SELECT id, email, username, first_name, last_name, is_active,
+		       scim_external_id, COALESCE(scim_managed, false), COALESCE(is_agent, false),
+		       created_at, updated_at
+		FROM users WHERE id = ?
+	`, id).Scan(&user.ID, &user.Email, &user.Username, &user.FirstName, &user.LastName,
+		&user.IsActive, &scimExternalID, &user.SCIMManaged, &user.IsAgent,
+		&user.CreatedAt, &user.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	if scimExternalID.Valid {
+		user.SCIMExternalID = scimExternalID.String
+	}
+	return &user, nil
+}
+
+// GetUserByEmail loads a user by email for the SCIM create/adopt flow.
+func (r *SCIMRepository) GetUserByEmail(email string) (*models.User, error) {
+	var user models.User
+	err := r.db.QueryRow(`
+		SELECT id, email, username, first_name, last_name, is_active,
+		       COALESCE(scim_managed, false), created_at, updated_at
+		FROM users WHERE email = ?
+	`, email).Scan(&user.ID, &user.Email, &user.Username,
+		&user.FirstName, &user.LastName, &user.IsActive,
+		&user.SCIMManaged, &user.CreatedAt, &user.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
+// UsernameExists reports whether any user row already holds the username.
+// It deliberately mirrors the handler's historical `err == nil` semantics:
+// lookup errors (including not-found) read as "no collision".
+func (r *SCIMRepository) UsernameExists(username string) bool {
+	var collidingID int
+	err := r.db.QueryRow(`SELECT id FROM users WHERE username = ?`, username).Scan(&collidingID)
+	return err == nil
+}
+
+// AdoptUser links an existing local user to SCIM management.
+func (r *SCIMRepository) AdoptUser(id int, username, externalID string, isActive bool) error {
+	_, err := r.db.Exec(`
+		UPDATE users SET username = ?, scim_managed = true, scim_external_id = ?,
+		                 is_active = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, username, scimNullIfEmpty(externalID), isActive, id)
+	return err
+}
+
+// CreateUser inserts a new SCIM-managed user and returns its ID.
+func (r *SCIMRepository) CreateUser(email, username, firstName, lastName string, isActive bool, externalID string) (int, error) {
+	var userID int64
+	err := r.db.QueryRow(`
+		INSERT INTO users (email, username, first_name, last_name, is_active,
+		                   scim_external_id, scim_managed, email_verified)
+		VALUES (?, ?, ?, ?, ?, ?, true, true) RETURNING id
+	`, email, username, firstName, lastName, isActive, scimNullIfEmpty(externalID)).Scan(&userID)
+	if err != nil {
+		return 0, err
+	}
+	return int(userID), nil
+}
+
+// ReplaceUser fully replaces the SCIM-managed attributes of a user.
+func (r *SCIMRepository) ReplaceUser(id int, email, username, firstName, lastName string, isActive bool, externalID string) error {
+	_, err := r.db.Exec(`
+		UPDATE users SET email = ?, username = ?, first_name = ?, last_name = ?,
+		                 is_active = ?, scim_external_id = ?, scim_managed = true,
+		                 updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, email, username, firstName, lastName, isActive, scimNullIfEmpty(externalID), id)
+	return err
+}
+
+// DeactivateUser flips a user inactive (SCIM DELETE deactivates, never deletes).
+func (r *SCIMRepository) DeactivateUser(id int) error {
+	_, err := r.db.Exec(`UPDATE users SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, id)
+	return err
+}
+
+// SetUserActive applies a SCIM PATCH to the active flag.
+func (r *SCIMRepository) SetUserActive(id int, active bool) error {
+	_, err := r.db.Exec(`UPDATE users SET is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, active, id)
+	return err
+}
+
+// SetUserUsername applies a SCIM PATCH to the username.
+func (r *SCIMRepository) SetUserUsername(id int, username string) error {
+	_, err := r.db.Exec(`UPDATE users SET username = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, username, id)
+	return err
+}
+
+// SetUserFirstName applies a SCIM PATCH to name.givenName.
+func (r *SCIMRepository) SetUserFirstName(id int, firstName string) error {
+	_, err := r.db.Exec(`UPDATE users SET first_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, firstName, id)
+	return err
+}
+
+// SetUserLastName applies a SCIM PATCH to name.familyName.
+func (r *SCIMRepository) SetUserLastName(id int, lastName string) error {
+	_, err := r.db.Exec(`UPDATE users SET last_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, lastName, id)
+	return err
+}
+
+// SetUserExternalID applies a SCIM PATCH to externalId.
+func (r *SCIMRepository) SetUserExternalID(id int, externalID string) error {
+	_, err := r.db.Exec(`UPDATE users SET scim_external_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, externalID, id)
+	return err
+}
+
+// ClearUserExternalID applies a SCIM PATCH remove of externalId.
+func (r *SCIMRepository) ClearUserExternalID(id int) error {
+	_, err := r.db.Exec(`UPDATE users SET scim_external_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, id)
+	return err
+}
+
+// IsUserSCIMVisible reports whether a user ID can be referenced as a SCIM
+// group member: must exist, be SCIM-managed, and not be an agent. Mirrors
+// the ListUsersFiltered scope so SCIM only ever wires up users it can also
+// see via GET /Users. Without this check, a SCIM client could attach
+// arbitrary local/admin/service users to SCIM-managed groups by guessing IDs.
+func (r *SCIMRepository) IsUserSCIMVisible(userID int) bool {
+	var ok bool
+	err := r.db.QueryRow(`
+		SELECT COALESCE(scim_managed, false) = true AND COALESCE(is_agent, false) = false
+		FROM users WHERE id = ?
+	`, userID).Scan(&ok)
+	return err == nil && ok
+}
+
+// =============================================================================
+// Groups
+// =============================================================================
+
+// ListGroupsFiltered returns the SCIM-visible groups matching an optional
+// pre-built filter WHERE clause, plus the unpaginated total count.
+//
+// Mirrors ListUsersFiltered: SCIM only sees what the IdP provisioned.
+// Returning locally-managed groups here would let a SCIM client enumerate
+// them, then take them over via PUT/PATCH or destroy them via DELETE.
+func (r *SCIMRepository) ListGroupsFiltered(whereClause string, filterArgs []interface{}, count, offset int) ([]models.TeamGroup, int, error) {
+	baseQuery := `SELECT id, name, description, COALESCE(scim_external_id, '') as scim_external_id,
+	              created_at, updated_at FROM groups WHERE scim_managed = true`
+	countQuery := `SELECT COUNT(*) FROM groups WHERE scim_managed = true`
+
+	args := []interface{}{}
+	if whereClause != "" {
+		baseQuery += " AND " + whereClause
+		countQuery += " AND " + whereClause
+		args = filterArgs
+	}
+
+	var totalResults int
+	if err := r.db.QueryRow(countQuery, args...).Scan(&totalResults); err != nil {
+		return nil, 0, fmt.Errorf("failed to count groups: %w", err)
+	}
+
+	baseQuery += fmt.Sprintf(" ORDER BY id LIMIT %d OFFSET %d", count, offset)
+
+	rows, err := r.db.Query(baseQuery, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query groups: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	groups := make([]models.TeamGroup, 0)
+	for rows.Next() {
+		var group models.TeamGroup
+		var scimExternalID string
+		if err := rows.Scan(&group.ID, &group.Name, &group.Description, &scimExternalID,
+			&group.CreatedAt, &group.UpdatedAt); err != nil {
+			return nil, 0, fmt.Errorf("scan group row: %w", err)
+		}
+		group.SCIMExternalID = scimExternalID
+		groups = append(groups, group)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("iterate groups: %w", err)
+	}
+
+	return groups, totalResults, nil
+}
+
+// GetGroupByID loads a single group with the SCIM-relevant flags.
+func (r *SCIMRepository) GetGroupByID(id int) (*models.TeamGroup, error) {
+	var group models.TeamGroup
+	var scimExternalID sql.NullString
+	err := r.db.QueryRow(`
+		SELECT id, name, description, scim_external_id, COALESCE(scim_managed, false),
+		       created_at, updated_at
+		FROM groups WHERE id = ?
+	`, id).Scan(&group.ID, &group.Name, &group.Description, &scimExternalID,
+		&group.SCIMManaged, &group.CreatedAt, &group.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	if scimExternalID.Valid {
+		group.SCIMExternalID = scimExternalID.String
+	}
+	return &group, nil
+}
+
+// GroupNameExists reports whether a group with the given name already exists.
+// Mirrors the handler's historical `err == nil` semantics (see UsernameExists).
+func (r *SCIMRepository) GroupNameExists(name string) bool {
+	var existingID int
+	err := r.db.QueryRow(`SELECT id FROM groups WHERE name = ?`, name).Scan(&existingID)
+	return err == nil
+}
+
+// CreateGroup inserts a new SCIM-managed group and returns its ID.
+func (r *SCIMRepository) CreateGroup(name, externalID string) (int, error) {
+	var groupID int64
+	err := r.db.QueryRow(`
+		INSERT INTO groups (name, description, scim_external_id, scim_managed, is_active)
+		VALUES (?, '', ?, true, true) RETURNING id
+	`, name, scimNullIfEmpty(externalID)).Scan(&groupID)
+	if err != nil {
+		return 0, err
+	}
+	return int(groupID), nil
+}
+
+// GetGroupMembers returns only SCIM-managed memberships. A locally-added
+// member of an otherwise SCIM-managed group must stay invisible to the IdP;
+// otherwise it'll record the ID in its shadow and try to remove it on the
+// next sync.
+func (r *SCIMRepository) GetGroupMembers(groupID int) ([]SCIMGroupMemberRow, error) {
+	rows, err := r.db.Query(`
+		SELECT u.id, u.first_name, u.last_name, u.username
+		FROM group_members gm
+		JOIN users u ON gm.user_id = u.id
+		WHERE gm.group_id = ? AND gm.scim_managed = true
+	`, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var members []SCIMGroupMemberRow
+	for rows.Next() {
+		var m SCIMGroupMemberRow
+		if err := rows.Scan(&m.UserID, &m.FirstName, &m.LastName, &m.Username); err != nil {
+			return nil, fmt.Errorf("scan group member row: %w", err)
+		}
+		members = append(members, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate group members: %w", err)
+	}
+	return members, nil
+}
+
+// AddGroupMember inserts a SCIM-managed membership (no upsert; a duplicate
+// surfaces as a constraint error the caller audits, matching CreateGroup's
+// historical behavior).
+func (r *SCIMRepository) AddGroupMember(groupID, userID int) error {
+	_, err := r.db.Exec(`
+		INSERT INTO group_members (group_id, user_id, scim_managed, added_at)
+		VALUES (?, ?, true, CURRENT_TIMESTAMP)
+	`, groupID, userID)
+	return err
+}
+
+// UpsertGroupMember inserts a SCIM-managed membership, flipping an existing
+// local membership into scim_managed state on conflict (PATCH add semantics).
+func (r *SCIMRepository) UpsertGroupMember(groupID, userID int) error {
+	_, err := r.db.Exec(`
+		INSERT INTO group_members (group_id, user_id, scim_managed, added_at)
+		VALUES (?, ?, true, CURRENT_TIMESTAMP)
+		ON CONFLICT(group_id, user_id) DO UPDATE SET scim_managed = true
+	`, groupID, userID)
+	return err
+}
+
+// RemoveGroupMember deletes a membership, scoped to SCIM-managed rows so a
+// SCIM PATCH can't wipe a locally-added row. Matches the bulk DELETE inside
+// ReplaceGroup.
+func (r *SCIMRepository) RemoveGroupMember(groupID, userID int) error {
+	_, err := r.db.Exec(`DELETE FROM group_members WHERE group_id = ? AND user_id = ? AND scim_managed = true`, groupID, userID)
+	return err
+}
+
+// UpdateGroupName applies a SCIM PATCH to displayName.
+func (r *SCIMRepository) UpdateGroupName(id int, name string) error {
+	_, err := r.db.Exec(`UPDATE groups SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, name, id)
+	return err
+}
+
+// UpdateGroupExternalID applies a SCIM PATCH to externalId.
+func (r *SCIMRepository) UpdateGroupExternalID(id int, externalID string) error {
+	_, err := r.db.Exec(`UPDATE groups SET scim_external_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, externalID, id)
+	return err
+}
+
+// DeleteGroup deletes a group row.
+func (r *SCIMRepository) DeleteGroup(id int) error {
+	_, err := r.db.Exec(`DELETE FROM groups WHERE id = ?`, id)
+	return err
+}
+
+// ReplaceGroup wraps the rename + member-set rewrite in a single transaction
+// so a failure mid-flight cannot leave the group renamed-but-empty (or with
+// only some of the new members applied). It returns the SCIM-managed member
+// IDs that were present before the rewrite so the caller can emit a remove
+// audit entry per departing user; the snapshot is taken inside the tx so it
+// reflects the same state the DELETE then removes. On error the transaction
+// rolls back and the caller observes no externally visible change.
+func (r *SCIMRepository) ReplaceGroup(ctx context.Context, id int, name, externalID string, memberIDs []int) ([]int, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err = tx.Exec(`
+		UPDATE groups SET name = ?, scim_external_id = ?, scim_managed = true,
+		                  updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, name, scimNullIfEmpty(externalID), id); err != nil {
+		return nil, err
+	}
+
+	var priorMemberIDs []int
+	priorRows, selErr := tx.Query(`SELECT user_id FROM group_members WHERE group_id = ? AND scim_managed = true`, id)
+	if selErr != nil {
+		return nil, selErr
+	}
+	for priorRows.Next() {
+		var uid int
+		if scanErr := priorRows.Scan(&uid); scanErr != nil {
+			_ = priorRows.Close()
+			return nil, scanErr
+		}
+		priorMemberIDs = append(priorMemberIDs, uid)
+	}
+	if iterErr := priorRows.Err(); iterErr != nil {
+		_ = priorRows.Close()
+		return nil, iterErr
+	}
+	_ = priorRows.Close()
+
+	if _, err = tx.Exec(`DELETE FROM group_members WHERE group_id = ? AND scim_managed = true`, id); err != nil {
+		return nil, err
+	}
+
+	for _, memberID := range memberIDs {
+		if _, err = tx.Exec(`
+			INSERT INTO group_members (group_id, user_id, scim_managed, added_at)
+			VALUES (?, ?, true, CURRENT_TIMESTAMP)
+			ON CONFLICT(group_id, user_id) DO UPDATE SET scim_managed = true
+		`, id, memberID); err != nil {
+			return nil, err
+		}
+	}
+
+	if commitErr := tx.Commit(); commitErr != nil {
+		return nil, commitErr
+	}
+
+	return priorMemberIDs, nil
+}
+
+// =============================================================================
+// Notifications
+// =============================================================================
+
+// InsertWarningNotification writes a single 'warning' notification row,
+// used to alert system admins about SCIM offboarding cascades.
+func (r *SCIMRepository) InsertWarningNotification(userID int, title, message, metadata string) error {
+	_, err := r.db.Exec(`
+		INSERT INTO notifications (user_id, title, message, type, metadata)
+		VALUES (?, ?, ?, 'warning', ?)
+	`, userID, title, message, metadata)
+	return err
+}

@@ -42,6 +42,14 @@ func (a *Auditor) Log(r *http.Request, user *models.User, actionType, resourceTy
 	})
 }
 
+// LogEvent persists a fully-constructed audit event. It exists for callers
+// (e.g. SCIM, which authenticates via token rather than a user session) that
+// need to control every field of the event instead of deriving the actor from
+// an authenticated *models.User.
+func (a *Auditor) LogEvent(event AuditEvent) {
+	_ = LogAudit(a.db, event)
+}
+
 // LogWithDetails records a successful resource action with extra structured
 // details (serialized to JSON in the audit log row).
 func (a *Auditor) LogWithDetails(r *http.Request, user *models.User, actionType, resourceType string, resourceID *int, resourceName string, details map[string]interface{}) {
