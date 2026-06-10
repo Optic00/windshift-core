@@ -14,6 +14,7 @@ import (
 	"windshift/internal/cacheutil"
 	"windshift/internal/database"
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 
@@ -535,6 +536,13 @@ func (nh *NotificationHandler) CreateNotification(w http.ResponseWriter, r *http
 	if !ok {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &notification.Title, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &notification.Message, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &notification.Type, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &notification.Avatar, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &notification.ActionURL, Policy: sanitize.PlainTextField},
+	)
 
 	// Force caller identity — never trust the request body's user_id.
 	notification.UserID = user.ID
