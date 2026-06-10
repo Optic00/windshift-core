@@ -10,9 +10,45 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
+
+// sanitizeAssetReport scrubs the user-facing fields on an asset report
+// payload. Name + Description render in the portal report list and
+// audit log; CQLQuery + the Config blob are long-form text; Icon /
+// Color / column identifiers are identifier-shaped.
+func sanitizeAssetReport(ar *models.AssetReport) {
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &ar.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &ar.Description, Policy: sanitize.RichText},
+		sanitize.Pair{Target: &ar.CQLQuery, Policy: sanitize.LongDocument},
+		sanitize.Pair{Target: &ar.Icon, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &ar.Color, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: ar.Config, Policy: sanitize.LongDocument},
+	)
+	for i := range ar.ColumnConfig {
+		sanitize.Apply(&ar.ColumnConfig[i], sanitize.ShortIdentifier)
+	}
+}
+
+// sanitizeAssetReportFields scrubs the per-row form-mode fields.
+// DisplayName + Description render as label/help copy in the portal
+// form; FieldIdentifier + VirtualFieldType are identifier-shaped;
+// VirtualFieldOptions is the JSON option list the portal select
+// renders verbatim.
+func sanitizeAssetReportFields(fields []models.AssetReportField) {
+	for i := range fields {
+		sanitize.ApplyAll(
+			sanitize.Pair{Target: &fields[i].FieldIdentifier, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: fields[i].DisplayName, Policy: sanitize.PlainTextField},
+			sanitize.Pair{Target: fields[i].Description, Policy: sanitize.RichText},
+			sanitize.Pair{Target: fields[i].VirtualFieldType, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: fields[i].VirtualFieldOptions, Policy: sanitize.LongDocument},
+		)
+	}
+}
 
 type AssetReportHandler struct {
 	repo           *repository.AssetReportRepository
@@ -119,6 +155,7 @@ func (h *AssetReportHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	sanitizeAssetReport(&ar)
 
 	ar.ChannelID = channelID
 
@@ -245,6 +282,7 @@ func (h *AssetReportHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	sanitizeAssetReport(&ar)
 
 	if strings.TrimSpace(ar.Name) == "" {
 		respondValidationError(w, r, "Asset report name is required")
@@ -483,6 +521,7 @@ func (h *AssetReportHandler) UpdateFields(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	sanitizeAssetReportFields(fields)
 
 	if err := h.repo.ReplaceFields(assetReportID, fields); err != nil {
 		respondInternalError(w, r, err)

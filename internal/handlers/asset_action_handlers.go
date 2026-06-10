@@ -9,6 +9,7 @@ import (
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/repository/actionutil"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
 
@@ -100,6 +101,10 @@ func (h *AssetActionHandler) CreateAction(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
+	)
 
 	if msg := actionutil.ValidateActionFields(req.Name, string(req.TriggerType)); msg != "" {
 		respondValidationError(w, r, msg)
@@ -201,6 +206,10 @@ func (h *AssetActionHandler) UpdateAction(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: req.Description, Policy: sanitize.RichText},
+	)
 
 	var err error
 
