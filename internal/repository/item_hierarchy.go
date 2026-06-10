@@ -388,6 +388,99 @@ func (r *ItemRepository) GetDescendantIDs(parentID int) ([]int, error) {
 	return ids, nil
 }
 
+// CountDescendants returns the total number of descendants of an item. The
+// recursive walk is capped at maxItemHierarchyDepth so a stored cycle can't
+// loop the DB.
+func (r *ItemRepository) CountDescendants(itemID int) (int, error) {
+	var count int
+	err := r.db.QueryRow(`
+		WITH RECURSIVE descendants AS (
+			SELECT id, parent_id, 1 as depth
+			FROM items
+			WHERE parent_id = ?
+
+			UNION ALL
+
+			SELECT i.id, i.parent_id, d.depth + 1
+			FROM items i
+			JOIN descendants d ON i.parent_id = d.id
+			WHERE d.depth < ?
+		)
+		SELECT COUNT(*) FROM descendants
+	`, itemID, maxItemHierarchyDepth).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count descendants: %w", err)
+	}
+	return count, nil
+}
+
+// EffectiveProjectResolution is the result of walking an item's hierarchy to
+// resolve project inheritance.
+type EffectiveProjectResolution struct {
+	DirectProjectID    *int // the item's own project_id (nil when unset)
+	InheritProject     bool // the item's inherit_project flag
+	EffectiveProjectID *int // resolved project after walking inherit_project up the chain
+}
+
+// ResolveEffectiveProject walks up an item's parent chain (capped at 10
+// levels) to resolve the inherited time-tracking project.
+func (r *ItemRepository) ResolveEffectiveProject(itemID int) (*EffectiveProjectResolution, error) {
+	query := `
+		WITH RECURSIVE effective_projects AS (
+			-- Base case: the item itself
+			SELECT
+				id,
+				project_id,
+				inherit_project,
+				parent_id,
+				CASE
+					WHEN inherit_project = true THEN NULL
+					ELSE project_id
+				END as effective_project_id,
+				0 as depth
+			FROM items
+			WHERE id = ?
+
+			UNION ALL
+
+			-- Recursive case: climb up hierarchy to find inherited project
+			SELECT
+				ep.id,
+				ep.project_id,
+				ep.inherit_project,
+				i.parent_id,
+				CASE
+					WHEN i.project_id IS NOT NULL AND i.inherit_project = false THEN i.project_id
+					ELSE ep.effective_project_id
+				END as effective_project_id,
+				ep.depth + 1
+			FROM effective_projects ep
+			JOIN items i ON ep.parent_id = i.id
+			WHERE ep.effective_project_id IS NULL
+			  AND ep.inherit_project = true
+			  AND ep.depth < 10
+		)
+		SELECT
+			project_id,
+			inherit_project,
+			effective_project_id
+		FROM effective_projects
+		WHERE id = ?
+		ORDER BY depth DESC
+		LIMIT 1
+	`
+
+	var out EffectiveProjectResolution
+	var directProjectID, effectiveProjectID sql.NullInt64
+	err := r.db.QueryRow(query, itemID, itemID).Scan(&directProjectID, &out.InheritProject, &effectiveProjectID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to calculate effective project: %w", err)
+	}
+	assignNullableInt(&out.DirectProjectID, directProjectID)
+	assignNullableInt(&out.EffectiveProjectID, effectiveProjectID)
+	return &out, nil
+}
+
 // SetParentDirect sets parent_id without recording history or bumping
 // updated_at. Used by the Jira import, which runs without a user context and
 // must preserve imported timestamps.

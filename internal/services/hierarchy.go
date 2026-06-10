@@ -111,31 +111,7 @@ func (h *HierarchyService) GetDescendants(itemID, maxDepth int) ([]models.Item, 
 // The recursive walk is capped at maxHierarchyDepth so a stored cycle can't
 // loop the DB.
 func (h *HierarchyService) CountDescendants(itemID int) (int, error) {
-	query := `
-		WITH RECURSIVE descendants AS (
-			-- Base case: get direct children
-			SELECT id, parent_id, 1 as depth
-			FROM items
-			WHERE parent_id = ?
-
-			UNION ALL
-
-			-- Recursive case: get children of descendants
-			SELECT i.id, i.parent_id, d.depth + 1
-			FROM items i
-			JOIN descendants d ON i.parent_id = d.id
-			WHERE d.depth < ?
-		)
-		SELECT COUNT(*) FROM descendants
-	`
-
-	var count int
-	err := h.db.QueryRow(query, itemID, maxHierarchyDepth).Scan(&count)
-	if err != nil {
-		return 0, fmt.Errorf("failed to count descendants: %w", err)
-	}
-
-	return count, nil
+	return repository.NewItemRepository(h.db).CountDescendants(itemID)
 }
 
 // GetChildren returns direct children of an item
