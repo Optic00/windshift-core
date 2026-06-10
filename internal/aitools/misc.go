@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"windshift/internal/repository"
 )
 
 // oneYearAgoCutoff returns a dialect-appropriate SQL fragment that evaluates
@@ -299,8 +301,9 @@ func init() {
 			if sinceDate == "" {
 				sinceDate = time.Now().AddDate(0, 0, -1).Format("2006-01-02")
 			}
-			if _, err := time.Parse("2006-01-02", sinceDate); err != nil {
-				return map[string]string{"error": "invalid since_date format, use YYYY-MM-DD"}, nil
+			since, err := time.Parse("2006-01-02", sinceDate)
+			if err != nil {
+				return map[string]string{"error": "invalid since_date format, use YYYY-MM-DD"}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
 			}
 			limit := args.Limit
 			if limit <= 0 {
@@ -322,71 +325,39 @@ func init() {
 			if len(wsIDs) == 0 {
 				return out, nil
 			}
-			ph := make([]string, len(wsIDs))
-			wsArgs := make([]interface{}, len(wsIDs))
-			for i, id := range wsIDs {
-				ph[i] = "?"
-				wsArgs[i] = id
-			}
-			wsIn := strings.Join(ph, ",")
-
-			changeQuery := fmt.Sprintf(`SELECT ih.field_name, COALESCE(ih.old_value, ''), COALESCE(ih.new_value, ''), ih.changed_at,
-				w.key || '-' || CAST(i.workspace_item_number AS TEXT) as item_key, i.title,
-				COALESCE(u.first_name || ' ' || u.last_name, 'Unknown') as changed_by
-				FROM item_history ih
-				JOIN items i ON ih.item_id = i.id
-				JOIN workspaces w ON i.workspace_id = w.id
-				LEFT JOIN users u ON ih.user_id = u.id
-				WHERE i.workspace_id IN (%s) AND ih.changed_at >= ?
-				ORDER BY ih.changed_at DESC LIMIT ?`, wsIn)
-			cArgs := append(append([]interface{}{}, wsArgs...), sinceDate, limit)
-			rows, err := env.DB.Query(changeQuery, cArgs...)
+			itemRepo := repository.NewItemRepository(env.DB)
+			changes, err := itemRepo.RecentItemChanges(wsIDs, since, limit)
 			if err != nil {
 				return nil, err
 			}
-			defer func() { _ = rows.Close() }()
-			for rows.Next() {
-				var c recentChangeDTO
-				var changedAt time.Time
-				if err := rows.Scan(&c.FieldName, &c.OldValue, &c.NewValue, &changedAt, &c.ItemKey, &c.ItemTitle, &c.ChangedBy); err != nil {
-					continue
-				}
-				c.ChangedAt = changedAt.Format(time.RFC3339)
-				out.Changes = append(out.Changes, c)
-			}
-			if err := rows.Err(); err != nil {
-				return nil, err
+			for _, c := range changes {
+				out.Changes = append(out.Changes, recentChangeDTO{
+					FieldName: c.FieldName,
+					OldValue:  c.OldValue,
+					NewValue:  c.NewValue,
+					ChangedAt: c.ChangedAt.Format(time.RFC3339),
+					ItemKey:   c.ItemKey,
+					ItemTitle: c.Title,
+					ChangedBy: c.ChangedBy,
+				})
 			}
 
-			commentQuery := fmt.Sprintf(`SELECT c.content, c.created_at,
-				w.key || '-' || CAST(i.workspace_item_number AS TEXT) as item_key, i.title,
-				COALESCE(u.first_name || ' ' || u.last_name, 'Unknown') as author
-				FROM comments c
-				JOIN items i ON c.item_id = i.id
-				JOIN workspaces w ON i.workspace_id = w.id
-				LEFT JOIN users u ON c.author_id = u.id
-				WHERE i.workspace_id IN (%s) AND c.created_at >= ? AND c.is_private = false
-				ORDER BY c.created_at DESC LIMIT ?`, wsIn)
-			ccArgs := append(append([]interface{}{}, wsArgs...), sinceDate, 30)
-			cRows, err := env.DB.Query(commentQuery, ccArgs...)
+			comments, err := itemRepo.RecentComments(wsIDs, since, 30)
 			if err != nil {
 				return nil, err
 			}
-			defer func() { _ = cRows.Close() }()
-			for cRows.Next() {
-				var cm recentCommentDTO
-				var createdAt time.Time
-				if err := cRows.Scan(&cm.Content, &createdAt, &cm.ItemKey, &cm.ItemTitle, &cm.Author); err != nil {
-					continue
+			for _, c := range comments {
+				cm := recentCommentDTO{
+					Content:   c.Content,
+					CreatedAt: c.CreatedAt.Format(time.RFC3339),
+					ItemKey:   c.ItemKey,
+					ItemTitle: c.Title,
+					Author:    c.Author,
 				}
-				cm.CreatedAt = createdAt.Format(time.RFC3339)
 				if len(cm.Content) > 200 {
 					cm.Content = cm.Content[:200] + "..."
 				}
 				out.Comments = append(out.Comments, cm)
-			}
-			if err := cRows.Err(); err != nil {
-				return nil, err
 			}
 			return out, nil
 		},
