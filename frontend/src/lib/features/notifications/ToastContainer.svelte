@@ -2,6 +2,7 @@
   import { XCircle, CircleCheck, AlertTriangle, Info } from '@lucide/svelte';
   import { toasts, removeToast } from '../../stores/toasts.svelte.js';
   import { t } from '../../stores/i18n.svelte.js';
+  import { portal } from '../../actions/portal.js';
 
   // Icon mapping for variants
   const variantIcons = {
@@ -95,7 +96,10 @@
 </script>
 
 {#if toasts.value.length > 0}
-  <div class="fixed top-12 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center">
+  <!-- Portaled to <body> and layered above every dialog tier (modals are
+       z-50, stacked dialogs z-[60]/z-[70], tooltips z-[100]) — toasts are
+       transient feedback and must never be buried by an open modal. -->
+  <div use:portal class="fixed top-12 left-1/2 -translate-x-1/2 z-[110] flex flex-col items-center">
     {#each toasts.value as toast, index (toast.id)}
       {@const Icon = variantIcons[toast.variant]}
       {@const borderColor = variantBorders[toast.variant] || variantBorders['default']}
