@@ -9,6 +9,7 @@ import (
 
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 )
 
 // ScheduleCalendarRequest represents the request to schedule an item on calendar
@@ -32,6 +33,11 @@ func (h *ItemHandler) ScheduleItem(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Notes, Policy: sanitize.RichText},
+		sanitize.Pair{Target: &req.ScheduledDate, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.ScheduledTime, Policy: sanitize.ShortIdentifier},
+	)
 
 	// Require authentication
 	user, ok := RequireAuth(w, r)
