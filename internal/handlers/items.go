@@ -339,6 +339,9 @@ func (h *ItemHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 	}
 	items = filteredItems
 
+	// Strip names of time projects the viewer can't access (keeps the IDs).
+	h.maskInaccessibleProjectNames(user.ID, items)
+
 	// Load labels for items
 	if err := repository.NewLabelRepository(h.db).LoadForItems(items); err != nil {
 		slog.Warn("failed to load labels for items", slog.Any("error", err))
@@ -521,6 +524,12 @@ func (h *ItemHandler) respondItemByID(w http.ResponseWriter, r *http.Request, us
 			slog.Warn("failed to track item view activity", slog.Int("user_id", user.ID), slog.Int("item_id", item.ID), slog.Any("error", err))
 		}
 	}
+
+	// Strip names of time projects the viewer has no access to (incl. the
+	// cross-workspace inherited effective project), keeping the IDs.
+	masked := []models.Item{*item}
+	h.maskInaccessibleProjectNames(user.ID, masked)
+	*item = masked[0]
 
 	respondJSONOK(w, item)
 }
@@ -1024,6 +1033,52 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSONOK(w, updatedItem)
+}
+
+// maskInaccessibleProjectNames blanks the human-readable project name fields on
+// items whose project / time-project / effective-project the user is not allowed
+// to view, so a restricted time project's name isn't disclosed to item viewers
+// who lack time-project access. Project *IDs* are left intact (they carry no
+// name); only the names are stripped. A user with full project access (the
+// GetAccessibleProjects nil sentinel) is never masked.
+func (h *ItemHandler) maskInaccessibleProjectNames(userID int, items []models.Item) {
+	ts := services.NewTimePermissionService(h.db, h.permissionService)
+	accessible, err := ts.GetAccessibleProjects(userID)
+	if err != nil {
+		slog.Warn("failed to load accessible projects for masking", slog.Int("user_id", userID), slog.Any("error", err))
+		// Fail closed: if we can't determine access, strip names rather than leak.
+		for i := range items {
+			items[i].ProjectName = ""
+			items[i].TimeProjectName = ""
+			items[i].EffectiveProjectName = ""
+		}
+		return
+	}
+	if accessible == nil {
+		return // full access: nothing to mask
+	}
+	allowed := make(map[int]struct{}, len(accessible))
+	for _, id := range accessible {
+		allowed[id] = struct{}{}
+	}
+	canSee := func(p *int) bool {
+		if p == nil {
+			return true // no project assigned → no name to hide
+		}
+		_, ok := allowed[*p]
+		return ok
+	}
+	for i := range items {
+		if !canSee(items[i].ProjectID) {
+			items[i].ProjectName = ""
+		}
+		if !canSee(items[i].TimeProjectID) {
+			items[i].TimeProjectName = ""
+		}
+		if !canSee(items[i].EffectiveProjectID) {
+			items[i].EffectiveProjectName = ""
+		}
+	}
 }
 
 // projectResolutionChanged reports whether an update touched a field that can
