@@ -27,17 +27,61 @@ func sanitizeStatusMappings(mappings []models.StatusMigrationMapping) {
 	}
 }
 
+// defaultValueNodeBudget caps the total number of JSON nodes (strings,
+// array elements, object entries, scalars) retained from a single
+// DefaultValue. Legitimate defaults are a scalar or a small array of
+// option ids; 256 nodes is far beyond anything the migration UI emits.
+const defaultValueNodeBudget = 256
+
+// sanitizeJSONValue recursively bounds the free-form strings inside a
+// decoded JSON value: every string (including object keys) gets the
+// PlainTextField scrub, arrays and objects are walked, and a shared node
+// budget caps the total structure retained. Without the recursion a
+// client could bypass the string-typed scrub by wrapping the same
+// free-form text in an array or object (e.g. ["<multi-MB string>"]).
+// Numbers, bools, and nulls are bounded by construction and pass through.
+func sanitizeJSONValue(v interface{}, budget *int) interface{} {
+	if *budget <= 0 {
+		return nil
+	}
+	*budget--
+	switch x := v.(type) {
+	case string:
+		return sanitize.PlainTextField.Sanitize(x)
+	case []interface{}:
+		out := make([]interface{}, 0, len(x))
+		for _, e := range x {
+			if *budget <= 0 {
+				break
+			}
+			out = append(out, sanitizeJSONValue(e, budget))
+		}
+		return out
+	case map[string]interface{}:
+		out := make(map[string]interface{}, len(x))
+		for k, e := range x {
+			if *budget <= 0 {
+				break
+			}
+			out[sanitize.PlainTextField.Sanitize(k)] = sanitizeJSONValue(e, budget)
+		}
+		return out
+	default:
+		return x
+	}
+}
+
 // sanitizeCustomFieldMappings scrubs the custom-field migration batch. Action
-// is identifier-shaped ("keep"/"orphan"/"add_default"); a string DefaultValue
-// is persisted into item custom-field JSON and rendered on item views, so it
-// gets the plain-text scrub. Non-string defaults stay untouched.
+// is identifier-shaped ("keep"/"orphan"/"add_default"); DefaultValue is
+// persisted verbatim into item custom-field JSON and rendered on item views,
+// so every string anywhere in its decoded shape gets the plain-text scrub —
+// not just a top-level string, which would leave array/object wrappers as a
+// trivial bypass. The node budget bounds the structure itself.
 func sanitizeCustomFieldMappings(mappings []models.CustomFieldMigrationMapping) {
 	for i := range mappings {
 		sanitize.Apply(&mappings[i].Action, sanitize.ShortIdentifier)
-		if s, ok := mappings[i].DefaultValue.(string); ok {
-			sanitize.Apply(&s, sanitize.PlainTextField)
-			mappings[i].DefaultValue = s
-		}
+		budget := defaultValueNodeBudget
+		mappings[i].DefaultValue = sanitizeJSONValue(mappings[i].DefaultValue, &budget)
 	}
 }
 
