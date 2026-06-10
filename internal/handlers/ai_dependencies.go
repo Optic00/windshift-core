@@ -13,6 +13,7 @@ import (
 	"windshift/internal/llm"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
 
@@ -601,6 +602,13 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	req, ok := decodeJSON[ChatRequest](w, r)
 	if !ok {
 		return
+	}
+	sanitize.Apply(&req.Message, sanitize.Comment)
+	for i := range req.History {
+		sanitize.Apply(&req.History[i].Content, sanitize.Comment)
+	}
+	if req.Context != nil {
+		sanitize.Apply(&req.Context.View, sanitize.ShortIdentifier)
 	}
 	if strings.TrimSpace(req.Message) == "" {
 		respondBadRequest(w, r, "message is required")
