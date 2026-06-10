@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -26,25 +27,33 @@ type RunnerLeaseReaper struct {
 	mu       sync.RWMutex
 	running  bool
 
-	interval   time.Duration
-	staleAfter time.Duration // a runner with no heartbeat for this long is dead
-	now        func() time.Time
+	interval         time.Duration
+	staleAfter       time.Duration // a runner with no heartbeat for this long is dead
+	queuedStallAfter time.Duration // a remote run queued unclaimed for this long is flagged
+	now              func() time.Time
 }
 
 const (
 	defaultReaperInterval   = 60 * time.Second
 	defaultReaperStaleAfter = 90 * time.Second // ~3 missed 30s heartbeats
+
+	// defaultQueuedStallAfter is how long a remote-pool run may sit queued
+	// (unclaimed) before each sweep flags it. Claims poll every ~2s, so a
+	// healthy pool claims within seconds; minutes of queued means no live
+	// runner, a full concurrency quota, or a dead pool.
+	defaultQueuedStallAfter = 3 * time.Minute
 )
 
 // NewRunnerLeaseReaper builds the reaper with sensible defaults. The caller
 // wires Start/Stop into the server lifecycle.
 func NewRunnerLeaseReaper(runs *repository.AgentRunRepository, runners *repository.RunnerRepository) *RunnerLeaseReaper {
 	return &RunnerLeaseReaper{
-		runs:       runs,
-		runners:    runners,
-		interval:   defaultReaperInterval,
-		staleAfter: defaultReaperStaleAfter,
-		now:        func() time.Time { return time.Now().UTC() },
+		runs:             runs,
+		runners:          runners,
+		interval:         defaultReaperInterval,
+		staleAfter:       defaultReaperStaleAfter,
+		queuedStallAfter: defaultQueuedStallAfter,
+		now:              func() time.Time { return time.Now().UTC() },
 	}
 }
 
@@ -103,7 +112,8 @@ func (s *RunnerLeaseReaper) tick() {
 }
 
 // Sweep runs one reap pass: fail runs of stale runners, then revoke those
-// runners. Exported for testing. Returns the counts.
+// runners, then flag remote runs that have sat queued past the stall
+// threshold. Exported for testing. Returns the reap/revoke counts.
 func (s *RunnerLeaseReaper) Sweep(ctx context.Context) (reapedRuns, revokedInstances int, err error) {
 	now := s.now()
 	staleBefore := now.Add(-s.staleAfter)
@@ -112,5 +122,45 @@ func (s *RunnerLeaseReaper) Sweep(ctx context.Context) (reapedRuns, revokedInsta
 		return reapedRuns, 0, err
 	}
 	revokedInstances, err = s.runners.RevokeStaleInstances(ctx, staleBefore, now)
-	return reapedRuns, revokedInstances, err
+	if err != nil {
+		return reapedRuns, revokedInstances, err
+	}
+	s.flagStalledQueuedRuns(ctx, now, staleBefore)
+	return reapedRuns, revokedInstances, nil
+}
+
+// flagStalledQueuedRuns surfaces remote-pool runs nobody has claimed: a
+// recurring WARN per sweep keeps the signal alive in the server log while
+// the stall persists, and a one-time "warning" event lands in the run's own
+// event stream so the stall is visible in the UI next to the queued event.
+// Best-effort: diagnostics must never fail the sweep.
+func (s *RunnerLeaseReaper) flagStalledQueuedRuns(ctx context.Context, now, staleBefore time.Time) {
+	stalled, err := s.runs.ListStaleQueuedPoolRuns(ctx, now.Add(-s.queuedStallAfter))
+	if err != nil {
+		slog.Error("runner lease reaper: list stalled queued runs", "error", err)
+		return
+	}
+	liveByPool := map[int]int{}
+	for _, run := range stalled {
+		live, ok := liveByPool[run.PoolID]
+		if !ok {
+			if live, err = s.runners.CountLiveInstancesForPool(ctx, run.PoolID, staleBefore); err != nil {
+				slog.Error("runner lease reaper: count live instances", "pool_id", run.PoolID, "error", err)
+				continue
+			}
+			liveByPool[run.PoolID] = live
+		}
+		age := now.Sub(run.QueuedAt).Round(time.Second)
+		slog.Warn("agent run queued but unclaimed",
+			"run_id", run.RunID, "pool_id", run.PoolID, "queued_for", age.String(), "live_runners", live)
+		if has, err := s.runs.HasEvent(ctx, run.RunID, "warning"); err != nil || has {
+			continue
+		}
+		payload := fmt.Sprintf(
+			`{"message":"queued for %s without being claimed — pool %d has %d live runner(s)","live_runners":%d,"target_pool_id":%d}`,
+			age, run.PoolID, live, live, run.PoolID)
+		if err := s.runs.AppendEvent(ctx, run.RunID, "warning", payload); err != nil {
+			slog.Warn("runner lease reaper: append stall event", "run_id", run.RunID, "error", err)
+		}
+	}
 }

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -112,6 +113,21 @@ func (h *RunnerControlHandler) Claim(w http.ResponseWriter, r *http.Request) {
 	if run == nil {
 		respondJSONOK(w, services.ClaimResponse{Job: nil})
 		return
+	}
+	// One log + one run event per claim: together with the "queued" event
+	// this makes the queued→running hop traceable from both the server log
+	// and the run's own event stream (a stalled run is one missing event).
+	slog.Info("runner claimed agent run",
+		slog.Int("run_id", run.ID),
+		slog.Int("pool_id", inst.PoolCapabilityID),
+		slog.Int("runner_id", inst.ID),
+		slog.String("runner_name", inst.Name),
+	)
+	claimedPayload, _ := json.Marshal(map[string]any{
+		"phase": "claimed", "runner_id": inst.ID, "runner_name": inst.Name,
+	})
+	if err := h.runs.AppendEvent(r.Context(), run.ID, "lifecycle", string(claimedPayload)); err != nil {
+		slog.Warn("append claimed event", slog.Int("run_id", run.ID), slog.Any("error", err))
 	}
 	// Enrich the claim: a binding-backed coding-agent run gets its per-run
 	// token minted, grants persisted, and runner context env populated, the

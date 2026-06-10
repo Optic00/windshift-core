@@ -317,6 +317,59 @@ func (r *AgentRunRepository) ReapStaleRuns(ctx context.Context, staleBefore, now
 	return int(n), nil
 }
 
+// StaleQueuedPoolRun is one remote-pool run that has sat queued (unclaimed)
+// past the stall threshold. The lease reaper surfaces these so "assigned the
+// ticket but nothing happens" is diagnosable from the server log and the
+// run's own event stream.
+type StaleQueuedPoolRun struct {
+	RunID    int
+	PoolID   int
+	ItemID   *int
+	QueuedAt time.Time
+}
+
+// ListStaleQueuedPoolRuns returns remote-pool runs still queued since before
+// olderThan, oldest first. Local (in-process) runs are excluded — they are
+// consumed by the worker pool immediately and have no claim hop to stall on.
+func (r *AgentRunRepository) ListStaleQueuedPoolRuns(ctx context.Context, olderThan time.Time) ([]StaleQueuedPoolRun, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, target_pool_id, item_id, queued_at FROM agent_runs
+		WHERE status = ? AND target_pool_id IS NOT NULL AND queued_at < ?
+		ORDER BY queued_at ASC
+	`, models.AgentRunStatusQueued, olderThan)
+	if err != nil {
+		return nil, fmt.Errorf("list stale queued pool runs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []StaleQueuedPoolRun
+	for rows.Next() {
+		var run StaleQueuedPoolRun
+		var itemID sql.NullInt64
+		if err := rows.Scan(&run.RunID, &run.PoolID, &itemID, &run.QueuedAt); err != nil {
+			return nil, fmt.Errorf("scan stale queued pool run: %w", err)
+		}
+		if itemID.Valid {
+			v := int(itemID.Int64)
+			run.ItemID = &v
+		}
+		out = append(out, run)
+	}
+	return out, rows.Err()
+}
+
+// HasEvent reports whether the run already has an event of the given type —
+// used to emit one-time warning events without duplicating them every sweep.
+func (r *AgentRunRepository) HasEvent(ctx context.Context, runID int, eventType string) (bool, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT EXISTS(SELECT 1 FROM agent_run_events WHERE run_id = ? AND type = ?)
+	`, runID, eventType)
+	var exists bool
+	if err := row.Scan(&exists); err != nil {
+		return false, fmt.Errorf("has event: %w", err)
+	}
+	return exists, nil
+}
+
 // SetGrants snapshots a run's access-layer grants and binds the run to the
 // minted run-token that authorizes them (WI-144). Called from the claim path
 // once the grants are derived from the binding.

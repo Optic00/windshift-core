@@ -588,6 +588,13 @@ func (s *BindingService) MaybeStartRunForAssignee(ctx context.Context, workspace
 		return fmt.Errorf("find binding: %w", err)
 	}
 	if binding == nil {
+		// Human assignees land here on every assignment — stay silent for
+		// them. But an AGENT assignee with no binding is a misconfiguration
+		// the assigner cannot see otherwise: the assignment "succeeds" and
+		// nothing ever happens.
+		if s.identity.IsAgentUser(*newAssignee) {
+			s.logger.Printf("binding service: item=%d assigned to agent user=%d but workspace=%d has no agent binding for that user — no run started", itemID, *newAssignee, workspaceID)
+		}
 		return nil
 	}
 	return s.startRunForBinding(ctx, binding, workspaceID, itemID, triggeredByUserID)

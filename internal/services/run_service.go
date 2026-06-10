@@ -392,8 +392,13 @@ func (s *RunService) Start(ctx context.Context, req RunRequest) (int, error) {
 		return 0, fmt.Errorf("insert agent_run: %w", err)
 	}
 	// Lifecycle event is best-effort: failure to record it must not block
-	// the run from proceeding.
-	if err := s.repo.AppendEvent(ctx, runID, "lifecycle", `{"phase":"queued"}`); err != nil {
+	// the run from proceeding. Remote runs record which pool they queued for
+	// so a stalled run's event log answers "where was this supposed to run?".
+	queuedPayload := `{"phase":"queued"}`
+	if req.TargetPoolID != nil {
+		queuedPayload = fmt.Sprintf(`{"phase":"queued","target_pool_id":%d}`, *req.TargetPoolID)
+	}
+	if err := s.repo.AppendEvent(ctx, runID, "lifecycle", queuedPayload); err != nil {
 		s.logger.Printf("run service: append queued event: %v", err)
 	}
 

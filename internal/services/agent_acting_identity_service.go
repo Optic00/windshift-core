@@ -64,6 +64,20 @@ func NewAgentActingIdentityService(users *UserReadService, security *repository.
 	return &AgentActingIdentityService{users: users, security: security}, nil
 }
 
+// IsAgentUser reports whether the user exists, is active, and is an agent.
+// Triggers use it to decide whether a "no binding matched" outcome is worth
+// logging (an agent assignee with no binding is a silent misconfiguration;
+// a human assignee is just a normal assignment). It deliberately skips the
+// ownership/allowlist gates Resolve enforces — this is observability, not
+// authorization.
+func (s *AgentActingIdentityService) IsAgentUser(userID int) bool {
+	if userID <= 0 {
+		return false
+	}
+	u, err := s.users.GetByID(userID)
+	return err == nil && u.IsActive && u.IsAgent
+}
+
 // Resolve validates a candidate acting user against the gate rules and
 // returns the canonical identity payload to stamp on the run. Returns one
 // of the typed errors above when the candidate is not eligible; the

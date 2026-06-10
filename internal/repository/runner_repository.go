@@ -225,6 +225,25 @@ func (r *RunnerRepository) RevokeStaleInstances(ctx context.Context, staleBefore
 	return int(n), nil
 }
 
+// CountLiveInstancesForPool counts the pool's active runners with a fresh
+// heartbeat (at or after freshSince; a never-heartbeated instance counts as
+// live only within its registration grace window). Observability companion
+// to RevokeStaleInstances: "how many runners could actually claim work right
+// now" — used for stall diagnostics and the agent-presence UI.
+func (r *RunnerRepository) CountLiveInstancesForPool(ctx context.Context, poolID int, freshSince time.Time) (int, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM runner_instances
+		WHERE pool_capability_id = ? AND status = ?
+		  AND ((last_heartbeat_at IS NOT NULL AND last_heartbeat_at >= ?)
+		    OR (last_heartbeat_at IS NULL AND registered_at >= ?))
+	`, poolID, models.RunnerInstanceStatusActive, freshSince, freshSince)
+	var n int
+	if err := row.Scan(&n); err != nil {
+		return 0, fmt.Errorf("count live instances for pool: %w", err)
+	}
+	return n, nil
+}
+
 func scanRegistrationToken(row interface{ Scan(...any) error }) (*models.RunnerRegistrationToken, error) {
 	tok := &models.RunnerRegistrationToken{}
 	var description sql.NullString
