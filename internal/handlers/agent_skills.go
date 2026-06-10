@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -217,7 +216,7 @@ func (h *AgentSkillHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	skill, err := h.repo.Get(r.Context(), id, workspaceID)
-	if errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, repository.ErrNotFound) {
 		respondNotFound(w, r, "agent skill")
 		return
 	}

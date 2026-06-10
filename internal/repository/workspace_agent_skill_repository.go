@@ -96,10 +96,18 @@ func (r *WorkspaceAgentSkillRepository) Delete(ctx context.Context, id, workspac
 	return n, nil
 }
 
-// Get loads a single skill by (id, workspace). sql.ErrNoRows when absent.
+// Get loads a single skill by (id, workspace). Returns ErrNotFound when absent,
+// so callers do not have to reach into database/sql to detect a miss.
 func (r *WorkspaceAgentSkillRepository) Get(ctx context.Context, id, workspaceID int) (*models.WorkspaceAgentSkill, error) {
 	row := r.db.QueryRowContext(ctx, skillSelectSQL+` WHERE id = ? AND workspace_id = ?`, id, workspaceID)
-	return scanSkill(row)
+	skill, err := scanSkill(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get skill: %w", err)
+	}
+	return skill, nil
 }
 
 // ListForWorkspace returns the workspace's skill library, name order.
