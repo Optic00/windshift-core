@@ -28,6 +28,12 @@ func sanitizeHomepageLayout(layout *models.WorkspaceHomepageLayout) {
 			sanitize.Pair{Target: &layout.Sections[i].Title, Policy: sanitize.PlainTextField},
 			sanitize.Pair{Target: &layout.Sections[i].Subtitle, Policy: sanitize.PlainTextField},
 		)
+		// WidgetIDs carries the same client-generated UUIDs as widget.ID,
+		// stored verbatim and echoed back on GET, so each element gets the
+		// same identifier bound.
+		for j := range layout.Sections[i].WidgetIDs {
+			sanitize.Apply(&layout.Sections[i].WidgetIDs[j], sanitize.ShortIdentifier)
+		}
 	}
 	for i := range layout.Widgets {
 		sanitize.ApplyAll(
