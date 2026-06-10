@@ -14,7 +14,10 @@
 //	windshift-triage push \
 //	  --dest <checkout> --branch agent-runs/run-<n> \
 //	  [--token-file <path>] [--git-transport askpass|proxy] [--proxy-url <url>]
-//	  -> {"head_sha":"<sha>"}
+//	  [--skip-if-head <base-sha>]
+//	  -> {"head_sha":"<sha>","skipped":false}
+//	     ({"head_sha":"","skipped":true} when the head still equals
+//	     --skip-if-head: a commit-less run pushes nothing)
 //
 // Privilege separation is the point: the agent container never execs this and
 // never sees the cache or SCM credentials; the orchestrator never inlines its
@@ -24,6 +27,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -101,6 +105,7 @@ func runPush(args []string) error {
 	proxyURL := fs.String("proxy-url", "", "git-proxy URL (proxy transport)")
 	remoteURL := fs.String("remote-url", "", "trusted push URL (askpass transport)")
 	allowFileURL := fs.Bool("allow-file-url", false, "permit file:// remotes (tests only)")
+	skipIfHead := fs.String("skip-if-head", "", "base SHA: skip the push when the branch head still equals it (commit-less run)")
 	_ = fs.Parse(args)
 
 	if err := requireTransport(*transport); err != nil {
@@ -126,16 +131,23 @@ func runPush(args []string) error {
 	}
 
 	head, err := repoprep.PushBranch(context.Background(), repoprep.PushOptions{
-		Dest:         *dest,
-		Branch:       *branch,
-		RemoteURL:    remoteOverride,
-		Token:        token,
-		AllowFileURL: *allowFileURL,
+		Dest:             *dest,
+		Branch:           *branch,
+		RemoteURL:        remoteOverride,
+		Token:            token,
+		AllowFileURL:     *allowFileURL,
+		SkipIfHeadEquals: *skipIfHead,
 	})
+	if errors.Is(err, repoprep.ErrNoNewCommits) {
+		// A commit-less run is a success with nothing to deliver — report
+		// the skip instead of failing, so the runner can finish the run
+		// without a branch (and without a PR).
+		return emit(map[string]any{"head_sha": "", "skipped": true})
+	}
 	if err != nil {
 		return err
 	}
-	return emit(map[string]string{"head_sha": head})
+	return emit(map[string]any{"head_sha": head, "skipped": false})
 }
 
 func requireTransport(t string) error {

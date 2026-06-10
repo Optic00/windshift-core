@@ -228,9 +228,19 @@ func (p *Preparer) Push(ctx context.Context, pr *Prepared, token string) error {
 		Token:        token,
 		GitBinary:    p.gitBinary,
 		AllowFileURL: p.allowFileURL,
+		// A run in which the agent committed nothing has nothing worth
+		// delivering: skip the push instead of littering the remote with a
+		// branch identical to base (and a doomed PR-create call after it).
+		SkipIfHeadEquals: pr.BaseCommit,
 	})
 	return err
 }
+
+// ErrNoNewCommits is returned by PushBranch when the run branch's head still
+// equals SkipIfHeadEquals — the agent finished without committing (e.g. it
+// answered a question via a work-item comment instead of changing code), so
+// there is nothing to deliver: no branch on the remote, no PR.
+var ErrNoNewCommits = errors.New("repoprep: branch head equals base — no new commits to push")
 
 // PushOptions configures a stateless push of a single branch from an existing
 // checkout — what the triage binary's `push` subcommand needs, since prepare
@@ -242,6 +252,10 @@ type PushOptions struct {
 	Token        string // optional: askpass token
 	GitBinary    string // default "git"
 	AllowFileURL bool
+	// SkipIfHeadEquals, when set, short-circuits with ErrNoNewCommits if the
+	// branch head resolves to this SHA (the base commit the run branch was
+	// cut at): a commit-less run pushes nothing.
+	SkipIfHeadEquals string
 }
 
 // PushBranch pushes exactly Branch from Dest to RemoteURL and returns the
@@ -270,6 +284,9 @@ func PushBranch(ctx context.Context, opts PushOptions) (string, error) {
 		return "", fmt.Errorf("rev-parse %s: %w", opts.Branch, err)
 	}
 	sha := strings.TrimSpace(shaOut)
+	if opts.SkipIfHeadEquals != "" && sha == opts.SkipIfHeadEquals {
+		return "", ErrNoNewCommits
+	}
 
 	tmp, err := os.MkdirTemp("", "windshift-sanitized-push-*")
 	if err != nil {

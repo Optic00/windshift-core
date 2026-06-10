@@ -90,13 +90,22 @@ func (t *TriageRunner) Run(ctx context.Context, input RunInput, emit EventSink) 
 
 	// Push the agent's commits only on success. A run that didn't succeed has
 	// nothing the post-run PR hook should act on, and pushing a half-built
-	// branch through the ref-gated proxy adds no value.
+	// branch through the ref-gated proxy adds no value. A commit-less success
+	// (head still at base) skips the push: nothing to deliver, no branch on
+	// the remote, no PR. Only an actual push stamps Branch/BaseCommit on the
+	// result — that is what the orchestrator's PR hook keys on.
 	if result.Status == models.AgentRunStatusSucceeded {
-		if head, perr := t.push(ctx, prep, proxyURL, tokenFile); perr != nil {
+		head, skipped, perr := t.push(ctx, prep, proxyURL, tokenFile)
+		switch {
+		case perr != nil:
 			_ = emit("lifecycle", fmt.Sprintf(`{"phase":"push_failed","error":%q}`, RedactString(perr.Error())))
 			return RunnerResult{Status: models.AgentRunStatusFailed, Error: fmt.Sprintf("triage push: %v", perr)}
-		} else {
+		case skipped:
+			_ = emit("lifecycle", `{"phase":"no_changes"}`)
+		default:
 			_ = emit("lifecycle", fmt.Sprintf(`{"phase":"pushed","branch":%q,"head":%q}`, prep.Branch, head))
+			result.Branch = prep.Branch
+			result.BaseCommit = prep.BaseCommit
 		}
 	}
 	return result
@@ -125,22 +134,24 @@ func (t *TriageRunner) prepare(ctx context.Context, input RunInput, proxyURL, to
 	return p, nil
 }
 
-func (t *TriageRunner) push(ctx context.Context, prep triagePrepareOut, proxyURL, tokenFile string) (string, error) {
+func (t *TriageRunner) push(ctx context.Context, prep triagePrepareOut, proxyURL, tokenFile string) (head string, skipped bool, err error) {
 	out, err := t.execTriage(ctx, "push",
 		"--dest", prep.CheckoutPath,
 		"--branch", prep.Branch,
 		"--git-transport", "proxy",
 		"--proxy-url", proxyURL,
 		"--token-file", tokenFile,
+		"--skip-if-head", prep.BaseCommit,
 	)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	var p struct {
 		HeadSHA string `json:"head_sha"`
+		Skipped bool   `json:"skipped"`
 	}
 	_ = json.Unmarshal(out, &p)
-	return p.HeadSHA, nil
+	return p.HeadSHA, p.Skipped, nil
 }
 
 // execTriage runs the triage binary and returns its stdout. stderr is folded
