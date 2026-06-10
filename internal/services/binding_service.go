@@ -434,6 +434,13 @@ var ErrBindingNoRepo = errors.New("binding service: binding has no repo configur
 // on this server (no RunnerImage / WorktreeRoot).
 var ErrBindingRunnerNotConfigured = errors.New("binding service: coding-agent runner not configured")
 
+// ErrBindingTestRunRemotePool is returned by StartTestRun when the binding
+// targets a remote runner pool. Test runs always execute on the local
+// in-process runtime; running one for a pool-targeted binding would test the
+// wrong runtime — and fail outright on hosts without git/docker, which is the
+// very deployment remote pools exist for.
+var ErrBindingTestRunRemotePool = errors.New("binding service: test runs are not supported for bindings that target a remote runner pool")
+
 // DefaultTestRunPrompt is the one-shot prompt a binding "test run" hands the
 // agent. It is deliberately read-only — list the project root and report a few
 // entries — so simulating an assignment proves the full chain (LLM reachable +
@@ -453,8 +460,9 @@ const DefaultTestRunPrompt = "This is a connectivity test, not a real task. " +
 //
 // Returns the new run id immediately (the run executes asynchronously); callers
 // watch it via the agent-runs events endpoints. Workspace-scoped like TestLLM.
-// Requires a repo-backed binding (ErrBindingNoRepo otherwise) and a configured
-// runner (ErrBindingRunnerNotConfigured otherwise).
+// Requires a repo-backed binding (ErrBindingNoRepo otherwise), a binding on the
+// local in-process runtime (ErrBindingTestRunRemotePool otherwise), and a
+// configured runner (ErrBindingRunnerNotConfigured otherwise).
 //
 // triggeredByUserID is the admin starting the test; on OAuth connections the
 // clone authenticates with their personal token (WI-275) —
@@ -472,6 +480,9 @@ func (s *BindingService) StartTestRun(ctx context.Context, bindingID, workspaceI
 	}
 	if !binding.HasRepo() {
 		return 0, ErrBindingNoRepo
+	}
+	if binding.TargetPoolID != nil {
+		return 0, ErrBindingTestRunRemotePool
 	}
 	if s.runs == nil {
 		return 0, ErrBindingRunnerNotConfigured

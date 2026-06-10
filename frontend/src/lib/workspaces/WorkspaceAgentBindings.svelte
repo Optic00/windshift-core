@@ -580,14 +580,16 @@
                       size="sm"
                       variant="ghost"
                       onclick={() => testBinding(b)}
-                      disabled={testing[b.id] || !b.llm_connection_id || !b.repo_slug}
+                      disabled={testing[b.id] || !b.llm_connection_id || !b.repo_slug || !!b.target_pool_id}
                       loading={testing[b.id]}
                       icon={FlaskConical}
                       title={!b.llm_connection_id
                         ? 'No LLM connection on this binding to test'
                         : !b.repo_slug
                           ? 'This binding has no repo — a test run needs one to check out'
-                          : 'Test run: provision a real container, check out the repo, have the agent list its files'}
+                          : b.target_pool_id
+                            ? 'Test runs execute on the local runtime and are not supported for runner-pool bindings — assign a real work item to verify the pool'
+                            : 'Test run: provision a real container, check out the repo, have the agent list its files'}
                     />
                     <Button
                       size="sm"

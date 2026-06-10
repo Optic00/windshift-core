@@ -399,7 +399,8 @@ type testRunResponse struct {
 // executes asynchronously; the response carries its id for event polling.
 //
 // 404 when the binding is absent, 400 when it has no repo configured, and 409
-// when the coding-agent runner isn't configured on this server.
+// when the coding-agent runner isn't configured on this server or the binding
+// targets a remote runner pool (test runs are local-runtime only).
 func (h *WorkspaceAgentBindingHandler) TestRun(w http.ResponseWriter, r *http.Request) {
 	workspaceID, ok := requireIDParam(w, r, "workspaceId")
 	if !ok {
@@ -426,6 +427,8 @@ func (h *WorkspaceAgentBindingHandler) TestRun(w http.ResponseWriter, r *http.Re
 			respondBadRequest(w, r, "this binding has no repo configured — a test run needs a repo to check out")
 		case errors.Is(err, services.ErrBindingRunnerNotConfigured):
 			respondConflict(w, r, "the coding-agent runner is not configured on this server")
+		case errors.Is(err, services.ErrBindingTestRunRemotePool):
+			respondConflict(w, r, "test runs execute on this server's local runtime and are not supported for bindings that target a remote runner pool — assign a real work item to verify the pool instead")
 		case errors.Is(err, services.ErrTriggerUserSCMNotConnected):
 			respondConflict(w, r, "you have no connected SCM account for this binding's OAuth connection — connect your GitHub/Gitea account under profile settings first")
 		default:
