@@ -62,7 +62,6 @@ internal/handlers/notification.go
 internal/handlers/oauth.go
 internal/handlers/oncall.go
 internal/handlers/permission_sets.go
-internal/handlers/permissions.go
 internal/handlers/personal_labels.go
 internal/handlers/plugins.go
 internal/handlers/portal.go

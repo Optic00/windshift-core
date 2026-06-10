@@ -1,65 +1,39 @@
 package handlers
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"time"
 
-	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	"windshift/internal/repository"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
 
 // PermissionHandler handles permission-related HTTP requests
 type PermissionHandler struct {
-	db                database.Database
+	repo              *repository.PermissionRepository
 	permissionService *services.PermissionService
+	auditor           *logger.Auditor
 }
 
 // NewPermissionHandlerWithCache creates a new permission handler with cached permission service
-func NewPermissionHandlerWithCache(db database.Database, permissionService *services.PermissionService) *PermissionHandler {
+func NewPermissionHandlerWithCache(repo *repository.PermissionRepository, permissionService *services.PermissionService, auditor *logger.Auditor) *PermissionHandler {
 	return &PermissionHandler{
-		db:                db,
+		repo:              repo,
 		permissionService: permissionService,
+		auditor:           auditor,
 	}
 }
 
 // GetAllPermissions returns all available permissions
 func (h *PermissionHandler) GetAllPermissions(w http.ResponseWriter, r *http.Request) {
-	query := `
-		SELECT id, permission_key, permission_name, description, scope, is_system, created_at, updated_at
-		FROM permissions
-		ORDER BY scope, permission_name
-	`
-
-	rows, err := h.db.Query(query)
+	permissions, err := h.repo.ListAll()
 	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	defer func() { _ = rows.Close() }()
-
-	var permissions []models.Permission
-	for rows.Next() {
-		var p models.Permission
-		err := rows.Scan(
-			&p.ID, &p.PermissionKey, &p.PermissionName,
-			&p.Description, &p.Scope, &p.IsSystem,
-			&p.CreatedAt, &p.UpdatedAt,
-		)
-		if err != nil {
-			respondInternalError(w, r, err)
-			return
-		}
-		permissions = append(permissions, p)
-	}
-	if err := rows.Err(); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
@@ -110,9 +84,8 @@ func (h *PermissionHandler) requireGlobalPermissionScope(w http.ResponseWriter, 
 		return 0, false
 	}
 
-	var permissionScope string
-	err := h.db.QueryRow("SELECT scope FROM permissions WHERE id = ?", permissionID).Scan(&permissionScope)
-	if errors.Is(err, sql.ErrNoRows) {
+	permissionScope, err := h.repo.GetScope(permissionID)
+	if errors.Is(err, repository.ErrNotFound) {
 		respondNotFound(w, r, "permission")
 		return 0, false
 	}
@@ -147,16 +120,7 @@ func (h *PermissionHandler) GrantGlobalPermission(w http.ResponseWriter, r *http
 	}
 
 	// Grant the permission (only if not already granted)
-	_, err := h.db.ExecWrite(`
-		INSERT INTO user_global_permissions (user_id, permission_id, granted_by, granted_at)
-		SELECT ?, ?, ?, ?
-		WHERE NOT EXISTS (
-			SELECT 1 FROM user_global_permissions
-			WHERE user_id = ? AND permission_id = ?
-		)
-	`, req.UserID, req.PermissionID, granterID, time.Now(), req.UserID, req.PermissionID)
-
-	if err != nil {
+	if err := h.repo.GrantGlobalToUser(req.UserID, req.PermissionID, granterID); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
@@ -173,15 +137,16 @@ func (h *PermissionHandler) GrantGlobalPermission(w http.ResponseWriter, r *http
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
 		// Get permission and target user details for audit log
-		var permissionName, targetUsername string
-		if err := h.db.QueryRow("SELECT permission_name FROM permissions WHERE id = ?", req.PermissionID).Scan(&permissionName); err != nil {
+		permissionName, err := h.repo.GetName(req.PermissionID)
+		if err != nil {
 			slog.Warn("failed to look up permission name", slog.Any("error", err))
 		}
-		if err := h.db.QueryRow("SELECT username FROM users WHERE id = ?", req.UserID).Scan(&targetUsername); err != nil {
+		targetUsername, err := h.repo.GetUsername(req.UserID)
+		if err != nil {
 			slog.Warn("failed to look up username", slog.Any("error", err))
 		}
 
-		_ = logger.LogAudit(h.db, logger.AuditEvent{
+		h.auditor.LogEvent(logger.AuditEvent{
 			UserID:       currentUser.ID,
 			Username:     currentUser.Username,
 			IPAddress:    utils.GetClientIP(r),
@@ -216,23 +181,15 @@ func (h *PermissionHandler) RevokeGlobalPermission(w http.ResponseWriter, r *htt
 		return
 	}
 
-	var err error
-
 	// Don't allow revoking system admin from the last admin
-	var permissionKey string
-	err = h.db.QueryRow("SELECT permission_key FROM permissions WHERE id = ?", permissionID).Scan(&permissionKey)
+	permissionKey, err := h.repo.GetKey(permissionID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
 
 	if permissionKey == models.PermissionSystemAdmin {
-		var adminCount int
-		err = h.db.QueryRow(`
-			SELECT COUNT(*) FROM user_global_permissions ugp
-			JOIN permissions p ON ugp.permission_id = p.id
-			WHERE p.permission_key = 'system.admin'
-		`).Scan(&adminCount)
+		adminCount, err := h.repo.CountSystemAdminGrants()
 		if err != nil {
 			respondInternalError(w, r, err)
 			return
@@ -245,17 +202,12 @@ func (h *PermissionHandler) RevokeGlobalPermission(w http.ResponseWriter, r *htt
 	}
 
 	// Revoke the permission
-	result, err := h.db.ExecWrite(`
-		DELETE FROM user_global_permissions
-		WHERE user_id = ? AND permission_id = ?
-	`, userID, permissionID)
-
+	rowsAffected, err := h.repo.RevokeGlobalFromUser(userID, permissionID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
 
-	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
 		respondNotFound(w, r, "permission")
 		return
@@ -273,15 +225,16 @@ func (h *PermissionHandler) RevokeGlobalPermission(w http.ResponseWriter, r *htt
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
 		// Get permission and target user details for audit log
-		var permissionName, targetUsername string
-		if err := h.db.QueryRow("SELECT permission_name FROM permissions WHERE id = ?", permissionID).Scan(&permissionName); err != nil {
+		permissionName, err := h.repo.GetName(permissionID)
+		if err != nil {
 			slog.Warn("failed to look up permission name", slog.Any("error", err))
 		}
-		if err := h.db.QueryRow("SELECT username FROM users WHERE id = ?", userID).Scan(&targetUsername); err != nil {
+		targetUsername, err := h.repo.GetUsername(userID)
+		if err != nil {
 			slog.Warn("failed to look up username", slog.Any("error", err))
 		}
 
-		_ = logger.LogAudit(h.db, logger.AuditEvent{
+		h.auditor.LogEvent(logger.AuditEvent{
 			UserID:       currentUser.ID,
 			Username:     currentUser.Username,
 			IPAddress:    utils.GetClientIP(r),
@@ -304,6 +257,33 @@ func (h *PermissionHandler) RevokeGlobalPermission(w http.ResponseWriter, r *htt
 	respondJSONOKWithWarnings(w, map[string]string{"message": "Permission revoked successfully"}, warnings)
 }
 
+// invalidateGroupMemberCaches invalidates the permission cache for every
+// member of the given group, mirroring the historical semantics: a failed
+// member query is silent, a partial iteration failure surfaces a warning
+// but still invalidates the members collected so far.
+func (h *PermissionHandler) invalidateGroupMemberCaches(groupID int) []models.APIWarning {
+	var warnings []models.APIWarning
+	if h.permissionService == nil {
+		return warnings
+	}
+
+	userIDs, iterErr, queryErr := h.repo.GroupMemberUserIDs(groupID)
+	if queryErr != nil {
+		return warnings
+	}
+	if iterErr != nil {
+		warnings = append(warnings, createCacheWarning("permission", iterErr, fmt.Sprintf("group_id:%d", groupID)))
+	}
+
+	// Invalidate cache for each user in the group
+	for _, userID := range userIDs {
+		if err := h.permissionService.OnUserPermissionChanged(userID); err != nil {
+			warnings = append(warnings, createCacheWarning("permission", err, fmt.Sprintf("user_id:%d,group_id:%d", userID, groupID)))
+		}
+	}
+	return warnings
+}
+
 // GrantGlobalPermissionToGroup grants a global permission to a group
 func (h *PermissionHandler) GrantGlobalPermissionToGroup(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -321,8 +301,7 @@ func (h *PermissionHandler) GrantGlobalPermissionToGroup(w http.ResponseWriter, 
 	}
 
 	// Verify the group exists
-	var groupExists bool
-	err := h.db.QueryRow("SELECT EXISTS(SELECT 1 FROM groups WHERE id = ?)", req.GroupID).Scan(&groupExists)
+	groupExists, err := h.repo.GroupExists(req.GroupID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -333,58 +312,27 @@ func (h *PermissionHandler) GrantGlobalPermissionToGroup(w http.ResponseWriter, 
 	}
 
 	// Grant the permission (only if not already granted)
-	_, err = h.db.ExecWrite(`
-		INSERT INTO group_global_permissions (group_id, permission_id, granted_by, granted_at)
-		SELECT ?, ?, ?, ?
-		WHERE NOT EXISTS (
-			SELECT 1 FROM group_global_permissions
-			WHERE group_id = ? AND permission_id = ?
-		)
-	`, req.GroupID, req.PermissionID, granterID, time.Now(), req.GroupID, req.PermissionID)
-
-	if err != nil {
+	if err := h.repo.GrantGlobalToGroup(req.GroupID, req.PermissionID, granterID); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
 
 	// Invalidate permission cache for all users in the group
-	var warnings []models.APIWarning
-	if h.permissionService != nil {
-		var userIDs []int
-		rows, err := h.db.Query("SELECT user_id FROM group_members WHERE group_id = ?", req.GroupID)
-		if err == nil {
-			defer func() { _ = rows.Close() }()
-			for rows.Next() {
-				var userID int
-				if err := rows.Scan(&userID); err == nil {
-					userIDs = append(userIDs, userID)
-				}
-			}
-			if err := rows.Err(); err != nil {
-				warnings = append(warnings, createCacheWarning("permission", err, fmt.Sprintf("group_id:%d", req.GroupID)))
-			}
-
-			// Invalidate cache for each user in the group
-			for _, userID := range userIDs {
-				if err := h.permissionService.OnUserPermissionChanged(userID); err != nil {
-					warnings = append(warnings, createCacheWarning("permission", err, fmt.Sprintf("user_id:%d,group_id:%d", userID, req.GroupID)))
-				}
-			}
-		}
-	}
+	warnings := h.invalidateGroupMemberCaches(req.GroupID)
 
 	// Log audit event
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
-		var permissionName, groupName string
-		if err := h.db.QueryRow("SELECT permission_name FROM permissions WHERE id = ?", req.PermissionID).Scan(&permissionName); err != nil {
+		permissionName, err := h.repo.GetName(req.PermissionID)
+		if err != nil {
 			slog.Warn("failed to look up permission name", slog.Any("error", err))
 		}
-		if err := h.db.QueryRow("SELECT name FROM groups WHERE id = ?", req.GroupID).Scan(&groupName); err != nil {
+		groupName, err := h.repo.GetGroupName(req.GroupID)
+		if err != nil {
 			slog.Warn("failed to look up group name", slog.Any("error", err))
 		}
 
-		_ = logger.LogAudit(h.db, logger.AuditEvent{
+		h.auditor.LogEvent(logger.AuditEvent{
 			UserID:       currentUser.ID,
 			Username:     currentUser.Username,
 			IPAddress:    utils.GetClientIP(r),
@@ -420,60 +368,33 @@ func (h *PermissionHandler) RevokeGlobalPermissionFromGroup(w http.ResponseWrite
 	}
 
 	// Revoke the permission
-	result, err := h.db.ExecWrite(`
-		DELETE FROM group_global_permissions
-		WHERE group_id = ? AND permission_id = ?
-	`, groupID, permissionID)
-
+	rowsAffected, err := h.repo.RevokeGlobalFromGroup(groupID, permissionID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
 
-	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
 		respondNotFound(w, r, "permission")
 		return
 	}
 
 	// Invalidate permission cache for all users in the group
-	var warnings []models.APIWarning
-	if h.permissionService != nil {
-		var userIDs []int
-		rows, err := h.db.Query("SELECT user_id FROM group_members WHERE group_id = ?", groupID)
-		if err == nil {
-			defer func() { _ = rows.Close() }()
-			for rows.Next() {
-				var userID int
-				if err := rows.Scan(&userID); err == nil {
-					userIDs = append(userIDs, userID)
-				}
-			}
-			if err := rows.Err(); err != nil {
-				warnings = append(warnings, createCacheWarning("permission", err, fmt.Sprintf("group_id:%d", groupID)))
-			}
-
-			// Invalidate cache for each user in the group
-			for _, userID := range userIDs {
-				if err := h.permissionService.OnUserPermissionChanged(userID); err != nil {
-					warnings = append(warnings, createCacheWarning("permission", err, fmt.Sprintf("user_id:%d,group_id:%d", userID, groupID)))
-				}
-			}
-		}
-	}
+	warnings := h.invalidateGroupMemberCaches(groupID)
 
 	// Log audit event
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
-		var permissionName, groupName string
-		if err := h.db.QueryRow("SELECT permission_name FROM permissions WHERE id = ?", permissionID).Scan(&permissionName); err != nil {
+		permissionName, err := h.repo.GetName(permissionID)
+		if err != nil {
 			slog.Warn("failed to look up permission name", slog.Any("error", err))
 		}
-		if err := h.db.QueryRow("SELECT name FROM groups WHERE id = ?", groupID).Scan(&groupName); err != nil {
+		groupName, err := h.repo.GetGroupName(groupID)
+		if err != nil {
 			slog.Warn("failed to look up group name", slog.Any("error", err))
 		}
 
-		_ = logger.LogAudit(h.db, logger.AuditEvent{
+		h.auditor.LogEvent(logger.AuditEvent{
 			UserID:       currentUser.ID,
 			Username:     currentUser.Username,
 			IPAddress:    utils.GetClientIP(r),
@@ -505,148 +426,51 @@ func (h *PermissionHandler) getUserPermissionSummary(userID int) (*models.UserPe
 	}
 
 	// Get user info
-	var user models.User
-	err := h.db.QueryRow(`
-		SELECT id, email, username, first_name, last_name, is_active
-		FROM users WHERE id = ?
-	`, userID).Scan(&user.ID, &user.Email, &user.Username, &user.FirstName, &user.LastName, &user.IsActive)
+	user, err := h.repo.GetUserBasic(userID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get user info: %w", err)
+		return nil, err
 	}
-	summary.User = &user
+	summary.User = user
 
 	// Get global permissions
-	globalQuery := `
-		SELECT ugp.id, ugp.user_id, ugp.permission_id, ugp.granted_by, ugp.granted_at,
-		       p.id, p.permission_key, p.permission_name, p.description, p.scope, p.is_system, p.created_at, p.updated_at
-		FROM user_global_permissions ugp
-		JOIN permissions p ON ugp.permission_id = p.id
-		WHERE ugp.user_id = ?
-		ORDER BY p.permission_name
-	`
-
-	rows, err := h.db.Query(globalQuery, userID)
+	globalGrants, err := h.repo.ListUserGlobalGrants(userID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get global permissions: %w", err)
+		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
-
-	for rows.Next() {
-		var ugp models.UserGlobalPermission
-		var p models.Permission
-
-		err = rows.Scan(
-			&ugp.ID, &ugp.UserID, &ugp.PermissionID, &ugp.GrantedBy, &ugp.GrantedAt,
-			&p.ID, &p.PermissionKey, &p.PermissionName, &p.Description, &p.Scope, &p.IsSystem, &p.CreatedAt, &p.UpdatedAt,
-		)
-		if err != nil {
-			continue
-		}
-
-		ugp.Permission = &p
+	for _, ugp := range globalGrants {
 		summary.GlobalPermissions = append(summary.GlobalPermissions, ugp)
-
-		if p.PermissionKey == models.PermissionSystemAdmin {
+		if ugp.Permission != nil && ugp.Permission.PermissionKey == models.PermissionSystemAdmin {
 			summary.HasSystemAdmin = true
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
 	}
 
 	// Get permissions inherited from groups
-	groupPermissionsQuery := `
-		SELECT DISTINCT ggp.id, ggp.permission_id, ggp.granted_by, ggp.granted_at,
-		       p.id, p.permission_key, p.permission_name, p.description, p.scope, p.is_system, p.created_at, p.updated_at
-		FROM group_members gm
-		JOIN group_global_permissions ggp ON gm.group_id = ggp.group_id
-		JOIN permissions p ON ggp.permission_id = p.id
-		JOIN groups g ON gm.group_id = g.id
-		WHERE gm.user_id = ? AND g.is_active = true
-		ORDER BY p.permission_name
-	`
-
-	groupRows, err := h.db.Query(groupPermissionsQuery, userID)
+	groupGrants, err := h.repo.ListUserGroupGlobalGrants(userID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get group permissions: %w", err)
+		return nil, err
 	}
-	defer func() { _ = groupRows.Close() }()
-
-	for groupRows.Next() {
-		var ugp models.UserGlobalPermission
-		var p models.Permission
-
-		err = groupRows.Scan(
-			&ugp.ID, &ugp.PermissionID, &ugp.GrantedBy, &ugp.GrantedAt,
-			&p.ID, &p.PermissionKey, &p.PermissionName, &p.Description, &p.Scope, &p.IsSystem, &p.CreatedAt, &p.UpdatedAt,
-		)
-		if err != nil {
-			continue
-		}
-
-		// Set UserID to the queried user (not the group)
-		ugp.UserID = userID
-		ugp.Permission = &p
+	for _, ugp := range groupGrants {
 		summary.GlobalPermissions = append(summary.GlobalPermissions, ugp)
-
-		if p.PermissionKey == models.PermissionSystemAdmin {
+		if ugp.Permission != nil && ugp.Permission.PermissionKey == models.PermissionSystemAdmin {
 			summary.HasSystemAdmin = true
 		}
 	}
-	if err := groupRows.Err(); err != nil {
-		return nil, err
-	}
 
 	// Get workspace permissions from explicit role assignments
-	workspaceQuery := `
-		SELECT uwr.workspace_id, uwr.role_id, uwr.granted_by, uwr.granted_at,
-		       p.id, p.permission_key, p.permission_name, p.description, p.scope, p.is_system, p.created_at, p.updated_at,
-		       w.id, w.name, w.description, w.key
-		FROM user_workspace_roles uwr
-		JOIN role_permissions rp ON uwr.role_id = rp.role_id
-		JOIN permissions p ON rp.permission_id = p.id
-		JOIN workspaces w ON uwr.workspace_id = w.id
-		WHERE uwr.user_id = ?
-		ORDER BY w.name, p.permission_name
-	`
-
 	// Track already-added workspace permissions to avoid duplicates
 	addedPerms := make(map[int]map[string]bool) // workspace_id -> permission_key -> true
 
-	rows, err = h.db.Query(workspaceQuery, userID)
+	workspaceGrants, err := h.repo.ListUserWorkspaceRoleGrants(userID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get workspace permissions: %w", err)
+		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
-
-	for rows.Next() {
-		var uwp models.UserWorkspacePermission
-		var p models.Permission
-		var w models.Workspace
-		var roleID int
-
-		err := rows.Scan(
-			&uwp.WorkspaceID, &roleID, &uwp.GrantedBy, &uwp.GrantedAt,
-			&p.ID, &p.PermissionKey, &p.PermissionName, &p.Description, &p.Scope, &p.IsSystem, &p.CreatedAt, &p.UpdatedAt,
-			&w.ID, &w.Name, &w.Description, &w.Key,
-		)
-		if err != nil {
-			continue
-		}
-
-		uwp.UserID = userID
-		uwp.PermissionID = p.ID
-		uwp.Permission = &p
-		uwp.Workspace = &w
+	for _, uwp := range workspaceGrants {
 		summary.WorkspacePermissions = append(summary.WorkspacePermissions, uwp)
 
 		if addedPerms[uwp.WorkspaceID] == nil {
 			addedPerms[uwp.WorkspaceID] = make(map[string]bool)
 		}
-		addedPerms[uwp.WorkspaceID][p.PermissionKey] = true
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+		addedPerms[uwp.WorkspaceID][uwp.Permission.PermissionKey] = true
 	}
 
 	// Supplement with group-based and "Everyone" implicit permissions from the
@@ -657,21 +481,9 @@ func (h *PermissionHandler) getUserPermissionSummary(userID int) (*models.UserPe
 		if cacheErr == nil && !effectiveCache.IsSystemAdmin {
 			// Build a permission-key → Permission lookup so we can populate the
 			// Permission field on synthetic UserWorkspacePermission entries.
-			permLookup := make(map[string]*models.Permission)
-			permRows, permErr := h.db.Query(`
-				SELECT id, permission_key, permission_name, description, scope, is_system, created_at, updated_at
-				FROM permissions
-			`)
-			if permErr == nil {
-				defer func() { _ = permRows.Close() }()
-				for permRows.Next() {
-					var p models.Permission
-					if scanErr := permRows.Scan(&p.ID, &p.PermissionKey, &p.PermissionName, &p.Description, &p.Scope, &p.IsSystem, &p.CreatedAt, &p.UpdatedAt); scanErr == nil {
-						cp := p // copy to avoid pointer reuse
-						permLookup[p.PermissionKey] = &cp
-					}
-				}
-				_ = permRows.Err()
+			permLookup, lookupErr := h.repo.PermissionsByKey()
+			if lookupErr != nil {
+				permLookup = make(map[string]*models.Permission)
 			}
 
 			// Build a workspace ID → Workspace lookup for workspaces we haven't seen yet.
@@ -695,19 +507,14 @@ func (h *PermissionHandler) getUserPermissionSummary(userID int) (*models.UserPe
 			}
 
 			if len(needWSIDs) > 0 {
-				wsRows, wsErr := h.db.Query(`SELECT id, name, description, key FROM workspaces`)
+				workspaces, wsErr := h.repo.ListWorkspacesBasic()
 				if wsErr == nil {
-					defer func() { _ = wsRows.Close() }()
-					for wsRows.Next() {
-						var w models.Workspace
-						if scanErr := wsRows.Scan(&w.ID, &w.Name, &w.Description, &w.Key); scanErr == nil {
-							if needWSIDs[w.ID] {
-								cp := w
-								wsLookup[w.ID] = &cp
-							}
+					for _, w := range workspaces {
+						if needWSIDs[w.ID] {
+							cp := w
+							wsLookup[w.ID] = &cp
 						}
 					}
-					_ = wsRows.Err()
 				}
 			}
 
@@ -770,37 +577,8 @@ func (h *PermissionHandler) getSessionUserID(r *http.Request) int {
 
 // GetAllGroupPermissions returns all group permission assignments
 func (h *PermissionHandler) GetAllGroupPermissions(w http.ResponseWriter, r *http.Request) {
-	query := `
-		SELECT ggp.group_id, ggp.permission_id, ggp.granted_by, ggp.granted_at
-		FROM group_global_permissions ggp
-		ORDER BY ggp.group_id, ggp.permission_id
-	`
-
-	rows, err := h.db.Query(query)
+	groupPermissions, err := h.repo.ListGroupGlobalGrants()
 	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	defer func() { _ = rows.Close() }()
-
-	type GroupPermission struct {
-		GroupID      int    `json:"group_id"`
-		PermissionID int    `json:"permission_id"`
-		GrantedBy    *int   `json:"granted_by"`
-		GrantedAt    string `json:"granted_at"`
-	}
-
-	// Initialize as empty slice to ensure JSON encoding returns [] instead of null
-	groupPermissions := make([]GroupPermission, 0)
-	for rows.Next() {
-		var gp GroupPermission
-		err := rows.Scan(&gp.GroupID, &gp.PermissionID, &gp.GrantedBy, &gp.GrantedAt)
-		if err != nil {
-			continue
-		}
-		groupPermissions = append(groupPermissions, gp)
-	}
-	if err := rows.Err(); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
