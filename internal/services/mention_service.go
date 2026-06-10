@@ -11,6 +11,7 @@ import (
 
 	"windshift/internal/database"
 	"windshift/internal/models"
+	"windshift/internal/repository"
 )
 
 // MentionPattern matches @username or @"Display Name" patterns
@@ -300,14 +301,7 @@ func (s *MentionService) emitMentionNotification(params ProcessMentionsParams, m
 	}
 
 	// Get item details for rich notification
-	var itemTitle, workspaceKey string
-	var workspaceItemNumber int
-	err := s.db.QueryRow(`
-		SELECT i.title, w.key, i.workspace_item_number
-		FROM items i
-		JOIN workspaces w ON i.workspace_id = w.id
-		WHERE i.id = ?
-	`, params.ItemID).Scan(&itemTitle, &workspaceKey, &workspaceItemNumber)
+	item, err := repository.NewItemRepository(s.db).FindByIDWithDetails(params.ItemID)
 	if err != nil {
 		slog.Error("Error fetching item details", slog.String("component", "mentions"), slog.Any("error", err))
 		return
@@ -324,7 +318,7 @@ func (s *MentionService) emitMentionNotification(params ProcessMentionsParams, m
 	}
 	actorName := strings.TrimSpace(actorFirstName + " " + actorLastName)
 
-	itemKey := fmt.Sprintf("%s-%d", workspaceKey, workspaceItemNumber)
+	itemKey := fmt.Sprintf("%s-%d", item.WorkspaceKey, item.WorkspaceItemNumber)
 
 	// Determine source type description
 	var sourceTypeDesc string
@@ -345,7 +339,7 @@ func (s *MentionService) emitMentionNotification(params ProcessMentionsParams, m
 	// this case.
 	title := "You were mentioned"
 	message := fmt.Sprintf("%s mentioned you in %s on %s (%s)",
-		actorName, sourceTypeDesc, itemTitle, itemKey)
+		actorName, sourceTypeDesc, item.Title, itemKey)
 	if err := s.notificationService.NotifyUsers(
 		[]int{mentionedUserID},
 		params.WorkspaceID,

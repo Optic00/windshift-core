@@ -11,7 +11,6 @@ import (
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/sanitize"
-	"windshift/internal/utils"
 )
 
 // WebhookDispatcher is an interface for dispatching webhook events.
@@ -103,20 +102,10 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 	// 1. Sanitize content (XSS prevention — strips HTML tags + dangerous Markdown URLs)
 	sanitizedContent := sanitize.Comment.Sanitize(params.Content)
 
-	// 2. Get item details for notifications
-	var workspaceID int
-	var itemTitle string
-	var workspaceItemNumber int
-	var workspaceKey string
-	var assigneeID, creatorID sql.NullInt64
-	err := s.db.QueryRow(`
-		SELECT i.workspace_id, i.title, i.workspace_item_number, w.key, i.assignee_id, i.creator_id
-		FROM items i
-		JOIN workspaces w ON i.workspace_id = w.id
-		WHERE i.id = ?
-	`, params.ItemID).Scan(&workspaceID, &itemTitle, &workspaceItemNumber, &workspaceKey, &assigneeID, &creatorID)
+	// 2. Get item details for notifications and the webhook payload
+	item, err := repository.NewItemRepository(s.db).FindByIDWithDetails(params.ItemID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, repository.ErrNotFound) {
 			return nil, fmt.Errorf("item not found: %d", params.ItemID)
 		}
 		return nil, fmt.Errorf("failed to fetch item details: %w", err)
@@ -166,9 +155,6 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 	if !params.SuppressNotifications {
 		// 5. Emit notification event (if notificationService != nil)
 		if s.notificationService != nil {
-			assigneeIDPtr := utils.NullInt64ToPtr(assigneeID)
-			creatorIDPtr := utils.NullInt64ToPtr(creatorID)
-
 			// Get actor name for notification
 			var actorName string
 			if params.PortalCustomerID != nil {
@@ -189,7 +175,7 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 			}
 
 			// Construct the item key (e.g., "TST-1")
-			itemKey := fmt.Sprintf("%s-%d", workspaceKey, workspaceItemNumber)
+			itemKey := fmt.Sprintf("%s-%d", item.WorkspaceKey, item.WorkspaceItemNumber)
 
 			slog.Debug("emitting notification event for comment",
 				slog.String("component", "comment_service"),
@@ -199,14 +185,14 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 
 			s.notificationService.EmitEvent(&NotificationEvent{
 				EventType:   models.EventCommentCreated,
-				WorkspaceID: workspaceID,
+				WorkspaceID: item.WorkspaceID,
 				ActorUserID: params.ActorUserID,
 				ItemID:      params.ItemID,
-				AssigneeID:  assigneeIDPtr,
-				CreatorID:   creatorIDPtr,
+				AssigneeID:  item.AssigneeID,
+				CreatorID:   item.CreatorID,
 				Title:       "New Comment Added",
 				TemplateData: map[string]interface{}{
-					"item.title": itemTitle,
+					"item.title": item.Title,
 					"item.key":   itemKey,
 					"item.id":    params.ItemID,
 					"user.name":  actorName,
@@ -221,7 +207,7 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 				SourceID:    int(commentID),
 				Content:     params.Content, // Use original content for mention parsing
 				ItemID:      params.ItemID,
-				WorkspaceID: workspaceID,
+				WorkspaceID: item.WorkspaceID,
 				ActorUserID: params.ActorUserID,
 			}); err != nil {
 				slog.Warn("failed to process mentions",
@@ -235,11 +221,7 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 
 		// 7. Dispatch webhook (if webhookSender != nil)
 		if s.webhookSender != nil {
-			// Get full item for webhook payload
-			itemRepo := repository.NewItemRepository(s.db)
-			if item, err := itemRepo.FindByIDWithDetails(params.ItemID); err == nil {
-				go s.webhookSender.DispatchEvent("comment.created", item)
-			}
+			go s.webhookSender.DispatchEvent("comment.created", item)
 		}
 
 		// 8. Handle outbound email reply (if emailReplyService != nil)
