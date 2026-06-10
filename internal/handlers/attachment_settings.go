@@ -5,6 +5,7 @@ import (
 
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
@@ -42,6 +43,11 @@ func (h *AttachmentSettingsHandler) Update(w http.ResponseWriter, r *http.Reques
 	req, ok := decodeJSON[models.AttachmentSettingsRequest](w, r)
 	if !ok {
 		return
+	}
+	// MIME types are identifier-shaped ("image/png") and render in the
+	// attachment-settings admin table.
+	for i := range req.AllowedMimeTypes {
+		sanitize.Apply(&req.AllowedMimeTypes[i], sanitize.ShortIdentifier)
 	}
 
 	settings, err := h.settingsService.Update(settingsID, &req)

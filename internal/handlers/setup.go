@@ -11,6 +11,7 @@ import (
 	"windshift/internal/llm"
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
 	"windshift/internal/utils"
 
 	"golang.org/x/crypto/bcrypt"
@@ -58,6 +59,15 @@ func (h *SetupHandler) CompleteInitialSetup(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
+	// First/last name render across the app (avatars, mentions, audit
+	// log); username + email are identifier-shaped. Password is hashed
+	// and deliberately left untouched.
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.AdminUser.FirstName, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.AdminUser.LastName, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.AdminUser.Username, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.AdminUser.Email, Policy: sanitize.ShortIdentifier},
+	)
 
 	// Validate the setup request
 	if err := h.validateSetupRequest(req); err != nil {
@@ -336,6 +346,16 @@ func (h *SetupHandler) UpdateAIFeaturesConfig(w http.ResponseWriter, r *http.Req
 	cfg, ok := decodeJSON[models.AIFeaturesConfig](w, r)
 	if !ok {
 		return
+	}
+	// Feature keys are identifier-shaped ("daily_briefing"), persisted,
+	// and echoed back in the validation errors below. Sanitize is
+	// idempotent, so re-visiting a reinserted key during range is a
+	// no-op. Mode and Schedule are strictly allowlisted below.
+	for key, fc := range cfg {
+		if clean := sanitize.ShortIdentifier.Sanitize(key); clean != key {
+			delete(cfg, key)
+			cfg[clean] = fc
+		}
 	}
 
 	validModes := map[models.AIFeatureMode]bool{
