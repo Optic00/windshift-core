@@ -14,6 +14,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
 
@@ -82,6 +83,20 @@ type ApproveRequest struct {
 	Scopes      []string `json:"scopes"`
 }
 
+// sanitizeApproveRequest scrubs the user-facing fields on the consent
+// payload. Hostname surfaces in token names + audit details, FirstName /
+// LastName seed the agent profile; State is identifier-shaped (opaque
+// random from the CLI). CallbackURL goes through the strict loopback
+// validator and AgentName through sanitizeAgentName instead.
+func sanitizeApproveRequest(req *ApproveRequest) {
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.State, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.Hostname, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.FirstName, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.LastName, Policy: sanitize.PlainTextField},
+	)
+}
+
 // Approve is called when the user clicks "Allow" on the consent page. It
 // creates (or reuses) an agent owned by the current user, mints a token,
 // and returns a one-time `code` the CLI can redeem at /exchange.
@@ -95,6 +110,7 @@ func (h *CLIAuthHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	sanitizeApproveRequest(&req)
 
 	if err := validateLoopbackCallback(req.CallbackURL); err != nil {
 		respondBadRequest(w, r, err.Error())
@@ -262,6 +278,7 @@ func (h *CLIAuthHandler) Deny(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req, _ := decodeJSON[ApproveRequest](w, r) // best-effort body, optional fields
+	sanitizeApproveRequest(&req)
 
 	h.auditor.LogWithDetails(r, currentUser, "cli_onboarding.deny", logger.ResourceUser, nil, "", map[string]interface{}{
 		"hostname":   req.Hostname,

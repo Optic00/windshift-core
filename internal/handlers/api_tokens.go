@@ -13,6 +13,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
@@ -72,6 +73,7 @@ func (ath *APITokenHandler) CreateToken(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
+	sanitize.Apply(&request.Name, sanitize.PlainTextField)
 
 	// Validate required fields
 	if request.Name == "" {

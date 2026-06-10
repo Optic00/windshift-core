@@ -19,6 +19,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
@@ -160,6 +161,10 @@ func (h *AdminOAuthClientHandler) CreateClient(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Slug, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.DisplayName, Policy: sanitize.PlainTextField},
+	)
 
 	req.Slug = strings.TrimSpace(req.Slug)
 	req.DisplayName = strings.TrimSpace(req.DisplayName)
@@ -277,6 +282,7 @@ func (h *AdminOAuthClientHandler) UpdateClient(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
+	sanitize.Apply(&req.DisplayName, sanitize.PlainTextField)
 
 	existing, err := scanOAuthClient(h.queryClientByID(id))
 	if errors.Is(err, sql.ErrNoRows) {

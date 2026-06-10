@@ -11,6 +11,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
 
@@ -83,6 +84,7 @@ func (h *CredentialHandler) CreateSSHKey(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	sanitize.Apply(&req.CredentialName, sanitize.PlainTextField)
 
 	// Validate input
 	if req.CredentialName == "" {
