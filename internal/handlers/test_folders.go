@@ -9,6 +9,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
@@ -96,6 +97,9 @@ func (h *TestFolderHandler) CreateFolder(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	folder.Name = sanitize.PlainTextField.Sanitize(folder.Name)
+	folder.Description = sanitize.RichText.Sanitize(folder.Description)
+
 	created, err := h.service.Create(workspaceID, folder)
 	if err != nil {
 		h.writeFolderServiceError(w, r, err)
@@ -132,6 +136,9 @@ func (h *TestFolderHandler) UpdateFolder(w http.ResponseWriter, r *http.Request)
 		respondBadRequest(w, r, "Invalid request body")
 		return
 	}
+
+	folder.Name = sanitize.PlainTextField.Sanitize(folder.Name)
+	folder.Description = sanitize.RichText.Sanitize(folder.Description)
 
 	var rawPayload map[string]json.RawMessage
 	if err = json.Unmarshal(body, &rawPayload); err != nil {
