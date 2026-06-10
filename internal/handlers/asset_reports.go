@@ -45,6 +45,24 @@ func (h *AssetReportHandler) GetAllForChannel(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+
+	// Report definitions expose cql_query and visibility ACL config, so gate
+	// the list by manager scope on the channel just like the single-report Get
+	// (404, not 403, to avoid disclosing the channel exists).
+	canManage, err := h.channelService.UserCanManage(r.Context(), user.ID, channelID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	if !canManage {
+		respondNotFound(w, r, "channel")
+		return
+	}
+
 	reports, err := h.repo.ListByChannel(channelID)
 	if err != nil {
 		respondInternalError(w, r, err)
