@@ -36,6 +36,12 @@ export default {
     searchUser: 'Search user...',
     searchGroup: 'Search group...',
 
+    // Agent presence in assignment pickers (WI-272)
+    agentOnline: 'Agent online — a live runner will pick up assigned items',
+    agentOffline: 'Agent offline — its runner pool has no live runner; assigned items will queue',
+    agentLocal: 'Agent runs on this server',
+    agentUnbound: 'No agent binding in this workspace — assigning will not start a run',
+
     // Group Picker
     selectGroup: 'Select group',
 

@@ -187,9 +187,20 @@
     return { label: 'Active', appearance: 'success' };
   }
 
+  // Mirrors the server's RunnerLivenessWindow (90s, ~3 missed heartbeats):
+  // past it the lease reaper treats the runner as dead, so the UI must not
+  // keep calling it active.
+  const HEARTBEAT_FRESH_MS = 90_000;
+
   function instanceStatus(inst) {
     if (inst.revoked_at) return { label: 'Revoked', appearance: 'removed' };
-    if (inst.status === 'active') return { label: 'Active', appearance: 'success' };
+    if (inst.status === 'active') {
+      const lastSeen = inst.last_heartbeat_at || inst.registered_at;
+      if (lastSeen && Date.now() - new Date(lastSeen).getTime() <= HEARTBEAT_FRESH_MS) {
+        return { label: 'Online', appearance: 'success' };
+      }
+      return { label: 'Stale', appearance: 'warning' };
+    }
     return { label: inst.status || 'Unknown', appearance: 'default' };
   }
 

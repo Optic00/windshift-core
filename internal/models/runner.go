@@ -13,6 +13,12 @@ const (
 	RunnerInstanceStatusRevoked = "revoked"
 )
 
+// RunnerLivenessWindow is how recent a runner's heartbeat must be to count
+// as live: ~3 missed 30s heartbeats. Shared by the lease reaper (reaping
+// threshold) and the agent-presence surfaces (online/offline derivation,
+// WI-272) so "offline" in the UI and "dead" to the reaper never disagree.
+const RunnerLivenessWindow = 90 * time.Second
+
 // RunnerRegistrationToken is a reusable, pool-scoped, revocable token an
 // operator bakes into a runner deployment. A runner presents it to register
 // and exchanges it for a per-instance RunnerInstance credential. Revoking it

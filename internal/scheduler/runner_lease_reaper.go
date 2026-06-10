@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"windshift/internal/models"
 	"windshift/internal/repository"
 )
 
@@ -35,7 +36,7 @@ type RunnerLeaseReaper struct {
 
 const (
 	defaultReaperInterval   = 60 * time.Second
-	defaultReaperStaleAfter = 90 * time.Second // ~3 missed 30s heartbeats
+	defaultReaperStaleAfter = models.RunnerLivenessWindow
 
 	// defaultQueuedStallAfter is how long a remote-pool run may sit queued
 	// (unclaimed) before each sweep flags it. Claims poll every ~2s, so a

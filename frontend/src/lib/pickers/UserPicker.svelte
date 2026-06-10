@@ -96,6 +96,17 @@
     return result;
   });
 
+  // Agent presence (WI-272): the assignable-users endpoint decorates agent
+  // users with whether anything would actually pick up an assigned item.
+  function presenceMeta(presence) {
+    switch (presence) {
+      case 'online': return { color: '#22c55e', label: t('pickers.agentOnline') };
+      case 'local': return { color: '#22c55e', label: t('pickers.agentLocal') };
+      case 'offline': return { color: '#ef4444', label: t('pickers.agentOffline') };
+      default: return { color: '#9ca3af', label: t('pickers.agentUnbound') };
+    }
+  }
+
   // Handle selection
   function handleSelect(user) {
     wasSelectionMade = true;
@@ -323,8 +334,17 @@
                 size="sm"
               />
               <div class="flex flex-col min-w-0 flex-1">
-                <span class="font-medium truncate" style="color: var(--ds-text);">
+                <span class="font-medium truncate flex items-center gap-1.5" style="color: var(--ds-text);">
                   {user.first_name} {user.last_name}
+                  {#if user.agent_presence}
+                    {@const presence = presenceMeta(user.agent_presence)}
+                    <span
+                      class="inline-block w-2 h-2 rounded-full shrink-0"
+                      style="background-color: {presence.color};"
+                      title={presence.label}
+                      data-testid={`agent-presence-${user.id}`}
+                    ></span>
+                  {/if}
                 </span>
                 <Text size="xs" variant="subtle" truncate>{user.email}</Text>
               </div>
