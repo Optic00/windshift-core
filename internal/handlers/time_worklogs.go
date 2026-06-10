@@ -456,6 +456,16 @@ func (h *TimeWorklogHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// An item link is optional (item_id is nullable), but when one is supplied
+	// the caller must be able to view that item. CheckItemPermission returns 404
+	// on both not-found and no-permission so we don't disclose the item (or its
+	// title / workspace key) to callers who can't see it.
+	if req.ItemID != nil && *req.ItemID > 0 {
+		if !CheckItemPermission(w, r, repository.NewItemRepository(h.db), h.permissionService, *req.ItemID, models.PermissionItemView) {
+			return
+		}
+	}
+
 	// Debug: Log the received request
 	slog.Debug("received worklog request", slog.String("component", "time_tracking"), slog.Int("project_id", req.ProjectID), slog.String("description", req.Description))
 
@@ -539,6 +549,15 @@ func (h *TimeWorklogHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !canBook {
 		respondForbidden(w, r)
 		return
+	}
+
+	// The item_id being set on the worklog (it may be changing) is optional, but
+	// when present the caller must be able to view it. 404 on failure hides the
+	// item rather than disclosing it via the re-read joined row below.
+	if req.ItemID != nil && *req.ItemID > 0 {
+		if !CheckItemPermission(w, r, repository.NewItemRepository(h.db), h.permissionService, *req.ItemID, models.PermissionItemView) {
+			return
+		}
 	}
 
 	warnings := sanitize.ApplyAllWithWarnings(
