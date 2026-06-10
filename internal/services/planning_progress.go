@@ -1,13 +1,13 @@
 package services
 
 import (
-	"database/sql"
 	"fmt"
 
-	"windshift/internal/database"
+	"windshift/internal/models"
+	"windshift/internal/repository"
 )
 
-// last review: ser, 080626, NOTE: is this file still used?
+// last review: ser, 080626
 
 // StatusBreakdown represents item counts per status category in a progress report.
 // Used by both milestones and iterations.
@@ -34,7 +34,7 @@ type ProgressItem struct {
 	AssigneeAvatar string `json:"assignee_avatar,omitempty"`
 }
 
-// progressAccumulator collects items and computes progress stats from query rows.
+// progressAccumulator collects items and computes progress stats.
 type progressAccumulator struct {
 	TotalItems      int
 	CompletedItems  int
@@ -43,51 +43,82 @@ type progressAccumulator struct {
 	ItemsByCategory map[string][]ProgressItem
 }
 
-// buildProgressReport scans rows of progress items and returns computed stats.
-// Each row must supply the 14-column shape: id, title, workspace_id, workspace_key,
-// item_number, category_name, category_color, is_completed, status_name, status_color,
-// priority_name, priority_color, assignee_name, assignee_avatar.
-// last review: ser, 080626, FIXME: please use the ItemHandler / Service
-func buildProgressReport(rows *sql.Rows) (*progressAccumulator, error) { //nolint:unparam // error is always nil but kept for consistency with scan pattern
+// progressPageSize matches the item repository's pagination cap.
+const progressPageSize = 1000
+
+// buildProgressReport lists all items matching the given filters (e.g.
+// MilestoneID or IterationID) through the item repository and computes
+// progress stats, grouping items by status category.
+func (s *PlanningService) buildProgressReport(filters repository.ItemFilters) (*progressAccumulator, error) {
+	statuses, err := s.statuses.List()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list statuses: %w", err)
+	}
+	statusByID := make(map[int]models.Status, len(statuses))
+	for _, st := range statuses {
+		statusByID[st.ID] = st
+	}
+
 	acc := &progressAccumulator{
 		ItemsByCategory: make(map[string][]ProgressItem),
 	}
-
 	breakdownMap := make(map[string]*StatusBreakdown)
 
-	for rows.Next() {
-		var item ProgressItem
-		var categoryName, categoryColor string
-		var isCompleted bool
-		var statusColor, priorityColor sql.NullString
-
-		err := rows.Scan(
-			&item.ID, &item.Title, &item.WorkspaceID, &item.WorkspaceKey, &item.ItemNumber,
-			&categoryName, &categoryColor, &isCompleted,
-			&item.StatusName, &statusColor,
-			&item.PriorityName, &priorityColor,
-			&item.AssigneeName, &item.AssigneeAvatar,
-		)
+	for offset := 0; ; offset += progressPageSize {
+		items, total, err := s.items.FindAllWithDetails(repository.ItemListParams{
+			Filters:    filters,
+			Pagination: repository.PaginationParams{Limit: progressPageSize, Offset: offset},
+			SortBy:     "key",
+			SortAsc:    true,
+		})
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("failed to query progress items: %w", err)
 		}
 
-		item.StatusColor = statusColor.String
-		item.PriorityColor = priorityColor.String
+		for _, item := range items {
+			categoryName := "No Status"
+			categoryColor := "#9ca3af"
+			statusColor := ""
+			isCompleted := false
+			if item.StatusID != nil {
+				if st, ok := statusByID[*item.StatusID]; ok {
+					categoryName = st.CategoryName
+					categoryColor = st.CategoryColor
+					statusColor = st.CategoryColor
+					isCompleted = st.IsCompleted
+				}
+			}
 
-		if _, exists := breakdownMap[categoryName]; !exists {
-			breakdownMap[categoryName] = &StatusBreakdown{
-				CategoryName:  categoryName,
-				CategoryColor: categoryColor,
-				IsCompleted:   isCompleted,
+			if _, exists := breakdownMap[categoryName]; !exists {
+				breakdownMap[categoryName] = &StatusBreakdown{
+					CategoryName:  categoryName,
+					CategoryColor: categoryColor,
+					IsCompleted:   isCompleted,
+				}
+			}
+			breakdownMap[categoryName].ItemCount++
+
+			acc.ItemsByCategory[categoryName] = append(acc.ItemsByCategory[categoryName], ProgressItem{
+				ID:             item.ID,
+				Title:          item.Title,
+				WorkspaceID:    item.WorkspaceID,
+				WorkspaceKey:   item.WorkspaceKey,
+				ItemNumber:     item.WorkspaceItemNumber,
+				StatusName:     item.StatusName,
+				StatusColor:    statusColor,
+				PriorityName:   item.PriorityName,
+				PriorityColor:  item.PriorityColor,
+				AssigneeName:   item.AssigneeName,
+				AssigneeAvatar: item.AssigneeAvatar,
+			})
+			acc.TotalItems++
+			if isCompleted {
+				acc.CompletedItems++
 			}
 		}
-		breakdownMap[categoryName].ItemCount++
 
-		acc.ItemsByCategory[categoryName] = append(acc.ItemsByCategory[categoryName], item)
-		acc.TotalItems++
-		if isCompleted {
-			acc.CompletedItems++
+		if len(items) == 0 || offset+len(items) >= total {
+			break
 		}
 	}
 
@@ -101,38 +132,4 @@ func buildProgressReport(rows *sql.Rows) (*progressAccumulator, error) { //nolin
 	}
 
 	return acc, nil
-}
-
-// queryProgressItems runs the standard progress-items query, filtering by the
-// given WHERE clause (e.g. "i.iteration_id = ?" or an EXISTS subquery against
-// item_milestones), and returns the computed progress accumulator.
-// last review: ser, 080626, FIXME: Should use item handler
-func queryProgressItems(db database.Database, whereClause string, arg int) (*progressAccumulator, error) {
-	rows, err := db.Query(`
-		SELECT
-			i.id, i.title, i.workspace_id, w.key as workspace_key, i.workspace_item_number,
-			COALESCE(sc.name, 'No Status') as category_name,
-			COALESCE(sc.color, '#9ca3af') as category_color,
-			COALESCE(sc.is_completed, false) as is_completed,
-			COALESCE(st.name, '') as status_name,
-			COALESCE(sc.color, '') as status_color,
-			COALESCE(p.name, '') as priority_name,
-			COALESCE(p.color, '') as priority_color,
-			COALESCE(u.first_name || ' ' || u.last_name, '') as assignee_name,
-			COALESCE(u.avatar_url, '') as assignee_avatar
-		FROM items i
-		JOIN workspaces w ON i.workspace_id = w.id
-		LEFT JOIN statuses st ON i.status_id = st.id
-		LEFT JOIN status_categories sc ON st.category_id = sc.id
-		LEFT JOIN priorities p ON i.priority_id = p.id
-		LEFT JOIN users u ON i.assignee_id = u.id
-		WHERE `+whereClause+`
-		ORDER BY sc.name, i.workspace_item_number
-	`, arg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query progress items: %w", err)
-	}
-	defer rows.Close()
-
-	return buildProgressReport(rows)
 }
