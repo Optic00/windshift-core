@@ -1714,10 +1714,9 @@ func (as *ActionService) executeNotifyUser(node *models.ActionNode, ctx *models.
 // preferring the execution context's variable map and falling back to a direct
 // DB read of the item. Returns 0 when the field is absent or NULL.
 func (as *ActionService) lookupItemUserField(ctx *models.ExecutionContext, column, varName string) int {
-	if repository.IsAllowedItemColumn(column) {
-		var nid sql.NullInt64
-		if err := as.db.QueryRow(`SELECT `+column+` FROM items WHERE id = ?`, currentActionItemID(ctx)).Scan(&nid); err == nil && nid.Valid {
-			return int(nid.Int64)
+	if val, err := as.itemRepo.GetAllowedColumnValue(currentActionItemID(ctx), column); err == nil {
+		if nid, ok := val.(int64); ok {
+			return int(nid)
 		}
 	}
 	if ctx.Item != nil {
@@ -1973,8 +1972,7 @@ func (as *ActionService) executeUpdateAsset(node *models.ActionNode, ctx *models
 
 	itemID := currentActionItemID(ctx)
 	// Get the item's custom_field_values to find the asset reference
-	var customFieldValuesJSON sql.NullString
-	err := as.db.QueryRow(`SELECT custom_field_values FROM items WHERE id = ?`, itemID).Scan(&customFieldValuesJSON)
+	customFieldValuesJSON, err := as.itemRepo.GetCustomFieldValuesRaw(itemID)
 	if err != nil {
 		return fmt.Errorf("failed to get item custom_field_values: %w", err)
 	}
@@ -2180,9 +2178,8 @@ func (as *ActionService) executeCreateAsset(node *models.ActionNode, ctx *models
 
 	itemID := currentActionItemID(ctx)
 	// Get item's custom field values for field mapping
-	var customFieldValuesJSON sql.NullString
-	err := as.db.QueryRow(`SELECT custom_field_values FROM items WHERE id = ?`, itemID).Scan(&customFieldValuesJSON)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	customFieldValuesJSON, err := as.itemRepo.GetCustomFieldValuesRaw(itemID)
+	if err != nil && !errors.Is(err, repository.ErrNotFound) {
 		return fmt.Errorf("failed to get item custom_field_values: %w", err)
 	}
 
@@ -2310,7 +2307,11 @@ func (as *ActionService) executeRoundRobinAssign(node *models.ActionNode, ctx *m
 
 	// Get current assignee for event emission
 	var oldAssigneeID sql.NullInt64
-	_ = as.db.QueryRow(`SELECT assignee_id FROM items WHERE id = ?`, itemID).Scan(&oldAssigneeID)
+	if val, err := as.itemRepo.GetAllowedColumnValue(itemID, "assignee_id"); err == nil {
+		if nid, ok := val.(int64); ok {
+			oldAssigneeID = sql.NullInt64{Int64: nid, Valid: true}
+		}
+	}
 
 	// Get next assignee via round-robin
 	assigneeID, err := as.teamService.GetNextRoundRobinAssignee(node.ID, config.TeamID, config.SkipOnLeaveMembers, config.UseLeaveSubstitutes)

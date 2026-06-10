@@ -253,6 +253,27 @@ func (r *ItemRepository) GetPortalRequest(itemID int) (*PortalRequestRow, error)
 	return &row, nil
 }
 
+// GetPortalCreatorEmail returns the email of the portal customer who created
+// the item through the given channel. Returns ErrNotFound when the item does
+// not exist, was not created by a portal customer, or belongs to a different
+// channel.
+func (r *ItemRepository) GetPortalCreatorEmail(itemID, channelID int) (string, error) {
+	var email sql.NullString
+	err := r.db.QueryRow(`
+		SELECT pc.email
+		FROM items i
+		JOIN portal_customers pc ON pc.id = i.creator_portal_customer_id
+		WHERE i.id = ? AND i.channel_id = ?
+	`, itemID, channelID).Scan(&email)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && !email.Valid) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("get portal creator email: %w", err)
+	}
+	return email.String, nil
+}
+
 // --- Portal customer ticket lookups -----------------------------------------
 
 // PortalCustomerSubmission is one row returned by

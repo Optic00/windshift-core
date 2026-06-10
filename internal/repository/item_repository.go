@@ -848,6 +848,52 @@ func (r *ItemRepository) FindIDByKeyAndNumber(workspaceKey string, itemNumber in
 	return id, nil
 }
 
+// GetItemKey returns the "KEY-NUMBER" display key for an item (e.g. "WI-42").
+// Returns ErrNotFound when the item does not exist.
+func (r *ItemRepository) GetItemKey(itemID int) (string, error) {
+	var workspaceKey string
+	var itemNumber int
+	err := r.db.QueryRow(`
+		SELECT w.key, i.workspace_item_number
+		FROM items i
+		JOIN workspaces w ON i.workspace_id = w.id
+		WHERE i.id = ?
+	`, itemID).Scan(&workspaceKey, &itemNumber)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to get item key: %w", err)
+	}
+	return fmt.Sprintf("%s-%d", workspaceKey, itemNumber), nil
+}
+
+// itemUserRefColumns lists the read-only user-reference columns on items that
+// resolvers (e.g. approval steps) may select dynamically. Kept separate from
+// allowedItemColumns because that list also gates writes via UpdateFields.
+var itemUserRefColumns = map[string]bool{
+	"assignee_id": true,
+	"creator_id":  true,
+	"reporter_id": true,
+}
+
+// GetUserFieldTx returns the given user-reference column of an item inside a
+// transaction. Returns nil (without error) when the column is NULL.
+func (r *ItemRepository) GetUserFieldTx(ctx context.Context, tx database.Tx, itemID int, col string) (*int, error) {
+	if !itemUserRefColumns[col] {
+		return nil, fmt.Errorf("unknown item user column: %s", col)
+	}
+	var nid sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `SELECT `+col+` FROM items WHERE id = ?`, itemID).Scan(&nid); err != nil {
+		return nil, fmt.Errorf("get item column %s: %w", col, err)
+	}
+	if !nid.Valid {
+		return nil, nil
+	}
+	v := int(nid.Int64)
+	return &v, nil
+}
+
 // FindIDByKeyAndNumberInWorkspace resolves an item by workspace key + number,
 // additionally constrained to the given workspace — the key must belong to
 // that workspace or the lookup returns ErrNotFound. Used by SCM sync, where

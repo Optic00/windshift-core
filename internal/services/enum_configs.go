@@ -10,6 +10,7 @@ import (
 	"windshift/internal/constants"
 	"windshift/internal/database"
 	"windshift/internal/models"
+	"windshift/internal/repository"
 )
 
 // NewStatusCategoryConfig returns the configuration for StatusCategory CRUD
@@ -694,8 +695,8 @@ func NewStatusConfig() EnumConfig {
 			}
 
 			// Check items
-			var itemCount int
-			if err := db.QueryRow("SELECT COUNT(*) FROM items WHERE status_id = ?", id).Scan(&itemCount); err != nil {
+			itemCount, err := repository.NewItemRepository(db).CountByField("status_id", id)
+			if err != nil {
 				slog.Error("dependency check failed", slog.Any("error", err), slog.String("table", "items"), slog.Int("id", id))
 				return "Unable to verify dependencies — please try again"
 			}
@@ -889,8 +890,8 @@ func NewItemTypeConfig() EnumConfig {
 		},
 
 		CheckDependencies: func(db database.Database, id int) string {
-			var count int
-			if err := db.QueryRow("SELECT COUNT(*) FROM items WHERE item_type_id = ?", id).Scan(&count); err != nil {
+			count, err := repository.NewItemRepository(db).CountByField("item_type_id", id)
+			if err != nil {
 				slog.Error("dependency check failed", slog.Any("error", err), slog.String("table", "items"), slog.Int("id", id))
 				return "Unable to verify dependencies — please try again"
 			}

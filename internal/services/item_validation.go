@@ -104,16 +104,8 @@ func ValidateItemCreation(db database.Database, params ItemValidationParams) *It
 
 // validateParentHierarchy validates the parent-child hierarchy relationship
 func validateParentHierarchy(db database.Database, parentID, itemTypeID *int) *ItemValidationResult {
-	var parentItemTypeID sql.NullInt64
-	var parentItemTypeHierarchyLevel int
-	err := db.QueryRow(`
-		SELECT i.item_type_id, COALESCE(it.hierarchy_level, 0)
-		FROM items i
-		LEFT JOIN item_types it ON i.item_type_id = it.id
-		WHERE i.id = ?
-	`, *parentID).Scan(&parentItemTypeID, &parentItemTypeHierarchyLevel)
-
-	if errors.Is(err, sql.ErrNoRows) {
+	_, parentItemTypeHierarchyLevel, err := repository.NewItemRepository(db).GetItemTypeAndHierarchyLevel(*parentID)
+	if errors.Is(err, repository.ErrNotFound) {
 		return &ItemValidationResult{Valid: false, Error: "Parent item not found"}
 	}
 	if err != nil {

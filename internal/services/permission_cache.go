@@ -14,6 +14,7 @@ import (
 	"windshift/internal/cacheutil"
 	"windshift/internal/database"
 	"windshift/internal/models"
+	"windshift/internal/repository"
 
 	"github.com/allegro/bigcache/v3"
 )
@@ -273,10 +274,9 @@ func (ps *PermissionService) GetItemWorkspaceID(userID, itemID int) (int, error)
 	// Cache miss or item not in map - query database
 	atomic.AddInt64(&ps.misses, 1)
 
-	var workspaceID int
-	err = ps.db.QueryRow(`SELECT workspace_id FROM items WHERE id = ?`, itemID).Scan(&workspaceID)
+	workspaceID, err := repository.NewItemRepository(ps.db).GetWorkspaceID(itemID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, repository.ErrNotFound) {
 			return 0, fmt.Errorf("item not found: %d", itemID)
 		}
 		atomic.AddInt64(&ps.errors, 1)

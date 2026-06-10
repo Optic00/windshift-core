@@ -3,6 +3,7 @@ package repository
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -16,6 +17,27 @@ const maxItemHierarchyDepth = 30
 // aggregation. Sized so the IN-list stays well under SQLite's default
 // SQLITE_MAX_VARIABLE_NUMBER (32766) even with a handful of extra params.
 const defaultTimeRollupMaxItems = 500
+
+// GetItemTypeAndHierarchyLevel returns an item's item_type_id (nil when unset)
+// and the hierarchy level of that type (0 when the type has none). Returns
+// ErrNotFound when the item does not exist.
+func (r *ItemRepository) GetItemTypeAndHierarchyLevel(itemID int) (typeID *int, level int, err error) {
+	var itemTypeID sql.NullInt64
+	err = r.db.QueryRow(`
+		SELECT i.item_type_id, COALESCE(it.hierarchy_level, 0)
+		FROM items i
+		LEFT JOIN item_types it ON i.item_type_id = it.id
+		WHERE i.id = ?
+	`, itemID).Scan(&itemTypeID, &level)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, 0, ErrNotFound
+	}
+	if err != nil {
+		return nil, 0, fmt.Errorf("get item type hierarchy level: %w", err)
+	}
+	assignNullableInt(&typeID, itemTypeID)
+	return typeID, level, nil
+}
 
 // GetChildren returns direct children of an item
 func (r *ItemRepository) GetChildren(parentID int) ([]*models.Item, error) {

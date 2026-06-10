@@ -1,9 +1,8 @@
 package services
 
 import (
-	"fmt"
-
 	"windshift/internal/database"
+	"windshift/internal/repository"
 )
 
 // IDResolverService provides ID-to-name resolution for various entities
@@ -84,16 +83,9 @@ func (s *IDResolverService) ResolveItemTypeName(id int) string {
 
 // ResolveItemKey returns the item key in "WORKSPACE-ID" format for an item ID
 func (s *IDResolverService) ResolveItemKey(id int) string {
-	var workspaceKey string
-	var itemNumber int
-	err := s.db.QueryRow(`
-		SELECT w.key, i.workspace_item_number
-		FROM items i
-		JOIN workspaces w ON i.workspace_id = w.id
-		WHERE i.id = ?
-	`, id).Scan(&workspaceKey, &itemNumber)
+	key, err := repository.NewItemRepository(s.db).GetItemKey(id)
 	if err != nil {
 		return ""
 	}
-	return fmt.Sprintf("%s-%d", workspaceKey, itemNumber)
+	return key
 }

@@ -377,14 +377,8 @@ func (p *Processor) senderIsThreadParticipant(ctx context.Context, itemID, chann
 		return true
 	}
 	// Original creator via portal customer.
-	var creatorEmail sql.NullString
-	if err := p.db.QueryRowContext(ctx, `
-		SELECT pc.email
-		FROM items i
-		JOIN portal_customers pc ON pc.id = i.creator_portal_customer_id
-		WHERE i.id = ? AND i.channel_id = ?
-	`, itemID, channelID).Scan(&creatorEmail); err == nil && creatorEmail.Valid {
-		if normalizedEmail(creatorEmail.String) == senderEmail {
+	if creatorEmail, err := repository.NewItemRepository(p.db).GetPortalCreatorEmail(itemID, channelID); err == nil {
+		if normalizedEmail(creatorEmail) == senderEmail {
 			return true
 		}
 	}
