@@ -51,13 +51,14 @@ services:
       # daemon later bind-mounts that path into the runner container.
       # - /var/run/docker.sock:/var/run/docker.sock
       # - /var/lib/windshift/coding-agent-worktrees:/var/lib/windshift/coding-agent-worktrees
-      # tmpfs for /tmp - the scratch image has no /tmp. Needed for SQLite WAL
-      # mode and for the coding-agent runner's git askpass/push scratch dirs.
-      - type: tmpfs
-        target: /tmp
-        tmpfs:
-          size: 64M
-          mode: 1777
+    # tmpfs for /tmp - the scratch image has no /tmp. Needed for SQLite WAL
+    # mode and as scratch space for the coding-agent runner's git operations.
+    # "exec" matters: Docker mounts tmpfs noexec by default, which would stop
+    # git from running the orchestrator's askpass credential helper. Short
+    # syntax on purpose - the long-syntax "mode: 1777" is parsed as DECIMAL
+    # (mounts as 03361); the short form defaults to a correct sticky 1777.
+    tmpfs:
+      - /tmp:exec,size=64M
     restart: unless-stopped
     # --- Traefik labels (uncomment when using traefik service) ---
     # labels:

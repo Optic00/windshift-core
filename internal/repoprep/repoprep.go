@@ -232,7 +232,7 @@ func (p *Preparer) Push(ctx context.Context, pr *Prepared, token string) error {
 		// delivering: skip the push instead of littering the remote with a
 		// branch identical to base (and a doomed PR-create call after it).
 		SkipIfHeadEquals: pr.BaseCommit,
-		TempFallbackRoot: p.tempFallbackRoot(),
+		TempRoot:         p.tempRoot(),
 	})
 	return err
 }
@@ -257,11 +257,13 @@ type PushOptions struct {
 	// branch head resolves to this SHA (the base commit the run branch was
 	// cut at): a commit-less run pushes nothing.
 	SkipIfHeadEquals string
-	// TempFallbackRoot, when set, is used for the sanitized push repo and the
-	// askpass dir if the system temp dir is unavailable (scratch image without
-	// a /tmp tmpfs). The in-process Preparer sets it; the triage binary runs
-	// in the runner container, which always mounts a /tmp tmpfs.
-	TempFallbackRoot string
+	// TempRoot, when set, is the preferred location for the sanitized push
+	// repo and the askpass dir, with the system temp dir as fallback — in a
+	// scratch deploy /tmp is absent or mounted noexec, and the askpass helper
+	// must be executable. The in-process Preparer sets it to a subdir of its
+	// worktree root; the triage binary leaves it empty because the runner
+	// container always mounts an exec-capable /tmp tmpfs.
+	TempRoot string
 }
 
 // PushBranch pushes exactly Branch from Dest to RemoteURL and returns the
@@ -294,7 +296,7 @@ func PushBranch(ctx context.Context, opts PushOptions) (string, error) {
 		return "", ErrNoNewCommits
 	}
 
-	tmp, err := mkdirTempWithFallback(opts.TempFallbackRoot, "windshift-sanitized-push-*")
+	tmp, err := mkdirTempPreferring(opts.TempRoot, "windshift-sanitized-push-*")
 	if err != nil {
 		return "", fmt.Errorf("temp push repo: %w", err)
 	}
@@ -315,7 +317,7 @@ func PushBranch(ctx context.Context, opts PushOptions) (string, error) {
 	}
 
 	refspec := fmt.Sprintf("%s:refs/heads/%s", sha, opts.Branch)
-	if err := gitWithToken(ctx, gitBin, opts.AllowFileURL, tmp, opts.Token, opts.TempFallbackRoot, "push", opts.RemoteURL, refspec); err != nil {
+	if err := gitWithToken(ctx, gitBin, opts.AllowFileURL, tmp, opts.Token, opts.TempRoot, "push", opts.RemoteURL, refspec); err != nil {
 		return "", fmt.Errorf("push %s: %w", opts.Branch, err)
 	}
 	return sha, nil
@@ -433,14 +435,16 @@ func (p *Preparer) runGitLocalSource(ctx context.Context, dir string, args ...st
 }
 
 func (p *Preparer) runGitWithToken(ctx context.Context, dir, token string, args ...string) error {
-	return gitWithToken(ctx, p.gitBinary, p.allowFileURL, dir, token, p.tempFallbackRoot(), args...)
+	return gitWithToken(ctx, p.gitBinary, p.allowFileURL, dir, token, p.tempRoot(), args...)
 }
 
-// tempFallbackRoot is where temp dirs land when the system temp dir is absent
-// (scratch image, no /tmp tmpfs). It sits beside the per-repo trees; ".tmp" is
-// never matched by EvictIdle's ".bare" walk, and each temp dir inside it is
-// removed by its creator after use.
-func (p *Preparer) tempFallbackRoot() string {
+// tempRoot is the preferred location for the orchestrator's git scratch dirs
+// (askpass helper, sanitized push repo): the worktree root is a writable,
+// exec-capable volume, while a scratch deploy's /tmp is absent or noexec. It
+// sits beside the per-repo trees; ".tmp" is never matched by EvictIdle's
+// ".bare" walk, and each temp dir inside it is removed by its creator after
+// use.
+func (p *Preparer) tempRoot() string {
 	return filepath.Join(p.rootDir, ".tmp")
 }
 
@@ -454,13 +458,13 @@ func (p *Preparer) runGitOutput(ctx context.Context, dir string, args ...string)
 // gitWithToken runs git with token injected via a per-invocation GIT_ASKPASS
 // helper. The token reaches the helper through an env var only — never argv,
 // never .git/config. An empty token behaves exactly like a plain run.
-// tempFallbackRoot seeds mkdirTempWithFallback for the askpass dir.
-func gitWithToken(ctx context.Context, gitBinary string, allowFileURL bool, dir, token, tempFallbackRoot string, args ...string) error {
+// tempRoot seeds mkdirTempPreferring for the askpass dir.
+func gitWithToken(ctx context.Context, gitBinary string, allowFileURL bool, dir, token, tempRoot string, args ...string) error {
 	if token == "" {
 		_, err := gitOutputEnv(ctx, gitBinary, allowFileURL, dir, nil, args...)
 		return err
 	}
-	dirPath, askpassPath, err := writeAskpassHelper(tempFallbackRoot)
+	dirPath, askpassPath, err := writeAskpassHelper(tempRoot)
 	if err != nil {
 		return fmt.Errorf("setup askpass: %w", err)
 	}
@@ -530,22 +534,28 @@ func gitOutputEnv(ctx context.Context, gitBinary string, allowFileURL bool, dir 
 	return string(out), nil
 }
 
-// mkdirTempWithFallback creates a temp dir in the system temp location, and
-// when that fails (a scratch image without /tmp, unless the operator mounted a
-// tmpfs there) retries under fallbackRoot — for the orchestrator that is a
-// subdir of the worktree root, which is always a writable volume when the
-// runner is configured. An empty fallbackRoot keeps the plain behavior.
-func mkdirTempWithFallback(fallbackRoot, pattern string) (string, error) {
-	dir, err := os.MkdirTemp("", pattern)
-	if err == nil || fallbackRoot == "" {
-		return dir, err
+// mkdirTempPreferring creates a temp dir under preferredRoot when set, falling
+// back to the system temp location. The orchestrator passes a subdir of the
+// worktree root: that is always a writable, exec-capable volume when the
+// runner is configured, whereas in a scratch deploy /tmp is either absent
+// entirely or a tmpfs Docker mounted noexec by default — and the askpass
+// helper must be executable by git. An empty preferredRoot keeps the plain
+// os.MkdirTemp behavior.
+func mkdirTempPreferring(preferredRoot, pattern string) (string, error) {
+	if preferredRoot == "" {
+		return os.MkdirTemp("", pattern)
 	}
-	if mkErr := os.MkdirAll(fallbackRoot, 0o700); mkErr != nil {
-		return "", errors.Join(err, mkErr)
+	rootErr := os.MkdirAll(preferredRoot, 0o700)
+	if rootErr == nil {
+		dir, err := os.MkdirTemp(preferredRoot, pattern)
+		if err == nil {
+			return dir, nil
+		}
+		rootErr = err
 	}
-	dir, fbErr := os.MkdirTemp(fallbackRoot, pattern)
-	if fbErr != nil {
-		return "", errors.Join(err, fbErr)
+	dir, sysErr := os.MkdirTemp("", pattern)
+	if sysErr != nil {
+		return "", errors.Join(rootErr, sysErr)
 	}
 	return dir, nil
 }
@@ -554,8 +564,8 @@ func mkdirTempWithFallback(fallbackRoot, pattern string) (string, error) {
 // answers git's prompts from AGENT_GIT_TOKEN. The username "oauth2" works for
 // both GitHub and Gitea (both accept any non-empty username with a token in the
 // password slot). The caller removes dirPath after the git invocation.
-func writeAskpassHelper(tempFallbackRoot string) (dirPath, scriptPath string, err error) {
-	dirPath, err = mkdirTempWithFallback(tempFallbackRoot, "windshift-askpass-*")
+func writeAskpassHelper(tempRoot string) (dirPath, scriptPath string, err error) {
+	dirPath, err = mkdirTempPreferring(tempRoot, "windshift-askpass-*")
 	if err != nil {
 		return "", "", err
 	}
