@@ -29,6 +29,8 @@ type DiagnosticsHandler struct {
 	llmManager       *llm.ConnectionManager
 	llmCache         *llm.ModelCache
 	auditor          *logger.Auditor
+	runnerRepo       *repository.RunnerRepository
+	agentRunRepo     *repository.AgentRunRepository
 }
 
 // NewDiagnosticsHandler creates a new diagnostics handler.
@@ -41,6 +43,8 @@ func NewDiagnosticsHandler(
 	llmManager *llm.ConnectionManager,
 	llmCache *llm.ModelCache,
 	auditor *logger.Auditor,
+	runnerRepo *repository.RunnerRepository,
+	agentRunRepo *repository.AgentRunRepository,
 ) *DiagnosticsHandler {
 	return &DiagnosticsHandler{
 		actionRepo:       actionRepo,
@@ -51,6 +55,8 @@ func NewDiagnosticsHandler(
 		llmManager:       llmManager,
 		llmCache:         llmCache,
 		auditor:          auditor,
+		runnerRepo:       runnerRepo,
+		agentRunRepo:     agentRunRepo,
 	}
 }
 

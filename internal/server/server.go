@@ -1266,6 +1266,8 @@ func (s *Server) initialize() error {
 				llmManager,
 				llmModelCache,
 				logger.NewAuditor(s.db),
+				repository.NewRunnerRepository(s.db),
+				repository.NewAgentRunRepository(s.db),
 			),
 			AgentSecurity: handlers.NewAgentSecurityHandler(
 				agentSecurityRepo,

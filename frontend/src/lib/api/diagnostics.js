@@ -137,3 +137,16 @@ export function getBriefingFailures(opts = {}) {
   const qs = params.toString();
   return fetchAPI(`/admin/diagnostics/briefing-failures${qs ? `?${qs}` : ''}`);
 }
+
+/**
+ * Per-pool runner health: live/stale/revoked runners vs queued/running runs.
+ * healthy=false means queued work with no live runner to claim it.
+ *
+ * @returns {Promise<Array<{id: number, name: string, enabled: boolean,
+ *   max_concurrent_runs: number, live_runners: number, stale_runners: number,
+ *   revoked_runners: number, last_heartbeat_at?: string, queued_runs: number,
+ *   running_runs: number, oldest_queued_seconds?: number, healthy: boolean}>>}
+ */
+export function getRunnerPools() {
+  return fetchAPI('/admin/diagnostics/runner-pools');
+}
