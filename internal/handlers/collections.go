@@ -13,10 +13,26 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
 
 var slugRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$`)
+
+// sanitizeCollection scrubs the user-facing fields on a collection
+// payload. Name renders in the collections list + board headers;
+// Description is Milkdown rich text; QLQuery is long-form query text
+// (matching CQLQuery on asset reports); FilterState is the saved-filter
+// JSON blob. PublicSlug stays untouched here — slugRegex already
+// confines it whenever it is non-empty.
+func sanitizeCollection(c *models.Collection) {
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &c.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &c.Description, Policy: sanitize.RichText},
+		sanitize.Pair{Target: &c.QLQuery, Policy: sanitize.LongDocument},
+		sanitize.Pair{Target: c.FilterState, Policy: sanitize.LongDocument},
+	)
+}
 
 type CollectionHandler struct {
 	db                database.Database
@@ -172,6 +188,7 @@ func (h *CollectionHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	sanitizeCollection(&collection)
 
 	// Validate required fields
 	if collection.Name == "" {
@@ -274,6 +291,7 @@ func (h *CollectionHandler) Update(w http.ResponseWriter, r *http.Request) {
 		respondBadRequest(w, r, "Invalid JSON: "+err.Error())
 		return
 	}
+	sanitizeCollection(&collection)
 
 	_, workspaceProvided := payload["workspace_id"]
 	_, categoryProvided := payload["category_id"]
@@ -428,6 +446,9 @@ func (h *CollectionHandler) UpdatePublicSharing(w http.ResponseWriter, r *http.R
 		respondBadRequest(w, r, "Invalid JSON: "+err.Error())
 		return
 	}
+	// PublicSlug is only regex-validated when enabling sharing; when
+	// disabling, the slug still lands in the DB, so bound it here.
+	sanitize.Apply(payload.PublicSlug, sanitize.ShortIdentifier)
 
 	currentUser, ok := h.requireCollectionOwner(w, r, id)
 	if !ok {
