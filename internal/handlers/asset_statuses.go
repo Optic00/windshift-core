@@ -71,6 +71,17 @@ func (h *AssetStatusHandler) requireStatusAdminAccess(w http.ResponseWriter, r *
 	if !ok {
 		return nil, 0, 0, false
 	}
+	// Gate on view first so a caller who cannot see the set gets 404 rather
+	// than a 403 that would disclose the status/set exists.
+	canView, err := h.assetHandler.canViewSet(currentUser.ID, setID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return nil, 0, 0, false
+	}
+	if !canView {
+		respondNotFound(w, r, "asset_status")
+		return nil, 0, 0, false
+	}
 	canAdmin, err := h.assetHandler.canAdminSet(currentUser.ID, setID)
 	if err != nil {
 		respondInternalError(w, r, err)

@@ -100,6 +100,18 @@ func (h *AssetTypeHandler) requireAssetTypeAdminAccess(w http.ResponseWriter, r 
 		return 0, nil, false
 	}
 
+	// Gate on view first so a caller who cannot see the set gets 404 rather
+	// than a 403 that would disclose the type/set exists.
+	canView, err := h.assetHandler.canViewSet(user.ID, setID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return 0, nil, false
+	}
+	if !canView {
+		respondNotFound(w, r, "asset_type")
+		return 0, nil, false
+	}
+
 	canAdmin, err := h.assetHandler.canAdminSet(user.ID, setID)
 	if err != nil {
 		respondInternalError(w, r, err)
@@ -294,6 +306,18 @@ func (h *AssetTypeHandler) DeleteAssetType(w http.ResponseWriter, r *http.Reques
 	}
 	if err != nil {
 		respondInternalError(w, r, err)
+		return
+	}
+
+	// Gate on view first so a caller who cannot see the set gets 404 rather
+	// than a 403 that would disclose the type/set exists.
+	canView, err := h.assetHandler.canViewSet(currentUser.ID, setID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	if !canView {
+		respondNotFound(w, r, "asset_type")
 		return
 	}
 
