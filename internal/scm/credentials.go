@@ -247,7 +247,7 @@ func (r *CredentialResolver) GetCredentialsForUser(ctx context.Context, connecti
 	var baseURL sql.NullString
 	var oauthClientID, oauthClientSecretEnc sql.NullString
 	var ghAppID, ghAppPrivateKeyEnc, ghAppInstallationID sql.NullString
-	var providerPATEnc sql.NullString
+	var providerPATEnc, wsPATEnc sql.NullString
 
 	err := r.db.QueryRow(`
 		SELECT
@@ -255,7 +255,8 @@ func (r *CredentialResolver) GetCredentialsForUser(ctx context.Context, connecti
 			sp.provider_type, sp.auth_method, sp.base_url,
 			sp.oauth_client_id, sp.oauth_client_secret_encrypted,
 			sp.github_app_id, sp.github_app_private_key_encrypted, sp.github_app_installation_id,
-			sp.personal_access_token_encrypted
+			sp.personal_access_token_encrypted,
+			wsc.personal_access_token_encrypted
 		FROM workspace_scm_connections wsc
 		JOIN scm_providers sp ON sp.id = wsc.scm_provider_id
 		WHERE wsc.id = ?
@@ -265,6 +266,7 @@ func (r *CredentialResolver) GetCredentialsForUser(ctx context.Context, connecti
 		&oauthClientID, &oauthClientSecretEnc,
 		&ghAppID, &ghAppPrivateKeyEnc, &ghAppInstallationID,
 		&providerPATEnc,
+		&wsPATEnc,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -347,16 +349,27 @@ func (r *CredentialResolver) GetCredentialsForUser(ctx context.Context, connecti
 		}()
 
 	case models.SCMAuthMethodPAT:
-		// For PAT, use provider-level token (not user-specific)
-		if providerPATEnc.Valid && providerPATEnc.String != "" {
+		// PATs are not user-specific: prefer the workspace-level PAT, fall
+		// back to provider-level — same hierarchy as
+		// GetCredentialsByConnectionID, so user-aware and connection-level
+		// resolution behave identically on PAT connections.
+		switch {
+		case wsPATEnc.Valid && wsPATEnc.String != "":
+			creds.AuthSource = "workspace"
+			token, err := r.encryption.Decrypt(wsPATEnc.String)
+			if err != nil {
+				return nil, fmt.Errorf("failed to decrypt workspace PAT: %w", err)
+			}
+			creds.PersonalAccessToken = token
+		case providerPATEnc.Valid && providerPATEnc.String != "":
 			creds.AuthSource = "provider"
 			token, err := r.encryption.Decrypt(providerPATEnc.String)
 			if err != nil {
 				return nil, fmt.Errorf("failed to decrypt provider PAT: %w", err)
 			}
 			creds.PersonalAccessToken = token
-		} else {
-			return nil, fmt.Errorf("PAT not configured for this provider")
+		default:
+			return nil, fmt.Errorf("PAT not configured for this connection")
 		}
 	}
 
