@@ -219,6 +219,19 @@ func (h *RunnerBrokerHandler) ProxyLLM(w http.ResponseWriter, r *http.Request) {
 // traversal tail) is rejected so the proxied upstream path cannot escape the
 // grant-validated owner/repo. The tail is the decoded PathValue, so an encoded
 // "%2e%2e" already appears here as "..".
+// gitProxyBaseURL resolves the clone base URL the proxy targets. GitHub-cloud
+// connections commonly store no base_url (the API layer defaults it
+// internally), but the proxy needs the clone host — default it exactly like
+// deriveCloneURL does for local runs, otherwise a remote run 503s on a
+// connection that works fine in-process. Gitea has no well-known default; an
+// empty base URL there stays a config error (caught by the Host=="" check).
+func gitProxyBaseURL(providerType, stored string) string {
+	if stored == "" && providerType == "github" {
+		return "https://github.com"
+	}
+	return stored
+}
+
 func allowedGitProxyPath(path string) bool {
 	switch strings.TrimPrefix(path, "/") {
 	case "info/refs", "git-upload-pack", "git-receive-pack":
@@ -329,17 +342,17 @@ func (h *RunnerBrokerHandler) ProxyGit(w http.ResponseWriter, r *http.Request) {
 	// connections the proxy injects that user's personal token (the run's
 	// triggering user). 0 — legacy runs queued before the field existed —
 	// keeps the connection-level credential.
-	var scmToken, scmBase string
+	var scmToken, scmProviderType, scmBase string
 	if grants.Git.UserID > 0 {
-		scmToken, _, scmBase, err = h.scm.ResolveForRunAsUser(r.Context(), grants.Git.ConnectionID, grants.Git.UserID)
+		scmToken, scmProviderType, scmBase, err = h.scm.ResolveForRunAsUser(r.Context(), grants.Git.ConnectionID, grants.Git.UserID)
 	} else {
-		scmToken, _, scmBase, err = h.scm.ResolveForRun(r.Context(), grants.Git.ConnectionID)
+		scmToken, scmProviderType, scmBase, err = h.scm.ResolveForRun(r.Context(), grants.Git.ConnectionID)
 	}
 	if err != nil {
 		respondServiceUnavailable(w, r, "scm credential unavailable")
 		return
 	}
-	target, err := url.Parse(scmBase)
+	target, err := url.Parse(gitProxyBaseURL(scmProviderType, scmBase))
 	if err != nil || target.Host == "" {
 		respondServiceUnavailable(w, r, "scm connection has no base url")
 		return
