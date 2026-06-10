@@ -35,13 +35,14 @@ func sanitizeAssetReport(ar *models.AssetReport) {
 
 // sanitizeAssetReportFields scrubs the per-row form-mode fields.
 // DisplayName + Description render as label/help copy in the portal
-// form; FieldIdentifier + VirtualFieldType are identifier-shaped;
-// VirtualFieldOptions is the JSON option list the portal select
-// renders verbatim.
+// form; FieldIdentifier + FieldType + VirtualFieldType are
+// identifier-shaped; VirtualFieldOptions is the JSON option list the
+// portal select renders verbatim.
 func sanitizeAssetReportFields(fields []models.AssetReportField) {
 	for i := range fields {
 		sanitize.ApplyAll(
 			sanitize.Pair{Target: &fields[i].FieldIdentifier, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: &fields[i].FieldType, Policy: sanitize.ShortIdentifier},
 			sanitize.Pair{Target: fields[i].DisplayName, Policy: sanitize.PlainTextField},
 			sanitize.Pair{Target: fields[i].Description, Policy: sanitize.RichText},
 			sanitize.Pair{Target: fields[i].VirtualFieldType, Policy: sanitize.ShortIdentifier},

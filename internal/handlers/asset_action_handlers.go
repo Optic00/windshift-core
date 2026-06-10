@@ -13,6 +13,24 @@ import (
 	"windshift/internal/services"
 )
 
+// sanitizeAssetActionFlow scrubs the user-supplied flow-graph strings.
+// NodeConfig is a free-form JSON blob persisted verbatim and echoed on
+// every action GET — same shape as the AssetReport.Config blob, so it
+// gets the same LongDocument bound. Edge type + handles are
+// identifier-shaped strings stored and echoed verbatim.
+func sanitizeAssetActionFlow(nodes []models.AssetActionNode, edges []models.AssetActionEdge) {
+	for i := range nodes {
+		sanitize.Apply(&nodes[i].NodeConfig, sanitize.LongDocument)
+	}
+	for i := range edges {
+		sanitize.ApplyAll(
+			sanitize.Pair{Target: &edges[i].EdgeType, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: &edges[i].SourceHandle, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: &edges[i].TargetHandle, Policy: sanitize.ShortIdentifier},
+		)
+	}
+}
+
 // AssetActionHandler handles asset action automation API endpoints
 type AssetActionHandler struct {
 	repo          *repository.AssetActionRepository
@@ -104,7 +122,9 @@ func (h *AssetActionHandler) CreateAction(w http.ResponseWriter, r *http.Request
 	sanitize.ApplyAll(
 		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
 		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
+		sanitize.Pair{Target: &req.TriggerConfig, Policy: sanitize.LongDocument},
 	)
+	sanitizeAssetActionFlow(req.Nodes, req.Edges)
 
 	if msg := actionutil.ValidateActionFields(req.Name, string(req.TriggerType)); msg != "" {
 		respondValidationError(w, r, msg)
@@ -209,7 +229,9 @@ func (h *AssetActionHandler) UpdateAction(w http.ResponseWriter, r *http.Request
 	sanitize.ApplyAll(
 		sanitize.Pair{Target: req.Name, Policy: sanitize.PlainTextField},
 		sanitize.Pair{Target: req.Description, Policy: sanitize.RichText},
+		sanitize.Pair{Target: req.TriggerConfig, Policy: sanitize.LongDocument},
 	)
+	sanitizeAssetActionFlow(req.Nodes, req.Edges)
 
 	var err error
 
