@@ -2382,11 +2382,14 @@ type AssetSummary struct {
 	AssetTag string
 }
 
-// GetAssetSummary returns the title and asset_tag for an asset. Returns ErrNotFound
-// when the asset does not exist (used to render a "deleted" marker).
-func (r *AssetRepository) GetAssetSummary(assetID int) (*AssetSummary, error) {
+// GetAssetSummary returns the title and asset_tag for an asset within the given
+// set. Returns ErrNotFound when the asset does not exist or belongs to another
+// set — asset-reference custom fields must not resolve across set boundaries,
+// otherwise an out-of-set asset's title/tag would leak (used to render a
+// "deleted" marker in that case).
+func (r *AssetRepository) GetAssetSummary(assetID, setID int) (*AssetSummary, error) {
 	var title, assetTag sql.NullString
-	err := r.db.QueryRow(`SELECT title, asset_tag FROM assets WHERE id = ?`, assetID).Scan(&title, &assetTag)
+	err := r.db.QueryRow(`SELECT title, asset_tag FROM assets WHERE id = ? AND set_id = ?`, assetID, setID).Scan(&title, &assetTag)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

@@ -60,7 +60,10 @@ func (h *AssetHandler) enrichAssetRefCustomFields(asset *models.Asset) error {
 			continue
 		}
 
-		summary, err := h.repo.GetAssetSummary(refID)
+		// Scope the lookup to the referencing asset's own set so a value that
+		// points at an asset in another set resolves as "deleted" rather than
+		// leaking that asset's title/asset_tag.
+		summary, err := h.repo.GetAssetSummary(refID, asset.SetID)
 		if err != nil {
 			if errors.Is(err, repository.ErrNotFound) {
 				asset.CustomFieldValues[fieldKey] = map[string]interface{}{
