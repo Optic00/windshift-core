@@ -27,9 +27,9 @@ jobs:
           - name: windshiftapp/windshift
             dockerfile: Dockerfile
             short: windshift
-          - name: windshiftapp/coding-agent-runner
+          - name: windshiftapp/ws-carrier
             dockerfile: deploy/coding-agent/Dockerfile
-            short: coding-agent-runner
+            short: ws-carrier
           - name: windshiftapp/windshift-runner
             dockerfile: deploy/windshift-runner/Dockerfile
             short: windshift-runner
@@ -111,8 +111,8 @@ jobs:
         image:
           - name: windshiftapp/windshift
             short: windshift
-          - name: windshiftapp/coding-agent-runner
-            short: coding-agent-runner
+          - name: windshiftapp/ws-carrier
+            short: ws-carrier
           - name: windshiftapp/windshift-runner
             short: windshift-runner
     steps:
