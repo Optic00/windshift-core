@@ -404,6 +404,14 @@ func (h *TimeWorklogHandler) validateAndParseWorklog(req WorklogRequest) (custom
 
 		durationMins = int(duration.Minutes())
 
+		// Sub-minute inputs (e.g. "0.4m") truncate to 0; reject them the same
+		// way the explicit start/end branch rejects a non-positive span so a
+		// zero-duration worklog never persists.
+		if durationMins <= 0 {
+			err = fmt.Errorf("end time must be after start time")
+			return
+		}
+
 		// Default to ending "now" and calculating start time backwards
 		if req.EndTime != "" {
 			end, parseErr := time.Parse("15:04", req.EndTime)
