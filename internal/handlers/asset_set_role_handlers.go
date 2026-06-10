@@ -72,6 +72,20 @@ func (h *AssetHandler) AssignSetRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// An upsert that demotes the set's sole Administrator is functionally a
+	// revoke, so apply the same last-admin guard the revoke path uses.
+	kind := "user"
+	principalID := 0
+	if req.UserID != nil {
+		principalID = *req.UserID
+	} else {
+		kind = "group"
+		principalID = *req.GroupID
+	}
+	if ok := h.ensureAssignWontOrphanAdmin(w, r, setID, req.RoleID, kind, principalID); !ok {
+		return
+	}
+
 	if req.UserID != nil {
 		err = h.repo.AssignUserRole(setID, *req.UserID, req.RoleID, currentUser.ID)
 	} else {
@@ -198,6 +212,101 @@ func (h *AssetHandler) ensureNotLastAdmin(w http.ResponseWriter, r *http.Request
 
 	if remaining == 0 {
 		respondConflict(w, r, "Cannot remove the last Administrator; grant Administrator to another user or group first.")
+		return false
+	}
+	return true
+}
+
+// ensureAssignWontOrphanAdmin blocks a role (re)assignment that would demote a
+// set's sole Administrator to a non-admin role, leaving it with no
+// Administrator and no everyone-role Administrator fallback. Mirrors
+// ensureNotLastAdmin for the upsert/demote path. kind is "user" or "group".
+func (h *AssetHandler) ensureAssignWontOrphanAdmin(w http.ResponseWriter, r *http.Request, setID, newRoleID int, kind string, principalID int) bool {
+	adminRoleID, err := h.repo.GetAssetRoleIDByName(AssetRoleAdministrator)
+	if errors.Is(err, repository.ErrNotFound) {
+		return true
+	}
+	if err != nil {
+		respondInternalError(w, r, err)
+		return false
+	}
+
+	// Granting (or keeping) Administrator can never orphan a set.
+	if newRoleID == adminRoleID {
+		return true
+	}
+
+	// Only a demotion of a current Administrator is dangerous.
+	currentRoleID, err := h.repo.GetPrincipalDirectRoleID(setID, kind, principalID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return true
+	}
+	if err != nil {
+		respondInternalError(w, r, err)
+		return false
+	}
+	if currentRoleID != adminRoleID {
+		return true
+	}
+
+	// Everyone-role Administrator fallback keeps the set reachable.
+	everyoneRoleID, err := h.repo.GetEveryoneRoleIDValueForSet(setID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return false
+	}
+	if everyoneRoleID.Valid && int(everyoneRoleID.Int64) == adminRoleID {
+		return true
+	}
+
+	remaining, err := h.repo.CountAdminAssignmentsExcludingPrincipal(setID, adminRoleID, kind, principalID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return false
+	}
+	if remaining == 0 {
+		respondConflict(w, r, "Cannot remove the last Administrator; grant Administrator to another user or group first.")
+		return false
+	}
+	return true
+}
+
+// ensureEveryoneChangeWontOrphanAdmin blocks clearing or lowering the
+// everyone-role when it is the set's only Administrator. newRoleID is the
+// proposed everyone-role (nil to remove).
+func (h *AssetHandler) ensureEveryoneChangeWontOrphanAdmin(w http.ResponseWriter, r *http.Request, setID int, newRoleID *int) bool {
+	adminRoleID, err := h.repo.GetAssetRoleIDByName(AssetRoleAdministrator)
+	if errors.Is(err, repository.ErrNotFound) {
+		return true
+	}
+	if err != nil {
+		respondInternalError(w, r, err)
+		return false
+	}
+
+	// Keeping the everyone-role at Administrator can never orphan the set.
+	if newRoleID != nil && *newRoleID == adminRoleID {
+		return true
+	}
+
+	// Only removing/lowering a current everyone-role Administrator is dangerous.
+	currentRoleID, err := h.repo.GetEveryoneRoleIDValueForSet(setID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return false
+	}
+	if !currentRoleID.Valid || int(currentRoleID.Int64) != adminRoleID {
+		return true
+	}
+
+	// An explicit user/group Administrator keeps the set reachable.
+	remaining, err := h.repo.CountAdminAssignments(setID, adminRoleID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return false
+	}
+	if remaining == 0 {
+		respondConflict(w, r, "Cannot remove the last Administrator; grant Administrator to a user or group first.")
 		return false
 	}
 	return true

@@ -48,6 +48,13 @@ func (h *AssetHandler) SetEveryoneRole(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// When the everyone-role is the set's only Administrator, clearing it (or
+	// lowering it to a non-admin role) would orphan the set, so apply the same
+	// last-admin guard the revoke path uses.
+	if ok := h.ensureEveryoneChangeWontOrphanAdmin(w, r, setID, req.RoleID); !ok {
+		return
+	}
+
 	if err := h.repo.SetEveryoneRole(setID, req.RoleID, currentUser.ID); err != nil {
 		respondInternalError(w, r, err)
 		return

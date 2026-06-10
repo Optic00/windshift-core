@@ -725,6 +725,61 @@ func (r *AssetRepository) CountAdminAssignmentsExcluding(setID, adminRoleID, exc
 	return count, nil
 }
 
+// GetPrincipalDirectRoleID returns the directly-assigned role_id for a
+// user or group on a set. kind is "user" or "group". Returns ErrNotFound when
+// the principal has no direct assignment on the set.
+func (r *AssetRepository) GetPrincipalDirectRoleID(setID int, kind string, principalID int) (int, error) {
+	var query string
+	if kind == "group" {
+		query = `SELECT role_id FROM group_asset_set_roles WHERE set_id = ? AND group_id = ?`
+	} else {
+		query = `SELECT role_id FROM user_asset_set_roles WHERE set_id = ? AND user_id = ?`
+	}
+	var roleID int
+	err := r.db.QueryRow(query, setID, principalID).Scan(&roleID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	return roleID, err
+}
+
+// CountAdminAssignmentsExcludingPrincipal returns the count of admin role
+// assignments (user + group) for a set, not counting the given principal
+// (matched by user_id/group_id rather than assignment id). Used to decide
+// whether re-assigning that principal to a non-admin role would orphan the set.
+func (r *AssetRepository) CountAdminAssignmentsExcludingPrincipal(setID, adminRoleID int, excludeKind string, excludePrincipalID int) (int, error) {
+	var count int
+	err := r.db.QueryRow(`
+		SELECT
+			(SELECT COUNT(*) FROM user_asset_set_roles WHERE set_id = ? AND role_id = ? AND NOT (user_id = ? AND ? = 'user'))
+			+
+			(SELECT COUNT(*) FROM group_asset_set_roles WHERE set_id = ? AND role_id = ? AND NOT (group_id = ? AND ? = 'group'))
+	`,
+		setID, adminRoleID, excludePrincipalID, excludeKind,
+		setID, adminRoleID, excludePrincipalID, excludeKind,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count admin assignments: %w", err)
+	}
+	return count, nil
+}
+
+// CountAdminAssignments returns the total count of explicit admin role
+// assignments (user + group) for a set.
+func (r *AssetRepository) CountAdminAssignments(setID, adminRoleID int) (int, error) {
+	var count int
+	err := r.db.QueryRow(`
+		SELECT
+			(SELECT COUNT(*) FROM user_asset_set_roles WHERE set_id = ? AND role_id = ?)
+			+
+			(SELECT COUNT(*) FROM group_asset_set_roles WHERE set_id = ? AND role_id = ?)
+	`, setID, adminRoleID, setID, adminRoleID).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count admin assignments: %w", err)
+	}
+	return count, nil
+}
+
 // AssignUserRole assigns a role to a user for a set (upsert)
 func (r *AssetRepository) AssignUserRole(setID, userID, roleID, grantedBy int) error {
 	now := time.Now()
