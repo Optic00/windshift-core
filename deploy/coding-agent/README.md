@@ -70,6 +70,14 @@ Picking a name distinct from `bridge` is intentional: it forces the
 operator to think about egress filtering rather than inheriting the
 host's default outbound posture.
 
+On firewalld hosts (Fedora/RHEL) use the bundled helper — it encodes the
+allowlist as a permanent firewalld policy keyed on the network's source
+subnet, so it survives reboots and docker recreating the bridge (WI-315):
+
+```bash
+sudo ./deploy/coding-agent/egress-firewalld.sh --allow windshift.example.com
+```
+
 A minimal setup with restrictive iptables (Linux host):
 
 ```bash
