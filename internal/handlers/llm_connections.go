@@ -9,6 +9,7 @@ import (
 	"windshift/internal/llm"
 	"windshift/internal/logger"
 	"windshift/internal/restapi"
+	"windshift/internal/sanitize"
 	"windshift/internal/utils"
 )
 
@@ -85,6 +86,10 @@ func (h *LLMConnectionHandler) CreateConnection(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Model, Policy: sanitize.ShortIdentifier},
+	)
 	if !validateConnectionRequest(w, r, req.Name, req.ProviderType, req.Model, req.BaseURL) {
 		return
 	}
@@ -112,6 +117,10 @@ func (h *LLMConnectionHandler) UpdateConnection(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Model, Policy: sanitize.ShortIdentifier},
+	)
 	if !validateConnectionRequest(w, r, req.Name, req.ProviderType, req.Model, req.BaseURL) {
 		return
 	}
