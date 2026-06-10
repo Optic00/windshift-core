@@ -480,6 +480,9 @@ func (h *SCMWorkspaceHandler) ListAvailableRepositories(w http.ResponseWriter, r
 	if !ok {
 		return
 	}
+	// Credential resolution refreshes expiring OAuth tokens internally;
+	// a dead refresh token surfaces as ErrRefreshTokenInvalid and the
+	// stored credentials are already wiped, so reconnecting is the only fix.
 	provider, err := h.credentialResolver.GetProviderForUser(r.Context(), connID, user.ID)
 	if err != nil {
 		if errors.Is(err, scm.ErrUserSCMNotConnected) {
@@ -490,33 +493,16 @@ func (h *SCMWorkspaceHandler) ListAvailableRepositories(w http.ResponseWriter, r
 			})
 			return
 		}
+		if errors.Is(err, scm.ErrRefreshTokenInvalid) {
+			respondError(w, r, restapi.NewAPIError(http.StatusUnauthorized, "SCM_REAUTH_REQUIRED", "Your SCM connection is no longer valid. Please reconnect."))
+			return
+		}
 		slog.Error("failed to get provider", slog.String("component", "scm"), slog.Any("error", err))
 		respondJSONOK(w, map[string]interface{}{
 			"error":        err.Error(),
 			"repositories": []interface{}{},
 		})
 		return
-	}
-
-	// Attempt token refresh if needed (for OAuth providers with expiring tokens)
-	creds, err := h.credentialResolver.GetCredentialsForUser(r.Context(), connID, user.ID)
-	if err == nil && creds.AuthMethod == models.SCMAuthMethodOAuth {
-		if newToken, refreshErr := h.credentialResolver.RefreshOAuthTokenIfNeeded(r.Context(), connID, creds); refreshErr != nil {
-			// Dead refresh token: credentials have already been wiped by
-			// RefreshOAuthTokenIfNeeded. Tell the caller to reconnect
-			// rather than serving them a guaranteed-401 provider call.
-			if errors.Is(refreshErr, scm.ErrRefreshTokenInvalid) {
-				respondError(w, r, restapi.NewAPIError(http.StatusUnauthorized, "SCM_REAUTH_REQUIRED", "Your SCM connection is no longer valid. Please reconnect."))
-				return
-			}
-			slog.Warn("token refresh failed, continuing with existing token", slog.String("component", "scm"), slog.Any("error", refreshErr))
-		} else if newToken != creds.OAuthAccessToken {
-			// Token was refreshed, recreate provider with new token
-			provider, err = h.credentialResolver.GetProviderForUser(r.Context(), connID, user.ID)
-			if err != nil {
-				slog.Error("failed to recreate provider after refresh", slog.String("component", "scm"), slog.Any("error", err))
-			}
-		}
 	}
 
 	// Parse query params

@@ -229,6 +229,10 @@ func (r *CredentialResolver) GetCredentialsByConnectionID(ctx context.Context, c
 		}
 	}
 
+	if err := r.ensureFreshOAuthToken(ctx, connectionID, &creds); err != nil {
+		return nil, err
+	}
+
 	return &creds, nil
 }
 
@@ -356,7 +360,42 @@ func (r *CredentialResolver) GetCredentialsForUser(ctx context.Context, connecti
 		}
 	}
 
+	if err := r.ensureFreshOAuthToken(ctx, connectionID, creds); err != nil {
+		return nil, err
+	}
+
 	return creds, nil
+}
+
+// ensureFreshOAuthToken is the single refresh choke point for resolved
+// credentials: every Get* resolution passes through here, so consumers
+// (provider construction, the run-broker git proxy, PR creation) cannot
+// end up holding an expired OAuth access token. No-op for non-OAuth
+// credentials. A dead refresh token is terminal — the stored credentials
+// have already been invalidated by RefreshOAuthTokenIfNeeded, so the
+// resolution fails with ErrRefreshTokenInvalid in the chain rather than
+// handing back a guaranteed-401 token. Transient refresh failures keep
+// the existing token: it may still be accepted upstream, and failing the
+// whole resolution for a network blip would be worse.
+func (r *CredentialResolver) ensureFreshOAuthToken(ctx context.Context, connectionID int, creds *ProviderCredentials) error {
+	if creds.OAuthAccessToken == "" {
+		return nil
+	}
+	newToken, err := r.RefreshOAuthTokenIfNeeded(ctx, connectionID, creds)
+	if err != nil {
+		if errors.Is(err, ErrRefreshTokenInvalid) {
+			return fmt.Errorf("scm credentials require reconnect: %w", err)
+		}
+		// RefreshOAuthTokenIfNeeded returns the freshly minted token even
+		// when persisting it failed — prefer it over the expiring one.
+		if newToken != "" {
+			creds.OAuthAccessToken = newToken
+		}
+		slog.Warn("failed to refresh OAuth token, using best available", slog.String("component", "scm"), slog.Int("connection_id", connectionID), slog.Any("error", err))
+		return nil
+	}
+	creds.OAuthAccessToken = newToken
+	return nil
 }
 
 // GetProviderForUser is a convenience method that resolves user-specific credentials
