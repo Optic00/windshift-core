@@ -37,6 +37,9 @@
   let deleteConfirmText = $state('');
   let timeProjects = $state([]);
   let configurationRefreshKey = $state(0);
+  // Bumped when the skills panel changes a skill so the bindings panel's
+  // attach-pickers refresh (the two are siblings on the coding-agents tab).
+  let agentSkillsVersion = $state(0);
 
   // Time project categories state
   let timeProjectCategories = $state([]);
@@ -447,8 +450,8 @@
     {:else if activeTab === 'coding-agents'}
         <!-- Coding Agent Bindings (WI-88) + skills library (WI-258) -->
         <div class="space-y-4">
-            <WorkspaceAgentBindings {workspaceId} />
-            <WorkspaceAgentSkills {workspaceId} />
+            <WorkspaceAgentBindings {workspaceId} skillsVersion={agentSkillsVersion} />
+            <WorkspaceAgentSkills {workspaceId} onchanged={() => (agentSkillsVersion += 1)} />
         </div>
 
     {:else if activeTab === 'issue-sync'}

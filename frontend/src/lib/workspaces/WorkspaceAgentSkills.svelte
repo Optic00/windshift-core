@@ -10,11 +10,17 @@
   import { BookOpen, Loader2, Pencil, Plus, Trash2 } from '@lucide/svelte';
   import { agentSkills } from '../api.js';
   import Panel from '../components/Panel.svelte';
+  import Button from '../components/Button.svelte';
+  import Checkbox from '../components/Checkbox.svelte';
   import Input from '../components/Input.svelte';
+  import Textarea from '../components/Textarea.svelte';
   import ConfirmDialog from '../dialogs/ConfirmDialog.svelte';
   import { errorToast, successToast } from '../stores/toasts.svelte.js';
+  import { getShortcutDisplay, toHotkeyString } from '../utils/keyboardShortcuts.js';
 
-  let { workspaceId } = $props();
+  // onchanged fires after any successful create/update/delete so the
+  // bindings panel above can refresh its skill attach-pickers.
+  let { workspaceId, onchanged = null } = $props();
 
   let loading = $state(true);
   let skills = $state([]);
@@ -84,6 +90,7 @@
       }
       closeEditor();
       await load();
+      onchanged?.();
     } catch (err) {
       errorToast(err?.message || 'Failed to save skill');
       console.error('Failed to save skill:', err);
@@ -106,6 +113,7 @@
       await agentSkills.remove(workspaceId, target.id);
       successToast('Skill deleted');
       await load();
+      onchanged?.();
     } catch (err) {
       errorToast(err?.message || 'Failed to delete skill');
       console.error('Failed to delete skill:', err);
@@ -119,15 +127,16 @@
       <BookOpen class="w-4 h-4" style="color: var(--ds-icon-subtle);" />
       Agent skills
     </h4>
-    <button
-      type="button"
+    <Button
+      size="sm"
+      icon={Plus}
       onclick={openCreate}
-      class="inline-flex items-center gap-1 text-xs px-2 py-1 rounded border hover:opacity-80"
-      style="border-color: var(--ds-border); color: var(--ds-text);"
-      data-testid="agent-skill-add"
+      dataTestid="agent-skill-add"
+      keyboardHint="N"
+      hotkeyConfig={{ key: toHotkeyString('agentSkills', 'add'), guard: () => editorFor === null }}
     >
-      <Plus class="w-3.5 h-3.5" /> New skill
-    </button>
+      New skill
+    </Button>
   </div>
   <p class="text-xs mb-3" style="color: var(--ds-text-subtle);">
     Markdown knowledge packs for your agents. Attach skills to a binding below; the agent sees each
@@ -161,28 +170,12 @@
               <td class="px-3 py-2" style="color: var(--ds-text-subtle);">{skill.description || '—'}</td>
               <td class="px-3 py-2" style="color: var(--ds-text-subtle);">{skill.enabled ? 'enabled' : 'disabled'}</td>
               <td class="px-3 py-2 text-right whitespace-nowrap">
-                <button
-                  type="button"
-                  onclick={() => openEdit(skill)}
-                  class="inline-flex items-center justify-center p-1 rounded hover:opacity-80"
-                  style="color: var(--ds-icon);"
-                  title="Edit skill"
-                  aria-label="Edit skill {skill.name}"
-                  data-testid="agent-skill-edit"
-                >
+                <Button size="sm" variant="ghost" onclick={() => openEdit(skill)} title="Edit skill" dataTestid="agent-skill-edit">
                   <Pencil class="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onclick={() => openDeleteDialog(skill)}
-                  class="inline-flex items-center justify-center p-1 rounded hover:opacity-80"
-                  style="color: var(--ds-icon-danger);"
-                  title="Delete skill"
-                  aria-label="Delete skill {skill.name}"
-                  data-testid="agent-skill-delete"
-                >
-                  <Trash2 class="w-4 h-4" />
-                </button>
+                </Button>
+                <Button size="sm" variant="ghost" onclick={() => openDeleteDialog(skill)} title="Delete skill" dataTestid="agent-skill-delete">
+                  <Trash2 class="w-4 h-4" style="color: var(--ds-text-danger);" />
+                </Button>
               </td>
             </tr>
           {/each}
@@ -209,40 +202,33 @@
         <label class="block text-xs mb-1" style="color: var(--ds-text-subtle);" for="agent-skill-body">
           Body (markdown — the SKILL.md content)
         </label>
-        <textarea
+        <Textarea
           id="agent-skill-body"
           bind:value={formBody}
-          rows="10"
-          class="w-full text-sm rounded border px-2 py-1 font-mono"
-          style="border-color: var(--ds-border); background-color: var(--ds-background-input, transparent); color: var(--ds-text);"
-          placeholder="# Release notes&#10;&#10;Structure every release note as..."
-        ></textarea>
+          rows={10}
+          size="small"
+          class="font-mono"
+          placeholder={'# Release notes\n\nStructure every release note as...'}
+        />
       </div>
       <div class="flex items-center justify-between">
-        <label class="inline-flex items-center gap-2 text-sm" style="color: var(--ds-text);">
-          <input type="checkbox" bind:checked={formEnabled} />
-          Enabled
-        </label>
+        <span data-testid="agent-skill-enabled">
+          <Checkbox bind:checked={formEnabled} label="Enabled" />
+        </span>
         <div class="flex items-center gap-2">
-          <button
-            type="button"
-            onclick={closeEditor}
-            class="text-sm px-3 py-1 rounded border hover:opacity-80"
-            style="border-color: var(--ds-border); color: var(--ds-text-subtle);"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
+          <Button size="sm" variant="secondary" onclick={closeEditor}>Cancel</Button>
+          <Button
+            size="sm"
+            variant="primary"
             onclick={save}
             disabled={!canSave}
-            class="text-sm px-3 py-1 rounded border hover:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
-            style="border-color: var(--ds-border); color: var(--ds-text);"
-            data-testid="agent-skill-save"
+            loading={saving}
+            dataTestid="agent-skill-save"
+            keyboardHint={getShortcutDisplay('agentSkills', 'save')}
+            hotkeyConfig={{ key: toHotkeyString('agentSkills', 'save'), guard: () => canSave }}
           >
-            {#if saving}<Loader2 class="w-3.5 h-3.5 animate-spin inline" />{/if}
             {editorFor === 0 ? 'Create skill' : 'Save changes'}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

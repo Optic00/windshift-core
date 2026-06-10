@@ -210,6 +210,15 @@ const shortcuts = {
   actionCredentials: {
     add: { key: 'a' },
   },
+  // Coding agents (workspace settings tab — bindings + skills are siblings,
+  // so their add shortcuts must not collide)
+  agentBindings: {
+    add: { key: 'a' },
+  },
+  agentSkills: {
+    add: { key: 'n' },
+    save: { key: 'Enter', modifierKey: true },
+  },
   security: {
     addCredential: { key: 'a' },
     createToken: { key: 't' },

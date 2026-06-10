@@ -10,13 +10,19 @@
   import { Bot, FlaskConical, Loader2, Plus, Trash2, Wand2 } from '@lucide/svelte';
   import { agentBindings, agentRuns, agentSkills, api } from '../api.js';
   import Panel from '../components/Panel.svelte';
+  import Button from '../components/Button.svelte';
+  import Checkbox from '../components/Checkbox.svelte';
   import Select from '../components/Select.svelte';
   import Input from '../components/Input.svelte';
+  import Textarea from '../components/Textarea.svelte';
   import AlertBox from '../components/AlertBox.svelte';
   import ConfirmDialog from '../dialogs/ConfirmDialog.svelte';
   import { errorToast, successToast } from '../stores/toasts.svelte.js';
+  import { toHotkeyString } from '../utils/keyboardShortcuts.js';
 
-  let { workspaceId } = $props();
+  // skillsVersion: bumped by the parent when the skills panel below this one
+  // creates/edits/deletes a skill, so the attach-pickers here don't go stale.
+  let { workspaceId, skillsVersion = 0 } = $props();
 
   let loading = $state(true);
   let bindings = $state([]);
@@ -196,6 +202,18 @@
   }
 
   onMount(load);
+
+  // Refresh just the skills list when the sibling skills panel reports a
+  // change (initial value is covered by load()).
+  let lastSkillsVersion = skillsVersion;
+  $effect(() => {
+    if (skillsVersion === lastSkillsVersion) return;
+    lastSkillsVersion = skillsVersion;
+    agentSkills
+      .listForWorkspace(workspaceId)
+      .then((skills) => (workspaceSkills = skills ?? []))
+      .catch(() => {});
+  });
 
   async function load() {
     loading = true;
@@ -547,46 +565,31 @@
                     {b.max_runs_per_day > 0 ? `${b.max_runs_per_day}/day` : 'unlimited'} · token {b.token_ttl_minutes}m
                   </td>
                   <td class="px-3 py-2 text-right whitespace-nowrap">
-                    <button
-                      type="button"
+                    <Button
+                      size="sm"
+                      variant="ghost"
                       onclick={() => testBinding(b)}
                       disabled={testing[b.id] || !b.llm_connection_id || !b.repo_slug}
-                      class="inline-flex items-center justify-center p-1 rounded hover:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed"
-                      style="color: var(--ds-icon);"
+                      loading={testing[b.id]}
+                      icon={FlaskConical}
                       title={!b.llm_connection_id
                         ? 'No LLM connection on this binding to test'
                         : !b.repo_slug
                           ? 'This binding has no repo — a test run needs one to check out'
                           : 'Test run: provision a real container, check out the repo, have the agent list its files'}
-                      aria-label="Test run for {displayActingUser(b.acting_user_id)}"
-                    >
-                      {#if testing[b.id]}
-                        <Loader2 class="w-4 h-4 animate-spin" />
-                      {:else}
-                        <FlaskConical class="w-4 h-4" />
-                      {/if}
-                    </button>
-                    <button
-                      type="button"
+                    />
+                    <Button
+                      size="sm"
+                      variant="ghost"
                       onclick={() => (configFor === b.id ? (configFor = null) : openConfig(b))}
-                      class="inline-flex items-center justify-center p-1 rounded hover:opacity-80"
-                      style="color: var(--ds-icon);"
                       title="Persona & skills"
-                      aria-label="Edit persona and skills for {displayActingUser(b.acting_user_id)}"
-                      data-testid="binding-agent-config-{b.id}"
+                      dataTestid="binding-agent-config-{b.id}"
                     >
                       <Wand2 class="w-4 h-4" />
-                    </button>
-                    <button
-                      type="button"
-                      onclick={() => openDeleteDialog(b)}
-                      class="inline-flex items-center justify-center p-1 rounded hover:opacity-80"
-                      style="color: var(--ds-icon-danger);"
-                      title="Remove binding"
-                      aria-label="Remove binding for {displayActingUser(b.acting_user_id)}"
-                    >
-                      <Trash2 class="w-4 h-4" />
-                    </button>
+                    </Button>
+                    <Button size="sm" variant="ghost" onclick={() => openDeleteDialog(b)} title="Remove binding">
+                      <Trash2 class="w-4 h-4" style="color: var(--ds-text-danger);" />
+                    </Button>
                   </td>
                 </tr>
                 {#if configFor === b.id}
@@ -597,27 +600,21 @@
                           <label for="config-instructions-{b.id}" class="block text-xs mb-1" style="color: var(--ds-text-subtle);">
                             Custom instructions (appended to the standard prompt as the agent's role)
                           </label>
-                          <textarea
-                            id="config-instructions-{b.id}"
-                            bind:value={configInstructions}
-                            rows="3"
-                            class="w-full text-sm rounded border px-2 py-1"
-                            style="border-color: var(--ds-border); background-color: var(--ds-background-input, transparent); color: var(--ds-text);"
-                          ></textarea>
+                          <Textarea id="config-instructions-{b.id}" bind:value={configInstructions} rows={3} size="small" />
                         </div>
                         {#if workspaceSkills.length > 0}
                           <div>
                             <span class="block text-xs mb-1" style="color: var(--ds-text-subtle);">Skills</span>
                             <div class="flex flex-wrap gap-3">
                               {#each workspaceSkills as skill (skill.id)}
-                                <label class="inline-flex items-center gap-1.5 text-sm" style="color: var(--ds-text);" title={skill.description}>
-                                  <input
-                                    type="checkbox"
+                                <span title={skill.description}>
+                                  <Checkbox
+                                    size="small"
                                     checked={configSkillIds.includes(skill.id)}
                                     onchange={() => (configSkillIds = toggleSkill(configSkillIds, skill.id))}
+                                    label="{skill.name}{skill.enabled ? '' : ' (disabled)'}"
                                   />
-                                  {skill.name}{skill.enabled ? '' : ' (disabled)'}
-                                </label>
+                                </span>
                               {/each}
                             </div>
                           </div>
@@ -625,25 +622,17 @@
                           <p class="text-xs" style="color: var(--ds-text-subtle);">No skills in this workspace yet — create them in the Agent skills panel below.</p>
                         {/if}
                         <div class="flex justify-end gap-2">
-                          <button
-                            type="button"
-                            onclick={() => (configFor = null)}
-                            class="text-sm px-3 py-1 rounded border hover:opacity-80"
-                            style="border-color: var(--ds-border); color: var(--ds-text-subtle);"
-                          >
-                            Cancel
-                          </button>
-                          <button
-                            type="button"
+                          <Button size="sm" variant="secondary" onclick={() => (configFor = null)}>Cancel</Button>
+                          <Button
+                            size="sm"
+                            variant="primary"
                             onclick={saveConfig}
                             disabled={configSaving}
-                            class="text-sm px-3 py-1 rounded border hover:opacity-80 disabled:opacity-40"
-                            style="border-color: var(--ds-border); color: var(--ds-text);"
-                            data-testid="binding-agent-config-save"
+                            loading={configSaving}
+                            dataTestid="binding-agent-config-save"
                           >
-                            {#if configSaving}<Loader2 class="w-3.5 h-3.5 animate-spin inline" />{/if}
                             Save
-                          </button>
+                          </Button>
                         </div>
                       </div>
                     </td>
@@ -756,47 +745,43 @@
             <label for="binding-instructions" class="block text-xs mb-1" style="color: var(--ds-text-subtle);">
               Custom instructions (optional persona — "You are our release manager…")
             </label>
-            <textarea
+            <Textarea
               id="binding-instructions"
               bind:value={addInstructions}
-              rows="3"
-              class="w-full text-sm rounded border px-2 py-1"
-              style="border-color: var(--ds-border); background-color: var(--ds-background-input, transparent); color: var(--ds-text);"
+              rows={3}
+              size="small"
               placeholder="Appended to the standard agent prompt as the agent's role. The operational rules (commit, comment, no push) stay in place."
-            ></textarea>
+            />
           </div>
           {#if workspaceSkills.length > 0}
             <div class="mt-3">
               <span class="block text-xs mb-1" style="color: var(--ds-text-subtle);">Skills</span>
               <div class="flex flex-wrap gap-3">
                 {#each workspaceSkills as skill (skill.id)}
-                  <label class="inline-flex items-center gap-1.5 text-sm" style="color: var(--ds-text);" title={skill.description}>
-                    <input
-                      type="checkbox"
+                  <span title={skill.description}>
+                    <Checkbox
+                      size="small"
                       checked={addSkillIds.includes(skill.id)}
                       onchange={() => (addSkillIds = toggleSkill(addSkillIds, skill.id))}
+                      label="{skill.name}{skill.enabled ? '' : ' (disabled)'}"
                     />
-                    {skill.name}{skill.enabled ? '' : ' (disabled)'}
-                  </label>
+                  </span>
                 {/each}
               </div>
             </div>
           {/if}
           <div class="mt-4 flex justify-end">
-            <button
-              type="button"
+            <Button
+              variant="primary"
+              icon={Plus}
               onclick={addBinding}
               disabled={!canAdd}
-              class="inline-flex items-center gap-2 px-4 py-2 rounded text-sm font-medium disabled:opacity-50"
-              style="background-color: var(--ds-interactive); color: var(--ds-text-inverse);"
+              loading={adding}
+              keyboardHint="A"
+              hotkeyConfig={{ key: toHotkeyString('agentBindings', 'add'), guard: () => canAdd }}
             >
-              {#if adding}
-                <Loader2 class="w-4 h-4 animate-spin" />
-              {:else}
-                <Plus class="w-4 h-4" />
-              {/if}
               Add binding
-            </button>
+            </Button>
           </div>
         {/if}
       </Panel>
