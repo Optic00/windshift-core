@@ -29,11 +29,13 @@
   let creating = $state(false);
   let poolForm = $state({ name: '', maxConcurrent: 0, appliesToAll: true, enabled: true });
 
-  // Mint-token modal + one-time reveal
+  // Mint-token modal + one-time reveal. mintedToken carries the plaintext
+  // token AND the server-generated copy-paste install command (WI-309) —
+  // public WS_API_URL, version-matched images, and the token baked in.
   let showMint = $state(false);
   let minting = $state(false);
   let mintForm = $state({ description: '', ttlHours: 0 });
-  let mintedToken = $state(null);
+  let mintedToken = $state(null); // { token, installCommand }
 
   const canCreate = $derived(poolForm.name.trim().length > 0 && Number(poolForm.maxConcurrent) >= 0);
 
@@ -123,7 +125,8 @@
         ttl_hours: Number(mintForm.ttlHours) || 0,
       });
       showMint = false;
-      mintedToken = res?.token || null; // plaintext, shown once
+      // Plaintext, shown once.
+      mintedToken = res?.token ? { token: res.token, installCommand: res.install_command || '' } : null;
       await loadTokens(selectedPool.id);
     } catch (e) {
       errorToast(e?.message || 'Failed to mint token');
@@ -428,23 +431,45 @@
 {#if mintedToken}
   <Modal isOpen={true} onclose={() => (mintedToken = null)}>
     {#snippet children()}
-      <ModalHeader title="Registration token" onclose={() => (mintedToken = null)} />
-      <div class="space-y-3 p-4">
-        <p class="text-sm" style="color: var(--ds-text-subtle);">
-          Copy this token now — it is shown <strong>once</strong> and cannot be retrieved again. Set it as
-          <code>WSRUNNER_REGISTRATION_TOKEN</code> on the runner host.
-        </p>
-        <div class="flex items-center gap-2">
-          <code
-            class="flex-1 overflow-x-auto rounded-md border px-3 py-2 text-xs"
-            style="background: var(--ds-surface-sunken); color: var(--ds-text); border-color: var(--ds-border);"
-          >{mintedToken}</code>
-          <Button variant="secondary" size="sm" onclick={() => copy(mintedToken)}>
-            <Copy size={14} /> Copy
-          </Button>
+      <ModalHeader title="Add the runner host" onclose={() => (mintedToken = null)} />
+      <div class="space-y-4 p-4">
+        {#if mintedToken.installCommand}
+          <div class="space-y-2">
+            <p class="text-sm" style="color: var(--ds-text-subtle);">
+              Run this on the runner host. It installs and starts the runner container with
+              this server's URL, the matching image tag, and the fresh token already baked in:
+            </p>
+            <div class="flex items-start gap-2">
+              <code
+                data-testid="runner-install-command"
+                class="flex-1 overflow-x-auto whitespace-pre rounded-md border px-3 py-2 text-xs"
+                style="background: var(--ds-surface-sunken); color: var(--ds-text); border-color: var(--ds-border);"
+              >{mintedToken.installCommand}</code>
+              <Button variant="primary" size="sm" dataTestid="copy-install-command" onclick={() => copy(mintedToken.installCommand)}>
+                <Copy size={14} /> Copy
+              </Button>
+            </div>
+          </div>
+        {/if}
+        <div class="space-y-2">
+          <p class="text-sm" style="color: var(--ds-text-subtle);">
+            {#if mintedToken.installCommand}Setting up manually instead? Set the token as{:else}Set the token as{/if}
+            <code>WSRUNNER_REGISTRATION_TOKEN</code> on the runner host. It is shown
+            <strong>once</strong> and cannot be retrieved again.
+          </p>
+          <div class="flex items-center gap-2">
+            <code
+              data-testid="runner-registration-token"
+              class="flex-1 overflow-x-auto rounded-md border px-3 py-2 text-xs"
+              style="background: var(--ds-surface-sunken); color: var(--ds-text); border-color: var(--ds-border);"
+            >{mintedToken.token}</code>
+            <Button variant="secondary" size="sm" dataTestid="copy-registration-token" onclick={() => copy(mintedToken.token)}>
+              <Copy size={14} /> Copy
+            </Button>
+          </div>
         </div>
         <div class="flex justify-end pt-2 border-t" style="border-color: var(--ds-border);">
-          <Button variant="primary" onclick={() => (mintedToken = null)}>Done</Button>
+          <Button variant="primary" dataTestid="runner-token-done" onclick={() => (mintedToken = null)}>Done</Button>
         </div>
       </div>
     {/snippet}

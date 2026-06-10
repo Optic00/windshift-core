@@ -26,16 +26,20 @@ type RunnerControlHandler struct {
 	runSvc   *services.RunService
 	caps     *repository.ActionRepository
 	now      func() time.Time
+	// baseURL is the resolved public base URL (without /api); used to render
+	// the copy-paste install command returned alongside a minted registration
+	// token (WI-309).
+	baseURL string
 }
 
 // NewRunnerControlHandler constructs the handler. registry/runs may be nil
 // when the coding-agent harness is disabled, in which case endpoints return
 // 503 rather than panicking.
-func NewRunnerControlHandler(registry *services.RunnerRegistryService, runs *repository.AgentRunRepository, runSvc *services.RunService, caps *repository.ActionRepository, now func() time.Time) *RunnerControlHandler {
+func NewRunnerControlHandler(registry *services.RunnerRegistryService, runs *repository.AgentRunRepository, runSvc *services.RunService, caps *repository.ActionRepository, now func() time.Time, baseURL string) *RunnerControlHandler {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return &RunnerControlHandler{registry: registry, runs: runs, runSvc: runSvc, caps: caps, now: now}
+	return &RunnerControlHandler{registry: registry, runs: runs, runSvc: runSvc, caps: caps, now: now, baseURL: baseURL}
 }
 
 // poolMaxConcurrent reads the runner_pool capability's MaxConcurrentRuns quota

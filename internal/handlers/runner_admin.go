@@ -53,9 +53,13 @@ type mintRunnerTokenRequest struct {
 const defaultRunnerTokenTTLHours = 24 * 30
 
 // mintRunnerTokenResponse returns the plaintext token exactly once, alongside
-// the persisted (hash-only) metadata.
+// the persisted (hash-only) metadata. InstallCommand is the complete
+// copy-paste host-onboarding one-liner (WI-309): the hosted install script
+// (WI-313) already bakes in the public WS_API_URL and version-matched image
+// references, so token + script URL is everything a fresh host needs.
 type mintRunnerTokenResponse struct {
-	Token string `json:"token"`
+	Token          string `json:"token"`
+	InstallCommand string `json:"install_command"`
 	*models.RunnerRegistrationToken
 }
 
@@ -97,7 +101,11 @@ func (h *RunnerControlHandler) MintRunnerToken(w http.ResponseWriter, r *http.Re
 		respondInternalError(w, r, err)
 		return
 	}
-	respondJSONCreated(w, mintRunnerTokenResponse{Token: full, RunnerRegistrationToken: tok})
+	respondJSONCreated(w, mintRunnerTokenResponse{
+		Token:                   full,
+		InstallCommand:          runnerInstallCommand(apiBaseURLFor(h.baseURL, r), full),
+		RunnerRegistrationToken: tok,
+	})
 }
 
 // ListRunnerTokens lists every registration token for a pool (active, revoked,

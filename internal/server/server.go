@@ -748,7 +748,7 @@ func (s *Server) initialize() error {
 	// remote pools do not require the local CodingAgent.RunnerImage, and the
 	// handler 503s when the registry is unavailable.
 	runnerRegistry := services.NewRunnerRegistryService(repository.NewRunnerRepository(s.db), nil)
-	runnerControlHandler := handlers.NewRunnerControlHandler(runnerRegistry, repository.NewAgentRunRepository(s.db), codingRunSvc, repository.NewActionRepository(s.db), nil)
+	runnerControlHandler := handlers.NewRunnerControlHandler(runnerRegistry, repository.NewAgentRunRepository(s.db), codingRunSvc, repository.NewActionRepository(s.db), nil, baseURL)
 	// Agent presence for assignment pickers (WI-272): binding → pool →
 	// heartbeat-fresh runner count, surfaced as online/offline/local/unbound.
 	userHandler.SetAgentPresenceService(services.NewAgentPresenceService(agentBindingRepo, repository.NewRunnerRepository(s.db)))

@@ -47,14 +47,15 @@ func runnerImageTag() string {
 	return strings.TrimPrefix(version.Version, "v")
 }
 
-// apiBaseURL is the public orchestrator base INCLUDING the mandatory /api
+// apiBaseURLFor is the public orchestrator base INCLUDING the mandatory /api
 // suffix — the exact WS_API_URL a runner must use. Falls back to the request
 // host when no base URL is configured (any real deployment sits behind TLS).
 // The fallback host is allowlist-validated before being embedded: the script
 // is piped straight into bash, so a forged Host header must not be able to
-// inject shell syntax.
-func (h *RunnerInstallHandler) apiBaseURL(r *http.Request) string {
-	base := strings.TrimRight(h.baseURL, "/")
+// inject shell syntax. Shared with the mint-token endpoint (WI-309), which
+// emits the same URL inside the copy-paste install command.
+func apiBaseURLFor(baseURL string, r *http.Request) string {
+	base := strings.TrimRight(baseURL, "/")
 	if base == "" {
 		host := r.Host
 		if !validScriptHost(host) {
@@ -63,6 +64,14 @@ func (h *RunnerInstallHandler) apiBaseURL(r *http.Request) string {
 		base = "https://" + host
 	}
 	return base + "/api"
+}
+
+// runnerInstallCommand is the complete copy-paste onboarding one-liner for a
+// freshly minted registration token (WI-309) — the hosted install script
+// (WI-313) with the token passed through. Pattern: GitHub Actions / Gitea
+// runner setup.
+func runnerInstallCommand(apiBase, token string) string {
+	return "curl -fsSL " + apiBase + "/runner-install.sh | sudo bash -s -- --token " + token
 }
 
 // validScriptHost accepts hostname[:port], IPv4[:port], and bracketed
@@ -85,7 +94,7 @@ func validScriptHost(host string) bool {
 // ServeScript renders the install script with the server-known values
 // substituted. GET /runner-install.sh.
 func (h *RunnerInstallHandler) ServeScript(w http.ResponseWriter, r *http.Request) {
-	api := h.apiBaseURL(r)
+	api := apiBaseURLFor(h.baseURL, r)
 	tag := runnerImageTag()
 	script := strings.NewReplacer(
 		"__WS_API_URL__", api,
