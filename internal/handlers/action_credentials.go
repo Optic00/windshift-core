@@ -7,6 +7,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
 
@@ -82,6 +83,10 @@ func (h *ActionCredentialsHandler) CreateGlobal(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.SecretMetadata, Policy: sanitize.RichText},
+	)
 	created, err := h.service.Create(req, &currentUser.ID)
 	if err != nil {
 		respondValidationError(w, r, err.Error())
@@ -109,6 +114,10 @@ func (h *ActionCredentialsHandler) CreateForWorkspace(w http.ResponseWriter, r *
 	if !ok {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.SecretMetadata, Policy: sanitize.RichText},
+	)
 	// Path scope wins — clients can't smuggle a global credential or extra
 	// workspaces through a workspace endpoint.
 	appliesAll := false
@@ -161,6 +170,10 @@ func (h *ActionCredentialsHandler) handleUpdate(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: req.SecretMetadata, Policy: sanitize.RichText},
+	)
 	if !allowScopeChange {
 		req.AppliesToAllWorkspaces = nil
 		req.WorkspaceIDs = nil
