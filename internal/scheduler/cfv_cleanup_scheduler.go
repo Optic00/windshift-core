@@ -207,61 +207,30 @@ func (s *CFVCleanupScheduler) processJob(fieldID int) (int, error) {
 	fieldKey := strconv.Itoa(fieldID)
 	totalProcessed := 0
 	lastID := 0
+	itemRepo := repository.NewItemRepository(s.db)
 
 	for {
-		rows, err := s.db.Query(
-			`SELECT id, custom_field_values
-			   FROM items
-			  WHERE id > ?
-			    AND custom_field_values IS NOT NULL
-			    AND custom_field_values != ''
-			    AND custom_field_values LIKE ?
-			  ORDER BY id ASC
-			  LIMIT ?`,
-			lastID, "%\""+fieldKey+"\"%", s.batchSize,
-		)
+		batch, err := itemRepo.ListCustomFieldValuesPageByKey(lastID, fieldKey, s.batchSize)
 		if err != nil {
 			return totalProcessed, err
 		}
-
-		type itemRow struct {
-			id  int
-			cfv string
-		}
-		var batch []itemRow
-		for rows.Next() {
-			var ir itemRow
-			if err := rows.Scan(&ir.id, &ir.cfv); err != nil {
-				_ = rows.Close()
-				return totalProcessed, err
-			}
-			batch = append(batch, ir)
-		}
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			return totalProcessed, err
-		}
-		_ = rows.Close()
 		if len(batch) == 0 {
 			return totalProcessed, nil
 		}
 
 		for _, ir := range batch {
-			lastID = ir.id
-			cleaned, changed, err := stripCFVKey(ir.cfv, fieldKey)
+			lastID = ir.ID
+			cleaned, changed, err := stripCFVKey(ir.CFV, fieldKey)
 			if err != nil {
 				// Malformed JSON in cfv — log and skip the row rather
 				// than failing the whole job.
-				slog.Warn("cfv_cleanup: skip malformed cfv", "item_id", ir.id, "error", err)
+				slog.Warn("cfv_cleanup: skip malformed cfv", "item_id", ir.ID, "error", err)
 				continue
 			}
 			if !changed {
 				continue
 			}
-			if _, err := s.db.ExecWrite(
-				`UPDATE items SET custom_field_values = ? WHERE id = ?`,
-				cleaned, ir.id,
-			); err != nil {
+			if err := itemRepo.SetCustomFieldValuesRaw(context.Background(), ir.ID, cleaned); err != nil {
 				return totalProcessed, err
 			}
 			totalProcessed++

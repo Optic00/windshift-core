@@ -476,6 +476,78 @@ func (r *ItemRepository) GetCustomFieldValuesRaw(itemID int) (sql.NullString, er
 	return data, nil
 }
 
+// SetCustomFieldValuesRaw replaces an item's entire custom_field_values JSON
+// payload. Callers own marshaling; no history is recorded.
+func (r *ItemRepository) SetCustomFieldValuesRaw(ctx context.Context, itemID int, raw string) error {
+	if _, err := r.db.ExecWriteContext(ctx, `UPDATE items SET custom_field_values = ? WHERE id = ?`, raw, itemID); err != nil {
+		return fmt.Errorf("set custom field values: %w", err)
+	}
+	return nil
+}
+
+// SetVirtualFieldDataRaw replaces an item's virtual_field_data JSON payload.
+func (r *ItemRepository) SetVirtualFieldDataRaw(ctx context.Context, itemID int, raw string) error {
+	if _, err := r.db.ExecWriteContext(ctx, `UPDATE items SET virtual_field_data = ? WHERE id = ?`, raw, itemID); err != nil {
+		return fmt.Errorf("set virtual field data: %w", err)
+	}
+	return nil
+}
+
+// ItemCFVRow is one (id, custom_field_values) pair from a paged scan.
+type ItemCFVRow struct {
+	ID  int
+	CFV string
+}
+
+// ListCustomFieldValuesPageByKey returns up to limit items after afterID whose
+// custom_field_values JSON contains the given field key, ordered by id. Used
+// by the cleanup scheduler to iterate the table with bounded memory.
+func (r *ItemRepository) ListCustomFieldValuesPageByKey(afterID int, fieldKey string, limit int) ([]ItemCFVRow, error) {
+	rows, err := r.db.Query(
+		`SELECT id, custom_field_values
+		   FROM items
+		  WHERE id > ?
+		    AND custom_field_values IS NOT NULL
+		    AND custom_field_values != ''
+		    AND custom_field_values LIKE ?
+		  ORDER BY id ASC
+		  LIMIT ?`,
+		afterID, `%"`+fieldKey+`"%`, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list custom field values page: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []ItemCFVRow
+	for rows.Next() {
+		var row ItemCFVRow
+		if err := rows.Scan(&row.ID, &row.CFV); err != nil {
+			return nil, fmt.Errorf("scan custom field values row: %w", err)
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+// DeleteByWorkspaceTx deletes every item in the given workspace. Used by user
+// offboarding to tear down personal workspaces.
+func (r *ItemRepository) DeleteByWorkspaceTx(tx database.Tx, workspaceID int) error {
+	if _, err := tx.Exec(`DELETE FROM items WHERE workspace_id = ?`, workspaceID); err != nil {
+		return fmt.Errorf("delete items by workspace: %w", err)
+	}
+	return nil
+}
+
+// ClearAssigneeForUserTx unassigns the given user from every item. Used by
+// user offboarding; intentionally does not bump updated_at.
+func (r *ItemRepository) ClearAssigneeForUserTx(tx database.Tx, userID int) error {
+	if _, err := tx.Exec(`UPDATE items SET assignee_id = NULL WHERE assignee_id = ?`, userID); err != nil {
+		return fmt.Errorf("clear assignee for user: %w", err)
+	}
+	return nil
+}
+
 // ListCustomFieldValuesByWorkspace streams every (item_id, custom_field_values)
 // pair in a workspace. Used by the migration analyzer which has to inspect
 // every item's stored field payload. The returned RowsIterator mirrors

@@ -388,6 +388,16 @@ func (r *ItemRepository) GetDescendantIDs(parentID int) ([]int, error) {
 	return ids, nil
 }
 
+// SetParentDirect sets parent_id without recording history or bumping
+// updated_at. Used by the Jira import, which runs without a user context and
+// must preserve imported timestamps.
+func (r *ItemRepository) SetParentDirect(itemID, parentID int) error {
+	if _, err := r.db.ExecWrite(`UPDATE items SET parent_id = ? WHERE id = ?`, parentID, itemID); err != nil {
+		return fmt.Errorf("set parent: %w", err)
+	}
+	return nil
+}
+
 // UpdateParent updates the parent_id for an item
 func (r *ItemRepository) UpdateParent(tx database.Tx, itemID int, newParentID *int) error {
 	var err error

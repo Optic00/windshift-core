@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"windshift/internal/database"
+	"windshift/internal/repository"
 )
 
 // OffboardUser deactivates a user and anonymizes their PII while preserving
@@ -49,8 +50,9 @@ func OffboardUser(db database.Database, userID int) (revokedTokenIDs []int, err 
 	if err := row.Scan(&wsID); err == nil {
 		personalWsID = &wsID
 	}
+	itemRepo := repository.NewItemRepository(db)
 	if personalWsID != nil {
-		if _, err := tx.Exec(`DELETE FROM items WHERE workspace_id = ?`, *personalWsID); err != nil {
+		if err := itemRepo.DeleteByWorkspaceTx(tx, *personalWsID); err != nil {
 			return nil, fmt.Errorf("failed to delete personal workspace items: %w", err)
 		}
 		if _, err := tx.Exec(`DELETE FROM workspaces WHERE id = ?`, *personalWsID); err != nil {
@@ -59,7 +61,7 @@ func OffboardUser(db database.Database, userID int) (revokedTokenIDs []int, err 
 	}
 
 	// c) Unassign from all items
-	if _, err := tx.Exec(`UPDATE items SET assignee_id = NULL WHERE assignee_id = ?`, userID); err != nil {
+	if err := itemRepo.ClearAssigneeForUserTx(tx, userID); err != nil {
 		return nil, fmt.Errorf("failed to unassign items: %w", err)
 	}
 

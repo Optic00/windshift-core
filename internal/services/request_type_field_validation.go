@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"windshift/internal/database"
+	"windshift/internal/repository"
 )
 
 // IsBlankSubmittedField reports whether a value submitted in a portal/form
@@ -177,7 +178,7 @@ func StoreCustomFieldValues(ctx context.Context, db database.Database, component
 
 	customFieldsJSON, err := json.Marshal(customFields)
 	if err == nil {
-		if _, err := db.ExecWriteContext(ctx, `UPDATE items SET custom_field_values = ? WHERE id = ?`, string(customFieldsJSON), itemID); err != nil {
+		if err := repository.NewItemRepository(db).SetCustomFieldValuesRaw(ctx, int(itemID), string(customFieldsJSON)); err != nil {
 			slog.Warn("failed to update item custom_field_values", slog.String("component", component), slog.Int64("item_id", itemID), slog.Any("error", err))
 		}
 	}
@@ -196,7 +197,7 @@ func StoreVirtualFieldValues(ctx context.Context, db database.Database, componen
 		return
 	}
 
-	if _, err := db.ExecWriteContext(ctx, `UPDATE items SET virtual_field_data = ? WHERE id = ?`, string(virtualFieldsJSON), itemID); err != nil {
+	if err := repository.NewItemRepository(db).SetVirtualFieldDataRaw(ctx, int(itemID), string(virtualFieldsJSON)); err != nil {
 		slog.Warn("failed to update item virtual_field_data", slog.String("component", component), slog.Int64("item_id", itemID), slog.Any("error", err))
 	}
 }

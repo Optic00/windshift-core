@@ -17,6 +17,7 @@ import (
 
 	"windshift/internal/jira"
 	"windshift/internal/models"
+	"windshift/internal/repository"
 	"windshift/internal/services"
 
 	"github.com/google/uuid"
@@ -1123,7 +1124,7 @@ func (h *JiraImportHandler) linkParents(jobID string) {
 		// Update the child item's parent_id directly.
 		// We cannot use ItemUpdateService here because it requires a valid user ID
 		// for history tracking, and the import runs without a user context.
-		_, err = h.db.ExecWrite(`UPDATE items SET parent_id = ? WHERE id = ?`, parentID, link.childID)
+		err = repository.NewItemRepository(h.db).SetParentDirect(link.childID, parentID)
 		if err != nil {
 			slog.Error("Failed to set parent_id",
 				slog.String("component", "jira"),
