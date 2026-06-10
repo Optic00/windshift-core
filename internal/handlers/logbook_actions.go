@@ -10,6 +10,7 @@ import (
 
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
 
@@ -63,6 +64,9 @@ func (h *LogbookNodeExecutionHandler) HandleNodeExecution(w http.ResponseWriter,
 		})
 		return
 	}
+	// Event.Title is the sidecar-relayed document title — user-supplied
+	// text that feeds fallback item/asset titles below.
+	sanitize.Apply(&req.Event.Title, sanitize.PlainTextField)
 
 	slog.Info("received node execution request",
 		slog.String("component", "logbook-actions"),
@@ -108,6 +112,10 @@ func (h *LogbookNodeExecutionHandler) executeCreateItem(nodeConfig string, event
 	if err := json.Unmarshal([]byte(nodeConfig), &config); err != nil {
 		return nil, fmt.Errorf("failed to parse create_item config: %w", err)
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &config.Title, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &config.Description, Policy: sanitize.RichText},
+	)
 
 	title := config.Title
 	if title == "" {
@@ -188,6 +196,11 @@ func (h *LogbookNodeExecutionHandler) executeCreateAsset(nodeConfig string, even
 	if err := json.Unmarshal([]byte(nodeConfig), &config); err != nil {
 		return nil, fmt.Errorf("failed to parse create_asset config: %w", err)
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &config.Title, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &config.Description, Policy: sanitize.RichText},
+		sanitize.Pair{Target: &config.AssetTag, Policy: sanitize.ShortIdentifier},
+	)
 
 	title := config.Title
 	if title == "" {
