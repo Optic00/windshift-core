@@ -130,6 +130,7 @@ type WorkspaceHandlers struct {
 	Approval              *handlers.ApprovalHandler
 	TransitionGovernance  *handlers.TransitionGovernanceHandler
 	AgentBinding          *handlers.WorkspaceAgentBindingHandler
+	AgentSkill            *handlers.AgentSkillHandler
 	AgentRun              *handlers.AgentRunHandler
 	RunnerControl         *handlers.RunnerControlHandler
 	RunnerBroker          *handlers.RunnerBrokerHandler

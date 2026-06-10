@@ -721,6 +721,7 @@ func (s *Server) initialize() error {
 	if agentAPIURL == "" {
 		agentAPIURL = baseURL
 	}
+	agentSkillRepo := repository.NewWorkspaceAgentSkillRepository(s.db)
 	bindingSvc, _ := services.NewBindingService(services.BindingServiceOptions{
 		Repo:       agentBindingRepo,
 		Identity:   agentIdentitySvc,
@@ -729,6 +730,7 @@ func (s *Server) initialize() error {
 		LLMRuntime: llmManager,
 		RunContext: agentBindingRepo,
 		Pools:      repository.NewActionRepository(s.db),
+		Skills:     agentSkillRepo,
 		APIURL:     agentAPIURL,
 	})
 	// Let the run service enrich remote claims from the binding (WI-195): a
@@ -738,6 +740,8 @@ func (s *Server) initialize() error {
 		codingRunSvc.SetBindingInputsResolver(bindingSvc)
 	}
 	agentBindingHandler := handlers.NewWorkspaceAgentBindingHandler(bindingSvc, agentIdentitySvc, permService, logger.NewAuditor(s.db))
+	agentBindingHandler.SetSkillsRepo(agentSkillRepo)
+	agentSkillHandler := handlers.NewAgentSkillHandler(agentSkillRepo, permService, logger.NewAuditor(s.db))
 	agentRunHandler := handlers.NewAgentRunHandler(repository.NewAgentRunRepository(s.db), codingRunSvc, permService)
 	// Remote-runner control plane (WI-141). Constructed unconditionally:
 	// remote pools do not require the local CodingAgent.RunnerImage, and the
@@ -1219,6 +1223,7 @@ func (s *Server) initialize() error {
 			Approval:              handlers.NewApprovalHandler(permService, approvalService, repository.NewItemRepository(s.db), logger.NewAuditor(s.db)),
 			TransitionGovernance:  handlers.NewTransitionGovernanceHandler(repository.NewTransitionRepository(s.db), approvalSetService),
 			AgentBinding:          agentBindingHandler,
+			AgentSkill:            agentSkillHandler,
 			AgentRun:              agentRunHandler,
 			RunnerControl:         runnerControlHandler,
 			RunnerBroker:          runnerBrokerHandler,

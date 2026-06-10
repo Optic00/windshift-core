@@ -9,6 +9,7 @@
   import WorkspaceConfigurationPreview from './WorkspaceConfigurationPreview.svelte';
   import WorkspaceSCMSettings from './WorkspaceSCMSettings.svelte';
   import WorkspaceAgentBindings from './WorkspaceAgentBindings.svelte';
+  import WorkspaceAgentSkills from './WorkspaceAgentSkills.svelte';
   import IssueSyncSettings from '../settings/IssueSyncSettings.svelte';
   import RecurrenceManager from '../settings/RecurrenceManager.svelte';
   import Button from '../components/Button.svelte';
@@ -444,8 +445,11 @@
         <WorkspaceSCMSettings {workspaceId} />
 
     {:else if activeTab === 'coding-agents'}
-        <!-- Coding Agent Bindings (WI-88) -->
-        <WorkspaceAgentBindings {workspaceId} />
+        <!-- Coding Agent Bindings (WI-88) + skills library (WI-258) -->
+        <div class="space-y-4">
+            <WorkspaceAgentBindings {workspaceId} />
+            <WorkspaceAgentSkills {workspaceId} />
+        </div>
 
     {:else if activeTab === 'issue-sync'}
         <!-- Issue Sync Settings -->

@@ -24,6 +24,7 @@ type WorkspaceAgentBindingHandler struct {
 	identity          *services.AgentActingIdentityService
 	permissionService *services.PermissionService
 	auditor           *logger.Auditor
+	skills            *repository.WorkspaceAgentSkillRepository
 }
 
 // NewWorkspaceAgentBindingHandler constructs the handler.
@@ -39,6 +40,13 @@ func NewWorkspaceAgentBindingHandler(
 		permissionService: permissionService,
 		auditor:           auditor,
 	}
+}
+
+// SetSkillsRepo wires the optional agent-skills repository (WI-258) so
+// binding responses can include attached skill ids and the agent-config
+// update endpoint can replace attachments.
+func (h *WorkspaceAgentBindingHandler) SetSkillsRepo(repo *repository.WorkspaceAgentSkillRepository) {
+	h.skills = repo
 }
 
 // Candidates returns the acting-identity options the workspace admin
@@ -82,6 +90,8 @@ type bindingResponse struct {
 	TokenScopes     []string `json:"token_scopes,omitempty"`
 	TokenTTLMinutes int      `json:"token_ttl_minutes"`
 	MaxRunsPerDay   int      `json:"max_runs_per_day"`
+	Instructions    string   `json:"instructions,omitempty"`
+	SkillIDs        []int    `json:"skill_ids,omitempty"`
 }
 
 func toBindingResponse(b *models.WorkspaceAgentBinding) bindingResponse {
@@ -98,7 +108,22 @@ func toBindingResponse(b *models.WorkspaceAgentBinding) bindingResponse {
 		TokenScopes:     b.TokenScopes,
 		TokenTTLMinutes: b.TokenTTLMinutes,
 		MaxRunsPerDay:   b.MaxRunsPerDay,
+		Instructions:    b.Instructions,
 	}
+}
+
+// withSkillIDs decorates a binding response with its attached skill ids.
+// Best-effort: a skills lookup failure leaves the field empty rather than
+// failing the listing.
+func (h *WorkspaceAgentBindingHandler) withSkillIDs(r *http.Request, resp bindingResponse) bindingResponse {
+	if h.skills == nil {
+		return resp
+	}
+	ids, err := h.skills.SkillIDsForBinding(r.Context(), resp.ID)
+	if err == nil {
+		resp.SkillIDs = ids
+	}
+	return resp
 }
 
 type createBindingBody struct {
@@ -111,6 +136,8 @@ type createBindingBody struct {
 	TokenScopes     []string `json:"token_scopes,omitempty"`
 	TokenTTLMinutes int      `json:"token_ttl_minutes,omitempty"`
 	MaxRunsPerDay   int      `json:"max_runs_per_day,omitempty"`
+	Instructions    string   `json:"instructions,omitempty"`
+	SkillIDs        []int    `json:"skill_ids,omitempty"`
 }
 
 // List returns every binding configured in the workspace.
@@ -133,7 +160,7 @@ func (h *WorkspaceAgentBindingHandler) List(w http.ResponseWriter, r *http.Reque
 	}
 	out := make([]bindingResponse, 0, len(bindings))
 	for _, b := range bindings {
-		out = append(out, toBindingResponse(b))
+		out = append(out, h.withSkillIDs(r, toBindingResponse(b)))
 	}
 	respondJSON(w, http.StatusOK, out)
 }
@@ -175,6 +202,8 @@ func (h *WorkspaceAgentBindingHandler) Create(w http.ResponseWriter, r *http.Req
 		TokenScopes:     body.TokenScopes,
 		TokenTTLMinutes: body.TokenTTLMinutes,
 		MaxRunsPerDay:   body.MaxRunsPerDay,
+		Instructions:    body.Instructions,
+		SkillIDs:        body.SkillIDs,
 		CreatedByUserID: user.ID,
 	})
 	if err != nil {
@@ -187,7 +216,9 @@ func (h *WorkspaceAgentBindingHandler) Create(w http.ResponseWriter, r *http.Req
 		case errors.Is(err, services.ErrBindingTokenTTLOverCap),
 			errors.Is(err, services.ErrBindingRepoNeedsSCMConnection),
 			errors.Is(err, services.ErrBindingInvalidRepoSlug),
-			errors.Is(err, services.ErrBindingInvalidPool):
+			errors.Is(err, services.ErrBindingInvalidPool),
+			errors.Is(err, services.ErrBindingInstructionsTooLong),
+			isSkillAttachError(err):
 			respondBadRequest(w, r, err.Error())
 		case isAgentScopeError(err):
 			respondBadRequest(w, r, err.Error())
@@ -203,7 +234,62 @@ func (h *WorkspaceAgentBindingHandler) Create(w http.ResponseWriter, r *http.Req
 		"acting_user_id":   binding.ActingUserID,
 		"acting_user_kind": binding.ActingUserKind,
 	})
-	respondJSON(w, http.StatusCreated, toBindingResponse(binding))
+	respondJSON(w, http.StatusCreated, h.withSkillIDs(r, toBindingResponse(binding)))
+}
+
+// isSkillAttachError reports whether the error came from skill-id
+// validation during binding create/update (bad or foreign ids → 400).
+func isSkillAttachError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "skill")
+}
+
+type updateAgentConfigBody struct {
+	Instructions string `json:"instructions"`
+	SkillIDs     []int  `json:"skill_ids"`
+}
+
+// UpdateAgentConfig rewrites the binding's prompt-shaping configuration —
+// custom instructions + skill attachments (WI-258). Bindings stay
+// create/delete-only for everything else; this narrow update lets admins
+// iterate on personas without recreating the binding.
+func (h *WorkspaceAgentBindingHandler) UpdateAgentConfig(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := requireIDParam(w, r, "workspaceId")
+	if !ok {
+		return
+	}
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+	if !RequireWorkspacePermission(w, r, user.ID, workspaceID, models.PermissionWorkspaceAdmin, h.permissionService) {
+		return
+	}
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil || id <= 0 {
+		respondBadRequest(w, r, "id path param must be a positive integer")
+		return
+	}
+	var body updateAgentConfigBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respondBadRequest(w, r, "invalid request body")
+		return
+	}
+	if err := h.bindings.UpdateAgentConfig(r.Context(), workspaceID, id, body.Instructions, body.SkillIDs); err != nil {
+		switch {
+		case errors.Is(err, services.ErrBindingNotFound):
+			respondNotFound(w, r, "agent binding")
+		case errors.Is(err, services.ErrBindingInstructionsTooLong), isSkillAttachError(err):
+			respondBadRequest(w, r, err.Error())
+		default:
+			respondInternalError(w, r, err)
+		}
+		return
+	}
+	h.auditor.LogWithDetails(r, user, "agent_binding.update_config", "workspace_agent_binding", &id, "", map[string]interface{}{
+		"workspace_id": workspaceID,
+		"skill_count":  len(body.SkillIDs),
+	})
+	respondJSON(w, http.StatusOK, map[string]any{"updated": true})
 }
 
 // Delete removes a binding by id. Returns 404 when the binding is absent.

@@ -88,6 +88,7 @@ func RegisterRoutes(deps restapi.Deps) {
 	attachmentHandler := handlers.NewAttachmentHandler(db, permissionService, deps.AttachmentPath)
 	pageHandler := handlers.NewPageHandler(db, permissionService)
 	pageLabelHandler := handlers.NewPageLabelHandler(db, permissionService)
+	agentSkillHandler := handlers.NewAgentSkillHandler(db, permissionService)
 	diagramHandler := handlers.NewDiagramHandler(db, permissionService)
 	labelHandler := handlers.NewLabelHandler(db, permissionService)
 	testMgmtHandler := handlers.NewTestManagementHandler(db, permissionService)
@@ -294,6 +295,8 @@ func RegisterRoutes(deps restapi.Deps) {
 	// the user-facing permission gate is also page.edit / page.view.
 	// Attach/detach gates per-page via PagePermissionService.
 	// ============================================
+	v1.HandleWithMiddleware("GET /workspaces/{id}/agent-skills", agentSkillHandler.List, bearerAuth.RequirePermission("agent-skills:read"), router.RequireNumericID)
+	v1.HandleWithMiddleware("GET /workspaces/{id}/agent-skills/{skillId}", agentSkillHandler.Get, bearerAuth.RequirePermission("agent-skills:read"), router.RequireNumericID)
 	v1.HandleWithMiddleware("GET /workspaces/{id}/page-labels", pageLabelHandler.ListLabels, bearerAuth.RequirePermission("pages:read"), router.RequireNumericID)
 	v1.HandleWithMiddleware("POST /workspaces/{id}/page-labels", pageLabelHandler.CreateLabel, bearerAuth.RequirePermission("pages:write"), router.RequireNumericID)
 	v1.HandleWithMiddleware("GET /workspaces/{id}/page-labels/{labelId}", pageLabelHandler.GetLabel, bearerAuth.RequirePermission("pages:read"), router.RequireNumericID)

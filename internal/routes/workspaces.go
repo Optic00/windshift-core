@@ -163,6 +163,12 @@ func RegisterWorkspaceRoutes(deps *Deps) {
 		api.HandleH("DELETE /workspaces/{workspaceId}/agent-bindings/{id}", auth(http.HandlerFunc(deps.Workspaces.AgentBinding.Delete)))
 		api.HandleH("POST /workspaces/{workspaceId}/agent-bindings/{id}/test-llm", auth(http.HandlerFunc(deps.Workspaces.AgentBinding.TestLLM)))
 		api.HandleH("POST /workspaces/{workspaceId}/agent-bindings/{id}/test-run", auth(http.HandlerFunc(deps.Workspaces.AgentBinding.TestRun)))
+		api.HandleH("PUT /workspaces/{workspaceId}/agent-bindings/{id}/agent-config", auth(http.HandlerFunc(deps.Workspaces.AgentBinding.UpdateAgentConfig)))
+		api.HandleH("GET /workspaces/{workspaceId}/agent-skills", auth(http.HandlerFunc(deps.Workspaces.AgentSkill.List)))
+		api.HandleH("POST /workspaces/{workspaceId}/agent-skills", auth(http.HandlerFunc(deps.Workspaces.AgentSkill.Create)))
+		api.HandleH("GET /workspaces/{workspaceId}/agent-skills/{id}", auth(http.HandlerFunc(deps.Workspaces.AgentSkill.Get)))
+		api.HandleH("PUT /workspaces/{workspaceId}/agent-skills/{id}", auth(http.HandlerFunc(deps.Workspaces.AgentSkill.Update)))
+		api.HandleH("DELETE /workspaces/{workspaceId}/agent-skills/{id}", auth(http.HandlerFunc(deps.Workspaces.AgentSkill.Delete)))
 		api.HandleH("GET /workspaces/{workspaceId}/agent-binding-candidates", auth(http.HandlerFunc(deps.Workspaces.AgentBinding.Candidates)))
 	}
 

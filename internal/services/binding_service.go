@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -42,6 +43,15 @@ var validRepoSlug = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
 // the bad config at create time rather than getting silently clamped at
 // every run start.
 var ErrBindingTokenTTLOverCap = errors.New("binding service: token_ttl_minutes exceeds the agent-token ceiling")
+
+// ErrBindingInstructionsTooLong caps a binding's custom instructions: the
+// text is appended to every run's initial prompt, so an unbounded value is
+// a token-cost and context-window footgun. 8000 characters is plenty for a
+// persona; longer material belongs in a skill the agent loads on demand.
+var ErrBindingInstructionsTooLong = errors.New("binding service: instructions exceed 8000 characters — move detailed material into a skill")
+
+// maxBindingInstructionsLen caps CreateBindingRequest.Instructions.
+const maxBindingInstructionsLen = 8000
 
 // ErrBindingBudgetExceeded is returned (and swallowed at log level) by
 // MaybeStartRunForAssignee when a binding has already started its
@@ -144,6 +154,7 @@ type BindingService struct {
 	llmRuntime LLMRuntimeResolver
 	runContext AgentRunContextResolver
 	pools      RunnerPoolLister
+	skills     *repository.WorkspaceAgentSkillRepository
 	apiURL     string
 	logger     *log.Logger
 }
@@ -159,8 +170,11 @@ type BindingServiceOptions struct {
 	LLMRuntime LLMRuntimeResolver
 	RunContext AgentRunContextResolver
 	Pools      RunnerPoolLister
-	APIURL     string
-	Logger     *log.Logger
+	// Skills is optional: when nil, bindings carry no skill attachments and
+	// run prompts get no skills index (WI-258).
+	Skills *repository.WorkspaceAgentSkillRepository
+	APIURL string
+	Logger *log.Logger
 }
 
 // NewBindingService constructs a BindingService. Repo + Identity are
@@ -184,6 +198,7 @@ func NewBindingService(opts BindingServiceOptions) (*BindingService, error) {
 		llmRuntime: opts.LLMRuntime,
 		runContext: opts.RunContext,
 		pools:      opts.Pools,
+		skills:     opts.Skills,
 		apiURL:     opts.APIURL,
 		logger:     logger,
 	}, nil
@@ -212,6 +227,12 @@ type CreateBindingRequest struct {
 	TokenScopes     []string
 	TokenTTLMinutes int
 	MaxRunsPerDay   int
+	// Instructions is the binding's persona/specialization, appended to the
+	// run's standard initial prompt as a "Your role" section (WI-258).
+	Instructions string
+	// SkillIDs attaches workspace agent skills to the binding; every id must
+	// belong to the binding's workspace.
+	SkillIDs        []int
 	CreatedByUserID int
 }
 
@@ -247,6 +268,12 @@ func (s *BindingService) Create(ctx context.Context, req CreateBindingRequest) (
 		if req.SCMConnectionID == nil {
 			return nil, ErrBindingRepoNeedsSCMConnection
 		}
+	}
+	if len(req.Instructions) > maxBindingInstructionsLen {
+		return nil, ErrBindingInstructionsTooLong
+	}
+	if len(req.SkillIDs) > 0 && s.skills == nil {
+		return nil, errors.New("binding service: skills are not configured on this server")
 	}
 	identity, err := s.identity.Resolve(ctx, req.CreatedByUserID, req.ActingUserID, req.WorkspaceID)
 	if err != nil {
@@ -284,6 +311,7 @@ func (s *BindingService) Create(ctx context.Context, req CreateBindingRequest) (
 		TokenScopes:     req.TokenScopes,
 		TokenTTLMinutes: req.TokenTTLMinutes,
 		MaxRunsPerDay:   req.MaxRunsPerDay,
+		Instructions:    req.Instructions,
 		CreatedByUserID: req.CreatedByUserID,
 	}
 	id, err := s.repo.Insert(ctx, binding)
@@ -291,7 +319,46 @@ func (s *BindingService) Create(ctx context.Context, req CreateBindingRequest) (
 		return nil, err
 	}
 	binding.ID = id
+	if len(req.SkillIDs) > 0 {
+		if err := s.skills.ReplaceBindingSkills(ctx, id, req.WorkspaceID, req.SkillIDs); err != nil {
+			// The binding row exists; surface the attachment failure rather
+			// than rolling back — the admin can re-attach via the skills
+			// endpoint. Wrapped so the handler maps it to 400.
+			return nil, fmt.Errorf("binding service: attach skills: %w", err)
+		}
+	}
 	return binding, nil
+}
+
+// UpdateAgentConfig rewrites a binding's prompt-shaping configuration —
+// custom instructions and skill attachments — in place (WI-258). Bindings
+// are otherwise create/delete-only; this narrow update exists so admins can
+// iterate on personas and skills without recreating the binding (which
+// would churn its id and history). Scoped by workspace.
+func (s *BindingService) UpdateAgentConfig(ctx context.Context, workspaceID, bindingID int, instructions string, skillIDs []int) error {
+	if len(instructions) > maxBindingInstructionsLen {
+		return ErrBindingInstructionsTooLong
+	}
+	binding, err := s.repo.Get(ctx, bindingID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrBindingNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("load binding: %w", err)
+	}
+	if binding.WorkspaceID != workspaceID {
+		return ErrBindingNotFound
+	}
+	if err := s.repo.UpdateInstructions(ctx, bindingID, workspaceID, instructions); err != nil {
+		return err
+	}
+	if s.skills == nil {
+		if len(skillIDs) > 0 {
+			return errors.New("binding service: skills are not configured on this server")
+		}
+		return nil
+	}
+	return s.skills.ReplaceBindingSkills(ctx, bindingID, workspaceID, skillIDs)
 }
 
 // validateTargetPool confirms poolID is an enabled runner_pool capability the
@@ -471,7 +538,7 @@ func (s *BindingService) StartTestRun(ctx context.Context, bindingID, workspaceI
 		}
 		applyLLMModelEnv(req.Env, llmCfg)
 	}
-	req.Token, req.Grants = s.bindingTokenAndGrants(binding, 0, triggeredByUserID)
+	req.Token, req.Grants = s.bindingTokenAndGrants(binding, 0, triggeredByUserID, false)
 
 	runID, err := s.runs.Start(ctx, req)
 	if err != nil {
@@ -575,6 +642,46 @@ func (s *BindingService) MaybeStartRunsForMentions(ctx context.Context, workspac
 	return errors.Join(errs...)
 }
 
+// promptSuffixForBinding renders the per-binding addition to the run's
+// initial prompt (WI-258): the binding's instructions as a "Your role"
+// section, plus an index of the attached enabled skills with `ws skill get`
+// pointers — progressive disclosure, so skill bodies cost no context until
+// the agent decides one is relevant. Returns "" when the binding has
+// neither.
+func (s *BindingService) promptSuffixForBinding(binding *models.WorkspaceAgentBinding, skills []*models.WorkspaceAgentSkill) string {
+	var b strings.Builder
+	if strings.TrimSpace(binding.Instructions) != "" {
+		b.WriteString("\n\n## Your role\n")
+		b.WriteString(strings.TrimSpace(binding.Instructions))
+	}
+	if len(skills) > 0 {
+		fmt.Fprintf(&b, "\n\n## Skills\nYou have %d skill(s) — knowledge packs curated for you. When one is relevant to the task, read its full body with `ws skill get <id>` before relying on it:\n", len(skills))
+		for _, sk := range skills {
+			desc := strings.TrimSpace(sk.Description)
+			if desc == "" {
+				desc = "(no description)"
+			}
+			fmt.Fprintf(&b, "- [%d] %s: %s\n", sk.ID, sk.Name, desc)
+		}
+	}
+	return b.String()
+}
+
+// enabledSkillsForBinding loads the binding's enabled skills; nil when the
+// skills repo is not wired or the lookup fails (logged — a skills hiccup
+// must not block the run).
+func (s *BindingService) enabledSkillsForBinding(ctx context.Context, binding *models.WorkspaceAgentBinding) []*models.WorkspaceAgentSkill {
+	if s.skills == nil {
+		return nil
+	}
+	skills, err := s.skills.ListEnabledForBinding(ctx, binding.ID)
+	if err != nil {
+		s.logger.Printf("binding service: list skills for binding=%d: %v (run proceeds without skills)", binding.ID, err)
+		return nil
+	}
+	return skills
+}
+
 // startRunForBinding admits and dispatches one run for a matched binding —
 // the shared core of the assignee-change and comment-@mention triggers.
 // Enforces the binding's MaxRunsPerDay budget, routes to the remote pool or
@@ -637,16 +744,19 @@ func (s *BindingService) startRunForBinding(ctx context.Context, binding *models
 		return nil
 	}
 
+	skills := s.enabledSkillsForBinding(ctx, binding)
+
 	env, err := s.buildRunEnv(ctx, workspaceID, itemID)
 	if err != nil {
 		return err
 	}
 	req := RunRequest{
-		WorkspaceID:       workspaceID,
-		ItemID:            &itemID,
-		BindingID:         binding.ID,
-		Env:               env,
-		TriggeredByUserID: triggeredByUserID,
+		WorkspaceID:         workspaceID,
+		ItemID:              &itemID,
+		BindingID:           binding.ID,
+		Env:                 env,
+		TriggeredByUserID:   triggeredByUserID,
+		InitialPromptSuffix: s.promptSuffixForBinding(binding, skills),
 	}
 	if binding.HasRepo() {
 		// HasRepo guarantees SCMConnectionID is set; this is the only
@@ -701,7 +811,7 @@ func (s *BindingService) startRunForBinding(ctx context.Context, binding *models
 	// (WI-144). Shared with the remote claim path via bindingTokenAndGrants so
 	// both transports derive identical inputs (WI-195). The git ref is filled
 	// at claim from the prepared worktree branch.
-	req.Token, req.Grants = s.bindingTokenAndGrants(binding, itemID, triggeredByUserID)
+	req.Token, req.Grants = s.bindingTokenAndGrants(binding, itemID, triggeredByUserID, len(skills) > 0)
 
 	runID, err := s.runs.Start(ctx, req)
 	if err != nil {
@@ -719,14 +829,22 @@ func (s *BindingService) startRunForBinding(ctx context.Context, binding *models
 // path fills it (the worktree branch locally, the run-branch namespace
 // remotely). triggeredByUserID is stamped into the git grant as the
 // credential principal the git proxy resolves on OAuth connections (WI-275);
-// 0 keeps the connection-level credential.
-func (s *BindingService) bindingTokenAndGrants(b *models.WorkspaceAgentBinding, itemID, triggeredByUserID int) (*TokenSpec, *models.RunGrants) {
+// 0 keeps the connection-level credential. withSkillsRead appends the
+// agent-skills:read scope when the binding pins explicit scopes that predate
+// the skills feature — a run whose prompt indexes skills must be able to
+// fetch them (WI-258); empty scopes already expand to the default set, which
+// includes it.
+func (s *BindingService) bindingTokenAndGrants(b *models.WorkspaceAgentBinding, itemID, triggeredByUserID int, withSkillsRead bool) (*TokenSpec, *models.RunGrants) {
 	if b.ActingUserID <= 0 || !s.runs.HasTokens() {
 		return nil, nil
 	}
+	scopes := b.TokenScopes
+	if withSkillsRead && len(scopes) > 0 && !slices.Contains(scopes, auth.ScopeAgentSkillsRead) {
+		scopes = append(append([]string{}, scopes...), auth.ScopeAgentSkillsRead)
+	}
 	spec := &TokenSpec{
 		ActingUserID: b.ActingUserID,
-		Scopes:       b.TokenScopes,
+		Scopes:       scopes,
 		TTL:          time.Duration(b.TokenTTLMinutes) * time.Minute,
 		Name:         fmt.Sprintf("agent-run:item-%d:binding-%d", itemID, b.ID),
 	}
@@ -749,13 +867,13 @@ func (s *BindingService) bindingTokenAndGrants(b *models.WorkspaceAgentBinding, 
 // injected into env — a remote runner reaches git/llm/secrets through the
 // brokers using its per-run token (WI-195). Returns (nil, nil, nil, nil) for
 // a run with no binding (e.g. action_container).
-func (s *BindingService) ResolveRunInputs(ctx context.Context, run *models.AgentRun) (*TokenSpec, *models.RunGrants, *JobRepo, map[string]string, error) {
+func (s *BindingService) ResolveRunInputs(ctx context.Context, run *models.AgentRun) (*RunInputs, error) {
 	if run == nil || run.BindingID == nil {
-		return nil, nil, nil, nil, nil
+		return nil, nil
 	}
 	binding, err := s.repo.Get(ctx, *run.BindingID)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("resolve run inputs: load binding %d: %w", *run.BindingID, err)
+		return nil, fmt.Errorf("resolve run inputs: load binding %d: %w", *run.BindingID, err)
 	}
 	itemID := 0
 	if run.ItemID != nil {
@@ -763,7 +881,7 @@ func (s *BindingService) ResolveRunInputs(ctx context.Context, run *models.Agent
 	}
 	env, err := s.buildRunEnv(ctx, run.WorkspaceID, itemID)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("resolve run inputs: build env: %w", err)
+		return nil, fmt.Errorf("resolve run inputs: build env: %w", err)
 	}
 	// Model id for the agent (same as the local path); the broker token and
 	// llm-proxy base URL are layered on at claim by applyLLMProxyEnv. No raw
@@ -772,7 +890,7 @@ func (s *BindingService) ResolveRunInputs(ctx context.Context, run *models.Agent
 	if binding.LLMConnectionID != nil && s.llmRuntime != nil {
 		llmCfg, err := s.llmRuntime.ConnectionRuntime(ctx, *binding.LLMConnectionID)
 		if err != nil {
-			return nil, nil, nil, nil, fmt.Errorf("resolve run inputs: llm runtime: %w", err)
+			return nil, fmt.Errorf("resolve run inputs: llm runtime: %w", err)
 		}
 		applyLLMModelEnv(env, llmCfg)
 	}
@@ -780,7 +898,9 @@ func (s *BindingService) ResolveRunInputs(ctx context.Context, run *models.Agent
 	if run.TriggeredByUserID != nil {
 		triggeredBy = *run.TriggeredByUserID
 	}
-	spec, grants := s.bindingTokenAndGrants(binding, itemID, triggeredBy)
+	skills := s.enabledSkillsForBinding(ctx, binding)
+	promptSuffix := s.promptSuffixForBinding(binding, skills)
+	spec, grants := s.bindingTokenAndGrants(binding, itemID, triggeredBy, len(skills) > 0)
 
 	// Repo-prep inputs for a remote runner: only when the binding is repo-
 	// backed. Unlike the local path, no SCM token travels here — the remote
@@ -797,7 +917,7 @@ func (s *BindingService) ResolveRunInputs(ctx context.Context, run *models.Agent
 			BaseRef:     baseRef,
 		}
 	}
-	return spec, grants, repo, env, nil
+	return &RunInputs{Token: spec, Grants: grants, Repo: repo, Env: env, PromptSuffix: promptSuffix}, nil
 }
 
 func (s *BindingService) buildRunEnv(ctx context.Context, workspaceID, itemID int) (map[string]string, error) {

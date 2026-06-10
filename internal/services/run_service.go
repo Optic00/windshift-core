@@ -140,6 +140,11 @@ type RunRequest struct {
 	// remote claim path, so Repo/Token/Grants/Env on this request are ignored
 	// for remote runs — the orchestrator never sees the work locally.
 	TargetPoolID *int
+	// InitialPromptSuffix is appended to whichever initial prompt the run
+	// uses (the service default or a per-run override): the binding's
+	// custom instructions + skills index (WI-258). Never replaces the
+	// operational prompt.
+	InitialPromptSuffix string
 	// TriggeredByUserID is the user who caused the run (the assigner whose
 	// change fired the binding trigger, or the admin starting a test run).
 	// Persisted on the run for audit; on OAuth SCM connections it is the
@@ -203,7 +208,19 @@ type PostRunInfo struct {
 // whose binding mints no token, and (nil, nil, nil, nil) for a run with no
 // binding (e.g. action_container) — neither gets token/grant enrichment.
 type BindingInputsResolver interface {
-	ResolveRunInputs(ctx context.Context, run *models.AgentRun) (*TokenSpec, *models.RunGrants, *JobRepo, map[string]string, error)
+	ResolveRunInputs(ctx context.Context, run *models.AgentRun) (*RunInputs, error)
+}
+
+// RunInputs bundles everything a binding-backed run needs at remote claim
+// time: the per-run token spec, broker grants, repo-prep coordinates, runner
+// env, and the per-binding prompt suffix (instructions + skills index,
+// WI-258). Nil means "no binding" — the claim proceeds without enrichment.
+type RunInputs struct {
+	Token        *TokenSpec
+	Grants       *models.RunGrants
+	Repo         *JobRepo
+	Env          map[string]string
+	PromptSuffix string
 }
 
 // PostRunHook is the optional post-finalize callback. Errors are logged
@@ -705,26 +722,31 @@ func (s *RunService) PrepareRemoteClaim(ctx context.Context, run *models.AgentRu
 	if s.bindingInputs == nil || s.tokens == nil || run.BindingID == nil {
 		return spec, nil
 	}
-	tokenSpec, grants, repo, env, err := s.bindingInputs.ResolveRunInputs(ctx, run)
+	inputs, err := s.bindingInputs.ResolveRunInputs(ctx, run)
 	if err != nil {
 		return JobSpec{}, fmt.Errorf("remote claim: resolve run inputs: %w", err)
 	}
+	if inputs == nil {
+		inputs = &RunInputs{}
+	}
+	spec.InitialPrompt += inputs.PromptSuffix
+	env := inputs.Env
 	if env == nil {
 		env = map[string]string{}
 	}
 	env["AGENT_RUN_ID"] = fmt.Sprintf("%d", run.ID)
-	if tokenSpec != nil {
-		token, err := s.mintTokenAndGrants(ctx, run.ID, *tokenSpec, grants, fmt.Sprintf("agent-runs/run-%d", run.ID))
+	if inputs.Token != nil {
+		token, err := s.mintTokenAndGrants(ctx, run.ID, *inputs.Token, inputs.Grants, fmt.Sprintf("agent-runs/run-%d", run.ID))
 		if err != nil {
 			return JobSpec{}, fmt.Errorf("remote claim: mint token run=%d: %w", run.ID, err)
 		}
 		env["WS_TOKEN"] = token
-		applyLLMProxyEnv(env, grants, run.ID, token)
+		applyLLMProxyEnv(env, inputs.Grants, run.ID, token)
 	}
 	spec.Env = env
 	// A remote runner prepares its own checkout from this; the host
 	// WorkspacePath stays empty on the wire.
-	spec.Repo = repo
+	spec.Repo = inputs.Repo
 	return spec, nil
 }
 

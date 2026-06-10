@@ -112,6 +112,7 @@ CREATE TABLE IF NOT EXISTS workspace_agent_bindings (
     max_runs_per_day INTEGER NOT NULL DEFAULT 0,
     scm_connection_id INTEGER REFERENCES workspace_scm_connections(id) ON DELETE SET NULL,
     target_pool_id INTEGER, -- soft ref to action_capabilities (runner_pool); NULL = local in-process run (WI-195)
+    instructions TEXT NOT NULL DEFAULT '', -- appended to the run's initial prompt as the agent's role/persona (WI-258)
     created_by_user_id INTEGER NOT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -125,6 +126,39 @@ CREATE INDEX IF NOT EXISTS idx_workspace_agent_bindings_workspace
     ON workspace_agent_bindings(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_workspace_agent_bindings_scm_connection
     ON workspace_agent_bindings(scm_connection_id);
+
+-- Workspace agent skills (WI-258): a per-workspace library of markdown
+-- "knowledge packs" attachable to agent bindings. Delivery is progressive
+-- disclosure through the ws CLI: the run's initial prompt lists attached
+-- skills (name + description) and the agent fetches a body with
+-- `ws skill get <id>` only when relevant. Modeled after the Anthropic
+-- Agent Skills standard (SKILL.md), markdown-only in v1.
+CREATE TABLE IF NOT EXISTS workspace_agent_skills (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    body TEXT NOT NULL DEFAULT '',
+    enabled BOOLEAN NOT NULL DEFAULT 1,
+    created_by_user_id INTEGER,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+    FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_agent_skills_workspace_name
+    ON workspace_agent_skills(workspace_id, name);
+
+CREATE TABLE IF NOT EXISTS workspace_agent_binding_skills (
+    binding_id INTEGER NOT NULL,
+    skill_id INTEGER NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (binding_id, skill_id),
+    FOREIGN KEY (binding_id) REFERENCES workspace_agent_bindings(id) ON DELETE CASCADE,
+    FOREIGN KEY (skill_id) REFERENCES workspace_agent_skills(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_workspace_agent_binding_skills_skill
+    ON workspace_agent_binding_skills(skill_id);
 
 -- Remote runner pools (Initiative WI-141). A pool is an action_capabilities
 -- row of type 'runner_pool'; these tables hang off it by soft ref (no FK,

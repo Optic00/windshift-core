@@ -151,6 +151,9 @@ func (s *RunService) claimNext() *ClaimedJob {
 		if job.req.InitialPrompt != "" {
 			initialPrompt = job.req.InitialPrompt
 		}
+		// Per-binding instructions + skills index ride as a suffix on top of
+		// whichever base prompt won (WI-258).
+		initialPrompt += job.req.InitialPromptSuffix
 		return &ClaimedJob{Spec: JobSpec{RunID: job.runID, WorkspacePath: st.path, Env: env, InitialPrompt: initialPrompt, Kind: job.req.JobKind, Image: job.req.JobImage}, Ctx: runCtx}
 	}
 }

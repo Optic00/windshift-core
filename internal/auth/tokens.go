@@ -100,6 +100,12 @@ const (
 	ScopeAssetsWrite  = "assets:write"
 	ScopeAssetsDelete = "assets:delete"
 
+	// Agent skills (WI-258): the per-workspace library of markdown knowledge
+	// packs a run's prompt indexes and the agent reads via `ws skill get`.
+	// Read-only by design on the token surface — authoring is a workspace-
+	// admin UI concern, not an API-token one.
+	ScopeAgentSkillsRead = "agent-skills:read"
+
 	// Admin scopes (require system admin role AND scope on token)
 	ScopeAdminUsersRead      = "admin:users:read"
 	ScopeAdminUsersWrite     = "admin:users:write"
@@ -133,6 +139,7 @@ var DefaultAgentScopes = []string{
 	// finding 1 concern that legacy 'write' shouldn't silently grant
 	// destructive ops.
 	ScopeAssetsRead, ScopeAssetsWrite,
+	ScopeAgentSkillsRead,
 	ScopeMCPAccess,
 }
 
@@ -149,6 +156,7 @@ var DefaultCodingAgentRunScopes = []string{
 	ScopeMilestonesRead, ScopeIterationsRead, ScopeProjectsRead,
 	ScopePagesRead,
 	ScopeTestsRead,
+	ScopeAgentSkillsRead,
 }
 
 // AllValidScopes is the complete set of valid scope strings for validation.
@@ -167,6 +175,7 @@ var AllValidScopes = []string{
 	ScopePagesRead, ScopePagesWrite, ScopePagesDelete,
 	ScopeTestsRead, ScopeTestsWrite,
 	ScopeAssetsRead, ScopeAssetsWrite, ScopeAssetsDelete,
+	ScopeAgentSkillsRead,
 	ScopeAdminUsersRead, ScopeAdminUsersWrite,
 	ScopeAdminGroupsRead, ScopeAdminGroupsWrite,
 	ScopeAdminAuditLogsRead,

@@ -32,7 +32,11 @@ type WorkspaceAgentBinding struct {
 	// TargetPoolID routes this binding's coding-agent runs to a runner_pool
 	// capability (a remote pool) instead of the local in-process pool. NULL =
 	// local. The pool's per-run token + grants are derived at claim (WI-195).
-	TargetPoolID    *int      `json:"target_pool_id,omitempty"`
+	TargetPoolID *int `json:"target_pool_id,omitempty"`
+	// Instructions is the binding's persona/specialization, appended to the
+	// run's standard initial prompt as a "Your role" section (WI-258). It
+	// never replaces the operational prompt.
+	Instructions    string    `json:"instructions,omitempty"`
 	CreatedByUserID int       `json:"created_by_user_id"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`

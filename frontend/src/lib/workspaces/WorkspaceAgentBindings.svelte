@@ -7,8 +7,8 @@
   // candidates endpoint just keeps the picker honest.
 
   import { onDestroy, onMount } from 'svelte';
-  import { Bot, FlaskConical, Loader2, Plus, Trash2 } from '@lucide/svelte';
-  import { agentBindings, agentRuns, api } from '../api.js';
+  import { Bot, FlaskConical, Loader2, Plus, Trash2, Wand2 } from '@lucide/svelte';
+  import { agentBindings, agentRuns, agentSkills, api } from '../api.js';
   import Panel from '../components/Panel.svelte';
   import Select from '../components/Select.svelte';
   import Input from '../components/Input.svelte';
@@ -45,7 +45,47 @@
   let addLLMConnectionId = $state(null);
   let addTokenTTLMinutes = $state(60);
   let addMaxRunsPerDay = $state(0);
+  let addInstructions = $state('');
+  let addSkillIds = $state([]);
   let adding = $state(false);
+
+  // Workspace skills library (WI-258) for the attach pickers.
+  let workspaceSkills = $state([]);
+
+  // Per-binding agent-config editor (instructions + skills), keyed open by id.
+  let configFor = $state(null);
+  let configInstructions = $state('');
+  let configSkillIds = $state([]);
+  let configSaving = $state(false);
+
+  function toggleSkill(list, id) {
+    return list.includes(id) ? list.filter((s) => s !== id) : [...list, id];
+  }
+
+  function openConfig(b) {
+    configFor = b.id;
+    configInstructions = b.instructions || '';
+    configSkillIds = [...(b.skill_ids || [])];
+  }
+
+  async function saveConfig() {
+    if (configFor == null) return;
+    configSaving = true;
+    try {
+      await agentBindings.updateAgentConfig(workspaceId, configFor, {
+        instructions: configInstructions,
+        skill_ids: configSkillIds,
+      });
+      successToast('Agent configuration saved');
+      configFor = null;
+      await load();
+    } catch (err) {
+      errorToast(err?.message || 'Failed to save agent configuration');
+      console.error('Failed to save agent config:', err);
+    } finally {
+      configSaving = false;
+    }
+  }
 
   // Linked repositories for the currently-selected SCM connection.
   let linkedRepos = $state([]);
@@ -160,7 +200,7 @@
   async function load() {
     loading = true;
     try {
-      const [list, cands, conns, llmConns, pools] = await Promise.all([
+      const [list, cands, conns, llmConns, pools, skills] = await Promise.all([
         agentBindings.listForWorkspace(workspaceId),
         agentBindings.getCandidates(workspaceId),
         api.workspaceSCM.getConnections(workspaceId).catch(() => []),
@@ -170,12 +210,15 @@
         api.llmProviders.getEnabled().catch(() => []),
         // Runner pools this workspace can target (empty if none / not allowed).
         api.actionCapabilities.getForWorkspace(workspaceId, 'runner_pool').catch(() => []),
+        // Skills library for the attach pickers (WI-258).
+        agentSkills.listForWorkspace(workspaceId).catch(() => []),
       ]);
       bindings = list ?? [];
       candidates = cands ?? [];
       scmConnections = conns ?? [];
       llmConnections = llmConns ?? [];
       runnerPools = pools ?? [];
+      workspaceSkills = skills ?? [];
     } catch (err) {
       console.error('Failed to load agent bindings:', err);
       errorToast(err?.message || 'Failed to load agent bindings');
@@ -323,6 +366,8 @@
     addLLMConnectionId = null;
     addTokenTTLMinutes = 60;
     addMaxRunsPerDay = 0;
+    addInstructions = '';
+    addSkillIds = [];
     linkedRepos = [];
   }
 
@@ -338,6 +383,8 @@
     if (addLLMConnectionId) body.llm_connection_id = addLLMConnectionId;
     if (addRepoSlug.trim()) body.repo_slug = addRepoSlug.trim();
     if (addRepoBaseRef.trim()) body.repo_base_ref = addRepoBaseRef.trim();
+    if (addInstructions.trim()) body.instructions = addInstructions.trim();
+    if (addSkillIds.length) body.skill_ids = addSkillIds;
     adding = true;
     try {
       await agentBindings.create(workspaceId, body);
@@ -521,6 +568,17 @@
                     </button>
                     <button
                       type="button"
+                      onclick={() => (configFor === b.id ? (configFor = null) : openConfig(b))}
+                      class="inline-flex items-center justify-center p-1 rounded hover:opacity-80"
+                      style="color: var(--ds-icon);"
+                      title="Persona & skills"
+                      aria-label="Edit persona and skills for {displayActingUser(b.acting_user_id)}"
+                      data-testid="binding-agent-config-{b.id}"
+                    >
+                      <Wand2 class="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
                       onclick={() => openDeleteDialog(b)}
                       class="inline-flex items-center justify-center p-1 rounded hover:opacity-80"
                       style="color: var(--ds-icon-danger);"
@@ -531,6 +589,66 @@
                     </button>
                   </td>
                 </tr>
+                {#if configFor === b.id}
+                  <tr style="border-color: var(--ds-border);">
+                    <td colspan="8" class="px-3 pb-3">
+                      <div class="rounded border p-3 space-y-3" style="border-color: var(--ds-border);" data-testid="binding-agent-config-editor">
+                        <div>
+                          <label for="config-instructions-{b.id}" class="block text-xs mb-1" style="color: var(--ds-text-subtle);">
+                            Custom instructions (appended to the standard prompt as the agent's role)
+                          </label>
+                          <textarea
+                            id="config-instructions-{b.id}"
+                            bind:value={configInstructions}
+                            rows="3"
+                            class="w-full text-sm rounded border px-2 py-1"
+                            style="border-color: var(--ds-border); background-color: var(--ds-background-input, transparent); color: var(--ds-text);"
+                          ></textarea>
+                        </div>
+                        {#if workspaceSkills.length > 0}
+                          <div>
+                            <span class="block text-xs mb-1" style="color: var(--ds-text-subtle);">Skills</span>
+                            <div class="flex flex-wrap gap-3">
+                              {#each workspaceSkills as skill (skill.id)}
+                                <label class="inline-flex items-center gap-1.5 text-sm" style="color: var(--ds-text);" title={skill.description}>
+                                  <input
+                                    type="checkbox"
+                                    checked={configSkillIds.includes(skill.id)}
+                                    onchange={() => (configSkillIds = toggleSkill(configSkillIds, skill.id))}
+                                  />
+                                  {skill.name}{skill.enabled ? '' : ' (disabled)'}
+                                </label>
+                              {/each}
+                            </div>
+                          </div>
+                        {:else}
+                          <p class="text-xs" style="color: var(--ds-text-subtle);">No skills in this workspace yet — create them in the Agent skills panel below.</p>
+                        {/if}
+                        <div class="flex justify-end gap-2">
+                          <button
+                            type="button"
+                            onclick={() => (configFor = null)}
+                            class="text-sm px-3 py-1 rounded border hover:opacity-80"
+                            style="border-color: var(--ds-border); color: var(--ds-text-subtle);"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            onclick={saveConfig}
+                            disabled={configSaving}
+                            class="text-sm px-3 py-1 rounded border hover:opacity-80 disabled:opacity-40"
+                            style="border-color: var(--ds-border); color: var(--ds-text);"
+                            data-testid="binding-agent-config-save"
+                          >
+                            {#if configSaving}<Loader2 class="w-3.5 h-3.5 animate-spin inline" />{/if}
+                            Save
+                          </button>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                {/if}
                 {#if testResults[b.id]}
                   <tr style="border-color: var(--ds-border);">
                     <td colspan="8" class="px-3 pb-3">
@@ -633,6 +751,37 @@
               <Input id="binding-budget" type="number" min="0" bind:value={addMaxRunsPerDay} />
             </div>
           </div>
+          <!-- Persona + skills (WI-258): appended to the run's standard prompt. -->
+          <div class="mt-4">
+            <label for="binding-instructions" class="block text-xs mb-1" style="color: var(--ds-text-subtle);">
+              Custom instructions (optional persona — "You are our release manager…")
+            </label>
+            <textarea
+              id="binding-instructions"
+              bind:value={addInstructions}
+              rows="3"
+              class="w-full text-sm rounded border px-2 py-1"
+              style="border-color: var(--ds-border); background-color: var(--ds-background-input, transparent); color: var(--ds-text);"
+              placeholder="Appended to the standard agent prompt as the agent's role. The operational rules (commit, comment, no push) stay in place."
+            ></textarea>
+          </div>
+          {#if workspaceSkills.length > 0}
+            <div class="mt-3">
+              <span class="block text-xs mb-1" style="color: var(--ds-text-subtle);">Skills</span>
+              <div class="flex flex-wrap gap-3">
+                {#each workspaceSkills as skill (skill.id)}
+                  <label class="inline-flex items-center gap-1.5 text-sm" style="color: var(--ds-text);" title={skill.description}>
+                    <input
+                      type="checkbox"
+                      checked={addSkillIds.includes(skill.id)}
+                      onchange={() => (addSkillIds = toggleSkill(addSkillIds, skill.id))}
+                    />
+                    {skill.name}{skill.enabled ? '' : ' (disabled)'}
+                  </label>
+                {/each}
+              </div>
+            </div>
+          {/if}
           <div class="mt-4 flex justify-end">
             <button
               type="button"

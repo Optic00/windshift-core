@@ -40,6 +40,20 @@ export const agentBindings = {
     }),
 
   /**
+   * Rewrite the binding's prompt-shaping config: custom instructions (the
+   * persona appended to the run's initial prompt) + attached skill ids
+   * (WI-258). Everything else on a binding stays create/delete-only.
+   * @param {number} workspaceId
+   * @param {number} id
+   * @param {{ instructions: string, skill_ids: number[] }} body
+   */
+  updateAgentConfig: (workspaceId, id, body) =>
+    fetchAPI(`/workspaces/${workspaceId}/agent-bindings/${id}/agent-config`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+
+  /**
    * Round-trip a prompt through the binding's LLM connection and return the
    * model's reply, plus — when the binding is repo-backed — a snapshot of the
    * cloned worktree's project root:

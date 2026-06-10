@@ -1002,6 +1002,37 @@ func (c *Client) ResolveItemID(keyOrID string) (int, error) {
 // Pages API Methods
 // ============================================
 
+// AgentSkill mirrors the v1 agent-skills payloads (WI-258).
+type AgentSkill struct {
+	ID          int    `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Body        string `json:"body,omitempty"`
+	Enabled     bool   `json:"enabled"`
+}
+
+type agentSkillListResponse struct {
+	Items []AgentSkill `json:"items"`
+}
+
+// ListAgentSkills lists the workspace's enabled agent skills (no bodies).
+func (c *Client) ListAgentSkills(workspaceID int) ([]AgentSkill, error) {
+	var resp agentSkillListResponse
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/workspaces/%d/agent-skills", workspaceID), &resp); err != nil {
+		return nil, err
+	}
+	return resp.Items, nil
+}
+
+// GetAgentSkill fetches one skill including its markdown body.
+func (c *Client) GetAgentSkill(workspaceID, skillID int) (*AgentSkill, error) {
+	var skill AgentSkill
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/workspaces/%d/agent-skills/%d", workspaceID, skillID), &skill); err != nil {
+		return nil, err
+	}
+	return &skill, nil
+}
+
 // ListPages returns every page in the workspace the caller can view,
 // sorted depth-first by the server.
 func (c *Client) ListPages(workspaceID int) ([]Page, error) {
