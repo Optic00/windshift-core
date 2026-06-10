@@ -126,6 +126,133 @@ func (r *ItemRepository) GetItemWorkspaceOwnership(itemID int) (*ItemWorkspaceOw
 	return &out, nil
 }
 
+// --- Portal channel request lookups ------------------------------------------
+
+// PortalRequestRow is one row returned by the portal channel request queries —
+// an item submitted through a portal channel, hydrated with workspace,
+// request-type, status, and comment-count metadata.
+type PortalRequestRow struct {
+	ID                      int
+	WorkspaceID             int
+	WorkspaceItemNumber     int
+	Title                   string
+	Description             string
+	StatusName              string
+	PriorityName            string
+	CreatedAt               string
+	UpdatedAt               string
+	ChannelID               *int
+	RequestTypeID           *int
+	CreatorID               *int
+	CreatorPortalCustomerID *int
+	WorkspaceName           string
+	WorkspaceKey            string
+	RequestTypeName         *string
+	RequestTypeIcon         *string
+	RequestTypeColor        *string
+	CommentCount            int
+	StatusCategoryColor     *string
+	StatusIsCompleted       bool
+}
+
+const portalRequestSelect = `
+	SELECT
+		i.id, i.workspace_id, i.workspace_item_number, i.title, i.description,
+		COALESCE(s.name, 'Unknown') AS status, COALESCE(p.name, '') AS priority,
+		i.created_at, i.updated_at,
+		i.channel_id, i.request_type_id, i.creator_id, i.creator_portal_customer_id,
+		w.name AS workspace_name,
+		w.key AS workspace_key,
+		rt.name AS request_type_name,
+		rt.icon AS request_type_icon,
+		rt.color AS request_type_color,
+		(SELECT COUNT(*) FROM comments WHERE item_id = i.id AND (is_private = false OR is_private IS NULL)) AS comment_count,
+		sc.color AS status_category_color,
+		COALESCE(sc.is_completed, false) AS status_is_completed
+	FROM items i
+	JOIN workspaces w ON i.workspace_id = w.id
+	LEFT JOIN request_types rt ON i.request_type_id = rt.id
+	LEFT JOIN statuses s ON i.status_id = s.id
+	LEFT JOIN status_categories sc ON s.category_id = sc.id
+	LEFT JOIN priorities p ON i.priority_id = p.id
+`
+
+func scanPortalRequestRow(scanner interface {
+	Scan(dest ...interface{}) error
+}) (PortalRequestRow, error) {
+	var row PortalRequestRow
+	var channelID, requestTypeID, creatorID, creatorPortalCustomerID sql.NullInt64
+	var requestTypeName, requestTypeIcon, requestTypeColor, statusCategoryColor sql.NullString
+	err := scanner.Scan(
+		&row.ID, &row.WorkspaceID, &row.WorkspaceItemNumber, &row.Title, &row.Description,
+		&row.StatusName, &row.PriorityName, &row.CreatedAt, &row.UpdatedAt,
+		&channelID, &requestTypeID, &creatorID, &creatorPortalCustomerID,
+		&row.WorkspaceName, &row.WorkspaceKey,
+		&requestTypeName, &requestTypeIcon, &requestTypeColor,
+		&row.CommentCount,
+		&statusCategoryColor, &row.StatusIsCompleted,
+	)
+	if err != nil {
+		return row, err
+	}
+	assignNullableInt(&row.ChannelID, channelID)
+	assignNullableInt(&row.RequestTypeID, requestTypeID)
+	assignNullableInt(&row.CreatorID, creatorID)
+	assignNullableInt(&row.CreatorPortalCustomerID, creatorPortalCustomerID)
+	assignNullableStringPtr(&row.RequestTypeName, requestTypeName)
+	assignNullableStringPtr(&row.RequestTypeIcon, requestTypeIcon)
+	assignNullableStringPtr(&row.RequestTypeColor, requestTypeColor)
+	assignNullableStringPtr(&row.StatusCategoryColor, statusCategoryColor)
+	return row, nil
+}
+
+// ListChannelRequestsByCreator returns the newest 500 requests an internal
+// user submitted through the given portal channel.
+func (r *ItemRepository) ListChannelRequestsByCreator(creatorID, channelID int) ([]PortalRequestRow, error) {
+	return r.listChannelRequests("i.creator_id = ?", creatorID, channelID)
+}
+
+// ListChannelRequestsByPortalCustomer returns the newest 500 requests a portal
+// customer submitted through the given portal channel.
+func (r *ItemRepository) ListChannelRequestsByPortalCustomer(customerID, channelID int) ([]PortalRequestRow, error) {
+	return r.listChannelRequests("i.creator_portal_customer_id = ?", customerID, channelID)
+}
+
+func (r *ItemRepository) listChannelRequests(ownerClause string, ownerID, channelID int) ([]PortalRequestRow, error) {
+	rows, err := r.db.Query(portalRequestSelect+`
+		WHERE `+ownerClause+` AND i.channel_id = ?
+		ORDER BY i.created_at DESC
+		LIMIT 500
+	`, ownerID, channelID)
+	if err != nil {
+		return nil, fmt.Errorf("list channel requests: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := []PortalRequestRow{}
+	for rows.Next() {
+		row, err := scanPortalRequestRow(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan channel request: %w", err)
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+// GetPortalRequest returns a single item with portal request metadata.
+// Returns ErrNotFound if the item does not exist.
+func (r *ItemRepository) GetPortalRequest(itemID int) (*PortalRequestRow, error) {
+	row, err := scanPortalRequestRow(r.db.QueryRow(portalRequestSelect+" WHERE i.id = ?", itemID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get portal request %d: %w", itemID, err)
+	}
+	return &row, nil
+}
+
 // --- Portal customer ticket lookups -----------------------------------------
 
 // PortalCustomerSubmission is one row returned by

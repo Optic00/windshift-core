@@ -11,16 +11,18 @@ import (
 
 	"windshift/internal/database"
 	"windshift/internal/models"
+	"windshift/internal/repository"
 )
 
 // PortalService encapsulates database logic for portal requests
 type PortalService struct {
-	db database.Database
+	db    database.Database
+	items *repository.ItemRepository
 }
 
 // NewPortalService creates a new PortalService
 func NewPortalService(db database.Database) *PortalService {
-	return &PortalService{db: db}
+	return &PortalService{db: db, items: repository.NewItemRepository(db)}
 }
 
 // GetCustomerIDForUser returns the portal customer linked to an internal user.
@@ -166,193 +168,73 @@ type PortalComment struct {
 	AuthorAvatar     string `json:"author_avatar"`
 }
 
+// portalRequestSummaryFromRow maps a repository portal request row to the
+// portal API summary shape.
+func portalRequestSummaryFromRow(row repository.PortalRequestRow) PortalRequestSummary {
+	return PortalRequestSummary{
+		ID:                  row.ID,
+		WorkspaceID:         row.WorkspaceID,
+		WorkspaceItemNumber: row.WorkspaceItemNumber,
+		WorkspaceName:       row.WorkspaceName,
+		WorkspaceKey:        row.WorkspaceKey,
+		Title:               row.Title,
+		Description:         row.Description,
+		Status:              row.StatusName,
+		Priority:            row.PriorityName,
+		CreatedAt:           row.CreatedAt,
+		UpdatedAt:           row.UpdatedAt,
+		ChannelID:           row.ChannelID,
+		RequestTypeID:       row.RequestTypeID,
+		RequestTypeName:     row.RequestTypeName,
+		RequestTypeIcon:     row.RequestTypeIcon,
+		RequestTypeColor:    row.RequestTypeColor,
+		CommentCount:        row.CommentCount,
+		StatusCategoryColor: row.StatusCategoryColor,
+		StatusIsCompleted:   row.StatusIsCompleted,
+	}
+}
+
+func portalRequestSummariesFromRows(rows []repository.PortalRequestRow) []PortalRequestSummary {
+	requests := make([]PortalRequestSummary, 0, len(rows))
+	for _, row := range rows {
+		requests = append(requests, portalRequestSummaryFromRow(row))
+	}
+	return requests
+}
+
 // GetRequestsByCreatorID gets requests for internal user (by creator_id)
-func (s *PortalService) GetRequestsByCreatorID(ctx context.Context, creatorID, channelID int) ([]PortalRequestSummary, error) {
-	query := `
-		SELECT
-			i.id, i.workspace_id, i.workspace_item_number, i.title, i.description,
-			COALESCE(s.name, 'Unknown') AS status, COALESCE(p.name, '') AS priority,
-			i.created_at, i.updated_at,
-			i.channel_id, i.request_type_id,
-			w.name AS workspace_name,
-			w.key AS workspace_key,
-			rt.name AS request_type_name,
-			rt.icon AS request_type_icon,
-			rt.color AS request_type_color,
-			(SELECT COUNT(*) FROM comments WHERE item_id = i.id AND (is_private = false OR is_private IS NULL)) AS comment_count,
-			sc.color AS status_category_color,
-			COALESCE(sc.is_completed, false) AS status_is_completed
-		FROM items i
-		JOIN workspaces w ON i.workspace_id = w.id
-		LEFT JOIN request_types rt ON i.request_type_id = rt.id
-		LEFT JOIN statuses s ON i.status_id = s.id
-		LEFT JOIN status_categories sc ON s.category_id = sc.id
-		LEFT JOIN priorities p ON i.priority_id = p.id
-		WHERE i.creator_id = ? AND i.channel_id = ?
-		ORDER BY i.created_at DESC
-		LIMIT 500
-	`
-
-	return s.scanRequestSummaries(ctx, query, creatorID, channelID)
-}
-
-// GetRequestsByPortalCustomerID gets requests for portal customer (by creator_portal_customer_id)
-func (s *PortalService) GetRequestsByPortalCustomerID(ctx context.Context, portalCustomerID, channelID int) ([]PortalRequestSummary, error) {
-	query := `
-		SELECT
-			i.id, i.workspace_id, i.workspace_item_number, i.title, i.description,
-			COALESCE(s.name, 'Unknown') AS status, COALESCE(p.name, '') AS priority,
-			i.created_at, i.updated_at,
-			i.channel_id, i.request_type_id,
-			w.name AS workspace_name,
-			w.key AS workspace_key,
-			rt.name AS request_type_name,
-			rt.icon AS request_type_icon,
-			rt.color AS request_type_color,
-			(SELECT COUNT(*) FROM comments WHERE item_id = i.id AND (is_private = false OR is_private IS NULL)) AS comment_count,
-			sc.color AS status_category_color,
-			COALESCE(sc.is_completed, false) AS status_is_completed
-		FROM items i
-		JOIN workspaces w ON i.workspace_id = w.id
-		LEFT JOIN request_types rt ON i.request_type_id = rt.id
-		LEFT JOIN statuses s ON i.status_id = s.id
-		LEFT JOIN status_categories sc ON s.category_id = sc.id
-		LEFT JOIN priorities p ON i.priority_id = p.id
-		WHERE i.creator_portal_customer_id = ? AND i.channel_id = ?
-		ORDER BY i.created_at DESC
-		LIMIT 500
-	`
-
-	return s.scanRequestSummaries(ctx, query, portalCustomerID, channelID)
-}
-
-// scanRequestSummaries is a helper to scan request summary rows
-func (s *PortalService) scanRequestSummaries(ctx context.Context, query string, args ...interface{}) ([]PortalRequestSummary, error) {
-	rows, err := s.db.QueryContext(ctx, query, args...)
+func (s *PortalService) GetRequestsByCreatorID(_ context.Context, creatorID, channelID int) ([]PortalRequestSummary, error) {
+	rows, err := s.items.ListChannelRequestsByCreator(creatorID, channelID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch requests: %w", err)
 	}
-	defer rows.Close()
-
-	var requests []PortalRequestSummary
-	for rows.Next() {
-		var req PortalRequestSummary
-		var requestTypeName, requestTypeIcon, requestTypeColor, statusCategoryColor sql.NullString
-		var statusIsCompleted sql.NullBool
-		err := rows.Scan(
-			&req.ID, &req.WorkspaceID, &req.WorkspaceItemNumber, &req.Title, &req.Description,
-			&req.Status, &req.Priority, &req.CreatedAt, &req.UpdatedAt,
-			&req.ChannelID, &req.RequestTypeID,
-			&req.WorkspaceName, &req.WorkspaceKey,
-			&requestTypeName, &requestTypeIcon, &requestTypeColor,
-			&req.CommentCount,
-			&statusCategoryColor, &statusIsCompleted,
-		)
-		if err != nil {
-			continue
-		}
-
-		if requestTypeName.Valid {
-			req.RequestTypeName = &requestTypeName.String
-		}
-		if requestTypeIcon.Valid {
-			req.RequestTypeIcon = &requestTypeIcon.String
-		}
-		if requestTypeColor.Valid {
-			req.RequestTypeColor = &requestTypeColor.String
-		}
-		if statusCategoryColor.Valid {
-			req.StatusCategoryColor = &statusCategoryColor.String
-		}
-		if statusIsCompleted.Valid {
-			req.StatusIsCompleted = statusIsCompleted.Bool
-		}
-
-		requests = append(requests, req)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("failed to iterate requests: %w", err)
-	}
-
-	if requests == nil {
-		requests = []PortalRequestSummary{}
-	}
-
-	return requests, nil
+	return portalRequestSummariesFromRows(rows), nil
 }
 
-// GetRequestDetail gets request detail with ownership info
-func (s *PortalService) GetRequestDetail(ctx context.Context, itemID int) (*PortalRequestDetail, error) {
-	query := `
-		SELECT
-			i.id, i.workspace_id, i.workspace_item_number, i.title, i.description,
-			COALESCE(s.name, 'Unknown') AS status, COALESCE(p.name, '') AS priority,
-			i.created_at, i.updated_at,
-			i.channel_id, i.request_type_id, i.creator_portal_customer_id, i.creator_id,
-			w.name AS workspace_name,
-			w.key AS workspace_key,
-			rt.name AS request_type_name,
-			rt.icon AS request_type_icon,
-			rt.color AS request_type_color,
-			(SELECT COUNT(*) FROM comments WHERE item_id = i.id AND (is_private = false OR is_private IS NULL)) AS comment_count,
-			sc.color AS status_category_color,
-			COALESCE(sc.is_completed, false) AS status_is_completed
-		FROM items i
-		JOIN workspaces w ON i.workspace_id = w.id
-		LEFT JOIN request_types rt ON i.request_type_id = rt.id
-		LEFT JOIN statuses s ON i.status_id = s.id
-		LEFT JOIN status_categories sc ON s.category_id = sc.id
-		LEFT JOIN priorities p ON i.priority_id = p.id
-		WHERE i.id = ?
-	`
+// GetRequestsByPortalCustomerID gets requests for portal customer (by creator_portal_customer_id)
+func (s *PortalService) GetRequestsByPortalCustomerID(_ context.Context, portalCustomerID, channelID int) ([]PortalRequestSummary, error) {
+	rows, err := s.items.ListChannelRequestsByPortalCustomer(portalCustomerID, channelID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch requests: %w", err)
+	}
+	return portalRequestSummariesFromRows(rows), nil
+}
 
-	var detail PortalRequestDetail
-	var requestTypeName, requestTypeIcon, requestTypeColor, statusCategoryColor sql.NullString
-	var creatorPortalCustomerID, creatorID sql.NullInt64
-	var statusIsCompleted sql.NullBool
-
-	err := s.db.QueryRowContext(ctx, query, itemID).Scan(
-		&detail.ID, &detail.WorkspaceID, &detail.WorkspaceItemNumber, &detail.Title, &detail.Description,
-		&detail.Status, &detail.Priority, &detail.CreatedAt, &detail.UpdatedAt,
-		&detail.ChannelID, &detail.RequestTypeID, &creatorPortalCustomerID, &creatorID,
-		&detail.WorkspaceName, &detail.WorkspaceKey,
-		&requestTypeName, &requestTypeIcon, &requestTypeColor,
-		&detail.CommentCount,
-		&statusCategoryColor, &statusIsCompleted,
-	)
-
-	if errors.Is(err, sql.ErrNoRows) {
+// GetRequestDetail gets request detail with ownership info. Returns nil
+// (without error) when the item does not exist.
+func (s *PortalService) GetRequestDetail(_ context.Context, itemID int) (*PortalRequestDetail, error) {
+	row, err := s.items.GetPortalRequest(itemID)
+	if errors.Is(err, repository.ErrNotFound) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch request: %w", err)
 	}
-
-	if requestTypeName.Valid {
-		detail.RequestTypeName = &requestTypeName.String
-	}
-	if requestTypeIcon.Valid {
-		detail.RequestTypeIcon = &requestTypeIcon.String
-	}
-	if requestTypeColor.Valid {
-		detail.RequestTypeColor = &requestTypeColor.String
-	}
-	if statusCategoryColor.Valid {
-		detail.StatusCategoryColor = &statusCategoryColor.String
-	}
-	if statusIsCompleted.Valid {
-		detail.StatusIsCompleted = statusIsCompleted.Bool
-	}
-	if creatorPortalCustomerID.Valid {
-		id := int(creatorPortalCustomerID.Int64)
-		detail.CreatorPortalCustomerID = &id
-	}
-	if creatorID.Valid {
-		id := int(creatorID.Int64)
-		detail.CreatorID = &id
-	}
-
-	return &detail, nil
+	return &PortalRequestDetail{
+		PortalRequestSummary:    portalRequestSummaryFromRow(*row),
+		CreatorID:               row.CreatorID,
+		CreatorPortalCustomerID: row.CreatorPortalCustomerID,
+	}, nil
 }
 
 // VerifyRequestOwnership verifies that a user owns a request
