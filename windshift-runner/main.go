@@ -19,6 +19,8 @@
 //	WSRUNNER_ALLOW_INSECURE      set to 1 to permit a plaintext http:// WS_API_URL (dev only)
 //	WSRUNNER_NAME                runner display name (default: hostname)
 //	WSRUNNER_IMAGE               windshift-agent container image (required to run jobs)
+//	WSRUNNER_ALLOW_UNLABELED_IMAGE  set to 1 to accept an agent image without the
+//	                             org.windshift.agent-contract label (pre-WI-312 images)
 //	WSRUNNER_DOCKER              docker binary (default: docker)
 //	WSRUNNER_POLL_INTERVAL       claim poll interval when idle (default: 2s)
 //	WSRUNNER_HEARTBEAT_INTERVAL  lease heartbeat interval (default: 30s)
@@ -36,6 +38,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -79,6 +82,12 @@ func main() {
 	// on a fresh host. Creation is a plain bridge and warns loudly that
 	// egress is unfiltered.
 	services.EnsureAgentNetwork(ctx, logger.Printf, dockerBin, "")
+
+	// Validate the agent image carries the contract label (WI-312) BEFORE the
+	// first claim. A wrong image (e.g. the ws-carrier, whose entrypoint is the
+	// ws CLI) exits 0 without speaking the JSONL contract and would otherwise
+	// report as a successful no-change run.
+	preflightAgentImage(ctx, logger, dockerBin, image)
 
 	// Resolve an authenticated client without re-registering on every restart
 	// (WI-238 security Phase 6): reuse an injected (WSRUNNER_CREDENTIAL) or
@@ -282,6 +291,60 @@ func preflightAPIURL(ctx context.Context, logger *log.Logger, baseURL string) {
 			versionURL, resp.Status, baseURL)
 	}
 	logger.Printf("control plane ok: %s (server version %s)", baseURL, doc.Version)
+}
+
+// Agent-contract image label (WI-312). The windshift-agent image stamps
+// LABEL org.windshift.agent-contract=v1; the runner refuses to start with an
+// image that lacks it, because a non-agent image "succeeds" silently (exit 0,
+// no JSONL events, reported as no_changes).
+const (
+	agentContractLabel   = "org.windshift.agent-contract"
+	agentContractVersion = "v1"
+)
+
+// preflightAgentImage inspects WSRUNNER_IMAGE for the agent-contract label
+// before the first claim (WI-312), pulling the image first when it is not
+// present locally (docker run would pull it on the first claim anyway — at
+// boot the pull doubles as validation). Missing or mismatched label is fatal
+// unless WSRUNNER_ALLOW_UNLABELED_IMAGE=1 (escape hatch for agent images
+// built before the label existed). An unpullable image only warns: registry
+// hiccups at boot must not kill a runner that can retry on claim.
+func preflightAgentImage(ctx context.Context, logger *log.Logger, dockerBin, image string) {
+	if image == "" {
+		return // already warned at startup; claims fail visibly without an image
+	}
+	// dockerBin + image are operator config, not user-supplied data.
+	inspect := func() (string, error) {
+		out, err := exec.CommandContext(ctx, dockerBin, "image", "inspect", //nolint:gosec // G204: operator-controlled argv
+			"--format", `{{index .Config.Labels "`+agentContractLabel+`"}}`, image).Output()
+		return strings.TrimSpace(string(out)), err
+	}
+	label, err := inspect()
+	if err != nil {
+		logger.Printf("agent image %s not present locally; pulling for the contract-label check...", image)
+		if out, pullErr := exec.CommandContext(ctx, dockerBin, "pull", image).CombinedOutput(); pullErr != nil { //nolint:gosec // G204: operator-controlled argv
+			logger.Printf("warning: could not pull %s (%v: %s); skipping the agent-contract check — the first claim will retry the pull",
+				image, pullErr, strings.TrimSpace(string(out)))
+			return
+		}
+		if label, err = inspect(); err != nil {
+			logger.Printf("warning: could not inspect %s after pull (%v); skipping the agent-contract check", image, err)
+			return
+		}
+	}
+	switch {
+	case label == agentContractVersion:
+		logger.Printf("agent image ok: %s (contract %s)", image, label)
+	case label == "" && envOr("WSRUNNER_ALLOW_UNLABELED_IMAGE", "") == "1":
+		logger.Printf("warning: agent image %s does not carry the %s label; accepted because WSRUNNER_ALLOW_UNLABELED_IMAGE=1", image, agentContractLabel)
+	case label == "":
+		logger.Fatalf("agent image %s does not carry the %s label — is WSRUNNER_IMAGE pointing at the right image? "+
+			"It must be the windshift-agent image (NOT the ws-carrier CLI image). For an agent image built before "+
+			"the label existed, set WSRUNNER_ALLOW_UNLABELED_IMAGE=1.", image, agentContractLabel)
+	default:
+		logger.Fatalf("agent image %s carries %s=%q, but this runner speaks contract %q — upgrade the runner or pin a matching image",
+			image, agentContractLabel, label, agentContractVersion)
+	}
 }
 
 // readCredential returns the trimmed credential stored at path, or "" if the

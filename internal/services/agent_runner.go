@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"windshift/internal/models"
@@ -139,9 +140,10 @@ func (r *AgentRunner) Run(ctx context.Context, input RunInput, emit EventSink) R
 	// a channel.
 	sawIdle := make(chan struct{}, 1)
 	streamDone := make(chan struct{})
+	var sawContractEvent atomic.Bool
 	go func() {
 		defer close(streamDone)
-		drainAgentStdout(stdout, idleEvent, emit, sawIdle)
+		drainAgentStdout(stdout, idleEvent, emit, sawIdle, &sawContractEvent)
 	}()
 
 	// Shutdown trigger: whichever fires first — idle from the
@@ -186,6 +188,14 @@ func (r *AgentRunner) Run(ctx context.Context, input RunInput, emit EventSink) R
 	switch {
 	case canceledByCtx:
 		return RunnerResult{Status: models.AgentRunStatusCanceled, Error: ctx.Err().Error()}
+	case waitErr == nil && !sawContractEvent.Load():
+		// Exit 0 without one valid JSONL contract event means the subprocess
+		// never spoke the protocol — almost certainly the wrong image (WI-312:
+		// the ws-carrier's help text once reported as a successful run).
+		return RunnerResult{
+			Status: models.AgentRunStatusFailed,
+			Error:  "agent subprocess exited without emitting a single JSONL contract event — is the configured agent image actually the windshift-agent image?",
+		}
 	case waitErr == nil:
 		return RunnerResult{Status: models.AgentRunStatusSucceeded}
 	}
@@ -455,8 +465,10 @@ func writeJSONLine(w io.Writer, obj any) error {
 // sink. JSON-parseable lines pass through verbatim; non-JSON lines are
 // wrapped as {"line": "<raw>"}. When the parsed event's "type" matches
 // idleEvent, sawIdle is signaled (non-blocking — only the first idle
-// event needs to wake the orchestrator).
-func drainAgentStdout(rd io.Reader, idleEvent string, emit EventSink, sawIdle chan<- struct{}) {
+// event needs to wake the orchestrator). sawContractEvent records whether
+// at least one typed JSONL event arrived — the discriminator between a real
+// agent and a wrong image that just prints text and exits (WI-312).
+func drainAgentStdout(rd io.Reader, idleEvent string, emit EventSink, sawIdle chan<- struct{}, sawContractEvent *atomic.Bool) {
 	scanner := bufio.NewScanner(rd)
 	scanner.Buffer(make([]byte, 64*1024), maxAgentLine)
 	for scanner.Scan() {
@@ -474,7 +486,11 @@ func drainAgentStdout(rd io.Reader, idleEvent string, emit EventSink, sawIdle ch
 			payload = string(b)
 		}
 		_ = emit("stdout", payload)
-		if t, _ := parsed["type"].(string); t == idleEvent {
+		t, _ := parsed["type"].(string)
+		if t != "" {
+			sawContractEvent.Store(true)
+		}
+		if t == idleEvent {
 			select {
 			case sawIdle <- struct{}{}:
 			default:
