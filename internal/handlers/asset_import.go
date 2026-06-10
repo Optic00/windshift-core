@@ -256,6 +256,21 @@ func (h *AssetHandler) StartImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The category/status maps are caller-supplied (name -> id). Validate every
+	// referenced id belongs to this set so an import cannot plant foreign-set
+	// taxonomy FKs (whose names/colors would then render to set viewers). The
+	// normal create/update path enforces the same via validateResourceBelongsToSet.
+	for name, id := range req.CategoryMap {
+		if !h.validateResourceBelongsToSet(w, r, "asset_categories", id, setID, "Category "+name) {
+			return
+		}
+	}
+	for name, id := range req.StatusMap {
+		if !h.validateResourceBelongsToSet(w, r, "asset_statuses", id, setID, "Status "+name) {
+			return
+		}
+	}
+
 	// Locate the uploaded file
 	importsBase := filepath.Join(h.attachmentPath, "imports")
 	importDir, err := securejoin.SecureJoin(importsBase, req.UploadID)
