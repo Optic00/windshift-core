@@ -477,7 +477,7 @@ func (s *Server) initialize() error {
 	credentialHandler := handlers.NewCredentialHandler(repository.NewCredentialRepository(s.db), logger.NewAuditor(s.db), permService, cfg.SSH.Enabled)
 	webAuthnHandler := handlers.NewWebAuthnHandler(s.db, permService, sessionManager, webAuthnConfig, ipExtractor)
 	collectionHandler := handlers.NewCollectionHandler(s.db, permService)
-	boardConfigHandler := handlers.NewBoardConfigurationHandler(s.db, permService)
+	boardConfigHandler := handlers.NewBoardConfigurationHandler(repository.NewBoardConfigurationRepository(s.db), repository.NewCollectionRepository(s.db), permService)
 	testCoverageHandler := handlers.NewTestCoverageHandler(repository.NewTestCoverageRepository(s.db), permService)
 	publicBoardHandler := handlers.NewPublicBoardHandler(s.db, permService, cfg.AttachmentPath)
 	permissionHandler := handlers.NewPermissionHandlerWithCache(repository.NewPermissionRepository(s.db), permService, logger.NewAuditor(s.db))

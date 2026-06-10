@@ -16,7 +16,6 @@ internal/handlers/attachment.go
 internal/handlers/audit_log.go
 internal/handlers/auth_policy.go
 internal/handlers/base.go
-internal/handlers/board_configuration.go
 internal/handlers/calendar_feed.go
 internal/handlers/channels.go
 internal/handlers/collections.go

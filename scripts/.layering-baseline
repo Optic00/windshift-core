@@ -7,7 +7,6 @@ internal/handlers/asset_link_handlers.go|windshift/internal/database
 internal/handlers/attachment.go|windshift/internal/database
 internal/handlers/auth_policy.go|windshift/internal/database
 internal/handlers/base.go|windshift/internal/database
-internal/handlers/board_configuration.go|windshift/internal/database
 internal/handlers/calendar_feed.go|windshift/internal/database
 internal/handlers/collections.go|windshift/internal/database
 internal/handlers/comment.go|windshift/internal/database
