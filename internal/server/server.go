@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -2091,6 +2092,24 @@ func bootCodingAgentRunService(
 ) (*services.RunService, error) {
 	if cfg.WorktreeRoot == "" {
 		return nil, fmt.Errorf("coding-agent: WorktreeRoot is required when RunnerImage is set")
+	}
+	// The in-process path shells out to git (repo prep/push) and docker
+	// (spawning agent containers). The scratch image ships neither, so runs
+	// claimed in-process there fail one by one with "executable file not
+	// found". Surface that once at boot instead — remote runner pools are
+	// unaffected, so the harness still comes up.
+	dockerBin := cfg.DockerBinary
+	if dockerBin == "" {
+		dockerBin = "docker"
+	}
+	for bin, neededFor := range map[string]string{"git": "repo checkout and push", dockerBin: "spawning agent containers"} {
+		if _, lookErr := exec.LookPath(bin); lookErr != nil {
+			slog.Error("coding-agent: binary not found on PATH; runs claimed by this process will fail until it is available. Either run agents on a separate runner host (windshift-runner) or deploy Windshift where the binary is installed",
+				slog.String("component", "coding-agent"),
+				slog.String("binary", bin),
+				slog.String("needed_for", neededFor),
+			)
+		}
 	}
 	prep, err := repoprep.New(repoprep.Options{RootDir: cfg.WorktreeRoot})
 	if err != nil {
