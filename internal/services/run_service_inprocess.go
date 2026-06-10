@@ -163,11 +163,12 @@ func (s *RunService) failClaim(job queuedJob, cancel context.CancelFunc, msg str
 	s.finalize(job.runID, models.AgentRunStatusFailed, msg)
 	if hook {
 		s.invokePostRunHook(PostRunInfo{
-			RunID:       job.runID,
-			WorkspaceID: job.req.WorkspaceID,
-			ItemID:      job.req.ItemID,
-			BindingID:   job.req.BindingID,
-			Status:      models.AgentRunStatusFailed,
+			RunID:             job.runID,
+			WorkspaceID:       job.req.WorkspaceID,
+			ItemID:            job.req.ItemID,
+			BindingID:         job.req.BindingID,
+			Status:            models.AgentRunStatusFailed,
+			TriggeredByUserID: job.req.TriggeredByUserID,
 		})
 	}
 	cancel()
@@ -252,13 +253,14 @@ func (s *RunService) Report(ctx context.Context, runID int, result RunnerResult)
 	// too), so opening a PR would be wrong.
 	if st == nil || !st.ephemeral {
 		s.invokePostRunHook(PostRunInfo{
-			RunID:       runID,
-			WorkspaceID: req.WorkspaceID,
-			ItemID:      req.ItemID,
-			BindingID:   req.BindingID,
-			Status:      status,
-			Branch:      branch,
-			BaseCommit:  baseCommit,
+			RunID:             runID,
+			WorkspaceID:       req.WorkspaceID,
+			ItemID:            req.ItemID,
+			BindingID:         req.BindingID,
+			Status:            status,
+			Branch:            branch,
+			BaseCommit:        baseCommit,
+			TriggeredByUserID: req.TriggeredByUserID,
 		})
 	}
 

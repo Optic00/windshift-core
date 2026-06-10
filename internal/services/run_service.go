@@ -140,6 +140,12 @@ type RunRequest struct {
 	// remote claim path, so Repo/Token/Grants/Env on this request are ignored
 	// for remote runs — the orchestrator never sees the work locally.
 	TargetPoolID *int
+	// TriggeredByUserID is the user who caused the run (the assigner whose
+	// change fired the binding trigger, or the admin starting a test run).
+	// Persisted on the run for audit; on OAuth SCM connections it is the
+	// credential principal for the run's git traffic and PR creation
+	// (WI-275). 0 = unknown (legacy callers) → connection-level credential.
+	TriggeredByUserID int
 }
 
 // TokenSpec is the per-run input to RunTokenService.Mint. Phase 4-5 wire
@@ -184,6 +190,10 @@ type PostRunInfo struct {
 	Status      string
 	Branch      string
 	BaseCommit  string
+	// TriggeredByUserID is the run's triggering user (0 when unknown). The
+	// PR hook uses it as the credential principal on OAuth SCM connections
+	// (WI-275).
+	TriggeredByUserID int
 }
 
 // BindingInputsResolver derives a binding-backed run's per-run token spec,
@@ -352,6 +362,10 @@ func (s *RunService) Start(ctx context.Context, req RunRequest) (int, error) {
 		bID := req.BindingID
 		run.BindingID = &bID
 	}
+	if req.TriggeredByUserID > 0 {
+		uID := req.TriggeredByUserID
+		run.TriggeredByUserID = &uID
+	}
 	if req.TargetPoolID != nil {
 		run.TargetPoolID = req.TargetPoolID
 		run.JobKind = req.JobKind
@@ -482,16 +496,65 @@ func (s *RunService) FinalizeRemote(ctx context.Context, runID int, result Runne
 	// them here, the single point where remote-reported SCM state reaches the
 	// hook (the local in-process path derives both server-side and is trusted).
 	branch, baseCommit = s.validateRemoteSCMRefs(ctx, runID, branch, baseCommit)
+	triggeredBy := 0
+	if run.TriggeredByUserID != nil {
+		triggeredBy = *run.TriggeredByUserID
+	}
 	s.invokePostRunHook(PostRunInfo{
-		RunID:       runID,
-		WorkspaceID: run.WorkspaceID,
-		ItemID:      run.ItemID,
-		BindingID:   bindingID,
-		Status:      status,
-		Branch:      branch,
-		BaseCommit:  baseCommit,
+		RunID:             runID,
+		WorkspaceID:       run.WorkspaceID,
+		ItemID:            run.ItemID,
+		BindingID:         bindingID,
+		Status:            status,
+		Branch:            branch,
+		BaseCommit:        baseCommit,
+		TriggeredByUserID: triggeredBy,
 	})
 	return nil
+}
+
+// RecordFailedStart persists a run that could not start at trigger time —
+// e.g. the triggering user has no connected SCM account on an OAuth
+// connection (WI-275) — directly in the failed state, with the queued and
+// failed lifecycle events, so the refused trigger is visible in the runs
+// UI instead of vanishing into a server log. Nothing is dispatched and no
+// post-run hook fires. Returns the run id.
+func (s *RunService) RecordFailedStart(ctx context.Context, req RunRequest, reason string) (int, error) {
+	if req.WorkspaceID == 0 {
+		return 0, errors.New("run service: workspace_id is required")
+	}
+	run := &models.AgentRun{
+		WorkspaceID: req.WorkspaceID,
+		ItemID:      req.ItemID,
+		Status:      models.AgentRunStatusQueued,
+	}
+	if req.BindingID > 0 {
+		bID := req.BindingID
+		run.BindingID = &bID
+	}
+	if req.TriggeredByUserID > 0 {
+		uID := req.TriggeredByUserID
+		run.TriggeredByUserID = &uID
+	}
+	if req.TargetPoolID != nil {
+		run.TargetPoolID = req.TargetPoolID
+		run.JobKind = req.JobKind
+	}
+	runID, err := s.repo.Insert(ctx, run)
+	if err != nil {
+		return 0, fmt.Errorf("insert agent_run: %w", err)
+	}
+	red := RedactString(reason)
+	if err := s.repo.AppendEvent(ctx, runID, "lifecycle", `{"phase":"queued"}`); err != nil {
+		s.logger.Printf("run service: append queued event: %v", err)
+	}
+	if err := s.repo.AppendEvent(ctx, runID, "lifecycle", fmt.Sprintf(`{"phase":"failed","reason":%q}`, red)); err != nil {
+		s.logger.Printf("run service: append failed event: %v", err)
+	}
+	if err := s.repo.Finalize(ctx, runID, models.AgentRunStatusFailed, red, s.now()); err != nil {
+		return runID, fmt.Errorf("finalize failed-start run %d: %w", runID, err)
+	}
+	return runID, nil
 }
 
 // validateRemoteSCMRefs constrains the branch + base commit a remote runner

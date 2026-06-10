@@ -15,13 +15,18 @@ import (
 // OpenPRRequest is what AgentPRService hands to the OpenPRFn adapter.
 type OpenPRRequest struct {
 	ConnectionID int
-	Owner        string
-	Repo         string
-	HeadBranch   string
-	BaseBranch   string
-	Title        string
-	Body         string
-	Draft        bool
+	// UserID is the credential principal: on OAuth connections the PR is
+	// opened with this user's personal token (the run's triggering user,
+	// WI-275). 0 = connection-level credential (PAT / GitHub App, and
+	// legacy runs with no recorded triggering user).
+	UserID     int
+	Owner      string
+	Repo       string
+	HeadBranch string
+	BaseBranch string
+	Title      string
+	Body       string
+	Draft      bool
 }
 
 // OpenedPR is what the adapter returns. Mirrors the subset of
@@ -133,6 +138,7 @@ func (s *AgentPRService) AfterRun(ctx context.Context, info PostRunInfo) {
 
 	pr, err := s.openPR(ctx, OpenPRRequest{
 		ConnectionID: *binding.SCMConnectionID,
+		UserID:       info.TriggeredByUserID,
 		Owner:        owner,
 		Repo:         repo,
 		HeadBranch:   info.Branch,

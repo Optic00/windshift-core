@@ -331,7 +331,7 @@ func (h *WorkspaceAgentBindingHandler) TestRun(w http.ResponseWriter, r *http.Re
 		respondBadRequest(w, r, "id path param must be a positive integer")
 		return
 	}
-	runID, err := h.bindings.StartTestRun(r.Context(), id, workspaceID)
+	runID, err := h.bindings.StartTestRun(r.Context(), id, workspaceID, user.ID)
 	if err != nil {
 		switch {
 		case errors.Is(err, services.ErrBindingNotFound):
@@ -340,6 +340,8 @@ func (h *WorkspaceAgentBindingHandler) TestRun(w http.ResponseWriter, r *http.Re
 			respondBadRequest(w, r, "this binding has no repo configured — a test run needs a repo to check out")
 		case errors.Is(err, services.ErrBindingRunnerNotConfigured):
 			respondConflict(w, r, "the coding-agent runner is not configured on this server")
+		case errors.Is(err, services.ErrTriggerUserSCMNotConnected):
+			respondConflict(w, r, "you have no connected SCM account for this binding's OAuth connection — connect your GitHub/Gitea account under profile settings first")
 		default:
 			respondError(w, r, restapi.NewAPIError(http.StatusBadGateway, restapi.ErrCodeConnectionTestFailed,
 				"failed to start test run: "+err.Error()))

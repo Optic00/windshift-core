@@ -55,9 +55,26 @@ var ErrBindingBudgetExceeded = errors.New("binding service: max_runs_per_day bud
 // access token + provider type + (for self-hosted) base URL. Kept as an
 // interface so production wires scm.CredentialResolver while tests can
 // supply a fake.
+//
+// ResolveForRunAsUser is the user-principal variant (WI-275): on
+// OAuth-method connections it resolves the given user's personal token
+// (ErrTriggerUserSCMNotConnected wrapped in the error chain when the user
+// has none — no fallback to the workspace credential); on PAT / GitHub App
+// connections it behaves exactly like ResolveForRun. ResolveForRun remains
+// for callers without a user principal (legacy runs with no recorded
+// triggering user).
 type SCMCredentialResolver interface {
 	ResolveForRun(ctx context.Context, connectionID int) (token string, providerType string, baseURL string, err error)
+	ResolveForRunAsUser(ctx context.Context, connectionID, userID int) (token string, providerType string, baseURL string, err error)
 }
+
+// ErrTriggerUserSCMNotConnected is returned (wrapped) when a run on an
+// OAuth-method SCM connection cannot start because the triggering user has
+// not connected their own SCM account. The run is recorded as failed so the
+// trigger is visible in the runs UI; there is deliberately no fallback to
+// the workspace connection credential — code changes must not ride the
+// connecting admin's identity (WI-275).
+var ErrTriggerUserSCMNotConnected = errors.New("binding service: triggering user has no connected SCM account for this connection")
 
 // LLMRuntimeResolver returns the provider runtime config for a connection and
 // runs one-shot test prompts against it. Create uses ConnectionRuntime to
@@ -371,7 +388,11 @@ const DefaultTestRunPrompt = "This is a connectivity test, not a real task. " +
 // watch it via the agent-runs events endpoints. Workspace-scoped like TestLLM.
 // Requires a repo-backed binding (ErrBindingNoRepo otherwise) and a configured
 // runner (ErrBindingRunnerNotConfigured otherwise).
-func (s *BindingService) StartTestRun(ctx context.Context, bindingID, workspaceID int) (int, error) {
+//
+// triggeredByUserID is the admin starting the test; on OAuth connections the
+// clone authenticates with their personal token (WI-275) —
+// ErrTriggerUserSCMNotConnected when they have none.
+func (s *BindingService) StartTestRun(ctx context.Context, bindingID, workspaceID, triggeredByUserID int) (int, error) {
 	binding, err := s.repo.Get(ctx, bindingID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, ErrBindingNotFound
@@ -401,9 +422,21 @@ func (s *BindingService) StartTestRun(ctx context.Context, bindingID, workspaceI
 
 	// Repo prep inputs, derived exactly as the live trigger does: the clone URL
 	// comes from the trusted SCM connection + slug, and the token rides on
-	// RepoSpec for askpass injection (never embedded in the URL).
-	token, providerType, baseURL, err := s.scmCreds.ResolveForRun(ctx, *binding.SCMConnectionID)
+	// RepoSpec for askpass injection (never embedded in the URL). The
+	// credential principal is the admin starting the test (WI-275).
+	token, providerType, baseURL, err := s.scmCreds.ResolveForRunAsUser(ctx, *binding.SCMConnectionID, triggeredByUserID)
 	if err != nil {
+		if errors.Is(err, ErrTriggerUserSCMNotConnected) {
+			req := RunRequest{
+				WorkspaceID:       workspaceID,
+				BindingID:         binding.ID,
+				TriggeredByUserID: triggeredByUserID,
+			}
+			if _, rerr := s.runs.RecordFailedStart(ctx, req, triggerUserNotConnectedReason); rerr != nil {
+				s.logger.Printf("binding service: record failed test run for binding=%d: %v", binding.ID, rerr)
+			}
+			return 0, err
+		}
 		return 0, fmt.Errorf("resolve scm credentials: %w", err)
 	}
 	cloneURL, derr := deriveCloneURL(providerType, baseURL, binding.RepoSlug)
@@ -412,12 +445,13 @@ func (s *BindingService) StartTestRun(ctx context.Context, bindingID, workspaceI
 	}
 
 	req := RunRequest{
-		WorkspaceID:   workspaceID,
-		ItemID:        nil,
-		BindingID:     binding.ID,
-		Env:           env,
-		InitialPrompt: DefaultTestRunPrompt,
-		Ephemeral:     true,
+		WorkspaceID:       workspaceID,
+		ItemID:            nil,
+		BindingID:         binding.ID,
+		Env:               env,
+		InitialPrompt:     DefaultTestRunPrompt,
+		Ephemeral:         true,
+		TriggeredByUserID: triggeredByUserID,
 		Repo: &repoprep.RepoSpec{
 			WorkspaceID: workspaceID,
 			RepoSlug:    binding.RepoSlug,
@@ -437,7 +471,7 @@ func (s *BindingService) StartTestRun(ctx context.Context, bindingID, workspaceI
 		}
 		applyLLMModelEnv(req.Env, llmCfg)
 	}
-	req.Token, req.Grants = s.bindingTokenAndGrants(binding, 0)
+	req.Token, req.Grants = s.bindingTokenAndGrants(binding, 0, triggeredByUserID)
 
 	runID, err := s.runs.Start(ctx, req)
 	if err != nil {
@@ -447,6 +481,11 @@ func (s *BindingService) StartTestRun(ctx context.Context, bindingID, workspaceI
 	return runID, nil
 }
 
+// triggerUserNotConnectedReason is the error recorded on a run that could
+// not start because the triggering user has no SCM account connected for
+// the binding's OAuth connection. Shown verbatim in the runs UI.
+const triggerUserNotConnectedReason = "the user who triggered this run has no connected SCM account for the binding's OAuth connection; connect your GitHub/Gitea account under profile settings, or switch the connection to a PAT / GitHub App"
+
 // MaybeStartRunForAssignee is the assignee-change trigger. Hot path: if
 // the assignee did not actually change or no binding matches the new
 // assignee, this is a no-op (one indexed lookup). Otherwise it builds a
@@ -454,7 +493,12 @@ func (s *BindingService) StartTestRun(ctx context.Context, bindingID, workspaceI
 //
 // The signature takes *int for old/new assignee so callers don't have to
 // special-case nil (item created without assignee, then assigned later).
-func (s *BindingService) MaybeStartRunForAssignee(ctx context.Context, workspaceID, itemID int, oldAssignee, newAssignee *int) error {
+//
+// triggeredByUserID is the user performing the assignment; on OAuth SCM
+// connections their personal token is the run's git credential (WI-275).
+// When they have no connected account the run is recorded as failed (so
+// the refusal is visible) and ErrTriggerUserSCMNotConnected is returned.
+func (s *BindingService) MaybeStartRunForAssignee(ctx context.Context, workspaceID, itemID int, oldAssignee, newAssignee *int, triggeredByUserID int) error {
 	if newAssignee == nil {
 		return nil
 	}
@@ -496,13 +540,27 @@ func (s *BindingService) MaybeStartRunForAssignee(ctx context.Context, workspace
 	// since a remote runner reaches git/llm/secrets through the brokers, not
 	// host-side credentials (WI-195).
 	if binding.TargetPoolID != nil {
-		runID, err := s.runs.Start(ctx, RunRequest{
-			WorkspaceID:  workspaceID,
-			ItemID:       &itemID,
-			BindingID:    binding.ID,
-			TargetPoolID: binding.TargetPoolID,
-			JobKind:      models.JobKindCodingAgent,
-		})
+		remoteReq := RunRequest{
+			WorkspaceID:       workspaceID,
+			ItemID:            &itemID,
+			BindingID:         binding.ID,
+			TargetPoolID:      binding.TargetPoolID,
+			JobKind:           models.JobKindCodingAgent,
+			TriggeredByUserID: triggeredByUserID,
+		}
+		// Pre-validate the credential principal now rather than letting the
+		// run sit queued until a runner claims it and the git proxy 401s:
+		// "fail visibly at start time" (WI-275). The resolved token is
+		// discarded — remote runners reach git only through the proxy.
+		if binding.HasRepo() && s.scmCreds != nil {
+			if _, _, _, err := s.scmCreds.ResolveForRunAsUser(ctx, *binding.SCMConnectionID, triggeredByUserID); errors.Is(err, ErrTriggerUserSCMNotConnected) {
+				if _, rerr := s.runs.RecordFailedStart(ctx, remoteReq, triggerUserNotConnectedReason); rerr != nil {
+					s.logger.Printf("binding service: record failed remote run for item=%d binding=%d: %v", itemID, binding.ID, rerr)
+				}
+				return err
+			}
+		}
+		runID, err := s.runs.Start(ctx, remoteReq)
 		if err != nil {
 			return fmt.Errorf("start remote run: %w", err)
 		}
@@ -515,10 +573,11 @@ func (s *BindingService) MaybeStartRunForAssignee(ctx context.Context, workspace
 		return err
 	}
 	req := RunRequest{
-		WorkspaceID: workspaceID,
-		ItemID:      &itemID,
-		BindingID:   binding.ID,
-		Env:         env,
+		WorkspaceID:       workspaceID,
+		ItemID:            &itemID,
+		BindingID:         binding.ID,
+		Env:               env,
+		TriggeredByUserID: triggeredByUserID,
 	}
 	if binding.HasRepo() {
 		// HasRepo guarantees SCMConnectionID is set; this is the only
@@ -529,8 +588,14 @@ func (s *BindingService) MaybeStartRunForAssignee(ctx context.Context, workspace
 			s.logger.Printf("binding service: binding=%d wants repo prep but no SCMCredentialResolver is configured (dropping)", binding.ID)
 			return nil
 		}
-		token, providerType, baseURL, err := s.scmCreds.ResolveForRun(ctx, *binding.SCMConnectionID)
+		token, providerType, baseURL, err := s.scmCreds.ResolveForRunAsUser(ctx, *binding.SCMConnectionID, triggeredByUserID)
 		if err != nil {
+			if errors.Is(err, ErrTriggerUserSCMNotConnected) {
+				if _, rerr := s.runs.RecordFailedStart(ctx, req, triggerUserNotConnectedReason); rerr != nil {
+					s.logger.Printf("binding service: record failed run for item=%d binding=%d: %v", itemID, binding.ID, rerr)
+				}
+				return err
+			}
 			return fmt.Errorf("resolve scm credentials: %w", err)
 		}
 		cloneURL, derr := deriveCloneURL(providerType, baseURL, binding.RepoSlug)
@@ -567,7 +632,7 @@ func (s *BindingService) MaybeStartRunForAssignee(ctx context.Context, workspace
 	// (WI-144). Shared with the remote claim path via bindingTokenAndGrants so
 	// both transports derive identical inputs (WI-195). The git ref is filled
 	// at claim from the prepared worktree branch.
-	req.Token, req.Grants = s.bindingTokenAndGrants(binding, itemID)
+	req.Token, req.Grants = s.bindingTokenAndGrants(binding, itemID, triggeredByUserID)
 
 	runID, err := s.runs.Start(ctx, req)
 	if err != nil {
@@ -583,8 +648,10 @@ func (s *BindingService) MaybeStartRunForAssignee(ctx context.Context, workspace
 // acting user, or no token service configured) — grants are meaningful only
 // when bound to a token. The git grant's Ref is left empty here; the claim
 // path fills it (the worktree branch locally, the run-branch namespace
-// remotely).
-func (s *BindingService) bindingTokenAndGrants(b *models.WorkspaceAgentBinding, itemID int) (*TokenSpec, *models.RunGrants) {
+// remotely). triggeredByUserID is stamped into the git grant as the
+// credential principal the git proxy resolves on OAuth connections (WI-275);
+// 0 keeps the connection-level credential.
+func (s *BindingService) bindingTokenAndGrants(b *models.WorkspaceAgentBinding, itemID, triggeredByUserID int) (*TokenSpec, *models.RunGrants) {
 	if b.ActingUserID <= 0 || !s.runs.HasTokens() {
 		return nil, nil
 	}
@@ -596,7 +663,7 @@ func (s *BindingService) bindingTokenAndGrants(b *models.WorkspaceAgentBinding, 
 	}
 	grants := &models.RunGrants{}
 	if b.HasRepo() {
-		grants.Git = &models.GitGrant{Repo: b.RepoSlug, ConnectionID: *b.SCMConnectionID}
+		grants.Git = &models.GitGrant{Repo: b.RepoSlug, ConnectionID: *b.SCMConnectionID, UserID: triggeredByUserID}
 	}
 	if b.LLMConnectionID != nil {
 		grants.LLM = &models.LLMGrant{ConnectionID: *b.LLMConnectionID}
@@ -640,7 +707,11 @@ func (s *BindingService) ResolveRunInputs(ctx context.Context, run *models.Agent
 		}
 		applyLLMModelEnv(env, llmCfg)
 	}
-	spec, grants := s.bindingTokenAndGrants(binding, itemID)
+	triggeredBy := 0
+	if run.TriggeredByUserID != nil {
+		triggeredBy = *run.TriggeredByUserID
+	}
+	spec, grants := s.bindingTokenAndGrants(binding, itemID, triggeredBy)
 
 	// Repo-prep inputs for a remote runner: only when the binding is repo-
 	// backed. Unlike the local path, no SCM token travels here — the remote

@@ -1925,6 +1925,34 @@ func (a *scmCredsAdapter) ResolveForRun(ctx context.Context, connectionID int) (
 	if err != nil {
 		return "", "", "", err
 	}
+	return a.tokenFromCreds(ctx, connectionID, creds)
+}
+
+// ResolveForRunAsUser implements the user-principal variant of
+// services.SCMCredentialResolver (WI-275): credentials are resolved with
+// scm.CredentialResolver.GetCredentialsForUser, so an OAuth-method
+// connection yields the triggering user's personal token — or fails with
+// services.ErrTriggerUserSCMNotConnected in the chain when the user has
+// not connected an account (deliberately no fallback to the workspace
+// credential). PAT and GitHub App connections resolve identically to
+// ResolveForRun because GetCredentialsForUser falls back to the
+// impersonal connection-level credential for those auth methods.
+func (a *scmCredsAdapter) ResolveForRunAsUser(ctx context.Context, connectionID, userID int) (token, providerType, baseURL string, err error) {
+	creds, err := a.cr.GetCredentialsForUser(ctx, connectionID, userID)
+	if err != nil {
+		if errors.Is(err, scm.ErrUserSCMNotConnected) {
+			return "", "", "", fmt.Errorf("user %d on connection %d: %w", userID, connectionID, services.ErrTriggerUserSCMNotConnected)
+		}
+		return "", "", "", err
+	}
+	return a.tokenFromCreds(ctx, connectionID, creds)
+}
+
+// tokenFromCreds picks the git-auth token out of resolved credentials.
+// Resolution order matches what the scm.Provider would pick for HTTP
+// traffic: OAuth access token → personal access token → GitHub App
+// installation token (minted on demand via the App's JWT flow).
+func (a *scmCredsAdapter) tokenFromCreds(ctx context.Context, connectionID int, creds *scm.ProviderCredentials) (token, providerType, baseURL string, err error) {
 	switch {
 	case creds.OAuthAccessToken != "":
 		token = creds.OAuthAccessToken
@@ -1982,10 +2010,19 @@ func (a *scmCredsAdapter) mintGitHubAppToken(ctx context.Context, creds *scm.Pro
 
 // openPRViaCredentialResolver implements services.OpenPRFn. Builds a
 // scm.Provider for the connection, calls CreatePullRequest, and lifts
-// the result into the orchestrator's OpenedPR shape.
+// the result into the orchestrator's OpenedPR shape. When the request
+// carries a UserID (the run's triggering user, WI-275), credentials
+// resolve per-user — on OAuth connections the PR is authored by that
+// user; PAT / GitHub App connections resolve identically either way.
 func openPRViaCredentialResolver(cr *scm.CredentialResolver) services.OpenPRFn {
 	return func(ctx context.Context, req services.OpenPRRequest) (*services.OpenedPR, error) {
-		creds, err := cr.GetCredentialsByConnectionID(ctx, req.ConnectionID)
+		var creds *scm.ProviderCredentials
+		var err error
+		if req.UserID > 0 {
+			creds, err = cr.GetCredentialsForUser(ctx, req.ConnectionID, req.UserID)
+		} else {
+			creds, err = cr.GetCredentialsByConnectionID(ctx, req.ConnectionID)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("resolve connection %d: %w", req.ConnectionID, err)
 		}
