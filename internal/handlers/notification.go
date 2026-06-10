@@ -542,6 +542,10 @@ func (nh *NotificationHandler) CreateNotification(w http.ResponseWriter, r *http
 		sanitize.Pair{Target: &notification.Type, Policy: sanitize.ShortIdentifier},
 		sanitize.Pair{Target: &notification.Avatar, Policy: sanitize.ShortIdentifier},
 		sanitize.Pair{Target: &notification.ActionURL, Policy: sanitize.PlainTextField},
+		// Metadata is a JSON blob that is never decoded server-side, so this
+		// handler is the only bounding point — RichText caps it at 256 KiB
+		// (same treatment as SecretMetadata in action_credentials.go).
+		sanitize.Pair{Target: &notification.Metadata, Policy: sanitize.RichText},
 	)
 
 	// Force caller identity — never trust the request body's user_id.
