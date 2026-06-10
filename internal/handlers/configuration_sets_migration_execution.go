@@ -14,8 +14,32 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/utils"
 )
+
+// sanitizeStatusMappings bounds the user-facing status label carried on each
+// mapping. FromStatus is the display name echoed back from the analyzer; the
+// IDs are validated numerically and stay untouched.
+func sanitizeStatusMappings(mappings []models.StatusMigrationMapping) {
+	for i := range mappings {
+		sanitize.Apply(&mappings[i].FromStatus, sanitize.PlainTextField)
+	}
+}
+
+// sanitizeCustomFieldMappings scrubs the custom-field migration batch. Action
+// is identifier-shaped ("keep"/"orphan"/"add_default"); a string DefaultValue
+// is persisted into item custom-field JSON and rendered on item views, so it
+// gets the plain-text scrub. Non-string defaults stay untouched.
+func sanitizeCustomFieldMappings(mappings []models.CustomFieldMigrationMapping) {
+	for i := range mappings {
+		sanitize.Apply(&mappings[i].Action, sanitize.ShortIdentifier)
+		if s, ok := mappings[i].DefaultValue.(string); ok {
+			sanitize.Apply(&s, sanitize.PlainTextField)
+			mappings[i].DefaultValue = s
+		}
+	}
+}
 
 // errMigrationConflict signals that a compare-and-swap on
 // workspace_configuration_sets failed because another caller changed the
@@ -27,6 +51,7 @@ func (h *ConfigurationSetHandler) ExecuteMigration(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
+	sanitizeStatusMappings(migrationReq.StatusMappings)
 
 	// Validate configuration set exists and load its workflow_id for membership checks.
 	var configSetExists bool
@@ -106,6 +131,8 @@ func (h *ConfigurationSetHandler) ExecuteComprehensiveMigration(w http.ResponseW
 	if !ok {
 		return
 	}
+	sanitizeStatusMappings(req.StatusMappings)
+	sanitizeCustomFieldMappings(req.CustomFieldMappings)
 
 	// Validate configuration sets exist. OldConfigurationSetID == 0 is allowed
 	// and means "the workspace had no configuration set assigned".
