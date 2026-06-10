@@ -39,7 +39,6 @@ internal/handlers/reviews.go|windshift/internal/database
 internal/handlers/scm_item_links.go|windshift/internal/database
 internal/handlers/scm_providers_workspaces.go|windshift/internal/database
 internal/handlers/scm_providers.go|windshift/internal/database
-internal/handlers/scm_workspace.go|windshift/internal/database
 internal/handlers/screens.go|windshift/internal/database
 internal/handlers/setup.go|windshift/internal/database
 internal/handlers/sso.go|windshift/internal/database

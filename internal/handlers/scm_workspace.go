@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"crypto/rand"
-	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -15,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"windshift/internal/database"
 	"windshift/internal/models"
+	"windshift/internal/repository"
 	"windshift/internal/restapi"
 	"windshift/internal/sanitize"
 	"windshift/internal/scm"
@@ -26,7 +25,7 @@ import (
 
 // SCMWorkspaceHandler handles workspace SCM connection endpoints
 type SCMWorkspaceHandler struct {
-	db                 database.Database
+	repo               *repository.SCMWorkspaceRepository
 	encryption         *sso.SecretEncryption
 	providerHandler    *SCMProviderHandler
 	credentialResolver *scm.CredentialResolver
@@ -35,38 +34,10 @@ type SCMWorkspaceHandler struct {
 }
 
 // WorkspaceSCMConnectionResponse represents a workspace SCM connection for API responses
-type WorkspaceSCMConnectionResponse struct {
-	ID                   int                    `json:"id"`
-	WorkspaceID          int                    `json:"workspace_id"`
-	SCMProviderID        int                    `json:"scm_provider_id"`
-	ProviderName         string                 `json:"provider_name"`
-	ProviderType         models.SCMProviderType `json:"provider_type"`
-	ProviderSlug         string                 `json:"provider_slug"`
-	Enabled              bool                   `json:"enabled"`
-	SmartCommitsEnabled  bool                   `json:"smart_commits_enabled"`
-	DefaultBranchPattern string                 `json:"default_branch_pattern,omitempty"`
-	ItemKeyPattern       string                 `json:"item_key_pattern,omitempty"`
-	RepositoryCount      int                    `json:"repository_count"`
-	CreatedBy            *int                   `json:"created_by,omitempty"`
-	CreatedAt            time.Time              `json:"created_at"`
-	UpdatedAt            time.Time              `json:"updated_at"`
-}
+type WorkspaceSCMConnectionResponse = repository.SCMWorkspaceConnection
 
 // WorkspaceRepositoryResponse represents a linked repository for API responses
-type WorkspaceRepositoryResponse struct {
-	ID                       int        `json:"id"`
-	WorkspaceSCMConnectionID int        `json:"workspace_scm_connection_id"`
-	RepositoryExternalID     string     `json:"repository_external_id"`
-	RepositoryName           string     `json:"repository_name"`
-	RepositoryURL            string     `json:"repository_url"`
-	DefaultBranch            string     `json:"default_branch"`
-	IsActive                 bool       `json:"is_active"`
-	MilestoneTagPattern      string     `json:"milestone_tag_pattern"`
-	MilestoneBranchPattern   string     `json:"milestone_branch_pattern"`
-	LastSyncedAt             *time.Time `json:"last_synced_at,omitempty"`
-	CreatedAt                time.Time  `json:"created_at"`
-	UpdatedAt                time.Time  `json:"updated_at"`
-}
+type WorkspaceRepositoryResponse = repository.SCMLinkedRepository
 
 // UpdateWorkspaceRepositoryRequest is the body of the per-repo PATCH used
 // by the workspace settings UI to set the milestone-from-tag globs.
@@ -103,12 +74,12 @@ type LinkRepositoryRequest struct {
 // NewSCMWorkspaceHandler creates a new workspace SCM handler.
 // baseURL: public URL of the application (from config.Load), used to build
 // OAuth callback URIs. Empty falls back to deriving from the request Host.
-func NewSCMWorkspaceHandler(db database.Database, encryption *sso.SecretEncryption, providerHandler *SCMProviderHandler, permissionService *services.PermissionService, baseURL string) *SCMWorkspaceHandler {
+func NewSCMWorkspaceHandler(repo *repository.SCMWorkspaceRepository, encryption *sso.SecretEncryption, providerHandler *SCMProviderHandler, credentialResolver *scm.CredentialResolver, permissionService *services.PermissionService, baseURL string) *SCMWorkspaceHandler {
 	return &SCMWorkspaceHandler{
-		db:                 db,
+		repo:               repo,
 		encryption:         encryption,
 		providerHandler:    providerHandler,
-		credentialResolver: scm.NewCredentialResolver(db, encryption),
+		credentialResolver: credentialResolver,
 		permissionService:  permissionService,
 		baseURL:            baseURL,
 	}
@@ -121,58 +92,8 @@ func (h *SCMWorkspaceHandler) GetWorkspaceSCMConnections(w http.ResponseWriter, 
 		return
 	}
 
-	rows, err := h.db.Query(`
-		SELECT
-			wsc.id, wsc.workspace_id, wsc.scm_provider_id, wsc.enabled,
-			wsc.smart_commits_enabled,
-			wsc.default_branch_pattern, wsc.item_key_pattern,
-			wsc.created_by, wsc.created_at, wsc.updated_at,
-			sp.name, sp.provider_type, sp.slug,
-			(SELECT COUNT(*) FROM workspace_repositories wr WHERE wr.workspace_scm_connection_id = wsc.id) as repo_count
-		FROM workspace_scm_connections wsc
-		JOIN scm_providers sp ON sp.id = wsc.scm_provider_id
-		WHERE wsc.workspace_id = ?
-		ORDER BY sp.name
-	`, workspaceID)
+	connections, err := h.repo.ListConnections(workspaceID)
 	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	defer func() { _ = rows.Close() }()
-
-	connections := []WorkspaceSCMConnectionResponse{}
-	for rows.Next() {
-		var conn WorkspaceSCMConnectionResponse
-		var defaultBranchPattern, itemKeyPattern sql.NullString
-		var createdBy sql.NullInt64
-
-		err := rows.Scan(
-			&conn.ID, &conn.WorkspaceID, &conn.SCMProviderID, &conn.Enabled,
-			&conn.SmartCommitsEnabled,
-			&defaultBranchPattern, &itemKeyPattern,
-			&createdBy, &conn.CreatedAt, &conn.UpdatedAt,
-			&conn.ProviderName, &conn.ProviderType, &conn.ProviderSlug,
-			&conn.RepositoryCount,
-		)
-		if err != nil {
-			slog.Error("failed to scan connection", slog.String("component", "scm"), slog.Any("error", err))
-			continue
-		}
-
-		if defaultBranchPattern.Valid {
-			conn.DefaultBranchPattern = defaultBranchPattern.String
-		}
-		if itemKeyPattern.Valid {
-			conn.ItemKeyPattern = itemKeyPattern.String
-		}
-		if createdBy.Valid {
-			cb := int(createdBy.Int64)
-			conn.CreatedBy = &cb
-		}
-
-		connections = append(connections, conn)
-	}
-	if err := rows.Err(); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
@@ -207,10 +128,9 @@ func (h *SCMWorkspaceHandler) CreateWorkspaceSCMConnection(w http.ResponseWriter
 	}
 
 	// Verify the provider exists and is enabled
-	var providerEnabled bool
-	err = h.db.QueryRow("SELECT enabled FROM scm_providers WHERE id = ?", req.SCMProviderID).Scan(&providerEnabled)
+	providerEnabled, err := h.repo.GetProviderEnabled(req.SCMProviderID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, repository.ErrNotFound) {
 			respondNotFound(w, r, "scm_provider")
 		} else {
 			respondInternalError(w, r, err)
@@ -244,14 +164,7 @@ func (h *SCMWorkspaceHandler) CreateWorkspaceSCMConnection(w http.ResponseWriter
 	}
 
 	// Insert the connection
-	var id int64
-	err = h.db.QueryRow(`
-		INSERT INTO workspace_scm_connections (
-			workspace_id, scm_provider_id, enabled,
-			default_branch_pattern, item_key_pattern, created_by
-		) VALUES (?, ?, true, ?, ?, ?) RETURNING id
-	`, workspaceID, req.SCMProviderID,
-		nullString(req.DefaultBranchPattern), nullString(req.ItemKeyPattern), createdBy).Scan(&id)
+	id, err := h.repo.CreateConnection(workspaceID, req.SCMProviderID, req.DefaultBranchPattern, req.ItemKeyPattern, createdBy)
 	if err != nil {
 		slog.Error("failed to create connection", slog.String("component", "scm"), slog.Any("error", err))
 		respondConflict(w, r, "Failed to create SCM connection. It may already exist.")
@@ -259,7 +172,7 @@ func (h *SCMWorkspaceHandler) CreateWorkspaceSCMConnection(w http.ResponseWriter
 	}
 
 	// Get the created connection
-	conn, err := h.getConnectionByID(int(id))
+	conn, err := h.repo.GetConnectionByID(id)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -282,9 +195,9 @@ func (h *SCMWorkspaceHandler) GetWorkspaceSCMConnection(w http.ResponseWriter, r
 		return
 	}
 
-	conn, err := h.getConnectionByID(connID)
+	conn, err := h.repo.GetConnectionByID(connID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, repository.ErrNotFound) {
 			respondNotFound(w, r, "connection")
 		} else {
 			respondInternalError(w, r, err)
@@ -327,9 +240,9 @@ func (h *SCMWorkspaceHandler) UpdateWorkspaceSCMConnection(w http.ResponseWriter
 	)
 
 	// Verify connection exists and belongs to this workspace
-	conn, err := h.getConnectionByID(connID)
+	conn, err := h.repo.GetConnectionByID(connID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, repository.ErrNotFound) {
 			respondNotFound(w, r, "connection")
 		} else {
 			respondInternalError(w, r, err)
@@ -361,22 +274,13 @@ func (h *SCMWorkspaceHandler) UpdateWorkspaceSCMConnection(w http.ResponseWriter
 		itemKeyPattern = *req.ItemKeyPattern
 	}
 
-	_, err = h.db.Exec(`
-		UPDATE workspace_scm_connections SET
-			enabled = ?,
-			smart_commits_enabled = ?,
-			default_branch_pattern = ?,
-			item_key_pattern = ?,
-			updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?
-	`, enabled, smartCommits, nullString(defaultBranchPattern), nullString(itemKeyPattern), connID)
-	if err != nil {
+	if err := h.repo.UpdateConnection(connID, enabled, smartCommits, defaultBranchPattern, itemKeyPattern); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
 
 	// Get updated connection
-	conn, err = h.getConnectionByID(connID)
+	conn, err = h.repo.GetConnectionByID(connID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -399,13 +303,10 @@ func (h *SCMWorkspaceHandler) DeleteWorkspaceSCMConnection(w http.ResponseWriter
 		return
 	}
 
-	var err error
-
 	// Verify connection belongs to this workspace
-	var connWorkspaceID int
-	err = h.db.QueryRow("SELECT workspace_id FROM workspace_scm_connections WHERE id = ?", connID).Scan(&connWorkspaceID)
+	connWorkspaceID, _, err := h.repo.GetConnectionWorkspaceAndProvider(connID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, repository.ErrNotFound) {
 			respondNotFound(w, r, "connection")
 		} else {
 			respondInternalError(w, r, err)
@@ -419,8 +320,7 @@ func (h *SCMWorkspaceHandler) DeleteWorkspaceSCMConnection(w http.ResponseWriter
 	}
 
 	// Delete (cascade will handle repositories and item links)
-	_, err = h.db.Exec("DELETE FROM workspace_scm_connections WHERE id = ?", connID)
-	if err != nil {
+	if err := h.repo.DeleteConnection(connID); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
@@ -439,16 +339,10 @@ func (h *SCMWorkspaceHandler) ListAvailableRepositories(w http.ResponseWriter, r
 		return
 	}
 
-	var err error
-
 	// Get connection and verify ownership
-	var providerID int
-	var connWorkspaceID int
-	err = h.db.QueryRow(`
-		SELECT workspace_id, scm_provider_id FROM workspace_scm_connections WHERE id = ?
-	`, connID).Scan(&connWorkspaceID, &providerID)
+	connWorkspaceID, providerID, err := h.repo.GetConnectionWorkspaceAndProvider(connID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, repository.ErrNotFound) {
 			respondNotFound(w, r, "connection")
 		} else {
 			respondInternalError(w, r, err)
@@ -533,22 +427,9 @@ func (h *SCMWorkspaceHandler) ListAvailableRepositories(w http.ResponseWriter, r
 		return
 	}
 
-	// Get already linked repos to mark them
-	linkedMap := make(map[string]bool)
-	linkedRows, err := h.db.Query(`
-		SELECT repository_external_id FROM workspace_repositories
-		WHERE workspace_scm_connection_id = ?
-	`, connID)
-	if err == nil {
-		defer func() { _ = linkedRows.Close() }()
-		for linkedRows.Next() {
-			var extID string
-			if linkedRows.Scan(&extID) == nil {
-				linkedMap[extID] = true
-			}
-		}
-		_ = linkedRows.Err()
-	}
+	// Get already linked repos to mark them (best-effort: an error leaves
+	// the linked set empty).
+	linkedMap, _ := h.repo.LinkedRepositoryExternalIDs(connID)
 
 	// Build response with linked status
 	type RepoWithStatus struct {
@@ -582,13 +463,10 @@ func (h *SCMWorkspaceHandler) GetLinkedRepositories(w http.ResponseWriter, r *ht
 		return
 	}
 
-	var err error
-
 	// Verify connection belongs to workspace
-	var connWorkspaceID int
-	err = h.db.QueryRow("SELECT workspace_id FROM workspace_scm_connections WHERE id = ?", connID).Scan(&connWorkspaceID)
+	connWorkspaceID, _, err := h.repo.GetConnectionWorkspaceAndProvider(connID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, repository.ErrNotFound) {
 			respondNotFound(w, r, "connection")
 		} else {
 			respondInternalError(w, r, err)
@@ -601,44 +479,8 @@ func (h *SCMWorkspaceHandler) GetLinkedRepositories(w http.ResponseWriter, r *ht
 		return
 	}
 
-	rows, err := h.db.Query(`
-		SELECT id, workspace_scm_connection_id, repository_external_id,
-			   repository_name, repository_url, default_branch,
-			   is_active, milestone_tag_pattern, milestone_branch_pattern,
-			   last_synced_at, created_at, updated_at
-		FROM workspace_repositories
-		WHERE workspace_scm_connection_id = ?
-		ORDER BY repository_name
-	`, connID)
+	repos, err := h.repo.ListLinkedRepositories(connID)
 	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	defer func() { _ = rows.Close() }()
-
-	repos := []WorkspaceRepositoryResponse{}
-	for rows.Next() {
-		var repo WorkspaceRepositoryResponse
-		var lastSyncedAt sql.NullTime
-
-		err := rows.Scan(
-			&repo.ID, &repo.WorkspaceSCMConnectionID, &repo.RepositoryExternalID,
-			&repo.RepositoryName, &repo.RepositoryURL, &repo.DefaultBranch,
-			&repo.IsActive, &repo.MilestoneTagPattern, &repo.MilestoneBranchPattern,
-			&lastSyncedAt, &repo.CreatedAt, &repo.UpdatedAt,
-		)
-		if err != nil {
-			slog.Error("failed to scan repository", slog.String("component", "scm"), slog.Any("error", err))
-			continue
-		}
-
-		if lastSyncedAt.Valid {
-			repo.LastSyncedAt = &lastSyncedAt.Time
-		}
-
-		repos = append(repos, repo)
-	}
-	if err := rows.Err(); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
@@ -678,10 +520,9 @@ func (h *SCMWorkspaceHandler) LinkRepository(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Verify connection belongs to workspace
-	var connWorkspaceID, providerID int
-	err = h.db.QueryRow("SELECT workspace_id, scm_provider_id FROM workspace_scm_connections WHERE id = ?", connID).Scan(&connWorkspaceID, &providerID)
+	connWorkspaceID, providerID, err := h.repo.GetConnectionWorkspaceAndProvider(connID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, repository.ErrNotFound) {
 			respondNotFound(w, r, "connection")
 		} else {
 			respondInternalError(w, r, err)
@@ -713,13 +554,7 @@ func (h *SCMWorkspaceHandler) LinkRepository(w http.ResponseWriter, r *http.Requ
 		defaultBranch = "main"
 	}
 
-	var id int64
-	err = h.db.QueryRow(`
-		INSERT INTO workspace_repositories (
-			workspace_scm_connection_id, repository_external_id,
-			repository_name, repository_url, default_branch, is_active
-		) VALUES (?, ?, ?, ?, ?, true) RETURNING id
-	`, connID, req.RepositoryExternalID, req.RepositoryName, req.RepositoryURL, defaultBranch).Scan(&id)
+	id, err := h.repo.LinkRepository(connID, req.RepositoryExternalID, req.RepositoryName, req.RepositoryURL, defaultBranch)
 	if err != nil {
 		slog.Error("failed to link repository", slog.String("component", "scm"), slog.Any("error", err))
 		respondConflict(w, r, "Failed to link repository. It may already be linked.")
@@ -727,27 +562,10 @@ func (h *SCMWorkspaceHandler) LinkRepository(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Get the created repo
-	var repo WorkspaceRepositoryResponse
-	var lastSyncedAt sql.NullTime
-	err = h.db.QueryRow(`
-		SELECT id, workspace_scm_connection_id, repository_external_id,
-			   repository_name, repository_url, default_branch,
-			   is_active, milestone_tag_pattern, milestone_branch_pattern,
-			   last_synced_at, created_at, updated_at
-		FROM workspace_repositories WHERE id = ?
-	`, id).Scan(
-		&repo.ID, &repo.WorkspaceSCMConnectionID, &repo.RepositoryExternalID,
-		&repo.RepositoryName, &repo.RepositoryURL, &repo.DefaultBranch,
-		&repo.IsActive, &repo.MilestoneTagPattern, &repo.MilestoneBranchPattern,
-		&lastSyncedAt, &repo.CreatedAt, &repo.UpdatedAt,
-	)
+	repo, err := h.repo.GetRepositoryByID(id)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
-	}
-
-	if lastSyncedAt.Valid {
-		repo.LastSyncedAt = &lastSyncedAt.Time
 	}
 
 	respondJSONCreated(w, repo)
@@ -760,17 +578,10 @@ func (h *SCMWorkspaceHandler) UnlinkRepository(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	var err error
-
 	// Look up the workspace via the connection to check permission
-	var workspaceID int
-	err = h.db.QueryRow(`
-		SELECT wsc.workspace_id FROM workspace_repositories wr
-		JOIN workspace_scm_connections wsc ON wsc.id = wr.workspace_scm_connection_id
-		WHERE wr.id = ?
-	`, repoID).Scan(&workspaceID)
+	workspaceID, err := h.repo.GetRepositoryWorkspaceID(repoID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, repository.ErrNotFound) {
 			respondNotFound(w, r, "repository")
 		} else {
 			respondInternalError(w, r, err)
@@ -786,8 +597,7 @@ func (h *SCMWorkspaceHandler) UnlinkRepository(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	_, err = h.db.Exec("DELETE FROM workspace_repositories WHERE id = ?", repoID)
-	if err != nil {
+	if err := h.repo.DeleteRepository(repoID); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
@@ -806,13 +616,9 @@ func (h *SCMWorkspaceHandler) UpdateRepository(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	var workspaceID int
-	if err := h.db.QueryRow(`
-		SELECT wsc.workspace_id FROM workspace_repositories wr
-		JOIN workspace_scm_connections wsc ON wsc.id = wr.workspace_scm_connection_id
-		WHERE wr.id = ?
-	`, repoID).Scan(&workspaceID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+	workspaceID, err := h.repo.GetRepositoryWorkspaceID(repoID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
 			respondNotFound(w, r, "repository")
 		} else {
 			respondInternalError(w, r, err)
@@ -840,58 +646,30 @@ func (h *SCMWorkspaceHandler) UpdateRepository(w http.ResponseWriter, r *http.Re
 		sanitize.Pair{Target: req.MilestoneBranchPattern, Policy: sanitize.ShortIdentifier},
 	)
 
-	// Build a dynamic UPDATE so unset fields aren't overwritten. Reject
-	// empty strings explicitly — they would disable detection silently.
-	sets := []string{"updated_at = CURRENT_TIMESTAMP"}
-	args := []any{}
-	if req.MilestoneTagPattern != nil {
-		if *req.MilestoneTagPattern == "" {
-			respondValidationError(w, r, "milestone_tag_pattern must not be empty")
-			return
-		}
-		sets = append(sets, "milestone_tag_pattern = ?")
-		args = append(args, *req.MilestoneTagPattern)
+	// Unset fields aren't overwritten. Reject empty strings explicitly —
+	// they would disable detection silently.
+	if req.MilestoneTagPattern != nil && *req.MilestoneTagPattern == "" {
+		respondValidationError(w, r, "milestone_tag_pattern must not be empty")
+		return
 	}
-	if req.MilestoneBranchPattern != nil {
-		if *req.MilestoneBranchPattern == "" {
-			respondValidationError(w, r, "milestone_branch_pattern must not be empty")
-			return
-		}
-		sets = append(sets, "milestone_branch_pattern = ?")
-		args = append(args, *req.MilestoneBranchPattern)
+	if req.MilestoneBranchPattern != nil && *req.MilestoneBranchPattern == "" {
+		respondValidationError(w, r, "milestone_branch_pattern must not be empty")
+		return
 	}
-	if len(args) == 0 {
+	if req.MilestoneTagPattern == nil && req.MilestoneBranchPattern == nil {
 		respondValidationError(w, r, "no fields to update")
 		return
 	}
-	args = append(args, repoID)
 
-	query := "UPDATE workspace_repositories SET " + strings.Join(sets, ", ") + " WHERE id = ?"
-	if _, err := h.db.Exec(query, args...); err != nil {
+	if err := h.repo.UpdateRepositoryPatterns(repoID, req.MilestoneTagPattern, req.MilestoneBranchPattern); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
 
-	var repo WorkspaceRepositoryResponse
-	var lastSyncedAt sql.NullTime
-	err := h.db.QueryRow(`
-		SELECT id, workspace_scm_connection_id, repository_external_id,
-			   repository_name, repository_url, default_branch,
-			   is_active, milestone_tag_pattern, milestone_branch_pattern,
-			   last_synced_at, created_at, updated_at
-		FROM workspace_repositories WHERE id = ?
-	`, repoID).Scan(
-		&repo.ID, &repo.WorkspaceSCMConnectionID, &repo.RepositoryExternalID,
-		&repo.RepositoryName, &repo.RepositoryURL, &repo.DefaultBranch,
-		&repo.IsActive, &repo.MilestoneTagPattern, &repo.MilestoneBranchPattern,
-		&lastSyncedAt, &repo.CreatedAt, &repo.UpdatedAt,
-	)
+	repo, err := h.repo.GetRepositoryByID(repoID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
-	}
-	if lastSyncedAt.Valid {
-		repo.LastSyncedAt = &lastSyncedAt.Time
 	}
 	respondJSONOK(w, repo)
 }
@@ -903,104 +681,15 @@ func (h *SCMWorkspaceHandler) GetAvailableSCMProviders(w http.ResponseWriter, r 
 		return
 	}
 
-	// Get all enabled providers that are not already connected to this workspace
-	// Filter out restricted providers that this workspace doesn't have access to
-	rows, err := h.db.Query(`
-		SELECT sp.id, sp.slug, sp.name, sp.provider_type, sp.auth_method,
-			   sp.workspace_restriction_mode,
-			   CASE WHEN wsc.id IS NOT NULL THEN 1 ELSE 0 END as is_connected
-		FROM scm_providers sp
-		LEFT JOIN workspace_scm_connections wsc
-			ON wsc.scm_provider_id = sp.id AND wsc.workspace_id = ?
-		WHERE sp.enabled = true
-		  AND (
-			sp.workspace_restriction_mode = 'unrestricted'
-			OR sp.workspace_restriction_mode IS NULL
-			OR EXISTS (
-				SELECT 1 FROM scm_provider_workspace_allowlist al
-				WHERE al.provider_id = sp.id AND al.workspace_id = ?
-			)
-		  )
-		ORDER BY sp.name
-	`, workspaceID, workspaceID)
+	// Get all enabled providers that are not already connected to this workspace.
+	// Restricted providers this workspace doesn't have access to are filtered out.
+	providers, err := h.repo.ListAvailableProviders(workspaceID)
 	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	defer func() { _ = rows.Close() }()
-
-	type AvailableProvider struct {
-		ID           int                    `json:"id"`
-		Slug         string                 `json:"slug"`
-		Name         string                 `json:"name"`
-		ProviderType models.SCMProviderType `json:"provider_type"`
-		AuthMethod   models.SCMAuthMethod   `json:"auth_method"`
-		IsConnected  bool                   `json:"is_connected"`
-	}
-
-	providers := []AvailableProvider{}
-	for rows.Next() {
-		var p AvailableProvider
-		var isConnected int
-		var restrictionMode sql.NullString
-		err := rows.Scan(&p.ID, &p.Slug, &p.Name, &p.ProviderType, &p.AuthMethod, &restrictionMode, &isConnected)
-		if err != nil {
-			slog.Error("failed to scan provider", slog.String("component", "scm"), slog.Any("error", err))
-			continue
-		}
-		p.IsConnected = isConnected == 1
-		providers = append(providers, p)
-	}
-	if err := rows.Err(); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
 
 	respondJSONOK(w, providers)
-}
-
-// Helper methods
-
-func (h *SCMWorkspaceHandler) getConnectionByID(id int) (*WorkspaceSCMConnectionResponse, error) {
-	var conn WorkspaceSCMConnectionResponse
-	var defaultBranchPattern, itemKeyPattern sql.NullString
-	var createdBy sql.NullInt64
-
-	err := h.db.QueryRow(`
-		SELECT
-			wsc.id, wsc.workspace_id, wsc.scm_provider_id, wsc.enabled,
-			wsc.smart_commits_enabled,
-			wsc.default_branch_pattern, wsc.item_key_pattern,
-			wsc.created_by, wsc.created_at, wsc.updated_at,
-			sp.name, sp.provider_type, sp.slug,
-			(SELECT COUNT(*) FROM workspace_repositories wr WHERE wr.workspace_scm_connection_id = wsc.id) as repo_count
-		FROM workspace_scm_connections wsc
-		JOIN scm_providers sp ON sp.id = wsc.scm_provider_id
-		WHERE wsc.id = ?
-	`, id).Scan(
-		&conn.ID, &conn.WorkspaceID, &conn.SCMProviderID, &conn.Enabled,
-		&conn.SmartCommitsEnabled,
-		&defaultBranchPattern, &itemKeyPattern,
-		&createdBy, &conn.CreatedAt, &conn.UpdatedAt,
-		&conn.ProviderName, &conn.ProviderType, &conn.ProviderSlug,
-		&conn.RepositoryCount,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	if defaultBranchPattern.Valid {
-		conn.DefaultBranchPattern = defaultBranchPattern.String
-	}
-	if itemKeyPattern.Valid {
-		conn.ItemKeyPattern = itemKeyPattern.String
-	}
-	if createdBy.Valid {
-		cb := int(createdBy.Int64)
-		conn.CreatedBy = &cb
-	}
-
-	return &conn, nil
 }
 
 // StartWorkspaceOAuth initiates the OAuth flow for a workspace SCM connection
@@ -1015,8 +704,6 @@ func (h *SCMWorkspaceHandler) StartWorkspaceOAuth(w http.ResponseWriter, r *http
 		return
 	}
 
-	var err error
-
 	// Get user from context
 	user, ok := RequireAuth(w, r)
 	if !ok {
@@ -1024,12 +711,9 @@ func (h *SCMWorkspaceHandler) StartWorkspaceOAuth(w http.ResponseWriter, r *http
 	}
 
 	// Verify connection exists and belongs to this workspace
-	var providerID, connWorkspaceID int
-	err = h.db.QueryRow(`
-		SELECT workspace_id, scm_provider_id FROM workspace_scm_connections WHERE id = ?
-	`, connID).Scan(&connWorkspaceID, &providerID)
+	connWorkspaceID, providerID, err := h.repo.GetConnectionWorkspaceAndProvider(connID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, repository.ErrNotFound) {
 			respondNotFound(w, r, "connection")
 		} else {
 			respondInternalError(w, r, err)
@@ -1043,26 +727,19 @@ func (h *SCMWorkspaceHandler) StartWorkspaceOAuth(w http.ResponseWriter, r *http
 	}
 
 	// Get provider details
-	var providerType models.SCMProviderType
-	var authMethod models.SCMAuthMethod
-	var clientID, baseURL, oauthScopes, providerSlug sql.NullString
-
-	err = h.db.QueryRow(`
-		SELECT provider_type, auth_method, oauth_client_id, base_url, scopes, slug
-		FROM scm_providers WHERE id = ?
-	`, providerID).Scan(&providerType, &authMethod, &clientID, &baseURL, &oauthScopes, &providerSlug)
+	oauthCfg, err := h.repo.GetProviderOAuthConfig(providerID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
 
 	// OAuth is only valid for OAuth auth method
-	if authMethod != models.SCMAuthMethodOAuth {
+	if oauthCfg.AuthMethod != models.SCMAuthMethodOAuth {
 		respondBadRequest(w, r, "This provider does not use OAuth authentication")
 		return
 	}
 
-	if !clientID.Valid || clientID.String == "" {
+	if oauthCfg.ClientID == "" {
 		respondBadRequest(w, r, "OAuth not configured for this provider")
 		return
 	}
@@ -1073,52 +750,48 @@ func (h *SCMWorkspaceHandler) StartWorkspaceOAuth(w http.ResponseWriter, r *http
 	state := base64.URLEncoding.EncodeToString(stateBytes)
 
 	// Determine redirect URI
-	redirectURI, err := h.getWorkspaceOAuthRedirectURI(providerSlug.String)
+	redirectURI, err := h.getWorkspaceOAuthRedirectURI(oauthCfg.Slug)
 	if err != nil {
-		slog.Error("workspace SCM OAuth start: redirect URI unavailable", slog.String("component", "scm"), slog.String("slug", providerSlug.String), slog.Any("error", err))
+		slog.Error("workspace SCM OAuth start: redirect URI unavailable", slog.String("component", "scm"), slog.String("slug", oauthCfg.Slug), slog.Any("error", err))
 		respondServiceUnavailable(w, r, err.Error())
 		return
 	}
 
 	// Store state token with workspace_id
 	expiresAt := time.Now().Add(5 * time.Minute)
-	_, err = h.db.Exec(`
-		INSERT INTO scm_oauth_state (provider_id, state, redirect_uri, user_id, workspace_id, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`, providerID, state, redirectURI, user.ID, workspaceID, expiresAt)
-	if err != nil {
+	if err := h.repo.CreateOAuthState(providerID, state, redirectURI, user.ID, workspaceID, expiresAt); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
 
 	// Generate OAuth URL based on provider type
 	var authURL string
-	switch providerType {
+	switch oauthCfg.ProviderType {
 	case models.SCMProviderTypeGitHub:
 		scopes := "repo read:user user:email"
-		if oauthScopes.Valid && oauthScopes.String != "" {
-			scopes = oauthScopes.String
+		if oauthCfg.Scopes != "" {
+			scopes = oauthCfg.Scopes
 		}
 		authURL = fmt.Sprintf(
 			"https://github.com/login/oauth/authorize?client_id=%s&redirect_uri=%s&scope=%s&state=%s",
-			clientID.String,
+			oauthCfg.ClientID,
 			url.QueryEscape(redirectURI),
 			url.QueryEscape(scopes),
 			state,
 		)
 	case models.SCMProviderTypeGitea:
-		if !baseURL.Valid || baseURL.String == "" {
+		if oauthCfg.BaseURL == "" {
 			respondBadRequest(w, r, "Base URL not configured for this provider")
 			return
 		}
 		scopes := "read:user read:repository write:repository"
-		if oauthScopes.Valid && oauthScopes.String != "" {
-			scopes = oauthScopes.String
+		if oauthCfg.Scopes != "" {
+			scopes = oauthCfg.Scopes
 		}
 		authURL = fmt.Sprintf(
 			"%s/login/oauth/authorize?client_id=%s&redirect_uri=%s&response_type=code&scope=%s&state=%s",
-			strings.TrimSuffix(baseURL.String, "/"),
-			clientID.String,
+			strings.TrimSuffix(oauthCfg.BaseURL, "/"),
+			oauthCfg.ClientID,
 			url.QueryEscape(redirectURI),
 			url.QueryEscape(scopes),
 			state,
@@ -1145,12 +818,10 @@ func (h *SCMWorkspaceHandler) SetWorkspacePAT(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	var err error
-
 	var req struct {
 		PersonalAccessToken string `json:"personal_access_token"`
 	}
-	if err = json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondBadRequest(w, r, "Invalid request body")
 		return
 	}
@@ -1161,12 +832,9 @@ func (h *SCMWorkspaceHandler) SetWorkspacePAT(w http.ResponseWriter, r *http.Req
 	}
 
 	// Verify connection exists and belongs to this workspace
-	var connWorkspaceID, providerID int
-	err = h.db.QueryRow(`
-		SELECT workspace_id, scm_provider_id FROM workspace_scm_connections WHERE id = ?
-	`, connID).Scan(&connWorkspaceID, &providerID)
+	connWorkspaceID, providerID, err := h.repo.GetConnectionWorkspaceAndProvider(connID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, repository.ErrNotFound) {
 			respondNotFound(w, r, "connection")
 		} else {
 			respondInternalError(w, r, err)
@@ -1180,8 +848,7 @@ func (h *SCMWorkspaceHandler) SetWorkspacePAT(w http.ResponseWriter, r *http.Req
 	}
 
 	// Verify provider uses PAT auth
-	var authMethod models.SCMAuthMethod
-	err = h.db.QueryRow("SELECT auth_method FROM scm_providers WHERE id = ?", providerID).Scan(&authMethod)
+	authMethod, err := h.repo.GetProviderAuthMethod(providerID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -1199,13 +866,7 @@ func (h *SCMWorkspaceHandler) SetWorkspacePAT(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	_, err = h.db.Exec(`
-		UPDATE workspace_scm_connections SET
-			personal_access_token_encrypted = ?,
-			updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?
-	`, patEnc, connID)
-	if err != nil {
+	if err := h.repo.SetConnectionPAT(connID, patEnc); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
@@ -1228,13 +889,10 @@ func (h *SCMWorkspaceHandler) ClearWorkspaceCredentials(w http.ResponseWriter, r
 		return
 	}
 
-	var err error
-
 	// Verify connection exists and belongs to this workspace
-	var connWorkspaceID int
-	err = h.db.QueryRow("SELECT workspace_id FROM workspace_scm_connections WHERE id = ?", connID).Scan(&connWorkspaceID)
+	connWorkspaceID, _, err := h.repo.GetConnectionWorkspaceAndProvider(connID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, repository.ErrNotFound) {
 			respondNotFound(w, r, "connection")
 		} else {
 			respondInternalError(w, r, err)
@@ -1248,16 +906,7 @@ func (h *SCMWorkspaceHandler) ClearWorkspaceCredentials(w http.ResponseWriter, r
 	}
 
 	// Clear all workspace-level credentials
-	_, err = h.db.Exec(`
-		UPDATE workspace_scm_connections SET
-			oauth_access_token_encrypted = NULL,
-			oauth_refresh_token_encrypted = NULL,
-			oauth_token_expires_at = NULL,
-			personal_access_token_encrypted = NULL,
-			updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?
-	`, connID)
-	if err != nil {
+	if err := h.repo.ClearConnectionCredentials(connID); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
@@ -1277,26 +926,15 @@ func (h *SCMWorkspaceHandler) GetWorkspaceConnectionAuthStatus(w http.ResponseWr
 		return
 	}
 
-	var err error
-
 	currentUser, ok := RequireAuth(w, r)
 	if !ok {
 		return
 	}
 
 	// Get connection with workspace-level credentials info
-	var connWorkspaceID, providerID int
-	var wsOAuthTokenEnc, wsPATEnc sql.NullString
-	var wsOAuthExpiresAt sql.NullTime
-
-	err = h.db.QueryRow(`
-		SELECT workspace_id, scm_provider_id,
-			   oauth_access_token_encrypted, personal_access_token_encrypted,
-			   oauth_token_expires_at
-		FROM workspace_scm_connections WHERE id = ?
-	`, connID).Scan(&connWorkspaceID, &providerID, &wsOAuthTokenEnc, &wsPATEnc, &wsOAuthExpiresAt)
+	connInfo, err := h.repo.GetConnectionAuthInfo(connID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, repository.ErrNotFound) {
 			respondNotFound(w, r, "connection")
 		} else {
 			respondInternalError(w, r, err)
@@ -1304,62 +942,50 @@ func (h *SCMWorkspaceHandler) GetWorkspaceConnectionAuthStatus(w http.ResponseWr
 		return
 	}
 
-	if connWorkspaceID != workspaceID {
+	if connInfo.WorkspaceID != workspaceID {
 		respondNotFound(w, r, "connection")
 		return
 	}
 
 	// Get provider info
-	var authMethod models.SCMAuthMethod
-	var providerPATEnc, ghAppPrivateKeyEnc sql.NullString
-	var providerSlug string
-	err = h.db.QueryRow(`
-		SELECT auth_method, personal_access_token_encrypted, github_app_private_key_encrypted, slug
-		FROM scm_providers WHERE id = ?
-	`, providerID).Scan(&authMethod, &providerPATEnc, &ghAppPrivateKeyEnc, &providerSlug)
+	providerInfo, err := h.repo.GetProviderAuthInfo(connInfo.ProviderID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
 
 	response := map[string]interface{}{
-		"auth_method":      authMethod,
+		"auth_method":      providerInfo.AuthMethod,
 		"is_authenticated": false,
-		"provider_slug":    providerSlug,
+		"provider_slug":    providerInfo.Slug,
 	}
 
-	switch authMethod {
+	switch providerInfo.AuthMethod {
 	case models.SCMAuthMethodOAuth:
-		hasWorkspaceToken := wsOAuthTokenEnc.Valid && wsOAuthTokenEnc.String != ""
-		// Also check user-level token
-		var hasUserToken bool
-		var scmUsername sql.NullString
-		_ = h.db.QueryRow(`
-			SELECT CASE WHEN oauth_access_token_encrypted IS NOT NULL AND oauth_access_token_encrypted != '' THEN 1 ELSE 0 END,
-			       scm_username
-			FROM user_scm_oauth_tokens WHERE user_id = ? AND scm_provider_id = ?
-		`, currentUser.ID, providerID).Scan(&hasUserToken, &scmUsername)
+		hasWorkspaceToken := connInfo.HasOAuthToken
+		// Also check user-level token (best-effort: a missing row leaves
+		// the user-token flags unset).
+		hasUserToken, scmUsername, _ := h.repo.GetUserOAuthTokenStatus(currentUser.ID, connInfo.ProviderID)
 
 		response["has_workspace_token"] = hasWorkspaceToken
 		response["has_user_token"] = hasUserToken
 		response["is_authenticated"] = hasWorkspaceToken || hasUserToken
-		if scmUsername.Valid {
-			response["scm_username"] = scmUsername.String
+		if scmUsername != nil {
+			response["scm_username"] = *scmUsername
 		}
-		if wsOAuthExpiresAt.Valid {
-			response["token_expires_at"] = wsOAuthExpiresAt.Time
-			response["token_expired"] = wsOAuthExpiresAt.Time.Before(time.Now())
+		if connInfo.OAuthTokenExpiresAt != nil {
+			response["token_expires_at"] = *connInfo.OAuthTokenExpiresAt
+			response["token_expired"] = connInfo.OAuthTokenExpiresAt.Before(time.Now())
 		}
 	case models.SCMAuthMethodPAT:
-		hasWorkspacePAT := wsPATEnc.Valid && wsPATEnc.String != ""
-		hasProviderPAT := providerPATEnc.Valid && providerPATEnc.String != ""
+		hasWorkspacePAT := connInfo.HasPAT
+		hasProviderPAT := providerInfo.HasPAT
 		response["has_workspace_pat"] = hasWorkspacePAT
 		response["has_provider_pat"] = hasProviderPAT
 		response["is_authenticated"] = hasWorkspacePAT || hasProviderPAT
 	case models.SCMAuthMethodGitHubApp:
-		hasAppKey := ghAppPrivateKeyEnc.Valid && ghAppPrivateKeyEnc.String != ""
-		response["has_github_app_key"] = hasAppKey
-		response["is_authenticated"] = hasAppKey
+		response["has_github_app_key"] = providerInfo.HasGitHubAppKey
+		response["is_authenticated"] = providerInfo.HasGitHubAppKey
 		response["auth_source"] = "provider"
 	}
 

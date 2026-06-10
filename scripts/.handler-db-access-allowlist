@@ -80,7 +80,6 @@ internal/handlers/scm_item_links.go
 internal/handlers/scm_providers.go
 internal/handlers/scm_providers_oauth.go
 internal/handlers/scm_providers_workspaces.go
-internal/handlers/scm_workspace.go
 internal/handlers/screens.go
 internal/handlers/setup.go
 internal/handlers/sso.go
