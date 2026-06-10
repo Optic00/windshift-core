@@ -473,7 +473,7 @@ func (s *Server) initialize() error {
 			return result, err
 		},
 	)
-	groupHandler := handlers.NewGroupHandler(s.db, permService)
+	groupHandler := handlers.NewGroupHandler(repository.NewGroupRepository(s.db), permService, logger.NewAuditor(s.db))
 	credentialHandler := handlers.NewCredentialHandler(repository.NewCredentialRepository(s.db), logger.NewAuditor(s.db), permService, cfg.SSH.Enabled)
 	webAuthnHandler := handlers.NewWebAuthnHandler(s.db, permService, sessionManager, webAuthnConfig, ipExtractor)
 	collectionHandler := handlers.NewCollectionHandler(s.db, permService)

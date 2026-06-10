@@ -30,7 +30,6 @@ internal/handlers/credentials.go
 internal/handlers/diagnostics.go
 internal/handlers/email_providers.go
 internal/handlers/forms.go
-internal/handlers/groups.go
 internal/handlers/helpers.go
 internal/handlers/hub.go
 internal/handlers/integration_item_links.go
