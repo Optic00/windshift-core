@@ -528,13 +528,27 @@ func (r *AgentRunRepository) ListForWorkspace(ctx context.Context, workspaceID, 
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
+	return r.listRuns(ctx, "workspace_id", workspaceID, limit, beforeID)
+}
+
+// ListForItem returns the most recent N runs triggered against the given
+// work item, newest first — the item detail "Agent log" tab (WI-260).
+// Same cursor semantics as ListForWorkspace.
+func (r *AgentRunRepository) ListForItem(ctx context.Context, itemID, limit, beforeID int) ([]*models.AgentRun, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	return r.listRuns(ctx, "item_id", itemID, limit, beforeID)
+}
+
+func (r *AgentRunRepository) listRuns(ctx context.Context, scopeColumn string, scopeID, limit, beforeID int) ([]*models.AgentRun, error) {
 	query := `
 		SELECT id, workspace_id, item_id, binding_id, status, queued_at, started_at, ended_at,
 		       container_id, error, triggered_by_user_id, created_at, updated_at
 		FROM agent_runs
-		WHERE workspace_id = ?
+		WHERE ` + scopeColumn + ` = ?
 	`
-	args := []any{workspaceID}
+	args := []any{scopeID}
 	if beforeID > 0 {
 		query += " AND id < ?"
 		args = append(args, beforeID)
@@ -544,7 +558,7 @@ func (r *AgentRunRepository) ListForWorkspace(ctx context.Context, workspaceID, 
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("list runs for workspace: %w", err)
+		return nil, fmt.Errorf("list runs by %s: %w", scopeColumn, err)
 	}
 	defer func() { _ = rows.Close() }()
 

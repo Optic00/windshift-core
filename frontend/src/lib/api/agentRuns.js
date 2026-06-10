@@ -20,6 +20,20 @@ export const agentRuns = {
     return fetchAPI(`/workspaces/${workspaceId}/agent-runs${qs ? `?${qs}` : ''}`);
   },
 
+  /**
+   * List the runs triggered against one work item (newest first) — backs
+   * the item-detail "Agent log" tab (WI-260).
+   * @param {number} itemId
+   * @param {{ limit?: number, beforeId?: number }} [opts]
+   */
+  listForItem: (itemId, opts = {}) => {
+    const params = new URLSearchParams();
+    if (opts.limit) params.set('limit', String(opts.limit));
+    if (opts.beforeId) params.set('before_id', String(opts.beforeId));
+    const qs = params.toString();
+    return fetchAPI(`/items/${itemId}/agent-runs${qs ? `?${qs}` : ''}`);
+  },
+
   /** Get a single run by id. */
   get: (runId) => fetchAPI(`/agent-runs/${runId}`),
 

@@ -176,6 +176,7 @@ func RegisterWorkspaceRoutes(deps *Deps) {
 	// workspace-admin gated inside the handler.
 	if deps.Workspaces.AgentRun != nil {
 		api.HandleH("GET /workspaces/{workspaceId}/agent-runs", auth(http.HandlerFunc(deps.Workspaces.AgentRun.List)))
+		api.HandleH("GET /items/{itemId}/agent-runs", auth(http.HandlerFunc(deps.Workspaces.AgentRun.ListForItem)))
 		api.HandleH("GET /agent-runs/{id}", auth(http.HandlerFunc(deps.Workspaces.AgentRun.Get)))
 		api.HandleH("GET /agent-runs/{id}/events", auth(http.HandlerFunc(deps.Workspaces.AgentRun.Events)))
 		api.HandleH("POST /agent-runs/{id}/cancel", auth(http.HandlerFunc(deps.Workspaces.AgentRun.Cancel)))

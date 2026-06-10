@@ -743,7 +743,7 @@ func (s *Server) initialize() error {
 	agentBindingHandler := handlers.NewWorkspaceAgentBindingHandler(bindingSvc, agentIdentitySvc, permService, logger.NewAuditor(s.db))
 	agentBindingHandler.SetSkillsRepo(agentSkillRepo)
 	agentSkillHandler := handlers.NewAgentSkillHandler(agentSkillRepo, permService, logger.NewAuditor(s.db))
-	agentRunHandler := handlers.NewAgentRunHandler(repository.NewAgentRunRepository(s.db), codingRunSvc, permService)
+	agentRunHandler := handlers.NewAgentRunHandler(repository.NewAgentRunRepository(s.db), codingRunSvc, permService, repository.NewItemRepository(s.db))
 	// Remote-runner control plane (WI-141). Constructed unconditionally:
 	// remote pools do not require the local CodingAgent.RunnerImage, and the
 	// handler 503s when the registry is unavailable.

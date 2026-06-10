@@ -135,6 +135,10 @@ export default {
     // Item Detail Tabs
     timeTracking: 'Time Tracking',
     details: 'Details',
+    agentLog: 'Agent log',
+    agentLogEmpty: 'No agent runs for this item yet',
+    agentLogTriggeredBy: 'triggered by',
+    agentLogWaiting: 'Waiting for output…',
     created: 'Created',
     lastUpdated: 'Last Updated',
     by: 'by',

@@ -21,17 +21,20 @@ type AgentRunHandler struct {
 	repo              *repository.AgentRunRepository
 	runs              *services.RunService
 	permissionService *services.PermissionService
+	items             *repository.ItemRepository
 }
 
 // NewAgentRunHandler constructs the handler. runs may be nil when the
 // harness is disabled (CodingAgent.RunnerImage unset); in that case the
 // cancel endpoint returns 503 instead of silently dropping the request.
+// items resolves an item's workspace for the item-scoped runs list.
 func NewAgentRunHandler(
 	repo *repository.AgentRunRepository,
 	runs *services.RunService,
 	permissionService *services.PermissionService,
+	items *repository.ItemRepository,
 ) *AgentRunHandler {
-	return &AgentRunHandler{repo: repo, runs: runs, permissionService: permissionService}
+	return &AgentRunHandler{repo: repo, runs: runs, permissionService: permissionService, items: items}
 }
 
 type agentRunResponse struct {
@@ -89,6 +92,32 @@ func (h *AgentRunHandler) List(w http.ResponseWriter, r *http.Request) {
 	out := make([]agentRunResponse, 0, len(runs))
 	for _, r := range runs {
 		out = append(out, toAgentRunResponse(r))
+	}
+	respondJSON(w, http.StatusOK, out)
+}
+
+// ListForItem returns the runs triggered against one work item, newest
+// first — the item detail "Agent log" tab (WI-260). Gated on item.view via
+// the item's workspace; 404 on both a missing item and a missing permission
+// so item existence never leaks.
+func (h *AgentRunHandler) ListForItem(w http.ResponseWriter, r *http.Request) {
+	itemID, ok := requireIDParam(w, r, "itemId")
+	if !ok {
+		return
+	}
+	if !CheckItemPermission(w, r, h.items, h.permissionService, itemID, models.PermissionItemView) {
+		return
+	}
+	limit := parseQueryInt(r, "limit", 50)
+	beforeID := parseQueryInt(r, "before_id", 0)
+	runs, err := h.repo.ListForItem(r.Context(), itemID, limit, beforeID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	out := make([]agentRunResponse, 0, len(runs))
+	for _, run := range runs {
+		out = append(out, toAgentRunResponse(run))
 	}
 	respondJSON(w, http.StatusOK, out)
 }
