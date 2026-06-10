@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"windshift/internal/logger"
+	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
 	"windshift/internal/sanitize"
@@ -21,8 +22,12 @@ import (
 // Comment description) so a sanitized bundle round-trips the way direct API
 // writes would. Name-shaped cross-references get the same policy as their
 // defining entity so by-name resolution inside the bundle stays intact.
-// Enum-shaped machine tokens (kind, field_type, quorum_mode, ...) and the
-// free-form per-condition Config blob stay untouched.
+// Enum-shaped machine tokens (field_type, quorum_mode, logic_mode, ...) get
+// ShortIdentifier: legitimate values ("and", "sequential", "script") pass
+// through untouched while a bundle can no longer persist unbounded text into
+// columns the live CRUD handlers allowlist. The free-form per-condition
+// Config blob is byte-bounded (see sanitizeConfigSetCondition); deep
+// validation still belongs to the live condition editor.
 func sanitizeConfigSetTemplate(tpl *services.ConfigSetTemplate) {
 	if tpl.ExportedBy != nil {
 		sanitizeConfigSetExportBy(tpl.ExportedBy)
@@ -39,6 +44,7 @@ func sanitizeConfigSetTemplate(tpl *services.ConfigSetTemplate) {
 	for i := range p.CustomFields {
 		sanitize.ApplyAll(
 			sanitize.Pair{Target: &p.CustomFields[i].Name, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: &p.CustomFields[i].FieldType, Policy: sanitize.ShortIdentifier},
 			sanitize.Pair{Target: &p.CustomFields[i].Description, Policy: sanitize.Comment},
 			sanitize.Pair{Target: &p.CustomFields[i].Options, Policy: sanitize.Comment},
 		)
@@ -74,8 +80,10 @@ func sanitizeConfigSetTemplate(tpl *services.ConfigSetTemplate) {
 		)
 		for j := range sc.Fields {
 			sanitize.ApplyAll(
+				sanitize.Pair{Target: &sc.Fields[j].FieldKind, Policy: sanitize.ShortIdentifier},
 				sanitize.Pair{Target: &sc.Fields[j].FieldIdentifier, Policy: sanitize.ShortIdentifier},
 				sanitize.Pair{Target: &sc.Fields[j].CustomFieldName, Policy: sanitize.ShortIdentifier},
+				sanitize.Pair{Target: &sc.Fields[j].FieldWidth, Policy: sanitize.ShortIdentifier},
 			)
 		}
 		for j := range sc.SystemFields {
@@ -110,9 +118,10 @@ func sanitizeConfigSetTemplate(tpl *services.ConfigSetTemplate) {
 			sanitize.ApplyAll(
 				sanitize.Pair{Target: tc.FromStatusName, Policy: sanitize.PlainTextField},
 				sanitize.Pair{Target: &tc.ToStatusName, Policy: sanitize.PlainTextField},
+				sanitize.Pair{Target: &tc.LogicMode, Policy: sanitize.ShortIdentifier},
 			)
 			for k := range tc.Conditions {
-				sanitize.Apply(&tc.Conditions[k].ErrorMessage, sanitize.PlainTextField)
+				sanitizeConfigSetCondition(&tc.Conditions[k])
 			}
 		}
 	}
@@ -127,6 +136,7 @@ func sanitizeConfigSetTemplate(tpl *services.ConfigSetTemplate) {
 			ss := &as.SetStatuses[j]
 			sanitize.ApplyAll(
 				sanitize.Pair{Target: &ss.StatusName, Policy: sanitize.PlainTextField},
+				sanitize.Pair{Target: &ss.StepMode, Policy: sanitize.ShortIdentifier},
 				sanitize.Pair{Target: ss.ApproveTransition.FromStatusName, Policy: sanitize.PlainTextField},
 				sanitize.Pair{Target: &ss.ApproveTransition.ToStatusName, Policy: sanitize.PlainTextField},
 				sanitize.Pair{Target: ss.DenyTransition.FromStatusName, Policy: sanitize.PlainTextField},
@@ -140,13 +150,55 @@ func sanitizeConfigSetTemplate(tpl *services.ConfigSetTemplate) {
 	sanitizeConfigSetLinks(&p.Links)
 }
 
+// configSetConditionScriptMaxBytes mirrors the live validateCondition cap on
+// script-condition bodies (condition_sets.go) so an imported bundle cannot
+// plant a script larger than the condition editor would ever accept.
+const configSetConditionScriptMaxBytes = 10240
+
+// configSetConditionConfigMaxBytes bounds the serialized size of one
+// condition's free-form Config blob. Legitimate configs are tiny (a couple
+// of IDs / a field ref + pattern / a <=10KB script), so 64 KiB is generous
+// headroom while keeping a hostile bundle from parking megabytes in
+// conditions.config.
+const configSetConditionConfigMaxBytes = 64 * 1024
+
+// sanitizeConfigSetCondition bounds one workflow condition: the type / mode
+// machine tokens (live path allowlists these; import must at least bound
+// them), the user-facing error message, and the free-form Config blob. A
+// Config that still exceeds the byte cap after the script trim is dropped
+// wholesale — there is no legitimate config that large, and an empty config
+// fails closed in the condition engine rather than persisting megabytes.
+func sanitizeConfigSetCondition(c *services.ConfigSetTplCondition) {
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &c.Type, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &c.Mode, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &c.ErrorMessage, Policy: sanitize.PlainTextField},
+	)
+	if c.Type == models.ConditionTypeScript {
+		if script, ok := c.Config["script"].(string); ok && len(script) > configSetConditionScriptMaxBytes {
+			c.Config["script"] = script[:configSetConditionScriptMaxBytes]
+		}
+	}
+	if raw, err := json.Marshal(c.Config); err != nil || len(raw) > configSetConditionConfigMaxBytes {
+		c.Config = map[string]interface{}{}
+	}
+}
+
 // sanitizeConfigSetApprovalStep scrubs the name / identifier / email refs on
 // one approval step. Role + group names render in the approval chain editor
 // and echo back via UnresolvedRef on a 422; field identifiers + emails are
-// identifier-shaped.
+// identifier-shaped. The quorum / policy / source machine tokens get
+// ShortIdentifier because the import path bypasses the ApprovalSetService
+// allowlists that bound them on the live path.
 func sanitizeConfigSetApprovalStep(st *services.ConfigSetTplApprovalStep) {
 	sanitize.ApplyAll(
 		sanitize.Pair{Target: &st.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &st.QuorumMode, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &st.RejectionPolicy, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &st.ApproverSource, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &st.OnLeaveStrategy, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &st.EscalationAction, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &st.EscalationTargetSource, Policy: sanitize.ShortIdentifier},
 		sanitize.Pair{Target: &st.ApproverFieldIdentifier, Policy: sanitize.ShortIdentifier},
 		sanitize.Pair{Target: &st.ApproverCustomFieldName, Policy: sanitize.ShortIdentifier},
 		sanitize.Pair{Target: &st.ApproverRoleName, Policy: sanitize.PlainTextField},
