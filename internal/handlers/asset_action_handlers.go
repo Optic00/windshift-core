@@ -352,6 +352,20 @@ func (h *AssetActionHandler) ExecuteAction(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// The target asset id is caller-controlled; confirm it belongs to the
+	// admin-checked set before executing, otherwise an admin of one set could
+	// drive an action against an asset in a set they cannot access. Return 404
+	// (not 403) to avoid disclosing the existence of out-of-set assets.
+	assetSetID, err := h.assetHandler.repo.GetAssetSetID(req.AssetID)
+	if err == repository.ErrNotFound || (err == nil && assetSetID != setID) {
+		respondNotFound(w, r, "asset")
+		return
+	}
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+
 	if h.actionService == nil {
 		respondInternalError(w, r, fmt.Errorf("asset action service not available"))
 		return

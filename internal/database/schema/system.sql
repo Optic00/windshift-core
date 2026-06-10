@@ -224,7 +224,10 @@ CREATE TABLE active_timers (
 CREATE INDEX IF NOT EXISTS idx_active_timers_workspace_id ON active_timers(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_active_timers_item_id ON active_timers(item_id);
 CREATE INDEX IF NOT EXISTS idx_active_timers_project_id ON active_timers(project_id);
-CREATE INDEX IF NOT EXISTS idx_active_timers_user_id ON active_timers(user_id);
+-- A user can have at most one active timer at a time; the UNIQUE index is the
+-- DB-level backstop for the "only one running" check in TimerService.StartTimer
+-- (which is otherwise a TOCTOU race under concurrent starts).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_active_timers_user_id ON active_timers(user_id);
 
 -- Themes table
 CREATE TABLE IF NOT EXISTS themes (

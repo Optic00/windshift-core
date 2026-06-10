@@ -1127,6 +1127,46 @@ var Catalog = []Migration{
 				ON workspace_agent_binding_skills(skill_id);
 		`,
 	},
+	{
+		// active_timers "only one running timer per user" was enforced solely by
+		// a TOCTOU check (HasActiveTimerForUser → CreateTimer, two statements, no
+		// txn) in TimerService.StartTimer, so concurrent starts could create
+		// multiple running timers. Make the user_id index UNIQUE so the DB is the
+		// backstop; the repo maps the resulting constraint violation to
+		// ErrTimerAlreadyRunning (WI-298). Before swapping the index we delete all
+		// but the latest active timer per user so any pre-existing duplicates
+		// don't block the UNIQUE index creation.
+		//
+		// The schema (system{,_postgres}.sql) creates idx_active_timers_user_id as
+		// a plain index; this migration drops it and recreates it UNIQUE. The
+		// Check reports the effect present once the index is already unique, so it
+		// is idempotent on installs that already have it (incl. fresh installs
+		// whose schema bootstrap will adopt the UNIQUE form on SQLite but not on
+		// Postgres — this migration unifies both).
+		Version: "20260610_active_timers_unique_user",
+		Name:    "Enforce one active timer per user via UNIQUE(user_id)",
+		CheckSQLite: `SELECT COUNT(*) FROM pragma_index_list('active_timers')
+			WHERE name='idx_active_timers_user_id' AND "unique"=1`,
+		CheckPostgres: `SELECT COUNT(*) FROM pg_index i
+			JOIN pg_class c ON c.oid = i.indexrelid
+			WHERE c.relname='idx_active_timers_user_id' AND i.indisunique`,
+		SQLite: `
+			DELETE FROM active_timers
+			WHERE id NOT IN (
+				SELECT MAX(id) FROM active_timers GROUP BY user_id
+			);
+			DROP INDEX IF EXISTS idx_active_timers_user_id;
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_active_timers_user_id ON active_timers(user_id);
+		`,
+		Postgres: `
+			DELETE FROM active_timers
+			WHERE id NOT IN (
+				SELECT MAX(id) FROM active_timers GROUP BY user_id
+			);
+			DROP INDEX IF EXISTS idx_active_timers_user_id;
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_active_timers_user_id ON active_timers(user_id);
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {

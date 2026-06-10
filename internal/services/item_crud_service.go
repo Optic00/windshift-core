@@ -538,49 +538,41 @@ func (s *ItemCRUDService) GetWithEffectiveProject(id int) (*models.Item, error) 
 		return nil, err
 	}
 
-	// Calculate effective project if inherit_project is true
+	// Resolve the effective project through the canonical resolver so this
+	// shares the single source of truth with the item handler and the cache
+	// (it keys off the inherit_project boolean and stops at the first ancestor
+	// with a direct project).
+	res, err := s.repo.ResolveEffectiveProject(id)
+	if err != nil {
+		return nil, err
+	}
 	switch {
-	case item.InheritProject && item.ParentID != nil:
-		effectiveProjectID, err := s.calculateEffectiveProject(id)
-		if err == nil && effectiveProjectID != nil {
-			item.EffectiveProjectID = effectiveProjectID
-			// Fetch project name
+	case res.DirectProjectID == nil && !res.InheritProject:
+		item.ProjectInheritanceMode = "none"
+	case res.InheritProject:
+		item.EffectiveProjectID = res.EffectiveProjectID
+		item.ProjectInheritanceMode = "inherit"
+	default:
+		item.EffectiveProjectID = res.EffectiveProjectID
+		item.ProjectInheritanceMode = "direct"
+	}
+
+	// Populate the effective project name when one resolved.
+	if item.EffectiveProjectID != nil {
+		if item.ProjectID != nil && *item.ProjectID == *item.EffectiveProjectID {
+			item.EffectiveProjectName = item.ProjectName
+		} else {
 			var name sql.NullString
-			if err := s.db.QueryRow("SELECT name FROM time_projects WHERE id = ?", *effectiveProjectID).Scan(&name); err != nil {
+			if err := s.db.QueryRow("SELECT name FROM time_projects WHERE id = ?", *item.EffectiveProjectID).Scan(&name); err != nil {
 				slog.Warn("failed to look up project name", slog.Any("error", err))
 			}
 			if name.Valid {
 				item.EffectiveProjectName = name.String
 			}
-			item.ProjectInheritanceMode = "inherit"
 		}
-	case item.ProjectID != nil:
-		item.EffectiveProjectID = item.ProjectID
-		item.EffectiveProjectName = item.ProjectName
-		item.ProjectInheritanceMode = "direct"
-	default:
-		item.ProjectInheritanceMode = "none"
 	}
 
 	return item, nil
-}
-
-// calculateEffectiveProject walks up the hierarchy to find an inherited project.
-// deadcode-keep: only reached from GetWithEffectiveProject (also test-only).
-func (s *ItemCRUDService) calculateEffectiveProject(itemID int) (*int, error) {
-	ancestors, err := s.repo.GetAncestors(itemID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Walk up ancestors (already ordered from immediate parent to root)
-	for _, ancestor := range ancestors {
-		if ancestor.ProjectID != nil {
-			return ancestor.ProjectID, nil
-		}
-	}
-
-	return nil, nil
 }
 
 // GetHistory retrieves the change history for an item

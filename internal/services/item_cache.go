@@ -17,11 +17,12 @@ import (
 
 // ItemHierarchyCache stores cached hierarchy data for an item
 type ItemHierarchyCache struct {
-	ItemID             int       `json:"item_id"`
-	EffectiveProjectID *int      `json:"effective_project_id"`
-	AncestorPath       []int     `json:"ancestor_path"` // IDs from root to parent
-	Level              int       `json:"level"`
-	CachedAt           time.Time `json:"cached_at"`
+	ItemID                 int       `json:"item_id"`
+	EffectiveProjectID     *int      `json:"effective_project_id"`
+	ProjectInheritanceMode string    `json:"project_inheritance_mode"` // "direct" | "inherit" | "none"
+	AncestorPath           []int     `json:"ancestor_path"`            // IDs from root to parent
+	Level                  int       `json:"level"`
+	CachedAt               time.Time `json:"cached_at"`
 }
 
 // ProjectInheritanceCache caches project inheritance for a workspace
@@ -238,14 +239,13 @@ func (ics *ItemCacheService) GetStats() map[string]interface{} {
 // GetEffectiveProjectForItem retrieves or calculates the effective project for an item
 // This method first checks the cache, then falls back to database calculation if needed
 func (ics *ItemCacheService) GetEffectiveProjectForItem(itemID, workspaceID int) (effectiveProjectID *int, projectInheritanceMode string, err error) {
-	// Try cache first
+	// Try cache first. A populated entry always carries the resolved mode
+	// (including "none"), so the mode gates the hit — this both avoids the old
+	// hardcoded "direct" on every hit and lets "none" items hit the cache
+	// instead of recomputing each call.
 	hierarchyCache, err := ics.GetItemHierarchy(itemID)
-	if err == nil && hierarchyCache != nil {
-		// Cache hit!
-		if hierarchyCache.EffectiveProjectID != nil {
-			mode := "direct" // Default assumption
-			return hierarchyCache.EffectiveProjectID, mode, nil
-		}
+	if err == nil && hierarchyCache != nil && hierarchyCache.ProjectInheritanceMode != "" {
+		return hierarchyCache.EffectiveProjectID, hierarchyCache.ProjectInheritanceMode, nil
 	}
 
 	// Cache miss - calculate from database
@@ -264,11 +264,12 @@ func (ics *ItemCacheService) GetEffectiveProjectForItem(itemID, workspaceID int)
 		projectInheritanceMode = "direct"
 	}
 
-	// Store in cache for future use
+	// Store in cache for future use, including the resolved mode.
 	cacheEntry := &ItemHierarchyCache{
-		ItemID:             itemID,
-		EffectiveProjectID: effectiveProjectID,
-		CachedAt:           time.Now(),
+		ItemID:                 itemID,
+		EffectiveProjectID:     effectiveProjectID,
+		ProjectInheritanceMode: projectInheritanceMode,
+		CachedAt:               time.Now(),
 	}
 	_ = ics.SetItemHierarchy(cacheEntry) // Ignore cache write errors
 

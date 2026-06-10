@@ -339,6 +339,9 @@ func (h *ItemHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 	}
 	items = filteredItems
 
+	// Strip names of time projects the viewer can't access (keeps the IDs).
+	h.maskInaccessibleProjectNames(user.ID, items)
+
 	// Load labels for items
 	if err := repository.NewLabelRepository(h.db).LoadForItems(items); err != nil {
 		slog.Warn("failed to load labels for items", slog.Any("error", err))
@@ -522,6 +525,12 @@ func (h *ItemHandler) respondItemByID(w http.ResponseWriter, r *http.Request, us
 		}
 	}
 
+	// Strip names of time projects the viewer has no access to (incl. the
+	// cross-workspace inherited effective project), keeping the IDs.
+	masked := []models.Item{*item}
+	h.maskInaccessibleProjectNames(user.ID, masked)
+	*item = masked[0]
+
 	respondJSONOK(w, item)
 }
 
@@ -590,6 +599,7 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 		IsTask:            item.IsTask,
 		RelatedWorkItemID: relatedWorkItemIDPtr,
 		UserID:            user.ID,
+		PermService:       h.permissionService,
 	})
 
 	if !validationResult.Valid {
@@ -656,9 +666,11 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 		StoryPoints:           item.StoryPoints,
 		EstimateMinutes:       item.EstimateMinutes,
 		CustomFieldValuesJSON: customFieldValuesJSON,
+		ValidatingUserID:      user.ID,
+		PermService:           h.permissionService,
 	})
 	if err != nil {
-		if errors.Is(err, services.ErrMissingItemType) {
+		if errors.Is(err, services.ErrMissingItemType) || errors.Is(err, services.ErrProjectNotFound) {
 			respondValidationError(w, r, err.Error())
 			return
 		}
@@ -845,6 +857,15 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 	originalItem := result.OriginalItem
 	updatedItem := result.Item
 
+	// Invalidate the cached effective project for this item and its descendants
+	// when a project-affecting field changed. The cache keys only on item ID and
+	// stores the resolved project, so a change to project_id / inherit_project /
+	// parent_id here would otherwise leave this item and every descendant that
+	// inherits from it serving a stale effective project for up to the cache TTL.
+	if h.itemCache != nil && projectResolutionChanged(originalItem, updatedItem) {
+		h.invalidateEffectiveProjectSubtree(updatedItem.ID)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 
 	// Check if assignee changed (compare originalItem with updatedItem)
@@ -1012,6 +1033,86 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSONOK(w, updatedItem)
+}
+
+// maskInaccessibleProjectNames blanks the human-readable project name fields on
+// items whose project / time-project / effective-project the user is not allowed
+// to view, so a restricted time project's name isn't disclosed to item viewers
+// who lack time-project access. Project *IDs* are left intact (they carry no
+// name); only the names are stripped. A user with full project access (the
+// GetAccessibleProjects nil sentinel) is never masked.
+func (h *ItemHandler) maskInaccessibleProjectNames(userID int, items []models.Item) {
+	ts := services.NewTimePermissionService(h.db, h.permissionService)
+	accessible, err := ts.GetAccessibleProjects(userID)
+	if err != nil {
+		slog.Warn("failed to load accessible projects for masking", slog.Int("user_id", userID), slog.Any("error", err))
+		// Fail closed: if we can't determine access, strip names rather than leak.
+		for i := range items {
+			items[i].ProjectName = ""
+			items[i].TimeProjectName = ""
+			items[i].EffectiveProjectName = ""
+		}
+		return
+	}
+	if accessible == nil {
+		return // full access: nothing to mask
+	}
+	allowed := make(map[int]struct{}, len(accessible))
+	for _, id := range accessible {
+		allowed[id] = struct{}{}
+	}
+	canSee := func(p *int) bool {
+		if p == nil {
+			return true // no project assigned → no name to hide
+		}
+		_, ok := allowed[*p]
+		return ok
+	}
+	for i := range items {
+		if !canSee(items[i].ProjectID) {
+			items[i].ProjectName = ""
+		}
+		if !canSee(items[i].TimeProjectID) {
+			items[i].TimeProjectName = ""
+		}
+		if !canSee(items[i].EffectiveProjectID) {
+			items[i].EffectiveProjectName = ""
+		}
+	}
+}
+
+// projectResolutionChanged reports whether an update touched a field that can
+// change an item's (or its descendants') effective project: the direct project,
+// the inherit flag, or the parent link.
+func projectResolutionChanged(original, updated *models.Item) bool {
+	if original.InheritProject != updated.InheritProject {
+		return true
+	}
+	if !intPtrEqual(original.ProjectID, updated.ProjectID) {
+		return true
+	}
+	if !intPtrEqual(original.ParentID, updated.ParentID) {
+		return true
+	}
+	return false
+}
+
+// invalidateEffectiveProjectSubtree drops the cached hierarchy entry for an item
+// and all of its descendants, since each descendant may resolve its effective
+// project through this item.
+func (h *ItemHandler) invalidateEffectiveProjectSubtree(itemID int) {
+	_ = h.itemCache.InvalidateItemHierarchy(itemID, nil)
+	if h.hierarchyService == nil {
+		return
+	}
+	descendants, err := h.hierarchyService.GetDescendants(itemID, 0)
+	if err != nil {
+		slog.Warn("failed to load descendants for cache invalidation", slog.Int("item_id", itemID), slog.Any("error", err))
+		return
+	}
+	for i := range descendants {
+		_ = h.itemCache.InvalidateItemHierarchy(descendants[i].ID, nil)
+	}
 }
 
 func (h *ItemHandler) Delete(w http.ResponseWriter, r *http.Request) {

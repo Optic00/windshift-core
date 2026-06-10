@@ -110,11 +110,60 @@ type ItemCreationParams struct {
 	// import time. Both fall back to time.Now() when nil.
 	CreatedAt *time.Time
 	UpdatedAt *time.Time
+	// ValidatingUserID and PermService enable project-assignment access control.
+	// When ValidatingUserID > 0 and PermService is non-nil, CreateItem rejects a
+	// ProjectID / TimeProjectID the user may not view (returning ErrProjectNotFound,
+	// indistinguishable from a non-existent project to avoid ID enumeration).
+	// User-facing create handlers set both; internal callers (import, recurrence,
+	// copy of already-authorized items) leave them zero to skip the check.
+	ValidatingUserID int
+	PermService      *PermissionService
+}
+
+// ErrProjectNotFound is returned by CreateItem when a supplied project_id /
+// time_project_id either does not exist or is not accessible to the validating
+// user. The two cases share one error so callers cannot enumerate project IDs.
+var ErrProjectNotFound = errors.New("project not found")
+
+// validateProjectAssignmentAccess ensures the validating user may attach the
+// given project IDs. Existence is checked first (CanViewProject treats an
+// unrestricted non-existent project as viewable), then access.
+func validateProjectAssignmentAccess(db database.Database, perm *PermissionService, userID int, projectIDs ...*int) error {
+	ts := NewTimePermissionService(db, perm)
+	for _, pid := range projectIDs {
+		if pid == nil || *pid <= 0 {
+			continue
+		}
+		var exists bool
+		if err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM time_projects WHERE id = ?)", *pid).Scan(&exists); err != nil {
+			return fmt.Errorf("failed to validate project: %w", err)
+		}
+		if !exists {
+			return ErrProjectNotFound
+		}
+		hasAccess, err := ts.CanViewProject(userID, *pid)
+		if err != nil {
+			return fmt.Errorf("failed to check project access: %w", err)
+		}
+		if !hasAccess {
+			return ErrProjectNotFound
+		}
+	}
+	return nil
 }
 
 // CreateItem creates a new item with proper transaction handling and number generation
 // This centralizes the item creation logic used by normal creation, portal submissions, and copying
 func CreateItem(db database.Database, params ItemCreationParams) (int64, error) {
+	// Enforce project-assignment access control: a user may only attach a
+	// project_id / time_project_id they can view. Skipped for internal callers
+	// that don't set a validating user.
+	if params.ValidatingUserID > 0 && params.PermService != nil {
+		if err := validateProjectAssignmentAccess(db, params.PermService, params.ValidatingUserID, params.ProjectID, params.TimeProjectID); err != nil {
+			return 0, err
+		}
+	}
+
 	// Enforce config set item type restrictions before anything else
 	if params.ItemTypeID != nil && *params.ItemTypeID != 0 {
 		allowed, err := IsItemTypeAllowedInWorkspace(db, params.WorkspaceID, *params.ItemTypeID)

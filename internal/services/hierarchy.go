@@ -151,57 +151,31 @@ func (h *HierarchyService) GetRoot(itemID int) (*models.Item, error) {
 	return nil, fmt.Errorf("hierarchy walk exceeded %d levels without finding a root (item %d, likely cyclic)", maxHierarchyDepth, itemID)
 }
 
-// GetEffectiveProject returns the effective project_id for an item by walking up the hierarchy
-// Returns: (effective_project_id, inheritance_mode, error)
-// inheritance_mode: "none" (NULL), "inherit" (-1), "direct" (>0)
+// GetEffectiveProject returns the effective project_id for an item by walking
+// up the hierarchy. Returns: (effective_project_id, inheritance_mode, error)
+// where inheritance_mode is "none" / "inherit" / "direct".
+//
+// This delegates to the repository's ResolveEffectiveProject so it shares the
+// single source of truth with the item handler and the cache. Inheritance is
+// modeled by the inherit_project boolean column (an item with inherit_project=
+// true climbs to its parent's effective project); the legacy project_id = -1
+// sentinel is no longer used.
 func (h *HierarchyService) GetEffectiveProject(itemID int) (projectID *int, inheritanceMode string, err error) {
-	query := `
-		WITH RECURSIVE project_chain AS (
-			-- Base case: get the item itself
-			SELECT id, project_id, parent_id, 0 as depth
-			FROM items
-			WHERE id = ?
-
-			UNION ALL
-
-			-- Recursive case: walk up to parent if current has inherit (-1)
-			SELECT i.id, i.project_id, i.parent_id, pc.depth + 1
-			FROM items i
-			JOIN project_chain pc ON i.id = pc.parent_id
-			WHERE pc.project_id = -1 AND pc.depth < 10
-		)
-		SELECT
-			id,
-			project_id,
-			CASE
-				WHEN project_id IS NULL THEN 'none'
-				WHEN project_id = -1 THEN 'inherit'
-				ELSE 'direct'
-			END as mode,
-			depth
-		FROM project_chain
-		WHERE project_id IS NOT NULL AND project_id != -1
-		ORDER BY depth ASC
-		LIMIT 1
-	`
-
-	var id, depth int
-	var nullProjectID sql.NullInt64
-	var mode string
-
-	err = h.db.QueryRow(query, itemID).Scan(&id, &nullProjectID, &mode, &depth)
-	if errors.Is(err, sql.ErrNoRows) {
-		// No effective project found (all ancestors have NULL or -1)
-		return nil, "none", nil
-	}
+	res, err := repository.NewItemRepository(h.db).ResolveEffectiveProject(itemID)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			// Non-existent item: nothing to resolve.
+			return nil, "none", nil
+		}
 		return nil, "", fmt.Errorf("failed to get effective project: %w", err)
 	}
 
-	if nullProjectID.Valid {
-		val := int(nullProjectID.Int64)
-		return &val, mode, nil
+	switch {
+	case res.DirectProjectID == nil && !res.InheritProject:
+		return nil, "none", nil
+	case res.InheritProject:
+		return res.EffectiveProjectID, "inherit", nil
+	default:
+		return res.EffectiveProjectID, "direct", nil
 	}
-
-	return nil, "none", nil
 }

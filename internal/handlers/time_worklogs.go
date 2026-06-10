@@ -404,6 +404,14 @@ func (h *TimeWorklogHandler) validateAndParseWorklog(req WorklogRequest) (custom
 
 		durationMins = int(duration.Minutes())
 
+		// Sub-minute inputs (e.g. "0.4m") truncate to 0; reject them the same
+		// way the explicit start/end branch rejects a non-positive span so a
+		// zero-duration worklog never persists.
+		if durationMins <= 0 {
+			err = fmt.Errorf("end time must be after start time")
+			return
+		}
+
 		// Default to ending "now" and calculating start time backwards
 		if req.EndTime != "" {
 			end, parseErr := time.Parse("15:04", req.EndTime)
@@ -452,6 +460,16 @@ func (h *TimeWorklogHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 		if !canBook {
 			respondForbidden(w, r)
+			return
+		}
+	}
+
+	// An item link is optional (item_id is nullable), but when one is supplied
+	// the caller must be able to view that item. CheckItemPermission returns 404
+	// on both not-found and no-permission so we don't disclose the item (or its
+	// title / workspace key) to callers who can't see it.
+	if req.ItemID != nil && *req.ItemID > 0 {
+		if !CheckItemPermission(w, r, repository.NewItemRepository(h.db), h.permissionService, *req.ItemID, models.PermissionItemView) {
 			return
 		}
 	}
@@ -539,6 +557,15 @@ func (h *TimeWorklogHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !canBook {
 		respondForbidden(w, r)
 		return
+	}
+
+	// The item_id being set on the worklog (it may be changing) is optional, but
+	// when present the caller must be able to view it. 404 on failure hides the
+	// item rather than disclosing it via the re-read joined row below.
+	if req.ItemID != nil && *req.ItemID > 0 {
+		if !CheckItemPermission(w, r, repository.NewItemRepository(h.db), h.permissionService, *req.ItemID, models.PermissionItemView) {
+			return
+		}
 	}
 
 	warnings := sanitize.ApplyAllWithWarnings(

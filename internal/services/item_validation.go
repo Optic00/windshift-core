@@ -8,6 +8,7 @@ import (
 
 	"windshift/internal/constants"
 	"windshift/internal/database"
+	"windshift/internal/models"
 	"windshift/internal/repository"
 )
 
@@ -21,6 +22,11 @@ type ItemValidationParams struct {
 	IsTask            bool
 	RelatedWorkItemID *int
 	UserID            int // User creating the item (for personal workspace validation)
+	// PermService, when set, enforces that the caller has view permission on a
+	// cross-workspace parent's workspace before allowing the link — otherwise a
+	// user could discover (and attach to) items in workspaces they can't see.
+	// User-facing create handlers set it; internal callers may omit it.
+	PermService *PermissionService
 }
 
 // ItemValidationResult contains the result of validation
@@ -85,7 +91,7 @@ func ValidateItemCreation(db database.Database, params ItemValidationParams) *It
 
 	// Validate parent item if specified
 	if params.ParentID != nil && *params.ParentID != 0 {
-		result := validateParentHierarchy(db, params.ParentID, params.ItemTypeID)
+		result := validateParentHierarchy(db, params.ParentID, params.ItemTypeID, params.WorkspaceID, params.UserID, params.PermService)
 		if !result.Valid {
 			return result
 		}
@@ -102,9 +108,36 @@ func ValidateItemCreation(db database.Database, params ItemValidationParams) *It
 	return &ItemValidationResult{Valid: true}
 }
 
-// validateParentHierarchy validates the parent-child hierarchy relationship
-func validateParentHierarchy(db database.Database, parentID, itemTypeID *int) *ItemValidationResult {
-	_, parentItemTypeHierarchyLevel, err := repository.NewItemRepository(db).GetItemTypeAndHierarchyLevel(*parentID)
+// validateParentHierarchy validates the parent-child hierarchy relationship.
+// When permService is non-nil and the parent lives in a different workspace
+// than the new item, the caller must hold view permission on the parent's
+// workspace; otherwise the parent is reported as "not found" so its existence
+// (and hierarchy level) isn't leaked across a workspace boundary.
+func validateParentHierarchy(db database.Database, parentID, itemTypeID *int, workspaceID, userID int, permService *PermissionService) *ItemValidationResult {
+	repo := repository.NewItemRepository(db)
+
+	// Cross-workspace parent: gate on view permission before revealing anything
+	// about the parent (mirrors the update-path check in the field validator).
+	if permService != nil {
+		parentWorkspaceID, wsErr := repo.GetWorkspaceID(*parentID)
+		if errors.Is(wsErr, repository.ErrNotFound) {
+			return &ItemValidationResult{Valid: false, Error: "Parent item not found"}
+		}
+		if wsErr != nil {
+			return &ItemValidationResult{Valid: false, Error: fmt.Sprintf("Failed to validate parent: %v", wsErr)}
+		}
+		if parentWorkspaceID != workspaceID {
+			hasView, permErr := permService.HasWorkspacePermission(userID, parentWorkspaceID, models.PermissionItemView)
+			if permErr != nil {
+				return &ItemValidationResult{Valid: false, Error: fmt.Sprintf("Failed to validate parent: %v", permErr)}
+			}
+			if !hasView {
+				return &ItemValidationResult{Valid: false, Error: "Parent item not found"}
+			}
+		}
+	}
+
+	_, parentItemTypeHierarchyLevel, err := repo.GetItemTypeAndHierarchyLevel(*parentID)
 	if errors.Is(err, repository.ErrNotFound) {
 		return &ItemValidationResult{Valid: false, Error: "Parent item not found"}
 	}

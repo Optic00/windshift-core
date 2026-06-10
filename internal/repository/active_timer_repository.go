@@ -66,7 +66,10 @@ type CreateTimerInput struct {
 	StartTimeUTC int64
 }
 
-// CreateTimer inserts a new active timer and returns its id.
+// CreateTimer inserts a new active timer and returns its id. A unique-constraint
+// violation on user_id (the user already has a running timer — the DB backstop
+// for the "only one running" invariant) is mapped to ErrDuplicateEntry so the
+// service can resolve a concurrent start/start race as ErrTimerAlreadyRunning.
 func (r *ActiveTimerRepository) CreateTimer(in CreateTimerInput) (int, error) {
 	var id int64
 	err := r.db.QueryRow(`
@@ -74,6 +77,9 @@ func (r *ActiveTimerRepository) CreateTimer(in CreateTimerInput) (int, error) {
 		VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id
 	`, in.WorkspaceID, in.ItemID, in.ProjectID, in.UserID, in.Description, in.StartTimeUTC, in.StartTimeUTC).Scan(&id)
 	if err != nil {
+		if database.IsUniqueConstraintError(err) {
+			return 0, ErrDuplicateEntry
+		}
 		return 0, err
 	}
 	return int(id), nil
