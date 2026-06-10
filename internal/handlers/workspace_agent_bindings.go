@@ -11,6 +11,7 @@ import (
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
 
@@ -190,6 +191,13 @@ func (h *WorkspaceAgentBindingHandler) Create(w http.ResponseWriter, r *http.Req
 		respondBadRequest(w, r, "acting_user_id is required")
 		return
 	}
+	// RepoSlug/RepoBaseRef are identifier-shaped (owner/repo, git ref);
+	// Instructions is free-form persona text rendered in the binding editor.
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &body.RepoSlug, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &body.RepoBaseRef, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &body.Instructions, Policy: sanitize.RichText},
+	)
 
 	binding, err := h.bindings.Create(r.Context(), services.CreateBindingRequest{
 		WorkspaceID:     workspaceID,
@@ -274,6 +282,7 @@ func (h *WorkspaceAgentBindingHandler) UpdateAgentConfig(w http.ResponseWriter, 
 		respondBadRequest(w, r, "invalid request body")
 		return
 	}
+	sanitize.Apply(&body.Instructions, sanitize.RichText)
 	if err := h.bindings.UpdateAgentConfig(r.Context(), workspaceID, id, body.Instructions, body.SkillIDs); err != nil {
 		switch {
 		case errors.Is(err, services.ErrBindingNotFound):
@@ -366,6 +375,8 @@ func (h *WorkspaceAgentBindingHandler) TestLLM(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
+	// Prompt is echoed back verbatim in the response.
+	sanitize.Apply(&body.Prompt, sanitize.RichText)
 	answer, err := h.bindings.TestLLM(r.Context(), id, workspaceID, body.Prompt)
 	if err != nil {
 		switch {

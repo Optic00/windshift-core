@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
 )
 
 // Runner-pool admin lifecycle (WI-177). These endpoints hang off the
@@ -85,6 +86,8 @@ func (h *RunnerControlHandler) MintRunnerToken(w http.ResponseWriter, r *http.Re
 		respondBadRequest(w, r, "invalid request body")
 		return
 	}
+	// Description renders in the pool's token list.
+	sanitize.Apply(&req.Description, sanitize.PlainTextField)
 	if req.TTLHours < 0 {
 		respondBadRequest(w, r, "ttl_hours cannot be negative")
 		return

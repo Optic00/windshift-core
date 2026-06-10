@@ -9,6 +9,7 @@ import (
 
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
 
@@ -73,6 +74,9 @@ func (h *RunnerControlHandler) Register(w http.ResponseWriter, r *http.Request) 
 		respondBadRequest(w, r, "invalid request body")
 		return
 	}
+	// Name renders in the pool's instance list + claim logs. The
+	// registration token is a machine credential and stays untouched.
+	sanitize.Apply(&req.Name, sanitize.PlainTextField)
 	cred, inst, err := h.registry.Register(r.Context(), req.RegistrationToken, req.Name)
 	if err != nil {
 		// Invalid/expired token is the only expected error; surface it as
@@ -172,9 +176,20 @@ func (h *RunnerControlHandler) Events(w http.ResponseWriter, r *http.Request) {
 		respondBadRequest(w, r, "invalid request body")
 		return
 	}
+	sanitize.Apply(&req.Type, sanitize.ShortIdentifier)
+	// PayloadJSON is a JSON blob, so HTML stripping would corrupt valid
+	// payloads — bound it by size and require well-formed JSON instead.
+	if len(req.PayloadJSON) > sanitize.LongTextMaxBytes {
+		respondBadRequest(w, r, "payload_json exceeds the maximum size")
+		return
+	}
 	payload := req.PayloadJSON
 	if payload == "" {
 		payload = "{}"
+	}
+	if !json.Valid([]byte(payload)) {
+		respondBadRequest(w, r, "payload_json must be valid JSON")
+		return
 	}
 	if err := h.runs.AppendEvent(r.Context(), runID, req.Type, payload); err != nil {
 		respondInternalError(w, r, err)
@@ -203,6 +218,14 @@ func (h *RunnerControlHandler) Result(w http.ResponseWriter, r *http.Request) {
 		respondBadRequest(w, r, "invalid request body")
 		return
 	}
+	// Error renders in the run detail view; the rest are identifier-shaped
+	// (container id, branch name, commit sha). Status is enum-validated below.
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Error, Policy: sanitize.RichText},
+		sanitize.Pair{Target: &req.ContainerID, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.Branch, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.BaseCommit, Policy: sanitize.ShortIdentifier},
+	)
 	status := req.Status
 	if !models.IsAgentRunTerminal(status) {
 		respondBadRequest(w, r, "status must be a terminal agent-run state")
