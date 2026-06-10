@@ -6,7 +6,30 @@ import (
 	"net/http"
 
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
 )
+
+// sanitizeDashboardLayout scrubs the user-facing fields on a dashboard
+// layout payload. Section Title + Subtitle render as headings on the
+// personal dashboard; section/widget ids are client-generated
+// identifier-shaped strings echoed back in validation errors.
+func sanitizeDashboardLayout(layout *models.UserDashboardLayout) {
+	for i := range layout.Sections {
+		section := &layout.Sections[i]
+		sanitize.ApplyAll(
+			sanitize.Pair{Target: &section.ID, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: &section.Title, Policy: sanitize.PlainTextField},
+			sanitize.Pair{Target: &section.Subtitle, Policy: sanitize.PlainTextField},
+		)
+	}
+	for i := range layout.Widgets {
+		widget := &layout.Widgets[i]
+		sanitize.ApplyAll(
+			sanitize.Pair{Target: &widget.ID, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: &widget.SectionID, Policy: sanitize.ShortIdentifier},
+		)
+	}
+}
 
 // validDashboardWidgetTypes lists widget types usable on the personal dashboard.
 // Keep in sync with frontend/src/lib/services/dashboardWidgetRegistry.js.
@@ -52,6 +75,7 @@ func (h *UserPreferencesHandler) UpdateDashboardLayout(w http.ResponseWriter, r 
 	if !ok {
 		return
 	}
+	sanitizeDashboardLayout(&layout)
 
 	if len(layout.Sections) > dashboardMaxSections {
 		respondValidationError(w, r, fmt.Sprintf("Too many sections: %d (max %d)", len(layout.Sections), dashboardMaxSections))
