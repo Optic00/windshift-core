@@ -14,8 +14,36 @@ import (
 	"windshift/internal/middleware"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
+
+// sanitizeSCIMUser scrubs the IdP-supplied fields on a SCIM user payload.
+// UserName / email values / ExternalID are identifier-shaped; the name
+// components and DisplayName render in member lists, group rosters, and
+// audit log details.
+func sanitizeSCIMUser(u *models.SCIMUser) {
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &u.UserName, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &u.Name.GivenName, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &u.Name.FamilyName, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &u.DisplayName, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &u.ExternalID, Policy: sanitize.ShortIdentifier},
+	)
+	for i := range u.Emails {
+		sanitize.Apply(&u.Emails[i].Value, sanitize.ShortIdentifier)
+	}
+}
+
+// sanitizeSCIMGroup scrubs the IdP-supplied fields on a SCIM group payload.
+// DisplayName renders in group directories + member popovers; ExternalID is
+// the IdP's identifier-shaped correlation key.
+func sanitizeSCIMGroup(g *models.SCIMGroup) {
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &g.DisplayName, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &g.ExternalID, Policy: sanitize.ShortIdentifier},
+	)
+}
 
 // SCIMHandler handles SCIM 2.0 endpoints
 type SCIMHandler struct {
@@ -355,6 +383,7 @@ func (h *SCIMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		respondSCIMErrorMsg(w, http.StatusBadRequest, "Invalid request body", "invalidValue")
 		return
 	}
+	sanitizeSCIMUser(&scimUser)
 
 	// Validate required fields
 	if scimUser.UserName == "" {
@@ -524,6 +553,7 @@ func (h *SCIMHandler) ReplaceUser(w http.ResponseWriter, r *http.Request) {
 		respondSCIMErrorMsg(w, http.StatusBadRequest, "Invalid request body", "invalidValue")
 		return
 	}
+	sanitizeSCIMUser(&scimUser)
 
 	// Extract email
 	email := existingUser.Email
@@ -767,6 +797,7 @@ func (h *SCIMHandler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 		respondSCIMErrorMsg(w, http.StatusBadRequest, "Invalid request body", "invalidValue")
 		return
 	}
+	sanitizeSCIMGroup(&scimGroup)
 
 	if scimGroup.DisplayName == "" {
 		respondSCIMErrorMsg(w, http.StatusBadRequest, "displayName is required", "invalidValue")
@@ -891,6 +922,7 @@ func (h *SCIMHandler) ReplaceGroup(w http.ResponseWriter, r *http.Request) {
 		respondSCIMErrorMsg(w, http.StatusBadRequest, "Invalid request body", "invalidValue")
 		return
 	}
+	sanitizeSCIMGroup(&scimGroup)
 
 	groupRef := &models.TeamGroup{ID: id, Name: scimGroup.DisplayName}
 
@@ -1590,6 +1622,7 @@ func (h *SCIMHandler) applyUserPatchOp(snapshot *models.User, op models.SCIMPatc
 
 		case "username":
 			if strVal, ok := op.Value.(string); ok {
+				sanitize.Apply(&strVal, sanitize.ShortIdentifier)
 				err := h.repo.SetUserUsername(userID, strVal)
 				if err != nil {
 					return nil, err
@@ -1601,6 +1634,7 @@ func (h *SCIMHandler) applyUserPatchOp(snapshot *models.User, op models.SCIMPatc
 
 		case "name.givenname":
 			if strVal, ok := op.Value.(string); ok {
+				sanitize.Apply(&strVal, sanitize.PlainTextField)
 				err := h.repo.SetUserFirstName(userID, strVal)
 				if err != nil {
 					return nil, err
@@ -1612,6 +1646,7 @@ func (h *SCIMHandler) applyUserPatchOp(snapshot *models.User, op models.SCIMPatc
 
 		case "name.familyname":
 			if strVal, ok := op.Value.(string); ok {
+				sanitize.Apply(&strVal, sanitize.PlainTextField)
 				err := h.repo.SetUserLastName(userID, strVal)
 				if err != nil {
 					return nil, err
@@ -1623,6 +1658,7 @@ func (h *SCIMHandler) applyUserPatchOp(snapshot *models.User, op models.SCIMPatc
 
 		case "externalid":
 			if strVal, ok := op.Value.(string); ok {
+				sanitize.Apply(&strVal, sanitize.ShortIdentifier)
 				err := h.repo.SetUserExternalID(userID, strVal)
 				if err != nil {
 					return nil, err
@@ -1679,6 +1715,7 @@ func (h *SCIMHandler) applyGroupPatchOp(r *http.Request, snapshot *models.TeamGr
 		switch path {
 		case "displayname":
 			if strVal, ok := op.Value.(string); ok {
+				sanitize.Apply(&strVal, sanitize.PlainTextField)
 				err := h.repo.UpdateGroupName(groupID, strVal)
 				if err != nil {
 					return nil, err
@@ -1690,6 +1727,7 @@ func (h *SCIMHandler) applyGroupPatchOp(r *http.Request, snapshot *models.TeamGr
 
 		case "externalid":
 			if strVal, ok := op.Value.(string); ok {
+				sanitize.Apply(&strVal, sanitize.ShortIdentifier)
 				err := h.repo.UpdateGroupExternalID(groupID, strVal)
 				if err != nil {
 					return nil, err
