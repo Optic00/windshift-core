@@ -168,6 +168,7 @@
                   style="color: var(--ds-icon);"
                   title="Edit skill"
                   aria-label="Edit skill {skill.name}"
+                  data-testid="agent-skill-edit"
                 >
                   <Pencil class="w-4 h-4" />
                 </button>
@@ -178,6 +179,7 @@
                   style="color: var(--ds-icon-danger);"
                   title="Delete skill"
                   aria-label="Delete skill {skill.name}"
+                  data-testid="agent-skill-delete"
                 >
                   <Trash2 class="w-4 h-4" />
                 </button>
