@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"windshift/internal/logger"
+	"windshift/internal/repository"
 	"windshift/internal/restapi"
 	"windshift/internal/utils"
 
@@ -690,7 +691,7 @@ func (h *JiraImportHandler) DeleteImportedData(w http.ResponseWriter, r *http.Re
 					_ = tRows.Close()
 				}
 				if wfTxOK {
-					if _, cancelErr := cancelApprovalRequestsForTransitions(wfTx, transitionIDs); cancelErr != nil {
+					if _, cancelErr := repository.CancelApprovalRequestsForTransitions(wfTx, transitionIDs); cancelErr != nil {
 						slog.Error("Failed to cancel blocking approval_requests", slog.String("component", "jira"), slog.Int("windshiftID", m.windshiftID), slog.Any("error", cancelErr))
 						wfTxOK = false
 					}

@@ -449,7 +449,7 @@ func (s *Server) initialize() error {
 		func() interface{} { return &models.Status{} })
 	statusHandlerLegacy := handlers.NewStatusHandler(repository.NewStatusRepository(s.db), repository.NewItemRepository(s.db), logger.NewAuditor(s.db))
 	workflowService := s.workflowService
-	workflowHandler := handlers.NewWorkflowHandler(s.db)
+	workflowHandler := handlers.NewWorkflowHandler(repository.NewWorkflowRepository(s.db), logger.NewAuditor(s.db))
 	workflowHandler.SetWorkflowService(workflowService)
 	userHandler := handlers.NewUserHandler(
 		repository.NewUserRepository(s.db),
