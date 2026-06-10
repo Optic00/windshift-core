@@ -1,4 +1,4 @@
-package services
+package repository
 
 import (
 	"database/sql"
@@ -13,11 +13,11 @@ import (
 	"windshift/internal/database"
 )
 
-// fracIndexMaxRetries caps the number of unique-violation retries on the
+// FracIndexMaxRetries caps the number of unique-violation retries on the
 // item INSERT / reorder UPDATE paths. The retry path only fires when a
 // concurrent writer wins the race on idx_items_frac_index between two
 // transactions that read the same neighbor keys before either committed.
-const fracIndexMaxRetries = 5
+const FracIndexMaxRetries = 5
 
 // fracIndexRebalanceLengthThreshold is the point where a generated key is
 // considered pathologically long for an interactive reorder. A local window
@@ -376,7 +376,7 @@ func GenerateFracIndexForNewItem(tx database.Tx, driverName string) (string, err
 func MoveItemBetween(db database.Database, itemID int, prevID, nextID *int) (string, error) {
 	driver := db.GetDriverName()
 	var lastErr error
-	for attempt := 0; attempt < fracIndexMaxRetries; attempt++ {
+	for attempt := 0; attempt < FracIndexMaxRetries; attempt++ {
 		key, err := database.WithTxResult(db, func(tx database.Tx) (string, error) {
 			prev, perr := readFracIndexForUpdate(tx, prevID, driver)
 			if perr != nil {
@@ -432,7 +432,7 @@ func MoveItemBetween(db database.Database, itemID int, prevID, nextID *int) (str
 			slog.Int("item_id", itemID),
 			slog.String("component", "fracindex"))
 	}
-	return "", fmt.Errorf("move item %d failed after %d frac_index retries: %w", itemID, fracIndexMaxRetries, lastErr)
+	return "", fmt.Errorf("move item %d failed after %d frac_index retries: %w", itemID, FracIndexMaxRetries, lastErr)
 }
 
 // chooseMoveFracIndex returns a globally unique frac_index that still sorts

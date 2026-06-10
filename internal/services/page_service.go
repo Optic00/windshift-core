@@ -1005,7 +1005,7 @@ func (s *PageService) resolveSiblingFracIndex(
 		// No non-moved siblings → the moved page is the lone child;
 		// pick a deterministic starting key.
 		if len(siblingByID) == 0 {
-			key, kerr := KeyBetween("", "")
+			key, kerr := repository.KeyBetween("", "")
 			if kerr != nil {
 				return nil, fmt.Errorf("compute initial frac_index for empty parent: %w", kerr)
 			}
@@ -1048,7 +1048,7 @@ func (s *PageService) resolveSiblingFracIndex(
 			if siblings[i].ID == movedPageID {
 				continue
 			}
-			fresh, kerr := KeyBetween(lastKey, "")
+			fresh, kerr := repository.KeyBetween(lastKey, "")
 			if kerr != nil {
 				return nil, fmt.Errorf("backfill frac_index for sibling %d: %w", siblings[i].ID, kerr)
 			}
@@ -1074,7 +1074,7 @@ func (s *PageService) resolveSiblingFracIndex(
 		}
 	}
 
-	newKey, err := KeyBetween(prevKey, nextKey)
+	newKey, err := repository.KeyBetween(prevKey, nextKey)
 	if err != nil {
 		return nil, fmt.Errorf("compute frac_index between %q and %q: %w", prevKey, nextKey, err)
 	}

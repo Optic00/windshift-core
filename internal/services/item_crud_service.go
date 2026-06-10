@@ -187,7 +187,7 @@ func (s *ItemCRUDService) Copy(itemID int, opts CopyOptions) (*CopyResult, error
 			}
 			defer func() { _ = tx.Rollback() }()
 
-			fracIndex, err := GenerateFracIndexForNewItem(tx, driverName)
+			fracIndex, err := repository.GenerateFracIndexForNewItem(tx, driverName)
 			if err != nil {
 				return 0, err
 			}
@@ -245,7 +245,7 @@ func (s *ItemCRUDService) Copy(itemID int, opts CopyOptions) (*CopyResult, error
 		if lastErr == nil {
 			break
 		}
-		if !IsFracIndexUniqueViolation(lastErr) {
+		if !repository.IsFracIndexUniqueViolation(lastErr) {
 			return nil, lastErr
 		}
 		slog.Warn("frac_index unique violation on copy, retrying",

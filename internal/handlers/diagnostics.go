@@ -12,7 +12,6 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
-	"windshift/internal/services"
 	"windshift/internal/utils"
 )
 
@@ -103,7 +102,7 @@ func nextAppendKey(byteMax *string) (string, error) {
 	if byteMax != nil {
 		last = *byteMax
 	}
-	return services.KeyBetween(last, "")
+	return repository.KeyBetween(last, "")
 }
 
 // GetActionLogs returns recent cross-workspace action execution logs.

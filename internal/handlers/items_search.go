@@ -215,7 +215,7 @@ func (h *ItemHandler) UpdateFracIndex(w http.ResponseWriter, r *http.Request) {
 	// behavior (the frontend relies on this to distinguish "neighbor
 	// deleted" from a generic failure) and short-circuit when the
 	// current position is already strictly between prev and next.
-	// The real atomic move is delegated to services.MoveItemBetween,
+	// The real atomic move is delegated to repository.MoveItemBetween,
 	// which re-reads the neighbors inside its own tx with FOR UPDATE
 	// (Postgres) and retries on idx_items_frac_index violations.
 	itemRepo := repository.NewItemRepository(h.db)
@@ -260,8 +260,8 @@ func (h *ItemHandler) UpdateFracIndex(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if _, err := services.MoveItemBetween(h.db, id, fracIndexRequest.PrevItemID, fracIndexRequest.NextItemID); err != nil {
-		if services.IsFracIndexUniqueViolation(err) {
+	if _, err := repository.MoveItemBetween(h.db, id, fracIndexRequest.PrevItemID, fracIndexRequest.NextItemID); err != nil {
+		if repository.IsFracIndexUniqueViolation(err) {
 			respondConflict(w, r, "could not reorder; please refresh and try again")
 			return
 		}

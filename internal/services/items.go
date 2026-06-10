@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"windshift/internal/database"
+	"windshift/internal/repository"
 )
 
 // ErrMissingItemType is returned by CreateItem when the caller did not
@@ -218,7 +219,7 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 		}
 		defer func() { _ = tx.Rollback() }()
 
-		fracIndex, err := GenerateFracIndexForNewItem(tx, driverName)
+		fracIndex, err := repository.GenerateFracIndexForNewItem(tx, driverName)
 		if err != nil {
 			return 0, "", fmt.Errorf("failed to generate frac_index: %w", err)
 		}
@@ -303,21 +304,21 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 	// MAX(frac_index) is re-read inside that tx, so concurrent writers'
 	// commits are picked up automatically — no cache to invalidate.
 	var itemID int64
-	for attempt := 0; attempt < fracIndexMaxRetries; attempt++ {
+	for attempt := 0; attempt < repository.FracIndexMaxRetries; attempt++ {
 		id, fracIndex, ierr := runInsertTx()
 		if ierr == nil {
 			itemID = id
 			break
 		}
-		if !IsFracIndexUniqueViolation(ierr) {
+		if !repository.IsFracIndexUniqueViolation(ierr) {
 			return 0, ierr
 		}
 		slog.Warn("frac_index unique violation, retrying",
 			slog.Int("attempt", attempt+1),
 			slog.String("frac_index", fracIndex),
 			slog.String("component", "fracindex"))
-		if attempt == fracIndexMaxRetries-1 {
-			return 0, fmt.Errorf("failed to insert item after %d frac_index retries: %w", fracIndexMaxRetries, ierr)
+		if attempt == repository.FracIndexMaxRetries-1 {
+			return 0, fmt.Errorf("failed to insert item after %d frac_index retries: %w", repository.FracIndexMaxRetries, ierr)
 		}
 	}
 
