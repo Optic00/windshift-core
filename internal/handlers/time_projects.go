@@ -310,7 +310,10 @@ func (h *TimeProjectHandler) Get(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !canView {
-			respondForbidden(w, r)
+			// Hide existence: return 404 (matching the not-found branch below) rather than
+			// 403, so a caller can't distinguish a project they lack access to from one that
+			// doesn't exist (WI-293), matching Worklog.Get.
+			respondNotFound(w, r, "project")
 			return
 		}
 	}

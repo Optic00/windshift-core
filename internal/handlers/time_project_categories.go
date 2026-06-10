@@ -11,19 +11,47 @@ import (
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/sanitize"
+	"windshift/internal/services"
 	"windshift/internal/utils"
 )
 
 type TimeProjectCategoryHandler struct {
-	repo    *repository.TimeProjectCategoryRepository
-	auditor *logger.Auditor
+	repo                  *repository.TimeProjectCategoryRepository
+	auditor               *logger.Auditor
+	timePermissionService *services.TimePermissionService
 }
 
-func NewTimeProjectCategoryHandler(repo *repository.TimeProjectCategoryRepository, auditor *logger.Auditor) *TimeProjectCategoryHandler {
+func NewTimeProjectCategoryHandler(repo *repository.TimeProjectCategoryRepository, auditor *logger.Auditor, timePermissionService *services.TimePermissionService) *TimeProjectCategoryHandler {
 	return &TimeProjectCategoryHandler{
-		repo:    repo,
-		auditor: auditor,
+		repo:                  repo,
+		auditor:               auditor,
+		timePermissionService: timePermissionService,
 	}
+}
+
+// checkManagePermission gates category taxonomy mutations on the same global config
+// permission the sibling customer handler uses (customers.manage / project.manage / admin).
+// Categories are global taxonomy shared across all projects, so a per-project manager
+// must not be able to mutate them — only holders of the global manage permission may.
+func (h *TimeProjectCategoryHandler) checkManagePermission(w http.ResponseWriter, r *http.Request) (*models.User, bool) {
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return nil, false
+	}
+
+	if h.timePermissionService != nil {
+		hasPermission, err := h.timePermissionService.HasCustomersManagePermission(user.ID)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return nil, false
+		}
+		if !hasPermission {
+			respondForbidden(w, r)
+			return nil, false
+		}
+	}
+
+	return user, true
 }
 
 // GetCategories retrieves all time project categories
@@ -58,6 +86,10 @@ func (h *TimeProjectCategoryHandler) GetCategory(w http.ResponseWriter, r *http.
 
 // CreateCategory creates a new time project category
 func (h *TimeProjectCategoryHandler) CreateCategory(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.checkManagePermission(w, r); !ok {
+		return
+	}
+
 	c, ok := decodeJSON[models.TimeProjectCategory](w, r)
 	if !ok {
 		return
@@ -92,6 +124,10 @@ func (h *TimeProjectCategoryHandler) CreateCategory(w http.ResponseWriter, r *ht
 
 // UpdateCategory updates an existing time project category
 func (h *TimeProjectCategoryHandler) UpdateCategory(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.checkManagePermission(w, r); !ok {
+		return
+	}
+
 	id, ok := requireIDParam(w, r, "id")
 	if !ok {
 		return
@@ -140,6 +176,10 @@ func (h *TimeProjectCategoryHandler) UpdateCategory(w http.ResponseWriter, r *ht
 
 // DeleteCategory deletes a time project category
 func (h *TimeProjectCategoryHandler) DeleteCategory(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.checkManagePermission(w, r); !ok {
+		return
+	}
+
 	id, ok := requireIDParam(w, r, "id")
 	if !ok {
 		return
@@ -177,6 +217,10 @@ func (h *TimeProjectCategoryHandler) DeleteCategory(w http.ResponseWriter, r *ht
 
 // ReorderCategories updates the display order of multiple categories
 func (h *TimeProjectCategoryHandler) ReorderCategories(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.checkManagePermission(w, r); !ok {
+		return
+	}
+
 	var orderUpdates []struct {
 		ID           int `json:"id"`
 		DisplayOrder int `json:"display_order"`

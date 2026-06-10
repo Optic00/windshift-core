@@ -42,17 +42,23 @@ func (h *TimeProjectPermissionHandler) requireProjectViewAccess(w http.ResponseW
 		return 0, false
 	}
 	if !canView {
-		respondForbidden(w, r)
+		// Hide existence: 404 (not 403) so a caller can't distinguish a project they
+		// lack access to from one that doesn't exist (WI-293), matching Worklog.Get.
+		respondNotFound(w, r, "project")
 		return 0, false
 	}
 
 	return projectID, true
 }
 
-// requireProjectManagerAccess authenticates the user, extracts the project ID from the "id" route
-// param, and checks that the user is a manager of the project. Returns the project ID, user, and
-// true on success; writes the appropriate error response and returns false on failure.
-func (h *TimeProjectPermissionHandler) requireProjectManagerAccess(w http.ResponseWriter, r *http.Request) (int, *models.User, bool) {
+// requireGrantAuthority authenticates the user, extracts the project ID from the "id" route
+// param, and checks that the user holds real authority to grant/revoke project access. That
+// means global project.manage OR a direct/group manager assignment on this specific project —
+// deliberately NOT the "no managers configured → open to all" default, which would otherwise
+// let any authenticated user seize control of an unmanaged project by inserting themselves as
+// its first manager (WI-288). Returns the project ID, user, and true on success; writes the
+// appropriate error response and returns false on failure.
+func (h *TimeProjectPermissionHandler) requireGrantAuthority(w http.ResponseWriter, r *http.Request) (int, *models.User, bool) {
 	projectID, ok := requireIDParam(w, r, "id")
 	if !ok {
 		return 0, nil, false
@@ -63,12 +69,12 @@ func (h *TimeProjectPermissionHandler) requireProjectManagerAccess(w http.Respon
 		return 0, nil, false
 	}
 
-	isManager, err := h.timePermissionService.IsTimeProjectManager(user.ID, projectID)
+	canGrant, err := h.timePermissionService.CanGrantProjectAccess(user.ID, projectID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return 0, nil, false
 	}
-	if !isManager {
+	if !canGrant {
 		respondForbidden(w, r)
 		return 0, nil, false
 	}
@@ -98,35 +104,12 @@ func (h *TimeProjectPermissionHandler) GetManagers(w http.ResponseWriter, r *htt
 
 // AddManager adds a manager to a project
 func (h *TimeProjectPermissionHandler) AddManager(w http.ResponseWriter, r *http.Request) {
-	projectID, ok := requireIDParam(w, r, "id")
+	// Grant authority requires global project.manage OR a real manager assignment on this
+	// project — not the "open to all" default (WI-288), so the first manager of an unmanaged
+	// project can only be set by someone holding global project.manage.
+	projectID, user, ok := h.requireGrantAuthority(w, r)
 	if !ok {
 		return
-	}
-
-	// Get user from context
-	user, ok := RequireAuth(w, r)
-	if !ok {
-		return
-	}
-
-	// Check if user has project.manage OR is a manager of this project
-	hasGlobalManage, err := h.timePermissionService.HasProjectManagePermission(user.ID)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-
-	if !hasGlobalManage {
-		var isManager bool
-		isManager, err = h.timePermissionService.IsTimeProjectManager(user.ID, projectID)
-		if err != nil {
-			respondInternalError(w, r, err)
-			return
-		}
-		if !isManager {
-			respondForbidden(w, r)
-			return
-		}
 	}
 
 	req, ok := decodeJSON[models.TimeProjectManagerRequest](w, r)
@@ -152,31 +135,16 @@ func (h *TimeProjectPermissionHandler) AddManager(w http.ResponseWriter, r *http
 
 // RemoveManager removes a manager from a project
 func (h *TimeProjectPermissionHandler) RemoveManager(w http.ResponseWriter, r *http.Request) {
-	projectID, ok := requireIDParam(w, r, "id")
+	// Same authority as AddManager (WI-288): global project.manage OR a real manager
+	// assignment on this project. Resolving the asymmetry where AddManager honored the
+	// open-to-all default but RemoveManager required global project.manage.
+	projectID, user, ok := h.requireGrantAuthority(w, r)
 	if !ok {
 		return
 	}
 
 	managerID, ok := requireIDParam(w, r, "managerId")
 	if !ok {
-		return
-	}
-
-	// Get user from context
-	user, ok := RequireAuth(w, r)
-	if !ok {
-		return
-	}
-
-	// Only project.manage can remove managers (not project-level managers)
-	hasGlobalManage, err := h.timePermissionService.HasProjectManagePermission(user.ID)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-
-	if !hasGlobalManage {
-		respondForbidden(w, r)
 		return
 	}
 
@@ -231,7 +199,7 @@ func (h *TimeProjectPermissionHandler) GetMembers(w http.ResponseWriter, r *http
 
 // AddMember adds a member to a project
 func (h *TimeProjectPermissionHandler) AddMember(w http.ResponseWriter, r *http.Request) {
-	projectID, user, ok := h.requireProjectManagerAccess(w, r)
+	projectID, user, ok := h.requireGrantAuthority(w, r)
 	if !ok {
 		return
 	}
@@ -259,7 +227,7 @@ func (h *TimeProjectPermissionHandler) AddMember(w http.ResponseWriter, r *http.
 
 // RemoveMember removes a member from a project
 func (h *TimeProjectPermissionHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
-	projectID, user, ok := h.requireProjectManagerAccess(w, r)
+	projectID, user, ok := h.requireGrantAuthority(w, r)
 	if !ok {
 		return
 	}

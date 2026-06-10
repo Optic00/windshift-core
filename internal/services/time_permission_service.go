@@ -99,6 +99,26 @@ func (s *TimePermissionService) IsTimeProjectManager(userID, projectID int) (boo
 	return s.isProjectManager(userID, projectID)
 }
 
+// CanGrantProjectAccess checks if a user has real authority to add/remove project
+// managers or members. Unlike IsTimeProjectManager, it deliberately does NOT treat
+// the "no managers configured → open to all" default as authority: that default would
+// let any authenticated user seize control of a brand-new project by inserting
+// themselves as its first manager. Authority requires either the global project.manage
+// permission OR a direct/group manager assignment on this specific project.
+func (s *TimePermissionService) CanGrantProjectAccess(userID, projectID int) (bool, error) {
+	// 1. Global full access (system.admin OR project.manage)
+	hasFullAccess, err := s.HasProjectManagePermission(userID)
+	if err != nil {
+		return false, err
+	}
+	if hasFullAccess {
+		return true, nil
+	}
+
+	// 2. Must be an actually-assigned manager of this project (not the open-to-all default)
+	return s.isProjectManager(userID, projectID)
+}
+
 // CanBookTimeOnProject checks if user can create worklogs on a specific project
 // True if: IsTimeProjectManager OR assigned as member (user/group) OR no members configured
 func (s *TimePermissionService) CanBookTimeOnProject(userID, projectID int) (bool, error) {
