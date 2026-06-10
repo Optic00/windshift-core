@@ -29,7 +29,6 @@ func (r *ActionRepository) IsEnabledLLMConnection(connectionID int) bool {
 	return r.db.QueryRow(`SELECT 1 FROM llm_connections WHERE id = ? AND is_enabled = true`, connectionID).Scan(&exists) == nil
 }
 
-
 // applyActionNulls sets nullable fields on an Action from scanned sql.Null values.
 func applyActionNulls(a *models.Action, description, triggerConfig sql.NullString, createdBy, actorUserID sql.NullInt64) {
 	ApplyActionNullFieldsToPtr(&a.Description, &a.TriggerConfig, &a.CreatedBy, description, triggerConfig, createdBy)
