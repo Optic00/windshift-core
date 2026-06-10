@@ -135,6 +135,9 @@ func (s *TimerService) StartTimer(
 		}
 	}
 
+	// Fast-path pre-check; the UNIQUE(user_id) index on active_timers is the
+	// authoritative backstop for the race two concurrent starts would otherwise
+	// win (the duplicate-entry mapping below).
 	hasActive, err := s.repo.HasActiveTimerForUser(userID)
 	if err != nil {
 		return nil, err
@@ -152,6 +155,11 @@ func (s *TimerService) StartTimer(
 		Description:  description,
 		StartTimeUTC: now,
 	})
+	if errors.Is(err, repository.ErrDuplicateEntry) {
+		// Lost the start/start race: another timer was inserted between our
+		// pre-check and this insert. The UNIQUE index rejected the duplicate.
+		return nil, ErrTimerAlreadyRunning
+	}
 	if err != nil {
 		return nil, err
 	}

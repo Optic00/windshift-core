@@ -33,25 +33,25 @@ func NewTimeProjectCategoryHandler(repo *repository.TimeProjectCategoryRepositor
 // permission the sibling customer handler uses (customers.manage / project.manage / admin).
 // Categories are global taxonomy shared across all projects, so a per-project manager
 // must not be able to mutate them — only holders of the global manage permission may.
-func (h *TimeProjectCategoryHandler) checkManagePermission(w http.ResponseWriter, r *http.Request) (*models.User, bool) {
+func (h *TimeProjectCategoryHandler) checkManagePermission(w http.ResponseWriter, r *http.Request) bool {
 	user, ok := RequireAuth(w, r)
 	if !ok {
-		return nil, false
+		return false
 	}
 
 	if h.timePermissionService != nil {
 		hasPermission, err := h.timePermissionService.HasCustomersManagePermission(user.ID)
 		if err != nil {
 			respondInternalError(w, r, err)
-			return nil, false
+			return false
 		}
 		if !hasPermission {
 			respondForbidden(w, r)
-			return nil, false
+			return false
 		}
 	}
 
-	return user, true
+	return true
 }
 
 // GetCategories retrieves all time project categories
@@ -86,7 +86,7 @@ func (h *TimeProjectCategoryHandler) GetCategory(w http.ResponseWriter, r *http.
 
 // CreateCategory creates a new time project category
 func (h *TimeProjectCategoryHandler) CreateCategory(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.checkManagePermission(w, r); !ok {
+	if !h.checkManagePermission(w, r) {
 		return
 	}
 
@@ -124,7 +124,7 @@ func (h *TimeProjectCategoryHandler) CreateCategory(w http.ResponseWriter, r *ht
 
 // UpdateCategory updates an existing time project category
 func (h *TimeProjectCategoryHandler) UpdateCategory(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.checkManagePermission(w, r); !ok {
+	if !h.checkManagePermission(w, r) {
 		return
 	}
 
@@ -176,7 +176,7 @@ func (h *TimeProjectCategoryHandler) UpdateCategory(w http.ResponseWriter, r *ht
 
 // DeleteCategory deletes a time project category
 func (h *TimeProjectCategoryHandler) DeleteCategory(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.checkManagePermission(w, r); !ok {
+	if !h.checkManagePermission(w, r) {
 		return
 	}
 
@@ -217,7 +217,7 @@ func (h *TimeProjectCategoryHandler) DeleteCategory(w http.ResponseWriter, r *ht
 
 // ReorderCategories updates the display order of multiple categories
 func (h *TimeProjectCategoryHandler) ReorderCategories(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.checkManagePermission(w, r); !ok {
+	if !h.checkManagePermission(w, r) {
 		return
 	}
 
