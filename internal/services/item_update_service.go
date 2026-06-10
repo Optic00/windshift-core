@@ -104,30 +104,11 @@ func (s *ItemUpdateService) UpdateItem(req UpdateItemRequest) (*UpdateItemResult
 		return nil, fmt.Errorf("validation failed: %w", err)
 	}
 
-	// Convert custom field values to JSON for database storage
-	customFieldValuesJSON, err := validation.ConvertCustomFieldValuesToJSON(existingItem.CustomFieldValues)
-	if err != nil {
-		return nil, err
-	}
-
-	// Update the item in database
+	// Update the item in database (the repository marshals custom field
+	// values and bumps updated_at)
 	now := time.Now()
-	_, err = tx.Exec(`
-		UPDATE items
-		SET workspace_id = ?, title = ?, description = ?, status_id = ?, priority_id = ?, due_date = ?,
-		    start_date = ?, end_date = ?,
-		    iteration_id = ?, project_id = ?, inherit_project = ?, assignee_id = ?, creator_id = ?,
-		    custom_field_values = ?, parent_id = ?, related_work_item_id = ?, story_points = ?, estimate_minutes = ?, updated_at = ?
-		WHERE id = ?
-	`, existingItem.WorkspaceID, existingItem.Title, existingItem.Description,
-		existingItem.StatusID, existingItem.PriorityID, existingItem.DueDate,
-		existingItem.StartDate, existingItem.EndDate,
-		existingItem.IterationID, existingItem.ProjectID, existingItem.InheritProject, existingItem.AssigneeID,
-		existingItem.CreatorID, customFieldValuesJSON, existingItem.ParentID, existingItem.RelatedWorkItemID,
-		existingItem.StoryPoints, existingItem.EstimateMinutes, now, req.ItemID)
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to update item: %w", err)
+	if err := repository.NewItemRepository(s.db).Update(tx, &existingItem); err != nil {
+		return nil, err
 	}
 
 	// Apply milestone-set replace if the validator parsed milestone_ids. The

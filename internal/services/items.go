@@ -225,12 +225,8 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 		}
 
 		// Get next workspace-specific item number (within transaction to prevent race conditions)
-		var nextWorkspaceItemNumber int
-		if err := tx.QueryRow(`
-			SELECT COALESCE(MAX(workspace_item_number), 0) + 1
-			FROM items
-			WHERE workspace_id = ?
-		`, params.WorkspaceID).Scan(&nextWorkspaceItemNumber); err != nil {
+		nextWorkspaceItemNumber, err := repository.NewItemRepository(db).GetNextWorkspaceItemNumber(tx, params.WorkspaceID)
+		if err != nil {
 			return 0, "", fmt.Errorf("failed to generate workspace item number: %w", err)
 		}
 

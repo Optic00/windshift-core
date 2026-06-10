@@ -309,29 +309,19 @@ func (s *ItemTypeChangeService) validateItemTypeAllowedForWorkspace(workspaceID,
 }
 
 func (s *ItemTypeChangeService) validateItemTypeHierarchyCompatibility(item *models.Item, targetLevel int) error {
+	itemRepo := repository.NewItemRepository(s.db)
 	if item.ParentID != nil {
-		var parentLevel sql.NullInt64
-		err := s.db.QueryRow(`
-			SELECT it.hierarchy_level
-			FROM items p
-			LEFT JOIN item_types it ON p.item_type_id = it.id
-			WHERE p.id = ?
-		`, *item.ParentID).Scan(&parentLevel)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		parentLevel, err := itemRepo.GetItemHierarchyLevel(*item.ParentID)
+		if err != nil {
 			return err
 		}
-		if parentLevel.Valid && targetLevel != int(parentLevel.Int64)+1 {
+		if parentLevel != nil && targetLevel != *parentLevel+1 {
 			return &validation.ValidationError{Field: "target_item_type_id", Message: "Item type is not compatible with the current parent hierarchy"}
 		}
 	}
 
-	var incompatibleChildren int
-	if err := s.db.QueryRow(`
-		SELECT COUNT(*)
-		FROM items c
-		JOIN item_types it ON c.item_type_id = it.id
-		WHERE c.parent_id = ? AND it.hierarchy_level != ?
-	`, item.ID, targetLevel+1).Scan(&incompatibleChildren); err != nil {
+	incompatibleChildren, err := itemRepo.CountChildrenWithHierarchyLevelNot(item.ID, targetLevel+1)
+	if err != nil {
 		return err
 	}
 	if incompatibleChildren > 0 {

@@ -388,6 +388,44 @@ func (r *ItemRepository) GetDescendantIDs(parentID int) ([]int, error) {
 	return ids, nil
 }
 
+// GetItemHierarchyLevel returns the hierarchy level of an item's type, or nil
+// when the item does not exist, has no type, or the type has no level set.
+func (r *ItemRepository) GetItemHierarchyLevel(itemID int) (*int, error) {
+	var level sql.NullInt64
+	err := r.db.QueryRow(`
+		SELECT it.hierarchy_level
+		FROM items p
+		LEFT JOIN item_types it ON p.item_type_id = it.id
+		WHERE p.id = ?
+	`, itemID).Scan(&level)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get item hierarchy level: %w", err)
+	}
+	var out *int
+	assignNullableInt(&out, level)
+	return out, nil
+}
+
+// CountChildrenWithHierarchyLevelNot returns how many direct children of an
+// item have a typed hierarchy level different from the given level. Children
+// without a type are not counted.
+func (r *ItemRepository) CountChildrenWithHierarchyLevelNot(parentID, level int) (int, error) {
+	var count int
+	err := r.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM items c
+		JOIN item_types it ON c.item_type_id = it.id
+		WHERE c.parent_id = ? AND it.hierarchy_level != ?
+	`, parentID, level).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count children by hierarchy level: %w", err)
+	}
+	return count, nil
+}
+
 // CountDescendants returns the total number of descendants of an item. The
 // recursive walk is capped at maxItemHierarchyDepth so a stored cycle can't
 // loop the DB.
