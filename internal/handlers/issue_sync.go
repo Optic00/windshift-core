@@ -8,6 +8,7 @@ import (
 
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
 	"windshift/internal/scm"
 	"windshift/internal/services"
 )
@@ -26,6 +27,48 @@ func NewIssueSyncHandler(issueSyncService *scm.IssueSyncService, permService *se
 		permissionService: permService,
 		auditor:           auditor,
 	}
+}
+
+// validateSyncConfigRequest gates the user-supplied fields on a sync-config
+// payload. The six mapping fields are JSON blobs unmarshaled downstream, so
+// HTML stripping would corrupt valid payloads — bound them by size and
+// require well-formed JSON instead. LabelSyncMode is enum-shaped; empty is
+// allowed (create defaults to "none", update keeps the stored mode). Writes
+// a validation error and returns false on the first offending field.
+func validateSyncConfigRequest(w http.ResponseWriter, r *http.Request, req *models.IssueSyncConfigRequest) bool {
+	blobs := []struct {
+		name  string
+		value string
+	}{
+		{"status_mapping", req.StatusMapping},
+		{"reverse_status_mapping", req.ReverseStatusMapping},
+		{"label_mappings", req.LabelMappings},
+		{"filter_labels", req.FilterLabels},
+		{"assignee_mappings", req.AssigneeMappings},
+		{"milestone_mappings", req.MilestoneMappings},
+	}
+	for _, blob := range blobs {
+		if blob.value == "" {
+			continue
+		}
+		if len(blob.value) > sanitize.LongTextMaxBytes {
+			respondValidationError(w, r, blob.name+" exceeds the maximum size")
+			return false
+		}
+		if !json.Valid([]byte(blob.value)) {
+			respondValidationError(w, r, blob.name+" must be valid JSON")
+			return false
+		}
+	}
+
+	switch req.LabelSyncMode {
+	case "", models.IssueSyncLabelMirror, models.IssueSyncLabelMapped, models.IssueSyncLabelNone:
+	default:
+		respondValidationError(w, r, "label_sync_mode must be one of: mirror, mapped, none")
+		return false
+	}
+
+	return true
 }
 
 // requireAuthWorkspaceID authenticates the request and parses the "id" path
@@ -102,6 +145,10 @@ func (h *IssueSyncHandler) CreateSyncConfig(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	if !validateSyncConfigRequest(w, r, &req) {
+		return
+	}
+
 	if req.WorkspaceRepositoryID == 0 {
 		respondValidationError(w, r, "workspace_repository_id is required")
 		return
@@ -147,6 +194,10 @@ func (h *IssueSyncHandler) UpdateSyncConfig(w http.ResponseWriter, r *http.Reque
 	var req models.IssueSyncConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondBadRequest(w, r, "Invalid request body")
+		return
+	}
+
+	if !validateSyncConfigRequest(w, r, &req) {
 		return
 	}
 
