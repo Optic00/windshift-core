@@ -11,6 +11,7 @@ import (
 	"windshift/internal/auth"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
@@ -76,16 +77,22 @@ func (h *PortalAuthHandler) RequestMagicLink(w http.ResponseWriter, r *http.Requ
 
 	// Parse request body
 	var request struct {
-		Email string `json:"email"`
+		Email string `json:"email" validate:"required,email,max=255"`
 	}
 	if err = json.NewDecoder(r.Body).Decode(&request); err != nil {
 		respondBadRequest(w, r, "Invalid request body")
 		return
 	}
+	sanitize.Apply(&request.Email, sanitize.ShortIdentifier)
 
 	email := strings.TrimSpace(strings.ToLower(request.Email))
 	if email == "" {
 		respondValidationError(w, r, "Email is required")
+		return
+	}
+	request.Email = email
+	if err = utils.Validate(request); err != nil {
+		respondValidationError(w, r, err.Error())
 		return
 	}
 
