@@ -30,7 +30,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"log"
+	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -64,6 +68,11 @@ func main() {
 	// the current job (if any) reports.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// Boot-time sanity check on WS_API_URL (WI-310): a definitively wrong URL
+	// (bare host, missing /api) fails fast with guidance instead of surfacing
+	// later as an opaque registration or claim error.
+	preflightAPIURL(ctx, logger, baseURL)
 
 	// Resolve an authenticated client without re-registering on every restart
 	// (WI-238 security Phase 6): reuse an injected (WSRUNNER_CREDENTIAL) or
@@ -161,7 +170,17 @@ func loadOrRegister(ctx context.Context, logger *log.Logger, baseURL, credFile, 
 	}
 
 	// No usable credential — register. Only here is the registration token
-	// needed.
+	// needed. Probe the credential path FIRST (WI-310): the token is
+	// single-use and the credential is persisted only after a successful
+	// exchange, so registering against an unwritable path would consume the
+	// token and lose the credential on the next restart.
+	if err := probeCredentialPath(credFile); err != nil {
+		logger.Fatalf("credential path %s is not writable (%v); refusing to register so the single-use "+
+			"registration token is not consumed and lost. Fix the path and restart. On Fedora/RHEL this is "+
+			"typically an SELinux denial on the mounted volume — run the container with "+
+			"--security-opt label=disable or mount the volume with :Z; for a systemd install check the "+
+			"directory exists and is owned by the runner user.", credFile, err)
+	}
 	regToken := mustEnv(logger, "WSRUNNER_REGISTRATION_TOKEN")
 	reg, err := services.RegisterRunner(ctx, baseURL, regToken, name, nil)
 	if err != nil {
@@ -169,7 +188,11 @@ func loadOrRegister(ctx context.Context, logger *log.Logger, baseURL, credFile, 
 	}
 	logger.Printf("registered as instance %d in pool %d (name %q)", reg.InstanceID, reg.PoolID, name)
 	if err := writeCredential(credFile, reg.Credential); err != nil {
-		logger.Printf("warning: could not persist credential to %s: %v (will re-register next restart)", credFile, err)
+		// The preflight probe makes this near-impossible, but if it happens the
+		// situation is urgent: the registration token was just consumed, so the
+		// next restart cannot re-register with it.
+		logger.Printf("ERROR: could not persist credential to %s: %v — the registration token is now consumed; "+
+			"this runner works until restarted, then needs a NEW token. Fix the path before restarting.", credFile, err)
 	}
 	return services.NewHTTPOrchestratorClient(baseURL, reg.Credential, nil)
 }
@@ -192,6 +215,67 @@ func useCredential(ctx context.Context, logger *log.Logger, baseURL, credential,
 		logger.Printf("runner credential from %s: control plane unreachable (%v); proceeding, worker will retry", source, err)
 		return client, true
 	}
+}
+
+// probeCredentialPath verifies the credential file's directory is writable by
+// creating the parent and write+deleting a sibling probe file (WI-310). Run
+// BEFORE consuming the single-use registration token: an unwritable path
+// (commonly an SELinux denial on the mounted volume) would otherwise let
+// registration succeed, the credential write fail, and the next restart 401
+// with the token already spent.
+func probeCredentialPath(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	probe := path + ".probe"
+	if err := os.WriteFile(probe, []byte("probe\n"), 0o600); err != nil {
+		return err
+	}
+	return os.Remove(probe)
+}
+
+// preflightAPIURL sanity-checks WS_API_URL shape and reachability at boot
+// (WI-310). GET <base>/version is public and returns the orchestrator's build
+// metadata, so it doubles as a shape check: a bare host or a /rest/api/v1 URL
+// serves HTML or 404 instead of the version document, which is a definitive
+// misconfiguration → fail fast with guidance. A transport error is only a
+// warning: the control plane may simply not be up yet, and the worker loop
+// retries.
+func preflightAPIURL(ctx context.Context, logger *log.Logger, baseURL string) {
+	parsed, err := url.Parse(baseURL)
+	if err != nil || parsed.Host == "" {
+		logger.Fatalf("WS_API_URL %q is not a valid URL: %v", baseURL, err)
+	}
+	if !strings.HasSuffix(strings.TrimRight(parsed.Path, "/"), "/api") {
+		logger.Printf("warning: WS_API_URL %q does not end in /api — the runner control plane is mounted "+
+			"under /api (e.g. https://windshift.example.com/api)", baseURL)
+	}
+
+	versionURL := strings.TrimRight(baseURL, "/") + "/version"
+	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, versionURL, http.NoBody)
+	if err != nil {
+		logger.Fatalf("WS_API_URL preflight: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		logger.Printf("warning: WS_API_URL preflight: %s unreachable (%v); continuing — the worker retries, "+
+			"but verify the URL and network if this persists", versionURL, err)
+		return
+	}
+	defer resp.Body.Close() //nolint:errcheck // read-only response body
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	var doc struct {
+		Version string `json:"version"`
+	}
+	if resp.StatusCode != http.StatusOK || json.Unmarshal(body, &doc) != nil || doc.Version == "" {
+		logger.Fatalf("WS_API_URL preflight: GET %s returned %q, not the Windshift version document. "+
+			"WS_API_URL must be the orchestrator base URL INCLUDING the /api suffix "+
+			"(e.g. https://windshift.example.com/api) — not the bare host and not the /rest/api/v1 REST base. Got %q.",
+			versionURL, resp.Status, baseURL)
+	}
+	logger.Printf("control plane ok: %s (server version %s)", baseURL, doc.Version)
 }
 
 // readCredential returns the trimmed credential stored at path, or "" if the
