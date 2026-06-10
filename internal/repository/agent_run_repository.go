@@ -132,6 +132,25 @@ func (r *AgentRunRepository) CountForBindingSince(ctx context.Context, bindingID
 	return n, nil
 }
 
+// CountActiveForBindingItem returns how many queued or running runs the
+// binding currently has on the given item. The comment-@mention trigger's
+// dedup check (WI-264): a mention of an agent that is already working on
+// the item must not stack a second run.
+func (r *AgentRunRepository) CountActiveForBindingItem(ctx context.Context, bindingID, itemID int) (int, error) {
+	if bindingID == 0 || itemID == 0 {
+		return 0, nil
+	}
+	row := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM agent_runs
+		WHERE binding_id = ? AND item_id = ? AND status IN (?, ?)
+	`, bindingID, itemID, models.AgentRunStatusQueued, models.AgentRunStatusRunning)
+	var n int
+	if err := row.Scan(&n); err != nil {
+		return 0, fmt.Errorf("count active runs for binding item: %w", err)
+	}
+	return n, nil
+}
+
 // MarkRunning transitions a run from queued to running and stamps started_at.
 // Callers must hold their admission-control slot before invoking this.
 func (r *AgentRunRepository) MarkRunning(ctx context.Context, id int, containerID string, now time.Time) error {

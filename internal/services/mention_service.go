@@ -65,6 +65,32 @@ func (s *MentionService) ExtractMentionIdentifiers(content string) []string {
 	return identifiers
 }
 
+// ResolveMentionedUserIDs parses content and resolves every @mention to an
+// active user id, skipping identifiers that match no user. IDs follow first
+// appearance order and are deduplicated. Used by the comment-@mention
+// coding-agent trigger (WI-264), which needs the resolved principals rather
+// than the mention rows ProcessMentions writes.
+func (s *MentionService) ResolveMentionedUserIDs(content string) ([]int, error) {
+	identifiers := s.ExtractMentionIdentifiers(content)
+	if len(identifiers) == 0 {
+		return nil, nil
+	}
+	ids := make([]int, 0, len(identifiers))
+	seen := make(map[int]bool, len(identifiers))
+	for _, identifier := range identifiers {
+		userID, _, err := s.resolveUserIdentifier(identifier)
+		if err != nil {
+			return nil, fmt.Errorf("resolve mention %q: %w", identifier, err)
+		}
+		if userID == 0 || seen[userID] {
+			continue
+		}
+		seen[userID] = true
+		ids = append(ids, userID)
+	}
+	return ids, nil
+}
+
 // resolveUserIdentifier looks up a user by username or display name
 func (s *MentionService) resolveUserIdentifier(identifier string) (userID int, displayName string, err error) {
 	var firstName, lastName string

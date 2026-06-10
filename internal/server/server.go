@@ -840,6 +840,11 @@ func (s *Server) initialize() error {
 	commentService.SetNotificationService(s.notificationService)
 	commentService.SetMentionService(mentionService)
 	commentService.SetWebhookSender(webhookSender)
+	if bindingSvc != nil {
+		// @mentioning a binding's acting user in a comment starts a run
+		// (WI-264), same machinery as the assignee-change trigger.
+		commentService.SetAgentMentionTrigger(bindingSvc)
+	}
 	commentHandler.SetCommentService(commentService)
 	commentHandler.SetIssueSyncService(issueSyncService)
 	s.actionService.SetCommentService(commentService)

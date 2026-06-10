@@ -778,3 +778,9 @@ func (s *RunService) HasTokens() bool {
 func (s *RunService) CountRunsForBindingSince(ctx context.Context, bindingID int, since time.Time) (int, error) {
 	return s.repo.CountForBindingSince(ctx, bindingID, since)
 }
+
+// CountActiveRunsForBindingItem proxies to the repository for the
+// comment-@mention trigger's per-item dedup check (WI-264).
+func (s *RunService) CountActiveRunsForBindingItem(ctx context.Context, bindingID, itemID int) (int, error) {
+	return s.repo.CountActiveForBindingItem(ctx, bindingID, itemID)
+}

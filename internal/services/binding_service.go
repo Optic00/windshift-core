@@ -512,6 +512,75 @@ func (s *BindingService) MaybeStartRunForAssignee(ctx context.Context, workspace
 	if binding == nil {
 		return nil
 	}
+	return s.startRunForBinding(ctx, binding, workspaceID, itemID, triggeredByUserID)
+}
+
+// MaybeStartRunsForMentions is the comment-@mention trigger (WI-264): every
+// mentioned user that is a binding's acting user gets a run on the commented
+// item — a lighter nudge than assignment, with no assignee or status change.
+// Callers invoke it on comment CREATE only; comment edits never re-trigger.
+//
+// Per-mention guards:
+//   - self-mention: a mention of the comment author themselves is skipped,
+//     so an agent commenting "@itself" cannot loop. Agents mentioning OTHER
+//     agents do trigger (indirect cycles are the operator's configuration
+//     responsibility, mirrored from the assignee trigger's posture).
+//   - dedup: a binding that already has a queued or running run on this item
+//     is skipped — a repeat mention while the agent works is a nudge, not a
+//     second job. A mention in a later comment, after the run finishes,
+//     triggers again.
+//   - budget: MaxRunsPerDay applies exactly as in the assignee trigger.
+//
+// Distinct agents mentioned in one comment each get their own run. Failures
+// are isolated per mention (one agent's refusal must not block the others);
+// they are joined into the returned error for the caller to log-and-swallow.
+func (s *BindingService) MaybeStartRunsForMentions(ctx context.Context, workspaceID, itemID int, mentionedUserIDs []int, commentAuthorID int) error {
+	if len(mentionedUserIDs) == 0 {
+		return nil
+	}
+	seen := make(map[int]bool, len(mentionedUserIDs))
+	var errs []error
+	for _, userID := range mentionedUserIDs {
+		if userID <= 0 || seen[userID] {
+			continue
+		}
+		seen[userID] = true
+		if userID == commentAuthorID {
+			continue
+		}
+		binding, err := s.repo.FindByActingUser(ctx, workspaceID, userID)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("find binding for mention of user %d: %w", userID, err))
+			continue
+		}
+		if binding == nil {
+			// A plain human mention — the notification pipeline owns it.
+			continue
+		}
+		if s.runs != nil {
+			active, err := s.runs.CountActiveRunsForBindingItem(ctx, binding.ID, itemID)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("count active runs for binding %d: %w", binding.ID, err))
+				continue
+			}
+			if active > 0 {
+				s.logger.Printf("binding service: mention of binding=%d on item=%d skipped — %d run(s) already queued/running", binding.ID, itemID, active)
+				continue
+			}
+		}
+		if err := s.startRunForBinding(ctx, binding, workspaceID, itemID, commentAuthorID); err != nil {
+			errs = append(errs, fmt.Errorf("start run for mentioned binding %d: %w", binding.ID, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// startRunForBinding admits and dispatches one run for a matched binding —
+// the shared core of the assignee-change and comment-@mention triggers.
+// Enforces the binding's MaxRunsPerDay budget, routes to the remote pool or
+// the local in-process path, and resolves SCM credentials as the triggering
+// user (WI-275).
+func (s *BindingService) startRunForBinding(ctx context.Context, binding *models.WorkspaceAgentBinding, workspaceID, itemID, triggeredByUserID int) error {
 	if s.runs == nil {
 		s.logger.Printf("binding service: matched binding=%d for item=%d but no RunService is configured (dropping)", binding.ID, itemID)
 		return nil

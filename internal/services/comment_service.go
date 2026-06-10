@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -35,6 +36,14 @@ type HandleCommentParams struct {
 	IsPrivate        bool
 }
 
+// AgentMentionTrigger is the coding-agent harness's interest in new
+// comments (WI-264): @mentions of a binding's acting user start a run on
+// the commented item. Kept as an interface so CommentService stays
+// decoupled from BindingService (which satisfies it) and tests can stub it.
+type AgentMentionTrigger interface {
+	MaybeStartRunsForMentions(ctx context.Context, workspaceID, itemID int, mentionedUserIDs []int, commentAuthorID int) error
+}
+
 // CommentService encapsulates comment creation logic used by both HTTP handlers
 // and action automation service.
 type CommentService struct {
@@ -44,6 +53,7 @@ type CommentService struct {
 	mentionService      *MentionService
 	webhookSender       WebhookDispatcher
 	emailReplyService   EmailReplyHandler
+	agentMentionTrigger AgentMentionTrigger
 }
 
 // CreateCommentParams contains the parameters for creating a comment.
@@ -94,6 +104,12 @@ func (s *CommentService) SetWebhookSender(ws WebhookDispatcher) {
 // SetEmailReplyService sets the email reply service for sending threaded replies to portal customers.
 func (s *CommentService) SetEmailReplyService(ers EmailReplyHandler) {
 	s.emailReplyService = ers
+}
+
+// SetAgentMentionTrigger wires the optional coding-agent @mention trigger
+// (WI-264). Nil disables the hook; Create calls it once per created comment.
+func (s *CommentService) SetAgentMentionTrigger(trigger AgentMentionTrigger) {
+	s.agentMentionTrigger = trigger
 }
 
 // Create creates a new comment with all associated side effects:
@@ -216,6 +232,34 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 					slog.Any("error", err),
 				)
 				// Don't fail the request if mention processing fails
+			}
+		}
+
+		// 6b. Coding-agent @mention trigger (WI-264). Create-only by
+		// construction: this hook lives here and not in ProcessMentions,
+		// which also runs on comment EDITS — adding an @ by editing must
+		// not re-trigger. Portal-customer comments (ActorUserID 0) are
+		// skipped: the trigger needs a real user as the run's credential
+		// principal (WI-275). Failures are logged, never surfaced — a
+		// refused run must not block the comment.
+		if s.agentMentionTrigger != nil && s.mentionService != nil && params.ActorUserID > 0 {
+			if ids, err := s.mentionService.ResolveMentionedUserIDs(params.Content); err != nil {
+				slog.Warn("failed to resolve mentions for agent trigger",
+					slog.String("component", "comment_service"),
+					slog.Int64("comment_id", commentID),
+					slog.Any("error", err),
+				)
+			} else if len(ids) > 0 {
+				// Background context: the run outlives the comment request,
+				// and a client disconnect must not abort run admission.
+				if err := s.agentMentionTrigger.MaybeStartRunsForMentions(context.Background(), item.WorkspaceID, params.ItemID, ids, params.ActorUserID); err != nil {
+					slog.Warn("coding-agent mention trigger failed",
+						slog.String("component", "comment_service"),
+						slog.Int("item_id", params.ItemID),
+						slog.Int64("comment_id", commentID),
+						slog.Any("error", err),
+					)
+				}
 			}
 		}
 
