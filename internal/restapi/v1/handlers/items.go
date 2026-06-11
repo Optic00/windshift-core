@@ -480,6 +480,25 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 	req.Title = sanitize.PlainTextField.Sanitize(req.Title)
 	req.Description = sanitize.RichText.Sanitize(req.Description)
 
+	// Centralized creation validation (parent hierarchy, cross-workspace
+	// parent visibility, task status rules) — mirrors the cookie-auth create
+	// path. Permission-shaped parent failures surface as "Parent item not
+	// found" so existence isn't leaked.
+	validationResult := services.ValidateItemCreation(h.DB, services.ItemValidationParams{
+		WorkspaceID: req.WorkspaceID,
+		Title:       req.Title,
+		ItemTypeID:  req.ItemTypeID,
+		ParentID:    req.ParentID,
+		StatusID:    req.StatusID,
+		IsTask:      req.IsTask,
+		UserID:      user.ID,
+		PermService: h.permSvc,
+	})
+	if !validationResult.Valid {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, validationResult.Error))
+		return
+	}
+
 	// Convert custom field values to JSON
 	var customFieldValuesJSON string
 	if req.CustomFields != nil {
