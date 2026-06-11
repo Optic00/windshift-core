@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"windshift/internal/auth"
 	"windshift/internal/cql"
 	"windshift/internal/database"
 	"windshift/internal/models"
@@ -105,6 +106,7 @@ func init() {
 	Register(Default, Tool[listItemsArgs]{
 		Name:        "list_items",
 		Description: "List work items in one or all accessible workspaces, with optional filters and CQL.",
+		Scopes:      []string{auth.ScopeItemsRead},
 		Run: func(_ context.Context, env *Env, args listItemsArgs) (any, error) {
 			var wsIDs []int
 			if args.WorkspaceID != nil && *args.WorkspaceID > 0 {
@@ -192,6 +194,7 @@ func init() {
 	Register(Default, Tool[getItemArgs]{
 		Name:        "get_item",
 		Description: "Get details of a single work item by numeric ID or key (e.g. PROJ-42).",
+		Scopes:      []string{auth.ScopeItemsRead},
 		Run: func(_ context.Context, env *Env, args getItemArgs) (any, error) {
 			itemID, err := resolveItemID(env.DB, args.ItemID, args.ItemKey)
 			if err != nil {
@@ -232,6 +235,7 @@ func init() {
 	Register(Default, Tool[searchItemsArgs]{
 		Name:        "search_items",
 		Description: "Full-text search for work items by title or description across accessible workspaces.",
+		Scopes:      []string{auth.ScopeItemsRead},
 		Run: func(_ context.Context, env *Env, args searchItemsArgs) (any, error) {
 			if strings.TrimSpace(args.Query) == "" {
 				return map[string]string{"error": "query is required"}, nil
@@ -279,6 +283,7 @@ func init() {
 	Register(Default, Tool[createItemArgs]{
 		Name:        "create_item",
 		Description: "Create a new work item in a workspace.",
+		Scopes:      []string{auth.ScopeItemsWrite},
 		Run: func(_ context.Context, env *Env, args createItemArgs) (any, error) {
 			if strings.TrimSpace(args.Title) == "" {
 				return map[string]string{"error": "title is required"}, nil
@@ -323,6 +328,7 @@ func init() {
 	Register(Default, Tool[updateItemArgs]{
 		Name:        "update_item",
 		Description: "Update fields on an existing work item. Identifies the item by numeric ID or key. Use transition_item to change status (workflow + condition rules apply).",
+		Scopes:      []string{auth.ScopeItemsWrite},
 		Run: func(_ context.Context, env *Env, args updateItemArgs) (any, error) {
 			itemID, err := resolveItemID(env.DB, args.ItemID, args.ItemKey)
 			if err != nil {
@@ -374,6 +380,7 @@ func init() {
 	Register(Default, Tool[deleteItemArgs]{
 		Name:        "delete_item",
 		Description: "Delete a work item and all its descendants.",
+		Scopes:      []string{auth.ScopeItemsDelete},
 		Run: func(_ context.Context, env *Env, args deleteItemArgs) (any, error) {
 			crudSvc := services.NewItemCRUDService(env.DB)
 			item, err := crudSvc.GetByID(args.ItemID)
@@ -404,6 +411,7 @@ func init() {
 	Register(Default, Tool[getItemChildrenArgs]{
 		Name:        "get_item_children",
 		Description: "Get the direct children of a work item.",
+		Scopes:      []string{auth.ScopeItemsRead},
 		Run: func(_ context.Context, env *Env, args getItemChildrenArgs) (any, error) {
 			crudSvc := services.NewItemCRUDService(env.DB)
 			item, err := crudSvc.GetByID(args.ItemID)
@@ -431,6 +439,7 @@ func init() {
 	Register(Default, Tool[transitionItemArgs]{
 		Name:        "transition_item",
 		Description: "Perform a workflow status transition on an item. Identifies the item by ID or key, and the target status by ID or name. Workflow + condition rules are enforced.",
+		Scopes:      []string{auth.ScopeItemsWrite},
 		Run: func(ctx context.Context, env *Env, args transitionItemArgs) (any, error) {
 			itemID, err := resolveItemID(env.DB, args.ItemID, args.ItemKey)
 			if err != nil {

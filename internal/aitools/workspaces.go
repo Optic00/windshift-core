@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 
+	"windshift/internal/auth"
 	"windshift/internal/repository"
 )
 
@@ -35,6 +36,7 @@ func init() {
 	Register(Default, Tool[listWorkspacesArgs]{
 		Name:        "list_workspaces",
 		Description: "List all workspaces the authenticated user has access to.",
+		Scopes:      []string{auth.ScopeWorkspacesRead},
 		Run: func(_ context.Context, env *Env, _ listWorkspacesArgs) (any, error) {
 			out := listWorkspacesOut{Workspaces: []workspaceDTO{}}
 			if len(env.AccessibleWorkspaceIDs) == 0 {
@@ -55,6 +57,7 @@ func init() {
 	Register(Default, Tool[getWorkspaceArgs]{
 		Name:        "get_workspace",
 		Description: "Get detailed information about a specific workspace.",
+		Scopes:      []string{auth.ScopeWorkspacesRead},
 		Run: func(_ context.Context, env *Env, args getWorkspaceArgs) (any, error) {
 			if !env.HasWorkspaceAccess(args.WorkspaceID) {
 				return map[string]string{"error": "workspace not found"}, nil

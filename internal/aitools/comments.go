@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"windshift/internal/auth"
 	"windshift/internal/models"
 	"windshift/internal/services"
 )
@@ -42,6 +43,7 @@ func init() {
 	Register(Default, Tool[listCommentsArgs]{
 		Name:        "list_comments",
 		Description: "List all comments on a work item.",
+		Scopes:      []string{auth.ScopeItemsRead},
 		Run: func(_ context.Context, env *Env, args listCommentsArgs) (any, error) {
 			if args.ItemID <= 0 {
 				return map[string]string{"error": "item_id is required"}, nil
@@ -64,6 +66,7 @@ func init() {
 	Register(Default, Tool[addCommentArgs]{
 		Name:        "add_comment",
 		Description: "Add a comment to a work item.",
+		Scopes:      []string{auth.ScopeItemsWrite},
 		Run: func(_ context.Context, env *Env, args addCommentArgs) (any, error) {
 			if args.ItemID <= 0 {
 				return map[string]string{"error": "item_id is required"}, nil

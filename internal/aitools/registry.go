@@ -19,7 +19,16 @@ import (
 type Tool[Args any] struct {
 	Name        string
 	Description string
-	Run         func(ctx context.Context, env *Env, args Args) (any, error)
+	// Scopes lists the API-token scopes (auth.Scope* constants) required to
+	// invoke this tool from a token-authenticated adapter — i.e. the MCP
+	// server, which gates each call on the bearer token's scope set. All
+	// listed scopes must be present (write implies read, per
+	// auth.TokenManager.CheckTokenPermissions). The cookie-authenticated
+	// in-product chat has no token and ignores this field entirely; the
+	// per-user workspace permission checks inside Run remain the only gate
+	// on that surface.
+	Scopes []string
+	Run    func(ctx context.Context, env *Env, args Args) (any, error)
 }
 
 // Entry is the type-erased view of a registered Tool, suitable for use
@@ -28,6 +37,9 @@ type Tool[Args any] struct {
 type Entry struct {
 	Name        string
 	Description string
+	// Scopes are the required API-token scopes copied from the Tool at
+	// register time. See Tool.Scopes for semantics.
+	Scopes []string
 	// Schema is the JSON Schema for the tool's Args, derived from the
 	// typed Args struct via jsonschema.For. Pre-computed at register time.
 	Schema json.RawMessage
@@ -61,6 +73,13 @@ func Register[Args any](r *Registry, t Tool[Args]) {
 	if _, exists := r.entries[t.Name]; exists {
 		panic("aitools: duplicate tool name: " + t.Name)
 	}
+	// Every tool must declare its token-scope requirement so the MCP adapter
+	// can never dispatch a tool that slipped through unmapped. Panicking at
+	// init keeps the failure loud at startup instead of silently open at
+	// request time.
+	if len(t.Scopes) == 0 {
+		panic("aitools: tool " + t.Name + " must declare required token Scopes")
+	}
 
 	schema, err := jsonschema.For[Args](nil)
 	if err != nil {
@@ -74,6 +93,7 @@ func Register[Args any](r *Registry, t Tool[Args]) {
 	entry := Entry{
 		Name:        t.Name,
 		Description: t.Description,
+		Scopes:      t.Scopes,
 		Schema:      schemaJSON,
 		NewArgs:     func() any { return new(Args) },
 		Run: func(ctx context.Context, env *Env, args any) (any, error) {

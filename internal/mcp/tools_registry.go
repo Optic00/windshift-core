@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -32,6 +33,17 @@ func (ms *MCPServer) registerAITools() {
 				res, _, _ := errNoAuth()
 				return res, nil
 			}
+			// Enforce the tool's declared token scopes (Entry.Scopes).
+			// mcp:access (checked by the auth middleware) only opens the
+			// surface; without this check a default-mint token could reach
+			// tools its scope set excludes on the REST surface (e.g.
+			// delete_item without items:delete, create_action without
+			// actions:write). The in-product chat adapter never goes
+			// through here — cookie sessions carry no token, so its
+			// behavior is unchanged.
+			if res, ok := ms.checkToolScopes(ctx, entry); !ok {
+				return res, nil
+			}
 			env, err := ms.buildEnv(user)
 			if err != nil {
 				res, _, _ := errInternal("build env", err)
@@ -59,6 +71,31 @@ func (ms *MCPServer) registerAITools() {
 			}, nil
 		})
 	}
+}
+
+// checkToolScopes verifies the request's validated API token carries every
+// scope the tool declared (aitools registrations mirror the v1 router's
+// per-route gating; write scopes imply the matching read scope). Returns a
+// tool-error result naming the missing scopes when the check fails. Fails
+// closed when no token is in context — only bearerAuthMiddleware puts one
+// there, so a missing token means the request bypassed token auth somehow.
+func (ms *MCPServer) checkToolScopes(ctx context.Context, entry aitools.Entry) (*mcp.CallToolResult, bool) {
+	token := apiTokenFromContext(ctx)
+	if token == nil {
+		res, _, _ := errNoAuth()
+		return res, false
+	}
+	var missing []string
+	for _, scope := range entry.Scopes {
+		if !ms.deps.TokenManager.CheckTokenPermissions(token, []string{scope}) {
+			missing = append(missing, scope)
+		}
+	}
+	if len(missing) > 0 {
+		res, _, _ := toolErrorf("token missing required scope: %s", strings.Join(missing, ", "))
+		return res, false
+	}
+	return nil, true
 }
 
 // buildEnv constructs an aitools.Env scoped to the calling user. Permissions

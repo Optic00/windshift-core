@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"windshift/internal/auth"
 	"windshift/internal/models"
 	"windshift/internal/services"
 )
@@ -41,6 +42,7 @@ func init() {
 	Register(Default, Tool[listLabelsArgs]{
 		Name:        "list_labels",
 		Description: "List all labels in a workspace.",
+		Scopes:      []string{auth.ScopeItemsRead},
 		Run: func(_ context.Context, env *Env, args listLabelsArgs) (any, error) {
 			if !env.HasWorkspaceAccess(args.WorkspaceID) {
 				return map[string]string{"error": "workspace not found"}, nil
@@ -71,6 +73,7 @@ func init() {
 	Register(Default, Tool[setItemLabelsArgs]{
 		Name:        "set_item_labels",
 		Description: "Set labels on a work item (replaces existing labels).",
+		Scopes:      []string{auth.ScopeItemsWrite},
 		Run: func(_ context.Context, env *Env, args setItemLabelsArgs) (any, error) {
 			item, err := services.NewItemCRUDService(env.DB).GetByID(args.ItemID)
 			if err != nil {

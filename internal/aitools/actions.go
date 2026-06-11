@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 
+	"windshift/internal/auth"
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
@@ -346,6 +347,7 @@ func init() {
 	Register(Default, Tool[describeActionCatalogArgs]{
 		Name:        "describe_action_catalog",
 		Description: "Discover what kinds of actions can be built in a workspace. Returns every trigger type and every node type with its JSON Schema config, plus the action capabilities (LLM connections, HTTP clients, docker environments) reachable from this workspace. Call this before constructing an action so you know exactly what configs each node accepts.",
+		Scopes:      []string{auth.ScopeActionsRead},
 		Run: func(_ context.Context, env *Env, args describeActionCatalogArgs) (any, error) {
 			if !env.HasWorkspaceAccess(args.WorkspaceID) {
 				return map[string]string{"error": "workspace not found"}, nil
@@ -402,6 +404,7 @@ func init() {
 	Register(Default, Tool[validateActionArgs]{
 		Name:        "validate_action",
 		Description: "Dry-run validate an action definition without persisting. Returns a structured list of errors (empty when the definition would persist successfully). Use this to iterate before calling create_action.",
+		Scopes:      []string{auth.ScopeActionsRead},
 		Run: func(_ context.Context, env *Env, args validateActionArgs) (any, error) {
 			if !env.HasWorkspaceAccess(args.WorkspaceID) {
 				return map[string]string{"error": "workspace not found"}, nil
@@ -425,6 +428,7 @@ func init() {
 	Register(Default, Tool[createActionArgs]{
 		Name:        "create_action",
 		Description: "Create a new automation action in a workspace from a complete graph definition. The definition is validated against the catalog (schema shapes, edge references, cycles, iterator-body containment, capability scope) before persisting. Returns the created action's summary; the new action is enabled and starts firing immediately.",
+		Scopes:      []string{auth.ScopeActionsWrite},
 		Run: func(_ context.Context, env *Env, args createActionArgs) (any, error) {
 			if !env.HasWorkspaceAccess(args.WorkspaceID) {
 				return map[string]string{"error": "workspace not found"}, nil
@@ -525,6 +529,7 @@ func init() {
 	Register(Default, Tool[getActionArgs]{
 		Name:        "get_action",
 		Description: "Fetch the full definition of an existing action — trigger, trigger config, every node with its node_config, and every edge. Use this before update_action so you know exactly what graph you are replacing. Caller must have action.manage on the workspace.",
+		Scopes:      []string{auth.ScopeActionsRead},
 		Run: func(_ context.Context, env *Env, args getActionArgs) (any, error) {
 			if !env.HasWorkspaceAccess(args.WorkspaceID) {
 				return map[string]string{"error": "workspace not found"}, nil
@@ -576,6 +581,7 @@ func init() {
 	Register(Default, Tool[updateActionArgs]{
 		Name:        "update_action",
 		Description: "Replace an existing action's full definition. The new graph is validated against the catalog before persisting (same checks as create_action). On success the workspace action cache is invalidated so the new automation takes effect immediately, and any in-app editor open on this action live-reloads. Caller must have action.manage on the workspace.",
+		Scopes:      []string{auth.ScopeActionsWrite},
 		Run: func(_ context.Context, env *Env, args updateActionArgs) (any, error) {
 			if !env.HasWorkspaceAccess(args.WorkspaceID) {
 				return map[string]string{"error": "workspace not found"}, nil
@@ -648,6 +654,7 @@ func init() {
 	Register(Default, Tool[listActionTemplatesArgs]{
 		Name:        "list_action_templates",
 		Description: "List the embedded action templates shipped with the server. These are known-good blueprints you can start from rather than constructing a graph from scratch. Use the apply endpoint (or copy the template's nodes/edges into create_action) to instantiate one.",
+		Scopes:      []string{auth.ScopeActionsRead},
 		Run: func(_ context.Context, _ *Env, _ listActionTemplatesArgs) (any, error) {
 			tmpls := actiontemplates.Registry()
 			out := listActionTemplatesOut{Templates: make([]templateDTO, 0, len(tmpls))}
