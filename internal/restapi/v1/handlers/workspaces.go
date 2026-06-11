@@ -353,6 +353,10 @@ func (h *WorkspaceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 // @Failure      500    {object}  handlers.ErrorResponse
 // @Router       /workspaces/{id}/items [get]
 func (h *WorkspaceHandler) GetItems(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.RequireAuth(w, r)
+	if !ok {
+		return
+	}
 	wsID, ok := h.RequireWorkspaceViewAccess(w, r)
 	if !ok {
 		return
@@ -374,6 +378,8 @@ func (h *WorkspaceHandler) GetItems(w http.ResponseWriter, r *http.Request) {
 		h.RespondInternalError(w, r)
 		return
 	}
+
+	h.maskProjectNames(user.ID, items)
 
 	response := dto.MapItemsToResponse(items, baseURL)
 	h.RespondPaginated(w, response, pagination, total)

@@ -161,6 +161,9 @@ func (h *ItemHandler) Search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Strip names of time projects the viewer has no access to, keeping the IDs.
+	h.maskInaccessibleProjectNames(user.ID, filteredItems)
+
 	respondJSONOK(w, filteredItems)
 }
 
@@ -375,6 +378,9 @@ func (h *ItemHandler) GetBacklogItems(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+
+	// Strip names of time projects the viewer has no access to, keeping the IDs.
+	h.maskInaccessibleProjectNames(user.ID, filteredItems)
 
 	totalPages := 0
 	if limit > 0 {

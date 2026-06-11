@@ -250,6 +250,8 @@ func (h *ItemHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.maskProjectNames(user.ID, items)
+
 	// Convert to DTOs
 	baseURL := getBaseURL(r)
 	itemResponses := dto.MapItemsToResponse(items, baseURL)
@@ -274,7 +276,7 @@ func (h *ItemHandler) List(w http.ResponseWriter, r *http.Request) {
 // @Failure      500  {object}  handlers.ErrorResponse
 // @Router       /items/{id} [get]
 func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
-	item, _, ok := h.requireItemAccess(w, r, true, h.Perms.CanViewWorkspace)
+	item, user, ok := h.requireItemAccess(w, r, true, h.Perms.CanViewWorkspace)
 	if !ok {
 		return
 	}
@@ -283,6 +285,7 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	itemID := item.ID
+	h.maskProjectNamesOne(user.ID, item)
 
 	// Convert to DTO
 	baseURL := getBaseURL(r)
@@ -382,6 +385,8 @@ func (h *ItemHandler) GetByKeyAndNumber(w http.ResponseWriter, r *http.Request) 
 	if !h.allowUnlessPersonalExcluded(w, r, item.WorkspaceID) {
 		return
 	}
+
+	h.maskProjectNamesOne(user.ID, item)
 
 	baseURL := getBaseURL(r)
 	response := dto.MapItemToResponse(item, baseURL)
@@ -541,6 +546,8 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.maskProjectNamesOne(user.ID, fullItem)
+
 	baseURL := getBaseURL(r)
 	response := dto.MapItemToResponse(fullItem, baseURL)
 
@@ -693,6 +700,8 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.maskProjectNamesOne(user.ID, result.Item)
+
 	baseURL := getBaseURL(r)
 	response := dto.MapItemToResponse(result.Item, baseURL)
 
@@ -742,6 +751,7 @@ func (h *ItemHandler) ChangeType(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if item.ItemTypeID != nil && *item.ItemTypeID == req.TargetItemTypeID && !analysis.RequiresMigration {
+		h.maskProjectNamesOne(user.ID, item)
 		h.RespondOK(w, dto.MapItemToResponse(item, getBaseURL(r)))
 		return
 	}
@@ -783,6 +793,7 @@ func (h *ItemHandler) ChangeType(w http.ResponseWriter, r *http.Request) {
 		h.RespondInternalError(w, r)
 		return
 	}
+	h.maskProjectNamesOne(user.ID, updated)
 	h.RespondOK(w, dto.MapItemToResponse(updated, getBaseURL(r)))
 }
 
@@ -863,6 +874,7 @@ func (h *ItemHandler) Transition(w http.ResponseWriter, r *http.Request) {
 		h.RespondInternalError(w, r)
 		return
 	}
+	h.maskProjectNamesOne(user.ID, fullItem)
 	h.RespondOK(w, dto.TransitionResultResponse{
 		Item:        dto.MapItemToResponse(fullItem, baseURL),
 		OldStatusID: result.OldStatusID,
@@ -1126,7 +1138,7 @@ func (h *ItemHandler) GetAttachments(w http.ResponseWriter, r *http.Request) {
 // @Failure      500  {object}  handlers.ErrorResponse
 // @Router       /items/{id}/children [get]
 func (h *ItemHandler) GetChildren(w http.ResponseWriter, r *http.Request) {
-	item, _, ok := h.requireItemAccess(w, r, false, h.Perms.CanViewWorkspace)
+	item, user, ok := h.requireItemAccess(w, r, false, h.Perms.CanViewWorkspace)
 	if !ok {
 		return
 	}
@@ -1143,6 +1155,8 @@ func (h *ItemHandler) GetChildren(w http.ResponseWriter, r *http.Request) {
 	for i, child := range childrenPtrs {
 		children[i] = *child
 	}
+
+	h.maskProjectNames(user.ID, children)
 
 	baseURL := getBaseURL(r)
 	response := dto.MapItemsToResponse(children, baseURL)
@@ -1209,6 +1223,8 @@ func (h *ItemHandler) Search(w http.ResponseWriter, r *http.Request) {
 		h.RespondInternalError(w, r)
 		return
 	}
+
+	h.maskProjectNames(user.ID, items)
 
 	baseURL := getBaseURL(r)
 	response := dto.MapItemsToResponse(items, baseURL)

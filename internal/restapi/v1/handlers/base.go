@@ -152,6 +152,20 @@ func (b *BaseHandler) RequireWorkspaceEditAccess(w http.ResponseWriter, r *http.
 	return wsID, true
 }
 
+// maskProjectNames blanks restricted time-project names (direct, time-tracking
+// and inherited effective project) on items before they are mapped to response
+// DTOs, mirroring the cookie-auth surface. IDs are kept; only names are stripped.
+func (b *BaseHandler) maskProjectNames(userID int, items []models.Item) {
+	services.NewTimePermissionService(b.DB, b.PermissionService).MaskInaccessibleProjectNames(userID, items)
+}
+
+// maskProjectNamesOne applies maskProjectNames to a single item in place.
+func (b *BaseHandler) maskProjectNamesOne(userID int, item *models.Item) {
+	masked := []models.Item{*item}
+	b.maskProjectNames(userID, masked)
+	*item = masked[0]
+}
+
 // ValidateRequiredString checks a required string field.
 func (b *BaseHandler) ValidateRequiredString(w http.ResponseWriter, r *http.Request, value, fieldName string) bool {
 	if strings.TrimSpace(value) == "" {

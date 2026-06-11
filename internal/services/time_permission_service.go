@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"windshift/internal/database"
 	"windshift/internal/models"
@@ -296,6 +297,51 @@ func (s *TimePermissionService) GetAccessibleProjects(userID int) ([]int, error)
 	}
 
 	return projectIDs, nil
+}
+
+// MaskInaccessibleProjectNames blanks the human-readable project name fields on
+// items whose project / time-project / effective-project the user is not allowed
+// to view, so a restricted time project's name isn't disclosed to item viewers
+// who lack time-project access. Project *IDs* are left intact (they carry no
+// name); only the names are stripped. A user with full project access (the
+// GetAccessibleProjects nil sentinel) is never masked.
+func (s *TimePermissionService) MaskInaccessibleProjectNames(userID int, items []models.Item) {
+	accessible, err := s.GetAccessibleProjects(userID)
+	if err != nil {
+		slog.Warn("failed to load accessible projects for masking", slog.Int("user_id", userID), slog.Any("error", err))
+		// Fail closed: if we can't determine access, strip names rather than leak.
+		for i := range items {
+			items[i].ProjectName = ""
+			items[i].TimeProjectName = ""
+			items[i].EffectiveProjectName = ""
+		}
+		return
+	}
+	if accessible == nil {
+		return // full access: nothing to mask
+	}
+	allowed := make(map[int]struct{}, len(accessible))
+	for _, id := range accessible {
+		allowed[id] = struct{}{}
+	}
+	canSee := func(p *int) bool {
+		if p == nil {
+			return true // no project assigned → no name to hide
+		}
+		_, ok := allowed[*p]
+		return ok
+	}
+	for i := range items {
+		if !canSee(items[i].ProjectID) {
+			items[i].ProjectName = ""
+		}
+		if !canSee(items[i].TimeProjectID) {
+			items[i].TimeProjectName = ""
+		}
+		if !canSee(items[i].EffectiveProjectID) {
+			items[i].EffectiveProjectName = ""
+		}
+	}
 }
 
 // CanEditWorklog checks if user can edit/delete a worklog

@@ -213,6 +213,8 @@ func (h *CollectionHandler) respondCollectionItems(w http.ResponseWriter, r *htt
 		return
 	}
 
+	h.maskProjectNames(user.ID, items)
+
 	baseURL := getBaseURL(r)
 	itemResponses := dto.MapItemsToResponse(items, baseURL)
 	h.RespondPaginated(w, itemResponses, pagination, total)

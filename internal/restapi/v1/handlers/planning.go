@@ -519,6 +519,8 @@ func (h *MilestoneHandler) GetItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.maskProjectNames(userID, items)
+
 	response := dto.MapItemsToResponse(items, baseURL)
 	h.RespondPaginated(w, response, pagination, total)
 }
@@ -806,6 +808,10 @@ func (h *MilestoneHandler) DeleteInWorkspace(w http.ResponseWriter, r *http.Requ
 // @Failure      500          {object}  handlers.ErrorResponse
 // @Router       /workspaces/{id}/milestones/{milestoneId}/items [get]
 func (h *MilestoneHandler) GetItemsInWorkspace(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.RequireAuth(w, r)
+	if !ok {
+		return
+	}
 	wsID, ok := h.RequireWorkspaceViewAccess(w, r)
 	if !ok {
 		return
@@ -835,6 +841,8 @@ func (h *MilestoneHandler) GetItemsInWorkspace(w http.ResponseWriter, r *http.Re
 		h.RespondInternalError(w, r)
 		return
 	}
+
+	h.maskProjectNames(user.ID, items)
 
 	response := dto.MapItemsToResponse(items, baseURL)
 	h.RespondPaginated(w, response, pagination, total)
