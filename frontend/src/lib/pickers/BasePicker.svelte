@@ -223,7 +223,9 @@
       event.preventDefault();
       event.stopPropagation();
 
-      if (event.key === 'Enter' && canCreateCurrentInput()) {
+      // A highlighted option always wins; create-on-Enter only fires when
+      // there is no selectable option for the query (e.g. zero matches).
+      if (event.key === 'Enter' && totalItems === 0 && canCreateCurrentInput()) {
         await handleCreateOption();
         return;
       }
