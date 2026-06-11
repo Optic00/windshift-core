@@ -36,3 +36,63 @@ func GetAccessibleWorkspaceIDs(db database.Database, userID int) ([]int, error) 
 	}
 	return ids, rows.Err()
 }
+
+// FilterSharedWorkspaceIDs returns ids with personal workspaces removed.
+// Backs the v1 API's exclude_personal query parameter: integration surfaces
+// (e.g. embedding items in shared documents) must not expose the caller's
+// personal-workspace items even though the caller themselves can see them.
+func FilterSharedWorkspaceIDs(db database.Database, ids []int) ([]int, error) {
+	if len(ids) == 0 {
+		return ids, nil
+	}
+	placeholders := make([]byte, 0, len(ids)*2)
+	args := make([]interface{}, 0, len(ids))
+	for i, id := range ids {
+		if i > 0 {
+			placeholders = append(placeholders, ',')
+		}
+		placeholders = append(placeholders, '?')
+		args = append(args, id)
+	}
+	rows, err := db.Query(`
+		SELECT id FROM workspaces
+		WHERE id IN (`+string(placeholders)+`) AND is_personal = true
+	`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	personal := make(map[int]bool)
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		personal[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	shared := make([]int, 0, len(ids))
+	for _, id := range ids {
+		if !personal[id] {
+			shared = append(shared, id)
+		}
+	}
+	return shared, nil
+}
+
+// IsPersonalWorkspace reports whether the workspace is a personal workspace.
+func IsPersonalWorkspace(db database.Database, workspaceID int) (bool, error) {
+	var isPersonal bool
+	err := db.QueryRow(
+		`SELECT COALESCE(is_personal, false) FROM workspaces WHERE id = ?`,
+		workspaceID,
+	).Scan(&isPersonal)
+	if err != nil {
+		return false, err
+	}
+	return isPersonal, nil
+}

@@ -1957,6 +1957,34 @@
         },
         "type": "object"
       },
+      "handlers.agentSkillListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/handlers.agentSkillSummary"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "handlers.agentSkillSummary": {
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "handlers.capabilityDTO": {
         "properties": {
           "capability_type": {
@@ -2609,6 +2637,62 @@
           "ActionTriggerSCMReleaseBranchCreated"
         ]
       },
+      "models.Attachment": {
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "file_size": {
+            "type": "integer"
+          },
+          "filename": {
+            "description": "Stored filename (UUID-based)",
+            "type": "string"
+          },
+          "has_thumbnail": {
+            "description": "Whether thumbnail was generated",
+            "type": "boolean"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "item_id": {
+            "type": "integer"
+          },
+          "mime_type": {
+            "type": "string"
+          },
+          "original_filename": {
+            "description": "Original user filename",
+            "type": "string"
+          },
+          "uploaded_by": {
+            "type": "integer"
+          },
+          "uploader_email": {
+            "type": "string"
+          },
+          "uploader_name": {
+            "description": "Joined fields for API responses",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "models.AttachmentUploadResponse": {
+        "properties": {
+          "attachment": {
+            "$ref": "#/components/schemas/models.Attachment"
+          },
+          "message": {
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
       "models.CalendarScheduleEntry": {
         "properties": {
           "created_at": {
@@ -2801,6 +2885,10 @@
           "parent_title": {
             "type": "string"
           },
+          "parent_workspace_item_number": {
+            "description": "Parent's workspace-scoped number, for rendering the parent key",
+            "type": "integer"
+          },
           "personal_labels": {
             "items": {
               "$ref": "#/components/schemas/models.PersonalLabel"
@@ -2887,6 +2975,10 @@
           },
           "status_name": {
             "description": "Name from statuses table (joined field)",
+            "type": "string"
+          },
+          "status_since": {
+            "description": "StatusSince is when the item last entered its current status, derived from\nitem_history (falls back to created_at when there is no recorded change).",
             "type": "string"
           },
           "story_points": {
@@ -3610,6 +3702,39 @@
           },
           "updated_at": {
             "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "models.WorkspaceAgentSkill": {
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "created_by_user_id": {
+            "description": "CreatedByUserID is a soft audit ref; nil when the creator was deleted.",
+            "type": "integer"
+          },
+          "description": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "workspace_id": {
+            "type": "integer"
           }
         },
         "type": "object"
@@ -5796,6 +5921,14 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "description": "Exclude items from the caller's personal workspaces",
+            "in": "query",
+            "name": "exclude_personal",
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -7041,6 +7174,14 @@
             "required": true,
             "schema": {
               "type": "integer"
+            }
+          },
+          {
+            "description": "Treat items in the caller's personal workspaces as not found",
+            "in": "query",
+            "name": "exclude_personal",
+            "schema": {
+              "type": "boolean"
             }
           }
         ],
@@ -10298,6 +10439,14 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "description": "Exclude items from the caller's personal workspaces",
+            "in": "query",
+            "name": "exclude_personal",
+            "schema": {
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -12097,6 +12246,167 @@
         "summary": "Replace an action's definition",
         "tags": [
           "actions"
+        ]
+      }
+    },
+    "/workspaces/{id}/agent-skills": {
+      "get": {
+        "parameters": [
+          {
+            "description": "Workspace ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.agentSkillListResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid workspace ID"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Workspace not found or caller lacks item.view"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List agent skills in a workspace",
+        "tags": [
+          "agents"
+        ]
+      }
+    },
+    "/workspaces/{id}/agent-skills/{skillId}": {
+      "get": {
+        "parameters": [
+          {
+            "description": "Workspace ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Skill ID",
+            "in": "path",
+            "name": "skillId",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/models.WorkspaceAgentSkill"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid workspace or skill ID"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Skill not found in this workspace or caller lacks item.view"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Get an agent skill by ID",
+        "tags": [
+          "agents"
         ]
       }
     },
@@ -15017,8 +15327,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/components/schemas/models.AttachmentUploadResponse"
                 }
               }
             },
@@ -22925,6 +23234,14 @@
             "required": true,
             "schema": {
               "type": "integer"
+            }
+          },
+          {
+            "description": "Treat items in the caller's personal workspaces as not found",
+            "in": "query",
+            "name": "exclude_personal",
+            "schema": {
+              "type": "boolean"
             }
           }
         ],

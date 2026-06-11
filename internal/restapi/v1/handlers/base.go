@@ -160,3 +160,12 @@ func (b *BaseHandler) ValidateRequiredString(w http.ResponseWriter, r *http.Requ
 	}
 	return true
 }
+
+// ExcludePersonal reports whether the request opts out of personal-workspace
+// results via the exclude_personal query parameter. Integration surfaces that
+// republish items into shared contexts (e.g. document embeds) set this so the
+// caller's own personal items never leak into pages other people read.
+func ExcludePersonal(r *http.Request) bool {
+	v := r.URL.Query().Get("exclude_personal")
+	return v == "true" || v == "1"
+}

@@ -111,6 +111,25 @@ func (h *ItemHandler) requireItemAccess(w http.ResponseWriter, r *http.Request, 
 	return item, user, true
 }
 
+// allowUnlessPersonalExcluded enforces the exclude_personal query parameter
+// on single-item fetches: when set and the item's workspace is personal, the
+// item is reported as not found (mirroring the visibility 404 contract).
+func (h *ItemHandler) allowUnlessPersonalExcluded(w http.ResponseWriter, r *http.Request, workspaceID int) bool {
+	if !ExcludePersonal(r) {
+		return true
+	}
+	personal, err := repository.IsPersonalWorkspace(h.DB, workspaceID)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return false
+	}
+	if personal {
+		h.RespondError(w, r, restapi.ErrItemNotFound)
+		return false
+	}
+	return true
+}
+
 // List handles GET /rest/api/v1/items
 //
 // @Summary      List items visible to the caller
@@ -245,7 +264,8 @@ func (h *ItemHandler) List(w http.ResponseWriter, r *http.Request) {
 // @Tags         items
 // @Produce      json
 // @Security     BearerAuth
-// @Param        id   path      int  true  "Item ID"
+// @Param        id                path      int   true   "Item ID"
+// @Param        exclude_personal  query     bool  false  "Treat items in the caller's personal workspaces as not found"
 // @Success      200  {object}  dto.ItemResponse
 // @Failure      400  {object}  handlers.ErrorResponse  "Invalid item ID"
 // @Failure      401  {object}  handlers.ErrorResponse
@@ -256,6 +276,9 @@ func (h *ItemHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 	item, _, ok := h.requireItemAccess(w, r, true, h.Perms.CanViewWorkspace)
 	if !ok {
+		return
+	}
+	if !h.allowUnlessPersonalExcluded(w, r, item.WorkspaceID) {
 		return
 	}
 
@@ -305,7 +328,8 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 // @Produce      json
 // @Security     BearerAuth
 // @Param        ws_key  path      string  true  "Workspace key (e.g. PROJ)"
-// @Param        number  path      int     true  "Per-workspace item number"
+// @Param        number            path      int   true   "Per-workspace item number"
+// @Param        exclude_personal  query     bool  false  "Treat items in the caller's personal workspaces as not found"
 // @Success      200     {object}  dto.ItemResponse
 // @Failure      400     {object}  handlers.ErrorResponse  "Invalid workspace key or item number"
 // @Failure      401     {object}  handlers.ErrorResponse
@@ -353,6 +377,9 @@ func (h *ItemHandler) GetByKeyAndNumber(w http.ResponseWriter, r *http.Request) 
 	if err != nil || !allowed {
 		// 404, never 403 — do not leak that the item exists.
 		h.RespondError(w, r, restapi.ErrItemNotFound)
+		return
+	}
+	if !h.allowUnlessPersonalExcluded(w, r, item.WorkspaceID) {
 		return
 	}
 
@@ -1129,11 +1156,12 @@ func (h *ItemHandler) GetChildren(w http.ResponseWriter, r *http.Request) {
 // @Tags         items, search
 // @Produce      json
 // @Security     BearerAuth
-// @Param        q      query     string  true   "Search query"
-// @Param        page   query     int     false  "Page number (1-based)"
-// @Param        limit  query     int     false  "Items per page (max 100)"
-// @Param        sort   query     string  false  "Sort field"
-// @Param        order  query     string  false  "Sort order: asc or desc"
+// @Param        q                 query     string  true   "Search query"
+// @Param        page              query     int     false  "Page number (1-based)"
+// @Param        limit             query     int     false  "Items per page (max 100)"
+// @Param        sort              query     string  false  "Sort field"
+// @Param        order             query     string  false  "Sort order: asc or desc"
+// @Param        exclude_personal  query     bool    false  "Exclude items from the caller's personal workspaces"
 // @Success      200    {object}  handlers.PaginatedResponse{data=[]dto.ItemResponse}
 // @Failure      400    {object}  handlers.ErrorResponse  "Missing or invalid q parameter"
 // @Failure      401    {object}  handlers.ErrorResponse
@@ -1158,6 +1186,13 @@ func (h *ItemHandler) Search(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.RespondInternalError(w, r)
 		return
+	}
+	if ExcludePersonal(r) {
+		accessibleWorkspaceIDs, err = repository.FilterSharedWorkspaceIDs(h.DB, accessibleWorkspaceIDs)
+		if err != nil {
+			h.RespondInternalError(w, r)
+			return
+		}
 	}
 
 	if len(accessibleWorkspaceIDs) == 0 {

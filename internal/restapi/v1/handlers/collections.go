@@ -102,11 +102,12 @@ func (h *CollectionHandler) Get(w http.ResponseWriter, r *http.Request) {
 // @Tags         collections
 // @Produce      json
 // @Security     BearerAuth
-// @Param        key    path      string  true   "Collection id (numeric) or public_slug"
-// @Param        page   query     int     false  "Page number (1-based)"
-// @Param        limit  query     int     false  "Items per page (max 100)"
-// @Param        sort   query     string  false  "Sort field"
-// @Param        order  query     string  false  "Sort order: asc or desc"
+// @Param        key               path      string  true   "Collection id (numeric) or public_slug"
+// @Param        page              query     int     false  "Page number (1-based)"
+// @Param        limit             query     int     false  "Items per page (max 100)"
+// @Param        sort              query     string  false  "Sort field"
+// @Param        order             query     string  false  "Sort order: asc or desc"
+// @Param        exclude_personal  query     bool    false  "Exclude items from the caller's personal workspaces"
 // @Success      200    {object}  handlers.PaginatedResponse{data=[]dto.ItemResponse}
 // @Failure      400    {object}  handlers.ErrorResponse  "Invalid QL query stored on the collection"
 // @Failure      401    {object}  handlers.ErrorResponse
@@ -175,6 +176,13 @@ func (h *CollectionHandler) respondCollectionItems(w http.ResponseWriter, r *htt
 			"message": "Failed to get accessible workspaces",
 		}))
 		return
+	}
+	if ExcludePersonal(r) {
+		accessibleWorkspaceIDs, err = repository.FilterSharedWorkspaceIDs(h.DB, accessibleWorkspaceIDs)
+		if err != nil {
+			h.RespondInternalError(w, r)
+			return
+		}
 	}
 	if len(accessibleWorkspaceIDs) == 0 {
 		h.RespondPaginated(w, []dto.ItemResponse{}, pagination, 0)
