@@ -11,11 +11,13 @@ import (
 )
 
 type listCommentsArgs struct {
-	ItemID int `json:"item_id" jsonschema:"Item ID to list comments for"`
+	ItemID  int    `json:"item_id,omitempty" jsonschema:"Item ID to list comments for. Provide either this or item_key."`
+	ItemKey string `json:"item_key,omitempty" jsonschema:"Item key like PROJ-42. Provide either this or item_id."`
 }
 
 type addCommentArgs struct {
-	ItemID  int    `json:"item_id" jsonschema:"Item ID to add comment to"`
+	ItemID  int    `json:"item_id,omitempty" jsonschema:"Item ID to add comment to. Provide either this or item_key."`
+	ItemKey string `json:"item_key,omitempty" jsonschema:"Item key like PROJ-42. Provide either this or item_id."`
 	Content string `json:"content" jsonschema:"Comment content (plain text or TipTap JSON)"`
 }
 
@@ -57,20 +59,21 @@ type updateCommentOut struct {
 func init() {
 	Register(Default, Tool[listCommentsArgs]{
 		Name:        "list_comments",
-		Description: "List all comments on a work item.",
+		Description: "List all comments on a work item. Identifies the item by numeric ID or key (e.g. PROJ-42).",
 		Scopes:      []string{auth.ScopeItemsRead},
 		Run: func(_ context.Context, env *Env, args listCommentsArgs) (any, error) {
-			if args.ItemID <= 0 {
-				return map[string]string{"error": "item_id is required"}, nil
+			itemID, err := resolveItemID(env.DB, args.ItemID, args.ItemKey)
+			if err != nil {
+				return map[string]string{"error": err.Error()}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
 			}
-			item, err := services.NewItemCRUDService(env.DB).GetByID(args.ItemID)
+			item, err := services.NewItemCRUDService(env.DB).GetByID(itemID)
 			if err != nil {
 				return map[string]string{"error": "item not found"}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
 			}
 			if !env.HasWorkspaceAccess(item.WorkspaceID) {
 				return map[string]string{"error": "item not found"}, nil
 			}
-			comments, err := env.CommentService.GetByItemID(args.ItemID)
+			comments, err := env.CommentService.GetByItemID(itemID)
 			if err != nil {
 				return nil, err
 			}
@@ -80,16 +83,17 @@ func init() {
 
 	Register(Default, Tool[addCommentArgs]{
 		Name:        "add_comment",
-		Description: "Add a comment to a work item.",
+		Description: "Add a comment to a work item. Identifies the item by numeric ID or key (e.g. PROJ-42).",
 		Scopes:      []string{auth.ScopeItemsWrite},
 		Run: func(_ context.Context, env *Env, args addCommentArgs) (any, error) {
-			if args.ItemID <= 0 {
-				return map[string]string{"error": "item_id is required"}, nil
+			itemID, err := resolveItemID(env.DB, args.ItemID, args.ItemKey)
+			if err != nil {
+				return map[string]string{"error": err.Error()}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
 			}
 			if strings.TrimSpace(args.Content) == "" {
 				return map[string]string{"error": "content is required"}, nil
 			}
-			item, err := services.NewItemCRUDService(env.DB).GetByID(args.ItemID)
+			item, err := services.NewItemCRUDService(env.DB).GetByID(itemID)
 			if err != nil {
 				return map[string]string{"error": "item not found"}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
 			}
@@ -104,7 +108,7 @@ func init() {
 				return map[string]string{"error": "permission denied"}, nil
 			}
 			result, err := env.CommentService.Create(services.CreateCommentParams{
-				ItemID:      args.ItemID,
+				ItemID:      itemID,
 				AuthorID:    env.UserID,
 				Content:     args.Content,
 				ActorUserID: env.UserID,
@@ -112,7 +116,7 @@ func init() {
 			if err != nil {
 				return nil, err
 			}
-			return addCommentOut{ID: result.CommentID, ItemID: args.ItemID, Content: args.Content}, nil
+			return addCommentOut{ID: result.CommentID, ItemID: itemID, Content: args.Content}, nil
 		},
 	})
 

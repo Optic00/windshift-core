@@ -572,8 +572,8 @@ func buildChatContextHint(ctx *ChatContext) string {
 	case "item-detail":
 		if ctx.ItemKey != "" {
 			return fmt.Sprintf(
-				"\n\nThe user is currently viewing work item %s. If they ask you to read, summarize, or change the current item, call get_item with item_key=%q before answering or mutating. Use update_item with item_key=%q for field changes, transition_item with item_key=%q for status changes, and get_item_children if they ask about sub-tasks. For comments, first use get_item to resolve the numeric item id, then call list_comments or add_comment with that item_id. After a mutating tool succeeds, do not call it again; summarize the completed change to the user.",
-				ctx.ItemKey, ctx.ItemKey, ctx.ItemKey, ctx.ItemKey,
+				"\n\nThe user is currently viewing work item %s. If they ask you to read, summarize, or change the current item, call get_item with item_key=%q before answering or mutating. Use update_item with item_key=%q for field changes, transition_item with item_key=%q for status changes, add_comment with item_key=%q for comments, and get_item_children if they ask about sub-tasks. After a mutating tool succeeds, do not call it again; summarize the completed change to the user.",
+				ctx.ItemKey, ctx.ItemKey, ctx.ItemKey, ctx.ItemKey, ctx.ItemKey,
 			)
 		}
 		if ctx.ItemID > 0 {

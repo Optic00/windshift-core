@@ -79,7 +79,8 @@ type logTimeArgs struct {
 	DurationMinutes int    `json:"duration_minutes,omitempty" jsonschema:"Alternative to duration: minutes as integer"`
 	StartTime       string `json:"start_time,omitempty" jsonschema:"HH:MM start time. Pair with end_time."`
 	EndTime         string `json:"end_time,omitempty" jsonschema:"HH:MM end time. Pair with start_time."`
-	ItemID          *int   `json:"item_id,omitempty" jsonschema:"Optional linked work item ID"`
+	ItemID          *int   `json:"item_id,omitempty" jsonschema:"Optional linked work item ID (alternative: item_key)"`
+	ItemKey         string `json:"item_key,omitempty" jsonschema:"Optional linked work item key like PROJ-42 (alternative to item_id)"`
 }
 
 type logTimeOut struct {
@@ -99,7 +100,8 @@ type startTimerArgs struct {
 	ProjectID   int    `json:"project_id" jsonschema:"Time project ID"`
 	WorkspaceID int    `json:"workspace_id" jsonschema:"Workspace ID"`
 	Description string `json:"description" jsonschema:"Timer description"`
-	ItemID      *int   `json:"item_id,omitempty" jsonschema:"Optional linked work item ID"`
+	ItemID      *int   `json:"item_id,omitempty" jsonschema:"Optional linked work item ID (alternative: item_key)"`
+	ItemKey     string `json:"item_key,omitempty" jsonschema:"Optional linked work item key like PROJ-42 (alternative to item_id)"`
 }
 
 type startTimerOut struct {
@@ -247,7 +249,7 @@ func init() {
 
 	Register(Default, Tool[logTimeArgs]{
 		Name:        "log_time",
-		Description: "Log a time entry on a time tracking project. Provide duration (e.g. '2h', '30m', '1h30m', '1d') OR duration_minutes OR start_time + end_time (HH:MM).",
+		Description: "Log a time entry on a time tracking project. Provide duration (e.g. '2h', '30m', '1h30m', '1d') OR duration_minutes OR start_time + end_time (HH:MM). An optional work item can be linked by numeric ID or key (e.g. PROJ-42).",
 		Scopes:      []string{auth.ScopeItemsWrite}, // time tracking has no dedicated token scope yet (WI-365)
 		Run: func(_ context.Context, env *Env, args logTimeArgs) (any, error) {
 			if args.ProjectID == 0 || args.Description == "" || args.Date == "" {
@@ -317,16 +319,9 @@ func init() {
 			if durationMins <= 0 {
 				return map[string]string{"error": "duration must be positive"}, nil
 			}
-			var itemID *int
-			if args.ItemID != nil && *args.ItemID > 0 {
-				wsID, err := repository.NewItemRepository(env.DB).GetWorkspaceID(*args.ItemID)
-				if err != nil {
-					return map[string]string{"error": "item not found"}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
-				}
-				if !env.HasWorkspaceAccess(wsID) {
-					return map[string]string{"error": "item not found"}, nil
-				}
-				itemID = args.ItemID
+			itemID, toolErr := resolveOptionalItemRef(env, args.ItemID, args.ItemKey)
+			if toolErr != nil {
+				return toolErr, nil
 			}
 			id, err := repository.NewTimeWorklogRepository(env.DB).Create(repository.NewWorklog{
 				ProjectID:       args.ProjectID,
@@ -355,10 +350,14 @@ func init() {
 
 	Register(Default, Tool[startTimerArgs]{
 		Name:        "start_timer",
-		Description: "Start a time tracking timer. Only one timer can be active at a time.",
+		Description: "Start a time tracking timer. Only one timer can be active at a time. An optional work item can be linked by numeric ID or key (e.g. PROJ-42).",
 		Scopes:      []string{auth.ScopeItemsWrite}, // time tracking has no dedicated token scope yet (WI-365)
 		Run: func(_ context.Context, env *Env, args startTimerArgs) (any, error) {
-			timer, err := env.TimerService.StartTimer(env.UserID, args.WorkspaceID, args.ProjectID, args.ItemID, args.Description)
+			itemID, toolErr := resolveOptionalItemRef(env, args.ItemID, args.ItemKey)
+			if toolErr != nil {
+				return toolErr, nil
+			}
+			timer, err := env.TimerService.StartTimer(env.UserID, args.WorkspaceID, args.ProjectID, itemID, args.Description)
 			if err != nil {
 				if msg, ok := timerErrToToolMessage(err); ok {
 					return map[string]string{"error": msg}, nil
@@ -399,6 +398,33 @@ func init() {
 			}, nil
 		},
 	})
+}
+
+// resolveOptionalItemRef resolves the optional work-item reference time tools
+// accept (numeric item_id or item_key like PROJ-42). Returns (nil, nil) when
+// neither is provided. Resolution failures and items outside the caller's
+// accessible workspaces both surface as the generic "item not found" tool
+// error so item existence is never leaked.
+func resolveOptionalItemRef(env *Env, itemID *int, itemKey string) (*int, any) {
+	if (itemID == nil || *itemID <= 0) && itemKey == "" {
+		return nil, nil
+	}
+	rawID := 0
+	if itemID != nil {
+		rawID = *itemID
+	}
+	id, err := resolveItemID(env.DB, rawID, itemKey)
+	if err != nil {
+		return nil, map[string]string{"error": err.Error()}
+	}
+	wsID, err := repository.NewItemRepository(env.DB).GetWorkspaceID(id)
+	if err != nil {
+		return nil, map[string]string{"error": "item not found"}
+	}
+	if !env.HasWorkspaceAccess(wsID) {
+		return nil, map[string]string{"error": "item not found"}
+	}
+	return &id, nil
 }
 
 // timerErrToToolMessage maps TimerService sentinel errors to the

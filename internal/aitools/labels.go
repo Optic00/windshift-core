@@ -27,8 +27,9 @@ type listLabelsOut struct {
 }
 
 type setItemLabelsArgs struct {
-	ItemID   int   `json:"item_id" jsonschema:"Item ID to set labels on"`
-	LabelIDs []int `json:"label_ids" jsonschema:"Label IDs to set (replaces all existing labels)"`
+	ItemID   int    `json:"item_id,omitempty" jsonschema:"Item ID to set labels on. Provide either this or item_key."`
+	ItemKey  string `json:"item_key,omitempty" jsonschema:"Item key like PROJ-42. Provide either this or item_id."`
+	LabelIDs []int  `json:"label_ids" jsonschema:"Label IDs to set (replaces all existing labels)"`
 }
 
 type setItemLabelsOut struct {
@@ -60,10 +61,14 @@ func init() {
 
 	Register(Default, Tool[setItemLabelsArgs]{
 		Name:        "set_item_labels",
-		Description: "Set labels on a work item (replaces existing labels).",
+		Description: "Set labels on a work item (replaces existing labels). Identifies the item by numeric ID or key (e.g. PROJ-42).",
 		Scopes:      []string{auth.ScopeItemsWrite},
 		Run: func(_ context.Context, env *Env, args setItemLabelsArgs) (any, error) {
-			item, err := services.NewItemCRUDService(env.DB).GetByID(args.ItemID)
+			itemID, err := resolveItemID(env.DB, args.ItemID, args.ItemKey)
+			if err != nil {
+				return map[string]string{"error": err.Error()}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
+			}
+			item, err := services.NewItemCRUDService(env.DB).GetByID(itemID)
 			if err != nil {
 				return map[string]string{"error": "item not found"}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
 			}
@@ -100,10 +105,10 @@ func init() {
 				seen[labelID] = true
 				labelIDs = append(labelIDs, labelID)
 			}
-			if err := labelRepo.ReplaceItemLabels(args.ItemID, labelIDs); err != nil {
+			if err := labelRepo.ReplaceItemLabels(itemID, labelIDs); err != nil {
 				return nil, err
 			}
-			return setItemLabelsOut{ItemID: args.ItemID, LabelIDs: args.LabelIDs, Updated: true}, nil
+			return setItemLabelsOut{ItemID: itemID, LabelIDs: args.LabelIDs, Updated: true}, nil
 		},
 	})
 }

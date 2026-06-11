@@ -404,11 +404,15 @@ func init() {
 	// ------------------------------------------------------------------------
 	Register(Default, Tool[deleteItemArgs]{
 		Name:        "delete_item",
-		Description: "Delete a work item and all its descendants.",
+		Description: "Delete a work item and all its descendants. Identifies the item by numeric ID or key (e.g. PROJ-42).",
 		Scopes:      []string{auth.ScopeItemsDelete},
 		Run: func(_ context.Context, env *Env, args deleteItemArgs) (any, error) {
+			itemID, err := resolveItemID(env.DB, args.ItemID, args.ItemKey)
+			if err != nil {
+				return map[string]string{"error": err.Error()}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
+			}
 			crudSvc := services.NewItemCRUDService(env.DB)
-			item, err := crudSvc.GetByID(args.ItemID)
+			item, err := crudSvc.GetByID(itemID)
 			if err != nil {
 				return map[string]string{"error": "item not found"}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
 			}
@@ -422,7 +426,7 @@ func init() {
 			if !ok {
 				return map[string]string{"error": "permission denied"}, nil
 			}
-			result, err := crudSvc.Delete(args.ItemID)
+			result, err := crudSvc.Delete(itemID)
 			if err != nil {
 				return nil, err
 			}
@@ -435,18 +439,22 @@ func init() {
 	// ------------------------------------------------------------------------
 	Register(Default, Tool[getItemChildrenArgs]{
 		Name:        "get_item_children",
-		Description: "Get the direct children of a work item.",
+		Description: "Get the direct children of a work item. Identifies the parent by numeric ID or key (e.g. PROJ-42).",
 		Scopes:      []string{auth.ScopeItemsRead},
 		Run: func(_ context.Context, env *Env, args getItemChildrenArgs) (any, error) {
+			itemID, err := resolveItemID(env.DB, args.ItemID, args.ItemKey)
+			if err != nil {
+				return map[string]string{"error": err.Error()}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
+			}
 			crudSvc := services.NewItemCRUDService(env.DB)
-			item, err := crudSvc.GetByID(args.ItemID)
+			item, err := crudSvc.GetByID(itemID)
 			if err != nil {
 				return map[string]string{"error": "item not found"}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
 			}
 			if !env.HasWorkspaceAccess(item.WorkspaceID) {
 				return map[string]string{"error": "item not found"}, nil
 			}
-			children, err := crudSvc.GetChildren(args.ItemID)
+			children, err := crudSvc.GetChildren(itemID)
 			if err != nil {
 				return nil, err
 			}
@@ -572,11 +580,13 @@ type updateItemArgs struct {
 }
 
 type deleteItemArgs struct {
-	ItemID int `json:"item_id" jsonschema:"Item ID to delete (also deletes descendants)"`
+	ItemID  int    `json:"item_id,omitempty" jsonschema:"Item ID to delete (also deletes descendants). Provide either this or item_key."`
+	ItemKey string `json:"item_key,omitempty" jsonschema:"Item key like PROJ-42. Provide either this or item_id."`
 }
 
 type getItemChildrenArgs struct {
-	ItemID int `json:"item_id" jsonschema:"Parent item ID"`
+	ItemID  int    `json:"item_id,omitempty" jsonschema:"Parent item ID. Provide either this or item_key."`
+	ItemKey string `json:"item_key,omitempty" jsonschema:"Parent item key like PROJ-42. Provide either this or item_id."`
 }
 
 type transitionItemArgs struct {
