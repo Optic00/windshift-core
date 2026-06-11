@@ -4,6 +4,10 @@
   import CustomFieldRenderer from '../items/CustomFieldRenderer.svelte';
   import ColorDot from '../../components/ColorDot.svelte';
   import { Calendar, User, Target, Globe, Building2 } from '@lucide/svelte';
+  import {
+    milestonePickerConfig as milestoneConfig,
+    iterationPickerConfig as iterationConfig,
+  } from '../../pickers/pickerConfigs.js';
 
   let {
     field,
@@ -15,19 +19,6 @@
     onChange = (_value) => {}
   } = $props();
 
-  const milestoneConfig = {
-    getValue: (item) => item.id,
-    getLabel: (item) => item.name,
-    searchFields: ['name'],
-    groupBy: null
-  };
-
-  const iterationConfig = {
-    getValue: (item) => item.id,
-    getLabel: (item) => item.name,
-    searchFields: ['name'],
-    groupBy: (item) => item.is_global ? 'Global' : 'Team'
-  };
 </script>
 
 {#if field.field_type === 'milestone'}

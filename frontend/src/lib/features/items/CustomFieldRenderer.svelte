@@ -15,6 +15,10 @@
   import { formatCustomFieldDate } from '../../utils/dateFormatter.js';
   import { parseFieldOptions, resolveOptionLabel, resolveOptionLabels } from '../../utils/optionUtils.js';
   import { safeHref } from '../../utils/sanitize';
+  import {
+    milestonePickerConfig as milestoneConfig,
+    iterationPickerConfig as iterationConfig,
+  } from '../../pickers/pickerConfigs.js';
 
   // Helper to parse field options into [{id, label}] items
   function parseOptions(optionsStr) {
@@ -65,22 +69,6 @@
   } = $props();
 
   const isRequired = $derived(required || field.required || field.is_required);
-
-  // Milestone config for ItemPicker
-  const milestoneConfig = {
-    getValue: (item) => item.id,
-    getLabel: (item) => item.name,
-    searchFields: ['name'],
-    groupBy: null
-  };
-
-  // Iteration config for ItemPicker
-  const iterationConfig = {
-    getValue: (item) => item.id,
-    getLabel: (item) => item.name,
-    searchFields: ['name'],
-    groupBy: (item) => item.is_global ? 'Global' : 'Team'
-  };
 
   // Custom-field dates are calendar days, not moments in time — keep them as
   // YYYY-MM-DD strings end-to-end to avoid timezone drift.

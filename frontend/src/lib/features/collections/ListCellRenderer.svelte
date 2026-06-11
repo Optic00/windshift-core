@@ -13,6 +13,12 @@
   import { Calendar, User, Target, Globe, Building2, FolderKanban } from '@lucide/svelte';
   import { itemTypeIconMap } from '../../utils/icons.js';
   import { formatDate } from '../../utils/dateFormatter.js';
+  import {
+    createStatusPickerConfig,
+    priorityPickerConfig as priorityConfig,
+    iterationPickerConfig as iterationConfig,
+    projectPickerConfig as projectConfig,
+  } from '../../pickers/pickerConfigs.js';
 
   let {
     item,
@@ -87,52 +93,7 @@
   }
 
   // Configs for pickers
-  const statusConfig = {
-    icon: {
-      type: 'color-dot',
-      source: (status) => {
-        const category = statusCategories.find(sc => sc.id === status.category_id);
-        return category?.color || '#6b7280';
-      },
-      size: 'w-2 h-2'
-    },
-    primary: { text: (status) => status.name },
-    getValue: (status) => status.id,
-    getLabel: (status) => status.name,
-    searchFields: ['name']
-  };
-
-  const priorityConfig = {
-    icon: {
-      type: 'color-dot',
-      source: (priority) => priority.color || '#6b7280',
-      size: 'w-2 h-2'
-    },
-    primary: { text: (priority) => priority.name },
-    getValue: (priority) => priority.id,
-    getLabel: (priority) => priority.name,
-    searchFields: ['name']
-  };
-
-  const milestoneConfig = {
-    getValue: (item) => item.id,
-    getLabel: (item) => item.name,
-    searchFields: ['name'],
-    groupBy: null
-  };
-
-  const iterationConfig = {
-    getValue: (item) => item.id,
-    getLabel: (item) => item.name,
-    searchFields: ['name'],
-    groupBy: (item) => item.is_global ? 'Global' : 'Team'
-  };
-
-  const projectConfig = {
-    getValue: (project) => project.id,
-    getLabel: (project) => project.name,
-    searchFields: ['name']
-  };
+  const statusConfig = $derived(createStatusPickerConfig(statusCategories));
 </script>
 
 {#if column.field_type === 'system'}
