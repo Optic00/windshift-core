@@ -15,22 +15,32 @@ import (
 	"windshift/internal/utils"
 )
 
-// sanitizeAssetReport scrubs the user-facing fields on an asset report
+// sanitizeAssetReport gates the user-facing fields on an asset report
 // payload. Name + Description render in the portal report list and
-// audit log; CQLQuery + the Config blob are long-form text; Icon /
-// Color / column identifiers are identifier-shaped.
-func sanitizeAssetReport(ar *models.AssetReport) {
+// audit log; CQLQuery is query text whose comparison operators are
+// load-bearing, so it is length-capped only; the Config blob is JSON —
+// HTML stripping would corrupt it, so it is validated (size +
+// well-formed JSON) and rejected instead of scrubbed; Icon / Color /
+// column identifiers are identifier-shaped. Writes a validation error
+// and returns false when Config is rejected.
+func sanitizeAssetReport(w http.ResponseWriter, r *http.Request, ar *models.AssetReport) bool {
 	sanitize.ApplyAll(
 		sanitize.Pair{Target: &ar.Name, Policy: sanitize.PlainTextField},
 		sanitize.Pair{Target: &ar.Description, Policy: sanitize.RichText},
-		sanitize.Pair{Target: &ar.CQLQuery, Policy: sanitize.LongDocument},
+		sanitize.Pair{Target: &ar.CQLQuery, Policy: sanitize.QueryText},
 		sanitize.Pair{Target: &ar.Icon, Policy: sanitize.ShortIdentifier},
 		sanitize.Pair{Target: &ar.Color, Policy: sanitize.ShortIdentifier},
-		sanitize.Pair{Target: ar.Config, Policy: sanitize.LongDocument},
 	)
 	for i := range ar.ColumnConfig {
 		sanitize.Apply(&ar.ColumnConfig[i], sanitize.ShortIdentifier)
 	}
+	if ar.Config != nil {
+		if err := sanitize.ValidateJSONPayload("config", *ar.Config); err != nil {
+			respondValidationError(w, r, err.Error())
+			return false
+		}
+	}
+	return true
 }
 
 // sanitizeAssetReportFields scrubs the per-row form-mode fields.
@@ -156,7 +166,9 @@ func (h *AssetReportHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	sanitizeAssetReport(&ar)
+	if !sanitizeAssetReport(w, r, &ar) {
+		return
+	}
 
 	ar.ChannelID = channelID
 
@@ -283,7 +295,9 @@ func (h *AssetReportHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	sanitizeAssetReport(&ar)
+	if !sanitizeAssetReport(w, r, &ar) {
+		return
+	}
 
 	if strings.TrimSpace(ar.Name) == "" {
 		respondValidationError(w, r, "Asset report name is required")

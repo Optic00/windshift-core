@@ -13,14 +13,19 @@ import (
 	"windshift/internal/services"
 )
 
-// sanitizeAssetActionFlow scrubs the user-supplied flow-graph strings.
+// sanitizeAssetActionFlow gates the user-supplied flow-graph strings.
 // NodeConfig is a free-form JSON blob persisted verbatim and echoed on
-// every action GET — same shape as the AssetReport.Config blob, so it
-// gets the same LongDocument bound. Edge type + handles are
-// identifier-shaped strings stored and echoed verbatim.
-func sanitizeAssetActionFlow(nodes []models.AssetActionNode, edges []models.AssetActionEdge) {
+// every action GET — HTML stripping would corrupt it, so it is
+// validated (size + well-formed JSON) and rejected instead of
+// scrubbed. Edge type + handles are identifier-shaped strings stored
+// and echoed verbatim. Writes a validation error and returns false
+// when a node config is rejected.
+func sanitizeAssetActionFlow(w http.ResponseWriter, r *http.Request, nodes []models.AssetActionNode, edges []models.AssetActionEdge) bool {
 	for i := range nodes {
-		sanitize.Apply(&nodes[i].NodeConfig, sanitize.LongDocument)
+		if err := sanitize.ValidateJSONPayload("node_config", nodes[i].NodeConfig); err != nil {
+			respondValidationError(w, r, err.Error())
+			return false
+		}
 	}
 	for i := range edges {
 		sanitize.ApplyAll(
@@ -29,6 +34,7 @@ func sanitizeAssetActionFlow(nodes []models.AssetActionNode, edges []models.Asse
 			sanitize.Pair{Target: &edges[i].TargetHandle, Policy: sanitize.ShortIdentifier},
 		)
 	}
+	return true
 }
 
 // AssetActionHandler handles asset action automation API endpoints
@@ -122,9 +128,16 @@ func (h *AssetActionHandler) CreateAction(w http.ResponseWriter, r *http.Request
 	sanitize.ApplyAll(
 		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
 		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
-		sanitize.Pair{Target: &req.TriggerConfig, Policy: sanitize.LongDocument},
 	)
-	sanitizeAssetActionFlow(req.Nodes, req.Edges)
+	// TriggerConfig is a JSON blob — reject invalid JSON instead of
+	// HTML-stripping it (which would corrupt valid payloads).
+	if err := sanitize.ValidateJSONPayload("trigger_config", req.TriggerConfig); err != nil {
+		respondValidationError(w, r, err.Error())
+		return
+	}
+	if !sanitizeAssetActionFlow(w, r, req.Nodes, req.Edges) {
+		return
+	}
 
 	if msg := actionutil.ValidateActionFields(req.Name, string(req.TriggerType)); msg != "" {
 		respondValidationError(w, r, msg)
@@ -229,9 +242,18 @@ func (h *AssetActionHandler) UpdateAction(w http.ResponseWriter, r *http.Request
 	sanitize.ApplyAll(
 		sanitize.Pair{Target: req.Name, Policy: sanitize.PlainTextField},
 		sanitize.Pair{Target: req.Description, Policy: sanitize.RichText},
-		sanitize.Pair{Target: req.TriggerConfig, Policy: sanitize.LongDocument},
 	)
-	sanitizeAssetActionFlow(req.Nodes, req.Edges)
+	// TriggerConfig is a JSON blob — reject invalid JSON instead of
+	// HTML-stripping it (which would corrupt valid payloads).
+	if req.TriggerConfig != nil {
+		if err := sanitize.ValidateJSONPayload("trigger_config", *req.TriggerConfig); err != nil {
+			respondValidationError(w, r, err.Error())
+			return
+		}
+	}
+	if !sanitizeAssetActionFlow(w, r, req.Nodes, req.Edges) {
+		return
+	}
 
 	var err error
 

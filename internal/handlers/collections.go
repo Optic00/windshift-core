@@ -19,19 +19,29 @@ import (
 
 var slugRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$`)
 
-// sanitizeCollection scrubs the user-facing fields on a collection
+// sanitizeCollection gates the user-facing fields on a collection
 // payload. Name renders in the collections list + board headers;
-// Description is Milkdown rich text; QLQuery is long-form query text
+// Description is Milkdown rich text; QLQuery is CQL query text whose
+// comparison operators are load-bearing, so it is length-capped only
 // (matching CQLQuery on asset reports); FilterState is the saved-filter
-// JSON blob. PublicSlug stays untouched here — slugRegex already
-// confines it whenever it is non-empty.
-func sanitizeCollection(c *models.Collection) {
+// JSON blob — HTML stripping would corrupt it, so it is validated
+// (size + well-formed JSON) and rejected instead of scrubbed.
+// PublicSlug stays untouched here — slugRegex already confines it
+// whenever it is non-empty. Writes a validation error and returns
+// false when FilterState is rejected.
+func sanitizeCollection(w http.ResponseWriter, r *http.Request, c *models.Collection) bool {
 	sanitize.ApplyAll(
 		sanitize.Pair{Target: &c.Name, Policy: sanitize.PlainTextField},
 		sanitize.Pair{Target: &c.Description, Policy: sanitize.RichText},
-		sanitize.Pair{Target: &c.QLQuery, Policy: sanitize.LongDocument},
-		sanitize.Pair{Target: c.FilterState, Policy: sanitize.LongDocument},
+		sanitize.Pair{Target: &c.QLQuery, Policy: sanitize.QueryText},
 	)
+	if c.FilterState != nil {
+		if err := sanitize.ValidateJSONPayload("filter_state", *c.FilterState); err != nil {
+			respondValidationError(w, r, err.Error())
+			return false
+		}
+	}
+	return true
 }
 
 type CollectionHandler struct {
@@ -188,7 +198,9 @@ func (h *CollectionHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	sanitizeCollection(&collection)
+	if !sanitizeCollection(w, r, &collection) {
+		return
+	}
 
 	// Validate required fields
 	if collection.Name == "" {
@@ -291,7 +303,9 @@ func (h *CollectionHandler) Update(w http.ResponseWriter, r *http.Request) {
 		respondBadRequest(w, r, "Invalid JSON: "+err.Error())
 		return
 	}
-	sanitizeCollection(&collection)
+	if !sanitizeCollection(w, r, &collection) {
+		return
+	}
 
 	_, workspaceProvided := payload["workspace_id"]
 	_, categoryProvided := payload["category_id"]

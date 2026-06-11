@@ -132,19 +132,27 @@ type SSOProviderRequest struct {
 // sanitizeSSOProviderRequest bounds the user-supplied text fields shared by
 // CreateProvider and UpdateProvider. ProviderType is a strict enum and
 // ClientSecret is an opaque machine token — both stay untouched.
-func sanitizeSSOProviderRequest(req *SSOProviderRequest) {
+// AttributeMapping is a JSON blob — HTML stripping would corrupt it, so
+// it is validated (size + well-formed JSON) and rejected instead of
+// scrubbed. Writes a validation error and returns false when it is
+// rejected.
+func sanitizeSSOProviderRequest(w http.ResponseWriter, r *http.Request, req *SSOProviderRequest) bool {
 	sanitize.ApplyAll(
 		sanitize.Pair{Target: &req.Slug, Policy: sanitize.ShortIdentifier},
 		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
 		sanitize.Pair{Target: &req.IssuerURL, Policy: sanitize.PlainTextField},
 		sanitize.Pair{Target: &req.ClientID, Policy: sanitize.ShortIdentifier},
 		sanitize.Pair{Target: &req.Scopes, Policy: sanitize.PlainTextField},
-		sanitize.Pair{Target: &req.AttributeMapping, Policy: sanitize.RichText},
 		sanitize.Pair{Target: &req.SAMLIdPMetadataURL, Policy: sanitize.PlainTextField},
 		sanitize.Pair{Target: &req.SAMLIdPSSOURL, Policy: sanitize.PlainTextField},
 		sanitize.Pair{Target: &req.SAMLIdPCertificate, Policy: sanitize.RichText},
 		sanitize.Pair{Target: &req.SAMLSPEntityID, Policy: sanitize.PlainTextField},
 	)
+	if err := sanitize.ValidateJSONPayload("attribute_mapping", req.AttributeMapping); err != nil {
+		respondValidationError(w, r, err.Error())
+		return false
+	}
+	return true
 }
 
 // NewSSOHandler creates a new SSO handler.
@@ -547,7 +555,9 @@ func (h *SSOHandler) CreateProvider(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	sanitizeSSOProviderRequest(&req)
+	if !sanitizeSSOProviderRequest(w, r, &req) {
+		return
+	}
 
 	// Validate required fields
 	if req.Slug == "" {
@@ -712,7 +722,9 @@ func (h *SSOHandler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	sanitizeSSOProviderRequest(&req)
+	if !sanitizeSSOProviderRequest(w, r, &req) {
+		return
+	}
 
 	// Update fields
 	if req.Slug != "" {
