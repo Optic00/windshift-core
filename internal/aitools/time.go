@@ -408,7 +408,7 @@ func init() {
 // neither is provided. Resolution failures and items outside the caller's
 // accessible workspaces both surface as the generic "item not found" tool
 // error so item existence is never leaked.
-func resolveOptionalItemRef(env *Env, itemID *int, itemKey string) (*int, any) {
+func resolveOptionalItemRef(env *Env, itemID *int, itemKey string) (resolvedID *int, resolvedValue any) {
 	if (itemID == nil || *itemID <= 0) && itemKey == "" {
 		return nil, nil
 	}

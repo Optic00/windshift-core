@@ -6,7 +6,7 @@
 </script>
 
 <BaseChartWidget
-  bind:chartData
+  {chartData}
   seriesKey="created"
   seriesLabel={t('widgets.createdChart.title')}
   seriesColor="#3b82f6"

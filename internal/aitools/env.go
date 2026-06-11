@@ -73,7 +73,7 @@ const (
 // distinguish agent writes from cookie-auth writes. Best-effort: failures
 // are logged, never propagated, so a successful tool call is not broken by
 // an audit miss (same policy as the diagram history writes).
-func (e *Env) AuditWrite(entityType string, entityID int, toolName string, summary string) {
+func (e *Env) AuditWrite(entityType string, entityID int, toolName, summary string) {
 	e.audit(toolName, entityType, entityID, summary, nil)
 }
 

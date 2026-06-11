@@ -1,9 +1,9 @@
 <script>
   import { Handle } from '@xyflow/svelte';
   import { getHandlePositions } from '../nodes/flowDirection.js';
-  import { t } from '../../stores/i18n.svelte.js';
-  import Badge from '../../components/Badge.svelte';
-  import StatusBadge from '../../components/StatusBadge.svelte';
+  import { t } from '../../../stores/i18n.svelte.js';
+  import Badge from '../../../components/Badge.svelte';
+  import StatusBadge from '../../../components/StatusBadge.svelte';
 
   function truncateContent(content, maxLength = 50) {
     if (!content) return '';
@@ -17,7 +17,7 @@
 
   let status = $derived(showStatusInfo && data.config?.status_id ? getStatus(data.config.status_id) : null);
 
-  export let {
+  let {
     data = {},
     selected = false,
     flowStore,
@@ -63,7 +63,9 @@
   }
 
   // Common body rendering logic
-  {#snippet body()}
+</script>
+
+{#snippet body()}
     {#if showCapabilityId && data.config?.capability_id}
       <div class="cap-info">
         <span class="cap-label">{t(showInputOutput ? 'actions.config.model' : 'actions.config.capability')}:</span>
@@ -132,7 +134,6 @@
       <div class="placeholder">{getPlaceholderText()}</div>
     {/if}
   {/snippet}
-</script>
 
 <div
   class="base-action-node action-flow-node"

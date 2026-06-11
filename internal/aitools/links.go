@@ -236,8 +236,8 @@ func newLinkToolService(env *Env) *services.ItemLinkService {
 // workspace gate. Returns a non-empty errMsg (for the JSON-value error
 // convention) when the reference is invalid or the entity is not accessible;
 // both "missing" and "no access" share the same generic message.
-func resolveLinkEntity(env *Env, svc *services.ItemLinkService, entityType string, entityID int, itemKey string) (string, int, string) {
-	canonical := "item"
+func resolveLinkEntity(env *Env, svc *services.ItemLinkService, entityType string, entityID int, itemKey string) (canonical string, status int, message string) {
+	canonical = "item"
 	if strings.TrimSpace(entityType) != "" {
 		c, ok := services.CanonicalEntityType(entityType)
 		if !ok || c == "asset" {
