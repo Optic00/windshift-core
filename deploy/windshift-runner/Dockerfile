@@ -26,7 +26,7 @@
 # --------------------------------------------------------------------
 # Stage 1: build windshift-runner + windshift-triage
 # --------------------------------------------------------------------
-FROM golang:1.26.4-alpine AS build
+FROM golang:1.26.4-alpine@sha256:a6a091eac01ceac4b97496fe2957a49b6cdd83365337d5f46f6f73710424e805 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -41,7 +41,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
 # --------------------------------------------------------------------
 # Stage 2: runtime — runner + triage + git + docker CLI
 # --------------------------------------------------------------------
-FROM alpine:3.21
+FROM alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d
 
 # git: triage shells out to it. docker-cli: drive the host daemon via the
 # mounted socket. ca-certificates: TLS to the orchestrator.

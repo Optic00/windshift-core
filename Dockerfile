@@ -1,7 +1,7 @@
 # Multi-stage build for Windshift server
 
 # Stage 1: Build frontend
-FROM node:25-alpine AS frontend-builder
+FROM node:25-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS frontend-builder
 
 WORKDIR /build
 
@@ -23,7 +23,7 @@ RUN VITE_APP_VERSION_CODE="${VERSION}" \
     npm run build
 
 # Stage 2: Build Go binary
-FROM golang:1.26.4-alpine AS builder
+FROM golang:1.26.4-alpine@sha256:a6a091eac01ceac4b97496fe2957a49b6cdd83365337d5f46f6f73710424e805 AS builder
 
 # Install build dependencies (no gcc/musl-dev needed - pure Go SQLite driver)
 RUN apk add --no-cache git tzdata
