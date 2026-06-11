@@ -65,9 +65,10 @@ func NewRunTokenService(tm *auth.TokenManager) (*RunTokenService, error) {
 
 // Mint issues a short-lived, IsTemporary=true API token for the given acting
 // user. Scopes are restricted to auth.DefaultCodingAgentRunScopes (no admin:*,
-// broad write/delete, MCP, or legacy scope strings); TTL is capped at
-// MaxAgentTokenTTL. The token never appears in the user-facing token list (the
-// IsTemporary flag is what gates that).
+// broad write/delete, or legacy scope strings; mcp:access is included since
+// WI-351 because the MCP server enforces per-tool token scopes); TTL is
+// capped at MaxAgentTokenTTL. The token never appears in the user-facing
+// token list (the IsTemporary flag is what gates that).
 func (s *RunTokenService) Mint(ctx context.Context, req MintRequest) (*MintResult, error) {
 	if req.ActingUserID <= 0 {
 		return nil, errors.New("run token service: ActingUserID is required")

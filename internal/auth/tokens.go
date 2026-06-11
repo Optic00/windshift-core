@@ -146,7 +146,7 @@ var DefaultAgentScopes = []string{
 // DefaultCodingAgentRunScopes is the narrowed scope set granted to short-lived
 // per-run coding-agent tokens when a binding does not explicitly request
 // scopes. It is intentionally smaller than DefaultAgentScopes: no workspace
-// write, no pages delete/write, no assets write, no tests write, and no MCP.
+// write, no pages delete/write, no assets write, and no tests write.
 var DefaultCodingAgentRunScopes = []string{
 	ScopeItemsRead, ScopeItemsWrite,
 	ScopeWorkspacesRead,
@@ -157,6 +157,12 @@ var DefaultCodingAgentRunScopes = []string{
 	ScopePagesRead,
 	ScopeTestsRead,
 	ScopeAgentSkillsRead,
+	// mcp:access is safe to grant since WI-351: the MCP server enforces
+	// each tool's required token scopes at dispatch, so this narrowed set
+	// holds on the MCP surface too — e.g. a run token (no pages:write,
+	// no items:delete, no actions:*) is refused page-writing, item-delete
+	// and automation tools there just like on the v1 REST surface.
+	ScopeMCPAccess,
 }
 
 // AllValidScopes is the complete set of valid scope strings for validation.
@@ -260,10 +266,12 @@ func ValidateScopes(scopes []string) error {
 
 // ValidateAgentScopes restricts coding-agent run tokens to the narrowed
 // DefaultCodingAgentRunScopes set: no admin:* scopes, no legacy
-// "read"/"write"/"admin" strings, no destructive scopes, no broad workspace
-// writes, and no MCP. The harness mints tokens that run inside an
-// attacker-reachable container, so the surface must stay narrow regardless of
-// what the binding's workspace admin requested.
+// "read"/"write"/"admin" strings, no destructive scopes, and no broad
+// workspace writes. mcp:access is permitted since WI-351 because the MCP
+// server enforces per-tool token scopes, so it cannot widen the set. The
+// harness mints tokens that run inside an attacker-reachable container, so
+// the surface must stay narrow regardless of what the binding's workspace
+// admin requested.
 func ValidateAgentScopes(scopes []string) error {
 	allowed := make(map[string]bool, len(DefaultCodingAgentRunScopes))
 	for _, s := range DefaultCodingAgentRunScopes {
