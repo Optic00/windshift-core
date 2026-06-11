@@ -4,7 +4,6 @@
   import { createAsyncLoader } from '../composables';
   import { api } from '../api.js';
   import { onMount } from 'svelte';
-  import { t } from '../stores/i18n.svelte.js';
 
   let {
     value = $bindable(null),
@@ -13,22 +12,23 @@
     unassignedLabel = 'None',
     disabled = false,
     class: className = '',
-    children = null,
     onSelect = () => {},
     onCancel = () => {}
   } = $props();
 
   const organisations = createAsyncLoader(() => api.customerOrganisations.getAll());
   onMount(() => organisations.load());
-
-  let itemSnippet = null;
 </script>
 
-{#if children}
-  {#snippet itemSnippet({ item, isSelected })}
-    {@render children()}
-  {/snippet}
-{/if}
+{#snippet organisationRow({ item })}
+  <Building2 class="w-4 h-4 flex-shrink-0" />
+  <div class="flex flex-col min-w-0">
+    <span class="font-medium truncate">{item?.name || ''}</span>
+    {#if item?.email || item?.description}
+      <span class="text-xs truncate" style="color: var(--ds-text-subtle);">{item.email || item.description}</span>
+    {/if}
+  </div>
+{/snippet}
 
 <BasePicker
   bind:value
@@ -40,14 +40,10 @@
   {disabled}
   allowClear={true}
   class={className}
-  itemSnippet={itemSnippet}
+  itemSnippet={organisationRow}
   searchFields={['name', 'email', 'description']}
   getValue={(item) => item?.id}
   getLabel={(item) => item?.name || ''}
   onSelect={(item) => onSelect(item)}
   onCancel={() => onCancel()}
->
-  {#snippet iconSnippet({ item })}
-    <Building2 class="w-4 h-4" />
-  {/snippet}
-</BasePicker>
+/>
