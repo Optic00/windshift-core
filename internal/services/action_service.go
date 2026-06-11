@@ -25,6 +25,7 @@ import (
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/utils"
+	"windshift/internal/validation"
 
 	"github.com/google/uuid"
 )
@@ -1237,6 +1238,19 @@ func (as *ActionService) executeSetFieldCustom(ctx *models.ExecutionContext, ste
 		return err
 	}
 
+	// Substituted variables can carry user content — run text/textarea
+	// values through the same sanitize pass as the interactive write
+	// paths (WI-319) before persisting. Non-text field types pass
+	// through unchanged.
+	fieldKey := strconv.Itoa(config.CustomFieldID)
+	cfv := map[string]interface{}{fieldKey: value}
+	if err := validation.SanitizeCustomFieldTextValues(as.db, cfv); err != nil {
+		return fmt.Errorf("sanitize custom field value: %w", err)
+	}
+	if sanitized, ok := cfv[fieldKey].(string); ok {
+		value = sanitized
+	}
+
 	oldValue, err := as.itemRepo.GetItemCustomFieldValue(itemID, config.CustomFieldID)
 	if err != nil {
 		slog.Debug("failed to get current custom field value for cascade event",
@@ -2100,6 +2114,17 @@ func (as *ActionService) executeUpdateAsset(node *models.ActionNode, ctx *models
 		assetCustomFields[mapping.TargetFieldID] = sourceValue
 	}
 
+	// Substituted values can carry user content — bound text/textarea
+	// fields with the same sanitize pass the asset create/update
+	// surfaces apply (WI-319) before persisting. Other field types are
+	// unchanged.
+	if err := as.sanitizeAssetCustomFieldText(asset.AssetTypeID, assetCustomFields); err != nil {
+		return fmt.Errorf("failed to sanitize asset custom_field_values: %w", err)
+	}
+	for k := range newValues {
+		newValues[k] = assetCustomFields[k]
+	}
+
 	// Serialize updated custom_field_values
 	updatedJSON, err := json.Marshal(assetCustomFields)
 	if err != nil {
@@ -2148,6 +2173,16 @@ func (as *ActionService) executeUpdateAsset(node *models.ActionNode, ctx *models
 	return nil
 }
 
+// sanitizeAssetCustomFieldText runs the asset-side text/textarea
+// custom-field sanitize pass (the one CreateAsset/UpdateAsset apply via
+// ValidateCustomFieldsSchema) over a values map, mutating it in place.
+// Used by the create_asset / update_asset action executors, which write
+// assets.custom_field_values directly instead of going through
+// AssetService.
+func (as *ActionService) sanitizeAssetCustomFieldText(assetTypeID int, values map[string]interface{}) error {
+	return NewAssetService(as.db, repository.NewAssetRepository(as.db)).SanitizeCustomFieldTextValues(assetTypeID, values)
+}
+
 // executeCreateAsset executes a create_asset node
 func (as *ActionService) executeCreateAsset(node *models.ActionNode, ctx *models.ExecutionContext, stepResult *models.StepResult) error {
 	var config models.CreateAssetNodeConfig
@@ -2168,13 +2203,17 @@ func (as *ActionService) executeCreateAsset(node *models.ActionNode, ctx *models
 		return err
 	}
 
-	// Substitute variables in title, description, and asset_tag
+	// Substitute variables in title, description, and asset_tag.
+	// Substituted variables can carry user content — apply the same
+	// input policy the normal asset create path runs (WI-319) before
+	// anything reaches the INSERT.
 	title := as.substituteVariables(config.Title, ctx)
+	description := as.substituteVariables(config.Description, ctx)
+	assetTag := as.substituteVariables(config.AssetTag, ctx)
+	sanitizeAssetText(&title, &description, &assetTag)
 	if title == "" {
 		return fmt.Errorf("title is required and cannot be empty after substitution")
 	}
-	description := as.substituteVariables(config.Description, ctx)
-	assetTag := as.substituteVariables(config.AssetTag, ctx)
 
 	itemID := currentActionItemID(ctx)
 	// Get item's custom field values for field mapping
@@ -2213,6 +2252,12 @@ func (as *ActionService) executeCreateAsset(node *models.ActionNode, ctx *models
 		}
 
 		assetCustomFields[mapping.TargetFieldID] = sourceValue
+	}
+
+	// Same sanitize pass the asset create/update surfaces apply
+	// (WI-319): bound text/textarea values before the INSERT.
+	if err := as.sanitizeAssetCustomFieldText(config.AssetTypeID, assetCustomFields); err != nil {
+		return fmt.Errorf("failed to sanitize custom_field_values: %w", err)
 	}
 
 	// Serialize custom_field_values

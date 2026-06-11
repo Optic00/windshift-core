@@ -243,6 +243,47 @@ func (s *AssetService) ValidateCustomFieldsSchema(assetTypeID int, values map[st
 	return nil
 }
 
+// SanitizeCustomFieldTextValues runs only the text/textarea sanitize
+// pass of ValidateCustomFieldsSchema over a values map, mutating it in
+// place. For write paths (automation actions) that merge values into
+// stored custom_field_values without the full schema validation —
+// unknown keys and non-string values are left untouched so existing
+// behavior for those callers is preserved; only string values on
+// text/textarea fields get the rendering-matched policies applied.
+func (s *AssetService) SanitizeCustomFieldTextValues(assetTypeID int, values map[string]interface{}) error {
+	if len(values) == 0 {
+		return nil
+	}
+	fields, err := s.repo.FindAssetTypeFields(assetTypeID)
+	if err != nil {
+		return fmt.Errorf("load asset type fields: %w", err)
+	}
+	byKey := make(map[string]models.AssetTypeField, len(fields)*2)
+	for _, f := range fields {
+		byKey[fmt.Sprintf("%d", f.CustomFieldID)] = f
+		byKey[strings.ToLower(f.FieldName)] = f
+	}
+	for k, v := range values {
+		f, ok := byKey[k]
+		if !ok {
+			if f, ok = byKey[strings.ToLower(k)]; !ok {
+				continue
+			}
+		}
+		switch f.FieldType {
+		case "text", "textarea":
+			if s, ok := v.(string); ok {
+				if f.FieldType == "textarea" {
+					values[k] = sanitize.RichText.Sanitize(s)
+				} else {
+					values[k] = sanitize.PlainTextField.Sanitize(s)
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // validateAssetFieldValue type-checks a single field value. Returns
 // nil for empty / null values — required-field presence is enforced
 // separately by ValidateCustomFieldsSchema when opts.EnforceRequired

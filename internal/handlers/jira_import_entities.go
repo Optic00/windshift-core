@@ -18,7 +18,9 @@ import (
 	"windshift/internal/jira"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
+	"windshift/internal/validation"
 
 	"github.com/google/uuid"
 )
@@ -950,6 +952,14 @@ func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, works
 		estimateMinutes = &minutes
 	}
 
+	// Imported Jira values are untrusted user content — run text/textarea
+	// custom-field entries through the same sanitize pass the interactive
+	// item write paths apply (WI-319) before persisting. The internal
+	// "_jira_*" metadata keys are non-numeric and pass through untouched.
+	if err := validation.SanitizeCustomFieldTextValues(h.db, customFieldValues); err != nil {
+		return fmt.Errorf("failed to sanitize custom field values: %w", err)
+	}
+
 	// Serialize custom field values to JSON
 	customFieldValuesJSON := ""
 	if len(customFieldValues) > 0 {
@@ -959,9 +969,10 @@ func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, works
 	}
 
 	// Create the work item using centralized service (handles workspace_item_number, frac_index, etc.)
+	// The summary gets the same title sanitize the normal item-create path applies.
 	itemID, err := services.CreateItem(h.db, services.ItemCreationParams{
 		WorkspaceID:           workspaceID,
-		Title:                 issue.Fields.Summary,
+		Title:                 sanitize.PlainTextField.Sanitize(issue.Fields.Summary),
 		Description:           description,
 		StatusID:              statusID,
 		ItemTypeID:            itemTypeID,
