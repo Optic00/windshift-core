@@ -75,6 +75,8 @@ type Item struct {
 	Description         string                 `json:"description,omitempty"`
 	IsTask              bool                   `json:"is_task"`
 	DueDate             *time.Time             `json:"due_date,omitempty"`
+	StartDate           *time.Time             `json:"start_date,omitempty"`
+	EndDate             *time.Time             `json:"end_date,omitempty"`
 	CustomFields        map[string]interface{} `json:"custom_fields,omitempty"`
 
 	// Hierarchy
@@ -117,6 +119,8 @@ type ItemCreateRequest struct {
 	IterationID  *int                   `json:"iteration_id,omitempty"`
 	ProjectID    *int                   `json:"project_id,omitempty"`
 	DueDate      *time.Time             `json:"due_date,omitempty"`
+	StartDate    *time.Time             `json:"start_date,omitempty"`
+	EndDate      *time.Time             `json:"end_date,omitempty"`
 	IsTask       bool                   `json:"is_task,omitempty"`
 	CustomFields map[string]interface{} `json:"custom_fields,omitempty"`
 }
@@ -135,6 +139,8 @@ type ItemUpdateRequest struct {
 	IterationID  *int                   `json:"iteration_id,omitempty"`
 	ProjectID    *int                   `json:"project_id,omitempty"`
 	DueDate      *time.Time             `json:"due_date,omitempty"`
+	StartDate    *time.Time             `json:"start_date,omitempty"`
+	EndDate      *time.Time             `json:"end_date,omitempty"`
 	IsTask       *bool                  `json:"is_task,omitempty"`
 	CustomFields map[string]interface{} `json:"custom_fields,omitempty"`
 }

@@ -2,7 +2,9 @@ package wscli
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -206,7 +208,8 @@ var taskCreateCmd = &cobra.Command{
 Examples:
   ws task create -t "Fix login bug"
   ws task create -t "Add feature" -d "Detailed description"
-  ws task create -t "Bug" --type 1 --priority 2
+  ws task create -t "Bug" --type Bug --priority 2
+  ws task create -t "Ship it" --due-date 2026-07-20
   ws task create -t "New feature" --web    # Create and open in browser`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if createTitle == "" {
@@ -236,8 +239,12 @@ Examples:
 		}
 
 		// Set optional fields
-		if createTypeID > 0 {
-			req.ItemTypeID = &createTypeID
+		if createType != "" {
+			typeID, err := resolveItemTypeID(client, createType)
+			if err != nil {
+				return err
+			}
+			req.ItemTypeID = &typeID
 		}
 		if createPriorityID > 0 {
 			req.PriorityID = &createPriorityID
@@ -250,6 +257,27 @@ Examples:
 		}
 		if createParentID > 0 {
 			req.ParentID = &createParentID
+		}
+		if createDueDate != "" {
+			d, err := parseDateFlag("due-date", createDueDate)
+			if err != nil {
+				return err
+			}
+			req.DueDate = d
+		}
+		if createStartDate != "" {
+			d, err := parseDateFlag("start-date", createStartDate)
+			if err != nil {
+				return err
+			}
+			req.StartDate = d
+		}
+		if createEndDate != "" {
+			d, err := parseDateFlag("end-date", createEndDate)
+			if err != nil {
+				return err
+			}
+			req.EndDate = d
 		}
 
 		item, err := client.CreateItem(req)
@@ -522,7 +550,9 @@ Examples:
   ws task edit CP-30 -t "New title"
   ws task edit CP-30 -d "Updated description"
   ws task edit CP-30 --priority 2 --assignee 3
-  ws task edit CP-30 -t "Title" -d "Description" --type 1`,
+  ws task edit CP-30 --type Bug                 # Change item type by name
+  ws task edit CP-30 --due-date 2026-07-20      # Set due date
+  ws task edit CP-30 --start-date 2026-07-01 --end-date 2026-07-15`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := NewClient()
@@ -560,9 +590,33 @@ Examples:
 			req.ParentID = &editParentID
 			hasChanges = true
 		}
+		if cmd.Flags().Changed("due-date") {
+			d, err := parseDateFlag("due-date", editDueDate)
+			if err != nil {
+				return err
+			}
+			req.DueDate = d
+			hasChanges = true
+		}
+		if cmd.Flags().Changed("start-date") {
+			d, err := parseDateFlag("start-date", editStartDate)
+			if err != nil {
+				return err
+			}
+			req.StartDate = d
+			hasChanges = true
+		}
+		if cmd.Flags().Changed("end-date") {
+			d, err := parseDateFlag("end-date", editEndDate)
+			if err != nil {
+				return err
+			}
+			req.EndDate = d
+			hasChanges = true
+		}
 
 		if !hasChanges && !typeChanged {
-			return fmt.Errorf("no changes specified. Use flags like -t, -d, --type, --priority, --assignee")
+			return fmt.Errorf("no changes specified. Use flags like -t, -d, --type, --priority, --assignee, --due-date")
 		}
 
 		var item *Item
@@ -573,8 +627,9 @@ Examples:
 			}
 		}
 		if typeChanged {
-			if editTypeID <= 0 {
-				return fmt.Errorf("--type must be a positive item type ID")
+			typeID, err := resolveItemTypeID(client, editType)
+			if err != nil {
+				return err
 			}
 			var targetStatusID *int
 			if cmd.Flags().Changed("type-status") {
@@ -583,7 +638,7 @@ Examples:
 				}
 				targetStatusID = &editTypeStatusID
 			}
-			item, err = client.ChangeItemType(itemID, editTypeID, targetStatusID)
+			item, err = client.ChangeItemType(itemID, typeID, targetStatusID)
 			if err != nil {
 				return fmt.Errorf("failed to change item type: %w", err)
 			}
@@ -597,6 +652,59 @@ Examples:
 		output.Print(item)
 		return nil
 	},
+}
+
+// parseDateFlag parses a YYYY-MM-DD CLI flag value into a UTC time.Time.
+func parseDateFlag(flagName, value string) (*time.Time, error) {
+	parsed, err := time.Parse("2006-01-02", value)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --%s %q: expected YYYY-MM-DD", flagName, value)
+	}
+	return &parsed, nil
+}
+
+// resolveItemTypeID resolves an item type given as a numeric ID or a name.
+// Names match case-insensitively, exact first, then unique substring.
+func resolveItemTypeID(client *Client, input string) (int, error) {
+	if id, err := strconv.Atoi(input); err == nil {
+		if id <= 0 {
+			return 0, fmt.Errorf("item type ID must be positive")
+		}
+		return id, nil
+	}
+
+	types, err := client.ListItemTypes()
+	if err != nil {
+		return 0, fmt.Errorf("failed to list item types: %w", err)
+	}
+
+	inputLower := strings.ToLower(input)
+	var partial []ItemType
+	for _, t := range types {
+		nameLower := strings.ToLower(t.Name)
+		if nameLower == inputLower {
+			return t.ID, nil
+		}
+		if strings.Contains(nameLower, inputLower) {
+			partial = append(partial, t)
+		}
+	}
+	if len(partial) == 1 {
+		return partial[0].ID, nil
+	}
+
+	var available []string
+	for _, t := range types {
+		available = append(available, fmt.Sprintf("%s (ID: %d)", t.Name, t.ID))
+	}
+	if len(partial) > 1 {
+		var matches []string
+		for _, t := range partial {
+			matches = append(matches, t.Name)
+		}
+		return 0, fmt.Errorf("item type %q is ambiguous (matches %s)", input, strings.Join(matches, ", "))
+	}
+	return 0, fmt.Errorf("unknown item type %q. Available types:\n  - %s", input, strings.Join(available, "\n  - "))
 }
 
 // applyDateFilters parses created/updated relative date filters and adds them to the filters map.
@@ -648,19 +756,25 @@ var (
 
 	createTitle       string
 	createDescription string
-	createTypeID      int
+	createType        string
 	createPriorityID  int
 	createStatusID    int
 	createAssigneeID  int
 	createParentID    int
+	createDueDate     string
+	createStartDate   string
+	createEndDate     string
 
 	editTitle        string
 	editDescription  string
-	editTypeID       int
+	editType         string
 	editTypeStatusID int
 	editPriorityID   int
 	editAssigneeID   int
 	editParentID     int
+	editDueDate      string
+	editStartDate    string
+	editEndDate      string
 )
 
 func init() {
@@ -700,18 +814,24 @@ func init() {
 	// Edit flags
 	taskEditCmd.Flags().StringVarP(&editTitle, "title", "t", "", "new title")
 	taskEditCmd.Flags().StringVarP(&editDescription, "description", "d", "", "new description (supports \\n / \\t / \\\\)")
-	taskEditCmd.Flags().IntVar(&editTypeID, "type", 0, "item type ID")
+	taskEditCmd.Flags().StringVar(&editType, "type", "", "item type (name or ID); changes type via the change-type endpoint")
 	taskEditCmd.Flags().IntVar(&editTypeStatusID, "type-status", 0, "target status ID when changing to a type with a different workflow")
 	taskEditCmd.Flags().IntVar(&editPriorityID, "priority", 0, "priority ID")
 	taskEditCmd.Flags().IntVar(&editAssigneeID, "assignee", 0, "assignee user ID")
 	taskEditCmd.Flags().IntVar(&editParentID, "parent", 0, "parent item ID")
+	taskEditCmd.Flags().StringVar(&editDueDate, "due-date", "", "due date (YYYY-MM-DD)")
+	taskEditCmd.Flags().StringVar(&editStartDate, "start-date", "", "start date (YYYY-MM-DD)")
+	taskEditCmd.Flags().StringVar(&editEndDate, "end-date", "", "end date (YYYY-MM-DD)")
 
 	// Create flags
 	taskCreateCmd.Flags().StringVarP(&createTitle, "title", "t", "", "task title (required)")
 	taskCreateCmd.Flags().StringVarP(&createDescription, "description", "d", "", "task description (supports \\n / \\t / \\\\)")
-	taskCreateCmd.Flags().IntVar(&createTypeID, "type", 0, "item type ID")
+	taskCreateCmd.Flags().StringVar(&createType, "type", "", "item type (name or ID)")
 	taskCreateCmd.Flags().IntVar(&createPriorityID, "priority", 0, "priority ID")
 	taskCreateCmd.Flags().IntVar(&createStatusID, "status", 0, "status ID")
 	taskCreateCmd.Flags().IntVar(&createAssigneeID, "assignee", 0, "assignee user ID")
 	taskCreateCmd.Flags().IntVar(&createParentID, "parent", 0, "parent item ID")
+	taskCreateCmd.Flags().StringVar(&createDueDate, "due-date", "", "due date (YYYY-MM-DD)")
+	taskCreateCmd.Flags().StringVar(&createStartDate, "start-date", "", "start date (YYYY-MM-DD)")
+	taskCreateCmd.Flags().StringVar(&createEndDate, "end-date", "", "end date (YYYY-MM-DD)")
 }
