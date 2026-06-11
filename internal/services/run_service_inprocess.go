@@ -93,9 +93,22 @@ func (s *RunService) claimNext() *ClaimedJob {
 		}()
 
 		now := s.now()
-		if err := s.repo.MarkRunning(runCtx, job.runID, "", now); err != nil {
+		transitioned, err := s.repo.MarkRunningIfQueued(runCtx, job.runID, "", now)
+		if err != nil {
 			s.logger.Printf("run service: mark running run=%d: %v", job.runID, err)
 			s.failClaim(job, cancel, fmt.Sprintf("mark running: %v", err), false)
+			continue
+		}
+		if !transitioned {
+			// The row left 'queued' while the job sat on the in-memory
+			// channel — canceled via the API (WI-341) or otherwise already
+			// terminal. The terminal status (and its lifecycle event) is
+			// recorded by whoever made that transition; just release the
+			// run's accounting and move on instead of executing it anyway.
+			s.logger.Printf("run service: skipping run=%d: no longer queued at dequeue", job.runID)
+			cancel()
+			s.unregisterCancel(job.runID)
+			s.wg.Done()
 			continue
 		}
 		if err := s.repo.AppendEvent(runCtx, job.runID, "lifecycle", `{"phase":"running"}`); err != nil {

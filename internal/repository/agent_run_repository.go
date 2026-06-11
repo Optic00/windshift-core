@@ -154,7 +154,17 @@ func (r *AgentRunRepository) CountActiveForBindingItem(ctx context.Context, bind
 // MarkRunning transitions a run from queued to running and stamps started_at.
 // Callers must hold their admission-control slot before invoking this.
 func (r *AgentRunRepository) MarkRunning(ctx context.Context, id int, containerID string, now time.Time) error {
-	_, err := r.db.ExecWriteContext(ctx, `
+	_, err := r.MarkRunningIfQueued(ctx, id, containerID, now)
+	return err
+}
+
+// MarkRunningIfQueued is MarkRunning with the CAS outcome surfaced: it
+// reports whether the queued→running transition actually happened. The
+// in-process queue consumer uses it to skip a dequeued job whose row left
+// 'queued' while it sat on the in-memory channel — canceled via the API
+// (WI-341) — instead of executing it anyway.
+func (r *AgentRunRepository) MarkRunningIfQueued(ctx context.Context, id int, containerID string, now time.Time) (transitioned bool, err error) {
+	res, err := r.db.ExecWriteContext(ctx, `
 		UPDATE agent_runs
 		SET status = ?, started_at = ?, container_id = ?, updated_at = ?
 		WHERE id = ? AND status = ?
@@ -163,9 +173,39 @@ func (r *AgentRunRepository) MarkRunning(ctx context.Context, id int, containerI
 		id, models.AgentRunStatusQueued,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to mark agent_run running: %w", err)
+		return false, fmt.Errorf("failed to mark agent_run running: %w", err)
 	}
-	return nil
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to mark agent_run running: rows affected: %w", err)
+	}
+	return n > 0, nil
+}
+
+// CancelQueued atomically cancels a run that is still queued, using the same
+// status-guarded CAS as ClaimQueued / FinalizeRunning: the UPDATE only matches
+// while status is 'queued', so it can never race a claim — either this wins
+// and the run is terminal before anyone executes it (ClaimQueued's own CAS
+// then skips the row), or a claim won first, zero rows match, and the caller
+// falls through to the claimed-run cancel paths. Reports whether the
+// transition happened (WI-341).
+func (r *AgentRunRepository) CancelQueued(ctx context.Context, id int, now time.Time) (transitioned bool, err error) {
+	res, err := r.db.ExecWriteContext(ctx, `
+		UPDATE agent_runs
+		SET status = ?, ended_at = ?, error = ?, updated_at = ?
+		WHERE id = ? AND status = ?
+	`,
+		models.AgentRunStatusCanceled, now, "canceled while queued", now,
+		id, models.AgentRunStatusQueued,
+	)
+	if err != nil {
+		return false, fmt.Errorf("cancel queued: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("cancel queued: rows affected: %w", err)
+	}
+	return n > 0, nil
 }
 
 // ClaimQueued atomically claims the oldest queued run targeted at the given
