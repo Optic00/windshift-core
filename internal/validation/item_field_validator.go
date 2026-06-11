@@ -129,6 +129,34 @@ func (e *ValidationError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Field, e.Message)
 }
 
+// applyDateField applies one date field from updateData onto dst. Accepted
+// values: nil (clear), a YYYY-MM-DD string (web handlers decode bodies as raw
+// maps), or a time.Time (the REST v1 handlers decode typed DTOs). Any other
+// type is a validation error — a recognized key must never be silently
+// dropped.
+func applyDateField(updateData map[string]interface{}, field string, dst **time.Time) error {
+	value, ok := updateData[field]
+	if !ok {
+		return nil
+	}
+	switch v := value.(type) {
+	case nil:
+		*dst = nil
+	case string:
+		parsedDate, err := time.Parse("2006-01-02", v)
+		if err != nil {
+			return &ValidationError{Field: field, Message: fmt.Sprintf("Invalid %s format, expected YYYY-MM-DD", field)}
+		}
+		*dst = &parsedDate
+	case time.Time:
+		t := v
+		*dst = &t
+	default:
+		return &ValidationError{Field: field, Message: fmt.Sprintf("Invalid %s type, expected a YYYY-MM-DD string or null", field)}
+	}
+	return nil
+}
+
 // ValidateAndApplyUpdates applies all update data to an item with validation
 // Returns a list of validation errors if any occur
 func (v *ItemFieldValidator) ValidateAndApplyUpdates(
@@ -170,43 +198,15 @@ func (v *ItemFieldValidator) ValidateAndApplyUpdates(
 		return err
 	}
 
-	// Due date validation and parsing
-	if dueDateValue, ok := updateData["due_date"]; ok {
-		if dueDateValue == nil {
-			item.DueDate = nil
-		} else if dueDateStr, ok := dueDateValue.(string); ok {
-			parsedDate, err := time.Parse("2006-01-02", dueDateStr)
-			if err != nil {
-				return &ValidationError{Field: "due_date", Message: "Invalid due_date format, expected YYYY-MM-DD"}
-			}
-			item.DueDate = &parsedDate
-		}
+	// Date validation and parsing (due/start/end)
+	if err := applyDateField(updateData, "due_date", &item.DueDate); err != nil {
+		return err
 	}
-
-	// Start date validation and parsing
-	if startDateValue, ok := updateData["start_date"]; ok {
-		if startDateValue == nil {
-			item.StartDate = nil
-		} else if startDateStr, ok := startDateValue.(string); ok {
-			parsedDate, err := time.Parse("2006-01-02", startDateStr)
-			if err != nil {
-				return &ValidationError{Field: "start_date", Message: "Invalid start_date format, expected YYYY-MM-DD"}
-			}
-			item.StartDate = &parsedDate
-		}
+	if err := applyDateField(updateData, "start_date", &item.StartDate); err != nil {
+		return err
 	}
-
-	// End date validation and parsing
-	if endDateValue, ok := updateData["end_date"]; ok {
-		if endDateValue == nil {
-			item.EndDate = nil
-		} else if endDateStr, ok := endDateValue.(string); ok {
-			parsedDate, err := time.Parse("2006-01-02", endDateStr)
-			if err != nil {
-				return &ValidationError{Field: "end_date", Message: "Invalid end_date format, expected YYYY-MM-DD"}
-			}
-			item.EndDate = &parsedDate
-		}
+	if err := applyDateField(updateData, "end_date", &item.EndDate); err != nil {
+		return err
 	}
 
 	// Milestone IDs validation (multi-milestone). Accepts []int / []float64 /
