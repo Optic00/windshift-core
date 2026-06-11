@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"windshift/internal/auth"
 	"windshift/internal/cql"
@@ -193,7 +194,7 @@ func init() {
 	// ------------------------------------------------------------------------
 	Register(Default, Tool[getItemArgs]{
 		Name:        "get_item",
-		Description: "Get details of a single work item by numeric ID or key (e.g. PROJ-42).",
+		Description: "Get details of a single work item by numeric ID or key (e.g. PROJ-42). Long descriptions are truncated to 500 characters with an explicit marker unless full_description=true.",
 		Scopes:      []string{auth.ScopeItemsRead},
 		Run: func(_ context.Context, env *Env, args getItemArgs) (any, error) {
 			itemID, err := resolveItemID(env.DB, args.ItemID, args.ItemKey)
@@ -220,8 +221,14 @@ func init() {
 			}
 			if item.Description != "" {
 				desc := item.Description
-				if len(desc) > 500 {
-					desc = desc[:500] + "..."
+				if !args.FullDescription && len(desc) > 500 {
+					// Cut on a rune boundary so the truncated text stays valid UTF-8.
+					cut := 500
+					for cut > 0 && !utf8.RuneStart(desc[cut]) {
+						cut--
+					}
+					desc = fmt.Sprintf("%s... [truncated, %d chars total — pass full_description=true for the full text]",
+						desc[:cut], utf8.RuneCountInString(item.Description))
 				}
 				d.Description = desc
 			}
@@ -522,8 +529,9 @@ func init() {
 // ----------------------------------------------------------------------------
 
 type getItemArgs struct {
-	ItemID  int    `json:"item_id,omitempty" jsonschema:"Item ID (numeric)"`
-	ItemKey string `json:"item_key,omitempty" jsonschema:"Item key like PROJ-42"`
+	ItemID          int    `json:"item_id,omitempty" jsonschema:"Item ID (numeric)"`
+	ItemKey         string `json:"item_key,omitempty" jsonschema:"Item key like PROJ-42"`
+	FullDescription bool   `json:"full_description,omitempty" jsonschema:"Return the complete description. By default descriptions longer than 500 characters are truncated with a marker showing the total length."`
 }
 
 type searchItemsArgs struct {
