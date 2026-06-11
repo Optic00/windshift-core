@@ -19,6 +19,15 @@ type addCommentArgs struct {
 	Content string `json:"content" jsonschema:"Comment content (plain text or TipTap JSON)"`
 }
 
+type updateCommentArgs struct {
+	CommentID int    `json:"comment_id" jsonschema:"Comment ID to update"`
+	Content   string `json:"content" jsonschema:"Replacement comment content (plain text or TipTap JSON)"`
+}
+
+type deleteCommentArgs struct {
+	CommentID int `json:"comment_id" jsonschema:"Comment ID to delete"`
+}
+
 type commentDTO struct {
 	ID        int    `json:"id"`
 	ItemID    int    `json:"item_id"`
@@ -35,6 +44,12 @@ type listCommentsOut struct {
 
 type addCommentOut struct {
 	ID      int64  `json:"id"`
+	ItemID  int    `json:"item_id"`
+	Content string `json:"content"`
+}
+
+type updateCommentOut struct {
+	ID      int    `json:"id"`
 	ItemID  int    `json:"item_id"`
 	Content string `json:"content"`
 }
@@ -100,6 +115,76 @@ func init() {
 			return addCommentOut{ID: result.CommentID, ItemID: args.ItemID, Content: args.Content}, nil
 		},
 	})
+
+	Register(Default, Tool[updateCommentArgs]{
+		Name:        "update_comment",
+		Description: "Update the content of an existing comment. Only the comment's author can edit it, unless the caller holds the edit-others-comments permission in the item's workspace.",
+		Run: func(_ context.Context, env *Env, args updateCommentArgs) (any, error) {
+			if args.CommentID <= 0 {
+				return map[string]string{"error": "comment_id is required"}, nil
+			}
+			if strings.TrimSpace(args.Content) == "" {
+				return map[string]string{"error": "content is required"}, nil
+			}
+			if denied, err := checkCommentEditAccess(env, args.CommentID); denied != nil || err != nil {
+				return denied, err
+			}
+			// CommentService.Update applies the same sanitization policy as
+			// Create (sanitize.Comment), so add_comment and update_comment
+			// store content under identical rules.
+			updated, err := env.CommentService.Update(args.CommentID, args.Content, env.UserID)
+			if err != nil {
+				return nil, err
+			}
+			return updateCommentOut{ID: updated.ID, ItemID: updated.ItemID, Content: updated.Content}, nil
+		},
+	})
+
+	Register(Default, Tool[deleteCommentArgs]{
+		Name:        "delete_comment",
+		Description: "Delete a comment. Only the comment's author can delete it, unless the caller holds the edit-others-comments permission in the item's workspace.",
+		Run: func(_ context.Context, env *Env, args deleteCommentArgs) (any, error) {
+			if args.CommentID <= 0 {
+				return map[string]string{"error": "comment_id is required"}, nil
+			}
+			if denied, err := checkCommentEditAccess(env, args.CommentID); denied != nil || err != nil {
+				return denied, err
+			}
+			if err := env.CommentService.Delete(args.CommentID); err != nil {
+				return nil, err
+			}
+			return map[string]any{"deleted": true, "comment_id": args.CommentID}, nil
+		},
+	})
+}
+
+// checkCommentEditAccess mirrors the HTTP comment handlers' authorization
+// rule (CommentHandler.requireCommentEditAccess): the caller must be the
+// comment's author or hold comment.edit_others in the item's workspace.
+// Every access failure — missing comment, workspace the caller can't see,
+// or insufficient permission — collapses into the same generic not-found
+// value so callers can't probe for comment existence (the 404-not-403
+// invariant). A nil, nil return means access is granted.
+func checkCommentEditAccess(env *Env, commentID int) (any, error) {
+	notFound := map[string]string{"error": "comment not found"}
+	comment, err := env.CommentService.Get(commentID)
+	if err != nil {
+		return notFound, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
+	}
+	if !env.HasWorkspaceAccess(comment.WorkspaceID) {
+		return notFound, nil
+	}
+	if comment.AuthorID != nil && *comment.AuthorID == env.UserID {
+		return nil, nil
+	}
+	canEditOthers, err := env.PermService.HasWorkspacePermission(env.UserID, comment.WorkspaceID, models.PermissionCommentEditOthers)
+	if err != nil {
+		return nil, err
+	}
+	if !canEditOthers {
+		return notFound, nil
+	}
+	return nil, nil
 }
 
 func mapCommentsDTO(comments []models.Comment) []commentDTO {
