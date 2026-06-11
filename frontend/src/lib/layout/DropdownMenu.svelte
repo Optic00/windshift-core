@@ -162,7 +162,7 @@
     onclick={(e) => e.stopPropagation()}
     onkeydown={(e) => e.stopPropagation()}
     class="{triggerAvatar ? 'p-0' : iconOnly ? '' : triggerClass ? '' : 'px-4 py-2'} rounded text-sm font-medium transition flex items-center {alignmentClass} {triggerGap} flex-shrink-0 {triggerBgColor ? getTextColorForBackground(triggerBgColor) : ''} {triggerClass} {isDisabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}"
-    style="{triggerBgColor ? `background-color: ${triggerBgColor}; ${triggerStyle}` : triggerStyle}{$open && !triggerBgColor ? '; background-color: var(--ds-background-neutral-hovered);' : ''}"
+    style="{triggerBgColor ? `background-color: ${triggerBgColor}; ${triggerStyle}` : triggerStyle}{$open && !triggerBgColor ? '; background-color: var(--ctx-surface-raised, var(--ds-background-neutral-hovered));' : ''}"
   >
     {#if children}
       {@render children()}
