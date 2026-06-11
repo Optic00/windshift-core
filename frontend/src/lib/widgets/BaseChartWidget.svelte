@@ -12,7 +12,6 @@
     showYAxis = false,
     gridLineCount = 4,
     gridDashed = true,
-    emptyMessageKey = '',
     customEmptyMessage = '',
     customLabelFormatter = null
   } = $props();
@@ -35,9 +34,10 @@
     values: chartData.map(d => d.count ?? 0)
   }]);
 
-  // Get empty message
+  // seriesKey doubles as the i18n prefix: widgets.<seriesKey>Chart.emptyMessage
+  // must exist for any new seriesKey, or pass customEmptyMessage instead.
   const emptyMessage = $derived(
-    customEmptyMessage || t(`widgets.${seriesKey}Chart.emptyMessage`, emptyMessageKey)
+    customEmptyMessage || t(`widgets.${seriesKey}Chart.emptyMessage`)
   );
 </script>
 
