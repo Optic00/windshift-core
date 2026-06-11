@@ -527,7 +527,14 @@ export class QLParser {
 
   valueList() {
     const values = [];
+    this._parseValues(values);
+    return {
+      type: NodeType.LIST,
+      values,
+    };
+  }
 
+  _parseValues(values) {
     if (this.match(TokenType.STRING, TokenType.NUMBER, TokenType.DATE, TokenType.IDENTIFIER)) {
       const token = this.advance();
       values.push({
@@ -550,11 +557,86 @@ export class QLParser {
         }
       }
     }
+  }
+}
 
-    return {
-      type: NodeType.LIST,
-      values,
-    };
+// Shared evaluation helpers used by both QLEvaluator and AssetQLEvaluator.
+
+function compareValuesShared(left, right, operation) {
+  if (left == null && right == null) return operation === 'equals';
+  if (left == null || right == null) return operation !== 'equals';
+
+  const leftStr = String(left).toLowerCase();
+  const rightStr = String(right).toLowerCase();
+
+  switch (operation) {
+    case 'equals':
+      return leftStr === rightStr;
+    case 'contains':
+      return leftStr.includes(rightStr);
+    case 'less':
+      return left < right;
+    case 'lessEqual':
+      return left <= right;
+    case 'greater':
+      return left > right;
+    case 'greaterEqual':
+      return left >= right;
+    default:
+      return false;
+  }
+}
+
+function evaluateComparisonShared(evaluator, ast, item) {
+  const left = evaluator.evaluate(ast.left, item);
+  const right = evaluator.evaluate(ast.right, item);
+
+  switch (ast.operator) {
+    case '=':
+      return evaluator.compareValues(left, right, 'equals');
+    case '!=':
+    case '<>':
+      return !evaluator.compareValues(left, right, 'equals');
+    case '<':
+      return evaluator.compareValues(left, right, 'less');
+    case '<=':
+      return evaluator.compareValues(left, right, 'lessEqual');
+    case '>':
+      return evaluator.compareValues(left, right, 'greater');
+    case '>=':
+      return evaluator.compareValues(left, right, 'greaterEqual');
+    case '~':
+      return evaluator.compareValues(left, right, 'contains');
+    default:
+      throw new Error(`Unknown comparison operator: ${ast.operator}`);
+  }
+}
+
+function evaluateInExpressionShared(evaluator, ast, item) {
+  const fieldValue = evaluator.evaluate(ast.field, item);
+  const values = ast.values.values.map((v) => evaluator.evaluate(v, item));
+  const isIn = values.some((value) => evaluator.compareValues(fieldValue, value, 'equals'));
+  return ast.operator === 'IN' ? isIn : !isIn;
+}
+
+function evaluateFunctionShared(ast) {
+  switch (ast.name.toLowerCase()) {
+    case 'currentuser':
+      return authStore.currentUser?.id?.toString() || null;
+    case 'now':
+      return new Date().toISOString();
+    case 'startofday': {
+      const start = new Date();
+      start.setHours(0, 0, 0, 0);
+      return start.toISOString();
+    }
+    case 'endofday': {
+      const end = new Date();
+      end.setHours(23, 59, 59, 999);
+      return end.toISOString();
+    }
+    default:
+      throw new Error(`Unknown function: ${ast.name}`);
   }
 }
 
@@ -607,57 +689,15 @@ export class QLEvaluator {
   }
 
   evaluateComparison(ast, item) {
-    const left = this.evaluate(ast.left, item);
-    const right = this.evaluate(ast.right, item);
-
-    switch (ast.operator) {
-      case '=':
-        return this.compareValues(left, right, 'equals');
-      case '!=':
-      case '<>':
-        return !this.compareValues(left, right, 'equals');
-      case '<':
-        return this.compareValues(left, right, 'less');
-      case '<=':
-        return this.compareValues(left, right, 'lessEqual');
-      case '>':
-        return this.compareValues(left, right, 'greater');
-      case '>=':
-        return this.compareValues(left, right, 'greaterEqual');
-      case '~':
-        return this.compareValues(left, right, 'contains');
-      default:
-        throw new Error(`Unknown comparison operator: ${ast.operator}`);
-    }
+    return evaluateComparisonShared(this, ast, item);
   }
 
   evaluateInExpression(ast, item) {
-    const fieldValue = this.evaluate(ast.field, item);
-    const values = ast.values.values.map((v) => this.evaluate(v, item));
-
-    const isIn = values.some((value) => this.compareValues(fieldValue, value, 'equals'));
-    return ast.operator === 'IN' ? isIn : !isIn;
+    return evaluateInExpressionShared(this, ast, item);
   }
 
   evaluateFunction(ast, _item) {
-    switch (ast.name.toLowerCase()) {
-      case 'currentuser':
-        return authStore.currentUser?.id?.toString() || null;
-      case 'now':
-        return new Date().toISOString();
-      case 'startofday': {
-        const start = new Date();
-        start.setHours(0, 0, 0, 0);
-        return start.toISOString();
-      }
-      case 'endofday': {
-        const end = new Date();
-        end.setHours(23, 59, 59, 999);
-        return end.toISOString();
-      }
-      default:
-        throw new Error(`Unknown function: ${ast.name}`);
-    }
+    return evaluateFunctionShared(ast);
   }
 
   getFieldValue(fieldName, item) {
@@ -696,30 +736,7 @@ export class QLEvaluator {
   }
 
   compareValues(left, right, operation) {
-    // Handle null/undefined values
-    if (left == null && right == null) return operation === 'equals';
-    if (left == null || right == null) return operation !== 'equals';
-
-    // Convert to comparable types
-    const leftStr = String(left).toLowerCase();
-    const rightStr = String(right).toLowerCase();
-
-    switch (operation) {
-      case 'equals':
-        return leftStr === rightStr;
-      case 'contains':
-        return leftStr.includes(rightStr);
-      case 'less':
-        return left < right;
-      case 'lessEqual':
-        return left <= right;
-      case 'greater':
-        return left > right;
-      case 'greaterEqual':
-        return left >= right;
-      default:
-        return false;
-    }
+    return compareValuesShared(left, right, operation);
   }
 
   filter(items, queryString) {
@@ -1251,57 +1268,15 @@ export class AssetQLEvaluator {
   }
 
   evaluateComparison(ast, asset) {
-    const left = this.evaluate(ast.left, asset);
-    const right = this.evaluate(ast.right, asset);
-
-    switch (ast.operator) {
-      case '=':
-        return this.compareValues(left, right, 'equals');
-      case '!=':
-      case '<>':
-        return !this.compareValues(left, right, 'equals');
-      case '<':
-        return this.compareValues(left, right, 'less');
-      case '<=':
-        return this.compareValues(left, right, 'lessEqual');
-      case '>':
-        return this.compareValues(left, right, 'greater');
-      case '>=':
-        return this.compareValues(left, right, 'greaterEqual');
-      case '~':
-        return this.compareValues(left, right, 'contains');
-      default:
-        throw new Error(`Unknown comparison operator: ${ast.operator}`);
-    }
+    return evaluateComparisonShared(this, ast, asset);
   }
 
   evaluateInExpression(ast, asset) {
-    const fieldValue = this.evaluate(ast.field, asset);
-    const values = ast.values.values.map((v) => this.evaluate(v, asset));
-
-    const isIn = values.some((value) => this.compareValues(fieldValue, value, 'equals'));
-    return ast.operator === 'IN' ? isIn : !isIn;
+    return evaluateInExpressionShared(this, ast, asset);
   }
 
   evaluateFunction(ast, _asset) {
-    switch (ast.name.toLowerCase()) {
-      case 'currentuser':
-        return authStore.currentUser?.id?.toString() || null;
-      case 'now':
-        return new Date().toISOString();
-      case 'startofday': {
-        const start = new Date();
-        start.setHours(0, 0, 0, 0);
-        return start.toISOString();
-      }
-      case 'endofday': {
-        const end = new Date();
-        end.setHours(23, 59, 59, 999);
-        return end.toISOString();
-      }
-      default:
-        throw new Error(`Unknown function: ${ast.name}`);
-    }
+    return evaluateFunctionShared(ast);
   }
 
   getFieldValue(fieldName, asset) {
@@ -1396,30 +1371,7 @@ export class AssetQLEvaluator {
   }
 
   compareValues(left, right, operation) {
-    // Handle null/undefined values
-    if (left == null && right == null) return operation === 'equals';
-    if (left == null || right == null) return operation !== 'equals';
-
-    // Convert to comparable types
-    const leftStr = String(left).toLowerCase();
-    const rightStr = String(right).toLowerCase();
-
-    switch (operation) {
-      case 'equals':
-        return leftStr === rightStr;
-      case 'contains':
-        return leftStr.includes(rightStr);
-      case 'less':
-        return left < right;
-      case 'lessEqual':
-        return left <= right;
-      case 'greater':
-        return left > right;
-      case 'greaterEqual':
-        return left >= right;
-      default:
-        return false;
-    }
+    return compareValuesShared(left, right, operation);
   }
 
   filter(assets, queryString) {

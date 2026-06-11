@@ -126,7 +126,7 @@ func init() {
 	Register(Default, Tool[listTimeProjectsArgs]{
 		Name:        "list_time_projects",
 		Description: "List time tracking projects the user has access to.",
-		Scopes:      []string{auth.ScopeItemsRead}, // time tracking has no dedicated token scope yet (WI-365)
+		Scopes:      []string{auth.ScopeTimeRead},
 		Run: func(_ context.Context, env *Env, args listTimeProjectsArgs) (any, error) {
 			accessibleIDs, err := env.TimePermService.GetAccessibleProjects(env.UserID)
 			if err != nil {
@@ -178,7 +178,7 @@ func init() {
 	Register(Default, Tool[listWorklogsArgs]{
 		Name:        "list_worklogs",
 		Description: "List the current user's time tracking worklogs with optional date and project filters.",
-		Scopes:      []string{auth.ScopeItemsRead}, // time tracking has no dedicated token scope yet (WI-365)
+		Scopes:      []string{auth.ScopeTimeRead},
 		Run: func(_ context.Context, env *Env, args listWorklogsArgs) (any, error) {
 			limit := args.Limit
 			if limit <= 0 || limit > 200 {
@@ -250,7 +250,7 @@ func init() {
 	Register(Default, Tool[logTimeArgs]{
 		Name:        "log_time",
 		Description: "Log a time entry on a time tracking project. Provide duration (e.g. '2h', '30m', '1h30m', '1d') OR duration_minutes OR start_time + end_time (HH:MM). An optional work item can be linked by numeric ID or key (e.g. PROJ-42).",
-		Scopes:      []string{auth.ScopeItemsWrite}, // time tracking has no dedicated token scope yet (WI-365)
+		Scopes:      []string{auth.ScopeTimeWrite},
 		Run: func(_ context.Context, env *Env, args logTimeArgs) (any, error) {
 			if args.ProjectID == 0 || args.Description == "" || args.Date == "" {
 				return map[string]string{"error": "project_id, description, and date are required"}, nil
@@ -352,7 +352,7 @@ func init() {
 	Register(Default, Tool[startTimerArgs]{
 		Name:        "start_timer",
 		Description: "Start a time tracking timer. Only one timer can be active at a time. An optional work item can be linked by numeric ID or key (e.g. PROJ-42).",
-		Scopes:      []string{auth.ScopeItemsWrite}, // time tracking has no dedicated token scope yet (WI-365)
+		Scopes:      []string{auth.ScopeTimeWrite},
 		Run: func(_ context.Context, env *Env, args startTimerArgs) (any, error) {
 			itemID, toolErr := resolveOptionalItemRef(env, args.ItemID, args.ItemKey)
 			if toolErr != nil {
@@ -378,7 +378,7 @@ func init() {
 	Register(Default, Tool[stopTimerArgs]{
 		Name:        "stop_timer",
 		Description: "Stop the user's currently running timer and create a worklog entry.",
-		Scopes:      []string{auth.ScopeItemsWrite}, // time tracking has no dedicated token scope yet (WI-365)
+		Scopes:      []string{auth.ScopeTimeWrite},
 		Run: func(_ context.Context, env *Env, _ stopTimerArgs) (any, error) {
 			res, err := env.TimerService.StopActiveForUser(env.UserID)
 			if err != nil {

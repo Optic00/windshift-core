@@ -1667,3 +1667,83 @@ func (c *Client) ImportAssetsCSV(setID, assetTypeID int, statusID, categoryID *i
 	}
 	return &job, nil
 }
+
+// ============================================
+// Time tracking
+// ============================================
+
+// ListTimeProjects returns time projects accessible to the authenticated user.
+func (c *Client) ListTimeProjects() ([]TimeProject, error) {
+	var projects []TimeProject
+	if err := c.GET("/rest/api/v1/time/projects", &projects); err != nil {
+		return nil, err
+	}
+	return projects, nil
+}
+
+// ListTimeWorklogs returns worklogs for the authenticated user with optional filters.
+func (c *Client) ListTimeWorklogs(filters map[string]string) (*PaginatedResponse[TimeWorklog], error) {
+	path := "/rest/api/v1/time/worklogs"
+	if len(filters) > 0 {
+		params := make([]string, 0, len(filters))
+		for k, v := range filters {
+			params = append(params, k+"="+v)
+		}
+		path += "?" + strings.Join(params, "&")
+	}
+	var resp PaginatedResponse[TimeWorklog]
+	if err := c.GET(path, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// CreateTimeWorklog logs a new time entry.
+func (c *Client) CreateTimeWorklog(req TimeWorklogCreateRequest) (map[string]any, error) {
+	var out map[string]any
+	if err := c.POST("/rest/api/v1/time/worklogs", req, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// UpdateTimeWorklog updates the description of an existing worklog.
+func (c *Client) UpdateTimeWorklog(id int, description string) error {
+	body := map[string]string{"description": description}
+	var out map[string]any
+	return c.PUT(fmt.Sprintf("/rest/api/v1/time/worklogs/%d", id), body, &out)
+}
+
+// DeleteTimeWorklog deletes a worklog.
+func (c *Client) DeleteTimeWorklog(id int) error {
+	return c.DELETE(fmt.Sprintf("/rest/api/v1/time/worklogs/%d", id))
+}
+
+// StartTimer starts a new active timer.
+func (c *Client) StartTimer(req TimerStartRequest) (map[string]any, error) {
+	var out map[string]any
+	if err := c.POST("/rest/api/v1/timer/start", req, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// GetActiveTimer returns the user's currently running timer.
+func (c *Client) GetActiveTimer() (map[string]any, error) {
+	var out map[string]any
+	if err := c.GET("/rest/api/v1/timer/active", &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// StopTimer stops the user's active timer and creates a worklog.
+func (c *Client) StopTimer() (map[string]any, error) {
+	var out map[string]any
+	// DELETE on /timer/stop returns a JSON body; use a custom request so we
+	// can pass a result target (the convenience Delete method discards the body).
+	if err := c.doRequest("DELETE", "/rest/api/v1/timer/stop", nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}

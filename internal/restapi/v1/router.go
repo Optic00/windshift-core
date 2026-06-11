@@ -99,6 +99,15 @@ func RegisterRoutes(deps restapi.Deps) {
 		services.NewPageAttachmentUploadService(db, deps.AttachmentPath, permissionService, pagePermissionService),
 	)
 
+	// Time tracking
+	timePermService := services.NewTimePermissionService(db, permissionService)
+	timeProjectHandler := handlers.NewTimeProjectHandler(handlers.NewBaseHandler(db, permissionService), timePermService)
+	timeWorklogHandler := handlers.NewTimeWorklogHandler(handlers.NewBaseHandler(db, permissionService), timePermService)
+	timerRepo := repository.NewActiveTimerRepository(db)
+	itemRepo := repository.NewItemRepository(db)
+	timerService := services.NewTimerService(timerRepo, itemRepo, timePermService, permissionService)
+	activeTimerHandler := handlers.NewActiveTimerHandler(handlers.NewBaseHandler(db, permissionService), timerRepo, timerService)
+
 	// Public discovery routes (no bearer auth). Mounted on a sibling group
 	// that shares the /rest/api/v1 prefix and rate limiter but skips
 	// RequireAuth — the OpenAPI document describes the public surface and
@@ -495,6 +504,19 @@ func RegisterRoutes(deps restapi.Deps) {
 	// Search
 	// ============================================
 	v1.HandleWithMiddleware("GET /search/items", itemHandler.Search, bearerAuth.RequirePermission("items:read"))
+
+	// ============================================
+	// Time tracking
+	// ============================================
+	v1.HandleWithMiddleware("GET /time/projects", timeProjectHandler.List, bearerAuth.RequirePermission("time:read"))
+	v1.HandleWithMiddleware("GET /time/projects/{id}", timeProjectHandler.Get, bearerAuth.RequirePermission("time:read"), router.RequireNumericID)
+	v1.HandleWithMiddleware("GET /time/worklogs", timeWorklogHandler.ListMine, bearerAuth.RequirePermission("time:read"))
+	v1.HandleWithMiddleware("POST /time/worklogs", timeWorklogHandler.Create, bearerAuth.RequirePermission("time:write"))
+	v1.HandleWithMiddleware("PUT /time/worklogs/{id}", timeWorklogHandler.Update, bearerAuth.RequirePermission("time:write"), router.RequireNumericID)
+	v1.HandleWithMiddleware("DELETE /time/worklogs/{id}", timeWorklogHandler.Delete, bearerAuth.RequirePermission("time:delete"), router.RequireNumericID)
+	v1.HandleWithMiddleware("POST /timer/start", activeTimerHandler.StartTimer, bearerAuth.RequirePermission("time:write"))
+	v1.HandleWithMiddleware("GET /timer/active", activeTimerHandler.GetActiveTimer, bearerAuth.RequirePermission("time:read"))
+	v1.HandleWithMiddleware("DELETE /timer/stop", activeTimerHandler.StopTimer, bearerAuth.RequirePermission("time:write"))
 
 	// ============================================
 	// Admin endpoints (require system admin + scope)

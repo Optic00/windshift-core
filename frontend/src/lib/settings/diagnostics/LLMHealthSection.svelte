@@ -1,7 +1,5 @@
 <script>
-  import { onDestroy, onMount } from 'svelte';
   import {
-    IconRefresh,
     IconAlertTriangle,
     IconAlertCircle,
     IconCircleCheck,
@@ -14,6 +12,8 @@
   import { getLLMProviderStatus, getBriefingFailures } from '../../api/diagnostics.js';
   import { api } from '../../api.js';
   import { errorToast, successToast } from '../../stores/toasts.svelte.js';
+  import DiagnosticsSection from './DiagnosticsSection.svelte';
+  import { formatRelativeTime, formatUtcTime, truncateText } from './format-utils.js';
 
   let view = $state({
     loading: true,
@@ -57,36 +57,6 @@
     }
   }
 
-  let interval;
-  onMount(() => {
-    load();
-    interval = setInterval(load, 30_000);
-  });
-  onDestroy(() => {
-    if (interval) clearInterval(interval);
-  });
-
-  function fmtTime(iso) {
-    if (!iso) return '—';
-    const d = iso instanceof Date ? iso : new Date(iso);
-    if (Number.isNaN(d.getTime())) return '—';
-    return d.toISOString().replace('T', ' ').replace(/\..*Z$/, ' UTC');
-  }
-
-  function fmtRelative(iso) {
-    if (!iso) return 'Never refreshed';
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return 'Never refreshed';
-    const diffMs = Date.now() - d.getTime();
-    const mins = Math.round(diffMs / 60000);
-    if (mins < 1) return 'just now';
-    if (mins < 60) return `${mins}m ago`;
-    const hours = Math.round(mins / 60);
-    if (hours < 24) return `${hours}h ago`;
-    const days = Math.round(hours / 24);
-    return `${days}d ago`;
-  }
-
   const BUCKET_LABELS = {
     model_not_found: 'Model not found',
     auth_failed: 'Auth failed',
@@ -117,7 +87,7 @@
   );
 
   const recentColumns = [
-    { key: 'created_at', label: 'When', render: (row) => fmtTime(row.created_at) },
+    { key: 'created_at', label: 'When', render: (row) => formatUtcTime(row.created_at) },
     { key: 'user_id', label: 'User', render: (row) => `#${row.user_id}` },
     { key: 'date', label: 'Briefing date', render: (row) => row.date },
     {
@@ -128,44 +98,22 @@
     {
       key: 'error',
       label: 'Error',
-      render: (row) => (row.error?.length > 200 ? row.error.slice(0, 200) + '…' : row.error),
+      render: (row) => truncateText(row.error, 200),
       textColor: 'var(--ds-text-subtle)',
     },
   ];
 </script>
 
-<section class="space-y-6" data-testid="diagnostics-llm-health">
-  <div class="flex items-start justify-between gap-4">
-    <div>
-      <h3 class="text-base font-semibold" style="color: var(--ds-text);">AI / LLM health</h3>
-      <p class="text-sm" style="color: var(--ds-text-subtle);">
-        Per-provider model catalog cache and recent briefing failures grouped by error class. Refresh a catalog when a provider releases or retires models — drift is then visible against the connections you have configured.
-      </p>
-    </div>
-    <button
-      type="button"
-      class="inline-flex items-center gap-1.5 text-sm px-2.5 py-1.5 rounded-md transition-colors"
-      style="color: var(--ds-text-subtle); background-color: var(--ds-surface-raised); border: 1px solid var(--ds-border-subtle);"
-      onclick={load}
-      disabled={view.loading}
-      data-testid="llm-health-refresh"
-    >
-      <IconRefresh class="w-4 h-4" />
-      <span>{view.loading ? 'Loading…' : 'Refresh'}</span>
-    </button>
-  </div>
-
-  {#if view.error}
-    <Card>
-      <div class="flex items-start gap-3 p-3" style="color: var(--ds-accent-red);">
-        <IconAlertTriangle class="w-5 h-5 flex-shrink-0 mt-0.5" />
-        <div>
-          <div class="font-semibold">Failed to load diagnostics</div>
-          <div class="text-sm" style="color: var(--ds-text-subtle);">{view.error}</div>
-        </div>
-      </div>
-    </Card>
-  {:else}
+<DiagnosticsSection
+  title="AI / LLM health"
+  subtitle="Per-provider model catalog cache and recent briefing failures grouped by error class. Refresh a catalog when a provider releases or retires models — drift is then visible against the connections you have configured."
+  dataTestId="diagnostics-llm-health"
+  onLoad={load}
+  lastRefreshed={lastRefreshed}
+  bind:loading={view.loading}
+  bind:error={view.error}
+>
+  {#snippet children()}
     {#if driftRows.length > 0}
       <Card>
         <div class="flex items-start gap-3 p-4" data-testid="llm-health-drift">
@@ -208,7 +156,7 @@
                 </div>
                 <div class="text-xs mt-1" style="color: var(--ds-text-subtle);">
                   {#if p.has_dynamic_models}
-                    {p.models_cached_count} cached · last refresh {fmtRelative(p.last_refreshed_at)}
+                    {p.models_cached_count} cached · last refresh {formatRelativeTime(p.last_refreshed_at)}
                     {#if p.connections.length > 0}
                       · {p.connections.length} enabled connection{p.connections.length === 1 ? '' : 's'}
                     {/if}
@@ -229,11 +177,9 @@
                   class="inline-flex items-center gap-1.5 text-sm px-2.5 py-1.5 rounded-md transition-colors flex-shrink-0"
                   style="color: var(--ds-text); background-color: var(--ds-surface-raised); border: 1px solid var(--ds-border-subtle);"
                   onclick={() => refreshProvider(p.type)}
-                  disabled={!!refreshing[p.type]}
-                  data-testid={`llm-health-refresh-${p.type}`}
+                  disabled={refreshing[p.type]}
                 >
-                  <IconRefresh class="w-4 h-4 {refreshing[p.type] ? 'animate-spin' : ''}" />
-                  <span>{refreshing[p.type] ? 'Refreshing…' : 'Refresh now'}</span>
+                  {refreshing[p.type] ? 'Refreshing…' : 'Refresh catalog'}
                 </button>
               {/if}
             </div>
@@ -242,39 +188,34 @@
       </div>
     </div>
 
-    <div>
-      <div class="flex items-baseline justify-between mb-3">
-        <h4 class="text-sm font-semibold flex items-center gap-1.5" style="color: var(--ds-text);">
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4" data-testid="llm-health-failure-buckets">
+      {#each view.failures?.buckets ?? [] as bucket (`bucket-${bucket.classified_as}`)}
+        <StatCard
+          icon={IconDatabase}
+          label={BUCKET_LABELS[bucket.classified_as] ?? bucket.classified_as}
+          value={String(bucket.count)}
+          color={BUCKET_COLORS[bucket.classified_as] ?? 'blue'}
+        />
+      {/each}
+    </div>
+
+    {#if totalFailures === 0}
+      <p class="text-sm" style="color: var(--ds-text-subtle);">
+        No briefing failures in the last 24h.
+      </p>
+    {:else}
+      <div>
+        <h4 class="text-sm font-semibold mb-2 flex items-center gap-1.5" style="color: var(--ds-text);">
           <IconDatabase class="w-4 h-4" />
-          Briefing failures (last 24h)
+          Recent failure details
         </h4>
-        <span class="text-xs" style="color: var(--ds-text-subtle);">Last refreshed {fmtTime(lastRefreshed)}</span>
-      </div>
-      {#if totalFailures === 0}
-        <Card>
-          <div class="flex items-center gap-3 p-3">
-            <IconCircleCheck class="w-5 h-5" style="color: var(--ds-accent-green);" />
-            <span class="text-sm" style="color: var(--ds-text);">No failed briefings in the last 24 hours.</span>
-          </div>
-        </Card>
-      {:else}
-        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
-          {#each view.failures.buckets as b (b.class)}
-            <StatCard
-              icon={b.count > 0 ? IconAlertCircle : IconCircleCheck}
-              label={BUCKET_LABELS[b.class] ?? b.class}
-              value={b.count}
-              color={b.count > 0 ? BUCKET_COLORS[b.class] ?? 'blue' : 'green'}
-            />
-          {/each}
-        </div>
         <DataTable
           columns={recentColumns}
-          data={view.failures.recent}
+          data={view.failures?.recent ?? []}
           keyField="id"
-          emptyMessage="No failed briefings to show."
+          defaultPageSize={10}
         />
-      {/if}
-    </div>
-  {/if}
-</section>
+      </div>
+    {/if}
+  {/snippet}
+</DiagnosticsSection>

@@ -289,7 +289,7 @@ func (h *SSOHandler) StartLogin(w http.ResponseWriter, r *http.Request) {
 		redirectAfterLogin = "/"
 	}
 
-	rememberMe := r.URL.Query().Get("remember") == "true"
+	rememberMe := ssoRememberMeFromRequest(r)
 
 	// Decrypt client secret
 	clientSecret, err := h.encryption.Decrypt(provider.ClientSecretEncrypted)
@@ -1083,6 +1083,11 @@ func (h *SSOHandler) providerToResponse(p *sso.SSOProvider) *SSOProviderResponse
 		CreatedAt:            p.CreatedAt,
 		UpdatedAt:            p.UpdatedAt,
 	}
+}
+
+func ssoRememberMeFromRequest(r *http.Request) bool {
+	query := r.URL.Query()
+	return query.Get("remember_me") == "true" || query.Get("remember") == "true"
 }
 
 // GetEncryption returns the encryption service (for reuse by LDAP handler).

@@ -1431,6 +1431,7 @@
                                             {projects}
                                             labels={wdsLabels}
                                             {customFieldDefinitions}
+                                            {users}
                                           />
                                         {/each}
                                       </div>

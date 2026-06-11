@@ -1,7 +1,5 @@
 <script>
-  import { onDestroy, onMount } from 'svelte';
   import {
-    IconRefresh,
     IconAlertTriangle,
     IconCircleCheck,
     IconDatabase,
@@ -11,6 +9,8 @@
   import StatCard from '../../components/StatCard.svelte';
   import DataTable from '../../components/DataTable.svelte';
   import { getFracIndexState } from '../../api/diagnostics.js';
+  import DiagnosticsSection from './DiagnosticsSection.svelte';
+  import { formatUtcTime, formatValue } from './format-utils.js';
 
   /** @type {{loading: boolean, error: string|null, data: any|null}} */
   let view = $state({ loading: true, error: null, data: null });
@@ -25,25 +25,6 @@
     } catch (err) {
       view = { ...view, loading: false, error: err?.message ?? String(err) };
     }
-  }
-
-  let interval;
-  onMount(() => {
-    load();
-    interval = setInterval(load, 30_000);
-  });
-  onDestroy(() => {
-    if (interval) clearInterval(interval);
-  });
-
-  function fmtVal(v) {
-    if (v === null || v === undefined || v === '') return '—';
-    return String(v);
-  }
-
-  function fmtTime(d) {
-    if (!d) return '—';
-    return d.toISOString().replace('T', ' ').replace(/\..*Z$/, ' UTC');
   }
 
   const healthy = $derived(view.data?.healthy === true);
@@ -90,122 +71,96 @@
   );
 </script>
 
-<section class="space-y-6" data-testid="diagnostics-frac-index">
-  <div class="flex items-start justify-between gap-4">
-    <div>
-      <h3 class="text-base font-semibold" style="color: var(--ds-text);">Fractional index health</h3>
-      <p class="text-sm" style="color: var(--ds-text-subtle);">
-        Inspects the persisted state of <code>items.frac_index</code> — column collation, linguistic vs byte-wise ordering, and the next key the generator would emit. Auto-refreshes every 30s.
-      </p>
-    </div>
-    <button
-      type="button"
-      class="inline-flex items-center gap-1.5 text-sm px-2.5 py-1.5 rounded-md transition-colors"
-      style="color: var(--ds-text-subtle); background-color: var(--ds-surface-raised); border: 1px solid var(--ds-border-subtle);"
-      onclick={load}
-      disabled={view.loading}
-      data-testid="frac-index-refresh"
-    >
-      <IconRefresh class="w-4 h-4" />
-      <span>{view.loading ? 'Loading…' : 'Refresh'}</span>
-    </button>
-  </div>
-
-  {#if view.error}
-    <Card>
-      <div class="flex items-start gap-3 p-3" style="color: var(--ds-accent-red);">
-        <IconAlertTriangle class="w-5 h-5 flex-shrink-0 mt-0.5" />
-        <div>
-          <div class="font-semibold">Failed to load diagnostics</div>
-          <div class="text-sm" style="color: var(--ds-text-subtle);">{view.error}</div>
-        </div>
-      </div>
-    </Card>
-  {:else if view.data}
-    {#if verdict()}
-      <Card>
-        <div
-          class="flex items-start gap-3 p-4"
-          data-testid="frac-index-verdict"
-          data-verdict={healthy ? 'healthy' : 'unhealthy'}
-        >
-          {#if healthy}
-            <IconCircleCheck class="w-6 h-6 flex-shrink-0 mt-0.5" style="color: var(--ds-accent-green);" />
-          {:else}
-            <IconAlertTriangle class="w-6 h-6 flex-shrink-0 mt-0.5" style="color: var(--ds-accent-orange);" />
-          {/if}
-          <div>
-            <div class="font-semibold" style="color: var(--ds-text);">{verdict().title}</div>
-            <div class="text-sm mt-1" style="color: var(--ds-text-subtle);">{verdict().body}</div>
+<DiagnosticsSection
+  title="Fractional index health"
+  subtitle={`Inspects the persisted state of <code>items.frac_index</code> — column collation, linguistic vs byte-wise ordering, and the next key the generator would emit. Auto-refreshes every 30s.`}
+  dataTestId="diagnostics-frac-index"
+  onLoad={load}
+  lastRefreshed={lastRefreshed}
+  bind:loading={view.loading}
+  bind:error={view.error}
+>
+  {#snippet children()}
+    {#if view.data}
+      {#if verdict()}
+        <Card>
+          <div
+            class="flex items-start gap-3 p-4"
+            data-testid="frac-index-verdict"
+            data-verdict={healthy ? 'healthy' : 'unhealthy'}
+          >
+            {#if healthy}
+              <IconCircleCheck class="w-6 h-6 flex-shrink-0 mt-0.5" style="color: var(--ds-accent-green);" />
+            {:else}
+              <IconAlertTriangle class="w-6 h-6 flex-shrink-0 mt-0.5" style="color: var(--ds-accent-orange);" />
+            {/if}
+            <div>
+              <div class="font-semibold" style="color: var(--ds-text);">{verdict().title}</div>
+              <div class="text-sm mt-1" style="color: var(--ds-text-subtle);">{verdict().body}</div>
+            </div>
           </div>
+        </Card>
+      {/if}
+
+      <div>
+        <h4 class="text-sm font-semibold mb-3 flex items-center gap-1.5" style="color: var(--ds-text);">
+          <IconDatabase class="w-4 h-4" />
+          Database state
+        </h4>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <StatCard
+            icon={IconDatabase}
+            label="Column collation"
+            value={formatValue(db?.column_collation)}
+            color={db?.collation_mismatch ? 'orange' : 'blue'}
+          />
+          <StatCard
+            icon={IconDatabase}
+            label="DB default collation"
+            value={formatValue(db?.default_collation)}
+            color="blue"
+          />
+          <StatCard
+            icon={IconTargetArrow}
+            label="Linguistic max"
+            value={formatValue(db?.linguistic_max)}
+            color={db?.collation_mismatch ? 'orange' : 'green'}
+          />
+          <StatCard
+            icon={IconTargetArrow}
+            label="Byte-wise max"
+            value={formatValue(db?.byte_max)}
+            color="green"
+          />
         </div>
-      </Card>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-4">
+          <StatCard
+            icon={IconDatabase}
+            label="Rows with frac_index"
+            value={formatValue(db?.not_null_count)}
+          />
+          <StatCard
+            icon={IconTargetArrow}
+            label="Predicted next"
+            value={formatValue(db?.predicted_next)}
+            color={db?.predicted_collision ? 'orange' : 'green'}
+          />
+          <StatCard
+            icon={IconDatabase}
+            label="DB last updated"
+            value={formatUtcTime(db?.last_updated_at)}
+          />
+        </div>
+      </div>
+
+      <div>
+        <h3 class="text-sm font-semibold mb-2" style="color: var(--ds-text);">Top 10 keys (byte-ordered)</h3>
+        <DataTable
+          columns={top10Columns}
+          data={top10Rows}
+          keyField="rank"
+        />
+      </div>
     {/if}
-
-    <div>
-      <h4 class="text-sm font-semibold mb-3 flex items-center gap-1.5" style="color: var(--ds-text);">
-        <IconDatabase class="w-4 h-4" />
-        Database state
-      </h4>
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
-          icon={IconDatabase}
-          label="Column collation"
-          value={fmtVal(db?.column_collation)}
-          color={db?.collation_mismatch ? 'orange' : 'blue'}
-        />
-        <StatCard
-          icon={IconDatabase}
-          label="DB default collation"
-          value={fmtVal(db?.default_collation)}
-          color="blue"
-        />
-        <StatCard
-          icon={IconTargetArrow}
-          label="Linguistic max"
-          value={fmtVal(db?.linguistic_max)}
-          color={db?.collation_mismatch ? 'orange' : 'green'}
-        />
-        <StatCard
-          icon={IconTargetArrow}
-          label="Byte-wise max"
-          value={fmtVal(db?.byte_max)}
-          color="green"
-        />
-      </div>
-      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-4">
-        <StatCard
-          icon={IconDatabase}
-          label="Rows with frac_index"
-          value={fmtVal(db?.not_null_count)}
-          color="blue"
-        />
-        <StatCard
-          icon={IconTargetArrow}
-          label="Predicted next key"
-          value={fmtVal(db?.predicted_next)}
-          color={db?.predicted_collision ? 'orange' : 'blue'}
-        />
-        <StatCard
-          icon={db?.predicted_collision ? IconAlertTriangle : IconCircleCheck}
-          label="Predicted collision"
-          value={db?.predicted_collision ? `would hit ${db.predicted_collision}` : 'none'}
-          color={db?.predicted_collision ? 'orange' : 'green'}
-        />
-      </div>
-    </div>
-
-    <div>
-      <div class="flex items-baseline justify-between mb-2">
-        <h4 class="text-sm font-semibold" style="color: var(--ds-text);">Top 10 frac_index values (byte order)</h4>
-        <span class="text-xs" style="color: var(--ds-text-subtle);">Last refreshed {fmtTime(lastRefreshed)}</span>
-      </div>
-      <DataTable
-        columns={top10Columns}
-        data={top10Rows}
-        keyField="rank"
-        emptyMessage="No items with a non-null frac_index."
-      />
-    </div>
-  {/if}
-</section>
+  {/snippet}
+</DiagnosticsSection>

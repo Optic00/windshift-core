@@ -17,6 +17,7 @@
     projects = [],
     labels = [],
     customFieldDefinitions = [],
+    users = [],
   } = $props();
 
   // Shared chip presentation.
@@ -36,6 +37,29 @@
       ? (item.custom_field_values?.[customFieldId] ?? item.custom_field_values?.[String(customFieldId)])
       : null
   );
+  // Resolve user-type custom field values to display names.
+  let customFieldUserNames = $derived.by(() => {
+    if (!customFieldDef || !customFieldValue) return [];
+    if (customFieldDef.field_type === 'user') {
+      const v = /** @type {any} */ (customFieldValue);
+      if (typeof v === 'object' && v.name) return [v.name];
+      const uid = typeof v === 'object' ? parseInt(v.id ?? v.user_id, 10) : parseInt(v, 10);
+      const u = users.find((u) => u.id === uid);
+      return u ? [`${u.first_name} ${u.last_name}`.trim() || u.username] : [];
+    }
+    if (customFieldDef.field_type === 'multi_user') {
+      const raw = /** @type {any} */ (customFieldValue);
+      if (!raw) return [];
+      const entries = Array.isArray(raw) ? raw : [raw];
+      return entries.map((entry) => {
+        if (typeof entry === 'object' && entry.name) return entry.name;
+        const id = typeof entry === 'object' ? parseInt(entry.id ?? entry.user_id, 10) : parseInt(entry, 10);
+        const u = users.find((u) => u.id === id);
+        return u ? `${u.first_name} ${u.last_name}`.trim() || u.username : null;
+      }).filter(Boolean);
+    }
+    return [];
+  });
 </script>
 
 {#if cardField.field_type === 'system'}
@@ -144,15 +168,56 @@
     {/if}
   {/if}
 {:else if cardField.field_type === 'custom'}
-  {#if customFieldDef && customFieldValue}
-    <span class={CHIP_CLASS} style={CHIP_STYLE}>
-      {#if customFieldDef.field_type === 'date'}
+  {#if customFieldDef && customFieldValue != null}
+    {#if customFieldDef.field_type === 'date'}
+      <span class={CHIP_CLASS} style={CHIP_STYLE}>
         {formatDateShort(customFieldValue)}
-      {:else if (customFieldDef.field_type === 'select' || customFieldDef.field_type === 'multiselect') && customFieldDef.options}
+      </span>
+    {:else if (customFieldDef.field_type === 'select' || customFieldDef.field_type === 'multiselect') && customFieldDef.options}
+      <span class={CHIP_CLASS} style={CHIP_STYLE}>
         {resolveOptionLabel(customFieldDef.options, customFieldValue) || customFieldValue}
-      {:else}
+      </span>
+    {:else if customFieldDef.field_type === 'checkbox'}
+      <span class={CHIP_CLASS} style={CHIP_STYLE}>
+        {/** @type {any} */ (customFieldValue) === true || String(customFieldValue) === 'true' || customFieldValue === '1' ? '✓' : '✗'}
+      </span>
+    {:else if customFieldDef.field_type === 'number'}
+      <span class={CHIP_CLASS} style={CHIP_STYLE}>
+        {parseFloat(String(customFieldValue))}
+      </span>
+    {:else if customFieldDef.field_type === 'user' && customFieldUserNames.length > 0}
+      <span class={CHIP_CLASS} style={CHIP_STYLE} title={customFieldDef.name}>
+        {customFieldUserNames[0]}
+      </span>
+    {:else if customFieldDef.field_type === 'multi_user' && customFieldUserNames.length > 0}
+      <span class={CHIP_CLASS} style={CHIP_STYLE} title={customFieldDef.name}>
+        {customFieldUserNames[0]}{#if customFieldUserNames.length > 1} +{customFieldUserNames.length - 1}{/if}
+      </span>
+    {:else if customFieldDef.field_type === 'url' && String(customFieldValue).trim()}
+      <span class={CHIP_CLASS} style={CHIP_STYLE} title={customFieldValue}>
+        {String(customFieldValue).length > 30 ? String(customFieldValue).slice(0, 30) + '…' : customFieldValue}
+      </span>
+    {:else if customFieldDef.field_type === 'asset'}
+      <span class={CHIP_CLASS} style={CHIP_STYLE}>
+        {#if typeof customFieldValue === 'object' && customFieldValue}
+          {@const a = /** @type {any} */ (customFieldValue)}
+          {#if Array.isArray(a)}
+            {a.length} asset{#if a.length !== 1}s{/if}
+          {:else}
+            {a.asset_tag || a.title || `#${a.id}`}
+          {/if}
+        {:else}
+          #{customFieldValue}
+        {/if}
+      </span>
+    {:else if typeof customFieldValue === 'string' && customFieldValue.length > 40}
+      <span class={CHIP_CLASS} style={CHIP_STYLE} title={customFieldValue}>
+        {customFieldValue.slice(0, 40)}…
+      </span>
+    {:else}
+      <span class={CHIP_CLASS} style={CHIP_STYLE}>
         {customFieldValue}
-      {/if}
-    </span>
+      </span>
+    {/if}
   {/if}
 {/if}

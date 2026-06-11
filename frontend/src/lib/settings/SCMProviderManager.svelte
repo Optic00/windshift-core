@@ -635,33 +635,36 @@
         </FormField>
       {/if}
 
+      {#snippet callbackUrlBlock}
+  <div class="p-3 rounded-lg border" style="background-color: var(--ds-surface); border-color: var(--ds-border);">
+    <div class="flex items-center justify-between mb-1">
+      <span class="text-sm font-medium" style="color: var(--ds-text);">{t('settings.scmProviders.callbackUrl')}</span>
+      {#if oauthCallbackUrl}
+        <CopyButton
+          text={oauthCallbackUrl}
+          size="sm"
+          label={t('settings.scmProviders.copy')}
+          copiedLabel={t('settings.scmProviders.copied')}
+          onError={handleCopyError}
+        />
+      {/if}
+    </div>
+    {#if oauthCallbackUrl}
+      <code class="block text-xs p-2 rounded break-all" style="background-color: var(--ds-background-input); color: var(--ds-text);">
+        {oauthCallbackUrl}
+      </code>
+    {:else}
+      <p class="text-xs" style="color: var(--ds-text-subtle);">{t('settings.scmProviders.enterSlugForCallback')}</p>
+    {/if}
+    <DescriptionText variant="subtlest">
+      {t('settings.scmProviders.useThisUrl')} {formData.provider_type === 'github' ? 'GitHub' : 'Gitea'}
+    </DescriptionText>
+  </div>
+{/snippet}
+
       <!-- OAuth Settings -->
       {#if formData.auth_method === 'oauth'}
-        <!-- Callback URL -->
-        <div class="p-3 rounded-lg border" style="background-color: var(--ds-surface); border-color: var(--ds-border);">
-          <div class="flex items-center justify-between mb-1">
-            <span class="text-sm font-medium" style="color: var(--ds-text);">{t('settings.scmProviders.callbackUrl')}</span>
-            {#if oauthCallbackUrl}
-              <CopyButton
-                text={oauthCallbackUrl}
-                size="sm"
-                label={t('settings.scmProviders.copy')}
-                copiedLabel={t('settings.scmProviders.copied')}
-                onError={handleCopyError}
-              />
-            {/if}
-          </div>
-          {#if oauthCallbackUrl}
-            <code class="block text-xs p-2 rounded break-all" style="background-color: var(--ds-background-input); color: var(--ds-text);">
-              {oauthCallbackUrl}
-            </code>
-          {:else}
-            <p class="text-xs" style="color: var(--ds-text-subtle);">{t('settings.scmProviders.enterSlugForCallback')}</p>
-          {/if}
-          <DescriptionText variant="subtlest">
-            {t('settings.scmProviders.useThisUrl')} {formData.provider_type === 'github' ? 'GitHub' : 'Gitea'}
-          </DescriptionText>
-        </div>
+        {@render callbackUrlBlock()}
 
         <div class="grid grid-cols-2 gap-4">
           <FormField label={t('settings.scmProviders.oauthClientId')} error={formErrors.oauth_client_id}>
@@ -682,31 +685,7 @@
 
       <!-- GitHub App Settings -->
       {#if formData.auth_method === 'github_app'}
-        <!-- Callback URL -->
-        <div class="p-3 rounded-lg border" style="background-color: var(--ds-surface); border-color: var(--ds-border);">
-          <div class="flex items-center justify-between mb-1">
-            <span class="text-sm font-medium" style="color: var(--ds-text);">{t('settings.scmProviders.callbackUrl')}</span>
-            {#if oauthCallbackUrl}
-              <CopyButton
-                text={oauthCallbackUrl}
-                size="sm"
-                label={t('settings.scmProviders.copy')}
-                copiedLabel={t('settings.scmProviders.copied')}
-                onError={handleCopyError}
-              />
-            {/if}
-          </div>
-          {#if oauthCallbackUrl}
-            <code class="block text-xs p-2 rounded break-all" style="background-color: var(--ds-background-input); color: var(--ds-text);">
-              {oauthCallbackUrl}
-            </code>
-          {:else}
-            <p class="text-xs" style="color: var(--ds-text-subtle);">{t('settings.scmProviders.enterSlugForCallback')}</p>
-          {/if}
-          <DescriptionText variant="subtlest">
-            {t('settings.scmProviders.useThisUrl')} {formData.provider_type === 'github' ? 'GitHub' : 'Gitea'}
-          </DescriptionText>
-        </div>
+        {@render callbackUrlBlock()}
 
         <FormField label={t('settings.scmProviders.githubAppId')} error={formErrors.github_app_id}>
           <Input bind:value={formData.github_app_id} />

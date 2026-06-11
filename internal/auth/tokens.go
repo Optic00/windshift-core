@@ -100,6 +100,14 @@ const (
 	ScopeAssetsWrite  = "assets:write"
 	ScopeAssetsDelete = "assets:delete"
 
+	// Time tracking (worklogs, timers, time projects). :write covers create/edit;
+	// :delete is required for worklog deletion. Per-project membership is enforced
+	// in-handler via TimePermService — token scope alone never grants access to a
+	// project the user isn't a member of.
+	ScopeTimeRead   = "time:read"
+	ScopeTimeWrite  = "time:write"
+	ScopeTimeDelete = "time:delete"
+
 	// Agent skills (WI-258): the per-workspace library of markdown knowledge
 	// packs a run's prompt indexes and the agent reads via `ws skill get`.
 	// Read-only by design on the token surface — authoring is a workspace-
@@ -130,6 +138,7 @@ var DefaultAgentScopes = []string{
 	ScopeMilestonesRead, ScopeIterationsRead, ScopeProjectsRead,
 	ScopePagesRead, ScopePagesWrite, ScopePagesDelete,
 	ScopeTestsRead, ScopeTestsWrite,
+	ScopeTimeRead, ScopeTimeWrite,
 	// assets:read + assets:write are default-on; the per-set asset role
 	// model (Viewer / Editor / Administrator on each asset_management_set,
 	// enforced by services.AssetPermissionService) is the real guard, so
@@ -156,6 +165,7 @@ var DefaultCodingAgentRunScopes = []string{
 	ScopeMilestonesRead, ScopeIterationsRead, ScopeProjectsRead,
 	ScopePagesRead,
 	ScopeTestsRead,
+	ScopeTimeRead, ScopeTimeWrite,
 	ScopeAgentSkillsRead,
 	// mcp:access is safe to grant since WI-351: the MCP server enforces
 	// each tool's required token scopes at dispatch, so this narrowed set
@@ -181,6 +191,7 @@ var AllValidScopes = []string{
 	ScopePagesRead, ScopePagesWrite, ScopePagesDelete,
 	ScopeTestsRead, ScopeTestsWrite,
 	ScopeAssetsRead, ScopeAssetsWrite, ScopeAssetsDelete,
+	ScopeTimeRead, ScopeTimeWrite, ScopeTimeDelete,
 	ScopeAgentSkillsRead,
 	ScopeAdminUsersRead, ScopeAdminUsersWrite,
 	ScopeAdminGroupsRead, ScopeAdminGroupsWrite,
@@ -199,7 +210,7 @@ var allNonAdminReadScopes = []string{
 	ScopeCustomFieldsRead, ScopeUsersRead, ScopeMilestonesRead,
 	ScopeIterationsRead, ScopeProjectsRead, ScopeCollectionsRead,
 	ScopeActionsRead, ScopePagesRead, ScopeTestsRead,
-	ScopeAssetsRead,
+	ScopeAssetsRead, ScopeTimeRead,
 }
 
 // allNonAdminScopes is the set of all non-admin scopes (for legacy "write" mapping).
@@ -223,6 +234,7 @@ var allNonAdminScopes = []string{
 	ScopePagesRead, ScopePagesWrite, ScopePagesDelete,
 	ScopeTestsRead, ScopeTestsWrite,
 	ScopeAssetsRead, ScopeAssetsWrite,
+	ScopeTimeRead, ScopeTimeWrite,
 }
 
 // AdminScopes returns the set of scopes that require system admin role.

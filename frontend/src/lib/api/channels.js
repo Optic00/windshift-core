@@ -52,41 +52,46 @@ export const channels = {
 
 export const channelCategories = createCrudClient('/channel-categories');
 
+// Create a channel-scoped CRUD client for sub-resources like request-types
+// and asset-reports that live under /channels/:channelId/.
+function createChannelScopedCrud(resourceKey) {
+  return {
+    getForChannel: (channelId) => fetchAPI(`/channels/${channelId}/${resourceKey}`),
+    getForPortal: (slug) => fetchAPI(`/portal/${slug}/${resourceKey}`),
+    get: (id) => fetchAPI(`/${resourceKey}/${id}`),
+    create: (channelId, data) =>
+      fetchAPI(`/channels/${channelId}/${resourceKey}`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    update: (channelId, id, data) =>
+      fetchAPI(`/channels/${channelId}/${resourceKey}/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    delete: (channelId, id) =>
+      fetchAPI(`/channels/${channelId}/${resourceKey}/${id}`, {
+        method: 'DELETE',
+      }),
+    getFields: (id) => fetchAPI(`/${resourceKey}/${id}/fields`),
+    updateFields: (channelId, id, fields) =>
+      fetchAPI(`/channels/${channelId}/${resourceKey}/${id}/fields`, {
+        method: 'PUT',
+        body: JSON.stringify(fields),
+      }),
+    getAvailableFields: (id) => fetchAPI(`/${resourceKey}/${id}/available-fields`),
+    updateVisibility: (channelId, id, { groupIds, orgIds }) =>
+      fetchAPI(`/channels/${channelId}/${resourceKey}/${id}/visibility`, {
+        method: 'PUT',
+        body: JSON.stringify({ group_ids: groupIds, org_ids: orgIds }),
+      }),
+  };
+}
+
 // Request Types (channel-scoped)
 export const requestTypes = {
+  ...createChannelScopedCrud('request-types'),
   getAllForChannel: (channelId) => fetchAPI(`/channels/${channelId}/request-types`),
-  getForChannel: (channelId) => fetchAPI(`/channels/${channelId}/request-types`),
-  getForPortal: (slug) => fetchAPI(`/portal/${slug}/request-types`),
-  get: (id) => fetchAPI(`/request-types/${id}`),
-  create: (channelId, data) =>
-    fetchAPI(`/channels/${channelId}/request-types`, {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-  // Write operations take channelId from the caller — the backend constrains
-  // mutations to request types that belong to that channel, so the URL must
-  // include it. Reads stay flat (the resource id is sufficient).
-  update: (channelId, id, data) =>
-    fetchAPI(`/channels/${channelId}/request-types/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    }),
-  delete: (channelId, id) =>
-    fetchAPI(`/channels/${channelId}/request-types/${id}`, {
-      method: 'DELETE',
-    }),
-  getFields: (id) => fetchAPI(`/request-types/${id}/fields`),
-  updateFields: (channelId, id, fields) =>
-    fetchAPI(`/channels/${channelId}/request-types/${id}/fields`, {
-      method: 'PUT',
-      body: JSON.stringify(fields),
-    }),
-  getAvailableFields: (id) => fetchAPI(`/request-types/${id}/available-fields`),
-  updateVisibility: (channelId, id, { groupIds, orgIds }) =>
-    fetchAPI(`/channels/${channelId}/request-types/${id}/visibility`, {
-      method: 'PUT',
-      body: JSON.stringify({ group_ids: groupIds, org_ids: orgIds }),
-    }),
   updateConfig: (id, config) =>
     fetchAPI(`/request-types/${id}/config`, {
       method: 'PUT',
@@ -96,36 +101,7 @@ export const requestTypes = {
 
 // Asset Reports (channel-scoped)
 export const assetReports = {
-  getForChannel: (channelId) => fetchAPI(`/channels/${channelId}/asset-reports`),
-  getForPortal: (slug) => fetchAPI(`/portal/${slug}/asset-reports`),
-  get: (id) => fetchAPI(`/asset-reports/${id}`),
-  create: (channelId, data) =>
-    fetchAPI(`/channels/${channelId}/asset-reports`, {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-  // Write operations take channelId — see requestTypes above.
-  update: (channelId, id, data) =>
-    fetchAPI(`/channels/${channelId}/asset-reports/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    }),
-  delete: (channelId, id) =>
-    fetchAPI(`/channels/${channelId}/asset-reports/${id}`, {
-      method: 'DELETE',
-    }),
-  updateVisibility: (channelId, id, { groupIds, orgIds }) =>
-    fetchAPI(`/channels/${channelId}/asset-reports/${id}/visibility`, {
-      method: 'PUT',
-      body: JSON.stringify({ group_ids: groupIds, org_ids: orgIds }),
-    }),
-  getFields: (id) => fetchAPI(`/asset-reports/${id}/fields`),
-  updateFields: (channelId, id, fields) =>
-    fetchAPI(`/channels/${channelId}/asset-reports/${id}/fields`, {
-      method: 'PUT',
-      body: JSON.stringify(fields),
-    }),
-  getAvailableFields: (id) => fetchAPI(`/asset-reports/${id}/available-fields`),
+  ...createChannelScopedCrud('asset-reports'),
   getPortalFields: (slug, id) => fetchAPI(`/portal/${slug}/asset-reports/${id}/fields`),
   execute: (slug, id, params = {}) => {
     const mapped = {};

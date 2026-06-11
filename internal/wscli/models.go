@@ -937,6 +937,67 @@ type AssetStatusSummary struct {
 	Color string `json:"color,omitempty"`
 }
 
+// TimeProject mirrors the v1 time-projects response.
+type TimeProject struct {
+	ID            int                    `json:"id"`
+	CustomerID    *int                   `json:"customer_id,omitempty"`
+	CategoryID    *int                   `json:"category_id,omitempty"`
+	Name          string                 `json:"name"`
+	Description   string                 `json:"description"`
+	Status        string                 `json:"status"`
+	Color         string                 `json:"color,omitempty"`
+	HourlyRate    float64                `json:"hourly_rate"`
+	Settings      map[string]interface{} `json:"settings,omitempty"`
+	CustomerName  string                 `json:"customer_name,omitempty"`
+	CategoryName  string                 `json:"category_name,omitempty"`
+	CategoryColor string                 `json:"category_color,omitempty"`
+	TotalHours    *float64               `json:"total_hours,omitempty"`
+}
+
+// TimeWorklog mirrors the v1 worklog response.
+type TimeWorklog struct {
+	ID                  int      `json:"id"`
+	ProjectID           int      `json:"project_id"`
+	CustomerID          int      `json:"customer_id"`
+	ItemID              *int     `json:"item_id,omitempty"`
+	Description         string   `json:"description"`
+	Date                int64    `json:"date"`
+	StartTime           int64    `json:"start_time"`
+	EndTime             int64    `json:"end_time"`
+	DurationMinutes     int      `json:"duration_minutes"`
+	CreatedAt           int64    `json:"created_at"`
+	UpdatedAt           int64    `json:"updated_at"`
+	CustomerName        string   `json:"customer_name,omitempty"`
+	ProjectName         string   `json:"project_name,omitempty"`
+	ItemTitle           string   `json:"item_title,omitempty"`
+	WorkspaceID         *int     `json:"workspace_id,omitempty"`
+	WorkspaceKey        string   `json:"workspace_key,omitempty"`
+	WorkspaceItemNumber int      `json:"workspace_item_number,omitempty"`
+	ProjectMaxHours     *float64 `json:"project_max_hours,omitempty"`
+	ProjectTotalHours   *float64 `json:"project_total_hours,omitempty"`
+}
+
+// TimeWorklogCreateRequest mirrors the v1 create-worklog request body.
+type TimeWorklogCreateRequest struct {
+	ProjectID       int    `json:"project_id"`
+	Description     string `json:"description"`
+	Date            string `json:"date"`
+	Duration        string `json:"duration,omitempty"`
+	DurationMinutes int    `json:"duration_minutes,omitempty"`
+	StartTime       string `json:"start_time,omitempty"`
+	EndTime         string `json:"end_time,omitempty"`
+	ItemID          *int   `json:"item_id,omitempty"`
+	ItemKey         string `json:"item_key,omitempty"`
+}
+
+// TimerStartRequest mirrors the v1 start-timer request body.
+type TimerStartRequest struct {
+	WorkspaceID int    `json:"workspace_id"`
+	ProjectID   int    `json:"project_id"`
+	ItemID      *int   `json:"item_id,omitempty"`
+	Description string `json:"description"`
+}
+
 // AssetImportJob mirrors dto.AssetImportJobResponse.
 type AssetImportJob struct {
 	ID            int     `json:"id"`
