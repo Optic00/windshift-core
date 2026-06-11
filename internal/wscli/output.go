@@ -81,6 +81,10 @@ func (o *Output) printTable(data interface{}) {
 		o.printCommentDetailTable(w, v)
 	case []Attachment:
 		o.printAttachmentsTable(w, v)
+	case []Label:
+		o.printLabelsTable(w, v)
+	case []History:
+		o.printHistoryTable(w, v)
 	case []Milestone:
 		o.printMilestonesTable(w, v)
 	case *PaginatedResponse[Milestone]:
@@ -685,6 +689,49 @@ func (o *Output) printCommentDetailTable(w *tabwriter.Writer, c *Comment) {
 	_, _ = fmt.Fprintf(w, "Created:\t%s\n", c.CreatedAt.Format("2006-01-02 15:04:05"))
 	_, _ = fmt.Fprintf(w, "Updated:\t%s\n", c.UpdatedAt.Format("2006-01-02 15:04:05"))
 	_, _ = fmt.Fprintf(w, "Content:\n%s\n", c.Content)
+}
+
+// ============================================
+// Item Label / History formatters
+// ============================================
+
+func (o *Output) printLabelsTable(w *tabwriter.Writer, labels []Label) {
+	_, _ = fmt.Fprintln(w, "ID\tNAME\tCOLOR")
+	_, _ = fmt.Fprintln(w, "--\t----\t-----")
+	for _, l := range labels {
+		_, _ = fmt.Fprintf(w, "%d\t%s\t%s\n", l.ID, l.Name, l.Color)
+	}
+}
+
+// historyValue picks the human-readable value for a history cell: resolved
+// value when the server provided one, raw value otherwise, "-" when empty.
+func historyValue(raw, resolved *string) string {
+	if resolved != nil && *resolved != "" {
+		return *resolved
+	}
+	if raw != nil && *raw != "" {
+		return *raw
+	}
+	return "-"
+}
+
+func (o *Output) printHistoryTable(w *tabwriter.Writer, history []History) {
+	_, _ = fmt.Fprintln(w, "FIELD\tOLD\tNEW\tACTOR\tTIME")
+	_, _ = fmt.Fprintln(w, "-----\t---\t---\t-----\t----")
+	for i := range history {
+		h := &history[i]
+		actor := "-"
+		if h.User != nil && h.User.FullName != "" {
+			actor = h.User.FullName
+		}
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+			h.FieldName,
+			truncateString(historyValue(h.OldValue, h.ResolvedOldValue), 40),
+			truncateString(historyValue(h.NewValue, h.ResolvedNewValue), 40),
+			actor,
+			h.ChangedAt.Format("2006-01-02 15:04"),
+		)
+	}
 }
 
 func truncateString(s string, maxLen int) string {

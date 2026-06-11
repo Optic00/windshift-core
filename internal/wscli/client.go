@@ -938,6 +938,90 @@ func (c *Client) ResolveMilestoneID(nameOrID string, workspaceID *int) (int, err
 	return 0, fmt.Errorf("milestone not found: %s", nameOrID)
 }
 
+// SearchItems performs a full-text search over items the caller can view
+// via GET /rest/api/v1/search/items. limit <= 0 falls back to the server
+// default page size.
+func (c *Client) SearchItems(query string, limit int) (*PaginatedResponse[Item], error) {
+	params := url.Values{}
+	params.Set("q", query)
+	if limit > 0 {
+		params.Set("limit", strconv.Itoa(limit))
+	}
+
+	var resp PaginatedResponse[Item]
+	if err := c.GET("/rest/api/v1/search/items?"+params.Encode(), &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// GetItemHistory returns the change history of an item. The endpoint
+// returns the full history as a plain array.
+func (c *Client) GetItemHistory(itemID int) ([]History, error) {
+	var history []History
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/items/%d/history", itemID), &history); err != nil {
+		return nil, err
+	}
+	return history, nil
+}
+
+// ============================================
+// Item Label Methods
+// ============================================
+//
+// Workspace-scoped work-item labels (catalog under /workspaces/{id}/labels,
+// per-item attachments under /items/{id}/labels). Fully separate from the
+// page-label system. Gated by items:read / items:write.
+
+// ListLabels returns every item label defined in a workspace.
+func (c *Client) ListLabels(workspaceID int) ([]Label, error) {
+	var resp LabelListResponse
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/workspaces/%d/labels", workspaceID), &resp); err != nil {
+		return nil, err
+	}
+	return resp.Items, nil
+}
+
+// ListItemLabels returns the labels attached to a single item.
+func (c *Client) ListItemLabels(itemID int) ([]Label, error) {
+	var resp LabelListResponse
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/items/%d/labels", itemID), &resp); err != nil {
+		return nil, err
+	}
+	return resp.Items, nil
+}
+
+// SetItemLabels atomically replaces the label set on an item.
+func (c *Client) SetItemLabels(itemID int, labelIDs []int) ([]Label, error) {
+	var resp LabelListResponse
+	if err := c.PUT(
+		fmt.Sprintf("/rest/api/v1/items/%d/labels", itemID),
+		ItemLabelSetRequest{LabelIDs: labelIDs},
+		&resp,
+	); err != nil {
+		return nil, err
+	}
+	return resp.Items, nil
+}
+
+// AddItemLabel attaches a single label to an item.
+func (c *Client) AddItemLabel(itemID, labelID int) ([]Label, error) {
+	var resp LabelListResponse
+	if err := c.POST(
+		fmt.Sprintf("/rest/api/v1/items/%d/labels", itemID),
+		ItemLabelAddRequest{LabelID: labelID},
+		&resp,
+	); err != nil {
+		return nil, err
+	}
+	return resp.Items, nil
+}
+
+// RemoveItemLabel detaches a single label from an item.
+func (c *Client) RemoveItemLabel(itemID, labelID int) error {
+	return c.DELETE(fmt.Sprintf("/rest/api/v1/items/%d/labels/%d", itemID, labelID))
+}
+
 // ============================================
 // Custom Field Methods
 // ============================================

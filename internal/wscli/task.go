@@ -519,6 +519,43 @@ Examples:
 	},
 }
 
+var taskHistoryCmd = &cobra.Command{
+	Use:   "history <id|KEY-123>",
+	Short: "Show the change history of a task",
+	Long: `Show the field-level change history of a work item (field, old
+value, new value, actor, time). The server returns the full history; --limit
+keeps only the first N entries of that response.
+
+Examples:
+  ws task history PROJ-45
+  ws task history PROJ-45 --limit 20
+  ws task history 123 -o json`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		client, err := NewClient()
+		if err != nil {
+			return err
+		}
+
+		itemID, err := client.ResolveItemID(args[0])
+		if err != nil {
+			return fmt.Errorf("failed to resolve item: %w", err)
+		}
+
+		history, err := client.GetItemHistory(itemID)
+		if err != nil {
+			return fmt.Errorf("failed to get item history: %w", err)
+		}
+		if historyLimit > 0 && len(history) > historyLimit {
+			history = history[:historyLimit]
+		}
+
+		output := NewOutput()
+		output.Print(history)
+		return nil
+	},
+}
+
 var taskChildrenCmd = &cobra.Command{
 	Use:   "children <id|KEY-123>",
 	Short: "List children of a task or epic",
@@ -891,6 +928,7 @@ var (
 	updatedFilter  string
 	openInBrowser  bool
 	clearMilestone bool
+	historyLimit   int
 
 	childStatusFilter string
 	childTypeFilter   string
@@ -935,6 +973,7 @@ func init() {
 	taskCmd.AddCommand(taskChildrenCmd)
 	taskCmd.AddCommand(taskMoveCmd)
 	taskCmd.AddCommand(taskSetMilestoneCmd)
+	taskCmd.AddCommand(taskHistoryCmd)
 
 	// List filters
 	taskMineCmd.Flags().StringVarP(&statusFilter, "status", "s", "", "filter by status (use ~status to exclude)")
@@ -953,6 +992,9 @@ func init() {
 
 	// Set-milestone flags
 	taskSetMilestoneCmd.Flags().BoolVar(&clearMilestone, "clear", false, "remove item from milestone")
+
+	// History flags
+	taskHistoryCmd.Flags().IntVar(&historyLimit, "limit", 0, "show at most N history entries (0 = all)")
 
 	// Children filters
 	taskChildrenCmd.Flags().StringVarP(&childStatusFilter, "status", "s", "", "filter by status (use ~status to exclude)")
