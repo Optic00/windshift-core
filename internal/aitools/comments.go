@@ -118,6 +118,7 @@ func init() {
 
 	Register(Default, Tool[updateCommentArgs]{
 		Name:        "update_comment",
+		Scopes:      []string{auth.ScopeItemsWrite},
 		Description: "Update the content of an existing comment. Only the comment's author can edit it, unless the caller holds the edit-others-comments permission in the item's workspace.",
 		Run: func(_ context.Context, env *Env, args updateCommentArgs) (any, error) {
 			if args.CommentID <= 0 {
@@ -142,6 +143,7 @@ func init() {
 
 	Register(Default, Tool[deleteCommentArgs]{
 		Name:        "delete_comment",
+		Scopes:      []string{auth.ScopeItemsDelete},
 		Description: "Delete a comment. Only the comment's author can delete it, unless the caller holds the edit-others-comments permission in the item's workspace.",
 		Run: func(_ context.Context, env *Env, args deleteCommentArgs) (any, error) {
 			if args.CommentID <= 0 {

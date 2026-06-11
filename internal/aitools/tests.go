@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"time"
 
+	"windshift/internal/auth"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/sanitize"
@@ -265,6 +266,7 @@ func init() {
 	// ------------------------------------------------------------------------
 	Register(Default, Tool[listTestCasesArgs]{
 		Name:        "list_test_cases",
+		Scopes:      []string{auth.ScopeTestsRead},
 		Description: "List test cases in a workspace, optionally filtered to one test folder.",
 		Run: func(_ context.Context, env *Env, args listTestCasesArgs) (any, error) {
 			if !hasTestPermission(env, args.WorkspaceID, models.PermissionTestView) {
@@ -291,6 +293,7 @@ func init() {
 	// ------------------------------------------------------------------------
 	Register(Default, Tool[getTestCaseArgs]{
 		Name:        "get_test_case",
+		Scopes:      []string{auth.ScopeTestsRead},
 		Description: "Get a test case by ID, including its steps (action / data / expected result).",
 		Run: func(_ context.Context, env *Env, args getTestCaseArgs) (any, error) {
 			caseSvc := services.NewTestCaseService(env.DB)
@@ -338,6 +341,7 @@ func init() {
 	// ------------------------------------------------------------------------
 	Register(Default, Tool[listTestRunsArgs]{
 		Name:        "list_test_runs",
+		Scopes:      []string{auth.ScopeTestsRead},
 		Description: "List test runs in a workspace, optionally filtered by test set or assignee.",
 		Run: func(_ context.Context, env *Env, args listTestRunsArgs) (any, error) {
 			if !hasTestPermission(env, args.WorkspaceID, models.PermissionTestView) {
@@ -365,6 +369,7 @@ func init() {
 	// ------------------------------------------------------------------------
 	Register(Default, Tool[getTestRunArgs]{
 		Name:        "get_test_run",
+		Scopes:      []string{auth.ScopeTestsRead},
 		Description: "Get a test run by ID, including its per-test-case results and a pass/fail summary.",
 		Run: func(_ context.Context, env *Env, args getTestRunArgs) (any, error) {
 			runSvc := services.NewTestRunService(env.DB)
@@ -402,6 +407,7 @@ func init() {
 	// ------------------------------------------------------------------------
 	Register(Default, Tool[startTestRunArgs]{
 		Name:        "start_test_run",
+		Scopes:      []string{auth.ScopeTestsWrite},
 		Description: "Start a new test run from a test set (set_id) or a saved run template (template_id). Initializes a not_run result for every test case in the set.",
 		Run: func(_ context.Context, env *Env, args startTestRunArgs) (any, error) {
 			switch {
@@ -420,6 +426,7 @@ func init() {
 	// ------------------------------------------------------------------------
 	Register(Default, Tool[endTestRunArgs]{
 		Name:        "end_test_run",
+		Scopes:      []string{auth.ScopeTestsWrite},
 		Description: "Mark a test run as ended and return its final result summary.",
 		Run: func(_ context.Context, env *Env, args endTestRunArgs) (any, error) {
 			runSvc := services.NewTestRunService(env.DB)
@@ -456,6 +463,7 @@ func init() {
 	// ------------------------------------------------------------------------
 	Register(Default, Tool[recordTestResultArgs]{
 		Name:        "record_test_result",
+		Scopes:      []string{auth.ScopeTestsWrite},
 		Description: "Record the result of a test case in a test run (status passed | failed | blocked | skipped, with optional notes and actual result).",
 		Run: func(_ context.Context, env *Env, args recordTestResultArgs) (any, error) {
 			switch args.Status {

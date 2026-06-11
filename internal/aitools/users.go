@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"windshift/internal/auth"
 	"windshift/internal/repository"
 	"windshift/internal/services"
 )
@@ -33,6 +34,7 @@ type findUsersOut struct {
 func init() {
 	Register(Default, Tool[findUsersArgs]{
 		Name:        "find_users",
+		Scopes:      []string{auth.ScopeUsersRead},
 		Description: "Find users by name or email (case-insensitive substring match). Pass workspace_id to restrict the search to that workspace's members; member results include their workspace role names. Returns at most 20 matches — narrow the query if the person you want is missing.",
 		Run: func(_ context.Context, env *Env, args findUsersArgs) (any, error) {
 			query := strings.ToLower(strings.TrimSpace(args.Query))
