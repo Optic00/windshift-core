@@ -313,10 +313,18 @@ build_binaries() {
 
     dry_run_or_exec mkdir -p dist/binaries
 
+    local failed_platforms=()
     for platform in "${PLATFORMS[@]}"; do
         IFS="/" read -r goos goarch <<< "$platform"
-        build_binary "$goos" "$goarch" || true
+        build_binary "$goos" "$goarch" || failed_platforms+=("$platform")
     done
+
+    if [ ${#failed_platforms[@]} -gt 0 ]; then
+        for platform in "${failed_platforms[@]}"; do
+            log_error "Server binary build failed for ${platform}"
+        done
+        die "Server binary builds failed for ${#failed_platforms[@]} platform(s)"
+    fi
 
     log_success "Server binary builds complete"
 }
@@ -355,10 +363,18 @@ build_ws_binaries() {
 
     dry_run_or_exec mkdir -p dist/binaries
 
+    local failed_platforms=()
     for platform in "${PLATFORMS[@]}"; do
         IFS="/" read -r goos goarch <<< "$platform"
-        build_ws_binary "$goos" "$goarch" || true
+        build_ws_binary "$goos" "$goarch" || failed_platforms+=("$platform")
     done
+
+    if [ ${#failed_platforms[@]} -gt 0 ]; then
+        for platform in "${failed_platforms[@]}"; do
+            log_error "ws CLI binary build failed for ${platform}"
+        done
+        die "ws CLI binary builds failed for ${#failed_platforms[@]} platform(s)"
+    fi
 
     log_success "ws CLI binary builds complete"
 }
