@@ -334,9 +334,72 @@ type IterationSummary struct {
 	Name string `json:"name,omitempty"`
 }
 
+// Iteration mirrors the v1 IterationResponse payload returned by
+// /rest/api/v1/iterations and /rest/api/v1/workspaces/{id}/iterations.
+type Iteration struct {
+	ID          int    `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	StartDate   string `json:"start_date"`
+	EndDate     string `json:"end_date"`
+	Status      string `json:"status"`
+	IsGlobal    bool   `json:"is_global"`
+	WorkspaceID *int   `json:"workspace_id,omitempty"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
 type ProjectSummary struct {
 	ID   int    `json:"id"`
 	Name string `json:"name,omitempty"`
+}
+
+// ============================================
+// Custom Fields
+// ============================================
+
+// CustomField mirrors the v1 CustomFieldResponse payload returned by
+// /rest/api/v1/custom-fields. Options is a JSON string for select /
+// multiselect fields.
+type CustomField struct {
+	ID           int    `json:"id"`
+	Name         string `json:"name"`
+	FieldType    string `json:"field_type"`
+	Description  string `json:"description,omitempty"`
+	Options      string `json:"options,omitempty"`
+	Required     bool   `json:"required"`
+	DisplayOrder int    `json:"display_order"`
+}
+
+// ============================================
+// Item Labels
+// ============================================
+
+// Label is a workspace-scoped work-item label (fully separate from the
+// page-label system). Mirrors models.Label on the wire.
+type Label struct {
+	ID          int       `json:"id"`
+	Name        string    `json:"name"`
+	Color       string    `json:"color"`
+	WorkspaceID int       `json:"workspace_id"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// LabelListResponse is the {items:[...]} envelope used by the v1
+// workspace-label and item-label endpoints.
+type LabelListResponse struct {
+	Items []Label `json:"items"`
+}
+
+// ItemLabelSetRequest is the body for PUT /rest/api/v1/items/{id}/labels.
+type ItemLabelSetRequest struct {
+	LabelIDs []int `json:"label_ids"`
+}
+
+// ItemLabelAddRequest is the body for POST /rest/api/v1/items/{id}/labels.
+type ItemLabelAddRequest struct {
+	LabelID int `json:"label_id"`
 }
 
 // ============================================

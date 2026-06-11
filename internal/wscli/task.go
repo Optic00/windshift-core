@@ -210,6 +210,8 @@ Examples:
   ws task create -t "Add feature" -d "Detailed description"
   ws task create -t "Bug" --type Bug --priority 2
   ws task create -t "Ship it" --due-date 2026-07-20
+  ws task create -t "Spike" --custom-field "Risk=High" --custom-field 7=42
+  ws task create -t "Sprint work" --iteration "Sprint 12" --project 3
   ws task create -t "New feature" --web    # Create and open in browser`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if createTitle == "" {
@@ -278,6 +280,27 @@ Examples:
 				return err
 			}
 			req.EndDate = d
+		}
+		if len(createCustomFields) > 0 {
+			cf, err := parseCustomFieldFlags(client, createCustomFields)
+			if err != nil {
+				return err
+			}
+			req.CustomFields = cf
+		}
+		if createIteration != "" {
+			id, err := client.ResolveIterationID(createIteration, &wsID)
+			if err != nil {
+				return fmt.Errorf("failed to resolve iteration: %w", err)
+			}
+			req.IterationID = &id
+		}
+		if createProject != "" {
+			id, err := parseProjectFlag(createProject)
+			if err != nil {
+				return err
+			}
+			req.ProjectID = &id
 		}
 
 		item, err := client.CreateItem(req)
@@ -552,7 +575,10 @@ Examples:
   ws task edit CP-30 --priority 2 --assignee 3
   ws task edit CP-30 --type Bug                 # Change item type by name
   ws task edit CP-30 --due-date 2026-07-20      # Set due date
-  ws task edit CP-30 --start-date 2026-07-01 --end-date 2026-07-15`,
+  ws task edit CP-30 --start-date 2026-07-01 --end-date 2026-07-15
+  ws task edit CP-30 --custom-field "Risk=High" # Set custom field by name
+  ws task edit CP-30 --iteration "Sprint 12"    # Assign to iteration by name
+  ws task edit CP-30 --project 3                # Assign to project by ID`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := NewClient()
@@ -614,9 +640,41 @@ Examples:
 			req.EndDate = d
 			hasChanges = true
 		}
+		if len(editCustomFields) > 0 {
+			cf, err := parseCustomFieldFlags(client, editCustomFields)
+			if err != nil {
+				return err
+			}
+			req.CustomFields = cf
+			hasChanges = true
+		}
+		if cmd.Flags().Changed("iteration") {
+			var wsID *int
+			if wsKey := cfg.GetEffectiveWorkspace(); wsKey != "" {
+				id, err := client.ResolveWorkspaceID(wsKey)
+				if err != nil {
+					return fmt.Errorf("failed to resolve workspace: %w", err)
+				}
+				wsID = &id
+			}
+			id, err := client.ResolveIterationID(editIteration, wsID)
+			if err != nil {
+				return fmt.Errorf("failed to resolve iteration: %w", err)
+			}
+			req.IterationID = &id
+			hasChanges = true
+		}
+		if cmd.Flags().Changed("project") {
+			id, err := parseProjectFlag(editProject)
+			if err != nil {
+				return err
+			}
+			req.ProjectID = &id
+			hasChanges = true
+		}
 
 		if !hasChanges && !typeChanged {
-			return fmt.Errorf("no changes specified. Use flags like -t, -d, --type, --priority, --assignee, --due-date")
+			return fmt.Errorf("no changes specified. Use flags like -t, -d, --type, --priority, --assignee, --due-date, --custom-field, --iteration, --project")
 		}
 
 		var item *Item
@@ -707,6 +765,89 @@ func resolveItemTypeID(client *Client, input string) (int, error) {
 	return 0, fmt.Errorf("unknown item type %q. Available types:\n  - %s", input, strings.Join(available, "\n  - "))
 }
 
+// parseCustomFieldFlags turns repeated --custom-field <field>=<value> flags
+// into the custom_fields wire map. Keys are resolved to custom-field IDs
+// (numeric input passes through; names resolve via the v1 custom-fields
+// read endpoint). Values pass through as strings — the server validates
+// them against the field type.
+func parseCustomFieldFlags(client *Client, pairs []string) (map[string]interface{}, error) {
+	fields := make(map[string]interface{}, len(pairs))
+	var defs []CustomField // lazily loaded, only when a non-numeric key shows up
+	for _, pair := range pairs {
+		key, value, found := strings.Cut(pair, "=")
+		key = strings.TrimSpace(key)
+		if !found || key == "" {
+			return nil, fmt.Errorf("invalid --custom-field %q: expected <field>=<value>", pair)
+		}
+		if id, err := strconv.Atoi(key); err == nil {
+			if id <= 0 {
+				return nil, fmt.Errorf("invalid --custom-field %q: field ID must be positive", pair)
+			}
+			fields[strconv.Itoa(id)] = value
+			continue
+		}
+		if defs == nil {
+			var err error
+			defs, err = client.ListCustomFields()
+			if err != nil {
+				return nil, fmt.Errorf("failed to list custom fields: %w", err)
+			}
+		}
+		id, err := resolveCustomFieldID(key, defs)
+		if err != nil {
+			return nil, err
+		}
+		fields[strconv.Itoa(id)] = value
+	}
+	return fields, nil
+}
+
+// resolveCustomFieldID resolves a custom-field name against the workspace
+// catalog. Names match case-insensitively, exact first, then unique
+// substring — same convention as resolveItemTypeID.
+func resolveCustomFieldID(name string, defs []CustomField) (int, error) {
+	nameLower := strings.ToLower(name)
+	var partial []CustomField
+	for _, f := range defs {
+		fLower := strings.ToLower(f.Name)
+		if fLower == nameLower {
+			return f.ID, nil
+		}
+		if strings.Contains(fLower, nameLower) {
+			partial = append(partial, f)
+		}
+	}
+	if len(partial) == 1 {
+		return partial[0].ID, nil
+	}
+	if len(partial) > 1 {
+		var matches []string
+		for _, f := range partial {
+			matches = append(matches, f.Name)
+		}
+		return 0, fmt.Errorf("custom field %q is ambiguous (matches %s)", name, strings.Join(matches, ", "))
+	}
+	var available []string
+	for _, f := range defs {
+		available = append(available, fmt.Sprintf("%s (ID: %d, %s)", f.Name, f.ID, f.FieldType))
+	}
+	if len(available) == 0 {
+		return 0, fmt.Errorf("unknown custom field %q (no custom fields are defined)", name)
+	}
+	return 0, fmt.Errorf("unknown custom field %q. Available fields:\n  - %s", name, strings.Join(available, "\n  - "))
+}
+
+// parseProjectFlag parses the --project flag. The v1 API has no project
+// listing endpoint, so only numeric project IDs are accepted — no
+// name-based resolution.
+func parseProjectFlag(value string) (int, error) {
+	id, err := strconv.Atoi(value)
+	if err != nil || id <= 0 {
+		return 0, fmt.Errorf("invalid --project %q: expected a numeric project ID (the v1 API exposes no project listing, so names cannot be resolved)", value)
+	}
+	return id, nil
+}
+
 // applyDateFilters parses created/updated relative date filters and adds them to the filters map.
 func applyDateFilters(filters map[string]string, createdFilter, updatedFilter string) error {
 	if createdFilter != "" {
@@ -754,16 +895,19 @@ var (
 	childStatusFilter string
 	childTypeFilter   string
 
-	createTitle       string
-	createDescription string
-	createType        string
-	createPriorityID  int
-	createStatusID    int
-	createAssigneeID  int
-	createParentID    int
-	createDueDate     string
-	createStartDate   string
-	createEndDate     string
+	createTitle        string
+	createDescription  string
+	createType         string
+	createPriorityID   int
+	createStatusID     int
+	createAssigneeID   int
+	createParentID     int
+	createDueDate      string
+	createStartDate    string
+	createEndDate      string
+	createCustomFields []string
+	createIteration    string
+	createProject      string
 
 	editTitle        string
 	editDescription  string
@@ -775,6 +919,9 @@ var (
 	editDueDate      string
 	editStartDate    string
 	editEndDate      string
+	editCustomFields []string
+	editIteration    string
+	editProject      string
 )
 
 func init() {
@@ -822,6 +969,9 @@ func init() {
 	taskEditCmd.Flags().StringVar(&editDueDate, "due-date", "", "due date (YYYY-MM-DD)")
 	taskEditCmd.Flags().StringVar(&editStartDate, "start-date", "", "start date (YYYY-MM-DD)")
 	taskEditCmd.Flags().StringVar(&editEndDate, "end-date", "", "end date (YYYY-MM-DD)")
+	taskEditCmd.Flags().StringArrayVar(&editCustomFields, "custom-field", nil, "custom field value as <field>=<value> (repeatable; field is a name or numeric ID)")
+	taskEditCmd.Flags().StringVar(&editIteration, "iteration", "", "iteration (name or numeric ID)")
+	taskEditCmd.Flags().StringVar(&editProject, "project", "", "project ID (numeric only — the v1 API has no project listing endpoint)")
 
 	// Create flags
 	taskCreateCmd.Flags().StringVarP(&createTitle, "title", "t", "", "task title (required)")
@@ -834,4 +984,7 @@ func init() {
 	taskCreateCmd.Flags().StringVar(&createDueDate, "due-date", "", "due date (YYYY-MM-DD)")
 	taskCreateCmd.Flags().StringVar(&createStartDate, "start-date", "", "start date (YYYY-MM-DD)")
 	taskCreateCmd.Flags().StringVar(&createEndDate, "end-date", "", "end date (YYYY-MM-DD)")
+	taskCreateCmd.Flags().StringArrayVar(&createCustomFields, "custom-field", nil, "custom field value as <field>=<value> (repeatable; field is a name or numeric ID)")
+	taskCreateCmd.Flags().StringVar(&createIteration, "iteration", "", "iteration (name or numeric ID)")
+	taskCreateCmd.Flags().StringVar(&createProject, "project", "", "project ID (numeric only — the v1 API has no project listing endpoint)")
 }

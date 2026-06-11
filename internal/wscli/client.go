@@ -939,6 +939,107 @@ func (c *Client) ResolveMilestoneID(nameOrID string, workspaceID *int) (int, err
 }
 
 // ============================================
+// Custom Field Methods
+// ============================================
+
+// ListCustomFields lists all custom field definitions. Gated by the
+// custom-fields:read scope (part of the default agent mint).
+func (c *Client) ListCustomFields() ([]CustomField, error) {
+	var fields []CustomField
+	if err := c.GET("/rest/api/v1/custom-fields", &fields); err != nil {
+		return nil, err
+	}
+	return fields, nil
+}
+
+// ============================================
+// Iteration API Methods
+// ============================================
+
+// ListIterations lists iterations across all scopes (global + workspace).
+// Requires the iterations:read scope.
+func (c *Client) ListIterations(filters map[string]string) (*PaginatedResponse[Iteration], error) {
+	path := "/rest/api/v1/iterations"
+	if len(filters) > 0 {
+		params := url.Values{}
+		for k, v := range filters {
+			params.Set(k, v)
+		}
+		path += "?" + params.Encode()
+	}
+
+	var resp PaginatedResponse[Iteration]
+	if err := c.GET(path, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// ListIterationsInWorkspace lists iterations belonging to a single workspace
+// via the items:read-gated workspace route.
+func (c *Client) ListIterationsInWorkspace(workspaceID int, filters map[string]string) (*PaginatedResponse[Iteration], error) {
+	path := fmt.Sprintf("/rest/api/v1/workspaces/%d/iterations", workspaceID)
+	if len(filters) > 0 {
+		params := url.Values{}
+		for k, v := range filters {
+			params.Set(k, v)
+		}
+		path += "?" + params.Encode()
+	}
+
+	var resp PaginatedResponse[Iteration]
+	if err := c.GET(path, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// ResolveIterationID resolves an iteration name or ID to an ID. Mirrors
+// ResolveMilestoneID: numeric input passes through; otherwise the lookup is
+// fuzzy (exact case-insensitive first, then first substring match) against
+// the workspace-scoped list when workspaceID is non-nil, else the global list.
+func (c *Client) ResolveIterationID(nameOrID string, workspaceID *int) (int, error) {
+	// Use Atoi so malformed inputs like "123abc" do not resolve as ID 123.
+	if id, err := strconv.Atoi(nameOrID); err == nil {
+		return id, nil
+	}
+
+	var resp *PaginatedResponse[Iteration]
+	var err error
+	if workspaceID != nil {
+		resp, err = c.ListIterationsInWorkspace(*workspaceID, nil)
+	} else {
+		resp, err = c.ListIterations(nil)
+	}
+	if err != nil {
+		return 0, err
+	}
+
+	nameLower := strings.ToLower(nameOrID)
+	var bestMatch *Iteration
+
+	for i := range resp.Data {
+		it := &resp.Data[i]
+		itNameLower := strings.ToLower(it.Name)
+
+		// Exact match (case-insensitive)
+		if itNameLower == nameLower {
+			return it.ID, nil
+		}
+		// Partial match - prefer first match
+		if bestMatch == nil && strings.Contains(itNameLower, nameLower) {
+			bestMatch = it
+		}
+	}
+
+	if bestMatch != nil {
+		return bestMatch.ID, nil
+	}
+
+	return 0, fmt.Errorf("iteration not found: %s", nameOrID)
+}
+
+// ============================================
 // Helper Methods
 // ============================================
 
