@@ -125,6 +125,24 @@ func (h *ItemHandler) SetConditionService(cs *services.ConditionService) {
 	h.conditionService = cs
 }
 
+// parseIDListParam parses a comma-separated list of integer IDs from a
+// query parameter. Empty/non-numeric tokens are silently dropped — a
+// zero-length result means "no usable filter values supplied".
+func parseIDListParam(raw string) []int {
+	parts := strings.Split(raw, ",")
+	ids := make([]int, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if id, err := strconv.Atoi(p); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
 // milestoneIDsFromItem extracts the milestone IDs from an item's Milestones
 // slice. Used when forwarding a freshly-decoded models.Item into
 // services.CreateItem (which takes []int rather than the full Milestone slice).
@@ -291,6 +309,16 @@ func (h *ItemHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			filters.ItemID = &itemID
 		}
+	}
+
+	// Multi-status include/exclude filters (apply to both QL and non-QL
+	// queries — the board uses these to page non-completed columns
+	// separately from the capped rightmost column).
+	if raw := r.URL.Query().Get("status_id"); raw != "" {
+		filters.StatusIDs = parseIDListParam(raw)
+	}
+	if raw := r.URL.Query().Get("status_id_not"); raw != "" {
+		filters.StatusIDsNot = parseIDListParam(raw)
 	}
 
 	// Sub-filter QL (ANDed with collection/direct QL)

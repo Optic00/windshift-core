@@ -8,6 +8,7 @@
   import { useGradientStyles, loadWorkspaceGradient } from '../../stores/workspaceGradient.svelte.js';
   import QuickAddForm from './QuickAddForm.svelte';
   import { getCollection, checkItemVisibility } from './collectionService.js';
+  import { RIGHTMOST_COLUMN_LIMIT, buildDisplayColumns } from './boardColumns.js';
   import { infoToast, successToast, warningToast } from '../../stores/toasts.svelte.js';
   import { Plus, ChevronDown, ChevronRight, MoreHorizontal, Layers } from '@lucide/svelte';
   import ItemPicker from '../../pickers/ItemPicker.svelte';
@@ -47,8 +48,6 @@
   let wdsLabels = $derived(workspaceDataStore.labels);
   let projects = $derived(workspaceDataStore.projects);
   let customFieldDefinitions = $derived(workspaceDataStore.customFieldDefinitions);
-
-  const RIGHTMOST_COLUMN_LIMIT = 50;
 
   // Dynamic view-specific state — derived directly from central store
   let items = $derived(collectionStore.items);
@@ -220,8 +219,7 @@
 
       // Toast feedback
       showCreatedItemToast(fullItem);
-      const total = collectionStore.itemsPagination?.total ?? 0;
-      if (total > collectionStore.items.length) {
+      if (collectionStore.itemsHasMore) {
         warningToast('The board has more items than can be displayed. Use "Load More" to see all items.');
       }
 
@@ -500,42 +498,10 @@
 
   // Backlog items are loaded from backend in loadData()
 
-  // Sort statuses by category order (To Do -> In Progress -> Done categories)
-  let sortedStatuses = $derived.by(() => {
-    return statuses.slice().sort((a, b) => {
-      // First sort by category priority
-      const categoryOrder = {
-        'To Do': 1,
-        'In Progress': 2,
-        'Done': 3
-      };
-
-      const aCategoryOrder = categoryOrder[a.category_name] || 999;
-      const bCategoryOrder = categoryOrder[b.category_name] || 999;
-
-      if (aCategoryOrder !== bCategoryOrder) {
-        return aCategoryOrder - bCategoryOrder;
-      }
-
-      // Within same category, sort by name
-      return a.name.localeCompare(b.name);
-    });
-  });
-
-  // Compute display columns based on board configuration or fall back to sorted statuses
-  let displayColumns = $derived.by(() => {
-    if (boardConfig?.columns?.length > 0) {
-      return boardConfig.columns.slice().sort((a, b) => a.display_order - b.display_order);
-    }
-    return sortedStatuses.map(status => ({
-      id: status.id,
-      name: status.name,
-      status_ids: [status.id],
-      color: status.category_color,
-      wip_limit: null,
-      is_default_column: true
-    }));
-  });
+  // Compute display columns based on board configuration or fall back to
+  // sorted statuses. Shared with collectionContext's split-fetch logic so
+  // the store excludes exactly the statuses rendered in the capped column.
+  let displayColumns = $derived(buildDisplayColumns(boardConfig, statuses));
 
   let validColumns = $derived(displayColumns.filter(col => col.status_ids?.length > 0));
   let rightmostBoardColumn = $derived(validColumns[validColumns.length - 1] ?? null);
@@ -557,6 +523,25 @@
           .sort((a, b) => itemRecencyValue(b) - itemRecencyValue(a) || b.id - a.id)
           .slice(0, RIGHTMOST_COLUMN_LIMIT)
       : columnItems;
+  }
+
+  // Total item count for a column header. When the store split-fetched a
+  // capped rightmost column, only the latest RIGHTMOST_COLUMN_LIMIT of its
+  // items are loaded, so the loaded count undercounts — use the server-side
+  // total instead. Swimlane boards keep client-derived per-lane counts (the
+  // server total is board-wide, not per lane). Skipped while quick-search or
+  // the iteration filter narrows the visible set — those filter the loaded
+  // items, so loaded counts are the honest numbers.
+  function getColumnTotal(columnIndex, allColumnItems) {
+    const useServerTotal =
+      collectionStore.rightmostCap &&
+      !selectedGroupByItemType &&
+      !searchQuery.trim() &&
+      !iterationFilterId &&
+      shouldLimitRightmostColumn(columnIndex);
+    return useServerTotal
+      ? Math.max(collectionStore.rightmostCap.total, allColumnItems.length)
+      : allColumnItems.length;
   }
 
   let selectedGroupByItemType = $derived(
@@ -1155,7 +1140,7 @@
           workspaceName={workspace?.name || ''}
           collection={currentCollectionName}
           viewName="Board"
-          itemCount={collectionStore.itemsPagination?.total ?? filteredItems.length}
+          itemCount={(collectionStore.itemsPagination?.total ?? filteredItems.length) + (collectionStore.rightmostCap?.total ?? 0)}
         >
           {#snippet actions()}
             <div class="flex items-center gap-3">
@@ -1319,7 +1304,8 @@
                     {@const quickAddKey = `${lane.id}-${column.id}`}
                     {@const allColumnItems = getItemsByColumn(column, lane.items)}
                     {@const columnItems = getDisplayItemsByColumn(column, columnIndex, validColumns, lane.items)}
-                    {@const hiddenColumnItemCount = allColumnItems.length - columnItems.length}
+                    {@const columnTotal = getColumnTotal(columnIndex, allColumnItems)}
+                    {@const hiddenColumnItemCount = columnTotal - columnItems.length}
                     {@const isOverWip = column.wip_limit && allColumnItems.length > column.wip_limit}
                     <div
                       class="relative rounded border shadow-sm transition-colors"
@@ -1347,9 +1333,9 @@
                         <div class="flex items-center justify-between">
                           <span class="text-sm" style={styles.glassSubtleTextStyle}>
                             {#if hiddenColumnItemCount > 0}
-                              {columnItems.length} of {allColumnItems.length} {t('items.item')}
+                              {columnItems.length} of {columnTotal} {t('items.item')}
                             {:else}
-                              {allColumnItems.length} {t('items.item')}
+                              {columnTotal} {t('items.item')}
                             {/if}
                           </span>
                           {#if column.wip_limit}
@@ -1385,7 +1371,7 @@
                         {:else}
                           {#if hiddenColumnItemCount > 0}
                             <p class="text-xs mb-3" style={styles.glassSubtleTextStyle}>
-                              Showing latest {RIGHTMOST_COLUMN_LIMIT} of {allColumnItems.length} items in this column.
+                              Showing latest {columnItems.length} of {columnTotal} items in this column.
                             </p>
                           {/if}
                           <div class="space-y-1">
@@ -1505,6 +1491,7 @@
         {#if collectionStore.itemsHasMore}
           <div class="mt-6 text-center">
             <button
+              data-testid="board-load-more"
               onclick={() => collectionStore.loadMoreItems()}
               disabled={collectionStore.itemsLoadingMore}
               class="px-4 py-2 text-sm  rounded-lg border transition-colors"
@@ -1512,7 +1499,7 @@
             >
               {collectionStore.itemsLoadingMore ? t('common.loading') : t('common.loadMore')}
               {#if collectionStore.itemsPagination?.total && !iterationFilterId}
-                ({collectionStore.itemsPagination.total - collectionStore.items.length} {t('common.remaining')})
+                ({collectionStore.itemsPagination.total - collectionStore.mainItemsLoadedCount} {t('common.remaining')})
               {/if}
             </button>
           </div>
