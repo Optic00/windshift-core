@@ -118,10 +118,11 @@ func (r *AgentRunner) Run(ctx context.Context, input RunInput, emit EventSink) R
 
 	// Stderr drain — same JSON-or-wrap convention as docker_runner.
 	var wgStderr sync.WaitGroup
+	var stderrDrainErr error
 	wgStderr.Add(1)
 	go func() {
 		defer wgStderr.Done()
-		drainPipe(stderr, "stderr", emit)
+		stderrDrainErr = drainPipe(stderr, "stderr", emit)
 	}()
 
 	// Send the initial prompt. The RPC protocol takes JSONL commands;
@@ -141,9 +142,10 @@ func (r *AgentRunner) Run(ctx context.Context, input RunInput, emit EventSink) R
 	sawIdle := make(chan struct{}, 1)
 	streamDone := make(chan struct{})
 	var sawContractEvent atomic.Bool
+	var streamErr error
 	go func() {
 		defer close(streamDone)
-		drainAgentStdout(stdout, idleEvent, emit, sawIdle, &sawContractEvent)
+		streamErr = drainAgentStdout(stdout, idleEvent, emit, sawIdle, &sawContractEvent)
 	}()
 
 	// Shutdown trigger: whichever fires first — idle from the
@@ -166,24 +168,27 @@ func (r *AgentRunner) Run(ctx context.Context, input RunInput, emit EventSink) R
 	_ = stdin.Close()
 
 	// Wait up to grace for the subprocess to exit on its own; past
-	// that, kill via the cmdCtx.
+	// that, kill via the cmdCtx. All pipe readers must finish BEFORE
+	// cmd.Wait — os/exec closes the stdout/stderr pipes inside Wait,
+	// which would race the drain goroutines and could drop trailing
+	// output (same ordering DockerRunner uses). The grace timer
+	// therefore runs independently of Wait: a subprocess that ignores
+	// the abort gets killed by cancelCmd, the pipes hit EOF, the drains
+	// return, and only then do we reap it.
 	graceTimer := time.NewTimer(grace)
 	defer graceTimer.Stop()
-	doneWait := make(chan error, 1)
-	go func() { doneWait <- cmd.Wait() }()
-	var waitErr error
-	select {
-	case waitErr = <-doneWait:
-	case <-graceTimer.C:
-		cancelCmd()
-		waitErr = <-doneWait
-	}
-
-	// Make sure the stderr drain completes before we return — losing
-	// trailing stderr to a goroutine leak shows up as missing context
-	// in failure modes.
+	waitDone := make(chan struct{})
+	go func() {
+		select {
+		case <-graceTimer.C:
+			cancelCmd()
+		case <-waitDone:
+		}
+	}()
 	wgStderr.Wait()
 	<-streamDone
+	waitErr := cmd.Wait()
+	close(waitDone)
 
 	switch {
 	case canceledByCtx:
@@ -195,6 +200,15 @@ func (r *AgentRunner) Run(ctx context.Context, input RunInput, emit EventSink) R
 		return RunnerResult{
 			Status: models.AgentRunStatusFailed,
 			Error:  "agent subprocess exited without emitting a single JSONL contract event — is the configured agent image actually the windshift-agent image?",
+		}
+	case waitErr == nil && (streamErr != nil || stderrDrainErr != nil):
+		// The subprocess exited 0 but a drain died mid-stream (e.g. an
+		// oversized line tripped bufio.ErrTooLong) — events after that
+		// point were discarded, so the stream is degraded and the run
+		// must not be reported as a clean success.
+		return RunnerResult{
+			Status: models.AgentRunStatusFailed,
+			Error:  fmt.Sprintf("agent event stream degraded — output drain failed mid-run, trailing events discarded: %v", errors.Join(streamErr, stderrDrainErr)),
 		}
 	case waitErr == nil:
 		return RunnerResult{Status: models.AgentRunStatusSucceeded}
@@ -468,7 +482,12 @@ func writeJSONLine(w io.Writer, obj any) error {
 // event needs to wake the orchestrator). sawContractEvent records whether
 // at least one typed JSONL event arrived — the discriminator between a real
 // agent and a wrong image that just prints text and exits (WI-312).
-func drainAgentStdout(rd io.Reader, idleEvent string, emit EventSink, sawIdle chan<- struct{}, sawContractEvent *atomic.Bool) {
+//
+// Returns nil on a clean scan to EOF. If the scanner stops early (oversized
+// line / read error), the rest of the stream is still drained to EOF so the
+// pipe never backs up, and the error is returned so the runner can mark the
+// event stream as degraded instead of silently completing.
+func drainAgentStdout(rd io.Reader, idleEvent string, emit EventSink, sawIdle chan<- struct{}, sawContractEvent *atomic.Bool) error {
 	scanner := bufio.NewScanner(rd)
 	scanner.Buffer(make([]byte, 64*1024), maxAgentLine)
 	for scanner.Scan() {
@@ -497,6 +516,19 @@ func drainAgentStdout(rd io.Reader, idleEvent string, emit EventSink, sawIdle ch
 			}
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		// The line scanner is dead, so the idle event can no longer be
+		// observed — wake the orchestrator now so it runs the abort path
+		// (otherwise it would sit in its select until ctx cancel while we
+		// block below draining toward an EOF that needs the subprocess to
+		// exit first).
+		select {
+		case sawIdle <- struct{}{}:
+		default:
+		}
+		return drainRest(rd, "stdout", err, emit)
+	}
+	return nil
 }
 
 // isClosed reports whether a done-channel has already fired. Non-blocking;

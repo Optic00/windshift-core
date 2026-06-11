@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"windshift/internal/models"
 )
@@ -45,6 +46,11 @@ type DockerRunner struct {
 	PidsLimit int    // docker --pids-limit
 	Memory    string // docker --memory + --memory-swap
 	CPUs      string // docker --cpus
+
+	// ShutdownGrace bounds how long a canceled run may linger before the
+	// docker CLI process is force-killed. Defaults to 10 seconds, same as
+	// AgentRunner.ShutdownGrace.
+	ShutdownGrace time.Duration
 }
 
 // buildDockerArgs assembles the docker-run argv for a plain container job:
@@ -113,27 +119,67 @@ func (r *DockerRunner) Run(ctx context.Context, input RunInput, emit EventSink) 
 	}
 
 	var wg sync.WaitGroup
+	var stdoutDrainErr, stderrDrainErr error
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		drainPipe(stdout, "stdout", emit)
+		stdoutDrainErr = drainPipe(stdout, "stdout", emit)
 	}()
 	go func() {
 		defer wg.Done()
-		drainPipe(stderr, "stderr", emit)
+		stderrDrainErr = drainPipe(stderr, "stderr", emit)
+	}()
+
+	// Pipes must be read to EOF before cmd.Wait — os/exec closes them
+	// inside Wait, which would race the drain goroutines. drainPipe now
+	// guarantees it consumes its pipe to EOF even when the line scanner
+	// errors out, so the only way wg.Wait can hang is the container never
+	// exiting. Guard that with a kill path consistent with AgentRunner's
+	// ShutdownGrace: CommandContext already SIGKILLs the docker CLI when
+	// ctx is canceled; the watchdog force-kills again after the grace
+	// period in case that signal is lost, so a hung container cannot
+	// wedge the worker forever.
+	grace := r.ShutdownGrace
+	if grace <= 0 {
+		grace = defaultAgentShutdownGrace
+	}
+	watchdogDone := make(chan struct{})
+	go func() {
+		select {
+		case <-watchdogDone:
+			return
+		case <-ctx.Done():
+		}
+		t := time.NewTimer(grace)
+		defer t.Stop()
+		select {
+		case <-watchdogDone:
+		case <-t.C:
+			_ = cmd.Process.Kill()
+		}
 	}()
 	wg.Wait()
 
 	waitErr := cmd.Wait()
+	close(watchdogDone)
 
 	// docker-run with --rm leaves us no easy way to get the container id
 	// after the fact (the CLI wraps a create+start+wait+rm). Phase 6's
 	// long-lived RPC pipe path captures the id via `docker create` →
 	// stamps it on the row before streaming starts. Skeleton stays
 	// container_id-less.
+	drainErr := errors.Join(stdoutDrainErr, stderrDrainErr)
 	switch {
 	case ctx.Err() != nil:
 		return RunnerResult{Status: models.AgentRunStatusCanceled, Error: ctx.Err().Error()}
+	case waitErr == nil && drainErr != nil:
+		// The container exited 0 but part of its output never made it into
+		// events. Reporting success here would silently hide the missing
+		// output, so the run fails with the drain diagnostics instead.
+		return RunnerResult{
+			Status: models.AgentRunStatusFailed,
+			Error:  fmt.Sprintf("docker run exited 0 but output drain failed (events truncated): %v", drainErr),
+		}
 	case waitErr == nil:
 		return RunnerResult{Status: models.AgentRunStatusSucceeded}
 	}
@@ -152,7 +198,13 @@ func (r *DockerRunner) Run(ctx context.Context, input RunInput, emit EventSink) 
 // drainPipe reads lines from r and pushes them onto the sink as the given
 // event type. JSON-parseable lines pass through verbatim; non-JSON lines
 // are wrapped as {"line":"<raw>"} so consumers always see a JSON document.
-func drainPipe(rd io.Reader, eventType string, emit EventSink) {
+//
+// Returns nil when the stream was scanned cleanly to EOF. When the scanner
+// stops early (bufio.ErrTooLong on an oversized line, or a read error), the
+// remainder of the stream is still drained to EOF — see drainRest — and the
+// scan error is returned so the caller can fail the run instead of reporting
+// success with silently missing output.
+func drainPipe(rd io.Reader, eventType string, emit EventSink) error {
 	scanner := bufio.NewScanner(rd)
 	// Containers can emit long lines (logged tool output, stack traces).
 	// Bump the buffer well above the default 64KB but bound it so a
@@ -173,4 +225,23 @@ func drainPipe(rd io.Reader, eventType string, emit EventSink) {
 		}
 		_ = emit(eventType, payload)
 	}
+	if err := scanner.Err(); err != nil {
+		return drainRest(rd, eventType, err, emit)
+	}
+	return nil
+}
+
+// drainRest finishes a stream whose line scanner stopped with an error. It
+// emits one diagnostic event (same {"line":...} payload shape as wrapped
+// non-JSON output), then keeps consuming the stream in raw discarded chunks
+// until EOF — the pipe must NEVER back up, or the child blocks on a full
+// pipe buffer and the worker wedges. The returned error carries the scan
+// error plus how many trailing bytes were discarded.
+func drainRest(rd io.Reader, eventType string, scanErr error, emit EventSink) error {
+	b, _ := json.Marshal(map[string]string{
+		"line": fmt.Sprintf("[runner] %s scan aborted: %v — remaining output will be drained and discarded", eventType, scanErr),
+	})
+	_ = emit(eventType, string(b))
+	discarded, _ := io.Copy(io.Discard, rd)
+	return fmt.Errorf("%s scan: %w (%d trailing bytes discarded)", eventType, scanErr, discarded)
 }
