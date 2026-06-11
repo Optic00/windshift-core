@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/services"
 	"windshift/internal/validation"
@@ -183,7 +184,13 @@ func (h *ItemHandler) ChangeType(w http.ResponseWriter, r *http.Request) {
 		}(r.Context(), *updatedItem.StatusID)
 	}
 
-	respondJSONOK(w, updatedItem)
+	// Strip names of time projects the caller has no access to (incl. the
+	// inherited effective project), matching the masked read paths. Mask a
+	// copy so async consumers of updatedItem aren't mutated.
+	maskedUpdated := []models.Item{*updatedItem}
+	h.maskInaccessibleProjectNames(user.ID, maskedUpdated)
+
+	respondJSONOK(w, maskedUpdated[0])
 }
 
 func (h *ItemHandler) typeChangeService() *services.ItemTypeChangeService {

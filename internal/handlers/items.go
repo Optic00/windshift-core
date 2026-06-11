@@ -790,7 +790,13 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 			slog.Float64("total", float64(totalTime.Microseconds())/1000.0),
 		))
 
-	respondJSONCreated(w, createdItem)
+	// Strip names of time projects the creator has no access to (incl. the
+	// inherited effective project), matching the masked read paths. Mask a
+	// copy so the webhook goroutine's view of createdItem isn't mutated.
+	maskedCreated := []models.Item{createdItem}
+	h.maskInaccessibleProjectNames(user.ID, maskedCreated)
+
+	respondJSONCreated(w, maskedCreated[0])
 }
 
 func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
@@ -1060,7 +1066,13 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	respondJSONOK(w, updatedItem)
+	// Strip names of time projects the editor has no access to (incl. the
+	// inherited effective project), matching the masked read paths. Mask a
+	// copy so async consumers of updatedItem aren't mutated.
+	maskedUpdated := []models.Item{*updatedItem}
+	h.maskInaccessibleProjectNames(user.ID, maskedUpdated)
+
+	respondJSONOK(w, maskedUpdated[0])
 }
 
 // maskInaccessibleProjectNames blanks the human-readable project name fields on
