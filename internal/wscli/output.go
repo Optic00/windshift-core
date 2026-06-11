@@ -370,7 +370,7 @@ func (o *Output) printCommentsCSV(w *csv.Writer, comments []Comment) {
 	for _, c := range comments {
 		author := ""
 		if c.Author != nil {
-			author = c.Author.Name
+			author = c.Author.FullName
 		}
 		created := c.CreatedAt.Format("2006-01-02 15:04")
 		_ = w.Write([]string{fmt.Sprintf("%d", c.ID), author, created, c.Content})
@@ -380,7 +380,7 @@ func (o *Output) printCommentsCSV(w *csv.Writer, comments []Comment) {
 func (o *Output) printCommentCSV(w *csv.Writer, c *Comment) {
 	author := ""
 	if c.Author != nil {
-		author = c.Author.Name
+		author = c.Author.FullName
 	}
 	_ = w.Write([]string{"ID", "ITEM_ID", "AUTHOR", "CREATED", "UPDATED", "CONTENT"})
 	_ = w.Write([]string{fmt.Sprintf("%d", c.ID), fmt.Sprintf("%d", c.ItemID), author, c.CreatedAt.Format(time.RFC3339), c.UpdatedAt.Format(time.RFC3339), c.Content})
@@ -421,10 +421,10 @@ func (o *Output) printItemDetailTable(w *tabwriter.Writer, item *Item) {
 		_, _ = fmt.Fprintf(w, "Priority:\t%s\n", item.Priority.Name)
 	}
 	if item.Assignee != nil {
-		_, _ = fmt.Fprintf(w, "Assignee:\t%s\n", item.Assignee.Name)
+		_, _ = fmt.Fprintf(w, "Assignee:\t%s\n", item.Assignee.FullName)
 	}
 	if item.Creator != nil {
-		_, _ = fmt.Fprintf(w, "Creator:\t%s\n", item.Creator.Name)
+		_, _ = fmt.Fprintf(w, "Creator:\t%s\n", item.Creator.FullName)
 	}
 	if item.Description != "" {
 		_, _ = fmt.Fprintf(w, "Description:\t%s\n", truncateString(item.Description, 100))
@@ -611,7 +611,7 @@ func (o *Output) printCommentsTable(w *tabwriter.Writer, comments []Comment) {
 	for _, c := range comments {
 		author := ""
 		if c.Author != nil {
-			author = c.Author.Name
+			author = c.Author.FullName
 		}
 		created := c.CreatedAt.Format("2006-01-02 15:04")
 		content := truncateString(c.Content, 50)
@@ -624,8 +624,8 @@ func (o *Output) printAttachmentsTable(w *tabwriter.Writer, atts []Attachment) {
 	_, _ = fmt.Fprintln(w, "--\t--------\t----\t----\t--------\t-------")
 	for _, a := range atts {
 		uploader := "-"
-		if a.Uploader != nil && a.Uploader.Name != "" {
-			uploader = a.Uploader.Name
+		if a.Uploader != nil && a.Uploader.FullName != "" {
+			uploader = a.Uploader.FullName
 		}
 		_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\n",
 			a.ID,
@@ -643,7 +643,7 @@ func (o *Output) printAttachmentsCSV(w *csv.Writer, atts []Attachment) {
 	for _, a := range atts {
 		uploader := ""
 		if a.Uploader != nil {
-			uploader = a.Uploader.Name
+			uploader = a.Uploader.FullName
 		}
 		_ = w.Write([]string{
 			fmt.Sprintf("%d", a.ID),
@@ -680,7 +680,7 @@ func (o *Output) printCommentDetailTable(w *tabwriter.Writer, c *Comment) {
 	_, _ = fmt.Fprintf(w, "ID:\t%d\n", c.ID)
 	_, _ = fmt.Fprintf(w, "Item ID:\t%d\n", c.ItemID)
 	if c.Author != nil {
-		_, _ = fmt.Fprintf(w, "Author:\t%s\n", c.Author.Name)
+		_, _ = fmt.Fprintf(w, "Author:\t%s\n", c.Author.FullName)
 	}
 	_, _ = fmt.Fprintf(w, "Created:\t%s\n", c.CreatedAt.Format("2006-01-02 15:04:05"))
 	_, _ = fmt.Fprintf(w, "Updated:\t%s\n", c.UpdatedAt.Format("2006-01-02 15:04:05"))
@@ -1217,7 +1217,7 @@ func (o *Output) printAssetDetailTable(w *tabwriter.Writer, a *Asset) {
 	if a.Creator != nil {
 		// v1 asset surface no longer exposes creator.email under
 		// assets:read; render the display name (id as fallback) instead.
-		name := a.Creator.Name
+		name := a.Creator.FullName
 		if name == "" {
 			name = fmt.Sprintf("#%d", a.Creator.ID)
 		}
