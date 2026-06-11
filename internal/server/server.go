@@ -69,6 +69,7 @@ type Server struct {
 	recurrenceScheduler       *scheduler.RecurrenceScheduler
 	cfvCleanupScheduler       *scheduler.CFVCleanupScheduler
 	runnerLeaseReaper         *scheduler.RunnerLeaseReaper
+	codingRunService          *services.RunService
 	workflowService           *services.WorkflowService
 	actionService             *services.ActionService
 	assetActionService        *services.AssetActionService
@@ -728,6 +729,10 @@ func (s *Server) initialize() error {
 			)
 		}
 	}
+	// Kept on the Server so Shutdown can drain in-flight local runs instead
+	// of leaving them to be killed mid-flight with their rows stuck
+	// non-terminal (WI-332).
+	s.codingRunService = codingRunSvc
 
 	agentAPIURL := cfg.CodingAgent.WSAPIURL
 	if agentAPIURL == "" {
@@ -1627,6 +1632,16 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		s.runnerLeaseReaper.Stop()
 	}
 
+	if s.codingRunService != nil {
+		slog.Info("shutting down coding-agent run service")
+		// Stops admission, drains still-queued local runs as canceled, and
+		// cancels in-flight runs so their workers finalize a terminal status
+		// (WI-332). Bounded by the shutdown ctx like the LDAP drain below.
+		if err := s.codingRunService.Shutdown(ctx); err != nil {
+			slog.Warn("coding-agent run service shutdown did not drain in time", "error", err)
+		}
+	}
+
 	if s.actionService != nil {
 		slog.Info("stopping action service")
 		s.actionService.Stop()
@@ -2191,6 +2206,23 @@ func bootCodingAgentRunService(
 	}
 
 	runRepo := repository.NewAgentRunRepository(db)
+	// Boot reconciliation (WI-332): local runs exist only in the previous
+	// process's in-memory queue and in-flight registry, so any local run
+	// still queued/running in the DB was orphaned by a crash or kill —
+	// no worker will ever pick it up again, and both reapers skip local
+	// runs by design. Fail them before the new service starts accepting
+	// work, while every local non-terminal row is by definition orphaned.
+	if n, recErr := runRepo.ReapOrphanedLocalRuns(context.Background(), time.Now().UTC()); recErr != nil {
+		slog.Warn("coding-agent: reconcile orphaned local runs",
+			slog.String("component", "coding-agent"),
+			slog.Any("error", recErr),
+		)
+	} else if n > 0 {
+		slog.Info("coding-agent: failed local runs orphaned by a previous process",
+			slog.String("component", "coding-agent"),
+			slog.Int("count", n),
+		)
+	}
 	initialPrompt := promptStore.Get(llm.PromptCodingAgentInitial)
 	runSvc, err := services.NewRunService(runRepo, services.RunServiceOptions{
 		Runner:        runner,

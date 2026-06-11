@@ -317,6 +317,36 @@ func (r *AgentRunRepository) ReapStaleRuns(ctx context.Context, staleBefore, now
 	return int(n), nil
 }
 
+// ReapOrphanedLocalRuns fails every non-terminal LOCAL run (runner_id IS
+// NULL, target_pool_id IS NULL) — the boot-time reconciliation for in-process
+// runs (WI-332). Local runs live in the orchestrator's in-memory queue and
+// in-flight registry, so any local run still queued/running in the DB at
+// startup belonged to a previous process that crashed or was killed before
+// finalizing; no worker will ever pick it up again, and both reapers skip
+// local runs by design. Must be called before the new RunService starts
+// accepting work, while every local non-terminal row is by definition
+// orphaned. Returns the number reconciled.
+func (r *AgentRunRepository) ReapOrphanedLocalRuns(ctx context.Context, now time.Time) (int, error) {
+	res, err := r.db.ExecWriteContext(ctx, `
+		UPDATE agent_runs
+		SET status = ?, error = ?, ended_at = ?, updated_at = ?
+		WHERE status IN (?, ?)
+		  AND runner_id IS NULL
+		  AND target_pool_id IS NULL
+	`,
+		models.AgentRunStatusFailed, "orphaned by restart", now, now,
+		models.AgentRunStatusQueued, models.AgentRunStatusRunning,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("reap orphaned local runs: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("reap orphaned local runs: rows affected: %w", err)
+	}
+	return int(n), nil
+}
+
 // ReapOverdueRuns fails any run that has sat in 'running' since before
 // startedBefore, regardless of runner heartbeat. It is the max-run-duration
 // backstop (WI-331): a healthy runner whose terminal report was lost keeps
