@@ -12,6 +12,9 @@ import (
 	"time"
 
 	"windshift/internal/jira"
+	"windshift/internal/repository"
+	"windshift/internal/sanitize"
+	"windshift/internal/services"
 )
 
 const jiraAssetsPageSize = 100
@@ -431,6 +434,22 @@ func (h *JiraImportHandler) importJiraAssetObject(jobID string, setID, assetType
 			customValues[strconv.Itoa(fieldID)] = value
 		}
 	}
+
+	// External Jira attribute display values are untrusted — every string
+	// gets at least the rich-text strip + length cap, then the asset CF
+	// text pass (the same one CreateAsset/UpdateAsset apply, WI-319) lays
+	// the rendering-matched policy over text/textarea-typed fields. Both
+	// passes are idempotent no-ops on plain text.
+	for key, v := range customValues {
+		if s, ok := v.(string); ok {
+			customValues[key] = sanitize.RichText.Sanitize(s)
+		}
+	}
+	if err := services.NewAssetService(h.db, repository.NewAssetRepository(h.db)).SanitizeCustomFieldTextValues(assetTypeID, customValues); err != nil {
+		slog.Warn("Failed to sanitize Jira asset custom field values", slog.String("component", "jira"), slog.String("objectID", object.ID), slog.Any("error", err))
+		return
+	}
+
 	customJSON := "{}"
 	if len(customValues) > 0 {
 		if b, err := json.Marshal(customValues); err == nil {
@@ -438,14 +457,19 @@ func (h *JiraImportHandler) importJiraAssetObject(jobID string, setID, assetType
 		}
 	}
 
-	title := strings.TrimSpace(object.Label)
+	// object.Label / ObjectKey are external display strings — apply the
+	// same per-column policies sanitizeAssetText runs on the normal asset
+	// create path (PlainTextField title, RichText description,
+	// ShortIdentifier asset_tag) before they reach the INSERT.
+	title := sanitize.PlainTextField.Sanitize(object.Label)
 	if title == "" {
-		title = strings.TrimSpace(object.ObjectKey)
+		title = sanitize.PlainTextField.Sanitize(object.ObjectKey)
 	}
 	if title == "" {
-		title = "Jira Asset " + object.ID
+		title = sanitize.PlainTextField.Sanitize("Jira Asset " + object.ID)
 	}
-	description := fmt.Sprintf("Imported from Jira Assets object %s", object.ObjectKey)
+	assetTag := sanitize.ShortIdentifier.Sanitize(object.ObjectKey)
+	description := sanitize.RichText.Sanitize(fmt.Sprintf("Imported from Jira Assets object %s", object.ObjectKey))
 
 	createdAt := nullableAssetTime(object.Created)
 	updatedAt := nullableAssetTime(object.Updated)
@@ -457,7 +481,7 @@ func (h *JiraImportHandler) importJiraAssetObject(jobID string, setID, assetType
 	err := h.db.QueryRow(`
 		INSERT INTO assets (set_id, asset_type_id, status_id, title, description, asset_tag, custom_field_values, import_job_id, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP), COALESCE(?, CURRENT_TIMESTAMP)) RETURNING id
-	`, setID, assetTypeID, status, title, description, strings.TrimSpace(object.ObjectKey), customJSON, jobID, createdAt, updatedAt).Scan(&assetID)
+	`, setID, assetTypeID, status, title, description, assetTag, customJSON, jobID, createdAt, updatedAt).Scan(&assetID)
 	if err != nil {
 		slog.Warn("Failed to import Jira asset object", slog.String("component", "jira"), slog.String("objectID", object.ID), slog.String("objectKey", object.ObjectKey), slog.Any("error", err))
 		return

@@ -1238,18 +1238,34 @@ func (as *ActionService) executeSetFieldCustom(ctx *models.ExecutionContext, ste
 		return err
 	}
 
-	// Substituted variables can carry user content — run text/textarea
-	// values through the same sanitize pass as the interactive write
-	// paths (WI-319) before persisting. Non-text field types pass
-	// through unchanged.
+	// Substituted variables can carry user content — route the value
+	// through the WI-319 choke point before persisting: select/multiselect
+	// values are validated against the field's option set and text/textarea
+	// values sanitized (same path as the interactive item write surfaces).
+	// A validation failure fails this node instead of writing the raw value.
 	fieldKey := strconv.Itoa(config.CustomFieldID)
 	cfv := map[string]interface{}{fieldKey: value}
-	if err := validation.SanitizeCustomFieldTextValues(as.db, cfv); err != nil {
-		return fmt.Errorf("sanitize custom field value: %w", err)
+	fieldTypes, err := validation.CustomFieldTypes(as.db, cfv)
+	if err != nil {
+		return fmt.Errorf("resolve custom field type: %w", err)
 	}
-	if sanitized, ok := cfv[fieldKey].(string); ok {
-		value = sanitized
+	switch fieldTypes[fieldKey] {
+	case "select":
+		// An empty substitution clears the field rather than failing
+		// option-id validation.
+		if strings.TrimSpace(value) == "" {
+			cfv[fieldKey] = nil
+		}
+	case "multiselect":
+		// Multiselect values arrive as the substituted string form of a
+		// JSON array ("[1,2]") or a CSV of option ids — decode before
+		// validation so each element is checked against the option set.
+		cfv[fieldKey] = parseActionMultiselectValue(value)
 	}
+	if err := validation.ValidateAndNormalizeCustomFieldValues(as.db, cfv); err != nil {
+		return fmt.Errorf("set_field: custom field %d: %w", config.CustomFieldID, err)
+	}
+	newValue := cfv[fieldKey]
 
 	oldValue, err := as.itemRepo.GetItemCustomFieldValue(itemID, config.CustomFieldID)
 	if err != nil {
@@ -1266,7 +1282,7 @@ func (as *ActionService) executeSetFieldCustom(ctx *models.ExecutionContext, ste
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := as.itemRepo.SetItemCustomFieldValue(tx, itemID, config.CustomFieldID, value); err != nil {
+	if err := as.itemRepo.SetItemCustomFieldValue(tx, itemID, config.CustomFieldID, newValue); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -1278,7 +1294,7 @@ func (as *ActionService) executeSetFieldCustom(ctx *models.ExecutionContext, ste
 		"field_name":      key,
 		"custom_field_id": config.CustomFieldID,
 		"old_value":       oldValue,
-		"new_value":       value,
+		"new_value":       newValue,
 	}
 
 	as.EmitActionEvent(&models.ActionEvent{
@@ -1287,13 +1303,34 @@ func (as *ActionService) executeSetFieldCustom(ctx *models.ExecutionContext, ste
 		ItemID:            itemID,
 		ActorUserID:       ctx.EffectiveActorID,
 		OldValues:         map[string]interface{}{key: oldValue},
-		NewValues:         map[string]interface{}{key: value},
+		NewValues:         map[string]interface{}{key: newValue},
 		TriggeredByAction: true,
 		ExecutionChainID:  ctx.ChainID,
 		CascadeDepth:      ctx.Event.CascadeDepth + 1,
 	})
 
 	return nil
+}
+
+// parseActionMultiselectValue decodes a substituted multiselect set_field
+// value: a JSON array ("[1,2]") or a CSV of option ids ("1, 2"). An empty
+// string means "clear". Elements stay untyped — option-id coercion and
+// option-set validation happen in ValidateAndNormalizeCustomFieldValues.
+func parseActionMultiselectValue(value string) interface{} {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	var arr []interface{}
+	if err := json.Unmarshal([]byte(trimmed), &arr); err == nil {
+		return arr
+	}
+	parts := strings.Split(trimmed, ",")
+	out := make([]interface{}, 0, len(parts))
+	for _, part := range parts {
+		out = append(out, strings.TrimSpace(part))
+	}
+	return out
 }
 
 // executeSetStatus executes a set_status node. The transition is routed

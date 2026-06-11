@@ -96,6 +96,24 @@ func SanitizeCustomFieldTextValues(db database.Database, cfv map[string]interfac
 	return nil
 }
 
+// CustomFieldTypes resolves the field_type for each numeric cfv key that
+// matches an existing custom field definition, using the same bulk loader
+// the validators use. Keys without a matching definition are absent from
+// the result. Lets write paths branch on field type (e.g. to pre-shape a
+// multiselect value, or to leave text/textarea entries to the type-correct
+// sanitize pass) without duplicating the definitions query.
+func CustomFieldTypes(db database.Database, cfv map[string]interface{}) (map[string]string, error) {
+	fields, err := loadFieldsForCFV(db, cfv)
+	if err != nil {
+		return nil, err
+	}
+	types := make(map[string]string, len(fields))
+	for key, def := range fields {
+		types[key] = def.FieldType
+	}
+	return types, nil
+}
+
 // sanitizeTextValue applies the rendering-matched sanitize policy to a
 // text/textarea custom-field value: PlainTextField for single-line text
 // (rendered inline in cards / detail rows), RichText for textarea
