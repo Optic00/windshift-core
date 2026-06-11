@@ -43,12 +43,15 @@ func sanitizeAssetReport(w http.ResponseWriter, r *http.Request, ar *models.Asse
 	return true
 }
 
-// sanitizeAssetReportFields scrubs the per-row form-mode fields.
+// sanitizeAssetReportFields gates the per-row form-mode fields.
 // DisplayName + Description render as label/help copy in the portal
 // form; FieldIdentifier + FieldType + VirtualFieldType are
 // identifier-shaped; VirtualFieldOptions is the JSON option list the
-// portal select renders verbatim.
-func sanitizeAssetReportFields(fields []models.AssetReportField) {
+// portal select JSON.parses — HTML stripping would corrupt it, so it
+// is validated (size + well-formed JSON) and rejected instead of
+// scrubbed. Writes a validation error and returns false when an
+// option list is rejected.
+func sanitizeAssetReportFields(w http.ResponseWriter, r *http.Request, fields []models.AssetReportField) bool {
 	for i := range fields {
 		sanitize.ApplyAll(
 			sanitize.Pair{Target: &fields[i].FieldIdentifier, Policy: sanitize.ShortIdentifier},
@@ -56,9 +59,15 @@ func sanitizeAssetReportFields(fields []models.AssetReportField) {
 			sanitize.Pair{Target: fields[i].DisplayName, Policy: sanitize.PlainTextField},
 			sanitize.Pair{Target: fields[i].Description, Policy: sanitize.RichText},
 			sanitize.Pair{Target: fields[i].VirtualFieldType, Policy: sanitize.ShortIdentifier},
-			sanitize.Pair{Target: fields[i].VirtualFieldOptions, Policy: sanitize.LongDocument},
 		)
+		if fields[i].VirtualFieldOptions != nil {
+			if err := sanitize.ValidateJSONPayload("virtual_field_options", *fields[i].VirtualFieldOptions); err != nil {
+				respondValidationError(w, r, err.Error())
+				return false
+			}
+		}
 	}
+	return true
 }
 
 type AssetReportHandler struct {
@@ -577,7 +586,9 @@ func (h *AssetReportHandler) UpdateFields(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	sanitizeAssetReportFields(fields)
+	if !sanitizeAssetReportFields(w, r, fields) {
+		return
+	}
 
 	if err := h.repo.ReplaceFields(assetReportID, fields); err != nil {
 		respondInternalError(w, r, err)

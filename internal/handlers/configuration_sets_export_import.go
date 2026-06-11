@@ -25,10 +25,14 @@ import (
 // Enum-shaped machine tokens (field_type, quorum_mode, logic_mode, ...) get
 // ShortIdentifier: legitimate values ("and", "sequential", "script") pass
 // through untouched while a bundle can no longer persist unbounded text into
-// columns the live CRUD handlers allowlist. The free-form per-condition
+// columns the live CRUD handlers allowlist. Custom-field Options is a JSON
+// blob (select/linking/asset configs json.Unmarshal it downstream) — HTML
+// stripping would corrupt it, so it is validated (size + well-formed JSON)
+// and rejected instead of scrubbed; writes a validation error and returns
+// false when an option blob is rejected. The free-form per-condition
 // Config blob is byte-bounded (see sanitizeConfigSetCondition); deep
 // validation still belongs to the live condition editor.
-func sanitizeConfigSetTemplate(tpl *services.ConfigSetTemplate) {
+func sanitizeConfigSetTemplate(w http.ResponseWriter, r *http.Request, tpl *services.ConfigSetTemplate) bool {
 	if tpl.ExportedBy != nil {
 		sanitizeConfigSetExportBy(tpl.ExportedBy)
 	}
@@ -46,8 +50,13 @@ func sanitizeConfigSetTemplate(tpl *services.ConfigSetTemplate) {
 			sanitize.Pair{Target: &p.CustomFields[i].Name, Policy: sanitize.ShortIdentifier},
 			sanitize.Pair{Target: &p.CustomFields[i].FieldType, Policy: sanitize.ShortIdentifier},
 			sanitize.Pair{Target: &p.CustomFields[i].Description, Policy: sanitize.Comment},
-			sanitize.Pair{Target: &p.CustomFields[i].Options, Policy: sanitize.Comment},
 		)
+		if err := sanitize.ValidateJSONPayload(
+			fmt.Sprintf("custom_fields[%d].options", i), p.CustomFields[i].Options,
+		); err != nil {
+			respondValidationError(w, r, err.Error())
+			return false
+		}
 	}
 	for i := range p.Statuses {
 		sanitize.ApplyAll(
@@ -148,6 +157,7 @@ func sanitizeConfigSetTemplate(tpl *services.ConfigSetTemplate) {
 		}
 	}
 	sanitizeConfigSetLinks(&p.Links)
+	return true
 }
 
 // configSetConditionScriptMaxBytes mirrors the live validateCondition cap on
@@ -344,7 +354,9 @@ func (h *ConfigurationSetHandler) Import(w http.ResponseWriter, r *http.Request)
 		respondBadRequest(w, r, "Invalid template JSON: "+err.Error())
 		return
 	}
-	sanitizeConfigSetTemplate(&tpl)
+	if !sanitizeConfigSetTemplate(w, r, &tpl) {
+		return
+	}
 
 	importSvc := services.NewConfigSetImportService(h.db, h.repo)
 	newID, warnings, err := importSvc.Import(r.Context(), &tpl)

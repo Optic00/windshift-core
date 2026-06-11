@@ -83,10 +83,15 @@ func (h *ActionCredentialsHandler) CreateGlobal(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
-	sanitize.ApplyAll(
-		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
-		sanitize.Pair{Target: &req.SecretMetadata, Policy: sanitize.RichText},
-	)
+	sanitize.Apply(&req.Name, sanitize.PlainTextField)
+	// SecretMetadata is a JSON blob — HTML stripping would corrupt valid
+	// payloads before the service's validateSecretMetadata even sees them,
+	// so it is size-capped + required to be well-formed JSON instead;
+	// the service stays the semantic validator.
+	if err := sanitize.ValidateJSONPayload("secret_metadata", req.SecretMetadata); err != nil {
+		respondValidationError(w, r, err.Error())
+		return
+	}
 	created, err := h.service.Create(req, &currentUser.ID)
 	if err != nil {
 		respondValidationError(w, r, err.Error())
@@ -114,10 +119,13 @@ func (h *ActionCredentialsHandler) CreateForWorkspace(w http.ResponseWriter, r *
 	if !ok {
 		return
 	}
-	sanitize.ApplyAll(
-		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
-		sanitize.Pair{Target: &req.SecretMetadata, Policy: sanitize.RichText},
-	)
+	sanitize.Apply(&req.Name, sanitize.PlainTextField)
+	// SecretMetadata is a JSON blob — size-cap + well-formed-JSON gate
+	// instead of HTML stripping (see CreateGlobal).
+	if err := sanitize.ValidateJSONPayload("secret_metadata", req.SecretMetadata); err != nil {
+		respondValidationError(w, r, err.Error())
+		return
+	}
 	// Path scope wins — clients can't smuggle a global credential or extra
 	// workspaces through a workspace endpoint.
 	appliesAll := false
@@ -170,10 +178,15 @@ func (h *ActionCredentialsHandler) handleUpdate(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
-	sanitize.ApplyAll(
-		sanitize.Pair{Target: req.Name, Policy: sanitize.PlainTextField},
-		sanitize.Pair{Target: req.SecretMetadata, Policy: sanitize.RichText},
-	)
+	sanitize.Apply(req.Name, sanitize.PlainTextField)
+	// SecretMetadata is a JSON blob — size-cap + well-formed-JSON gate
+	// instead of HTML stripping (see CreateGlobal).
+	if req.SecretMetadata != nil {
+		if err := sanitize.ValidateJSONPayload("secret_metadata", *req.SecretMetadata); err != nil {
+			respondValidationError(w, r, err.Error())
+			return
+		}
+	}
 	if !allowScopeChange {
 		req.AppliesToAllWorkspaces = nil
 		req.WorkspaceIDs = nil
