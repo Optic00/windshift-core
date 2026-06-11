@@ -485,7 +485,7 @@ func init() {
 			case args.ToStatusName != "":
 				id, err := resolveStatusName(env.DB, args.ToStatusName, wsID)
 				if err != nil {
-					return map[string]string{"error": fmt.Sprintf("could not resolve status name %q", args.ToStatusName)}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
+					return map[string]string{"error": fmt.Sprintf("could not resolve status name %q: %s", args.ToStatusName, err.Error())}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
 				}
 				toStatusID = id
 			default:
@@ -619,7 +619,7 @@ func buildUpdateData(env *Env, args updateItemArgs, wsID int) (data map[string]i
 		}
 		changed = append(changed, "assignee")
 	case args.AssigneeName != nil:
-		id, err := resolveAssigneeName(env.DB, *args.AssigneeName)
+		id, err := resolveAssigneeName(env, *args.AssigneeName, wsID)
 		if err != nil {
 			return nil, nil, fmt.Errorf("could not resolve assignee name %q: %w", *args.AssigneeName, err)
 		}
@@ -715,13 +715,42 @@ func workspaceLookupMap(db database.Database) map[string]int {
 	return out
 }
 
-func resolveStatusName(db database.Database, name string, _ int) (int, error) {
-	var id int
-	err := db.QueryRow("SELECT id FROM statuses WHERE LOWER(name) = LOWER(?)", name).Scan(&id)
+// resolveStatusName resolves a status name to an ID, scoped to the statuses
+// actually configured for the target workspace (via its configuration set's
+// workflow — same source the workspace status endpoints use). A globally
+// existing status that isn't part of the workspace's workflow is not a match;
+// the error lists the workspace's valid statuses so the caller can pick one.
+func resolveStatusName(db database.Database, name string, workspaceID int) (int, error) {
+	statuses, err := services.NewWorkspaceService(db).GetStatuses(workspaceID)
 	if err != nil {
-		return 0, fmt.Errorf("status not found")
+		return 0, fmt.Errorf("failed to load workspace statuses: %w", err)
 	}
-	return id, nil
+	var matches []models.Status
+	for _, s := range statuses {
+		if strings.EqualFold(s.Name, name) {
+			matches = append(matches, s)
+		}
+	}
+	switch len(matches) {
+	case 1:
+		return matches[0].ID, nil
+	case 0:
+		return 0, fmt.Errorf("status not found in this workspace; valid statuses: %s", statusCandidateList(statuses))
+	default:
+		return 0, fmt.Errorf("status name is ambiguous in this workspace; candidates: %s — pass to_status_id instead", statusCandidateList(matches))
+	}
+}
+
+// statusCandidateList renders statuses as "Name (id N), ..." for tool errors.
+func statusCandidateList(statuses []models.Status) string {
+	if len(statuses) == 0 {
+		return "(none configured)"
+	}
+	parts := make([]string, 0, len(statuses))
+	for _, s := range statuses {
+		parts = append(parts, fmt.Sprintf("%s (id %d)", s.Name, s.ID))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func resolvePriorityName(db database.Database, name string) (int, error) {
@@ -733,13 +762,71 @@ func resolvePriorityName(db database.Database, name string) (int, error) {
 	return id, nil
 }
 
-func resolveAssigneeName(db database.Database, name string) (int, error) {
-	var id int
-	err := db.QueryRow("SELECT id FROM users WHERE LOWER(first_name || ' ' || last_name) = LOWER(?)", name).Scan(&id)
+// resolveAssigneeName resolves a user's full name to an ID, restricted to
+// users visible in the item's workspace. Visibility reuses the canonical
+// gated-aware check the HTTP layer builds workspace access from (item.view
+// permission on the workspace, see PermissionService.AccessibleWorkspaceIDs)
+// so a name match outside the workspace never resolves silently. Ambiguous
+// or out-of-workspace matches return an error listing candidates so the
+// caller can disambiguate (e.g. by passing assignee_id).
+func resolveAssigneeName(env *Env, name string, workspaceID int) (int, error) {
+	rows, err := env.DB.Query(
+		"SELECT id, first_name || ' ' || last_name FROM users WHERE LOWER(first_name || ' ' || last_name) = LOWER(?) ORDER BY id",
+		name,
+	)
 	if err != nil {
+		return 0, fmt.Errorf("failed to look up user: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var matches []userCandidate
+	for rows.Next() {
+		var c userCandidate
+		if err := rows.Scan(&c.id, &c.fullName); err != nil {
+			continue
+		}
+		matches = append(matches, c)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("failed to look up user: %w", err)
+	}
+	if len(matches) == 0 {
 		return 0, fmt.Errorf("user not found")
 	}
-	return id, nil
+
+	var inWorkspace []userCandidate
+	for _, c := range matches {
+		visible, err := env.PermService.HasWorkspacePermission(c.id, workspaceID, models.PermissionItemView)
+		if err != nil {
+			return 0, fmt.Errorf("failed to check workspace membership: %w", err)
+		}
+		if visible {
+			inWorkspace = append(inWorkspace, c)
+		}
+	}
+	switch len(inWorkspace) {
+	case 1:
+		return inWorkspace[0].id, nil
+	case 0:
+		return 0, fmt.Errorf("no matching user is a member of this workspace; matches elsewhere: %s", userCandidateList(matches))
+	default:
+		return 0, fmt.Errorf("name is ambiguous in this workspace; candidates: %s — pass assignee_id instead", userCandidateList(inWorkspace))
+	}
+}
+
+// userCandidate is a (id, full name) pair used for assignee disambiguation
+// messages.
+type userCandidate struct {
+	id       int
+	fullName string
+}
+
+// userCandidateList renders user candidates as "Name (id N), ..." for tool errors.
+func userCandidateList(users []userCandidate) string {
+	parts := make([]string, 0, len(users))
+	for _, u := range users {
+		parts = append(parts, fmt.Sprintf("%s (id %d)", u.fullName, u.id))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func resolveMilestoneName(db database.Database, name string, workspaceID int) (int, error) {
