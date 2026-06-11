@@ -21,6 +21,7 @@
   import { t } from '../../stores/i18n.svelte.js';
   import { pagesTreeRefresh } from './pagesTreeRefresh.svelte.js';
   import { pagesFocusTitle } from './pagesFocusTitle.svelte.js';
+  import { agentRuns } from '../../stores/agentRuns.svelte.js';
 
   /**
    * Workspace knowledge-pages view: right pane only (the tree + new-page
@@ -146,6 +147,15 @@
       await loadPage(pageId);
     }
   });
+
+  // Live-reload after AI chat agent runs so page edits made through update_page
+  // become visible without requiring a manual refresh. If the user currently
+  // has local unsaved edits, skip the reload rather than clobber their draft.
+  onMount(() => agentRuns.subscribe(() => {
+    pagesTreeRefresh.bump();
+    if (!selectedPage?.id || dirty || saveInFlight) return;
+    loadPage(selectedPage.id);
+  }));
 
   onDestroy(() => {
     // Don't leave a dangling timer. We deliberately do NOT flush here:

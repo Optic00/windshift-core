@@ -5,9 +5,10 @@
   import MilkdownEditor from '../../editors/LazyMilkdownEditor.svelte';
   import ChatToolTrace from './ChatToolTrace.svelte';
   import { chatStore } from '../../stores/chatStore.svelte.js';
-  import { navigate, currentRoute } from '../../router.js';
+  import { currentRoute } from '../../router.js';
   import Select from '../../components/Select.svelte';
   import EmptyState from '../../components/EmptyState.svelte';
+  import { buildChatContext } from './chatContext.js';
 
   let {
     isOpen = $bindable(false),
@@ -144,18 +145,10 @@
   }
 
   // Build a per-request context blob. The backend appends a narrow,
-  // surface-specific hint to the system prompt only on action surfaces, so
-  // we only fill in context when we're actually on one — everywhere else
-  // the chat stays unaware of the user's location to keep the prompt clean.
+  // surface-specific hint only on supported object surfaces, so everywhere
+  // else the chat stays unaware of the user's location to keep the prompt clean.
   function buildContext() {
-    const route = $currentRoute;
-    if (route?.view !== 'workspace-actions') return undefined;
-    const ctx = { view: route.view };
-    const wsId = Number(route.params?.id);
-    if (wsId) ctx.workspace_id = wsId;
-    const actionId = Number(route.params?.actionId);
-    if (actionId) ctx.action_id = actionId;
-    return ctx;
+    return buildChatContext($currentRoute);
   }
 
   function send() {

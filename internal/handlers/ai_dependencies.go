@@ -522,6 +522,9 @@ type ChatContext struct {
 	View        string `json:"view,omitempty"`
 	WorkspaceID int    `json:"workspace_id,omitempty"`
 	ActionID    int    `json:"action_id,omitempty"`
+	PageID      int    `json:"page_id,omitempty"`
+	ItemID      int    `json:"item_id,omitempty"`
+	ItemKey     string `json:"item_key,omitempty"`
 }
 
 // ChatRequest is the request body for the agentic chat endpoint.
@@ -539,7 +542,8 @@ func buildChatContextHint(ctx *ChatContext) string {
 	if ctx == nil {
 		return ""
 	}
-	if ctx.View == "workspace-actions" {
+	switch ctx.View {
+	case "workspace-actions":
 		if ctx.ActionID > 0 {
 			return fmt.Sprintf(
 				"\n\nThe user is currently editing action %d in workspace %d. Workflow: (1) call get_action with workspace_id=%d, action_id=%d to read the current graph; (2) call describe_action_catalog with workspace_id=%d if you need to recall node configs; (3) compose the full replacement graph and call update_action — the editor live-reloads on success. Optionally validate non-trivial changes with validate_action before the write. update_action is a full replace (not a patch), so you must include every node and edge you want to keep. After update_action succeeds, do not call it again; summarize the completed change to the user.",
@@ -550,6 +554,36 @@ func buildChatContextHint(ctx *ChatContext) string {
 			return fmt.Sprintf(
 				"\n\nThe user is on the action settings page for workspace %d. If they ask you to build an automation, use describe_action_catalog to discover available triggers and nodes, list_action_templates for shipped blueprints, then create_action to persist a new automation in this workspace. After create_action succeeds, do not call it again; summarize the created automation to the user.",
 				ctx.WorkspaceID,
+			)
+		}
+	case "workspace-pages":
+		if ctx.PageID > 0 {
+			return fmt.Sprintf(
+				"\n\nThe user is currently viewing knowledge page %d in workspace %d. If they ask you to read or summarize the current page, call get_page with page_id=%d before answering. If they ask you to change the current page, first call get_page with page_id=%d, then call update_page with page_id=%d and the complete replacement Markdown content and/or title. After update_page succeeds, do not call it again; summarize the completed change to the user.",
+				ctx.PageID, ctx.WorkspaceID, ctx.PageID, ctx.PageID, ctx.PageID,
+			)
+		}
+		if ctx.WorkspaceID > 0 {
+			return fmt.Sprintf(
+				"\n\nThe user is on the knowledge pages area for workspace %d. If they ask about pages or workspace docs without naming one, use list_pages or search_knowledge in workspace_id=%d to find the relevant page before answering. If they ask you to create a page, use create_page in this workspace.",
+				ctx.WorkspaceID, ctx.WorkspaceID,
+			)
+		}
+	case "item-detail":
+		if ctx.ItemKey != "" {
+			return fmt.Sprintf(
+				"\n\nThe user is currently viewing work item %s. If they ask you to read, summarize, or change the current item, call get_item with item_key=%q before answering or mutating. Use update_item with item_key=%q for field changes, transition_item with item_key=%q for status changes, and get_item_children if they ask about sub-tasks. For comments, first use get_item to resolve the numeric item id, then call list_comments or add_comment with that item_id. After a mutating tool succeeds, do not call it again; summarize the completed change to the user.",
+				ctx.ItemKey, ctx.ItemKey, ctx.ItemKey, ctx.ItemKey,
+			)
+		}
+		if ctx.ItemID > 0 {
+			location := fmt.Sprintf("work item %d", ctx.ItemID)
+			if ctx.WorkspaceID > 0 {
+				location = fmt.Sprintf("work item %d in workspace %d", ctx.ItemID, ctx.WorkspaceID)
+			}
+			return fmt.Sprintf(
+				"\n\nThe user is currently viewing %s. If they ask you to read, summarize, or change the current item, call get_item with item_id=%d before answering or mutating. Use update_item with item_id=%d for field changes, transition_item with item_id=%d for status changes, add_comment with item_id=%d for comments, and get_item_children if they ask about sub-tasks. After a mutating tool succeeds, do not call it again; summarize the completed change to the user.",
+				location, ctx.ItemID, ctx.ItemID, ctx.ItemID, ctx.ItemID,
 			)
 		}
 	}
@@ -609,6 +643,7 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Context != nil {
 		sanitize.Apply(&req.Context.View, sanitize.ShortIdentifier)
+		sanitize.Apply(&req.Context.ItemKey, sanitize.ShortIdentifier)
 	}
 	if strings.TrimSpace(req.Message) == "" {
 		respondBadRequest(w, r, "message is required")
@@ -676,6 +711,11 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		slog.ErrorContext(r.Context(), "chat agent run failed",
 			slog.Int("user_id", user.ID),
 			slog.String("ctx_view", chatContextView(req.Context)),
+			slog.Int("ctx_workspace_id", chatContextWorkspaceID(req.Context)),
+			slog.Int("ctx_action_id", chatContextActionID(req.Context)),
+			slog.Int("ctx_page_id", chatContextPageID(req.Context)),
+			slog.Int("ctx_item_id", chatContextItemID(req.Context)),
+			slog.String("ctx_item_key", chatContextItemKey(req.Context)),
 			slog.String("error", err.Error()),
 		)
 		respondLLMError(w, r, err)
@@ -687,6 +727,9 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		slog.String("ctx_view", chatContextView(req.Context)),
 		slog.Int("ctx_workspace_id", chatContextWorkspaceID(req.Context)),
 		slog.Int("ctx_action_id", chatContextActionID(req.Context)),
+		slog.Int("ctx_page_id", chatContextPageID(req.Context)),
+		slog.Int("ctx_item_id", chatContextItemID(req.Context)),
+		slog.String("ctx_item_key", chatContextItemKey(req.Context)),
 		slog.String("stop_reason", string(result.StopReason)),
 		slog.Int("iterations", result.Iterations),
 		slog.Int("max_iterations", result.MaxIter),
@@ -702,7 +745,7 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// chatContextView / WorkspaceID / ActionID safely read fields off a
+// chatContextView / WorkspaceID / ActionID / PageID / Item safely read fields off a
 // possibly-nil ChatContext for slog calls.
 func chatContextView(c *ChatContext) string {
 	if c == nil {
@@ -721,4 +764,22 @@ func chatContextActionID(c *ChatContext) int {
 		return 0
 	}
 	return c.ActionID
+}
+func chatContextPageID(c *ChatContext) int {
+	if c == nil {
+		return 0
+	}
+	return c.PageID
+}
+func chatContextItemID(c *ChatContext) int {
+	if c == nil {
+		return 0
+	}
+	return c.ItemID
+}
+func chatContextItemKey(c *ChatContext) string {
+	if c == nil {
+		return ""
+	}
+	return c.ItemKey
 }
