@@ -10,6 +10,7 @@
   import CreateItemNode from '../logbook-actions/nodes/CreateItemNode.svelte';
   import CreateItemConfigPanel from '../logbook-actions/CreateItemConfigPanel.svelte';
   import BaseActionFlowEditor from '../actions/shared/BaseActionFlowEditor.svelte';
+  import ConditionConfigPanel from '../actions/shared/ConditionConfigPanel.svelte';
   import { assetActionFlowStore } from '../../stores/assetActionFlowStore.svelte.js';
   import FieldSelector from '../../pickers/FieldSelector.svelte';
   import { api } from '../../api.js';
@@ -214,39 +215,13 @@
       </div>
       <Button variant="ghost" size="small" onclick={handleDeleteNode}>Delete Node</Button>
     {:else if selectedNode.type === 'condition'}
-      <div>
-        <label for="condition-field" class="block text-xs font-medium mb-1">Field</label>
-        <Select
-          id="condition-field"
-          options={conditionFields}
-          value={selectedNode.data?.config?.field_name || ''}
-          onchange={(v) =>
-            store.updateNodeConfig(selectedNode.id, { field_name: v })}
-          size="small"
-        />
-      </div>
-      <div>
-        <label for="condition-operator" class="block text-xs font-medium mb-1">Operator</label>
-        <Select
-          id="condition-operator"
-          options={conditionOperators}
-          value={selectedNode.data?.config?.operator || 'eq'}
-          onchange={(v) =>
-            store.updateNodeConfig(selectedNode.id, { operator: v })}
-          size="small"
-        />
-      </div>
-      <div>
-        <div class="block text-xs font-medium mb-1">Value</div>
-        <input
-          type="text"
-          class="w-full px-3 py-2 border rounded-md text-sm config-input"
-          value={selectedNode.data?.config?.value || ''}
-          oninput={(e) =>
-            store.updateNodeConfig(selectedNode.id, { value: e.currentTarget.value })}
-        />
-      </div>
-      <Button variant="ghost" size="small" onclick={handleDeleteNode}>Delete Node</Button>
+      <ConditionConfigPanel
+        {selectedNode}
+        {store}
+        fields={conditionFields}
+        operators={conditionOperators}
+        onDelete={handleDeleteNode}
+      />
     {:else if selectedNode.type === 'notify_user'}
       <div>
         <div class="block text-xs font-medium mb-1">User ID</div>
