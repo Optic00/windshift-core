@@ -2,13 +2,12 @@ package aitools
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 
 	"windshift/internal/auth"
 	"windshift/internal/models"
+	"windshift/internal/repository"
 	"windshift/internal/services"
 )
 
@@ -47,24 +46,13 @@ func init() {
 			if !env.HasWorkspaceAccess(args.WorkspaceID) {
 				return map[string]string{"error": "workspace not found"}, nil
 			}
-			rows, err := env.DB.Query(
-				"SELECT id, name, color, workspace_id FROM labels WHERE workspace_id = ? ORDER BY name",
-				args.WorkspaceID,
-			)
+			labels, err := repository.NewLabelRepository(env.DB).ListByWorkspace(args.WorkspaceID)
 			if err != nil {
 				return nil, err
 			}
-			defer func() { _ = rows.Close() }()
-			out := listLabelsOut{Labels: []labelDTO{}}
-			for rows.Next() {
-				var l labelDTO
-				if err := rows.Scan(&l.ID, &l.Name, &l.Color, &l.WorkspaceID); err != nil {
-					continue
-				}
-				out.Labels = append(out.Labels, l)
-			}
-			if err := rows.Err(); err != nil {
-				return nil, err
+			out := listLabelsOut{Labels: make([]labelDTO, 0, len(labels))}
+			for _, l := range labels {
+				out.Labels = append(out.Labels, labelDTO{ID: l.ID, Name: l.Name, Color: l.Color, WorkspaceID: l.WorkspaceID})
 			}
 			return out, nil
 		},
@@ -89,18 +77,15 @@ func init() {
 			if !ok {
 				return map[string]string{"error": "permission denied"}, nil
 			}
-			tx, err := env.DB.Begin()
-			if err != nil {
-				return nil, err
-			}
-			defer func() { _ = tx.Rollback() }()
-			if _, err := tx.Exec("DELETE FROM item_labels WHERE item_id = ?", args.ItemID); err != nil {
-				return nil, err
-			}
+			labelRepo := repository.NewLabelRepository(env.DB)
+			// Validate every requested label exists in the item's workspace,
+			// deduplicating so the replace below never hits the unique
+			// constraint on (item_id, label_id).
+			seen := make(map[int]bool, len(args.LabelIDs))
+			labelIDs := make([]int, 0, len(args.LabelIDs))
 			for _, labelID := range args.LabelIDs {
-				var wsID int
-				err := tx.QueryRow("SELECT workspace_id FROM labels WHERE id = ?", labelID).Scan(&wsID)
-				if errors.Is(err, sql.ErrNoRows) {
+				wsID, err := labelRepo.GetWorkspaceID(labelID)
+				if errors.Is(err, repository.ErrNotFound) {
 					return map[string]string{"error": fmt.Sprintf("label %d not found", labelID)}, nil
 				}
 				if err != nil {
@@ -109,14 +94,13 @@ func init() {
 				if wsID != item.WorkspaceID {
 					return map[string]string{"error": fmt.Sprintf("label %d belongs to a different workspace", labelID)}, nil
 				}
-				if _, err := tx.Exec("INSERT INTO item_labels (item_id, label_id) VALUES (?, ?)", args.ItemID, labelID); err != nil {
-					if strings.Contains(err.Error(), "UNIQUE") || strings.Contains(err.Error(), "duplicate") {
-						continue
-					}
-					return nil, err
+				if seen[labelID] {
+					continue
 				}
+				seen[labelID] = true
+				labelIDs = append(labelIDs, labelID)
 			}
-			if err := tx.Commit(); err != nil {
+			if err := labelRepo.ReplaceItemLabels(args.ItemID, labelIDs); err != nil {
 				return nil, err
 			}
 			return setItemLabelsOut{ItemID: args.ItemID, LabelIDs: args.LabelIDs, Updated: true}, nil

@@ -317,7 +317,7 @@ func init() {
 			if durationMins <= 0 {
 				return map[string]string{"error": "duration must be positive"}, nil
 			}
-			var itemIDVal interface{}
+			var itemID *int
 			if args.ItemID != nil && *args.ItemID > 0 {
 				wsID, err := repository.NewItemRepository(env.DB).GetWorkspaceID(*args.ItemID)
 				if err != nil {
@@ -326,16 +326,19 @@ func init() {
 				if !env.HasWorkspaceAccess(wsID) {
 					return map[string]string{"error": "item not found"}, nil
 				}
-				itemIDVal = *args.ItemID
+				itemID = args.ItemID
 			}
-			now := time.Now().Unix()
-			var id int64
-			err = env.DB.QueryRow(`
-				INSERT INTO time_worklogs (project_id, customer_id, user_id, item_id, description, date, start_time, end_time, duration_minutes, created_at, updated_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-				args.ProjectID, customerID.Int64, env.UserID, itemIDVal, args.Description,
-				date.Unix(), startUnix, endUnix, durationMins, now, now,
-			).Scan(&id)
+			id, err := repository.NewTimeWorklogRepository(env.DB).Create(repository.NewWorklog{
+				ProjectID:       args.ProjectID,
+				CustomerID:      customerID.Int64,
+				UserID:          env.UserID,
+				ItemID:          itemID,
+				Description:     args.Description,
+				DateUnix:        date.Unix(),
+				StartTimeUnix:   startUnix,
+				EndTimeUnix:     endUnix,
+				DurationMinutes: durationMins,
+			})
 			if err != nil {
 				return nil, err
 			}
