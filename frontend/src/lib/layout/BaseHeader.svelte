@@ -11,7 +11,8 @@
     actions = null,
     textStyle = '',
     subtitleStyle = '',
-    iconStyle = ''
+    iconStyle = '',
+    marginClass = 'mb-8'
   } = $props();
 
   const subtitleText = $derived(subtitle || description);
@@ -19,14 +20,16 @@
   const subtitleStyleProp = $derived(subtitleStyle || 'color: var(--ds-text-subtle);');
 </script>
 
-<div class="flex items-center justify-between mb-{count ? '6' : '8'}">
+<div class="flex items-center justify-between {marginClass}">
   <div>
-    <h1 class="flex items-baseline gap-2 text-xl font-medium mb-2" style="{textStyle || 'color: var(--ds-text);'}">
-      {title}
+    <div class="flex items-baseline gap-2 mb-2">
+      <h1 class="text-xl font-medium" style="{textStyle || 'color: var(--ds-text);'}">
+        {title}
+      </h1>
       {#if badge}
         <span class="text-xs font-medium px-1.5 py-0.5 rounded" style={badgeStyle}>{badge}</span>
       {/if}
-    </h1>
+    </div>
     {#if subtitleText || count !== null}
       <div class="flex items-center gap-2 text-sm" style="{subtitleStyleProp}">
         {#if icon && subtitleText}

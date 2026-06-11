@@ -24,4 +24,5 @@
   {actions}
   {textStyle}
   {subtitleStyle}
+  iconStyle={subtitleStyle}
 />
