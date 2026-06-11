@@ -23,9 +23,4 @@
   {/snippet}
 </GenericActionNode>
 
-<style>
-  .config-line {
-    font-size: 12px;
-    color: var(--ds-text-subtle);
-  }
-</style>
+

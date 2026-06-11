@@ -22,13 +22,4 @@
   {/snippet}
 </GenericActionNode>
 
-<style>
-  .config-line {
-    font-size: 12px;
-    color: var(--ds-text-subtle);
-    max-width: 200px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-</style>
+

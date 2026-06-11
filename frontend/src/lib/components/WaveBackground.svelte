@@ -29,13 +29,6 @@
 
 <style>
   .wave-bg {
-    -webkit-mask-image: radial-gradient(
-      ellipse 75% 65% at 50% 45%,
-      rgba(0, 0, 0, 1) 0%,
-      rgba(0, 0, 0, 0.9) 35%,
-      rgba(0, 0, 0, 0.45) 70%,
-      rgba(0, 0, 0, 0) 100%
-    );
     mask-image: radial-gradient(
       ellipse 75% 65% at 50% 45%,
       rgba(0, 0, 0, 1) 0%,
@@ -43,5 +36,6 @@
       rgba(0, 0, 0, 0.45) 70%,
       rgba(0, 0, 0, 0) 100%
     );
+    -webkit-mask-image: mask-image;
   }
 </style>
