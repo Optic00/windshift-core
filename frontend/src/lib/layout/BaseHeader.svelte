@@ -1,6 +1,8 @@
 <script>
   let {
     title = '',
+    badge = '',
+    badgeStyle = 'background-color: var(--ctx-active-bg, var(--ds-accent-blue-subtler)); color: var(--ctx-active-text, var(--ds-accent-blue)); backdrop-filter: var(--ctx-backdrop, none);',
     subtitle = '',
     description = '',
     icon = null,
@@ -19,8 +21,11 @@
 
 <div class="flex items-center justify-between mb-{count ? '6' : '8'}">
   <div>
-    <h1 class="text-xl font-medium mb-2" style="{textStyle || 'color: var(--ds-text);'}">
+    <h1 class="flex items-baseline gap-2 text-xl font-medium mb-2" style="{textStyle || 'color: var(--ds-text);'}">
       {title}
+      {#if badge}
+        <span class="text-xs font-medium px-1.5 py-0.5 rounded" style={badgeStyle}>{badge}</span>
+      {/if}
     </h1>
     {#if subtitleText || count !== null}
       <div class="flex items-center gap-2 text-sm" style="{subtitleStyleProp}">
