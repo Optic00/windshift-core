@@ -300,19 +300,37 @@ func init() {
 			}
 			title := sanitize.PlainTextField.Sanitize(args.Title)
 			desc := sanitize.Comment.Sanitize(args.Description)
-			itemID, err := services.CreateItem(env.DB, services.ItemCreationParams{
+			// Centralized creation validation (parent hierarchy, cross-workspace
+			// parent visibility, status rules) — mirrors the cookie-auth and v1
+			// create paths. Permission-shaped parent failures surface as "Parent
+			// item not found" so existence isn't leaked.
+			validationResult := services.ValidateItemCreation(env.DB, services.ItemValidationParams{
 				WorkspaceID: args.WorkspaceID,
 				Title:       title,
-				Description: desc,
-				StatusID:    args.StatusID,
-				PriorityID:  args.PriorityID,
-				AssigneeID:  args.AssigneeID,
-				ParentID:    args.ParentID,
 				ItemTypeID:  args.ItemTypeID,
-				CreatorID:   &env.UserID,
+				ParentID:    args.ParentID,
+				StatusID:    args.StatusID,
+				UserID:      env.UserID,
+				PermService: env.PermService,
+			})
+			if !validationResult.Valid {
+				return map[string]string{"error": validationResult.Error}, nil
+			}
+			itemID, err := services.CreateItem(env.DB, services.ItemCreationParams{
+				WorkspaceID:      args.WorkspaceID,
+				Title:            title,
+				Description:      desc,
+				StatusID:         args.StatusID,
+				PriorityID:       args.PriorityID,
+				AssigneeID:       args.AssigneeID,
+				ParentID:         args.ParentID,
+				ItemTypeID:       args.ItemTypeID,
+				CreatorID:        &env.UserID,
+				ValidatingUserID: env.UserID,
+				PermService:      env.PermService,
 			})
 			if err != nil {
-				return nil, err
+				return map[string]string{"error": fmt.Sprintf("create failed: %s", err.Error())}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
 			}
 			created, err := services.NewItemCRUDService(env.DB).GetByID(int(itemID))
 			if err != nil {
