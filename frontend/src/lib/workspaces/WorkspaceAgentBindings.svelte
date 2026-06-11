@@ -6,7 +6,7 @@
   // Backend chokepoint re-validates the identity at create time; the
   // candidates endpoint just keeps the picker honest.
 
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
   import { Bot, FlaskConical, Loader2, Plus, Trash2, Wand2 } from '@lucide/svelte';
   import { agentBindings, agentRuns, agentSkills, api } from '../api.js';
   import Panel from '../components/Panel.svelte';
@@ -205,8 +205,10 @@
   onMount(load);
 
   // Refresh just the skills list when the sibling skills panel reports a
-  // change (initial value is covered by load()).
-  let lastSkillsVersion = skillsVersion;
+  // change (initial value is covered by load()). The untrack'd snapshot is
+  // intentional: it pins the mount-time version so the effect only fires
+  // for changes after mount.
+  let lastSkillsVersion = untrack(() => skillsVersion);
   $effect(() => {
     if (skillsVersion === lastSkillsVersion) return;
     lastSkillsVersion = skillsVersion;
