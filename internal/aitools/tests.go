@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"windshift/internal/auth"
+	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/sanitize"
@@ -442,6 +443,7 @@ func init() {
 				}
 				return nil, err
 			}
+			env.AuditWrite(logger.ResourceTestRun, args.RunID, "end_test_run", "")
 			run, err := runSvc.GetByID(args.RunID, wsID)
 			if err != nil {
 				return map[string]any{"success": true}, nil //nolint:nilerr // run ended; summary fetch is best-effort
@@ -507,6 +509,8 @@ func init() {
 				}
 				return testToolError(fmt.Sprintf("failed to record result: %s", err.Error())), nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
 			}
+			env.AuditWrite(resourceTestResult, target.ID, "record_test_result",
+				fmt.Sprintf("%s: %s", target.TestCaseTitle, args.Status))
 			updated := target.TestResult
 			updated.Status = args.Status
 			updated.ActualResult = actual
@@ -553,6 +557,7 @@ func startTestRunFromSet(env *Env, args startTestRunArgs) (any, error) {
 	if err != nil {
 		return testToolError(err.Error()), nil //nolint:nilerr // validation error as tool JSON
 	}
+	env.AuditWrite(logger.ResourceTestRun, run.ID, "start_test_run", run.Name)
 	return map[string]any{"success": true, "run": testRunToDTO(run)}, nil
 }
 
@@ -584,5 +589,6 @@ func startTestRunFromTemplate(env *Env, args startTestRunArgs) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	env.AuditWrite(logger.ResourceTestRun, run.ID, "start_test_run", run.Name)
 	return map[string]any{"success": true, "run": testRunToDTO(run)}, nil
 }

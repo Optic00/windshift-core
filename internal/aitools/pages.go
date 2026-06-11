@@ -254,6 +254,7 @@ func init() {
 			if err != nil {
 				return map[string]string{"error": err.Error()}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
 			}
+			env.AuditWrite(resourcePage, page.ID, "create_page", page.Title)
 			return map[string]any{"page": pageToDTO(page), "content": page.Content}, nil
 		},
 	})
@@ -283,6 +284,7 @@ func init() {
 			if err != nil {
 				return map[string]string{"error": err.Error()}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
 			}
+			env.AuditWrite(resourcePage, updated.ID, "update_page", updated.Title)
 			return map[string]any{"page": pageToDTO(updated), "content": updated.Content}, nil
 		},
 	})
@@ -311,6 +313,7 @@ func init() {
 			if err != nil {
 				return map[string]string{"error": err.Error()}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
 			}
+			env.AuditWrite(resourcePage, moved.ID, "move_page", moved.Title)
 			return map[string]any{"page": pageToDTO(moved)}, nil
 		},
 	})
@@ -347,6 +350,7 @@ func init() {
 			}); err != nil {
 				return map[string]string{"error": err.Error()}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
 			}
+			env.AuditWrite(resourcePage, page.ID, "archive_page", page.Title)
 			return map[string]any{"archived": true, "page_id": page.ID}, nil
 		},
 	})
@@ -365,6 +369,7 @@ func init() {
 			if err != nil {
 				return map[string]string{"error": err.Error()}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
 			}
+			env.AuditWrite(resourcePage, restored.ID, "restore_page_revision", restored.Title)
 			return map[string]any{"page": pageToDTO(restored), "content": restored.Content}, nil
 		},
 	})
@@ -401,6 +406,7 @@ func init() {
 			if err != nil {
 				return map[string]string{"error": err.Error()}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
 			}
+			env.AuditWrite(resourcePage, page.ID, "grant_page_permission", page.Title)
 			return permissionToOut(*perm), nil
 		},
 	})
@@ -418,6 +424,7 @@ func init() {
 			if err := pageSvc.RevokePermission(env.UserID, page.ID, args.PermissionID); err != nil {
 				return map[string]string{"error": err.Error()}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
 			}
+			env.AuditWrite(resourcePage, page.ID, "revoke_page_permission", page.Title)
 			return map[string]any{"revoked": true, "permission_id": args.PermissionID}, nil
 		},
 	})
@@ -436,6 +443,7 @@ func init() {
 			if err != nil {
 				return map[string]string{"error": err.Error()}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
 			}
+			env.AuditWrite(resourcePage, updated.ID, "set_page_inheritance", updated.Title)
 			return map[string]any{"page": pageToDTO(updated), "inherit_permissions": updated.InheritPermissions}, nil
 		},
 	})

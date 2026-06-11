@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"windshift/internal/auth"
+	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/services"
@@ -108,6 +109,7 @@ func init() {
 			if err := labelRepo.ReplaceItemLabels(itemID, labelIDs); err != nil {
 				return nil, err
 			}
+			env.AuditWrite(logger.ResourceItem, itemID, "set_item_labels", item.Title)
 			return setItemLabelsOut{ItemID: itemID, LabelIDs: args.LabelIDs, Updated: true}, nil
 		},
 	})

@@ -337,6 +337,7 @@ func init() {
 			if err != nil {
 				return nil, err
 			}
+			env.AuditWrite(resourceTimeWorklog, int(id), "log_time", args.Description)
 			return logTimeOut{
 				ID:              id,
 				ProjectID:       args.ProjectID,
@@ -364,6 +365,7 @@ func init() {
 				}
 				return nil, err
 			}
+			env.AuditWrite(resourceTimer, timer.ID, "start_timer", timer.Description)
 			return startTimerOut{
 				ID:           int64(timer.ID),
 				Description:  timer.Description,
@@ -388,6 +390,7 @@ func init() {
 				}
 				return nil, err
 			}
+			env.AuditWrite(resourceTimer, res.TimerID, "stop_timer", res.Description)
 			return stopTimerOut{
 				Stopped:         true,
 				TimerID:         res.TimerID,

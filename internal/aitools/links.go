@@ -192,6 +192,8 @@ func init() {
 			if err != nil {
 				return linkServiceErrorResult(err)
 			}
+			env.AuditWrite(resourceItemLink, link.ID, "add_link",
+				fmt.Sprintf("%s %s:%d -> %s:%d", link.LinkTypeName, sourceType, sourceID, targetType, targetID))
 			return map[string]any{"link": linkToDTO(link)}, nil
 		},
 	})
@@ -205,6 +207,7 @@ func init() {
 			if err := newLinkToolService(env).DeleteLinkWithChecks(env.UserID, args.LinkID); err != nil {
 				return linkServiceErrorResult(err)
 			}
+			env.AuditWrite(resourceItemLink, args.LinkID, "remove_link", "")
 			return map[string]any{"deleted": true, "link_id": args.LinkID}, nil
 		},
 	})

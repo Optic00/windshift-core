@@ -2,10 +2,12 @@ package aitools
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
 	"windshift/internal/auth"
+	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/services"
 )
@@ -116,6 +118,7 @@ func init() {
 			if err != nil {
 				return nil, err
 			}
+			env.AuditWrite(logger.ResourceComment, int(result.CommentID), "add_comment", fmt.Sprintf("item %d", itemID))
 			return addCommentOut{ID: result.CommentID, ItemID: itemID, Content: args.Content}, nil
 		},
 	})
@@ -141,6 +144,7 @@ func init() {
 			if err != nil {
 				return nil, err
 			}
+			env.AuditWrite(logger.ResourceComment, updated.ID, "update_comment", fmt.Sprintf("item %d", updated.ItemID))
 			return updateCommentOut{ID: updated.ID, ItemID: updated.ItemID, Content: updated.Content}, nil
 		},
 	})
@@ -159,6 +163,7 @@ func init() {
 			if err := env.CommentService.Delete(args.CommentID); err != nil {
 				return nil, err
 			}
+			env.AuditWrite(logger.ResourceComment, args.CommentID, "delete_comment", "")
 			return map[string]any{"deleted": true, "comment_id": args.CommentID}, nil
 		},
 	})

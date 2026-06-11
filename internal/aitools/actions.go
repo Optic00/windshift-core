@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 
 	"github.com/google/jsonschema-go/jsonschema"
 
@@ -18,39 +17,15 @@ import (
 	"windshift/internal/services/actiontemplates"
 )
 
-// emitActionAudit writes an audit row for an agent-driven action mutation.
-// IP/UserAgent are empty by design — the call originates from the chat/MCP
-// adapter, not a direct HTTP request. The Source field on Env tags which
-// surface initiated it (ai_chat vs mcp) so the audit trail can distinguish
-// agent writes from cookie-auth writes. Best-effort: failures are logged,
-// never propagated up so a working tool call isn't broken by an audit miss.
+// emitActionAudit writes an audit row for an agent-driven action mutation
+// through the shared Env.audit choke point (see env.go). It keeps the
+// HTTP-parity action types (automation.create / automation.update) and the
+// workspace_id detail the action audit trail has always carried; everything
+// else (source tagging, best-effort error handling) is the shared mechanism.
 func emitActionAudit(env *Env, actionType string, workspaceID, actionID int, actionName string) {
-	id := actionID
-	source := env.Source
-	if source == "" {
-		source = "unknown"
-	}
-	err := logger.LogAudit(env.DB, logger.AuditEvent{
-		UserID:       env.UserID,
-		Username:     env.Username,
-		ActionType:   actionType,
-		ResourceType: logger.ResourceAutomation,
-		ResourceID:   &id,
-		ResourceName: actionName,
-		Details: map[string]interface{}{
-			"source":       source,
-			"workspace_id": workspaceID,
-		},
-		Success: true,
+	env.audit(actionType, logger.ResourceAutomation, actionID, actionName, map[string]interface{}{
+		"workspace_id": workspaceID,
 	})
-	if err != nil {
-		slog.Warn("aitool audit log failed",
-			slog.String("component", "aitools"),
-			slog.String("action_type", actionType),
-			slog.Int("action_id", actionID),
-			slog.Any("error", err),
-		)
-	}
 }
 
 // ----------------------------------------------------------------------------

@@ -10,6 +10,7 @@ import (
 	"windshift/internal/auth"
 	"windshift/internal/cql"
 	"windshift/internal/database"
+	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/sanitize"
@@ -339,6 +340,7 @@ func init() {
 			if err != nil {
 				return map[string]string{"error": fmt.Sprintf("create failed: %s", err.Error())}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
 			}
+			env.AuditWrite(logger.ResourceItem, int(itemID), "create_item", title)
 			created, err := services.NewItemCRUDService(env.DB).GetByID(int(itemID))
 			if err != nil {
 				return map[string]any{"id": itemID}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
@@ -391,6 +393,7 @@ func init() {
 			if err != nil {
 				return map[string]string{"error": fmt.Sprintf("update failed: %s", err.Error())}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
 			}
+			env.AuditWrite(logger.ResourceItem, itemID, "update_item", result.Item.Title)
 			out := map[string]any{
 				"item":           itemToSummary(result.Item),
 				"changed_fields": changed,
@@ -430,6 +433,7 @@ func init() {
 			if err != nil {
 				return nil, err
 			}
+			env.AuditWrite(logger.ResourceItem, itemID, "delete_item", item.Title)
 			return map[string]any{"deleted": true, "deleted_count": result.DeletedCount}, nil
 		},
 	})
@@ -521,6 +525,7 @@ func init() {
 				}
 				return map[string]string{"error": fmt.Sprintf("transition failed: %s", err.Error())}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
 			}
+			env.AuditWrite(logger.ResourceItem, itemID, "transition_item", result.Item.Title)
 			out := map[string]any{
 				"item":          itemToSummary(result.Item),
 				"old_status_id": result.OldStatusID,

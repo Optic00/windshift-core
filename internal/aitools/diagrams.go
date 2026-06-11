@@ -263,6 +263,7 @@ func init() {
 				// History is best-effort, mirroring the handler.
 				_ = herr
 			}
+			env.AuditWrite(resourceDiagram, int(id), "create_diagram", name)
 			return diagramSummaryDTO{
 				ID:        int(id),
 				ItemID:    itemID,
@@ -343,6 +344,7 @@ func init() {
 			}
 			_ = repo.RecordHistory(existing.ItemID, env.UserID, "diagram_updated", oldName,
 				fmt.Sprintf("diagram:%d:%s", args.ID, newName))
+			env.AuditWrite(resourceDiagram, args.ID, "update_diagram", newName)
 
 			return diagramSummaryDTO{
 				ID:     args.ID,
@@ -393,6 +395,7 @@ func init() {
 				}
 				return nil, err
 			}
+			env.AuditWrite(resourceDiagram, args.ID, "delete_diagram", name)
 			return map[string]any{
 				"success": true,
 				"id":      args.ID,
