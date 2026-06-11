@@ -1,5 +1,5 @@
 <script>
-  import GenericActionListManager from '../actions/shared/GenericActionListManager.svelte';
+  import GenericActionListManager from '../features/actions/shared/GenericActionListManager.svelte';
 
   let {
     actions = [],

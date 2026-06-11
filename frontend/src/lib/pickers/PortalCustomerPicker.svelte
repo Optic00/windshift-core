@@ -22,28 +22,32 @@
   onMount(() => customers.load());
 
   let itemSnippet = null;
-  {#if children}
-    {#snippet itemSnippet({ item, isSelected })}
-      {@render children()}
-    {/snippet}
-  {/if}
-
-  <BasePicker
-    bind:value
-    items={customers.data || []}
-    loading={customers.loading}
-    {placeholder}
-    {showUnassigned}
-    {unassignedLabel}
-    {disabled}
-    allowClear={true}
-    class={className}
-    icon={{ type: 'component', source: () => User }}
-    itemSnippet={itemSnippet}
-    searchFields={['name', 'email', 'customer_organisation_name']}
-    getValue={(item) => item?.id}
-    getLabel={(item) => item?.name || ''}
-    onSelect={(item) => onSelect(item)}
-    onCancel={() => onCancel()}
-  />
 </script>
+
+{#if children}
+  {#snippet itemSnippet({ item, isSelected })}
+    {@render children()}
+  {/snippet}
+{/if}
+
+<BasePicker
+  bind:value
+  items={customers.data || []}
+  loading={customers.loading}
+  {placeholder}
+  {showUnassigned}
+  {unassignedLabel}
+  {disabled}
+  allowClear={true}
+  class={className}
+  itemSnippet={itemSnippet}
+  searchFields={['name', 'email', 'customer_organisation_name']}
+  getValue={(item) => item?.id}
+  getLabel={(item) => item?.name || ''}
+  onSelect={(item) => onSelect(item)}
+  onCancel={() => onCancel()}
+>
+  {#snippet iconSnippet({ item })}
+    <User class="w-4 h-4" />
+  {/snippet}
+</BasePicker>

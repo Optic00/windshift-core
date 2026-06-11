@@ -22,28 +22,32 @@
   onMount(() => organisations.load());
 
   let itemSnippet = null;
-  {#if children}
-    {#snippet itemSnippet({ item, isSelected })}
-      {@render children()}
-    {/snippet}
-  {/if}
-
-  <BasePicker
-    bind:value
-    items={organisations.data || []}
-    loading={organisations.loading}
-    {placeholder}
-    {showUnassigned}
-    {unassignedLabel}
-    {disabled}
-    allowClear={true}
-    class={className}
-    icon={{ type: 'component', source: () => Building2 }}
-    itemSnippet={itemSnippet}
-    searchFields={['name', 'email', 'description']}
-    getValue={(item) => item?.id}
-    getLabel={(item) => item?.name || ''}
-    onSelect={(item) => onSelect(item)}
-    onCancel={() => onCancel()}
-  />
 </script>
+
+{#if children}
+  {#snippet itemSnippet({ item, isSelected })}
+    {@render children()}
+  {/snippet}
+{/if}
+
+<BasePicker
+  bind:value
+  items={organisations.data || []}
+  loading={organisations.loading}
+  {placeholder}
+  {showUnassigned}
+  {unassignedLabel}
+  {disabled}
+  allowClear={true}
+  class={className}
+  itemSnippet={itemSnippet}
+  searchFields={['name', 'email', 'description']}
+  getValue={(item) => item?.id}
+  getLabel={(item) => item?.name || ''}
+  onSelect={(item) => onSelect(item)}
+  onCancel={() => onCancel()}
+>
+  {#snippet iconSnippet({ item })}
+    <Building2 class="w-4 h-4" />
+  {/snippet}
+</BasePicker>

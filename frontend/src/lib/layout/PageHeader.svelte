@@ -12,16 +12,16 @@
     children = null,
     actions = null
   } = $props();
-
-  <BaseHeader
-    {icon}
-    {title}
-    {subtitle}
-    {description}
-    {count}
-    {children}
-    {actions}
-    {textStyle}
-    {subtitleStyle}
-  />
 </script>
+
+<BaseHeader
+  {icon}
+  {title}
+  {subtitle}
+  {description}
+  {count}
+  {children}
+  {actions}
+  {textStyle}
+  {subtitleStyle}
+/>

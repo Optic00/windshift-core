@@ -14,21 +14,24 @@
   } = $props();
 
   const resolvedPlaceholder = $derived(placeholder || t('pickers.defaultConfiguration'));
-
-  <BasePicker
-    bind:value
-    {items}
-    {placeholder}
-    showUnassigned={true}
-    unassignedLabel={t('pickers.defaultConfiguration')}
-    {disabled}
-    allowClear={true}
-    class={className}
-    icon={{ type: 'component', source: () => Settings }}
-    searchFields={['name', 'description']}
-    getValue={(item) => item?.id}
-    getLabel={(item) => item?.name || ''}
-    onSelect={(item) => onSelect(item)}
-    onCancel={() => onCancel()}
-  />
 </script>
+
+<BasePicker
+  bind:value
+  {items}
+  {placeholder}
+  showUnassigned={true}
+  unassignedLabel={t('pickers.defaultConfiguration')}
+  {disabled}
+  allowClear={true}
+  class={className}
+  searchFields={['name', 'description']}
+  getValue={(item) => item?.id}
+  getLabel={(item) => item?.name || ''}
+  onSelect={(item) => onSelect(item)}
+  onCancel={() => onCancel()}
+>
+  {#snippet iconSnippet({ item })}
+    <Settings class="w-4 h-4" />
+  {/snippet}
+</BasePicker>
