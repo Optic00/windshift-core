@@ -59,6 +59,7 @@ This release includes fixes from two dedicated security reviews — one focused 
 
 ## Also in 0.8.0
 
+- **Built for integrations** — the REST API is ready to back third-party embeds (a Docmost integration that embeds live Windshift items and collection reports is in review): a `collections:read` token scope for read-only report access, a ready-made Docmost entry in the OAuth client setup, and a new `exclude_personal` API parameter so integrations can guarantee your personal-workspace items never appear on shared surfaces.
 - **Asset management API & CLI** — assets get full REST endpoints, token scopes, CSV import, and new `ws asset` commands (deleting via API is opt-in).
 - **Jira import grows** — the importer now covers Jira/Insight assets, boards and sprints, and custom fields, and can be re-run safely without creating duplicates.
 - **Time tracking integrity** — one active timer per user is now enforced, worklogs require permission to view the item, and several permission gaps in projects and categories were closed.
