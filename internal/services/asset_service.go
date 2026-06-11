@@ -35,6 +35,25 @@ func sanitizeAssetText(title, description, assetTag *string) {
 	)
 }
 
+// reencodeCustomFieldValues refreshes the pre-encoded JSON payload from
+// the (caller-supplied) values map. Handlers marshal custom_field_values
+// before calling the service, but ValidateCustomFieldsSchema sanitizes
+// text/textarea values in the map afterwards — without a re-encode the
+// sanitized values would never reach persistence. No-op when the caller
+// didn't supply a values map (partial update keeping stored values).
+func reencodeCustomFieldValues(values map[string]interface{}, target **string) error {
+	if values == nil {
+		return nil
+	}
+	b, err := json.Marshal(values)
+	if err != nil {
+		return fmt.Errorf("encode custom field values: %w", err)
+	}
+	s := string(b)
+	*target = &s
+	return nil
+}
+
 // AuditActor carries the actor + transport context an audit event needs.
 // Both the cookie-auth and bearer-auth surfaces build this from their
 // *http.Request before calling into AssetService so the service layer
@@ -151,7 +170,10 @@ type CustomFieldsValidationOpts struct {
 //  2. Each supplied value is type-checked against the declared
 //     field_type (text / textarea / number / boolean / date / select
 //     / multiselect / user). Select/multiselect values are checked
-//     against the field's Options whitelist.
+//     against the field's Options whitelist. Text/textarea values are
+//     sanitized IN PLACE (PlainTextField / RichText — matching how
+//     they render) so the values map comes out write-safe; callers
+//     that pre-encoded a JSON payload must re-encode after this call.
 //  3. When opts.EnforceRequired is set, every required field on the
 //     type must be present (non-empty) in values.
 //
@@ -195,6 +217,16 @@ func (s *AssetService) ValidateCustomFieldsSchema(assetTypeID int, values map[st
 		}
 		if err := validateAssetFieldValue(f, v); err != nil {
 			return &AssetValidationError{Msg: fmt.Sprintf("custom_field_values[%q]: %s", k, err.Error())}
+		}
+		switch f.FieldType {
+		case "text", "textarea":
+			if s, ok := v.(string); ok {
+				if f.FieldType == "textarea" {
+					values[k] = sanitize.RichText.Sanitize(s)
+				} else {
+					values[k] = sanitize.PlainTextField.Sanitize(s)
+				}
+			}
 		}
 	}
 
@@ -354,6 +386,9 @@ func (s *AssetService) CreateAsset(actor AuditActor, in repository.CreateAssetIn
 	if err := s.ValidateCustomFieldsSchema(in.AssetTypeID, customFieldValues, CustomFieldsValidationOpts{EnforceRequired: true}); err != nil {
 		return nil, err
 	}
+	if err := reencodeCustomFieldValues(customFieldValues, &in.CustomFieldValuesJSON); err != nil {
+		return nil, err
+	}
 	sanitizeAssetText(&in.Title, &in.Description, &in.AssetTag)
 	assetID, err := s.repo.CreateAsset(in)
 	if err != nil {
@@ -403,6 +438,9 @@ func (s *AssetService) UpdateAsset(actor AuditActor, assetID int, oldSnap reposi
 		enforceRequired = true
 	}
 	if err := s.ValidateCustomFieldsSchema(in.AssetTypeID, toValidate, CustomFieldsValidationOpts{EnforceRequired: enforceRequired}); err != nil {
+		return nil, err
+	}
+	if err := reencodeCustomFieldValues(customFieldValues, &in.CustomFieldValuesJSON); err != nil {
 		return nil, err
 	}
 	sanitizeAssetText(&in.Title, &in.Description, &in.AssetTag)

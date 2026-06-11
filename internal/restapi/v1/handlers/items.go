@@ -451,6 +451,21 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// Convert custom field values to JSON
 	var customFieldValuesJSON string
 	if req.CustomFields != nil {
+		// Vet option ids (select/multiselect) + sanitize text/textarea
+		// values, mirroring the cookie-auth create handler.
+		if err := validation.ValidateAndNormalizeCustomFieldValues(h.DB, req.CustomFields); err != nil {
+			var verr *validation.ValidationError
+			if errors.As(err, &verr) {
+				h.RespondError(w, r, restapi.NewAPIError(
+					http.StatusBadRequest,
+					restapi.ErrCodeValidationFailed,
+					verr.Message,
+				).WithDetails(map[string]string{"field": verr.Field}))
+				return
+			}
+			h.RespondInternalError(w, r)
+			return
+		}
 		var customFieldValuesBytes []byte
 		customFieldValuesBytes, err = json.Marshal(req.CustomFields)
 		if err != nil {

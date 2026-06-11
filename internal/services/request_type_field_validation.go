@@ -11,6 +11,7 @@ import (
 
 	"windshift/internal/database"
 	"windshift/internal/repository"
+	"windshift/internal/validation"
 )
 
 // IsBlankSubmittedField reports whether a value submitted in a portal/form
@@ -142,6 +143,14 @@ func ValidateAndSeparateRequestFields(ctx context.Context, db database.Database,
 func StoreCustomFieldValues(ctx context.Context, db database.Database, component string, itemID int64, customFields map[string]interface{}) {
 	if len(customFields) == 0 {
 		return
+	}
+
+	// Forms/portal submissions carry raw anonymous-user text; bound
+	// text/textarea values before they reach either persistence target
+	// below. Failure to load field definitions only skips sanitization
+	// (logged), matching this function's tolerant store-what-we-can style.
+	if err := validation.SanitizeCustomFieldTextValues(db, customFields); err != nil {
+		slog.Warn("failed to sanitize custom field values", slog.String("component", component), slog.Int64("item_id", itemID), slog.Any("error", err))
 	}
 
 	now := time.Now()
