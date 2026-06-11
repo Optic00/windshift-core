@@ -27,7 +27,7 @@ func NewItemRepository(db database.Database) *ItemRepository {
 
 const itemBaseColumns = `id, workspace_id, workspace_item_number, item_type_id, title, description, status_id,
        priority_id, due_date, start_date, end_date, is_task, iteration_id, project_id, inherit_project,
-       assignee_id, creator_id, creator_portal_customer_id, custom_field_values, parent_id, related_work_item_id,
+       time_project_id, assignee_id, creator_id, creator_portal_customer_id, custom_field_values, parent_id, related_work_item_id,
        story_points, estimate_minutes, frac_index, created_at, updated_at`
 
 func scanItemBase(scanner interface {
@@ -36,7 +36,7 @@ func scanItemBase(scanner interface {
 	var item models.Item
 	var customFieldValuesJSON sql.NullString
 	var itemTypeID, parentID, statusID, iterationID, projectID, priorityID sql.NullInt64
-	var assigneeID, creatorID, creatorPortalCustomerID, relatedWorkItemID sql.NullInt64
+	var timeProjectID, assigneeID, creatorID, creatorPortalCustomerID, relatedWorkItemID sql.NullInt64
 	var dueDate, startDate, endDate sql.NullTime
 	var storyPoints sql.NullFloat64
 	var estimateMinutes sql.NullInt64
@@ -45,7 +45,7 @@ func scanItemBase(scanner interface {
 	err := scanner.Scan(
 		&item.ID, &item.WorkspaceID, &item.WorkspaceItemNumber, &itemTypeID, &item.Title, &item.Description,
 		&statusID, &priorityID, &dueDate, &startDate, &endDate, &item.IsTask, &iterationID,
-		&projectID, &item.InheritProject, &assigneeID, &creatorID, &creatorPortalCustomerID, &customFieldValuesJSON, &parentID,
+		&projectID, &item.InheritProject, &timeProjectID, &assigneeID, &creatorID, &creatorPortalCustomerID, &customFieldValuesJSON, &parentID,
 		&relatedWorkItemID, &storyPoints, &estimateMinutes, &fracIndex, &item.CreatedAt, &item.UpdatedAt,
 	)
 	if err != nil {
@@ -58,6 +58,7 @@ func scanItemBase(scanner interface {
 	assignNullableInt(&item.PriorityID, priorityID)
 	assignNullableInt(&item.IterationID, iterationID)
 	assignNullableInt(&item.ProjectID, projectID)
+	assignNullableInt(&item.TimeProjectID, timeProjectID)
 	assignNullableInt(&item.AssigneeID, assigneeID)
 	assignNullableInt(&item.CreatorID, creatorID)
 	assignNullableInt(&item.CreatorPortalCustomerID, creatorPortalCustomerID)
