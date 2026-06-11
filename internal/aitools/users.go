@@ -35,12 +35,19 @@ func init() {
 	Register(Default, Tool[findUsersArgs]{
 		Name:        "find_users",
 		Scopes:      []string{auth.ScopeUsersRead},
-		Description: "Find users by name or email (case-insensitive substring match). Pass workspace_id to restrict the search to that workspace's members; member results include their workspace role names. Returns at most 20 matches — narrow the query if the person you want is missing.",
+		Description: "Find users by name (case-insensitive substring match; system admins can also match on email). Pass workspace_id to restrict the search to that workspace's members. Returns at most 20 matches — narrow the query if the person you want is missing.",
 		Run: func(_ context.Context, env *Env, args findUsersArgs) (any, error) {
 			query := strings.ToLower(strings.TrimSpace(args.Query))
 			if query == "" {
 				return map[string]string{"error": "query is required"}, nil
 			}
+
+			// Email addresses and workspace role assignments are admin-only
+			// on the HTTP surfaces (GetAll strips email for non-admins; role
+			// assignments are an admin-gated route) — mirror that here, and
+			// keep email out of the *match* too so a non-admin can't confirm
+			// addresses by substring probing.
+			isAdmin, _ := env.PermService.IsSystemAdmin(env.UserID) //nolint:errcheck // fail closed: lookup error means non-admin masking
 
 			var candidates []foundUserDTO
 			if args.WorkspaceID != nil {
@@ -95,11 +102,17 @@ func init() {
 
 			out := findUsersOut{Users: []foundUserDTO{}}
 			for _, c := range candidates {
-				if strings.Contains(strings.ToLower(c.Name), query) ||
+				matched := strings.Contains(strings.ToLower(c.Name), query) ||
 					strings.Contains(strings.ToLower(c.Username), query) ||
-					strings.Contains(strings.ToLower(c.Email), query) {
-					out.Users = append(out.Users, c)
+					(isAdmin && strings.Contains(strings.ToLower(c.Email), query))
+				if !matched {
+					continue
 				}
+				if !isAdmin {
+					c.Email = ""
+					c.Roles = nil
+				}
+				out.Users = append(out.Users, c)
 			}
 			sort.Slice(out.Users, func(i, j int) bool {
 				if out.Users[i].Name != out.Users[j].Name {
