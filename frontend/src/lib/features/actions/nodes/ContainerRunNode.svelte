@@ -7,4 +7,4 @@
   let { data = {}, selected = false } = $props();
 </script>
 
-<BaseActionNode {data} {selected} flowStore={data.flowStore || actionFlowStore} icon={Box} title={t('actions.nodes.containerRun')} accentColor="blue" showCapabilityId={true} />
+<BaseActionNode {data} {selected} flowStore={data.flowStore || actionFlowStore} icon={Box} title={t('actions.nodes.containerRun')} accentColor="blue" showCapabilityId={true} placeholderKey="actions.config.selectCapability" />

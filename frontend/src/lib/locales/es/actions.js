@@ -52,6 +52,7 @@ export default {
       relatedItems: 'Para cada elemento relacionado',
       transitionItem: 'Transicionar elemento',
       roundRobinAssign: 'Asignar por turno rotativo',
+      createMilestone: 'Crear hito',
     },
 
     aiUpdated: 'Acción actualizada por IA',

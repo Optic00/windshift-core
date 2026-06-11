@@ -52,6 +52,7 @@ export default {
       relatedItems: 'Para cada item relacionado',
       transitionItem: 'Transicionar item',
       roundRobinAssign: 'Atribuir em rodízio',
+      createMilestone: 'Criar marco',
     },
 
     aiUpdated: 'Ação atualizada pela IA',

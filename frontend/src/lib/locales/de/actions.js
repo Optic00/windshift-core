@@ -50,6 +50,7 @@ export default {
       relatedItems: 'Für jedes verwandte Element',
       transitionItem: 'Element überführen',
       roundRobinAssign: 'Round-Robin zuweisen',
+      createMilestone: 'Meilenstein erstellen',
     },
 
     aiUpdated: 'Aktion durch KI aktualisiert',

@@ -51,6 +51,7 @@ export default {
       relatedItems: 'لكل عنصر مرتبط',
       transitionItem: 'نقل العنصر',
       roundRobinAssign: 'تعيين بالتناوب',
+      createMilestone: 'إنشاء معلم',
     },
 
     aiUpdated: 'تم تحديث الإجراء بواسطة الذكاء الاصطناعي',

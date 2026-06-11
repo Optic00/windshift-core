@@ -42,6 +42,7 @@ export default {
       relatedItems: '对每个相关项',
       transitionItem: '过渡项目',
       roundRobinAssign: '轮询分配',
+      createMilestone: '创建里程碑',
     },
     aiUpdated: 'AI 已更新动作',
     addNodes: '添加节点',

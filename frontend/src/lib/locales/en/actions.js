@@ -56,6 +56,7 @@ export default {
       relatedItems: 'For each related item',
       transitionItem: 'Transition item',
       roundRobinAssign: 'Round-robin assign',
+      createMilestone: 'Create milestone',
     },
 
     // Toast shown when the AI chat updates the open action via update_action.

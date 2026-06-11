@@ -25,9 +25,13 @@
     title,
     accentColor = 'teal',
     colorVars = null,
-    body,
+    // i18n key for the label next to capability_id (e.g. AI agent shows "Model")
+    capabilityLabelKey = 'actions.config.capability',
+    // i18n key overriding the unconfigured-state placeholder
+    placeholderKey = '',
     // Common configuration patterns
     showCapabilityId = false,
+    showToolsCount = false,
     showInputOutput = false,
     showHttpInfo = false,
     showConfigInfo = false,
@@ -49,6 +53,7 @@
 
   // Get appropriate placeholder text based on configuration
   function getPlaceholderText() {
+    if (placeholderKey) return t(placeholderKey);
     if (showCapabilityId) return t('actions.config.selectModelAndTools');
     if (showInputOutput) return t('actions.config.configureExtract');
     if (showHttpInfo) return t('actions.config.configureRequest');
@@ -68,11 +73,11 @@
 {#snippet body()}
     {#if showCapabilityId && data.config?.capability_id}
       <div class="cap-info">
-        <span class="cap-label">{t(showInputOutput ? 'actions.config.model' : 'actions.config.capability')}:</span>
+        <span class="cap-label">{t(capabilityLabelKey)}:</span>
         <span class="cap-value">#{data.config.capability_id}</span>
-        {#if data.config.tools?.length > 0 && !showInputOutput}
+        {#if showToolsCount}
           <span class="tools-count">
-            {data.config.tools.length} {t('actions.config.tools')}
+            {data.config.tools?.length || 0} {t('actions.config.tools')}
           </span>
         {/if}
       </div>
