@@ -495,12 +495,53 @@ func (h *AssetReportHandler) UpdateVisibility(w http.ResponseWriter, r *http.Req
 	respondJSONOK(w, *ar)
 }
 
+// requireManagedAssetReport authenticates the request, resolves the asset
+// report from the "id" path param, and gates by manager scope on the owning
+// channel — the same gate Get applies. Responds 404 both when the report is
+// missing and when the user can't manage the channel (no existence leak).
+// Returns the report and true on success; writes the response and returns
+// false otherwise.
+func (h *AssetReportHandler) requireManagedAssetReport(w http.ResponseWriter, r *http.Request) (*models.AssetReport, bool) {
+	id, ok := requireIDParam(w, r, "id")
+	if !ok {
+		return nil, false
+	}
+
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return nil, false
+	}
+
+	ar, err := h.repo.GetByID(id)
+	if errors.Is(err, repository.ErrNotFound) {
+		respondNotFound(w, r, "asset_report")
+		return nil, false
+	}
+	if err != nil {
+		respondInternalError(w, r, err)
+		return nil, false
+	}
+
+	canManage, err := h.channelService.UserCanManage(r.Context(), user.ID, ar.ChannelID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return nil, false
+	}
+	if !canManage {
+		respondNotFound(w, r, "asset_report")
+		return nil, false
+	}
+
+	return ar, true
+}
+
 // GetFields returns all fields for a form-mode asset report.
 func (h *AssetReportHandler) GetFields(w http.ResponseWriter, r *http.Request) {
-	assetReportID, ok := requireIDParam(w, r, "id")
+	ar, ok := h.requireManagedAssetReport(w, r)
 	if !ok {
 		return
 	}
+	assetReportID := ar.ID
 
 	fields, err := h.repo.ListFields(assetReportID)
 	if err != nil {
@@ -557,10 +598,11 @@ func (h *AssetReportHandler) UpdateFields(w http.ResponseWriter, r *http.Request
 
 // GetAvailableFields returns fields available to bind on a form-mode asset report.
 func (h *AssetReportHandler) GetAvailableFields(w http.ResponseWriter, r *http.Request) {
-	assetReportID, ok := requireIDParam(w, r, "id")
+	ar, ok := h.requireManagedAssetReport(w, r)
 	if !ok {
 		return
 	}
+	assetReportID := ar.ID
 
 	itemTypeID, workspaceID, err := h.repo.GetItemTypeAndWorkspace(assetReportID)
 	if errors.Is(err, repository.ErrNotFound) {
