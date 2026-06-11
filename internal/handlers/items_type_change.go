@@ -122,7 +122,12 @@ func (h *ItemHandler) ChangeType(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if sameIntPtrValue(originalItem.ItemTypeID, req.TargetItemTypeID) && !analysis.RequiresMigration {
-		respondJSONOK(w, originalItem)
+		// Strip names of time projects the caller has no access to (incl. the
+		// inherited effective project), matching the masked read paths. Mask a
+		// copy so other consumers of originalItem aren't mutated.
+		maskedOriginal := []models.Item{*originalItem}
+		h.maskInaccessibleProjectNames(user.ID, maskedOriginal)
+		respondJSONOK(w, maskedOriginal[0])
 		return
 	}
 
