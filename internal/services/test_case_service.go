@@ -75,6 +75,10 @@ func (s *TestCaseService) Create(workspaceID int, req TestCaseCreateRequest) (*m
 	req.Title = sanitize.PlainTextField.Sanitize(req.Title)
 	req.Preconditions = sanitize.Comment.Sanitize(req.Preconditions)
 
+	if req.Title == "" {
+		return nil, fmt.Errorf("test case title is required")
+	}
+
 	// Set defaults
 	if req.Priority == "" {
 		req.Priority = "medium"
@@ -148,6 +152,10 @@ func (s *TestCaseService) Update(id, workspaceID int, req TestCaseUpdateRequest)
 	// Sanitize input
 	req.Title = sanitize.PlainTextField.Sanitize(req.Title)
 	req.Preconditions = sanitize.Comment.Sanitize(req.Preconditions)
+
+	if req.Title == "" {
+		return nil, fmt.Errorf("test case title is required")
+	}
 
 	// Validate priority if provided
 	if req.Priority != "" && !isValidTestCasePriority(req.Priority) {

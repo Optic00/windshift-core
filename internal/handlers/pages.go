@@ -290,10 +290,9 @@ func (h *PageHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	sanitize.ApplyAll(
-		sanitize.Pair{Target: &req.Title, Policy: sanitize.PlainTextField},
-		sanitize.Pair{Target: &req.Content, Policy: sanitize.LongDocument},
-	)
+	// Sanitization happens in PageService.Create — the documented choke
+	// point. Re-sanitizing here would double-decode HTML entities and
+	// corrupt escaped-HTML content (e.g. code samples) in a single save.
 	if req.Title == "" {
 		respondValidationError(w, r, "title is required")
 		return
@@ -346,10 +345,7 @@ func (h *PageHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	sanitize.ApplyAll(
-		sanitize.Pair{Target: &req.Title, Policy: sanitize.PlainTextField},
-		sanitize.Pair{Target: &req.Content, Policy: sanitize.LongDocument},
-	)
+	// Sanitization happens in PageService.Update (choke point); see Create.
 	if req.Title == "" {
 		respondValidationError(w, r, "title is required")
 		return

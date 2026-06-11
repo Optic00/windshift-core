@@ -107,9 +107,9 @@ func (h *TestCaseHandler) CreateTestCase(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	input.Title = sanitize.PlainTextField.Sanitize(input.Title)
-	input.Preconditions = sanitize.Comment.Sanitize(input.Preconditions)
-
+	// Sanitization happens in TestCaseService.Create — the documented
+	// choke point. Re-sanitizing here would double-decode HTML entities
+	// and corrupt escaped-HTML content in a single save.
 	if input.Title == "" {
 		respondValidationError(w, r, "Test case title is required")
 		return
@@ -161,9 +161,8 @@ func (h *TestCaseHandler) UpdateTestCase(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	input.Title = sanitize.PlainTextField.Sanitize(input.Title)
-	input.Preconditions = sanitize.Comment.Sanitize(input.Preconditions)
-
+	// Sanitization happens in TestCaseService.Update (choke point); see
+	// CreateTestCase.
 	if input.Title == "" {
 		respondValidationError(w, r, "Test case title is required")
 		return
