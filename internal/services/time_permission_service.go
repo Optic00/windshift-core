@@ -284,7 +284,10 @@ func (s *TimePermissionService) GetAccessibleProjects(userID int) ([]int, error)
 	}
 	defer rows.Close()
 
-	var projectIDs []int
+	// Initialize as a non-nil slice: nil is reserved for the full-access
+	// sentinel above, so a user with zero accessible projects must return
+	// an empty slice rather than accidentally signal full access.
+	projectIDs := []int{}
 	for rows.Next() {
 		var id int
 		if err := rows.Scan(&id); err != nil {
