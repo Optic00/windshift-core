@@ -31,6 +31,7 @@ type RunnerLeaseReaper struct {
 	interval         time.Duration
 	staleAfter       time.Duration // a runner with no heartbeat for this long is dead
 	queuedStallAfter time.Duration // a remote run queued unclaimed for this long is flagged
+	maxRunDuration   time.Duration // a run 'running' for this long is failed regardless of heartbeat
 	now              func() time.Time
 }
 
@@ -43,6 +44,16 @@ const (
 	// healthy pool claims within seconds; minutes of queued means no live
 	// runner, a full concurrency quota, or a dead pool.
 	defaultQueuedStallAfter = 3 * time.Minute
+
+	// defaultMaxRunDuration is the max-run-duration backstop (WI-331): a run
+	// still 'running' after this long is failed regardless of its runner's
+	// heartbeat. Heartbeat-based reaping only catches a *dead* runner; a
+	// healthy runner whose terminal report was lost (or whose claim response
+	// never arrived) keeps the phantom run alive forever, permanently eating
+	// a pool-concurrency slot and the binding's per-item dedup. Generous on
+	// purpose — real agent runs finish in minutes, so hours of 'running'
+	// means the verdict is never coming.
+	defaultMaxRunDuration = 8 * time.Hour
 )
 
 // NewRunnerLeaseReaper builds the reaper with sensible defaults. The caller
@@ -54,6 +65,7 @@ func NewRunnerLeaseReaper(runs *repository.AgentRunRepository, runners *reposito
 		interval:         defaultReaperInterval,
 		staleAfter:       defaultReaperStaleAfter,
 		queuedStallAfter: defaultQueuedStallAfter,
+		maxRunDuration:   defaultMaxRunDuration,
 		now:              func() time.Time { return time.Now().UTC() },
 	}
 }
@@ -112,9 +124,10 @@ func (s *RunnerLeaseReaper) tick() {
 	}
 }
 
-// Sweep runs one reap pass: fail runs of stale runners, then revoke those
-// runners, then flag remote runs that have sat queued past the stall
-// threshold. Exported for testing. Returns the reap/revoke counts.
+// Sweep runs one reap pass: fail runs of stale runners, fail runs that have
+// exceeded the max-run-duration backstop, then revoke the stale runners, then
+// flag remote runs that have sat queued past the stall threshold. Exported
+// for testing. Returns the reap/revoke counts.
 func (s *RunnerLeaseReaper) Sweep(ctx context.Context) (reapedRuns, revokedInstances int, err error) {
 	now := s.now()
 	staleBefore := now.Add(-s.staleAfter)
@@ -122,6 +135,18 @@ func (s *RunnerLeaseReaper) Sweep(ctx context.Context) (reapedRuns, revokedInsta
 	if err != nil {
 		return reapedRuns, 0, err
 	}
+	// Duration backstop (WI-331): a healthy runner whose terminal report was
+	// lost keeps the run 'running' indefinitely — heartbeat staleness never
+	// triggers, so an absolute bound on time-in-running is the only way out.
+	overdue, err := s.runs.ReapOverdueRuns(ctx, now.Add(-s.maxRunDuration), now)
+	if err != nil {
+		return reapedRuns, 0, err
+	}
+	if overdue > 0 {
+		slog.Warn("failed agent runs stuck in running past the max duration",
+			"count", overdue, "max_run_duration", s.maxRunDuration)
+	}
+	reapedRuns += overdue
 	revokedInstances, err = s.runners.RevokeStaleInstances(ctx, staleBefore, now)
 	if err != nil {
 		return reapedRuns, revokedInstances, err

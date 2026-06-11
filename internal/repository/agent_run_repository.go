@@ -317,6 +317,37 @@ func (r *AgentRunRepository) ReapStaleRuns(ctx context.Context, staleBefore, now
 	return int(n), nil
 }
 
+// ReapOverdueRuns fails any run that has sat in 'running' since before
+// startedBefore, regardless of runner heartbeat. It is the max-run-duration
+// backstop (WI-331): a healthy runner whose terminal report was lost keeps
+// heartbeating, so ReapStaleRuns never fires and the phantom run would hold a
+// pool-concurrency slot and the binding's per-item dedup forever. The same
+// bound also covers a claim whose response was lost on the wire (the run is
+// 'running' with started_at stamped but no runner ever executes it). A run
+// with no started_at (shouldn't happen — every queued→running transition
+// stamps it) falls back to queued_at so it cannot dodge the bound. Returns
+// the number reaped.
+func (r *AgentRunRepository) ReapOverdueRuns(ctx context.Context, startedBefore, now time.Time) (int, error) {
+	res, err := r.db.ExecWriteContext(ctx, `
+		UPDATE agent_runs
+		SET status = ?, error = ?, ended_at = ?, updated_at = ?
+		WHERE status = ?
+		  AND ((started_at IS NOT NULL AND started_at < ?)
+		    OR (started_at IS NULL AND queued_at < ?))
+	`,
+		models.AgentRunStatusFailed, "run exceeded the maximum allowed duration (reaped by the orchestrator backstop)", now, now,
+		models.AgentRunStatusRunning, startedBefore, startedBefore,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("reap overdue runs: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("reap overdue runs: rows affected: %w", err)
+	}
+	return int(n), nil
+}
+
 // StaleQueuedPoolRun is one remote-pool run that has sat queued (unclaimed)
 // past the stall threshold. The lease reaper surfaces these so "assigned the
 // ticket but nothing happens" is diagnosable from the server log and the

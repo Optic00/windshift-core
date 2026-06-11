@@ -188,10 +188,26 @@ func (c *HTTPOrchestratorClient) Emit(ctx context.Context, runID int, eventType,
 		EmitRequest{Type: eventType, PayloadJSON: payloadJSON}, nil)
 }
 
+// reportRetryBudget bounds how long Report keeps retrying delivery of a
+// terminal verdict before giving up, and reportAttemptTimeout bounds each
+// individual POST within that budget.
+const (
+	reportRetryBudget    = 2 * time.Minute
+	reportAttemptTimeout = 30 * time.Second
+)
+
 // Report implements OrchestratorClient. It deregisters the run's per-run
 // context and delivers the terminal verdict on a fresh context derived from
 // ctx — the run's own context may already be canceled (abort / shutdown),
 // but the verdict must still reach the orchestrator.
+//
+// The terminal verdict is the one message that must not be lost: a dropped
+// report leaves the run stuck in 'running' on the orchestrator until the
+// duration backstop reaps it (WI-331), holding a pool-concurrency slot and
+// the binding's per-item dedup the whole time. So transient failures are
+// retried with capped exponential backoff for up to reportRetryBudget before
+// giving up. A definitive 4xx rejection (stale credential, unknown run) will
+// not change on retry and is surfaced immediately.
 func (c *HTTPOrchestratorClient) Report(ctx context.Context, runID int, result RunnerResult) error {
 	c.mu.Lock()
 	if cancel := c.inflight[runID]; cancel != nil {
@@ -200,16 +216,42 @@ func (c *HTTPOrchestratorClient) Report(ctx context.Context, runID int, result R
 	delete(c.inflight, runID)
 	c.mu.Unlock()
 
-	rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-	defer rcancel()
-	return doJSON(rctx, c.hc, fmt.Sprintf("%s/runner/runs/%d/result", c.baseURL, runID), c.credential,
-		ReportRequest{
-			Status:      result.Status,
-			Error:       result.Error,
-			ContainerID: result.ContainerID,
-			Branch:      result.Branch,
-			BaseCommit:  result.BaseCommit,
-		}, nil)
+	req := ReportRequest{
+		Status:      result.Status,
+		Error:       result.Error,
+		ContainerID: result.ContainerID,
+		Branch:      result.Branch,
+		BaseCommit:  result.BaseCommit,
+	}
+	base := context.WithoutCancel(ctx)
+	url := fmt.Sprintf("%s/runner/runs/%d/result", c.baseURL, runID)
+	deadline := time.Now().Add(reportRetryBudget)
+	backoff := time.Second
+	for attempt := 1; ; attempt++ {
+		rctx, rcancel := context.WithTimeout(base, reportAttemptTimeout)
+		err := doJSON(rctx, c.hc, url, c.credential, req, nil)
+		rcancel()
+		if err == nil {
+			return nil
+		}
+		// A definitive client-side rejection (auth, unknown run, bad body)
+		// is not transient; retrying just delays the inevitable.
+		var se *HTTPStatusError
+		if errors.As(err, &se) && se.StatusCode >= 400 && se.StatusCode < 500 {
+			return err
+		}
+		if !time.Now().Add(backoff).Before(deadline) {
+			return fmt.Errorf("report run %d: giving up after %d attempt(s): %w", runID, attempt, err)
+		}
+		if c.Logger != nil {
+			c.Logger.Printf("runner: report run=%d attempt %d failed, retrying in %s: %v", runID, attempt, backoff, err)
+		}
+		time.Sleep(backoff)
+		backoff *= 2
+		if backoff > reportAttemptTimeout {
+			backoff = reportAttemptTimeout
+		}
+	}
 }
 
 // register stores the cancel func for an in-flight run so Heartbeat can abort
