@@ -37,6 +37,9 @@ SKIP_DESKTOP=false
 CONFIRM=true
 TAG_CREATED=false
 SKIP_SECURITY_CHECKS=false
+# Set by cmd_release: official releases must not ship an unsigned/un-notarized
+# DMG, so missing signing config becomes a hard failure instead of a warning.
+REQUIRE_SIGNED_DMG=false
 
 # Colors
 RED='\033[0;31m'
@@ -515,11 +518,19 @@ build_desktop_mac() {
     fi
 
     # Surface the signing posture so a silent unsigned build doesn't surprise anyone.
-    # Logged before the dry-run guard so dry-run reflects the actual outcome.
+    # Checked before the dry-run guard so dry-run reflects the actual outcome.
+    # For 'release' (REQUIRE_SIGNED_DMG) an unsigned or un-notarized DMG is a
+    # hard failure — use --skip-desktop to release without a DMG instead.
     if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
+        if [ "$REQUIRE_SIGNED_DMG" = true ]; then
+            die "APPLE_SIGNING_IDENTITY not set — refusing to publish an UNSIGNED DMG in an official release. Set the signing env vars or pass --skip-desktop."
+        fi
         log_warn "APPLE_SIGNING_IDENTITY not set — DMG will be UNSIGNED."
         log_warn "  Users will see \"App is damaged\" on first open; they'll need to right-click → Open."
     elif [ -z "${APPLE_ID:-}" ] || [ -z "${APPLE_PASSWORD:-}" ] || [ -z "${APPLE_TEAM_ID:-}" ]; then
+        if [ "$REQUIRE_SIGNED_DMG" = true ]; then
+            die "APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID not all set — refusing to publish a non-notarized DMG in an official release. Set the notarization env vars or pass --skip-desktop."
+        fi
         log_warn "APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID not all set — DMG will be SIGNED but NOT notarized."
     else
         log_info "Signing identity: $APPLE_SIGNING_IDENTITY (will notarize via notarytool)"
@@ -905,6 +916,8 @@ cmd_release() {
     check_git_state
     determine_version
 
+    REQUIRE_SIGNED_DMG=true
+
     if [ "$CONFIRM" = true ] && [ "$DRY_RUN" = false ]; then
         echo ""
         echo "Windshift Release: $VERSION"
@@ -988,8 +1001,12 @@ Desktop signing (optional, only consulted when running on macOS):
   APPLE_PASSWORD_OP_REF   1Password item ID — alternative to APPLE_PASSWORD
   APPLE_TEAM_ID           Apple Developer team ID (for notarization)
   RELEASE_GPG_KEY         Optional GPG key id/email used to sign SHA256SUMS.txt
-  When unset, the DMG is produced unsigned and unnotarized — Gatekeeper will
-  block double-click on download, users must right-click → Open.
+  For 'build' and 'push': when unset, the DMG is produced unsigned and
+  unnotarized — Gatekeeper will block double-click on download, users must
+  right-click → Open.
+  For 'release': all signing/notarization vars are REQUIRED (the release
+  aborts rather than publish an unsigned DMG); pass --skip-desktop to
+  release without a DMG.
 
 Examples:
   # Quick Docker push for testing
