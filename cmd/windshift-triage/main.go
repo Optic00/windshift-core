@@ -33,6 +33,7 @@ import (
 	iofs "io/fs"
 	"os"
 	"strings"
+	"syscall"
 
 	"windshift/internal/repoprep"
 )
@@ -118,6 +119,9 @@ func chownCheckoutForAgent(checkout string) error {
 	defer func() { _ = root.Close() }()
 	if err := root.Lchown(".", agentUID, agentGID); err != nil {
 		if errors.Is(err, iofs.ErrPermission) {
+			if verr := verifyCheckoutReadable(checkout, agentUID, agentGID); verr != nil {
+				return verr
+			}
 			fmt.Fprintf(os.Stderr, "windshift-triage: skipping checkout chown (not root): %v\n", err)
 			return nil
 		}
@@ -129,6 +133,33 @@ func chownCheckoutForAgent(checkout string) error {
 		}
 		return root.Lchown(p, agentUID, agentGID)
 	})
+}
+
+// verifyCheckoutReadable guards the not-root chown skip: skipping is only
+// safe when the agent uid can still traverse the checkout (same-uid local
+// dev, or world-readable modes from a normal umask). A non-root runner with
+// a restrictive umask would otherwise hand the agent a tree it cannot even
+// read, and the run burns its budget flailing on in-container EACCES
+// instead of failing here with one clear line.
+func verifyCheckoutReadable(checkout string, uid, gid int) error {
+	info, err := os.Stat(checkout)
+	if err != nil {
+		return err
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return nil // non-unix stat: nothing to verify
+	}
+	mode := info.Mode().Perm()
+	switch {
+	case int(st.Uid) == uid && mode&0o500 == 0o500:
+		return nil
+	case int(st.Gid) == gid && mode&0o050 == 0o050:
+		return nil
+	case mode&0o005 == 0o005:
+		return nil
+	}
+	return fmt.Errorf("checkout %s (uid %d gid %d mode %#o) is unreadable by the agent uid %d and this non-root runner cannot chown it — run the runner as root or relax its umask", checkout, st.Uid, st.Gid, mode, uid)
 }
 
 func runPush(args []string) error {
