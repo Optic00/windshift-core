@@ -357,11 +357,21 @@ func (r *DockerAgentRunner) buildDockerArgs(input RunInput, envFilePath string) 
 		args = append(args, "--env-file", envFilePath)
 	}
 	if input.WorkspacePath != "" {
-		args = append(args, "-v", fmt.Sprintf("%s:/workspace", input.WorkspacePath))
+		args = append(args, "-v", workspaceMountSpec(input.WorkspacePath))
 	}
 	args = append(args, r.ExtraArgs...)
 	args = append(args, r.Image)
 	return args
+}
+
+// workspaceMountSpec renders the bind-mount argument for the per-run
+// checkout. The :Z suffix privately relabels the tree on SELinux-enforcing
+// hosts (WI-388): without it the container process gets EACCES on every read
+// even though DAC permits — the same denial the runner's own credential-volume
+// preflight diagnoses. The checkout is per-run and throwaway, so a private
+// label is safe; on hosts without SELinux the flag is a no-op.
+func workspaceMountSpec(hostPath string) string {
+	return fmt.Sprintf("%s:/workspace:Z", hostPath)
 }
 
 // Run implements Runner. Builds docker args from the runner's static

@@ -30,6 +30,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	iofs "io/fs"
 	"os"
 	"strings"
 
@@ -89,10 +90,44 @@ func runPrepare(args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := chownCheckoutForAgent(pr.Path); err != nil {
+		return fmt.Errorf("chown checkout for agent uid: %w", err)
+	}
 	return emit(map[string]string{
 		"checkout_path": pr.Path,
 		"branch":        pr.Branch,
 		"base_commit":   pr.BaseCommit,
+	})
+}
+
+// chownCheckoutForAgent hands the prepared checkout to the pinned agent uid:
+// every job container runs --user=1000:1000 (baselineSandboxArgs), but the
+// checkout is created with the runner process's own uid — root on a
+// production runner host — so without this the tree is unwritable from
+// inside the container and the agent's first git operation fails (WI-388).
+// A non-root runner (local dev) can't chown and doesn't need to: the run
+// container is spawned by the same uid that owns the checkout there — that
+// case is skipped, every other failure is fatal so the run fails fast with a
+// clear error instead of an opaque in-container EACCES.
+func chownCheckoutForAgent(checkout string) error {
+	const agentUID, agentGID = 1000, 1000
+	root, err := os.OpenRoot(checkout)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	if err := root.Lchown(".", agentUID, agentGID); err != nil {
+		if errors.Is(err, iofs.ErrPermission) {
+			fmt.Fprintf(os.Stderr, "windshift-triage: skipping checkout chown (not root): %v\n", err)
+			return nil
+		}
+		return err
+	}
+	return iofs.WalkDir(root.FS(), ".", func(p string, _ iofs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		return root.Lchown(p, agentUID, agentGID)
 	})
 }
 

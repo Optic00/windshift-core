@@ -69,7 +69,7 @@ func (r *DockerRunner) buildDockerArgs(input RunInput, envFilePath string) []str
 		args = append(args, "--env-file", envFilePath)
 	}
 	if input.WorkspacePath != "" {
-		args = append(args, "-v", fmt.Sprintf("%s:/workspace", input.WorkspacePath))
+		args = append(args, "-v", workspaceMountSpec(input.WorkspacePath))
 	}
 	args = append(args, r.ExtraArgs...)
 	args = append(args, r.Image)
