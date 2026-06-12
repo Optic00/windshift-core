@@ -314,6 +314,7 @@
           variant="primary"
           size="medium"
           keyboardHint="A"
+          dataTestid="create-test-run-button"
         >
           {t('testing.createTestRun')}
         </Button>
@@ -374,6 +375,7 @@
             variant="primary"
             disabled={!selectedSetId || !runName}
             keyboardHint="↵"
+            dataTestid="create-run-submit"
           >
             {t('testing.createRun')}
           </Button>
