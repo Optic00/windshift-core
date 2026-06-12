@@ -143,6 +143,7 @@ export default {
     deleteTestRun: '删除测试运行',
     deleteRunConfirm: '确定要删除「{name}」吗？',
     failedToDeleteRun: '删除测试运行失败',
+    failedToCreateRun: '创建测试运行失败',
     noTestRunsYet: '暂无测试运行',
     createTestRunToExecute: '创建测试运行以开始执行测试用例。',
     continueExecution: '继续执行',

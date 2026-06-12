@@ -56,6 +56,19 @@ type TestRunCreateRequest struct {
 	AssigneeID *int
 }
 
+// validateAssignee verifies the assignee, when set, is an existing active user.
+func (s *TestRunService) validateAssignee(assigneeID *int) error {
+	if assigneeID == nil || *assigneeID <= 0 {
+		return nil
+	}
+	var count int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM users WHERE id = ? AND is_active = 1`, *assigneeID).Scan(&count)
+	if err != nil || count == 0 {
+		return fmt.Errorf("assignee not found")
+	}
+	return nil
+}
+
 // Create creates a new test run and initializes results for all test cases in the set
 func (s *TestRunService) Create(workspaceID int, req TestRunCreateRequest) (*models.TestRun, error) {
 	// Verify test set belongs to workspace
@@ -81,15 +94,12 @@ func (s *TestRunService) Create(workspaceID int, req TestRunCreateRequest) (*mod
 		}
 	}
 
-	// Validate assignee belongs to workspace if provided
-	if req.AssigneeID != nil && *req.AssigneeID > 0 {
-		var count int
-		err := s.db.QueryRow(`
-			SELECT COUNT(*) FROM user_workspace_roles WHERE user_id = ? AND workspace_id = ?
-		`, *req.AssigneeID, workspaceID).Scan(&count)
-		if err != nil || count == 0 {
-			return nil, fmt.Errorf("assignee is not a member of this workspace")
-		}
+	// Validate assignee is an active user if provided. Workspace membership
+	// is deliberately not required: workspaces are open by default (members
+	// of an open workspace have no user_workspace_roles row), and assignment
+	// pickers offer all active users — same contract as item assignment.
+	if err := s.validateAssignee(req.AssigneeID); err != nil {
+		return nil, err
 	}
 
 	run := &models.TestRun{
@@ -132,15 +142,9 @@ func (s *TestRunService) Update(id, workspaceID int, req TestRunUpdateRequest) (
 		return nil, err
 	}
 
-	// Validate assignee if provided
-	if req.AssigneeID != nil && *req.AssigneeID > 0 {
-		var count int
-		err = s.db.QueryRow(`
-			SELECT COUNT(*) FROM user_workspace_roles WHERE user_id = ? AND workspace_id = ?
-		`, *req.AssigneeID, workspaceID).Scan(&count)
-		if err != nil || count == 0 {
-			return nil, fmt.Errorf("assignee is not a member of this workspace")
-		}
+	// Validate assignee if provided (see Create for why membership is not checked)
+	if err := s.validateAssignee(req.AssigneeID); err != nil {
+		return nil, err
 	}
 
 	run.Name = req.Name

@@ -107,6 +107,7 @@
       showForm = false;
     } catch (error) {
       console.error('Failed to create test run:', error);
+      errorToast(t('testing.failedToCreateRun') + ': ' + error.message);
     }
   }
 
@@ -352,6 +353,7 @@
             <Label color="default" class="mb-2">{t('common.assignTo')}</Label>
             <UserPicker
               bind:value={selectedAssigneeId}
+              {workspaceId}
               showUnassigned={true}
               placeholder={t('testing.selectAssigneeOptional')}
             />

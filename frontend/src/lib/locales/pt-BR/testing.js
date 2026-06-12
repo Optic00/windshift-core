@@ -163,6 +163,7 @@ export default {
     deleteTestRun: 'Excluir Execução de Teste',
     deleteRunConfirm: 'Tem certeza de que deseja excluir "{name}"?',
     failedToDeleteRun: 'Falha ao excluir execução de teste',
+    failedToCreateRun: 'Falha ao criar execução de teste',
     noTestRunsYet: 'Nenhuma execução de teste ainda',
     createTestRunToExecute: 'Crie uma execução de teste para começar a executar casos de teste.',
     continueExecution: 'Continuar Execução',

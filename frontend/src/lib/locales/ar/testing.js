@@ -158,6 +158,7 @@ export default {
     deleteTestRun: 'حذف تشغيل الاختبار',
     deleteRunConfirm: 'هل أنت متأكد من حذف "{name}"؟',
     failedToDeleteRun: 'فشل حذف تشغيل الاختبار',
+    failedToCreateRun: 'فشل إنشاء تشغيل الاختبار',
     noTestRunsYet: 'لا توجد تشغيلات اختبار بعد',
     createTestRunToExecute: 'أنشئ تشغيل اختبار لبدء تنفيذ حالات الاختبار.',
     continueExecution: 'متابعة التنفيذ',
