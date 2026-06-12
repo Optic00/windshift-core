@@ -287,7 +287,16 @@ func PushBranch(ctx context.Context, opts PushOptions) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("abs dest: %w", err)
 	}
-	shaOut, err := gitOutputEnv(ctx, gitBin, opts.AllowFileURL, destAbs, nil, "rev-parse", "refs/heads/"+opts.Branch+"^{commit}")
+	// The checkout is chowned to the agent uid after prepare (WI-388) while a
+	// production runner pushes as root, so git's dubious-ownership check
+	// rejects every operation that opens it — including the commit-less skip
+	// below. Mark this one orchestrator-derived path safe via command-scope
+	// config (protected configuration since git 2.38); the global/system
+	// configs gitOutputEnv pins away could never grant the exception. The
+	// flag also reaches the upload-pack the local fetch spawns inside the
+	// checkout, via GIT_CONFIG_PARAMETERS.
+	safeDir := []string{"-c", "safe.directory=" + destAbs}
+	shaOut, err := gitOutputEnv(ctx, gitBin, opts.AllowFileURL, destAbs, nil, append(safeDir, "rev-parse", "refs/heads/"+opts.Branch+"^{commit}")...)
 	if err != nil {
 		return "", fmt.Errorf("rev-parse %s: %w", opts.Branch, err)
 	}
@@ -305,7 +314,7 @@ func PushBranch(ctx context.Context, opts PushOptions) (string, error) {
 		return "", fmt.Errorf("init sanitized push repo: %w", err)
 	}
 	fetchSpec := fmt.Sprintf("+refs/heads/%s:refs/heads/%s", opts.Branch, opts.Branch)
-	if _, err := gitOutputEnv(ctx, gitBin, true, tmp, nil, "fetch", "--no-tags", "--no-recurse-submodules", destAbs, fetchSpec); err != nil {
+	if _, err := gitOutputEnv(ctx, gitBin, true, tmp, nil, append(safeDir, "fetch", "--no-tags", "--no-recurse-submodules", destAbs, fetchSpec)...); err != nil {
 		return "", fmt.Errorf("fetch branch into sanitized push repo: %w", err)
 	}
 	fetchedOut, err := gitOutputEnv(ctx, gitBin, opts.AllowFileURL, tmp, nil, "rev-parse", "refs/heads/"+opts.Branch+"^{commit}")
