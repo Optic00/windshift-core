@@ -130,18 +130,15 @@ const DefaultCodingAgentRunnerImage = "ghcr.io/windshiftapp/windshift-agent:late
 // container data dir. Override for a different host layout.
 const DefaultCodingAgentWorktreeRoot = "/data/worktrees"
 
-// CodingAgentConfig configures the coding-agent harness (WI-89). RunnerImage and
-// WorktreeRoot both carry built-in defaults (DefaultCodingAgentRunnerImage and
-// DefaultCodingAgentWorktreeRoot), so the harness is active out of the box: the
-// server constructs a production RunService that spawns the windshift-agent
-// harness (the node-free codehamr fork, WI-204) inside RunnerImage, wires it
-// through the BindingService, and the assignee-change trigger fires real runs.
+// CodingAgentConfig configures the coding-agent harness (WI-89). The harness is
+// opt-in: set --enable-coding-agent (or CODING_AGENT_ENABLED=true) to activate
+// it. When enabled, the server constructs a production RunService that spawns
+// the windshift-agent harness (the node-free codehamr fork, WI-204) inside
+// RunnerImage, wires it through the BindingService, and the assignee-change
+// trigger fires real runs.
 //
-// The activation gate is still WorktreeRoot != "" — left in place so a future
-// remote-only control plane can opt out of the in-process runner — but since it
-// defaults non-empty, the in-process runner is on unless that default is
-// explicitly cleared. Override CODING_AGENT_RUNNER_IMAGE to pin a custom agent
-// build and CODING_AGENT_WORKTREE_ROOT to relocate the per-run checkouts.
+// Override CODING_AGENT_RUNNER_IMAGE to pin a custom agent build and
+// CODING_AGENT_WORKTREE_ROOT to relocate the per-run checkouts.
 //
 // The agent reaches the model only through the llm-proxy broker, so no
 // provider key or provider selection is injected into the container; it
@@ -153,6 +150,7 @@ const DefaultCodingAgentWorktreeRoot = "/data/worktrees"
 // for operator-specific resource budgets, NOT switches that can turn the
 // hardening off.
 type CodingAgentConfig struct {
+	Enabled      bool
 	RunnerImage  string // e.g. "ghcr.io/windshiftapp/windshift-agent:latest"
 	DockerBinary string // defaults to "docker"
 	WorktreeRoot string // absolute host path; required if RunnerImage is set

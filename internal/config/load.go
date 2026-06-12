@@ -51,6 +51,7 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 		disablePlugins        = flag.Bool("disable-plugins", false, "Disable the plugin system")
 		disableIPRateLimit    = flag.Bool("disable-ip-rate-limit", false, "Disable IP-based rate limiting")
 		enableAdminFallback   = flag.Bool("enable-fallback", false, "Enable admin password fallback")
+		enableCodingAgent     = flag.Bool("enable-coding-agent", false, "Enable the coding-agent harness")
 		llmProvidersFile      = flag.String("llm-providers", "", "Path to custom LLM providers JSON file")
 		aiPromptsDir          = flag.String("ai-prompts-dir", "", "Directory of custom AI prompt override files")
 	)
@@ -103,6 +104,7 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 	pluginsDisabled := *disablePlugins || parseBoolEnv("DISABLE_PLUGINS")
 	ipRateLimitDisabled := *disableIPRateLimit || parseBoolEnv("DISABLE_IP_RATE_LIMIT")
 	adminFallbackEnabled := *enableAdminFallback || parseBoolEnv("ENABLE_ADMIN_FALLBACK")
+	codingAgentEnabled := *enableCodingAgent || parseBoolEnv("CODING_AGENT_ENABLED")
 
 	resolvedSSHPort := firstNonEmpty(os.Getenv("SSH_PORT"), *sshPort)
 	resolvedSSHHost := firstNonEmpty(os.Getenv("SSH_HOST"), *sshHost)
@@ -209,6 +211,7 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 			PromptsDir:    resolvedAIPromptsDir,
 		},
 		CodingAgent: CodingAgentConfig{
+			Enabled:      codingAgentEnabled,
 			RunnerImage:  firstNonEmpty(os.Getenv("CODING_AGENT_RUNNER_IMAGE"), DefaultCodingAgentRunnerImage),
 			DockerBinary: os.Getenv("CODING_AGENT_DOCKER_BINARY"),
 			WorktreeRoot: firstNonEmpty(os.Getenv("CODING_AGENT_WORKTREE_ROOT"), DefaultCodingAgentWorktreeRoot),

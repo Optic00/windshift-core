@@ -719,7 +719,7 @@ func (s *Server) initialize() error {
 	llmModelRefresher := llm.NewModelRefresher(llmModelCache)
 
 	var codingRunSvc *services.RunService
-	if cfg.CodingAgent.WorktreeRoot != "" {
+	if cfg.CodingAgent.Enabled {
 		var bootErr error
 		codingRunSvc, bootErr = bootCodingAgentRunService(s.db, tokenManager, agentBindingRepo, scmCredResolver, cfg.CodingAgent, promptStore)
 		if bootErr != nil {
