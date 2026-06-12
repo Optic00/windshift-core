@@ -131,7 +131,7 @@ Differences from the standalone setup:
 - `WS_API_URL: http://windshift:8080/api` with `WSRUNNER_ALLOW_INSECURE: "1"` —
   plaintext is acceptable only because the traffic never leaves the host's
   docker bridge.
-- The orchestrator sets `CODING_AGENT_WS_API_URL=http://windshift:8080` so the
+- The orchestrator sets `CODING_AGENT_WS_API_URL=http://windshift:8080/api` so the
   per-run broker URLs (llm-proxy, git-proxy, `ws` API) handed to agent
   containers resolve on the internal network.
 - Bootstrap order: start Windshift, mint the pool registration token in

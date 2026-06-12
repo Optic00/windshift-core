@@ -42,7 +42,7 @@ services:
       # --- Coding agents, runner pool (uncomment the windshift-runner service
       #     + coding-agent network below). The in-network URL makes agent
       #     containers reach Windshift over the internal egress network: ---
-      # - CODING_AGENT_WS_API_URL=http://windshift:8080
+      # - CODING_AGENT_WS_API_URL=http://windshift:8080/api
       # --- Coding agents, local flavor (Windshift spawns agent containers
       #     itself; requires docker socket + worktree volume below). Also
       #     uncomment the coding-agent network and use the in-network
@@ -100,7 +100,7 @@ services:
   # When using the runner:
   #   1. Uncomment this service, the coding-agent network at the bottom, and
   #      on the windshift service above: the networks list and
-  #      CODING_AGENT_WS_API_URL=http://windshift:8080
+  #      CODING_AGENT_WS_API_URL=http://windshift:8080/api
   #   2. Start Windshift, mint a pool registration token (Admin -> Runner
   #      Pools), set it in .env as WSRUNNER_REGISTRATION_TOKEN
   #   3. docker compose up -d

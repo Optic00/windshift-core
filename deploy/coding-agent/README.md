@@ -83,7 +83,7 @@ docker network create --internal coding-agent-egress
 docker network connect coding-agent-egress windshift
 ```
 
-Point agents at the in-network address (`CODING_AGENT_WS_API_URL=http://windshift:8080`)
+Point agents at the in-network address (`CODING_AGENT_WS_API_URL=http://windshift:8080/api`)
 so the broker URLs handed to them resolve on that network. The deploy compose
 file (`deploy/docker-compose.yml`) ships this wired up, including a co-located
 `windshift-runner` service — see its commented blocks.
