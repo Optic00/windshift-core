@@ -191,6 +191,12 @@ func (s *ItemUpdateService) UpdateItem(req UpdateItemRequest) (*UpdateItemResult
 	// Check if status changed (for event emission)
 	statusChanged := s.hasStatusChanged(originalItem, updatedItem)
 
+	// Coding-agent binding trigger (WI-88), fired here so every update
+	// surface — cookie handlers, REST v1, MCP/AI tools, automation actions —
+	// gets it. The trigger no-ops when the assignee did not change or no
+	// binding matches the new assignee.
+	maybeTriggerAssigneeRun(updatedItem.WorkspaceID, updatedItem.ID, originalItem.AssigneeID, updatedItem.AssigneeID, req.UserID)
+
 	return &UpdateItemResult{
 		OriginalItem:  originalItem,
 		Item:          updatedItem,

@@ -41,7 +41,6 @@ type ItemHandler struct {
 	actionService interface {
 		EmitActionEvent(event *models.ActionEvent)
 	} // Action service for automation workflows (optional, can be nil)
-	bindingTrigger   BindingTrigger             // Coding-agent binding trigger (optional, WI-88)
 	webhookSender    *webhook.WebhookSender     // Webhook sender for dispatching webhook events (optional, can be nil)
 	eventCoordinator *services.EventCoordinator // Centralized event coordinator for side effects (optional, can be nil)
 	issueSyncService interface {
@@ -90,22 +89,6 @@ func (h *ItemHandler) SetActionService(actionService interface {
 	EmitActionEvent(event *models.ActionEvent)
 }) {
 	h.actionService = actionService
-}
-
-// BindingTrigger is the coding-agent harness's interest in item updates:
-// when an item's assignee changes, the trigger checks for a
-// workspace_agent_bindings row pointing at the new assignee and, if found,
-// starts a run. The interface stays small so the items handler can stay
-// ignorant of the binding service's internals (and so tests can stub it).
-type BindingTrigger interface {
-	MaybeStartRunForAssignee(ctx context.Context, workspaceID, itemID int, oldAssignee, newAssignee *int, triggeredByUserID int) error
-}
-
-// SetBindingTrigger wires the optional coding-agent binding trigger
-// (WI-88). Nil disables the hook; ItemHandler.Update calls it once per
-// assignee change.
-func (h *ItemHandler) SetBindingTrigger(trigger BindingTrigger) {
-	h.bindingTrigger = trigger
 }
 
 // SetEventCoordinator sets the event coordinator for centralized side effects
@@ -913,21 +896,9 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 		assigneeChanged = true
 	}
 
-	// WI-88 coding-agent binding trigger. Fires on every assignee change;
-	// the trigger no-ops when no binding matches the new assignee, so it's
-	// safe to call eagerly. Errors are logged-and-swallowed: a failed
-	// trigger must not block the item update from succeeding.
-	if assigneeChanged && h.bindingTrigger != nil {
-		if err := h.bindingTrigger.MaybeStartRunForAssignee(r.Context(), updatedItem.WorkspaceID, updatedItem.ID, originalItem.AssigneeID, updatedItem.AssigneeID, user.ID); err != nil {
-			slog.Warn("coding-agent binding trigger failed",
-				slog.Int("workspace_id", updatedItem.WorkspaceID),
-				slog.Int("item_id", updatedItem.ID),
-				slog.Any("error", err),
-			)
-		}
-	}
-
 	// Emit side effects via EventCoordinator (notifications, webhooks, action events)
+	// The coding-agent binding trigger (WI-88) fires inside
+	// ItemUpdateService.UpdateItem, shared by every update surface.
 	if h.eventCoordinator != nil {
 		h.eventCoordinator.EmitItemUpdated(originalItem, updatedItem, result.StatusChanged, assigneeChanged, user.ID, result.FieldChanges, user.Username)
 	} else {

@@ -110,6 +110,10 @@ type ItemCreationParams struct {
 	// import time. Both fall back to time.Now() when nil.
 	CreatedAt *time.Time
 	UpdatedAt *time.Time
+	// SkipAssigneeTrigger suppresses the coding-agent assignee trigger for
+	// bulk paths (e.g. the Jira importer) where pre-assigned items must not
+	// each start an agent run.
+	SkipAssigneeTrigger bool
 	// ValidatingUserID and PermService enable project-assignment access control.
 	// When ValidatingUserID > 0 and PermService is non-nil, CreateItem rejects a
 	// ProjectID / TimeProjectID the user may not view (returning ErrProjectNotFound,
@@ -371,6 +375,18 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 	if params.CreatorID != nil {
 		historyService := GetHistoryService(db)
 		historyService.RecordItemCreationHistoryAsync(db, int(itemID), *params.CreatorID)
+	}
+
+	// Items created with an assignee already set fire the coding-agent
+	// binding trigger exactly like a later assignment would (the create
+	// surfaces previously skipped it, so create-with-agent-assignee
+	// silently never started a run).
+	if !params.SkipAssigneeTrigger && params.AssigneeID != nil {
+		triggeredBy := params.ValidatingUserID
+		if triggeredBy == 0 && params.CreatorID != nil {
+			triggeredBy = *params.CreatorID
+		}
+		maybeTriggerAssigneeRun(params.WorkspaceID, int(itemID), nil, params.AssigneeID, triggeredBy)
 	}
 
 	return itemID, nil

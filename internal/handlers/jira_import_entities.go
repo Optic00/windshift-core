@@ -1050,6 +1050,9 @@ func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, works
 		CustomFieldValuesJSON: customFieldValuesJSON,
 		CreatedAt:             createdAt,
 		UpdatedAt:             updatedAt,
+		// A bulk import of issues pre-assigned to an agent user must not
+		// start one agent run per imported item.
+		SkipAssigneeTrigger: true,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create item: %w", err)
