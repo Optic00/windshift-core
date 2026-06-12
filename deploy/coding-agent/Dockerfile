@@ -32,8 +32,11 @@ RUN go mod download
 
 COPY . .
 
-ARG TARGETOS=linux
-ARG TARGETARCH=amd64
+# Populated by BuildKit when --platform is passed (CI does); empty otherwise,
+# which makes Go build for the native arch. A hard =amd64 default here once
+# shipped an x86_64 ws binary inside the arm64 image (WI-394).
+ARG TARGETOS
+ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w" -o /out/ws ./cmd/ws
 

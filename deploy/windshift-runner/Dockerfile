@@ -31,8 +31,12 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-ARG TARGETOS=linux
-ARG TARGETARCH=amd64
+# Populated by BuildKit when --platform is passed (CI does); empty otherwise,
+# which makes Go build for the native arch. A hard =amd64 default here once
+# shipped x86_64 binaries inside the arm64 image — they "worked" only via
+# qemu-user binfmt emulation on the runner host (WI-394).
+ARG TARGETOS
+ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w" -o /out/windshift-runner ./windshift-runner
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \

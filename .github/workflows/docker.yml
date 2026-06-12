@@ -79,10 +79,15 @@ jobs:
         with:
           context: .
           file: ${{ matrix.image.dockerfile }}
-          # Don't specify platforms - let Docker build for the native platform
-          # (avoids QEMU on arm64 runners). Each arch is pushed under its own
-          # per-commit staging TAG; the merge job combines the two into the real
-          # tags. We push by tag, NOT push-by-digest, on purpose: buildkit's
+          # The platform always matches the runner's native arch, so BuildKit
+          # never reaches for QEMU — but it MUST be passed explicitly: without
+          # --platform, TARGETOS/TARGETARCH stay unset and Dockerfile ARG
+          # defaults decide what the Go cross-compile targets. That once put
+          # x86_64 binaries inside the arm64 runner image, silently emulated
+          # via qemu binfmt on the host (WI-394). Each arch is pushed under its
+          # own per-commit staging TAG; the merge job combines the two into the
+          # real tags.
+          platforms: ${{ matrix.platform.os }} We push by tag, NOT push-by-digest, on purpose: buildkit's
           # default provenance makes even a single-platform build a manifest
           # index, and the index digest from steps.build.outputs.digest was not
           # resolvable at merge time for the large server image
