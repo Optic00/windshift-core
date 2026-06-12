@@ -87,7 +87,8 @@ jobs:
           # via qemu binfmt on the host (WI-394). Each arch is pushed under its
           # own per-commit staging TAG; the merge job combines the two into the
           # real tags.
-          platforms: ${{ matrix.platform.os }} We push by tag, NOT push-by-digest, on purpose: buildkit's
+          platforms: ${{ matrix.platform.os }}
+          # We push by tag, NOT push-by-digest, on purpose: buildkit's
           # default provenance makes even a single-platform build a manifest
           # index, and the index digest from steps.build.outputs.digest was not
           # resolvable at merge time for the large server image
