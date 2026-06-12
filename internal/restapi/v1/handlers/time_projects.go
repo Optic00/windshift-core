@@ -1,11 +1,10 @@
 package handlers
 
 import (
-	"database/sql"
-	"encoding/json"
 	"net/http"
 	"strings"
 
+	"windshift/internal/repository"
 	"windshift/internal/services"
 )
 
@@ -42,6 +41,24 @@ type timeProjectResponse struct {
 	TotalHours    *float64               `json:"total_hours,omitempty"`
 }
 
+func mapTimeProjectToResponse(p repository.TimeProjectDetail) timeProjectResponse {
+	return timeProjectResponse{
+		ID:            p.ID,
+		CustomerID:    p.CustomerID,
+		CategoryID:    p.CategoryID,
+		Name:          p.Name,
+		Description:   p.Description,
+		Status:        p.Status,
+		Color:         p.Color,
+		HourlyRate:    p.HourlyRate,
+		Settings:      p.Settings,
+		CustomerName:  p.CustomerName,
+		CategoryName:  p.CategoryName,
+		CategoryColor: p.CategoryColor,
+		TotalHours:    p.TotalHours,
+	}
+}
+
 // List returns time projects accessible to the authenticated user.
 func (h *TimeProjectHandler) List(w http.ResponseWriter, r *http.Request) {
 	user, ok := h.RequireAuth(w, r)
@@ -60,66 +77,16 @@ func (h *TimeProjectHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	query := `SELECT tp.id, tp.customer_id, tp.category_id, tp.name, COALESCE(tp.description, ''),
-	       tp.status, COALESCE(tp.color, ''), tp.hourly_rate, COALESCE(tp.settings, ''),
-	       COALESCE(co.name, ''), COALESCE(tpc.name, ''), COALESCE(tpc.color, ''),
-	       (SELECT COALESCE(SUM(duration_minutes), 0) / 60.0 FROM time_worklogs WHERE project_id = tp.id) as total_hours
-	FROM time_projects tp
-	LEFT JOIN customer_organisations co ON tp.customer_id = co.id
-	LEFT JOIN time_project_categories tpc ON tp.category_id = tpc.id
-	WHERE 1=1`
-	var qa []any
-
-	if accessibleIDs != nil {
-		ph := make([]string, len(accessibleIDs))
-		for i, id := range accessibleIDs {
-			ph[i] = "?"
-			qa = append(qa, id)
-		}
-		query += " AND tp.id IN (" + strings.Join(ph, ",") + ")"
-	}
-	if statusFilter != "" {
-		query += " AND tp.status = ?"
-		qa = append(qa, statusFilter)
-	}
-	query += " ORDER BY tp.name"
-
-	rows, err := h.DB.Query(query, qa...)
+	projects, err := repository.NewTimeProjectRepository(h.DB).ListDetails(accessibleIDs, statusFilter)
 	if err != nil {
 		h.RespondInternalError(w, r)
 		return
 	}
-	defer rows.Close()
 
-	out := make([]timeProjectResponse, 0)
-	for rows.Next() {
-		var p timeProjectResponse
-		var settingsStr sql.NullString
-		var totalHours sql.NullFloat64
-		if err := rows.Scan(&p.ID, &p.CustomerID, &p.CategoryID, &p.Name, &p.Description,
-			&p.Status, &p.Color, &p.HourlyRate, &settingsStr, &p.CustomerName,
-			&p.CategoryName, &p.CategoryColor, &totalHours); err != nil {
-			continue
-		}
-		if totalHours.Valid {
-			p.TotalHours = &totalHours.Float64
-		}
-		if settingsStr.Valid && settingsStr.String != "" && settingsStr.String != "{}" {
-			// Settings are stored as JSON; pass through as-is without
-			// unmarshal → marshal round-trip.
-			var m map[string]interface{}
-			_ = json.Unmarshal([]byte(settingsStr.String), &m)
-			if m != nil {
-				p.Settings = m
-			}
-		}
-		out = append(out, p)
+	out := make([]timeProjectResponse, 0, len(projects))
+	for _, p := range projects {
+		out = append(out, mapTimeProjectToResponse(p))
 	}
-	if err := rows.Err(); err != nil {
-		h.RespondInternalError(w, r)
-		return
-	}
-
 	h.RespondOK(w, out)
 }
 
@@ -145,35 +112,11 @@ func (h *TimeProjectHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	query := `SELECT tp.id, tp.customer_id, tp.category_id, tp.name, COALESCE(tp.description, ''),
-	       tp.status, COALESCE(tp.color, ''), tp.hourly_rate, COALESCE(tp.settings, ''),
-	       COALESCE(co.name, ''), COALESCE(tpc.name, ''), COALESCE(tpc.color, ''),
-	       (SELECT COALESCE(SUM(duration_minutes), 0) / 60.0 FROM time_worklogs WHERE project_id = tp.id) as total_hours
-	FROM time_projects tp
-	LEFT JOIN customer_organisations co ON tp.customer_id = co.id
-	LEFT JOIN time_project_categories tpc ON tp.category_id = tpc.id
-	WHERE tp.id = ?`
-
-	var p timeProjectResponse
-	var settingsStr sql.NullString
-	var totalHours sql.NullFloat64
-	err = h.DB.QueryRow(query, projectID).Scan(&p.ID, &p.CustomerID, &p.CategoryID, &p.Name, &p.Description,
-		&p.Status, &p.Color, &p.HourlyRate, &settingsStr, &p.CustomerName,
-		&p.CategoryName, &p.CategoryColor, &totalHours)
+	project, err := repository.NewTimeProjectRepository(h.DB).GetDetail(projectID)
 	if err != nil {
 		h.RespondNotFound(w, r)
 		return
 	}
-	if totalHours.Valid {
-		p.TotalHours = &totalHours.Float64
-	}
-	if settingsStr.Valid && settingsStr.String != "" && settingsStr.String != "{}" {
-		var m map[string]interface{}
-		_ = json.Unmarshal([]byte(settingsStr.String), &m)
-		if m != nil {
-			p.Settings = m
-		}
-	}
 
-	h.RespondOK(w, p)
+	h.RespondOK(w, mapTimeProjectToResponse(*project))
 }

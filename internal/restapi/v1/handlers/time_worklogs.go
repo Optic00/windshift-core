@@ -1,8 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -88,106 +86,49 @@ func (h *TimeWorklogHandler) ListMine(w http.ResponseWriter, r *http.Request) {
 	}
 
 	pagination := h.ParsePagination(r)
-	dateFrom := r.URL.Query().Get("date_from")
-	dateTo := r.URL.Query().Get("date_to")
-	projectIDStr := r.URL.Query().Get("project_id")
+	filter := repository.WorklogListFilter{
+		UserID: user.ID,
+		Limit:  pagination.Limit,
+		Offset: pagination.Offset,
+	}
 
-	query := `SELECT w.id, w.project_id, w.customer_id, w.item_id, w.description, w.date, w.start_time,
-	       w.end_time, w.duration_minutes, w.created_at, w.updated_at,
-	       c.name, p.name, i.title, ws.id, ws.key, i.workspace_item_number,
-	       p.settings as project_settings,
-	       (SELECT COALESCE(SUM(duration_minutes), 0) / 60.0 FROM time_worklogs WHERE project_id = w.project_id) as project_total_hours
-	FROM time_worklogs w
-	JOIN customer_organisations c ON w.customer_id = c.id
-	JOIN time_projects p ON w.project_id = p.id
-	LEFT JOIN items i ON w.item_id = i.id
-	LEFT JOIN workspaces ws ON i.workspace_id = ws.id
-	WHERE w.user_id = ?`
-	var qa []any
-	qa = append(qa, user.ID)
-
-	if dateFrom != "" {
+	if dateFrom := r.URL.Query().Get("date_from"); dateFrom != "" {
 		t, err := time.Parse("2006-01-02", dateFrom)
 		if err != nil {
 			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "invalid date_from format, use YYYY-MM-DD"))
 			return
 		}
-		query += " AND w.date >= ?"
-		qa = append(qa, t.Unix())
+		from := t.Unix()
+		filter.DateFromUnix = &from
 	}
-	if dateTo != "" {
+	if dateTo := r.URL.Query().Get("date_to"); dateTo != "" {
 		t, err := time.Parse("2006-01-02", dateTo)
 		if err != nil {
 			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "invalid date_to format, use YYYY-MM-DD"))
 			return
 		}
-		query += " AND w.date <= ?"
-		qa = append(qa, t.Add(24*time.Hour-time.Second).Unix())
+		to := t.Add(24*time.Hour - time.Second).Unix()
+		filter.DateToUnix = &to
 	}
-	if projectIDStr != "" {
+	if projectIDStr := r.URL.Query().Get("project_id"); projectIDStr != "" {
 		pid, err := strconv.Atoi(projectIDStr)
 		if err != nil || pid <= 0 {
 			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "invalid project_id"))
 			return
 		}
-		query += " AND w.project_id = ?"
-		qa = append(qa, pid)
-	}
-	query += " ORDER BY w.date DESC"
-
-	// Count total
-	countQuery := "SELECT COUNT(*) FROM (" + query + ")"
-	var total int
-	if err := h.DB.QueryRow(countQuery, qa...).Scan(&total); err != nil {
-		h.RespondInternalError(w, r)
-		return
+		filter.ProjectID = &pid
 	}
 
-	// Apply pagination
-	query += " LIMIT ? OFFSET ?"
-	qa = append(qa, pagination.Limit, pagination.Offset)
-
-	rows, err := h.DB.Query(query, qa...)
+	worklogs, total, err := repository.NewTimeWorklogRepository(h.DB).ListForUser(filter)
 	if err != nil {
 		h.RespondInternalError(w, r)
 		return
 	}
-	defer rows.Close()
 
-	out := make([]worklogResponse, 0)
-	for rows.Next() {
-		var wl models.Worklog
-		var itemTitle, workspaceKey, projectSettings sql.NullString
-		var workspaceID, workspaceItemNumber sql.NullInt64
-		var projectTotalHours sql.NullFloat64
-		if err := rows.Scan(&wl.ID, &wl.ProjectID, &wl.CustomerID, &wl.ItemID, &wl.Description,
-			&wl.Date, &wl.StartTime, &wl.EndTime, &wl.DurationMins,
-			&wl.CreatedAt, &wl.UpdatedAt, &wl.CustomerName, &wl.ProjectName, &itemTitle,
-			&workspaceID, &workspaceKey, &workspaceItemNumber, &projectSettings, &projectTotalHours); err != nil {
-			continue
-		}
-		wl.ItemTitle = itemTitle.String
-		wl.WorkspaceID = utils.NullInt64ToPtr(workspaceID)
-		wl.WorkspaceKey = workspaceKey.String
-		wl.WorkspaceItemNumber = int(workspaceItemNumber.Int64)
-		if projectTotalHours.Valid {
-			wl.ProjectTotalHours = &projectTotalHours.Float64
-		}
-		if projectSettings.Valid && projectSettings.String != "" {
-			var settings map[string]interface{}
-			if err := json.Unmarshal([]byte(projectSettings.String), &settings); err == nil {
-				if maxHours, ok := settings["max_hours"].(float64); ok && maxHours > 0 {
-					wl.ProjectMaxHours = &maxHours
-				}
-			}
-		}
+	out := make([]worklogResponse, 0, len(worklogs))
+	for _, wl := range worklogs {
 		out = append(out, mapWorklogToResponse(wl))
 	}
-	if err := rows.Err(); err != nil {
-		h.RespondInternalError(w, r)
-		return
-	}
-
 	h.RespondPaginated(w, out, pagination, total)
 }
 
@@ -232,19 +173,16 @@ func (h *TimeWorklogHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	sanitize.Apply(&req.Description, sanitize.RichText)
 
-	var projectName, projectStatus string
-	var customerID sql.NullInt64
-	err = h.DB.QueryRow("SELECT name, status, customer_id FROM time_projects WHERE id = ?", req.ProjectID).
-		Scan(&projectName, &projectStatus, &customerID)
+	project, err := repository.NewTimeProjectRepository(h.DB).GetBookingInfo(req.ProjectID)
 	if err != nil {
 		h.RespondError(w, r, restapi.NewAPIError(http.StatusNotFound, "NOT_FOUND", "project not found"))
 		return
 	}
-	if projectStatus != "Active" {
-		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, fmt.Sprintf("project %q is not active (status: %s)", projectName, projectStatus)))
+	if project.Status != "Active" {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, fmt.Sprintf("project %q is not active (status: %s)", project.Name, project.Status)))
 		return
 	}
-	if !customerID.Valid {
+	if project.CustomerID == nil {
 		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "project has no customer assigned, cannot log time"))
 		return
 	}
@@ -319,7 +257,7 @@ func (h *TimeWorklogHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	id, err := repository.NewTimeWorklogRepository(h.DB).Create(repository.NewWorklog{
 		ProjectID:       req.ProjectID,
-		CustomerID:      customerID.Int64,
+		CustomerID:      *project.CustomerID,
 		UserID:          user.ID,
 		ItemID:          itemID,
 		Description:     req.Description,
@@ -336,7 +274,7 @@ func (h *TimeWorklogHandler) Create(w http.ResponseWriter, r *http.Request) {
 	h.RespondCreated(w, map[string]any{
 		"id":               id,
 		"project_id":       req.ProjectID,
-		"project_name":     projectName,
+		"project_name":     project.Name,
 		"date":             req.Date,
 		"duration_minutes": durationMins,
 		"description":      req.Description,
@@ -362,8 +300,8 @@ func (h *TimeWorklogHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var ownerID int
-	err := h.DB.QueryRow("SELECT user_id FROM time_worklogs WHERE id = ?", worklogID).Scan(&ownerID)
+	worklogRepo := repository.NewTimeWorklogRepository(h.DB)
+	ownerID, err := worklogRepo.GetOwnerID(worklogID)
 	if err != nil {
 		h.RespondNotFound(w, r)
 		return
@@ -374,9 +312,7 @@ func (h *TimeWorklogHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sanitize.Apply(&req.Description, sanitize.RichText)
-	now := time.Now().Unix()
-	_, err = h.DB.Exec("UPDATE time_worklogs SET description = ?, updated_at = ? WHERE id = ?", req.Description, now, worklogID)
-	if err != nil {
+	if err := worklogRepo.UpdateDescription(worklogID, req.Description); err != nil {
 		h.RespondInternalError(w, r)
 		return
 	}
@@ -396,8 +332,8 @@ func (h *TimeWorklogHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var ownerID int
-	err := h.DB.QueryRow("SELECT user_id FROM time_worklogs WHERE id = ?", worklogID).Scan(&ownerID)
+	worklogRepo := repository.NewTimeWorklogRepository(h.DB)
+	ownerID, err := worklogRepo.GetOwnerID(worklogID)
 	if err != nil {
 		h.RespondNotFound(w, r)
 		return
@@ -407,8 +343,7 @@ func (h *TimeWorklogHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = h.DB.Exec("DELETE FROM time_worklogs WHERE id = ?", worklogID)
-	if err != nil {
+	if err := worklogRepo.Delete(worklogID); err != nil {
 		h.RespondInternalError(w, r)
 		return
 	}
@@ -423,21 +358,17 @@ func resolveItemByKey(db database.Database, permService *services.PermissionServ
 	if len(parts) != 2 {
 		return 0, fmt.Errorf("invalid item key format")
 	}
-	wsKey := parts[0]
-	itemNumStr := parts[1]
-	itemNum, err := strconv.Atoi(itemNumStr)
+	itemNum, err := strconv.Atoi(parts[1])
 	if err != nil {
 		return 0, fmt.Errorf("invalid item number in key")
 	}
 
-	var itemID, wsID int
-	err = db.QueryRow(`
-		SELECT i.id, i.workspace_id
-		FROM items i
-		JOIN workspaces w ON i.workspace_id = w.id
-		WHERE w.key = ? AND i.workspace_item_number = ?`,
-		wsKey, itemNum,
-	).Scan(&itemID, &wsID)
+	itemRepo := repository.NewItemRepository(db)
+	itemID, err := itemRepo.FindIDByKeyAndNumber(parts[0], itemNum)
+	if err != nil {
+		return 0, fmt.Errorf("item not found")
+	}
+	wsID, err := itemRepo.GetWorkspaceID(itemID)
 	if err != nil {
 		return 0, fmt.Errorf("item not found")
 	}
