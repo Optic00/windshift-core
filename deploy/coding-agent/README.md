@@ -70,6 +70,26 @@ Picking a name distinct from `bridge` is intentional: it forces the
 operator to think about egress filtering rather than inheriting the
 host's default outbound posture.
 
+### Simplest: an internal network (Windshift in docker on the same host)
+
+Agents only need to reach the Windshift API host (LLM and git are brokered
+through the orchestrator's proxies). When Windshift itself runs in docker on
+the same host, create the network with `--internal` and attach Windshift to
+it — Docker's isolation then IS the egress policy and no firewall rules are
+needed at all:
+
+```bash
+docker network create --internal coding-agent-egress
+docker network connect coding-agent-egress windshift
+```
+
+Point agents at the in-network address (`CODING_AGENT_WS_API_URL=http://windshift:8080`)
+so the broker URLs handed to them resolve on that network. The deploy compose
+file (`deploy/docker-compose.yml`) ships this wired up, including a co-located
+`windshift-runner` service — see its commented blocks.
+
+### firewalld / iptables (Windshift reachable only via a public URL)
+
 On firewalld hosts (Fedora/RHEL) use the bundled helper — it encodes the
 allowlist as a permanent firewalld policy keyed on the network's source
 subnet, so it survives reboots and docker recreating the bridge (WI-315):

@@ -115,6 +115,28 @@ the host Docker daemon through the mounted socket (Docker-out-of-Docker). See
 docker compose -f runner-compose.yml up -d
 ```
 
+### Same host as Windshift — one compose file, no firewall rules
+
+When the runner lives on the same host as the orchestrator, skip the separate
+compose file and the egress-firewall scripts entirely: `deploy/docker-compose.yml`
+ships a commented `windshift-runner` service plus a shared `coding-agent-egress`
+network declared with `internal: true`. Windshift joins that network, the runner
+and every spawned agent container live on it, and Docker's own isolation does
+the egress filtering — containers on an internal network can reach each other
+(i.e. Windshift) but nothing else. No firewalld policy, no iptables rules, no
+re-resolving the API host's IP when it changes.
+
+Differences from the standalone setup:
+
+- `WS_API_URL: http://windshift:8080/api` with `WSRUNNER_ALLOW_INSECURE: "1"` —
+  plaintext is acceptable only because the traffic never leaves the host's
+  docker bridge.
+- The orchestrator sets `CODING_AGENT_WS_API_URL=http://windshift:8080` so the
+  per-run broker URLs (llm-proxy, git-proxy, `ws` API) handed to agent
+  containers resolve on the internal network.
+- Bootstrap order: start Windshift, mint the pool registration token in
+  Admin → Runner Pools, put it in `.env`, then bring up the runner service.
+
 ### install.sh options
 
 | Flag | Default | Meaning |

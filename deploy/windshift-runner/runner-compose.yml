@@ -7,6 +7,11 @@
 # Podman: works with the rootful Podman socket — point the first volume at it,
 # e.g. /run/podman/podman.sock:/var/run/docker.sock. Rootless Podman needs extra
 # UID-mapping care on the checkout mount; see the docs.
+#
+# Same host as Windshift? Use the commented windshift-runner service in
+# deploy/docker-compose.yml instead: one compose file, and a shared internal
+# network replaces the egress firewall rules entirely (see README.md, "Same
+# host as Windshift").
 services:
   windshift-runner:
     image: ghcr.io/windshiftapp/windshift-runner:latest
