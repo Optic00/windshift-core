@@ -24,6 +24,13 @@ type Config struct {
 	TLSKeyPath        string
 	DisableCSRF       bool
 
+	// AllowInsecureHTTP permits credentialed browser access from plain-http
+	// origins other than localhost (e.g. http://lanhost:8080). Without it,
+	// such a BASE_URL fails CORS middleware construction, because credentialed
+	// CORS over insecure origins is interceptable. For trusted LANs and
+	// testing only; unlike UseProxy it does not affect forwarded-header trust.
+	AllowInsecureHTTP bool
+
 	// AllowLocalConnections, when true, lets every server-side SSRF-safe HTTP
 	// client/dialer reach loopback and private/RFC1918 destinations. It is the
 	// single switch operators flip to run self-hosted SCM (Gitea / GitHub

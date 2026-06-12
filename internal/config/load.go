@@ -33,6 +33,7 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 		allowedHosts          = flag.String("allowed-hosts", "", "Comma-separated allowed hostnames for CSRF")
 		allowedPort           = flag.String("allowed-port", "", "Port for CORS/WebAuthn trusted origins")
 		useProxy              = flag.Bool("use-proxy", false, "Enable proxy mode (trust X-Forwarded-Proto from private IPs)")
+		allowInsecureHTTP     = flag.Bool("allow-insecure-http", false, "Allow browser access via plain http on non-localhost origins — trusted LANs/testing only")
 		baseURL               = flag.String("base-url", "", "Public URL for the server")
 		contextPath           = flag.String("context-path", "", "Public context path to serve Windshift under, e.g. /windshift")
 		additionalProxies     = flag.String("additional-proxies", "", "Additional proxy IPs to trust")
@@ -170,6 +171,7 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 		TLSCertPath:       *tlsCertPath,
 		TLSKeyPath:        *tlsKeyPath,
 		DisableCSRF:       *disableCSRF,
+		AllowInsecureHTTP: *allowInsecureHTTP || parseBoolEnv("ALLOW_INSECURE_HTTP"),
 
 		AllowLocalConnections: *allowLocalConnections || parseBoolEnv("ALLOW_LOCAL_CONNECTIONS"),
 
