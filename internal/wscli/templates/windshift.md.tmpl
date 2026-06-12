@@ -11,8 +11,14 @@ ws task created           # Tasks I created
 
 # Create & manage
 ws task create -t "Title" [-d "Description"]
-ws task move <KEY-123> <status>
+ws task move <KEY-123> <status>   # THE status-change command (no "transition" subcommand exists)
 ws task get <KEY-123>
+ws task edit <KEY-123> [-t "Title"] [-d "Desc"] [--assignee <user-id>] [--parent <item-id>]
+ws task children <KEY-123>
+
+# Comments (Markdown; an agent's only channel to humans)
+ws comment add <KEY-123> -m "Markdown body"
+ws comment list <KEY-123>
 
 # Test execution
 ws test run mine          # My test runs
@@ -84,6 +90,16 @@ Use these consistent commands regardless of actual workspace statuses:
 {{- end}}
 
 {{end -}}
+## Changing Status
+
+`ws task move <KEY-123> <status>` is the ONLY status-change command — there
+is no `ws task transition`. `<status>` accepts an alias, an exact name
+(case-insensitive), a unique partial match, or a status ID **from the
+table above** (status IDs are workspace-specific; never guess one).
+Transitions are validated against the workflow — an invalid move is
+rejected with the allowed targets.
+
+
 ## Pages (Workspace Documentation)
 
 **Pages are the canonical store for project documentation in this workspace:**
