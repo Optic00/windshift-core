@@ -736,7 +736,12 @@ func (s *Server) initialize() error {
 
 	agentAPIURL := cfg.CodingAgent.WSAPIURL
 	if agentAPIURL == "" {
-		agentAPIURL = baseURL
+		// The agent-facing URL convention INCLUDES the mandatory /api suffix
+		// (see apiBaseURLFor); the broker URLs handed to agent containers
+		// (LLM_BASE_URL, git-proxy) are built directly on it. Falling back to
+		// the bare BASE_URL would send the agent's chat-completion POSTs to a
+		// path only the SPA catch-all matches — a 405 on every model call.
+		agentAPIURL = strings.TrimRight(baseURL, "/") + "/api"
 	}
 	agentSkillRepo := repository.NewWorkspaceAgentSkillRepository(s.db)
 	bindingSvc, _ := services.NewBindingService(services.BindingServiceOptions{
