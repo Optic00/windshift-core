@@ -2,6 +2,7 @@ import { get, writable } from 'svelte/store';
 import { api } from '../api.js';
 import { navigate } from '../router.js';
 import { formatDateSimple } from '../utils/dateFormatter.js';
+import { isTauri } from '../utils/isTauri.js';
 import { serverNow } from '../utils/serverClock.js';
 import { activityStore } from './activityStore.svelte.js';
 import { addToast } from './toasts.svelte.js';
@@ -250,10 +251,10 @@ export function startNotificationPoller() {
 
 // --- Desktop notification bridge (Tauri only) ---
 // Rides on the shared poller — no separate interval.
-if (typeof window !== 'undefined' && /** @type {any} */ (window).__TAURI__?.core) {
+if (isTauri()) {
   async function _sendDesktopNotification(title, body) {
     try {
-      const invoke = /** @type {any} */ (window).__TAURI__.core.invoke;
+      const { invoke } = await import('@tauri-apps/api/core');
       let granted = await invoke('plugin:notification|is_permission_granted');
       if (!granted) {
         const perm = await invoke('plugin:notification|request_permission');

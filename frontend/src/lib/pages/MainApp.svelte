@@ -11,6 +11,7 @@
   import { logbookStore } from '../stores/logbook.svelte.js';
   import { capabilitiesStore } from '../stores/capabilities.svelte.js';
   import { startNotificationPoller } from '../stores/notifications.js';
+  import { desktopBridge } from '../desktop/bridge.svelte.js';
   import { initDesktopFocusRefresh } from '../utils/desktopFocusRefresh.svelte.js';
   import { api } from '../api.js';
   import { t } from '../stores/i18n.svelte.js';
@@ -67,6 +68,9 @@
   let isResizingTerminal = $state(false);
   let resizeStartX = $state(0);
   let resizeStartPercent = $state(50);
+  let PomodoroSettingsModalComponent = $state(null);
+  let AboutModalComponent = $state(null);
+  let desktopModalLoading = $state(false);
 
   async function loadTerminalPanel() {
     if (TerminalPanelComponent || terminalLoading) return;
@@ -85,6 +89,27 @@
     terminalStore.toggle();
     if (!TerminalPanelComponent) {
       loadTerminalPanel();
+    }
+  }
+
+  async function loadDesktopModal(modal) {
+    if (desktopModalLoading) return;
+    if (modal === 'pomodoro-settings' && PomodoroSettingsModalComponent) return;
+    if (modal === 'about' && AboutModalComponent) return;
+
+    desktopModalLoading = true;
+    try {
+      if (modal === 'pomodoro-settings') {
+        const module = await import('../dialogs/PomodoroSettingsModal.svelte');
+        PomodoroSettingsModalComponent = module.default;
+      } else if (modal === 'about') {
+        const module = await import('../dialogs/AboutModal.svelte');
+        AboutModalComponent = module.default;
+      }
+    } catch (err) {
+      console.error('Failed to load desktop modal:', err);
+    } finally {
+      desktopModalLoading = false;
     }
   }
 
@@ -612,6 +637,7 @@
     // backend changes (CLI edits, other users, agents) appear without a
     // manual reload. Browser-only no-op.
     initDesktopFocusRefresh();
+    desktopBridge.init();
 
     // Start the shared notification poller (feeds tray, toasts, and the
     // new-notification bus used by item views to refresh instantly).
@@ -807,6 +833,12 @@
   $effect(() => {
     if (terminalState.visible && !TerminalPanelComponent) {
       loadTerminalPanel();
+    }
+  });
+
+  $effect(() => {
+    if (desktopBridge.modal) {
+      loadDesktopModal(desktopBridge.modal);
     }
   });
 
@@ -1215,6 +1247,18 @@
 
 <!-- Global Confirmation Dialog -->
 <GlobalConfirmDialog />
+
+{#if desktopBridge.modal === 'pomodoro-settings' && PomodoroSettingsModalComponent}
+  <PomodoroSettingsModalComponent
+    show={true}
+    onclose={() => desktopBridge.close()}
+  />
+{:else if desktopBridge.modal === 'about' && AboutModalComponent}
+  <AboutModalComponent
+    show={true}
+    onclose={() => desktopBridge.close()}
+  />
+{/if}
 
 <!-- Floating Timer -->
 <FloatingTimer />

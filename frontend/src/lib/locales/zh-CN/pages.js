@@ -24,6 +24,7 @@ export default {
     menuRename: 'Rename',
     menuMove: 'Move',
     menuPermissions: 'Permissions',
+    menuHistory: 'History',
     menuPrint: 'Print',
     menuArchive: 'Archive',
 
@@ -32,6 +33,21 @@ export default {
       back: 'Back to page',
       loading: 'Preparing page for print…',
       error: 'Failed to load page.',
+    },
+
+    // Revision history drawer
+    history: {
+      title: 'Revision history',
+      empty: 'No revisions yet.',
+      loadError: 'Failed to load revision history.',
+      restoreTitle: 'Restore revision #{rev}?',
+      restoreMessage:
+        'This will replace the current page body with the content of the selected revision and create a new revision recording the restore.',
+      restoreConfirm: 'Restore',
+      restoreAction: 'Restore #{rev}',
+      restoring: 'Restoring…',
+      restoredOK: 'Restored revision #{rev}.',
+      restoreError: 'Failed to restore revision.',
     },
 
     // Page pane
@@ -77,6 +93,24 @@ export default {
     archiveMessage:
       'This archives the page and every child page. Phase 1 has no undo for this action.',
     archiveConfirm: 'Archive',
+
+    // Archived pages list (admin-only full-page view opened from the sidebar header)
+    archivedOpenAria: 'View archived pages',
+    archivedHeading: 'Archived pages',
+    archivedSubtitle: 'Review and restore pages that were previously archived.',
+    archivedBack: 'Back to pages',
+    archivedEmpty: 'No archived pages',
+    archivedColTitle: 'Title',
+    archivedColArchivedAt: 'Archived',
+    archivedColArchivedBy: 'Archived by',
+    archivedUnarchive: 'Unarchive',
+    archivedUnarchiveTitle: 'Unarchive "{title}"?',
+    archivedUnarchiveMessage:
+      'The page reappears in the tree. If its parent is still archived, the page stays hidden until you unarchive the parent too.',
+    archivedUnarchiveConfirm: 'Unarchive',
+    archivedUnarchiveOK: 'Restored "{title}"',
+    archivedLoadError: 'Failed to load archived pages',
+    archivedUnarchiveError: 'Failed to unarchive page',
 
     // Move dialog
     moveTitle: 'Move "{title}"',
@@ -152,5 +186,19 @@ export default {
     toggleSubtreeAria: 'Toggle children of {title}',
     expandAllAria: 'Expand all',
     collapseAllAria: 'Collapse all',
+
+    // Linked work items button + popover (top-right on page detail)
+    workItemsButton: 'Work items',
+    workItemsAria: 'Show linked work items',
+    workItemsEmpty: 'No work items link here yet',
+    workItemsLoading: 'Loading work items…',
+    workItemsTitle: 'Work items',
+    addWorkItem: 'Add work item',
+    addWorkItemCancel: 'Cancel',
+    addWorkItemSearchPlaceholder: 'Search work items…',
+    removeWorkItemLink: 'Unlink work item',
+    workItemsErrorLoad: 'Failed to load linked work items',
+    workItemsErrorLink: 'Failed to link work item',
+    workItemsErrorUnlink: 'Failed to unlink work item',
   },
 };

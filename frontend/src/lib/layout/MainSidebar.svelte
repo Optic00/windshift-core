@@ -5,6 +5,7 @@
   import { aiStore } from '../stores/aiStore.svelte.js';
   import { getShortcutDisplay } from '../utils/keyboardShortcuts.js';
   import { workspaceIconMap } from '../utils/icons.js';
+  import { isTauri as getIsTauri } from '../utils/isTauri.js';
   import DropdownMenu from './DropdownMenu.svelte';
   import Tooltip from '../components/Tooltip.svelte';
   import NavLink from './NavLink.svelte';
@@ -24,7 +25,7 @@
     onToggleTerminal = () => {}
   } = $props();
 
-  const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+  const isTauri = getIsTauri();
 
   let workspaceSearchQuery = $state('');
 

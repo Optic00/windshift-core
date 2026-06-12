@@ -1,6 +1,15 @@
 #!/bin/bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Source local .env if present (for APPLE_SIGNING_IDENTITY, APPLE_PASSWORD_OP_REF, etc.)
+for env_file in "$SCRIPT_DIR/.env" "$SCRIPT_DIR/../desktop/.env"; do
+    if [ -f "$env_file" ]; then
+        set -a; source "$env_file"; set +a
+    fi
+done
+
 # =============================================================================
 # Windshift Release Script
 # =============================================================================
@@ -515,6 +524,7 @@ build_desktop_mac() {
         APPLE_PASSWORD=$(op item get "$APPLE_PASSWORD_OP_REF" --fields label=password --reveal) || {
             die "Failed to read APPLE_PASSWORD from 1Password (item: $APPLE_PASSWORD_OP_REF). Is 'op' signed in?"
         }
+        export APPLE_PASSWORD
     fi
 
     # Surface the signing posture so a silent unsigned build doesn't surprise anyone.

@@ -26,6 +26,7 @@ export const SUPPORTED_LOCALES = [
 // Reactive state using Svelte 5 runes
 let locale = $state(DEFAULT_LOCALE);
 let translations = $state({});
+let fallbackTranslations = $state({});
 let loading = $state(false);
 
 // Derived state
@@ -59,6 +60,15 @@ function interpolate(str, params = {}) {
   });
 }
 
+function getTranslationValue(source, key, params = {}) {
+  if (params.count !== undefined) {
+    const pluralKey = params.count === 1 ? `${key}_one` : `${key}_other`;
+    return getNestedValue(source, pluralKey) ?? getNestedValue(source, key);
+  }
+
+  return getNestedValue(source, key);
+}
+
 /**
  * Get translation for a key with optional interpolation and pluralization
  * @param {string} key - Translation key (dot notation)
@@ -66,18 +76,10 @@ function interpolate(str, params = {}) {
  * @returns {string}
  */
 export function t(key, params = {}) {
-  let value;
+  let value = getTranslationValue(translations, key, params);
 
-  // Handle pluralization
-  if (params.count !== undefined) {
-    const pluralKey = params.count === 1 ? `${key}_one` : `${key}_other`;
-    value = getNestedValue(translations, pluralKey);
-    if (!value) {
-      // Fall back to base key if plural variant not found
-      value = getNestedValue(translations, key);
-    }
-  } else {
-    value = getNestedValue(translations, key);
+  if (value === undefined && locale !== DEFAULT_LOCALE) {
+    value = getTranslationValue(fallbackTranslations, key, params);
   }
 
   // Return key if translation not found (helps identify missing translations)
@@ -102,7 +104,9 @@ export function translateError(error) {
 
   if (code) {
     // Look up translation for error code
-    const translation = getNestedValue(translations, `errors.${code}`);
+    const translation =
+      getNestedValue(translations, `errors.${code}`) ??
+      getNestedValue(fallbackTranslations, `errors.${code}`);
     if (translation) {
       // Interpolate details if available
       return interpolate(translation, error.details || {});
@@ -118,6 +122,15 @@ export function translateError(error) {
   return t('errors.INTERNAL_ERROR');
 }
 
+async function loadFallbackTranslations() {
+  if (Object.keys(fallbackTranslations).length > 0) {
+    return;
+  }
+
+  const module = await import(`../locales/${DEFAULT_LOCALE}/index.js`);
+  fallbackTranslations = module.default;
+}
+
 /**
  * Load translations for a locale
  * @param {string} localeCode - Locale code to load
@@ -126,9 +139,16 @@ async function loadTranslations(localeCode) {
   loading = true;
 
   try {
+    if (localeCode !== DEFAULT_LOCALE) {
+      await loadFallbackTranslations();
+    }
+
     // Dynamic import for lazy loading
     const module = await import(`../locales/${localeCode}/index.js`);
     translations = module.default;
+    if (localeCode === DEFAULT_LOCALE) {
+      fallbackTranslations = module.default;
+    }
     locale = localeCode;
 
     // Persist to localStorage
