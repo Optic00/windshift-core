@@ -13,7 +13,7 @@
     ontoggle,
     ondelete,
     onviewlogs,
-    onexecute
+    onexecute = null
   } = $props();
 </script>
 

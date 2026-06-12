@@ -15,8 +15,6 @@
     return data.statuses.find(s => s.id === statusId);
   }
 
-  let status = $derived(showStatusInfo && data.config?.status_id ? getStatus(data.config.status_id) : null);
-
   let {
     data = {},
     selected = false,
@@ -42,6 +40,8 @@
     showMilestoneInfo = false,
     showAssignmentInfo = false,
   } = $props();
+
+  let status = $derived(showStatusInfo && data.config?.status_id ? getStatus(data.config.status_id) : null);
 
   let positions = $derived(getHandlePositions(flowStore.direction));
 
