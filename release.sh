@@ -503,6 +503,17 @@ build_desktop_mac() {
 
     check_desktop_dependencies
 
+    # Resolve Apple app-specific password from 1Password if configured.
+    # APPLE_PASSWORD_OP_REF is the 1Password item ID.
+    if [ -z "${APPLE_PASSWORD:-}" ] && [ -n "${APPLE_PASSWORD_OP_REF:-}" ]; then
+        if ! command -v op >/dev/null 2>&1; then
+            die "APPLE_PASSWORD_OP_REF is set but 1Password CLI (op) is not installed."
+        fi
+        APPLE_PASSWORD=$(op item get "$APPLE_PASSWORD_OP_REF" --fields label=password --reveal) || {
+            die "Failed to read APPLE_PASSWORD from 1Password (item: $APPLE_PASSWORD_OP_REF). Is 'op' signed in?"
+        }
+    fi
+
     # Surface the signing posture so a silent unsigned build doesn't surprise anyone.
     # Logged before the dry-run guard so dry-run reflects the actual outcome.
     if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
@@ -974,6 +985,7 @@ Desktop signing (optional, only consulted when running on macOS):
   APPLE_SIGNING_IDENTITY  Developer ID Application cert name in your keychain
   APPLE_ID                Apple ID email (for notarization)
   APPLE_PASSWORD          App-specific password (for notarization)
+  APPLE_PASSWORD_OP_REF   1Password item ID — alternative to APPLE_PASSWORD
   APPLE_TEAM_ID           Apple Developer team ID (for notarization)
   RELEASE_GPG_KEY         Optional GPG key id/email used to sign SHA256SUMS.txt
   When unset, the DMG is produced unsigned and unnotarized — Gatekeeper will
