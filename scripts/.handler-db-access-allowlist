@@ -96,3 +96,5 @@ internal/handlers/workspaces_internal.go
 internal/handlers/workspaces_personal.go
 internal/handlers/workspaces_settings.go
 internal/handlers/workspaces_stats.go
+internal/restapi/v1/handlers/time_projects.go
+internal/restapi/v1/handlers/time_worklogs.go
