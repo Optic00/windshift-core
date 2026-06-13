@@ -290,12 +290,21 @@ func PushBranch(ctx context.Context, opts PushOptions) (string, error) {
 	// The checkout is chowned to the agent uid after prepare (WI-388) while a
 	// production runner pushes as root, so git's dubious-ownership check
 	// rejects every operation that opens it — including the commit-less skip
-	// below. Mark this one orchestrator-derived path safe via command-scope
+	// below. Mark these orchestrator-derived paths safe via command-scope
 	// config (protected configuration since git 2.38); the global/system
 	// configs gitOutputEnv pins away could never grant the exception. The
-	// flag also reaches the upload-pack the local fetch spawns inside the
+	// flags also reach the upload-pack the local fetch spawns inside the
 	// checkout, via GIT_CONFIG_PARAMETERS.
-	safeDir := []string{"-c", "safe.directory=" + destAbs}
+	//
+	// The check fires against two different paths for the same checkout: a
+	// command that discovers the repo from its working tree (rev-parse below,
+	// run with cwd=destAbs) reports the worktree root, while the upload-pack
+	// the local fetch invokes by repo path reports the gitdir. List both so
+	// neither shape is rejected.
+	safeDir := []string{
+		"-c", "safe.directory=" + destAbs,
+		"-c", "safe.directory=" + filepath.Join(destAbs, ".git"),
+	}
 	shaOut, err := gitOutputEnv(ctx, gitBin, opts.AllowFileURL, destAbs, nil, append(safeDir, "rev-parse", "refs/heads/"+opts.Branch+"^{commit}")...)
 	if err != nil {
 		return "", fmt.Errorf("rev-parse %s: %w", opts.Branch, err)
