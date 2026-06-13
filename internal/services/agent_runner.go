@@ -143,9 +143,10 @@ func (r *AgentRunner) Run(ctx context.Context, input RunInput, emit EventSink) R
 	streamDone := make(chan struct{})
 	var sawContractEvent atomic.Bool
 	var streamErr error
+	var outcome agentOutcome // written only by the drain goroutine; read after <-streamDone
 	go func() {
 		defer close(streamDone)
-		streamErr = drainAgentStdout(stdout, idleEvent, emit, sawIdle, &sawContractEvent)
+		streamErr = drainAgentStdout(stdout, idleEvent, emit, sawIdle, &sawContractEvent, &outcome)
 	}()
 
 	// Shutdown trigger: whichever fires first — idle from the
@@ -210,7 +211,26 @@ func (r *AgentRunner) Run(ctx context.Context, input RunInput, emit EventSink) R
 			Status: models.AgentRunStatusFailed,
 			Error:  fmt.Sprintf("agent event stream degraded — output drain failed mid-run, trailing events discarded: %v", errors.Join(streamErr, stderrDrainErr)),
 		}
+	case waitErr == nil && outcome.finishOutcome == "blocked":
+		// The agent declared itself blocked via the finish tool — the run
+		// did not deliver and must surface as failed, with the agent's own
+		// summary as the reason.
+		return RunnerResult{
+			Status: models.AgentRunStatusFailed,
+			Error:  "agent blocked: " + outcome.finishSummary,
+		}
+	case waitErr == nil && outcome.lastError != "" && outcome.finishOutcome == "":
+		// The agent emitted an error event (unrecovered stream error, max
+		// turns, …) and never reached a finish: exit 0 notwithstanding, the
+		// run died mid-task. Before this mapping, a broker stream break was
+		// recorded as a clean no_changes success (WI-395).
+		return RunnerResult{
+			Status: models.AgentRunStatusFailed,
+			Error:  "agent error: " + outcome.lastError,
+		}
 	case waitErr == nil:
+		// completed and needs_info both count as a successful run: the agent
+		// either delivered or correctly handed the item back to a human.
 		return RunnerResult{Status: models.AgentRunStatusSucceeded}
 	}
 
@@ -485,6 +505,33 @@ func writeJSONLine(w io.Writer, obj any) error {
 	return err
 }
 
+// agentOutcome accumulates the run-determining events seen on the agent's
+// stdout: the last {"type":"error"} message and the structured
+// {"type":"finish"} outcome/summary. Written only by the drain goroutine and
+// read by the runner after <-streamDone, so no locking is needed.
+type agentOutcome struct {
+	lastError     string
+	finishOutcome string
+	finishSummary string
+}
+
+// observe inspects one parsed agent event. "retry" events are deliberately
+// NOT recorded as errors — they are recovered hiccups the agent already
+// handled; only an unrecovered failure arrives as type "error".
+func (o *agentOutcome) observe(t string, parsed map[string]any) {
+	switch t {
+	case "error":
+		if msg, ok := parsed["message"].(string); ok && msg != "" {
+			o.lastError = msg
+		} else {
+			o.lastError = "agent reported an unspecified error"
+		}
+	case "finish":
+		o.finishOutcome, _ = parsed["outcome"].(string)
+		o.finishSummary, _ = parsed["summary"].(string)
+	}
+}
+
 // drainAgentStdout reads NDJSON events from stdout and forwards each to the
 // sink. JSON-parseable lines pass through verbatim; non-JSON lines are
 // wrapped as {"line": "<raw>"}. When the parsed event's "type" matches
@@ -497,7 +544,7 @@ func writeJSONLine(w io.Writer, obj any) error {
 // line / read error), the rest of the stream is still drained to EOF so the
 // pipe never backs up, and the error is returned so the runner can mark the
 // event stream as degraded instead of silently completing.
-func drainAgentStdout(rd io.Reader, idleEvent string, emit EventSink, sawIdle chan<- struct{}, sawContractEvent *atomic.Bool) error {
+func drainAgentStdout(rd io.Reader, idleEvent string, emit EventSink, sawIdle chan<- struct{}, sawContractEvent *atomic.Bool, outcome *agentOutcome) error {
 	scanner := bufio.NewScanner(rd)
 	scanner.Buffer(make([]byte, 64*1024), maxAgentLine)
 	for scanner.Scan() {
@@ -519,6 +566,7 @@ func drainAgentStdout(rd io.Reader, idleEvent string, emit EventSink, sawIdle ch
 		if t != "" {
 			sawContractEvent.Store(true)
 		}
+		outcome.observe(t, parsed)
 		if t == idleEvent {
 			select {
 			case sawIdle <- struct{}{}:
