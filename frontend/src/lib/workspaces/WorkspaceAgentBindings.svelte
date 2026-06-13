@@ -12,6 +12,7 @@
   import Panel from '../components/Panel.svelte';
   import Button from '../components/Button.svelte';
   import { BasePicker } from '../pickers';
+  import UserPicker from '../pickers/UserPicker.svelte';
   import Select from '../components/Select.svelte';
   import Input from '../components/Input.svelte';
   import Textarea from '../components/Textarea.svelte';
@@ -248,14 +249,19 @@
     }
   }
 
-  let candidateOptions = $derived([
-    { value: null, label: 'Pick an acting identity', disabled: true },
-    ...(candidates || []).map((c) => ({
-      value: c.user_id,
-      label: `${c.name || c.username || `User #${c.user_id}`} — service user`,
-      disabled: false,
-    })),
-  ]);
+  // Shape the candidate service users for UserPicker (searchable combobox):
+  // there can be hundreds, so a plain <select> doesn't scale. The endpoint
+  // only returns the combined git display name; map it into first_name so
+  // the trigger label and the search both work, with email shown beneath.
+  let candidateUsers = $derived(
+    (candidates || []).map((c) => ({
+      id: c.user_id,
+      first_name: c.name || c.username || `User #${c.user_id}`,
+      last_name: '',
+      email: c.email,
+      username: c.username,
+    }))
+  );
 
   let scmConnectionOptions = $derived([
     { value: null, label: '(none)', disabled: false },
@@ -711,7 +717,12 @@
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label for="binding-acting-user" class="block text-xs mb-1" style="color: var(--ds-text-subtle);">Acting identity</label>
-              <Select id="binding-acting-user" bind:value={addActingUserId} options={candidateOptions} />
+              <UserPicker
+                bind:value={addActingUserId}
+                users={candidateUsers}
+                placeholder="Pick a service user"
+                class="w-full"
+              />
             </div>
             <div>
               <label for="binding-target-pool" class="block text-xs mb-1" style="color: var(--ds-text-subtle);">Runs on</label>

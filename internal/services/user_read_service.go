@@ -246,45 +246,6 @@ func (s *UserReadService) Exists(id int) (bool, error) {
 	return exists, nil
 }
 
-// ListOwnedAgents returns the agent users owned by the given user, in
-// display-name order. Used by the workspace agent-bindings picker so a
-// workspace admin can pick an agent they themselves provisioned (which
-// the WI-87 chokepoint accepts without further gating).
-func (s *UserReadService) ListOwnedAgents(ctx context.Context, ownerID int) ([]models.User, error) {
-	if ownerID <= 0 {
-		return []models.User{}, nil
-	}
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, email, username, first_name, last_name, is_active,
-		       avatar_url, timezone, language,
-		       COALESCE(is_agent, false), agent_owner_user_id, created_at
-		FROM users
-		WHERE COALESCE(is_agent, false) = true
-		  AND agent_owner_user_id = ?
-		  AND COALESCE(is_active, true) = true
-		ORDER BY first_name, last_name, username
-	`, ownerID)
-	if err != nil {
-		return nil, fmt.Errorf("list owned agents: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	var out []models.User
-	for rows.Next() {
-		u, err := scanUserRow(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, u)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if out == nil {
-		out = []models.User{}
-	}
-	return out, nil
-}
-
 // ListAllowlistedCentralizedServiceUsers returns the active, unowned
 // agent users (is_agent + agent_owner_user_id IS NULL) that the WI-87
 // global allowlist makes reachable from this workspace — either via a
