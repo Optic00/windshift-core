@@ -290,22 +290,31 @@ func PushBranch(ctx context.Context, opts PushOptions) (string, error) {
 	// The checkout is chowned to the agent uid after prepare (WI-388) while a
 	// production runner pushes as root, so git's dubious-ownership check
 	// rejects every operation that opens it — including the commit-less skip
-	// below. Mark these orchestrator-derived paths safe via command-scope
-	// config (protected configuration since git 2.38); the global/system
-	// configs gitOutputEnv pins away could never grant the exception. The
-	// flags also reach the upload-pack the local fetch spawns inside the
-	// checkout, via GIT_CONFIG_PARAMETERS.
+	// below. The check honors safe.directory ONLY from the system/global config
+	// scope when it runs inside a spawned upload-pack (the one the local fetch
+	// below starts): command-scope `-c safe.directory` is silently ignored
+	// there (observed on git 2.47, the runner image's version; 2.54 happens to
+	// accept it, which masked this). gitOutputEnv pins GIT_CONFIG_NOSYSTEM, so
+	// the only avenue left is a *global* config — hand git a throwaway one
+	// carrying nothing but safe.directory so no host ~/.gitconfig leaks in.
 	//
-	// The check fires against two different paths for the same checkout: a
-	// command that discovers the repo from its working tree (rev-parse below,
-	// run with cwd=destAbs) reports the worktree root, while the upload-pack
-	// the local fetch invokes by repo path reports the gitdir. List both so
-	// neither shape is rejected.
-	safeDir := []string{
-		"-c", "safe.directory=" + destAbs,
-		"-c", "safe.directory=" + filepath.Join(destAbs, ".git"),
+	// The check fires against two paths for the same checkout: a command that
+	// discovers the repo from its working tree (rev-parse below, cwd=destAbs)
+	// reports the worktree root, while the upload-pack the fetch invokes by
+	// repo path reports the gitdir. List both so neither shape is rejected.
+	safeCfgDir, err := mkdirTempPreferring(opts.TempRoot, "windshift-safedir-*")
+	if err != nil {
+		return "", fmt.Errorf("temp safe.directory config: %w", err)
 	}
-	shaOut, err := gitOutputEnv(ctx, gitBin, opts.AllowFileURL, destAbs, nil, append(safeDir, "rev-parse", "refs/heads/"+opts.Branch+"^{commit}")...)
+	defer func() { _ = os.RemoveAll(safeCfgDir) }()
+	safeCfgPath := filepath.Join(safeCfgDir, "gitconfig")
+	safeCfg := fmt.Sprintf("[safe]\n\tdirectory = %s\n\tdirectory = %s\n", destAbs, filepath.Join(destAbs, ".git"))
+	if err := os.WriteFile(safeCfgPath, []byte(safeCfg), 0o600); err != nil {
+		return "", fmt.Errorf("write safe.directory config: %w", err)
+	}
+	safeEnv := []string{"GIT_CONFIG_GLOBAL=" + safeCfgPath}
+
+	shaOut, err := gitOutputEnv(ctx, gitBin, opts.AllowFileURL, destAbs, safeEnv, "rev-parse", "refs/heads/"+opts.Branch+"^{commit}")
 	if err != nil {
 		return "", fmt.Errorf("rev-parse %s: %w", opts.Branch, err)
 	}
@@ -323,7 +332,7 @@ func PushBranch(ctx context.Context, opts PushOptions) (string, error) {
 		return "", fmt.Errorf("init sanitized push repo: %w", err)
 	}
 	fetchSpec := fmt.Sprintf("+refs/heads/%s:refs/heads/%s", opts.Branch, opts.Branch)
-	if _, err := gitOutputEnv(ctx, gitBin, true, tmp, nil, append(safeDir, "fetch", "--no-tags", "--no-recurse-submodules", destAbs, fetchSpec)...); err != nil {
+	if _, err := gitOutputEnv(ctx, gitBin, true, tmp, safeEnv, "fetch", "--no-tags", "--no-recurse-submodules", destAbs, fetchSpec); err != nil {
 		return "", fmt.Errorf("fetch branch into sanitized push repo: %w", err)
 	}
 	fetchedOut, err := gitOutputEnv(ctx, gitBin, opts.AllowFileURL, tmp, nil, "rev-parse", "refs/heads/"+opts.Branch+"^{commit}")
@@ -535,12 +544,33 @@ func gitOutputEnv(ctx context.Context, gitBinary string, allowFileURL bool, dir 
 	// config (NOSYSTEM) and pin the global config to /dev/null so neither the
 	// host user's ~/.gitconfig nor an injected global is read. Repo-local config
 	// is still read by git, but the dangerous keys are overridden above.
-	cmd.Env = append(cmd.Environ(),
+	//
+	// A caller may override the global config via GIT_CONFIG_GLOBAL in extraEnv:
+	// PushBranch points it at a throwaway config carrying only safe.directory,
+	// the one scope git's early dubious-ownership check honors in a spawned
+	// upload-pack (see PushBranch). Honor that override here — and strip any
+	// inherited GIT_CONFIG_GLOBAL first, because glibc/musl getenv returns the
+	// first match, so a duplicate left earlier in the slice would win.
+	globalConfig := "/dev/null"
+	for _, e := range extraEnv {
+		if v, ok := strings.CutPrefix(e, "GIT_CONFIG_GLOBAL="); ok {
+			globalConfig = v
+		}
+	}
+	env := make([]string, 0, len(cmd.Environ())+4+len(extraEnv))
+	for _, e := range cmd.Environ() {
+		if strings.HasPrefix(e, "GIT_CONFIG_GLOBAL=") {
+			continue // set explicitly below
+		}
+		env = append(env, e)
+	}
+	env = append(env,
 		"GIT_ALLOW_PROTOCOL="+allowedProtocols,
 		"GIT_CONFIG_NOSYSTEM=1",
-		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_GLOBAL="+globalConfig,
 		"GIT_TERMINAL_PROMPT=0",
 	)
+	cmd.Env = env
 	cmd.Env = append(cmd.Env, extraEnv...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
