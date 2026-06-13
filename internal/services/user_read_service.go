@@ -262,9 +262,9 @@ func (s *UserReadService) ListAllowlistedCentralizedServiceUsers(ctx context.Con
 		       COALESCE(u.is_agent, false), u.agent_owner_user_id, u.created_at
 		FROM users u
 		INNER JOIN global_agent_acting_user_allowlist a ON a.user_id = u.id
-		WHERE COALESCE(u.is_agent, 0) = 1
+		WHERE COALESCE(u.is_agent, false) = true
 		  AND u.agent_owner_user_id IS NULL
-		  AND COALESCE(u.is_active, 1) = 1
+		  AND COALESCE(u.is_active, true) = true
 		  AND (a.workspace_id IS NULL OR a.workspace_id = ?)
 		GROUP BY u.id, u.email, u.username, u.first_name, u.last_name, u.is_active,
 		         u.avatar_url, u.timezone, u.language, u.is_agent, u.agent_owner_user_id, u.created_at
