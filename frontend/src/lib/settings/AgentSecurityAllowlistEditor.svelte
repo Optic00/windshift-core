@@ -13,6 +13,7 @@
   import UserPicker from '../pickers/UserPicker.svelte';
   import WorkspacePicker from '../pickers/WorkspacePicker.svelte';
   import Input from '../components/Input.svelte';
+  import Button from '../components/Button.svelte';
   import ConfirmWithReasonDialog from '../dialogs/ConfirmWithReasonDialog.svelte';
   import DescriptionText from '../components/DescriptionText.svelte';
   import { errorToast } from '../stores/toasts.svelte.js';
@@ -227,20 +228,18 @@
           <Input id="add-reason" size="small" class="min-h-[38px]" bind:value={addReason} placeholder="e.g. pilot rollout for acme-agent" />
         </div>
         <div class="md:col-span-1">
-          <button
-            type="button"
-            onclick={addEntry}
+          <!-- shortcut-guard-exempt: admin settings tab action, not a primary global-create surface -->
+          <Button
+            variant="primary"
+            fullWidth
+            icon={Plus}
+            loading={adding}
             disabled={!canAdd}
-            class="w-full min-h-[38px] inline-flex items-center justify-center gap-1 px-3 py-2 rounded text-sm font-medium disabled:opacity-50"
-            style="background-color: var(--ds-interactive); color: var(--ds-text-inverse);"
+            onclick={addEntry}
+            class="min-h-[38px]"
           >
-            {#if adding}
-              <Loader2 class="w-4 h-4 animate-spin" />
-            {:else}
-              <Plus class="w-4 h-4" />
-            {/if}
             Add
-          </button>
+          </Button>
         </div>
       </div>
     </div>
