@@ -45,10 +45,26 @@ func (g *RunGrants) AllowsGitRepo(repo string) bool {
 	return g != nil && g.Git != nil && g.Git.Repo == repo
 }
 
-// AllowsGitPush reports whether the run may push the given ref (exact match
-// against the single granted ref).
+// AllowsGitPush reports whether the run may push the given ref to repo. The
+// push is gated to the single branch named in the grant. git-receive-pack
+// always sends the fully-qualified ref ("refs/heads/agent-runs/run-7"), while
+// the grant may store that branch either short ("agent-runs/run-7", as the run
+// service mints it) or already qualified — so both sides are normalized to
+// refs/heads/<branch> before the exact match. A tag or any other ref class
+// never collapses onto a branch grant, so this stays a single-branch gate.
 func (g *RunGrants) AllowsGitPush(repo, ref string) bool {
-	return g.AllowsGitRepo(repo) && g.Git.Ref != "" && g.Git.Ref == ref
+	return g.AllowsGitRepo(repo) && g.Git.Ref != "" &&
+		qualifyBranchRef(g.Git.Ref) == qualifyBranchRef(ref)
+}
+
+// qualifyBranchRef returns ref in fully-qualified form, treating a bare name as
+// a branch (refs/heads/<name>). An already-qualified ref (refs/heads/, refs/tags/,
+// any refs/*) is returned unchanged, so a branch grant never matches a tag.
+func qualifyBranchRef(ref string) string {
+	if ref == "" || strings.HasPrefix(ref, "refs/") {
+		return ref
+	}
+	return "refs/heads/" + ref
 }
 
 // AllowsSecret reports whether the run may fetch the credential with the
