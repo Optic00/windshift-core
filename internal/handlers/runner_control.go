@@ -218,10 +218,13 @@ func (h *RunnerControlHandler) Result(w http.ResponseWriter, r *http.Request) {
 		respondBadRequest(w, r, "invalid request body")
 		return
 	}
-	// Error renders in the run detail view; the rest are identifier-shaped
-	// (container id, branch name, commit sha). Status is enum-validated below.
+	// Error and Summary render as prose (Summary becomes the PR note, WI-400);
+	// the rest are identifier-shaped (container id, branch name, commit sha).
+	// Summary is agent-generated, so RichText strips HTML and caps its length
+	// before it reaches an SCM PR body. Status is enum-validated below.
 	sanitize.ApplyAll(
 		sanitize.Pair{Target: &req.Error, Policy: sanitize.RichText},
+		sanitize.Pair{Target: &req.Summary, Policy: sanitize.RichText},
 		sanitize.Pair{Target: &req.ContainerID, Policy: sanitize.ShortIdentifier},
 		sanitize.Pair{Target: &req.Branch, Policy: sanitize.ShortIdentifier},
 		sanitize.Pair{Target: &req.BaseCommit, Policy: sanitize.ShortIdentifier},
@@ -242,6 +245,7 @@ func (h *RunnerControlHandler) Result(w http.ResponseWriter, r *http.Request) {
 			ContainerID: req.ContainerID,
 			Branch:      req.Branch,
 			BaseCommit:  req.BaseCommit,
+			Summary:     req.Summary,
 		}, req.Branch, req.BaseCommit); err != nil {
 			respondInternalError(w, r, err)
 			return

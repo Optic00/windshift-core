@@ -45,6 +45,10 @@ type RunnerResult struct {
 	// for runs that produced no branch.
 	Branch     string
 	BaseCommit string
+	// Summary is the agent's finish summary, surfaced as the PR note (WI-400).
+	// Empty when the agent emitted no summary. Agent-generated text — bound and
+	// sanitize before it reaches an SCM PR body.
+	Summary string
 }
 
 // RunInput is what RunService hands to a Runner when work is admitted:
@@ -199,6 +203,9 @@ type PostRunInfo struct {
 	// PR hook uses it as the credential principal on OAuth SCM connections
 	// (WI-275).
 	TriggeredByUserID int
+	// Summary is the agent's finish summary, rendered as the PR note (WI-400).
+	// Already sanitized + bounded by the time it reaches the hook.
+	Summary string
 }
 
 // BindingInputsResolver derives a binding-backed run's per-run token spec,
@@ -531,6 +538,7 @@ func (s *RunService) FinalizeRemote(ctx context.Context, runID int, result Runne
 		Branch:            branch,
 		BaseCommit:        baseCommit,
 		TriggeredByUserID: triggeredBy,
+		Summary:           result.Summary,
 	})
 	return nil
 }

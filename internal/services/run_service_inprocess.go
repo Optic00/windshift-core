@@ -293,6 +293,7 @@ func (s *RunService) Report(ctx context.Context, runID int, result RunnerResult)
 			Branch:            branch,
 			BaseCommit:        baseCommit,
 			TriggeredByUserID: req.TriggeredByUserID,
+			Summary:           result.Summary,
 		})
 	}
 

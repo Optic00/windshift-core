@@ -230,8 +230,9 @@ func (r *AgentRunner) Run(ctx context.Context, input RunInput, emit EventSink) R
 		}
 	case waitErr == nil:
 		// completed and needs_info both count as a successful run: the agent
-		// either delivered or correctly handed the item back to a human.
-		return RunnerResult{Status: models.AgentRunStatusSucceeded}
+		// either delivered or correctly handed the item back to a human. The
+		// agent's own finish summary rides along as the PR note (WI-400).
+		return RunnerResult{Status: models.AgentRunStatusSucceeded, Summary: outcome.finishSummary}
 	}
 
 	exitCode := -1

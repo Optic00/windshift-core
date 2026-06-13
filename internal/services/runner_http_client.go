@@ -76,6 +76,7 @@ type ReportRequest struct {
 	ContainerID string `json:"container_id,omitempty"`
 	Branch      string `json:"branch,omitempty"`
 	BaseCommit  string `json:"base_commit,omitempty"`
+	Summary     string `json:"summary,omitempty"` // agent finish summary, rendered as the PR note (WI-400)
 }
 
 // HeartbeatResponse is returned from POST /runner/heartbeat. Abort lists the
@@ -222,6 +223,7 @@ func (c *HTTPOrchestratorClient) Report(ctx context.Context, runID int, result R
 		ContainerID: result.ContainerID,
 		Branch:      result.Branch,
 		BaseCommit:  result.BaseCommit,
+		Summary:     result.Summary,
 	}
 	base := context.WithoutCancel(ctx)
 	url := fmt.Sprintf("%s/runner/runs/%d/result", c.baseURL, runID)
