@@ -717,7 +717,7 @@ func (s *Server) initialize() error {
 	var codingRunSvc *services.RunService
 	if cfg.CodingAgent.Enabled {
 		var bootErr error
-		codingRunSvc, bootErr = bootCodingAgentRunService(s.db, tokenManager, agentBindingRepo, scmCredResolver)
+		codingRunSvc, bootErr = bootCodingAgentRunService(s.db, tokenManager, agentBindingRepo, scmCredResolver, promptStore.Get(llm.PromptCodingAgentInitial))
 		if bootErr != nil {
 			slog.Warn("coding-agent harness disabled: failed to construct RunService",
 				slog.String("component", "coding-agent"),
@@ -2115,7 +2115,9 @@ func openPRViaCredentialResolver(cr *scm.CredentialResolver) services.OpenPRFn {
 }
 
 // bootCodingAgentRunService builds the orchestration-only WI-89 + WI-90
-// RunService when cfg.CodingAgent.Enabled is set: the per-run token minter and
+// RunService when cfg.CodingAgent.Enabled is set: initialPrompt is the static
+// coding-agent operational prompt the remote runner hands the agent as its
+// first message (per-binding suffixes append to it); the per-run token minter and
 // the post-run hook that opens a draft PR (via either GitHub or Gitea,
 // transparently) and writes back an item_scm_links row. The service queues
 // runs, enriches remote claims (PrepareRemoteClaim), and finalizes remote
@@ -2128,6 +2130,7 @@ func bootCodingAgentRunService(
 	tm *auth.TokenManager,
 	bindings *repository.WorkspaceAgentBindingRepository,
 	cr *scm.CredentialResolver,
+	initialPrompt string,
 ) (*services.RunService, error) {
 	tokens, err := services.NewRunTokenService(tm)
 	if err != nil {
@@ -2167,8 +2170,9 @@ func bootCodingAgentRunService(
 	}
 	// Orchestration-only: no Runner, so NewRunService starts no worker pool.
 	runSvc, err := services.NewRunService(runRepo, services.RunServiceOptions{
-		Tokens:      tokens,
-		PostRunHook: prSvc,
+		Tokens:        tokens,
+		PostRunHook:   prSvc,
+		InitialPrompt: initialPrompt,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("coding-agent run service: %w", err)
