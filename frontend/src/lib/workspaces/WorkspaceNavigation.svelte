@@ -16,7 +16,7 @@
     IconPencil as Pencil,
   } from '@tabler/icons-svelte-runes';
   import { workspaceIconMap } from '../utils/icons.js';
-  import { workspaceViewItems, workspaceOnlyViews, testNavigationItems } from '../navigation/workspaceNavigation.js';
+  import { workspaceViewItems, workspaceOnlyViews, testNavigationItems, workspaceSettingsItems, workspaceSettingsViews, workspaceSettingsRoute } from '../navigation/workspaceNavigation.js';
   import { navigate, currentRoute } from '../router.js';
   import { currentWorkspace, workspacePermissions } from '../stores';
   import { moduleSettings } from '../stores/moduleSettings.js';
@@ -24,6 +24,8 @@
   import DropdownMenu from '../layout/DropdownMenu.svelte';
   import Tooltip from '../components/Tooltip.svelte';
   import PagesNavSidebar from '../features/pages/PagesNavSidebar.svelte';
+  import WorkspaceAdminNav from './WorkspaceAdminNav.svelte';
+  import { t } from '../stores/i18n.svelte.js';
   import { workspaceGradientIndex, applyToAllViews, loadWorkspaceGradient, getGradientStyle } from '../stores/workspaceGradient.svelte.js';
   import { useEventListener } from 'runed';
   import { uiStore } from '../stores/ui.svelte.js';
@@ -40,16 +42,8 @@
     { icon: Sparkles, label: 'Plan My Day', route: '/personal/plan', view: 'personal-plan' },
   ];
 
-  const SETTINGS_VIEWS = [
-    'workspace-settings',
-    'workspace-settings-general',
-    'workspace-settings-categories',
-    'workspace-settings-members',
-    'workspace-settings-configuration',
-    'workspace-settings-source-control',
-    'workspace-settings-issue-sync',
-    'workspace-settings-danger',
-  ];
+  // Full list of workspace admin route views (registry-driven).
+  const SETTINGS_VIEWS = workspaceSettingsViews;
 
   let sidebarWidth = $derived($uiStore.wsSidebarWidth);
   let isCollapsed = $derived($uiStore.wsSidebarCollapsed);
@@ -122,6 +116,7 @@
     'test-reports'
   ]);
   const activeTestNavId = $derived.by(() => getActiveTestNavId($currentRoute));
+  const isSettingsView = $derived(SETTINGS_VIEWS.includes($currentRoute.view));
   const defaultCollectionView = workspaceViewItems[0]?.id || 'backlog';
 
   // Permission-based visibility
@@ -437,7 +432,7 @@
   {/if}
 {/snippet}
 
-{#snippet workspaceHeader({ withBottomMargin = true, pagesBackLink = false } = {})}
+{#snippet workspaceHeader({ withBottomMargin = true, backLink = false } = {})}
   <div class="px-4 {withBottomMargin ? 'mb-4' : ''} pb-4 border-b" style="border-color: var(--ds-border);">
     <div class="flex items-center gap-3">
       {@render workspaceAvatar(false)}
@@ -447,10 +442,10 @@
             {$currentWorkspace?.name || 'Workspace'}
           </div>
         </Tooltip>
-        {#if pagesBackLink}
-          <a class="workspace-header-back-link" href={`/workspaces/${workspaceId}`}>
+        {#if backLink}
+          <a class="workspace-header-back-link" href={`/workspaces/${workspaceId}`} data-testid="workspace-back-link">
             <ArrowLeft size={13} />
-            <span>Back to workspace</span>
+            <span>{t('workspaceSettings.backToWorkspace')}</span>
           </a>
         {:else if $currentWorkspace?.is_personal}
           <div class="text-xs text-orange-600">Personal</div>
@@ -508,7 +503,16 @@
       {@render workspaceAvatar(true)}
     </div>
 
-    {#if $currentWorkspace?.is_personal}
+    {#if isSettingsView}
+      <!-- Collapsed admin rail: back arrow + a module icon per settings page. -->
+      <div class="flex flex-col items-center space-y-1 mt-6">
+        {@render collapsedNavIcon({ href: `/workspaces/${workspaceId}`, label: t('workspaceSettings.backToWorkspace'), icon: ArrowLeft, isActive: false })}
+        {@render sectionDivider()}
+        {#each workspaceSettingsItems as item}
+          {@render collapsedNavIcon({ href: workspaceSettingsRoute(workspaceId, item.id), label: t(item.labelKey), icon: item.icon, isActive: $currentRoute.view === item.view })}
+        {/each}
+      </div>
+    {:else if $currentWorkspace?.is_personal}
       <div class="flex flex-col items-center space-y-1 mt-6">
         {#each PERSONAL_NAV_ITEMS as item}
           {@render collapsedNavIcon({ href: item.route, label: item.label, icon: item.icon, isActive: $currentRoute.view === item.view })}
@@ -557,13 +561,27 @@
 
     {@render resizeHandle()}
   </div>
+{:else if isSettingsView}
+  <!-- Workspace admin drilldown: keep the workspace identity header (with a
+       back link) and swap the body for the folded admin module nav. -->
+  <div
+    class="sidebar-mode-panel relative h-full flex-shrink-0 {sidebarBgClass} border-r flex flex-col py-4"
+    style="width: {sidebarWidth}px; min-width: {MIN_WIDTH}px; max-width: {MAX_WIDTH}px; {sidebarBgStyle}"
+    data-testid="workspace-admin-sidebar"
+  >
+    {@render workspaceHeader({ withBottomMargin: false, backLink: true })}
+    <div class="flex flex-1 min-h-0">
+      <WorkspaceAdminNav {workspaceId} />
+    </div>
+    {@render resizeHandle()}
+  </div>
 {:else if $currentRoute.view === 'workspace-pages' || $currentRoute.view === 'workspace-pages-archived'}
   <!-- Pages drilldown keeps the common workspace identity header and swaps the body for the page tree. -->
   <div
     class="sidebar-mode-panel relative h-full flex-shrink-0 {sidebarBgClass} border-r flex flex-col py-4"
     style="width: {sidebarWidth}px; min-width: {MIN_WIDTH}px; max-width: {MAX_WIDTH}px; {sidebarBgStyle}"
   >
-    {@render workspaceHeader({ withBottomMargin: false, pagesBackLink: true })}
+    {@render workspaceHeader({ withBottomMargin: false, backLink: true })}
     <div class="flex flex-1 min-h-0">
       <PagesNavSidebar {workspaceId} embedded />
     </div>

@@ -557,6 +557,19 @@ export default {
       settings: 'Settings',
     },
 
+    // Per-module page header subtitles (folded admin sidebar)
+    headers: {
+      general: 'Basic workspace details and defaults',
+      categories: 'Restrict which project categories apply',
+      members: 'Manage who can access this workspace',
+      configuration: 'Assign configuration sets to this workspace',
+      sourceControl: 'Connect repositories and source control',
+      codingAgents: 'Configure coding agents and their skills',
+      issueSync: 'Sync external issues into this workspace',
+      recurrence: 'Manage recurring item rules',
+      danger: 'Permanently remove this workspace',
+    },
+
     // Access denied
     accessDenied: 'Access Denied',
     accessDeniedDescription: 'You need workspace administrator permissions to access settings.',
