@@ -417,8 +417,8 @@
   {/if}
 {/snippet}
 
-{#snippet workspaceHeader({ withBottomMargin = true, backLink = false } = {})}
-  <div class="px-4 {withBottomMargin ? 'mb-4' : ''} pb-4 border-b" style="border-color: var(--ds-border);">
+{#snippet workspaceHeader({ backLink = false } = {})}
+  <div class="px-4 pb-4 border-b" style="border-color: var(--ds-border);">
     <div class="flex items-center gap-3">
       {@render workspaceAvatar(false)}
       <div class="flex-1 min-w-0">
@@ -554,7 +554,7 @@
     style="width: {sidebarWidth}px; min-width: {MIN_WIDTH}px; max-width: {MAX_WIDTH}px; {sidebarBgStyle}"
     data-testid="workspace-admin-sidebar"
   >
-    {@render workspaceHeader({ withBottomMargin: false, backLink: true })}
+    {@render workspaceHeader({ backLink: true })}
     <div class="flex flex-1 min-h-0">
       <WorkspaceAdminNav {workspaceId} />
     </div>
@@ -566,7 +566,7 @@
     class="sidebar-mode-panel relative h-full flex-shrink-0 {sidebarBgClass} border-r flex flex-col py-4"
     style="width: {sidebarWidth}px; min-width: {MIN_WIDTH}px; max-width: {MAX_WIDTH}px; {sidebarBgStyle}"
   >
-    {@render workspaceHeader({ withBottomMargin: false, backLink: true })}
+    {@render workspaceHeader({ backLink: true })}
     <div class="flex flex-1 min-h-0">
       <PagesNavSidebar {workspaceId} embedded />
     </div>
@@ -577,7 +577,7 @@
   <div class="sidebar-mode-panel relative h-full flex-shrink-0 {sidebarBgClass} border-r flex flex-col py-4" style="width: {sidebarWidth}px; min-width: {MIN_WIDTH}px; max-width: {MAX_WIDTH}px; {sidebarBgStyle}">
     {@render workspaceHeader()}
 
-    <nav class="flex-1 px-4 space-y-2">
+    <nav class="flex-1 px-4 pt-2 space-y-2">
       {#each PERSONAL_NAV_ITEMS as item}
         {@render navLink({ href: item.route, label: item.label, icon: item.icon, isActive: $currentRoute.view === item.view })}
       {/each}
@@ -591,7 +591,7 @@
     {@render workspaceHeader()}
 
     <!-- Collection Selector -->
-    <div class="px-4 mb-6">
+    <div class="px-4 pt-2 mb-6">
       <Tooltip content="Collection" placement="right">
         <DropdownMenu
           triggerText={currentCollectionName}
