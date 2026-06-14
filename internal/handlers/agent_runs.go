@@ -25,7 +25,7 @@ type AgentRunHandler struct {
 }
 
 // NewAgentRunHandler constructs the handler. runs may be nil when the
-// harness is disabled (CodingAgent.RunnerImage unset); in that case the
+// harness is disabled (CodingAgent.Enabled off); in that case the
 // cancel endpoint returns 503 instead of silently dropping the request.
 // items resolves an item's workspace for the item-scoped runs list.
 func NewAgentRunHandler(
@@ -180,7 +180,7 @@ func (h *AgentRunHandler) Events(w http.ResponseWriter, r *http.Request) {
 }
 
 // Cancel requests cancellation of an in-flight run. Returns 503 when the
-// harness's RunService isn't wired (CodingAgent.RunnerImage unset).
+// harness's RunService isn't wired (CodingAgent.Enabled off).
 // Returns 200 even when the run is already terminal; cancellation is
 // idempotent from the API's point of view.
 func (h *AgentRunHandler) Cancel(w http.ResponseWriter, r *http.Request) {

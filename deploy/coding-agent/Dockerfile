@@ -10,8 +10,8 @@
 # This image no longer bakes the retired Node agent, Node/npm, the windshift-guard
 # extension, or an RPC entrypoint — those moved out when the coding agent was
 # replaced by windshift-agent (WI-238). The hardened `docker run` sandbox is
-# still assembled by the orchestrator (DockerAgentRunner) around whichever agent
-# image the operator points CODING_AGENT_RUNNER_IMAGE / WSRUNNER_IMAGE at.
+# still assembled by the windshift-runner (DockerAgentRunner) around whichever
+# agent image the operator points WSRUNNER_IMAGE at.
 #
 # Built from the *repo root* (the build context needs cmd/ws + go.mod):
 #

@@ -15,7 +15,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -34,7 +33,6 @@ import (
 	"windshift/internal/models"
 	"windshift/internal/plugins"
 	"windshift/internal/portalwebauthn"
-	"windshift/internal/repoprep"
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
 	v1 "windshift/internal/restapi/v1"
@@ -675,15 +673,13 @@ func (s *Server) initialize() error {
 	// WI-87/88/89/90 coding-agent harness stack. The acting-identity
 	// chokepoint (WI-87) is constructed first; both the workspace-binding
 	// service and the admin AgentSecurity handler share its repo handle.
-	// When CodingAgent.WorktreeRoot is configured, the harness boots a
-	// production RunService (WI-89): repoprep.Preparer → RunTokenService →
-	// DockerAgentRunner → AgentPRService (WI-90, opens draft PRs on GitHub or
-	// Gitea via scm.Provider). WorktreeRoot is the activation knob — the one
-	// genuinely host-specific value (a writable, bind-mountable host path); the
-	// agent image name defaults in the binary (config.DefaultCodingAgentRunnerImage,
-	// override via CODING_AGENT_RUNNER_IMAGE). Without WorktreeRoot the harness
-	// stays in observer mode — bindings can still be created, the trigger logs
-	// but no run starts.
+	// When CodingAgent.Enabled is set, the harness boots an orchestration-only
+	// RunService (WI-89): RunTokenService → AgentPRService (WI-90, opens draft
+	// PRs on GitHub or Gitea via scm.Provider). It queues runs, enriches remote
+	// claims, and finalizes remote results — but executes nothing on this host.
+	// All runs are dispatched to remote runner pools (windshift-runner). Without
+	// the flag the harness stays in observer mode — bindings can still be
+	// created, the trigger logs but no run starts.
 	agentSecurityRepo := repository.NewAgentSecurityRepository(s.db)
 	agentIdentitySvc, _ := services.NewAgentActingIdentityService(services.NewUserReadService(s.db), agentSecurityRepo)
 	agentBindingRepo := repository.NewWorkspaceAgentBindingRepository(s.db)
@@ -721,7 +717,7 @@ func (s *Server) initialize() error {
 	var codingRunSvc *services.RunService
 	if cfg.CodingAgent.Enabled {
 		var bootErr error
-		codingRunSvc, bootErr = bootCodingAgentRunService(s.db, tokenManager, agentBindingRepo, scmCredResolver, cfg.CodingAgent, promptStore)
+		codingRunSvc, bootErr = bootCodingAgentRunService(s.db, tokenManager, agentBindingRepo, scmCredResolver)
 		if bootErr != nil {
 			slog.Warn("coding-agent harness disabled: failed to construct RunService",
 				slog.String("component", "coding-agent"),
@@ -765,9 +761,9 @@ func (s *Server) initialize() error {
 	agentBindingHandler.SetSkillsRepo(agentSkillRepo)
 	agentSkillHandler := handlers.NewAgentSkillHandler(agentSkillRepo, permService, logger.NewAuditor(s.db))
 	agentRunHandler := handlers.NewAgentRunHandler(repository.NewAgentRunRepository(s.db), codingRunSvc, permService, repository.NewItemRepository(s.db))
-	// Remote-runner control plane (WI-141). Constructed unconditionally:
-	// remote pools do not require the local CodingAgent.RunnerImage, and the
-	// handler 503s when the registry is unavailable.
+	// Remote-runner control plane (WI-141). Constructed unconditionally;
+	// the handler 503s when the registry/run service is unavailable (i.e.
+	// CodingAgent.Enabled is off).
 	runnerRegistry := services.NewRunnerRegistryService(repository.NewRunnerRepository(s.db), nil)
 	runnerControlHandler := handlers.NewRunnerControlHandler(runnerRegistry, repository.NewAgentRunRepository(s.db), codingRunSvc, repository.NewActionRepository(s.db), nil, baseURL)
 	// Agent presence for assignment pickers (WI-272): binding → pool →
@@ -2118,95 +2114,30 @@ func openPRViaCredentialResolver(cr *scm.CredentialResolver) services.OpenPRFn {
 	}
 }
 
-// bootCodingAgentRunService builds the production WI-89 + WI-90 RunService
-// when cfg.CodingAgent.RunnerImage is configured: a DockerAgentRunner
-// spawning windshift-agent containers, the worktree manager, the per-run
-// token minter, and the post-run hook that opens a draft PR (via either
-// GitHub or Gitea, transparently) and writes back an item_scm_links row.
-// Returns an error for any misconfig so the rest of the server still
-// comes up with the harness disabled.
+// bootCodingAgentRunService builds the orchestration-only WI-89 + WI-90
+// RunService when cfg.CodingAgent.Enabled is set: the per-run token minter and
+// the post-run hook that opens a draft PR (via either GitHub or Gitea,
+// transparently) and writes back an item_scm_links row. The service queues
+// runs, enriches remote claims (PrepareRemoteClaim), and finalizes remote
+// results (FinalizeRemote) — but runs no in-process worker pool, so no agent
+// executes on the orchestrator host. All runs are dispatched to remote runner
+// pools (windshift-runner). Returns an error for any misconfig so the rest of
+// the server still comes up with the harness disabled.
 func bootCodingAgentRunService(
 	db database.Database,
 	tm *auth.TokenManager,
 	bindings *repository.WorkspaceAgentBindingRepository,
 	cr *scm.CredentialResolver,
-	cfg config.CodingAgentConfig,
-	promptStore *llm.PromptStore,
 ) (*services.RunService, error) {
-	if cfg.WorktreeRoot == "" {
-		return nil, fmt.Errorf("coding-agent: WorktreeRoot is required when RunnerImage is set")
-	}
-	// The in-process path shells out to git (repo prep/push) and docker
-	// (spawning agent containers). The scratch image ships neither, so runs
-	// claimed in-process there fail one by one with "executable file not
-	// found". Surface that once at boot instead — remote runner pools are
-	// unaffected, so the harness still comes up.
-	dockerBin := cfg.DockerBinary
-	if dockerBin == "" {
-		dockerBin = "docker"
-	}
-	for bin, neededFor := range map[string]string{"git": "repo checkout and push", dockerBin: "spawning agent containers"} {
-		if _, lookErr := exec.LookPath(bin); lookErr != nil {
-			slog.Error("coding-agent: binary not found on PATH; runs claimed by this process will fail until it is available. Either run agents on a separate runner host (windshift-runner) or deploy Windshift where the binary is installed",
-				slog.String("component", "coding-agent"),
-				slog.String("binary", bin),
-				slog.String("needed_for", neededFor),
-			)
-		}
-	}
-	// Ensure the agent egress network exists (WI-311): in-process runs spawn
-	// containers on the same network a remote runner would, and a fresh host
-	// otherwise fails every spawn until the operator hand-creates it.
-	services.EnsureAgentNetwork(context.Background(), func(format string, args ...any) {
-		slog.Warn(fmt.Sprintf(format, args...), slog.String("component", "coding-agent"))
-	}, dockerBin, cfg.Network)
-
-	prep, err := repoprep.New(repoprep.Options{RootDir: cfg.WorktreeRoot})
-	if err != nil {
-		return nil, fmt.Errorf("coding-agent repo preparer: %w", err)
-	}
 	tokens, err := services.NewRunTokenService(tm)
 	if err != nil {
 		return nil, fmt.Errorf("coding-agent token service: %w", err)
 	}
 
-	// The windshift-agent reaches the model only through the run-scoped
-	// llm-proxy; per-run LLM env (LLM_BASE_URL + brokered token) is layered
-	// on by BindingService. LLMModel is the only static fallback, used when
-	// a binding carries no llm_connection_id.
-	staticEnv := map[string]string{}
-	if cfg.LLMModel != "" {
-		staticEnv["LLM_MODEL"] = cfg.LLMModel
-	}
-
-	// Kind-dispatching runner (WI-146): coding_agent runs the windshift-agent
-	// harness on the fixed runner image; action_container / ci_task run the
-	// job's admin image as a plain container. Both get the same baseline
-	// sandbox flags + tunables (WI-238 security Phase 2).
-	runner := &services.KindDispatchRunner{
-		CodingAgent: &services.DockerAgentRunner{
-			Image:         cfg.RunnerImage,
-			DockerBinary:  cfg.DockerBinary,
-			Env:           staticEnv,
-			Network:       cfg.Network,
-			PidsLimit:     cfg.PidsLimit,
-			Memory:        cfg.Memory,
-			CPUs:          cfg.CPUs,
-			InitialPrompt: promptStore.Get(llm.PromptCodingAgentInitial),
-		},
-		Container: &services.ContainerImageRunner{
-			DockerBinary: cfg.DockerBinary,
-			Network:      cfg.Network,
-			PidsLimit:    cfg.PidsLimit,
-			Memory:       cfg.Memory,
-			CPUs:         cfg.CPUs,
-		},
-	}
-
 	// PR-creation post-run hook. cr is the same CredentialResolver
 	// BindingService uses for URL embedding; binding lookups go through
 	// the shared bindings repo so the hook sees the exact row the
-	// trigger fired on.
+	// trigger fired on. It fires for remote runs via FinalizeRemote.
 	prSvc, err := services.NewAgentPRService(services.AgentPRServiceOptions{
 		Bindings: bindings,
 		OpenPR:   openPRViaCredentialResolver(cr),
@@ -2217,12 +2148,12 @@ func bootCodingAgentRunService(
 	}
 
 	runRepo := repository.NewAgentRunRepository(db)
-	// Boot reconciliation (WI-332): local runs exist only in the previous
-	// process's in-memory queue and in-flight registry, so any local run
-	// still queued/running in the DB was orphaned by a crash or kill —
-	// no worker will ever pick it up again, and both reapers skip local
-	// runs by design. Fail them before the new service starts accepting
-	// work, while every local non-terminal row is by definition orphaned.
+	// Boot reconciliation (WI-332): local runs exist only in a previous
+	// process's in-memory queue, so any local run still queued/running in the
+	// DB was orphaned by a crash or kill and no worker will ever pick it up
+	// again. Fail them before the new service starts accepting work. (With the
+	// in-process loop removed, no new local runs are created — this only clears
+	// rows left over from an older build.)
 	if n, recErr := runRepo.ReapOrphanedLocalRuns(context.Background(), time.Now().UTC()); recErr != nil {
 		slog.Warn("coding-agent: reconcile orphaned local runs",
 			slog.String("component", "coding-agent"),
@@ -2234,14 +2165,10 @@ func bootCodingAgentRunService(
 			slog.Int("count", n),
 		)
 	}
-	initialPrompt := promptStore.Get(llm.PromptCodingAgentInitial)
+	// Orchestration-only: no Runner, so NewRunService starts no worker pool.
 	runSvc, err := services.NewRunService(runRepo, services.RunServiceOptions{
-		Runner:        runner,
-		Preparer:      prep,
-		Tokens:        tokens,
-		PostRunHook:   prSvc,
-		InitialPrompt: initialPrompt,
-		GlobalCap:     cfg.GlobalCap,
+		Tokens:      tokens,
+		PostRunHook: prSvc,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("coding-agent run service: %w", err)

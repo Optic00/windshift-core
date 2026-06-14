@@ -274,11 +274,11 @@ type DockerAgentRunner struct {
 	CPUs      string // docker --cpus
 }
 
-// sandboxDefaults are the hardened defaults applied when the operator
+// sandboxDefaults are the hardened defaults applied when the caller
 // has not overridden a tunable. Network defaults to a name the operator
 // is expected to have created with egress restrictions (see
-// deploy/coding-agent/README.md). Operators who knowingly want host
-// egress can set CODING_AGENT_NETWORK=bridge to opt out, loudly.
+// deploy/coding-agent/README.md). The runner (windshift-runner) may set
+// the Network field to "bridge" to opt into host egress, loudly.
 var sandboxDefaults = struct {
 	Network   string
 	PidsLimit int

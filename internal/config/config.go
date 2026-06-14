@@ -119,48 +119,21 @@ type LLMConfig struct {
 	PromptsDir    string
 }
 
-// DefaultCodingAgentRunnerImage is the windshift-agent image the in-process
-// runner spawns when CODING_AGENT_RUNNER_IMAGE is unset. The image name is a
-// standard, non-host-specific value, so it lives in the binary; operators only
-// override it to pin a custom build.
-const DefaultCodingAgentRunnerImage = "ghcr.io/windshiftapp/windshift-agent:latest"
-
-// DefaultCodingAgentWorktreeRoot is where the in-process runner prepares per-run
-// checkouts when CODING_AGENT_WORKTREE_ROOT is unset — under the conventional
-// container data dir. Override for a different host layout.
-const DefaultCodingAgentWorktreeRoot = "/data/worktrees"
-
 // CodingAgentConfig configures the coding-agent harness (WI-89). The harness is
 // opt-in: set --enable-coding-agent (or CODING_AGENT_ENABLED=true) to activate
-// it. When enabled, the server constructs a production RunService that spawns
-// the windshift-agent harness (the node-free codehamr fork, WI-204) inside
-// RunnerImage, wires it through the BindingService, and the assignee-change
-// trigger fires real runs.
-//
-// Override CODING_AGENT_RUNNER_IMAGE to pin a custom agent build and
-// CODING_AGENT_WORKTREE_ROOT to relocate the per-run checkouts.
+// it. When enabled, the server wires the orchestration surface — the
+// BindingService trigger that queues runs, the /runner/* control plane that
+// remote runner pools register/claim against, and the post-run PR hook — but it
+// does NOT execute agents on the orchestrator host. All runs are dispatched to
+// remote runner pools (windshift-runner); there is no in-process LLM loop.
 //
 // The agent reaches the model only through the llm-proxy broker, so no
-// provider key or provider selection is injected into the container; it
-// needs only an LLM_BASE_URL (set per-run to the run-scoped proxy) and a
-// model id.
-//
-// Sandbox knobs (Network/PidsLimit/Memory/CPUs) layer onto the hardened
-// `docker run` defaults baked into DockerAgentRunner. They are tunables
-// for operator-specific resource budgets, NOT switches that can turn the
-// hardening off.
+// provider key or provider selection is injected; it needs only an
+// LLM_BASE_URL (set per-run to the run-scoped proxy) and a model id, both
+// derived from the binding's LLM connection at claim time.
 type CodingAgentConfig struct {
-	Enabled      bool
-	RunnerImage  string // e.g. "ghcr.io/windshiftapp/windshift-agent:latest"
-	DockerBinary string // defaults to "docker"
-	WorktreeRoot string // absolute host path; required if RunnerImage is set
-	GlobalCap    int    // RunService.GlobalCap; defaults to 8
-	LLMModel     string // fallback env LLM_MODEL for the container when a binding has no llm_connection_id
-	WSAPIURL     string // URL the runner container uses to reach this Windshift API; defaults to BASE_URL
-	Network      string // docker --network value; defaults to "coding-agent-egress" (operator-created, egress-filtered)
-	PidsLimit    int    // docker --pids-limit; defaults to 512
-	Memory       string // docker --memory + --memory-swap; defaults to "4g"
-	CPUs         string // docker --cpus; defaults to "2"
+	Enabled  bool
+	WSAPIURL string // URL the runner reaches this Windshift API on; defaults to BASE_URL
 }
 
 // LogbookConfig holds the URL of the logbook sidecar (if any).

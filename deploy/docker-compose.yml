@@ -39,30 +39,20 @@ services:
       # - DB_SSLMODE=disable
       # --- LLM (uncomment when using llm service) ---
       # - LLM_ENDPOINT=http://llm:8081
-      # --- Coding agents, runner pool (uncomment the windshift-runner service
-      #     + coding-agent network below). The in-network URL makes agent
-      #     containers reach Windshift over the internal egress network: ---
+      # --- Coding agents (uncomment the windshift-runner service + coding-agent
+      #     network below). Windshift orchestrates only — it queues runs and
+      #     serves the runner pool; agents execute on the windshift-runner host,
+      #     never here. Enable the feature with --enable-coding-agent /
+      #     CODING_AGENT_ENABLED=true. The in-network URL lets the runner reach
+      #     Windshift over the internal egress network: ---
+      # - CODING_AGENT_ENABLED=true
       # - CODING_AGENT_WS_API_URL=http://windshift:8080/api
-      # --- Coding agents, local flavor (Windshift spawns agent containers
-      #     itself; requires docker socket + worktree volume below). Also
-      #     uncomment the coding-agent network and use the in-network
-      #     CODING_AGENT_WS_API_URL above. ---
-      # - CODING_AGENT_RUNNER_IMAGE=ghcr.io/windshiftapp/windshift-agent:latest
-      # - CODING_AGENT_WORKTREE_ROOT=/var/lib/windshift/coding-agent-worktrees
     volumes:
       - windshift-data:/data
-      # Coding-agent harness (uncomment with CODING_AGENT_* env above): lets
-      # Windshift spawn the published windshift-agent image. The worktree path must
-      # be the same absolute host path inside Windshift because the host docker
-      # daemon later bind-mounts that path into the runner container.
-      # - /var/run/docker.sock:/var/run/docker.sock
-      # - /var/lib/windshift/coding-agent-worktrees:/var/lib/windshift/coding-agent-worktrees
     # tmpfs for /tmp - the scratch image has no /tmp. Needed for SQLite WAL
-    # mode and as scratch space for the coding-agent runner's git operations.
-    # "exec" matters: Docker mounts tmpfs noexec by default, which would stop
-    # git from running the orchestrator's askpass credential helper. Short
-    # syntax on purpose - the long-syntax "mode: 1777" is parsed as DECIMAL
-    # (mounts as 03361); the short form defaults to a correct sticky 1777.
+    # mode. Short syntax on purpose - the long-syntax "mode: 1777" is parsed as
+    # DECIMAL (mounts as 03361); the short form defaults to a correct sticky
+    # 1777.
     tmpfs:
       - /tmp:exec,size=64M
     restart: unless-stopped

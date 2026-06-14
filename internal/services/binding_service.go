@@ -431,7 +431,7 @@ var ErrBindingNoRepo = errors.New("binding service: binding has no repo configur
 
 // ErrBindingRunnerNotConfigured is returned by StartTestRun when a test run is
 // requested but no RunService is wired — the coding-agent harness is disabled
-// on this server (no RunnerImage / WorktreeRoot).
+// on this server (CodingAgent.Enabled off).
 var ErrBindingRunnerNotConfigured = errors.New("binding service: coding-agent runner not configured")
 
 // ErrBindingTestRunRemotePool is returned by StartTestRun when the binding
@@ -485,6 +485,12 @@ func (s *BindingService) StartTestRun(ctx context.Context, bindingID, workspaceI
 		return 0, ErrBindingTestRunRemotePool
 	}
 	if s.runs == nil {
+		return 0, ErrBindingRunnerNotConfigured
+	}
+	// Test runs execute on the local in-process runtime (they refuse remote
+	// pools above). On an orchestration-only server there is no local runner,
+	// so fail before doing any prep rather than queuing a run nothing claims.
+	if !s.runs.LocalExecutionEnabled() {
 		return 0, ErrBindingRunnerNotConfigured
 	}
 	if s.scmCreds == nil {

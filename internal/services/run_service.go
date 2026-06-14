@@ -248,6 +248,12 @@ const defaultGlobalCap = 8
 // ErrShuttingDown is returned from Start once Shutdown has been called.
 var ErrShuttingDown = errors.New("run service is shutting down")
 
+// ErrLocalRunnerDisabled is returned from Start for a local (non-pool) run when
+// the service runs orchestration-only (no in-process runner). All execution
+// happens on remote runner pools; a binding that resolves to a local run on
+// such a server is a misconfiguration. The run row is left untouched.
+var ErrLocalRunnerDisabled = errors.New("run service: in-process runner is disabled; route this binding to a remote runner pool")
+
 // RunService orchestrates agent runs against the agent_runs table.
 type RunService struct {
 	repo          *repository.AgentRunRepository
@@ -288,9 +294,6 @@ func NewRunService(repo *repository.AgentRunRepository, opts RunServiceOptions) 
 	if repo == nil {
 		return nil, errors.New("run service: repo is required")
 	}
-	if opts.Runner == nil {
-		return nil, errors.New("run service: runner is required")
-	}
 	capacity := opts.GlobalCap
 	if capacity <= 0 {
 		capacity = defaultGlobalCap
@@ -317,11 +320,20 @@ func NewRunService(repo *repository.AgentRunRepository, opts RunServiceOptions) 
 		inflight:      make(map[int]context.CancelFunc),
 		claims:        make(map[int]*claimState),
 	}
+	// Orchestration-only mode (no Runner): the service still queues runs,
+	// enriches remote claims (PrepareRemoteClaim), and finalizes remote
+	// results (FinalizeRemote) + fires the post-run hook — but it runs no
+	// in-process worker pool, so no agent executes on this host. This is the
+	// production wiring: all runs are dispatched to remote runner pools.
+	if opts.Runner == nil {
+		return s, nil
+	}
 	// In-process worker pool (decision #7): `capacity` workers each run
 	// the shared RunWorker loop with RunService itself as the (local)
 	// OrchestratorClient. Pool size is the concurrency cap, which replaced
-	// the old global semaphore. Remote pools (later phases) run the same
-	// RunWorker in the agent binary against the HTTP transport.
+	// the old global semaphore. Remote pools run the same RunWorker in the
+	// agent binary against the HTTP transport. Used by tests that exercise
+	// the local execution path directly.
 	for i := 0; i < capacity; i++ {
 		s.workerWG.Add(1)
 		go func() {
@@ -369,6 +381,12 @@ func (s *RunService) unregisterCancel(runID int) {
 func (s *RunService) Start(ctx context.Context, req RunRequest) (int, error) {
 	if req.WorkspaceID == 0 {
 		return 0, errors.New("run service: workspace_id is required")
+	}
+	// A local (non-pool) run needs the in-process worker pool to execute it.
+	// In orchestration-only mode there is no runner and the queue is never
+	// drained, so reject before inserting a row that would sit queued forever.
+	if req.TargetPoolID == nil && s.runner == nil {
+		return 0, ErrLocalRunnerDisabled
 	}
 	s.mu.Lock()
 	if s.shutdown {
@@ -805,6 +823,14 @@ func (s *RunService) Wait() {
 // for the run.
 func (s *RunService) HasTokens() bool {
 	return s.tokens != nil
+}
+
+// LocalExecutionEnabled reports whether the service runs an in-process worker
+// pool. It is false on an orchestration-only server, where all runs execute on
+// remote runner pools. Callers that can only run locally (binding test runs)
+// use it to fail fast instead of queuing a run nothing will pick up.
+func (s *RunService) LocalExecutionEnabled() bool {
+	return s.runner != nil
 }
 
 // CountRunsForBindingSince proxies to the repository so BindingService
