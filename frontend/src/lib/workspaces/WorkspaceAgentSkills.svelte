@@ -13,10 +13,16 @@
   import Button from '../components/Button.svelte';
   import Checkbox from '../components/Checkbox.svelte';
   import Input from '../components/Input.svelte';
+  import Label from '../components/Label.svelte';
   import Textarea from '../components/Textarea.svelte';
+  import SectionHeader from '../layout/SectionHeader.svelte';
+  import EmptyState from '../components/EmptyState.svelte';
+  import Modal from '../dialogs/Modal.svelte';
+  import ModalHeader from '../dialogs/ModalHeader.svelte';
+  import DialogFooter from '../dialogs/DialogFooter.svelte';
   import ConfirmDialog from '../dialogs/ConfirmDialog.svelte';
   import { errorToast, successToast } from '../stores/toasts.svelte.js';
-  import { getShortcutDisplay, toHotkeyString } from '../utils/keyboardShortcuts.js';
+  import { toHotkeyString } from '../utils/keyboardShortcuts.js';
 
   // onchanged fires after any successful create/update/delete so the
   // bindings panel above can refresh its skill attach-pickers.
@@ -25,8 +31,9 @@
   let loading = $state(true);
   let skills = $state([]);
 
-  // Editor state: null = closed, 0 = creating, >0 = editing that id.
-  let editorFor = $state(null);
+  // Modal state: closed, or open for create (editingId = null) / edit (id).
+  let showModal = $state(false);
+  let editingId = $state(null);
   let formName = $state('');
   let formDescription = $state('');
   let formBody = $state('');
@@ -50,23 +57,26 @@
   onMount(load);
 
   function openCreate() {
-    editorFor = 0;
+    editingId = null;
     formName = '';
     formDescription = '';
     formBody = '';
     formEnabled = true;
+    showModal = true;
   }
 
   function openEdit(skill) {
-    editorFor = skill.id;
+    editingId = skill.id;
     formName = skill.name;
     formDescription = skill.description || '';
     formBody = skill.body || '';
     formEnabled = !!skill.enabled;
+    showModal = true;
   }
 
-  function closeEditor() {
-    editorFor = null;
+  function closeModal() {
+    showModal = false;
+    editingId = null;
   }
 
   let canSave = $derived(!!formName.trim() && !saving);
@@ -81,14 +91,14 @@
     };
     saving = true;
     try {
-      if (editorFor === 0) {
+      if (editingId === null) {
         await agentSkills.create(workspaceId, body);
         successToast('Skill created');
       } else {
-        await agentSkills.update(workspaceId, editorFor, body);
+        await agentSkills.update(workspaceId, editingId, body);
         successToast('Skill updated');
       }
-      closeEditor();
+      closeModal();
       await load();
       onchanged?.();
     } catch (err) {
@@ -122,38 +132,41 @@
 </script>
 
 <Panel padding="spacious">
-  <div class="flex items-center justify-between mb-1">
-    <h4 class="text-sm font-medium flex items-center gap-2" style="color: var(--ds-text);">
-      <BookOpen class="w-4 h-4" style="color: var(--ds-icon-subtle);" />
-      Agent skills
-    </h4>
-    <Button
-      size="sm"
-      icon={Plus}
-      onclick={openCreate}
-      dataTestid="agent-skill-add"
-      keyboardHint="N"
-      hotkeyConfig={{ key: toHotkeyString('agentSkills', 'add'), guard: () => editorFor === null }}
-    >
-      New skill
-    </Button>
-  </div>
-  <p class="text-xs mb-3" style="color: var(--ds-text-subtle);">
-    Markdown knowledge packs for your agents. Attach skills to a binding below; the agent sees each
-    skill's name and description in its prompt and reads the full body only when relevant. Keep the
-    description as a "when to use this" trigger.
-  </p>
+  <SectionHeader
+    title="Agent skills"
+    subtitle="Markdown knowledge packs your agents read on demand — attach them to a binding above."
+  >
+    {#snippet actions()}
+      <Button
+        size="sm"
+        icon={Plus}
+        onclick={openCreate}
+        dataTestid="agent-skill-add"
+        keyboardHint="N"
+        hotkeyConfig={{ key: toHotkeyString('agentSkills', 'add'), guard: () => !showModal }}
+      >
+        New skill
+      </Button>
+    {/snippet}
+  </SectionHeader>
 
   {#if loading}
     <div class="flex items-center justify-center py-6">
       <Loader2 class="w-5 h-5 animate-spin" style="color: var(--ds-icon-subtle);" />
     </div>
-  {:else if skills.length === 0 && editorFor === null}
-    <p class="text-sm py-2" style="color: var(--ds-text-subtle);">
-      No skills yet. Create one to give your agents reusable, curated knowledge.
-    </p>
-  {:else if skills.length > 0}
-    <div class="border rounded-md overflow-hidden mb-3" style="border-color: var(--ds-border);">
+  {:else if skills.length === 0}
+    <EmptyState
+      icon={BookOpen}
+      title="No skills yet"
+      description="Create one to give your agents reusable, curated knowledge."
+    >
+      {#snippet action()}
+        <!-- shortcut-guard-exempt: duplicate of the section-header "New skill" action, which carries the N hotkey -->
+        <Button size="sm" icon={Plus} onclick={openCreate}>New skill</Button>
+      {/snippet}
+    </EmptyState>
+  {:else}
+    <div class="border rounded-md overflow-hidden" style="border-color: var(--ds-border);">
       <table class="w-full text-sm">
         <thead>
           <tr style="background-color: var(--ds-background-neutral);">
@@ -183,25 +196,28 @@
       </table>
     </div>
   {/if}
+</Panel>
 
-  {#if editorFor !== null}
-    <div class="border rounded-md p-3 space-y-3" style="border-color: var(--ds-border);" data-testid="agent-skill-editor">
+<Modal isOpen={showModal} onclose={closeModal} onSubmit={save} submitDisabled={!canSave} maxWidth="max-w-2xl">
+  {#snippet children(submitHint)}
+    <ModalHeader
+      title={editingId === null ? 'New skill' : 'Edit skill'}
+      icon={BookOpen}
+      onclose={closeModal}
+    />
+    <div class="px-6 py-4 space-y-3" data-testid="agent-skill-editor">
       <div class="grid grid-cols-2 gap-3">
         <div>
-          <label class="block text-xs mb-1" style="color: var(--ds-text-subtle);" for="agent-skill-name">Name</label>
+          <Label for="agent-skill-name" required class="mb-1">Name</Label>
           <Input id="agent-skill-name" bind:value={formName} placeholder="release-notes" />
         </div>
         <div>
-          <label class="block text-xs mb-1" style="color: var(--ds-text-subtle);" for="agent-skill-description">
-            Description (when should the agent reach for this?)
-          </label>
+          <Label for="agent-skill-description" class="mb-1">Description (when should the agent reach for this?)</Label>
           <Input id="agent-skill-description" bind:value={formDescription} placeholder="How we write and format release notes" />
         </div>
       </div>
       <div>
-        <label class="block text-xs mb-1" style="color: var(--ds-text-subtle);" for="agent-skill-body">
-          Body (markdown — the SKILL.md content)
-        </label>
+        <Label for="agent-skill-body" class="mb-1">Body (markdown — the SKILL.md content)</Label>
         <Textarea
           id="agent-skill-body"
           bind:value={formBody}
@@ -211,29 +227,22 @@
           placeholder={'# Release notes\n\nStructure every release note as...'}
         />
       </div>
-      <div class="flex items-center justify-between">
-        <span data-testid="agent-skill-enabled">
-          <Checkbox bind:checked={formEnabled} label="Enabled" />
-        </span>
-        <div class="flex items-center gap-2">
-          <Button size="sm" variant="secondary" onclick={closeEditor}>Cancel</Button>
-          <Button
-            size="sm"
-            variant="primary"
-            onclick={save}
-            disabled={!canSave}
-            loading={saving}
-            dataTestid="agent-skill-save"
-            keyboardHint={getShortcutDisplay('agentSkills', 'save')}
-            hotkeyConfig={{ key: toHotkeyString('agentSkills', 'save'), guard: () => canSave }}
-          >
-            {editorFor === 0 ? 'Create skill' : 'Save changes'}
-          </Button>
-        </div>
-      </div>
+      <span data-testid="agent-skill-enabled">
+        <Checkbox bind:checked={formEnabled} label="Enabled" />
+      </span>
     </div>
-  {/if}
-</Panel>
+    <DialogFooter
+      onCancel={closeModal}
+      onConfirm={save}
+      confirmLabel={editingId === null ? 'Create skill' : 'Save changes'}
+      disabled={!canSave}
+      loading={saving}
+      confirmTestid="agent-skill-save"
+      showKeyboardHint
+      confirmKeyboardHint={submitHint}
+    />
+  {/snippet}
+</Modal>
 
 <ConfirmDialog
   bind:show={deleteDialogOpen}
