@@ -577,7 +577,7 @@
   <div class="sidebar-mode-panel relative h-full flex-shrink-0 {sidebarBgClass} border-r flex flex-col py-4" style="width: {sidebarWidth}px; min-width: {MIN_WIDTH}px; max-width: {MAX_WIDTH}px; {sidebarBgStyle}">
     {@render workspaceHeader()}
 
-    <nav class="flex-1 px-4 pt-2 space-y-2">
+    <nav class="flex-1 px-4 pt-2 space-y-1">
       {#each PERSONAL_NAV_ITEMS as item}
         {@render navLink({ href: item.route, label: item.label, icon: item.icon, isActive: $currentRoute.view === item.view })}
       {/each}
@@ -606,7 +606,7 @@
       </Tooltip>
     </div>
 
-    <nav class="flex-1 px-4 space-y-2">
+    <nav class="flex-1 px-4 space-y-1">
       {@render navLink({ href: getNavigationUrl('overview'), label: 'Overview', tooltip: 'Workspace overview and dashboard', icon: Home, isActive: $currentRoute.view === 'workspace-overview' })}
 
       {#each workspaceViewItems as view}
@@ -623,7 +623,7 @@
       {/if}
 
       {#if $moduleSettings.test_management_enabled && canViewTests && !currentCollectionId}
-        <div class="mt-4 pt-4 border-t space-y-2" style="border-color: var(--ds-border);">
+        <div class="mt-4 pt-4 border-t space-y-1" style="border-color: var(--ds-border);">
           <div class="text-xs font-semibold uppercase tracking-wide" style="color: var(--ds-text-subtle);">
             Tests
           </div>
@@ -647,7 +647,7 @@
         </button>
 
         {#if workspaceToolsExpanded}
-          <div class="space-y-2">
+          <div class="space-y-1">
             {#each filteredWorkspaceOnlyViews as view}
               {@render navLink({ href: getNavigationUrl(view.id), label: view.label, tooltip: view.tooltip, icon: view.icon, isActive: $currentRoute.view === `workspace-${view.id}` })}
             {/each}
