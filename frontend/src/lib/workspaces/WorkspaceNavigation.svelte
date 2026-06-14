@@ -17,6 +17,7 @@
   } from '@tabler/icons-svelte-runes';
   import { workspaceIconMap } from '../utils/icons.js';
   import { workspaceViewItems, workspaceOnlyViews, testNavigationItems, workspaceSettingsItems, workspaceSettingsViews, workspaceSettingsRoute } from '../navigation/workspaceNavigation.js';
+  import { navItemStyle, onNavMouseEnter, onNavMouseLeave } from '../navigation/navItemStyle.js';
   import { navigate, currentRoute } from '../router.js';
   import { currentWorkspace, workspacePermissions } from '../stores';
   import { moduleSettings } from '../stores/moduleSettings.js';
@@ -382,22 +383,6 @@
 
   function isSettingsActive() {
     return SETTINGS_VIEWS.includes($currentRoute.view);
-  }
-
-  function navItemStyle(isActive) {
-    return isActive
-      ? 'background: var(--ds-surface-selected); color: var(--ds-text);'
-      : 'color: var(--ds-text-subtle);';
-  }
-
-  function onNavMouseEnter(event, isActive) {
-    if (!isActive) {
-      event.currentTarget.style.cssText = 'background: var(--ds-background-neutral-hovered); color: var(--ds-text);';
-    }
-  }
-
-  function onNavMouseLeave(event, isActive) {
-    event.currentTarget.style.cssText = navItemStyle(isActive);
   }
 </script>
 
