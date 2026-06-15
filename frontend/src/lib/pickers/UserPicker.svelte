@@ -1,6 +1,6 @@
 <script>
-  import { createPopover, melt } from '@melt-ui/svelte';
-  import { ChevronDown } from '@lucide/svelte';
+  import { ChevronDown, X } from '@lucide/svelte';
+  import { BasePicker } from '.';
   import { createAsyncLoader } from '../composables';
   import { api } from '../api.js';
   import { onMount } from 'svelte';
@@ -8,11 +8,6 @@
   import Text from '../components/Text.svelte';
   import { t } from '../stores/i18n.svelte.js';
 
-  // Generate unique IDs for ARIA attributes
-  const listboxId = `listbox-${Math.random().toString(36).slice(2, 9)}`;
-  const getOptionId = (index) => `${listboxId}-option-${index}`;
-
-  // Props
   let {
     value = $bindable(null),
     placeholder = '',
@@ -21,11 +16,12 @@
     disabled = false,
     class: className = '',
     showSelectedInTrigger = true,
-    children = null,
+    children: customTrigger = null,  // Optional custom trigger from caller
     workspaceId = null,
-    users: externalUsers = null,
+    users = null,
     label = '',
     autoOpen = false,
+    allowClear = true,
     onSelect = () => {},
     onCancel = () => {}
   } = $props();
@@ -37,64 +33,14 @@
   const loader = createAsyncLoader(() =>
     workspaceId ? api.getAssignableUsers(workspaceId) : api.getUsers()
   );
-  onMount(() => { if (!externalUsers) loader.load(); });
+  onMount(() => { if (!users) loader.load(); });
 
-  // Use externally provided users list or fall back to loader data
-  let usersList = $derived(externalUsers ?? loader.data ?? []);
-
-  // State
-  let searchTerm = $state('');
-  let highlightedIndex = $state(0);
-  let inputElement = $state(null);
-
-  // Create popover
-  const {
-    elements: { trigger, content },
-    states: { open }
-  } = createPopover({
-    positioning: {
-      placement: 'bottom-start',
-      gutter: 8
-    },
-    portal: 'body',
-    forceVisible: true,
-    onOpenChange: ({ next }) => {
-      if (next) {
-        searchTerm = '';
-        highlightedIndex = 0;
-        setTimeout(() => inputElement?.focus(), 50);
-      } else if (!wasSelectionMade) {
-        onCancel();
-      }
-      wasSelectionMade = false;
-      return next;
-    }
-  });
-
-  let wasSelectionMade = false;
+  let usersList = $derived(users ?? loader.data ?? []);
 
   // Selected user lookup
   let selectedUser = $derived(
     usersList.find(u => u.id === value) || null
   );
-
-  // Filter and limit users
-  let filteredUsers = $derived.by(() => {
-    let result = usersList;
-    if (searchTerm.trim()) {
-      const term = searchTerm.toLowerCase();
-      result = result.filter(u =>
-        u.first_name?.toLowerCase().includes(term) ||
-        u.last_name?.toLowerCase().includes(term) ||
-        u.email?.toLowerCase().includes(term) ||
-        u.username?.toLowerCase().includes(term)
-      );
-    } else {
-      // Show only 4 users by default (when no search)
-      result = result.slice(0, 4);
-    }
-    return result;
-  });
 
   // Agent presence (WI-272): the assignable-users endpoint decorates agent
   // users with whether anything would actually pick up an assigned item.
@@ -107,264 +53,88 @@
     }
   }
 
-  // Handle selection
+  // Helper: build user display label
+  function getUserLabel(user) {
+    if (!user) return '';
+    return `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.email || user.username || '';
+  }
+
   function handleSelect(user) {
-    wasSelectionMade = true;
-    value = user?.id || null;
-    $open = false;
     onSelect(user);
   }
 
-  // Handle keyboard navigation
-  function handleKeyDown(e) {
-    const totalItems = (showUnassigned ? 1 : 0) + filteredUsers.length;
-
-    // Tab closes the dropdown without preventing default (allows focus to move)
-    if (e.key === 'Tab') {
-      $open = false;
-      return;
-    }
-
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      highlightedIndex = (highlightedIndex + 1) % totalItems;
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      highlightedIndex = highlightedIndex === 0 ? totalItems - 1 : highlightedIndex - 1;
-    } else if (e.key === 'Enter' || (e.key === ' ' && e.target.tagName !== 'INPUT')) {
-      e.preventDefault();
-      if (showUnassigned && highlightedIndex === 0) {
-        handleSelect(null);
-      } else {
-        const adjustedIndex = showUnassigned ? highlightedIndex - 1 : highlightedIndex;
-        if (adjustedIndex >= 0 && adjustedIndex < filteredUsers.length) {
-          handleSelect(filteredUsers[adjustedIndex]);
-        }
-      }
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      $open = false;
-    }
+  function handleCancel() {
+    onCancel();
   }
 </script>
 
-<!-- Trigger -->
-{#if children}
-  <button
-    type="button"
-    use:melt={$trigger}
-    {disabled}
-    class="cursor-pointer {className}"
-    style:opacity={disabled ? 0.5 : 1}
-    style:cursor={disabled ? 'not-allowed' : 'pointer'}
-    role="combobox"
-    aria-expanded={$open}
-    aria-controls={listboxId}
-    aria-haspopup="listbox"
-  >
-    {@render children()}
-  </button>
-{:else}
-  <button
-    type="button"
-    use:melt={$trigger}
-    {disabled}
-    class="relative w-full flex items-center justify-between gap-2 px-3 py-2 rounded text-sm transition-colors {className}"
-    style="
-      background-color: var(--ds-background-input);
-      border: 1px solid var(--ds-border);
-      color: var(--ds-text);
-    "
-    style:opacity={disabled ? 0.5 : 1}
-    style:cursor={disabled ? 'not-allowed' : 'pointer'}
-    role="combobox"
-    aria-expanded={$open}
-    aria-controls={listboxId}
-    aria-haspopup="listbox"
-    data-testid="user-picker-trigger"
-  >
-    <div class="flex items-center gap-2 flex-1 min-w-0">
-      {#if selectedUser && showSelectedInTrigger}
-        <Avatar
-          src={selectedUser.avatar_url}
-          firstName={selectedUser.first_name}
-          lastName={selectedUser.last_name}
-          size="xs"
-        />
-        <span class="truncate">{selectedUser.first_name} {selectedUser.last_name}</span>
-      {:else}
-        <span style="color: var(--ds-text-subtle);">{resolvedPlaceholder}</span>
-      {/if}
-    </div>
-    <ChevronDown size={16} style="color: var(--ds-text-subtle);" />
-  </button>
-{/if}
-
-<!-- Popover Content -->
-{#if $open}
-  <div
-    use:melt={$content}
-    class="z-[60] rounded shadow-lg overflow-hidden"
-    style="
-      background-color: var(--ds-surface-raised);
-      border: 1px solid var(--ds-border);
-      min-width: 280px;
-      max-width: 360px;
-    "
-    onkeydown={(e) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        $open = false;
-      }
-    }}
-  >
-    <!-- Search Input -->
-    <div class="p-2 border-b" style="border-color: var(--ds-border);">
-      <input
-        bind:this={inputElement}
-        bind:value={searchTerm}
-        onkeydown={handleKeyDown}
-        type="text"
-        placeholder={t('pickers.searchUsers')}
-        data-testid="user-picker-search"
-        class="w-full px-3 py-2 rounded text-sm outline-none"
-        style="
-          background-color: var(--ds-background-input);
-          border: 1px solid var(--ds-border);
-          color: var(--ds-text);
-        "
-        aria-controls={listboxId}
-        aria-activedescendant={getOptionId(highlightedIndex)}
-        aria-autocomplete="list"
-        onfocus={(e) => e.currentTarget.style.borderColor = 'var(--ds-border-focused)'}
-        onblur={(e) => e.currentTarget.style.borderColor = 'var(--ds-border)'}
-      />
-    </div>
-
-    <!-- Users List -->
-    <div class="max-h-80 overflow-y-auto" role="listbox" id={listboxId} aria-label={t('pickers.users')}>
-      {#if !externalUsers && loader.loading}
-        <div class="p-4 text-center" style="color: var(--ds-text-subtle);">
-          {t('common.loading')}
+<BasePicker
+  bind:value
+  items={usersList}
+  loading={loader.loading}
+  placeholder={resolvedPlaceholder}
+  {showUnassigned}
+  unassignedLabel={resolvedUnassignedLabel}
+  {disabled}
+  allowClear={true}
+  {autoOpen}
+  {showSelectedInTrigger}
+  {label}
+  class={className}
+  searchFields={['first_name', 'last_name', 'email', 'username']}
+  getValue={(user) => user?.id}
+  getLabel={getUserLabel}
+  onSelect={handleSelect}
+  onCancel={handleCancel}
+>
+  {#snippet children()}
+    {#if customTrigger}
+      {@render customTrigger()}
+    {:else}
+      <div
+        aria-disabled={disabled}
+        tabindex={disabled ? -1 : 0}
+        class="relative w-full flex items-center justify-between gap-2 px-3 py-2 rounded text-sm transition-colors"
+        style="background-color: var(--ds-background-input); border: 1px solid var(--ds-border); color: var(--ds-text);"
+        style:opacity={disabled ? 0.5 : 1}
+        style:cursor={disabled ? 'not-allowed' : 'pointer'}
+        role="combobox"
+        aria-haspopup="listbox"
+        data-testid="user-picker-trigger"
+      >
+        <div class="flex items-center gap-2 flex-1 min-w-0">
+          {#if selectedUser && showSelectedInTrigger}
+            <Avatar src={selectedUser.avatar_url} firstName={selectedUser.first_name} lastName={selectedUser.last_name} size="xs" />
+            <span class="truncate">{selectedUser.first_name} {selectedUser.last_name}</span>
+          {:else}
+            <span style="color: var(--ds-text-subtle);">{resolvedPlaceholder}</span>
+          {/if}
         </div>
-      {:else}
-        <!-- Unassigned Option -->
-        {#if showUnassigned}
-          <button
-            type="button"
-            onclick={() => handleSelect(null)}
-            class="w-full px-3 py-2.5 text-left text-sm transition-colors flex items-center gap-3"
-            style="
-              color: var(--ds-text);
-              background-color: {highlightedIndex === 0 ? 'var(--ds-background-neutral-hovered)' : 'transparent'};
-              border-bottom: 1px solid var(--ds-border);
-            "
-            role="option"
-            id={getOptionId(0)}
-            aria-selected={value === null}
-            onmouseover={(e) => {
-              highlightedIndex = 0;
-              e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)';
-            }}
-            onmouseout={(e) => {
-              if (highlightedIndex !== 0) {
-                e.currentTarget.style.backgroundColor = 'transparent';
-              }
-            }}
-            onfocus={(e) => {
-              highlightedIndex = 0;
-              e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)';
-            }}
-            onblur={(e) => {
-              if (highlightedIndex !== 0) {
-                e.currentTarget.style.backgroundColor = 'transparent';
-              }
-            }}
-          >
-            <span style="color: var(--ds-text-subtle);">{resolvedUnassignedLabel}</span>
-          </button>
-        {/if}
+        <div class="flex items-center gap-1 flex-shrink-0">
+          {#if allowClear && value != null && !disabled && showSelectedInTrigger}
+            <button type="button" onclick={(e) => { e.stopPropagation(); onSelect(null); }} class="p-0.5 rounded hover:bg-opacity-10" style="color: var(--ds-text-subtle);" aria-label={t('pickers.clearSelection')}>
+              <X size={14} />
+            </button>
+          {/if}
+          <ChevronDown size={16} style="color: var(--ds-text-subtle);" />
+        </div>
+      </div>
+    {/if}
+  {/snippet}
 
-        <!-- User Items -->
-        {#each filteredUsers as user, index}
-          {@const itemIndex = showUnassigned ? index + 1 : index}
-          {@const isHighlighted = highlightedIndex === itemIndex}
-          {@const isSelected = value === user.id}
-
-          <button
-            type="button"
-            onclick={() => handleSelect(user)}
-            class="w-full px-3 py-2.5 text-left text-sm transition-colors"
-            style="
-              background-color: {isSelected ? 'var(--ds-background-selected)' : isHighlighted ? 'var(--ds-background-neutral-hovered)' : 'transparent'};
-              border-bottom: 1px solid var(--ds-border);
-            "
-            role="option"
-            id={getOptionId(itemIndex)}
-            data-testid={`user-picker-option-${user.id}`}
-            aria-selected={isSelected}
-            onmouseover={(e) => {
-              highlightedIndex = itemIndex;
-              if (!isSelected) {
-                e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)';
-              }
-            }}
-            onmouseout={(e) => {
-              if (!isSelected && highlightedIndex !== itemIndex) {
-                e.currentTarget.style.backgroundColor = 'transparent';
-              }
-            }}
-            onfocus={(e) => {
-              highlightedIndex = itemIndex;
-              if (!isSelected) {
-                e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)';
-              }
-            }}
-            onblur={(e) => {
-              if (!isSelected && highlightedIndex !== itemIndex) {
-                e.currentTarget.style.backgroundColor = 'transparent';
-              }
-            }}
-          >
-            <div class="flex items-center gap-3">
-              <Avatar
-                src={user.avatar_url}
-                firstName={user.first_name}
-                lastName={user.last_name}
-                size="sm"
-              />
-              <div class="flex flex-col min-w-0 flex-1">
-                <span class="font-medium truncate flex items-center gap-1.5" style="color: var(--ds-text);">
-                  {user.first_name} {user.last_name}
-                  {#if user.agent_presence}
-                    {@const presence = presenceMeta(user.agent_presence)}
-                    <span
-                      class="inline-block w-2 h-2 rounded-full shrink-0"
-                      style="background-color: {presence.color};"
-                      title={presence.label}
-                      data-testid={`agent-presence-${user.id}`}
-                    ></span>
-                  {/if}
-                </span>
-                <Text size="xs" variant="subtle" truncate>{user.email}</Text>
-              </div>
-            </div>
-          </button>
-        {/each}
-
-        <!-- No Results -->
-        {#if filteredUsers.length === 0 && !showUnassigned}
-          <div class="p-4 text-center" style="color: var(--ds-text-subtle);">
-            {searchTerm ? t('pickers.noUsersFound') : t('pickers.noUsersAvailable')}
-          </div>
-        {/if}
-      {/if}
+  {#snippet itemSnippet({ item: user, isSelected })}
+    <div class="flex items-center gap-3 flex-1 min-w-0">
+      <Avatar src={user.avatar_url} firstName={user.first_name} lastName={user.last_name} size="sm" />
+      <div class="flex flex-col min-w-0 flex-1">
+        <span class="font-medium truncate flex items-center gap-1.5" style="color: var(--ds-text);">
+          {user.first_name} {user.last_name}
+          {#if user.agent_presence}
+            {@const presence = presenceMeta(user.agent_presence)}
+            <span class="inline-block w-2 h-2 rounded-full shrink-0" style="background-color: {presence.color};" title={presence.label} data-testid={`agent-presence-${user.id}`}></span>
+          {/if}
+        </span>
+        <Text size="xs" variant="subtle" truncate>{user.email}</Text>
+      </div>
     </div>
-  </div>
-{/if}
-
-<style>
-  button {
-    font-family: inherit;
-  }
-</style>
+  {/snippet}
+</BasePicker>
