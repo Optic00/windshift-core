@@ -338,10 +338,10 @@
             keyField="row_key"
             emptyMessage={t('testing.noFailuresToShow')}
           >
-            {#snippet test_case_link({ item })}
+            {#snippet test_case_link(item)}
               <a href="{workspaceTestBase}/cases/{item.test_case_id}" style="color: var(--ds-text-link);" class="hover:underline">{item.test_case_title}</a>
             {/snippet}
-            {#snippet run_link({ item })}
+            {#snippet run_link(item)}
               <a href="{workspaceTestBase}/runs/{item.run_id}?from=reports" style="color: var(--ds-text-link);" class="hover:underline">{item.run_name}</a>
             {/snippet}
           </DataTable>
@@ -372,10 +372,10 @@
             keyField="row_key"
             emptyMessage={t('testing.noBlockedTests')}
           >
-            {#snippet test_case_link({ item })}
+            {#snippet test_case_link(item)}
               <a href="{workspaceTestBase}/cases/{item.test_case_id}" style="color: var(--ds-text-link);" class="hover:underline">{item.test_case_title}</a>
             {/snippet}
-            {#snippet run_link({ item })}
+            {#snippet run_link(item)}
               <a href="{workspaceTestBase}/runs/{item.run_id}?from=reports" style="color: var(--ds-text-link);" class="hover:underline">{item.run_name}</a>
             {/snippet}
           </DataTable>

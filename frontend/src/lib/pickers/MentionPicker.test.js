@@ -101,9 +101,7 @@ describe('MentionPicker — Enter while open must not break the mention (WI-200)
     const { preventDefault, stopPropagation } = pressKey('Enter');
 
     expect(onSelect).toHaveBeenCalledTimes(1);
-    expect(onSelect).toHaveBeenCalledWith(
-      expect.objectContaining({ username: 'alice' })
-    );
+    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ username: 'alice' }));
     expect(preventDefault).toHaveBeenCalled();
     expect(stopPropagation).toHaveBeenCalled();
   });
@@ -165,8 +163,6 @@ describe('MentionPicker — Enter while open must not break the mention (WI-200)
     pressKey('Enter');
 
     expect(preventDefault).toHaveBeenCalled();
-    expect(onSelect).toHaveBeenCalledWith(
-      expect.objectContaining({ username: 'bob' })
-    );
+    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ username: 'bob' }));
   });
 });
