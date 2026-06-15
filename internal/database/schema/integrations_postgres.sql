@@ -68,3 +68,53 @@ CREATE TABLE IF NOT EXISTS item_integration_links (
 CREATE INDEX IF NOT EXISTS idx_item_integration_links_item ON item_integration_links(item_id);
 CREATE INDEX IF NOT EXISTS idx_item_integration_links_provider ON item_integration_links(integration_provider_id);
 CREATE INDEX IF NOT EXISTS idx_item_integration_links_external ON item_integration_links(external_id);
+
+-- ============================================================================
+-- Todoist personal-task sync (WI-402)
+-- Two-way 1:1 mirror between a user's personal workspace and their Todoist
+-- account. Reuses integration_providers + user_integration_tokens for the
+-- connection; these tables hold the per-user sync configuration and the
+-- item <-> Todoist-task id mapping.
+-- ============================================================================
+
+-- Per-user sync configuration. One row per (user, provider).
+CREATE TABLE IF NOT EXISTS todoist_sync_config (
+	id TEXT PRIMARY KEY,
+	user_id TEXT NOT NULL,
+	integration_provider_id TEXT NOT NULL REFERENCES integration_providers(id) ON DELETE CASCADE,
+	personal_workspace_id INTEGER NOT NULL,
+	enabled BOOLEAN DEFAULT false,
+	scope_mode TEXT NOT NULL DEFAULT 'all',
+	todoist_project_id TEXT DEFAULT '',
+	sync_token TEXT DEFAULT '*',
+	last_synced_at TIMESTAMPTZ,
+	last_error TEXT DEFAULT '',
+	created_at TIMESTAMPTZ DEFAULT NOW(),
+	updated_at TIMESTAMPTZ DEFAULT NOW(),
+	UNIQUE(user_id, integration_provider_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_todoist_sync_config_user ON todoist_sync_config(user_id);
+CREATE INDEX IF NOT EXISTS idx_todoist_sync_config_enabled ON todoist_sync_config(enabled);
+
+-- Item <-> Todoist-task id map. One row per synced task pair.
+CREATE TABLE IF NOT EXISTS todoist_task_links (
+	id TEXT PRIMARY KEY,
+	user_id TEXT NOT NULL,
+	item_id INTEGER NOT NULL,
+	todoist_task_id TEXT NOT NULL,
+	todoist_project_id TEXT DEFAULT '',
+	last_title TEXT DEFAULT '',
+	last_description TEXT DEFAULT '',
+	last_due TEXT DEFAULT '',
+	last_priority INTEGER DEFAULT 1,
+	last_completed BOOLEAN DEFAULT false,
+	created_at TIMESTAMPTZ DEFAULT NOW(),
+	updated_at TIMESTAMPTZ DEFAULT NOW(),
+	UNIQUE(user_id, todoist_task_id),
+	UNIQUE(item_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_todoist_task_links_user ON todoist_task_links(user_id);
+CREATE INDEX IF NOT EXISTS idx_todoist_task_links_item ON todoist_task_links(item_id);
+CREATE INDEX IF NOT EXISTS idx_todoist_task_links_todoist ON todoist_task_links(todoist_task_id);
