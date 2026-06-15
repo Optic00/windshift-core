@@ -85,6 +85,17 @@
     }));
   });
 
+  // Failure/blocked rows can repeat the same test_case_id (a flaky test that
+  // failed across several runs), so test_case_id is NOT a unique row key. Derive
+  // a composite key from (run_id, test_case_id) — unique per test result — so the
+  // DataTable's keyed {#each} doesn't crash on duplicate keys.
+  const failureRows = $derived.by(() =>
+    (reportData?.recent_failures ?? []).map((f) => ({ ...f, row_key: `${f.run_id}:${f.test_case_id}` }))
+  );
+  const blockedRows = $derived.by(() =>
+    (reportData?.recent_blocked ?? []).map((b) => ({ ...b, row_key: `${b.run_id}:${b.test_case_id}` }))
+  );
+
   // Columns for the failures table
   const failuresColumns = $derived.by(() => [
     {
@@ -320,11 +331,11 @@
             </p>
           </div>
         </div>
-        {#if reportData.recent_failures && reportData.recent_failures.length > 0}
+        {#if failureRows.length > 0}
           <DataTable
             columns={failuresColumns}
-            data={reportData.recent_failures}
-            keyField="test_case_id"
+            data={failureRows}
+            keyField="row_key"
             emptyMessage={t('testing.noFailuresToShow')}
           >
             {#snippet test_case_link({ item })}
@@ -354,11 +365,11 @@
             </p>
           </div>
         </div>
-        {#if reportData.recent_blocked && reportData.recent_blocked.length > 0}
+        {#if blockedRows.length > 0}
           <DataTable
             columns={blockedColumns}
-            data={reportData.recent_blocked}
-            keyField="test_case_id"
+            data={blockedRows}
+            keyField="row_key"
             emptyMessage={t('testing.noBlockedTests')}
           >
             {#snippet test_case_link({ item })}
