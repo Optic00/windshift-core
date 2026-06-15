@@ -66,6 +66,7 @@ type Server struct {
 	notificationScheduler     *scheduler.NotificationScheduler
 	recurrenceScheduler       *scheduler.RecurrenceScheduler
 	cfvCleanupScheduler       *scheduler.CFVCleanupScheduler
+	todoistSyncScheduler      *scheduler.TodoistSyncScheduler
 	runnerLeaseReaper         *scheduler.RunnerLeaseReaper
 	codingRunService          *services.RunService
 	workflowService           *services.WorkflowService
@@ -825,6 +826,8 @@ func (s *Server) initialize() error {
 	integrationOAuthHandler := handlers.NewIntegrationOAuthHandler(s.db, scmProviderHandler.GetEncryption(), baseURL)
 	integrationItemLinksHandler := handlers.NewIntegrationItemLinksHandler(s.db, scmProviderHandler.GetEncryption(), permService)
 	todoistSyncHandler := handlers.NewTodoistSyncHandler(s.db, scmProviderHandler.GetEncryption())
+	s.todoistSyncScheduler = scheduler.NewTodoistSyncScheduler(s.db, scmProviderHandler.GetEncryption())
+	s.todoistSyncScheduler.Start()
 
 	// SCM sync service (started below once smart-commit dependencies exist)
 	scmSyncService := scm.NewSyncService(s.db, scmProviderHandler.GetEncryption())
@@ -1634,6 +1637,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.cfvCleanupScheduler != nil {
 		slog.Info("stopping cfv cleanup scheduler")
 		s.cfvCleanupScheduler.Stop()
+	}
+
+	if s.todoistSyncScheduler != nil {
+		slog.Info("stopping todoist sync scheduler")
+		s.todoistSyncScheduler.Stop()
 	}
 
 	if s.runnerLeaseReaper != nil {
