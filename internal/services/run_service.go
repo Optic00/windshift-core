@@ -845,3 +845,17 @@ func (s *RunService) CountRunsForBindingSince(ctx context.Context, bindingID int
 func (s *RunService) CountActiveRunsForBindingItem(ctx context.Context, bindingID, itemID int) (int, error) {
 	return s.repo.CountActiveForBindingItem(ctx, bindingID, itemID)
 }
+
+// LatestRunForItem returns the most recent run on an item, or nil when the
+// item has never had one. Backs the manual "Re-run" trigger, which derives the
+// agent to re-run from the last run's binding.
+func (s *RunService) LatestRunForItem(ctx context.Context, itemID int) (*models.AgentRun, error) {
+	runs, err := s.repo.ListForItem(ctx, itemID, 1, 0)
+	if err != nil {
+		return nil, err
+	}
+	if len(runs) == 0 {
+		return nil, nil
+	}
+	return runs[0], nil
+}

@@ -760,7 +760,7 @@ func (s *Server) initialize() error {
 	agentBindingHandler := handlers.NewWorkspaceAgentBindingHandler(bindingSvc, agentIdentitySvc, permService, logger.NewAuditor(s.db))
 	agentBindingHandler.SetSkillsRepo(agentSkillRepo)
 	agentSkillHandler := handlers.NewAgentSkillHandler(agentSkillRepo, permService, logger.NewAuditor(s.db))
-	agentRunHandler := handlers.NewAgentRunHandler(repository.NewAgentRunRepository(s.db), codingRunSvc, permService, repository.NewItemRepository(s.db))
+	agentRunHandler := handlers.NewAgentRunHandler(repository.NewAgentRunRepository(s.db), codingRunSvc, permService, repository.NewItemRepository(s.db), bindingSvc)
 	// Remote-runner control plane (WI-141). Constructed unconditionally;
 	// the handler 503s when the registry/run service is unavailable (i.e.
 	// CodingAgent.Enabled is off).

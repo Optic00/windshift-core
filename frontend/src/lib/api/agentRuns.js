@@ -56,4 +56,15 @@ export const agentRuns = {
     fetchAPI(`/agent-runs/${runId}/cancel`, {
       method: 'POST',
     }),
+
+  /**
+   * Manually re-run the agent that last worked an item (the item agent-log
+   * "Re-run" button). Enqueues a fresh run reusing the last run's binding.
+   * Returns { started }: false means a run was already queued/running, so the
+   * call was a no-op. Requires item.edit.
+   */
+  rerun: (itemId) =>
+    fetchAPI(`/items/${itemId}/agent-runs`, {
+      method: 'POST',
+    }),
 };

@@ -60,6 +60,19 @@ const maxBindingInstructionsLen = 8000
 // reopens.
 var ErrBindingBudgetExceeded = errors.New("binding service: max_runs_per_day budget exceeded for today")
 
+// Re-run trigger sentinels (the manual "Re-run" button on the item agent log).
+var (
+	// ErrRerunUnavailable — no RunService is wired (coding-agent harness off).
+	ErrRerunUnavailable = errors.New("binding service: coding-agent harness is disabled")
+	// ErrRerunNoPriorRun — the item has never had a run, so there is no agent
+	// to re-run.
+	ErrRerunNoPriorRun = errors.New("binding service: no prior agent run on this item")
+	// ErrRerunNoBinding — the item's last run is not associated with an active
+	// agent binding (manual/test run, or the binding was deleted), so its
+	// configuration can't be reconstructed.
+	ErrRerunNoBinding = errors.New("binding service: the last run has no active agent binding to re-run")
+)
+
 // SCMCredentialResolver is the surface BindingService needs from
 // scm.CredentialResolver: given a workspace SCM connection id, return the
 // access token + provider type + (for self-hosted) base URL. Kept as an
@@ -874,6 +887,50 @@ func (s *BindingService) startRunForBinding(ctx context.Context, binding *models
 	}
 	s.logger.Printf("binding service: started run=%d for item=%d binding=%d acting_user=%d", runID, itemID, binding.ID, binding.ActingUserID)
 	return nil
+}
+
+// RerunForItem manually re-triggers the agent that last worked an item — the
+// "Re-run" button on the item's agent log. It derives the agent from the most
+// recent run that carried a binding and reuses that binding's full
+// configuration (repo / token / grants / prompt) via startRunForBinding, the
+// same path the assignee and @mention triggers use. triggeredByUserID is the
+// human who clicked; they become the run's SCM principal (WI-275).
+//
+// started=false with a nil error means a run is already queued or in progress
+// for this item — the re-run is a no-op rather than a stacked second job
+// (mirrors the @mention dedup, WI-264). The caller keeps its button disabled.
+func (s *BindingService) RerunForItem(ctx context.Context, itemID, triggeredByUserID int) (started bool, err error) {
+	if s.runs == nil {
+		return false, ErrRerunUnavailable
+	}
+	latest, err := s.runs.LatestRunForItem(ctx, itemID)
+	if err != nil {
+		return false, fmt.Errorf("find latest run: %w", err)
+	}
+	if latest == nil {
+		return false, ErrRerunNoPriorRun
+	}
+	if latest.BindingID == nil {
+		return false, ErrRerunNoBinding
+	}
+	binding, err := s.repo.Get(ctx, *latest.BindingID)
+	if err != nil || binding == nil {
+		// Binding deleted since the last run — nothing to reconstruct.
+		return false, ErrRerunNoBinding
+	}
+	// Dedup: never stack a second run while one is queued/running for this
+	// binding+item. The server-side backstop to the UI's disabled button.
+	active, err := s.runs.CountActiveRunsForBindingItem(ctx, binding.ID, itemID)
+	if err != nil {
+		return false, fmt.Errorf("count active runs: %w", err)
+	}
+	if active > 0 {
+		return false, nil
+	}
+	if err := s.startRunForBinding(ctx, binding, latest.WorkspaceID, itemID, triggeredByUserID); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // bindingTokenAndGrants derives the per-run token spec and access-layer

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -22,19 +23,21 @@ type AgentRunHandler struct {
 	runs              *services.RunService
 	permissionService *services.PermissionService
 	items             *repository.ItemRepository
+	bindings          *services.BindingService
 }
 
-// NewAgentRunHandler constructs the handler. runs may be nil when the
-// harness is disabled (CodingAgent.Enabled off); in that case the
-// cancel endpoint returns 503 instead of silently dropping the request.
+// NewAgentRunHandler constructs the handler. runs and bindings may be nil when
+// the harness is disabled (CodingAgent.Enabled off); in that case the cancel
+// and re-run endpoints return 503 instead of silently dropping the request.
 // items resolves an item's workspace for the item-scoped runs list.
 func NewAgentRunHandler(
 	repo *repository.AgentRunRepository,
 	runs *services.RunService,
 	permissionService *services.PermissionService,
 	items *repository.ItemRepository,
+	bindings *services.BindingService,
 ) *AgentRunHandler {
-	return &AgentRunHandler{repo: repo, runs: runs, permissionService: permissionService, items: items}
+	return &AgentRunHandler{repo: repo, runs: runs, permissionService: permissionService, items: items, bindings: bindings}
 }
 
 type agentRunResponse struct {
@@ -120,6 +123,49 @@ func (h *AgentRunHandler) ListForItem(w http.ResponseWriter, r *http.Request) {
 		out = append(out, toAgentRunResponse(run))
 	}
 	respondJSON(w, http.StatusOK, out)
+}
+
+// Rerun manually re-triggers the agent that last worked an item — the
+// "Re-run" button on the item detail "Agent log" tab. Gated on item.edit via
+// the item's workspace (404 on a missing item or permission, so existence
+// never leaks). The new run inherits the last run's binding configuration; the
+// authenticated user becomes its SCM principal.
+//
+// Runs do not start synchronously — they are enqueued. To keep a caller from
+// stacking duplicates, the service no-ops when a run is already queued/running
+// for the item (returned as 200 {"started": false}); the UI additionally
+// disables the button while any run is in flight.
+func (h *AgentRunHandler) Rerun(w http.ResponseWriter, r *http.Request) {
+	itemID, ok := requireIDParam(w, r, "itemId")
+	if !ok {
+		return
+	}
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+	if !CheckItemPermission(w, r, h.items, h.permissionService, itemID, models.PermissionItemEdit) {
+		return
+	}
+	if h.bindings == nil {
+		respondServiceUnavailable(w, r, "coding-agent harness is disabled on this server")
+		return
+	}
+	started, err := h.bindings.RerunForItem(r.Context(), itemID, user.ID)
+	if err != nil {
+		switch {
+		case errors.Is(err, services.ErrRerunUnavailable):
+			respondServiceUnavailable(w, r, "coding-agent harness is disabled on this server")
+		case errors.Is(err, services.ErrRerunNoPriorRun), errors.Is(err, services.ErrRerunNoBinding):
+			respondConflict(w, r, "this item has no agent run to re-run")
+		case errors.Is(err, services.ErrBindingBudgetExceeded):
+			respondConflict(w, r, "the agent has hit its daily run budget for this item — try again later")
+		default:
+			respondInternalError(w, r, err)
+		}
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"started": started})
 }
 
 // Get returns a single run. Workspace permission gates access by way of

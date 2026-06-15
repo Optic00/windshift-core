@@ -3,14 +3,20 @@
   // with a live-tailing transcript of the selected run. Pure add-on — reads
   // only the agent_runs/agent_run_events surface, never item state.
   import { onMount, onDestroy } from 'svelte';
-  import { Bot, RefreshCw } from '@lucide/svelte';
+  import { Bot, RefreshCw, TriangleAlert } from '@lucide/svelte';
   import { agentRuns } from '../../api/agentRuns.js';
   import Lozenge from '../../components/Lozenge.svelte';
   import EmptyState from '../../components/EmptyState.svelte';
   import { formatDateTimeLocale } from '../../utils/dateFormatter.js';
   import { t } from '../../stores/i18n.svelte.js';
+  import { workspacePermissions } from '../../stores';
 
-  let { itemId } = $props();
+  let { itemId, workspaceId } = $props();
+
+  // Re-run enqueues a real agent run — gate the control on the same item.edit
+  // permission the backend enforces, so view-only users don't see a button
+  // that would 404 on click.
+  const canRerun = $derived(workspaceId ? workspacePermissions.canEdit(workspaceId) : false);
 
   const RUNS_POLL_MS = 10_000;
   const EVENTS_POLL_MS = 1_500;
@@ -23,7 +29,19 @@
   let liveToken = null; // invalidates the tail loop on switch/unmount
   let runsTimer = null;
 
+  // Recovery-aware "needs human review" flag for the selected run, parsed from
+  // its review_flagged event (emitted by the runner on unrecovered, high-signal
+  // tool misuse). Null when the selected run is clean.
+  let reviewFlag = $state(/** @type {null | { reasons: string[] }} */ (null));
+
+  // Re-run button state. A run is enqueued, not started synchronously, so the
+  // button stays disabled while any run is in flight (hasActiveRun) AND while a
+  // trigger request is outstanding (rerunning) — together they prevent stacking.
+  let rerunning = $state(false);
+  let rerunError = $state('');
+
   const selectedRun = $derived(runs.find((r) => r.id === selectedRunId) || null);
+  const hasActiveRun = $derived(runs.some((r) => !TERMINAL.includes(r.status)));
 
   function statusAppearance(status) {
     switch (status) {
@@ -89,9 +107,23 @@
     }
   }
 
+  // Pull the review flag out of the raw events of the selected run, if any.
+  function scanReviewFlag(events) {
+    for (const ev of events) {
+      if (ev.type !== 'review_flagged') continue;
+      try {
+        const p = JSON.parse(ev.payload_json);
+        reviewFlag = { reasons: Array.isArray(p.reasons) ? p.reasons : [] };
+      } catch {
+        reviewFlag = { reasons: [] };
+      }
+    }
+  }
+
   async function selectRun(runId) {
     selectedRunId = runId;
     lines = [];
+    reviewFlag = null;
     const token = Symbol('agent-log');
     liveToken = token;
     let afterId = 0;
@@ -102,6 +134,7 @@
         if (liveToken !== token) return;
         if (events?.length) {
           afterId = events[events.length - 1].id;
+          scanReviewFlag(events);
           const fresh = events.map(eventText).filter(Boolean);
           if (fresh.length) lines = [...lines, ...fresh];
         }
@@ -114,11 +147,30 @@
       if (TERMINAL.includes(run.status)) {
         const tail = await agentRuns.listEventsAfter(runId, afterId, 200).catch(() => []);
         if (liveToken === token && tail?.length) {
+          scanReviewFlag(tail);
           lines = [...lines, ...tail.map(eventText).filter(Boolean)];
         }
         return;
       }
       await new Promise((resolve) => setTimeout(resolve, EVENTS_POLL_MS));
+    }
+  }
+
+  async function doRerun() {
+    if (rerunning || hasActiveRun) return;
+    rerunning = true;
+    rerunError = '';
+    try {
+      await agentRuns.rerun(itemId);
+      // The new run is queued, not started; refresh and jump to it so the
+      // transcript tails the fresh run. hasActiveRun then keeps the button
+      // disabled until it reaches a terminal state.
+      await loadRuns();
+      if (runs.length) selectRun(runs[0].id);
+    } catch (e) {
+      rerunError = e?.message || t('items.agentRerunFailed');
+    } finally {
+      rerunning = false;
     }
   }
 
@@ -138,6 +190,55 @@
   <EmptyState icon={Bot} title={t('items.agentLogEmpty')} />
 {:else}
   <div class="space-y-3" data-testid="item-agent-log">
+    <!-- Header: run count + manual re-run -->
+    <div class="flex items-center justify-between gap-2">
+      <span class="text-xs" style="color: var(--ds-text-subtle);">
+        {runs.length} {runs.length === 1 ? t('items.agentRunSingular') : t('items.agentRunPlural')}
+      </span>
+      {#if canRerun}
+        <button
+          type="button"
+          class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          style="border: 1px solid var(--ds-border); color: var(--ds-text); background-color: transparent;"
+          onclick={doRerun}
+          disabled={rerunning || hasActiveRun}
+          title={hasActiveRun ? t('items.agentRerunBusy') : t('items.agentRerunTitle')}
+          data-testid="agent-rerun-button"
+        >
+          <RefreshCw class={`w-3 h-3 ${rerunning ? 'animate-spin' : ''}`} />
+          {rerunning ? t('items.agentRerunStarting') : hasActiveRun ? t('items.agentRerunBusy') : t('items.agentRerunLabel')}
+        </button>
+      {/if}
+    </div>
+
+    {#if rerunError}
+      <div class="text-xs px-3 py-2 rounded" style="color: var(--ds-text-danger); border: 1px solid var(--ds-border-danger, #f87171); background-color: var(--ds-background-danger-subtle, #fef2f2);" data-testid="agent-rerun-error">
+        {rerunError}
+      </div>
+    {/if}
+
+    {#if reviewFlag}
+      <div
+        class="flex gap-2 px-3 py-2 rounded text-xs"
+        style="color: var(--ds-text-danger, #b91c1c); border: 1px solid var(--ds-border-danger, #f87171); background-color: var(--ds-background-danger-subtle, #fef2f2);"
+        role="status"
+        data-testid="agent-review-flag"
+      >
+        <TriangleAlert class="w-4 h-4 shrink-0" />
+        <div class="flex flex-col gap-0.5">
+          <strong>{t('items.agentReviewFlagTitle')}</strong>
+          <span>{t('items.agentReviewFlagBody')}</span>
+          {#if reviewFlag.reasons.length}
+            <ul class="list-disc pl-4 mt-0.5">
+              {#each reviewFlag.reasons as reason}
+                <li>{reason}</li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
+      </div>
+    {/if}
+
     <!-- Run selector -->
     <div class="flex flex-wrap gap-2">
       {#each runs as run (run.id)}
