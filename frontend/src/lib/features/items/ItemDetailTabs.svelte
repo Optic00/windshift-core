@@ -437,7 +437,7 @@
       {:else if tab === 'history'}
         <ItemHistory itemId={item.id} />
       {:else if tab === 'agent-log'}
-        <ItemAgentLog itemId={item.id} />
+        <ItemAgentLog itemId={item.id} workspaceId={item.workspace_id} />
       {/if}
     </div>
   </div>

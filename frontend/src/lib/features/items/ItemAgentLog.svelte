@@ -9,8 +9,14 @@
   import EmptyState from '../../components/EmptyState.svelte';
   import { formatDateTimeLocale } from '../../utils/dateFormatter.js';
   import { t } from '../../stores/i18n.svelte.js';
+  import { workspacePermissions } from '../../stores';
 
-  let { itemId } = $props();
+  let { itemId, workspaceId } = $props();
+
+  // Re-run enqueues a real agent run — gate the control on the same item.edit
+  // permission the backend enforces, so view-only users don't see a button
+  // that would 404 on click.
+  const canRerun = $derived(workspaceId ? workspacePermissions.canEdit(workspaceId) : false);
 
   const RUNS_POLL_MS = 10_000;
   const EVENTS_POLL_MS = 1_500;
@@ -189,18 +195,20 @@
       <span class="text-xs" style="color: var(--ds-text-subtle);">
         {runs.length} {runs.length === 1 ? t('items.agentRunSingular') : t('items.agentRunPlural')}
       </span>
-      <button
-        type="button"
-        class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-        style="border: 1px solid var(--ds-border); color: var(--ds-text); background-color: transparent;"
-        onclick={doRerun}
-        disabled={rerunning || hasActiveRun}
-        title={hasActiveRun ? t('items.agentRerunBusy') : t('items.agentRerunTitle')}
-        data-testid="agent-rerun-button"
-      >
-        <RefreshCw class={`w-3 h-3 ${rerunning ? 'animate-spin' : ''}`} />
-        {rerunning ? t('items.agentRerunStarting') : hasActiveRun ? t('items.agentRerunBusy') : t('items.agentRerunLabel')}
-      </button>
+      {#if canRerun}
+        <button
+          type="button"
+          class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          style="border: 1px solid var(--ds-border); color: var(--ds-text); background-color: transparent;"
+          onclick={doRerun}
+          disabled={rerunning || hasActiveRun}
+          title={hasActiveRun ? t('items.agentRerunBusy') : t('items.agentRerunTitle')}
+          data-testid="agent-rerun-button"
+        >
+          <RefreshCw class={`w-3 h-3 ${rerunning ? 'animate-spin' : ''}`} />
+          {rerunning ? t('items.agentRerunStarting') : hasActiveRun ? t('items.agentRerunBusy') : t('items.agentRerunLabel')}
+        </button>
+      {/if}
     </div>
 
     {#if rerunError}
