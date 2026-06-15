@@ -120,7 +120,6 @@ type projectScanTally struct {
 	attachments       int
 	attachmentBytes   int64
 	labeledIssues     int
-	multiVersion      int
 	components        int
 	affectsVersions   int
 	worklogs          int
@@ -238,9 +237,6 @@ func (h *JiraImportHandler) tallyIssue(issue *jira.JiraIssue, fields map[string]
 	if len(f.Labels) > 0 {
 		t.labeledIssues++
 	}
-	if len(f.FixVersions) > 1 {
-		t.multiVersion++
-	}
 	if len(f.Components) > 0 {
 		t.components++
 	}
@@ -342,48 +338,45 @@ func buildFindings(t *projectScanTally, fields map[string]jira.FieldMappingSugge
 			Reason: "This ADF node type has no Markdown equivalent in the importer and is flattened to its text content.", UsageCount: n,
 		})
 	}
-	if t.multiVersion > 0 {
-		findings = append(findings, jira.Finding{
-			Entity: "Multiple fix versions", Category: "milestone", Severity: jira.SeverityLossy,
-			Reason: "Windshift items take a single milestone, so only the first fixVersion is mapped; the rest are dropped.", UsageCount: t.multiVersion,
-		})
-	}
 	if hasSprints {
 		weight := t.sprintIssues
 		if weight == 0 {
 			weight = 1
 		}
 		findings = append(findings, jira.Finding{
-			Entity: "Sprints / iterations", Category: "iteration", Severity: jira.SeverityLossy,
-			Reason: "The project uses boards/sprints; sprint→iteration assignment is deferred to Phase 1, so sprint membership is not yet imported.", UsageCount: weight,
+			Entity: "Sprints / iterations", Category: "iteration", Severity: jira.SeverityClean,
+			Reason: "Boards/sprints import as Windshift iterations (name, start/end dates, state) and each issue's sprint membership is assigned to the imported item.", UsageCount: weight,
 		})
 	}
 	if len(t.usersMissingEmail) > 0 {
 		findings = append(findings, jira.Finding{
 			Entity: "Users without a visible email", Category: "users", Severity: jira.SeverityLossy,
-			Reason: "Some assignees/reporters expose no email (e.g. Cloud GDPR settings); the importer resolves what it can and otherwise creates an inactive placeholder user.", UsageCount: len(t.usersMissingEmail),
+			Reason: "Some assignees/reporters expose no email (e.g. Cloud GDPR settings); the importer creates an inactive user with a deterministic synthetic address, so the identity is preserved but the real email is not.", UsageCount: len(t.usersMissingEmail),
 		})
 	}
 
-	// Blocked: data with no Windshift home today.
+	// Lossy: imported, but as metadata or under conditions rather than as a
+	// first-class Windshift concept.
 	if t.components > 0 {
 		findings = append(findings, jira.Finding{
-			Entity: "Components", Category: "components", Severity: jira.SeverityBlocked,
-			Reason: "Jira components have no Windshift equivalent and are not imported.", UsageCount: t.components,
+			Entity: "Components", Category: "components", Severity: jira.SeverityLossy,
+			Reason: "Jira components have no first-class Windshift equivalent; they are preserved as read-only metadata on the item, not as editable components.", UsageCount: t.components,
 		})
 	}
 	if t.affectsVersions > 0 {
 		findings = append(findings, jira.Finding{
-			Entity: "Affects versions", Category: "version", Severity: jira.SeverityBlocked,
-			Reason: "Only fixVersions map to milestones; affects-versions are not imported.", UsageCount: t.affectsVersions,
+			Entity: "Affects versions", Category: "version", Severity: jira.SeverityLossy,
+			Reason: "Only fixVersions map to milestones; affects-versions are preserved as item metadata (and an optional 'Jira Affects Version/s' custom field) rather than as milestones.", UsageCount: t.affectsVersions,
 		})
 	}
 	if t.worklogs > 0 {
 		findings = append(findings, jira.Finding{
-			Entity: "Worklogs / time tracking", Category: "worklog", Severity: jira.SeverityBlocked,
-			Reason: "Worklogs and time-tracking estimates are not imported.", UsageCount: t.worklogs,
+			Entity: "Worklogs / time tracking", Category: "worklog", Severity: jira.SeverityLossy,
+			Reason: "Worklog entries import into Windshift time tracking when the import maps a time project; without one they are skipped, and only the worklogs returned in the issue payload are imported, so very long histories may be truncated. Estimates are kept as item metadata.", UsageCount: t.worklogs,
 		})
 	}
+
+	// Blocked: data with no Windshift home today.
 	if t.changelogs > 0 {
 		findings = append(findings, jira.Finding{
 			Entity: "Issue history / changelog", Category: "changelog", Severity: jira.SeverityBlocked,

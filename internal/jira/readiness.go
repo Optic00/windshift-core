@@ -32,21 +32,22 @@ type Finding struct {
 }
 
 // fieldTypeSeverity maps a resolved Windshift field type to its migration
-// fidelity. user/users land cleanly today (the importer resolves them in
-// Phase 0); recognized value types are deferred to Phase 1 so their *values*
-// are not yet written (lossy); asset-backed and unmapped fields have no home
-// in Windshift at all (blocked).
+// fidelity. The importer now writes custom-field *values* (not just the
+// definitions) during issue import, so every recognized type lands cleanly:
+// user/multi_user resolve to Windshift users, asset fields resolve to objects
+// imported into Windshift asset sets, and the scalar/option types carry their
+// values through. Only types with no Windshift mapping at all are blocked.
 func fieldTypeSeverity(t WindshiftFieldType) (severity Severity, reason string) {
 	switch t {
-	case FieldTypeUser, FieldTypeUsers:
-		return SeverityClean, "User-valued field; resolved to Windshift users by account/email."
 	case FieldTypeUnmapped:
 		return SeverityBlocked, "No Windshift equivalent for this field type; it is skipped."
+	case FieldTypeUser, FieldTypeMultiUser:
+		return SeverityClean, "User-valued field; resolved to Windshift users by account/email."
 	case FieldTypeAsset:
-		return SeverityBlocked, "Backed by Jira Assets/Insight, which is not imported."
+		return SeverityClean, "Backed by Jira Assets/Insight; the referenced objects import into Windshift asset sets and the field resolves to them."
 	default:
 		// text, textarea, number, select, multiselect, date, milestone, iteration
-		return SeverityLossy, "Field type is recognized and the definition maps, but custom-field values are not yet written (Phase 1), so the data is dropped for now."
+		return SeverityClean, "Field type maps to a Windshift custom field and its value is written during import."
 	}
 }
 
@@ -71,20 +72,48 @@ func ClassifyField(s FieldMappingSuggestion, usageCount int) Finding {
 // converter (ConvertADFToMarkdownWithUsers in field_mapper.go) renders with
 // full fidelity. Anything outside this set is flattened to its text content,
 // losing the original structure/formatting — so its presence is a lossy
-// signal. Keep this in sync with convertADFNodeWithResolver's switch.
+// signal. Keep this in sync with convertADFNodeWithResolver's switch (and its
+// helpers convertADFTable/TaskList/Panel/Expand/Media).
+//
+// This includes the structural child nodes of supported containers
+// (listItem, tableRow, tableCell/tableHeader, taskItem) which the converter
+// walks positionally rather than by type: they carry no information of their
+// own, so ScanADF must not flag them as lossy when their parent is supported.
 var supportedADFNodes = map[string]bool{
-	"doc":         true,
-	"paragraph":   true,
-	"heading":     true,
+	// Document + block structure.
+	"doc":          true,
+	"paragraph":    true,
+	"heading":      true,
+	"blockquote":   true,
+	"codeBlock":    true,
+	"rule":         true,
+	"panel":        true,
+	"expand":       true,
+	"nestedExpand": true,
+	// Lists (+ their items).
 	"bulletList":  true,
 	"orderedList": true,
 	"listItem":    true,
-	"codeBlock":   true,
-	"blockquote":  true,
-	"rule":        true,
-	"text":        true,
-	"hardBreak":   true,
-	"mention":     true,
+	"taskList":    true,
+	"taskItem":    true,
+	// Tables (+ their rows/cells).
+	"table":       true,
+	"tableRow":    true,
+	"tableCell":   true,
+	"tableHeader": true,
+	// Media (rendered as a placeholder; the file itself imports as an attachment).
+	"mediaSingle": true,
+	"mediaGroup":  true,
+	"media":       true,
+	// Inline content.
+	"text":       true,
+	"hardBreak":  true,
+	"mention":    true,
+	"status":     true,
+	"emoji":      true,
+	"date":       true,
+	"inlineCard": true,
+	"blockCard":  true,
 }
 
 // ScanADF walks an ADF document (the shape Jira returns for description and
