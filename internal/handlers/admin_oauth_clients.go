@@ -339,6 +339,21 @@ func (h *AdminOAuthClientHandler) UpdateClient(w http.ResponseWriter, r *http.Re
 			return
 		}
 		changes["enabled"] = *req.Enabled
+
+		// Disabling a client must cut off the credentials it already issued —
+		// otherwise a "disabled" client keeps working until every access and
+		// refresh token expires naturally. Reuse the same cascade the delete
+		// path uses (best-effort, so a stale token row doesn't block the
+		// admin action). Re-enabling (false->true) deliberately revokes
+		// nothing and restores nothing.
+		if !*req.Enabled {
+			revoked, revErr := h.cascadeRevokeTokensForClient(existing.ClientID)
+			if revErr != nil {
+				respondInternalError(w, r, revErr)
+				return
+			}
+			changes["tokens_revoked"] = revoked
+		}
 	}
 
 	if _, err := h.db.Exec(`UPDATE oauth_clients SET updated_at = CURRENT_TIMESTAMP WHERE id = ?`, id); err != nil {
@@ -462,10 +477,17 @@ func (h *AdminOAuthClientHandler) DeleteClient(w http.ResponseWriter, r *http.Re
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// cascadeRevokeTokensForClient revokes every api_token that has a refresh
-// token pointing at the given client. Returns the count for audit logging.
-// The CASCADE on oauth_refresh_tokens.client_id wipes the refresh rows when
-// the client itself is deleted; this just handles the access-token side.
+// cascadeRevokeTokensForClient revokes the credentials a client has issued:
+// every access token (api_tokens row) reachable via oauth_refresh_tokens, and
+// the refresh-token rows themselves. Returns the count of access tokens
+// revoked, for audit logging.
+//
+// Used by both DeleteClient and the disable transition in UpdateClient. On
+// delete the CASCADE on oauth_refresh_tokens.client_id wipes the refresh rows
+// afterward, so marking them revoked is redundant-but-harmless. On disable the
+// rows persist (the client may be re-enabled later) — marking them revoked is
+// what stops a stale refresh token from springing back to life and minting
+// fresh access tokens the moment the client is re-enabled.
 func (h *AdminOAuthClientHandler) cascadeRevokeTokensForClient(clientID string) (int, error) {
 	rows, err := h.db.Query(
 		`SELECT DISTINCT api_token_id FROM oauth_refresh_tokens WHERE client_id = ?`,
@@ -491,10 +513,19 @@ func (h *AdminOAuthClientHandler) cascadeRevokeTokensForClient(clientID string) 
 	revoked := 0
 	for _, tid := range tokenIDs {
 		// Best-effort: a token may already be revoked or expired. Skip
-		// errors so a single stale row doesn't block the whole delete.
+		// errors so a single stale row doesn't block the whole action.
 		if err := h.tokenManager.AdminRevokeToken(tid); err == nil {
 			revoked++
 		}
+	}
+
+	// Revoke the refresh-token rows so they cannot be exchanged for new access
+	// tokens (notably after a disabled client is re-enabled).
+	if _, err := h.db.Exec(
+		`UPDATE oauth_refresh_tokens SET revoked_at = CURRENT_TIMESTAMP WHERE client_id = ? AND revoked_at IS NULL`,
+		clientID,
+	); err != nil {
+		return revoked, err
 	}
 	return revoked, nil
 }
