@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -12,10 +13,23 @@ import (
 	"windshift/internal/integrations/todoist"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/sso"
 
 	"github.com/google/uuid"
 )
+
+// ErrTodoistSyncAlreadyRunning is returned by SyncConfig when another run
+// already holds the per-config lock (a manual "Sync now" racing the poller, or
+// two manual runs). Callers treat it as a benign skip, not a failure: the
+// manual endpoint maps it to 409 and the scheduler quietly moves on.
+var ErrTodoistSyncAlreadyRunning = errors.New("todoist sync already running for this config")
+
+// syncLockLease bounds how long one run may hold a config's sync lock. It is a
+// safety valve: if a run crashes or hangs without releasing, the lease expires
+// and the next run can proceed. It must comfortably exceed a normal
+// reconcile (a Sync pull + a batched command write).
+const syncLockLease = 10 * time.Minute
 
 // dueDateLayout is the canonical (date-only) representation the sync uses for
 // due dates on both sides. Time-of-day is intentionally not synced in v1: it
@@ -89,6 +103,23 @@ func NewTodoistSyncService(db database.Database, encryption *sso.SecretEncryptio
 // builds the API + store, reconciles, and records the outcome (cursor, last
 // error) on the config row.
 func (s *TodoistSyncService) SyncConfig(cfg models.TodoistSyncConfig) (SyncStats, error) {
+	// Per-config admission: only one run may reconcile a config at a time, so a
+	// manual sync and the poller can't both observe missing links and create
+	// duplicate Todoist tasks. The lease self-heals a crashed holder.
+	now := time.Now().UTC()
+	acquired, err := s.syncRepo.AcquireSyncLock(cfg.ID, now, now.Add(syncLockLease))
+	if err != nil {
+		return SyncStats{}, fmt.Errorf("acquire sync lock: %w", err)
+	}
+	if !acquired {
+		return SyncStats{}, ErrTodoistSyncAlreadyRunning
+	}
+	defer func() {
+		if relErr := s.syncRepo.ReleaseSyncLock(cfg.ID); relErr != nil {
+			slog.Error("failed to release todoist sync lock", slog.String("component", "todoist-sync"), slog.Any("error", relErr))
+		}
+	}()
+
 	enc, err := s.syncRepo.GetEncryptedToken(cfg.UserID, cfg.IntegrationProviderID)
 	if err != nil {
 		return SyncStats{}, fmt.Errorf("load token: %w", err)
@@ -418,12 +449,24 @@ func inScope(cfg models.TodoistSyncConfig, projectID string) bool {
 	return true
 }
 
+// stateFromTodoist projects an inbound Todoist task to the canonical taskState.
+// Todoist content is external input, so title and description are sanitized
+// here at the ingress boundary — the same policies the item handlers apply
+// (PlainTextField for the title, RichText for the description). Because every
+// inbound value passes through this one function, the sanitized form is what
+// gets written to Windshift items AND what gets snapshotted, so the reconciler
+// never repeatedly tries to "restore" a raw/unsafe remote value.
 func stateFromTodoist(td todoist.Item) taskState {
 	due := ""
 	if td.Due != nil {
 		due = normalizeDue(td.Due.Date)
 	}
-	return taskState{Title: td.Content, Description: td.Description, Due: due, Completed: td.Checked}
+	return taskState{
+		Title:       sanitize.PlainTextField.Sanitize(td.Content),
+		Description: sanitize.RichText.Sanitize(td.Description),
+		Due:         due,
+		Completed:   td.Checked,
+	}
 }
 
 func stateFromWS(ws repository.PersonalWorkspaceTask) taskState {

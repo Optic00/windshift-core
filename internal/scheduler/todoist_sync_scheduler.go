@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -88,7 +89,14 @@ func (s *TodoistSyncScheduler) syncAllEnabled() {
 		return
 	}
 	for _, cfg := range configs {
-		if _, err := s.syncService.SyncConfig(cfg); err != nil {
+		_, err := s.syncService.SyncConfig(cfg)
+		switch {
+		case errors.Is(err, services.ErrTodoistSyncAlreadyRunning):
+			// A manual "Sync now" holds the lock; skip this tick for the config.
+			slog.Debug("Todoist sync: config already running, skipping",
+				slog.String("component", "todoist-sync"),
+				slog.String("user_id", cfg.UserID))
+		case err != nil:
 			// SyncConfig already records last_error on the config row; log for ops.
 			slog.Warn("Todoist sync: user reconciliation failed",
 				slog.String("component", "todoist-sync"),

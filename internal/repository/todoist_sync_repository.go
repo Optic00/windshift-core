@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"windshift/internal/database"
 	"windshift/internal/models"
@@ -72,6 +73,42 @@ func (r *TodoistSyncRepository) UpdateSyncState(id, syncToken, lastError string)
 	`, syncToken, lastError, id)
 	if err != nil {
 		return fmt.Errorf("update todoist sync state: %w", err)
+	}
+	return nil
+}
+
+// AcquireSyncLock attempts to claim the per-config run lock so a manual "Sync
+// now" and the 5-minute poller cannot reconcile the same config concurrently
+// (double-creating Todoist tasks, racing deletes). It is a single guarded
+// UPDATE: the lock is free when sync_lock_until is NULL or already in the past
+// (a crashed holder self-heals once its lease expires). On success the lock is
+// leased until lockUntil. Returns true when this caller won the lock, false
+// when another run already holds an unexpired lease.
+func (r *TodoistSyncRepository) AcquireSyncLock(id string, now, lockUntil time.Time) (bool, error) {
+	res, err := r.db.ExecWrite(`
+		UPDATE todoist_sync_config
+		SET sync_lock_until = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND (sync_lock_until IS NULL OR sync_lock_until < ?)
+	`, lockUntil, id, now)
+	if err != nil {
+		return false, fmt.Errorf("acquire todoist sync lock: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("acquire todoist sync lock rows: %w", err)
+	}
+	return n == 1, nil
+}
+
+// ReleaseSyncLock clears the per-config run lock. Idempotent — clearing an
+// already-free lock is a no-op.
+func (r *TodoistSyncRepository) ReleaseSyncLock(id string) error {
+	if _, err := r.db.ExecWrite(`
+		UPDATE todoist_sync_config
+		SET sync_lock_until = NULL, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, id); err != nil {
+		return fmt.Errorf("release todoist sync lock: %w", err)
 	}
 	return nil
 }

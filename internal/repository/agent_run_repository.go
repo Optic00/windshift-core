@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+	"unicode/utf8"
 
 	"windshift/internal/database"
 	"windshift/internal/models"
@@ -65,11 +66,37 @@ func marshalTrigger(t *models.RunTrigger) (any, error) {
 	if t == nil || (t.Kind == "" && t.Instruction == "" && t.CommentID == 0 && t.AuthorID == 0) {
 		return nil, nil
 	}
+	// Defense in depth: the instruction is sourced from sanitized, capped
+	// comment content, but bound it again here so no caller can persist an
+	// unbounded prompt payload into trigger_json (the column feeds the agent's
+	// initial prompt). Copy first — never mutate the caller's trigger.
+	if len(t.Instruction) > maxTriggerInstructionBytes {
+		clamped := *t
+		clamped.Instruction = truncateInstruction(clamped.Instruction)
+		t = &clamped
+	}
 	b, err := json.Marshal(t)
 	if err != nil {
 		return nil, err
 	}
 	return string(b), nil
+}
+
+// maxTriggerInstructionBytes bounds the persisted trigger instruction. Matches
+// the 256 KiB long-text ceiling the comment sanitizer already enforces.
+const maxTriggerInstructionBytes = 256 * 1024
+
+// truncateInstruction cuts s to at most maxTriggerInstructionBytes bytes
+// without splitting a multi-byte rune.
+func truncateInstruction(s string) string {
+	if len(s) <= maxTriggerInstructionBytes {
+		return s
+	}
+	s = s[:maxTriggerInstructionBytes]
+	for s != "" && !utf8.ValidString(s) {
+		s = s[:len(s)-1]
+	}
+	return s
 }
 
 // scanTrigger decodes the nullable trigger_json column into a RunTrigger.

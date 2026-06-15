@@ -101,6 +101,7 @@ CREATE TABLE IF NOT EXISTS todoist_sync_config (
 	sync_token TEXT DEFAULT '*',                   -- Todoist incremental sync cursor
 	last_synced_at DATETIME,
 	last_error TEXT DEFAULT '',                    -- last sync error, surfaced in settings UI
+	sync_lock_until DATETIME,                      -- per-config run lock: set to a future lease while a sync runs; NULL/past = free
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	FOREIGN KEY (integration_provider_id) REFERENCES integration_providers(id) ON DELETE CASCADE,

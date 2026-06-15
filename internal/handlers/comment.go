@@ -22,6 +22,14 @@ import (
 	"windshift/internal/webhook"
 )
 
+// commentRequestBodyMaxBytes caps the comment create/update request body. The
+// content itself is bounded by sanitize.Comment (LongTextMaxBytes = 256 KiB);
+// the extra headroom covers JSON framing and the other small fields. Capping
+// the raw body stops a client from streaming an unbounded payload (memory) and
+// from smuggling a giant pre-sanitization comment that, via the @mention
+// trigger, would otherwise become an oversized agent prompt.
+const commentRequestBodyMaxBytes = sanitize.LongTextMaxBytes + 16*1024
+
 // CommentHandler handles comment-related HTTP requests
 type CommentHandler struct {
 	db                  database.Database
@@ -200,6 +208,7 @@ func (h *CommentHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		IsPrivate bool   `json:"is_private"`
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, commentRequestBodyMaxBytes)
 	if err = json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
 		respondBadRequest(w, r, "Invalid request body")
 		return
@@ -391,6 +400,7 @@ func (h *CommentHandler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 		Content string `json:"content"`
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, commentRequestBodyMaxBytes)
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
 		respondBadRequest(w, r, "Invalid request body")
 		return

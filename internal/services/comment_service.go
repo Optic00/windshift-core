@@ -252,7 +252,13 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 			} else if len(ids) > 0 {
 				// Background context: the run outlives the comment request,
 				// and a client disconnect must not abort run admission.
-				if err := s.agentMentionTrigger.MaybeStartRunsForMentions(context.Background(), item.WorkspaceID, params.ItemID, ids, params.ActorUserID, params.Content, int(commentID)); err != nil {
+				//
+				// Resolve mentions from the original body (above) but feed the
+				// run instruction the SANITIZED, capped content — the same text
+				// the stored comment shows. Passing params.Content here let a
+				// commenter smuggle oversized/unsafe prompt payloads into
+				// agent_runs.trigger_json that diverged from the visible comment.
+				if err := s.agentMentionTrigger.MaybeStartRunsForMentions(context.Background(), item.WorkspaceID, params.ItemID, ids, params.ActorUserID, sanitizedContent, int(commentID)); err != nil {
 					slog.Warn("coding-agent mention trigger failed",
 						slog.String("component", "comment_service"),
 						slog.Int("item_id", params.ItemID),

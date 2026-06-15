@@ -1209,6 +1209,7 @@ var Catalog = []Migration{
 				sync_token TEXT DEFAULT '*',
 				last_synced_at DATETIME,
 				last_error TEXT DEFAULT '',
+				sync_lock_until DATETIME,
 				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 				FOREIGN KEY (integration_provider_id) REFERENCES integration_providers(id) ON DELETE CASCADE,
@@ -1249,6 +1250,7 @@ var Catalog = []Migration{
 				sync_token TEXT DEFAULT '*',
 				last_synced_at TIMESTAMPTZ,
 				last_error TEXT DEFAULT '',
+				sync_lock_until TIMESTAMPTZ,
 				created_at TIMESTAMPTZ DEFAULT NOW(),
 				updated_at TIMESTAMPTZ DEFAULT NOW(),
 				UNIQUE(user_id, integration_provider_id)
@@ -1276,6 +1278,22 @@ var Catalog = []Migration{
 			CREATE INDEX IF NOT EXISTS idx_todoist_task_links_item ON todoist_task_links(item_id);
 			CREATE INDEX IF NOT EXISTS idx_todoist_task_links_todoist ON todoist_task_links(todoist_task_id);
 		`,
+	},
+	{
+		// todoist_sync_config.sync_lock_until backs the per-config sync
+		// admission lock (security fix, WI-402): SyncConfig sets it to a future
+		// lease while a run holds the config and clears it on completion, so a
+		// manual "Sync now" and the 5-minute poller cannot reconcile the same
+		// config concurrently and double-create Todoist tasks. The base table
+		// migration above carries the column in its CREATE TABLE for installs
+		// that hadn't created the table yet; this entry adds it to installs that
+		// created todoist_sync_config before the column existed.
+		Version:       "20260615_todoist_sync_lock_until",
+		Name:          "Add sync_lock_until to todoist_sync_config",
+		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('todoist_sync_config') WHERE name='sync_lock_until'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='todoist_sync_config' AND column_name='sync_lock_until'",
+		SQLite:        "ALTER TABLE todoist_sync_config ADD COLUMN sync_lock_until DATETIME",
+		Postgres:      "ALTER TABLE todoist_sync_config ADD COLUMN sync_lock_until TIMESTAMPTZ",
 	},
 }
 

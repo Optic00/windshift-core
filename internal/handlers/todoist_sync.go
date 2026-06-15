@@ -236,6 +236,10 @@ func (h *TodoistSyncHandler) RunSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	stats, syncErr := h.syncService.SyncConfig(*cfg)
+	if errors.Is(syncErr, services.ErrTodoistSyncAlreadyRunning) {
+		respondConflict(w, r, "A Todoist sync is already running for your account")
+		return
+	}
 	resp := map[string]any{
 		"ok":            syncErr == nil,
 		"created_in_ws": stats.CreatedInWS,
