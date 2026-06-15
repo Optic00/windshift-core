@@ -31,11 +31,21 @@
     await loadUsers();
   });
 
-  // Handle keyboard events using runed
+  // Handle keyboard events using runed.
+  //
+  // Capture phase is required: the editor (ProseMirror) attaches its own
+  // bubble-phase keydown handler on its content element, which sits *below*
+  // document in the tree, so a bubble-phase document listener would fire
+  // last — after ProseMirror has already moved the cursor (Arrow keys) or
+  // inserted a newline (Enter). That cursor move then fires keyup ->
+  // checkForMentionTrigger, breaking the @-pattern and closing the picker.
+  // Capturing here lets us intercept and stopPropagation before ProseMirror
+  // ever sees these keys.
   useEventListener(
     () => document,
     'keydown',
-    handleKeyDown
+    handleKeyDown,
+    { capture: true }
   );
 
   async function loadUsers() {
@@ -94,6 +104,7 @@
       }
     } else if (e.key === 'Escape') {
       e.preventDefault();
+      e.stopPropagation();
       onCancel?.();
     }
   }
