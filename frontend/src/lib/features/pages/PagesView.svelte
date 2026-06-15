@@ -308,6 +308,7 @@
       saveTimer = null;
     }
     const targetId = selectedPage.id;
+    const prevTitle = selectedPage.title;
     const titleSnap = draftTitle;
     const contentSnap = draftContent;
     saveStatus = 'saving';
@@ -339,7 +340,13 @@
           scheduleAutoSave();
         }
       }
-      pagesTreeRefresh.bump();
+      // The sidebar shows only titles, so a content-only save needs no
+      // sidebar update at all. Signal a targeted rename only when the title
+      // actually changed — that patches one row in place instead of
+      // refetching (and flashing) the whole tree.
+      if (updated.title !== prevTitle) {
+        pagesTreeRefresh.rename(updated.id, updated.title);
+      }
     } catch (err) {
       saveStatus = 'error';
       error = err?.message || t('pages.errorSave');

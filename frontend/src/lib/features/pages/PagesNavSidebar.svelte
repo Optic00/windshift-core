@@ -326,6 +326,19 @@
     loadTree();
   });
 
+  // A title-only save patches the one renamed node in place rather than
+  // refetching the whole tree — no network call, no expand/collapse reseed,
+  // no DnD re-wire, no flash. A no-op if the page isn't in the loaded tree.
+  $effect(() => {
+    const r = pagesTreeRefresh.renamed;
+    if (!r) return;
+    const node = pages.find((p) => p.id === r.id);
+    if (node && node.title !== r.title) {
+      node.title = r.title;
+      pages = pages;
+    }
+  });
+
   // Re-wire DnD whenever the rendered tree changes. The timeout matches
   // BoardConfigurationPage's pattern: the DOM nodes need to mount before
   // pragmatic-drag-and-drop can attach. We depend on `visibleRows`, not
