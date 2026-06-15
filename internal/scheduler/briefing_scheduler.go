@@ -355,7 +355,7 @@ func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, userI
 	userPrompt := fmt.Sprintf("Good morning %s! Today is %s (%s timezone).\n\nHere is your project data:\n\n%s",
 		firstName, nowLocal.Format("Monday, January 2, 2006"), timezone, strings.Join(contextParts, "\n\n"))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), llm.DefaultRequestTimeout)
 	defer cancel()
 
 	resp, err := llmClient.ChatCompletion(ctx, llm.ChatCompletionRequest{

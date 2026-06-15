@@ -219,7 +219,7 @@ func (h *AIHandler) PlanMyDay(w http.ResponseWriter, r *http.Request) {
 
 	// Call the LLM with structured output
 	extendWriteDeadline(w)
-	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), llm.DefaultRequestTimeout)
 	defer cancel()
 
 	plan, err := llm.ChatCompletionStructured[PlanMyDayResponse](ctx, llmClient, llm.ChatCompletionRequest{

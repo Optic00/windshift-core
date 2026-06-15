@@ -322,7 +322,7 @@ func (h *AIHandler) AnalyzeDependencies(w http.ResponseWriter, r *http.Request) 
 
 	// Call LLM
 	extendWriteDeadline(w)
-	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), llm.DefaultRequestTimeout)
 	defer cancel()
 
 	result, err := llm.ChatCompletionStructured[llmDependencyResult](ctx, llmClient, llm.ChatCompletionRequest{
@@ -724,7 +724,15 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	result, err := llm.RunAgent(r.Context(), llmClient, llm.AgentConfig{
+	// The agentic loop (up to MaxIterations of LLM round-trips + tool calls) is
+	// the longest-running AI handler, so it needs the same write-deadline escape
+	// and work bound as the one-shot handlers — otherwise the server's 30s
+	// WriteTimeout severs the response mid-run.
+	extendWriteDeadline(w)
+	ctx, cancel := context.WithTimeout(r.Context(), llm.DefaultRequestTimeout)
+	defer cancel()
+
+	result, err := llm.RunAgent(ctx, llmClient, llm.AgentConfig{
 		SystemPrompt:  systemPrompt,
 		Tools:         BuildLLMTools(),
 		MaxTokens:     2048,

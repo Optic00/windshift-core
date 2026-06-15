@@ -33,7 +33,7 @@ func joinProviderPath(baseURL, apiPath string) string {
 // --allow-local-connections switch, which utils.NewSSRFSafeHTTPClient honors.
 func newAdminConfiguredHTTPClient(timeout time.Duration) *http.Client {
 	if timeout == 0 {
-		timeout = 120 * time.Second
+		timeout = DefaultRequestTimeout
 	}
 	return utils.NewSSRFSafeHTTPClient(timeout)
 }

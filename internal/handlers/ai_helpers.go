@@ -43,11 +43,18 @@ func requireLLMClientForFeature(w http.ResponseWriter, r *http.Request, manager 
 	return client
 }
 
+// aiWriteDeadline is the per-request write deadline for AI handlers. It must
+// stay strictly above llm.DefaultRequestTimeout (the bound on the handler's
+// actual work): otherwise the server's 30s WriteTimeout — which this replaces —
+// would sever the response before the handler finishes. The 30s margin covers
+// response serialization and flush after the LLM call returns.
+const aiWriteDeadline = llm.DefaultRequestTimeout + 30*time.Second
+
 // extendWriteDeadline pushes the HTTP server's per-request write deadline
 // forward so that long-running AI calls aren't killed by WriteTimeout.
 func extendWriteDeadline(w http.ResponseWriter) {
 	rc := http.NewResponseController(w)
-	_ = rc.SetWriteDeadline(time.Now().Add(130 * time.Second))
+	_ = rc.SetWriteDeadline(time.Now().Add(aiWriteDeadline))
 }
 
 // respondLLMError logs an LLM call failure and writes a structured 503 response.

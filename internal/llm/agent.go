@@ -69,7 +69,7 @@ func RunAgent(ctx context.Context, client Client, cfg AgentConfig, userMessage s
 	}
 	timeout := cfg.Timeout
 	if timeout <= 0 {
-		timeout = 180 * time.Second
+		timeout = DefaultRequestTimeout
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	"windshift/internal/llm"
 	"windshift/internal/models"
@@ -132,7 +131,7 @@ func (h *AIHandler) GenerateReleaseNotes(w http.ResponseWriter, r *http.Request)
 	userPrompt := fmt.Sprintf("Generate release notes for this milestone:\n\n%s", strings.Join(contextLines, "\n"))
 
 	extendWriteDeadline(w)
-	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), llm.DefaultRequestTimeout)
 	defer cancel()
 
 	resp, err := llmClient.ChatCompletion(ctx, llm.ChatCompletionRequest{
