@@ -54,6 +54,10 @@
     if (ev.type === 'warning') {
       return payload.message ? `⚠ ${payload.message}` : null;
     }
+    if (ev.type === 'review_flagged') {
+      const reasons = Array.isArray(payload.reasons) ? payload.reasons.join('; ') : '';
+      return `⚠ Needs human review — ${reasons || 'unrecovered tool misuse'}`;
+    }
     switch (payload.type) {
       case 'message':
         return typeof payload.text === 'string' ? payload.text : null;

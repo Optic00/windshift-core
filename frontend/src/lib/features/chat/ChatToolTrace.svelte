@@ -9,8 +9,15 @@
    */
   import { IconChevronRight, IconAlertTriangle, IconCircleCheck, IconCircleX } from '@tabler/icons-svelte-runes';
 
-  /** @type {{ toolCalls?: any[], iterations?: number, maxIterations?: number, stopReason?: string }} */
-  let { toolCalls = [], iterations = 0, maxIterations = 0, stopReason = '' } = $props();
+  /** @type {{ toolCalls?: any[], iterations?: number, maxIterations?: number, stopReason?: string, needsReview?: boolean, reviewReasons?: string[] }} */
+  let {
+    toolCalls = [],
+    iterations = 0,
+    maxIterations = 0,
+    stopReason = '',
+    needsReview = false,
+    reviewReasons = [],
+  } = $props();
 
   let expanded = $state(false);
   let expandedIdx = $state(/** @type {number | null} */ (null));
@@ -46,6 +53,23 @@
     }
   }
 </script>
+
+{#if needsReview}
+  <div class="review" role="status">
+    <IconAlertTriangle size={13} stroke={1.5} class="icon-err" />
+    <div class="review-body">
+      <strong>Needs human review</strong>
+      <span>The model misused a tool and didn't recover — the answer may not be grounded.</span>
+      {#if reviewReasons.length > 0}
+        <ul>
+          {#each reviewReasons as reason}
+            <li>{reason}</li>
+          {/each}
+        </ul>
+      {/if}
+    </div>
+  </div>
+{/if}
 
 {#if toolCalls.length > 0 || hitLimit}
   <div class="trace">
@@ -105,6 +129,29 @@
 {/if}
 
 <style>
+  .review {
+    display: flex;
+    gap: 6px;
+    margin-top: 6px;
+    padding: 6px 8px;
+    font-size: 11px;
+    border-radius: 4px;
+    background: var(--ds-background-danger-subtle, #fef2f2);
+    border: 1px solid var(--ds-border-danger, #f87171);
+    color: var(--ds-text-danger, #b91c1c);
+  }
+  .review-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .review-body strong {
+    font-weight: 600;
+  }
+  .review-body ul {
+    margin: 2px 0 0;
+    padding-left: 16px;
+  }
   .trace {
     margin-top: 6px;
     font-size: 11px;

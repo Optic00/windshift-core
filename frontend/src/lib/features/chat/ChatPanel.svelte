@@ -312,6 +312,8 @@
                     iterations={msg.iterations}
                     maxIterations={msg.maxIterations}
                     stopReason={msg.stopReason}
+                    needsReview={msg.needsReview}
+                    reviewReasons={msg.reviewReasons}
                   />
                 {/if}
               </div>

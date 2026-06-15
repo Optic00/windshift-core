@@ -631,6 +631,24 @@ type ChatResponse struct {
 	Iterations    int                  `json:"iterations"`
 	MaxIterations int                  `json:"max_iterations"`
 	StopReason    string               `json:"stop_reason"`
+	// NeedsReview flags a recovery-aware, high-signal tool misuse (the model
+	// invented a tool or could not satisfy a tool's schema, and never
+	// recovered) — a correlate of hallucination worth a human glance. It is
+	// not a claim that the answer is wrong. ReviewReasons explains why.
+	NeedsReview   bool     `json:"needs_review,omitempty"`
+	ReviewReasons []string `json:"review_reasons,omitempty"`
+}
+
+// reviewVerdictForToolCalls computes the recovery-aware review flag for a chat
+// run's tool calls, reusing the same classifier + evaluator the coding agent
+// drains into. Pure — exposed for testing the chat-side mapping without the
+// full handler stack.
+func reviewVerdictForToolCalls(calls []llm.ToolCallRecord) llm.ReviewVerdict {
+	outcomes := make([]llm.ToolCallOutcome, len(calls))
+	for i, tc := range calls {
+		outcomes[i] = llm.ToolCallOutcome{Tool: tc.Name, Class: llm.Classify(tc.Name, tc.Result)}
+	}
+	return llm.EvaluateReview(outcomes, llm.DefaultReviewFlagConfig())
 }
 
 // Chat handles agentic chat where the LLM can query workspaces and items via tool calls.
@@ -743,12 +761,19 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		slog.Int("tool_calls", len(result.ToolCalls)),
 	)
 
+	// Recovery-aware review flag over the run's tool calls (same classifier the
+	// coding agent uses). Computed inline — chat is ephemeral, so the verdict
+	// rides along on the response rather than being persisted.
+	verdict := reviewVerdictForToolCalls(result.ToolCalls)
+
 	respondJSONOK(w, ChatResponse{
 		Answer:        result.Answer,
 		ToolCalls:     result.ToolCalls,
 		Iterations:    result.Iterations,
 		MaxIterations: result.MaxIter,
 		StopReason:    string(result.StopReason),
+		NeedsReview:   verdict.Flagged,
+		ReviewReasons: verdict.Reasons,
 	})
 }
 

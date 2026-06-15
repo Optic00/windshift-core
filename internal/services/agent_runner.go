@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"windshift/internal/llm"
 	"windshift/internal/models"
 )
 
@@ -190,6 +191,25 @@ func (r *AgentRunner) Run(ctx context.Context, input RunInput, emit EventSink) R
 	<-streamDone
 	waitErr := cmd.Wait()
 	close(waitDone)
+
+	// Recovery-aware review flag: a high-signal, unrecovered tool misuse
+	// (invented tool / unsatisfiable schema) correlates with hallucination and
+	// is worth a human glance, even when the run otherwise "succeeded". Emitted
+	// once, as an orthogonal annotation — it deliberately does NOT change the
+	// run status below.
+	if verdict := llm.EvaluateReview(outcome.toolCalls, llm.DefaultReviewFlagConfig()); verdict.Flagged {
+		classes := make([]string, len(verdict.UnrecoveredClasses))
+		for i, c := range verdict.UnrecoveredClasses {
+			classes[i] = string(c)
+		}
+		if payload, err := json.Marshal(map[string]any{
+			"reasons":    verdict.Reasons,
+			"classes":    classes,
+			"tool_calls": len(outcome.toolCalls),
+		}); err == nil {
+			_ = emit("review_flagged", string(payload))
+		}
+	}
 
 	switch {
 	case canceledByCtx:
@@ -514,6 +534,11 @@ type agentOutcome struct {
 	lastError     string
 	finishOutcome string
 	finishSummary string
+	// toolCalls is the ordered classification of every tool_done event, used
+	// after the stream closes to decide whether the run needs human review
+	// (see EvaluateReview). Successful calls are recorded too, since a later
+	// success is what recovers an earlier high-signal failure.
+	toolCalls []llm.ToolCallOutcome
 }
 
 // observe inspects one parsed agent event. "retry" events are deliberately
@@ -530,6 +555,13 @@ func (o *agentOutcome) observe(t string, parsed map[string]any) {
 	case "finish":
 		o.finishOutcome, _ = parsed["outcome"].(string)
 		o.finishSummary, _ = parsed["summary"].(string)
+	case "tool_done":
+		tool, _ := parsed["tool"].(string)
+		output, _ := parsed["output"].(string)
+		o.toolCalls = append(o.toolCalls, llm.ToolCallOutcome{
+			Tool:  tool,
+			Class: llm.Classify(tool, output),
+		})
 	}
 }
 
