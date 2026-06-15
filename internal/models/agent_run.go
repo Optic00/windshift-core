@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // Agent-run lifecycle states. The agent_runs.status CHECK constraint
 // enforces this set in the database — keep both lists in sync.
@@ -69,9 +72,36 @@ type AgentRun struct {
 	// for the run's git traffic and PR creation (WI-275). Nil on runs
 	// queued before the column existed — those use the connection-level
 	// credential.
-	TriggeredByUserID *int      `json:"triggered_by_user_id,omitempty"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	TriggeredByUserID *int `json:"triggered_by_user_id,omitempty"`
+	// Trigger is the run's trigger context + free-form instruction, persisted
+	// as JSON (agent_runs.trigger_json). Holding it in one JSON blob keeps new
+	// instruction shapes migration-free. Nil for runs created before the
+	// column existed, or triggers that carried no extra context.
+	Trigger   *RunTrigger `json:"trigger,omitempty"`
+	CreatedAt time.Time   `json:"created_at"`
+	UpdatedAt time.Time   `json:"updated_at"`
+}
+
+// RunTrigger captures why and how a run started, plus any free-form
+// instruction that came with the trigger. It is persisted verbatim as JSON in
+// agent_runs.trigger_json so additional instruction fields can be added
+// without a schema migration.
+type RunTrigger struct {
+	// Kind is how the run started: "mention", "assignee", "rerun", or "test".
+	Kind string `json:"kind,omitempty"`
+	// Instruction is the free-form directive that triggered the run — the body
+	// of the @mentioning comment. Treated as the run's primary instruction for
+	// what to do, layered on after the static prompt and the binding's persona.
+	Instruction string `json:"instruction,omitempty"`
+	// CommentID is the comment the instruction came from (0 if none); audit only.
+	CommentID int `json:"comment_id,omitempty"`
+	// AuthorID is the user who wrote the triggering comment (0 if none).
+	AuthorID int `json:"author_id,omitempty"`
+}
+
+// HasInstruction reports whether the trigger carries a non-empty instruction.
+func (t *RunTrigger) HasInstruction() bool {
+	return t != nil && strings.TrimSpace(t.Instruction) != ""
 }
 
 // AgentRunEvent is one entry on the NDJSON-style stream the agent emits to

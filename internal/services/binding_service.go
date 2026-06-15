@@ -628,7 +628,7 @@ func (s *BindingService) MaybeStartRunForAssignee(ctx context.Context, workspace
 		}
 		return nil
 	}
-	return s.startRunForBinding(ctx, binding, workspaceID, itemID, triggeredByUserID)
+	return s.startRunForBinding(ctx, binding, workspaceID, itemID, triggeredByUserID, &models.RunTrigger{Kind: "assignee"})
 }
 
 // MaybeStartRunsForMentions is the comment-@mention trigger (WI-264): every
@@ -650,7 +650,7 @@ func (s *BindingService) MaybeStartRunForAssignee(ctx context.Context, workspace
 // Distinct agents mentioned in one comment each get their own run. Failures
 // are isolated per mention (one agent's refusal must not block the others);
 // they are joined into the returned error for the caller to log-and-swallow.
-func (s *BindingService) MaybeStartRunsForMentions(ctx context.Context, workspaceID, itemID int, mentionedUserIDs []int, commentAuthorID int) error {
+func (s *BindingService) MaybeStartRunsForMentions(ctx context.Context, workspaceID, itemID int, mentionedUserIDs []int, commentAuthorID int, commentBody string, commentID int) error {
 	if len(mentionedUserIDs) == 0 {
 		return nil
 	}
@@ -684,7 +684,13 @@ func (s *BindingService) MaybeStartRunsForMentions(ctx context.Context, workspac
 				continue
 			}
 		}
-		if err := s.startRunForBinding(ctx, binding, workspaceID, itemID, commentAuthorID); err != nil {
+		trigger := &models.RunTrigger{
+			Kind:        "mention",
+			Instruction: commentBody,
+			CommentID:   commentID,
+			AuthorID:    commentAuthorID,
+		}
+		if err := s.startRunForBinding(ctx, binding, workspaceID, itemID, commentAuthorID, trigger); err != nil {
 			errs = append(errs, fmt.Errorf("start run for mentioned binding %d: %w", binding.ID, err))
 		}
 	}
@@ -716,6 +722,28 @@ func (s *BindingService) promptSuffixForBinding(binding *models.WorkspaceAgentBi
 	return b.String()
 }
 
+// renderInstruction renders the run's free-form instruction — the body of the
+// @mentioning comment that triggered the run — as a prompt section the agent
+// treats as its directive for what to do. Returns "" when the trigger carries
+// no instruction (e.g. a bare assignment change), so the static prompt stands
+// alone. The comment is quoted verbatim and the agent is pointed at the item
+// and its other comments for context, so a terse instruction ("fix the typo")
+// does not strand it without the surrounding detail.
+func renderInstruction(trigger *models.RunTrigger) string {
+	if !trigger.HasInstruction() {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\n## Your instruction for this run\n")
+	b.WriteString("A user mentioned you in a comment on $WINDSHIFT_ITEM_ID. Treat the comment below as your primary instruction for what to do on this run — it takes precedence over any default assumption about the task. It may be terse; when it lacks detail, read the work item and its other comments (`ws task get $WINDSHIFT_ITEM_ID`, `ws comment list $WINDSHIFT_ITEM_ID`) for the surrounding context before acting.\n\n")
+	for _, line := range strings.Split(strings.TrimRight(trigger.Instruction, "\n"), "\n") {
+		b.WriteString("> ")
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
 // enabledSkillsForBinding loads the binding's enabled skills; nil when the
 // skills repo is not wired or the lookup fails (logged — a skills hiccup
 // must not block the run).
@@ -736,7 +764,7 @@ func (s *BindingService) enabledSkillsForBinding(ctx context.Context, binding *m
 // Enforces the binding's MaxRunsPerDay budget, routes to the remote pool or
 // the local in-process path, and resolves SCM credentials as the triggering
 // user (WI-275).
-func (s *BindingService) startRunForBinding(ctx context.Context, binding *models.WorkspaceAgentBinding, workspaceID, itemID, triggeredByUserID int) error {
+func (s *BindingService) startRunForBinding(ctx context.Context, binding *models.WorkspaceAgentBinding, workspaceID, itemID, triggeredByUserID int, trigger *models.RunTrigger) error {
 	if s.runs == nil {
 		s.logger.Printf("binding service: matched binding=%d for item=%d but no RunService is configured (dropping)", binding.ID, itemID)
 		return nil
@@ -772,6 +800,10 @@ func (s *BindingService) startRunForBinding(ctx context.Context, binding *models
 			TargetPoolID:      binding.TargetPoolID,
 			JobKind:           models.JobKindCodingAgent,
 			TriggeredByUserID: triggeredByUserID,
+			// The instruction itself is recovered + rendered into the prompt at
+			// remote claim time (ResolveRunInputs), the same place the binding
+			// suffix is re-derived — so it survives the queue→claim hop.
+			Trigger: trigger,
 		}
 		// Pre-validate the full SCM resolution now — credential principal AND
 		// clone-host config — rather than letting the run sit queued until a
@@ -816,12 +848,16 @@ func (s *BindingService) startRunForBinding(ctx context.Context, binding *models
 		return err
 	}
 	req := RunRequest{
-		WorkspaceID:         workspaceID,
-		ItemID:              &itemID,
-		BindingID:           binding.ID,
-		Env:                 env,
-		TriggeredByUserID:   triggeredByUserID,
-		InitialPromptSuffix: s.promptSuffixForBinding(binding, skills),
+		WorkspaceID:       workspaceID,
+		ItemID:            &itemID,
+		BindingID:         binding.ID,
+		Env:               env,
+		TriggeredByUserID: triggeredByUserID,
+		Trigger:           trigger,
+		// Local path renders the instruction inline (the remote path re-derives
+		// it at claim from the persisted Trigger). Order matches remote: static
+		// prompt, then binding persona/skills, then the run's instruction last.
+		InitialPromptSuffix: s.promptSuffixForBinding(binding, skills) + renderInstruction(trigger),
 	}
 	if binding.HasRepo() {
 		// HasRepo guarantees SCMConnectionID is set; this is the only
@@ -927,7 +963,15 @@ func (s *BindingService) RerunForItem(ctx context.Context, itemID, triggeredByUs
 	if active > 0 {
 		return false, nil
 	}
-	if err := s.startRunForBinding(ctx, binding, latest.WorkspaceID, itemID, triggeredByUserID); err != nil {
+	// Carry the original run's instruction forward so a re-run repeats the same
+	// directive the agent first saw, not a bare context-free run.
+	rerunTrigger := &models.RunTrigger{Kind: "rerun"}
+	if latest.Trigger != nil {
+		rerunTrigger.Instruction = latest.Trigger.Instruction
+		rerunTrigger.CommentID = latest.Trigger.CommentID
+		rerunTrigger.AuthorID = latest.Trigger.AuthorID
+	}
+	if err := s.startRunForBinding(ctx, binding, latest.WorkspaceID, itemID, triggeredByUserID, rerunTrigger); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -1011,7 +1055,10 @@ func (s *BindingService) ResolveRunInputs(ctx context.Context, run *models.Agent
 		triggeredBy = *run.TriggeredByUserID
 	}
 	skills := s.enabledSkillsForBinding(ctx, binding)
-	promptSuffix := s.promptSuffixForBinding(binding, skills)
+	// Re-derive the binding persona/skills suffix, then append the run's own
+	// instruction (the @mentioning comment, persisted on the run as Trigger) so
+	// the remote claim prepares the prompt identically to the local path.
+	promptSuffix := s.promptSuffixForBinding(binding, skills) + renderInstruction(run.Trigger)
 	spec, grants := s.bindingTokenAndGrants(binding, itemID, triggeredBy, len(skills) > 0)
 
 	// Repo-prep inputs for a remote runner: only when the binding is repo-

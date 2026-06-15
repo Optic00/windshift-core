@@ -155,6 +155,12 @@ type RunRequest struct {
 	// credential principal for the run's git traffic and PR creation
 	// (WI-275). 0 = unknown (legacy callers) → connection-level credential.
 	TriggeredByUserID int
+	// Trigger is the run's trigger context + free-form instruction (the
+	// @mentioning comment that started the run). Persisted as JSON on the run
+	// and, for remote runs, recovered at claim time so the instruction reaches
+	// the agent as part of its prompt. Nil for triggers carrying no extra
+	// context (e.g. a bare assignment change).
+	Trigger *models.RunTrigger
 }
 
 // TokenSpec is the per-run input to RunTokenService.Mint. Phase 4-5 wire
@@ -399,6 +405,7 @@ func (s *RunService) Start(ctx context.Context, req RunRequest) (int, error) {
 		WorkspaceID: req.WorkspaceID,
 		ItemID:      req.ItemID,
 		Status:      models.AgentRunStatusQueued,
+		Trigger:     req.Trigger,
 	}
 	if req.BindingID > 0 {
 		bID := req.BindingID
@@ -575,6 +582,7 @@ func (s *RunService) RecordFailedStart(ctx context.Context, req RunRequest, reas
 		WorkspaceID: req.WorkspaceID,
 		ItemID:      req.ItemID,
 		Status:      models.AgentRunStatusQueued,
+		Trigger:     req.Trigger,
 	}
 	if req.BindingID > 0 {
 		bID := req.BindingID

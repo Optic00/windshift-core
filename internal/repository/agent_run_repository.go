@@ -37,16 +37,20 @@ func (r *AgentRunRepository) Insert(ctx context.Context, run *models.AgentRun) (
 	if jobKind == "" {
 		jobKind = models.JobKindCodingAgent
 	}
+	triggerJSON, err := marshalTrigger(run.Trigger)
+	if err != nil {
+		return 0, fmt.Errorf("marshal agent_run trigger: %w", err)
+	}
 	// RETURNING id (not LastInsertId) for Postgres compatibility.
 	var id int64
-	err := r.db.QueryRowContext(ctx, `
-		INSERT INTO agent_runs(workspace_id, item_id, binding_id, target_pool_id, job_kind, job_image, status, triggered_by_user_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	err = r.db.QueryRowContext(ctx, `
+		INSERT INTO agent_runs(workspace_id, item_id, binding_id, target_pool_id, job_kind, job_image, status, triggered_by_user_id, trigger_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		RETURNING id
 	`,
 		run.WorkspaceID, nullIntArg(run.ItemID), nullIntArg(run.BindingID),
 		nullIntArg(run.TargetPoolID), jobKind, nullStringArg(run.JobImage), status,
-		nullIntArg(run.TriggeredByUserID),
+		nullIntArg(run.TriggeredByUserID), triggerJSON,
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("failed to insert agent_run: %w", err)
@@ -54,26 +58,58 @@ func (r *AgentRunRepository) Insert(ctx context.Context, run *models.AgentRun) (
 	return int(id), nil
 }
 
+// marshalTrigger renders a run's trigger context to the nullable JSON column
+// value. A nil or empty trigger stores SQL NULL so old rows and trigger-less
+// runs read back as nil rather than "null"/"{}".
+func marshalTrigger(t *models.RunTrigger) (any, error) {
+	if t == nil || (t.Kind == "" && t.Instruction == "" && t.CommentID == 0 && t.AuthorID == 0) {
+		return nil, nil
+	}
+	b, err := json.Marshal(t)
+	if err != nil {
+		return nil, err
+	}
+	return string(b), nil
+}
+
+// scanTrigger decodes the nullable trigger_json column into a RunTrigger.
+// Returns nil for SQL NULL / empty so callers see a clean absence.
+func scanTrigger(col sql.NullString) (*models.RunTrigger, error) {
+	if !col.Valid || col.String == "" || col.String == "null" {
+		return nil, nil
+	}
+	var t models.RunTrigger
+	if err := json.Unmarshal([]byte(col.String), &t); err != nil {
+		return nil, fmt.Errorf("decode agent_run trigger_json: %w", err)
+	}
+	return &t, nil
+}
+
 // Get loads a single run by ID. Returns sql.ErrNoRows if it does not exist.
 func (r *AgentRunRepository) Get(ctx context.Context, id int) (*models.AgentRun, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, workspace_id, item_id, binding_id, status, queued_at, started_at, ended_at,
-		       container_id, runner_id, target_pool_id, job_kind, job_image, error, triggered_by_user_id, created_at, updated_at
+		       container_id, runner_id, target_pool_id, job_kind, job_image, error, triggered_by_user_id, trigger_json, created_at, updated_at
 		FROM agent_runs WHERE id = ?
 	`, id)
 
 	run := &models.AgentRun{}
 	var itemID, bindingID, runnerID, targetPoolID, triggeredBy sql.NullInt64
 	var startedAt, endedAt sql.NullTime
-	var containerID, jobImage, errMsg sql.NullString
+	var containerID, jobImage, errMsg, triggerJSON sql.NullString
 
 	if err := row.Scan(
 		&run.ID, &run.WorkspaceID, &itemID, &bindingID, &run.Status,
 		&run.QueuedAt, &startedAt, &endedAt,
-		&containerID, &runnerID, &targetPoolID, &run.JobKind, &jobImage, &errMsg, &triggeredBy, &run.CreatedAt, &run.UpdatedAt,
+		&containerID, &runnerID, &targetPoolID, &run.JobKind, &jobImage, &errMsg, &triggeredBy, &triggerJSON, &run.CreatedAt, &run.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
+	trigger, err := scanTrigger(triggerJSON)
+	if err != nil {
+		return nil, err
+	}
+	run.Trigger = trigger
 	if triggeredBy.Valid {
 		v := int(triggeredBy.Int64)
 		run.TriggeredByUserID = &v

@@ -1167,6 +1167,24 @@ var Catalog = []Migration{
 			CREATE UNIQUE INDEX IF NOT EXISTS idx_active_timers_user_id ON active_timers(user_id);
 		`,
 	},
+	{
+		// agent_runs.trigger_json holds the run's trigger context + free-form
+		// instruction (the body of the @mentioning comment that started the
+		// run) as a single JSON blob, so new instruction shapes need no
+		// further schema migration. JSONB on Postgres (queryable), TEXT on
+		// SQLite (which has no jsonb type). Nullable — runs created before the
+		// column, and triggers with no extra context, leave it NULL.
+		Version:       "20260615_agent_runs_trigger_json",
+		Name:          "Add trigger_json to agent_runs",
+		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('agent_runs') WHERE name='trigger_json'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_name='agent_runs' AND column_name='trigger_json'",
+		SQLite: `
+			ALTER TABLE agent_runs ADD COLUMN trigger_json TEXT;
+		`,
+		Postgres: `
+			ALTER TABLE agent_runs ADD COLUMN trigger_json JSONB;
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {

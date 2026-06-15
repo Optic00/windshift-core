@@ -41,7 +41,7 @@ type HandleCommentParams struct {
 // the commented item. Kept as an interface so CommentService stays
 // decoupled from BindingService (which satisfies it) and tests can stub it.
 type AgentMentionTrigger interface {
-	MaybeStartRunsForMentions(ctx context.Context, workspaceID, itemID int, mentionedUserIDs []int, commentAuthorID int) error
+	MaybeStartRunsForMentions(ctx context.Context, workspaceID, itemID int, mentionedUserIDs []int, commentAuthorID int, commentBody string, commentID int) error
 }
 
 // CommentService encapsulates comment creation logic used by both HTTP handlers
@@ -252,7 +252,7 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 			} else if len(ids) > 0 {
 				// Background context: the run outlives the comment request,
 				// and a client disconnect must not abort run admission.
-				if err := s.agentMentionTrigger.MaybeStartRunsForMentions(context.Background(), item.WorkspaceID, params.ItemID, ids, params.ActorUserID); err != nil {
+				if err := s.agentMentionTrigger.MaybeStartRunsForMentions(context.Background(), item.WorkspaceID, params.ItemID, ids, params.ActorUserID, params.Content, int(commentID)); err != nil {
 					slog.Warn("coding-agent mention trigger failed",
 						slog.String("component", "comment_service"),
 						slog.Int("item_id", params.ItemID),
