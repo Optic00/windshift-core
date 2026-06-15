@@ -1185,6 +1185,98 @@ var Catalog = []Migration{
 			ALTER TABLE agent_runs ADD COLUMN trigger_json JSONB;
 		`,
 	},
+	{
+		// WI-402 Todoist personal-task sync. todoist_sync_config holds the
+		// per-(user, provider) sync configuration; todoist_task_links is the
+		// item <-> Todoist-task id map with a last-synced snapshot for
+		// field-level last-write-wins. Both reuse integration_providers /
+		// user_integration_tokens for the connection. Fresh installs get these
+		// from schema/integrations{,_postgres}.sql; this entry upgrades existing
+		// DBs (its Check stamps without re-running once todoist_task_links exists).
+		Version:       "20260615_todoist_sync_tables",
+		Name:          "Create todoist_sync_config + todoist_task_links for personal-task sync",
+		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='todoist_task_links'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='todoist_task_links'",
+		SQLite: `
+			CREATE TABLE IF NOT EXISTS todoist_sync_config (
+				id TEXT PRIMARY KEY,
+				user_id TEXT NOT NULL,
+				integration_provider_id TEXT NOT NULL,
+				personal_workspace_id INTEGER NOT NULL,
+				enabled BOOLEAN DEFAULT 0,
+				scope_mode TEXT NOT NULL DEFAULT 'all',
+				todoist_project_id TEXT DEFAULT '',
+				sync_token TEXT DEFAULT '*',
+				last_synced_at DATETIME,
+				last_error TEXT DEFAULT '',
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (integration_provider_id) REFERENCES integration_providers(id) ON DELETE CASCADE,
+				UNIQUE(user_id, integration_provider_id)
+			);
+			CREATE INDEX IF NOT EXISTS idx_todoist_sync_config_user ON todoist_sync_config(user_id);
+			CREATE INDEX IF NOT EXISTS idx_todoist_sync_config_enabled ON todoist_sync_config(enabled);
+
+			CREATE TABLE IF NOT EXISTS todoist_task_links (
+				id TEXT PRIMARY KEY,
+				user_id TEXT NOT NULL,
+				item_id INTEGER NOT NULL,
+				todoist_task_id TEXT NOT NULL,
+				todoist_project_id TEXT DEFAULT '',
+				last_title TEXT DEFAULT '',
+				last_description TEXT DEFAULT '',
+				last_due TEXT DEFAULT '',
+				last_priority INTEGER DEFAULT 1,
+				last_completed BOOLEAN DEFAULT 0,
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				UNIQUE(user_id, todoist_task_id),
+				UNIQUE(item_id)
+			);
+			CREATE INDEX IF NOT EXISTS idx_todoist_task_links_user ON todoist_task_links(user_id);
+			CREATE INDEX IF NOT EXISTS idx_todoist_task_links_item ON todoist_task_links(item_id);
+			CREATE INDEX IF NOT EXISTS idx_todoist_task_links_todoist ON todoist_task_links(todoist_task_id);
+		`,
+		Postgres: `
+			CREATE TABLE IF NOT EXISTS todoist_sync_config (
+				id TEXT PRIMARY KEY,
+				user_id TEXT NOT NULL,
+				integration_provider_id TEXT NOT NULL REFERENCES integration_providers(id) ON DELETE CASCADE,
+				personal_workspace_id INTEGER NOT NULL,
+				enabled BOOLEAN DEFAULT false,
+				scope_mode TEXT NOT NULL DEFAULT 'all',
+				todoist_project_id TEXT DEFAULT '',
+				sync_token TEXT DEFAULT '*',
+				last_synced_at TIMESTAMPTZ,
+				last_error TEXT DEFAULT '',
+				created_at TIMESTAMPTZ DEFAULT NOW(),
+				updated_at TIMESTAMPTZ DEFAULT NOW(),
+				UNIQUE(user_id, integration_provider_id)
+			);
+			CREATE INDEX IF NOT EXISTS idx_todoist_sync_config_user ON todoist_sync_config(user_id);
+			CREATE INDEX IF NOT EXISTS idx_todoist_sync_config_enabled ON todoist_sync_config(enabled);
+
+			CREATE TABLE IF NOT EXISTS todoist_task_links (
+				id TEXT PRIMARY KEY,
+				user_id TEXT NOT NULL,
+				item_id INTEGER NOT NULL,
+				todoist_task_id TEXT NOT NULL,
+				todoist_project_id TEXT DEFAULT '',
+				last_title TEXT DEFAULT '',
+				last_description TEXT DEFAULT '',
+				last_due TEXT DEFAULT '',
+				last_priority INTEGER DEFAULT 1,
+				last_completed BOOLEAN DEFAULT false,
+				created_at TIMESTAMPTZ DEFAULT NOW(),
+				updated_at TIMESTAMPTZ DEFAULT NOW(),
+				UNIQUE(user_id, todoist_task_id),
+				UNIQUE(item_id)
+			);
+			CREATE INDEX IF NOT EXISTS idx_todoist_task_links_user ON todoist_task_links(user_id);
+			CREATE INDEX IF NOT EXISTS idx_todoist_task_links_item ON todoist_task_links(item_id);
+			CREATE INDEX IF NOT EXISTS idx_todoist_task_links_todoist ON todoist_task_links(todoist_task_id);
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {
