@@ -32,7 +32,7 @@ import (
 //go:embed all:frontend/dist
 var frontendFiles embed.FS
 
-//go:embed banner.txt
+//go:embed assets/banner.txt
 var bannerArt string
 
 // ANSI color for startup banner
