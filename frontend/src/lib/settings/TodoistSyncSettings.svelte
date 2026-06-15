@@ -198,7 +198,7 @@
 						size="small"
 						onclick={runNow}
 						disabled={syncing}
-						data-testid="todoist-sync-now"
+						dataTestid="todoist-sync-now"
 					>
 						{#if syncing}
 							<Loader2 class="w-4 h-4 animate-spin mr-1" />

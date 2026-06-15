@@ -83,9 +83,12 @@
   async function refreshModels() {
     if (!selectedProvider || !isDynamicProvider || refreshModelsDisabled) return;
     refreshingModels = true;
+    const refreshConnectionId = showEditModal && editingConnection?.provider_type === form.provider_type
+      ? editingConnection.id
+      : null;
     try {
       const result = await api.llmProviders.refreshModels(selectedProvider.type, {
-        ...(editingConnection?.id ? { connection_id: editingConnection.id } : {}),
+        ...(refreshConnectionId ? { connection_id: refreshConnectionId } : {}),
         ...(form.base_url ? { base_url: form.base_url } : {}),
         ...(form.api_key ? { api_key: form.api_key } : {}),
       });
@@ -133,6 +136,7 @@
   });
 
   function openCreate() {
+    editingConnection = null;
     resetForm();
     showCreateModal = true;
   }
