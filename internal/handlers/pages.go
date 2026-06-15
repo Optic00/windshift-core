@@ -177,6 +177,19 @@ func (h *PageHandler) GetTree(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// The sidebar renders titles only and PageMoveDialog needs id/parent
+	// only; neither consumer touches the body. Stripping the heavy TEXT
+	// fields here keeps the tree payload KB-sized instead of MB-sized at
+	// ~1000 pages (content is shipped twice over: flat Pages + nested
+	// Tree, since PageNode embeds Page). Mutating the shared slice before
+	// BuildPageTree copies each Page into a PageNode strips both shapes
+	// in one pass. (WI-407.)
+	for i := range filtered {
+		filtered[i].Content = ""
+		filtered[i].ContentHash = ""
+		filtered[i].Excerpt = ""
+	}
+
 	// Preload labels onto each visible page before BuildPageTree copies
 	// them into PageNodes — the copy inherits the slice header.
 	if err := h.service.PreloadLabels(filtered); err != nil {
