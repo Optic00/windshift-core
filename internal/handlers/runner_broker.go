@@ -27,6 +27,17 @@ const (
 	maxLLMBrokerBody  = 16 << 20 // 16 MiB
 	maxHTTPBrokerBody = 16 << 20 // 16 MiB
 	maxGitBrokerBody  = 2 << 30  // 2 GiB
+
+	// egressResponseHeaderTimeout bounds time-to-first-header for arbitrary
+	// HTTP/git egress, where a slow upstream is treated as a fault.
+	egressResponseHeaderTimeout = 30 * time.Second
+	// llmResponseHeaderTimeout is intentionally generous: an OpenAI-compatible
+	// chat completion can spend minutes on prompt prefill (long context,
+	// reasoning) before committing the SSE response headers. A 30s bound aborts
+	// those slow-but-healthy calls with "timeout awaiting response headers",
+	// which the coding agent surfaces as a 503 and retries into failure. Still
+	// bounded so a genuinely hung upstream cannot pin a goroutine forever.
+	llmResponseHeaderTimeout = 5 * time.Minute
 )
 
 // RunnerBrokerHandler is the secretless access layer's server side
@@ -200,7 +211,7 @@ func (h *RunnerBrokerHandler) ProxyLLM(w http.ResponseWriter, r *http.Request) {
 		// targets even if an LLM connection's base URL is misconfigured or
 		// rebinds between write-time validation and use (Phase 8 of the
 		// agent-runner security fix plan).
-		Transport: ssrfSafeTransport(),
+		Transport: ssrfSafeTransport(llmResponseHeaderTimeout),
 		Director: func(req *http.Request) {
 			req.URL.Scheme = target.Scheme
 			req.URL.Host = target.Host
@@ -437,7 +448,7 @@ func (h *RunnerBrokerHandler) ProxyHTTP(w http.ResponseWriter, r *http.Request) 
 		// WI-168) so the broker can't be coerced into reaching the cloud
 		// metadata endpoint or internal services. The dialer re-resolves and
 		// re-checks at connect time, which also defends against DNS rebinding.
-		Transport: ssrfSafeTransport(),
+		Transport: ssrfSafeTransport(egressResponseHeaderTimeout),
 		Director: func(req *http.Request) {
 			req.URL = tu
 			req.Host = tu.Host
@@ -459,14 +470,14 @@ func (h *RunnerBrokerHandler) ProxyHTTP(w http.ResponseWriter, r *http.Request) 
 // unspecified 0.0.0.0/:: addresses that route to localhost) — broader than the
 // plain IsPrivateIP check, which misses several localhost-reachable ranges.
 // Used by the HTTP egress broker.
-func ssrfSafeTransport() http.RoundTripper {
+func ssrfSafeTransport(responseHeaderTimeout time.Duration) http.RoundTripper {
 	return &http.Transport{
 		// No ProxyFromEnvironment (WI-238 security Phase 7): an env-configured
 		// HTTP(S)_PROXY would be dialed directly, bypassing the post-resolution
 		// blocklist below and reopening the SSRF hole the dialer closes. The
 		// broker always connects to the validated target itself.
 		Proxy:                 nil,
-		ResponseHeaderTimeout: 30 * time.Second,
+		ResponseHeaderTimeout: responseHeaderTimeout,
 		IdleConnTimeout:       60 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		DialContext:           utils.SafeNetDialer(10 * time.Second).DialContext,
