@@ -421,6 +421,12 @@ func (o *Output) printItemDetailTable(w *tabwriter.Writer, item *Item) {
 	if item.ItemType != nil {
 		_, _ = fmt.Fprintf(w, "Type:\t%s\n", item.ItemType.Name)
 	}
+	if item.ParentID != nil {
+		_, _ = fmt.Fprintf(w, "Parent:\t%s\n", parentDisplay(item))
+	}
+	if len(item.Children) > 0 {
+		_, _ = fmt.Fprintf(w, "Children:\t%s\n", childrenSummary(item.Children))
+	}
 	if item.Priority != nil {
 		_, _ = fmt.Fprintf(w, "Priority:\t%s\n", item.Priority.Name)
 	}

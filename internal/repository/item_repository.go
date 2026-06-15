@@ -139,6 +139,7 @@ func (r *ItemRepository) FindByIDWithWorkspaceStatus(id int) (*ItemWithWorkspace
 
 	// Joined data
 	var projectName, iterationName, timeProjectName, parentTitle sql.NullString
+	var parentWorkspaceItemNumber sql.NullInt64
 	var assigneeName, assigneeEmail, assigneeAvatar, creatorName, creatorEmail sql.NullString
 	var priorityName, priorityIcon, priorityColor sql.NullString
 	var statusName sql.NullString
@@ -165,6 +166,7 @@ func (r *ItemRepository) FindByIDWithWorkspaceStatus(id int) (*ItemWithWorkspace
 		       proj.name as project_name,
 		       tp.name as time_project_name,
 		       p.title as parent_title,
+		       p.workspace_item_number as parent_workspace_item_number,
 		       assignee.first_name || ' ' || assignee.last_name as assignee_name, assignee.email as assignee_email, assignee.avatar_url as assignee_avatar,
 		       creator.first_name || ' ' || creator.last_name as creator_name, creator.email as creator_email,
 		       pri.name as priority_name, pri.icon as priority_icon, pri.color as priority_color,
@@ -197,7 +199,7 @@ func (r *ItemRepository) FindByIDWithWorkspaceStatus(id int) (*ItemWithWorkspace
 		&parentID, &storyPoints, &estimateMinutes, &item.FracIndex, &item.CreatedAt, &item.UpdatedAt,
 		&creatorPortalCustomerID, &channelID, &requestTypeID,
 		&item.WorkspaceName, &item.WorkspaceKey, &workspaceActive,
-		&iterationName, &projectName, &timeProjectName, &parentTitle,
+		&iterationName, &projectName, &timeProjectName, &parentTitle, &parentWorkspaceItemNumber,
 		&assigneeName, &assigneeEmail, &assigneeAvatar, &creatorName, &creatorEmail,
 		&priorityName, &priorityIcon, &priorityColor,
 		&statusName,
@@ -243,6 +245,7 @@ func (r *ItemRepository) FindByIDWithWorkspaceStatus(id int) (*ItemWithWorkspace
 	assignNullableString(&item.ProjectName, projectName)
 	assignNullableString(&item.TimeProjectName, timeProjectName)
 	assignNullableString(&item.ParentTitle, parentTitle)
+	assignNullableInt(&item.ParentWorkspaceItemNumber, parentWorkspaceItemNumber)
 	assignNullableString(&item.AssigneeName, assigneeName)
 	assignNullableString(&item.AssigneeEmail, assigneeEmail)
 	assignNullableString(&item.AssigneeAvatar, assigneeAvatar)

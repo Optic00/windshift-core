@@ -130,6 +130,48 @@ func (h *ItemHandler) allowUnlessPersonalExcluded(w http.ResponseWriter, r *http
 	return true
 }
 
+// setParentSummary fills the parent's display key and title on the response,
+// but only when the caller is allowed to see the parent. A parent may live in
+// a different workspace than its child; revealing its key or title across a
+// workspace boundary the caller can't view would leak information, so a
+// cross-workspace parent is gated on item-view permission — mirroring
+// validateParentHierarchy. Same-workspace parents are already covered by the
+// item's own workspace view check. The raw parent_id is left as-is
+// (pre-existing behavior); only the renderable fields are withheld, so an
+// unauthorized caller sees a parent_id it cannot resolve but no key/title.
+//
+// The key is built from the parent's own workspace key (not the child's), so
+// it is correct even when the parent lives in another workspace.
+func (h *ItemHandler) setParentSummary(userID int, item *models.Item, resp *dto.ItemResponse) {
+	if item == nil || resp == nil || item.ParentID == nil || item.ParentWorkspaceItemNumber == nil {
+		return
+	}
+
+	parentWorkspaceID, err := h.itemRepo.GetWorkspaceID(*item.ParentID)
+	if err != nil {
+		// Fail closed: withhold the renderable fields on lookup failure.
+		return
+	}
+
+	// The parent's workspace key — same as the child's for the common
+	// in-workspace hierarchy, looked up only when the parent is elsewhere.
+	parentWorkspaceKey := item.WorkspaceKey
+	if parentWorkspaceID != item.WorkspaceID {
+		// Cross-workspace parent: gate on view permission before revealing anything.
+		if allowed, perr := h.Perms.CanViewWorkspace(userID, parentWorkspaceID); perr != nil || !allowed {
+			return
+		}
+		key, kerr := repository.NewWorkspaceRepository(h.DB).GetKey(parentWorkspaceID)
+		if kerr != nil {
+			return
+		}
+		parentWorkspaceKey = key
+	}
+
+	resp.ParentKey = fmt.Sprintf("%s-%d", parentWorkspaceKey, *item.ParentWorkspaceItemNumber)
+	resp.ParentTitle = item.ParentTitle
+}
+
 // List handles GET /rest/api/v1/items
 //
 // @Summary      List items visible to the caller
@@ -290,6 +332,7 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 	// Convert to DTO
 	baseURL := getBaseURL(r)
 	response := dto.MapItemToResponse(item, baseURL)
+	h.setParentSummary(user.ID, item, response)
 
 	// Handle expand parameter
 	expand := restapi.ParseExpand(r)
@@ -390,6 +433,7 @@ func (h *ItemHandler) GetByKeyAndNumber(w http.ResponseWriter, r *http.Request) 
 
 	baseURL := getBaseURL(r)
 	response := dto.MapItemToResponse(item, baseURL)
+	h.setParentSummary(user.ID, item, response)
 
 	expand := restapi.ParseExpand(r)
 	if expand.Comments {

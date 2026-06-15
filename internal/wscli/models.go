@@ -79,8 +79,12 @@ type Item struct {
 	EndDate             *time.Time             `json:"end_date,omitempty"`
 	CustomFields        map[string]interface{} `json:"custom_fields,omitempty"`
 
-	// Hierarchy
-	ParentID *int `json:"parent_id,omitempty"`
+	// Hierarchy. ParentKey/ParentTitle are populated by the server on
+	// permission-checked single-item reads (omitted when the caller may not
+	// view the parent); render ParentKey rather than deriving one from ParentID.
+	ParentID    *int   `json:"parent_id,omitempty"`
+	ParentKey   string `json:"parent_key,omitempty"`
+	ParentTitle string `json:"parent_title,omitempty"`
 
 	// Related entities
 	Status     *StatusSummary     `json:"status,omitempty"`

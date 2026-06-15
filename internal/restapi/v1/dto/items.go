@@ -19,8 +19,18 @@ type ItemResponse struct {
 	EndDate             *time.Time             `json:"end_date,omitempty"`
 	CustomFields        map[string]interface{} `json:"custom_fields,omitempty"`
 
-	// Hierarchy
-	ParentID *int `json:"parent_id,omitempty"`
+	// Hierarchy. ParentID is the raw DB id. ParentKey is the parent's
+	// ready-to-display key (e.g. "WI-120"), computed server-side from the
+	// parent's own workspace — clients must render this rather than building a
+	// key from ParentID, which is a DB id in a different namespace and may even
+	// point into another workspace. ParentKey and ParentTitle are populated
+	// only on permission-checked single-item reads, and only when the caller
+	// may view the parent (see ItemHandler.setParentSummary); they are omitted
+	// from list responses and withheld across a workspace boundary the caller
+	// cannot see.
+	ParentID    *int   `json:"parent_id,omitempty"`
+	ParentKey   string `json:"parent_key,omitempty"`
+	ParentTitle string `json:"parent_title,omitempty"`
 
 	// Related entities (populated based on ?expand= parameter)
 	Status     *StatusSummary     `json:"status,omitempty"`

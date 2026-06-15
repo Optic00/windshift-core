@@ -2,6 +2,7 @@ package wscli
 
 import (
 	"fmt"
+	"strings"
 )
 
 // resolveOptionalWorkspace resolves the workspace ID from config/flag if present.
@@ -80,6 +81,57 @@ func itemDisplayFields(item *Item) (key, status, assignee, itemType string) {
 		itemType = item.ItemType.Name
 	}
 	return
+}
+
+// parentRef returns a reference to an item's parent for display. It prefers
+// the server-provided ParentKey (e.g. "WI-120"), which the server computes
+// from the parent's own workspace and withholds when the caller may not view
+// the parent. When the key is absent it falls back to the resolvable
+// "item:<id>" form — never a key reconstructed from ParentID, which is a DB id
+// in a different namespace. Returns "" when the item has no parent.
+func parentRef(item *Item) string {
+	if item == nil || item.ParentID == nil {
+		return ""
+	}
+	if item.ParentKey != "" {
+		return item.ParentKey
+	}
+	return fmt.Sprintf("item:%d", *item.ParentID)
+}
+
+// childrenSummary renders an inline list of child keys with a total count,
+// e.g. "WI-385, WI-386, WI-387 (3)". The list is capped so big epics stay
+// scannable; remaining children are summarized as "… (+N more)". Each child
+// already carries its own correct Key, so no key arithmetic is needed.
+func childrenSummary(children []Item) string {
+	const maxInline = 10
+	keys := make([]string, 0, len(children))
+	for i := range children {
+		k, _, _, _ := itemDisplayFields(&children[i])
+		keys = append(keys, k)
+		if len(keys) == maxInline && len(children) > maxInline {
+			break
+		}
+	}
+	joined := strings.Join(keys, ", ")
+	if len(children) > len(keys) {
+		joined = fmt.Sprintf("%s … (+%d more)", joined, len(children)-len(keys))
+	}
+	return fmt.Sprintf("%s (%d)", joined, len(children))
+}
+
+// parentDisplay renders the parent for a human-facing detail line, e.g.
+// "WI-120 (Login epic)", or just the reference when no title is available.
+// Returns "" when the item has no parent.
+func parentDisplay(item *Item) string {
+	key := parentRef(item)
+	if key == "" {
+		return ""
+	}
+	if item.ParentTitle != "" {
+		return fmt.Sprintf("%s (%s)", key, item.ParentTitle)
+	}
+	return key
 }
 
 // newFiltersWithWorkspace creates a filter map and applies the optional

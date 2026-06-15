@@ -12,9 +12,13 @@ ws task created           # Tasks I created
 # Create & manage
 ws task create -t "Title" [-d "Description"]
 ws task move <KEY-123> <status>   # THE status-change command (no "transition" subcommand exists)
-ws task get <KEY-123>
+ws task get <KEY-123>             # Detail view — shows Parent (key) and Children
 ws task edit <KEY-123> [-t "Title"] [-d "Desc"] [--assignee <user-id>] [--parent <item-id>]
-ws task children <KEY-123>
+ws task children <KEY-123>        # List child items
+ws task parent <KEY-123>          # Show this item's parent
+# NB: JSON "parent_id" is a raw DB id, NOT a workspace number — never build a
+# key as WI-<parent_id>. Use `ws task parent`, or `ws task get item:<parent_id>`.
+# `ws task get` also prints the parent's real key (parent_key in JSON).
 
 # Comments (Markdown; an agent's only channel to humans)
 ws comment add <KEY-123> -m "Markdown body"

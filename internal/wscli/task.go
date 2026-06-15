@@ -194,6 +194,14 @@ Examples:
 			return nil
 		}
 
+		// Surface the item's children so both directions of the hierarchy are
+		// visible from a single `get` (the parent key/title come straight from
+		// the server). A children-fetch failure is non-fatal — still print the
+		// item we already have.
+		if children, cerr := client.GetItemChildren(itemID); cerr == nil {
+			item.Children = children
+		}
+
 		output := NewOutput()
 		output.Print(item)
 		return nil
@@ -601,6 +609,53 @@ Examples:
 	},
 }
 
+var taskParentCmd = &cobra.Command{
+	Use:   "parent <id|KEY-123>",
+	Short: "Show the parent of a task",
+	Long: `Show the parent item of a given item — the inverse of "task children".
+
+Resolves the item, then fetches and prints its parent. The parent is looked up
+by its database id directly, so there is no need to reconstruct a key from the
+raw parent_id field (which is a DB id, not a workspace key).
+
+Examples:
+  ws task parent WI-385                   # Show WI-385's parent
+  ws task parent 552                      # By numeric ID`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client, err := NewClient()
+		if err != nil {
+			return err
+		}
+
+		itemID, err := client.ResolveItemID(args[0])
+		if err != nil {
+			return fmt.Errorf("failed to resolve item: %w", err)
+		}
+
+		item, err := client.GetItem(itemID, "")
+		if err != nil {
+			return fmt.Errorf("failed to get item: %w", err)
+		}
+
+		if item.ParentID == nil {
+			_, _ = fmt.Fprintf(stdout, "%s has no parent\n", args[0])
+			return nil
+		}
+
+		// Fetch the parent by its DB id — GET /items/{id} takes the numeric id
+		// directly, so this is correct by construction (no key arithmetic).
+		parent, err := client.GetItem(*item.ParentID, "transitions")
+		if err != nil {
+			return fmt.Errorf("failed to get parent: %w", err)
+		}
+
+		output := NewOutput()
+		output.Print(parent)
+		return nil
+	},
+}
+
 var taskEditCmd = &cobra.Command{
 	Use:   "edit <id|KEY-123>",
 	Short: "Edit a task",
@@ -971,6 +1026,7 @@ func init() {
 	taskCmd.AddCommand(taskCreateCmd)
 	taskCmd.AddCommand(taskEditCmd)
 	taskCmd.AddCommand(taskChildrenCmd)
+	taskCmd.AddCommand(taskParentCmd)
 	taskCmd.AddCommand(taskMoveCmd)
 	taskCmd.AddCommand(taskSetMilestoneCmd)
 	taskCmd.AddCommand(taskHistoryCmd)
