@@ -23,16 +23,26 @@ function testCaseLinkSnippet() {
   }));
 }
 
-const columns = [
-  { key: 'test_case_title', label: 'Test Case', slot: 'test_case_link' },
-];
+const columns = [{ key: 'test_case_title', label: 'Test Case', slot: 'test_case_link' }];
 
 // The prod trigger: the same flaky test case (id 5) failed across two runs, so
 // `test_case_id` repeats. Rows carry a unique composite `row_key` (run:case),
 // which is what TestReports keys the table on.
 const rows = [
-  { test_case_id: 5, test_case_title: 'Login test', run_id: 10, run_name: 'Run A', row_key: '10:5' },
-  { test_case_id: 5, test_case_title: 'Login test', run_id: 11, run_name: 'Run B', row_key: '11:5' },
+  {
+    test_case_id: 5,
+    test_case_title: 'Login test',
+    run_id: 10,
+    run_name: 'Run A',
+    row_key: '10:5',
+  },
+  {
+    test_case_id: 5,
+    test_case_title: 'Login test',
+    run_id: 11,
+    run_name: 'Run B',
+    row_key: '11:5',
+  },
 ];
 
 describe('TestReports failures table (regression)', () => {
