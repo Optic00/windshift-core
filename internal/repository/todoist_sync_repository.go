@@ -98,6 +98,24 @@ func (r *TodoistSyncRepository) ListEnabledConfigs() ([]models.TodoistSyncConfig
 	return configs, nil
 }
 
+// GetEncryptedToken returns the encrypted OAuth access token for a (user,
+// provider) connection, or ErrNotFound when the user has not connected. The
+// caller decrypts it (the repository performs no crypto).
+func (r *TodoistSyncRepository) GetEncryptedToken(userID, providerID string) (string, error) {
+	var enc string
+	err := r.db.QueryRow(`
+		SELECT oauth_access_token_encrypted FROM user_integration_tokens
+		WHERE user_id = ? AND integration_provider_id = ?
+	`, userID, providerID).Scan(&enc)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("get integration token: %w", err)
+	}
+	return enc, nil
+}
+
 const todoistTaskLinkColumns = "id, user_id, item_id, todoist_task_id, todoist_project_id, last_title, last_description, last_due, last_priority, last_completed, created_at, updated_at"
 
 // GetLinkByItemID returns the task link for a personal item, or ErrNotFound.

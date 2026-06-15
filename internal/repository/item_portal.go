@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"windshift/internal/models"
 )
@@ -92,6 +93,57 @@ func (r *ItemRepository) ListRelatedPersonalItems(relatedWorkItemID, personalWor
 		return nil, fmt.Errorf("iterate related personal items: %w", err)
 	}
 	return items, nil
+}
+
+// PersonalWorkspaceTask is the minimal projection of a personal-workspace task
+// the Todoist sync engine reconciles against. Completed is derived from the
+// status's category (is_completed), the same signal the UI uses to render a
+// task as done.
+type PersonalWorkspaceTask struct {
+	ItemID      int
+	Title       string
+	Description string
+	DueDate     *time.Time
+	ParentID    *int
+	Completed   bool
+	UpdatedAt   time.Time
+}
+
+// ListPersonalWorkspaceTasks returns every task item in a personal workspace,
+// projected for Todoist sync. is_task filters out any non-task rows so the sync
+// mirrors the personal to-do list rather than arbitrary items.
+func (r *ItemRepository) ListPersonalWorkspaceTasks(workspaceID int) ([]PersonalWorkspaceTask, error) {
+	rows, err := r.db.Query(`
+		SELECT i.id, i.title, i.description, i.due_date, i.parent_id, i.updated_at,
+		       COALESCE(sc.is_completed, false) AS completed
+		FROM items i
+		LEFT JOIN statuses s ON i.status_id = s.id
+		LEFT JOIN status_categories sc ON s.category_id = sc.id
+		WHERE i.workspace_id = ? AND i.is_task = true
+	`, workspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("list personal workspace tasks: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var tasks []PersonalWorkspaceTask
+	for rows.Next() {
+		var t PersonalWorkspaceTask
+		var dueDate sql.NullTime
+		var parentID sql.NullInt64
+		if err := rows.Scan(&t.ItemID, &t.Title, &t.Description, &dueDate, &parentID, &t.UpdatedAt, &t.Completed); err != nil {
+			return nil, fmt.Errorf("scan personal workspace task: %w", err)
+		}
+		if dueDate.Valid {
+			t.DueDate = &dueDate.Time
+		}
+		assignNullableInt(&t.ParentID, parentID)
+		tasks = append(tasks, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate personal workspace tasks: %w", err)
+	}
+	return tasks, nil
 }
 
 // ItemWorkspaceOwnership describes the workspace an item belongs to, whether
