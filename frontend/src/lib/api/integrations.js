@@ -15,6 +15,18 @@ export const userIntegrations = {
   startOAuth: (slug) => fetchAPI(`/integrations/oauth/${slug}/start`),
 };
 
+// Todoist personal-task sync
+export const todoistSync = {
+  get: () => fetchAPI('/users/me/todoist-sync'),
+  update: (data) =>
+    fetchAPI('/users/me/todoist-sync', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+  getProjects: () => fetchAPI('/users/me/todoist-sync/projects'),
+  run: () => fetchAPI('/users/me/todoist-sync/run', { method: 'POST' }),
+};
+
 // Item integration links
 export const itemIntegrationLinks = {
   get: (itemId) => fetchAPI(`/items/${itemId}/integration-links`),

@@ -6,6 +6,7 @@
 	import Button from '../components/Button.svelte';
 	import AlertBox from '../components/AlertBox.svelte';
 	import EmptyState from '../components/EmptyState.svelte';
+	import TodoistSyncSettings from './TodoistSyncSettings.svelte';
 	import { t } from '../stores/i18n.svelte.js';
 	import { formatDateSimple } from '../utils/dateFormatter.js';
 
@@ -286,10 +287,12 @@
 					{@const connection = getConnectedProvider(provider.id)}
 					{@const metadata = connection ? parseMetadata(connection.provider_metadata) : {}}
 					{@const IntegrationIcon = getIntegrationIcon(provider.provider_type)}
+					{@const isTodoist = provider.provider_type?.toLowerCase() === 'todoist'}
 					<div
-						class="border rounded-lg p-4 flex items-center gap-4"
+						class="border rounded-lg p-4"
 						style="border-color: var(--ds-border); background-color: var(--ds-surface-raised);"
 					>
+						<div class="flex items-center gap-4">
 						<div
 							class="w-12 h-12 rounded-lg flex items-center justify-center"
 							style="background-color: var(--ds-background-neutral);"
@@ -374,6 +377,10 @@
 								</Button>
 							{/if}
 						</div>
+						</div>
+						{#if isTodoist && connection}
+							<TodoistSyncSettings />
+						{/if}
 					</div>
 				{/each}
 			</div>
