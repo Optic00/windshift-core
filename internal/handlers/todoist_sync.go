@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
@@ -21,7 +20,6 @@ import (
 // and a manual "Sync now" trigger. It reuses the integration OAuth connection
 // (encrypted token in user_integration_tokens) established by the connect flow.
 type TodoistSyncHandler struct {
-	db            database.Database
 	encryption    *sso.SecretEncryption
 	syncRepo      *repository.TodoistSyncRepository
 	workspaceRepo *repository.WorkspaceRepository
@@ -31,7 +29,6 @@ type TodoistSyncHandler struct {
 // NewTodoistSyncHandler constructs a TodoistSyncHandler.
 func NewTodoistSyncHandler(db database.Database, encryption *sso.SecretEncryption) *TodoistSyncHandler {
 	return &TodoistSyncHandler{
-		db:            db,
 		encryption:    encryption,
 		syncRepo:      repository.NewTodoistSyncRepository(db),
 		workspaceRepo: repository.NewWorkspaceRepository(db),
@@ -257,19 +254,7 @@ func (h *TodoistSyncHandler) RunSync(w http.ResponseWriter, r *http.Request) {
 
 // todoistProviderID resolves the single enabled Todoist provider, or ErrNotFound.
 func (h *TodoistSyncHandler) todoistProviderID() (string, error) {
-	var id string
-	err := h.db.QueryRow(`
-		SELECT id FROM integration_providers
-		WHERE provider_type = ? AND enabled = true
-		ORDER BY created_at LIMIT 1
-	`, string(models.IntegrationProviderTodoist)).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", repository.ErrNotFound
-	}
-	if err != nil {
-		return "", fmt.Errorf("resolve todoist provider: %w", err)
-	}
-	return id, nil
+	return h.syncRepo.GetEnabledTodoistProviderID()
 }
 
 func (h *TodoistSyncHandler) userConnected(userID, providerID string) bool {

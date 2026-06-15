@@ -135,6 +135,25 @@ func (r *TodoistSyncRepository) ListEnabledConfigs() ([]models.TodoistSyncConfig
 	return configs, nil
 }
 
+// GetEnabledTodoistProviderID resolves the single enabled Todoist integration
+// provider, or ErrNotFound when none is configured/enabled. Oldest-first so the
+// result is stable if more than one provider row somehow exists.
+func (r *TodoistSyncRepository) GetEnabledTodoistProviderID() (string, error) {
+	var id string
+	err := r.db.QueryRow(`
+		SELECT id FROM integration_providers
+		WHERE provider_type = ? AND enabled = true
+		ORDER BY created_at LIMIT 1
+	`, string(models.IntegrationProviderTodoist)).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve todoist provider: %w", err)
+	}
+	return id, nil
+}
+
 // GetEncryptedToken returns the encrypted OAuth access token for a (user,
 // provider) connection, or ErrNotFound when the user has not connected. The
 // caller decrypts it (the repository performs no crypto).
