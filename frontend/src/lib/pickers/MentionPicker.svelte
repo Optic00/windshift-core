@@ -85,21 +85,37 @@
     onSelect?.(user);
   }
 
+  // Keys the picker owns while it is open. While a mention is in progress,
+  // these must always be consumed (preventDefault + stopPropagation) so the
+  // underlying ProseMirror editor never sees them — otherwise Enter inserts a
+  // newline right at the cursor, splitting the in-progress @mention and
+  // leaving a broken chip behind (WI-200).
+  const PICKER_KEYS = new Set(['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape']);
+
   function handleKeyDown(e) {
-    if (!open || filteredUsers.length === 0) return;
+    if (!open || !PICKER_KEYS.has(e.key)) return;
+
+    // Consume the key so ProseMirror doesn't get to act on it regardless of
+    // whether there is a result to select. (Arrow keys only make sense with a
+    // non-empty list, so leave them alone then.)
+    const hasResults = filteredUsers.length > 0;
 
     if (e.key === 'ArrowDown') {
+      if (!hasResults) return;
       e.preventDefault();
       e.stopPropagation();
       highlightedIndex = (highlightedIndex + 1) % filteredUsers.length;
     } else if (e.key === 'ArrowUp') {
+      if (!hasResults) return;
       e.preventDefault();
       e.stopPropagation();
       highlightedIndex = highlightedIndex === 0 ? filteredUsers.length - 1 : highlightedIndex - 1;
     } else if (e.key === 'Enter' || e.key === 'Tab') {
+      // Always consume Enter/Tab while the picker is open — even with no
+      // results — so the editor can't insert a newline mid-mention.
+      e.preventDefault();
+      e.stopPropagation();
       if (filteredUsers[highlightedIndex]) {
-        e.preventDefault();
-        e.stopPropagation();
         handleSelect(filteredUsers[highlightedIndex]);
       }
     } else if (e.key === 'Escape') {
