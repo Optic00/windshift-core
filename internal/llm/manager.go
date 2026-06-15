@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
 	"time"
 
 	"windshift/internal/database"
@@ -51,6 +53,31 @@ func NewConnectionManager(db database.Database, encryption *sso.SecretEncryption
 // Otherwise, picks the default enabled connection (or the first enabled one).
 // Falls back to the env-var-based client if no DB connections exist.
 func (m *ConnectionManager) Resolve(connectionID int) (Client, error) {
+	rc, err := m.resolve(connectionID)
+	if err != nil {
+		return nil, err
+	}
+	return rc.client, nil
+}
+
+// resolvedConnection bundles a ready Client with the non-secret connection
+// metadata (provider, model, effective endpoint) so callers that want to log
+// or report what they're talking to don't have to re-query. The fallback
+// env-var client has no DB row, so usedFallback flags that provider/model are
+// unknown.
+type resolvedConnection struct {
+	client       Client
+	connectionID int
+	providerType ProviderType
+	model        string
+	baseURL      string // effective endpoint (provider default when none stored)
+	usedFallback bool
+}
+
+// resolve is the metadata-returning core behind Resolve. Keeping Resolve's
+// signature narrow (just a Client) avoids churning its many callers while
+// still letting PromptConnection name the provider/model in its logs.
+func (m *ConnectionManager) resolve(connectionID int) (*resolvedConnection, error) {
 	var row *sql.Row
 	if connectionID > 0 {
 		row = m.db.QueryRow(
@@ -78,7 +105,7 @@ func (m *ConnectionManager) Resolve(connectionID int) (Client, error) {
 			return nil, fmt.Errorf("LLM connection %d not found or disabled", connectionID)
 		}
 		// No DB connections configured — fall back to the env-var client
-		return m.fallback, nil
+		return &resolvedConnection{client: m.fallback, usedFallback: true}, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to query connection: %w", err)
@@ -92,12 +119,71 @@ func (m *ConnectionManager) Resolve(connectionID int) (Client, error) {
 		}
 	}
 
-	return NewProviderClient(ConnectionConfig{
-		ProviderType: ProviderType(providerType),
-		Model:        model,
-		APIKey:       apiKey,
-		BaseURL:      baseURL.String,
-	}), nil
+	effectiveBaseURL := baseURL.String
+	if effectiveBaseURL == "" {
+		if p := GetProvider(ProviderType(providerType)); p != nil {
+			effectiveBaseURL = p.BaseURL
+		}
+	}
+
+	return &resolvedConnection{
+		client: NewProviderClient(ConnectionConfig{
+			ProviderType: ProviderType(providerType),
+			Model:        model,
+			APIKey:       apiKey,
+			BaseURL:      baseURL.String,
+		}),
+		connectionID: id,
+		providerType: ProviderType(providerType),
+		model:        model,
+		baseURL:      effectiveBaseURL,
+	}, nil
+}
+
+// ConnectionRuntimeConfig contains the decrypted runtime fields needed to
+// resolve the admin-selected provider for a coding-agent run (the model id for
+// the agent container; the key + base URL stay server-side in the llm-proxy).
+type ConnectionRuntimeConfig struct {
+	ProviderType string
+	APIFormat    string
+	Model        string
+	APIKey       string
+	BaseURL      string
+}
+
+// ConnectionRuntime returns the runtime config for one enabled connection. It
+// is intentionally narrower than GetConnection and is only used after callers
+// have already authorized access to the selected connection.
+func (m *ConnectionManager) ConnectionRuntime(ctx context.Context, connectionID int) (*ConnectionRuntimeConfig, error) {
+	cfg := &ConnectionRuntimeConfig{}
+	var apiKeyEncrypted, baseURLNull sql.NullString
+	err := m.db.QueryRowContext(ctx,
+		`SELECT provider_type, model, api_key_encrypted, base_url
+		 FROM llm_connections
+		 WHERE id = ? AND is_enabled = true`,
+		connectionID,
+	).Scan(&cfg.ProviderType, &cfg.Model, &apiKeyEncrypted, &baseURLNull)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("LLM connection %d not found or disabled", connectionID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to query connection runtime: %w", err)
+	}
+	provider := GetProvider(ProviderType(cfg.ProviderType))
+	if provider == nil {
+		return nil, fmt.Errorf("unknown LLM provider type %q", cfg.ProviderType)
+	}
+	cfg.APIFormat = provider.APIFormat
+	if apiKeyEncrypted.Valid && apiKeyEncrypted.String != "" {
+		cfg.APIKey, err = m.encryption.Decrypt(apiKeyEncrypted.String)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt API key: %w", err)
+		}
+	}
+	if baseURLNull.Valid {
+		cfg.BaseURL = baseURLNull.String
+	}
+	return cfg, nil
 }
 
 // ListConnections returns all connections (without secrets) for admin listing.
@@ -288,27 +374,84 @@ func (m *ConnectionManager) DeleteConnection(id int) error {
 // exists — the handler then decides whether the provider requires a key
 // (everything except OpenRouter does today).
 func (m *ConnectionManager) GetAnyAPIKeyForProvider(providerType ProviderType) (string, error) {
-	var apiKeyEncrypted sql.NullString
-	err := m.db.QueryRow(
-		`SELECT api_key_encrypted FROM llm_connections
-		 WHERE provider_type = ? AND is_enabled = true AND api_key_encrypted IS NOT NULL AND api_key_encrypted <> ''
-		 ORDER BY is_default DESC, id ASC LIMIT 1`,
+	runtime, err := m.GetCatalogRuntimeForProvider(providerType)
+	if err != nil {
+		return "", err
+	}
+	if runtime == nil {
+		return "", nil
+	}
+	return runtime.APIKey, nil
+}
+
+// CatalogRuntime contains endpoint/auth material used to refresh a provider's
+// model catalog. It intentionally excludes model names and other unrelated
+// connection fields.
+type CatalogRuntime struct {
+	ConnectionID int
+	APIKey       string
+	BaseURL      string
+}
+
+// GetCatalogRuntimeForProvider returns auth/base URL from the preferred enabled
+// connection for a provider. It returns nil when no enabled connection exists.
+func (m *ConnectionManager) GetCatalogRuntimeForProvider(providerType ProviderType) (*CatalogRuntime, error) {
+	return m.catalogRuntimeFromRow(m.db.QueryRow(
+		`SELECT id, api_key_encrypted, base_url FROM llm_connections
+		 WHERE provider_type = ? AND is_enabled = true
+		 ORDER BY CASE WHEN api_key_encrypted IS NOT NULL AND api_key_encrypted <> '' THEN 0 ELSE 1 END,
+		          is_default DESC, id ASC LIMIT 1`,
 		string(providerType),
-	).Scan(&apiKeyEncrypted)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
+	), fmt.Sprintf("%q", providerType))
+}
+
+// GetCatalogRuntimeForConnection returns auth/base URL for one enabled
+// connection, and the connection's provider type so callers can validate it
+// against route parameters.
+func (m *ConnectionManager) GetCatalogRuntimeForConnection(connectionID int) (ProviderType, *CatalogRuntime, error) {
+	var providerType string
+	row := m.db.QueryRow(
+		`SELECT provider_type, id, api_key_encrypted, base_url FROM llm_connections
+		 WHERE id = ? AND is_enabled = true`,
+		connectionID,
+	)
+	var id int
+	var apiKeyEncrypted, baseURL sql.NullString
+	if err := row.Scan(&providerType, &id, &apiKeyEncrypted, &baseURL); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil, nil
+		}
+		return "", nil, fmt.Errorf("lookup catalog runtime for connection %d: %w", connectionID, err)
 	}
-	if err != nil {
-		return "", fmt.Errorf("lookup api key for %q: %w", providerType, err)
+	runtime, err := m.decryptCatalogRuntime(id, apiKeyEncrypted, baseURL, fmt.Sprintf("connection %d", connectionID))
+	return ProviderType(providerType), runtime, err
+}
+
+func (m *ConnectionManager) catalogRuntimeFromRow(row *sql.Row, label string) (*CatalogRuntime, error) {
+	var id int
+	var apiKeyEncrypted, baseURL sql.NullString
+	if err := row.Scan(&id, &apiKeyEncrypted, &baseURL); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("lookup catalog runtime for %s: %w", label, err)
 	}
-	if !apiKeyEncrypted.Valid || apiKeyEncrypted.String == "" {
-		return "", nil
+	return m.decryptCatalogRuntime(id, apiKeyEncrypted, baseURL, label)
+}
+
+func (m *ConnectionManager) decryptCatalogRuntime(id int, apiKeyEncrypted, baseURL sql.NullString, label string) (*CatalogRuntime, error) {
+	runtime := &CatalogRuntime{ConnectionID: id}
+	if apiKeyEncrypted.Valid && apiKeyEncrypted.String != "" {
+		apiKey, err := m.encryption.Decrypt(apiKeyEncrypted.String)
+		if err != nil {
+			return nil, fmt.Errorf("decrypt api key for %s: %w", label, err)
+		}
+		runtime.APIKey = apiKey
 	}
-	apiKey, err := m.encryption.Decrypt(apiKeyEncrypted.String)
-	if err != nil {
-		return "", fmt.Errorf("decrypt api key for %q: %w", providerType, err)
+	if baseURL.Valid {
+		runtime.BaseURL = baseURL.String
 	}
-	return apiKey, nil
+	return runtime, nil
 }
 
 // TestConnection tests a connection by creating a client and calling Health.
@@ -341,6 +484,67 @@ func (m *ConnectionManager) TestConnection(id int) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	return client.Health(ctx)
+}
+
+// PromptConnection runs a one-shot chat completion against an enabled
+// connection and returns the model's reply text. Unlike TestConnection's
+// Health ping, this exercises the full inference path — provider, key, and
+// model — which is what a "test this agent's LLM" button needs. The connection
+// must be enabled (Resolve only returns enabled rows); a disabled or missing
+// id errors. The resolved client carries the manager's private-CIDR allowlist
+// so a self-hosted base URL can't be turned into an SSRF probe.
+func (m *ConnectionManager) PromptConnection(ctx context.Context, connectionID int, prompt string) (string, error) {
+	if connectionID <= 0 {
+		return "", fmt.Errorf("a connection id is required")
+	}
+	rc, err := m.resolve(connectionID)
+	if err != nil {
+		slog.Warn("llm test prompt: resolve failed",
+			slog.Int("connection_id", connectionID),
+			slog.String("error", err.Error()),
+		)
+		return "", err
+	}
+
+	log := slog.With(
+		slog.Int("connection_id", connectionID),
+		slog.String("provider", string(rc.providerType)),
+		slog.String("model", rc.model),
+		slog.String("base_url", rc.baseURL),
+		slog.Bool("fallback_client", rc.usedFallback),
+		slog.Int("prompt_chars", len(prompt)),
+	)
+	log.Info("llm test prompt: sending to provider")
+
+	start := time.Now()
+	resp, err := rc.client.ChatCompletion(ctx, ChatCompletionRequest{
+		Messages:  []Message{{Role: "user", Content: prompt}},
+		MaxTokens: 256,
+	})
+	if err != nil {
+		log.Warn("llm test prompt: provider call failed",
+			slog.Duration("duration", time.Since(start)),
+			slog.String("error", err.Error()),
+		)
+		return "", err
+	}
+	if len(resp.Choices) == 0 {
+		log.Warn("llm test prompt: provider returned no choices",
+			slog.Duration("duration", time.Since(start)),
+		)
+		return "", fmt.Errorf("model returned no choices")
+	}
+
+	answer := strings.TrimSpace(resp.Choices[0].Message.Content)
+	log.Info("llm test prompt: reply received",
+		slog.Duration("duration", time.Since(start)),
+		slog.Int("answer_chars", len(answer)),
+		slog.String("finish_reason", resp.Choices[0].FinishReason),
+		slog.Int("prompt_tokens", resp.Usage.PromptTokens),
+		slog.Int("completion_tokens", resp.Usage.CompletionTokens),
+		slog.Int("total_tokens", resp.Usage.TotalTokens),
+	)
+	return answer, nil
 }
 
 // LoadAIFeaturesConfig reads the per-feature AI configuration from system_settings.

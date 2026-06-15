@@ -12,11 +12,13 @@ import (
 	"strings"
 	"time"
 
+	"windshift/internal/authz"
 	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 	"windshift/internal/validation"
@@ -27,6 +29,7 @@ type ItemHandler struct {
 	db                  database.Database
 	hierarchyService    *services.HierarchyService
 	permissionService   *services.PermissionService
+	authz               *authz.Authz
 	itemCache           *services.ItemCacheService
 	activityTracker     *services.ActivityTracker
 	idResolver          *services.IDResolverService
@@ -38,7 +41,6 @@ type ItemHandler struct {
 	actionService interface {
 		EmitActionEvent(event *models.ActionEvent)
 	} // Action service for automation workflows (optional, can be nil)
-	bindingTrigger   BindingTrigger             // Coding-agent binding trigger (optional, WI-88)
 	webhookSender    *webhook.WebhookSender     // Webhook sender for dispatching webhook events (optional, can be nil)
 	eventCoordinator *services.EventCoordinator // Centralized event coordinator for side effects (optional, can be nil)
 	issueSyncService interface {
@@ -63,6 +65,7 @@ func NewItemHandler(db database.Database, permissionService *services.Permission
 		db:                  db,
 		hierarchyService:    services.NewHierarchyService(db),
 		permissionService:   permissionService,
+		authz:               authz.New(db, permissionService),
 		itemCache:           itemCache,
 		activityTracker:     activityTracker,
 		idResolver:          services.NewIDResolverService(db),
@@ -88,22 +91,6 @@ func (h *ItemHandler) SetActionService(actionService interface {
 	h.actionService = actionService
 }
 
-// BindingTrigger is the coding-agent harness's interest in item updates:
-// when an item's assignee changes, the trigger checks for a
-// workspace_agent_bindings row pointing at the new assignee and, if found,
-// starts a run. The interface stays small so the items handler can stay
-// ignorant of the binding service's internals (and so tests can stub it).
-type BindingTrigger interface {
-	MaybeStartRunForAssignee(ctx context.Context, workspaceID, itemID int, oldAssignee, newAssignee *int) error
-}
-
-// SetBindingTrigger wires the optional coding-agent binding trigger
-// (WI-88). Nil disables the hook; ItemHandler.Update calls it once per
-// assignee change.
-func (h *ItemHandler) SetBindingTrigger(trigger BindingTrigger) {
-	h.bindingTrigger = trigger
-}
-
 // SetEventCoordinator sets the event coordinator for centralized side effects
 func (h *ItemHandler) SetEventCoordinator(ec *services.EventCoordinator) {
 	h.eventCoordinator = ec
@@ -119,6 +106,24 @@ func (h *ItemHandler) SetIssueSyncService(svc interface {
 // SetConditionService sets the condition service for workflow transition conditions
 func (h *ItemHandler) SetConditionService(cs *services.ConditionService) {
 	h.conditionService = cs
+}
+
+// parseIDListParam parses a comma-separated list of integer IDs from a
+// query parameter. Empty/non-numeric tokens are silently dropped — a
+// zero-length result means "no usable filter values supplied".
+func parseIDListParam(raw string) []int {
+	parts := strings.Split(raw, ",")
+	ids := make([]int, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if id, err := strconv.Atoi(p); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 // milestoneIDsFromItem extracts the milestone IDs from an item's Milestones
@@ -289,6 +294,16 @@ func (h *ItemHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Multi-status include/exclude filters (apply to both QL and non-QL
+	// queries — the board uses these to page non-completed columns
+	// separately from the capped rightmost column).
+	if raw := r.URL.Query().Get("status_id"); raw != "" {
+		filters.StatusIDs = parseIDListParam(raw)
+	}
+	if raw := r.URL.Query().Get("status_id_not"); raw != "" {
+		filters.StatusIDsNot = parseIDListParam(raw)
+	}
+
 	// Sub-filter QL (ANDed with collection/direct QL)
 	subQLQuery := r.URL.Query().Get("sub_ql")
 
@@ -335,6 +350,9 @@ func (h *ItemHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 	}
 	items = filteredItems
 
+	// Strip names of time projects the viewer can't access (keeps the IDs).
+	h.maskInaccessibleProjectNames(user.ID, items)
+
 	// Load labels for items
 	if err := repository.NewLabelRepository(h.db).LoadForItems(items); err != nil {
 		slog.Warn("failed to load labels for items", slog.Any("error", err))
@@ -376,6 +394,74 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.respondItemByID(w, r, user, id)
+}
+
+// GetByKeyAndNumber resolves a stable display key reference, e.g.
+// /api/workspaces/WI/items/123, then returns the same item shape as Get.
+// This lets SPA deep links support both numeric IDs and workspace-key/item-number keys.
+func (h *ItemHandler) GetByKeyAndNumber(w http.ResponseWriter, r *http.Request) {
+	key := strings.TrimSpace(r.PathValue("key"))
+	if key == "" {
+		respondValidationError(w, r, "workspace key is required")
+		return
+	}
+	itemRef := strings.TrimSpace(r.PathValue("number"))
+	if itemRef == "" {
+		respondValidationError(w, r, "item number is required")
+		return
+	}
+
+	lookupKey := key
+	lookupNumber := 0
+	if parts := strings.SplitN(itemRef, "-", 2); len(parts) == 2 {
+		embeddedKey := strings.TrimSpace(parts[0])
+		if embeddedKey == "" {
+			respondValidationError(w, r, "invalid item key")
+			return
+		}
+		// Allow /workspaces/1/items/WI-123 and /workspaces/WI/items/WI-123.
+		// If the path workspace is itself a key and disagrees with the embedded
+		// key, treat the item as not found rather than silently crossing workspaces.
+		if _, numericPathWorkspace := strconv.Atoi(key); numericPathWorkspace != nil && !strings.EqualFold(key, embeddedKey) {
+			respondNotFound(w, r, "item")
+			return
+		}
+		lookupKey = embeddedKey
+		var err error
+		lookupNumber, err = strconv.Atoi(parts[1])
+		if err != nil || lookupNumber <= 0 {
+			respondValidationError(w, r, "invalid item key")
+			return
+		}
+	} else {
+		var err error
+		lookupNumber, err = strconv.Atoi(itemRef)
+		if err != nil || lookupNumber <= 0 {
+			respondValidationError(w, r, "invalid item number")
+			return
+		}
+	}
+
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+
+	id, err := repository.NewItemRepository(h.db).FindIDByKeyAndNumber(lookupKey, lookupNumber)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			respondNotFound(w, r, "item")
+			return
+		}
+		respondInternalError(w, r, err)
+		return
+	}
+
+	h.respondItemByID(w, r, user, id)
+}
+
+func (h *ItemHandler) respondItemByID(w http.ResponseWriter, r *http.Request, user *models.User, id int) {
 	// Get item with all details using service
 	crudService := services.NewItemCRUDService(h.db)
 	result, err := crudService.GetByIDWithWorkspaceStatus(id)
@@ -450,6 +536,12 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Strip names of time projects the viewer has no access to (incl. the
+	// cross-workspace inherited effective project), keeping the IDs.
+	masked := []models.Item{*item}
+	h.maskInaccessibleProjectNames(user.ID, masked)
+	*item = masked[0]
+
 	respondJSONOK(w, item)
 }
 
@@ -487,8 +579,8 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Sanitize user input to prevent XSS
-	item.Title = utils.SanitizeTitle(item.Title)
-	item.Description = utils.SanitizeDescription(item.Description)
+	item.Title = sanitize.PlainTextField.Sanitize(item.Title)
+	item.Description = sanitize.RichText.Sanitize(item.Description)
 
 	// Convert item type ID to *int for validation
 	var itemTypeIDPtr *int
@@ -518,6 +610,7 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 		IsTask:            item.IsTask,
 		RelatedWorkItemID: relatedWorkItemIDPtr,
 		UserID:            user.ID,
+		PermService:       h.permissionService,
 	})
 
 	if !validationResult.Valid {
@@ -584,9 +677,11 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 		StoryPoints:           item.StoryPoints,
 		EstimateMinutes:       item.EstimateMinutes,
 		CustomFieldValuesJSON: customFieldValuesJSON,
+		ValidatingUserID:      user.ID,
+		PermService:           h.permissionService,
 	})
 	if err != nil {
-		if errors.Is(err, services.ErrMissingItemType) {
+		if errors.Is(err, services.ErrMissingItemType) || errors.Is(err, services.ErrProjectNotFound) {
 			respondValidationError(w, r, err.Error())
 			return
 		}
@@ -678,7 +773,13 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 			slog.Float64("total", float64(totalTime.Microseconds())/1000.0),
 		))
 
-	respondJSONCreated(w, createdItem)
+	// Strip names of time projects the creator has no access to (incl. the
+	// inherited effective project), matching the masked read paths. Mask a
+	// copy so the webhook goroutine's view of createdItem isn't mutated.
+	maskedCreated := []models.Item{createdItem}
+	h.maskInaccessibleProjectNames(user.ID, maskedCreated)
+
+	respondJSONCreated(w, maskedCreated[0])
 }
 
 func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
@@ -773,6 +874,15 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 	originalItem := result.OriginalItem
 	updatedItem := result.Item
 
+	// Invalidate the cached effective project for this item and its descendants
+	// when a project-affecting field changed. The cache keys only on item ID and
+	// stores the resolved project, so a change to project_id / inherit_project /
+	// parent_id here would otherwise leave this item and every descendant that
+	// inherits from it serving a stale effective project for up to the cache TTL.
+	if h.itemCache != nil && projectResolutionChanged(originalItem, updatedItem) {
+		h.invalidateEffectiveProjectSubtree(updatedItem.ID)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 
 	// Check if assignee changed (compare originalItem with updatedItem)
@@ -786,21 +896,9 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 		assigneeChanged = true
 	}
 
-	// WI-88 coding-agent binding trigger. Fires on every assignee change;
-	// the trigger no-ops when no binding matches the new assignee, so it's
-	// safe to call eagerly. Errors are logged-and-swallowed: a failed
-	// trigger must not block the item update from succeeding.
-	if assigneeChanged && h.bindingTrigger != nil {
-		if err := h.bindingTrigger.MaybeStartRunForAssignee(r.Context(), updatedItem.WorkspaceID, updatedItem.ID, originalItem.AssigneeID, updatedItem.AssigneeID); err != nil {
-			slog.Warn("coding-agent binding trigger failed",
-				slog.Int("workspace_id", updatedItem.WorkspaceID),
-				slog.Int("item_id", updatedItem.ID),
-				slog.Any("error", err),
-			)
-		}
-	}
-
 	// Emit side effects via EventCoordinator (notifications, webhooks, action events)
+	// The coding-agent binding trigger (WI-88) fires inside
+	// ItemUpdateService.UpdateItem, shared by every update surface.
 	if h.eventCoordinator != nil {
 		h.eventCoordinator.EmitItemUpdated(originalItem, updatedItem, result.StatusChanged, assigneeChanged, user.ID, result.FieldChanges, user.Username)
 	} else {
@@ -939,7 +1037,54 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	respondJSONOK(w, updatedItem)
+	// Strip names of time projects the editor has no access to (incl. the
+	// inherited effective project), matching the masked read paths. Mask a
+	// copy so async consumers of updatedItem aren't mutated.
+	maskedUpdated := []models.Item{*updatedItem}
+	h.maskInaccessibleProjectNames(user.ID, maskedUpdated)
+
+	respondJSONOK(w, maskedUpdated[0])
+}
+
+// maskInaccessibleProjectNames blanks the human-readable project name fields on
+// items whose project / time-project / effective-project the user is not allowed
+// to view. See TimePermissionService.MaskInaccessibleProjectNames.
+func (h *ItemHandler) maskInaccessibleProjectNames(userID int, items []models.Item) {
+	services.NewTimePermissionService(h.db, h.permissionService).MaskInaccessibleProjectNames(userID, items)
+}
+
+// projectResolutionChanged reports whether an update touched a field that can
+// change an item's (or its descendants') effective project: the direct project,
+// the inherit flag, or the parent link.
+func projectResolutionChanged(original, updated *models.Item) bool {
+	if original.InheritProject != updated.InheritProject {
+		return true
+	}
+	if !intPtrEqual(original.ProjectID, updated.ProjectID) {
+		return true
+	}
+	if !intPtrEqual(original.ParentID, updated.ParentID) {
+		return true
+	}
+	return false
+}
+
+// invalidateEffectiveProjectSubtree drops the cached hierarchy entry for an item
+// and all of its descendants, since each descendant may resolve its effective
+// project through this item.
+func (h *ItemHandler) invalidateEffectiveProjectSubtree(itemID int) {
+	_ = h.itemCache.InvalidateItemHierarchy(itemID, nil)
+	if h.hierarchyService == nil {
+		return
+	}
+	descendants, err := h.hierarchyService.GetDescendants(itemID, 0)
+	if err != nil {
+		slog.Warn("failed to load descendants for cache invalidation", slog.Int("item_id", itemID), slog.Any("error", err))
+		return
+	}
+	for i := range descendants {
+		_ = h.itemCache.InvalidateItemHierarchy(descendants[i].ID, nil)
+	}
 }
 
 func (h *ItemHandler) Delete(w http.ResponseWriter, r *http.Request) {
@@ -1360,7 +1505,7 @@ func (h *ItemHandler) Copy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create copy title
-	copyTitle := utils.SanitizeTitle(fmt.Sprintf("COPY - %s", originalItem.Title))
+	copyTitle := sanitize.PlainTextField.Sanitize(fmt.Sprintf("COPY - %s", originalItem.Title))
 
 	result, err := services.NewItemCRUDService(h.db).Copy(id, services.CopyOptions{
 		NewTitle:  copyTitle,

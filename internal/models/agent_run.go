@@ -13,6 +13,15 @@ const (
 	AgentRunStatusKilled    = "killed"
 )
 
+// Agent-run job kinds. coding_agent is the default (the windshift-agent harness
+// on the fixed runner image); action_container + ci_task run an admin-chosen
+// image on the same runner substrate (WI-146).
+const (
+	JobKindCodingAgent     = "coding_agent"
+	JobKindActionContainer = "action_container"
+	JobKindCITask          = "ci_task"
+)
+
 // IsAgentRunTerminal reports whether the status represents a final state
 // (no further transitions will be made by the orchestrator).
 func IsAgentRunTerminal(status string) bool {
@@ -27,7 +36,7 @@ func IsAgentRunTerminal(status string) bool {
 }
 
 // AgentRun records one execution of the coding-agent harness: a per-run
-// Docker container that mounts a worktree, runs the pi coding agent, and
+// Docker container that mounts a worktree, runs the windshift-agent, and
 // produces a PR. BindingID is optional — set when the run was triggered
 // by an assignee change matching a workspace_agent_binding, nil for
 // manually-started runs.
@@ -42,14 +51,33 @@ type AgentRun struct {
 	EndedAt     *time.Time `json:"ended_at,omitempty"`
 	ContainerID string     `json:"container_id,omitempty"`
 	Error       string     `json:"error,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	// TargetPoolID is the runner_pool capability this run is dispatched to,
+	// or nil for the local in-process pool (Initiative WI-141). Remote
+	// runners claim queued runs scoped by this value.
+	TargetPoolID *int `json:"target_pool_id,omitempty"`
+	// RunnerID is the runner_instances row that executed this run, or nil
+	// for the in-process local runner. Audit only; soft ref.
+	RunnerID *int `json:"runner_id,omitempty"`
+	// JobKind selects how the runner executes this run (WI-146); defaults to
+	// JobKindCodingAgent. JobImage is the admin image for container jobs
+	// (action_container / ci_task), empty for coding_agent.
+	JobKind  string `json:"job_kind,omitempty"`
+	JobImage string `json:"job_image,omitempty"`
+	// TriggeredByUserID is who caused the run: the user whose assignment
+	// fired the binding trigger, or the admin who started a test run. On
+	// OAuth SCM connections this user's personal token is the credential
+	// for the run's git traffic and PR creation (WI-275). Nil on runs
+	// queued before the column existed — those use the connection-level
+	// credential.
+	TriggeredByUserID *int      `json:"triggered_by_user_id,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
-// AgentRunEvent is one entry on the NDJSON-style stream pi emits to stdout
-// during a run, plus orchestrator-emitted lifecycle entries (queued,
+// AgentRunEvent is one entry on the NDJSON-style stream the agent emits to
+// stdout during a run, plus orchestrator-emitted lifecycle entries (queued,
 // running, succeeded, …). PayloadJSON is stored verbatim so future readers
-// can interpret newer pi event shapes without a schema migration.
+// can interpret newer agent event shapes without a schema migration.
 type AgentRunEvent struct {
 	ID          int       `json:"id"`
 	RunID       int       `json:"run_id"`

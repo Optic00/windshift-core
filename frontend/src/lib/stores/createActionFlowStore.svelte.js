@@ -22,6 +22,8 @@ export function createActionFlowStore({
   let direction = $state('horizontal');
 
   let statuses = $state(includeStatuses ? [] : null);
+  let clientNodeSeq = 0;
+  let clientEdgeSeq = 0;
 
   // Original action reference for API format conversion
   let _action = null;
@@ -131,6 +133,7 @@ export function createActionFlowStore({
             deletable: !isTrigger,
             data: {
               nodeId: node.id,
+              flowStore: store,
               ...(isTrigger ? { triggerType: action.trigger_type } : {}),
               config: isTrigger
                 ? parseConfig(action.trigger_config)
@@ -147,6 +150,7 @@ export function createActionFlowStore({
             position: { x: 100, y: 200 },
             deletable: false,
             data: {
+              flowStore: store,
               triggerType: action.trigger_type,
               config: parseConfig(action.trigger_config),
               ...(includeStatuses ? { statuses: initStatuses } : {}),
@@ -172,6 +176,18 @@ export function createActionFlowStore({
       } else {
         edges = [];
       }
+    },
+
+    setStatuses(nextStatuses = []) {
+      if (!includeStatuses) return;
+      statuses = nextStatuses;
+      nodes = nodes.map((node) => ({
+        ...node,
+        data: {
+          ...node.data,
+          statuses,
+        },
+      }));
     },
 
     updateNodeConfig(nodeId, configUpdates) {
@@ -225,13 +241,14 @@ export function createActionFlowStore({
     addNode(nodeType, position = null) {
       const isVertical = direction === 'vertical';
       const newNode = {
-        id: `node-${Date.now()}`,
+        id: `node-new-${Date.now()}-${++clientNodeSeq}`,
         type: nodeType,
         position: position || {
           x: isVertical ? 100 + Math.random() * 300 : 300 + Math.random() * 200,
           y: isVertical ? 300 + Math.random() * 200 : 100 + Math.random() * 300,
         },
         data: {
+          flowStore: store,
           config: getDefaultConfig(nodeType),
           ...(includeStatuses ? { statuses } : {}),
         },
@@ -266,7 +283,7 @@ export function createActionFlowStore({
       }
 
       const newEdge = {
-        id: `edge-${Date.now()}`,
+        id: `edge-new-${Date.now()}-${++clientEdgeSeq}`,
         source,
         target,
         type: 'action',

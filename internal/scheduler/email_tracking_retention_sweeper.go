@@ -53,10 +53,11 @@ func (s *EmailTrackingRetentionSweeper) Start() {
 	if s.running {
 		return
 	}
-	s.running = true
 	s.ticker = time.NewTicker(s.interval)
+	s.stopChan = make(chan struct{})
+	s.running = true
 	slog.Info("starting email tracking retention sweeper", "interval", s.interval, "default_days", s.defaultRetentionDays)
-	go s.loop()
+	go s.loop(s.ticker, s.stopChan)
 }
 
 // Stop halts the sweeper. Safe to call multiple times.
@@ -67,18 +68,21 @@ func (s *EmailTrackingRetentionSweeper) Stop() {
 		return
 	}
 	s.running = false
-	s.ticker.Stop()
+	if s.ticker != nil {
+		s.ticker.Stop()
+		s.ticker = nil
+	}
 	close(s.stopChan)
 	slog.Info("email tracking retention sweeper stopped")
 }
 
-func (s *EmailTrackingRetentionSweeper) loop() {
+func (s *EmailTrackingRetentionSweeper) loop(ticker *time.Ticker, stopChan <-chan struct{}) {
 	s.tick()
 	for {
 		select {
-		case <-s.ticker.C:
+		case <-ticker.C:
 			s.tick()
-		case <-s.stopChan:
+		case <-stopChan:
 			return
 		}
 	}

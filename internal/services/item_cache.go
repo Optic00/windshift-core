@@ -2,7 +2,6 @@ package services
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -11,17 +10,19 @@ import (
 
 	"windshift/internal/cacheutil"
 	"windshift/internal/database"
+	"windshift/internal/repository"
 
 	"github.com/allegro/bigcache/v3"
 )
 
 // ItemHierarchyCache stores cached hierarchy data for an item
 type ItemHierarchyCache struct {
-	ItemID             int       `json:"item_id"`
-	EffectiveProjectID *int      `json:"effective_project_id"`
-	AncestorPath       []int     `json:"ancestor_path"` // IDs from root to parent
-	Level              int       `json:"level"`
-	CachedAt           time.Time `json:"cached_at"`
+	ItemID                 int       `json:"item_id"`
+	EffectiveProjectID     *int      `json:"effective_project_id"`
+	ProjectInheritanceMode string    `json:"project_inheritance_mode"` // "direct" | "inherit" | "none"
+	AncestorPath           []int     `json:"ancestor_path"`            // IDs from root to parent
+	Level                  int       `json:"level"`
+	CachedAt               time.Time `json:"cached_at"`
 }
 
 // ProjectInheritanceCache caches project inheritance for a workspace
@@ -238,14 +239,13 @@ func (ics *ItemCacheService) GetStats() map[string]interface{} {
 // GetEffectiveProjectForItem retrieves or calculates the effective project for an item
 // This method first checks the cache, then falls back to database calculation if needed
 func (ics *ItemCacheService) GetEffectiveProjectForItem(itemID, workspaceID int) (effectiveProjectID *int, projectInheritanceMode string, err error) {
-	// Try cache first
+	// Try cache first. A populated entry always carries the resolved mode
+	// (including "none"), so the mode gates the hit — this both avoids the old
+	// hardcoded "direct" on every hit and lets "none" items hit the cache
+	// instead of recomputing each call.
 	hierarchyCache, err := ics.GetItemHierarchy(itemID)
-	if err == nil && hierarchyCache != nil {
-		// Cache hit!
-		if hierarchyCache.EffectiveProjectID != nil {
-			mode := "direct" // Default assumption
-			return hierarchyCache.EffectiveProjectID, mode, nil
-		}
+	if err == nil && hierarchyCache != nil && hierarchyCache.ProjectInheritanceMode != "" {
+		return hierarchyCache.EffectiveProjectID, hierarchyCache.ProjectInheritanceMode, nil
 	}
 
 	// Cache miss - calculate from database
@@ -264,11 +264,12 @@ func (ics *ItemCacheService) GetEffectiveProjectForItem(itemID, workspaceID int)
 		projectInheritanceMode = "direct"
 	}
 
-	// Store in cache for future use
+	// Store in cache for future use, including the resolved mode.
 	cacheEntry := &ItemHierarchyCache{
-		ItemID:             itemID,
-		EffectiveProjectID: effectiveProjectID,
-		CachedAt:           time.Now(),
+		ItemID:                 itemID,
+		EffectiveProjectID:     effectiveProjectID,
+		ProjectInheritanceMode: projectInheritanceMode,
+		CachedAt:               time.Now(),
 	}
 	_ = ics.SetItemHierarchy(cacheEntry) // Ignore cache write errors
 
@@ -277,68 +278,11 @@ func (ics *ItemCacheService) GetEffectiveProjectForItem(itemID, workspaceID int)
 
 // calculateEffectiveProject walks up the hierarchy to find the effective project
 func (ics *ItemCacheService) calculateEffectiveProject(itemID int) (effectiveProjectID *int, inheritProject bool, directProjectID *int, err error) {
-	query := `
-		WITH RECURSIVE effective_projects AS (
-			-- Base case: the item itself
-			SELECT
-				id,
-				project_id,
-				inherit_project,
-				parent_id,
-				CASE
-					WHEN inherit_project = true THEN NULL
-					ELSE project_id
-				END as effective_project_id,
-				0 as depth
-			FROM items
-			WHERE id = ?
-
-			UNION ALL
-
-			-- Recursive case: climb up hierarchy to find inherited project
-			SELECT
-				ep.id,
-				ep.project_id,
-				ep.inherit_project,
-				i.parent_id,
-				CASE
-					WHEN i.project_id IS NOT NULL AND i.inherit_project = false THEN i.project_id
-					ELSE ep.effective_project_id
-				END as effective_project_id,
-				ep.depth + 1
-			FROM effective_projects ep
-			JOIN items i ON ep.parent_id = i.id
-			WHERE ep.effective_project_id IS NULL
-			  AND ep.inherit_project = true
-			  AND ep.depth < 10
-		)
-		SELECT
-			project_id,
-			inherit_project,
-			effective_project_id
-		FROM effective_projects
-		WHERE id = ?
-		ORDER BY depth DESC
-		LIMIT 1
-	`
-
-	var nullableProjectID, nullableEffectiveProjectID sql.NullInt64
-	err = ics.db.QueryRow(query, itemID, itemID).Scan(&nullableProjectID, &inheritProject, &nullableEffectiveProjectID)
+	res, err := repository.NewItemRepository(ics.db).ResolveEffectiveProject(itemID)
 	if err != nil {
-		return nil, false, nil, fmt.Errorf("failed to calculate effective project: %w", err)
+		return nil, false, nil, err
 	}
-
-	if nullableProjectID.Valid {
-		pid := int(nullableProjectID.Int64)
-		directProjectID = &pid
-	}
-
-	if nullableEffectiveProjectID.Valid {
-		epid := int(nullableEffectiveProjectID.Int64)
-		effectiveProjectID = &epid
-	}
-
-	return effectiveProjectID, inheritProject, directProjectID, nil
+	return res.EffectiveProjectID, res.InheritProject, res.DirectProjectID, nil
 }
 
 // Helper methods

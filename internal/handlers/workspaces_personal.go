@@ -16,7 +16,13 @@ import (
 
 var personalWorkspaceKeySanitizer = regexp.MustCompile(`[^A-Za-z0-9]+`)
 
-// GetOrCreatePersonalWorkspace gets or creates a personal workspace for a user
+// GetOrCreatePersonalWorkspace gets or creates a personal workspace for a user.
+//
+// Unlike the regular Create handler, this path intentionally does NOT require
+// the global workspace.create permission. A personal "Todo List" workspace is
+// a per-user baseline provisioned on first access — gating it on workspace.create
+// would strand users whose admin never granted that permission. Authentication
+// is the only gate by design; do not add a canCreateWorkspace check here.
 func (h *WorkspaceHandler) GetOrCreatePersonalWorkspace(w http.ResponseWriter, r *http.Request) {
 	// Get authenticated user from context
 	user, ok := RequireAuth(w, r)

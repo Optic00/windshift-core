@@ -8,6 +8,7 @@ import (
 
 	"windshift/internal/logger"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/utils"
 )
 
@@ -83,6 +84,9 @@ func (h *SecuritySettingsHandler) UpdateSecuritySettings(w http.ResponseWriter, 
 	if !ok {
 		return
 	}
+	// Policy is identifier-shaped ("all_users"/"groups_only"/"disabled")
+	// and persisted + echoed verbatim in the settings UI and audit log.
+	sanitize.Apply(&settings.APIKeyCreationPolicy, sanitize.ShortIdentifier)
 
 	if err := h.settings.Upsert(
 		"calendar_feed_enabled", boolToString(settings.CalendarFeedEnabled),

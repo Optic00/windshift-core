@@ -21,6 +21,7 @@ import (
 	"windshift/internal/middleware"
 	"windshift/internal/plugins"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/sso"
 	"windshift/internal/utils"
@@ -128,6 +129,32 @@ type SSOProviderRequest struct {
 	SAMLSignRequests   bool   `json:"saml_sign_requests"`
 }
 
+// sanitizeSSOProviderRequest bounds the user-supplied text fields shared by
+// CreateProvider and UpdateProvider. ProviderType is a strict enum and
+// ClientSecret is an opaque machine token — both stay untouched.
+// AttributeMapping is a JSON blob — HTML stripping would corrupt it, so
+// it is validated (size + well-formed JSON) and rejected instead of
+// scrubbed. Writes a validation error and returns false when it is
+// rejected.
+func sanitizeSSOProviderRequest(w http.ResponseWriter, r *http.Request, req *SSOProviderRequest) bool {
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Slug, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.IssuerURL, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.ClientID, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.Scopes, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.SAMLIdPMetadataURL, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.SAMLIdPSSOURL, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.SAMLIdPCertificate, Policy: sanitize.RichText},
+		sanitize.Pair{Target: &req.SAMLSPEntityID, Policy: sanitize.PlainTextField},
+	)
+	if err := sanitize.ValidateJSONPayload("attribute_mapping", req.AttributeMapping); err != nil {
+		respondValidationError(w, r, err.Error())
+		return false
+	}
+	return true
+}
+
 // NewSSOHandler creates a new SSO handler.
 // sessionSecret: session-signing secret (resolved by config.Load from
 //
@@ -140,8 +167,7 @@ type SSOProviderRequest struct {
 // pluginManager: plugin manager for capability checks (can be nil)
 // useProxy: whether to trust proxy headers from trusted sources
 // additionalProxiesStr: comma-separated list of additional trusted proxy IPs
-// oidcAllowedPrivateCIDRs: comma-separated private / CGNAT CIDRs that OIDC may dial
-func NewSSOHandler(db database.Database, sessionManager *auth.SessionManager, permissionService *services.PermissionService, emailVerificationService *services.EmailVerificationService, pluginManager *plugins.Manager, sessionSecret, baseURL, allowedHostsStr string, devMode bool, ipExtractor *utils.IPExtractor, useProxy bool, additionalProxiesStr []string, oidcAllowedPrivateCIDRs string) *SSOHandler {
+func NewSSOHandler(db database.Database, sessionManager *auth.SessionManager, permissionService *services.PermissionService, emailVerificationService *services.EmailVerificationService, pluginManager *plugins.Manager, sessionSecret, baseURL, allowedHostsStr string, devMode bool, ipExtractor *utils.IPExtractor, useProxy bool, additionalProxiesStr []string) *SSOHandler {
 	// Defensive: config.Load guarantees non-empty, but a wiring bug upstream
 	// would silently break session encryption — fail fast instead.
 	if sessionSecret == "" {
@@ -165,14 +191,6 @@ func NewSSOHandler(db database.Database, sessionManager *auth.SessionManager, pe
 		if ip := net.ParseIP(strings.TrimSpace(proxyStr)); ip != nil {
 			additionalProxies = append(additionalProxies, ip)
 		}
-	}
-
-	oidcAllowedCIDRs, err := utils.ParseCIDRList(oidcAllowedPrivateCIDRs)
-	if err != nil {
-		log.Fatalf("FATAL: invalid OIDC_ALLOWED_PRIVATE_CIDRS: %v", err)
-	}
-	if len(oidcAllowedCIDRs) > 0 {
-		slog.Info("OIDC private/CGNAT dial allowlist configured", slog.Int("cidr_count", len(oidcAllowedCIDRs)))
 	}
 
 	// Log warning for production without BASE_URL
@@ -200,7 +218,7 @@ func NewSSOHandler(db database.Database, sessionManager *auth.SessionManager, pe
 		pluginManager:            pluginManager,
 		providerStore:            sso.NewProviderStore(db),
 		userStore:                sso.NewUserStore(db),
-		oidcService:              sso.NewOIDCServiceWithAllowedPrivateCIDRs(cookieKey, oidcAllowedCIDRs),
+		oidcService:              sso.NewOIDCService(cookieKey),
 		encryption:               sso.NewSecretEncryption(serverSecret),
 		baseURL:                  baseURL,
 		allowedHosts:             allowedHosts,
@@ -271,7 +289,7 @@ func (h *SSOHandler) StartLogin(w http.ResponseWriter, r *http.Request) {
 		redirectAfterLogin = "/"
 	}
 
-	rememberMe := r.URL.Query().Get("remember") == "true"
+	rememberMe := ssoRememberMeFromRequest(r)
 
 	// Decrypt client secret
 	clientSecret, err := h.encryption.Decrypt(provider.ClientSecretEncrypted)
@@ -537,6 +555,9 @@ func (h *SSOHandler) CreateProvider(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !sanitizeSSOProviderRequest(w, r, &req) {
+		return
+	}
 
 	// Validate required fields
 	if req.Slug == "" {
@@ -699,6 +720,9 @@ func (h *SSOHandler) UpdateProvider(w http.ResponseWriter, r *http.Request) {
 
 	req, ok := decodeJSON[SSOProviderRequest](w, r)
 	if !ok {
+		return
+	}
+	if !sanitizeSSOProviderRequest(w, r, &req) {
 		return
 	}
 
@@ -985,7 +1009,7 @@ func (h *SSOHandler) getRedirectURI(r *http.Request, slug string) string {
 		// Default remains HTTPS - never use HTTP in production
 	}
 
-	return fmt.Sprintf("%s://%s/api/sso/callback/%s", scheme, host, slug)
+	return fmt.Sprintf("%s://%s%s/api/sso/callback/%s", scheme, host, requestContextPrefix(r), slug)
 }
 
 // isTrustedRequest checks if the request comes from a trusted proxy
@@ -1059,6 +1083,11 @@ func (h *SSOHandler) providerToResponse(p *sso.SSOProvider) *SSOProviderResponse
 		CreatedAt:            p.CreatedAt,
 		UpdatedAt:            p.UpdatedAt,
 	}
+}
+
+func ssoRememberMeFromRequest(r *http.Request) bool {
+	query := r.URL.Query()
+	return query.Get("remember_me") == "true" || query.Get("remember") == "true"
 }
 
 // GetEncryption returns the encryption service (for reuse by LDAP handler).

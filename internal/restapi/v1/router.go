@@ -50,7 +50,7 @@
 package v1
 
 import (
-	legacyhandlers "windshift/internal/handlers"
+	"windshift/internal/repository"
 	"windshift/internal/restapi"
 	"windshift/internal/restapi/v1/handlers"
 	"windshift/internal/restapi/v1/middleware"
@@ -88,21 +88,25 @@ func RegisterRoutes(deps restapi.Deps) {
 	attachmentHandler := handlers.NewAttachmentHandler(db, permissionService, deps.AttachmentPath)
 	pageHandler := handlers.NewPageHandler(db, permissionService)
 	pageLabelHandler := handlers.NewPageLabelHandler(db, permissionService)
+	agentSkillHandler := handlers.NewAgentSkillHandler(db, permissionService)
 	diagramHandler := handlers.NewDiagramHandler(db, permissionService)
 	labelHandler := handlers.NewLabelHandler(db, permissionService)
 	testMgmtHandler := handlers.NewTestManagementHandler(db, permissionService)
 
-	// Page-attachment upload reuses the legacy attachment handler (whose
-	// Upload method holds the full validation / storage / DB-insert
-	// pipeline) so bearer-token callers don't reimplement it. The v1
-	// wrapper in PageAttachmentUploadHandler injects the bearer user into
-	// the request context and forces entity_type=page before delegating.
-	legacyAttachHandler := legacyhandlers.NewAttachmentHandler(db, deps.AttachmentPath, permissionService)
-	legacyAttachHandler.SetPagePermissionService(services.NewPagePermissionService(db, permissionService))
+	pagePermissionService := services.NewPagePermissionService(db, permissionService)
 	pageAttachmentUploadHandler := handlers.NewPageAttachmentUploadHandler(
 		handlers.NewBaseHandler(db, permissionService),
-		legacyAttachHandler,
+		services.NewPageAttachmentUploadService(db, deps.AttachmentPath, permissionService, pagePermissionService),
 	)
+
+	// Time tracking
+	timePermService := services.NewTimePermissionService(db, permissionService)
+	timeProjectHandler := handlers.NewTimeProjectHandler(handlers.NewBaseHandler(db, permissionService), timePermService)
+	timeWorklogHandler := handlers.NewTimeWorklogHandler(handlers.NewBaseHandler(db, permissionService), timePermService)
+	timerRepo := repository.NewActiveTimerRepository(db)
+	itemRepo := repository.NewItemRepository(db)
+	timerService := services.NewTimerService(timerRepo, itemRepo, timePermService, permissionService)
+	activeTimerHandler := handlers.NewActiveTimerHandler(handlers.NewBaseHandler(db, permissionService), timerRepo, timerService)
 
 	// Public discovery routes (no bearer auth). Mounted on a sibling group
 	// that shares the /rest/api/v1 prefix and rate limiter but skips
@@ -136,6 +140,7 @@ func RegisterRoutes(deps restapi.Deps) {
 	v1.HandleWithMiddleware("GET /items/{id}/history", itemHandler.GetHistory, bearerAuth.RequirePermission("items:read"), router.RequireNumericID)
 	v1.HandleWithMiddleware("GET /items/{id}/transitions", itemHandler.GetTransitions, bearerAuth.RequirePermission("items:read"), router.RequireNumericID)
 	v1.HandleWithMiddleware("POST /items/{id}/transition", itemHandler.Transition, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)
+	v1.HandleWithMiddleware("POST /items/{id}/change-type", itemHandler.ChangeType, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)
 	v1.HandleWithMiddleware("GET /items/{id}/attachments", itemHandler.GetAttachments, bearerAuth.RequirePermission("items:read"), router.RequireNumericID)
 	v1.HandleWithMiddleware("GET /attachments/{id}/download", attachmentHandler.Download, bearerAuth.RequirePermission("items:read"), router.RequireNumericID)
 	v1.HandleWithMiddleware("GET /attachments/{id}/thumbnail", attachmentHandler.Thumbnail, bearerAuth.RequirePermission("items:read"), router.RequireNumericID)
@@ -288,10 +293,9 @@ func RegisterRoutes(deps restapi.Deps) {
 	v1.HandleWithMiddleware("POST /workspaces/{id}/pages/{pageId}/permissions", pageHandler.GrantPermission, bearerAuth.RequirePermission("pages:write"), router.RequireNumericID)
 	v1.HandleWithMiddleware("DELETE /workspaces/{id}/pages/{pageId}/permissions/{permissionId}", pageHandler.RevokePermission, bearerAuth.RequirePermission("pages:write"), router.RequireNumericID)
 	v1.HandleWithMiddleware("PATCH /workspaces/{id}/pages/{pageId}/inheritance", pageHandler.SetInheritance, bearerAuth.RequirePermission("pages:write"), router.RequireNumericID)
-	// Bearer-authenticated page-attachment upload (the legacy
-	// /api/attachments/upload route rejects crw_ tokens). Delegates to
-	// the legacy upload pipeline so validation/storage/audit stay in one
-	// place. See PageAttachmentUploadHandler for the bridging contract.
+	// Bearer-authenticated page-attachment upload (the cookie-auth
+	// /api/attachments/upload route rejects crw_ tokens). Uses the shared
+	// upload service so validation/storage/audit stay in one place.
 	v1.HandleWithMiddleware("POST /workspaces/{id}/pages/{pageId}/attachments", pageAttachmentUploadHandler.Upload, bearerAuth.RequirePermission("pages:write"), router.RequireNumericID)
 
 	// ============================================
@@ -300,6 +304,8 @@ func RegisterRoutes(deps restapi.Deps) {
 	// the user-facing permission gate is also page.edit / page.view.
 	// Attach/detach gates per-page via PagePermissionService.
 	// ============================================
+	v1.HandleWithMiddleware("GET /workspaces/{id}/agent-skills", agentSkillHandler.List, bearerAuth.RequirePermission("agent-skills:read"), router.RequireNumericID)
+	v1.HandleWithMiddleware("GET /workspaces/{id}/agent-skills/{skillId}", agentSkillHandler.Get, bearerAuth.RequirePermission("agent-skills:read"), router.RequireNumericID)
 	v1.HandleWithMiddleware("GET /workspaces/{id}/page-labels", pageLabelHandler.ListLabels, bearerAuth.RequirePermission("pages:read"), router.RequireNumericID)
 	v1.HandleWithMiddleware("POST /workspaces/{id}/page-labels", pageLabelHandler.CreateLabel, bearerAuth.RequirePermission("pages:write"), router.RequireNumericID)
 	v1.HandleWithMiddleware("GET /workspaces/{id}/page-labels/{labelId}", pageLabelHandler.GetLabel, bearerAuth.RequirePermission("pages:read"), router.RequireNumericID)
@@ -446,9 +452,71 @@ func RegisterRoutes(deps restapi.Deps) {
 	v1.HandleWithMiddleware("GET /workspaces/{workspaceId}/test-results/{resultId}/items", testMgmtHandler.ListTestResultItems, bearerAuth.RequirePermission("tests:read"))
 
 	// ============================================
+	// Assets. Gated by assets:* at the route layer; the handler still asks
+	// the per-set asset role (Viewer / Editor / Administrator with the
+	// asset.view/create/edit/delete/admin keys) via AssetPermissionService
+	// so a token can't reach a set the user can't see. 404 (not 403) on
+	// any permission failure mirrors the items convention — set / asset
+	// existence is never leaked.
+	//
+	// Mutating sets / types / categories / statuses / role assignments and
+	// the asset-actions automation graphs stay admin-UI-only in this slice;
+	// follow-ups can promote subsets behind explicit asset-sets:write etc.
+	// ============================================
+	assetRepo := repository.NewAssetRepository(db)
+	assetPermSvc := deps.AssetPermissionService
+	if assetPermSvc == nil {
+		// Nil-safe fallback for embedders that haven't wired the shared
+		// service yet — construct a fresh one so asset routes still serve.
+		assetPermSvc = services.NewAssetPermissionService(assetRepo, permissionService)
+	}
+	assetSvc := deps.AssetService
+	if assetSvc == nil {
+		assetSvc = services.NewAssetService(db, assetRepo)
+	}
+	assetHandler := handlers.NewAssetHandler(db, permissionService, assetPermSvc, assetSvc)
+
+	// Asset entities
+	v1.HandleWithMiddleware("GET /asset-sets/{setId}/assets", assetHandler.List, bearerAuth.RequirePermission("assets:read"))
+	v1.HandleWithMiddleware("POST /asset-sets/{setId}/assets", assetHandler.Create, bearerAuth.RequirePermission("assets:write"))
+	v1.HandleWithMiddleware("POST /asset-sets/{setId}/assets/import", assetHandler.ImportCSV, bearerAuth.RequirePermission("assets:write"))
+	v1.HandleWithMiddleware("GET /assets/{id}", assetHandler.Get, bearerAuth.RequirePermission("assets:read"), router.RequireNumericID)
+	v1.HandleWithMiddleware("PUT /assets/{id}", assetHandler.Update, bearerAuth.RequirePermission("assets:write"), router.RequireNumericID)
+	v1.HandleWithMiddleware("DELETE /assets/{id}", assetHandler.Delete, bearerAuth.RequirePermission("assets:delete"), router.RequireNumericID)
+
+	// Asset sets (read-only on v1)
+	v1.HandleWithMiddleware("GET /asset-sets", assetHandler.ListSets, bearerAuth.RequirePermission("assets:read"))
+	v1.HandleWithMiddleware("GET /asset-sets/{setId}", assetHandler.GetSet, bearerAuth.RequirePermission("assets:read"))
+
+	// Asset types (read-only on v1)
+	v1.HandleWithMiddleware("GET /asset-sets/{setId}/types", assetHandler.ListTypes, bearerAuth.RequirePermission("assets:read"))
+	v1.HandleWithMiddleware("GET /asset-types/{id}", assetHandler.GetType, bearerAuth.RequirePermission("assets:read"), router.RequireNumericID)
+
+	// Asset categories (read-only on v1)
+	v1.HandleWithMiddleware("GET /asset-sets/{setId}/categories", assetHandler.ListCategories, bearerAuth.RequirePermission("assets:read"))
+	v1.HandleWithMiddleware("GET /asset-categories/{id}", assetHandler.GetCategory, bearerAuth.RequirePermission("assets:read"), router.RequireNumericID)
+
+	// Asset statuses (read-only on v1)
+	v1.HandleWithMiddleware("GET /asset-sets/{setId}/statuses", assetHandler.ListStatuses, bearerAuth.RequirePermission("assets:read"))
+	v1.HandleWithMiddleware("GET /asset-statuses/{id}", assetHandler.GetStatus, bearerAuth.RequirePermission("assets:read"), router.RequireNumericID)
+
+	// ============================================
 	// Search
 	// ============================================
 	v1.HandleWithMiddleware("GET /search/items", itemHandler.Search, bearerAuth.RequirePermission("items:read"))
+
+	// ============================================
+	// Time tracking
+	// ============================================
+	v1.HandleWithMiddleware("GET /time/projects", timeProjectHandler.List, bearerAuth.RequirePermission("time:read"))
+	v1.HandleWithMiddleware("GET /time/projects/{id}", timeProjectHandler.Get, bearerAuth.RequirePermission("time:read"), router.RequireNumericID)
+	v1.HandleWithMiddleware("GET /time/worklogs", timeWorklogHandler.ListMine, bearerAuth.RequirePermission("time:read"))
+	v1.HandleWithMiddleware("POST /time/worklogs", timeWorklogHandler.Create, bearerAuth.RequirePermission("time:write"))
+	v1.HandleWithMiddleware("PUT /time/worklogs/{id}", timeWorklogHandler.Update, bearerAuth.RequirePermission("time:write"), router.RequireNumericID)
+	v1.HandleWithMiddleware("DELETE /time/worklogs/{id}", timeWorklogHandler.Delete, bearerAuth.RequirePermission("time:delete"), router.RequireNumericID)
+	v1.HandleWithMiddleware("POST /timer/start", activeTimerHandler.StartTimer, bearerAuth.RequirePermission("time:write"))
+	v1.HandleWithMiddleware("GET /timer/active", activeTimerHandler.GetActiveTimer, bearerAuth.RequirePermission("time:read"))
+	v1.HandleWithMiddleware("DELETE /timer/stop", activeTimerHandler.StopTimer, bearerAuth.RequirePermission("time:write"))
 
 	// ============================================
 	// Admin endpoints (require system admin + scope)

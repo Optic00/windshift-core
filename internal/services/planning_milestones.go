@@ -8,16 +8,23 @@ import (
 	"time"
 
 	"windshift/internal/database"
+	"windshift/internal/repository"
 )
 
 // PlanningService encapsulates business logic for milestones, iterations, and projects.
 type PlanningService struct {
-	db database.Database
+	db       database.Database
+	items    *repository.ItemRepository
+	statuses *repository.StatusRepository
 }
 
 // NewPlanningService creates a new PlanningService.
 func NewPlanningService(db database.Database) *PlanningService {
-	return &PlanningService{db: db}
+	return &PlanningService{
+		db:       db,
+		items:    repository.NewItemRepository(db),
+		statuses: repository.NewStatusRepository(db),
+	}
 }
 
 // milestoneScanner is satisfied by both *sql.Row and *sql.Rows.
@@ -688,7 +695,7 @@ func (s *PlanningService) GetMilestoneProgress(milestoneID int) (*MilestoneProgr
 	report.CategoryColor = categoryColor.String
 
 	// Get status breakdown and items grouped by status category
-	acc, err := queryProgressItems(s.db, "EXISTS (SELECT 1 FROM item_milestones im WHERE im.item_id = i.id AND im.milestone_id = ?)", milestoneID)
+	acc, err := s.buildProgressReport(repository.ItemFilters{MilestoneID: &milestoneID})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get milestone progress: %w", err)
 	}

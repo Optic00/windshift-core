@@ -11,13 +11,18 @@
     applyMappingsChange,
   } from './shared/assetConfigHelpers.svelte.js';
 
-  let { selectedNode, showPlaceholderModal = $bindable(false) } = $props();
+  let {
+    selectedNode,
+    flowStore = actionFlowStore,
+    showPlaceholderModal = $bindable(false),
+  } = $props();
 
   // Data state
   let customFields = $state([]);
   let assetFields = $state([]);
   let assetTypes = $state([]);
   let loading = $state(true);
+  let assetTypesLoadToken = 0;
 
   const assetTypeFields = useAssetTypeFields(
     () => selectedNode?.data?.config?.asset_type_id
@@ -42,11 +47,13 @@
     if (sourceFieldId) {
       loadAssetTypes(sourceFieldId);
     } else {
+      assetTypesLoadToken += 1;
       assetTypes = [];
     }
   });
 
   async function loadAssetTypes(sourceFieldId) {
+    const token = ++assetTypesLoadToken;
     const field = assetFields.find(f => f.id === sourceFieldId || f.field_name === sourceFieldId);
     if (!field?.field_config?.asset_set_id) {
       assetTypes = [];
@@ -54,12 +61,15 @@
     }
 
     try {
-      assetTypes = await api.assetTypes.getAll(field.field_config.asset_set_id) || [];
+      const nextAssetTypes = await api.assetTypes.getAll(field.field_config.asset_set_id) || [];
+      if (token !== assetTypesLoadToken) return;
+      assetTypes = nextAssetTypes;
       // Update the asset_set_id in config
-      actionFlowStore.updateNodeConfig(selectedNode.id, {
+      flowStore.updateNodeConfig(selectedNode.id, {
         asset_set_id: field.field_config.asset_set_id
       });
     } catch (error) {
+      if (token !== assetTypesLoadToken) return;
       console.error('Failed to load asset types:', error);
       assetTypes = [];
     }
@@ -67,7 +77,7 @@
 
   function handleSourceFieldChange(e) {
     const value = e.target.value;
-    actionFlowStore.updateNodeConfig(selectedNode.id, {
+    flowStore.updateNodeConfig(selectedNode.id, {
       source_field_id: value,
       asset_type_id: 0,
       asset_set_id: 0,
@@ -76,11 +86,11 @@
   }
 
   function handleAssetTypeChange(e) {
-    applyAssetTypeChange(selectedNode.id, e.target.value);
+    applyAssetTypeChange(selectedNode.id, e.target.value, {}, flowStore);
   }
 
   function handleMappingsChange(mappings) {
-    applyMappingsChange(selectedNode.id, mappings);
+    applyMappingsChange(selectedNode.id, mappings, flowStore);
   }
 </script>
 

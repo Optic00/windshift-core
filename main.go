@@ -20,6 +20,7 @@ import (
 	"windshift/internal/middleware"
 	"windshift/internal/server"
 	"windshift/internal/tui"
+	"windshift/internal/utils"
 
 	"charm.land/wish/v2"
 	"charm.land/wish/v2/activeterm"
@@ -60,6 +61,14 @@ func main() {
 
 	// Initialize logger early
 	logger.Init(cfg.Logging.Level, cfg.Logging.Format)
+
+	// Apply the global SSRF-dialer override before any client is built. When on,
+	// server-side HTTP clients may reach loopback/private IPs (self-hosted SCM,
+	// Jira DC, local LLM gateways). Off by default; warn loudly when enabled.
+	utils.SetAllowLocalConnections(cfg.AllowLocalConnections)
+	if cfg.AllowLocalConnections {
+		slog.Warn("ALLOW_LOCAL_CONNECTIONS is enabled: server-side HTTP clients may dial loopback/private addresses (SSRF protections relaxed)")
+	}
 
 	// Print startup banner
 	printBanner()

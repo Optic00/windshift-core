@@ -1,5 +1,6 @@
 <script>
   import { t } from '../stores/i18n.svelte.js';
+  import BaseHeader from './BaseHeader.svelte';
 
   let {
     workspaceName = '',
@@ -12,30 +13,22 @@
     subtleTextStyle = '',
     actions = null,
   } = $props();
+
+  // Build subtitle from workspace and item count
+  let subtitle = $derived(
+    workspaceName + (itemCount !== null ? ` • ${itemCount} ${t('layout.items')}` : '')
+  );
 </script>
 
-<div class="flex items-center justify-between mb-4">
-  <div>
-    <div class="flex items-baseline gap-2 mb-1">
-      <h1 class="text-xl font-medium" style="color: var(--ctx-text, var(--ds-text));">
-        {viewName}
-      </h1>
-      {#if collection}
-        <span class="text-xs font-medium px-1.5 py-0.5 rounded" style="background-color: var(--ctx-active-bg, var(--ds-accent-blue-subtler)); color: var(--ctx-active-text, var(--ds-accent-blue)); backdrop-filter: var(--ctx-backdrop, none);">
-          {collection}
-        </span>
-      {/if}
-    </div>
-    <div class="flex items-center">
-      <span class="text-sm" style="color: var(--ctx-text-subtle, var(--ds-text-subtle));">
-        {workspaceName}{#if itemCount !== null} • {itemCount} {t('layout.items')}{/if}
-      </span>
-    </div>
-  </div>
-
-  {#if actions}
-    <div>
-      {@render actions()}
-    </div>
-  {/if}
-</div>
+<BaseHeader
+  title={viewName}
+  badge={collection}
+  {subtitle}
+  {actions}
+  textStyle={textStyle || 'color: var(--ctx-text, var(--ds-text));'}
+  subtitleStyle={subtleTextStyle || 'color: var(--ctx-text-subtle, var(--ds-text-subtle));'}
+  icon={null}
+  count={null}
+  children={null}
+  marginClass="mb-4"
+/>

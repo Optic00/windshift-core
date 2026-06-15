@@ -16,7 +16,7 @@
   }
 </script>
 
-<GenericActionNode {data} {selected} flowStore={actionFlowStore} icon={Bell} title={t('actions.nodes.notifyUser')} accentColor="magenta">
+<GenericActionNode {data} {selected} flowStore={data.flowStore || actionFlowStore} icon={Bell} title={t('actions.nodes.notifyUser')} accentColor="magenta">
   {#snippet body()}
     {#if data.config?.recipient_type}
       <div class="recipient-info">

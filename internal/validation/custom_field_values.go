@@ -6,6 +6,7 @@ import (
 
 	"windshift/internal/database"
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
 )
 
 // ValidateAndNormalizeCustomFieldValues vets a cfv map against the
@@ -15,7 +16,11 @@ import (
 //     field's option set. String-encoded numbers are accepted (e.g. "3").
 //   - For multiselect fields: value must be an array; each element must
 //     be a known option id. Duplicate ids are removed (order-preserving).
-//   - For non-select fields: values are left untouched.
+//   - For text/textarea fields: string values are run through the
+//     sanitize policies (PlainTextField / RichText — matching how the
+//     frontend renders them) so unbounded or HTML-bearing payloads never
+//     reach the database.
+//   - For other field types: values are left untouched.
 //   - cfv keys that do not match an existing custom field are left
 //     untouched — they accumulate harmlessly until the async cleanup job
 //     (see scheduler.CFVCleanupScheduler) runs.
@@ -58,9 +63,71 @@ func ValidateAndNormalizeCustomFieldValues(db database.Database, cfv map[string]
 				return err
 			}
 			cfv[fieldKey] = normalized
+		case "text", "textarea":
+			cfv[fieldKey] = sanitizeTextValue(def.FieldType, raw)
 		}
 	}
 	return nil
+}
+
+// SanitizeCustomFieldTextValues runs only the text/textarea sanitize
+// pass over a cfv map, mutating it in place. For write paths that
+// bypass ValidateAndNormalizeCustomFieldValues because their values
+// were already shape-checked elsewhere (forms/portal request-type
+// submissions) but still carry raw user text.
+func SanitizeCustomFieldTextValues(db database.Database, cfv map[string]interface{}) error {
+	if len(cfv) == 0 {
+		return nil
+	}
+	fields, err := loadFieldsForCFV(db, cfv)
+	if err != nil {
+		return fmt.Errorf("load custom fields for sanitization: %w", err)
+	}
+	for fieldKey, raw := range cfv {
+		def, ok := fields[fieldKey]
+		if !ok {
+			continue
+		}
+		switch def.FieldType {
+		case "text", "textarea":
+			cfv[fieldKey] = sanitizeTextValue(def.FieldType, raw)
+		}
+	}
+	return nil
+}
+
+// CustomFieldTypes resolves the field_type for each numeric cfv key that
+// matches an existing custom field definition, using the same bulk loader
+// the validators use. Keys without a matching definition are absent from
+// the result. Lets write paths branch on field type (e.g. to pre-shape a
+// multiselect value, or to leave text/textarea entries to the type-correct
+// sanitize pass) without duplicating the definitions query.
+func CustomFieldTypes(db database.Database, cfv map[string]interface{}) (map[string]string, error) {
+	fields, err := loadFieldsForCFV(db, cfv)
+	if err != nil {
+		return nil, err
+	}
+	types := make(map[string]string, len(fields))
+	for key, def := range fields {
+		types[key] = def.FieldType
+	}
+	return types, nil
+}
+
+// sanitizeTextValue applies the rendering-matched sanitize policy to a
+// text/textarea custom-field value: PlainTextField for single-line text
+// (rendered inline in cards / detail rows), RichText for textarea
+// (multi-line body content). Non-string values pass through untouched —
+// type-shape enforcement is not this function's job.
+func sanitizeTextValue(fieldType string, raw interface{}) interface{} {
+	s, ok := raw.(string)
+	if !ok {
+		return raw
+	}
+	if fieldType == "textarea" {
+		return sanitize.RichText.Sanitize(s)
+	}
+	return sanitize.PlainTextField.Sanitize(s)
 }
 
 func loadFieldsForCFV(db database.Database, cfv map[string]interface{}) (map[string]*models.CustomFieldDefinition, error) {

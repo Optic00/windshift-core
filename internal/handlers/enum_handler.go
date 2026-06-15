@@ -4,8 +4,45 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"windshift/internal/models"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
+
+// sanitizeEnumFields scrubs the shared Name/Color/Description shape of
+// the enum entities. Name + Description render in the settings tables
+// and pickers; Color is a hex code (identifier-shaped). Pass nil for
+// fields the entity doesn't have.
+func sanitizeEnumFields(name, color, description *string) {
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: color, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: description, Policy: sanitize.PlainTextField},
+	)
+}
+
+// sanitizeEnumEntity dispatches to the entity types this generic
+// handler decodes (see the NewEnumHandler call sites in server.go).
+func sanitizeEnumEntity(entity interface{}) {
+	switch e := entity.(type) {
+	case *models.HierarchyLevel:
+		sanitizeEnumFields(&e.Name, nil, &e.Description)
+	case *models.StatusCategory:
+		sanitizeEnumFields(&e.Name, &e.Color, &e.Description)
+	case *models.Status:
+		sanitizeEnumFields(&e.Name, nil, &e.Description)
+	case *models.MilestoneCategory:
+		sanitizeEnumFields(&e.Name, &e.Color, &e.Description)
+	case *models.ChannelCategory:
+		sanitizeEnumFields(&e.Name, &e.Color, &e.Description)
+	case *models.CollectionCategory:
+		sanitizeEnumFields(&e.Name, &e.Color, &e.Description)
+	case *models.IterationType:
+		sanitizeEnumFields(&e.Name, &e.Color, &e.Description)
+	case *models.ContactRole:
+		sanitizeEnumFields(&e.Name, nil, &e.Description)
+	}
+}
 
 // EnumHandler provides HTTP handlers for generic enum CRUD operations
 type EnumHandler struct {
@@ -53,6 +90,7 @@ func (h *EnumHandler) Create(w http.ResponseWriter, r *http.Request) {
 		respondBadRequest(w, r, "Invalid request body")
 		return
 	}
+	sanitizeEnumEntity(entity)
 
 	created, err := h.service.Create(entity, r)
 	if err != nil {
@@ -74,6 +112,7 @@ func (h *EnumHandler) Update(w http.ResponseWriter, r *http.Request) {
 		respondBadRequest(w, r, "Invalid request body")
 		return
 	}
+	sanitizeEnumEntity(entity)
 
 	updated, err := h.service.Update(id, entity, r)
 	if err != nil {

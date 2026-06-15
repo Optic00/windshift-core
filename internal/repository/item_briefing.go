@@ -21,6 +21,7 @@ type BriefingChange struct {
 	ItemKey   string
 	Title     string
 	ChangedBy string
+	ChangedAt time.Time
 }
 
 // RecentItemChanges returns up to limit item-history changes across the given
@@ -32,7 +33,7 @@ func (r *ItemRepository) RecentItemChanges(workspaceIDs []int, since time.Time, 
 		return nil, nil
 	}
 	args = append(args, since)
-	query := fmt.Sprintf(`SELECT ih.field_name, COALESCE(ih.old_value, ''), COALESCE(ih.new_value, ''),
+	query := fmt.Sprintf(`SELECT ih.field_name, COALESCE(ih.old_value, ''), COALESCE(ih.new_value, ''), ih.changed_at,
 		w.key || '-' || CAST(i.workspace_item_number AS TEXT) as item_key, i.title,
 		COALESCE(u.first_name || ' ' || u.last_name, 'Unknown') as changed_by
 		FROM item_history ih
@@ -51,7 +52,7 @@ func (r *ItemRepository) RecentItemChanges(workspaceIDs []int, since time.Time, 
 	var out []BriefingChange
 	for rows.Next() {
 		var c BriefingChange
-		if err := rows.Scan(&c.FieldName, &c.OldValue, &c.NewValue, &c.ItemKey, &c.Title, &c.ChangedBy); err != nil {
+		if err := rows.Scan(&c.FieldName, &c.OldValue, &c.NewValue, &c.ChangedAt, &c.ItemKey, &c.Title, &c.ChangedBy); err != nil {
 			return nil, fmt.Errorf("scan recent item change: %w", err)
 		}
 		out = append(out, c)
@@ -62,10 +63,11 @@ func (r *ItemRepository) RecentItemChanges(workspaceIDs []int, since time.Time, 
 // BriefingComment is a single recent public comment, denormalized for the
 // digest. Content is the full stored body; the caller truncates for display.
 type BriefingComment struct {
-	Content string
-	ItemKey string
-	Title   string
-	Author  string
+	Content   string
+	ItemKey   string
+	Title     string
+	Author    string
+	CreatedAt time.Time
 }
 
 // RecentComments returns up to limit public comments on items in the given
@@ -77,7 +79,7 @@ func (r *ItemRepository) RecentComments(workspaceIDs []int, since time.Time, lim
 		return nil, nil
 	}
 	args = append(args, since)
-	query := fmt.Sprintf(`SELECT c.content,
+	query := fmt.Sprintf(`SELECT c.content, c.created_at,
 		w.key || '-' || CAST(i.workspace_item_number AS TEXT) as item_key, i.title,
 		COALESCE(u.first_name || ' ' || u.last_name, 'Unknown') as author
 		FROM comments c
@@ -96,7 +98,7 @@ func (r *ItemRepository) RecentComments(workspaceIDs []int, since time.Time, lim
 	var out []BriefingComment
 	for rows.Next() {
 		var c BriefingComment
-		if err := rows.Scan(&c.Content, &c.ItemKey, &c.Title, &c.Author); err != nil {
+		if err := rows.Scan(&c.Content, &c.CreatedAt, &c.ItemKey, &c.Title, &c.Author); err != nil {
 			return nil, fmt.Errorf("scan recent comment: %w", err)
 		}
 		out = append(out, c)

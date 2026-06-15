@@ -1,5 +1,5 @@
 <script>
-  import ItemPicker from './ItemPicker.svelte';
+  import BasePicker from './BasePicker.svelte';
   import { Settings } from '@lucide/svelte';
   import { t } from '../stores/i18n.svelte.js';
 
@@ -14,30 +14,31 @@
   } = $props();
 
   const resolvedPlaceholder = $derived(placeholder || t('pickers.defaultConfiguration'));
-
-  const config = {
-    icon: {
-      type: 'component',
-      source: () => Settings
-    },
-    primary: { text: (item) => item.name || '' },
-    secondary: { text: (item) => item.description || '' },
-    searchFields: ['name', 'description'],
-    getValue: (item) => item?.id,
-    getLabel: (item) => item?.name || ''
-  };
 </script>
 
-<ItemPicker
+{#snippet configSetRow({ item })}
+  <Settings class="w-4 h-4 flex-shrink-0" />
+  <div class="flex flex-col min-w-0">
+    <span class="font-medium truncate">{item?.name || ''}</span>
+    {#if item?.description}
+      <span class="text-xs truncate" style="color: var(--ds-text-subtle);">{item.description}</span>
+    {/if}
+  </div>
+{/snippet}
+
+<BasePicker
   bind:value
   {items}
-  {config}
   placeholder={resolvedPlaceholder}
   showUnassigned={true}
   unassignedLabel={t('pickers.defaultConfiguration')}
   {disabled}
   allowClear={true}
   class={className}
+  itemSnippet={configSetRow}
+  searchFields={['name', 'description']}
+  getValue={(item) => item?.id}
+  getLabel={(item) => item?.name || ''}
   onSelect={(item) => onSelect(item)}
   onCancel={() => onCancel()}
 />

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	"windshift/internal/llm"
 	"windshift/internal/models"
@@ -114,7 +113,7 @@ func (h *AIHandler) SummarizeTestPlanDescription(w http.ResponseWriter, r *http.
 	userPrompt := fmt.Sprintf("Write a description for this test plan:\n\n%s", strings.Join(lines, "\n"))
 
 	extendWriteDeadline(w)
-	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), llm.DefaultRequestTimeout)
 	defer cancel()
 
 	resp, err := llmClient.ChatCompletion(ctx, llm.ChatCompletionRequest{

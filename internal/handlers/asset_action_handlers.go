@@ -5,20 +5,44 @@ import (
 	"fmt"
 	"net/http"
 
-	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/repository/actionutil"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
 
+// sanitizeAssetActionFlow gates the user-supplied flow-graph strings.
+// NodeConfig is a free-form JSON blob persisted verbatim and echoed on
+// every action GET — HTML stripping would corrupt it, so it is
+// validated (size + well-formed JSON) and rejected instead of
+// scrubbed. Edge type + handles are identifier-shaped strings stored
+// and echoed verbatim. Writes a validation error and returns false
+// when a node config is rejected.
+func sanitizeAssetActionFlow(w http.ResponseWriter, r *http.Request, nodes []models.AssetActionNode, edges []models.AssetActionEdge) bool {
+	for i := range nodes {
+		if err := sanitize.ValidateJSONPayload("node_config", nodes[i].NodeConfig); err != nil {
+			respondValidationError(w, r, err.Error())
+			return false
+		}
+	}
+	for i := range edges {
+		sanitize.ApplyAll(
+			sanitize.Pair{Target: &edges[i].EdgeType, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: &edges[i].SourceHandle, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: &edges[i].TargetHandle, Policy: sanitize.ShortIdentifier},
+		)
+	}
+	return true
+}
+
 // AssetActionHandler handles asset action automation API endpoints
 type AssetActionHandler struct {
-	db            database.Database
 	repo          *repository.AssetActionRepository
 	assetHandler  *AssetHandler
 	actionService *services.AssetActionService
+	auditor       *logger.Auditor
 }
 
 // NewAssetActionHandler creates a new asset action handler
@@ -36,12 +60,12 @@ func (h *AssetActionHandler) requireAssetAction(w http.ResponseWriter, r *http.R
 	return action, true
 }
 
-func NewAssetActionHandler(db database.Database, assetHandler *AssetHandler, actionService *services.AssetActionService) *AssetActionHandler {
+func NewAssetActionHandler(repo *repository.AssetActionRepository, assetHandler *AssetHandler, actionService *services.AssetActionService, auditor *logger.Auditor) *AssetActionHandler {
 	return &AssetActionHandler{
-		db:            db,
-		repo:          repository.NewAssetActionRepository(db),
+		repo:          repo,
 		assetHandler:  assetHandler,
 		actionService: actionService,
+		auditor:       auditor,
 	}
 }
 
@@ -101,6 +125,19 @@ func (h *AssetActionHandler) CreateAction(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
+	)
+	// TriggerConfig is a JSON blob — reject invalid JSON instead of
+	// HTML-stripping it (which would corrupt valid payloads).
+	if err := sanitize.ValidateJSONPayload("trigger_config", req.TriggerConfig); err != nil {
+		respondValidationError(w, r, err.Error())
+		return
+	}
+	if !sanitizeAssetActionFlow(w, r, req.Nodes, req.Edges) {
+		return
+	}
 
 	if msg := actionutil.ValidateActionFields(req.Name, string(req.TriggerType)); msg != "" {
 		respondValidationError(w, r, msg)
@@ -157,7 +194,7 @@ func (h *AssetActionHandler) CreateAction(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	logAudit(h.db, r, currentUser, logger.ActionAutomationCreate, logger.ResourceAutomation, &createdAction.ID, createdAction.Name)
+	h.auditor.Log(r, currentUser, logger.ActionAutomationCreate, logger.ResourceAutomation, &createdAction.ID, createdAction.Name)
 
 	respondJSONCreated(w, createdAction)
 }
@@ -202,6 +239,21 @@ func (h *AssetActionHandler) UpdateAction(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: req.Description, Policy: sanitize.RichText},
+	)
+	// TriggerConfig is a JSON blob — reject invalid JSON instead of
+	// HTML-stripping it (which would corrupt valid payloads).
+	if req.TriggerConfig != nil {
+		if err := sanitize.ValidateJSONPayload("trigger_config", *req.TriggerConfig); err != nil {
+			respondValidationError(w, r, err.Error())
+			return
+		}
+	}
+	if !sanitizeAssetActionFlow(w, r, req.Nodes, req.Edges) {
+		return
+	}
 
 	var err error
 
@@ -239,7 +291,7 @@ func (h *AssetActionHandler) UpdateAction(w http.ResponseWriter, r *http.Request
 	}
 
 	if currentUser != nil {
-		logAudit(h.db, r, currentUser, logger.ActionAutomationUpdate, logger.ResourceAutomation, &actionID, updatedAction.Name)
+		h.auditor.Log(r, currentUser, logger.ActionAutomationUpdate, logger.ResourceAutomation, &actionID, updatedAction.Name)
 	}
 
 	respondJSONOK(w, updatedAction)
@@ -271,7 +323,7 @@ func (h *AssetActionHandler) DeleteAction(w http.ResponseWriter, r *http.Request
 	}
 
 	if currentUser != nil {
-		logAudit(h.db, r, currentUser, logger.ActionAutomationDelete, logger.ResourceAutomation, &actionID, "")
+		h.auditor.Log(r, currentUser, logger.ActionAutomationDelete, logger.ResourceAutomation, &actionID, "")
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -350,6 +402,20 @@ func (h *AssetActionHandler) ExecuteAction(w http.ResponseWriter, r *http.Reques
 
 	action, ok := h.requireAssetAction(w, r, actionID, setID)
 	if !ok {
+		return
+	}
+
+	// The target asset id is caller-controlled; confirm it belongs to the
+	// admin-checked set before executing, otherwise an admin of one set could
+	// drive an action against an asset in a set they cannot access. Return 404
+	// (not 403) to avoid disclosing the existence of out-of-set assets.
+	assetSetID, err := h.assetHandler.repo.GetAssetSetID(req.AssetID)
+	if err == repository.ErrNotFound || (err == nil && assetSetID != setID) {
+		respondNotFound(w, r, "asset")
+		return
+	}
+	if err != nil {
+		respondInternalError(w, r, err)
 		return
 	}
 

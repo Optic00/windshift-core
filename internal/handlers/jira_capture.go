@@ -30,10 +30,10 @@ type CapturedPayloads struct {
 // a 100k-issue Cloud capture peaks at ~one BulkFetchResponse worth of RAM
 // during marshaling, not the cumulative total.
 type recordingClient struct {
-	inner         jira.Client
-	mu            sync.Mutex
-	payloads      CapturedPayloads
-	bulkFetchPath string
+	inner      jira.Client
+	mu         sync.Mutex
+	payloads   CapturedPayloads
+	jsonlPaths []string
 }
 
 // newRecordingClient builds a streaming recorder. captureDir is created by the
@@ -46,11 +46,22 @@ func newRecordingClient(inner jira.Client, captureDir string) *recordingClient {
 			IssueKeys:  make(map[string][]string),
 			UserEmails: make(map[string]string),
 		},
-		bulkFetchPath: filepath.Join(captureDir, "jira_bulk_fetch.jsonl"),
 	}
-	if err := os.WriteFile(rc.bulkFetchPath, nil, 0o600); err != nil { //nolint:gosec // path built from operator-supplied dir
-		slog.Warn("Failed to truncate bulk-fetch capture file", slog.String("component", "jira"),
-			slog.String("path", rc.bulkFetchPath), slog.Any("error", err))
+	rc.jsonlPaths = []string{
+		filepath.Join(captureDir, "jira_bulk_fetch.jsonl"),
+		filepath.Join(captureDir, "jira_boards.jsonl"),
+		filepath.Join(captureDir, "jira_board_configurations.jsonl"),
+		filepath.Join(captureDir, "jira_filters.jsonl"),
+		filepath.Join(captureDir, "jira_filter_details.jsonl"),
+		filepath.Join(captureDir, "jira_sprints.jsonl"),
+		filepath.Join(captureDir, "jira_issue_comments.jsonl"),
+		filepath.Join(captureDir, "jira_issue_worklogs.jsonl"),
+	}
+	for _, path := range rc.jsonlPaths {
+		if err := os.WriteFile(path, nil, 0o600); err != nil { //nolint:gosec // path built from operator-supplied dir
+			slog.Warn("Failed to truncate Jira capture JSONL file", slog.String("component", "jira"),
+				slog.String("path", path), slog.Any("error", err))
+		}
 	}
 	return rc
 }
@@ -74,11 +85,11 @@ func (r *recordingClient) saveToFile(dir string) error {
 	}
 
 	slog.Info("Saved captured Jira responses", slog.String("component", "jira"),
-		slog.String("path", path), slog.String("bulk_fetch_path", r.bulkFetchPath))
+		slog.String("path", path), slog.Any("jsonl_paths", r.jsonlPaths))
 	return nil
 }
 
-// --- Recorded methods (the 3 used during import) ---
+// --- Recorded methods used during import ---
 
 func (r *recordingClient) GetAllIssueKeys(ctx context.Context, jql string) ([]string, error) {
 	keys, err := r.inner.GetAllIssueKeys(ctx, jql)
@@ -93,36 +104,48 @@ func (r *recordingClient) GetAllIssueKeys(ctx context.Context, jql string) ([]st
 func (r *recordingClient) BulkFetchIssues(ctx context.Context, req jira.BulkFetchRequest) (*jira.BulkFetchResponse, error) {
 	resp, err := r.inner.BulkFetchIssues(ctx, req)
 	if err == nil && resp != nil {
-		r.appendBulkFetch(resp)
+		r.appendJSONL("jira_bulk_fetch.jsonl", resp)
 	}
 	return resp, err
 }
 
-// appendBulkFetch serializes a single page and appends it as one JSONL record.
+// appendJSONL serializes a single response and appends it as one JSONL record.
 // Open/append/close per call so a crashed import leaves a well-formed prefix
 // on disk and no file-handle leak; the syscall cost is negligible next to the
 // Jira API round-trip that produced the page.
-func (r *recordingClient) appendBulkFetch(resp *jira.BulkFetchResponse) {
-	line, err := json.Marshal(resp)
+func (r *recordingClient) appendJSONL(filename string, payload any) {
+	line, err := json.Marshal(payload)
 	if err != nil {
-		slog.Warn("Failed to marshal bulk-fetch page", slog.String("component", "jira"), slog.Any("error", err))
+		slog.Warn("Failed to marshal Jira capture page", slog.String("component", "jira"), slog.String("file", filename), slog.Any("error", err))
 		return
 	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	f, err := os.OpenFile(r.bulkFetchPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600) //nolint:gosec // path built from operator-supplied dir
+	var path string
+	for _, candidate := range r.jsonlPaths {
+		if filepath.Base(candidate) == filename {
+			path = candidate
+			break
+		}
+	}
+	if path == "" {
+		slog.Warn("Unknown Jira capture JSONL target", slog.String("component", "jira"), slog.String("file", filename))
+		return
+	}
+
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600) //nolint:gosec // path built from operator-supplied dir
 	if err != nil {
-		slog.Warn("Failed to open bulk-fetch capture file", slog.String("component", "jira"),
-			slog.String("path", r.bulkFetchPath), slog.Any("error", err))
+		slog.Warn("Failed to open Jira capture JSONL file", slog.String("component", "jira"),
+			slog.String("path", path), slog.Any("error", err))
 		return
 	}
 	defer func() { _ = f.Close() }()
 
 	if _, err := f.Write(append(line, '\n')); err != nil {
-		slog.Warn("Failed to append bulk-fetch page", slog.String("component", "jira"),
-			slog.String("path", r.bulkFetchPath), slog.Any("error", err))
+		slog.Warn("Failed to append Jira capture JSONL page", slog.String("component", "jira"),
+			slog.String("path", path), slog.Any("error", err))
 	}
 }
 
@@ -138,11 +161,9 @@ func (r *recordingClient) GetUserEmail(ctx context.Context, accountID string) (s
 
 // --- Pass-through methods ---
 //
-// NOT RECORDED — extend the recording wrapper before Phase 1.x lands. When
-// Phase 1.2 (sprint import) wires ListBoards/GetBoardSprints into the importer,
-// and when Phase 1.4 adds paged GetIssueComments/GetIssueWorklogs methods,
-// those calls bypass capture and the diff harness will silently under-compare.
-// scripts/jira_import_diff.py keeps a matching EXPECTED_PASSTHROUGH_GAPS set.
+// NOT RECORDED — extend the recording wrapper before adding importer calls that
+// the diff harness must compare. scripts/jira_import_diff.py keeps a matching
+// EXPECTED_PASSTHROUGH_GAPS set for intentionally ignored endpoints.
 
 func (r *recordingClient) TestConnection(ctx context.Context) (*jira.JiraInstanceInfo, error) {
 	return r.inner.TestConnection(ctx)
@@ -196,6 +217,22 @@ func (r *recordingClient) GetIssue(ctx context.Context, issueKey string, expand 
 	return r.inner.GetIssue(ctx, issueKey, expand)
 }
 
+func (r *recordingClient) GetIssueComments(ctx context.Context, issueKey string, startAt, maxResults int) (*jira.JiraCommentContainer, error) {
+	resp, err := r.inner.GetIssueComments(ctx, issueKey, startAt, maxResults)
+	if err == nil && resp != nil {
+		r.appendJSONL("jira_issue_comments.jsonl", map[string]any{"issue_key": issueKey, "response": resp})
+	}
+	return resp, err
+}
+
+func (r *recordingClient) GetIssueWorklogs(ctx context.Context, issueKey string, startAt, maxResults int) (*jira.JiraWorklogContainer, error) {
+	resp, err := r.inner.GetIssueWorklogs(ctx, issueKey, startAt, maxResults)
+	if err == nil && resp != nil {
+		r.appendJSONL("jira_issue_worklogs.jsonl", map[string]any{"issue_key": issueKey, "response": resp})
+	}
+	return resp, err
+}
+
 func (r *recordingClient) GetIssueCount(ctx context.Context, projectKey string, openOnly bool) (int, error) {
 	return r.inner.GetIssueCount(ctx, projectKey, openOnly)
 }
@@ -209,11 +246,43 @@ func (r *recordingClient) GetProjectVersions(ctx context.Context, projectKey str
 }
 
 func (r *recordingClient) ListBoards(ctx context.Context, projectKey string) (*jira.BoardListResult, error) {
-	return r.inner.ListBoards(ctx, projectKey)
+	resp, err := r.inner.ListBoards(ctx, projectKey)
+	if err == nil && resp != nil {
+		r.appendJSONL("jira_boards.jsonl", map[string]any{"project_key": projectKey, "response": resp})
+	}
+	return resp, err
 }
 
 func (r *recordingClient) GetBoardSprints(ctx context.Context, boardID int) (*jira.SprintListResult, error) {
-	return r.inner.GetBoardSprints(ctx, boardID)
+	resp, err := r.inner.GetBoardSprints(ctx, boardID)
+	if err == nil && resp != nil {
+		r.appendJSONL("jira_sprints.jsonl", map[string]any{"board_id": boardID, "response": resp})
+	}
+	return resp, err
+}
+
+func (r *recordingClient) GetBoardConfiguration(ctx context.Context, boardID int) (*jira.JiraBoardConfiguration, error) {
+	resp, err := r.inner.GetBoardConfiguration(ctx, boardID)
+	if err == nil && resp != nil {
+		r.appendJSONL("jira_board_configurations.jsonl", map[string]any{"board_id": boardID, "response": resp})
+	}
+	return resp, err
+}
+
+func (r *recordingClient) ListFilters(ctx context.Context, projectKey string) (*jira.FilterSearchResult, error) {
+	resp, err := r.inner.ListFilters(ctx, projectKey)
+	if err == nil && resp != nil {
+		r.appendJSONL("jira_filters.jsonl", map[string]any{"project_key": projectKey, "response": resp})
+	}
+	return resp, err
+}
+
+func (r *recordingClient) GetFilter(ctx context.Context, filterID string) (*jira.JiraFilter, error) {
+	resp, err := r.inner.GetFilter(ctx, filterID)
+	if err == nil && resp != nil {
+		r.appendJSONL("jira_filter_details.jsonl", map[string]any{"filter_id": filterID, "response": resp})
+	}
+	return resp, err
 }
 
 func (r *recordingClient) DownloadAttachment(ctx context.Context, attachmentURL string) (io.ReadCloser, string, error) {

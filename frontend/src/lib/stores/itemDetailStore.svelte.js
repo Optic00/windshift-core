@@ -22,6 +22,10 @@ const FIELD_MAP = {
 
 const STRING_FIELDS = new Set(['title', 'description']);
 
+function isNumericID(value) {
+  return /^\d+$/.test(String(value ?? ''));
+}
+
 const RELATED_ITEM_FIELDS = {
   status: ['status_id', 'status_name', 'status_color', 'status_category_id'],
   priority: ['priority_id', 'priority_name', 'priority_color'],
@@ -178,11 +182,17 @@ class ItemDetailStore {
    * so the UI doesn't flash a skeleton between items. Rapid clicks are made
    * race-safe by a monotonic load token; superseded results are discarded.
    */
-  async loadItem(workspaceId, itemId) {
+  async loadItem(workspaceId, itemId, options = {}) {
     const token = ++this.#loadToken;
     const isSwitch = this.item != null;
 
-    this.itemId = itemId;
+    let effectiveWorkspaceId = workspaceId;
+    let effectiveItemId = itemId;
+    const lookupWorkspaceKey =
+      options.workspaceKey || (workspaceId && !isNumericID(workspaceId) ? workspaceId : null);
+    const lookupItemNumber = options.itemNumber || (lookupWorkspaceKey ? itemId : null);
+
+    this.itemId = effectiveItemId;
     this.error = null;
     if (!isSwitch) {
       this.loading = true;
@@ -190,8 +200,16 @@ class ItemDetailStore {
     }
 
     try {
+      if (lookupWorkspaceKey) {
+        const resolved = await api.items.getByKey(lookupWorkspaceKey, lookupItemNumber);
+        if (token !== this.#loadToken) return;
+        effectiveItemId = resolved.id;
+        effectiveWorkspaceId = resolved.workspace_id;
+        this.itemId = effectiveItemId;
+      }
+
       // Fetch item first to derive workspaceId if not provided
-      const itemData = await api.items.get(itemId);
+      const itemData = await api.items.get(effectiveItemId);
       if (token !== this.#loadToken) return;
 
       this.item = itemData;
@@ -199,8 +217,8 @@ class ItemDetailStore {
         this.item.assignee_id = null;
       }
 
-      // Use provided workspaceId or derive from item
-      const wsId = workspaceId || itemData.workspace_id;
+      // Use provided/resolved workspaceId or derive from item
+      const wsId = effectiveWorkspaceId || itemData.workspace_id;
       this.workspaceId = wsId;
 
       const [
@@ -219,12 +237,12 @@ class ItemDetailStore {
       ] = await Promise.all([
         api.workspaces.get(wsId),
         api.linkTypes.getAll(),
-        api.links.getForItem('items', itemId),
+        api.links.getForItem('items', effectiveItemId),
         api.customFields.getAll(),
         api.milestones.getAll({ workspace_id: wsId, include_global: true }),
         api.iterations.getAll({ workspace_id: wsId, include_global: true }),
         api.time.projects.getByWorkspace(wsId),
-        api.time.worklogs.getByItem(itemId),
+        api.time.worklogs.getByItem(effectiveItemId),
         api.customerOrganisations.getAll(),
         api.items.getAll({ limit: 100 }),
         api.workspaces.getAll(),
@@ -297,6 +315,7 @@ class ItemDetailStore {
 
       // Load manual actions
       await this.#loadManualActions();
+      return this.item;
     } catch (err) {
       if (token !== this.#loadToken) return;
       console.error('Failed to load item or workspace:', err);

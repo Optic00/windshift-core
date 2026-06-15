@@ -14,8 +14,8 @@ import (
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
 	"windshift/internal/restapi/v1/dto"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
-	"windshift/internal/utils"
 	"windshift/internal/validation"
 )
 
@@ -29,6 +29,7 @@ type ItemHandler struct {
 	workflowSvc  *services.WorkflowService
 	conditionSvc *services.ConditionService
 	approvalSvc  *services.ApprovalService
+	permSvc      *services.PermissionService
 }
 
 // NewItemHandler creates a new item handler
@@ -44,6 +45,7 @@ func NewItemHandler(db database.Database, permissionService *services.Permission
 		workflowSvc:  workflowSvc,
 		conditionSvc: services.NewConditionService(db, permissionService, services.NewScriptEngine()),
 		approvalSvc:  services.NewApprovalService(db, permissionService, leaveRepo, workflowSvc),
+		permSvc:      permissionService,
 	}
 }
 
@@ -107,6 +109,25 @@ func (h *ItemHandler) requireItemAccess(w http.ResponseWriter, r *http.Request, 
 	}
 
 	return item, user, true
+}
+
+// allowUnlessPersonalExcluded enforces the exclude_personal query parameter
+// on single-item fetches: when set and the item's workspace is personal, the
+// item is reported as not found (mirroring the visibility 404 contract).
+func (h *ItemHandler) allowUnlessPersonalExcluded(w http.ResponseWriter, r *http.Request, workspaceID int) bool {
+	if !ExcludePersonal(r) {
+		return true
+	}
+	personal, err := repository.IsPersonalWorkspace(h.DB, workspaceID)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return false
+	}
+	if personal {
+		h.RespondError(w, r, restapi.ErrItemNotFound)
+		return false
+	}
+	return true
 }
 
 // List handles GET /rest/api/v1/items
@@ -229,6 +250,8 @@ func (h *ItemHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.maskProjectNames(user.ID, items)
+
 	// Convert to DTOs
 	baseURL := getBaseURL(r)
 	itemResponses := dto.MapItemsToResponse(items, baseURL)
@@ -243,7 +266,8 @@ func (h *ItemHandler) List(w http.ResponseWriter, r *http.Request) {
 // @Tags         items
 // @Produce      json
 // @Security     BearerAuth
-// @Param        id   path      int  true  "Item ID"
+// @Param        id                path      int   true   "Item ID"
+// @Param        exclude_personal  query     bool  false  "Treat items in the caller's personal workspaces as not found"
 // @Success      200  {object}  dto.ItemResponse
 // @Failure      400  {object}  handlers.ErrorResponse  "Invalid item ID"
 // @Failure      401  {object}  handlers.ErrorResponse
@@ -252,12 +276,16 @@ func (h *ItemHandler) List(w http.ResponseWriter, r *http.Request) {
 // @Failure      500  {object}  handlers.ErrorResponse
 // @Router       /items/{id} [get]
 func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
-	item, _, ok := h.requireItemAccess(w, r, true, h.Perms.CanViewWorkspace)
+	item, user, ok := h.requireItemAccess(w, r, true, h.Perms.CanViewWorkspace)
 	if !ok {
+		return
+	}
+	if !h.allowUnlessPersonalExcluded(w, r, item.WorkspaceID) {
 		return
 	}
 
 	itemID := item.ID
+	h.maskProjectNamesOne(user.ID, item)
 
 	// Convert to DTO
 	baseURL := getBaseURL(r)
@@ -303,7 +331,8 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 // @Produce      json
 // @Security     BearerAuth
 // @Param        ws_key  path      string  true  "Workspace key (e.g. PROJ)"
-// @Param        number  path      int     true  "Per-workspace item number"
+// @Param        number            path      int   true   "Per-workspace item number"
+// @Param        exclude_personal  query     bool  false  "Treat items in the caller's personal workspaces as not found"
 // @Success      200     {object}  dto.ItemResponse
 // @Failure      400     {object}  handlers.ErrorResponse  "Invalid workspace key or item number"
 // @Failure      401     {object}  handlers.ErrorResponse
@@ -353,6 +382,11 @@ func (h *ItemHandler) GetByKeyAndNumber(w http.ResponseWriter, r *http.Request) 
 		h.RespondError(w, r, restapi.ErrItemNotFound)
 		return
 	}
+	if !h.allowUnlessPersonalExcluded(w, r, item.WorkspaceID) {
+		return
+	}
+
+	h.maskProjectNamesOne(user.ID, item)
 
 	baseURL := getBaseURL(r)
 	response := dto.MapItemToResponse(item, baseURL)
@@ -443,12 +477,46 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Sanitize user input to prevent XSS
-	req.Title = utils.StripHTMLTags(req.Title)
-	req.Description = utils.SanitizeCommentContent(req.Description)
+	req.Title = sanitize.PlainTextField.Sanitize(req.Title)
+	req.Description = sanitize.RichText.Sanitize(req.Description)
+
+	// Centralized creation validation (parent hierarchy, cross-workspace
+	// parent visibility, task status rules) — mirrors the cookie-auth create
+	// path. Permission-shaped parent failures surface as "Parent item not
+	// found" so existence isn't leaked.
+	validationResult := services.ValidateItemCreation(h.DB, services.ItemValidationParams{
+		WorkspaceID: req.WorkspaceID,
+		Title:       req.Title,
+		ItemTypeID:  req.ItemTypeID,
+		ParentID:    req.ParentID,
+		StatusID:    req.StatusID,
+		IsTask:      req.IsTask,
+		UserID:      user.ID,
+		PermService: h.permSvc,
+	})
+	if !validationResult.Valid {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, validationResult.Error))
+		return
+	}
 
 	// Convert custom field values to JSON
 	var customFieldValuesJSON string
 	if req.CustomFields != nil {
+		// Vet option ids (select/multiselect) + sanitize text/textarea
+		// values, mirroring the cookie-auth create handler.
+		if err := validation.ValidateAndNormalizeCustomFieldValues(h.DB, req.CustomFields); err != nil {
+			var verr *validation.ValidationError
+			if errors.As(err, &verr) {
+				h.RespondError(w, r, restapi.NewAPIError(
+					http.StatusBadRequest,
+					restapi.ErrCodeValidationFailed,
+					verr.Message,
+				).WithDetails(map[string]string{"field": verr.Field}))
+				return
+			}
+			h.RespondInternalError(w, r)
+			return
+		}
 		var customFieldValuesBytes []byte
 		customFieldValuesBytes, err = json.Marshal(req.CustomFields)
 		if err != nil {
@@ -478,9 +546,11 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 		StartDate:             req.StartDate,
 		EndDate:               req.EndDate,
 		CustomFieldValuesJSON: customFieldValuesJSON,
+		ValidatingUserID:      user.ID,
+		PermService:           h.permSvc,
 	})
 	if err != nil {
-		if errors.Is(err, services.ErrMissingItemType) {
+		if errors.Is(err, services.ErrMissingItemType) || errors.Is(err, services.ErrProjectNotFound) {
 			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, err.Error()))
 			return
 		}
@@ -494,6 +564,8 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 		h.RespondInternalError(w, r)
 		return
 	}
+
+	h.maskProjectNamesOne(user.ID, fullItem)
 
 	baseURL := getBaseURL(r)
 	response := dto.MapItemToResponse(fullItem, baseURL)
@@ -565,10 +637,10 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return ok && string(raw) == "null"
 	}
 	if req.Title != nil {
-		updateData["title"] = utils.StripHTMLTags(*req.Title)
+		updateData["title"] = sanitize.PlainTextField.Sanitize(*req.Title)
 	}
 	if req.Description != nil {
-		updateData["description"] = utils.SanitizeCommentContent(*req.Description)
+		updateData["description"] = sanitize.RichText.Sanitize(*req.Description)
 	}
 	if req.PriorityID != nil {
 		updateData["priority_id"] = *req.PriorityID
@@ -647,10 +719,110 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.maskProjectNamesOne(user.ID, result.Item)
+
 	baseURL := getBaseURL(r)
 	response := dto.MapItemToResponse(result.Item, baseURL)
 
 	h.RespondOK(w, response)
+}
+
+// ChangeType handles POST /rest/api/v1/items/{id}/change-type.
+// Item type changes use their own service because a target type may imply a
+// different workflow. When the current status is not in the target workflow,
+// clients must provide target_status_id.
+//
+// @Summary      Change an item's item type
+// @Description  Reassigns an item to a different item type. If the target type's workflow does not contain the current status, the caller must supply target_status_id; otherwise a 409 lists the candidate statuses.
+// @Tags         items
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id    path      int                       true  "Item ID"
+// @Param        body  body      dto.ItemTypeChangeRequest true  "Target item type and optional target status"
+// @Success      200   {object}  dto.ItemResponse
+// @Failure      400   {object}  handlers.ErrorResponse  "Invalid body or missing target_item_type_id"
+// @Failure      401   {object}  handlers.ErrorResponse
+// @Failure      403   {object}  handlers.ErrorResponse  "Token lacks the items:write scope"
+// @Failure      404   {object}  handlers.ErrorResponse  "Item not found or not visible to caller"
+// @Failure      409   {object}  handlers.ErrorResponse  "Target status required because the current status is not in the target type's workflow"
+// @Failure      500   {object}  handlers.ErrorResponse
+// @Router       /items/{id}/change-type [post]
+func (h *ItemHandler) ChangeType(w http.ResponseWriter, r *http.Request) {
+	item, user, ok := h.requireItemAccess(w, r, true, h.Perms.CanEditWorkspace)
+	if !ok {
+		return
+	}
+
+	var req dto.ItemTypeChangeRequest
+	if !h.DecodeBodyOrRespond(w, r, &req) {
+		return
+	}
+	if req.TargetItemTypeID <= 0 {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeMissingField, "target_item_type_id is required"))
+		return
+	}
+
+	svc := services.NewItemTypeChangeService(h.DB).WithConditionService(h.conditionSvc)
+	analysis, err := svc.Analyze(item, req.TargetItemTypeID)
+	if err != nil {
+		h.respondTypeChangeError(w, r, err)
+		return
+	}
+	if item.ItemTypeID != nil && *item.ItemTypeID == req.TargetItemTypeID && !analysis.RequiresMigration {
+		h.maskProjectNamesOne(user.ID, item)
+		h.RespondOK(w, dto.MapItemToResponse(item, getBaseURL(r)))
+		return
+	}
+
+	var nextStatusID *int
+	if analysis.RequiresMigration {
+		if req.TargetStatusID == nil {
+			h.RespondError(w, r, restapi.NewAPIError(http.StatusConflict, restapi.ErrCodeConflict, "A target status is required before changing this item type").WithDetails(map[string]any{
+				"reason":   "migration_required",
+				"analysis": analysis,
+			}))
+			return
+		}
+		if analysis.TargetWorkflowID != nil {
+			inWorkflow, err := svc.IsStatusInWorkflow(*req.TargetStatusID, *analysis.TargetWorkflowID)
+			if err != nil {
+				h.RespondInternalError(w, r)
+				return
+			}
+			if !inWorkflow {
+				h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, "target_status_id is not part of the target item type workflow"))
+				return
+			}
+		}
+		if err := svc.ValidateStatusMapping(r.Context(), item, req.TargetItemTypeID, analysis.TargetWorkflowID, req.TargetStatusID); err != nil {
+			h.respondTypeChangeError(w, r, err)
+			return
+		}
+		nextStatusID = req.TargetStatusID
+	}
+
+	if _, err := svc.ApplyChange(item.ID, user.ID, req.TargetItemTypeID, nextStatusID, item); err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+
+	updated, err := h.itemRepo.FindByIDWithDetails(item.ID)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	h.maskProjectNamesOne(user.ID, updated)
+	h.RespondOK(w, dto.MapItemToResponse(updated, getBaseURL(r)))
+}
+
+func (h *ItemHandler) respondTypeChangeError(w http.ResponseWriter, r *http.Request, err error) {
+	var verr *validation.ValidationError
+	if errors.As(err, &verr) {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, verr.Message).WithDetails(map[string]string{"field": verr.Field}))
+		return
+	}
+	h.RespondInternalError(w, r)
 }
 
 // Transition handles POST /rest/api/v1/items/{id}/transition.
@@ -721,6 +893,7 @@ func (h *ItemHandler) Transition(w http.ResponseWriter, r *http.Request) {
 		h.RespondInternalError(w, r)
 		return
 	}
+	h.maskProjectNamesOne(user.ID, fullItem)
 	h.RespondOK(w, dto.TransitionResultResponse{
 		Item:        dto.MapItemToResponse(fullItem, baseURL),
 		OldStatusID: result.OldStatusID,
@@ -821,6 +994,14 @@ func (h *ItemHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	// Sanitize at the handler boundary in addition to CommentService.Create:
+	// the response body below is built from req.Content (not the stored
+	// row), so without sanitizing here the response would echo back the
+	// raw payload even though the stored row is clean. Sanitize is
+	// idempotent — double-coverage is fine.
+	commentWarnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Content, Policy: sanitize.Comment, Label: "Comment"},
+	)
 
 	if !h.ValidateRequiredString(w, r, req.Content, "content") {
 		return
@@ -856,6 +1037,7 @@ func (h *ItemHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 			FullName:  fullName,
 			AvatarURL: user.AvatarURL,
 		},
+		Warnings: commentWarnings,
 	}
 	h.RespondCreated(w, response)
 }
@@ -975,7 +1157,7 @@ func (h *ItemHandler) GetAttachments(w http.ResponseWriter, r *http.Request) {
 // @Failure      500  {object}  handlers.ErrorResponse
 // @Router       /items/{id}/children [get]
 func (h *ItemHandler) GetChildren(w http.ResponseWriter, r *http.Request) {
-	item, _, ok := h.requireItemAccess(w, r, false, h.Perms.CanViewWorkspace)
+	item, user, ok := h.requireItemAccess(w, r, false, h.Perms.CanViewWorkspace)
 	if !ok {
 		return
 	}
@@ -993,6 +1175,8 @@ func (h *ItemHandler) GetChildren(w http.ResponseWriter, r *http.Request) {
 		children[i] = *child
 	}
 
+	h.maskProjectNames(user.ID, children)
+
 	baseURL := getBaseURL(r)
 	response := dto.MapItemsToResponse(children, baseURL)
 	h.RespondOK(w, response)
@@ -1005,11 +1189,12 @@ func (h *ItemHandler) GetChildren(w http.ResponseWriter, r *http.Request) {
 // @Tags         items, search
 // @Produce      json
 // @Security     BearerAuth
-// @Param        q      query     string  true   "Search query"
-// @Param        page   query     int     false  "Page number (1-based)"
-// @Param        limit  query     int     false  "Items per page (max 100)"
-// @Param        sort   query     string  false  "Sort field"
-// @Param        order  query     string  false  "Sort order: asc or desc"
+// @Param        q                 query     string  true   "Search query"
+// @Param        page              query     int     false  "Page number (1-based)"
+// @Param        limit             query     int     false  "Items per page (max 100)"
+// @Param        sort              query     string  false  "Sort field"
+// @Param        order             query     string  false  "Sort order: asc or desc"
+// @Param        exclude_personal  query     bool    false  "Exclude items from the caller's personal workspaces"
 // @Success      200    {object}  handlers.PaginatedResponse{data=[]dto.ItemResponse}
 // @Failure      400    {object}  handlers.ErrorResponse  "Missing or invalid q parameter"
 // @Failure      401    {object}  handlers.ErrorResponse
@@ -1035,6 +1220,13 @@ func (h *ItemHandler) Search(w http.ResponseWriter, r *http.Request) {
 		h.RespondInternalError(w, r)
 		return
 	}
+	if ExcludePersonal(r) {
+		accessibleWorkspaceIDs, err = repository.FilterSharedWorkspaceIDs(h.DB, accessibleWorkspaceIDs)
+		if err != nil {
+			h.RespondInternalError(w, r)
+			return
+		}
+	}
 
 	if len(accessibleWorkspaceIDs) == 0 {
 		h.RespondPaginated(w, []dto.ItemResponse{}, pagination, 0)
@@ -1051,6 +1243,8 @@ func (h *ItemHandler) Search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.maskProjectNames(user.ID, items)
+
 	baseURL := getBaseURL(r)
 	response := dto.MapItemsToResponse(items, baseURL)
 	h.RespondPaginated(w, response, pagination, total)
@@ -1066,5 +1260,13 @@ func getBaseURL(r *http.Request) string {
 	if fwdProto := r.Header.Get("X-Forwarded-Proto"); fwdProto == "http" || fwdProto == "https" {
 		scheme = fwdProto
 	}
-	return fmt.Sprintf("%s://%s", scheme, r.Host)
+	prefix := sanitizedContextPrefix(r.Header.Get("X-Windshift-Context-Path"))
+	return fmt.Sprintf("%s://%s%s", scheme, r.Host, prefix)
+}
+
+func sanitizedContextPrefix(prefix string) string {
+	if prefix == "" || prefix == "/" || !strings.HasPrefix(prefix, "/") || strings.ContainsAny(prefix, "?#\\") || strings.Contains(prefix, "//") || strings.Contains(prefix, "..") {
+		return ""
+	}
+	return strings.TrimSuffix(prefix, "/")
 }

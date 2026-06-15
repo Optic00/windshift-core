@@ -10,6 +10,7 @@ import (
 
 	"windshift/internal/database"
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
 )
 
 type ReviewHandler struct {
@@ -196,6 +197,7 @@ func (h *ReviewHandler) CreateReview(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	sanitize.Apply(&req.ReviewData, sanitize.LongDocument)
 
 	// Validate required fields
 	if req.ReviewDate == "" || req.ReviewType == "" || req.ReviewData == "" {
@@ -271,6 +273,7 @@ func (h *ReviewHandler) UpdateReview(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	sanitize.Apply(&req.ReviewData, sanitize.LongDocument)
 
 	// Validate required fields
 	if req.ReviewData == "" {

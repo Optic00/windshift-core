@@ -4,10 +4,10 @@ import (
 	"errors"
 	"net/http"
 
-	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
 
@@ -25,20 +25,19 @@ import (
 // response uses the sanitized DTO so ciphertext and plaintext never leave
 // the server.
 type ActionCredentialsHandler struct {
-	db                database.Database
 	service           *services.ActionCredentialService
 	permissionService *services.PermissionService
 	keyCache          *WorkspaceKeyCache
+	auditor           *logger.Auditor
 }
 
-// NewActionCredentialsHandler builds the handler. serverSecret is the shared
-// SSO_SECRET; the service binds it to the action-credentials HKDF realm.
-func NewActionCredentialsHandler(db database.Database, permissionService *services.PermissionService, keyCache *WorkspaceKeyCache, serverSecret string) *ActionCredentialsHandler {
+// NewActionCredentialsHandler builds the handler from injected services.
+func NewActionCredentialsHandler(service *services.ActionCredentialService, permissionService *services.PermissionService, keyCache *WorkspaceKeyCache, auditor *logger.Auditor) *ActionCredentialsHandler {
 	return &ActionCredentialsHandler{
-		db:                db,
-		service:           services.NewActionCredentialService(repository.NewActionCredentialRepository(db), serverSecret),
+		service:           service,
 		permissionService: permissionService,
 		keyCache:          keyCache,
+		auditor:           auditor,
 	}
 }
 
@@ -84,6 +83,15 @@ func (h *ActionCredentialsHandler) CreateGlobal(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
+	sanitize.Apply(&req.Name, sanitize.PlainTextField)
+	// SecretMetadata is a JSON blob — HTML stripping would corrupt valid
+	// payloads before the service's validateSecretMetadata even sees them,
+	// so it is size-capped + required to be well-formed JSON instead;
+	// the service stays the semantic validator.
+	if err := sanitize.ValidateJSONPayload("secret_metadata", req.SecretMetadata); err != nil {
+		respondValidationError(w, r, err.Error())
+		return
+	}
 	created, err := h.service.Create(req, &currentUser.ID)
 	if err != nil {
 		respondValidationError(w, r, err.Error())
@@ -109,6 +117,13 @@ func (h *ActionCredentialsHandler) CreateForWorkspace(w http.ResponseWriter, r *
 	}
 	req, ok := decodeJSON[models.CreateActionCredentialRequest](w, r)
 	if !ok {
+		return
+	}
+	sanitize.Apply(&req.Name, sanitize.PlainTextField)
+	// SecretMetadata is a JSON blob — size-cap + well-formed-JSON gate
+	// instead of HTML stripping (see CreateGlobal).
+	if err := sanitize.ValidateJSONPayload("secret_metadata", req.SecretMetadata); err != nil {
+		respondValidationError(w, r, err.Error())
 		return
 	}
 	// Path scope wins — clients can't smuggle a global credential or extra
@@ -162,6 +177,15 @@ func (h *ActionCredentialsHandler) handleUpdate(w http.ResponseWriter, r *http.R
 	req, ok := decodeJSON[models.UpdateActionCredentialRequest](w, r)
 	if !ok {
 		return
+	}
+	sanitize.Apply(req.Name, sanitize.PlainTextField)
+	// SecretMetadata is a JSON blob — size-cap + well-formed-JSON gate
+	// instead of HTML stripping (see CreateGlobal).
+	if req.SecretMetadata != nil {
+		if err := sanitize.ValidateJSONPayload("secret_metadata", *req.SecretMetadata); err != nil {
+			respondValidationError(w, r, err.Error())
+			return
+		}
 	}
 	if !allowScopeChange {
 		req.AppliesToAllWorkspaces = nil
@@ -350,7 +374,7 @@ func (h *ActionCredentialsHandler) auditCredential(r *http.Request, user *models
 	// Details intentionally hold only non-sensitive metadata. The audit
 	// pipeline's sanitizeAuditDetails additionally redacts any key that
 	// looks like a secret, but we don't put plaintext here either way.
-	logAuditWithDetails(h.db, r, user, action, logger.ResourceActionCredential, &cred.ID, cred.Name, map[string]interface{}{
+	h.auditor.LogWithDetails(r, user, action, logger.ResourceActionCredential, &cred.ID, cred.Name, map[string]interface{}{
 		"credential_type": cred.CredentialType,
 		"scope":           scope,
 		"workspace_ids":   cred.WorkspaceIDs,

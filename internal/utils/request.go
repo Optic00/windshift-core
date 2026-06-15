@@ -75,9 +75,70 @@ func (e *IPExtractor) GetClientIP(r *http.Request) string {
 	return remoteAddr
 }
 
-// IsPrivateIP checks if an IP is a private/internal address
+// IsPrivateIP checks if an IP is a private/internal address.
+//
+// It is encoding-safe. Go's net.IP predicates only normalize native IPv4 and
+// IPv4-mapped IPv6 (::ffff:a.b.c.d) via To4(); they return false for the other
+// transitional forms that embed an IPv4 — IPv4-compatible (::a.b.c.d), 6to4
+// (2002:aabb:ccdd::/16), and the NAT64 well-known prefix (64:ff9b::/96). Without
+// unwrapping those, a loopback/RFC1918/link-local target can be smuggled past
+// the check as e.g. ::127.0.0.1, 2002:0a00:0001:: or 64:ff9b::a9fe:a9fe and then
+// routed to the embedded IPv4 at dial time. So we also re-check any embedded
+// IPv4 against the private ranges.
 func IsPrivateIP(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	if isPrivateRange(ip) {
+		return true
+	}
+	if v4 := embeddedIPv4(ip); v4 != nil {
+		return isPrivateRange(v4)
+	}
+	return false
+}
+
+func isPrivateRange(ip net.IP) bool {
 	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
+}
+
+// embeddedIPv4 returns the IPv4 address embedded in an IPv6 address for the
+// transitional forms whose net.IP predicates do NOT already normalize via To4():
+// IPv4-compatible (::a.b.c.d), 6to4 (2002::/16) and the NAT64 well-known prefix
+// (64:ff9b::/96). It returns nil for native IPv4, IPv4-mapped (::ffff:a.b.c.d,
+// already covered by To4), :: and ::1, and any address embedding no IPv4. Range
+// checks are re-run on the result so an encoded private/loopback target can't
+// slip through. Shared by IsPrivateIP and IsBlockedSSRFAddr.
+func embeddedIPv4(ip net.IP) net.IP {
+	if ip.To4() != nil {
+		// Native IPv4 or IPv4-mapped — the standard predicates already see it.
+		return nil
+	}
+	ip16 := ip.To16()
+	if ip16 == nil {
+		return nil
+	}
+	switch {
+	case ip16[0] == 0x20 && ip16[1] == 0x02:
+		// 6to4 2002:WWXX:YYZZ::/16 embeds W.X.Y.Z at bytes 2..5.
+		return net.IPv4(ip16[2], ip16[3], ip16[4], ip16[5]).To4()
+	case ip16[0] == 0x00 && ip16[1] == 0x64 && ip16[2] == 0xff && ip16[3] == 0x9b && allZero(ip16[4:12]):
+		// NAT64 64:ff9b::/96 embeds the IPv4 in the low 32 bits.
+		return net.IPv4(ip16[12], ip16[13], ip16[14], ip16[15]).To4()
+	case allZero(ip16[0:12]) && (!allZero(ip16[12:15]) || ip16[15] > 1):
+		// IPv4-compatible ::a.b.c.d (deprecated); excludes :: and ::1.
+		return net.IPv4(ip16[12], ip16[13], ip16[14], ip16[15]).To4()
+	}
+	return nil
+}
+
+func allZero(b []byte) bool {
+	for _, x := range b {
+		if x != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // IsTrustedProxy checks if an IP is a trusted proxy (private IP or in additional list)

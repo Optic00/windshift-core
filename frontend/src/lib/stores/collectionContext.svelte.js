@@ -1,5 +1,9 @@
 import { api } from '../api.js';
 import {
+  RIGHTMOST_COLUMN_LIMIT,
+  rightmostCapStatusIds,
+} from '../features/collections/boardColumns.js';
+import {
   fetchCollectionBacklog,
   fetchCollectionItemChanges,
   fetchCollectionItems,
@@ -7,6 +11,7 @@ import {
 } from '../features/collections/collectionService.js';
 import { currentRoute, GLOBAL_COLLECTION_VIEWS } from '../router.js';
 import { calcHasMore } from '../utils/paginationUtils.js';
+import { workspaceDataStore } from './workspaceDataStore.svelte.js';
 
 const COLLECTION_VIEWS = new Set([
   'workspace-board',
@@ -35,6 +40,15 @@ class CollectionStore {
   itemsPagination = $state(null);
   itemsHasMore = $state(false);
   itemsLoadingMore = $state(false);
+
+  // Split-fetch state for board views whose rightmost column is capped
+  // (show_rightmost_column_last_50): { statusIds, total } or null. When
+  // set, `items` holds the paged non-rightmost set (tracked by
+  // itemsPagination) merged with the latest RIGHTMOST_COLUMN_LIMIT
+  // rightmost-column items, and `total` is the server-side count of the
+  // rightmost column. Keeps completed items from eating the page budget
+  // of columns that actually render in full.
+  rightmostCap = $state(null);
 
   // Backlog pagination
   backlogPagination = $state(null);
@@ -119,26 +133,34 @@ class CollectionStore {
     this.loading = true;
 
     try {
-      await this.#primeChangesWatermark();
+      const [capStatusIds] = await Promise.all([
+        this.#resolveBoardCap(wsId, colId, view),
+        this.#primeChangesWatermark(),
+      ]);
       if (loadId !== this.#loadId) return; // stale
 
-      const [itemsResult, backlogResult] = await Promise.all([
+      const [itemsResult, backlogResult, capResult] = await Promise.all([
         fetchCollectionItems(wsId, colId, {
           page: 1,
           limit: DEFAULT_PAGE_SIZE,
           sub_ql: this.subFilterQL || undefined,
           ...this.#itemSortOptions(),
+          ...this.#capExclusionFilter(capStatusIds),
         }),
         fetchCollectionBacklog(wsId, colId, {
           page: 1,
           limit: DEFAULT_PAGE_SIZE,
           sub_ql: this.subFilterQL || undefined,
         }),
+        this.#fetchCapItems(wsId, colId, capStatusIds),
       ]);
 
       if (loadId !== this.#loadId) return; // stale
 
-      this.items = itemsResult.items;
+      this.items = capResult ? [...itemsResult.items, ...capResult.items] : itemsResult.items;
+      this.rightmostCap = capResult
+        ? { statusIds: capStatusIds, total: capResult.pagination?.total ?? capResult.items.length }
+        : null;
       this.collectionName = itemsResult.collectionName;
       this.publicSlug = itemsResult.publicSlug ?? null;
       this.itemsPagination = itemsResult.pagination;
@@ -161,6 +183,66 @@ class CollectionStore {
   }
 
   /**
+   * Resolves the status ids of the board's capped rightmost column for
+   * split fetching. Returns null for non-board views, boards without the
+   * show_rightmost_column_last_50 flag, or when resolution fails — the
+   * view then falls back to plain paged loading.
+   */
+  async #resolveBoardCap(wsId, colId, view) {
+    if (!BOARD_VIEWS.has(view)) return null;
+    try {
+      const config = await api.collections.getBoardConfiguration(colId || null, wsId || null);
+      if (!config?.show_rightmost_column_last_50) return null;
+      let statuses = [];
+      if (!(config.columns?.length > 0)) {
+        // Status-fallback columns: the rightmost column is derived from
+        // the status list, so make sure it's loaded.
+        if (wsId) {
+          await workspaceDataStore.initialize(wsId);
+        } else {
+          await workspaceDataStore.initializeGlobal();
+        }
+        statuses = workspaceDataStore.statuses;
+      }
+      return rightmostCapStatusIds(config, statuses);
+    } catch (error) {
+      if (error?.status !== 404) {
+        console.error('[collectionStore] board configuration lookup failed:', error);
+      }
+      return null;
+    }
+  }
+
+  /** Query-param fragment excluding capped-column statuses from a paged items fetch. */
+  #capExclusionFilter(capStatusIds = this.rightmostCap?.statusIds) {
+    return capStatusIds?.length ? { status_id_not: capStatusIds.join(',') } : {};
+  }
+
+  /** Fetches the latest RIGHTMOST_COLUMN_LIMIT items of the capped column (null when no cap). */
+  #fetchCapItems(wsId, colId, capStatusIds) {
+    if (!capStatusIds?.length) return Promise.resolve(null);
+    return fetchCollectionItems(wsId, colId, {
+      page: 1,
+      limit: RIGHTMOST_COLUMN_LIMIT,
+      sub_ql: this.subFilterQL || undefined,
+      status_id: capStatusIds.join(','),
+      order_by: 'updated_at',
+      sort_direction: 'desc',
+    });
+  }
+
+  /**
+   * Number of loaded items belonging to the paged (non-capped) set —
+   * the count itemsPagination.total refers to. Equals items.length when
+   * no rightmost cap is active.
+   */
+  get mainItemsLoadedCount() {
+    if (!this.rightmostCap) return this.items.length;
+    const capSet = new Set(this.rightmostCap.statusIds);
+    return this.items.filter((item) => !capSet.has(item.status_id)).length;
+  }
+
+  /**
    * Append mode: fetch next items page and append to existing items.
    */
   async loadMoreItems() {
@@ -175,6 +257,7 @@ class CollectionStore {
         limit: this.itemsPagination?.limit ?? DEFAULT_PAGE_SIZE,
         sub_ql: this.subFilterQL || undefined,
         ...this.#itemSortOptions(),
+        ...this.#capExclusionFilter(),
       });
 
       this.items = [...this.items, ...result.items];
@@ -264,29 +347,37 @@ class CollectionStore {
     if (!this.#wsId && !this.#colId) return;
     const loadId = ++this.#loadId;
 
-    const itemsLimit = Math.max(DEFAULT_PAGE_SIZE, this.items.length);
+    const itemsLimit = Math.max(DEFAULT_PAGE_SIZE, this.mainItemsLoadedCount);
     const backlogLimit = Math.max(DEFAULT_PAGE_SIZE, this.backlogItems.length);
 
     try {
-      await this.#primeChangesWatermark();
+      const [capStatusIds] = await Promise.all([
+        this.#resolveBoardCap(this.#wsId, this.#colId, this.#currentView),
+        this.#primeChangesWatermark(),
+      ]);
       if (loadId !== this.#loadId) return;
 
-      const [itemsResult, backlogResult] = await Promise.all([
+      const [itemsResult, backlogResult, capResult] = await Promise.all([
         fetchCollectionItems(this.#wsId, this.#colId, {
           page: 1,
           limit: itemsLimit,
           sub_ql: this.subFilterQL || undefined,
           ...this.#itemSortOptions(),
+          ...this.#capExclusionFilter(capStatusIds),
         }),
         fetchCollectionBacklog(this.#wsId, this.#colId, {
           page: 1,
           limit: backlogLimit,
           sub_ql: this.subFilterQL || undefined,
         }),
+        this.#fetchCapItems(this.#wsId, this.#colId, capStatusIds),
       ]);
       if (loadId !== this.#loadId) return;
 
-      this.items = itemsResult.items;
+      this.items = capResult ? [...itemsResult.items, ...capResult.items] : itemsResult.items;
+      this.rightmostCap = capResult
+        ? { statusIds: capStatusIds, total: capResult.pagination?.total ?? capResult.items.length }
+        : null;
 
       this.collectionName = itemsResult.collectionName;
       this.publicSlug = itemsResult.publicSlug ?? null;
@@ -439,12 +530,21 @@ class CollectionStore {
   }
 
   #removeItemsById(ids) {
-    const beforeItems = this.items.length;
     const beforeBacklog = this.backlogItems.length;
-    this.items = this.items.filter((item) => !ids.has(item.id));
+    const capSet = new Set(this.rightmostCap?.statusIds ?? []);
+    let removedItems = 0;
+    let removedCapItems = 0;
+    this.items = this.items.filter((item) => {
+      if (!ids.has(item.id)) return true;
+      if (capSet.has(item.status_id)) {
+        removedCapItems++;
+      } else {
+        removedItems++;
+      }
+      return false;
+    });
     this.backlogItems = this.backlogItems.filter((item) => !ids.has(item.id));
 
-    const removedItems = beforeItems - this.items.length;
     const removedBacklog = beforeBacklog - this.backlogItems.length;
     if (removedItems > 0 && this.itemsPagination) {
       this.itemsPagination = {
@@ -452,6 +552,12 @@ class CollectionStore {
         total: Math.max(0, (this.itemsPagination.total ?? 0) - removedItems),
       };
       this.itemsHasMore = calcHasMore(this.itemsPagination);
+    }
+    if (removedCapItems > 0 && this.rightmostCap) {
+      this.rightmostCap = {
+        ...this.rightmostCap,
+        total: Math.max(0, this.rightmostCap.total - removedCapItems),
+      };
     }
     if (removedBacklog > 0 && this.backlogPagination) {
       this.backlogPagination = {

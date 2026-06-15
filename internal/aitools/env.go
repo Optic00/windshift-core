@@ -8,7 +8,10 @@
 package aitools
 
 import (
+	"log/slog"
+
 	"windshift/internal/database"
+	"windshift/internal/logger"
 	"windshift/internal/services"
 )
 
@@ -46,6 +49,67 @@ type Env struct {
 	// InvalidateWorkspaceCache so they degrade to "next periodic refresh"
 	// when the adapter (chat handler / MCP server) wasn't wired with one.
 	ActionService *services.ActionService
+}
+
+// Audit resource types for entities internal/logger doesn't define a
+// Resource* constant for (their HTTP surfaces don't write central audit rows
+// yet). Kept here so every aitools call site spells them identically.
+const (
+	resourcePage        = "page"
+	resourceDiagram     = "diagram"
+	resourceItemLink    = "item_link"
+	resourceTimeWorklog = "time_worklog"
+	resourceTimer       = "timer"
+	resourceTestResult  = "test_result"
+)
+
+// AuditWrite records an agent-driven mutation in the central audit log.
+// entityType is the audit resource type (logger.Resource* where one exists,
+// e.g. "item", "comment", "page"), entityID the mutated row's ID, toolName
+// the aitools tool that performed the write (stored as the action type so
+// agent writes are queryable per tool), and summary a human-readable
+// resource name. The Source field on Env tags which surface initiated the
+// write (ai_chat | mcp) via details.source, so the audit trail can
+// distinguish agent writes from cookie-auth writes. Best-effort: failures
+// are logged, never propagated, so a successful tool call is not broken by
+// an audit miss (same policy as the diagram history writes).
+func (e *Env) AuditWrite(entityType string, entityID int, toolName, summary string) {
+	e.audit(toolName, entityType, entityID, summary, nil)
+}
+
+// audit is the single audit choke point for aitools writes — AuditWrite and
+// actions.go's emitActionAudit both funnel through it. IP/UserAgent are
+// empty by design: the call originates from the chat/MCP adapter, not a
+// direct HTTP request.
+func (e *Env) audit(actionType, resourceType string, resourceID int, resourceName string, details map[string]interface{}) {
+	if details == nil {
+		details = map[string]interface{}{}
+	}
+	source := e.Source
+	if source == "" {
+		source = "unknown"
+	}
+	details["source"] = source
+	id := resourceID
+	err := logger.LogAudit(e.DB, logger.AuditEvent{
+		UserID:       e.UserID,
+		Username:     e.Username,
+		ActionType:   actionType,
+		ResourceType: resourceType,
+		ResourceID:   &id,
+		ResourceName: resourceName,
+		Details:      details,
+		Success:      true,
+	})
+	if err != nil {
+		slog.Warn("aitool audit log failed",
+			slog.String("component", "aitools"),
+			slog.String("action_type", actionType),
+			slog.String("resource_type", resourceType),
+			slog.Int("resource_id", resourceID),
+			slog.Any("error", err),
+		)
+	}
 }
 
 // HasWorkspaceAccess reports whether the caller can touch the given workspace.

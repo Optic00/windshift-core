@@ -10,19 +10,48 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
+	"windshift/internal/services"
 	"windshift/internal/utils"
 )
 
 type TimeProjectCategoryHandler struct {
-	repo    *repository.TimeProjectCategoryRepository
-	auditor *logger.Auditor
+	repo                  *repository.TimeProjectCategoryRepository
+	auditor               *logger.Auditor
+	timePermissionService *services.TimePermissionService
 }
 
-func NewTimeProjectCategoryHandler(repo *repository.TimeProjectCategoryRepository, auditor *logger.Auditor) *TimeProjectCategoryHandler {
+func NewTimeProjectCategoryHandler(repo *repository.TimeProjectCategoryRepository, auditor *logger.Auditor, timePermissionService *services.TimePermissionService) *TimeProjectCategoryHandler {
 	return &TimeProjectCategoryHandler{
-		repo:    repo,
-		auditor: auditor,
+		repo:                  repo,
+		auditor:               auditor,
+		timePermissionService: timePermissionService,
 	}
+}
+
+// checkManagePermission gates category taxonomy mutations on the same global config
+// permission the sibling customer handler uses (customers.manage / project.manage / admin).
+// Categories are global taxonomy shared across all projects, so a per-project manager
+// must not be able to mutate them — only holders of the global manage permission may.
+func (h *TimeProjectCategoryHandler) checkManagePermission(w http.ResponseWriter, r *http.Request) bool {
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return false
+	}
+
+	if h.timePermissionService != nil {
+		hasPermission, err := h.timePermissionService.HasCustomersManagePermission(user.ID)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return false
+		}
+		if !hasPermission {
+			respondForbidden(w, r)
+			return false
+		}
+	}
+
+	return true
 }
 
 // GetCategories retrieves all time project categories
@@ -57,10 +86,19 @@ func (h *TimeProjectCategoryHandler) GetCategory(w http.ResponseWriter, r *http.
 
 // CreateCategory creates a new time project category
 func (h *TimeProjectCategoryHandler) CreateCategory(w http.ResponseWriter, r *http.Request) {
+	if !h.checkManagePermission(w, r) {
+		return
+	}
+
 	c, ok := decodeJSON[models.TimeProjectCategory](w, r)
 	if !ok {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &c.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &c.Description, Policy: sanitize.RichText, Label: "Description"},
+		sanitize.Pair{Target: &c.Color, Policy: sanitize.ShortIdentifier, Label: "Color"},
+	)
 
 	if c.Name == "" {
 		respondValidationError(w, r, "Category name is required")
@@ -78,11 +116,18 @@ func (h *TimeProjectCategoryHandler) CreateCategory(w http.ResponseWriter, r *ht
 		h.auditor.Log(r, currentUser, logger.ActionTimeCategoryCreate, logger.ResourceTimeCategory, &categoryID, c.Name)
 	}
 
-	respondJSONCreated(w, c)
+	respondJSONCreated(w, struct {
+		models.TimeProjectCategory
+		Warnings []string `json:"warnings,omitempty"`
+	}{c, warnings})
 }
 
 // UpdateCategory updates an existing time project category
 func (h *TimeProjectCategoryHandler) UpdateCategory(w http.ResponseWriter, r *http.Request) {
+	if !h.checkManagePermission(w, r) {
+		return
+	}
+
 	id, ok := requireIDParam(w, r, "id")
 	if !ok {
 		return
@@ -92,6 +137,11 @@ func (h *TimeProjectCategoryHandler) UpdateCategory(w http.ResponseWriter, r *ht
 	if !ok {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &c.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &c.Description, Policy: sanitize.RichText, Label: "Description"},
+		sanitize.Pair{Target: &c.Color, Policy: sanitize.ShortIdentifier, Label: "Color"},
+	)
 
 	if c.Name == "" {
 		respondValidationError(w, r, "Category name is required")
@@ -118,11 +168,18 @@ func (h *TimeProjectCategoryHandler) UpdateCategory(w http.ResponseWriter, r *ht
 		h.auditor.Log(r, currentUser, logger.ActionTimeCategoryUpdate, logger.ResourceTimeCategory, &id, c.Name)
 	}
 
-	respondJSONOK(w, c)
+	respondJSONOK(w, struct {
+		models.TimeProjectCategory
+		Warnings []string `json:"warnings,omitempty"`
+	}{c, warnings})
 }
 
 // DeleteCategory deletes a time project category
 func (h *TimeProjectCategoryHandler) DeleteCategory(w http.ResponseWriter, r *http.Request) {
+	if !h.checkManagePermission(w, r) {
+		return
+	}
+
 	id, ok := requireIDParam(w, r, "id")
 	if !ok {
 		return
@@ -160,6 +217,10 @@ func (h *TimeProjectCategoryHandler) DeleteCategory(w http.ResponseWriter, r *ht
 
 // ReorderCategories updates the display order of multiple categories
 func (h *TimeProjectCategoryHandler) ReorderCategories(w http.ResponseWriter, r *http.Request) {
+	if !h.checkManagePermission(w, r) {
+		return
+	}
+
 	var orderUpdates []struct {
 		ID           int `json:"id"`
 		DisplayOrder int `json:"display_order"`

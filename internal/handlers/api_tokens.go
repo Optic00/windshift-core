@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"windshift/internal/auth"
-	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
@@ -43,18 +43,20 @@ func getAuthorizedVia(r *http.Request) string {
 
 // APITokenHandler handles API token management
 type APITokenHandler struct {
-	db                database.Database
 	tokenManager      *auth.TokenManager
 	policyRepo        *repository.APITokenPolicyRepository
+	workspaceRepo     *repository.WorkspaceRepository
+	auditor           *logger.Auditor
 	permissionService *services.PermissionService
 }
 
 // NewAPITokenHandler creates a new API token handler
-func NewAPITokenHandler(db database.Database, tokenManager *auth.TokenManager, permissionService *services.PermissionService) *APITokenHandler {
+func NewAPITokenHandler(tokenManager *auth.TokenManager, policyRepo *repository.APITokenPolicyRepository, workspaceRepo *repository.WorkspaceRepository, auditor *logger.Auditor, permissionService *services.PermissionService) *APITokenHandler {
 	return &APITokenHandler{
-		db:                db,
 		tokenManager:      tokenManager,
-		policyRepo:        repository.NewAPITokenPolicyRepository(db),
+		policyRepo:        policyRepo,
+		workspaceRepo:     workspaceRepo,
+		auditor:           auditor,
 		permissionService: permissionService,
 	}
 }
@@ -71,6 +73,7 @@ func (ath *APITokenHandler) CreateToken(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
+	sanitize.Apply(&request.Name, sanitize.PlainTextField)
 
 	// Validate required fields
 	if request.Name == "" {
@@ -167,20 +170,9 @@ func (ath *APITokenHandler) CreateToken(w http.ResponseWriter, r *http.Request) 
 			if ownership.IsAgent && !isSystemAdmin {
 				reason = "not_agent_owner"
 			}
-			_ = logger.LogAudit(ath.db, logger.AuditEvent{
-				UserID:       user.ID,
-				Username:     user.Username,
-				IPAddress:    utils.GetClientIP(r),
-				UserAgent:    r.UserAgent(),
-				ActionType:   logger.ActionAPITokenCreate,
-				ResourceType: logger.ResourceAPIToken,
-				ResourceName: request.Name,
-				Details: map[string]interface{}{
-					"reason":         reason,
-					"target_user_id": *request.UserID,
-				},
-				Success:      false,
-				ErrorMessage: "not authorized to create token for target user",
+			ath.auditor.LogFailure(r, user, logger.ActionAPITokenCreate, logger.ResourceAPIToken, nil, request.Name, "not authorized to create token for target user", map[string]interface{}{
+				"reason":         reason,
+				"target_user_id": *request.UserID,
 			})
 			respondForbidden(w, r)
 			return
@@ -221,18 +213,7 @@ func (ath *APITokenHandler) CreateToken(w http.ResponseWriter, r *http.Request) 
 			details["via"] = via
 		}
 	}
-	_ = logger.LogAudit(ath.db, logger.AuditEvent{
-		UserID:       user.ID,
-		Username:     user.Username,
-		IPAddress:    utils.GetClientIP(r),
-		UserAgent:    r.UserAgent(),
-		ActionType:   logger.ActionAPITokenCreate,
-		ResourceType: logger.ResourceAPIToken,
-		ResourceID:   &tokenResponse.APIToken.ID,
-		ResourceName: tokenResponse.APIToken.Name,
-		Details:      details,
-		Success:      true,
-	})
+	ath.auditor.LogWithDetails(r, user, logger.ActionAPITokenCreate, logger.ResourceAPIToken, &tokenResponse.APIToken.ID, tokenResponse.APIToken.Name, details)
 
 	respondJSONOK(w, tokenResponse)
 }
@@ -329,7 +310,7 @@ func (ath *APITokenHandler) RevokeToken(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	logAudit(ath.db, r, user, logger.ActionAPITokenRevoke, logger.ResourceAPIToken, &token.ID, token.Name)
+	ath.auditor.Log(r, user, logger.ActionAPITokenRevoke, logger.ResourceAPIToken, &token.ID, token.Name)
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -348,16 +329,11 @@ func tokenRequestsPageScope(scopes []string) bool {
 }
 
 func (ath *APITokenHandler) userHasAnyPageWorkspaceAccess(userID int) (bool, error) {
-	rows, err := ath.db.Query(`SELECT id FROM workspaces WHERE active = true`)
+	workspaceIDs, err := ath.workspaceRepo.ListActiveIDs()
 	if err != nil {
 		return false, fmt.Errorf("load workspaces for agent page-access check: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var workspaceID int
-		if err := rows.Scan(&workspaceID); err != nil {
-			return false, err
-		}
+	for _, workspaceID := range workspaceIDs {
 		hasView, err := ath.permissionService.HasWorkspacePermission(userID, workspaceID, models.PermissionPageView)
 		if err != nil {
 			return false, err
@@ -366,7 +342,7 @@ func (ath *APITokenHandler) userHasAnyPageWorkspaceAccess(userID int) (bool, err
 			return true, nil
 		}
 	}
-	return false, rows.Err()
+	return false, nil
 }
 
 func (ath *APITokenHandler) canActOnUserTokens(caller *models.User, targetUserID int) bool {
@@ -439,17 +415,8 @@ func (ath *APITokenHandler) CleanupExpiredTokens(w http.ResponseWriter, r *http.
 
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
-		_ = logger.LogAudit(ath.db, logger.AuditEvent{
-			UserID:       currentUser.ID,
-			Username:     currentUser.Username,
-			IPAddress:    utils.GetClientIP(r),
-			UserAgent:    r.UserAgent(),
-			ActionType:   logger.ActionAPITokenCleanup,
-			ResourceType: logger.ResourceAPIToken,
-			Details: map[string]interface{}{
-				"cleaned_count": count,
-			},
-			Success: true,
+		ath.auditor.LogWithDetails(r, currentUser, logger.ActionAPITokenCleanup, logger.ResourceAPIToken, nil, "", map[string]interface{}{
+			"cleaned_count": count,
 		})
 	}
 
@@ -538,19 +505,8 @@ func (ath *APITokenHandler) AdminRevokeToken(w http.ResponseWriter, r *http.Requ
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
 		tid := tokenID
-		_ = logger.LogAudit(ath.db, logger.AuditEvent{
-			UserID:       currentUser.ID,
-			Username:     currentUser.Username,
-			IPAddress:    utils.GetClientIP(r),
-			UserAgent:    r.UserAgent(),
-			ActionType:   logger.ActionAPITokenAdminRevoke,
-			ResourceType: logger.ResourceAPIToken,
-			ResourceID:   &tid,
-			ResourceName: token.Name,
-			Details: map[string]interface{}{
-				"revoked_user_id": token.UserID,
-			},
-			Success: true,
+		ath.auditor.LogWithDetails(r, currentUser, logger.ActionAPITokenAdminRevoke, logger.ResourceAPIToken, &tid, token.Name, map[string]interface{}{
+			"revoked_user_id": token.UserID,
 		})
 	}
 

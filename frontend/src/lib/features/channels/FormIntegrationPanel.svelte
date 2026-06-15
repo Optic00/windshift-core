@@ -5,6 +5,7 @@
   import CopyButton from '../../components/CopyButton.svelte';
   import Input from '../../components/Input.svelte';
   import Label from '../../components/Label.svelte';
+  import { publicBaseURL } from '../../runtime/contextPath.js';
 
   let { slug = '', runtimeUrl = '' } = $props();
 
@@ -12,7 +13,7 @@
   let iframeWidth = $state('100%');
   let iframeHeight = $state('600');
 
-  let baseUrl = $derived(runtimeUrl || window.location.origin);
+  let baseUrl = $derived(runtimeUrl || publicBaseURL());
   let formUrl = $derived(`${baseUrl}/forms/${slug}`);
   let embedUrl = $derived(`${baseUrl}/forms/${slug}?embed=true`);
 

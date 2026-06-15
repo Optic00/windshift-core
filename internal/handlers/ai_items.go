@@ -238,7 +238,7 @@ func (h *AIHandler) CatchMeUp(w http.ResponseWriter, r *http.Request) {
 	userPrompt := fmt.Sprintf("Please catch me up on this work item:\n\n%s", strings.Join(contextLines, "\n"))
 
 	extendWriteDeadline(w)
-	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), llm.DefaultRequestTimeout)
 	defer cancel()
 
 	resp, err := llmClient.ChatCompletion(ctx, llm.ChatCompletionRequest{
@@ -319,7 +319,7 @@ Candidate items in the same workspace:
 Find similar items.`, itemKey, item.Title, currentDesc, strings.Join(candidateLines, "\n"))
 
 	extendWriteDeadline(w)
-	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), llm.DefaultRequestTimeout)
 	defer cancel()
 
 	result, err := llm.ChatCompletionStructured[FindSimilarResponse](ctx, llmClient, llm.ChatCompletionRequest{
@@ -421,7 +421,7 @@ func (h *AIHandler) DecomposeItem(w http.ResponseWriter, r *http.Request) {
 	userPrompt := fmt.Sprintf("Break this work item into sub-tasks:\n\n%s", strings.Join(contextParts, "\n"))
 
 	extendWriteDeadline(w)
-	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), llm.DefaultRequestTimeout)
 	defer cancel()
 
 	result, err := llm.ChatCompletionStructured[DecomposeResponse](ctx, llmClient, llm.ChatCompletionRequest{

@@ -503,5 +503,5 @@ func (h *CalendarFeedHandler) feedBaseURL(r *http.Request) string {
 	if r.TLS != nil {
 		scheme = "https"
 	}
-	return fmt.Sprintf("%s://%s", scheme, r.Host)
+	return fmt.Sprintf("%s://%s%s", scheme, r.Host, requestContextPrefix(r))
 }

@@ -14,6 +14,7 @@ export default {
     resetPassword: 'Passwort zurücksetzen',
     changePassword: 'Passwort ändern',
     confirmPassword: 'Passwort bestätigen',
+    passwordRequired: 'Passwort ist erforderlich',
     currentPassword: 'Aktuelles Passwort',
     newPassword: 'Neues Passwort',
     rememberMe: 'Angemeldet bleiben',

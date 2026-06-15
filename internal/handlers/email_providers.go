@@ -18,6 +18,7 @@ import (
 	"windshift/internal/email"
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
 	"windshift/internal/utils"
 )
 
@@ -141,6 +142,13 @@ func (h *EmailProviderHandler) CreateEmailProvider(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
+	// Name renders in the provider admin list + per-channel picker;
+	// Slug is the routing key. Secrets (OAuthClientSecret) stay raw —
+	// encrypted further down. Type / IMAPEncryption are enums.
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &req.Slug, Policy: sanitize.ShortIdentifier, Label: "Slug"},
+	)
 
 	// Validate required fields
 	if req.Name == "" || req.Slug == "" || req.Type == "" {
@@ -212,10 +220,14 @@ func (h *EmailProviderHandler) CreateEmailProvider(w http.ResponseWriter, r *htt
 		logAudit(h.db, r, currentUser, logger.ActionEmailProviderCreate, logger.ResourceEmailProvider, &providerID, req.Name)
 	}
 
-	respondJSONCreated(w, map[string]interface{}{
+	resp := map[string]interface{}{
 		"id":   id,
 		"slug": req.Slug,
-	})
+	}
+	if len(warnings) > 0 {
+		resp["warnings"] = warnings
+	}
+	respondJSONCreated(w, resp)
 }
 
 // UpdateEmailProvider updates an email provider
@@ -231,6 +243,10 @@ func (h *EmailProviderHandler) UpdateEmailProvider(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &req.Slug, Policy: sanitize.ShortIdentifier, Label: "Slug"},
+	)
 
 	// Encrypt client secret if provided
 	var clientSecretEnc *string
@@ -275,8 +291,12 @@ func (h *EmailProviderHandler) UpdateEmailProvider(w http.ResponseWriter, r *htt
 		logAudit(h.db, r, currentUser, logger.ActionEmailProviderUpdate, logger.ResourceEmailProvider, &id, req.Name)
 	}
 
+	resp := map[string]interface{}{"status": "updated"}
+	if len(warnings) > 0 {
+		resp["warnings"] = warnings
+	}
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // DeleteEmailProvider deletes an email provider

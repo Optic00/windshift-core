@@ -12,7 +12,7 @@
   };
 </script>
 
-<GenericActionNode {data} {selected} flowStore={logbookActionFlowStore} icon={FileText} title="Create Item" {colorVars}>
+<GenericActionNode {data} {selected} flowStore={data.flowStore || logbookActionFlowStore} icon={FileText} title="Create Item" {colorVars}>
   {#snippet body()}
     {#if data.config?.title}
       <div class="config-line">{data.config.title}</div>
@@ -22,13 +22,4 @@
   {/snippet}
 </GenericActionNode>
 
-<style>
-  .config-line {
-    font-size: 12px;
-    color: var(--ds-text-subtle);
-    max-width: 200px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-</style>
+

@@ -64,6 +64,20 @@ func NewAgentActingIdentityService(users *UserReadService, security *repository.
 	return &AgentActingIdentityService{users: users, security: security}, nil
 }
 
+// IsAgentUser reports whether the user exists, is active, and is an agent.
+// Triggers use it to decide whether a "no binding matched" outcome is worth
+// logging (an agent assignee with no binding is a silent misconfiguration;
+// a human assignee is just a normal assignment). It deliberately skips the
+// ownership/allowlist gates Resolve enforces — this is observability, not
+// authorization.
+func (s *AgentActingIdentityService) IsAgentUser(userID int) bool {
+	if userID <= 0 {
+		return false
+	}
+	u, err := s.users.GetByID(userID)
+	return err == nil && u.IsActive && u.IsAgent
+}
+
 // Resolve validates a candidate acting user against the gate rules and
 // returns the canonical identity payload to stamp on the run. Returns one
 // of the typed errors above when the candidate is not eligible; the
@@ -146,39 +160,25 @@ type CandidateActingIdentity struct {
 	OwnerName string `json:"owner_name,omitempty"`
 }
 
-// ListCandidatesForBinding returns every acting identity the given
+// ListCandidatesForBinding returns the acting identities the given
 // workspace admin may pick when creating a binding in this workspace:
+// centralized service users (is_agent + agent_owner_user_id NULL +
+// active) that the WI-87 allowlist reaches for this workspace. These
+// only surface when the master flag is on, matching what Resolve()
+// would accept at create time.
 //
-//  1. Agent users they own (is_agent + agent_owner_user_id =
-//     bindingCreatorID + active). Always available.
-//  2. Centralized service users (is_agent + agent_owner_user_id NULL +
-//     active) that the WI-87 allowlist reaches for this workspace.
-//     Only included when the master flag is on, matching what
-//     Resolve() would accept at create time.
+// Agents an admin personally owns are deliberately NOT offered — a
+// binding's acting identity is a workspace-shared, admin-provisioned
+// global service user, never a personal agent. (Resolve() still accepts
+// owned agents for backwards compatibility with bindings created before
+// this rule, so existing runs don't break; the picker simply won't
+// surface them as new options.)
 //
 // The handler layer surfaces this to the picker so admins can't even
 // see options the server is going to refuse.
 func (s *AgentActingIdentityService) ListCandidatesForBinding(ctx context.Context, bindingCreatorID, workspaceID int) ([]CandidateActingIdentity, error) {
 	if bindingCreatorID <= 0 || workspaceID <= 0 {
 		return nil, errors.New("agent acting identity service: bindingCreatorID and workspaceID are required")
-	}
-
-	owned, err := s.users.ListOwnedAgents(ctx, bindingCreatorID)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]CandidateActingIdentity, 0, len(owned))
-	for i := range owned {
-		u := owned[i]
-		owner := bindingCreatorID
-		out = append(out, CandidateActingIdentity{
-			UserID:   u.ID,
-			Kind:     ActingIdentityKindAgent,
-			Username: u.Username,
-			Email:    u.Email,
-			Name:     gitDisplayName(u.FirstName, u.LastName, u.Username),
-			OwnerID:  &owner,
-		})
 	}
 
 	// Centralized service users only surface when the master flag is on
@@ -188,12 +188,13 @@ func (s *AgentActingIdentityService) ListCandidatesForBinding(ctx context.Contex
 		return nil, fmt.Errorf("read security flag: %w", err)
 	}
 	if !flagEnabled {
-		return out, nil
+		return []CandidateActingIdentity{}, nil
 	}
 	centralized, err := s.users.ListAllowlistedCentralizedServiceUsers(ctx, workspaceID)
 	if err != nil {
 		return nil, err
 	}
+	out := make([]CandidateActingIdentity, 0, len(centralized))
 	for i := range centralized {
 		u := centralized[i]
 		out = append(out, CandidateActingIdentity{

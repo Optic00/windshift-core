@@ -68,9 +68,38 @@ func (h *AssetHandler) requireAssetEditAccess(w http.ResponseWriter, r *http.Req
 
 // GetAssetLinks returns all links for an asset (incoming and outgoing)
 func (h *AssetHandler) GetAssetLinks(w http.ResponseWriter, r *http.Request) {
-	_, assetID, ok := h.requireAssetViewAccess(w, r)
+	currentUser, assetID, ok := h.requireAssetViewAccess(w, r)
 	if !ok {
 		return
+	}
+
+	// Accessibility filter: viewing the source asset must not disclose the
+	// titles (or even existence) of linked items/assets/test cases the caller
+	// cannot otherwise see. Build the same accessible-workspace set + cached
+	// set-view checks the relationship graph uses, then drop any link whose
+	// *other* endpoint is not viewable. Without this a user who can edit one
+	// asset set could plant a link to an arbitrary cross-workspace entity and
+	// read its title back here.
+	accessibleWS, err := GetAccessibleWorkspaceIDs(&models.User{ID: currentUser.ID}, h.db, h.permissionService)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	wsSet := make(map[int]bool, len(accessibleWS))
+	for _, id := range accessibleWS {
+		wsSet[id] = true
+	}
+	setViewCache := map[int]bool{}
+	canViewCached := func(setID int) bool {
+		if v, ok := setViewCache[setID]; ok {
+			return v
+		}
+		allowed, err := h.canViewSet(currentUser.ID, setID)
+		if err != nil {
+			allowed = false
+		}
+		setViewCache[setID] = allowed
+		return allowed
 	}
 
 	// Get outgoing links (where this asset is the source). Item titles are
@@ -199,9 +228,24 @@ func (h *AssetHandler) GetAssetLinks(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Drop links whose other endpoint the caller cannot view, so neither the
+	// hydrated title nor the link's existence leaks across workspaces.
+	outgoing := make([]models.ItemLink, 0, len(outgoingLinks))
+	for _, link := range outgoingLinks {
+		if h.canAccessEntity(link.TargetType, link.TargetID, wsSet, canViewCached) {
+			outgoing = append(outgoing, link)
+		}
+	}
+	incoming := make([]models.ItemLink, 0, len(incomingLinks))
+	for _, link := range incomingLinks {
+		if h.canAccessEntity(link.SourceType, link.SourceID, wsSet, canViewCached) {
+			incoming = append(incoming, link)
+		}
+	}
+
 	response := map[string]interface{}{
-		"outgoing": outgoingLinks,
-		"incoming": incomingLinks,
+		"outgoing": outgoing,
+		"incoming": incoming,
 	}
 
 	respondJSONOK(w, response)
@@ -252,6 +296,29 @@ func (h *AssetHandler) CreateAssetLink(w http.ResponseWriter, r *http.Request) {
 	}
 	if !linkTypeActive {
 		respondValidationError(w, r, "Link type is not active")
+		return
+	}
+
+	// Authorize the target: editing one asset set must not let a user plant a
+	// link to (and later disclose the title of) an entity in a workspace/set
+	// they cannot view. canAccessEntity also returns false for a nonexistent
+	// target, giving us existence validation for free. 404 (not 403) avoids
+	// leaking whether the target exists.
+	accessibleWS, err := GetAccessibleWorkspaceIDs(&models.User{ID: currentUser.ID}, h.db, h.permissionService)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	wsSet := make(map[int]bool, len(accessibleWS))
+	for _, id := range accessibleWS {
+		wsSet[id] = true
+	}
+	targetViewable := h.canAccessEntity(req.TargetType, req.TargetID, wsSet, func(setID int) bool {
+		allowed, err := h.canViewSet(currentUser.ID, setID)
+		return err == nil && allowed
+	})
+	if !targetViewable {
+		respondNotFound(w, r, "target")
 		return
 	}
 
@@ -683,20 +750,37 @@ func (h *AssetHandler) findCustomFieldReferences(assetID int, wsSet map[int]bool
 			}
 		}
 
-		// Check assets: same pattern
-		var directExpr, nestedExpr string
+		// Check assets: value can be plain int, {id:N}, or a multi-asset array.
+		var assetQuery string
 		if h.db.GetDriverName() == "postgres" {
-			directExpr = fmt.Sprintf("a.custom_field_values->>'%s'", fieldKey)
-			nestedExpr = fmt.Sprintf("a.custom_field_values->'%s'->>'id'", fieldKey)
+			directExpr := fmt.Sprintf("a.custom_field_values->>'%s'", fieldKey)
+			nestedExpr := fmt.Sprintf("a.custom_field_values->'%s'->>'id'", fieldKey)
+			arrayExpr := fmt.Sprintf(`EXISTS (
+				SELECT 1 FROM jsonb_array_elements(CASE
+					WHEN jsonb_typeof(a.custom_field_values->'%s') = 'array' THEN a.custom_field_values->'%s'
+					ELSE '[]'::jsonb
+				END) AS elem
+				WHERE elem #>> '{}' = ? OR elem->>'id' = ?
+			)`, fieldKey, fieldKey)
+			assetQuery = fmt.Sprintf(`
+				SELECT a.id, a.title, a.set_id
+				FROM assets a
+				WHERE (%s = ? OR %s = ? OR %s)
+			`, directExpr, nestedExpr, arrayExpr)
 		} else {
-			directExpr = fmt.Sprintf(`NULLIF(a.custom_field_values,'') ->> '$."%s"'`, fieldKey)    //nolint:gocritic // SQL JSON path, not Go quoting
-			nestedExpr = fmt.Sprintf(`NULLIF(a.custom_field_values,'') ->> '$."%s".id'`, fieldKey) //nolint:gocritic // SQL JSON path, not Go quoting
+			directExpr := fmt.Sprintf(`NULLIF(a.custom_field_values,'') ->> '$."%s"'`, fieldKey)    //nolint:gocritic // SQL JSON path, not Go quoting
+			nestedExpr := fmt.Sprintf(`NULLIF(a.custom_field_values,'') ->> '$."%s".id'`, fieldKey) //nolint:gocritic // SQL JSON path, not Go quoting
+			arrayExpr := fmt.Sprintf(`EXISTS (
+				SELECT 1 FROM json_each(NULLIF(a.custom_field_values,'') -> '$."%s"') AS elem
+				WHERE CAST(elem.value AS TEXT) = ? OR elem.value ->> '$.id' = ?
+			)`, fieldKey) //nolint:gocritic // SQL JSON path, not Go quoting
+			assetQuery = fmt.Sprintf(`
+				SELECT a.id, a.title, a.set_id
+				FROM assets a
+				WHERE (%s = ? OR %s = ? OR %s)
+			`, directExpr, nestedExpr, arrayExpr)
 		}
-		assetRows, err := h.db.Query(fmt.Sprintf(`
-			SELECT a.id, a.title, a.set_id
-			FROM assets a
-			WHERE (%s = ? OR %s = ?)
-		`, directExpr, nestedExpr), assetIDStr, assetIDStr)
+		assetRows, err := h.db.Query(assetQuery, assetIDStr, assetIDStr, assetIDStr, assetIDStr)
 		if err != nil {
 			continue
 		}

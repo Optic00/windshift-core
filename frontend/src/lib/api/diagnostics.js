@@ -1,5 +1,18 @@
 import { fetchAPI } from './core.js';
 
+function diagnosticsQuery(endpoint, opts, overrides = {}) {
+  const params = new URLSearchParams();
+  if (opts.since) params.set('since', opts.since);
+  if (opts.limit != null) params.set('limit', String(opts.limit));
+  for (const [optKey, paramKey] of Object.entries(overrides)) {
+    if (opts[optKey] != null) {
+      params.set(paramKey, String(opts[optKey]));
+    }
+  }
+  const qs = params.toString();
+  return `/admin/diagnostics/${endpoint}${qs ? `?${qs}` : ''}`;
+}
+
 /**
  * Recent action execution logs across all workspaces (admin-only).
  * @param {Object} opts
@@ -8,12 +21,7 @@ import { fetchAPI } from './core.js';
  * @param {number} [opts.limit=25]
  */
 export function getActionLogs(opts = {}) {
-  const params = new URLSearchParams();
-  if (opts.mode) params.set('mode', opts.mode);
-  if (opts.since) params.set('since', opts.since);
-  if (opts.limit != null) params.set('limit', String(opts.limit));
-  const qs = params.toString();
-  return fetchAPI(`/admin/diagnostics/action-logs${qs ? `?${qs}` : ''}`);
+  return fetchAPI(diagnosticsQuery('action-logs', opts, { mode: 'mode' }));
 }
 
 /**
@@ -25,13 +33,12 @@ export function getActionLogs(opts = {}) {
  * @param {number} [opts.limit=25]
  */
 export function getWebhookDeliveries(opts = {}) {
-  const params = new URLSearchParams();
-  if (opts.status) params.set('status', opts.status);
-  if (opts.channelId) params.set('channel_id', String(opts.channelId));
-  if (opts.since) params.set('since', opts.since);
-  if (opts.limit != null) params.set('limit', String(opts.limit));
-  const qs = params.toString();
-  return fetchAPI(`/admin/diagnostics/webhook-deliveries${qs ? `?${qs}` : ''}`);
+  return fetchAPI(
+    diagnosticsQuery('webhook-deliveries', opts, {
+      status: 'status',
+      channelId: 'channel_id',
+    })
+  );
 }
 
 /**
@@ -40,10 +47,7 @@ export function getWebhookDeliveries(opts = {}) {
  * @param {string} [opts.since='24h']
  */
 export function getWebhookStats(opts = {}) {
-  const params = new URLSearchParams();
-  if (opts.since) params.set('since', opts.since);
-  const qs = params.toString();
-  return fetchAPI(`/admin/diagnostics/webhook-stats${qs ? `?${qs}` : ''}`);
+  return fetchAPI(diagnosticsQuery('webhook-stats', opts));
 }
 
 /**
@@ -67,13 +71,12 @@ export function purgeWebhookDeliveries(olderThan) {
  * @param {number} [opts.limit=25]
  */
 export function getSchedulerRuns(opts = {}) {
-  const params = new URLSearchParams();
-  if (opts.scheduler) params.set('scheduler', opts.scheduler);
-  if (opts.status) params.set('status', opts.status);
-  if (opts.since) params.set('since', opts.since);
-  if (opts.limit != null) params.set('limit', String(opts.limit));
-  const qs = params.toString();
-  return fetchAPI(`/admin/diagnostics/scheduler-runs${qs ? `?${qs}` : ''}`);
+  return fetchAPI(
+    diagnosticsQuery('scheduler-runs', opts, {
+      scheduler: 'scheduler',
+      status: 'status',
+    })
+  );
 }
 
 /**
@@ -82,10 +85,7 @@ export function getSchedulerRuns(opts = {}) {
  * @param {string} [opts.since='24h']
  */
 export function getSchedulerStats(opts = {}) {
-  const params = new URLSearchParams();
-  if (opts.since) params.set('since', opts.since);
-  const qs = params.toString();
-  return fetchAPI(`/admin/diagnostics/scheduler-stats${qs ? `?${qs}` : ''}`);
+  return fetchAPI(diagnosticsQuery('scheduler-stats', opts));
 }
 
 /**
@@ -132,8 +132,18 @@ export function getLLMProviderStatus() {
  * @param {string} [opts.since='24h']
  */
 export function getBriefingFailures(opts = {}) {
-  const params = new URLSearchParams();
-  if (opts.since) params.set('since', opts.since);
-  const qs = params.toString();
-  return fetchAPI(`/admin/diagnostics/briefing-failures${qs ? `?${qs}` : ''}`);
+  return fetchAPI(diagnosticsQuery('briefing-failures', opts));
+}
+
+/**
+ * Per-pool runner health: live/stale/revoked runners vs queued/running runs.
+ * healthy=false means queued work with no live runner to claim it.
+ *
+ * @returns {Promise<Array<{id: number, name: string, enabled: boolean,
+ *   max_concurrent_runs: number, live_runners: number, stale_runners: number,
+ *   revoked_runners: number, last_heartbeat_at?: string, queued_runs: number,
+ *   running_runs: number, oldest_queued_seconds?: number, healthy: boolean}>>}
+ */
+export function getRunnerPools() {
+  return fetchAPI('/admin/diagnostics/runner-pools');
 }

@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
 
@@ -36,6 +37,7 @@ func (h *ActiveTimerHandler) StartTimer(w http.ResponseWriter, r *http.Request) 
 		respondBadRequest(w, r, "Invalid request body")
 		return
 	}
+	sanitize.Apply(&req.Description, sanitize.RichText)
 
 	timer, err := h.timer.StartTimer(user.ID, req.WorkspaceID, req.ProjectID, req.ItemID, req.Description)
 	if err != nil {

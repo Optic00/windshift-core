@@ -156,6 +156,7 @@ export default {
     deleteTestRun: 'Testlauf löschen',
     deleteRunConfirm: 'Sind Sie sicher, dass Sie "{name}" löschen möchten?',
     failedToDeleteRun: 'Testlauf konnte nicht gelöscht werden',
+    failedToCreateRun: 'Testlauf konnte nicht erstellt werden',
     noTestRunsYet: 'Noch keine Testläufe',
     createTestRunToExecute: 'Erstellen Sie einen Testlauf, um Testfälle auszuführen.',
     continueExecution: 'Ausführung fortsetzen',

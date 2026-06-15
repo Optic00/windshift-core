@@ -11,6 +11,7 @@ import (
 
 	"windshift/internal/database"
 	"windshift/internal/models"
+	"windshift/internal/repository"
 )
 
 // MentionPattern matches @username or @"Display Name" patterns
@@ -62,6 +63,32 @@ func (s *MentionService) ExtractMentionIdentifiers(content string) []string {
 	}
 
 	return identifiers
+}
+
+// ResolveMentionedUserIDs parses content and resolves every @mention to an
+// active user id, skipping identifiers that match no user. IDs follow first
+// appearance order and are deduplicated. Used by the comment-@mention
+// coding-agent trigger (WI-264), which needs the resolved principals rather
+// than the mention rows ProcessMentions writes.
+func (s *MentionService) ResolveMentionedUserIDs(content string) ([]int, error) {
+	identifiers := s.ExtractMentionIdentifiers(content)
+	if len(identifiers) == 0 {
+		return nil, nil
+	}
+	ids := make([]int, 0, len(identifiers))
+	seen := make(map[int]bool, len(identifiers))
+	for _, identifier := range identifiers {
+		userID, _, err := s.resolveUserIdentifier(identifier)
+		if err != nil {
+			return nil, fmt.Errorf("resolve mention %q: %w", identifier, err)
+		}
+		if userID == 0 || seen[userID] {
+			continue
+		}
+		seen[userID] = true
+		ids = append(ids, userID)
+	}
+	return ids, nil
 }
 
 // resolveUserIdentifier looks up a user by username or display name
@@ -300,14 +327,7 @@ func (s *MentionService) emitMentionNotification(params ProcessMentionsParams, m
 	}
 
 	// Get item details for rich notification
-	var itemTitle, workspaceKey string
-	var workspaceItemNumber int
-	err := s.db.QueryRow(`
-		SELECT i.title, w.key, i.workspace_item_number
-		FROM items i
-		JOIN workspaces w ON i.workspace_id = w.id
-		WHERE i.id = ?
-	`, params.ItemID).Scan(&itemTitle, &workspaceKey, &workspaceItemNumber)
+	item, err := repository.NewItemRepository(s.db).FindByIDWithDetails(params.ItemID)
 	if err != nil {
 		slog.Error("Error fetching item details", slog.String("component", "mentions"), slog.Any("error", err))
 		return
@@ -324,7 +344,7 @@ func (s *MentionService) emitMentionNotification(params ProcessMentionsParams, m
 	}
 	actorName := strings.TrimSpace(actorFirstName + " " + actorLastName)
 
-	itemKey := fmt.Sprintf("%s-%d", workspaceKey, workspaceItemNumber)
+	itemKey := fmt.Sprintf("%s-%d", item.WorkspaceKey, item.WorkspaceItemNumber)
 
 	// Determine source type description
 	var sourceTypeDesc string
@@ -345,7 +365,7 @@ func (s *MentionService) emitMentionNotification(params ProcessMentionsParams, m
 	// this case.
 	title := "You were mentioned"
 	message := fmt.Sprintf("%s mentioned you in %s on %s (%s)",
-		actorName, sourceTypeDesc, itemTitle, itemKey)
+		actorName, sourceTypeDesc, item.Title, itemKey)
 	if err := s.notificationService.NotifyUsers(
 		[]int{mentionedUserID},
 		params.WorkspaceID,

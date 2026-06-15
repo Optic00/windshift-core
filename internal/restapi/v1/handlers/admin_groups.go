@@ -1,36 +1,45 @@
 package handlers
 
 import (
-	"database/sql"
+	"errors"
 	"net/http"
 	"time"
 
 	"windshift/internal/database"
+	"windshift/internal/repository"
 	"windshift/internal/restapi"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
 
 // AdminGroupHandler handles admin group management in REST API v1.
 type AdminGroupHandler struct {
 	BaseHandler
-	db database.Database
+	repo *repository.AdminGroupRepository
 }
 
 // NewAdminGroupHandler creates a new admin group handler.
 func NewAdminGroupHandler(db database.Database, permissionService *services.PermissionService) *AdminGroupHandler {
 	return &AdminGroupHandler{
 		BaseHandler: NewBaseHandler(db, permissionService),
-		db:          db,
+		repo:        repository.NewAdminGroupRepository(db),
 	}
 }
 
 // AdminGroupResponse is the admin representation of a group.
+//
+// Warnings carries user-facing strings the frontend toast machinery
+// surfaces at info severity — e.g. "Group name had HTML formatting
+// removed." Stamped by the handler from sanitize.ApplyAllWithWarnings
+// when input was modified at decode time. omitempty so the field
+// disappears entirely when there's nothing to report.
 type AdminGroupResponse struct {
-	ID          int    `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	MemberCount int    `json:"member_count"`
-	CreatedAt   string `json:"created_at"`
+	ID          int      `json:"id"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	MemberCount int      `json:"member_count"`
+	CreatedAt   string   `json:"created_at"`
+	Warnings    []string `json:"warnings,omitempty"`
 }
 
 // AdminGroupCreateRequest is the request body for creating a group.
@@ -67,47 +76,27 @@ func (h *AdminGroupHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	pagination := h.ParsePagination(r)
 
-	var total int
-	if err := h.db.QueryRow("SELECT COUNT(*) FROM team_groups").Scan(&total); err != nil {
-		h.RespondInternalError(w, r)
-		return
-	}
-
-	rows, err := h.db.Query(`
-		SELECT g.id, g.name, g.description,
-		       (SELECT COUNT(*) FROM group_members gm WHERE gm.group_id = g.id) AS member_count,
-		       g.created_at
-		FROM team_groups g
-		ORDER BY g.name ASC
-		LIMIT ? OFFSET ?
-	`, pagination.Limit, pagination.Offset)
+	total, err := h.repo.Count()
 	if err != nil {
 		h.RespondInternalError(w, r)
 		return
 	}
-	defer rows.Close()
 
-	var groups []AdminGroupResponse
-	for rows.Next() {
-		var g AdminGroupResponse
-		var desc sql.NullString
-		var createdAt time.Time
-		if err := rows.Scan(&g.ID, &g.Name, &desc, &g.MemberCount, &createdAt); err != nil {
-			continue
-		}
-		if desc.Valid {
-			g.Description = desc.String
-		}
-		g.CreatedAt = createdAt.Format("2006-01-02T15:04:05Z07:00")
-		groups = append(groups, g)
-	}
-	if err := rows.Err(); err != nil {
+	records, err := h.repo.List(pagination.Limit, pagination.Offset)
+	if err != nil {
 		h.RespondInternalError(w, r)
 		return
 	}
 
-	if groups == nil {
-		groups = []AdminGroupResponse{}
+	groups := make([]AdminGroupResponse, 0, len(records))
+	for _, record := range records {
+		groups = append(groups, AdminGroupResponse{
+			ID:          record.ID,
+			Name:        record.Name,
+			Description: record.Description,
+			MemberCount: record.MemberCount,
+			CreatedAt:   record.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		})
 	}
 
 	h.RespondPaginated(w, groups, pagination, total)
@@ -138,18 +127,17 @@ func (h *AdminGroupHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Group name"},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
+	)
 
 	if req.Name == "" {
 		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeMissingField, "Group name is required"))
 		return
 	}
 
-	var id int
-	err := h.db.QueryRow(`
-		INSERT INTO team_groups (name, description, created_by, created_at, updated_at)
-		VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-		RETURNING id
-	`, req.Name, req.Description, user.ID).Scan(&id)
+	id, err := h.repo.Create(req.Name, req.Description, user.ID)
 	if err != nil {
 		h.RespondInternalError(w, r)
 		return
@@ -161,6 +149,7 @@ func (h *AdminGroupHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Description: req.Description,
 		MemberCount: 0,
 		CreatedAt:   time.Now().Format("2006-01-02T15:04:05Z07:00"),
+		Warnings:    warnings,
 	})
 }
 
@@ -195,27 +184,23 @@ func (h *AdminGroupHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: req.Description, Policy: sanitize.RichText},
+	)
 
-	b := NewDynamicUpdateBuilder()
-	b.AddString("name", req.Name)
-	b.AddString("description", req.Description)
-
-	if !h.ValidateNoFields(w, r, b) {
+	update := repository.AdminGroupUpdate{Name: req.Name, Description: req.Description}
+	if update.IsEmpty() {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "No fields to update"))
 		return
 	}
-	b.AddTimestamp()
 
-	query, args := b.BuildUpdateByID("team_groups", id)
-
-	result, err := h.db.ExecWrite(query, args...)
-	if err != nil {
+	if err := h.repo.Update(id, update); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			h.RespondNotFound(w, r)
+			return
+		}
 		h.RespondInternalError(w, r)
-		return
-	}
-
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		h.RespondNotFound(w, r)
 		return
 	}
 
@@ -247,18 +232,12 @@ func (h *AdminGroupHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Delete members first, then group
-	_, _ = h.db.ExecWrite("DELETE FROM group_members WHERE group_id = ?", id)
-
-	result, err := h.db.ExecWrite("DELETE FROM team_groups WHERE id = ?", id)
-	if err != nil {
+	if err := h.repo.Delete(id); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			h.RespondNotFound(w, r)
+			return
+		}
 		h.RespondInternalError(w, r)
-		return
-	}
-
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		h.RespondNotFound(w, r)
 		return
 	}
 

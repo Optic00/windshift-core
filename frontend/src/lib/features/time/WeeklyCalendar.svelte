@@ -12,6 +12,7 @@
   import { t } from '../../stores/i18n.svelte.js';
   import { errorToast, infoToast } from '../../stores/toasts.svelte.js';
   import { navigate } from '../../router.js';
+  import { publicBaseURL } from '../../runtime/contextPath.js';
   import { formatDate, formatDateWithOptions } from '../../utils/dateFormatter.js';
   import Checkbox from '../../components/Checkbox.svelte';
   import DescriptionText from '../../components/DescriptionText.svelte';
@@ -687,7 +688,7 @@
     }
 
     const filename = `windshift-calendar-${formatDate(currentWeekStart)}.ics`;
-    exportTasksToICS(currentWeekTasks, window.location.origin, filename);
+    exportTasksToICS(currentWeekTasks, publicBaseURL(), filename);
   }
 
   onMount(async () => {

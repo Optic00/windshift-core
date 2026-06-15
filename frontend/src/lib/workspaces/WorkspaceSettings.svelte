@@ -3,12 +3,13 @@
   import { api } from '../api.js';
   import { navigate } from '../router.js';
   import { workspacePermissions, workspacesStore, currentWorkspace } from '../stores';
-  import { Trash2, AlertTriangle, Settings, Clock, Shield } from '@lucide/svelte';
+  import { Trash2, AlertTriangle, Clock, Shield } from '@lucide/svelte';
   import { moduleSettings } from '../stores/moduleSettings.js';
   import WorkspaceConfigurationAssigner from './WorkspaceConfigurationAssigner.svelte';
   import WorkspaceConfigurationPreview from './WorkspaceConfigurationPreview.svelte';
   import WorkspaceSCMSettings from './WorkspaceSCMSettings.svelte';
   import WorkspaceAgentBindings from './WorkspaceAgentBindings.svelte';
+  import WorkspaceAgentSkills from './WorkspaceAgentSkills.svelte';
   import IssueSyncSettings from '../settings/IssueSyncSettings.svelte';
   import RecurrenceManager from '../settings/RecurrenceManager.svelte';
   import Button from '../components/Button.svelte';
@@ -21,8 +22,8 @@
   import AlertBox from '../components/AlertBox.svelte';
   import Label from '../components/Label.svelte';
   import Toggle from '../components/Toggle.svelte';
-  import Tabs from '../components/Tabs.svelte';
   import Card from '../components/Card.svelte';
+  import { workspaceSettingsItems } from '../navigation/workspaceNavigation.js';
   import { successToast, errorToast } from '../stores/toasts.svelte.js';
   import { t } from '../stores/i18n.svelte.js';
   import DescriptionText from '../components/DescriptionText.svelte';
@@ -36,6 +37,9 @@
   let deleteConfirmText = $state('');
   let timeProjects = $state([]);
   let configurationRefreshKey = $state(0);
+  // Bumped when the skills panel changes a skill so the bindings panel's
+  // attach-pickers refresh (the two are siblings on the coding-agents tab).
+  let agentSkillsVersion = $state(0);
 
   // Time project categories state
   let timeProjectCategories = $state([]);
@@ -51,18 +55,22 @@
     internal_comments_enabled: false
   });
 
-  // Settings tabs configuration
-  const settingsTabs = $derived([
-    { id: 'general', label: t('workspaceSettings.tabs.general'), href: `/workspaces/${workspaceId}/settings/general` },
-    { id: 'categories', label: t('workspaceSettings.tabs.categories'), href: `/workspaces/${workspaceId}/settings/categories` },
-    { id: 'members', label: t('workspaceSettings.tabs.members'), href: `/workspaces/${workspaceId}/settings/members` },
-    { id: 'configuration', label: t('workspaceSettings.tabs.configurationSets'), href: `/workspaces/${workspaceId}/settings/configuration` },
-    { id: 'source-control', label: t('workspaceSettings.tabs.sourceControl'), href: `/workspaces/${workspaceId}/settings/source-control` },
-    { id: 'coding-agents', label: t('workspaceSettings.tabs.codingAgents'), href: `/workspaces/${workspaceId}/settings/coding-agents` },
-    { id: 'issue-sync', label: t('workspaceSettings.tabs.issueSync'), href: `/workspaces/${workspaceId}/settings/issue-sync` },
-    { id: 'recurrence', label: t('workspaceSettings.tabs.recurrence'), href: `/workspaces/${workspaceId}/settings/recurrence` },
-    { id: 'danger', label: t('workspaceSettings.tabs.removeWorkspace'), className: 'tab-danger', href: `/workspaces/${workspaceId}/settings/danger` }
-  ]);
+  // The active admin module (registry-driven), used to render the page header.
+  const currentModule = $derived(
+    workspaceSettingsItems.find((m) => m.id === activeTab) || workspaceSettingsItems[0]
+  );
+  // Per-module page-header subtitle keys (id → i18n key).
+  const HEADER_SUBTITLE = {
+    general: 'workspaceSettings.headers.general',
+    categories: 'workspaceSettings.headers.categories',
+    members: 'workspaceSettings.headers.members',
+    configuration: 'workspaceSettings.headers.configuration',
+    'source-control': 'workspaceSettings.headers.sourceControl',
+    'coding-agents': 'workspaceSettings.headers.codingAgents',
+    'issue-sync': 'workspaceSettings.headers.issueSync',
+    recurrence: 'workspaceSettings.headers.recurrence',
+    danger: 'workspaceSettings.headers.danger',
+  };
 
   // Permission check for workspace admin
   const canAdmin = $derived(workspacePermissions.canAdminWorkspace(workspaceId));
@@ -181,42 +189,6 @@
     }
   }
 
-  function goBackToWorkspace() {
-    navigate(`/workspaces/${workspaceId}`);
-  }
-
-  function goBackToWorkspaceList() {
-    navigate('/workspaces');
-  }
-
-  function switchTab(tab) {
-    if (tab === 'general') {
-      navigate(`/workspaces/${workspaceId}/settings/general`);
-    } else if (tab === 'categories') {
-      navigate(`/workspaces/${workspaceId}/settings/categories`);
-    } else if (tab === 'members') {
-      navigate(`/workspaces/${workspaceId}/settings/members`);
-    } else if (tab === 'configuration') {
-      navigate(`/workspaces/${workspaceId}/settings/configuration`);
-    } else if (tab === 'source-control') {
-      navigate(`/workspaces/${workspaceId}/settings/source-control`);
-    } else if (tab === 'coding-agents') {
-      navigate(`/workspaces/${workspaceId}/settings/coding-agents`);
-    } else if (tab === 'issue-sync') {
-      navigate(`/workspaces/${workspaceId}/settings/issue-sync`);
-    } else if (tab === 'recurrence') {
-      navigate(`/workspaces/${workspaceId}/settings/recurrence`);
-    } else if (tab === 'danger') {
-      navigate(`/workspaces/${workspaceId}/settings/danger`);
-    } else {
-      navigate(`/workspaces/${workspaceId}/settings`);
-    }
-  }
-
-  function handleTabChange(detail) {
-    switchTab(detail.tab);
-  }
-
   function handleConfigurationChanged() {
     configurationRefreshKey++;
   }
@@ -242,38 +214,13 @@
   </Card>
 {:else if workspace}
   <div class="space-y-6">
-    <!-- Header -->
-    <div class="mb-6">
-      <!-- Breadcrumb Navigation -->
-      <div class="flex items-center gap-2 text-sm mb-4" style="color: var(--ds-text-subtle);">
-        <a
-          href="/workspaces"
-          class="breadcrumb-link transition-colors no-underline"
-        >
-          {t('workspaceSettings.breadcrumbs.workspaces')}
-        </a>
-        <span>/</span>
-        <a
-          href={`/workspaces/${workspaceId}`}
-          class="breadcrumb-link transition-colors no-underline"
-        >
-          {workspace.name}
-        </a>
-        <span>/</span>
-        <span class="flex items-center gap-1" style="color: var(--ds-text);">
-          <Settings class="w-4 h-4" style="color: #3b82f6;" />
-          {t('workspaceSettings.breadcrumbs.settings')}
-        </span>
-      </div>
+    <PageHeader
+      icon={currentModule?.icon}
+      title={t(currentModule?.labelKey)}
+      subtitle={t(HEADER_SUBTITLE[activeTab])}
+    />
 
-      <PageHeader
-        icon={Settings}
-        title={t('workspaceSettings.title')}
-        subtitle={t('workspaceSettings.subtitle', { name: workspace?.name || 'workspace' })}
-      />
-    </div>
-
-    <Tabs tabs={settingsTabs} bind:activeTab onTabChange={handleTabChange}>
+    <div class="workspace-settings-content">
       {#if activeTab === 'general'}
         <!-- Basic Information -->
         <h3 class="text-lg font-medium mb-6" style="color: var(--ds-text);">{t('workspaceSettings.basicInformation')}</h3>
@@ -444,8 +391,11 @@
         <WorkspaceSCMSettings {workspaceId} />
 
     {:else if activeTab === 'coding-agents'}
-        <!-- Coding Agent Bindings (WI-88) -->
-        <WorkspaceAgentBindings {workspaceId} />
+        <!-- Coding Agent Bindings (WI-88) + skills library (WI-258) -->
+        <div class="space-y-4">
+            <WorkspaceAgentBindings {workspaceId} skillsVersion={agentSkillsVersion} />
+            <WorkspaceAgentSkills {workspaceId} onchanged={() => (agentSkillsVersion += 1)} />
+        </div>
 
     {:else if activeTab === 'issue-sync'}
         <!-- Issue Sync Settings -->
@@ -515,7 +465,7 @@
           </div>
         {/if}
     {/if}
-    </Tabs>
+    </div>
 
   </div>
 {:else}
@@ -523,16 +473,3 @@
     <p class="text-center" style="color: var(--ds-text-subtle);">{t('workspaceSettings.workspaceNotFound')}</p>
   </div>
 {/if}
-
-<style>
-  .breadcrumb-link:hover {
-    color: var(--ds-text) !important;
-  }
-
-  :global(.tab-danger) {
-    color: var(--ds-text-danger) !important;
-  }
-  :global(.tab-danger:hover) {
-    color: var(--ds-text-danger) !important;
-  }
-</style>

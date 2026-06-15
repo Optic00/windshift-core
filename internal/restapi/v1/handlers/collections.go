@@ -1,13 +1,14 @@
 package handlers
 
 import (
-	"database/sql"
 	"errors"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"windshift/internal/database"
+	"windshift/internal/repository"
 	"windshift/internal/restapi"
 	"windshift/internal/restapi/v1/dto"
 	"windshift/internal/services"
@@ -20,12 +21,14 @@ import (
 type CollectionHandler struct {
 	BaseHandler
 	itemCRUD *services.ItemCRUDService
+	repo     *repository.CollectionRepository
 }
 
 func NewCollectionHandler(db database.Database, permissionService *services.PermissionService) *CollectionHandler {
 	return &CollectionHandler{
 		BaseHandler: NewBaseHandler(db, permissionService),
 		itemCRUD:    services.NewItemCRUDService(db),
+		repo:        repository.NewCollectionRepository(db),
 	}
 }
 
@@ -48,15 +51,6 @@ type CollectionResponse struct {
 type CollectionListResponse struct {
 	Items []CollectionResponse `json:"items"`
 	Total int                  `json:"total"`
-}
-
-// collectionRow holds the slug-addressed collection's gating-relevant columns
-// alongside the response fields. It's the result of a single SELECT so we
-// don't issue a second query to check visibility.
-type collectionRow struct {
-	resp      CollectionResponse
-	isPublic  bool
-	createdBy *int
 }
 
 // Get handles GET /rest/api/v1/collections/{key}. `key` is either a numeric
@@ -94,7 +88,7 @@ func (h *CollectionHandler) Get(w http.ResponseWriter, r *http.Request) {
 		h.RespondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Collection not found"))
 		return
 	}
-	h.RespondOK(w, row.resp)
+	h.RespondOK(w, mapCollectionRecordToResponse(row))
 }
 
 // GetItems handles GET /rest/api/v1/collections/{key}/items. Resolves the
@@ -108,11 +102,12 @@ func (h *CollectionHandler) Get(w http.ResponseWriter, r *http.Request) {
 // @Tags         collections
 // @Produce      json
 // @Security     BearerAuth
-// @Param        key    path      string  true   "Collection id (numeric) or public_slug"
-// @Param        page   query     int     false  "Page number (1-based)"
-// @Param        limit  query     int     false  "Items per page (max 100)"
-// @Param        sort   query     string  false  "Sort field"
-// @Param        order  query     string  false  "Sort order: asc or desc"
+// @Param        key               path      string  true   "Collection id (numeric) or public_slug"
+// @Param        page              query     int     false  "Page number (1-based)"
+// @Param        limit             query     int     false  "Items per page (max 100)"
+// @Param        sort              query     string  false  "Sort field"
+// @Param        order             query     string  false  "Sort order: asc or desc"
+// @Param        exclude_personal  query     bool    false  "Exclude items from the caller's personal workspaces"
 // @Success      200    {object}  handlers.PaginatedResponse{data=[]dto.ItemResponse}
 // @Failure      400    {object}  handlers.ErrorResponse  "Invalid QL query stored on the collection"
 // @Failure      401    {object}  handlers.ErrorResponse
@@ -133,29 +128,29 @@ func (h *CollectionHandler) GetItems(w http.ResponseWriter, r *http.Request) {
 		h.RespondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Collection not found"))
 		return
 	}
-	h.respondCollectionItems(w, r, row.resp.ID)
+	h.respondCollectionItems(w, r, row.ID)
 }
 
 // loadCollectionByKey extracts {key} from the path and loads via numeric id
 // or slug accordingly. Writes the appropriate 4xx response and returns
 // (nil, false) when the caller should stop processing.
-func (h *CollectionHandler) loadCollectionByKey(w http.ResponseWriter, r *http.Request) (*collectionRow, bool) {
+func (h *CollectionHandler) loadCollectionByKey(w http.ResponseWriter, r *http.Request) (*repository.CollectionRecord, bool) {
 	key := strings.TrimSpace(r.PathValue("key"))
 	if key == "" {
 		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid collection key"))
 		return nil, false
 	}
 	var (
-		row *collectionRow
+		row *repository.CollectionRecord
 		err error
 	)
 	if id, atoiErr := strconv.Atoi(key); atoiErr == nil {
-		row, err = h.loadCollectionByID(id)
+		row, err = h.repo.GetByID(id)
 	} else {
-		row, err = h.loadCollectionBySlug(key)
+		row, err = h.repo.GetBySlug(key)
 	}
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, repository.ErrNotFound) {
 			h.RespondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "Collection not found"))
 			return nil, false
 		}
@@ -181,6 +176,13 @@ func (h *CollectionHandler) respondCollectionItems(w http.ResponseWriter, r *htt
 			"message": "Failed to get accessible workspaces",
 		}))
 		return
+	}
+	if ExcludePersonal(r) {
+		accessibleWorkspaceIDs, err = repository.FilterSharedWorkspaceIDs(h.DB, accessibleWorkspaceIDs)
+		if err != nil {
+			h.RespondInternalError(w, r)
+			return
+		}
 	}
 	if len(accessibleWorkspaceIDs) == 0 {
 		h.RespondPaginated(w, []dto.ItemResponse{}, pagination, 0)
@@ -210,6 +212,8 @@ func (h *CollectionHandler) respondCollectionItems(w http.ResponseWriter, r *htt
 		h.RespondInternalError(w, r)
 		return
 	}
+
+	h.maskProjectNames(user.ID, items)
 
 	baseURL := getBaseURL(r)
 	itemResponses := dto.MapItemsToResponse(items, baseURL)
@@ -256,61 +260,21 @@ func (h *CollectionHandler) List(w http.ResponseWriter, r *http.Request) {
 		candidateLimit = candidateCap
 	}
 
-	pattern := "%" + strings.ToLower(q) + "%"
-	rows, err := h.DB.Query(`
-		SELECT id, name, COALESCE(description, ''), workspace_id, is_public, created_by,
-		       COALESCE(public_slug, ''), created_at, updated_at
-		FROM collections
-		WHERE LOWER(name) LIKE ?
-		ORDER BY name ASC
-		LIMIT ?
-	`, pattern, candidateLimit)
+	candidates, err := h.repo.SearchByName(q, candidateLimit)
 	if err != nil {
 		h.RespondInternalError(w, r)
 		return
 	}
-	defer func() { _ = rows.Close() }()
 
 	results := make([]CollectionResponse, 0, limit)
-	for rows.Next() {
-		var (
-			row         collectionRow
-			description sql.NullString
-			workspaceID sql.NullInt64
-			createdBy   sql.NullInt64
-			slug        string
-		)
-		if err := rows.Scan(
-			&row.resp.ID, &row.resp.Name, &description,
-			&workspaceID, &row.isPublic, &createdBy,
-			&slug, &row.resp.CreatedAt, &row.resp.UpdatedAt,
-		); err != nil {
-			continue
-		}
-		if description.Valid {
-			row.resp.Description = description.String
-		}
-		if workspaceID.Valid {
-			id := int(workspaceID.Int64)
-			row.resp.WorkspaceID = &id
-		}
-		if createdBy.Valid {
-			id := int(createdBy.Int64)
-			row.createdBy = &id
-		}
-		row.resp.Slug = slug
-
+	for _, row := range candidates {
 		if !h.canViewCollection(user.ID, &row) {
 			continue
 		}
-		results = append(results, row.resp)
+		results = append(results, mapCollectionRecordToResponse(&row))
 		if len(results) >= limit {
 			break
 		}
-	}
-	if err := rows.Err(); err != nil {
-		h.RespondInternalError(w, r)
-		return
 	}
 
 	h.RespondOK(w, map[string]interface{}{
@@ -319,98 +283,33 @@ func (h *CollectionHandler) List(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// loadCollectionByID fetches a numeric-id-addressed collection. Mirrors
-// loadCollectionBySlug but doesn't require public_slug to be set.
-func (h *CollectionHandler) loadCollectionByID(id int) (*collectionRow, error) {
-	var (
-		row         collectionRow
-		description sql.NullString
-		workspaceID sql.NullInt64
-		createdBy   sql.NullInt64
-		slug        sql.NullString
-	)
-	err := h.DB.QueryRow(`
-		SELECT id, name, COALESCE(description, ''), workspace_id, is_public, created_by,
-		       public_slug, created_at, updated_at
-		FROM collections
-		WHERE id = ?
-	`, id).Scan(
-		&row.resp.ID, &row.resp.Name, &description,
-		&workspaceID, &row.isPublic, &createdBy,
-		&slug, &row.resp.CreatedAt, &row.resp.UpdatedAt,
-	)
-	if err != nil {
-		return nil, err
-	}
-	if description.Valid {
-		row.resp.Description = description.String
-	}
-	if workspaceID.Valid {
-		id := int(workspaceID.Int64)
-		row.resp.WorkspaceID = &id
-	}
-	if createdBy.Valid {
-		id := int(createdBy.Int64)
-		row.createdBy = &id
-	}
-	if slug.Valid {
-		row.resp.Slug = slug.String
-	}
-	return &row, nil
-}
-
-// loadCollectionBySlug fetches a slug-addressed collection plus the columns
-// needed for the visibility check. Returns sql.ErrNoRows when no such
-// addressable collection exists.
-func (h *CollectionHandler) loadCollectionBySlug(slug string) (*collectionRow, error) {
-	var (
-		row         collectionRow
-		description sql.NullString
-		workspaceID sql.NullInt64
-		createdBy   sql.NullInt64
-	)
-	err := h.DB.QueryRow(`
-		SELECT id, name, COALESCE(description, ''), workspace_id, is_public, created_by, created_at, updated_at
-		FROM collections
-		WHERE public_slug = ? AND public_slug IS NOT NULL
-	`, slug).Scan(
-		&row.resp.ID, &row.resp.Name, &description,
-		&workspaceID, &row.isPublic, &createdBy,
-		&row.resp.CreatedAt, &row.resp.UpdatedAt,
-	)
-	if err != nil {
-		return nil, err
-	}
-	row.resp.Slug = slug
-	if description.Valid {
-		row.resp.Description = description.String
-	}
-	if workspaceID.Valid {
-		id := int(workspaceID.Int64)
-		row.resp.WorkspaceID = &id
-	}
-	if createdBy.Valid {
-		id := int(createdBy.Int64)
-		row.createdBy = &id
-	}
-	return &row, nil
-}
-
 // canViewCollection decides whether the caller may see a slug-addressed
 // collection's metadata + items. Workspace-scoped collections are visible to
 // anyone with `item.view` on that workspace (matches the natural mental model
 // for embedded reports). Global collections fall back to the legacy
 // is_public-or-creator check from internal/handlers/collections.go.
-func (h *CollectionHandler) canViewCollection(userID int, row *collectionRow) bool {
-	if row.resp.WorkspaceID != nil {
-		allowed, err := h.Perms.CanViewWorkspace(userID, *row.resp.WorkspaceID)
+func (h *CollectionHandler) canViewCollection(userID int, row *repository.CollectionRecord) bool {
+	if row.WorkspaceID != nil {
+		allowed, err := h.Perms.CanViewWorkspace(userID, *row.WorkspaceID)
 		return err == nil && allowed
 	}
-	if row.isPublic {
+	if row.IsPublic {
 		return true
 	}
-	if row.createdBy != nil && *row.createdBy == userID {
+	if row.CreatedBy != nil && *row.CreatedBy == userID {
 		return true
 	}
 	return false
+}
+
+func mapCollectionRecordToResponse(row *repository.CollectionRecord) CollectionResponse {
+	return CollectionResponse{
+		ID:          row.ID,
+		Slug:        row.Slug,
+		Name:        row.Name,
+		Description: row.Description,
+		WorkspaceID: row.WorkspaceID,
+		CreatedAt:   row.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:   row.UpdatedAt.Format(time.RFC3339),
+	}
 }

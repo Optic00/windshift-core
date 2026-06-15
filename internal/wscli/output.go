@@ -81,6 +81,10 @@ func (o *Output) printTable(data interface{}) {
 		o.printCommentDetailTable(w, v)
 	case []Attachment:
 		o.printAttachmentsTable(w, v)
+	case []Label:
+		o.printLabelsTable(w, v)
+	case []History:
+		o.printHistoryTable(w, v)
 	case []Milestone:
 		o.printMilestonesTable(w, v)
 	case *PaginatedResponse[Milestone]:
@@ -111,6 +115,22 @@ func (o *Output) printTable(data interface{}) {
 		o.printItemLinkDetailTable(w, v)
 	case *LinkListResponse:
 		o.printLinkListTable(w, v)
+	case []Asset:
+		o.printAssetsTable(w, v)
+	case *PaginatedResponse[Asset]:
+		o.printAssetsTable(w, v.Data)
+	case *Asset:
+		o.printAssetDetailTable(w, v)
+	case []AssetSet:
+		o.printAssetSetsTable(w, v)
+	case *AssetSet:
+		o.printAssetSetDetailTable(w, v)
+	case []AssetType:
+		o.printAssetTypesTable(w, v)
+	case *AssetType:
+		o.printAssetTypeDetailTable(w, v)
+	case *AssetImportJob:
+		o.printAssetImportJobTable(w, v)
 	default:
 		// Fallback to JSON for unknown types
 		o.printJSON(data)
@@ -354,7 +374,7 @@ func (o *Output) printCommentsCSV(w *csv.Writer, comments []Comment) {
 	for _, c := range comments {
 		author := ""
 		if c.Author != nil {
-			author = c.Author.Name
+			author = c.Author.FullName
 		}
 		created := c.CreatedAt.Format("2006-01-02 15:04")
 		_ = w.Write([]string{fmt.Sprintf("%d", c.ID), author, created, c.Content})
@@ -364,7 +384,7 @@ func (o *Output) printCommentsCSV(w *csv.Writer, comments []Comment) {
 func (o *Output) printCommentCSV(w *csv.Writer, c *Comment) {
 	author := ""
 	if c.Author != nil {
-		author = c.Author.Name
+		author = c.Author.FullName
 	}
 	_ = w.Write([]string{"ID", "ITEM_ID", "AUTHOR", "CREATED", "UPDATED", "CONTENT"})
 	_ = w.Write([]string{fmt.Sprintf("%d", c.ID), fmt.Sprintf("%d", c.ItemID), author, c.CreatedAt.Format(time.RFC3339), c.UpdatedAt.Format(time.RFC3339), c.Content})
@@ -405,10 +425,10 @@ func (o *Output) printItemDetailTable(w *tabwriter.Writer, item *Item) {
 		_, _ = fmt.Fprintf(w, "Priority:\t%s\n", item.Priority.Name)
 	}
 	if item.Assignee != nil {
-		_, _ = fmt.Fprintf(w, "Assignee:\t%s\n", item.Assignee.Name)
+		_, _ = fmt.Fprintf(w, "Assignee:\t%s\n", item.Assignee.FullName)
 	}
 	if item.Creator != nil {
-		_, _ = fmt.Fprintf(w, "Creator:\t%s\n", item.Creator.Name)
+		_, _ = fmt.Fprintf(w, "Creator:\t%s\n", item.Creator.FullName)
 	}
 	if item.Description != "" {
 		_, _ = fmt.Fprintf(w, "Description:\t%s\n", truncateString(item.Description, 100))
@@ -595,7 +615,7 @@ func (o *Output) printCommentsTable(w *tabwriter.Writer, comments []Comment) {
 	for _, c := range comments {
 		author := ""
 		if c.Author != nil {
-			author = c.Author.Name
+			author = c.Author.FullName
 		}
 		created := c.CreatedAt.Format("2006-01-02 15:04")
 		content := truncateString(c.Content, 50)
@@ -608,8 +628,8 @@ func (o *Output) printAttachmentsTable(w *tabwriter.Writer, atts []Attachment) {
 	_, _ = fmt.Fprintln(w, "--\t--------\t----\t----\t--------\t-------")
 	for _, a := range atts {
 		uploader := "-"
-		if a.Uploader != nil && a.Uploader.Name != "" {
-			uploader = a.Uploader.Name
+		if a.Uploader != nil && a.Uploader.FullName != "" {
+			uploader = a.Uploader.FullName
 		}
 		_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\n",
 			a.ID,
@@ -627,7 +647,7 @@ func (o *Output) printAttachmentsCSV(w *csv.Writer, atts []Attachment) {
 	for _, a := range atts {
 		uploader := ""
 		if a.Uploader != nil {
-			uploader = a.Uploader.Name
+			uploader = a.Uploader.FullName
 		}
 		_ = w.Write([]string{
 			fmt.Sprintf("%d", a.ID),
@@ -664,11 +684,54 @@ func (o *Output) printCommentDetailTable(w *tabwriter.Writer, c *Comment) {
 	_, _ = fmt.Fprintf(w, "ID:\t%d\n", c.ID)
 	_, _ = fmt.Fprintf(w, "Item ID:\t%d\n", c.ItemID)
 	if c.Author != nil {
-		_, _ = fmt.Fprintf(w, "Author:\t%s\n", c.Author.Name)
+		_, _ = fmt.Fprintf(w, "Author:\t%s\n", c.Author.FullName)
 	}
 	_, _ = fmt.Fprintf(w, "Created:\t%s\n", c.CreatedAt.Format("2006-01-02 15:04:05"))
 	_, _ = fmt.Fprintf(w, "Updated:\t%s\n", c.UpdatedAt.Format("2006-01-02 15:04:05"))
 	_, _ = fmt.Fprintf(w, "Content:\n%s\n", c.Content)
+}
+
+// ============================================
+// Item Label / History formatters
+// ============================================
+
+func (o *Output) printLabelsTable(w *tabwriter.Writer, labels []Label) {
+	_, _ = fmt.Fprintln(w, "ID\tNAME\tCOLOR")
+	_, _ = fmt.Fprintln(w, "--\t----\t-----")
+	for _, l := range labels {
+		_, _ = fmt.Fprintf(w, "%d\t%s\t%s\n", l.ID, l.Name, l.Color)
+	}
+}
+
+// historyValue picks the human-readable value for a history cell: resolved
+// value when the server provided one, raw value otherwise, "-" when empty.
+func historyValue(raw, resolved *string) string {
+	if resolved != nil && *resolved != "" {
+		return *resolved
+	}
+	if raw != nil && *raw != "" {
+		return *raw
+	}
+	return "-"
+}
+
+func (o *Output) printHistoryTable(w *tabwriter.Writer, history []History) {
+	_, _ = fmt.Fprintln(w, "FIELD\tOLD\tNEW\tACTOR\tTIME")
+	_, _ = fmt.Fprintln(w, "-----\t---\t---\t-----\t----")
+	for i := range history {
+		h := &history[i]
+		actor := "-"
+		if h.User != nil && h.User.FullName != "" {
+			actor = h.User.FullName
+		}
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+			h.FieldName,
+			truncateString(historyValue(h.OldValue, h.ResolvedOldValue), 40),
+			truncateString(historyValue(h.NewValue, h.ResolvedNewValue), 40),
+			actor,
+			h.ChangedAt.Format("2006-01-02 15:04"),
+		)
+	}
 }
 
 func truncateString(s string, maxLen int) string {
@@ -1145,5 +1208,163 @@ func (o *Output) printLinkListCSV(w *csv.Writer, resp *LinkListResponse) {
 			l.LinkTypeReverseLabel,
 			linkEndpointRef(l.SourceType, l.SourceID, l.SourceWorkspaceKey, l.SourceTitle),
 		})
+	}
+}
+
+// ----------------------------------------------------------------------
+// Asset table printers
+// ----------------------------------------------------------------------
+
+func (o *Output) printAssetsTable(w *tabwriter.Writer, assets []Asset) {
+	_, _ = fmt.Fprintln(w, "ID\tTITLE\tTYPE\tSTATUS\tCATEGORY\tUPDATED")
+	_, _ = fmt.Fprintln(w, "--\t-----\t----\t------\t--------\t-------")
+	for _, a := range assets {
+		title := truncateString(a.Title, 30)
+		typeName := "-"
+		if a.AssetType != nil {
+			typeName = a.AssetType.Name
+		}
+		statusName := "-"
+		if a.Status != nil {
+			statusName = a.Status.Name
+		}
+		catName := "-"
+		if a.Category != nil {
+			catName = a.Category.Name
+		}
+		_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\n", a.ID, title, typeName, statusName, catName, a.UpdatedAt)
+	}
+}
+
+func (o *Output) printAssetDetailTable(w *tabwriter.Writer, a *Asset) {
+	_, _ = fmt.Fprintf(w, "ID:\t%d\n", a.ID)
+	_, _ = fmt.Fprintf(w, "Title:\t%s\n", a.Title)
+	if a.Description != "" {
+		_, _ = fmt.Fprintf(w, "Description:\t%s\n", truncateString(a.Description, 100))
+	}
+	if a.AssetTag != "" {
+		_, _ = fmt.Fprintf(w, "Tag:\t%s\n", a.AssetTag)
+	}
+	if a.Set != nil {
+		_, _ = fmt.Fprintf(w, "Set:\t%s (#%d)\n", a.Set.Name, a.Set.ID)
+	} else {
+		_, _ = fmt.Fprintf(w, "Set ID:\t%d\n", a.SetID)
+	}
+	if a.AssetType != nil {
+		_, _ = fmt.Fprintf(w, "Type:\t%s (#%d)\n", a.AssetType.Name, a.AssetType.ID)
+	} else {
+		_, _ = fmt.Fprintf(w, "Type ID:\t%d\n", a.AssetTypeID)
+	}
+	if a.Status != nil {
+		_, _ = fmt.Fprintf(w, "Status:\t%s\n", a.Status.Name)
+	}
+	if a.Category != nil {
+		_, _ = fmt.Fprintf(w, "Category:\t%s\n", a.Category.Name)
+	}
+	if a.Creator != nil {
+		// v1 asset surface no longer exposes creator.email under
+		// assets:read; render the display name (id as fallback) instead.
+		name := a.Creator.FullName
+		if name == "" {
+			name = fmt.Sprintf("#%d", a.Creator.ID)
+		}
+		_, _ = fmt.Fprintf(w, "Creator:\t%s\n", name)
+	}
+	if a.LinkedItemCount > 0 {
+		_, _ = fmt.Fprintf(w, "Linked items:\t%d\n", a.LinkedItemCount)
+	}
+	_, _ = fmt.Fprintf(w, "Created:\t%s\n", a.CreatedAt)
+	_, _ = fmt.Fprintf(w, "Updated:\t%s\n", a.UpdatedAt)
+	for _, warn := range a.Warnings {
+		_, _ = fmt.Fprintf(w, "Warning:\t%s\n", warn)
+	}
+}
+
+func (o *Output) printAssetSetsTable(w *tabwriter.Writer, sets []AssetSet) {
+	_, _ = fmt.Fprintln(w, "ID\tNAME\tASSETS\tTYPES\tDEFAULT\tROLE")
+	_, _ = fmt.Fprintln(w, "--\t----\t------\t-----\t-------\t----")
+	for _, s := range sets {
+		def := ""
+		if s.IsDefault {
+			def = "yes"
+		}
+		_, _ = fmt.Fprintf(w, "%d\t%s\t%d\t%d\t%s\t%s\n", s.ID, truncateString(s.Name, 30), s.AssetCount, s.AssetTypeCount, def, s.UserPermission)
+	}
+}
+
+func (o *Output) printAssetSetDetailTable(w *tabwriter.Writer, s *AssetSet) {
+	_, _ = fmt.Fprintf(w, "ID:\t%d\n", s.ID)
+	_, _ = fmt.Fprintf(w, "Name:\t%s\n", s.Name)
+	if s.Description != "" {
+		_, _ = fmt.Fprintf(w, "Description:\t%s\n", truncateString(s.Description, 100))
+	}
+	if s.IsDefault {
+		_, _ = fmt.Fprintf(w, "Default:\tyes\n")
+	}
+	_, _ = fmt.Fprintf(w, "Asset count:\t%d\n", s.AssetCount)
+	_, _ = fmt.Fprintf(w, "Type count:\t%d\n", s.AssetTypeCount)
+	if s.UserPermission != "" {
+		_, _ = fmt.Fprintf(w, "Your role:\t%s\n", s.UserPermission)
+	}
+	_, _ = fmt.Fprintf(w, "Created:\t%s\n", s.CreatedAt)
+	_, _ = fmt.Fprintf(w, "Updated:\t%s\n", s.UpdatedAt)
+}
+
+func (o *Output) printAssetTypesTable(w *tabwriter.Writer, types []AssetType) {
+	_, _ = fmt.Fprintln(w, "ID\tNAME\tFIELDS\tASSETS\tACTIVE")
+	_, _ = fmt.Fprintln(w, "--\t----\t------\t------\t------")
+	for _, t := range types {
+		active := "no"
+		if t.IsActive {
+			active = "yes"
+		}
+		_, _ = fmt.Fprintf(w, "%d\t%s\t%d\t%d\t%s\n", t.ID, truncateString(t.Name, 30), len(t.Fields), t.AssetCount, active)
+	}
+}
+
+func (o *Output) printAssetTypeDetailTable(w *tabwriter.Writer, t *AssetType) {
+	_, _ = fmt.Fprintf(w, "ID:\t%d\n", t.ID)
+	_, _ = fmt.Fprintf(w, "Name:\t%s\n", t.Name)
+	if t.Description != "" {
+		_, _ = fmt.Fprintf(w, "Description:\t%s\n", truncateString(t.Description, 100))
+	}
+	_, _ = fmt.Fprintf(w, "Set ID:\t%d\n", t.SetID)
+	_, _ = fmt.Fprintf(w, "Asset count:\t%d\n", t.AssetCount)
+	active := "no"
+	if t.IsActive {
+		active = "yes"
+	}
+	_, _ = fmt.Fprintf(w, "Active:\t%s\n", active)
+	if len(t.Fields) > 0 {
+		_, _ = fmt.Fprintf(w, "Fields:\t%d declared\n", len(t.Fields))
+		for _, f := range t.Fields {
+			req := ""
+			if f.IsRequired {
+				req = " (required)"
+			}
+			_, _ = fmt.Fprintf(w, "  - %s\t%s%s\n", f.FieldName, f.FieldType, req)
+		}
+	}
+	_, _ = fmt.Fprintf(w, "Created:\t%s\n", t.CreatedAt)
+	_, _ = fmt.Fprintf(w, "Updated:\t%s\n", t.UpdatedAt)
+}
+
+func (o *Output) printAssetImportJobTable(w *tabwriter.Writer, j *AssetImportJob) {
+	_, _ = fmt.Fprintf(w, "Job ID:\t%d\n", j.ID)
+	_, _ = fmt.Fprintf(w, "Set ID:\t%d\n", j.SetID)
+	if j.AssetTypeID > 0 {
+		_, _ = fmt.Fprintf(w, "Asset type ID:\t%d\n", j.AssetTypeID)
+	}
+	_, _ = fmt.Fprintf(w, "Status:\t%s\n", j.Status)
+	_, _ = fmt.Fprintf(w, "Rows:\t%d total, %d processed, %d created, %d errors\n", j.TotalRows, j.ProcessedRows, j.CreatedRows, j.ErrorRows)
+	if j.ErrorMessage != "" {
+		_, _ = fmt.Fprintf(w, "Error:\t%s\n", j.ErrorMessage)
+	}
+	_, _ = fmt.Fprintf(w, "Created:\t%s\n", j.CreatedAt)
+	if j.StartedAt != nil {
+		_, _ = fmt.Fprintf(w, "Started:\t%s\n", *j.StartedAt)
+	}
+	if j.CompletedAt != nil {
+		_, _ = fmt.Fprintf(w, "Completed:\t%s\n", *j.CompletedAt)
 	}
 }

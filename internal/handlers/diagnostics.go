@@ -12,7 +12,6 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
-	"windshift/internal/services"
 	"windshift/internal/utils"
 )
 
@@ -30,6 +29,8 @@ type DiagnosticsHandler struct {
 	llmManager       *llm.ConnectionManager
 	llmCache         *llm.ModelCache
 	auditor          *logger.Auditor
+	runnerRepo       *repository.RunnerRepository
+	agentRunRepo     *repository.AgentRunRepository
 }
 
 // NewDiagnosticsHandler creates a new diagnostics handler.
@@ -42,6 +43,8 @@ func NewDiagnosticsHandler(
 	llmManager *llm.ConnectionManager,
 	llmCache *llm.ModelCache,
 	auditor *logger.Auditor,
+	runnerRepo *repository.RunnerRepository,
+	agentRunRepo *repository.AgentRunRepository,
 ) *DiagnosticsHandler {
 	return &DiagnosticsHandler{
 		actionRepo:       actionRepo,
@@ -52,6 +55,8 @@ func NewDiagnosticsHandler(
 		llmManager:       llmManager,
 		llmCache:         llmCache,
 		auditor:          auditor,
+		runnerRepo:       runnerRepo,
+		agentRunRepo:     agentRunRepo,
 	}
 }
 
@@ -103,7 +108,7 @@ func nextAppendKey(byteMax *string) (string, error) {
 	if byteMax != nil {
 		last = *byteMax
 	}
-	return services.KeyBetween(last, "")
+	return repository.KeyBetween(last, "")
 }
 
 // GetActionLogs returns recent cross-workspace action execution logs.

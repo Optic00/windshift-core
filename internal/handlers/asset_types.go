@@ -9,6 +9,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/utils"
 )
 
@@ -99,6 +100,18 @@ func (h *AssetTypeHandler) requireAssetTypeAdminAccess(w http.ResponseWriter, r 
 		return 0, nil, false
 	}
 
+	// Gate on view first so a caller who cannot see the set gets 404 rather
+	// than a 403 that would disclose the type/set exists.
+	canView, err := h.assetHandler.canViewSet(user.ID, setID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return 0, nil, false
+	}
+	if !canView {
+		respondNotFound(w, r, "asset_type")
+		return 0, nil, false
+	}
+
 	canAdmin, err := h.assetHandler.canAdminSet(user.ID, setID)
 	if err != nil {
 		respondInternalError(w, r, err)
@@ -159,6 +172,12 @@ func (h *AssetTypeHandler) CreateAssetType(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
+		sanitize.Pair{Target: &req.Icon, Policy: sanitize.ShortIdentifier, Label: "Icon"},
+		sanitize.Pair{Target: &req.Color, Policy: sanitize.ShortIdentifier, Label: "Color"},
+	)
 
 	if req.Name == "" {
 		respondValidationError(w, r, "Name is required")
@@ -198,7 +217,10 @@ func (h *AssetTypeHandler) CreateAssetType(w http.ResponseWriter, r *http.Reques
 	assetType.ID = id
 	h.auditor.Log(r, currentUser, logger.ActionAssetTypeCreate, logger.ResourceAssetType, &id, req.Name)
 
-	respondJSONCreated(w, assetType)
+	respondJSONCreated(w, struct {
+		models.AssetType
+		Warnings []string `json:"warnings,omitempty"`
+	}{assetType, warnings})
 }
 
 // UpdateAssetTypeRequest represents the request body for updating an asset type
@@ -222,6 +244,12 @@ func (h *AssetTypeHandler) UpdateAssetType(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
+		sanitize.Pair{Target: &req.Icon, Policy: sanitize.ShortIdentifier, Label: "Icon"},
+		sanitize.Pair{Target: &req.Color, Policy: sanitize.ShortIdentifier, Label: "Color"},
+	)
 
 	if req.Name == "" {
 		respondValidationError(w, r, "Name is required")
@@ -253,7 +281,10 @@ func (h *AssetTypeHandler) UpdateAssetType(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	respondJSONOK(w, assetType)
+	respondJSONOK(w, struct {
+		*models.AssetType
+		Warnings []string `json:"warnings,omitempty"`
+	}{assetType, warnings})
 }
 
 // DeleteAssetType deletes an asset type
@@ -275,6 +306,18 @@ func (h *AssetTypeHandler) DeleteAssetType(w http.ResponseWriter, r *http.Reques
 	}
 	if err != nil {
 		respondInternalError(w, r, err)
+		return
+	}
+
+	// Gate on view first so a caller who cannot see the set gets 404 rather
+	// than a 403 that would disclose the type/set exists.
+	canView, err := h.assetHandler.canViewSet(currentUser.ID, setID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	if !canView {
+		respondNotFound(w, r, "asset_type")
 		return
 	}
 

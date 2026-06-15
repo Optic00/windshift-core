@@ -19,6 +19,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
@@ -160,6 +161,10 @@ func (h *AdminOAuthClientHandler) CreateClient(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Slug, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.DisplayName, Policy: sanitize.PlainTextField},
+	)
 
 	req.Slug = strings.TrimSpace(req.Slug)
 	req.DisplayName = strings.TrimSpace(req.DisplayName)
@@ -277,6 +282,7 @@ func (h *AdminOAuthClientHandler) UpdateClient(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
+	sanitize.Apply(&req.DisplayName, sanitize.PlainTextField)
 
 	existing, err := scanOAuthClient(h.queryClientByID(id))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -563,13 +569,29 @@ func scanOAuthClient(s oauthClientScanner) (OAuthClientResponse, error) {
 	return c, nil
 }
 
+// Bounds for redirect URI registration (WI-185): every entry is
+// json.Marshal'ed verbatim into oauth_clients.redirect_uris and rendered
+// back in the admin UI, so both the per-URI length and the entry count
+// need a cap. Rejecting (rather than truncating through a sanitize
+// policy) keeps a redirect target from being silently rewritten. 2048
+// covers real-world URLs with room to spare; no legitimate client
+// registers anywhere near 32 URIs.
+const (
+	maxRedirectURIs   = 32
+	maxRedirectURILen = 2048
+)
+
 // validateRedirectURIs enforces basic shape: non-empty, parseable, no
 // fragments, and either http(s) with a host or a non-browser-executable custom
 // scheme. Loopback constraints from cli_auth aren't applied — OAuth third-party
-// apps can register any URL the admin trusts.
+// apps can register any URL the admin trusts. Entry count + per-URI length
+// are capped so the stored JSON blob is bounded.
 func validateRedirectURIs(uris []string) error {
 	if len(uris) == 0 {
 		return errInvalidf("at least one redirect_uri is required")
+	}
+	if len(uris) > maxRedirectURIs {
+		return errInvalidf("too many redirect_uris (maximum is 32)")
 	}
 	for _, u := range uris {
 		if err := validateOAuthRedirectURI(u); err != nil {
@@ -583,6 +605,9 @@ func validateOAuthRedirectURI(raw string) error {
 	u := strings.TrimSpace(raw)
 	if u == "" {
 		return errInvalidf("redirect_uris must not contain empty entries")
+	}
+	if len(u) > maxRedirectURILen {
+		return errInvalidf("redirect_uris entries must be at most 2048 characters")
 	}
 	if u != raw {
 		return errInvalidf("redirect_uris must not contain leading or trailing whitespace")

@@ -27,6 +27,12 @@ jobs:
           - name: windshiftapp/windshift
             dockerfile: Dockerfile
             short: windshift
+          - name: windshiftapp/ws-carrier
+            dockerfile: deploy/coding-agent/Dockerfile
+            short: ws-carrier
+          - name: windshiftapp/windshift-runner
+            dockerfile: deploy/windshift-runner/Dockerfile
+            short: windshift-runner
         platform:
           - os: linux/amd64
             runner: ubuntu-latest
@@ -67,14 +73,27 @@ jobs:
           echo "commit=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
           echo "date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
 
-      - name: Build and push by digest
+      - name: Build and push per-arch staging tag
         id: build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8  # v6.19.2
         with:
           context: .
           file: ${{ matrix.image.dockerfile }}
-          # Don't specify platforms - let Docker build for native platform
-          # This avoids QEMU emulation issues on arm64 runners
+          # The platform always matches the runner's native arch, so BuildKit
+          # never reaches for QEMU — but it MUST be passed explicitly: without
+          # --platform, TARGETOS/TARGETARCH stay unset and Dockerfile ARG
+          # defaults decide what the Go cross-compile targets. That once put
+          # x86_64 binaries inside the arm64 runner image, silently emulated
+          # via qemu binfmt on the host (WI-394). Each arch is pushed under its
+          # own per-commit staging TAG; the merge job combines the two into the
+          # real tags.
+          platforms: ${{ matrix.platform.os }}
+          # We push by tag, NOT push-by-digest, on purpose: buildkit's
+          # default provenance makes even a single-platform build a manifest
+          # index, and the index digest from steps.build.outputs.digest was not
+          # resolvable at merge time for the large server image
+          # (docker/build-push-action#755). A registry tag always resolves, so
+          # the merge is reliable — and provenance/attestations are preserved.
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.image.short }}-${{ matrix.platform.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image.short }}-${{ matrix.platform.arch }}
@@ -83,23 +102,8 @@ jobs:
             RELEASE_NAME=
             COMMIT=${{ steps.build_meta.outputs.commit }}
             BUILD_DATE=${{ steps.build_meta.outputs.date }}
-          outputs: ${{ github.event_name != 'pull_request' && format('type=image,name={0},push-by-digest=true,name-canonical=true,push=true', format('{0}/{1}', env.REGISTRY, matrix.image.name)) || 'type=docker' }}
-
-      - name: Export digest
-        if: github.event_name != 'pull_request'
-        run: |
-          mkdir -p /tmp/digests
-          digest="${{ steps.build.outputs.digest }}"
-          touch "/tmp/digests/${digest#sha256:}"
-
-      - name: Upload digest
-        if: github.event_name != 'pull_request'
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6.0.0
-        with:
-          name: digests-${{ matrix.image.short }}-${{ matrix.platform.arch }}
-          path: /tmp/digests/*
-          if-no-files-found: error
-          retention-days: 1
+          tags: ${{ env.REGISTRY }}/${{ matrix.image.name }}:stage-${{ github.sha }}-${{ matrix.platform.arch }}
+          push: ${{ github.event_name != 'pull_request' }}
 
   merge:
     name: Merge Manifests (${{ matrix.image.short }})
@@ -107,18 +111,17 @@ jobs:
     if: github.event_name != 'pull_request'
     needs: build
     strategy:
+      # One image's merge hiccup must not cancel the others' publishes.
+      fail-fast: false
       matrix:
         image:
           - name: windshiftapp/windshift
             short: windshift
+          - name: windshiftapp/ws-carrier
+            short: ws-carrier
+          - name: windshiftapp/windshift-runner
+            short: windshift-runner
     steps:
-      - name: Download digests
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
-        with:
-          path: /tmp/digests
-          pattern: digests-${{ matrix.image.short }}-*
-          merge-multiple: true
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3.12.0
 
@@ -142,12 +145,52 @@ jobs:
             type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
             type=sha,prefix=
 
-      - name: Create manifest list
-        working-directory: /tmp/digests
+      - name: Create manifest list from per-arch staging tags
+        env:
+          IMG: ${{ env.REGISTRY }}/${{ matrix.image.name }}
+          STAGE: stage-${{ github.sha }}
         run: |
-          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf '${{ env.REGISTRY }}/${{ matrix.image.name }}@sha256:%s ' *)
+          # Combine the two per-arch staging tags into the final tags. Tags
+          # always resolve in the registry (unlike a by-digest index digest),
+          # so this is reliable. A short retry covers transient registry blips.
+          create() {
+            docker buildx imagetools create \
+              $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+              "${IMG}:${STAGE}-amd64" "${IMG}:${STAGE}-arm64"
+          }
+          for attempt in 1 2 3; do
+            if create; then
+              echo "manifest created (attempt ${attempt})"
+              exit 0
+            fi
+            echo "imagetools create failed (attempt ${attempt}); retrying in 10s..."
+            sleep 10
+          done
+          echo "imagetools create still failing after retries"
+          exit 1
 
       - name: Inspect image
         run: |
           docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ matrix.image.name }}:${{ steps.meta.outputs.version }}
+
+      - name: Prune per-arch staging tags
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PKG: ${{ matrix.image.short }}
+        run: |
+          # Best-effort cleanup: delete the two ephemeral stage-<sha>-<arch>
+          # tags now that the real multi-arch manifest is published. Never fails
+          # the job — leftover staging tags are harmless if this can't run.
+          for arch in amd64 arm64; do
+            tag="stage-${{ github.sha }}-${arch}"
+            vid=$(gh api --paginate "/orgs/windshiftapp/packages/container/${PKG}/versions" \
+              --jq ".[] | select(.metadata.container.tags | index(\"${tag}\")) | .id" | head -n1)
+            if [ -n "$vid" ]; then
+              gh api --method DELETE "/orgs/windshiftapp/packages/container/${PKG}/versions/${vid}" \
+                && echo "pruned ${tag} (version ${vid})" || echo "could not prune ${tag}"
+            else
+              echo "no version found for ${tag}"
+            fi
+          done

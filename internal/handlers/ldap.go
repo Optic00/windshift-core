@@ -11,6 +11,7 @@ import (
 	ldapPkg "windshift/internal/ldap"
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
 	"windshift/internal/sso"
 	"windshift/internal/utils"
 )
@@ -79,6 +80,28 @@ type LDAPConfigRequest struct {
 	SyncIntervalMinutes int    `json:"sync_interval_minutes"`
 	AutoProvisionUsers  bool   `json:"auto_provision_users"`
 	AutoDeactivateUsers bool   `json:"auto_deactivate_users"`
+}
+
+// sanitizeLDAPConfigRequest scrubs the admin-supplied text fields. Name
+// labels the directory in the admin UI; DNs + filters are free-form
+// directory expressions; the attr_* fields are identifier-shaped LDAP
+// attribute names. BindPassword is a secret and deliberately untouched.
+func sanitizeLDAPConfigRequest(req *LDAPConfigRequest) {
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Host, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.BindDN, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.BaseDN, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.UserFilter, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.GroupBaseDN, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.GroupFilter, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.AttrUsername, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.AttrEmail, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.AttrFirstName, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.AttrLastName, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.AttrDisplayName, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.AttrGroupMember, Policy: sanitize.ShortIdentifier},
+	)
 }
 
 // LDAPConfigResponse represents an LDAP config in API responses (without secrets).
@@ -161,6 +184,7 @@ func (h *LDAPHandler) CreateConfig(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	sanitizeLDAPConfigRequest(&req)
 
 	// Validate
 	if req.Name == "" {
@@ -274,6 +298,7 @@ func (h *LDAPHandler) UpdateConfig(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	sanitizeLDAPConfigRequest(&req)
 
 	// Update fields
 	if req.Name != "" {

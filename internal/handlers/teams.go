@@ -4,27 +4,27 @@ import (
 	"errors"
 	"net/http"
 
-	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
 
 type TeamHandler struct {
-	db                database.Database
 	teamRepo          *repository.TeamRepository
 	leaveRepo         *repository.LeaveRepository
 	permissionService *services.PermissionService
+	auditor           *logger.Auditor
 }
 
-func NewTeamHandler(db database.Database, teamRepo *repository.TeamRepository, leaveRepo *repository.LeaveRepository, permissionService *services.PermissionService) *TeamHandler {
+func NewTeamHandler(teamRepo *repository.TeamRepository, leaveRepo *repository.LeaveRepository, permissionService *services.PermissionService, auditor *logger.Auditor) *TeamHandler {
 	return &TeamHandler{
-		db:                db,
 		teamRepo:          teamRepo,
 		leaveRepo:         leaveRepo,
 		permissionService: permissionService,
+		auditor:           auditor,
 	}
 }
 
@@ -163,8 +163,8 @@ func (h *TeamHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Name = utils.SanitizeName(req.Name)
-	req.Description = utils.SanitizeDescription(req.Description)
+	req.Name = sanitize.ShortIdentifier.Sanitize(req.Name)
+	req.Description = sanitize.RichText.Sanitize(req.Description)
 
 	if req.Name == "" {
 		respondValidationError(w, r, "Name is required")
@@ -187,24 +187,9 @@ func (h *TeamHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Audit log
-	auditUser := utils.GetCurrentUser(r)
-	if auditUser != nil {
-		_ = logger.LogAudit(h.db, logger.AuditEvent{
-			UserID:       auditUser.ID,
-			Username:     auditUser.Username,
-			IPAddress:    utils.GetClientIP(r),
-			UserAgent:    r.UserAgent(),
-			ActionType:   logger.ActionTeamCreate,
-			ResourceType: logger.ResourceTeam,
-			ResourceID:   &teamID,
-			ResourceName: req.Name,
-			Details: map[string]interface{}{
-				"description": req.Description,
-			},
-			Success: true,
-		})
-	}
+	h.auditor.LogWithDetails(r, user, logger.ActionTeamCreate, logger.ResourceTeam, &teamID, req.Name, map[string]interface{}{
+		"description": req.Description,
+	})
 
 	respondJSONCreated(w, team)
 }
@@ -221,8 +206,8 @@ func (h *TeamHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Name = utils.SanitizeName(req.Name)
-	req.Description = utils.SanitizeDescription(req.Description)
+	req.Name = sanitize.ShortIdentifier.Sanitize(req.Name)
+	req.Description = sanitize.RichText.Sanitize(req.Description)
 
 	if req.Name == "" {
 		respondValidationError(w, r, "Name is required")
@@ -291,25 +276,10 @@ func (h *TeamHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Audit log
-	auditUser := utils.GetCurrentUser(r)
-	if auditUser != nil {
-		_ = logger.LogAudit(h.db, logger.AuditEvent{
-			UserID:       auditUser.ID,
-			Username:     auditUser.Username,
-			IPAddress:    utils.GetClientIP(r),
-			UserAgent:    r.UserAgent(),
-			ActionType:   logger.ActionTeamDelete,
-			ResourceType: logger.ResourceTeam,
-			ResourceID:   &id,
-			ResourceName: team.Name,
-			Details: map[string]interface{}{
-				"description": team.Description,
-				"is_active":   team.IsActive,
-			},
-			Success: true,
-		})
-	}
+	h.auditor.LogWithDetails(r, user, logger.ActionTeamDelete, logger.ResourceTeam, &id, team.Name, map[string]interface{}{
+		"description": team.Description,
+		"is_active":   team.IsActive,
+	})
 
 	w.WriteHeader(http.StatusNoContent)
 }

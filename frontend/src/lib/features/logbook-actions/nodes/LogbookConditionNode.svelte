@@ -13,6 +13,6 @@
 <GenericConditionNode
   {data}
   {selected}
-  flowStore={logbookActionFlowStore}
+  flowStore={data.flowStore || logbookActionFlowStore}
   {operatorSymbols}
 />

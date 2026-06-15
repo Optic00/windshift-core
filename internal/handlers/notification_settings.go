@@ -10,6 +10,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/utils"
 )
 
@@ -36,6 +37,25 @@ func (h *NotificationSettingsHandler) refreshRuleCache(action string) {
 			slog.String("component", "notifications"),
 			slog.String("action", action),
 			slog.Any("error", err))
+	}
+}
+
+// sanitizeNotificationSetting scrubs the user-facing fields on a
+// notification-setting payload. Name + Description render in the
+// notification-settings admin table; per-rule EventType is
+// identifier-shaped ("item.created") and echoed in validation errors;
+// MessageTemplate is the free-form template body delivered in
+// notifications.
+func sanitizeNotificationSetting(req *models.NotificationSetting) {
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.PlainTextField},
+	)
+	for i := range req.EventRules {
+		sanitize.ApplyAll(
+			sanitize.Pair{Target: &req.EventRules[i].EventType, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: &req.EventRules[i].MessageTemplate, Policy: sanitize.RichText},
+		)
 	}
 }
 
@@ -98,6 +118,7 @@ func (h *NotificationSettingsHandler) CreateNotificationSetting(w http.ResponseW
 	if !ok {
 		return
 	}
+	sanitizeNotificationSetting(&req)
 
 	if req.Name == "" {
 		respondValidationError(w, r, "Name is required")
@@ -139,6 +160,7 @@ func (h *NotificationSettingsHandler) UpdateNotificationSetting(w http.ResponseW
 	if !ok {
 		return
 	}
+	sanitizeNotificationSetting(&req)
 
 	if req.Name == "" {
 		respondValidationError(w, r, "Name is required")

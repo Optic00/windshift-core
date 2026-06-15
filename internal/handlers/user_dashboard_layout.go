@@ -1,12 +1,46 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
 )
+
+// sanitizeDashboardLayout scrubs the user-facing fields on a dashboard
+// layout payload. Section Title + Subtitle render as headings on the
+// personal dashboard; section/widget ids are client-generated
+// identifier-shaped strings echoed back in validation errors.
+// Section WidgetIDs are the same identifier class (they reference
+// Widget.ID values), so each element gets ShortIdentifier and the
+// slice is capped at dashboardMaxWidgets — a section can never
+// legitimately reference more widgets than the layout may contain.
+func sanitizeDashboardLayout(layout *models.UserDashboardLayout) {
+	for i := range layout.Sections {
+		section := &layout.Sections[i]
+		sanitize.ApplyAll(
+			sanitize.Pair{Target: &section.ID, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: &section.Title, Policy: sanitize.PlainTextField},
+			sanitize.Pair{Target: &section.Subtitle, Policy: sanitize.PlainTextField},
+		)
+		if len(section.WidgetIDs) > dashboardMaxWidgets {
+			section.WidgetIDs = section.WidgetIDs[:dashboardMaxWidgets]
+		}
+		for j := range section.WidgetIDs {
+			sanitize.Apply(&section.WidgetIDs[j], sanitize.ShortIdentifier)
+		}
+	}
+	for i := range layout.Widgets {
+		widget := &layout.Widgets[i]
+		sanitize.ApplyAll(
+			sanitize.Pair{Target: &widget.ID, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: &widget.SectionID, Policy: sanitize.ShortIdentifier},
+		)
+	}
+}
 
 // validDashboardWidgetTypes lists widget types usable on the personal dashboard.
 // Keep in sync with frontend/src/lib/services/dashboardWidgetRegistry.js.
@@ -24,6 +58,12 @@ var validDashboardWidgetTypes = map[string]bool{
 const (
 	dashboardMaxSections = 20
 	dashboardMaxWidgets  = 100
+	// dashboardMaxWidgetConfigBytes bounds a single widget's free-form
+	// config map (serialized as JSON). Config is arbitrary user-supplied
+	// JSON stored verbatim into the preferences TEXT column, so this cap
+	// is the primary length defense for the field — the registry's
+	// built-in widgets currently ship an empty config, so 4 KiB is roomy.
+	dashboardMaxWidgetConfigBytes = 4 * 1024
 )
 
 // GetDashboardLayout handles GET /api/user/dashboard-layout
@@ -52,6 +92,7 @@ func (h *UserPreferencesHandler) UpdateDashboardLayout(w http.ResponseWriter, r 
 	if !ok {
 		return
 	}
+	sanitizeDashboardLayout(&layout)
 
 	if len(layout.Sections) > dashboardMaxSections {
 		respondValidationError(w, r, fmt.Sprintf("Too many sections: %d (max %d)", len(layout.Sections), dashboardMaxSections))
@@ -97,6 +138,13 @@ func (h *UserPreferencesHandler) UpdateDashboardLayout(w http.ResponseWriter, r 
 		if widget.SectionID == "" || !sectionIDs[widget.SectionID] {
 			respondValidationError(w, r, fmt.Sprintf("Widget %s references unknown section_id: %q", widget.ID, widget.SectionID))
 			return
+		}
+		if widget.Config != nil {
+			raw, err := json.Marshal(widget.Config)
+			if err != nil || len(raw) > dashboardMaxWidgetConfigBytes {
+				respondValidationError(w, r, fmt.Sprintf("Widget %s config too large (max %d bytes)", widget.ID, dashboardMaxWidgetConfigBytes))
+				return
+			}
 		}
 	}
 

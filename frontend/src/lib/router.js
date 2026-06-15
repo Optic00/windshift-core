@@ -1,4 +1,5 @@
 import { writable } from 'svelte/store';
+import { toExternal, toLogical } from './runtime/contextPath.js';
 
 export const currentRoute = writable(
   /** @type {{path: string, view: string|null, params: Record<string, string>, query: Record<string, string>}} */ ({
@@ -37,6 +38,9 @@ const routes = {
   '/workspaces/:id/actions/:actionId': 'workspace-actions',
   '/workspaces/:id/items/:itemId': 'item-detail',
   '/workspaces/:id/collections/:collectionId/items/:itemId': 'item-detail',
+  // Stable key routes used by CLI/browser deep links.
+  '/workspace/:workspaceKey/item/:itemNumber': 'item-detail',
+  '/item/:itemKey': 'item-detail',
   // Routes without collection (show all workspace items)
   '/workspaces/:id/board': 'workspace-board',
   '/workspaces/:id/board/configure': 'workspace-board-config',
@@ -54,6 +58,8 @@ const routes = {
   '/workspaces/:id/pages': 'workspace-pages',
   '/workspaces/:id/pages/archived': 'workspace-pages-archived',
   '/workspaces/:id/pages/:pageId': 'workspace-pages',
+  // Chrome-free print/PDF view for a single page (opened in a new tab).
+  '/workspaces/:id/pages/:pageId/print': 'page-print',
   // Routes with collection ID filtering
   '/workspaces/:id/collections/:collectionId/board': 'workspace-board',
   '/workspaces/:id/collections/:collectionId/board/configure': 'workspace-board-config',
@@ -177,13 +183,15 @@ function parseQuery(search) {
 
 // Navigate to a route
 export function navigate(path, { replace = false } = {}) {
-  if (path === window.location.pathname + window.location.search) {
+  const logicalPath = toLogical(path);
+  const externalPath = toExternal(logicalPath);
+  if (externalPath === window.location.pathname + window.location.search) {
     return;
   }
   if (replace) {
-    window.history.replaceState({}, '', path);
+    window.history.replaceState({}, '', externalPath);
   } else {
-    window.history.pushState({}, '', path);
+    window.history.pushState({}, '', externalPath);
   }
   updateRoute();
 }
@@ -201,7 +209,7 @@ export function updateQueryParams(updates, { push = false } = {}) {
     }
   }
   const qs = params.toString();
-  const path = window.location.pathname + (qs ? `?${qs}` : '');
+  const path = toExternal(toLogical(window.location.pathname) + (qs ? `?${qs}` : ''));
   if (push) {
     window.history.pushState({}, '', path);
   } else {
@@ -212,7 +220,7 @@ export function updateQueryParams(updates, { push = false } = {}) {
 
 // Update current route from URL
 function updateRoute() {
-  const path = window.location.pathname;
+  const path = toLogical(window.location.pathname);
   const search = window.location.search;
 
   // Find matching route
@@ -282,7 +290,7 @@ export function initRouter() {
     if (anchor.hasAttribute('download')) return;
     e.preventDefault();
     const url = new URL(anchor.href);
-    navigate(url.pathname + url.search);
+    navigate(toLogical(url.pathname) + url.search);
   });
 }
 

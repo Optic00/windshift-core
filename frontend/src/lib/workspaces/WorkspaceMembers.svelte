@@ -1,11 +1,12 @@
 <script>
   import { onMount } from 'svelte';
   import { api } from '../api.js';
-  import { UserPlus, Trash2, Shield } from '@lucide/svelte';
+  import { UserPlus, Trash2, Shield, Users } from '@lucide/svelte';
   import Button from '../components/Button.svelte';
   import Modal from '../dialogs/Modal.svelte';
   import Select from '../components/Select.svelte';
   import UserPicker from '../pickers/UserPicker.svelte';
+  import GroupPicker from '../pickers/GroupPicker.svelte';
   import DataTable from '../components/DataTable.svelte';
   import SearchInput from '../components/SearchInput.svelte';
   import Pagination from '../components/Pagination.svelte';
@@ -21,6 +22,7 @@
   let { workspaceId } = $props();
 
   let members = $state([]);
+  let groupAssignments = $state([]);
   let roles = $state([]);
   let loading = $state(true);
   let error = $state(null);
@@ -31,6 +33,12 @@
   let selectedUserId = $state(null);
   let selectedRoleId = $state(null);
   let adding = $state(false);
+
+  // Add group modal state
+  let showGroupModal = $state(false);
+  let selectedGroupId = $state(null);
+  let selectedGroupRoleId = $state(null);
+  let addingGroup = $state(false);
 
   // Search and pagination state
   let searchQuery = $state('');
@@ -50,11 +58,13 @@
     loading = true;
     error = null;
     try {
-      const [membersData, rolesData] = await Promise.all([
+      const [membersData, groupsData, rolesData] = await Promise.all([
         api.workspaceRoles.getWorkspaceAssignments(workspaceIdNum),
+        api.workspaceRoles.getWorkspaceGroupAssignments(workspaceIdNum),
         api.workspaceRoles.getAll()
       ]);
       members = membersData || [];
+      groupAssignments = groupsData || [];
       roles = rolesData || [];
     } catch (err) {
       console.error('Failed to load workspace members:', err);
@@ -116,6 +126,67 @@
     }
   }
 
+  async function handleSubmitGroup() {
+    const roleId = selectedGroupRoleId ? Number(selectedGroupRoleId) : null;
+    const groupId = selectedGroupId ? Number(selectedGroupId) : null;
+    const workspaceIdNum = Number(workspaceId);
+    if (!groupId || !roleId) {
+      return;
+    }
+
+    try {
+      addingGroup = true;
+      await api.workspaceRoles.assignToGroup({
+        group_id: groupId,
+        workspace_id: workspaceIdNum,
+        role_id: roleId
+      });
+
+      selectedGroupId = null;
+      selectedGroupRoleId = null;
+      showGroupModal = false;
+
+      await loadData();
+    } catch (err) {
+      console.error('Failed to add group:', err);
+      errorToast(`Failed to add group: ${err.message}`);
+    } finally {
+      addingGroup = false;
+    }
+  }
+
+  async function handleRemoveGroupRole(group, role) {
+    const confirmed = await confirm({
+      title: `Remove ${role.role_name} role from ${group.group_name}?`,
+      message: 'This will revoke this role assignment from the group.'
+    });
+
+    if (!confirmed) return;
+
+    try {
+      const workspaceIdNum = Number(workspaceId);
+      await api.workspaceRoles.revokeFromGroup(group.group_id, workspaceIdNum, role.role_id);
+      await loadData();
+    } catch (err) {
+      console.error('Failed to remove group role:', err);
+      errorToast(`Failed to remove group role: ${err.message}`);
+    }
+  }
+
+  function openGroupModal() {
+    showGroupModal = true;
+  }
+
+  function canOpenGroupModal() {
+    return !showGroupModal;
+  }
+
+  function handleCancelGroup() {
+    showGroupModal = false;
+    selectedGroupId = null;
+    selectedGroupRoleId = null;
+  }
+
   function getRoleBadgeStyle(roleId) {
     const role = roles.find(r => r.id === roleId);
     if (!role) return 'background-color: var(--ds-background-neutral); color: var(--ds-text-subtle);';
@@ -144,16 +215,21 @@
   // A role with no explicit members means "Everyone" has that access,
   // but only if the parent role in the hierarchy is also open.
   function getEffectiveAccess(roleName, roleMembers) {
-    const viewerMembers = members.filter(m => m.roles.some(r => r.role_name === 'Viewer'));
-    const editorMembers = members.filter(m => m.roles.some(r => r.role_name === 'Editor'));
-    const testerMembers = members.filter(m => m.roles.some(r => r.role_name === 'Tester'));
+    // A role is "open to everyone" only when it has NO explicit assignment —
+    // neither a user member nor a group. This mirrors the backend, which counts
+    // user_workspace_roles + group_workspace_roles when deciding everyone-access.
+    const assignedCount = (name) =>
+      members.filter(m => m.roles.some(r => r.role_name === name)).length +
+      groupAssignments.filter(g => g.roles.some(r => r.role_name === name)).length;
 
-    const viewerOpen = viewerMembers.length === 0;
-    const editorOpen = editorMembers.length === 0;
-    const testerOpen = testerMembers.length === 0;
+    const viewerOpen = assignedCount('Viewer') === 0;
+    const editorOpen = assignedCount('Editor') === 0;
+    const testerOpen = assignedCount('Tester') === 0;
 
-    if (roleMembers.length > 0) {
-      return { type: 'members', count: roleMembers.length };
+    const roleGroups = groupAssignments.filter(g => g.roles.some(r => r.role_name === roleName));
+    const explicitCount = roleMembers.length + roleGroups.length;
+    if (explicitCount > 0) {
+      return { type: 'members', count: explicitCount };
     }
 
     if (roleName === 'Viewer') {
@@ -199,6 +275,22 @@
     }));
   }
 
+  function getGroupActionItems(group) {
+    return group.roles.map(role => ({
+      title: `Remove ${role.role_name}`,
+      icon: Trash2,
+      onClick: () => handleRemoveGroupRole(group, role),
+      hoverClass: 'hover-danger',
+      iconClass: 'text-red-500'
+    }));
+  }
+
+  const groupColumns = [
+    { key: 'group', label: 'Group', slot: 'group' },
+    { key: 'roles', label: 'Roles', slot: 'role' },
+    { key: 'actions', label: 'Actions', align: 'text-right' }
+  ];
+
   // Search filtering
   let filteredMembers = $derived(members.filter(member => {
     if (!searchQuery.trim()) return true;
@@ -227,7 +319,8 @@
         const role = roles.find((r) => r.name === roleName);
         if (!role) return null;
         const roleMembers = members.filter((m) => m.roles.some((r) => r.role_name === roleName));
-        return { name: roleName, role, members: roleMembers, access: getEffectiveAccess(roleName, roleMembers) };
+        const roleGroups = groupAssignments.filter((g) => g.roles.some((r) => r.role_name === roleName));
+        return { name: roleName, role, members: roleMembers, groups: roleGroups, access: getEffectiveAccess(roleName, roleMembers) };
       })
       .filter(Boolean)
   );
@@ -286,10 +379,13 @@
         {/if}
       {/snippet}
       {#snippet members(row)}
-        {#if row.members.length > 0}
+        {#if row.members.length > 0 || row.groups.length > 0}
           <div class="flex flex-wrap gap-2">
             {#each row.members as m}
               <Chip color="blue">{m.first_name} {m.last_name}</Chip>
+            {/each}
+            {#each row.groups as g}
+              <Chip color="purple" icon={Users}>{g.group_name}</Chip>
             {/each}
           </div>
         {:else}
@@ -306,10 +402,22 @@
       placeholder="Search members by name or email..."
       className="flex-1"
     />
-    <Button variant="primary" size="medium" onclick={() => showModal = true} keyboardHint="A" hotkeyConfig={{ key: toHotkeyString('workspaceMembers', 'addMember'), guard: () => !showModal }}>
-      <UserPlus class="w-4 h-4 mr-2" />
-      Add Member
-    </Button>
+    <div class="flex items-center gap-2">
+      <Button variant="primary" size="medium" onclick={() => showModal = true} keyboardHint="A" hotkeyConfig={{ key: toHotkeyString('workspaceMembers', 'addMember'), guard: () => !showModal }}>
+        <UserPlus class="w-4 h-4 mr-2" />
+        Add Member
+      </Button>
+      <Button
+        variant="default"
+        size="medium"
+        onclick={openGroupModal}
+        keyboardHint="G"
+        hotkeyConfig={{ key: toHotkeyString('workspaceMembers', 'addGroup'), guard: canOpenGroupModal }}
+      >
+        <Users class="w-4 h-4 mr-2" />
+        Add Group
+      </Button>
+    </div>
   </div>
 
   <!-- Members Table -->
@@ -372,6 +480,51 @@
         No members found matching "{searchQuery}"
       </div>
     {/if}
+
+    <!-- Group Assignments -->
+    <div class="flex items-start gap-3 mt-10 mb-4">
+      <Users class="w-4 h-4 text-blue-600 mt-0.5" />
+      <div>
+        <h3 class="text-sm font-semibold" style="color: var(--ds-text);">Groups</h3>
+        <p class="text-sm mt-1" style="color: var(--ds-text-subtle);">
+          Roles assigned to a group apply to every member of that group.
+        </p>
+      </div>
+    </div>
+
+    <DataTable
+      columns={groupColumns}
+      data={groupAssignments}
+      keyField="group_id"
+      emptyMessage="No groups assigned. Add a group to grant its members access."
+      emptyIcon={Users}
+      actionItems={getGroupActionItems}
+    >
+      {#snippet group(item)}
+        <div class="flex items-center gap-3">
+          <div class="flex items-center justify-center w-8 h-8 rounded-full" style="background-color: var(--ds-background-accent-purple-subtler);">
+            <Users class="w-4 h-4" style="color: var(--ds-accent-purple);" />
+          </div>
+          <div>
+            <Text size="sm" weight="medium">{item.group_name}</Text>
+            {#if item.group_description}
+              <Text size="xs" variant="subtle">{item.group_description}</Text>
+            {/if}
+          </div>
+        </div>
+      {/snippet}
+
+      {#snippet role(item)}
+        <div class="flex flex-wrap gap-2">
+          {#each item.roles as role}
+            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium" style={getRoleBadgeStyle(role.role_id)}>
+              <Shield class="w-3 h-3" />
+              {role.role_name}
+            </span>
+          {/each}
+        </div>
+      {/snippet}
+    </DataTable>
   {/if}
 </div>
 
@@ -420,6 +573,60 @@
         size="medium"
         onclick={handleCancel}
         disabled={adding}
+        keyboardHint="Esc"
+      >
+        Cancel
+      </Button>
+    </div>
+  </div>
+  {/snippet}
+</Modal>
+
+<!-- Add Group Modal -->
+<Modal
+  isOpen={showGroupModal}
+  onSubmit={handleSubmitGroup}
+  submitDisabled={!selectedGroupId || !selectedGroupRoleId || addingGroup}
+  maxWidth="max-w-2xl"
+  onclose={handleCancelGroup}
+>
+  {#snippet children(submitHint)}
+  <div class="p-6">
+    <h2 class="text-xl font-semibold mb-6" style="color: var(--ds-text);">
+      Add Group to Workspace
+    </h2>
+
+    <div class="space-y-4">
+      <div>
+        <Label color="default" required class="mb-2">Group</Label>
+        <GroupPicker bind:value={selectedGroupId} placeholder="Select group..." />
+      </div>
+
+      <div>
+        <Label color="default" required class="mb-2">Role</Label>
+        <Select
+          bind:value={selectedGroupRoleId}
+          onchange={(e) => selectedGroupRoleId = e.target.value ? Number(e.target.value) : null}
+          options={[{ value: null, label: 'Select role...' }, ...roles.map(role => ({ value: role.id, label: `${role.name} - ${role.description}` }))]}
+        />
+      </div>
+    </div>
+
+    <div class="mt-8 flex gap-3">
+      <Button
+        variant="primary"
+        size="medium"
+        onclick={handleSubmitGroup}
+        disabled={!selectedGroupId || !selectedGroupRoleId || addingGroup}
+        keyboardHint={submitHint}
+      >
+        {addingGroup ? 'Adding...' : 'Add Group'}
+      </Button>
+      <Button
+        variant="default"
+        size="medium"
+        onclick={handleCancelGroup}
+        disabled={addingGroup}
         keyboardHint="Esc"
       >
         Cancel

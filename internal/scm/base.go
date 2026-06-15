@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"time"
+
+	"windshift/internal/utils"
 )
 
 // baseProvider holds shared HTTP plumbing for SCM providers.
@@ -12,6 +15,19 @@ type baseProvider struct {
 	httpClient          *http.Client
 	setAuthHeader       func(req *http.Request)
 	handleErrorResponse func(resp *http.Response) error
+}
+
+// newSCMHTTPClient builds the HTTP client used by every SCM provider. The
+// provider base URL is operator-configured and all requests — including the
+// OAuth token exchange that carries the client secret — go to it, so the
+// client dials through the SSRF-safe dialer: a base URL (or a redirect) that
+// resolves to a loopback/RFC1918/link-local/CGNAT/metadata address is refused
+// before the handshake. Redirect-following is preserved and re-checked per hop.
+func newSCMHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: &http.Transport{DialContext: utils.SafeNetDialer(timeout).DialContext},
+	}
 }
 
 // doJSON performs an authenticated HTTP request and decodes the JSON response into result.

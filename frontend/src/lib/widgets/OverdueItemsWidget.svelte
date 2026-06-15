@@ -4,6 +4,7 @@
   import { formatDueDate, getDaysOverdue } from '../utils/dateFormatter.js';
   import WidgetState from './WidgetState.svelte';
   import { t } from '../stores/i18n.svelte.js';
+  import { normalizeDate, getDoneStatusIds } from './doneStatusHelper.js';
 
   let { workspaceId = null, collectionFilter = null } = $props();
 
@@ -14,32 +15,8 @@
   let error = $state(null);
   let currentWorkspaceId = $state(null);
   let refreshInFlight = $state(false);
-  let statusesPromise;
   let activeFetchId = $state(0);
   let currentCollectionFilter = $state(null);
-
-  function normalizeDate(dateString) {
-    if (!dateString) return null;
-    const date = new Date(dateString);
-    return Number.isNaN(date.getTime()) ? null : date;
-  }
-
-  async function getDoneStatusIds() {
-    try {
-      if (!statusesPromise) {
-        statusesPromise = api.statuses.getAll();
-      }
-      const statuses = await statusesPromise;
-      if (!Array.isArray(statuses)) return [];
-      return statuses
-        .filter(status => status?.category_name?.toLowerCase().trim() === 'done')
-        .map(status => status.id)
-        .filter(Boolean);
-    } catch (statusError) {
-      console.warn('Failed to load statuses for overdue widget:', statusError);
-      return [];
-    }
-  }
 
   async function loadOverdueItems() {
     if (!workspaceId) {
@@ -53,7 +30,7 @@
     refreshInFlight = true;
 
     try {
-      const doneStatusIds = await getDoneStatusIds();
+      const doneStatusIds = await getDoneStatusIds(api);
       const trimmedFilter = (collectionFilter || '').trim();
       const parts = [];
       if (trimmedFilter) {

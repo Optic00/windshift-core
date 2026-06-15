@@ -165,6 +165,7 @@ export default {
     deleteTestRun: 'Delete Test Run',
     deleteRunConfirm: 'Are you sure you want to delete "{name}"?',
     failedToDeleteRun: 'Failed to delete test run',
+    failedToCreateRun: 'Failed to create test run',
     noTestRunsYet: 'No test runs yet',
     createTestRunToExecute: 'Create a test run to start executing test cases.',
     continueExecution: 'Continue Execution',

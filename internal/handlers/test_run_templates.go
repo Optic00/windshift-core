@@ -7,6 +7,7 @@ import (
 
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 )
 
 type TestRunTemplateHandler struct {
@@ -79,6 +80,9 @@ func (h *TestRunTemplateHandler) prepareTemplateWrite(w http.ResponseWriter, r *
 	if !ok {
 		return
 	}
+
+	template.Name = sanitize.PlainTextField.Sanitize(template.Name)
+	template.Description = sanitize.RichText.Sanitize(template.Description)
 
 	// Verify test set belongs to workspace if provided
 	if template.SetID > 0 {

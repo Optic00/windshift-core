@@ -21,6 +21,37 @@ func NewWorkspaceAgentBindingRepository(db database.Database) *WorkspaceAgentBin
 	return &WorkspaceAgentBindingRepository{db: db}
 }
 
+// AgentRunContext returns the workspace key and workspace-scoped item number
+// for environment variables injected into the coding-agent container. itemID
+// may be zero for future manual runs; in that case ItemKey is empty.
+type AgentRunContext struct {
+	WorkspaceKey string
+	ItemNumber   int
+	ItemKey      string
+}
+
+func (r *WorkspaceAgentBindingRepository) AgentRunContext(ctx context.Context, workspaceID, itemID int) (AgentRunContext, error) {
+	var out AgentRunContext
+	if itemID > 0 {
+		err := r.db.QueryRowContext(ctx, `
+			SELECT w.key, i.workspace_item_number
+			FROM workspaces w
+			JOIN items i ON i.workspace_id = w.id AND i.id = ?
+			WHERE w.id = ?
+		`, itemID, workspaceID).Scan(&out.WorkspaceKey, &out.ItemNumber)
+		if err != nil {
+			return out, fmt.Errorf("load agent run workspace/item context: %w", err)
+		}
+		out.ItemKey = fmt.Sprintf("%s-%d", out.WorkspaceKey, out.ItemNumber)
+		return out, nil
+	}
+	err := r.db.QueryRowContext(ctx, `SELECT key FROM workspaces WHERE id = ?`, workspaceID).Scan(&out.WorkspaceKey)
+	if err != nil {
+		return out, fmt.Errorf("load agent run workspace context: %w", err)
+	}
+	return out, nil
+}
+
 // ErrBindingDuplicate is returned when a caller tries to create a second
 // binding for the same (workspace, acting_user). The handler layer maps
 // this to a 409 Conflict.
@@ -28,8 +59,8 @@ var ErrBindingDuplicate = errors.New("workspace agent binding: a binding for thi
 
 // Insert persists a new binding and returns its id. token_ttl_minutes
 // defaults to 60 when caller passes <= 0; scopes default to an empty array
-// (the BindingService merges with auth.DefaultAgentScopes at trigger time
-// if needed).
+// (RunTokenService expands that to auth.DefaultCodingAgentRunScopes at mint
+// time).
 func (r *WorkspaceAgentBindingRepository) Insert(ctx context.Context, b *models.WorkspaceAgentBinding) (int, error) {
 	if b.TokenTTLMinutes <= 0 {
 		b.TokenTTLMinutes = 60
@@ -38,25 +69,27 @@ func (r *WorkspaceAgentBindingRepository) Insert(ctx context.Context, b *models.
 	if err != nil {
 		return 0, fmt.Errorf("marshal token scopes: %w", err)
 	}
-	res, err := r.db.ExecWriteContext(ctx, `
+	// RETURNING id (not LastInsertId) for Postgres compatibility.
+	var id int64
+	err = r.db.QueryRowContext(ctx, `
 		INSERT INTO workspace_agent_bindings
 			(workspace_id, acting_user_id, acting_user_kind, repo_slug, repo_base_ref,
-			 llm_connection_id, scm_connection_id, token_scopes_json, token_ttl_minutes, max_runs_per_day, created_by_user_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 llm_connection_id, scm_connection_id, target_pool_id, token_scopes_json, token_ttl_minutes, max_runs_per_day, instructions, created_by_user_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		RETURNING id
 	`,
 		b.WorkspaceID, b.ActingUserID, b.ActingUserKind,
 		nullStringArg(b.RepoSlug), nullStringArg(b.RepoBaseRef),
-		nullIntArg(b.LLMConnectionID), nullIntArg(b.SCMConnectionID),
+		nullIntArg(b.LLMConnectionID), nullIntArg(b.SCMConnectionID), nullIntArg(b.TargetPoolID),
 		string(scopesJSON), b.TokenTTLMinutes, b.MaxRunsPerDay,
-		b.CreatedByUserID,
-	)
+		b.Instructions, b.CreatedByUserID,
+	).Scan(&id)
 	if err != nil {
 		if database.IsUniqueConstraintError(err) {
 			return 0, ErrBindingDuplicate
 		}
 		return 0, fmt.Errorf("insert binding: %w", err)
 	}
-	id, _ := res.LastInsertId()
 	return int(id), nil
 }
 
@@ -98,6 +131,20 @@ func (r *WorkspaceAgentBindingRepository) FindByActingUser(ctx context.Context, 
 	return b, err
 }
 
+// UpdateInstructions rewrites a binding's custom instructions, scoped by
+// workspace (WI-258).
+func (r *WorkspaceAgentBindingRepository) UpdateInstructions(ctx context.Context, id, workspaceID int, instructions string) error {
+	_, err := r.db.ExecWriteContext(ctx, `
+		UPDATE workspace_agent_bindings
+		SET instructions = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND workspace_id = ?
+	`, instructions, id, workspaceID)
+	if err != nil {
+		return fmt.Errorf("update binding instructions: %w", err)
+	}
+	return nil
+}
+
 // Delete removes a binding by (id, workspace_id). Returns the number of
 // rows affected so the handler can distinguish "deleted" from "no such
 // binding (or wrong workspace)". The workspace filter is required: a
@@ -115,9 +162,9 @@ func (r *WorkspaceAgentBindingRepository) Delete(ctx context.Context, id, worksp
 const bindingSelectSQL = `
 	SELECT id, workspace_id, acting_user_id, acting_user_kind,
 	       repo_slug, repo_base_ref,
-	       llm_connection_id, scm_connection_id,
+	       llm_connection_id, scm_connection_id, target_pool_id,
 	       token_scopes_json, token_ttl_minutes, max_runs_per_day,
-	       created_by_user_id, created_at, updated_at
+	       instructions, created_by_user_id, created_at, updated_at
 	FROM workspace_agent_bindings
 `
 
@@ -136,13 +183,13 @@ func scanBindingRows(rows *sql.Rows) (*models.WorkspaceAgentBinding, error) {
 func scanBindingFrom(scanner bindingRowScanner) (*models.WorkspaceAgentBinding, error) {
 	b := &models.WorkspaceAgentBinding{}
 	var repoSlug, repoBaseRef sql.NullString
-	var llmConn, scmConn sql.NullInt64
+	var llmConn, scmConn, targetPool sql.NullInt64
 	var scopesJSON string
 	if err := scanner.Scan(
 		&b.ID, &b.WorkspaceID, &b.ActingUserID, &b.ActingUserKind,
 		&repoSlug, &repoBaseRef,
-		&llmConn, &scmConn, &scopesJSON, &b.TokenTTLMinutes, &b.MaxRunsPerDay,
-		&b.CreatedByUserID, &b.CreatedAt, &b.UpdatedAt,
+		&llmConn, &scmConn, &targetPool, &scopesJSON, &b.TokenTTLMinutes, &b.MaxRunsPerDay,
+		&b.Instructions, &b.CreatedByUserID, &b.CreatedAt, &b.UpdatedAt,
 	); err != nil {
 		return nil, err
 	}
@@ -159,6 +206,10 @@ func scanBindingFrom(scanner bindingRowScanner) (*models.WorkspaceAgentBinding, 
 	if scmConn.Valid {
 		v := int(scmConn.Int64)
 		b.SCMConnectionID = &v
+	}
+	if targetPool.Valid {
+		v := int(targetPool.Int64)
+		b.TargetPoolID = &v
 	}
 	if scopesJSON != "" {
 		_ = json.Unmarshal([]byte(scopesJSON), &b.TokenScopes)

@@ -2,7 +2,6 @@
 package handlers
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -14,61 +13,6 @@ import (
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
-
-// ErrDatabaseNil is returned when database connection is not initialized
-var ErrDatabaseNil = errors.New("database connection is nil")
-
-// BaseHandler provides common database access patterns for all handlers
-type BaseHandler struct {
-	db database.Database
-}
-
-// NewBaseHandler creates a new base handler with database connection
-func NewBaseHandler(db database.Database) *BaseHandler {
-	return &BaseHandler{db: db}
-}
-
-// getReadDB returns the database connection for read operations.
-// Returns an error if the database connection is not initialized.
-func (h *BaseHandler) getReadDB() (database.Database, error) {
-	if h.db != nil {
-		return h.db, nil
-	}
-	return nil, ErrDatabaseNil
-}
-
-// getWriteDB returns the database connection for write operations.
-// Returns an error if the database connection is not initialized.
-func (h *BaseHandler) getWriteDB() (database.Database, error) {
-	if h.db != nil {
-		return h.db, nil
-	}
-	return nil, ErrDatabaseNil
-}
-
-// requireReadDB returns the database connection and writes an HTTP error if unavailable.
-// Returns nil and false if the database is unavailable (error already written to response).
-// Returns db and true if the database is available.
-func (h *BaseHandler) requireReadDB(w http.ResponseWriter, r *http.Request) (database.Database, bool) {
-	db, err := h.getReadDB()
-	if err != nil {
-		respondInternalError(w, r, err)
-		return nil, false
-	}
-	return db, true
-}
-
-// requireWriteDB returns the database connection and writes an HTTP error if unavailable.
-// Returns nil and false if the database is unavailable (error already written to response).
-// Returns db and true if the database is available.
-func (h *BaseHandler) requireWriteDB(w http.ResponseWriter, r *http.Request) (database.Database, bool) {
-	db, err := h.getWriteDB()
-	if err != nil {
-		respondInternalError(w, r, err)
-		return nil, false
-	}
-	return db, true
-}
 
 // AvailableField is the public shape for GetAvailableFields responses across
 // request-type and asset-report handlers. Identifier is the field key, Name
@@ -94,20 +38,6 @@ func requireWorkspaceIDAndID(w http.ResponseWriter, r *http.Request) (workspaceI
 		return
 	}
 	user = utils.GetCurrentUser(r)
-	return
-}
-
-// requireWorkspaceIDAndIDForWrite parses {workspaceId} and {id} path params,
-// pulls the current user, and resolves the write DB. Used by any mutating
-// handler that follows the standard "workspace-scoped resource with id" shape.
-func (h *BaseHandler) requireWorkspaceIDAndIDForWrite(
-	w http.ResponseWriter, r *http.Request,
-) (workspaceID, id int, user *models.User, db database.Database, ok bool) {
-	workspaceID, id, user, ok = requireWorkspaceIDAndID(w, r)
-	if !ok {
-		return
-	}
-	db, ok = h.requireWriteDB(w, r)
 	return
 }
 

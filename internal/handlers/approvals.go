@@ -5,10 +5,10 @@ import (
 	"errors"
 	"net/http"
 
-	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
 
@@ -16,17 +16,19 @@ import (
 // canceling in-flight approval requests. Approval-set CRUD is in
 // ApprovalSetHandler; this handler is the user-facing decision surface.
 type ApprovalHandler struct {
-	db              database.Database
 	permService     *services.PermissionService
 	approvalService *services.ApprovalService
+	itemRepo        *repository.ItemRepository
+	auditor         *logger.Auditor
 }
 
 // NewApprovalHandler constructs the runtime approval handler.
-func NewApprovalHandler(db database.Database, permService *services.PermissionService, approvalService *services.ApprovalService) *ApprovalHandler {
+func NewApprovalHandler(permService *services.PermissionService, approvalService *services.ApprovalService, itemRepo *repository.ItemRepository, auditor *logger.Auditor) *ApprovalHandler {
 	return &ApprovalHandler{
-		db:              db,
 		permService:     permService,
 		approvalService: approvalService,
+		itemRepo:        itemRepo,
+		auditor:         auditor,
 	}
 }
 
@@ -41,7 +43,7 @@ func (h *ApprovalHandler) GetForItem(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !CheckItemPermissionAsActor(w, r, repository.NewItemRepository(h.db), h.permService, h.approvalService, itemID, models.PermissionItemView) {
+	if !CheckItemPermissionAsActor(w, r, h.itemRepo, h.permService, h.approvalService, itemID, models.PermissionItemView) {
 		return
 	}
 
@@ -132,6 +134,12 @@ func (h *ApprovalHandler) Decide(w http.ResponseWriter, r *http.Request) {
 		respondValidationError(w, r, "Invalid request body")
 		return
 	}
+	// Approval comments are user-supplied reasoning that surfaces on the
+	// approval timeline and audit log; RichText scrubs HTML while keeping
+	// the multi-line markdown body intact.
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &body.Comment, Policy: sanitize.RichText, Label: "Comment"},
+	)
 	switch body.Decision {
 	case models.ApprovalDecisionApprove, models.ApprovalDecisionReject, models.ApprovalDecisionComment:
 		// ok
@@ -158,12 +166,16 @@ func (h *ApprovalHandler) Decide(w http.ResponseWriter, r *http.Request) {
 		respondValidationError(w, r, err.Error())
 		return
 	}
-	logAudit(h.db, r, user, logger.ActionApprovalDecide, logger.ResourceApprovalRequest, &requestID, body.Decision)
+	h.auditor.Log(r, user, logger.ActionApprovalDecide, logger.ResourceApprovalRequest, &requestID, body.Decision)
 
-	respondJSONOK(w, map[string]any{
+	resp := map[string]any{
 		"decision": decision,
 		"request":  req,
-	})
+	}
+	if len(warnings) > 0 {
+		resp["warnings"] = warnings
+	}
+	respondJSONOK(w, resp)
 }
 
 // cancelRequestBody is the JSON payload for POST /api/approvals/{id}/cancel.
@@ -192,6 +204,9 @@ func (h *ApprovalHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &body.Comment, Policy: sanitize.RichText, Label: "Comment"},
+	)
 
 	req, err := h.approvalService.GetRequest(requestID)
 	if err != nil {
@@ -209,7 +224,7 @@ func (h *ApprovalHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 	// policy in MEMORY.md: unauthorized → 404, never 409.
 	authorized := req.TriggeredByUserID == user.ID
 	if !authorized {
-		workspaceID, err := repository.NewItemRepository(h.db).GetWorkspaceID(req.ItemID)
+		workspaceID, err := h.itemRepo.GetWorkspaceID(req.ItemID)
 		if err != nil {
 			respondNotFound(w, r, "Approval request")
 			return
@@ -237,14 +252,17 @@ func (h *ApprovalHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
-	logAudit(h.db, r, user, logger.ActionApprovalCancel, logger.ResourceApprovalRequest, &requestID, "")
+	h.auditor.Log(r, user, logger.ActionApprovalCancel, logger.ResourceApprovalRequest, &requestID, "")
 
 	out, err := h.approvalService.GetRequest(requestID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
-	respondJSONOK(w, out)
+	respondJSONOK(w, struct {
+		*models.ApprovalRequest
+		Warnings []string `json:"warnings,omitempty"`
+	}{out, warnings})
 }
 
 // delegateRequestBody is the JSON payload for POST /api/approvals/{id}/delegate.
@@ -271,6 +289,9 @@ func (h *ApprovalHandler) Delegate(w http.ResponseWriter, r *http.Request) {
 		respondValidationError(w, r, "Invalid request body")
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &body.Comment, Policy: sanitize.RichText, Label: "Comment"},
+	)
 	if body.ToUserID == 0 {
 		respondValidationError(w, r, "to_user_id is required")
 		return
@@ -283,7 +304,7 @@ func (h *ApprovalHandler) Delegate(w http.ResponseWriter, r *http.Request) {
 	// Allow approvers without workspace item.view to delegate their seat — they
 	// already passed the active-pool gate at request creation, and delegation
 	// is a strictly approver-scoped action.
-	if !CheckItemPermissionAsActor(w, r, repository.NewItemRepository(h.db), h.permService, h.approvalService, itemID, models.PermissionItemView) {
+	if !CheckItemPermissionAsActor(w, r, h.itemRepo, h.permService, h.approvalService, itemID, models.PermissionItemView) {
 		return
 	}
 
@@ -291,14 +312,17 @@ func (h *ApprovalHandler) Delegate(w http.ResponseWriter, r *http.Request) {
 		respondValidationError(w, r, err.Error())
 		return
 	}
-	logAudit(h.db, r, user, logger.ActionApprovalDelegate, logger.ResourceApprovalRequest, &requestID, "")
+	h.auditor.Log(r, user, logger.ActionApprovalDelegate, logger.ResourceApprovalRequest, &requestID, "")
 
 	out, err := h.approvalService.GetRequest(requestID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
-	respondJSONOK(w, out)
+	respondJSONOK(w, struct {
+		*models.ApprovalRequest
+		Warnings []string `json:"warnings,omitempty"`
+	}{out, warnings})
 }
 
 // RefreshApprovers re-resolves the configured approver_source for a pending
@@ -324,7 +348,7 @@ func (h *ApprovalHandler) RefreshApprovers(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	if !CheckItemPermission(w, r, repository.NewItemRepository(h.db), h.permService, itemID, models.PermissionItemEdit) {
+	if !CheckItemPermission(w, r, h.itemRepo, h.permService, itemID, models.PermissionItemEdit) {
 		return
 	}
 
@@ -342,19 +366,25 @@ func (h *ApprovalHandler) RefreshApprovers(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &body.Comment, Policy: sanitize.RichText, Label: "Comment"},
+	)
 
 	if err := h.approvalService.RefreshApprovers(r.Context(), stepInstanceID, user.ID, body.Comment); err != nil {
 		respondValidationError(w, r, err.Error())
 		return
 	}
-	logAudit(h.db, r, user, logger.ActionApprovalRefresh, logger.ResourceApprovalRequest, &requestID, "")
+	h.auditor.Log(r, user, logger.ActionApprovalRefresh, logger.ResourceApprovalRequest, &requestID, "")
 
 	out, err := h.approvalService.GetRequest(requestID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
-	respondJSONOK(w, out)
+	respondJSONOK(w, struct {
+		*models.ApprovalRequest
+		Warnings []string `json:"warnings,omitempty"`
+	}{out, warnings})
 }
 
 // EscalateNow runs the configured escalation policy for a pending step
@@ -379,7 +409,7 @@ func (h *ApprovalHandler) EscalateNow(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !CheckItemPermission(w, r, repository.NewItemRepository(h.db), h.permService, itemID, models.PermissionItemEdit) {
+	if !CheckItemPermission(w, r, h.itemRepo, h.permService, itemID, models.PermissionItemEdit) {
 		return
 	}
 
@@ -393,7 +423,7 @@ func (h *ApprovalHandler) EscalateNow(w http.ResponseWriter, r *http.Request) {
 		respondValidationError(w, r, err.Error())
 		return
 	}
-	logAudit(h.db, r, user, logger.ActionApprovalEscalate, logger.ResourceApprovalRequest, &requestID, "manual")
+	h.auditor.Log(r, user, logger.ActionApprovalEscalate, logger.ResourceApprovalRequest, &requestID, "manual")
 
 	out, err := h.approvalService.GetRequest(requestID)
 	if err != nil {
@@ -410,7 +440,7 @@ func (h *ApprovalHandler) EscalateNow(w http.ResponseWriter, r *http.Request) {
 // case where a user has been added as an approver via a custom-field reference
 // without otherwise having a workspace role.
 func (h *ApprovalHandler) userCanViewRequest(user *models.User, req *models.ApprovalRequest) bool {
-	workspaceID, err := repository.NewItemRepository(h.db).GetWorkspaceID(req.ItemID)
+	workspaceID, err := h.itemRepo.GetWorkspaceID(req.ItemID)
 	if err == nil {
 		hasView, _ := h.permService.HasWorkspacePermission(user.ID, workspaceID, models.PermissionItemView)
 		if hasView {

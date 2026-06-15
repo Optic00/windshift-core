@@ -8,6 +8,7 @@
   import { confirm } from '../../composables/useConfirm.js';
   import { successToast, errorToast } from '../../stores/toasts.svelte.js';
   import { safeHref } from '../../utils/sanitize';
+  import { toExternal } from '../../runtime/contextPath.js';
 
   let { itemId, onaddlink } = $props();
 
@@ -103,7 +104,7 @@
 
   function connectIntegration() {
     // Redirect to connected accounts page
-    window.location.href = '/profile?tab=connected-accounts';
+    window.location.href = toExternal('/profile?tab=connected-accounts');
   }
 </script>
 

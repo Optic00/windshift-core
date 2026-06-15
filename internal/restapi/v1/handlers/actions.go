@@ -9,6 +9,7 @@ import (
 	"windshift/internal/repository"
 	"windshift/internal/repository/actionutil"
 	"windshift/internal/restapi"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/services/actioncatalog"
 )
@@ -80,6 +81,15 @@ func (h *ActionHandler) respondValidationErrors(w http.ResponseWriter, r *http.R
 	apiErr := restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, errs[0].Message).
 		WithDetails(map[string]any{"errors": errs})
 	restapi.RespondError(w, r, apiErr)
+}
+
+// actionResponse wraps *models.Action with the sanitize warnings the
+// handler stamps on create / update responses. The action fields flow
+// through as the top-level JSON shape; Warnings (omitempty) lands
+// alongside.
+type actionResponse struct {
+	*models.Action
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // actionDefinitionRequest is the wire shape clients send to create/update/
@@ -292,6 +302,10 @@ func (h *ActionHandler) CreateAction(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
+	)
 
 	def := req.toDefinition()
 	if errs := actioncatalog.Validate(actioncatalog.Default(), def, workspaceID, h); len(errs) > 0 {
@@ -337,7 +351,7 @@ func (h *ActionHandler) CreateAction(w http.ResponseWriter, r *http.Request) {
 		h.RespondInternalError(w, r)
 		return
 	}
-	h.RespondCreated(w, created)
+	h.RespondCreated(w, actionResponse{Action: created, Warnings: warnings})
 }
 
 // UpdateAction handles PUT /rest/api/v1/workspaces/{id}/actions/{actionId}
@@ -378,6 +392,10 @@ func (h *ActionHandler) UpdateAction(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
+	)
 
 	def := req.toDefinition()
 	if errs := actioncatalog.Validate(actioncatalog.Default(), def, workspaceID, h); len(errs) > 0 {
@@ -404,7 +422,7 @@ func (h *ActionHandler) UpdateAction(w http.ResponseWriter, r *http.Request) {
 		h.RespondInternalError(w, r)
 		return
 	}
-	h.RespondOK(w, updated)
+	h.RespondOK(w, actionResponse{Action: updated, Warnings: warnings})
 }
 
 // validateActionResponse is the structured payload returned by the
@@ -435,6 +453,10 @@ func (h *ActionHandler) ValidateAction(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
+	)
 	errs := actioncatalog.Validate(actioncatalog.Default(), req.toDefinition(), workspaceID, h)
 	if errs == nil {
 		errs = actioncatalog.ValidationErrors{}

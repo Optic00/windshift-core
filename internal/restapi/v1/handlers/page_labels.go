@@ -8,8 +8,8 @@ import (
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
-	"windshift/internal/utils"
 )
 
 // PageLabelHandler exposes workspace page-label CRUD and page↔label
@@ -171,7 +171,7 @@ func (h *PageLabelHandler) CreateLabel(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
-	name := utils.SanitizeName(req.Name)
+	name := sanitize.ShortIdentifier.Sanitize(req.Name)
 	if !h.ValidateRequiredString(w, r, name, "name") {
 		return
 	}
@@ -258,7 +258,7 @@ func (h *PageLabelHandler) UpdateLabel(w http.ResponseWriter, r *http.Request) {
 
 	name := existing.Name
 	if req.Name != nil {
-		name = utils.SanitizeName(*req.Name)
+		name = sanitize.ShortIdentifier.Sanitize(*req.Name)
 		if name == "" {
 			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeMissingField, "name is required"))
 			return

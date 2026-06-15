@@ -1,14 +1,31 @@
 #!/bin/bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Source local .env if present (for APPLE_SIGNING_IDENTITY, APPLE_PASSWORD_OP_REF, etc.)
+for env_file in "$SCRIPT_DIR/.env" "$SCRIPT_DIR/../desktop/.env"; do
+    if [ -f "$env_file" ]; then
+        set -a; source "$env_file"; set +a
+    fi
+done
+
 # =============================================================================
 # Windshift Release Script
 # =============================================================================
 
 # Configuration
 GHCR_REGISTRY="ghcr.io/windshiftapp/windshift"
+WS_CARRIER_GHCR_REGISTRY="ghcr.io/windshiftapp/ws-carrier"
+AGENT_GHCR_REGISTRY="ghcr.io/windshiftapp/windshift-agent"
+RUNNER_GHCR_REGISTRY="ghcr.io/windshiftapp/windshift-runner"
 GITHUB_REPO="Windshiftapp/windshift"
 DOCKER_PLATFORMS="linux/amd64,linux/arm64"
+# The thin no-node windshift-agent lives in a sibling repo; its image is built
+# from that checkout, lifting `ws` from the ws-carrier image this
+# release just built. Override the path if your layout differs; the build is
+# skipped (with a warning) when the checkout is absent.
+WINDSHIFT_AGENT_DIR="${WINDSHIFT_AGENT_DIR:-../windshift-agent}"
 
 # Build configurations: GOOS/GOARCH
 PLATFORMS=(
@@ -29,6 +46,9 @@ SKIP_DESKTOP=false
 CONFIRM=true
 TAG_CREATED=false
 SKIP_SECURITY_CHECKS=false
+# Set by cmd_release: official releases must not ship an unsigned/un-notarized
+# DMG, so missing signing config becomes a hard failure instead of a warning.
+REQUIRE_SIGNED_DMG=false
 
 # Colors
 RED='\033[0;31m'
@@ -305,10 +325,18 @@ build_binaries() {
 
     dry_run_or_exec mkdir -p dist/binaries
 
+    local failed_platforms=()
     for platform in "${PLATFORMS[@]}"; do
         IFS="/" read -r goos goarch <<< "$platform"
-        build_binary "$goos" "$goarch" || true
+        build_binary "$goos" "$goarch" || failed_platforms+=("$platform")
     done
+
+    if [ ${#failed_platforms[@]} -gt 0 ]; then
+        for platform in "${failed_platforms[@]}"; do
+            log_error "Server binary build failed for ${platform}"
+        done
+        die "Server binary builds failed for ${#failed_platforms[@]} platform(s)"
+    fi
 
     log_success "Server binary builds complete"
 }
@@ -347,10 +375,18 @@ build_ws_binaries() {
 
     dry_run_or_exec mkdir -p dist/binaries
 
+    local failed_platforms=()
     for platform in "${PLATFORMS[@]}"; do
         IFS="/" read -r goos goarch <<< "$platform"
-        build_ws_binary "$goos" "$goarch" || true
+        build_ws_binary "$goos" "$goarch" || failed_platforms+=("$platform")
     done
+
+    if [ ${#failed_platforms[@]} -gt 0 ]; then
+        for platform in "${failed_platforms[@]}"; do
+            log_error "ws CLI binary build failed for ${platform}"
+        done
+        die "ws CLI binary builds failed for ${#failed_platforms[@]} platform(s)"
+    fi
 
     log_success "ws CLI binary builds complete"
 }
@@ -479,12 +515,32 @@ build_desktop_mac() {
 
     check_desktop_dependencies
 
+    # Resolve Apple app-specific password from 1Password if configured.
+    # APPLE_PASSWORD_OP_REF is the 1Password item ID.
+    if [ -z "${APPLE_PASSWORD:-}" ] && [ -n "${APPLE_PASSWORD_OP_REF:-}" ]; then
+        if ! command -v op >/dev/null 2>&1; then
+            die "APPLE_PASSWORD_OP_REF is set but 1Password CLI (op) is not installed."
+        fi
+        APPLE_PASSWORD=$(op item get "$APPLE_PASSWORD_OP_REF" --fields label=password --reveal) || {
+            die "Failed to read APPLE_PASSWORD from 1Password (item: $APPLE_PASSWORD_OP_REF). Is 'op' signed in?"
+        }
+        export APPLE_PASSWORD
+    fi
+
     # Surface the signing posture so a silent unsigned build doesn't surprise anyone.
-    # Logged before the dry-run guard so dry-run reflects the actual outcome.
+    # Checked before the dry-run guard so dry-run reflects the actual outcome.
+    # For 'release' (REQUIRE_SIGNED_DMG) an unsigned or un-notarized DMG is a
+    # hard failure — use --skip-desktop to release without a DMG instead.
     if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
+        if [ "$REQUIRE_SIGNED_DMG" = true ]; then
+            die "APPLE_SIGNING_IDENTITY not set — refusing to publish an UNSIGNED DMG in an official release. Set the signing env vars or pass --skip-desktop."
+        fi
         log_warn "APPLE_SIGNING_IDENTITY not set — DMG will be UNSIGNED."
         log_warn "  Users will see \"App is damaged\" on first open; they'll need to right-click → Open."
     elif [ -z "${APPLE_ID:-}" ] || [ -z "${APPLE_PASSWORD:-}" ] || [ -z "${APPLE_TEAM_ID:-}" ]; then
+        if [ "$REQUIRE_SIGNED_DMG" = true ]; then
+            die "APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID not all set — refusing to publish a non-notarized DMG in an official release. Set the notarization env vars or pass --skip-desktop."
+        fi
         log_warn "APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID not all set — DMG will be SIGNED but NOT notarized."
     else
         log_info "Signing identity: $APPLE_SIGNING_IDENTITY (will notarize via notarytool)"
@@ -607,13 +663,18 @@ write_release_provenance() {
         echo ""
         echo "Docker base image references"
         echo "----------------------------"
+        echo "Dockerfile:"
         grep '^FROM ' Dockerfile || true
+        echo ""
+        echo "deploy/coding-agent/Dockerfile:"
+        grep '^FROM ' deploy/coding-agent/Dockerfile || true
         if command -v docker >/dev/null 2>&1; then
             echo ""
             echo "Resolved base image digests at build time"
             echo "-----------------------------------------"
-            docker buildx imagetools inspect node:25-alpine 2>/dev/null | grep -E 'Name:|Digest:' || true
-            docker buildx imagetools inspect golang:1.26.3-alpine 2>/dev/null | grep -E 'Name:|Digest:' || true
+            for image in node:25-alpine golang:1.26.3-alpine golang:1.26-bookworm node:lts-slim; do
+                docker buildx imagetools inspect "$image" 2>/dev/null | grep -E 'Name:|Digest:' || true
+            done
         fi
     } > "$provenance"
 
@@ -652,41 +713,102 @@ ensure_buildx() {
     fi
 }
 
+build_docker_image() {
+    local image="$1"
+    local dockerfile="$2"
+    local label="$3"
+    local include_version_args="$4"
+
+    local tags=("-t" "${image}:${VERSION}")
+
+    # Only tag as latest for official releases (not dev/test versions)
+    if [[ ! "$VERSION" =~ -dev|-test|-rc ]]; then
+        tags+=("-t" "${image}:latest")
+    fi
+
+    log_info "Building ${label}: ${image}:${VERSION}"
+    log_info "  Dockerfile: ${dockerfile}"
+
+    if [ "$DRY_RUN" = true ]; then
+        log_info "[DRY-RUN] Would build and push ${label} Docker image (${image}:${VERSION})"
+        return 0
+    fi
+
+    local args=(
+        "buildx" "build"
+        "--platform" "$DOCKER_PLATFORMS"
+        "-f" "$dockerfile"
+    )
+
+    if [ "$include_version_args" = true ]; then
+        local git_commit=$(git rev-parse --short HEAD)
+        local build_date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+        args+=(
+            "--build-arg" "VERSION=${VERSION}"
+            "--build-arg" "RELEASE_NAME=${RELEASE_NAME}"
+            "--build-arg" "COMMIT=${git_commit}"
+            "--build-arg" "BUILD_DATE=${build_date}"
+        )
+    fi
+
+    docker "${args[@]}" "${tags[@]}" --push .
+
+    log_success "${label} Docker image pushed to ${image}"
+}
+
+# build_agent_image builds the thin no-node windshift-agent image from the
+# sibling repo (WINDSHIFT_AGENT_DIR), lifting `ws` from the ws-carrier
+# image this release just built (so the agent and runner ship matched). Skips
+# with a warning when the checkout is absent so a server-only release still
+# completes.
+build_agent_image() {
+    local image="$AGENT_GHCR_REGISTRY"
+    local ws_image="${WS_CARRIER_GHCR_REGISTRY}:${VERSION}"
+    local ctx="$WINDSHIFT_AGENT_DIR"
+
+    if [ ! -d "$ctx" ]; then
+        log_warn "windshift-agent checkout not found at ${ctx}; skipping agent image (set WINDSHIFT_AGENT_DIR)"
+        return 0
+    fi
+
+    local tags=("-t" "${image}:${VERSION}")
+    if [[ ! "$VERSION" =~ -dev|-test|-rc ]]; then
+        tags+=("-t" "${image}:latest")
+    fi
+
+    log_info "Building windshift-agent: ${image}:${VERSION}"
+    log_info "  Context: ${ctx}  (WS_IMAGE=${ws_image})"
+
+    if [ "$DRY_RUN" = true ]; then
+        log_info "[DRY-RUN] Would build and push windshift-agent image (${image}:${VERSION}) from ${ctx}"
+        return 0
+    fi
+
+    docker buildx build \
+        --platform "$DOCKER_PLATFORMS" \
+        --build-arg "WS_IMAGE=${ws_image}" \
+        "${tags[@]}" --push "$ctx"
+
+    log_success "windshift-agent Docker image pushed to ${image}"
+}
+
 build_docker() {
     log_step "8/9" "Building Docker images..."
 
     check_docker
     ensure_buildx
 
-    local tags="-t ${GHCR_REGISTRY}:${VERSION}"
-
-    # Only tag as latest for official releases (not dev/test versions)
-    if [[ ! "$VERSION" =~ -dev|-test|-rc ]]; then
-        tags="$tags -t ${GHCR_REGISTRY}:latest"
-    fi
-
     log_info "Platforms: ${DOCKER_PLATFORMS}"
-    log_info "Tags: ${GHCR_REGISTRY}:${VERSION}"
+    log_info "Server tags: ${GHCR_REGISTRY}:${VERSION}"
+    log_info "ws-carrier tags: ${WS_CARRIER_GHCR_REGISTRY}:${VERSION}"
+    log_info "Runner tags: ${RUNNER_GHCR_REGISTRY}:${VERSION}"
+    log_info "Agent tags: ${AGENT_GHCR_REGISTRY}:${VERSION}"
 
-    if [ "$DRY_RUN" = true ]; then
-        log_info "[DRY-RUN] Would build and push Docker images"
-        return 0
-    fi
-
-    local git_commit=$(git rev-parse --short HEAD)
-    local build_date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-
-    docker buildx build \
-        --platform "$DOCKER_PLATFORMS" \
-        --build-arg VERSION="${VERSION}" \
-        --build-arg RELEASE_NAME="$RELEASE_NAME" \
-        --build-arg COMMIT="$git_commit" \
-        --build-arg BUILD_DATE="$build_date" \
-        $tags \
-        --push \
-        .
-
-    log_success "Docker images pushed to ${GHCR_REGISTRY}"
+    build_docker_image "$GHCR_REGISTRY" "Dockerfile" "Windshift server" true
+    build_docker_image "$WS_CARRIER_GHCR_REGISTRY" "deploy/coding-agent/Dockerfile" "ws-carrier (WS_IMAGE for windshift-agent)" false
+    build_docker_image "$RUNNER_GHCR_REGISTRY" "deploy/windshift-runner/Dockerfile" "windshift-runner" false
+    # Built last: it lifts ws from the ws-carrier image pushed above.
+    build_agent_image
 }
 
 create_github_release() {
@@ -763,7 +885,7 @@ cmd_push() {
         echo "=============================="
         echo "This will:"
         echo "  - Build frontend"
-        echo "  - Build and push Docker images to ${GHCR_REGISTRY}"
+        echo "  - Build and push Docker images to ${GHCR_REGISTRY}, ${WS_CARRIER_GHCR_REGISTRY}, ${RUNNER_GHCR_REGISTRY}, and ${AGENT_GHCR_REGISTRY}"
         echo ""
         echo "Note: This does NOT create a GitHub release."
         echo ""
@@ -781,7 +903,11 @@ cmd_push() {
     echo ""
     log_success "Push complete!"
     echo ""
-    echo "Docker image: ${GHCR_REGISTRY}:${VERSION}"
+    echo "Docker images:"
+    echo "  ${GHCR_REGISTRY}:${VERSION}"
+    echo "  ${WS_CARRIER_GHCR_REGISTRY}:${VERSION}"
+    echo "  ${RUNNER_GHCR_REGISTRY}:${VERSION}"
+    echo "  ${AGENT_GHCR_REGISTRY}:${VERSION}"
 }
 
 cmd_release() {
@@ -800,6 +926,8 @@ cmd_release() {
     check_git_state
     determine_version
 
+    REQUIRE_SIGNED_DMG=true
+
     if [ "$CONFIRM" = true ] && [ "$DRY_RUN" = false ]; then
         echo ""
         echo "Windshift Release: $VERSION"
@@ -812,7 +940,7 @@ cmd_release() {
         if [ "$SKIP_DESKTOP" != true ] && [ "$(uname)" = "Darwin" ]; then
             echo "  - Build macOS desktop DMG (arm64)"
         fi
-        echo "  - Build and push Docker image"
+        echo "  - Build and push Docker images (server + coding-agent runner + windshift-runner + windshift-agent)"
         echo "  - Create git tag and push"
         echo "  - Create GitHub release with assets"
         echo ""
@@ -842,7 +970,11 @@ cmd_release() {
     log_success "Release $VERSION complete!"
     echo ""
     echo "GitHub: https://github.com/${GITHUB_REPO}/releases/tag/${VERSION}"
-    echo "Docker: docker pull ${GHCR_REGISTRY}:${VERSION}"
+    echo "Docker:"
+    echo "  docker pull ${GHCR_REGISTRY}:${VERSION}"
+    echo "  docker pull ${WS_CARRIER_GHCR_REGISTRY}:${VERSION}"
+    echo "  docker pull ${RUNNER_GHCR_REGISTRY}:${VERSION}"
+    echo "  docker pull ${AGENT_GHCR_REGISTRY}:${VERSION}"
 }
 
 # =============================================================================
@@ -876,10 +1008,15 @@ Desktop signing (optional, only consulted when running on macOS):
   APPLE_SIGNING_IDENTITY  Developer ID Application cert name in your keychain
   APPLE_ID                Apple ID email (for notarization)
   APPLE_PASSWORD          App-specific password (for notarization)
+  APPLE_PASSWORD_OP_REF   1Password item ID — alternative to APPLE_PASSWORD
   APPLE_TEAM_ID           Apple Developer team ID (for notarization)
   RELEASE_GPG_KEY         Optional GPG key id/email used to sign SHA256SUMS.txt
-  When unset, the DMG is produced unsigned and unnotarized — Gatekeeper will
-  block double-click on download, users must right-click → Open.
+  For 'build' and 'push': when unset, the DMG is produced unsigned and
+  unnotarized — Gatekeeper will block double-click on download, users must
+  right-click → Open.
+  For 'release': all signing/notarization vars are REQUIRED (the release
+  aborts rather than publish an unsigned DMG); pass --skip-desktop to
+  release without a DMG.
 
 Examples:
   # Quick Docker push for testing

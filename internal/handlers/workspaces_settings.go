@@ -11,8 +11,38 @@ import (
 
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
+
+// sanitizeHomepageLayout scrubs the user-supplied strings on a homepage
+// layout payload. Section Title + Subtitle render as homepage headings;
+// section/widget IDs are client-generated UUIDs but get echoed back in
+// validation errors, so they're bounded as identifiers. Widget Type is
+// enum-validated against the registry and Config is a JSON blob consumed
+// per-widget, so both stay untouched.
+func sanitizeHomepageLayout(layout *models.WorkspaceHomepageLayout) {
+	for i := range layout.Sections {
+		sanitize.ApplyAll(
+			sanitize.Pair{Target: &layout.Sections[i].ID, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: &layout.Sections[i].Title, Policy: sanitize.PlainTextField},
+			sanitize.Pair{Target: &layout.Sections[i].Subtitle, Policy: sanitize.PlainTextField},
+		)
+		// WidgetIDs carries the same client-generated UUIDs as widget.ID,
+		// stored verbatim and echoed back on GET, so each element gets the
+		// same identifier bound.
+		for j := range layout.Sections[i].WidgetIDs {
+			sanitize.Apply(&layout.Sections[i].WidgetIDs[j], sanitize.ShortIdentifier)
+		}
+	}
+	for i := range layout.Widgets {
+		sanitize.ApplyAll(
+			sanitize.Pair{Target: &layout.Widgets[i].ID, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: &layout.Widgets[i].SectionID, Policy: sanitize.ShortIdentifier},
+		)
+	}
+	sanitize.Apply(&layout.BackgroundImageURL, sanitize.PlainTextField)
+}
 
 // requireWorkspacePermission checks authentication and workspace-level permission in one step.
 // It writes the appropriate error response and returns nil, false when the check fails.
@@ -95,6 +125,7 @@ func (h *WorkspaceHandler) UpdateHomepageLayout(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
+	sanitizeHomepageLayout(&layout)
 
 	// Validate widgets. Keep this list in sync with
 	// frontend/src/lib/services/widgetRegistry.js — types missing a frontend

@@ -51,6 +51,7 @@ export default {
       relatedItems: 'لكل عنصر مرتبط',
       transitionItem: 'نقل العنصر',
       roundRobinAssign: 'تعيين بالتناوب',
+      createMilestone: 'إنشاء معلم',
     },
 
     aiUpdated: 'تم تحديث الإجراء بواسطة الذكاء الاصطناعي',
@@ -105,6 +106,8 @@ export default {
       sourceTypeLiteral: 'قيمة ثابتة',
       selectTargetField: 'اختر الحقل المستهدف...',
       addMapping: 'إضافة تعيين',
+      milestonePickerHint: 'يخزن معرّفات المعالم للإجراء؛ تظهر الأسماء عند التحرير فقط.',
+      userPickerHint: 'اختر مستخدمًا محددًا أو اكتب معرّف مستخدم/قالبًا أدناه.',
       // Create Asset config
       assetSet: 'مجموعة الأصول',
       selectAssetSet: 'اختر مجموعة الأصول...',

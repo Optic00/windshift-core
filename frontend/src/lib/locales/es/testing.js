@@ -165,6 +165,7 @@ export default {
     deleteTestRun: 'Eliminar ejecucion de prueba',
     deleteRunConfirm: 'Esta seguro de que desea eliminar "{name}"?',
     failedToDeleteRun: 'No se pudo eliminar la ejecucion de prueba',
+    failedToCreateRun: 'No se pudo crear la ejecucion de prueba',
     noTestRunsYet: 'Aun no hay ejecuciones de prueba',
     createTestRunToExecute:
       'Cree una ejecucion de prueba para comenzar a ejecutar casos de prueba.',

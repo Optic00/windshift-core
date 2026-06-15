@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 
-	"windshift/internal/database"
 	"windshift/internal/repository"
 	"windshift/internal/services"
 )
@@ -35,8 +34,8 @@ type testSCMInjectRefHandler struct {
 // returned http.Handler only when WINDSHIFT_E2E_TEST_HOOKS=1 — the
 // gate lives at the call site so the build never compiles a route
 // that would still register itself under prod conditions.
-func NewTestSCMInjectRef(db database.Database, as *services.ActionService) http.Handler {
-	return &testSCMInjectRefHandler{svc: services.NewTestSCMHookService(db, as)}
+func NewTestSCMInjectRef(svc *services.TestSCMHookService) http.Handler {
+	return &testSCMInjectRefHandler{svc: svc}
 }
 
 func (h *testSCMInjectRefHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -97,8 +96,8 @@ type testSetupMockRepoHandler struct {
 // NewTestSetupMockRepo returns the http.Handler that seeds the
 // SCM-side rows. Same env-gate as inject-ref — server.go mounts both
 // behind WINDSHIFT_E2E_TEST_HOOKS=1.
-func NewTestSetupMockRepo(db database.Database) http.Handler {
-	return &testSetupMockRepoHandler{svc: services.NewTestSCMHookService(db, nil)}
+func NewTestSetupMockRepo(svc *services.TestSCMHookService) http.Handler {
+	return &testSetupMockRepoHandler{svc: svc}
 }
 
 func (h *testSetupMockRepoHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {

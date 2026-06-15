@@ -1,5 +1,5 @@
 <script>
-  import GenericActionListManager from '../actions/shared/GenericActionListManager.svelte';
+  import GenericManager from '../../managers/GenericManager.svelte';
 
   let {
     actions = [],
@@ -16,11 +16,11 @@
     'document_classified': 'Document Classified',
     'content_keyword': 'Content Keyword',
     'mime_type': 'MIME Type',
-    'manual': 'Manual',
+    manual: 'Manual',
   };
 </script>
 
-<GenericActionListManager
+<GenericManager
   {actions}
   {loading}
   {triggerLabels}

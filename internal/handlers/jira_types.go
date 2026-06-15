@@ -170,6 +170,7 @@ type StartImportRequest struct {
 	ProjectKeys    []string       `json:"project_keys"`
 	OpenIssuesOnly bool           `json:"open_issues_only"`
 	Mappings       ImportMappings `json:"mappings"`
+	ForceReimport  bool           `json:"force_reimport,omitempty"`
 }
 
 // VersionMapping maps a Jira version to a Windshift milestone
@@ -248,6 +249,8 @@ type ImportProgress struct {
 	ImportedAttachments int    `json:"imported_attachments"`
 	TotalComments       int    `json:"total_comments"`
 	ImportedComments    int    `json:"imported_comments"`
+	TotalWorklogs       int    `json:"total_worklogs"`
+	ImportedWorklogs    int    `json:"imported_worklogs"`
 }
 
 // StartImportResponse is returned when starting an import
@@ -267,19 +270,30 @@ type ConnectionInfo struct {
 	LastUsedAt     *time.Time `json:"last_used_at,omitempty"`
 }
 
+// ImportedWorkspaceInfo summarizes a workspace that was mapped by an import job.
+type ImportedWorkspaceInfo struct {
+	ID   int    `json:"id"`
+	Key  string `json:"key"`
+	Name string `json:"name"`
+}
+
 // ImportJobInfo represents an import job for the UI
 type ImportJobInfo struct {
-	ID           string                 `json:"id"`
-	ConnectionID string                 `json:"connection_id"`
-	InstanceURL  string                 `json:"instance_url,omitempty"`
-	InstanceName string                 `json:"instance_name,omitempty"`
-	Status       string                 `json:"status"`
-	Phase        string                 `json:"phase,omitempty"`
-	Scope        string                 `json:"scope"`
-	Progress     map[string]interface{} `json:"progress,omitempty"`
-	Result       map[string]interface{} `json:"result,omitempty"`
-	ErrorMessage string                 `json:"error_message,omitempty"`
-	CreatedAt    time.Time              `json:"created_at"`
-	StartedAt    *time.Time             `json:"started_at,omitempty"`
-	CompletedAt  *time.Time             `json:"completed_at,omitempty"`
+	ID                     string                  `json:"id"`
+	ConnectionID           string                  `json:"connection_id"`
+	InstanceURL            string                  `json:"instance_url,omitempty"`
+	InstanceName           string                  `json:"instance_name,omitempty"`
+	Status                 string                  `json:"status"`
+	Phase                  string                  `json:"phase,omitempty"`
+	Scope                  string                  `json:"scope"`
+	ProjectKeys            []string                `json:"project_keys,omitempty"`
+	ImportedWorkspaces     []ImportedWorkspaceInfo `json:"imported_workspaces,omitempty"`
+	ImportedWorkspaceCount int                     `json:"imported_workspace_count"`
+	ImportedItemCount      int                     `json:"imported_item_count"`
+	Progress               map[string]interface{}  `json:"progress,omitempty"`
+	Result                 map[string]interface{}  `json:"result,omitempty"`
+	ErrorMessage           string                  `json:"error_message,omitempty"`
+	CreatedAt              time.Time               `json:"created_at"`
+	StartedAt              *time.Time              `json:"started_at,omitempty"`
+	CompletedAt            *time.Time              `json:"completed_at,omitempty"`
 }

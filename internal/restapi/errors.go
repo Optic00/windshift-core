@@ -33,6 +33,10 @@ const (
 	ErrCodeTestSetNotFound         = "TEST_SET_NOT_FOUND"
 	ErrCodePortalNotFound          = "PORTAL_NOT_FOUND"
 	ErrCodeAssetNotFound           = "ASSET_NOT_FOUND"
+	ErrCodeAssetSetNotFound        = "ASSET_SET_NOT_FOUND"
+	ErrCodeAssetTypeNotFound       = "ASSET_TYPE_NOT_FOUND"
+	ErrCodeAssetCategoryNotFound   = "ASSET_CATEGORY_NOT_FOUND"
+	ErrCodeAssetStatusNotFound     = "ASSET_STATUS_NOT_FOUND"
 	ErrCodeConflict                = "CONFLICT"
 	ErrCodeAlreadyExists           = "ALREADY_EXISTS"
 
@@ -99,6 +103,10 @@ var (
 	ErrTestSetNotFound         = NewAPIError(http.StatusNotFound, ErrCodeTestSetNotFound, "Test set not found")
 	ErrPortalNotFound          = NewAPIError(http.StatusNotFound, ErrCodePortalNotFound, "Portal not found")
 	ErrAssetNotFound           = NewAPIError(http.StatusNotFound, ErrCodeAssetNotFound, "Asset not found")
+	ErrAssetSetNotFound        = NewAPIError(http.StatusNotFound, ErrCodeAssetSetNotFound, "Asset set not found")
+	ErrAssetTypeNotFound       = NewAPIError(http.StatusNotFound, ErrCodeAssetTypeNotFound, "Asset type not found")
+	ErrAssetCategoryNotFound   = NewAPIError(http.StatusNotFound, ErrCodeAssetCategoryNotFound, "Asset category not found")
+	ErrAssetStatusNotFound     = NewAPIError(http.StatusNotFound, ErrCodeAssetStatusNotFound, "Asset status not found")
 	ErrPluginsDisabled         = NewAPIError(http.StatusForbidden, ErrCodePluginsDisabled, "Plugin system is disabled")
 	ErrValidationFailed        = NewAPIError(http.StatusBadRequest, ErrCodeValidationFailed, "Validation failed")
 	ErrInvalidInput            = NewAPIError(http.StatusBadRequest, ErrCodeInvalidInput, "Invalid input")

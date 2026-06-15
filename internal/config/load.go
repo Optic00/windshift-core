@@ -4,6 +4,7 @@ import (
 	"embed"
 	"flag"
 	"log/slog"
+	"net/url"
 	"os"
 	"strings"
 
@@ -21,35 +22,38 @@ import (
 func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 	// Flag definitions mirror the historic main.go flags verbatim.
 	var (
-		portFlag                = flag.String("port", "8080", "Port to run the HTTP server on")
-		portShort               = flag.String("p", "8080", "Port to run the HTTP server on (shorthand)")
-		dbPath                  = flag.String("db", "windshift.db", "Database file path (SQLite)")
-		postgresConn            = flag.String("postgres-connection-string", "", "PostgreSQL connection string")
-		postgresConnShort       = flag.String("pg-conn", "", "PostgreSQL connection string (shorthand)")
-		attachmentPath          = flag.String("attachment-path", "", "Path to store attachments")
-		disableCSRF             = flag.Bool("no-csrf", false, "Disable CSRF protection (development only)")
-		allowedHosts            = flag.String("allowed-hosts", "", "Comma-separated allowed hostnames for CSRF")
-		allowedPort             = flag.String("allowed-port", "", "Port for CORS/WebAuthn trusted origins")
-		oidcAllowedPrivateCIDRs = flag.String("oidc-allowed-private-cidrs", "", "Comma-separated private/CGNAT CIDRs that OIDC discovery, JWKS, and token calls may dial")
-		useProxy                = flag.Bool("use-proxy", false, "Enable proxy mode (trust X-Forwarded-Proto from private IPs)")
-		baseURL                 = flag.String("base-url", "", "Public URL for the server")
-		additionalProxies       = flag.String("additional-proxies", "", "Additional proxy IPs to trust")
-		enableSSH               = flag.Bool("ssh", false, "Enable SSH TUI server")
-		enableMCP               = flag.Bool("mcp", false, "Enable MCP server at /mcp")
-		sshPort                 = flag.String("ssh-port", "23234", "SSH server port")
-		sshHost                 = flag.String("ssh-host", "localhost", "SSH server host")
-		sshKeyPath              = flag.String("ssh-key", ".ssh/windshift_host_key", "SSH host key file path")
-		maxReadConns            = flag.Int("max-read-conns", 120, "Max read connections")
-		maxWriteConns           = flag.Int("max-write-conns", 1, "Max write connections")
-		logLevel                = flag.String("log-level", "info", "Log level (debug, info, warn, error)")
-		logFormat               = flag.String("log-format", "text", "Log format (text, json, logfmt)")
-		tlsCertPath             = flag.String("tls-cert", "", "TLS certificate file path")
-		tlsKeyPath              = flag.String("tls-key", "", "TLS key file path")
-		disablePlugins          = flag.Bool("disable-plugins", false, "Disable the plugin system")
-		disableIPRateLimit      = flag.Bool("disable-ip-rate-limit", false, "Disable IP-based rate limiting")
-		enableAdminFallback     = flag.Bool("enable-fallback", false, "Enable admin password fallback")
-		llmProvidersFile        = flag.String("llm-providers", "", "Path to custom LLM providers JSON file")
-		aiPromptsDir            = flag.String("ai-prompts-dir", "", "Directory of custom AI prompt override files")
+		portFlag              = flag.String("port", "8080", "Port to run the HTTP server on")
+		portShort             = flag.String("p", "8080", "Port to run the HTTP server on (shorthand)")
+		dbPath                = flag.String("db", "windshift.db", "Database file path (SQLite)")
+		postgresConn          = flag.String("postgres-connection-string", "", "PostgreSQL connection string")
+		postgresConnShort     = flag.String("pg-conn", "", "PostgreSQL connection string (shorthand)")
+		attachmentPath        = flag.String("attachment-path", "", "Path to store attachments")
+		disableCSRF           = flag.Bool("no-csrf", false, "Disable CSRF protection (development only)")
+		allowLocalConnections = flag.Bool("allow-local-connections", false, "Allow server-side HTTP clients (SCM, Jira, LLM, webhooks) to reach loopback/private IPs — for self-hosted/internal endpoints")
+		allowedHosts          = flag.String("allowed-hosts", "", "Comma-separated allowed hostnames for CSRF")
+		allowedPort           = flag.String("allowed-port", "", "Port for CORS/WebAuthn trusted origins")
+		useProxy              = flag.Bool("use-proxy", false, "Enable proxy mode (trust X-Forwarded-Proto from private IPs)")
+		allowInsecureHTTP     = flag.Bool("allow-insecure-http", false, "Allow browser access via plain http on non-localhost origins — trusted LANs/testing only")
+		baseURL               = flag.String("base-url", "", "Public URL for the server")
+		contextPath           = flag.String("context-path", "", "Public context path to serve Windshift under, e.g. /windshift")
+		additionalProxies     = flag.String("additional-proxies", "", "Additional proxy IPs to trust")
+		enableSSH             = flag.Bool("ssh", false, "Enable SSH TUI server")
+		enableMCP             = flag.Bool("mcp", false, "Enable MCP server at /mcp")
+		sshPort               = flag.String("ssh-port", "23234", "SSH server port")
+		sshHost               = flag.String("ssh-host", "localhost", "SSH server host")
+		sshKeyPath            = flag.String("ssh-key", ".ssh/windshift_host_key", "SSH host key file path")
+		maxReadConns          = flag.Int("max-read-conns", 120, "Max read connections")
+		maxWriteConns         = flag.Int("max-write-conns", 1, "Max write connections")
+		logLevel              = flag.String("log-level", "info", "Log level (debug, info, warn, error)")
+		logFormat             = flag.String("log-format", "text", "Log format (text, json, logfmt)")
+		tlsCertPath           = flag.String("tls-cert", "", "TLS certificate file path")
+		tlsKeyPath            = flag.String("tls-key", "", "TLS key file path")
+		disablePlugins        = flag.Bool("disable-plugins", false, "Disable the plugin system")
+		disableIPRateLimit    = flag.Bool("disable-ip-rate-limit", false, "Disable IP-based rate limiting")
+		enableAdminFallback   = flag.Bool("enable-fallback", false, "Enable admin password fallback")
+		enableCodingAgent     = flag.Bool("enable-coding-agent", false, "Enable the coding-agent harness")
+		llmProvidersFile      = flag.String("llm-providers", "", "Path to custom LLM providers JSON file")
+		aiPromptsDir          = flag.String("ai-prompts-dir", "", "Directory of custom AI prompt override files")
 	)
 	flag.Parse()
 
@@ -88,12 +92,19 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 		resolvedBaseURL = os.Getenv("BASE_URL")
 	}
 
+	resolvedContextPath := *contextPath
+	if resolvedContextPath == "" {
+		resolvedContextPath = os.Getenv("WINDSHIFT_CONTEXT_PATH")
+	}
+	resolvedContextPath = normalizeContextPath(resolvedContextPath)
+
 	// Booleans: flag OR env.
 	sshEnabled := *enableSSH || parseBoolEnv("SSH_ENABLED")
 	mcpEnabled := *enableMCP || parseBoolEnv("MCP_ENABLED")
 	pluginsDisabled := *disablePlugins || parseBoolEnv("DISABLE_PLUGINS")
 	ipRateLimitDisabled := *disableIPRateLimit || parseBoolEnv("DISABLE_IP_RATE_LIMIT")
 	adminFallbackEnabled := *enableAdminFallback || parseBoolEnv("ENABLE_ADMIN_FALLBACK")
+	codingAgentEnabled := *enableCodingAgent || parseBoolEnv("CODING_AGENT_ENABLED")
 
 	resolvedSSHPort := firstNonEmpty(os.Getenv("SSH_PORT"), *sshPort)
 	resolvedSSHHost := firstNonEmpty(os.Getenv("SSH_HOST"), *sshHost)
@@ -112,7 +123,6 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 		useProxyExplicit = true
 	}
 	resolvedAdditionalProxies := firstNonEmpty(os.Getenv("ADDITIONAL_PROXIES"), *additionalProxies)
-	resolvedOIDCAllowedPrivateCIDRs := firstNonEmpty(os.Getenv("OIDC_ALLOWED_PRIVATE_CIDRS"), *oidcAllowedPrivateCIDRs)
 
 	resolvedPluginDir := firstNonEmpty(os.Getenv("PLUGIN_DIR"), "")
 	var extraPluginDirs []string
@@ -154,6 +164,7 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 	return Config{
 		Port:              port,
 		BaseURL:           resolvedBaseURL,
+		ContextPath:       resolvedContextPath,
 		AllowedHosts:      resolvedAllowedHosts,
 		AllowedPort:       *allowedPort,
 		UseProxy:          proxyVal,
@@ -162,6 +173,9 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 		TLSCertPath:       *tlsCertPath,
 		TLSKeyPath:        *tlsKeyPath,
 		DisableCSRF:       *disableCSRF,
+		AllowInsecureHTTP: *allowInsecureHTTP || parseBoolEnv("ALLOW_INSECURE_HTTP"),
+
+		AllowLocalConnections: *allowLocalConnections || parseBoolEnv("ALLOW_LOCAL_CONNECTIONS"),
 
 		DB: DBConfig{
 			PostgresConn:  pgConn,
@@ -177,9 +191,6 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 		},
 		Auth: AuthConfig{
 			SessionSecret: sessionSecret,
-		},
-		SSO: SSOConfig{
-			OIDCAllowedPrivateCIDRs: resolvedOIDCAllowedPrivateCIDRs,
 		},
 		WebAuthn: WebAuthnConfig{
 			RPID:   rpID,
@@ -200,16 +211,8 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 			PromptsDir:    resolvedAIPromptsDir,
 		},
 		CodingAgent: CodingAgentConfig{
-			RunnerImage:  os.Getenv("CODING_AGENT_RUNNER_IMAGE"),
-			DockerBinary: os.Getenv("CODING_AGENT_DOCKER_BINARY"),
-			WorktreeRoot: os.Getenv("CODING_AGENT_WORKTREE_ROOT"),
-			GlobalCap:    parseIntEnv("CODING_AGENT_GLOBAL_CAP", 0),
-			LLMProvider:  os.Getenv("CODING_AGENT_LLM_PROVIDER"),
-			LLMModel:     os.Getenv("CODING_AGENT_LLM_MODEL"),
-			Network:      os.Getenv("CODING_AGENT_NETWORK"),
-			PidsLimit:    parseIntEnv("CODING_AGENT_PIDS_LIMIT", 0),
-			Memory:       os.Getenv("CODING_AGENT_MEMORY"),
-			CPUs:         os.Getenv("CODING_AGENT_CPUS"),
+			Enabled:  codingAgentEnabled,
+			WSAPIURL: os.Getenv("CODING_AGENT_WS_API_URL"),
 		},
 		Logbook: LogbookConfig{
 			Endpoint: os.Getenv("LOGBOOK_ENDPOINT"),
@@ -245,4 +248,25 @@ func postgresEnv() database.PostgresEnv {
 		Password: os.Getenv("POSTGRES_PASSWORD"),
 		Database: firstNonEmpty(os.Getenv("POSTGRES_DB"), "windshift"),
 	}
+}
+
+func normalizeContextPath(raw string) string {
+	p := strings.TrimSpace(raw)
+	if p == "" {
+		return ""
+	}
+	if p == "/" || !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") || strings.HasSuffix(p, "/") {
+		slog.Error("FATAL: WINDSHIFT_CONTEXT_PATH / --context-path must be a non-root absolute path without a trailing slash", "context_path", raw)
+		os.Exit(1)
+	}
+	if strings.ContainsAny(p, "?#\\") || strings.Contains(p, "//") {
+		slog.Error("FATAL: WINDSHIFT_CONTEXT_PATH / --context-path must be a clean URL path", "context_path", raw)
+		os.Exit(1)
+	}
+	decoded, err := url.PathUnescape(p)
+	if err != nil || decoded != p || strings.Contains(decoded, "..") {
+		slog.Error("FATAL: WINDSHIFT_CONTEXT_PATH / --context-path must not contain encoded bytes or traversal", "context_path", raw)
+		os.Exit(1)
+	}
+	return p
 }

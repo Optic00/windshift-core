@@ -13,10 +13,36 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
 
 var slugRegex = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$`)
+
+// sanitizeCollection gates the user-facing fields on a collection
+// payload. Name renders in the collections list + board headers;
+// Description is Milkdown rich text; QLQuery is CQL query text whose
+// comparison operators are load-bearing, so it is length-capped only
+// (matching CQLQuery on asset reports); FilterState is the saved-filter
+// JSON blob — HTML stripping would corrupt it, so it is validated
+// (size + well-formed JSON) and rejected instead of scrubbed.
+// PublicSlug stays untouched here — slugRegex already confines it
+// whenever it is non-empty. Writes a validation error and returns
+// false when FilterState is rejected.
+func sanitizeCollection(w http.ResponseWriter, r *http.Request, c *models.Collection) bool {
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &c.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &c.Description, Policy: sanitize.RichText},
+		sanitize.Pair{Target: &c.QLQuery, Policy: sanitize.QueryText},
+	)
+	if c.FilterState != nil {
+		if err := sanitize.ValidateJSONPayload("filter_state", *c.FilterState); err != nil {
+			respondValidationError(w, r, err.Error())
+			return false
+		}
+	}
+	return true
+}
 
 type CollectionHandler struct {
 	db                database.Database
@@ -172,6 +198,9 @@ func (h *CollectionHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !sanitizeCollection(w, r, &collection) {
+		return
+	}
 
 	// Validate required fields
 	if collection.Name == "" {
@@ -272,6 +301,9 @@ func (h *CollectionHandler) Update(w http.ResponseWriter, r *http.Request) {
 	var collection models.Collection
 	if err = json.Unmarshal(bodyBytes, &collection); err != nil {
 		respondBadRequest(w, r, "Invalid JSON: "+err.Error())
+		return
+	}
+	if !sanitizeCollection(w, r, &collection) {
 		return
 	}
 
@@ -428,6 +460,9 @@ func (h *CollectionHandler) UpdatePublicSharing(w http.ResponseWriter, r *http.R
 		respondBadRequest(w, r, "Invalid JSON: "+err.Error())
 		return
 	}
+	// PublicSlug is only regex-validated when enabling sharing; when
+	// disabling, the slug still lands in the DB, so bound it here.
+	sanitize.Apply(payload.PublicSlug, sanitize.ShortIdentifier)
 
 	currentUser, ok := h.requireCollectionOwner(w, r, id)
 	if !ok {

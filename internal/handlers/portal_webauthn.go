@@ -20,6 +20,7 @@ import (
 	"windshift/internal/auth"
 	"windshift/internal/middleware"
 	"windshift/internal/portalwebauthn"
+	"windshift/internal/sanitize"
 	"windshift/internal/utils"
 )
 
@@ -101,6 +102,7 @@ func (h *PortalWebAuthnHandler) StartPortalRegistration(w http.ResponseWriter, r
 	if !ok {
 		return
 	}
+	sanitize.Apply(&req.CredentialName, sanitize.PlainTextField)
 	name := strings.TrimSpace(req.CredentialName)
 	if name == "" {
 		respondValidationError(w, r, "Credential name is required")
@@ -161,6 +163,7 @@ func (h *PortalWebAuthnHandler) CompletePortalRegistration(w http.ResponseWriter
 	if !ok {
 		return
 	}
+	sanitize.Apply(&req.CredentialName, sanitize.PlainTextField)
 	name := strings.TrimSpace(req.CredentialName)
 	if name == "" {
 		respondValidationError(w, r, "Credential name is required")

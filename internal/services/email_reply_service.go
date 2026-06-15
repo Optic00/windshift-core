@@ -10,6 +10,7 @@ import (
 
 	"windshift/internal/database"
 	"windshift/internal/emailutil"
+	"windshift/internal/repository"
 	"windshift/internal/smtp"
 )
 
@@ -54,34 +55,23 @@ func (s *EmailReplyService) HandleCommentCreated(params HandleCommentParams) err
 		return nil
 	}
 
-	// Query item: channel_id, creator_portal_customer_id, workspace key, item number, title
-	var channelID sql.NullInt64
-	var creatorPortalCustomerID sql.NullInt64
-	var workspaceKey string
-	var itemNumber int
-	var itemTitle string
-
-	err := s.db.QueryRow(`
-		SELECT i.channel_id, i.creator_portal_customer_id, w.key, i.workspace_item_number, i.title
-		FROM items i
-		JOIN workspaces w ON i.workspace_id = w.id
-		WHERE i.id = ?
-	`, params.ItemID).Scan(&channelID, &creatorPortalCustomerID, &workspaceKey, &itemNumber, &itemTitle)
+	// Query item: channel, portal customer creator, workspace key, item number, title
+	item, err := repository.NewItemRepository(s.db).FindByIDWithDetails(params.ItemID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, repository.ErrNotFound) {
 			return nil
 		}
 		return fmt.Errorf("failed to query item for email reply: %w", err)
 	}
 
 	// Skip if item has no channel or no portal customer creator
-	if !channelID.Valid || !creatorPortalCustomerID.Valid {
+	if item.ChannelID == nil || item.CreatorPortalCustomerID == nil {
 		return nil
 	}
 
 	// Verify channel is email type
 	var channelType string
-	err = s.db.QueryRow("SELECT type FROM channels WHERE id = ? AND type = 'email'", channelID.Int64).Scan(&channelType)
+	err = s.db.QueryRow("SELECT type FROM channels WHERE id = ? AND type = 'email'", *item.ChannelID).Scan(&channelType)
 	if err != nil {
 		// Not an email channel or doesn't exist — skip
 		return nil
@@ -89,11 +79,11 @@ func (s *EmailReplyService) HandleCommentCreated(params HandleCommentParams) err
 
 	// Look up portal customer email
 	var customerEmail, customerName string
-	err = s.db.QueryRow("SELECT email, name FROM portal_customers WHERE id = ?", creatorPortalCustomerID.Int64).Scan(&customerEmail, &customerName)
+	err = s.db.QueryRow("SELECT email, name FROM portal_customers WHERE id = ?", *item.CreatorPortalCustomerID).Scan(&customerEmail, &customerName)
 	if err != nil || customerEmail == "" {
 		slog.Debug("no email for portal customer, skipping reply",
 			slog.String("component", "email_reply_service"),
-			slog.Int64("customer_id", creatorPortalCustomerID.Int64),
+			slog.Int("customer_id", *item.CreatorPortalCustomerID),
 		)
 		return nil
 	}
@@ -146,7 +136,7 @@ func (s *EmailReplyService) HandleCommentCreated(params HandleCommentParams) err
 	inReplyTo := records[len(records)-1].MessageID
 
 	// Subject: Re: {original subject} from first tracking record
-	originalSubject := itemTitle
+	originalSubject := item.Title
 	if records[0].Subject.Valid && records[0].Subject.String != "" {
 		originalSubject = records[0].Subject.String
 	}
@@ -179,7 +169,7 @@ func (s *EmailReplyService) HandleCommentCreated(params HandleCommentParams) err
 	// threaded subject above (Re: …) and pass it through as OriginalSubject;
 	// the rendered subject from RenderEmail is discarded so the threading
 	// stays correct.
-	itemKey := fmt.Sprintf("%s-%d", workspaceKey, itemNumber)
+	itemKey := fmt.Sprintf("%s-%d", item.WorkspaceKey, item.WorkspaceItemNumber)
 	_, htmlBody, textBody, err := s.smtpSender.RenderEmail(emailutil.TemplatePortalReply, struct {
 		AuthorName      string
 		ItemKey         string
@@ -189,7 +179,7 @@ func (s *EmailReplyService) HandleCommentCreated(params HandleCommentParams) err
 	}{
 		AuthorName:      authorName,
 		ItemKey:         itemKey,
-		ItemTitle:       itemTitle,
+		ItemTitle:       item.Title,
 		Content:         params.Content,
 		OriginalSubject: subject,
 	})
@@ -225,7 +215,7 @@ func (s *EmailReplyService) HandleCommentCreated(params HandleCommentParams) err
 			item_id, comment_id, direction, processed_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'outbound', CURRENT_TIMESTAMP)
 	`,
-		channelID.Int64,
+		*item.ChannelID,
 		messageID,
 		messageID,
 		inReplyTo,

@@ -9,9 +9,11 @@ import (
 	"strings"
 	"time"
 
+	"windshift/internal/aitools"
 	"windshift/internal/llm"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
 
@@ -320,7 +322,7 @@ func (h *AIHandler) AnalyzeDependencies(w http.ResponseWriter, r *http.Request) 
 
 	// Call LLM
 	extendWriteDeadline(w)
-	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), llm.DefaultRequestTimeout)
 	defer cancel()
 
 	result, err := llm.ChatCompletionStructured[llmDependencyResult](ctx, llmClient, llm.ChatCompletionRequest{
@@ -520,6 +522,9 @@ type ChatContext struct {
 	View        string `json:"view,omitempty"`
 	WorkspaceID int    `json:"workspace_id,omitempty"`
 	ActionID    int    `json:"action_id,omitempty"`
+	PageID      int    `json:"page_id,omitempty"`
+	ItemID      int    `json:"item_id,omitempty"`
+	ItemKey     string `json:"item_key,omitempty"`
 }
 
 // ChatRequest is the request body for the agentic chat endpoint.
@@ -537,7 +542,8 @@ func buildChatContextHint(ctx *ChatContext) string {
 	if ctx == nil {
 		return ""
 	}
-	if ctx.View == "workspace-actions" {
+	switch ctx.View {
+	case "workspace-actions":
 		if ctx.ActionID > 0 {
 			return fmt.Sprintf(
 				"\n\nThe user is currently editing action %d in workspace %d. Workflow: (1) call get_action with workspace_id=%d, action_id=%d to read the current graph; (2) call describe_action_catalog with workspace_id=%d if you need to recall node configs; (3) compose the full replacement graph and call update_action — the editor live-reloads on success. Optionally validate non-trivial changes with validate_action before the write. update_action is a full replace (not a patch), so you must include every node and edge you want to keep. After update_action succeeds, do not call it again; summarize the completed change to the user.",
@@ -550,6 +556,36 @@ func buildChatContextHint(ctx *ChatContext) string {
 				ctx.WorkspaceID,
 			)
 		}
+	case "workspace-pages":
+		if ctx.PageID > 0 {
+			return fmt.Sprintf(
+				"\n\nThe user is currently viewing knowledge page %d in workspace %d. If they ask you to read or summarize the current page, call get_page with page_id=%d before answering. If they ask you to change the current page, first call get_page with page_id=%d, then call update_page with page_id=%d and the complete replacement Markdown content and/or title. After update_page succeeds, do not call it again; summarize the completed change to the user.",
+				ctx.PageID, ctx.WorkspaceID, ctx.PageID, ctx.PageID, ctx.PageID,
+			)
+		}
+		if ctx.WorkspaceID > 0 {
+			return fmt.Sprintf(
+				"\n\nThe user is on the knowledge pages area for workspace %d. If they ask about pages or workspace docs without naming one, use list_pages or search_knowledge in workspace_id=%d to find the relevant page before answering. If they ask you to create a page, use create_page in this workspace.",
+				ctx.WorkspaceID, ctx.WorkspaceID,
+			)
+		}
+	case "item-detail":
+		if ctx.ItemKey != "" {
+			return fmt.Sprintf(
+				"\n\nThe user is currently viewing work item %s. If they ask you to read, summarize, or change the current item, call get_item with item_key=%q before answering or mutating. Use update_item with item_key=%q for field changes, transition_item with item_key=%q for status changes, add_comment with item_key=%q for comments, and get_item_children if they ask about sub-tasks. After a mutating tool succeeds, do not call it again; summarize the completed change to the user.",
+				ctx.ItemKey, ctx.ItemKey, ctx.ItemKey, ctx.ItemKey, ctx.ItemKey,
+			)
+		}
+		if ctx.ItemID > 0 {
+			location := fmt.Sprintf("work item %d", ctx.ItemID)
+			if ctx.WorkspaceID > 0 {
+				location = fmt.Sprintf("work item %d in workspace %d", ctx.ItemID, ctx.WorkspaceID)
+			}
+			return fmt.Sprintf(
+				"\n\nThe user is currently viewing %s. If they ask you to read, summarize, or change the current item, call get_item with item_id=%d before answering or mutating. Use update_item with item_id=%d for field changes, transition_item with item_id=%d for status changes, add_comment with item_id=%d for comments, and get_item_children if they ask about sub-tasks. After a mutating tool succeeds, do not call it again; summarize the completed change to the user.",
+				location, ctx.ItemID, ctx.ItemID, ctx.ItemID, ctx.ItemID,
+			)
+		}
 	}
 	return ""
 }
@@ -557,24 +593,31 @@ func buildChatContextHint(ctx *ChatContext) string {
 func chatTerminalTools() map[string]bool {
 	return map[string]bool{
 		"add_comment":            true,
+		"add_link":               true,
 		"archive_page":           true,
 		"create_action":          true,
 		"create_diagram":         true,
 		"create_item":            true,
 		"create_page":            true,
+		"delete_comment":         true,
 		"delete_diagram":         true,
 		"delete_item":            true,
+		"end_test_run":           true,
 		"grant_page_permission":  true,
 		"log_time":               true,
 		"move_page":              true,
+		"record_test_result":     true,
+		"remove_link":            true,
 		"restore_page_revision":  true,
 		"revoke_page_permission": true,
 		"set_item_labels":        true,
 		"set_page_inheritance":   true,
+		"start_test_run":         true,
 		"start_timer":            true,
 		"stop_timer":             true,
 		"transition_item":        true,
 		"update_action":          true,
+		"update_comment":         true,
 		"update_diagram":         true,
 		"update_item":            true,
 		"update_page":            true,
@@ -588,6 +631,24 @@ type ChatResponse struct {
 	Iterations    int                  `json:"iterations"`
 	MaxIterations int                  `json:"max_iterations"`
 	StopReason    string               `json:"stop_reason"`
+	// NeedsReview flags a recovery-aware, high-signal tool misuse (the model
+	// invented a tool or could not satisfy a tool's schema, and never
+	// recovered) — a correlate of hallucination worth a human glance. It is
+	// not a claim that the answer is wrong. ReviewReasons explains why.
+	NeedsReview   bool     `json:"needs_review,omitempty"`
+	ReviewReasons []string `json:"review_reasons,omitempty"`
+}
+
+// reviewVerdictForToolCalls computes the recovery-aware review flag for a chat
+// run's tool calls, reusing the same classifier + evaluator the coding agent
+// drains into. Pure — exposed for testing the chat-side mapping without the
+// full handler stack.
+func reviewVerdictForToolCalls(calls []llm.ToolCallRecord) llm.ReviewVerdict {
+	outcomes := make([]llm.ToolCallOutcome, len(calls))
+	for i, tc := range calls {
+		outcomes[i] = llm.ToolCallOutcome{Tool: tc.Name, Class: llm.Classify(tc.Name, tc.Result)}
+	}
+	return llm.EvaluateReview(outcomes, llm.DefaultReviewFlagConfig())
 }
 
 // Chat handles agentic chat where the LLM can query workspaces and items via tool calls.
@@ -600,6 +661,14 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	req, ok := decodeJSON[ChatRequest](w, r)
 	if !ok {
 		return
+	}
+	sanitize.Apply(&req.Message, sanitize.Comment)
+	for i := range req.History {
+		sanitize.Apply(&req.History[i].Content, sanitize.Comment)
+	}
+	if req.Context != nil {
+		sanitize.Apply(&req.Context.View, sanitize.ShortIdentifier)
+		sanitize.Apply(&req.Context.ItemKey, sanitize.ShortIdentifier)
 	}
 	if strings.TrimSpace(req.Message) == "" {
 		respondBadRequest(w, r, "message is required")
@@ -620,7 +689,18 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build tool executor
-	executor := NewToolExecutor(h.db, accessibleWSIDs, user.ID, user.FullName, h.timePermService, h.permService, services.NewCommentService(h.db), h.timerService, h.actionService)
+	executor := NewToolExecutor(&aitools.Env{
+		DB:                     h.db,
+		UserID:                 user.ID,
+		Username:               user.FullName,
+		Source:                 aitools.SourceAIChat,
+		AccessibleWorkspaceIDs: accessibleWSIDs,
+		PermService:            h.permService,
+		TimePermService:        h.timePermService,
+		TimerService:           h.timerService,
+		CommentService:         services.NewCommentService(h.db),
+		ActionService:          h.actionService,
+	})
 
 	// Determine current date in user's timezone
 	chatTimezone := user.Timezone
@@ -644,7 +724,15 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	result, err := llm.RunAgent(r.Context(), llmClient, llm.AgentConfig{
+	// The agentic loop (up to MaxIterations of LLM round-trips + tool calls) is
+	// the longest-running AI handler, so it needs the same write-deadline escape
+	// and work bound as the one-shot handlers — otherwise the server's 30s
+	// WriteTimeout severs the response mid-run.
+	extendWriteDeadline(w)
+	ctx, cancel := context.WithTimeout(r.Context(), llm.DefaultRequestTimeout)
+	defer cancel()
+
+	result, err := llm.RunAgent(ctx, llmClient, llm.AgentConfig{
 		SystemPrompt:  systemPrompt,
 		Tools:         BuildLLMTools(),
 		MaxTokens:     2048,
@@ -656,6 +744,11 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		slog.ErrorContext(r.Context(), "chat agent run failed",
 			slog.Int("user_id", user.ID),
 			slog.String("ctx_view", chatContextView(req.Context)),
+			slog.Int("ctx_workspace_id", chatContextWorkspaceID(req.Context)),
+			slog.Int("ctx_action_id", chatContextActionID(req.Context)),
+			slog.Int("ctx_page_id", chatContextPageID(req.Context)),
+			slog.Int("ctx_item_id", chatContextItemID(req.Context)),
+			slog.String("ctx_item_key", chatContextItemKey(req.Context)),
 			slog.String("error", err.Error()),
 		)
 		respondLLMError(w, r, err)
@@ -667,11 +760,19 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		slog.String("ctx_view", chatContextView(req.Context)),
 		slog.Int("ctx_workspace_id", chatContextWorkspaceID(req.Context)),
 		slog.Int("ctx_action_id", chatContextActionID(req.Context)),
+		slog.Int("ctx_page_id", chatContextPageID(req.Context)),
+		slog.Int("ctx_item_id", chatContextItemID(req.Context)),
+		slog.String("ctx_item_key", chatContextItemKey(req.Context)),
 		slog.String("stop_reason", string(result.StopReason)),
 		slog.Int("iterations", result.Iterations),
 		slog.Int("max_iterations", result.MaxIter),
 		slog.Int("tool_calls", len(result.ToolCalls)),
 	)
+
+	// Recovery-aware review flag over the run's tool calls (same classifier the
+	// coding agent uses). Computed inline — chat is ephemeral, so the verdict
+	// rides along on the response rather than being persisted.
+	verdict := reviewVerdictForToolCalls(result.ToolCalls)
 
 	respondJSONOK(w, ChatResponse{
 		Answer:        result.Answer,
@@ -679,10 +780,12 @@ func (h *AIHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		Iterations:    result.Iterations,
 		MaxIterations: result.MaxIter,
 		StopReason:    string(result.StopReason),
+		NeedsReview:   verdict.Flagged,
+		ReviewReasons: verdict.Reasons,
 	})
 }
 
-// chatContextView / WorkspaceID / ActionID safely read fields off a
+// chatContextView / WorkspaceID / ActionID / PageID / Item safely read fields off a
 // possibly-nil ChatContext for slog calls.
 func chatContextView(c *ChatContext) string {
 	if c == nil {
@@ -701,4 +804,22 @@ func chatContextActionID(c *ChatContext) int {
 		return 0
 	}
 	return c.ActionID
+}
+func chatContextPageID(c *ChatContext) int {
+	if c == nil {
+		return 0
+	}
+	return c.PageID
+}
+func chatContextItemID(c *ChatContext) int {
+	if c == nil {
+		return 0
+	}
+	return c.ItemID
+}
+func chatContextItemKey(c *ChatContext) string {
+	if c == nil {
+		return ""
+	}
+	return c.ItemKey
 }

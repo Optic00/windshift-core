@@ -17,6 +17,8 @@ func RegisterItemRoutes(deps *Deps) {
 	api.HandleH("GET /workspaces/{id}/collections/{collectionId}/items/changes", auth(http.HandlerFunc(deps.Items.Item.GetChanges)))
 	api.HandleH("GET /items/backlog", auth(http.HandlerFunc(deps.Items.Item.GetBacklogItems)))
 	api.HandleH("GET /items/cache-stats", auth(http.HandlerFunc(deps.Items.Item.GetCacheStats)))
+	// Stable key lookup for SPA/CLI deep links: /workspaces/WI/items/123.
+	api.HandleH("GET /workspaces/{key}/items/{number}", auth(http.HandlerFunc(deps.Items.Item.GetByKeyAndNumber)))
 	api.HandleH("GET /items/{id}", auth(http.HandlerFunc(deps.Items.Item.Get)))
 	api.HandleH("PUT /items/{id}", auth(http.HandlerFunc(deps.Items.Item.Update)))
 	api.HandleH("DELETE /items/{id}", auth(http.HandlerFunc(deps.Items.Item.Delete)))

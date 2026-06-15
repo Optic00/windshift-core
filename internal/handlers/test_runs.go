@@ -11,6 +11,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
@@ -107,7 +108,7 @@ func (h *TestRunHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	input.Name = utils.SanitizeTitle(input.Name)
+	input.Name = sanitize.PlainTextField.Sanitize(input.Name)
 
 	run, err := h.service.Create(workspaceID, services.TestRunCreateRequest{
 		Name:       input.Name,
@@ -171,7 +172,7 @@ func (h *TestRunHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	input.Name = utils.SanitizeTitle(input.Name)
+	input.Name = sanitize.PlainTextField.Sanitize(input.Name)
 
 	_, err := h.service.Update(id, workspaceID, services.TestRunUpdateRequest{
 		Name:       input.Name,
@@ -286,8 +287,8 @@ func (h *TestRunHandler) UpdateResult(w http.ResponseWriter, r *http.Request) {
 	// Sanitize user input to prevent XSS. Use SanitizeDescription (preserves
 	// <br /> blank-line markers emitted by MilkdownEditor) rather than
 	// SanitizeCommentContent (which strips all HTML including <br>).
-	input.ActualResult = utils.SanitizeDescription(input.ActualResult)
-	input.Notes = utils.SanitizeDescription(input.Notes)
+	input.ActualResult = sanitize.RichText.Sanitize(input.ActualResult)
+	input.Notes = sanitize.RichText.Sanitize(input.Notes)
 
 	if err := h.service.UpdateResult(runID, resultID, services.TestResultUpdateRequest{
 		Status:       input.Status,
@@ -361,8 +362,8 @@ func (h *TestRunHandler) UpdateStepResult(w http.ResponseWriter, r *http.Request
 	// Sanitize user input to prevent XSS. SanitizeDescription preserves
 	// <br /> blank-line markers from MilkdownEditor; SanitizeCommentContent
 	// would strip them along with all other HTML.
-	update.ActualResult = utils.SanitizeDescription(update.ActualResult)
-	update.Notes = utils.SanitizeDescription(update.Notes)
+	update.ActualResult = sanitize.RichText.Sanitize(update.ActualResult)
+	update.Notes = sanitize.RichText.Sanitize(update.Notes)
 
 	// Verify item belongs to same workspace if provided
 	if update.ItemID != nil {

@@ -39,14 +39,22 @@ services:
       # - DB_SSLMODE=disable
       # --- LLM (uncomment when using llm service) ---
       # - LLM_ENDPOINT=http://llm:8081
+      # --- Coding agents (uncomment the windshift-runner service + coding-agent
+      #     network below). Windshift orchestrates only — it queues runs and
+      #     serves the runner pool; agents execute on the windshift-runner host,
+      #     never here. Enable the feature with --enable-coding-agent /
+      #     CODING_AGENT_ENABLED=true. The in-network URL lets the runner reach
+      #     Windshift over the internal egress network: ---
+      # - CODING_AGENT_ENABLED=true
+      # - CODING_AGENT_WS_API_URL=http://windshift:8080/api
     volumes:
       - windshift-data:/data
-      # tmpfs for /tmp - needed for SQLite WAL mode in scratch containers
-      - type: tmpfs
-        target: /tmp
-        tmpfs:
-          size: 64M
-          mode: 1777
+    # tmpfs for /tmp - the scratch image has no /tmp. Needed for SQLite WAL
+    # mode. Short syntax on purpose - the long-syntax "mode: 1777" is parsed as
+    # DECIMAL (mounts as 03361); the short form defaults to a correct sticky
+    # 1777.
+    tmpfs:
+      - /tmp:exec,size=64M
     restart: unless-stopped
     # --- Traefik labels (uncomment when using traefik service) ---
     # labels:
@@ -55,8 +63,12 @@ services:
     #   - "traefik.http.routers.windshift.entrypoints=websecure"
     #   - "traefik.http.routers.windshift.tls.certresolver=letsencrypt"
     #   - "traefik.http.services.windshift.loadbalancer.server.port=8080"
+    # --- Networks: keep ONE list with every network windshift joins. Listing
+    #     any network here removes the implicit default — keep "default". ---
     # networks:
-    #   - traefik
+    #   - default
+    #   - traefik          # with the traefik service
+    #   - coding-agent     # with a coding-agent flavor (internal egress network)
     depends_on: []
       # --- PostgreSQL dependency (uncomment when using postgres service) ---
       # postgres:
@@ -64,6 +76,47 @@ services:
       # --- LLM dependency (uncomment when using llm service) ---
       # llm:
       #   condition: service_healthy
+
+  # ---------------------------------------------------------------------------
+  # Coding-agent runner (uncomment to run coding-agent jobs on this host)
+  # ---------------------------------------------------------------------------
+  # Co-locates the windshift-runner worker with Windshift so the whole
+  # coding-agent stack lives in this one compose file. Agent containers are
+  # spawned into the coding-agent network declared at the bottom; because that
+  # network is INTERNAL, agents and the runner can reach only Windshift —
+  # no host firewall / egress-allowlist rules are needed (LLM and git traffic
+  # is brokered through Windshift's proxies).
+  #
+  # When using the runner:
+  #   1. Uncomment this service, the coding-agent network at the bottom, and
+  #      on the windshift service above: the networks list and
+  #      CODING_AGENT_WS_API_URL=http://windshift:8080/api
+  #   2. Start Windshift, mint a pool registration token (Admin -> Runner
+  #      Pools), set it in .env as WSRUNNER_REGISTRATION_TOKEN
+  #   3. docker compose up -d
+  # ---------------------------------------------------------------------------
+  # windshift-runner:
+  #   image: ghcr.io/windshiftapp/windshift-runner:latest
+  #   container_name: windshift-runner
+  #   environment:
+  #     # In-compose control plane. Plaintext HTTP is acceptable only because
+  #     # the traffic never leaves this host's docker bridge.
+  #     WS_API_URL: http://windshift:8080/api
+  #     WSRUNNER_ALLOW_INSECURE: "1"
+  #     WSRUNNER_REGISTRATION_TOKEN: ${WSRUNNER_REGISTRATION_TOKEN}
+  #     WSRUNNER_IMAGE: ghcr.io/windshiftapp/windshift-agent:latest
+  #   volumes:
+  #     # Drive the host docker daemon (spawns the sandboxed agent containers).
+  #     - /var/run/docker.sock:/var/run/docker.sock
+  #     # SAME path on host and in-container: the host daemon — not this
+  #     # container — bind-mounts each prepared checkout into the agent
+  #     # container, so the path must resolve identically on the host.
+  #     - /var/lib/windshift-runner:/var/lib/windshift-runner
+  #   networks:
+  #     - coding-agent
+  #   depends_on:
+  #     - windshift
+  #   restart: unless-stopped
 
   # ---------------------------------------------------------------------------
   # PostgreSQL (uncomment to use instead of SQLite)
@@ -250,7 +303,17 @@ volumes:
   # traefik-certs:
   #   name: windshift-traefik-certs
 
-# --- Traefik network (uncomment when using traefik service) ---
+# --- Networks: keep ONE top-level networks block; uncomment the entries you
+#     use. ---
+# Traefik network: uncomment with the traefik service.
+# Coding-agent egress network: uncomment with either coding-agent flavor. The
+# fixed name matches the network agent containers are spawned into.
+# "internal: true" is the whole egress story: containers on it reach each
+# other (i.e. Windshift) but nothing else — it replaces the firewalld /
+# iptables allowlist in deploy/coding-agent/README.md.
 # networks:
 #   traefik:
 #     name: windshift-traefik
+#   coding-agent:
+#     name: coding-agent-egress
+#     internal: true

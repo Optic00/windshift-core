@@ -1,17 +1,18 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 
 	"windshift/internal/database"
 	"windshift/internal/restapi"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
 
 // AdminUserHandler handles admin user management in REST API v1.
 type AdminUserHandler struct {
 	BaseHandler
-	db      database.Database
 	userSvc *services.UserReadService
 }
 
@@ -19,25 +20,29 @@ type AdminUserHandler struct {
 func NewAdminUserHandler(db database.Database, permissionService *services.PermissionService) *AdminUserHandler {
 	return &AdminUserHandler{
 		BaseHandler: NewBaseHandler(db, permissionService),
-		db:          db,
 		userSvc:     services.NewUserReadService(db),
 	}
 }
 
 // AdminUserResponse is the admin representation of a user.
+//
+// Warnings carries user-facing strings (frontend toasts at info
+// severity) for any field the handler had to sanitize at decode time.
+// Empty / omitted when nothing was modified.
 type AdminUserResponse struct {
-	ID        int    `json:"id"`
-	Email     string `json:"email"`
-	Username  string `json:"username"`
-	FirstName string `json:"first_name"`
-	LastName  string `json:"last_name"`
-	FullName  string `json:"full_name"`
-	IsActive  bool   `json:"is_active"`
-	AvatarURL string `json:"avatar_url,omitempty"`
-	Timezone  string `json:"timezone,omitempty"`
-	Language  string `json:"language,omitempty"`
-	GroupIDs  []int  `json:"group_ids"`
-	CreatedAt string `json:"created_at"`
+	ID        int      `json:"id"`
+	Email     string   `json:"email"`
+	Username  string   `json:"username"`
+	FirstName string   `json:"first_name"`
+	LastName  string   `json:"last_name"`
+	FullName  string   `json:"full_name"`
+	IsActive  bool     `json:"is_active"`
+	AvatarURL string   `json:"avatar_url,omitempty"`
+	Timezone  string   `json:"timezone,omitempty"`
+	Language  string   `json:"language,omitempty"`
+	GroupIDs  []int    `json:"group_ids"`
+	CreatedAt string   `json:"created_at"`
+	Warnings  []string `json:"warnings,omitempty"`
 }
 
 // AdminUserUpdateRequest is the request body for updating a user.
@@ -133,29 +138,32 @@ func (h *AdminUserHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	// Email is intentionally not sanitized — it's format-validated as an
+	// email address by the user service before write; running it through
+	// PlainTextField would silently turn "<script>@evil.com" into
+	// "@evil.com" rather than rejecting it as malformed.
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: req.FirstName, Policy: sanitize.PlainTextField, Label: "First name"},
+		sanitize.Pair{Target: req.LastName, Policy: sanitize.PlainTextField, Label: "Last name"},
+	)
 
-	b := NewDynamicUpdateBuilder()
-	b.AddString("first_name", req.FirstName)
-	b.AddString("last_name", req.LastName)
-	b.AddString("email", req.Email)
-	b.AddBool("is_active", req.IsActive)
-
-	if !h.ValidateNoFields(w, r, b) {
+	update := services.AdminUserUpdate{
+		FirstName: req.FirstName,
+		LastName:  req.LastName,
+		Email:     req.Email,
+		IsActive:  req.IsActive,
+	}
+	if update.IsEmpty() {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "No fields to update"))
 		return
 	}
-	b.AddTimestamp()
 
-	query, args := b.BuildUpdateByID("users", id)
-
-	result, err := h.db.ExecWrite(query, args...)
-	if err != nil {
+	if err := h.userSvc.UpdateAdmin(id, update); err != nil {
+		if errors.Is(err, services.ErrUserNotFound) {
+			h.RespondError(w, r, restapi.ErrUserNotFound)
+			return
+		}
 		h.RespondInternalError(w, r)
-		return
-	}
-
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		h.RespondError(w, r, restapi.ErrUserNotFound)
 		return
 	}
 
@@ -165,27 +173,14 @@ func (h *AdminUserHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.RespondOK(w, mapUserToResponse(u))
+	resp := mapUserToResponse(u)
+	resp.Warnings = warnings
+	h.RespondOK(w, resp)
 }
 
 func (h *AdminUserHandler) getUserGroupIDs(userID int) []int {
-	rows, err := h.db.Query("SELECT group_id FROM group_members WHERE user_id = ?", userID)
+	ids, err := h.userSvc.GetGroupIDs(userID)
 	if err != nil {
-		return []int{}
-	}
-	defer rows.Close()
-
-	var ids []int
-	for rows.Next() {
-		var id int
-		if rows.Scan(&id) == nil {
-			ids = append(ids, id)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return []int{}
-	}
-	if ids == nil {
 		return []int{}
 	}
 	return ids

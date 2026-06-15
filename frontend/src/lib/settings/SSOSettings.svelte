@@ -26,6 +26,7 @@
   import { safeHref } from '../utils/sanitize';
   import DescriptionText from '../components/DescriptionText.svelte';
   import { confirm } from '../composables/useConfirm.js';
+  import { publicBaseURL } from '../runtime/contextPath.js';
 
   let providers = $state([]);
   let loading = $state(true);
@@ -132,7 +133,7 @@
   }
 
   const callbackUrl = () =>
-    `${window.location.origin}/api/sso/callback/${formData.slug || 'slug'}`;
+    `${publicBaseURL()}/api/sso/callback/${formData.slug || 'slug'}`;
 
   function validateForm() {
     formErrors = {};
@@ -434,7 +435,7 @@
         <div class="flex items-center gap-2">
           <div class="flex-1 px-3 py-2 border rounded-md font-mono text-sm overflow-x-auto"
                style="background-color: var(--ds-surface); border-color: var(--ds-border); color: var(--ds-text);">
-            {window.location.origin}/api/sso/callback/{formData.slug || 'slug'}
+            {publicBaseURL()}/api/sso/callback/{formData.slug || 'slug'}
           </div>
           <CopyButton getText={callbackUrl} title={t('toast.copied')} />
         </div>

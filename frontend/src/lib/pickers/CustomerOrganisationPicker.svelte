@@ -1,5 +1,5 @@
 <script>
-  import ItemPicker from './ItemPicker.svelte';
+  import BasePicker from './BasePicker.svelte';
   import { Building2 } from '@lucide/svelte';
   import { createAsyncLoader } from '../composables';
   import { api } from '../api.js';
@@ -12,38 +12,38 @@
     unassignedLabel = 'None',
     disabled = false,
     class: className = '',
-    children = null,
     onSelect = () => {},
     onCancel = () => {}
   } = $props();
 
   const organisations = createAsyncLoader(() => api.customerOrganisations.getAll());
   onMount(() => organisations.load());
-
-  const config = {
-    icon: {
-      type: 'component',
-      source: () => Building2
-    },
-    primary: { text: (item) => item.name || '' },
-    secondary: { text: (item) => item.email || item.description || '' },
-    searchFields: ['name', 'email', 'description'],
-    getValue: (item) => item?.id,
-    getLabel: (item) => item?.name || ''
-  };
 </script>
 
-<ItemPicker
+{#snippet organisationRow({ item })}
+  <Building2 class="w-4 h-4 flex-shrink-0" />
+  <div class="flex flex-col min-w-0">
+    <span class="font-medium truncate">{item?.name || ''}</span>
+    {#if item?.email || item?.description}
+      <span class="text-xs truncate" style="color: var(--ds-text-subtle);">{item.email || item.description}</span>
+    {/if}
+  </div>
+{/snippet}
+
+<BasePicker
   bind:value
   items={organisations.data || []}
-  {config}
+  loading={organisations.loading}
   {placeholder}
   {showUnassigned}
   {unassignedLabel}
   {disabled}
-  loading={organisations.loading}
+  allowClear={true}
   class={className}
-  {children}
+  itemSnippet={organisationRow}
+  searchFields={['name', 'email', 'description']}
+  getValue={(item) => item?.id}
+  getLabel={(item) => item?.name || ''}
   onSelect={(item) => onSelect(item)}
   onCancel={() => onCancel()}
 />

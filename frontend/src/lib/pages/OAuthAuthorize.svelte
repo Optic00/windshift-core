@@ -22,6 +22,7 @@
 		'workspaces:read': 'Read workspaces and configuration',
 		'workspaces:write': 'Modify workspaces and configuration',
 		'workspaces:delete': 'Delete workspaces',
+		'collections:read': 'Read collections and reports',
 		'users:read': 'Read user directory',
 	};
 
@@ -175,7 +176,7 @@
 				After you approve
 			</div>
 			<p class="text-sm" style="color: var(--ds-text);">
-				Windshift will create a dedicated agent for this app and issue API tokens it can use to call Windshift on your behalf. You can revoke access any time from your profile's Agents tab.
+				Windshift will create a dedicated agent for this app and issue API tokens it can use to call Windshift on your behalf only. Other users must authorize the app with their own Windshift accounts. You can revoke your access any time from your profile's Agents tab.
 			</p>
 			<p class="text-xs mt-2" style="color: var(--ds-text-subtle);">
 				Browser will redirect to: <code class="break-all">{info.redirect_uri}</code>

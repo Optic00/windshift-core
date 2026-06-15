@@ -12,7 +12,8 @@ import (
 
 	"windshift/internal/database"
 	"windshift/internal/models"
-	"windshift/internal/utils"
+	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 )
 
 // WorkspacePermissionChecker lets the validator ask whether a user holds a
@@ -31,11 +32,20 @@ type HierarchyCycleChecker interface {
 	WouldCreateCycle(ancestorCandidateID, newParentID int) (bool, error)
 }
 
+// ProjectAccessChecker lets the validator ask whether a user may assign a
+// given time project to an item. Declared as an interface here for the same
+// reason as the checkers above — avoid importing services.
+// *services.TimePermissionService satisfies it by duck typing.
+type ProjectAccessChecker interface {
+	CanViewProject(userID, projectID int) (bool, error)
+}
+
 // ItemFieldValidator provides validation for item fields during create/update operations
 type ItemFieldValidator struct {
-	db           database.Database
-	permChecker  WorkspacePermissionChecker
-	cycleChecker HierarchyCycleChecker
+	db             database.Database
+	permChecker    WorkspacePermissionChecker
+	cycleChecker   HierarchyCycleChecker
+	projectChecker ProjectAccessChecker
 }
 
 // allowedEntityTables is a whitelist of valid table names for EntityExists checks
@@ -74,6 +84,41 @@ func (v *ItemFieldValidator) WithCycleChecker(checker HierarchyCycleChecker) *It
 	return v
 }
 
+// WithProjectAccessChecker attaches a time-project access checker so the
+// validator can enforce that the caller may assign a given project_id /
+// time_project_id. User-facing callers must set this; internal callers that
+// don't mutate those fields may omit it. Returns the receiver for chaining.
+func (v *ItemFieldValidator) WithProjectAccessChecker(checker ProjectAccessChecker) *ItemFieldValidator {
+	v.projectChecker = checker
+	return v
+}
+
+// checkProjectAssignable verifies the caller may attach the given time project
+// to an item. Existence is checked first (CanViewProject treats an unrestricted
+// non-existent project as viewable), then access. Both the not-found and
+// no-access cases return the same "<field> not found" error so the response
+// can't be used to enumerate which project IDs exist.
+func (v *ItemFieldValidator) checkProjectAssignable(field string, userID, projectID int) error {
+	exists, err := v.EntityExists("time_projects", projectID)
+	if err != nil {
+		return fmt.Errorf("failed to validate project: %w", err)
+	}
+	if !exists {
+		return &ValidationError{Field: field, Message: "Project not found"}
+	}
+	if v.projectChecker != nil {
+		hasAccess, accErr := v.projectChecker.CanViewProject(userID, projectID)
+		if accErr != nil {
+			return fmt.Errorf("failed to check project access: %w", accErr)
+		}
+		if !hasAccess {
+			// Mirror the not-found message to avoid leaking project existence.
+			return &ValidationError{Field: field, Message: "Project not found"}
+		}
+	}
+	return nil
+}
+
 // ValidationError represents a field validation error
 type ValidationError struct {
 	Field   string
@@ -82,6 +127,34 @@ type ValidationError struct {
 
 func (e *ValidationError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Field, e.Message)
+}
+
+// applyDateField applies one date field from updateData onto dst. Accepted
+// values: nil (clear), a YYYY-MM-DD string (web handlers decode bodies as raw
+// maps), or a time.Time (the REST v1 handlers decode typed DTOs). Any other
+// type is a validation error — a recognized key must never be silently
+// dropped.
+func applyDateField(updateData map[string]interface{}, field string, dst **time.Time) error {
+	value, ok := updateData[field]
+	if !ok {
+		return nil
+	}
+	switch v := value.(type) {
+	case nil:
+		*dst = nil
+	case string:
+		parsedDate, err := time.Parse("2006-01-02", v)
+		if err != nil {
+			return &ValidationError{Field: field, Message: fmt.Sprintf("Invalid %s format, expected YYYY-MM-DD", field)}
+		}
+		*dst = &parsedDate
+	case time.Time:
+		t := v
+		*dst = &t
+	default:
+		return &ValidationError{Field: field, Message: fmt.Sprintf("Invalid %s type, expected a YYYY-MM-DD string or null", field)}
+	}
+	return nil
 }
 
 // ValidateAndApplyUpdates applies all update data to an item with validation
@@ -93,7 +166,7 @@ func (v *ItemFieldValidator) ValidateAndApplyUpdates(
 ) error {
 	// Title validation and sanitization
 	if title, ok := updateData["title"].(string); ok {
-		sanitizedTitle := utils.SanitizeTitle(title)
+		sanitizedTitle := sanitize.PlainTextField.Sanitize(title)
 		if strings.TrimSpace(sanitizedTitle) == "" {
 			return &ValidationError{Field: "title", Message: "Title is required"}
 		}
@@ -102,7 +175,7 @@ func (v *ItemFieldValidator) ValidateAndApplyUpdates(
 
 	// Description validation and sanitization
 	if description, ok := updateData["description"].(string); ok {
-		item.Description = utils.SanitizeDescription(description)
+		item.Description = sanitize.RichText.Sanitize(description)
 	}
 
 	// is_task validation - can only be true for personal workspaces
@@ -125,43 +198,15 @@ func (v *ItemFieldValidator) ValidateAndApplyUpdates(
 		return err
 	}
 
-	// Due date validation and parsing
-	if dueDateValue, ok := updateData["due_date"]; ok {
-		if dueDateValue == nil {
-			item.DueDate = nil
-		} else if dueDateStr, ok := dueDateValue.(string); ok {
-			parsedDate, err := time.Parse("2006-01-02", dueDateStr)
-			if err != nil {
-				return &ValidationError{Field: "due_date", Message: "Invalid due_date format, expected YYYY-MM-DD"}
-			}
-			item.DueDate = &parsedDate
-		}
+	// Date validation and parsing (due/start/end)
+	if err := applyDateField(updateData, "due_date", &item.DueDate); err != nil {
+		return err
 	}
-
-	// Start date validation and parsing
-	if startDateValue, ok := updateData["start_date"]; ok {
-		if startDateValue == nil {
-			item.StartDate = nil
-		} else if startDateStr, ok := startDateValue.(string); ok {
-			parsedDate, err := time.Parse("2006-01-02", startDateStr)
-			if err != nil {
-				return &ValidationError{Field: "start_date", Message: "Invalid start_date format, expected YYYY-MM-DD"}
-			}
-			item.StartDate = &parsedDate
-		}
+	if err := applyDateField(updateData, "start_date", &item.StartDate); err != nil {
+		return err
 	}
-
-	// End date validation and parsing
-	if endDateValue, ok := updateData["end_date"]; ok {
-		if endDateValue == nil {
-			item.EndDate = nil
-		} else if endDateStr, ok := endDateValue.(string); ok {
-			parsedDate, err := time.Parse("2006-01-02", endDateStr)
-			if err != nil {
-				return &ValidationError{Field: "end_date", Message: "Invalid end_date format, expected YYYY-MM-DD"}
-			}
-			item.EndDate = &parsedDate
-		}
+	if err := applyDateField(updateData, "end_date", &item.EndDate); err != nil {
+		return err
 	}
 
 	// Milestone IDs validation (multi-milestone). Accepts []int / []float64 /
@@ -226,17 +271,40 @@ func (v *ItemFieldValidator) ValidateAndApplyUpdates(
 				return &ValidationError{Field: "project_id", Message: "Invalid project_id type"}
 			}
 			if newProjectID > 0 {
-				// Validate project exists
-				exists, err := v.EntityExists("time_projects", newProjectID)
-				if err != nil {
-					return fmt.Errorf("failed to validate project: %w", err)
-				}
-				if !exists {
-					return &ValidationError{Field: "project_id", Message: "Project not found"}
+				// Validate the project exists AND the caller may assign it.
+				if err := v.checkProjectAssignable("project_id", userID, newProjectID); err != nil {
+					return err
 				}
 				item.ProjectID = &newProjectID
 				// When setting a direct project, clear inherit flag
 				item.InheritProject = false
+			}
+		}
+	}
+
+	// Time-project override validation. time_project_id overrides the project
+	// used when logging time on the item; it is independent of inherit_project.
+	if timeProjectIDValue, ok := updateData["time_project_id"]; ok {
+		if timeProjectIDValue == nil {
+			item.TimeProjectID = nil
+		} else {
+			var newTimeProjectID int
+			switch tv := timeProjectIDValue.(type) {
+			case float64:
+				newTimeProjectID = int(tv)
+			case int:
+				newTimeProjectID = tv
+			default:
+				return &ValidationError{Field: "time_project_id", Message: "Invalid time_project_id type"}
+			}
+			if newTimeProjectID > 0 {
+				if err := v.checkProjectAssignable("time_project_id", userID, newTimeProjectID); err != nil {
+					return err
+				}
+				item.TimeProjectID = &newTimeProjectID
+			} else {
+				// 0 means clear, consistent with the aitools convention.
+				item.TimeProjectID = nil
 			}
 		}
 	}
@@ -297,9 +365,8 @@ func (v *ItemFieldValidator) ValidateAndApplyUpdates(
 
 			// Validate parent item exists and capture its workspace for the
 			// cross-workspace view-permission check below.
-			var parentWorkspaceID int
-			err := v.db.QueryRow("SELECT workspace_id FROM items WHERE id = ?", newParentID).Scan(&parentWorkspaceID)
-			if errors.Is(err, sql.ErrNoRows) {
+			parentWorkspaceID, err := repository.NewItemRepository(v.db).GetWorkspaceID(newParentID)
+			if errors.Is(err, repository.ErrNotFound) {
 				return &ValidationError{Field: "parent_id", Message: "Parent item not found"}
 			}
 			if err != nil {
@@ -377,8 +444,7 @@ func (v *ItemFieldValidator) ValidateAndApplyUpdates(
 			}
 
 			// Verify the related work item exists
-			var relatedWorkspaceID int
-			err := v.db.QueryRow("SELECT workspace_id FROM items WHERE id = ?", newRelatedWorkItemID).Scan(&relatedWorkspaceID)
+			_, err := repository.NewItemRepository(v.db).GetWorkspaceID(newRelatedWorkItemID)
 			if err != nil {
 				return &ValidationError{Field: "related_work_item_id", Message: "Related work item not found or access denied"}
 			}

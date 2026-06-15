@@ -5,9 +5,9 @@ import (
 	"strconv"
 	"time"
 
-	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/scheduler"
 	"windshift/internal/services"
 
@@ -16,7 +16,6 @@ import (
 
 // RecurrenceHandler handles recurrence rule API endpoints
 type RecurrenceHandler struct {
-	db                database.Database
 	recurrenceRepo    *repository.RecurrenceRepository
 	itemRepo          *repository.ItemRepository
 	scheduler         *scheduler.RecurrenceScheduler
@@ -24,11 +23,10 @@ type RecurrenceHandler struct {
 }
 
 // NewRecurrenceHandler creates a new recurrence handler
-func NewRecurrenceHandler(db database.Database, sched *scheduler.RecurrenceScheduler, permissionService *services.PermissionService) *RecurrenceHandler {
+func NewRecurrenceHandler(recurrenceRepo *repository.RecurrenceRepository, itemRepo *repository.ItemRepository, sched *scheduler.RecurrenceScheduler, permissionService *services.PermissionService) *RecurrenceHandler {
 	return &RecurrenceHandler{
-		db:                db,
-		recurrenceRepo:    repository.NewRecurrenceRepository(db),
-		itemRepo:          repository.NewItemRepository(db),
+		recurrenceRepo:    recurrenceRepo,
+		itemRepo:          itemRepo,
 		scheduler:         sched,
 		permissionService: permissionService,
 	}
@@ -36,7 +34,7 @@ func NewRecurrenceHandler(db database.Database, sched *scheduler.RecurrenceSched
 
 // checkItemEditPermission checks if the current user can edit the given item
 func (h *RecurrenceHandler) checkItemEditPermission(w http.ResponseWriter, r *http.Request, itemID int) bool {
-	return CheckItemPermission(w, r, repository.NewItemRepository(h.db), h.permissionService, itemID, models.PermissionItemEdit)
+	return CheckItemPermission(w, r, h.itemRepo, h.permissionService, itemID, models.PermissionItemEdit)
 }
 
 // resolveRuleForItem extracts the item ID from the URL, enforces permission, and
@@ -47,7 +45,7 @@ func (h *RecurrenceHandler) resolveRuleForItem(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return nil, false
 	}
-	if !CheckItemPermission(w, r, repository.NewItemRepository(h.db), h.permissionService, itemID, permission) {
+	if !CheckItemPermission(w, r, h.itemRepo, h.permissionService, itemID, permission) {
 		return nil, false
 	}
 
@@ -79,7 +77,7 @@ func (h *RecurrenceHandler) GetRecurrence(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	if !CheckItemPermission(w, r, repository.NewItemRepository(h.db), h.permissionService, itemID, models.PermissionItemView) {
+	if !CheckItemPermission(w, r, h.itemRepo, h.permissionService, itemID, models.PermissionItemView) {
 		return
 	}
 
@@ -132,6 +130,18 @@ func (h *RecurrenceHandler) CreateRecurrence(w http.ResponseWriter, r *http.Requ
 	req, ok := decodeJSON[models.CreateRecurrenceRequest](w, r)
 	if !ok {
 		return
+	}
+	// RRule, Timezone, DtStart, DtEnd are identifier-shaped strings the
+	// rrule + time parsers will reject anything bogus from. Stripping
+	// HTML markers defensively here closes the gap before parse error
+	// strings get echoed back in user-facing validation errors.
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.RRule, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.Timezone, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.DtStart, Policy: sanitize.ShortIdentifier},
+	)
+	if req.DtEnd != nil {
+		sanitize.Apply(req.DtEnd, sanitize.ShortIdentifier)
 	}
 
 	// Validate RRULE
@@ -249,6 +259,14 @@ func (h *RecurrenceHandler) UpdateRecurrence(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
+	// All free-form fields are *string — sanitize.Apply on nil is a
+	// no-op, so unset PATCH fields stay untouched.
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: req.RRule, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: req.Timezone, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: req.DtStart, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: req.DtEnd, Policy: sanitize.ShortIdentifier},
+	)
 
 	// Apply updates
 	if req.RRule != nil {
@@ -441,6 +459,10 @@ func (h *RecurrenceHandler) PreviewRRule(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.RRule, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.DtStart, Policy: sanitize.ShortIdentifier},
+	)
 
 	if req.RRule == "" {
 		respondValidationError(w, r, "rrule is required")

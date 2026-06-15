@@ -40,6 +40,51 @@ export const agentBindings = {
     }),
 
   /**
+   * Rewrite the binding's prompt-shaping config: custom instructions (the
+   * persona appended to the run's initial prompt) + attached skill ids
+   * (WI-258). Everything else on a binding stays create/delete-only.
+   * @param {number} workspaceId
+   * @param {number} id
+   * @param {{ instructions: string, skill_ids: number[] }} body
+   */
+  updateAgentConfig: (workspaceId, id, body) =>
+    fetchAPI(`/workspaces/${workspaceId}/agent-bindings/${id}/agent-config`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+
+  /**
+   * Round-trip a prompt through the binding's LLM connection and return the
+   * model's reply, plus — when the binding is repo-backed — a snapshot of the
+   * cloned worktree's project root:
+   *   { prompt, answer, repo?: { repo_slug, base_ref, entries: [{name, is_dir}], error? } }
+   * A blank prompt uses a server default. 502 means the provider/connection
+   * failed; 400 means the binding has no LLM connection. The repo block is
+   * reported inline (its own `error`) so a working model reply still returns
+   * even when the SCM/clone leg is broken; `repo` is absent for bindings with
+   * no repo configured.
+   */
+  testLLM: (workspaceId, id, prompt) =>
+    fetchAPI(`/workspaces/${workspaceId}/agent-bindings/${id}/test-llm`, {
+      method: 'POST',
+      body: JSON.stringify(prompt ? { prompt } : {}),
+    }),
+
+  /**
+   * Provision a real, ephemeral coding-agent container run for the binding —
+   * the same machinery a work-item assignment drives, but with no work item and
+   * a read-only prompt, marked so it can never push a branch or open a PR. Use
+   * it to verify the full chain end-to-end: model reachable + repo checked out +
+   * the agent can read its files. Returns { run_id }; watch it via the agentRuns
+   * events endpoints. 400 = binding has no repo; 409 = runner not configured on
+   * this server; 404 = no such binding.
+   */
+  testRun: (workspaceId, id) =>
+    fetchAPI(`/workspaces/${workspaceId}/agent-bindings/${id}/test-run`, {
+      method: 'POST',
+    }),
+
+  /**
    * List the acting-identity options the workspace admin may pick:
    * owned agent users + allowlisted centralized service users (when the
    * WI-87 master flag is on). The chokepoint re-validates at create

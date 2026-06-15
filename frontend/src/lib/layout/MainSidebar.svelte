@@ -5,6 +5,7 @@
   import { aiStore } from '../stores/aiStore.svelte.js';
   import { getShortcutDisplay } from '../utils/keyboardShortcuts.js';
   import { workspaceIconMap } from '../utils/icons.js';
+  import { isTauri as getIsTauri } from '../utils/isTauri.js';
   import DropdownMenu from './DropdownMenu.svelte';
   import Tooltip from '../components/Tooltip.svelte';
   import NavLink from './NavLink.svelte';
@@ -24,7 +25,7 @@
     onToggleTerminal = () => {}
   } = $props();
 
-  const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+  const isTauri = getIsTauri();
 
   let workspaceSearchQuery = $state('');
 
@@ -138,7 +139,7 @@
       href="/"
       class="flex items-center {$uiStore.navExpanded ? 'px-4' : 'justify-center'} w-full h-10 mb-2 hover:opacity-80 transition-opacity cursor-pointer"
     >
-      <img src="/windshift-3.svg" alt="Windshift" class="w-8 h-8 flex-shrink-0" />
+      <img src="windshift-3.svg" alt="Windshift" class="w-8 h-8 flex-shrink-0" />
       {#if $uiStore.navExpanded}
         <span class="ml-3 font-semibold text-sm whitespace-nowrap">Windshift</span>
       {/if}

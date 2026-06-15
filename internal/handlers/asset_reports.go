@@ -10,9 +10,65 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
+
+// sanitizeAssetReport gates the user-facing fields on an asset report
+// payload. Name + Description render in the portal report list and
+// audit log; CQLQuery is query text whose comparison operators are
+// load-bearing, so it is length-capped only; the Config blob is JSON —
+// HTML stripping would corrupt it, so it is validated (size +
+// well-formed JSON) and rejected instead of scrubbed; Icon / Color /
+// column identifiers are identifier-shaped. Writes a validation error
+// and returns false when Config is rejected.
+func sanitizeAssetReport(w http.ResponseWriter, r *http.Request, ar *models.AssetReport) bool {
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &ar.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &ar.Description, Policy: sanitize.RichText},
+		sanitize.Pair{Target: &ar.CQLQuery, Policy: sanitize.QueryText},
+		sanitize.Pair{Target: &ar.Icon, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &ar.Color, Policy: sanitize.ShortIdentifier},
+	)
+	for i := range ar.ColumnConfig {
+		sanitize.Apply(&ar.ColumnConfig[i], sanitize.ShortIdentifier)
+	}
+	if ar.Config != nil {
+		if err := sanitize.ValidateJSONPayload("config", *ar.Config); err != nil {
+			respondValidationError(w, r, err.Error())
+			return false
+		}
+	}
+	return true
+}
+
+// sanitizeAssetReportFields gates the per-row form-mode fields.
+// DisplayName + Description render as label/help copy in the portal
+// form; FieldIdentifier + FieldType + VirtualFieldType are
+// identifier-shaped; VirtualFieldOptions is the JSON option list the
+// portal select JSON.parses — HTML stripping would corrupt it, so it
+// is validated (size + well-formed JSON) and rejected instead of
+// scrubbed. Writes a validation error and returns false when an
+// option list is rejected.
+func sanitizeAssetReportFields(w http.ResponseWriter, r *http.Request, fields []models.AssetReportField) bool {
+	for i := range fields {
+		sanitize.ApplyAll(
+			sanitize.Pair{Target: &fields[i].FieldIdentifier, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: &fields[i].FieldType, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: fields[i].DisplayName, Policy: sanitize.PlainTextField},
+			sanitize.Pair{Target: fields[i].Description, Policy: sanitize.RichText},
+			sanitize.Pair{Target: fields[i].VirtualFieldType, Policy: sanitize.ShortIdentifier},
+		)
+		if fields[i].VirtualFieldOptions != nil {
+			if err := sanitize.ValidateJSONPayload("virtual_field_options", *fields[i].VirtualFieldOptions); err != nil {
+				respondValidationError(w, r, err.Error())
+				return false
+			}
+		}
+	}
+	return true
+}
 
 type AssetReportHandler struct {
 	repo           *repository.AssetReportRepository
@@ -42,6 +98,24 @@ func NewAssetReportHandler(
 func (h *AssetReportHandler) GetAllForChannel(w http.ResponseWriter, r *http.Request) {
 	channelID, ok := requireIDParam(w, r, "channel_id")
 	if !ok {
+		return
+	}
+
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+
+	// Report definitions expose cql_query and visibility ACL config, so gate
+	// the list by manager scope on the channel just like the single-report Get
+	// (404, not 403, to avoid disclosing the channel exists).
+	canManage, err := h.channelService.UserCanManage(r.Context(), user.ID, channelID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	if !canManage {
+		respondNotFound(w, r, "channel")
 		return
 	}
 
@@ -99,6 +173,9 @@ func (h *AssetReportHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	ar, ok := decodeJSON[models.AssetReport](w, r)
 	if !ok {
+		return
+	}
+	if !sanitizeAssetReport(w, r, &ar) {
 		return
 	}
 
@@ -225,6 +302,9 @@ func (h *AssetReportHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	ar, ok := decodeJSON[models.AssetReport](w, r)
 	if !ok {
+		return
+	}
+	if !sanitizeAssetReport(w, r, &ar) {
 		return
 	}
 
@@ -424,12 +504,53 @@ func (h *AssetReportHandler) UpdateVisibility(w http.ResponseWriter, r *http.Req
 	respondJSONOK(w, *ar)
 }
 
+// requireManagedAssetReport authenticates the request, resolves the asset
+// report from the "id" path param, and gates by manager scope on the owning
+// channel — the same gate Get applies. Responds 404 both when the report is
+// missing and when the user can't manage the channel (no existence leak).
+// Returns the report and true on success; writes the response and returns
+// false otherwise.
+func (h *AssetReportHandler) requireManagedAssetReport(w http.ResponseWriter, r *http.Request) (*models.AssetReport, bool) {
+	id, ok := requireIDParam(w, r, "id")
+	if !ok {
+		return nil, false
+	}
+
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return nil, false
+	}
+
+	ar, err := h.repo.GetByID(id)
+	if errors.Is(err, repository.ErrNotFound) {
+		respondNotFound(w, r, "asset_report")
+		return nil, false
+	}
+	if err != nil {
+		respondInternalError(w, r, err)
+		return nil, false
+	}
+
+	canManage, err := h.channelService.UserCanManage(r.Context(), user.ID, ar.ChannelID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return nil, false
+	}
+	if !canManage {
+		respondNotFound(w, r, "asset_report")
+		return nil, false
+	}
+
+	return ar, true
+}
+
 // GetFields returns all fields for a form-mode asset report.
 func (h *AssetReportHandler) GetFields(w http.ResponseWriter, r *http.Request) {
-	assetReportID, ok := requireIDParam(w, r, "id")
+	ar, ok := h.requireManagedAssetReport(w, r)
 	if !ok {
 		return
 	}
+	assetReportID := ar.ID
 
 	fields, err := h.repo.ListFields(assetReportID)
 	if err != nil {
@@ -465,6 +586,9 @@ func (h *AssetReportHandler) UpdateFields(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	if !sanitizeAssetReportFields(w, r, fields) {
+		return
+	}
 
 	if err := h.repo.ReplaceFields(assetReportID, fields); err != nil {
 		respondInternalError(w, r, err)
@@ -485,10 +609,11 @@ func (h *AssetReportHandler) UpdateFields(w http.ResponseWriter, r *http.Request
 
 // GetAvailableFields returns fields available to bind on a form-mode asset report.
 func (h *AssetReportHandler) GetAvailableFields(w http.ResponseWriter, r *http.Request) {
-	assetReportID, ok := requireIDParam(w, r, "id")
+	ar, ok := h.requireManagedAssetReport(w, r)
 	if !ok {
 		return
 	}
+	assetReportID := ar.ID
 
 	itemTypeID, workspaceID, err := h.repo.GetItemTypeAndWorkspace(assetReportID)
 	if errors.Is(err, repository.ErrNotFound) {

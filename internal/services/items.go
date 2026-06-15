@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"windshift/internal/database"
+	"windshift/internal/repository"
 )
 
 // ErrMissingItemType is returned by CreateItem when the caller did not
@@ -109,11 +110,64 @@ type ItemCreationParams struct {
 	// import time. Both fall back to time.Now() when nil.
 	CreatedAt *time.Time
 	UpdatedAt *time.Time
+	// SkipAssigneeTrigger suppresses the coding-agent assignee trigger for
+	// bulk paths (e.g. the Jira importer) where pre-assigned items must not
+	// each start an agent run.
+	SkipAssigneeTrigger bool
+	// ValidatingUserID and PermService enable project-assignment access control.
+	// When ValidatingUserID > 0 and PermService is non-nil, CreateItem rejects a
+	// ProjectID / TimeProjectID the user may not view (returning ErrProjectNotFound,
+	// indistinguishable from a non-existent project to avoid ID enumeration).
+	// User-facing create handlers set both; internal callers (import, recurrence,
+	// copy of already-authorized items) leave them zero to skip the check.
+	ValidatingUserID int
+	PermService      *PermissionService
+}
+
+// ErrProjectNotFound is returned by CreateItem when a supplied project_id /
+// time_project_id either does not exist or is not accessible to the validating
+// user. The two cases share one error so callers cannot enumerate project IDs.
+var ErrProjectNotFound = errors.New("project not found")
+
+// validateProjectAssignmentAccess ensures the validating user may attach the
+// given project IDs. Existence is checked first (CanViewProject treats an
+// unrestricted non-existent project as viewable), then access.
+func validateProjectAssignmentAccess(db database.Database, perm *PermissionService, userID int, projectIDs ...*int) error {
+	ts := NewTimePermissionService(db, perm)
+	for _, pid := range projectIDs {
+		if pid == nil || *pid <= 0 {
+			continue
+		}
+		var exists bool
+		if err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM time_projects WHERE id = ?)", *pid).Scan(&exists); err != nil {
+			return fmt.Errorf("failed to validate project: %w", err)
+		}
+		if !exists {
+			return ErrProjectNotFound
+		}
+		hasAccess, err := ts.CanViewProject(userID, *pid)
+		if err != nil {
+			return fmt.Errorf("failed to check project access: %w", err)
+		}
+		if !hasAccess {
+			return ErrProjectNotFound
+		}
+	}
+	return nil
 }
 
 // CreateItem creates a new item with proper transaction handling and number generation
 // This centralizes the item creation logic used by normal creation, portal submissions, and copying
 func CreateItem(db database.Database, params ItemCreationParams) (int64, error) {
+	// Enforce project-assignment access control: a user may only attach a
+	// project_id / time_project_id they can view. Skipped for internal callers
+	// that don't set a validating user.
+	if params.ValidatingUserID > 0 && params.PermService != nil {
+		if err := validateProjectAssignmentAccess(db, params.PermService, params.ValidatingUserID, params.ProjectID, params.TimeProjectID); err != nil {
+			return 0, err
+		}
+	}
+
 	// Enforce config set item type restrictions before anything else
 	if params.ItemTypeID != nil && *params.ItemTypeID != 0 {
 		allowed, err := IsItemTypeAllowedInWorkspace(db, params.WorkspaceID, *params.ItemTypeID)
@@ -218,18 +272,14 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 		}
 		defer func() { _ = tx.Rollback() }()
 
-		fracIndex, err := GenerateFracIndexForNewItem(tx, driverName)
+		fracIndex, err := repository.GenerateFracIndexForNewItem(tx, driverName)
 		if err != nil {
 			return 0, "", fmt.Errorf("failed to generate frac_index: %w", err)
 		}
 
 		// Get next workspace-specific item number (within transaction to prevent race conditions)
-		var nextWorkspaceItemNumber int
-		if err := tx.QueryRow(`
-			SELECT COALESCE(MAX(workspace_item_number), 0) + 1
-			FROM items
-			WHERE workspace_id = ?
-		`, params.WorkspaceID).Scan(&nextWorkspaceItemNumber); err != nil {
+		nextWorkspaceItemNumber, err := repository.NewItemRepository(db).GetNextWorkspaceItemNumber(tx, params.WorkspaceID)
+		if err != nil {
 			return 0, "", fmt.Errorf("failed to generate workspace item number: %w", err)
 		}
 
@@ -303,21 +353,21 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 	// MAX(frac_index) is re-read inside that tx, so concurrent writers'
 	// commits are picked up automatically — no cache to invalidate.
 	var itemID int64
-	for attempt := 0; attempt < fracIndexMaxRetries; attempt++ {
+	for attempt := 0; attempt < repository.FracIndexMaxRetries; attempt++ {
 		id, fracIndex, ierr := runInsertTx()
 		if ierr == nil {
 			itemID = id
 			break
 		}
-		if !IsFracIndexUniqueViolation(ierr) {
+		if !repository.IsFracIndexUniqueViolation(ierr) {
 			return 0, ierr
 		}
 		slog.Warn("frac_index unique violation, retrying",
 			slog.Int("attempt", attempt+1),
 			slog.String("frac_index", fracIndex),
 			slog.String("component", "fracindex"))
-		if attempt == fracIndexMaxRetries-1 {
-			return 0, fmt.Errorf("failed to insert item after %d frac_index retries: %w", fracIndexMaxRetries, ierr)
+		if attempt == repository.FracIndexMaxRetries-1 {
+			return 0, fmt.Errorf("failed to insert item after %d frac_index retries: %w", repository.FracIndexMaxRetries, ierr)
 		}
 	}
 
@@ -325,6 +375,18 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 	if params.CreatorID != nil {
 		historyService := GetHistoryService(db)
 		historyService.RecordItemCreationHistoryAsync(db, int(itemID), *params.CreatorID)
+	}
+
+	// Items created with an assignee already set fire the coding-agent
+	// binding trigger exactly like a later assignment would (the create
+	// surfaces previously skipped it, so create-with-agent-assignee
+	// silently never started a run).
+	if !params.SkipAssigneeTrigger && params.AssigneeID != nil {
+		triggeredBy := params.ValidatingUserID
+		if triggeredBy == 0 && params.CreatorID != nil {
+			triggeredBy = *params.CreatorID
+		}
+		maybeTriggerAssigneeRun(params.WorkspaceID, int(itemID), nil, params.AssigneeID, triggeredBy)
 	}
 
 	return itemID, nil

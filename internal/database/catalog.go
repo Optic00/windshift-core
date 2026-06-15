@@ -129,6 +129,7 @@ func init() {
 	Catalog = append(Catalog, seedMigrations()...)
 	Catalog = append(Catalog, miscMigrations()...)
 	Catalog = append(Catalog, schemaRerunMigrations()...)
+	Catalog = append(Catalog, driftFixMigrations()...)
 }
 
 // baselineMigration stamps schema_migrations with a "this database has
@@ -1574,10 +1575,16 @@ func seedMigrations() []Migration {
 func miscMigrations() []Migration {
 	return []Migration{
 		{
-			Version:  "drop_workspace_everyone_roles",
-			Name:     "DROP TABLE workspace_everyone_roles",
-			SQLite:   "DROP TABLE IF EXISTS workspace_everyone_roles",
-			Postgres: "DROP TABLE IF EXISTS workspace_everyone_roles",
+			Version: "drop_workspace_everyone_roles",
+			Name:    "DROP TABLE workspace_everyone_roles",
+			// Check returns 1 when the legacy table is already gone (fresh
+			// installs never had it; older installs that already ran this
+			// migration). Returns 0 only on a pre-migration install that
+			// still carries the table, in which case the body runs.
+			CheckSQLite:   "SELECT CASE WHEN EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='workspace_everyone_roles') THEN 0 ELSE 1 END",
+			CheckPostgres: "SELECT CASE WHEN EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='workspace_everyone_roles') THEN 0 ELSE 1 END",
+			SQLite:        "DROP TABLE IF EXISTS workspace_everyone_roles",
+			Postgres:      "DROP TABLE IF EXISTS workspace_everyone_roles",
 		},
 		{
 			Version:       "seed_link_types_tests_allowed_entity_types",
@@ -1601,10 +1608,17 @@ func miscMigrations() []Migration {
 			// the follow-up migration adds the UNIQUE(configuration_set_id)
 			// index. No Check — the DELETE is idempotent (zero rows match
 			// once dedup is done) and the runner stamps after first run.
-			Version:  "dedupe_configuration_set_notification_settings",
-			Name:     "dedupe configuration_set_notification_settings to one row per config set",
-			SQLite:   "DELETE FROM configuration_set_notification_settings WHERE id NOT IN (SELECT MAX(id) FROM configuration_set_notification_settings GROUP BY configuration_set_id)",
-			Postgres: "DELETE FROM configuration_set_notification_settings WHERE id NOT IN (SELECT MAX(id) FROM configuration_set_notification_settings GROUP BY configuration_set_id)",
+			Version: "dedupe_configuration_set_notification_settings",
+			Name:    "dedupe configuration_set_notification_settings to one row per config set",
+			// Check on the named unique index that the next migration creates
+			// (and schema/notifications{,_postgres}.sql carries on fresh
+			// installs). If the index exists, duplicates already cannot
+			// exist, so this dedupe is unreachable and the body is stamped
+			// without running.
+			CheckSQLite:   sqliteIndexCheck("uq_config_set_notification_setting_one_per_set"),
+			CheckPostgres: pgIndexCheck("uq_config_set_notification_setting_one_per_set"),
+			SQLite:        "DELETE FROM configuration_set_notification_settings WHERE id NOT IN (SELECT MAX(id) FROM configuration_set_notification_settings GROUP BY configuration_set_id)",
+			Postgres:      "DELETE FROM configuration_set_notification_settings WHERE id NOT IN (SELECT MAX(id) FROM configuration_set_notification_settings GROUP BY configuration_set_id)",
 		},
 		{
 			Version:       "idx_uq_config_set_notification_setting_one_per_set",
@@ -1634,10 +1648,16 @@ func miscMigrations() []Migration {
 			// owner id. CreateRecord now writes NULL for these entity_types;
 			// this migration nulls the existing rows so the symptom clears
 			// without a manual SQL fix-up.
-			Version:  "wi46_null_branding_attachment_item_id",
-			Name:     "WI-46 null item_id for workspace/portal/hub branding attachments",
-			SQLite:   "UPDATE attachments SET item_id = NULL WHERE entity_type IN ('workspace_background','portal_background','portal_logo','hub_logo') AND item_id IS NOT NULL",
-			Postgres: "UPDATE attachments SET item_id = NULL WHERE entity_type IN ('workspace_background','portal_background','portal_logo','hub_logo') AND item_id IS NOT NULL",
+			Version: "wi46_null_branding_attachment_item_id",
+			Name:    "WI-46 null item_id for workspace/portal/hub branding attachments",
+			// Check returns 1 when no branding attachments need scrubbing
+			// (fresh installs with no rows, or older installs that already
+			// ran this migration). Otherwise the body runs and nulls
+			// item_id on the offending rows.
+			CheckSQLite:   "SELECT CASE WHEN EXISTS(SELECT 1 FROM attachments WHERE entity_type IN ('workspace_background','portal_background','portal_logo','hub_logo') AND item_id IS NOT NULL) THEN 0 ELSE 1 END",
+			CheckPostgres: "SELECT CASE WHEN EXISTS(SELECT 1 FROM attachments WHERE entity_type IN ('workspace_background','portal_background','portal_logo','hub_logo') AND item_id IS NOT NULL) THEN 0 ELSE 1 END",
+			SQLite:        "UPDATE attachments SET item_id = NULL WHERE entity_type IN ('workspace_background','portal_background','portal_logo','hub_logo') AND item_id IS NOT NULL",
+			Postgres:      "UPDATE attachments SET item_id = NULL WHERE entity_type IN ('workspace_background','portal_background','portal_logo','hub_logo') AND item_id IS NOT NULL",
 		},
 		// Milestone-from-tag automation: stable upsert key on milestones,
 		// per-repo glob filters, and the tag/branch idempotency ledger.
@@ -1704,33 +1724,178 @@ func miscMigrations() []Migration {
 	}
 }
 
+// driftFixMigrations close gaps where the base schema/default data had moved
+// ahead of the upgrade path. They intentionally run after the schema re-runs
+// and legacy column-add catalog entries so their checks see the final shape of
+// an upgraded database.
+func driftFixMigrations() []Migration {
+	return []Migration{
+		{
+			Version:       "drift_email_message_tracking_direction",
+			Name:          "email_message_tracking.direction",
+			CheckSQLite:   sqliteColumnCheck("email_message_tracking", "direction"),
+			CheckPostgres: pgColumnCheck("email_message_tracking", "direction"),
+			SQLite:        "ALTER TABLE email_message_tracking ADD COLUMN direction TEXT DEFAULT 'inbound' CHECK(direction IN ('inbound', 'outbound'))",
+			Postgres:      "ALTER TABLE email_message_tracking ADD COLUMN direction TEXT DEFAULT 'inbound' CHECK(direction IN ('inbound', 'outbound'))",
+		},
+		{
+			Version: "drift_email_message_tracking_attachments_status_check",
+			Name:    "email_message_tracking.attachments_status CHECK",
+			CheckSQLite: `SELECT CASE WHEN EXISTS (
+				SELECT 1 FROM sqlite_master
+				WHERE type='table'
+				  AND name='email_message_tracking'
+				  AND sql LIKE '%attachments_status TEXT CHECK(attachments_status IN%'
+			) THEN 1 ELSE 0 END`,
+			CheckPostgres: "SELECT COUNT(*) FROM pg_constraint WHERE conname = 'email_message_tracking_attachments_status_check'",
+			SQLite: `
+				UPDATE email_message_tracking
+				SET attachments_status = NULL
+				WHERE attachments_status IS NOT NULL
+				  AND attachments_status NOT IN ('ok','partial','failed');
+
+				CREATE TABLE email_message_tracking_new (
+					id INTEGER PRIMARY KEY AUTOINCREMENT,
+					channel_id INTEGER NOT NULL,
+					message_id TEXT NOT NULL,
+					dedup_key TEXT NOT NULL DEFAULT '',
+					in_reply_to TEXT,
+					from_email TEXT NOT NULL,
+					from_name TEXT,
+					subject TEXT,
+					item_id INTEGER,
+					comment_id INTEGER,
+					attachments_status TEXT CHECK(attachments_status IN ('ok','partial','failed') OR attachments_status IS NULL),
+					direction TEXT DEFAULT 'inbound' CHECK(direction IN ('inbound', 'outbound')),
+					processed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+					FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE,
+					FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE SET NULL,
+					FOREIGN KEY (comment_id) REFERENCES comments(id) ON DELETE SET NULL
+				);
+				INSERT INTO email_message_tracking_new
+					(id, channel_id, message_id, dedup_key, in_reply_to, from_email, from_name, subject,
+					 item_id, comment_id, attachments_status, direction, processed_at)
+				SELECT id, channel_id, message_id, dedup_key, in_reply_to, from_email, from_name, subject,
+					   item_id, comment_id, attachments_status, COALESCE(direction, 'inbound'), processed_at
+				FROM email_message_tracking;
+				DROP TABLE email_message_tracking;
+				ALTER TABLE email_message_tracking_new RENAME TO email_message_tracking;
+				CREATE INDEX IF NOT EXISTS idx_email_message_tracking_channel_id ON email_message_tracking(channel_id);
+				CREATE INDEX IF NOT EXISTS idx_email_message_tracking_message_id ON email_message_tracking(message_id);
+				CREATE INDEX IF NOT EXISTS idx_email_message_tracking_in_reply_to ON email_message_tracking(in_reply_to);
+				CREATE UNIQUE INDEX IF NOT EXISTS idx_email_message_tracking_dedup ON email_message_tracking(channel_id, dedup_key);
+			`,
+			Postgres: `
+				UPDATE email_message_tracking
+				SET attachments_status = NULL
+				WHERE attachments_status IS NOT NULL
+				  AND attachments_status NOT IN ('ok','partial','failed');
+				ALTER TABLE email_message_tracking
+					ADD CONSTRAINT email_message_tracking_attachments_status_check
+					CHECK (attachments_status IN ('ok','partial','failed') OR attachments_status IS NULL);
+			`,
+		},
+		{
+			Version: "drift_active_timers_user_id_not_null",
+			Name:    "active_timers.user_id NOT NULL",
+			CheckSQLite: `SELECT CASE WHEN EXISTS (
+				SELECT 1 FROM pragma_table_info('active_timers')
+				WHERE name='user_id' AND [notnull] = 1
+			) THEN 1 ELSE 0 END`,
+			CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='active_timers' AND column_name='user_id' AND is_nullable='NO'",
+			SQLite: `
+				DELETE FROM active_timers WHERE user_id IS NULL;
+				CREATE TABLE active_timers_new (
+					id INTEGER PRIMARY KEY AUTOINCREMENT,
+					workspace_id INTEGER NOT NULL,
+					item_id INTEGER,
+					project_id INTEGER NOT NULL,
+					user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+					description TEXT NOT NULL,
+					start_time_utc INTEGER NOT NULL,
+					created_at INTEGER NOT NULL,
+					FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+					FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE SET NULL,
+					FOREIGN KEY (project_id) REFERENCES time_projects(id) ON DELETE CASCADE
+				);
+				INSERT INTO active_timers_new
+					(id, workspace_id, item_id, project_id, user_id, description, start_time_utc, created_at)
+				SELECT id, workspace_id, item_id, project_id, user_id, description, start_time_utc, created_at
+				FROM active_timers;
+				DROP TABLE active_timers;
+				ALTER TABLE active_timers_new RENAME TO active_timers;
+				CREATE INDEX IF NOT EXISTS idx_active_timers_workspace_id ON active_timers(workspace_id);
+				CREATE INDEX IF NOT EXISTS idx_active_timers_item_id ON active_timers(item_id);
+				CREATE INDEX IF NOT EXISTS idx_active_timers_project_id ON active_timers(project_id);
+				CREATE INDEX IF NOT EXISTS idx_active_timers_user_id ON active_timers(user_id);
+			`,
+			Postgres: `
+				DELETE FROM active_timers WHERE user_id IS NULL;
+				ALTER TABLE active_timers ALTER COLUMN user_id SET NOT NULL;
+			`,
+		},
+		{
+			Version:       "drift_screen_field_labels_postgres",
+			Name:          "screen_fields.labels (screen 1, Postgres)",
+			CheckSQLite:   "SELECT COUNT(*) FROM screen_fields WHERE screen_id = 1 AND field_identifier = 'labels'",
+			CheckPostgres: "SELECT COUNT(*) FROM screen_fields WHERE screen_id = 1 AND field_identifier = 'labels'",
+			SQLite:        "INSERT INTO screen_fields (screen_id, field_type, field_identifier, display_order, is_required, field_width) VALUES (1, 'system', 'labels', 11, false, 'full')",
+			Postgres:      "INSERT INTO screen_fields (screen_id, field_type, field_identifier, display_order, is_required, field_width) VALUES (1, 'system', 'labels', 11, false, 'full')",
+		},
+	}
+}
+
 // schemaRerunMigrations are embedded schema files that the legacy code
 // re-executes on every existing-install startup. Each schema is fully
 // idempotent (CREATE TABLE IF NOT EXISTS, CREATE INDEX IF NOT EXISTS,
 // CREATE OR REPLACE FUNCTION, DO $$ guard blocks) so re-running is safe.
 //
-// The runner stamps these on first upgrade (body runs once, then version
-// is in schema_migrations and subsequent startups skip). No Check needed:
-// the body is its own idempotency guarantee.
+// Every entry pins a sentinel table name — the first CREATE TABLE in the
+// schema file. The Check predicates assert that table is present, so on
+// a fresh install (where the same schema is already in DB.Initialize's
+// concat string) the migration stamps without re-executing the body.
+// schema/*.sql is canonical for fresh installs; this slice covers the
+// upgrade path only.
 func schemaRerunMigrations() []Migration {
-	return []Migration{
-		{Version: "schema_labels", Name: "labels schema", SQLite: labelsSchema, Postgres: labelsSchemaPostgres},
-		{Version: "schema_llm", Name: "llm schema", SQLite: llmSchema, Postgres: llmSchemaPostgres},
-		{Version: "schema_auth_policy", Name: "auth_policy schema", SQLite: authPolicySchema, Postgres: authPolicySchemaPostgres},
-		{Version: "schema_milestones", Name: "milestones schema", SQLite: milestonesSchema, Postgres: milestonesSchemaPostgres},
-		{Version: "schema_channels", Name: "channels schema", SQLite: channelsSchema, Postgres: channelsSchemaPostgres},
-		{Version: "schema_assets", Name: "assets schema", SQLite: assetsSchema, Postgres: assetsSchemaPostgres},
-		{Version: "schema_ldap", Name: "ldap schema", SQLite: ldapSchema, Postgres: ldapSchemaPostgres},
-		{Version: "schema_daily_briefings", Name: "daily_briefings schema", SQLite: dailyBriefingsSchema, Postgres: dailyBriefingsSchemaPostgres},
-		{Version: "schema_asset_actions", Name: "asset_actions schema", SQLite: assetActionsSchema, Postgres: assetActionsSchemaPostgres},
-		{Version: "schema_teams", Name: "teams schema", SQLite: teamsSchema, Postgres: teamsSchemaPostgres},
-		{Version: "schema_condition_sets", Name: "condition_sets schema", SQLite: conditionSetsSchema, Postgres: conditionSetsSchemaPostgres},
-		{Version: "schema_approvals", Name: "approvals schema", SQLite: approvalsSchema, Postgres: approvalsSchemaPostgres},
-		{Version: "schema_integrations", Name: "integrations schema", SQLite: integrationsSchema, Postgres: integrationsSchemaPostgres},
-		{Version: "schema_actions", Name: "actions schema", SQLite: actionsSchema, Postgres: actionsSchemaPostgres},
-		{Version: "schema_scm", Name: "scm schema", SQLite: scmSchema, Postgres: scmSchemaPostgres},
-		// Postgres-only — there's no asset_reports.sql for SQLite (it lives
-		// in the items.sql / scm.sql composite for SQLite).
-		{Version: "schema_asset_reports_postgres", Name: "asset_reports schema (Postgres)", Postgres: assetReportsSchemaPostgres},
+	type rerun struct {
+		version  string
+		name     string
+		sentinel string // first CREATE TABLE name in the schema body
+		sqlite   string
+		postgres string
 	}
+	entries := []rerun{
+		{"schema_labels", "labels schema", "labels", labelsSchema, labelsSchemaPostgres},
+		{"schema_llm", "llm schema", "llm_connections", llmSchema, llmSchemaPostgres},
+		{"schema_auth_policy", "auth_policy schema", "auth_policy_audit", authPolicySchema, authPolicySchemaPostgres},
+		{"schema_milestones", "milestones schema", "milestone_categories", milestonesSchema, milestonesSchemaPostgres},
+		{"schema_channels", "channels schema", "channel_categories", channelsSchema, channelsSchemaPostgres},
+		{"schema_assets", "assets schema", "asset_management_sets", assetsSchema, assetsSchemaPostgres},
+		{"schema_ldap", "ldap schema", "ldap_configs", ldapSchema, ldapSchemaPostgres},
+		{"schema_daily_briefings", "daily_briefings schema", "daily_briefings", dailyBriefingsSchema, dailyBriefingsSchemaPostgres},
+		{"schema_asset_actions", "asset_actions schema", "asset_actions", assetActionsSchema, assetActionsSchemaPostgres},
+		{"schema_teams", "teams schema", "teams", teamsSchema, teamsSchemaPostgres},
+		{"schema_condition_sets", "condition_sets schema", "condition_sets", conditionSetsSchema, conditionSetsSchemaPostgres},
+		{"schema_approvals", "approvals schema", "approval_sets", approvalsSchema, approvalsSchemaPostgres},
+		{"schema_integrations", "integrations schema", "integration_providers", integrationsSchema, integrationsSchemaPostgres},
+		{"schema_actions", "actions schema", "actions", actionsSchema, actionsSchemaPostgres},
+		{"schema_scm", "scm schema", "scm_providers", scmSchema, scmSchemaPostgres},
+		// Postgres-only — there's no asset_reports.sql for SQLite (it lives
+		// in the items.sql / scm.sql composite for SQLite). Empty SQLite
+		// body so the runner stamps without doing anything on that backend.
+		{"schema_asset_reports_postgres", "asset_reports schema (Postgres)", "asset_reports", "", assetReportsSchemaPostgres},
+	}
+
+	out := make([]Migration, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, Migration{
+			Version:       e.version,
+			Name:          e.name,
+			CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='" + e.sentinel + "'",
+			CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='" + e.sentinel + "'",
+			SQLite:        e.sqlite,
+			Postgres:      e.postgres,
+		})
+	}
+	return out
 }

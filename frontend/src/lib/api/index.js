@@ -9,6 +9,7 @@ import {
   aiFeatures,
   llmConnections,
   llmProviders,
+  runnerPools,
 } from './ai.js';
 import { analytics } from './analytics.js';
 import { approvalSets } from './approvalSets.js';
@@ -429,6 +430,9 @@ export const api = {
   // Action Capabilities (admin)
   actionCapabilities,
 
+  // Runner pools (admin; runner_pool capability tokens + instances)
+  runnerPools,
+
   // Action Credentials (admin + workspace; encrypted API tokens)
   actionCredentials,
 
@@ -444,6 +448,7 @@ export { agentBindings } from './agentBindings.js';
 export { agentRuns } from './agentRuns.js';
 // Coding-agent harness — admin security gate (WI-87).
 export { agentSecurity } from './agentSecurity.js';
+export { agentSkills } from './agentSkills.js';
 // Calendar feed exports
 export { createCalendarFeedToken, getCalendarFeedToken, revokeCalendarFeedToken } from './misc.js';
 // Core utilities

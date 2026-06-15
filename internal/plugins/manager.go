@@ -22,6 +22,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/services"
+	"windshift/internal/utils"
 
 	securejoin "github.com/cyphar/filepath-securejoin"
 	extism "github.com/extism/go-sdk"
@@ -81,8 +82,15 @@ func NewManager(pluginDir string, opts ...Option) *Manager {
 	options := ManagerOptions{
 		PluginTimeout: 5 * time.Second,
 		MemoryLimit:   64 * 1024 * 1024, // 64MiB default ceiling
-		HTTPClient:    &http.Client{Timeout: 10 * time.Second},
-		Logger:        logger.Get(),
+		// Plugin http_fetch dials a plugin-controlled URL. Route it through the
+		// SSRF-safe dialer (blocks loopback/RFC1918/link-local/CGNAT/metadata,
+		// re-checked on every redirect hop) so a plugin cannot reach
+		// 169.254.169.254 or internal services. Redirect-following is preserved.
+		HTTPClient: &http.Client{
+			Timeout:   10 * time.Second,
+			Transport: &http.Transport{DialContext: utils.SafeNetDialer(10 * time.Second).DialContext},
+		},
+		Logger: logger.Get(),
 	}
 
 	for _, opt := range opts {

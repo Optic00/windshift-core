@@ -14,6 +14,7 @@
   import SetPassword from './lib/pages/SetPassword.svelte';
   import MainApp from './lib/pages/MainApp.svelte';
   import PublicBoard from './lib/pages/PublicBoard.svelte';
+  import PagePrintView from './lib/features/pages/PagePrintView.svelte';
 
   let showLoginDialog = $state(false);
   let setupCompleted = $state(false);
@@ -174,7 +175,7 @@
     <div class="min-h-screen flex items-center justify-center w-full">
       <div class="text-center">
         <div class="w-16 h-16 mx-auto mb-4">
-          <img src="/windshift-3.svg" alt={APP_NAME} class="w-16 h-16 animate-pulse" />
+          <img src="windshift-3.svg" alt={APP_NAME} class="w-16 h-16 animate-pulse" />
         </div>
         <p class="text-gray-600">Loading...</p>
       </div>
@@ -194,6 +195,12 @@
   <!-- Empty background during setup - WelcomeAssistant modal will show on top -->
   {:else if !setupCompleted && appInitialized}
     <div class="flex-1"></div>
+  <!-- Chrome-free print/PDF view for a single page (authenticated, no app shell) -->
+  {:else if $authStore.isAuthenticated && appInitialized && $currentRoute.view === 'page-print'}
+    <PagePrintView
+      workspaceId={Number($currentRoute.params.id)}
+      pageId={Number($currentRoute.params.pageId)}
+    />
   <!-- Show main app when user is authenticated -->
   {:else if $authStore.isAuthenticated && appInitialized}
     <MainApp />
@@ -208,7 +215,7 @@
       {:else if showLoginDialog}
         <!-- Login dialog will show, but we can show a minimal background -->
         <div class="text-center">
-          <img src="/windshift-3.svg" alt="Windshift" class="w-16 h-16 mx-auto mb-4 opacity-50" />
+          <img src="windshift-3.svg" alt="Windshift" class="w-16 h-16 mx-auto mb-4 opacity-50" />
           <h1 class="text-2xl font-bold text-gray-400 mb-2">Windshift</h1>
           <p class="text-gray-500">Work Management</p>
         </div>

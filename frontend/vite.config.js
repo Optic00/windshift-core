@@ -6,6 +6,7 @@ import { defineConfig } from 'vite';
 // When PLUGIN_DEV_PORTS is set (e.g. "ldap-config=5561,saml-config=5562,..."),
 // add proxy rules that route plugin asset requests to individual Vite dev servers
 // for HMR support. These rules are more specific than /api and take priority.
+const enableBundleAnalyzer = process.env.ANALYZE === 'true';
 const pluginProxies = {};
 if (process.env.PLUGIN_DEV_PORTS) {
   for (const entry of process.env.PLUGIN_DEV_PORTS.split(',')) {
@@ -22,16 +23,24 @@ if (process.env.PLUGIN_DEV_PORTS) {
 
 // https://vite.dev/config/
 export default defineConfig({
+  // Emit relative asset URLs. The Go server injects a <base> tag into
+  // index.html so both root deployments and context-path deployments resolve
+  // chunks/assets from the externally visible app root.
+  base: './',
   plugins: [
     svelte(), // Uses svelte.config.js for preprocessors
     tailwindcss(),
-    visualizer({
-      filename: 'dist/bundle-analyzer.html',
-      open: false,
-      gzipSize: true,
-      brotliSize: true,
-      template: 'treemap',
-    }),
+    ...(enableBundleAnalyzer
+      ? [
+          visualizer({
+            filename: 'dist/bundle-analyzer.html',
+            open: false,
+            gzipSize: true,
+            brotliSize: true,
+            template: 'treemap',
+          }),
+        ]
+      : []),
   ],
   optimizeDeps: {
     // React + jsx-runtime are force-included so the dev optimizer emits all

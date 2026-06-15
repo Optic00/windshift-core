@@ -149,6 +149,9 @@ var pagesSchemaPostgres string
 //go:embed schema/page_labels_postgres.sql
 var pageLabelsSchemaPostgres string
 
+//go:embed schema/agents_postgres.sql
+var agentsSchemaPostgres string
+
 // PostgresDB implements the Database interface for PostgreSQL
 type PostgresDB struct {
 	db  *sql.DB
@@ -1333,6 +1336,7 @@ func (p *PostgresDB) getPostgresSchemaFiles() []schemaFile {
 		{"integrations_postgres.sql", integrationsSchemaPostgres},
 		{"pages_postgres.sql", pagesSchemaPostgres},
 		{"page_labels_postgres.sql", pageLabelsSchemaPostgres},
+		{"agents_postgres.sql", agentsSchemaPostgres},
 	}
 }
 
@@ -1475,6 +1479,7 @@ func (p *PostgresDB) initializePostgresDefaultData() error {
 		{"system", "iteration", 8, false, "half"},
 		{"system", "start_date", 9, false, "half"},
 		{"system", "end_date", 10, false, "half"},
+		{"system", "labels", 11, false, "full"},
 	}
 
 	for _, field := range screenFields {
@@ -1807,8 +1812,10 @@ func (p *PostgresDB) migrateDefaultConfigurationSet() error {
 			{"system", "assignee", 5, false, "half"},
 			{"system", "due_date", 6, false, "half"},
 			{"system", "milestone", 7, false, "half"},
-			{"system", "start_date", 8, false, "half"},
-			{"system", "end_date", 9, false, "half"},
+			{"system", "iteration", 8, false, "half"},
+			{"system", "start_date", 9, false, "half"},
+			{"system", "end_date", 10, false, "half"},
+			{"system", "labels", 11, false, "full"},
 		}
 
 		for _, field := range screenFields {

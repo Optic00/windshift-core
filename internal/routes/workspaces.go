@@ -161,6 +161,14 @@ func RegisterWorkspaceRoutes(deps *Deps) {
 		api.HandleH("GET /workspaces/{workspaceId}/agent-bindings", auth(http.HandlerFunc(deps.Workspaces.AgentBinding.List)))
 		api.HandleH("POST /workspaces/{workspaceId}/agent-bindings", auth(http.HandlerFunc(deps.Workspaces.AgentBinding.Create)))
 		api.HandleH("DELETE /workspaces/{workspaceId}/agent-bindings/{id}", auth(http.HandlerFunc(deps.Workspaces.AgentBinding.Delete)))
+		api.HandleH("POST /workspaces/{workspaceId}/agent-bindings/{id}/test-llm", auth(http.HandlerFunc(deps.Workspaces.AgentBinding.TestLLM)))
+		api.HandleH("POST /workspaces/{workspaceId}/agent-bindings/{id}/test-run", auth(http.HandlerFunc(deps.Workspaces.AgentBinding.TestRun)))
+		api.HandleH("PUT /workspaces/{workspaceId}/agent-bindings/{id}/agent-config", auth(http.HandlerFunc(deps.Workspaces.AgentBinding.UpdateAgentConfig)))
+		api.HandleH("GET /workspaces/{workspaceId}/agent-skills", auth(http.HandlerFunc(deps.Workspaces.AgentSkill.List)))
+		api.HandleH("POST /workspaces/{workspaceId}/agent-skills", auth(http.HandlerFunc(deps.Workspaces.AgentSkill.Create)))
+		api.HandleH("GET /workspaces/{workspaceId}/agent-skills/{id}", auth(http.HandlerFunc(deps.Workspaces.AgentSkill.Get)))
+		api.HandleH("PUT /workspaces/{workspaceId}/agent-skills/{id}", auth(http.HandlerFunc(deps.Workspaces.AgentSkill.Update)))
+		api.HandleH("DELETE /workspaces/{workspaceId}/agent-skills/{id}", auth(http.HandlerFunc(deps.Workspaces.AgentSkill.Delete)))
 		api.HandleH("GET /workspaces/{workspaceId}/agent-binding-candidates", auth(http.HandlerFunc(deps.Workspaces.AgentBinding.Candidates)))
 	}
 
@@ -168,9 +176,36 @@ func RegisterWorkspaceRoutes(deps *Deps) {
 	// workspace-admin gated inside the handler.
 	if deps.Workspaces.AgentRun != nil {
 		api.HandleH("GET /workspaces/{workspaceId}/agent-runs", auth(http.HandlerFunc(deps.Workspaces.AgentRun.List)))
+		api.HandleH("GET /items/{itemId}/agent-runs", auth(http.HandlerFunc(deps.Workspaces.AgentRun.ListForItem)))
+		api.HandleH("POST /items/{itemId}/agent-runs", auth(http.HandlerFunc(deps.Workspaces.AgentRun.Rerun)))
 		api.HandleH("GET /agent-runs/{id}", auth(http.HandlerFunc(deps.Workspaces.AgentRun.Get)))
 		api.HandleH("GET /agent-runs/{id}/events", auth(http.HandlerFunc(deps.Workspaces.AgentRun.Events)))
 		api.HandleH("POST /agent-runs/{id}/cancel", auth(http.HandlerFunc(deps.Workspaces.AgentRun.Cancel)))
+	}
+
+	// Remote-runner control plane (WI-141). These are NOT user-session
+	// routes: authentication is the per-instance runner credential, checked
+	// inline in the handler (register exchanges a pool registration token).
+	// So they register without the user `auth` middleware, like other public
+	// endpoints.
+	if deps.Workspaces.RunnerControl != nil {
+		api.HandleH("POST /runner/register", http.HandlerFunc(deps.Workspaces.RunnerControl.Register))
+		api.HandleH("POST /runner/claim", http.HandlerFunc(deps.Workspaces.RunnerControl.Claim))
+		api.HandleH("POST /runner/runs/{id}/events", http.HandlerFunc(deps.Workspaces.RunnerControl.Events))
+		api.HandleH("POST /runner/runs/{id}/result", http.HandlerFunc(deps.Workspaces.RunnerControl.Result))
+		api.HandleH("POST /runner/heartbeat", http.HandlerFunc(deps.Workspaces.RunnerControl.Heartbeat))
+	}
+
+	// Secretless access layer (WI-144): brokers a granted credential to a
+	// running job, authenticated by the per-run token (inline).
+	if deps.Workspaces.RunnerBroker != nil {
+		api.HandleH("GET /secrets/{run}/{credentialId}", http.HandlerFunc(deps.Workspaces.RunnerBroker.GetSecret))
+		api.HandleH("POST /llm-proxy/{run}/{path...}", http.HandlerFunc(deps.Workspaces.RunnerBroker.ProxyLLM))
+		api.HandleH("GET /llm-proxy/{run}/{path...}", http.HandlerFunc(deps.Workspaces.RunnerBroker.ProxyLLM))
+		api.HandleH("GET /git-proxy/{ws}/{owner}/{repo}/{gitpath...}", http.HandlerFunc(deps.Workspaces.RunnerBroker.ProxyGit))
+		api.HandleH("POST /git-proxy/{ws}/{owner}/{repo}/{gitpath...}", http.HandlerFunc(deps.Workspaces.RunnerBroker.ProxyGit))
+		api.HandleH("GET /http-proxy/{run}", http.HandlerFunc(deps.Workspaces.RunnerBroker.ProxyHTTP))
+		api.HandleH("POST /http-proxy/{run}", http.HandlerFunc(deps.Workspaces.RunnerBroker.ProxyHTTP))
 	}
 
 	// Actions automation endpoints (workspace-scoped, requires action.manage permission)
@@ -210,6 +245,16 @@ func RegisterWorkspaceRoutes(deps *Deps) {
 		api.HandleH("GET /admin/action-capabilities/{capabilityId}", admin(http.HandlerFunc(deps.Workspaces.Actions.GetCapability)))
 		api.HandleH("PUT /admin/action-capabilities/{capabilityId}", admin(http.HandlerFunc(deps.Workspaces.Actions.UpdateCapability)))
 		api.HandleH("DELETE /admin/action-capabilities/{capabilityId}", admin(http.HandlerFunc(deps.Workspaces.Actions.DeleteCapability)))
+
+		// Runner-pool lifecycle (WI-177): registration tokens + runner
+		// instances managed as child resources of a runner_pool capability.
+		if deps.Workspaces.RunnerControl != nil {
+			api.HandleH("POST /admin/action-capabilities/{capabilityId}/runner-tokens", admin(http.HandlerFunc(deps.Workspaces.RunnerControl.MintRunnerToken)))
+			api.HandleH("GET /admin/action-capabilities/{capabilityId}/runner-tokens", admin(http.HandlerFunc(deps.Workspaces.RunnerControl.ListRunnerTokens)))
+			api.HandleH("DELETE /admin/action-capabilities/{capabilityId}/runner-tokens/{tokenId}", admin(http.HandlerFunc(deps.Workspaces.RunnerControl.RevokeRunnerToken)))
+			api.HandleH("GET /admin/action-capabilities/{capabilityId}/runner-instances", admin(http.HandlerFunc(deps.Workspaces.RunnerControl.ListRunnerInstances)))
+			api.HandleH("DELETE /admin/action-capabilities/{capabilityId}/runner-instances/{instanceId}", admin(http.HandlerFunc(deps.Workspaces.RunnerControl.RevokeRunnerInstance)))
+		}
 
 		// Action credentials (encrypted API tokens referenced by HTTP capabilities)
 		if deps.Workspaces.ActionCredentials != nil {

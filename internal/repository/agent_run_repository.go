@@ -3,12 +3,13 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
-	"regexp"
 	"time"
 
 	"windshift/internal/database"
 	"windshift/internal/models"
+	"windshift/internal/redact"
 )
 
 // AgentRunRepository persists coding-agent runs and their event streams.
@@ -32,18 +33,23 @@ func (r *AgentRunRepository) Insert(ctx context.Context, run *models.AgentRun) (
 	if status == "" {
 		status = models.AgentRunStatusQueued
 	}
-	res, err := r.db.ExecWriteContext(ctx, `
-		INSERT INTO agent_runs(workspace_id, item_id, binding_id, status)
-		VALUES (?, ?, ?, ?)
+	jobKind := run.JobKind
+	if jobKind == "" {
+		jobKind = models.JobKindCodingAgent
+	}
+	// RETURNING id (not LastInsertId) for Postgres compatibility.
+	var id int64
+	err := r.db.QueryRowContext(ctx, `
+		INSERT INTO agent_runs(workspace_id, item_id, binding_id, target_pool_id, job_kind, job_image, status, triggered_by_user_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		RETURNING id
 	`,
-		run.WorkspaceID, nullIntArg(run.ItemID), nullIntArg(run.BindingID), status,
-	)
+		run.WorkspaceID, nullIntArg(run.ItemID), nullIntArg(run.BindingID),
+		nullIntArg(run.TargetPoolID), jobKind, nullStringArg(run.JobImage), status,
+		nullIntArg(run.TriggeredByUserID),
+	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("failed to insert agent_run: %w", err)
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		return 0, fmt.Errorf("failed to read insert id: %w", err)
 	}
 	return int(id), nil
 }
@@ -52,21 +58,28 @@ func (r *AgentRunRepository) Insert(ctx context.Context, run *models.AgentRun) (
 func (r *AgentRunRepository) Get(ctx context.Context, id int) (*models.AgentRun, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, workspace_id, item_id, binding_id, status, queued_at, started_at, ended_at,
-		       container_id, error, created_at, updated_at
+		       container_id, runner_id, target_pool_id, job_kind, job_image, error, triggered_by_user_id, created_at, updated_at
 		FROM agent_runs WHERE id = ?
 	`, id)
 
 	run := &models.AgentRun{}
-	var itemID, bindingID sql.NullInt64
+	var itemID, bindingID, runnerID, targetPoolID, triggeredBy sql.NullInt64
 	var startedAt, endedAt sql.NullTime
-	var containerID, errMsg sql.NullString
+	var containerID, jobImage, errMsg sql.NullString
 
 	if err := row.Scan(
 		&run.ID, &run.WorkspaceID, &itemID, &bindingID, &run.Status,
 		&run.QueuedAt, &startedAt, &endedAt,
-		&containerID, &errMsg, &run.CreatedAt, &run.UpdatedAt,
+		&containerID, &runnerID, &targetPoolID, &run.JobKind, &jobImage, &errMsg, &triggeredBy, &run.CreatedAt, &run.UpdatedAt,
 	); err != nil {
 		return nil, err
+	}
+	if triggeredBy.Valid {
+		v := int(triggeredBy.Int64)
+		run.TriggeredByUserID = &v
+	}
+	if jobImage.Valid {
+		run.JobImage = jobImage.String
 	}
 	if itemID.Valid {
 		v := int(itemID.Int64)
@@ -75,6 +88,14 @@ func (r *AgentRunRepository) Get(ctx context.Context, id int) (*models.AgentRun,
 	if bindingID.Valid {
 		v := int(bindingID.Int64)
 		run.BindingID = &v
+	}
+	if runnerID.Valid {
+		v := int(runnerID.Int64)
+		run.RunnerID = &v
+	}
+	if targetPoolID.Valid {
+		v := int(targetPoolID.Int64)
+		run.TargetPoolID = &v
 	}
 	if startedAt.Valid {
 		run.StartedAt = &startedAt.Time
@@ -111,10 +132,39 @@ func (r *AgentRunRepository) CountForBindingSince(ctx context.Context, bindingID
 	return n, nil
 }
 
+// CountActiveForBindingItem returns how many queued or running runs the
+// binding currently has on the given item. The comment-@mention trigger's
+// dedup check (WI-264): a mention of an agent that is already working on
+// the item must not stack a second run.
+func (r *AgentRunRepository) CountActiveForBindingItem(ctx context.Context, bindingID, itemID int) (int, error) {
+	if bindingID == 0 || itemID == 0 {
+		return 0, nil
+	}
+	row := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM agent_runs
+		WHERE binding_id = ? AND item_id = ? AND status IN (?, ?)
+	`, bindingID, itemID, models.AgentRunStatusQueued, models.AgentRunStatusRunning)
+	var n int
+	if err := row.Scan(&n); err != nil {
+		return 0, fmt.Errorf("count active runs for binding item: %w", err)
+	}
+	return n, nil
+}
+
 // MarkRunning transitions a run from queued to running and stamps started_at.
 // Callers must hold their admission-control slot before invoking this.
 func (r *AgentRunRepository) MarkRunning(ctx context.Context, id int, containerID string, now time.Time) error {
-	_, err := r.db.ExecWriteContext(ctx, `
+	_, err := r.MarkRunningIfQueued(ctx, id, containerID, now)
+	return err
+}
+
+// MarkRunningIfQueued is MarkRunning with the CAS outcome surfaced: it
+// reports whether the queued→running transition actually happened. The
+// in-process queue consumer uses it to skip a dequeued job whose row left
+// 'queued' while it sat on the in-memory channel — canceled via the API
+// (WI-341) — instead of executing it anyway.
+func (r *AgentRunRepository) MarkRunningIfQueued(ctx context.Context, id int, containerID string, now time.Time) (transitioned bool, err error) {
+	res, err := r.db.ExecWriteContext(ctx, `
 		UPDATE agent_runs
 		SET status = ?, started_at = ?, container_id = ?, updated_at = ?
 		WHERE id = ? AND status = ?
@@ -123,9 +173,361 @@ func (r *AgentRunRepository) MarkRunning(ctx context.Context, id int, containerI
 		id, models.AgentRunStatusQueued,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to mark agent_run running: %w", err)
+		return false, fmt.Errorf("failed to mark agent_run running: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to mark agent_run running: rows affected: %w", err)
+	}
+	return n > 0, nil
+}
+
+// CancelQueued atomically cancels a run that is still queued, using the same
+// status-guarded CAS as ClaimQueued / FinalizeRunning: the UPDATE only matches
+// while status is 'queued', so it can never race a claim — either this wins
+// and the run is terminal before anyone executes it (ClaimQueued's own CAS
+// then skips the row), or a claim won first, zero rows match, and the caller
+// falls through to the claimed-run cancel paths. Reports whether the
+// transition happened (WI-341).
+func (r *AgentRunRepository) CancelQueued(ctx context.Context, id int, now time.Time) (transitioned bool, err error) {
+	res, err := r.db.ExecWriteContext(ctx, `
+		UPDATE agent_runs
+		SET status = ?, ended_at = ?, error = ?, updated_at = ?
+		WHERE id = ? AND status = ?
+	`,
+		models.AgentRunStatusCanceled, now, "canceled while queued", now,
+		id, models.AgentRunStatusQueued,
+	)
+	if err != nil {
+		return false, fmt.Errorf("cancel queued: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("cancel queued: rows affected: %w", err)
+	}
+	return n > 0, nil
+}
+
+// ClaimQueued atomically claims the oldest queued run targeted at the given
+// pool, transitioning it queued→running and stamping the claiming runner +
+// started_at. It is the DB-as-queue primitive a remote runner polls: the
+// agent_runs table itself is the queue (Initiative WI-141). Returns
+// (nil, nil) when no queued run is available for the pool.
+//
+// Atomicity uses the same status-guarded CAS as MarkRunning: pick a
+// candidate, then UPDATE ... WHERE id=? AND status='queued'. If a racing
+// runner won the row first, the guarded update affects zero rows and we
+// retry with the next candidate. This needs no FOR UPDATE / SKIP LOCKED, so
+// it behaves identically on SQLite and Postgres.
+func (r *AgentRunRepository) ClaimQueued(ctx context.Context, poolID, runnerID int, now time.Time) (*models.AgentRun, error) {
+	const maxAttempts = 16
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		row := r.db.QueryRowContext(ctx, `
+			SELECT id FROM agent_runs
+			WHERE status = ? AND target_pool_id = ?
+			ORDER BY queued_at ASC
+			LIMIT 1
+		`, models.AgentRunStatusQueued, poolID)
+		var id int
+		switch err := row.Scan(&id); err {
+		case sql.ErrNoRows:
+			return nil, nil
+		case nil:
+			// fall through to the guarded claim
+		default:
+			return nil, fmt.Errorf("claim queued: select candidate: %w", err)
+		}
+
+		res, err := r.db.ExecWriteContext(ctx, `
+			UPDATE agent_runs
+			SET status = ?, runner_id = ?, started_at = ?, updated_at = ?
+			WHERE id = ? AND status = ?
+		`,
+			models.AgentRunStatusRunning, runnerID, now, now,
+			id, models.AgentRunStatusQueued,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("claim queued: mark running: %w", err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("claim queued: rows affected: %w", err)
+		}
+		if n == 1 {
+			return r.Get(ctx, id)
+		}
+		// Lost the race for this candidate; try the next queued run.
+	}
+	// Heavy contention exhausted the retry budget; the caller polls again.
+	return nil, nil
+}
+
+// CountQueuedForPool returns the number of queued runs targeted at the given
+// pool — the per-pool queue depth an autoscaler scales on (WI-141).
+func (r *AgentRunRepository) CountQueuedForPool(ctx context.Context, poolID int) (int, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM agent_runs WHERE status = ? AND target_pool_id = ?
+	`, models.AgentRunStatusQueued, poolID)
+	var n int
+	if err := row.Scan(&n); err != nil {
+		return 0, fmt.Errorf("count queued for pool: %w", err)
+	}
+	return n, nil
+}
+
+// CountRunningForPool returns how many runs are currently running on the
+// given pool — used to enforce the pool's max-concurrency quota (WI-147)
+// before handing out another claim.
+func (r *AgentRunRepository) CountRunningForPool(ctx context.Context, poolID int) (int, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM agent_runs WHERE status = ? AND target_pool_id = ?
+	`, models.AgentRunStatusRunning, poolID)
+	var n int
+	if err := row.Scan(&n); err != nil {
+		return 0, fmt.Errorf("count running for pool: %w", err)
+	}
+	return n, nil
+}
+
+// RequestCancel flags a running run for cancellation. The runner that owns
+// the run learns via its heartbeat and aborts. Idempotent no-op (zero rows)
+// when the run is not running or is already flagged.
+func (r *AgentRunRepository) RequestCancel(ctx context.Context, runID int, now time.Time) error {
+	_, err := r.db.ExecWriteContext(ctx, `
+		UPDATE agent_runs SET cancel_requested_at = ?, updated_at = ?
+		WHERE id = ? AND status = ? AND cancel_requested_at IS NULL
+	`, now, now, runID, models.AgentRunStatusRunning)
+	if err != nil {
+		return fmt.Errorf("request cancel: %w", err)
 	}
 	return nil
+}
+
+// ListAbortableRuns returns the ids of runs the given runner is executing
+// that have been flagged for cancellation, so the heartbeat handler can tell
+// the runner which jobs to abort.
+func (r *AgentRunRepository) ListAbortableRuns(ctx context.Context, runnerInstanceID int) ([]int, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id FROM agent_runs
+		WHERE runner_id = ? AND status = ? AND cancel_requested_at IS NOT NULL
+	`, runnerInstanceID, models.AgentRunStatusRunning)
+	if err != nil {
+		return nil, fmt.Errorf("list abortable runs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan abortable run: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// ReapStaleRuns fails any running run whose owning runner has gone stale —
+// revoked, or with a heartbeat older than staleBefore (or never seen and
+// registered before staleBefore). It is the liveness backstop for remote
+// runs whose runner died mid-execution (WI-141). Returns the number reaped.
+func (r *AgentRunRepository) ReapStaleRuns(ctx context.Context, staleBefore, now time.Time) (int, error) {
+	res, err := r.db.ExecWriteContext(ctx, `
+		UPDATE agent_runs
+		SET status = ?, error = ?, ended_at = ?, updated_at = ?
+		WHERE status = ?
+		  AND runner_id IS NOT NULL
+		  AND runner_id IN (
+		    SELECT id FROM runner_instances
+		    WHERE status = ?
+		       OR (last_heartbeat_at IS NOT NULL AND last_heartbeat_at < ?)
+		       OR (last_heartbeat_at IS NULL AND registered_at < ?)
+		  )
+	`,
+		models.AgentRunStatusFailed, "runner lease expired (missed heartbeat)", now, now,
+		models.AgentRunStatusRunning,
+		models.RunnerInstanceStatusRevoked, staleBefore, staleBefore,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("reap stale runs: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("reap stale runs: rows affected: %w", err)
+	}
+	return int(n), nil
+}
+
+// ReapOrphanedLocalRuns fails every non-terminal LOCAL run (runner_id IS
+// NULL, target_pool_id IS NULL) — the boot-time reconciliation for in-process
+// runs (WI-332). Local runs live in the orchestrator's in-memory queue and
+// in-flight registry, so any local run still queued/running in the DB at
+// startup belonged to a previous process that crashed or was killed before
+// finalizing; no worker will ever pick it up again, and both reapers skip
+// local runs by design. Must be called before the new RunService starts
+// accepting work, while every local non-terminal row is by definition
+// orphaned. Returns the number reconciled.
+func (r *AgentRunRepository) ReapOrphanedLocalRuns(ctx context.Context, now time.Time) (int, error) {
+	res, err := r.db.ExecWriteContext(ctx, `
+		UPDATE agent_runs
+		SET status = ?, error = ?, ended_at = ?, updated_at = ?
+		WHERE status IN (?, ?)
+		  AND runner_id IS NULL
+		  AND target_pool_id IS NULL
+	`,
+		models.AgentRunStatusFailed, "orphaned by restart", now, now,
+		models.AgentRunStatusQueued, models.AgentRunStatusRunning,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("reap orphaned local runs: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("reap orphaned local runs: rows affected: %w", err)
+	}
+	return int(n), nil
+}
+
+// ReapOverdueRuns fails any run that has sat in 'running' since before
+// startedBefore, regardless of runner heartbeat. It is the max-run-duration
+// backstop (WI-331): a healthy runner whose terminal report was lost keeps
+// heartbeating, so ReapStaleRuns never fires and the phantom run would hold a
+// pool-concurrency slot and the binding's per-item dedup forever. The same
+// bound also covers a claim whose response was lost on the wire (the run is
+// 'running' with started_at stamped but no runner ever executes it). A run
+// with no started_at (shouldn't happen — every queued→running transition
+// stamps it) falls back to queued_at so it cannot dodge the bound. Returns
+// the number reaped.
+func (r *AgentRunRepository) ReapOverdueRuns(ctx context.Context, startedBefore, now time.Time) (int, error) {
+	res, err := r.db.ExecWriteContext(ctx, `
+		UPDATE agent_runs
+		SET status = ?, error = ?, ended_at = ?, updated_at = ?
+		WHERE status = ?
+		  AND ((started_at IS NOT NULL AND started_at < ?)
+		    OR (started_at IS NULL AND queued_at < ?))
+	`,
+		models.AgentRunStatusFailed, "run exceeded the maximum allowed duration (reaped by the orchestrator backstop)", now, now,
+		models.AgentRunStatusRunning, startedBefore, startedBefore,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("reap overdue runs: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("reap overdue runs: rows affected: %w", err)
+	}
+	return int(n), nil
+}
+
+// StaleQueuedPoolRun is one remote-pool run that has sat queued (unclaimed)
+// past the stall threshold. The lease reaper surfaces these so "assigned the
+// ticket but nothing happens" is diagnosable from the server log and the
+// run's own event stream.
+type StaleQueuedPoolRun struct {
+	RunID    int
+	PoolID   int
+	ItemID   *int
+	QueuedAt time.Time
+}
+
+// ListStaleQueuedPoolRuns returns remote-pool runs still queued since before
+// olderThan, oldest first. Local (in-process) runs are excluded — they are
+// consumed by the worker pool immediately and have no claim hop to stall on.
+func (r *AgentRunRepository) ListStaleQueuedPoolRuns(ctx context.Context, olderThan time.Time) ([]StaleQueuedPoolRun, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, target_pool_id, item_id, queued_at FROM agent_runs
+		WHERE status = ? AND target_pool_id IS NOT NULL AND queued_at < ?
+		ORDER BY queued_at ASC
+	`, models.AgentRunStatusQueued, olderThan)
+	if err != nil {
+		return nil, fmt.Errorf("list stale queued pool runs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []StaleQueuedPoolRun
+	for rows.Next() {
+		var run StaleQueuedPoolRun
+		var itemID sql.NullInt64
+		if err := rows.Scan(&run.RunID, &run.PoolID, &itemID, &run.QueuedAt); err != nil {
+			return nil, fmt.Errorf("scan stale queued pool run: %w", err)
+		}
+		if itemID.Valid {
+			v := int(itemID.Int64)
+			run.ItemID = &v
+		}
+		out = append(out, run)
+	}
+	return out, rows.Err()
+}
+
+// HasEvent reports whether the run already has an event of the given type —
+// used to emit one-time warning events without duplicating them every sweep.
+func (r *AgentRunRepository) HasEvent(ctx context.Context, runID int, eventType string) (bool, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT EXISTS(SELECT 1 FROM agent_run_events WHERE run_id = ? AND type = ?)
+	`, runID, eventType)
+	var exists bool
+	if err := row.Scan(&exists); err != nil {
+		return false, fmt.Errorf("has event: %w", err)
+	}
+	return exists, nil
+}
+
+// SetGrants snapshots a run's access-layer grants and binds the run to the
+// minted run-token that authorizes them (WI-144). Called from the claim path
+// once the grants are derived from the binding.
+func (r *AgentRunRepository) SetGrants(ctx context.Context, runID, tokenID int, grants *models.RunGrants, now time.Time) error {
+	b, err := json.Marshal(grants)
+	if err != nil {
+		return fmt.Errorf("set grants: marshal: %w", err)
+	}
+	if _, err := r.db.ExecWriteContext(ctx, `
+		UPDATE agent_runs SET grants_json = ?, run_token_id = ?, updated_at = ?
+		WHERE id = ?
+	`, string(b), tokenID, now, runID); err != nil {
+		return fmt.Errorf("set grants: %w", err)
+	}
+	return nil
+}
+
+// GetRunAuthz returns what a broker needs to authorize a request for a run:
+// the id of the token bound to the run (0 if none), the run's grants (nil if
+// unset), and the run's current status. Brokers verify the presented token's
+// id matches, the status is running, and the resource is in the grants.
+func (r *AgentRunRepository) GetRunAuthz(ctx context.Context, runID int) (tokenID, workspaceID int, grants *models.RunGrants, status string, err error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT run_token_id, workspace_id, grants_json, status FROM agent_runs WHERE id = ?
+	`, runID)
+	var tid sql.NullInt64
+	var grantsJSON sql.NullString
+	if err := row.Scan(&tid, &workspaceID, &grantsJSON, &status); err != nil {
+		return 0, 0, nil, "", err
+	}
+	if grantsJSON.Valid && grantsJSON.String != "" {
+		grants = &models.RunGrants{}
+		if err := json.Unmarshal([]byte(grantsJSON.String), grants); err != nil {
+			return 0, 0, nil, "", fmt.Errorf("get run authz: unmarshal grants: %w", err)
+		}
+	}
+	return int(tid.Int64), workspaceID, grants, status, nil
+}
+
+// GetRunByTokenID resolves the run bound to a given run-token id — used by
+// the git broker, where the run id is not in the URL (the clone URL is
+// stable/repo-scoped) so the presented token is what identifies the run.
+func (r *AgentRunRepository) GetRunByTokenID(ctx context.Context, tokenID int) (runID, workspaceID int, grants *models.RunGrants, status string, err error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT id, workspace_id, grants_json, status FROM agent_runs WHERE run_token_id = ?
+	`, tokenID)
+	var grantsJSON sql.NullString
+	if err := row.Scan(&runID, &workspaceID, &grantsJSON, &status); err != nil {
+		return 0, 0, nil, "", err
+	}
+	if grantsJSON.Valid && grantsJSON.String != "" {
+		grants = &models.RunGrants{}
+		if err := json.Unmarshal([]byte(grantsJSON.String), grants); err != nil {
+			return 0, 0, nil, "", fmt.Errorf("get run by token: unmarshal grants: %w", err)
+		}
+	}
+	return runID, workspaceID, grants, status, nil
 }
 
 // SetContainerID records the spawned container id on an existing run row.
@@ -168,14 +570,43 @@ func (r *AgentRunRepository) Finalize(ctx context.Context, id int, status, errMs
 	return nil
 }
 
+// FinalizeRunning is the compare-and-swap finalize for the untrusted remote
+// path (WI-168): it stamps a terminal status only if the run is still
+// 'running', and reports whether the transition actually happened. A remote
+// runner credential can therefore not rewrite a run that has already
+// finalized (or been canceled by the orchestrator) — the UPDATE matches zero
+// rows and transitioned is false, so the caller can skip re-firing terminal
+// events / the post-run PR hook. Trusted in-process finalization uses the
+// unconditional Finalize.
+func (r *AgentRunRepository) FinalizeRunning(ctx context.Context, id int, status, errMsg string, now time.Time) (transitioned bool, err error) {
+	if !models.IsAgentRunTerminal(status) {
+		return false, fmt.Errorf("agent_run finalize: %q is not a terminal status", status)
+	}
+	res, err := r.db.ExecWriteContext(ctx, `
+		UPDATE agent_runs
+		SET status = ?, ended_at = ?, error = ?, updated_at = ?
+		WHERE id = ? AND status = ?
+	`,
+		status, now, nullStringArg(errMsg), now, id, models.AgentRunStatusRunning,
+	)
+	if err != nil {
+		return false, fmt.Errorf("failed to finalize agent_run: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to read finalize result: %w", err)
+	}
+	return n > 0, nil
+}
+
 // AppendEvent records one entry on the run's event stream. payloadJSON must
 // be a JSON document (valid object, array, or scalar); the column type is
 // JSONB on Postgres and TEXT on SQLite, but we treat it as opaque here.
 //
-// payloadJSON is scrubbed via redactURLCredentials before persistence so
-// any token-bearing URL fragment (e.g. an upstream git error containing
-// https://oauth2:<token>@host/...) cannot leak into the event stream
-// that's visible to every item viewer in the workspace.
+// payloadJSON is scrubbed before persistence so token-bearing output (URL
+// credentials, bearer headers, env assignments, broker tokens, JSON secret
+// fields, etc.) cannot leak into the event stream that's visible to every item
+// viewer in the workspace.
 func (r *AgentRunRepository) AppendEvent(ctx context.Context, runID int, eventType, payloadJSON string) error {
 	if payloadJSON == "" {
 		payloadJSON = "{}"
@@ -183,24 +614,11 @@ func (r *AgentRunRepository) AppendEvent(ctx context.Context, runID int, eventTy
 	_, err := r.db.ExecWriteContext(ctx, `
 		INSERT INTO agent_run_events(run_id, type, payload_json)
 		VALUES (?, ?, ?)
-	`, runID, eventType, redactURLCredentials(payloadJSON))
+	`, runID, eventType, redact.String(payloadJSON))
 	if err != nil {
 		return fmt.Errorf("failed to append agent_run_event: %w", err)
 	}
 	return nil
-}
-
-// redactURLCredentials is the package-local mirror of
-// services.RedactString. Kept here rather than imported because the
-// repository layer must not depend on services (layer guard); the
-// pattern is short enough to duplicate.
-var urlCredRE = regexp.MustCompile(`(https?://)[^@/\s:]+:[^@/\s]+@`)
-
-func redactURLCredentials(s string) string {
-	if s == "" {
-		return s
-	}
-	return urlCredRE.ReplaceAllString(s, "${1}[REDACTED]@")
 }
 
 // ListForWorkspace returns the most recent N runs in the workspace,
@@ -211,13 +629,27 @@ func (r *AgentRunRepository) ListForWorkspace(ctx context.Context, workspaceID, 
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
+	return r.listRuns(ctx, "workspace_id", workspaceID, limit, beforeID)
+}
+
+// ListForItem returns the most recent N runs triggered against the given
+// work item, newest first — the item detail "Agent log" tab (WI-260).
+// Same cursor semantics as ListForWorkspace.
+func (r *AgentRunRepository) ListForItem(ctx context.Context, itemID, limit, beforeID int) ([]*models.AgentRun, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	return r.listRuns(ctx, "item_id", itemID, limit, beforeID)
+}
+
+func (r *AgentRunRepository) listRuns(ctx context.Context, scopeColumn string, scopeID, limit, beforeID int) ([]*models.AgentRun, error) {
 	query := `
 		SELECT id, workspace_id, item_id, binding_id, status, queued_at, started_at, ended_at,
-		       container_id, error, created_at, updated_at
+		       container_id, error, triggered_by_user_id, created_at, updated_at
 		FROM agent_runs
-		WHERE workspace_id = ?
+		WHERE ` + scopeColumn + ` = ?
 	`
-	args := []any{workspaceID}
+	args := []any{scopeID}
 	if beforeID > 0 {
 		query += " AND id < ?"
 		args = append(args, beforeID)
@@ -227,26 +659,30 @@ func (r *AgentRunRepository) ListForWorkspace(ctx context.Context, workspaceID, 
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("list runs for workspace: %w", err)
+		return nil, fmt.Errorf("list runs by %s: %w", scopeColumn, err)
 	}
 	defer func() { _ = rows.Close() }()
 
 	var out []*models.AgentRun
 	for rows.Next() {
 		run := &models.AgentRun{}
-		var itemID, bindingID sql.NullInt64
+		var itemID, bindingID, triggeredBy sql.NullInt64
 		var startedAt, endedAt sql.NullTime
 		var containerID, errMsg sql.NullString
 		if err := rows.Scan(
 			&run.ID, &run.WorkspaceID, &itemID, &bindingID, &run.Status,
 			&run.QueuedAt, &startedAt, &endedAt,
-			&containerID, &errMsg, &run.CreatedAt, &run.UpdatedAt,
+			&containerID, &errMsg, &triggeredBy, &run.CreatedAt, &run.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan run row: %w", err)
 		}
 		if itemID.Valid {
 			v := int(itemID.Int64)
 			run.ItemID = &v
+		}
+		if triggeredBy.Valid {
+			v := int(triggeredBy.Int64)
+			run.TriggeredByUserID = &v
 		}
 		if bindingID.Valid {
 			v := int(bindingID.Int64)

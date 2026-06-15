@@ -311,14 +311,6 @@ func (s *ItemLinkService) ListLinksForEntityWithChecks(userID int, entityType st
 // Internal helpers
 // ============================================
 
-// AssetPermissionKey* are the permission-key strings the asset handler
-// expects. Lifted here so the service can reference them without an
-// import cycle with the handlers package.
-const (
-	AssetPermissionKeyView = "asset.view"
-	AssetPermissionKeyEdit = "asset.edit"
-)
-
 // isValidLinkEntityType reports whether s is one of the four entity
 // types the link table supports.
 func isValidLinkEntityType(s string) bool {

@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -50,9 +51,9 @@ type APIError struct {
 	// it under "message"; the v1 REST surface (restapi.ErrorResponse)
 	// puts it under "error". Accept both so we don't fall back to the
 	// machine-readable Code on v1 responses.
-	Message      string            `json:"message"`
-	ErrorMessage string            `json:"error"`
-	Details      map[string]string `json:"details,omitempty"`
+	Message      string      `json:"message"`
+	ErrorMessage string      `json:"error"`
+	Details      interface{} `json:"details,omitempty"`
 }
 
 func (e *APIError) Error() string {
@@ -254,6 +255,16 @@ func (c *Client) TransitionItem(id, toStatusID int) (*TransitionResult, error) {
 		return nil, err
 	}
 	return &result, nil
+}
+
+// ChangeItemType changes an item's item type through the dedicated endpoint.
+func (c *Client) ChangeItemType(id, targetItemTypeID int, targetStatusID *int) (*Item, error) {
+	var item Item
+	req := ItemTypeChangeRequest{TargetItemTypeID: targetItemTypeID, TargetStatusID: targetStatusID}
+	if err := c.POST(fmt.Sprintf("/rest/api/v1/items/%d/change-type", id), req, &item); err != nil {
+		return nil, err
+	}
+	return &item, nil
 }
 
 // ListWorkspaces lists all accessible workspaces
@@ -885,9 +896,9 @@ func (c *Client) DeleteMilestoneInWorkspace(workspaceID, milestoneID int) error 
 // is non-nil the lookup uses the workspace-scoped list endpoint; otherwise it
 // falls back to the global list (which only callers with global access can use).
 func (c *Client) ResolveMilestoneID(nameOrID string, workspaceID *int) (int, error) {
-	// Try parsing as integer first
-	var id int
-	if _, err := fmt.Sscanf(nameOrID, "%d", &id); err == nil {
+	// Try parsing as integer first. Use Atoi so malformed inputs like
+	// "123abc" do not accidentally resolve as ID 123.
+	if id, err := strconv.Atoi(nameOrID); err == nil {
 		return id, nil
 	}
 
@@ -927,15 +938,200 @@ func (c *Client) ResolveMilestoneID(nameOrID string, workspaceID *int) (int, err
 	return 0, fmt.Errorf("milestone not found: %s", nameOrID)
 }
 
+// SearchItems performs a full-text search over items the caller can view
+// via GET /rest/api/v1/search/items. limit <= 0 falls back to the server
+// default page size.
+func (c *Client) SearchItems(query string, limit int) (*PaginatedResponse[Item], error) {
+	params := url.Values{}
+	params.Set("q", query)
+	if limit > 0 {
+		params.Set("limit", strconv.Itoa(limit))
+	}
+
+	var resp PaginatedResponse[Item]
+	if err := c.GET("/rest/api/v1/search/items?"+params.Encode(), &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// GetItemHistory returns the change history of an item. The endpoint
+// returns the full history as a plain array.
+func (c *Client) GetItemHistory(itemID int) ([]History, error) {
+	var history []History
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/items/%d/history", itemID), &history); err != nil {
+		return nil, err
+	}
+	return history, nil
+}
+
+// ============================================
+// Item Label Methods
+// ============================================
+//
+// Workspace-scoped work-item labels (catalog under /workspaces/{id}/labels,
+// per-item attachments under /items/{id}/labels). Fully separate from the
+// page-label system. Gated by items:read / items:write.
+
+// ListLabels returns every item label defined in a workspace.
+func (c *Client) ListLabels(workspaceID int) ([]Label, error) {
+	var resp LabelListResponse
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/workspaces/%d/labels", workspaceID), &resp); err != nil {
+		return nil, err
+	}
+	return resp.Items, nil
+}
+
+// ListItemLabels returns the labels attached to a single item.
+func (c *Client) ListItemLabels(itemID int) ([]Label, error) {
+	var resp LabelListResponse
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/items/%d/labels", itemID), &resp); err != nil {
+		return nil, err
+	}
+	return resp.Items, nil
+}
+
+// SetItemLabels atomically replaces the label set on an item.
+func (c *Client) SetItemLabels(itemID int, labelIDs []int) ([]Label, error) {
+	var resp LabelListResponse
+	if err := c.PUT(
+		fmt.Sprintf("/rest/api/v1/items/%d/labels", itemID),
+		ItemLabelSetRequest{LabelIDs: labelIDs},
+		&resp,
+	); err != nil {
+		return nil, err
+	}
+	return resp.Items, nil
+}
+
+// AddItemLabel attaches a single label to an item.
+func (c *Client) AddItemLabel(itemID, labelID int) ([]Label, error) {
+	var resp LabelListResponse
+	if err := c.POST(
+		fmt.Sprintf("/rest/api/v1/items/%d/labels", itemID),
+		ItemLabelAddRequest{LabelID: labelID},
+		&resp,
+	); err != nil {
+		return nil, err
+	}
+	return resp.Items, nil
+}
+
+// RemoveItemLabel detaches a single label from an item.
+func (c *Client) RemoveItemLabel(itemID, labelID int) error {
+	return c.DELETE(fmt.Sprintf("/rest/api/v1/items/%d/labels/%d", itemID, labelID))
+}
+
+// ============================================
+// Custom Field Methods
+// ============================================
+
+// ListCustomFields lists all custom field definitions. Gated by the
+// custom-fields:read scope (part of the default agent mint).
+func (c *Client) ListCustomFields() ([]CustomField, error) {
+	var fields []CustomField
+	if err := c.GET("/rest/api/v1/custom-fields", &fields); err != nil {
+		return nil, err
+	}
+	return fields, nil
+}
+
+// ============================================
+// Iteration API Methods
+// ============================================
+
+// ListIterations lists iterations across all scopes (global + workspace).
+// Requires the iterations:read scope.
+func (c *Client) ListIterations(filters map[string]string) (*PaginatedResponse[Iteration], error) {
+	path := "/rest/api/v1/iterations"
+	if len(filters) > 0 {
+		params := url.Values{}
+		for k, v := range filters {
+			params.Set(k, v)
+		}
+		path += "?" + params.Encode()
+	}
+
+	var resp PaginatedResponse[Iteration]
+	if err := c.GET(path, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// ListIterationsInWorkspace lists iterations belonging to a single workspace
+// via the items:read-gated workspace route.
+func (c *Client) ListIterationsInWorkspace(workspaceID int, filters map[string]string) (*PaginatedResponse[Iteration], error) {
+	path := fmt.Sprintf("/rest/api/v1/workspaces/%d/iterations", workspaceID)
+	if len(filters) > 0 {
+		params := url.Values{}
+		for k, v := range filters {
+			params.Set(k, v)
+		}
+		path += "?" + params.Encode()
+	}
+
+	var resp PaginatedResponse[Iteration]
+	if err := c.GET(path, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// ResolveIterationID resolves an iteration name or ID to an ID. Mirrors
+// ResolveMilestoneID: numeric input passes through; otherwise the lookup is
+// fuzzy (exact case-insensitive first, then first substring match) against
+// the workspace-scoped list when workspaceID is non-nil, else the global list.
+func (c *Client) ResolveIterationID(nameOrID string, workspaceID *int) (int, error) {
+	// Use Atoi so malformed inputs like "123abc" do not resolve as ID 123.
+	if id, err := strconv.Atoi(nameOrID); err == nil {
+		return id, nil
+	}
+
+	var resp *PaginatedResponse[Iteration]
+	var err error
+	if workspaceID != nil {
+		resp, err = c.ListIterationsInWorkspace(*workspaceID, nil)
+	} else {
+		resp, err = c.ListIterations(nil)
+	}
+	if err != nil {
+		return 0, err
+	}
+
+	nameLower := strings.ToLower(nameOrID)
+	var bestMatch *Iteration
+
+	for i := range resp.Data {
+		it := &resp.Data[i]
+		itNameLower := strings.ToLower(it.Name)
+
+		// Exact match (case-insensitive)
+		if itNameLower == nameLower {
+			return it.ID, nil
+		}
+		// Partial match - prefer first match
+		if bestMatch == nil && strings.Contains(itNameLower, nameLower) {
+			bestMatch = it
+		}
+	}
+
+	if bestMatch != nil {
+		return bestMatch.ID, nil
+	}
+
+	return 0, fmt.Errorf("iteration not found: %s", nameOrID)
+}
+
 // ============================================
 // Helper Methods
 // ============================================
 
 // ResolveWorkspaceID resolves a workspace key to an ID
 func (c *Client) ResolveWorkspaceID(keyOrID string) (int, error) {
-	// Try parsing as integer first
-	var id int
-	if _, err := fmt.Sscanf(keyOrID, "%d", &id); err == nil {
+	// Try parsing as integer first. Use Atoi so malformed inputs like
+	// "123abc" do not accidentally resolve as ID 123.
+	if id, err := strconv.Atoi(keyOrID); err == nil {
 		return id, nil
 	}
 
@@ -956,21 +1152,23 @@ func (c *Client) ResolveWorkspaceID(keyOrID string) (int, error) {
 
 // ResolveItemID resolves an item key (e.g., PROJ-123) or ID to an item ID
 func (c *Client) ResolveItemID(keyOrID string) (int, error) {
-	// Try parsing as integer first
-	var id int
-	if _, err := fmt.Sscanf(keyOrID, "%d", &id); err == nil {
+	// Try parsing as integer first. Use Atoi so malformed inputs like
+	// "123abc" do not accidentally resolve as ID 123.
+	if id, err := strconv.Atoi(keyOrID); err == nil {
 		return id, nil
 	}
 
-	// Parse as workspace key + item number (e.g., PROJ-123)
-	parts := strings.SplitN(keyOrID, "-", 2)
-	if len(parts) != 2 {
+	// Parse as workspace key + item number (e.g., PROJ-123). Split on
+	// the last dash so workspace keys that themselves contain dashes (notably
+	// personal workspace keys) still resolve correctly.
+	dash := strings.LastIndex(keyOrID, "-")
+	if dash <= 0 || dash == len(keyOrID)-1 {
 		return 0, fmt.Errorf("invalid item identifier: %s (expected ID or KEY-NUMBER format)", keyOrID)
 	}
 
-	wsKey := parts[0]
-	var itemNum int
-	if _, err := fmt.Sscanf(parts[1], "%d", &itemNum); err != nil {
+	wsKey := keyOrID[:dash]
+	itemNum, err := strconv.Atoi(keyOrID[dash+1:])
+	if err != nil {
 		return 0, fmt.Errorf("invalid item number in: %s", keyOrID)
 	}
 
@@ -988,6 +1186,37 @@ func (c *Client) ResolveItemID(keyOrID string) (int, error) {
 // ============================================
 // Pages API Methods
 // ============================================
+
+// AgentSkill mirrors the v1 agent-skills payloads (WI-258).
+type AgentSkill struct {
+	ID          int    `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Body        string `json:"body,omitempty"`
+	Enabled     bool   `json:"enabled"`
+}
+
+type agentSkillListResponse struct {
+	Items []AgentSkill `json:"items"`
+}
+
+// ListAgentSkills lists the workspace's enabled agent skills (no bodies).
+func (c *Client) ListAgentSkills(workspaceID int) ([]AgentSkill, error) {
+	var resp agentSkillListResponse
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/workspaces/%d/agent-skills", workspaceID), &resp); err != nil {
+		return nil, err
+	}
+	return resp.Items, nil
+}
+
+// GetAgentSkill fetches one skill including its markdown body.
+func (c *Client) GetAgentSkill(workspaceID, skillID int) (*AgentSkill, error) {
+	var skill AgentSkill
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/workspaces/%d/agent-skills/%d", workspaceID, skillID), &skill); err != nil {
+		return nil, err
+	}
+	return &skill, nil
+}
 
 // ListPages returns every page in the workspace the caller can view,
 // sorted depth-first by the server.
@@ -1262,4 +1491,259 @@ func (c *Client) ListLinksForEntity(entityType string, id int) (*LinkListRespons
 // permission on the source entity.
 func (c *Client) DeleteLink(id int) error {
 	return c.DELETE(fmt.Sprintf("/rest/api/v1/links/%d", id))
+}
+
+// ----------------------------------------------------------------------
+// Assets — v1 surface
+// ----------------------------------------------------------------------
+
+// ListAssets returns a page of assets in setID, filtered by ?type_id /
+// ?category_id / ?status_id / ?q. Pagination flows through the standard
+// PaginatedResponse envelope.
+func (c *Client) ListAssets(setID int, filters map[string]string) (*PaginatedResponse[Asset], error) {
+	path := fmt.Sprintf("/rest/api/v1/asset-sets/%d/assets", setID)
+	if len(filters) > 0 {
+		params := url.Values{}
+		for k, v := range filters {
+			if v != "" {
+				params.Set(k, v)
+			}
+		}
+		if encoded := params.Encode(); encoded != "" {
+			path += "?" + encoded
+		}
+	}
+	var resp PaginatedResponse[Asset]
+	if err := c.GET(path, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// GetAsset fetches a single asset by id.
+func (c *Client) GetAsset(id int) (*Asset, error) {
+	var a Asset
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/assets/%d", id), &a); err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+// CreateAsset creates a new asset in setID.
+func (c *Client) CreateAsset(setID int, req AssetCreateRequest) (*Asset, error) {
+	var a Asset
+	if err := c.POST(fmt.Sprintf("/rest/api/v1/asset-sets/%d/assets", setID), req, &a); err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+// UpdateAsset partial-updates an asset. Only non-nil pointer fields in
+// req are written; everything else is preserved.
+func (c *Client) UpdateAsset(id int, req AssetUpdateRequest) (*Asset, error) {
+	var a Asset
+	if err := c.PUT(fmt.Sprintf("/rest/api/v1/assets/%d", id), req, &a); err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+// DeleteAsset removes an asset and any item↔asset links pointing at it.
+// Requires assets:delete scope on the token.
+func (c *Client) DeleteAsset(id int) error {
+	return c.DELETE(fmt.Sprintf("/rest/api/v1/assets/%d", id))
+}
+
+// ListAssetSets lists asset sets visible to the caller.
+func (c *Client) ListAssetSets() ([]AssetSet, error) {
+	var sets []AssetSet
+	if err := c.GET("/rest/api/v1/asset-sets", &sets); err != nil {
+		return nil, err
+	}
+	return sets, nil
+}
+
+// GetAssetSet fetches an asset set by id.
+func (c *Client) GetAssetSet(id int) (*AssetSet, error) {
+	var s AssetSet
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/asset-sets/%d", id), &s); err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+// ListAssetTypes lists the asset types defined on setID.
+func (c *Client) ListAssetTypes(setID int) ([]AssetType, error) {
+	var types []AssetType
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/asset-sets/%d/types", setID), &types); err != nil {
+		return nil, err
+	}
+	return types, nil
+}
+
+// GetAssetType fetches an asset type by id (including its field definitions).
+func (c *Client) GetAssetType(id int) (*AssetType, error) {
+	var t AssetType
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/asset-types/%d", id), &t); err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+// ListAssetCategories lists categories defined on setID.
+func (c *Client) ListAssetCategories(setID int) ([]AssetCategory, error) {
+	var cats []AssetCategory
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/asset-sets/%d/categories", setID), &cats); err != nil {
+		return nil, err
+	}
+	return cats, nil
+}
+
+// ListAssetStatuses lists statuses defined on setID.
+func (c *Client) ListAssetStatuses(setID int) ([]AssetStatus, error) {
+	var statuses []AssetStatus
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/asset-sets/%d/statuses", setID), &statuses); err != nil {
+		return nil, err
+	}
+	return statuses, nil
+}
+
+// ImportAssetsCSV uploads a CSV to /asset-sets/{setID}/assets/import. assetTypeID
+// is required; statusID and categoryID are optional defaults for every row.
+// Returns a synthetic AssetImportJob summarizing the run (the v1 endpoint is
+// synchronous one-shot, not the cookie-auth async flow).
+func (c *Client) ImportAssetsCSV(setID, assetTypeID int, statusID, categoryID *int, filename string, body io.Reader) (*AssetImportJob, error) {
+	var buf bytes.Buffer
+	mp := multipart.NewWriter(&buf)
+	if err := mp.WriteField("asset_type_id", fmt.Sprintf("%d", assetTypeID)); err != nil {
+		return nil, fmt.Errorf("multipart write asset_type_id: %w", err)
+	}
+	if statusID != nil {
+		if err := mp.WriteField("status_id", fmt.Sprintf("%d", *statusID)); err != nil {
+			return nil, fmt.Errorf("multipart write status_id: %w", err)
+		}
+	}
+	if categoryID != nil {
+		if err := mp.WriteField("category_id", fmt.Sprintf("%d", *categoryID)); err != nil {
+			return nil, fmt.Errorf("multipart write category_id: %w", err)
+		}
+	}
+	part, err := mp.CreateFormFile("file", filename)
+	if err != nil {
+		return nil, fmt.Errorf("multipart create file: %w", err)
+	}
+	if _, err := io.Copy(part, body); err != nil {
+		return nil, fmt.Errorf("multipart copy file: %w", err)
+	}
+	if err := mp.Close(); err != nil {
+		return nil, fmt.Errorf("multipart close: %w", err)
+	}
+
+	endpoint := fmt.Sprintf("%s/rest/api/v1/asset-sets/%d/assets/import", c.baseURL, setID)
+	req, err := http.NewRequest(http.MethodPost, endpoint, &buf)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", mp.FormDataContentType())
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response body: %w", err)
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("import failed (status %d): %s", resp.StatusCode, string(respBody))
+	}
+	var job AssetImportJob
+	if err := json.Unmarshal(respBody, &job); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	return &job, nil
+}
+
+// ============================================
+// Time tracking
+// ============================================
+
+// ListTimeProjects returns time projects accessible to the authenticated user.
+func (c *Client) ListTimeProjects() ([]TimeProject, error) {
+	var projects []TimeProject
+	if err := c.GET("/rest/api/v1/time/projects", &projects); err != nil {
+		return nil, err
+	}
+	return projects, nil
+}
+
+// ListTimeWorklogs returns worklogs for the authenticated user with optional filters.
+func (c *Client) ListTimeWorklogs(filters map[string]string) (*PaginatedResponse[TimeWorklog], error) {
+	path := "/rest/api/v1/time/worklogs"
+	if len(filters) > 0 {
+		params := make([]string, 0, len(filters))
+		for k, v := range filters {
+			params = append(params, k+"="+v)
+		}
+		path += "?" + strings.Join(params, "&")
+	}
+	var resp PaginatedResponse[TimeWorklog]
+	if err := c.GET(path, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// CreateTimeWorklog logs a new time entry.
+func (c *Client) CreateTimeWorklog(req TimeWorklogCreateRequest) (map[string]any, error) {
+	var out map[string]any
+	if err := c.POST("/rest/api/v1/time/worklogs", req, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// UpdateTimeWorklog updates the description of an existing worklog.
+func (c *Client) UpdateTimeWorklog(id int, description string) error {
+	body := map[string]string{"description": description}
+	var out map[string]any
+	return c.PUT(fmt.Sprintf("/rest/api/v1/time/worklogs/%d", id), body, &out)
+}
+
+// DeleteTimeWorklog deletes a worklog.
+func (c *Client) DeleteTimeWorklog(id int) error {
+	return c.DELETE(fmt.Sprintf("/rest/api/v1/time/worklogs/%d", id))
+}
+
+// StartTimer starts a new active timer.
+func (c *Client) StartTimer(req TimerStartRequest) (map[string]any, error) {
+	var out map[string]any
+	if err := c.POST("/rest/api/v1/timer/start", req, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// GetActiveTimer returns the user's currently running timer.
+func (c *Client) GetActiveTimer() (map[string]any, error) {
+	var out map[string]any
+	if err := c.GET("/rest/api/v1/timer/active", &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// StopTimer stops the user's active timer and creates a worklog.
+func (c *Client) StopTimer() (map[string]any, error) {
+	var out map[string]any
+	// DELETE on /timer/stop returns a JSON body; use a custom request so we
+	// can pass a result target (the convenience Delete method discards the body).
+	if err := c.doRequest("DELETE", "/rest/api/v1/timer/stop", nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }

@@ -5,15 +5,12 @@
 // F5 and tend to keep tabs fresh through normal navigation.
 
 import { collectionStore, itemDetailStore, workspaceDataStore } from '../stores';
-
-function isDesktop() {
-  return typeof window !== 'undefined' && !!(/** @type {any} */ (window).__TAURI__?.core);
-}
+import { isTauri } from './isTauri.js';
 
 let installed = false;
 
 export function initDesktopFocusRefresh() {
-  if (installed || !isDesktop()) return;
+  if (installed || !isTauri()) return;
   installed = true;
 
   let inFlight = false;

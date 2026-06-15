@@ -4,6 +4,7 @@
   import { formatDueDate, getDueBadgeClass } from '../utils/dateFormatter.js';
   import WidgetState from './WidgetState.svelte';
   import { t } from '../stores/i18n.svelte.js';
+  import { normalizeDate, getDoneStatusIds } from './doneStatusHelper.js';
 
   let { workspaceId = null, collectionFilter = null } = $props();
 
@@ -16,31 +17,7 @@
   let currentWorkspaceId = $state(null);
   let currentCollectionFilter = $state(null);
   let refreshInFlight = $state(false);
-  let statusesPromise;
   let activeFetchId = $state(0);
-
-  function normalizeDate(dateString) {
-    if (!dateString) return null;
-    const date = new Date(dateString);
-    return Number.isNaN(date.getTime()) ? null : date;
-  }
-
-  async function getDoneStatusIds() {
-    try {
-      if (!statusesPromise) {
-        statusesPromise = api.statuses.getAll();
-      }
-      const statuses = await statusesPromise;
-      if (!Array.isArray(statuses)) return [];
-      return statuses
-        .filter(status => status?.category_name?.toLowerCase().trim() === 'done')
-        .map(status => status.id)
-        .filter(Boolean);
-    } catch (statusError) {
-      console.warn('Failed to load statuses for upcoming deadlines widget:', statusError);
-      return [];
-    }
-  }
 
   function isWithinWindow(dateString, now, cutoff) {
     const d = normalizeDate(dateString);
@@ -59,7 +36,7 @@
     refreshInFlight = true;
 
     try {
-      const doneStatusIds = await getDoneStatusIds();
+      const doneStatusIds = await getDoneStatusIds(api);
       const trimmedFilter = (collectionFilter || '').trim();
       const parts = [];
       if (trimmedFilter) {

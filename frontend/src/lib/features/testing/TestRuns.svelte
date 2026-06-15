@@ -107,6 +107,7 @@
       showForm = false;
     } catch (error) {
       console.error('Failed to create test run:', error);
+      errorToast(t('testing.failedToCreateRun') + ': ' + error.message);
     }
   }
 
@@ -313,6 +314,7 @@
           variant="primary"
           size="medium"
           keyboardHint="A"
+          dataTestid="create-test-run-button"
         >
           {t('testing.createTestRun')}
         </Button>
@@ -352,6 +354,7 @@
             <Label color="default" class="mb-2">{t('common.assignTo')}</Label>
             <UserPicker
               bind:value={selectedAssigneeId}
+              {workspaceId}
               showUnassigned={true}
               placeholder={t('testing.selectAssigneeOptional')}
             />
@@ -372,6 +375,7 @@
             variant="primary"
             disabled={!selectedSetId || !runName}
             keyboardHint="↵"
+            dataTestid="create-run-submit"
           >
             {t('testing.createRun')}
           </Button>

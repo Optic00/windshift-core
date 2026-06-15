@@ -7,6 +7,7 @@ import (
 	"windshift/internal/auth"
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
 	"windshift/internal/utils"
 )
 
@@ -49,6 +50,7 @@ func (h *SCIMTokenHandler) CreateToken(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	sanitize.Apply(&request.Name, sanitize.PlainTextField)
 
 	if request.Name == "" {
 		respondValidationError(w, r, "Token name is required")

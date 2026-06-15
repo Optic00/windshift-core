@@ -8,6 +8,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/sso"
 	"windshift/internal/utils"
 
@@ -85,6 +86,15 @@ func (h *IntegrationProviderHandler) CreateProvider(w http.ResponseWriter, r *ht
 	if !ok {
 		return
 	}
+	// Name renders in the admin provider list + per-item link tooltips;
+	// Slug is identifier-shaped (URL component / DB lookup key). Secrets
+	// + ProviderConfig (JSON blob) are deliberately untouched — secrets
+	// are encrypted further down, config is JSON handled by the catalog
+	// follow-up.
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &req.Slug, Policy: sanitize.ShortIdentifier, Label: "Slug"},
+	)
 
 	if req.Slug == "" || req.Name == "" || req.ProviderType == "" {
 		respondValidationError(w, r, "Missing required fields: slug, name, provider_type")
@@ -93,10 +103,11 @@ func (h *IntegrationProviderHandler) CreateProvider(w http.ResponseWriter, r *ht
 
 	// Validate provider type
 	validTypes := map[string]bool{
-		string(models.IntegrationProviderNotion): true,
+		string(models.IntegrationProviderNotion):  true,
+		string(models.IntegrationProviderTodoist): true,
 	}
 	if !validTypes[req.ProviderType] {
-		respondBadRequest(w, r, "Invalid provider type. Supported: notion")
+		respondBadRequest(w, r, "Invalid provider type. Supported: notion, todoist")
 		return
 	}
 
@@ -142,7 +153,10 @@ func (h *IntegrationProviderHandler) CreateProvider(w http.ResponseWriter, r *ht
 		return
 	}
 	h.audit(r, logger.ActionIntegrationProviderCreate, created)
-	respondJSONCreated(w, providerToResponse(*created))
+	respondJSONCreated(w, struct {
+		IntegrationProviderResponse
+		Warnings []string `json:"warnings,omitempty"`
+	}{providerToResponse(*created), warnings})
 }
 
 // UpdateProvider updates an existing integration provider
@@ -157,6 +171,10 @@ func (h *IntegrationProviderHandler) UpdateProvider(w http.ResponseWriter, r *ht
 	if !ok {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &req.Slug, Policy: sanitize.ShortIdentifier, Label: "Slug"},
+	)
 
 	update := repository.IntegrationProviderUpdate{}
 	if req.Slug != "" {
@@ -202,7 +220,10 @@ func (h *IntegrationProviderHandler) UpdateProvider(w http.ResponseWriter, r *ht
 		return
 	}
 	h.audit(r, logger.ActionIntegrationProviderUpdate, updated)
-	respondJSONOK(w, providerToResponse(*updated))
+	respondJSONOK(w, struct {
+		IntegrationProviderResponse
+		Warnings []string `json:"warnings,omitempty"`
+	}{providerToResponse(*updated), warnings})
 }
 
 // DeleteProvider deletes an integration provider

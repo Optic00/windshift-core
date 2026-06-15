@@ -442,6 +442,7 @@
       {#snippet children()}
         <button
           onclick={() => oncopyKey?.()}
+          data-testid="item-copy-key"
           class="text-xs px-2 py-1 rounded transition-colors cursor-pointer flex-shrink-0 whitespace-nowrap"
           style="background-color: var(--ds-surface); color: var(--ds-text);"
         >

@@ -504,6 +504,30 @@ type ObjectSearchResult struct {
 }
 
 // ================================================================
+// Jira Filter Types
+// ================================================================
+
+// JiraFilter represents a saved Jira filter.
+type JiraFilter struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	JQL         string    `json:"jql"`
+	ViewURL     string    `json:"viewUrl"`
+	Owner       *JiraUser `json:"owner,omitempty"`
+	Self        string    `json:"self"`
+}
+
+// FilterSearchResult represents paged Jira saved filter search results.
+type FilterSearchResult struct {
+	MaxResults int          `json:"maxResults"`
+	StartAt    int          `json:"startAt"`
+	Total      int          `json:"total"`
+	IsLast     bool         `json:"isLast"`
+	Values     []JiraFilter `json:"values"`
+}
+
+// ================================================================
 // Jira Agile Types (Boards, Sprints)
 // ================================================================
 
@@ -539,6 +563,51 @@ type SprintListResult struct {
 	Total      int          `json:"total"`
 	IsLast     bool         `json:"isLast"`
 	Values     []JiraSprint `json:"values"`
+}
+
+// JiraBoardConfiguration represents Agile board configuration details.
+type JiraBoardConfiguration struct {
+	ID           int                    `json:"id"`
+	Name         string                 `json:"name"`
+	Type         string                 `json:"type"`
+	Filter       *JiraBoardFilter       `json:"filter,omitempty"`
+	Location     *JiraBoardLocation     `json:"location,omitempty"`
+	ColumnConfig *JiraBoardColumnConfig `json:"columnConfig,omitempty"`
+	SubQuery     *JiraBoardSubQuery     `json:"subQuery,omitempty"`
+	Ranking      map[string]interface{} `json:"ranking,omitempty"`
+}
+
+// JiraBoardFilter is the saved filter backing a board.
+type JiraBoardFilter struct {
+	ID   string `json:"id"`
+	Self string `json:"self"`
+	Name string `json:"name,omitempty"`
+	JQL  string `json:"jql,omitempty"`
+}
+
+// JiraBoardSubQuery preserves the board sub-query, if Jira exposes it.
+type JiraBoardSubQuery struct {
+	Query string `json:"query"`
+}
+
+// JiraBoardColumnConfig contains board columns and their status mapping.
+type JiraBoardColumnConfig struct {
+	Columns        []JiraBoardConfigColumn `json:"columns"`
+	ConstraintType string                  `json:"constraintType,omitempty"`
+}
+
+// JiraBoardConfigColumn represents a Jira board column.
+type JiraBoardConfigColumn struct {
+	Name     string                  `json:"name"`
+	Statuses []JiraBoardColumnStatus `json:"statuses"`
+	Min      *int                    `json:"min,omitempty"`
+	Max      *int                    `json:"max,omitempty"`
+}
+
+// JiraBoardColumnStatus is a Jira status assigned to a board column.
+type JiraBoardColumnStatus struct {
+	ID   string `json:"id"`
+	Self string `json:"self"`
 }
 
 // ================================================================

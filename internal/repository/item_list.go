@@ -6,9 +6,35 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"windshift/internal/models"
 )
+
+// dbTimeLayouts are the datetime string layouts SQLite may emit when a value
+// loses its column type affinity (e.g. through COALESCE/MAX), depending on
+// whether it was written by Go (RFC3339) or by SQLite's CURRENT_TIMESTAMP.
+var dbTimeLayouts = []string{
+	time.RFC3339Nano,
+	time.RFC3339,
+	"2006-01-02 15:04:05.999999999 -0700 MST",
+	"2006-01-02 15:04:05 -0700 MST",
+	"2006-01-02 15:04:05.999999999-07:00",
+	"2006-01-02 15:04:05.999999-07:00",
+	"2006-01-02 15:04:05-07:00",
+	"2006-01-02 15:04:05.999999999",
+	"2006-01-02 15:04:05",
+}
+
+// parseDBTime tolerantly parses a datetime string returned from SQLite.
+func parseDBTime(s string) (time.Time, bool) {
+	for _, layout := range dbTimeLayouts {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
+}
 
 // ItemListParams contains parameters for listing items
 type ItemListParams struct {
@@ -95,10 +121,11 @@ func (r *ItemRepository) FindAllWithDetails(params ItemListParams) ([]models.Ite
 		i.iteration_id, i.project_id, i.inherit_project, i.time_project_id, i.assignee_id, i.creator_id, i.custom_field_values, i.calendar_data, i.parent_id,
 		i.story_points, i.estimate_minutes, i.frac_index, i.created_at, i.updated_at,
 		w.name as workspace_name, w.key as workspace_key, it.name as item_type_name,
-		p.title as parent_title, iter.name as iteration_name, COALESCE(CAST(iter.end_date AS TEXT), '') as iteration_end_date, proj.name as project_name, tp.name as time_project_name,
+		p.title as parent_title, p.workspace_item_number as parent_workspace_item_number, iter.name as iteration_name, COALESCE(CAST(iter.end_date AS TEXT), '') as iteration_end_date, proj.name as project_name, tp.name as time_project_name,
 		assignee.first_name || ' ' || assignee.last_name as assignee_name, assignee.email as assignee_email, assignee.avatar_url as assignee_avatar,
 		creator.first_name || ' ' || creator.last_name as creator_name, creator.email as creator_email,
-		st.name as status_name, pri.name as priority_name, pri.icon as priority_icon, pri.color as priority_color
+		st.name as status_name, pri.name as priority_name, pri.icon as priority_icon, pri.color as priority_color,
+		COALESCE((SELECT MAX(ih.changed_at) FROM item_history ih WHERE ih.item_id = i.id AND ih.field_name = 'status_id' AND ih.new_value = CAST(i.status_id AS TEXT)), i.created_at) as status_since
 	`
 
 	fromClause := `FROM items i
@@ -397,8 +424,9 @@ func (r *ItemRepository) scanItemList(rows *sql.Rows) ([]models.Item, error) {
 	for rows.Next() {
 		var item models.Item
 		var customFieldValuesJSON, calendarDataJSON sql.NullString
-		var itemTypeID, parentID, iterationID, projectID, timeProjectID, assigneeID, creatorID, statusID, priorityID sql.NullInt64
+		var itemTypeID, parentID, parentWorkspaceItemNumber, iterationID, projectID, timeProjectID, assigneeID, creatorID, statusID, priorityID sql.NullInt64
 		var dueDate, startDate, endDate sql.NullTime
+		var statusSince sql.NullString
 		var itemTypeName, parentTitle, iterationName, iterationEndDate, projectName, timeProjectName sql.NullString
 		var assigneeName, assigneeEmail, assigneeAvatar, creatorName, creatorEmail, statusName sql.NullString
 		var priorityName, priorityIcon, priorityColor sql.NullString
@@ -410,8 +438,9 @@ func (r *ItemRepository) scanItemList(rows *sql.Rows) ([]models.Item, error) {
 		err := rows.Scan(
 			&item.ID, &item.WorkspaceID, &item.WorkspaceItemNumber, &itemTypeID, &item.Title, &item.Description,
 			&statusID, &priorityID, &dueDate, &startDate, &endDate, &item.IsTask, &iterationID, &projectID, &inheritProject, &timeProjectID, &assigneeID, &creatorID, &customFieldValuesJSON, &calendarDataJSON, &parentID,
-			&storyPoints, &estimateMinutes, &fracIndex, &item.CreatedAt, &item.UpdatedAt, &item.WorkspaceName, &item.WorkspaceKey, &itemTypeName, &parentTitle, &iterationName, &iterationEndDate, &projectName, &timeProjectName,
+			&storyPoints, &estimateMinutes, &fracIndex, &item.CreatedAt, &item.UpdatedAt, &item.WorkspaceName, &item.WorkspaceKey, &itemTypeName, &parentTitle, &parentWorkspaceItemNumber, &iterationName, &iterationEndDate, &projectName, &timeProjectName,
 			&assigneeName, &assigneeEmail, &assigneeAvatar, &creatorName, &creatorEmail, &statusName, &priorityName, &priorityIcon, &priorityColor,
+			&statusSince,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan item: %w", err)
@@ -420,6 +449,7 @@ func (r *ItemRepository) scanItemList(rows *sql.Rows) ([]models.Item, error) {
 		// Handle nullable fields
 		assignNullableInt(&item.ItemTypeID, itemTypeID)
 		assignNullableInt(&item.ParentID, parentID)
+		assignNullableInt(&item.ParentWorkspaceItemNumber, parentWorkspaceItemNumber)
 		assignNullableInt(&item.IterationID, iterationID)
 		assignNullableInt(&item.StatusID, statusID)
 		assignNullableInt(&item.ProjectID, projectID)
@@ -436,6 +466,11 @@ func (r *ItemRepository) scanItemList(rows *sql.Rows) ([]models.Item, error) {
 		}
 		if endDate.Valid {
 			item.EndDate = &endDate.Time
+		}
+		if statusSince.Valid {
+			if t, ok := parseDBTime(statusSince.String); ok {
+				item.StatusSince = &t
+			}
 		}
 		if storyPoints.Valid {
 			item.StoryPoints = &storyPoints.Float64

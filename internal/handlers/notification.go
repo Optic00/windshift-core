@@ -14,6 +14,7 @@ import (
 	"windshift/internal/cacheutil"
 	"windshift/internal/database"
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 
@@ -533,6 +534,21 @@ func (nh *NotificationHandler) CreateNotification(w http.ResponseWriter, r *http
 
 	notification, ok := decodeJSON[models.Notification](w, r)
 	if !ok {
+		return
+	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &notification.Title, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &notification.Message, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &notification.Type, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &notification.Avatar, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &notification.ActionURL, Policy: sanitize.PlainTextField},
+	)
+	// Metadata is a JSON blob that is never decoded server-side, so this
+	// handler is the only bounding point — HTML stripping would corrupt
+	// valid payloads, so it is size-capped and required to be well-formed
+	// JSON instead, with invalid payloads rejected.
+	if err := sanitize.ValidateJSONPayload("metadata", notification.Metadata); err != nil {
+		respondValidationError(w, r, err.Error())
 		return
 	}
 

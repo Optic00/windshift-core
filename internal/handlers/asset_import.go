@@ -20,6 +20,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/utils"
 
 	securejoin "github.com/cyphar/filepath-securejoin"
@@ -253,6 +254,21 @@ func (h *AssetHandler) StartImport(w http.ResponseWriter, r *http.Request) {
 	if typeSetID != setID {
 		respondValidationError(w, r, "Asset type does not belong to this set")
 		return
+	}
+
+	// The category/status maps are caller-supplied (name -> id). Validate every
+	// referenced id belongs to this set so an import cannot plant foreign-set
+	// taxonomy FKs (whose names/colors would then render to set viewers). The
+	// normal create/update path enforces the same via validateResourceBelongsToSet.
+	for name, id := range req.CategoryMap {
+		if !h.validateResourceBelongsToSet(w, r, "asset_categories", id, setID, "Category "+name) {
+			return
+		}
+	}
+	for name, id := range req.StatusMap {
+		if !h.validateResourceBelongsToSet(w, r, "asset_statuses", id, setID, "Status "+name) {
+			return
+		}
 	}
 
 	// Locate the uploaded file
@@ -527,19 +543,19 @@ func (h *AssetHandler) importCSVRow(record []string, setID int, req StartAssetIm
 		return strings.TrimSpace(record[idx])
 	}
 
-	title := utils.StripHTMLTags(getCol(req.Mappings.Title))
+	title := sanitize.PlainTextField.Sanitize(getCol(req.Mappings.Title))
 	if title == "" {
 		return fmt.Errorf("title is empty")
 	}
 
 	description := ""
 	if req.Mappings.Description >= 0 {
-		description = utils.SanitizeDescription(getCol(req.Mappings.Description))
+		description = sanitize.RichText.Sanitize(getCol(req.Mappings.Description))
 	}
 
 	assetTag := ""
 	if req.Mappings.AssetTag >= 0 {
-		assetTag = utils.StripHTMLTags(getCol(req.Mappings.AssetTag))
+		assetTag = sanitize.PlainTextField.Sanitize(getCol(req.Mappings.AssetTag))
 	}
 
 	// Resolve category
@@ -574,7 +590,7 @@ func (h *AssetHandler) importCSVRow(record []string, setID int, req StartAssetIm
 		for fieldKey, colIdx := range req.Mappings.CustomFields {
 			val := getCol(colIdx)
 			if val != "" {
-				sanitized := utils.StripHTMLTags(val)
+				sanitized := sanitize.PlainTextField.Sanitize(val)
 				// Resolve text values to option IDs for select/multiselect fields
 				resolved := h.resolveImportFieldValue(fieldKey, sanitized)
 				cfValues[fieldKey] = resolved

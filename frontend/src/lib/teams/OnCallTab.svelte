@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { IconPlus, IconBellRinging, IconCircle, IconEdit, IconTrash } from '@tabler/icons-svelte-runes';
+  import { IconPlus, IconBellRinging, IconCircle, IconEdit, IconTrash, IconArrowRight } from '@tabler/icons-svelte-runes';
   import { api } from '../api.js';
   import { t } from '../stores/i18n.svelte.js';
   import { confirm } from '../composables/useConfirm.js';
@@ -94,6 +94,31 @@
   function openOverrideEditor(scheduleId) {
     overrideScheduleId = scheduleId;
     showOverrideEditor = true;
+  }
+
+  function formatOverrideTime(value) {
+    if (!value) return '';
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleString();
+  }
+
+  async function deleteOverride(scheduleId, override) {
+    const confirmed = await confirm({
+      title: t('common.remove'),
+      message: t('teams.oncall.confirmDeleteOverride'),
+      confirmText: t('common.remove'),
+      cancelText: t('common.cancel'),
+      variant: 'danger',
+    });
+    if (!confirmed) return;
+    try {
+      await api.onCallSchedules.deleteOverride(scheduleId, override.id);
+      successToast(t('teams.oncall.overrideDeleted'));
+      await loadSchedules();
+    } catch (err) {
+      errorToast(err.message || t('teams.oncall.failedToDeleteOverride'));
+    }
   }
 
   async function onScheduleSaved() {
@@ -220,6 +245,51 @@
               {canEdit}
               onChange={onLayersChanged}
             />
+
+            <!-- Overrides (current + upcoming) -->
+            <div class="space-y-2" data-testid="override-list">
+              <h5 class="text-sm font-medium" style="color: var(--ds-text)">
+                {t('teams.oncall.overrides')}
+              </h5>
+              {#if !schedule.overrides || schedule.overrides.length === 0}
+                <div class="text-sm py-1" style="color: var(--ds-text-subtle)">
+                  {t('teams.oncall.noOverrides')}
+                </div>
+              {:else}
+                <div class="space-y-2">
+                  {#each schedule.overrides as override (override.id)}
+                    <div
+                      class="rounded border p-3 flex items-center justify-between"
+                      style="border-color: var(--ds-border); background-color: var(--ds-surface);"
+                      data-testid="override-row"
+                      data-override-id={override.id}
+                    >
+                      <div class="min-w-0">
+                        <div class="flex items-center gap-2 text-sm" style="color: var(--ds-text)">
+                          <span data-testid="override-replaced">{override.user_name}</span>
+                          <IconArrowRight class="w-3.5 h-3.5 flex-shrink-0" style="color: var(--ds-text-subtle)" />
+                          <span data-testid="override-replacement">{override.override_user_name}</span>
+                        </div>
+                        <div class="text-xs mt-1" style="color: var(--ds-text-subtle)" data-testid="override-window">
+                          {formatOverrideTime(override.start_time)} – {formatOverrideTime(override.end_time)}
+                        </div>
+                      </div>
+                      {#if canEdit}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          icon={IconTrash}
+                          onclick={() => deleteOverride(schedule.id, override)}
+                          dataTestid="override-delete"
+                        >
+                          {t('common.remove')}
+                        </Button>
+                      {/if}
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </div>
 
             <div class="flex justify-end">
               {#if canEdit}

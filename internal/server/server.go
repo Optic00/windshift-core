@@ -66,6 +66,8 @@ type Server struct {
 	notificationScheduler     *scheduler.NotificationScheduler
 	recurrenceScheduler       *scheduler.RecurrenceScheduler
 	cfvCleanupScheduler       *scheduler.CFVCleanupScheduler
+	runnerLeaseReaper         *scheduler.RunnerLeaseReaper
+	codingRunService          *services.RunService
 	workflowService           *services.WorkflowService
 	actionService             *services.ActionService
 	assetActionService        *services.AssetActionService
@@ -349,6 +351,13 @@ func (s *Server) initialize() error {
 	// immediately even when the workspace has millions of items.
 	s.cfvCleanupScheduler = scheduler.NewCFVCleanupScheduler(s.db)
 	s.cfvCleanupScheduler.Start()
+	// Liveness backstop for remote agent runs (WI-141): fail runs whose
+	// runner's heartbeat went stale and revoke the dead runner instances.
+	s.runnerLeaseReaper = scheduler.NewRunnerLeaseReaper(
+		repository.NewAgentRunRepository(s.db),
+		repository.NewRunnerRepository(s.db),
+	)
+	s.runnerLeaseReaper.Start()
 	slog.Info("recurrence scheduler started")
 
 	// Initialize shared execution chain store for cross-application loop prevention
@@ -370,7 +379,7 @@ func (s *Server) initialize() error {
 	// remains here because it needs cfg.Port.
 	baseURL := cfg.BaseURL
 	if baseURL == "" {
-		baseURL = fmt.Sprintf("http://localhost:%s", cfg.Port)
+		baseURL = fmt.Sprintf("http://localhost:%s%s", cfg.Port, cfg.ContextPath)
 	}
 
 	// Initialize email verification service
@@ -439,7 +448,7 @@ func (s *Server) initialize() error {
 		func() interface{} { return &models.Status{} })
 	statusHandlerLegacy := handlers.NewStatusHandler(repository.NewStatusRepository(s.db), repository.NewItemRepository(s.db), logger.NewAuditor(s.db))
 	workflowService := s.workflowService
-	workflowHandler := handlers.NewWorkflowHandler(s.db)
+	workflowHandler := handlers.NewWorkflowHandler(repository.NewWorkflowRepository(s.db), logger.NewAuditor(s.db))
 	workflowHandler.SetWorkflowService(workflowService)
 	userHandler := handlers.NewUserHandler(
 		repository.NewUserRepository(s.db),
@@ -463,32 +472,49 @@ func (s *Server) initialize() error {
 			return result, err
 		},
 	)
-	groupHandler := handlers.NewGroupHandler(s.db, permService)
-	credentialHandler := handlers.NewCredentialHandler(s.db, permService, cfg.SSH.Enabled)
+	groupHandler := handlers.NewGroupHandler(repository.NewGroupRepository(s.db), permService, logger.NewAuditor(s.db))
+	credentialHandler := handlers.NewCredentialHandler(repository.NewCredentialRepository(s.db), logger.NewAuditor(s.db), permService, cfg.SSH.Enabled)
 	webAuthnHandler := handlers.NewWebAuthnHandler(s.db, permService, sessionManager, webAuthnConfig, ipExtractor)
 	collectionHandler := handlers.NewCollectionHandler(s.db, permService)
-	boardConfigHandler := handlers.NewBoardConfigurationHandler(s.db, permService)
+	boardConfigHandler := handlers.NewBoardConfigurationHandler(repository.NewBoardConfigurationRepository(s.db), repository.NewCollectionRepository(s.db), permService)
 	testCoverageHandler := handlers.NewTestCoverageHandler(repository.NewTestCoverageRepository(s.db), permService)
 	publicBoardHandler := handlers.NewPublicBoardHandler(s.db, permService, cfg.AttachmentPath)
-	permissionHandler := handlers.NewPermissionHandlerWithCache(s.db, permService)
-	apiTokenHandler := handlers.NewAPITokenHandler(s.db, tokenManager, permService)
+	permissionHandler := handlers.NewPermissionHandlerWithCache(repository.NewPermissionRepository(s.db), permService, logger.NewAuditor(s.db))
+	apiTokenHandler := handlers.NewAPITokenHandler(
+		tokenManager,
+		repository.NewAPITokenPolicyRepository(s.db),
+		repository.NewWorkspaceRepository(s.db),
+		logger.NewAuditor(s.db),
+		permService,
+	)
 	agentHandler := handlers.NewAgentHandler(s.db, permService)
 
 	// SCIM handlers
 	scimTokenManager := auth.NewSCIMTokenManager(s.db)
 	scimAuthMiddleware := middleware.NewSCIMAuthMiddleware(scimTokenManager)
-	scimHandler := handlers.NewSCIMHandler(s.db, baseURL, permService)
+	scimHandler := handlers.NewSCIMHandler(
+		repository.NewSCIMRepository(s.db),
+		baseURL,
+		permService,
+		logger.NewAuditor(s.db),
+		func(id int) (services.AgentDeactivationResult, error) {
+			return services.DeactivateOwnedAgentsAndTokens(s.db, id)
+		},
+		func() ([]int, error) {
+			return services.ActiveSystemAdminIDs(s.db)
+		},
+	)
 	scimTokenHandler := handlers.NewSCIMTokenHandler(scimTokenManager, logger.NewAuditor(s.db))
 
 	permissionSetHandler := handlers.NewPermissionSetHandlerWithPool(repository.NewPermissionSetRepository(s.db), permService, logger.NewAuditor(s.db))
-	workspaceRoleHandler := handlers.NewWorkspaceRoleHandlerWithPool(s.db, permService)
+	workspaceRoleHandler := handlers.NewWorkspaceRoleHandlerWithPool(repository.NewWorkspaceRoleRepository(s.db), permService, logger.NewAuditor(s.db))
 
 	// Time tracking handlers
 	timePermissionService := services.NewTimePermissionService(s.db, permService)
 	customerOrgPermissionService := services.NewCustomerOrganisationPermissionService(s.db, permService, timePermissionService)
 	timeCustomerHandler := handlers.NewTimeCustomerHandler(repository.NewCustomerOrganisationRepository(s.db), logger.NewAuditor(s.db), timePermissionService, customerOrgPermissionService)
 	timeProjectHandler := handlers.NewTimeProjectHandler(s.db, timePermissionService, customerOrgPermissionService, workspaceKeyCache)
-	timeProjectCategoryHandler := handlers.NewTimeProjectCategoryHandler(repository.NewTimeProjectCategoryRepository(s.db), logger.NewAuditor(s.db))
+	timeProjectCategoryHandler := handlers.NewTimeProjectCategoryHandler(repository.NewTimeProjectCategoryRepository(s.db), logger.NewAuditor(s.db), timePermissionService)
 	timeWorklogHandler := handlers.NewTimeWorklogHandler(s.db, permService, timePermissionService)
 	activeTimerRepo := repository.NewActiveTimerRepository(s.db)
 	timerService := services.NewTimerService(activeTimerRepo, repository.NewItemRepository(s.db), timePermissionService, permService)
@@ -497,7 +523,7 @@ func (s *Server) initialize() error {
 	customerOrgPermissionHandler := handlers.NewCustomerOrganisationPermissionHandler(logger.NewAuditor(s.db), customerOrgPermissionService)
 
 	// Test management handlers
-	testFolderHandler := handlers.NewTestFolderHandlerWithPool(s.db)
+	testFolderHandler := handlers.NewTestFolderHandler(services.NewTestFolderService(s.db), logger.NewAuditor(s.db))
 	testCaseHandler := handlers.NewTestCaseHandlerWithPool(services.NewTestCaseService(s.db), logger.NewAuditor(s.db))
 	workspaceResourceRepo := repository.NewWorkspaceResourceRepository(s.db)
 	testSetHandler := handlers.NewTestSetHandlerWithPool(repository.NewTestSetRepository(s.db), workspaceResourceRepo, logger.NewAuditor(s.db))
@@ -524,18 +550,30 @@ func (s *Server) initialize() error {
 	pageLabelHandler := handlers.NewPageLabelHandler(pageLabelRepo, pagePermissionService, logger.NewAuditor(s.db))
 
 	// Recurrence handler
-	recurrenceHandler := handlers.NewRecurrenceHandler(s.db, s.recurrenceScheduler, permService)
+	recurrenceHandler := handlers.NewRecurrenceHandler(repository.NewRecurrenceRepository(s.db), repository.NewItemRepository(s.db), s.recurrenceScheduler, permService)
 
 	// Actions handler
-	actionsHandler := handlers.NewActionsHandler(s.db, s.actionService, permService, workspaceKeyCache)
-	actionCredentialsHandler := handlers.NewActionCredentialsHandler(s.db, permService, workspaceKeyCache, cfg.Auth.SessionSecret)
+	actionsHandler := handlers.NewActionsHandler(
+		repository.NewActionRepository(s.db),
+		repository.NewActionCredentialRepository(s.db),
+		repository.NewItemRepository(s.db),
+		logger.NewAuditor(s.db),
+		s.actionService,
+		permService,
+		workspaceKeyCache,
+	)
+	actionCredentialService := services.NewActionCredentialService(repository.NewActionCredentialRepository(s.db), cfg.Auth.SessionSecret)
+	actionCredentialsHandler := handlers.NewActionCredentialsHandler(actionCredentialService, permService, workspaceKeyCache, logger.NewAuditor(s.db))
 	// Wire credential resolution into the action runtime so HTTP capabilities
 	// can reference tokens by ID. The service shares the same SSO_SECRET via
 	// a domain-separated HKDF label (ActionCredentialEncryptionInfo).
-	s.actionService.SetCredentialService(services.NewActionCredentialService(
+	credentialSvc := services.NewActionCredentialService(
 		repository.NewActionCredentialRepository(s.db),
 		cfg.Auth.SessionSecret,
-	))
+	)
+	s.actionService.SetCredentialService(credentialSvc)
+	// Lets container_run nodes dispatch to a remote runner pool (WI-146).
+	s.actionService.SetAgentRunRepository(repository.NewAgentRunRepository(s.db))
 	// One-shot scanner: warn about any legacy capability whose
 	// default_headers still holds a sensitive header value. The scanner logs
 	// capability ID + header name only — never the value.
@@ -547,9 +585,9 @@ func (s *Server) initialize() error {
 	onCallRepo := repository.NewOnCallRepository(s.db)
 	teamService := services.NewTeamService(s.db, teamRepo, leaveRepo)
 	onCallService := services.NewOnCallService(s.db, onCallRepo, leaveRepo)
-	teamHandler := handlers.NewTeamHandler(s.db, teamRepo, leaveRepo, permService)
+	teamHandler := handlers.NewTeamHandler(teamRepo, leaveRepo, permService, logger.NewAuditor(s.db))
 	leaveHandler := handlers.NewLeaveHandler(leaveRepo, repository.NewUserRepository(s.db), permService)
-	onCallHandler := handlers.NewOnCallHandler(s.db, onCallRepo, teamRepo, onCallService, permService)
+	onCallHandler := handlers.NewOnCallHandler(onCallRepo, teamRepo, onCallService, permService)
 	s.actionService.SetTeamService(teamService)
 
 	milestoneCategoryConfig := services.NewMilestoneCategoryConfig()
@@ -572,7 +610,7 @@ func (s *Server) initialize() error {
 	iterationTypeHandler := handlers.NewEnumHandler(
 		services.NewEnumService(s.db, iterationTypeConfig),
 		func() interface{} { return &models.IterationType{} })
-	iterationHandler := handlers.NewIterationHandler(s.db, permService)
+	iterationHandler := handlers.NewIterationHandler(services.NewPlanningService(s.db), permService, logger.NewAuditor(s.db))
 	personalLabelHandler := handlers.NewPersonalLabelHandler(s.db, permService)
 	commentHandler := handlers.NewCommentHandler(s.db, permService, s.activityTracker, s.notificationService)
 	reviewHandler := handlers.NewReviewHandler(s.db)
@@ -593,7 +631,18 @@ func (s *Server) initialize() error {
 	authPolicyHandler := handlers.NewAuthPolicyHandlerWithFallback(s.db, cfg.EnableAdminFallback, logger.NewAuditor(s.db))
 
 	// Initialize auth handler
-	authHandler := handlers.NewAuthHandler(s.db, sessionManager, s.loginRateLimiter, permService, emailVerificationService, ipExtractor, authPolicyHandler, adminRateLimiter)
+	authHandler := handlers.NewAuthHandler(
+		repository.NewUserRepository(s.db),
+		repository.NewCredentialRepository(s.db),
+		logger.NewAuditor(s.db),
+		sessionManager,
+		s.loginRateLimiter,
+		permService,
+		emailVerificationService,
+		ipExtractor,
+		authPolicyHandler,
+		adminRateLimiter,
+	)
 
 	// Initialize invitation handler
 	invitationHandler := handlers.NewInvitationHandler(invitationService)
@@ -612,24 +661,25 @@ func (s *Server) initialize() error {
 	setupHandler := handlers.NewSetupHandler(s.db, sessionManager, authMiddleware)
 
 	// SSO handler
-	ssoHandler := handlers.NewSSOHandler(s.db, sessionManager, permService, emailVerificationService, s.pluginManager, cfg.Auth.SessionSecret, baseURL, cfg.AllowedHosts, cfg.DisableCSRF, ipExtractor, cfg.UseProxy, additionalProxyList, cfg.SSO.OIDCAllowedPrivateCIDRs)
+	ssoHandler := handlers.NewSSOHandler(s.db, sessionManager, permService, emailVerificationService, s.pluginManager, cfg.Auth.SessionSecret, baseURL, cfg.AllowedHosts, cfg.DisableCSRF, ipExtractor, cfg.UseProxy, additionalProxyList)
 
 	// SCM provider handler
 	scmProviderHandler := handlers.NewSCMProviderHandler(s.db, cfg.Auth.SessionSecret, baseURL)
-	scmWorkspaceHandler := handlers.NewSCMWorkspaceHandler(s.db, scmProviderHandler.GetEncryption(), scmProviderHandler, permService, baseURL)
+	scmWorkspaceHandler := handlers.NewSCMWorkspaceHandler(repository.NewSCMWorkspaceRepository(s.db), scmProviderHandler.GetEncryption(), scmProviderHandler, scm.NewCredentialResolver(s.db, scmProviderHandler.GetEncryption()), permService, baseURL)
 	scmItemLinksHandler := handlers.NewSCMItemLinksHandler(s.db, scmProviderHandler.GetEncryption(), permService)
-	userSCMTokenHandler := handlers.NewUserSCMTokenHandler(s.db, scmProviderHandler.GetEncryption())
-	milestoneHandler := handlers.NewMilestoneHandler(s.db, permService, scm.NewCredentialResolver(s.db, scmProviderHandler.GetEncryption()))
+	userSCMTokenHandler := handlers.NewUserSCMTokenHandler(repository.NewUserSCMTokenRepository(s.db), scmProviderHandler.GetEncryption())
+	milestoneHandler := handlers.NewMilestoneHandler(services.NewPlanningService(s.db), permService, scm.NewCredentialResolver(s.db, scmProviderHandler.GetEncryption()), logger.NewAuditor(s.db))
 
 	// WI-87/88/89/90 coding-agent harness stack. The acting-identity
 	// chokepoint (WI-87) is constructed first; both the workspace-binding
 	// service and the admin AgentSecurity handler share its repo handle.
-	// When CodingAgent.RunnerImage is configured, the harness boots a
-	// production RunService (WI-89): WorktreeManager → RunTokenService →
-	// DockerPiRunner → AgentPRService (WI-90, opens draft PRs on GitHub or
-	// Gitea via scm.Provider). Without it the harness stays in observer
-	// mode — bindings can still be created, the trigger logs but no run
-	// starts.
+	// When CodingAgent.Enabled is set, the harness boots an orchestration-only
+	// RunService (WI-89): RunTokenService → AgentPRService (WI-90, opens draft
+	// PRs on GitHub or Gitea via scm.Provider). It queues runs, enriches remote
+	// claims, and finalizes remote results — but executes nothing on this host.
+	// All runs are dispatched to remote runner pools (windshift-runner). Without
+	// the flag the harness stays in observer mode — bindings can still be
+	// created, the trigger logs but no run starts.
 	agentSecurityRepo := repository.NewAgentSecurityRepository(s.db)
 	agentIdentitySvc, _ := services.NewAgentActingIdentityService(services.NewUserReadService(s.db), agentSecurityRepo)
 	agentBindingRepo := repository.NewWorkspaceAgentBindingRepository(s.db)
@@ -640,10 +690,34 @@ func (s *Server) initialize() error {
 	// below resolve the same overridable prompts.
 	promptStore := llm.NewPromptStore(cfg.LLM.PromptsDir)
 
+	// Load LLM provider definitions before coding-agent bindings are wired: the
+	// binding trigger resolves per-binding llm_connection_id rows into agent runtime
+	// env, and that requires the same provider registry the AI handlers use.
+	if cfg.LLM.ProvidersFile != "" {
+		if err := llm.LoadProviders(cfg.LLM.ProvidersFile); err != nil {
+			slog.Error("failed to load custom LLM providers file, falling back to built-in defaults", "path", cfg.LLM.ProvidersFile, "error", err)
+			llm.LoadDefaultProviders()
+		} else {
+			slog.Info("loaded custom LLM providers", "path", cfg.LLM.ProvidersFile)
+		}
+	} else {
+		llm.LoadDefaultProviders()
+	}
+
+	fallbackLLMClient := llm.NewClient(llm.Config{Endpoint: cfg.LLM.Endpoint})
+	if fallbackLLMClient.Available() {
+		slog.Info("LLM fallback service configured", slog.String("endpoint", cfg.LLM.Endpoint))
+	} else {
+		slog.Info("LLM fallback service not configured")
+	}
+	llmManager := llm.NewConnectionManager(s.db, scmProviderHandler.GetEncryption(), fallbackLLMClient)
+	llmModelCache := llm.NewModelCache(s.db)
+	llmModelRefresher := llm.NewModelRefresher(llmModelCache)
+
 	var codingRunSvc *services.RunService
-	if cfg.CodingAgent.RunnerImage != "" {
+	if cfg.CodingAgent.Enabled {
 		var bootErr error
-		codingRunSvc, bootErr = bootCodingAgentRunService(s.db, tokenManager, agentBindingRepo, scmCredResolver, cfg.CodingAgent, promptStore)
+		codingRunSvc, bootErr = bootCodingAgentRunService(s.db, tokenManager, agentBindingRepo, scmCredResolver, promptStore.Get(llm.PromptCodingAgentInitial))
 		if bootErr != nil {
 			slog.Warn("coding-agent harness disabled: failed to construct RunService",
 				slog.String("component", "coding-agent"),
@@ -651,17 +725,60 @@ func (s *Server) initialize() error {
 			)
 		}
 	}
+	// Kept on the Server so Shutdown can drain in-flight local runs instead
+	// of leaving them to be killed mid-flight with their rows stuck
+	// non-terminal (WI-332).
+	s.codingRunService = codingRunSvc
 
+	agentAPIURL := cfg.CodingAgent.WSAPIURL
+	if agentAPIURL == "" {
+		// The agent-facing URL convention INCLUDES the mandatory /api suffix
+		// (see apiBaseURLFor); the broker URLs handed to agent containers
+		// (LLM_BASE_URL, git-proxy) are built directly on it. Falling back to
+		// the bare BASE_URL would send the agent's chat-completion POSTs to a
+		// path only the SPA catch-all matches — a 405 on every model call.
+		agentAPIURL = strings.TrimRight(baseURL, "/") + "/api"
+	}
+	agentSkillRepo := repository.NewWorkspaceAgentSkillRepository(s.db)
 	bindingSvc, _ := services.NewBindingService(services.BindingServiceOptions{
-		Repo:     agentBindingRepo,
-		Identity: agentIdentitySvc,
-		Runs:     codingRunSvc,
-		SCMCreds: &scmCredsAdapter{cr: scmCredResolver},
-		LLMCaps:  repository.NewActionRepository(s.db),
+		Repo:       agentBindingRepo,
+		Identity:   agentIdentitySvc,
+		Runs:       codingRunSvc,
+		SCMCreds:   &scmCredsAdapter{cr: scmCredResolver},
+		LLMRuntime: llmManager,
+		RunContext: agentBindingRepo,
+		Pools:      repository.NewActionRepository(s.db),
+		Skills:     agentSkillRepo,
+		APIURL:     agentAPIURL,
 	})
+	// Let the run service enrich remote claims from the binding (WI-195): a
+	// remote runner's claim mints the per-run token + grants the same way the
+	// local path does. Wired post-construction to break the service cycle.
+	if codingRunSvc != nil && bindingSvc != nil {
+		codingRunSvc.SetBindingInputsResolver(bindingSvc)
+	}
 	agentBindingHandler := handlers.NewWorkspaceAgentBindingHandler(bindingSvc, agentIdentitySvc, permService, logger.NewAuditor(s.db))
-	agentRunHandler := handlers.NewAgentRunHandler(repository.NewAgentRunRepository(s.db), codingRunSvc, permService)
-	itemHandler.SetBindingTrigger(bindingSvc)
+	agentBindingHandler.SetSkillsRepo(agentSkillRepo)
+	agentSkillHandler := handlers.NewAgentSkillHandler(agentSkillRepo, permService, logger.NewAuditor(s.db))
+	agentRunHandler := handlers.NewAgentRunHandler(repository.NewAgentRunRepository(s.db), codingRunSvc, permService, repository.NewItemRepository(s.db), bindingSvc)
+	// Remote-runner control plane (WI-141). Constructed unconditionally;
+	// the handler 503s when the registry/run service is unavailable (i.e.
+	// CodingAgent.Enabled is off).
+	runnerRegistry := services.NewRunnerRegistryService(repository.NewRunnerRepository(s.db), nil)
+	runnerControlHandler := handlers.NewRunnerControlHandler(runnerRegistry, repository.NewAgentRunRepository(s.db), codingRunSvc, repository.NewActionRepository(s.db), nil, baseURL)
+	// Agent presence for assignment pickers (WI-272): binding → pool →
+	// heartbeat-fresh runner count, surfaced as online/offline/local/unbound.
+	userHandler.SetAgentPresenceService(services.NewAgentPresenceService(agentBindingRepo, repository.NewRunnerRepository(s.db)))
+	// Secretless access layer (WI-144): brokers a granted credential to a
+	// running job without it ever living on the runner host.
+	runnerBrokerHandler := handlers.NewRunnerBrokerHandler(tokenManager, repository.NewAgentRunRepository(s.db), credentialSvc, llmManager, &scmCredsAdapter{cr: scmCredResolver})
+	if bindingSvc != nil {
+		// Registers the coding-agent assignee trigger inside the item
+		// create/update services, so every surface that sets an assignee
+		// (cookie handlers, REST v1, MCP/AI tools, automation actions,
+		// recurrence) starts runs — not just the cookie update handler.
+		services.SetItemAssigneeTrigger(bindingSvc)
+	}
 
 	// Asset management handlers
 	assetHandler := handlers.NewAssetHandler(s.db, permService, cfg.AttachmentPath)
@@ -683,7 +800,7 @@ func (s *Server) initialize() error {
 		logger.NewAuditor(s.db),
 		channelService,
 	)
-	assetActionHandler := handlers.NewAssetActionHandler(s.db, assetHandler, s.assetActionService)
+	assetActionHandler := handlers.NewAssetActionHandler(repository.NewAssetActionRepository(s.db), assetHandler, s.assetActionService, logger.NewAuditor(s.db))
 
 	// Jira import handler
 	jiraImportHandler := handlers.NewJiraImportHandler(s.db, cfg.Auth.SessionSecret, cfg.Jira.CapturePayloadsDir)
@@ -754,6 +871,11 @@ func (s *Server) initialize() error {
 	commentService.SetNotificationService(s.notificationService)
 	commentService.SetMentionService(mentionService)
 	commentService.SetWebhookSender(webhookSender)
+	if bindingSvc != nil {
+		// @mentioning a binding's acting user in a comment starts a run
+		// (WI-264), same machinery as the assignee-change trigger.
+		commentService.SetAgentMentionTrigger(bindingSvc)
+	}
 	commentHandler.SetCommentService(commentService)
 	commentHandler.SetIssueSyncService(issueSyncService)
 	s.actionService.SetCommentService(commentService)
@@ -847,7 +969,7 @@ func (s *Server) initialize() error {
 	webhookHandler := handlers.NewWebhookHandler(repository.NewChannelRepository(s.db), repository.NewItemRepository(s.db), webhookSender, permService, channelService)
 	portalHandler := handlers.NewPortalHandler(s.db, sessionManager, portalSessionManager, ipExtractor, cfg.AttachmentPath)
 	portalHandler.SetApprovalService(approvalService)
-	portalAuthHandler := handlers.NewPortalAuthHandler(s.db, portalSessionManager, sessionManager, magicLinkService, ipExtractor)
+	portalAuthHandler := handlers.NewPortalAuthHandler(repository.NewPortalAuthRepository(s.db), portalSessionManager, sessionManager, magicLinkService, ipExtractor)
 	portalWebAuthnHandler := handlers.NewPortalWebAuthnHandler(
 		portalSessionManager,
 		portalWebAuthnConfig,
@@ -943,7 +1065,7 @@ func (s *Server) initialize() error {
 		slog.Info("plugin system disabled")
 	}
 
-	pluginHandler := handlers.NewPluginHandler(s.db, s.pluginManager, cfg.Plugins.Disabled)
+	pluginHandler := handlers.NewPluginHandler(s.pluginManager, repository.NewPluginRegistryRepository(s.db), logger.NewAuditor(s.db), cfg.Plugins.Disabled)
 
 	// Audit log handler
 	auditLogHandler := handlers.NewAuditLogHandler(repository.NewAuditLogRepository(s.db))
@@ -963,28 +1085,7 @@ func (s *Server) initialize() error {
 	}
 	systemHandler := handlers.NewSystemHandler(shutdownChan)
 
-	// Load LLM provider definitions
-	if cfg.LLM.ProvidersFile != "" {
-		if err := llm.LoadProviders(cfg.LLM.ProvidersFile); err != nil {
-			slog.Error("failed to load custom LLM providers file, falling back to built-in defaults", "path", cfg.LLM.ProvidersFile, "error", err)
-			llm.LoadDefaultProviders()
-		} else {
-			slog.Info("loaded custom LLM providers", "path", cfg.LLM.ProvidersFile)
-		}
-	} else {
-		llm.LoadDefaultProviders()
-	}
-
 	// LLM connection manager and AI handler
-	fallbackLLMClient := llm.NewClient(llm.Config{Endpoint: cfg.LLM.Endpoint})
-	if fallbackLLMClient.Available() {
-		slog.Info("LLM fallback service configured", slog.String("endpoint", cfg.LLM.Endpoint))
-	} else {
-		slog.Info("LLM fallback service not configured")
-	}
-	llmManager := llm.NewConnectionManager(s.db, scmProviderHandler.GetEncryption(), fallbackLLMClient)
-	llmModelCache := llm.NewModelCache(s.db)
-	llmModelRefresher := llm.NewModelRefresher(llmModelCache)
 	llmConnHandler := handlers.NewLLMConnectionHandler(llmManager, logger.NewAuditor(s.db), llmModelCache, llmModelRefresher)
 	aiHandler := handlers.NewAIHandler(s.db, llmManager, permService, timePermissionService, timerService, promptStore, s.actionService)
 
@@ -1027,7 +1128,15 @@ func (s *Server) initialize() error {
 			slog.Info("internal LLM proxy enabled for logbook article generation")
 
 			// Node execution endpoint for logbook actions (create_item, create_asset on SQLite)
-			nodeExecHandler := handlers.NewLogbookNodeExecutionHandler(s.db, ssoSecret, eventCoordinator, permService, assetHandler)
+			nodeExecHandler := handlers.NewLogbookNodeExecutionHandler(
+				ssoSecret,
+				eventCoordinator,
+				permService,
+				assetHandler,
+				func(params services.ItemCreationParams) (int64, error) { return services.CreateItem(s.db, params) },
+				repository.NewWorkspaceRepository(s.db),
+				repository.NewAssetRepository(s.db),
+			)
 			mux.Handle("POST /api/internal/logbook/execute-node", http.HandlerFunc(nodeExecHandler.HandleNodeExecution))
 			slog.Info("internal logbook node execution endpoint enabled")
 		}
@@ -1041,7 +1150,7 @@ func (s *Server) initialize() error {
 			corsScheme = parsed.Scheme
 		}
 	}
-	corsMiddleware := createCORSMiddleware(cfg.AllowedHosts, effectivePort, corsScheme, cfg.DisableCSRF, cfg.UseProxy)
+	corsMiddleware := createCORSMiddleware(cfg.AllowedHosts, effectivePort, corsScheme, cfg.DisableCSRF, cfg.UseProxy, cfg.AllowInsecureHTTP)
 	apiMiddleware := router.MiddlewareChain{corsMiddleware, authMiddleware.OptionalAuth}
 
 	if !cfg.DisableCSRF {
@@ -1138,10 +1247,13 @@ func (s *Server) initialize() error {
 			Analytics:             handlers.NewAnalyticsHandler(services.NewAnalyticsService(s.db), permService, workspaceKeyCache),
 			ConditionSet:          handlers.NewConditionSetHandler(s.db),
 			ApprovalSet:           handlers.NewApprovalSetHandler(approvalSetService, logger.NewAuditor(s.db)),
-			Approval:              handlers.NewApprovalHandler(s.db, permService, approvalService),
+			Approval:              handlers.NewApprovalHandler(permService, approvalService, repository.NewItemRepository(s.db), logger.NewAuditor(s.db)),
 			TransitionGovernance:  handlers.NewTransitionGovernanceHandler(repository.NewTransitionRepository(s.db), approvalSetService),
 			AgentBinding:          agentBindingHandler,
+			AgentSkill:            agentSkillHandler,
 			AgentRun:              agentRunHandler,
+			RunnerControl:         runnerControlHandler,
+			RunnerBroker:          runnerBrokerHandler,
 		},
 		Users: routes.UserHandlers{
 			User:          userHandler,
@@ -1152,7 +1264,7 @@ func (s *Server) initialize() error {
 			Credential:    credentialHandler,
 			APIToken:      apiTokenHandler,
 			Agent:         agentHandler,
-			CLIAuth:       handlers.NewCLIAuthHandler(s.db, agentHandler, tokenManager, apiTokenHandler, permService),
+			CLIAuth:       handlers.NewCLIAuthHandler(repository.NewCLIAuthRepository(s.db), logger.NewAuditor(s.db), agentHandler, tokenManager, apiTokenHandler, permService),
 			OAuth:         handlers.NewOAuthHandler(s.db, agentHandler, tokenManager, apiTokenHandler, permService),
 		},
 		Admin: routes.AdminHandlers{
@@ -1177,6 +1289,8 @@ func (s *Server) initialize() error {
 				llmManager,
 				llmModelCache,
 				logger.NewAuditor(s.db),
+				repository.NewRunnerRepository(s.db),
+				repository.NewAgentRunRepository(s.db),
 			),
 			AgentSecurity: handlers.NewAgentSecurityHandler(
 				agentSecurityRepo,
@@ -1245,10 +1359,11 @@ func (s *Server) initialize() error {
 			LLMConnection: llmConnHandler,
 		},
 		Misc: routes.MiscHandlers{
-			Homepage:     homepageHandler,
-			Review:       reviewHandler,
-			CalendarFeed: calendarFeedHandler,
-			CustomField:  customFieldHandler,
+			Homepage:      homepageHandler,
+			Review:        reviewHandler,
+			CalendarFeed:  calendarFeedHandler,
+			CustomField:   customFieldHandler,
+			RunnerInstall: handlers.NewRunnerInstallHandler(baseURL),
 		},
 		Teams: routes.TeamHandlers{
 			Team:   teamHandler,
@@ -1274,8 +1389,8 @@ func (s *Server) initialize() error {
 	// action chain can be exercised end-to-end without standing up a
 	// real GitHub or pushing real refs. Production never sets this env.
 	if os.Getenv("WINDSHIFT_E2E_TEST_HOOKS") == "1" {
-		mux.Handle("POST /api/test/scm/setup-mock-repo", handlers.NewTestSetupMockRepo(s.db))
-		mux.Handle("POST /api/test/scm/inject-ref", handlers.NewTestSCMInjectRef(s.db, s.actionService))
+		mux.Handle("POST /api/test/scm/setup-mock-repo", handlers.NewTestSetupMockRepo(services.NewTestSCMHookService(s.db, nil)))
+		mux.Handle("POST /api/test/scm/inject-ref", handlers.NewTestSCMInjectRef(services.NewTestSCMHookService(s.db, s.actionService)))
 		slog.Warn("WINDSHIFT_E2E_TEST_HOOKS enabled — test hook routes are mounted; never enable in production")
 	}
 
@@ -1286,13 +1401,15 @@ func (s *Server) initialize() error {
 
 	// REST API v1
 	restapi.SetupRoutes(restapi.Deps{
-		Mux:               mux,
-		DB:                s.db,
-		TokenManager:      tokenManager,
-		PermissionService: permService,
-		ActionService:     s.actionService,
-		AttachmentPath:    cfg.AttachmentPath,
-		ItemLinkService:   itemLinkHandler.LinkService(),
+		Mux:                    mux,
+		DB:                     s.db,
+		TokenManager:           tokenManager,
+		PermissionService:      permService,
+		ActionService:          s.actionService,
+		AttachmentPath:         cfg.AttachmentPath,
+		ItemLinkService:        itemLinkHandler.LinkService(),
+		AssetPermissionService: assetHandler.AssetPermissionService(),
+		AssetService:           assetHandler.AssetService(),
 	}, v1.RegisterRoutes)
 
 	// MCP Server (Model Context Protocol) — opt-in via --mcp or MCP_ENABLED=true
@@ -1336,6 +1453,8 @@ func (s *Server) initialize() error {
 			mux.Handle("GET /remoteEntry.js", revalidatingAssets)
 			mux.Handle("GET /_app/", immutableAssets)
 			mux.Handle("GET /windshift-3.svg", revalidatingAssets)
+			mux.Handle("GET /favicon-32x32.png", revalidatingAssets)
+			mux.Handle("GET /apple-touch-icon.png", revalidatingAssets)
 			mux.Handle("GET /forms/widget.js", revalidatingAssets)
 
 			// Read index.html once at startup for nonce injection
@@ -1344,6 +1463,7 @@ func (s *Server) initialize() error {
 				slog.Warn("could not read index.html from embedded FS", "error", err)
 			}
 
+			contextPath := cfg.ContextPath
 			mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 				// Anything under an API root that hasn't matched a specific
 				// route is a 404 — don't fall through to the SPA shell.
@@ -1359,9 +1479,10 @@ func (s *Server) initialize() error {
 					return
 				}
 
-				// Inject CSP nonce into the inline theme script tag
+				// Inject CSP nonce into the inline theme script tag and expose the
+				// externally visible context path for the SPA translation layer.
 				nonce := CSPNonceFromContext(r.Context())
-				html := bytes.Replace(indexHTML, []byte("<script>"), []byte(`<script nonce="`+nonce+`">`), 1)
+				html := prepareIndexHTML(indexHTML, nonce, contextPath)
 
 				w.Header().Set("Content-Type", "text/html")
 				// Force the SPA shell to revalidate on every load so that a
@@ -1382,6 +1503,7 @@ func (s *Server) initialize() error {
 	securityMiddleware := createSecurityHeaders(enableHTTPS, cfg.UseProxy, additionalProxyIPs, jiraHosts.Allowed)
 	compressionMiddleware := middleware.CreateCompressionMiddleware(cfg.UseProxy)
 	handler := middleware.Recovery(compressionMiddleware(securityMiddleware(mux)))
+	handler = withContextPath(handler, cfg.ContextPath)
 
 	// Create HTTP server
 	s.httpServer = &http.Server{
@@ -1510,6 +1632,21 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.cfvCleanupScheduler != nil {
 		slog.Info("stopping cfv cleanup scheduler")
 		s.cfvCleanupScheduler.Stop()
+	}
+
+	if s.runnerLeaseReaper != nil {
+		slog.Info("stopping runner lease reaper")
+		s.runnerLeaseReaper.Stop()
+	}
+
+	if s.codingRunService != nil {
+		slog.Info("shutting down coding-agent run service")
+		// Stops admission, drains still-queued local runs as canceled, and
+		// cancels in-flight runs so their workers finalize a terminal status
+		// (WI-332). Bounded by the shutdown ctx like the LDAP drain below.
+		if err := s.codingRunService.Shutdown(ctx); err != nil {
+			slog.Warn("coding-agent run service shutdown did not drain in time", "error", err)
+		}
 	}
 
 	if s.actionService != nil {
@@ -1662,9 +1799,9 @@ func (s *Server) cleanup() {
 // deadcode-keep: called by core-tests/tests/helpers.go
 func (s *Server) BaseURL() string {
 	if s.actualPort == 0 {
-		return fmt.Sprintf("http://localhost:%s", s.config.Port)
+		return fmt.Sprintf("http://localhost:%s%s", s.config.Port, s.config.ContextPath)
 	}
-	return fmt.Sprintf("http://localhost:%d", s.actualPort)
+	return fmt.Sprintf("http://localhost:%d%s", s.actualPort, s.config.ContextPath)
 }
 
 // Port returns the actual port the server is listening on.
@@ -1838,6 +1975,34 @@ func (a *scmCredsAdapter) ResolveForRun(ctx context.Context, connectionID int) (
 	if err != nil {
 		return "", "", "", err
 	}
+	return a.tokenFromCreds(ctx, connectionID, creds)
+}
+
+// ResolveForRunAsUser implements the user-principal variant of
+// services.SCMCredentialResolver (WI-275): credentials are resolved with
+// scm.CredentialResolver.GetCredentialsForUser, so an OAuth-method
+// connection yields the triggering user's personal token — or fails with
+// services.ErrTriggerUserSCMNotConnected in the chain when the user has
+// not connected an account (deliberately no fallback to the workspace
+// credential). PAT and GitHub App connections resolve identically to
+// ResolveForRun because GetCredentialsForUser falls back to the
+// impersonal connection-level credential for those auth methods.
+func (a *scmCredsAdapter) ResolveForRunAsUser(ctx context.Context, connectionID, userID int) (token, providerType, baseURL string, err error) {
+	creds, err := a.cr.GetCredentialsForUser(ctx, connectionID, userID)
+	if err != nil {
+		if errors.Is(err, scm.ErrUserSCMNotConnected) {
+			return "", "", "", fmt.Errorf("user %d on connection %d: %w", userID, connectionID, services.ErrTriggerUserSCMNotConnected)
+		}
+		return "", "", "", err
+	}
+	return a.tokenFromCreds(ctx, connectionID, creds)
+}
+
+// tokenFromCreds picks the git-auth token out of resolved credentials.
+// Resolution order matches what the scm.Provider would pick for HTTP
+// traffic: OAuth access token → personal access token → GitHub App
+// installation token (minted on demand via the App's JWT flow).
+func (a *scmCredsAdapter) tokenFromCreds(ctx context.Context, connectionID int, creds *scm.ProviderCredentials) (token, providerType, baseURL string, err error) {
 	switch {
 	case creds.OAuthAccessToken != "":
 		token = creds.OAuthAccessToken
@@ -1895,10 +2060,19 @@ func (a *scmCredsAdapter) mintGitHubAppToken(ctx context.Context, creds *scm.Pro
 
 // openPRViaCredentialResolver implements services.OpenPRFn. Builds a
 // scm.Provider for the connection, calls CreatePullRequest, and lifts
-// the result into the orchestrator's OpenedPR shape.
+// the result into the orchestrator's OpenedPR shape. When the request
+// carries a UserID (the run's triggering user, WI-275), credentials
+// resolve per-user — on OAuth connections the PR is authored by that
+// user; PAT / GitHub App connections resolve identically either way.
 func openPRViaCredentialResolver(cr *scm.CredentialResolver) services.OpenPRFn {
 	return func(ctx context.Context, req services.OpenPRRequest) (*services.OpenedPR, error) {
-		creds, err := cr.GetCredentialsByConnectionID(ctx, req.ConnectionID)
+		var creds *scm.ProviderCredentials
+		var err error
+		if req.UserID > 0 {
+			creds, err = cr.GetCredentialsForUser(ctx, req.ConnectionID, req.UserID)
+		} else {
+			creds, err = cr.GetCredentialsByConnectionID(ctx, req.ConnectionID)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("resolve connection %d: %w", req.ConnectionID, err)
 		}
@@ -1940,56 +2114,33 @@ func openPRViaCredentialResolver(cr *scm.CredentialResolver) services.OpenPRFn {
 	}
 }
 
-// bootCodingAgentRunService builds the production WI-89 + WI-90 RunService
-// when cfg.CodingAgent.RunnerImage is configured: a DockerPiRunner spawning
-// pi-coding-agent containers, the worktree manager, the per-run token
-// minter, and the post-run hook that opens a draft PR (via either GitHub
-// or Gitea, transparently) and writes back an item_scm_links row.
-// Returns an error for any misconfig so the rest of the server still
-// comes up with the harness disabled.
+// bootCodingAgentRunService builds the orchestration-only WI-89 + WI-90
+// RunService when cfg.CodingAgent.Enabled is set: initialPrompt is the static
+// coding-agent operational prompt the remote runner hands the agent as its
+// first message (per-binding suffixes append to it); the per-run token minter and
+// the post-run hook that opens a draft PR (via either GitHub or Gitea,
+// transparently) and writes back an item_scm_links row. The service queues
+// runs, enriches remote claims (PrepareRemoteClaim), and finalizes remote
+// results (FinalizeRemote) — but runs no in-process worker pool, so no agent
+// executes on the orchestrator host. All runs are dispatched to remote runner
+// pools (windshift-runner). Returns an error for any misconfig so the rest of
+// the server still comes up with the harness disabled.
 func bootCodingAgentRunService(
 	db database.Database,
 	tm *auth.TokenManager,
 	bindings *repository.WorkspaceAgentBindingRepository,
 	cr *scm.CredentialResolver,
-	cfg config.CodingAgentConfig,
-	promptStore *llm.PromptStore,
+	initialPrompt string,
 ) (*services.RunService, error) {
-	if cfg.WorktreeRoot == "" {
-		return nil, fmt.Errorf("coding-agent: WorktreeRoot is required when RunnerImage is set")
-	}
-	wm, err := services.NewWorktreeManager(services.WorktreeManagerOptions{RootDir: cfg.WorktreeRoot})
-	if err != nil {
-		return nil, fmt.Errorf("coding-agent worktree manager: %w", err)
-	}
 	tokens, err := services.NewRunTokenService(tm)
 	if err != nil {
 		return nil, fmt.Errorf("coding-agent token service: %w", err)
 	}
 
-	staticEnv := map[string]string{}
-	if cfg.LLMProvider != "" {
-		staticEnv["LLM_PROVIDER"] = cfg.LLMProvider
-	}
-	if cfg.LLMModel != "" {
-		staticEnv["LLM_MODEL"] = cfg.LLMModel
-	}
-
-	runner := &services.DockerPiRunner{
-		Image:         cfg.RunnerImage,
-		DockerBinary:  cfg.DockerBinary,
-		Env:           staticEnv,
-		Network:       cfg.Network,
-		PidsLimit:     cfg.PidsLimit,
-		Memory:        cfg.Memory,
-		CPUs:          cfg.CPUs,
-		InitialPrompt: promptStore.Get(llm.PromptCodingAgentInitial),
-	}
-
 	// PR-creation post-run hook. cr is the same CredentialResolver
 	// BindingService uses for URL embedding; binding lookups go through
 	// the shared bindings repo so the hook sees the exact row the
-	// trigger fired on.
+	// trigger fired on. It fires for remote runs via FinalizeRemote.
 	prSvc, err := services.NewAgentPRService(services.AgentPRServiceOptions{
 		Bindings: bindings,
 		OpenPR:   openPRViaCredentialResolver(cr),
@@ -2000,12 +2151,28 @@ func bootCodingAgentRunService(
 	}
 
 	runRepo := repository.NewAgentRunRepository(db)
+	// Boot reconciliation (WI-332): local runs exist only in a previous
+	// process's in-memory queue, so any local run still queued/running in the
+	// DB was orphaned by a crash or kill and no worker will ever pick it up
+	// again. Fail them before the new service starts accepting work. (With the
+	// in-process loop removed, no new local runs are created — this only clears
+	// rows left over from an older build.)
+	if n, recErr := runRepo.ReapOrphanedLocalRuns(context.Background(), time.Now().UTC()); recErr != nil {
+		slog.Warn("coding-agent: reconcile orphaned local runs",
+			slog.String("component", "coding-agent"),
+			slog.Any("error", recErr),
+		)
+	} else if n > 0 {
+		slog.Info("coding-agent: failed local runs orphaned by a previous process",
+			slog.String("component", "coding-agent"),
+			slog.Int("count", n),
+		)
+	}
+	// Orchestration-only: no Runner, so NewRunService starts no worker pool.
 	runSvc, err := services.NewRunService(runRepo, services.RunServiceOptions{
-		Runner:      runner,
-		Worktrees:   wm,
-		Tokens:      tokens,
-		PostRunHook: prSvc,
-		GlobalCap:   cfg.GlobalCap,
+		Tokens:        tokens,
+		PostRunHook:   prSvc,
+		InitialPrompt: initialPrompt,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("coding-agent run service: %w", err)

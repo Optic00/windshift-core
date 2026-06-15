@@ -9,6 +9,7 @@ import (
 
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
@@ -50,7 +51,7 @@ func decodeDiagramRequest(w http.ResponseWriter, r *http.Request) (name, diagram
 		return "", "", false
 	}
 
-	req.Name = utils.SanitizeName(req.Name)
+	req.Name = sanitize.ShortIdentifier.Sanitize(req.Name)
 
 	if req.Name == "" {
 		respondValidationError(w, r, "Diagram name is required")

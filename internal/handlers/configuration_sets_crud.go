@@ -10,6 +10,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
@@ -98,6 +99,15 @@ func (h *ConfigurationSetHandler) Create(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	// Configuration set Name + Description render in the admin
+	// directory and the workspace assignment picker. The Create flow
+	// uses the existing APIWarning channel for notification-cache
+	// invalidation — keep sanitize warnings silent here; the contract
+	// test pins the scrub.
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &cs.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &cs.Description, Policy: sanitize.RichText},
+	)
 
 	// Validate required fields
 	if strings.TrimSpace(cs.Name) == "" {

@@ -84,6 +84,8 @@ func Get(key string) (Template, bool) {
 // LoadError returns the first parse/validation error encountered (if any).
 // Used by tests and the startup self-check; the API returns whatever
 // templates parsed successfully and skips the rest.
+//
+// deadcode-keep: called by core-tests/internal/services/actiontemplates/registry_test.go
 func LoadError() error { return loadErr }
 
 func load() {

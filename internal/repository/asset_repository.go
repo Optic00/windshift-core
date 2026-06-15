@@ -2,14 +2,17 @@ package repository
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
 	"windshift/internal/cql"
 	"windshift/internal/database"
 	"windshift/internal/models"
+	"windshift/internal/utils"
 )
 
 // AssetRepository provides data access methods for asset management
@@ -716,6 +719,61 @@ func (r *AssetRepository) CountAdminAssignmentsExcluding(setID, adminRoleID, exc
 		setID, adminRoleID, excludeID, excludeKind,
 		setID, adminRoleID, excludeID, excludeKind,
 	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count admin assignments: %w", err)
+	}
+	return count, nil
+}
+
+// GetPrincipalDirectRoleID returns the directly-assigned role_id for a
+// user or group on a set. kind is "user" or "group". Returns ErrNotFound when
+// the principal has no direct assignment on the set.
+func (r *AssetRepository) GetPrincipalDirectRoleID(setID int, kind string, principalID int) (int, error) {
+	var query string
+	if kind == "group" {
+		query = `SELECT role_id FROM group_asset_set_roles WHERE set_id = ? AND group_id = ?`
+	} else {
+		query = `SELECT role_id FROM user_asset_set_roles WHERE set_id = ? AND user_id = ?`
+	}
+	var roleID int
+	err := r.db.QueryRow(query, setID, principalID).Scan(&roleID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	return roleID, err
+}
+
+// CountAdminAssignmentsExcludingPrincipal returns the count of admin role
+// assignments (user + group) for a set, not counting the given principal
+// (matched by user_id/group_id rather than assignment id). Used to decide
+// whether re-assigning that principal to a non-admin role would orphan the set.
+func (r *AssetRepository) CountAdminAssignmentsExcludingPrincipal(setID, adminRoleID int, excludeKind string, excludePrincipalID int) (int, error) {
+	var count int
+	err := r.db.QueryRow(`
+		SELECT
+			(SELECT COUNT(*) FROM user_asset_set_roles WHERE set_id = ? AND role_id = ? AND NOT (user_id = ? AND ? = 'user'))
+			+
+			(SELECT COUNT(*) FROM group_asset_set_roles WHERE set_id = ? AND role_id = ? AND NOT (group_id = ? AND ? = 'group'))
+	`,
+		setID, adminRoleID, excludePrincipalID, excludeKind,
+		setID, adminRoleID, excludePrincipalID, excludeKind,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count admin assignments: %w", err)
+	}
+	return count, nil
+}
+
+// CountAdminAssignments returns the total count of explicit admin role
+// assignments (user + group) for a set.
+func (r *AssetRepository) CountAdminAssignments(setID, adminRoleID int) (int, error) {
+	var count int
+	err := r.db.QueryRow(`
+		SELECT
+			(SELECT COUNT(*) FROM user_asset_set_roles WHERE set_id = ? AND role_id = ?)
+			+
+			(SELECT COUNT(*) FROM group_asset_set_roles WHERE set_id = ? AND role_id = ?)
+	`, setID, adminRoleID, setID, adminRoleID).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("failed to count admin assignments: %w", err)
 	}
@@ -1605,6 +1663,49 @@ func scanAssetCategoryCoreRow(scanner interface{ Scan(...interface{}) error }) (
 // Asset CRUD
 // ============================================================================
 
+// AssetRowToModel converts an AssetRow into the models.Asset shape returned
+// by the API. Parses custom_field_values JSON; on failure, stamps a warning
+// and leaves the map empty. Canonical home so both cookie-auth and v1
+// handlers map rows the same way.
+func AssetRowToModel(row AssetRow) models.Asset {
+	asset := models.Asset{
+		ID:              row.ID,
+		SetID:           row.SetID,
+		AssetTypeID:     row.AssetTypeID,
+		CategoryID:      utils.NullInt64ToPtr(row.CategoryID),
+		StatusID:        utils.NullInt64ToPtr(row.StatusID),
+		Title:           row.Title,
+		Description:     row.Description.String,
+		AssetTag:        row.AssetTag.String,
+		FracIndex:       utils.NullStringToPtr(row.FracIndex),
+		CreatedBy:       row.CreatedBy,
+		CreatedAt:       row.CreatedAt,
+		UpdatedAt:       row.UpdatedAt,
+		SetName:         row.SetName.String,
+		AssetTypeName:   row.AssetTypeName.String,
+		AssetTypeIcon:   row.AssetTypeIcon.String,
+		AssetTypeColor:  row.AssetTypeColor.String,
+		CategoryName:    row.CategoryName.String,
+		CategoryPath:    row.CategoryPath.String,
+		StatusName:      row.StatusName.String,
+		StatusColor:     row.StatusColor.String,
+		CreatorName:     row.CreatorName.String,
+		CreatorEmail:    row.CreatorEmail.String,
+		LinkedItemCount: row.LinkedItemCount,
+	}
+	if row.CustomFieldValues.Valid && row.CustomFieldValues.String != "" {
+		if err := json.Unmarshal([]byte(row.CustomFieldValues.String), &asset.CustomFieldValues); err != nil {
+			slog.Error("failed to unmarshal asset custom_field_values",
+				slog.Int("asset_id", asset.ID),
+				slog.String("raw", row.CustomFieldValues.String),
+				slog.Any("error", err))
+			asset.CustomFieldValues = make(map[string]interface{})
+			asset.Warnings = append(asset.Warnings, "custom field values could not be parsed")
+		}
+	}
+	return asset
+}
+
 // AssetRow captures the full projection returned by the assets list/detail queries.
 type AssetRow struct {
 	ID                int
@@ -2281,11 +2382,14 @@ type AssetSummary struct {
 	AssetTag string
 }
 
-// GetAssetSummary returns the title and asset_tag for an asset. Returns ErrNotFound
-// when the asset does not exist (used to render a "deleted" marker).
-func (r *AssetRepository) GetAssetSummary(assetID int) (*AssetSummary, error) {
+// GetAssetSummary returns the title and asset_tag for an asset within the given
+// set. Returns ErrNotFound when the asset does not exist or belongs to another
+// set — asset-reference custom fields must not resolve across set boundaries,
+// otherwise an out-of-set asset's title/tag would leak (used to render a
+// "deleted" marker in that case).
+func (r *AssetRepository) GetAssetSummary(assetID, setID int) (*AssetSummary, error) {
 	var title, assetTag sql.NullString
-	err := r.db.QueryRow(`SELECT title, asset_tag FROM assets WHERE id = ?`, assetID).Scan(&title, &assetTag)
+	err := r.db.QueryRow(`SELECT title, asset_tag FROM assets WHERE id = ? AND set_id = ?`, assetID, setID).Scan(&title, &assetTag)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}

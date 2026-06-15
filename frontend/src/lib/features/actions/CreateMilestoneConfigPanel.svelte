@@ -4,9 +4,12 @@
   import Select from '../../components/Select.svelte';
   import Checkbox from '../../components/Checkbox.svelte';
 
-  let { selectedNode, showPlaceholderModal = $bindable(false) } = $props();
+  let {
+    selectedNode,
+    flowStore = actionFlowStore,
+    showPlaceholderModal = $bindable(false),
+  } = $props();
 
-  const store = actionFlowStore;
   const cfg = $derived(selectedNode?.data?.config || {});
 
   // Default-true for the two attach flags so the panel reflects the
@@ -51,7 +54,7 @@
       class="w-full px-3 py-2 border rounded-md text-sm config-input"
       value={cfg.upsert_key_template || ''}
       placeholder={refShortLiteral}
-      oninput={(e) => store.updateNodeConfig(selectedNode.id, { upsert_key_template: e.currentTarget.value })}
+      oninput={(e) => flowStore.updateNodeConfig(selectedNode.id, { upsert_key_template: e.currentTarget.value })}
     />
     <p class="hint">Stable identifier used to upsert. The same rendered value on a tag and its
       release/* branch pairs them on one milestone.</p>
@@ -65,7 +68,7 @@
       class="w-full px-3 py-2 border rounded-md text-sm config-input"
       value={cfg.name_template || ''}
       placeholder={namePlaceholder}
-      oninput={(e) => store.updateNodeConfig(selectedNode.id, { name_template: e.currentTarget.value })}
+      oninput={(e) => flowStore.updateNodeConfig(selectedNode.id, { name_template: e.currentTarget.value })}
     />
   </div>
 
@@ -76,7 +79,7 @@
         id="cm-status-branch"
         options={statusOptions}
         value={cfg.status_on_branch || 'planning'}
-        onchange={(v) => store.updateNodeConfig(selectedNode.id, { status_on_branch: v })}
+        onchange={(v) => flowStore.updateNodeConfig(selectedNode.id, { status_on_branch: v })}
         size="small"
       />
     </div>
@@ -86,7 +89,7 @@
         id="cm-status-tag"
         options={statusOptions}
         value={cfg.status_on_tag || 'in-progress'}
-        onchange={(v) => store.updateNodeConfig(selectedNode.id, { status_on_tag: v })}
+        onchange={(v) => flowStore.updateNodeConfig(selectedNode.id, { status_on_tag: v })}
         size="small"
       />
     </div>
@@ -94,14 +97,14 @@
 
   <Checkbox
     checked={attachReleaseOnTag()}
-    onchange={(checked) => store.updateNodeConfig(selectedNode.id, { attach_release_on_tag: checked })}
+    onchange={(checked) => flowStore.updateNodeConfig(selectedNode.id, { attach_release_on_tag: checked })}
     label="Attach a milestone_releases row on tag events"
     size="small"
   />
 
   <Checkbox
     checked={attachCommitIssues()}
-    onchange={(checked) => store.updateNodeConfig(selectedNode.id, { attach_commit_issues: checked })}
+    onchange={(checked) => flowStore.updateNodeConfig(selectedNode.id, { attach_commit_issues: checked })}
     label="Auto-attach items mentioned in commits since previous tag"
     size="small"
   />
@@ -114,7 +117,7 @@
       rows="3"
       value={cfg.description_template || ''}
       placeholder={descPlaceholder}
-      oninput={(e) => store.updateNodeConfig(selectedNode.id, { description_template: e.currentTarget.value })}
+      oninput={(e) => flowStore.updateNodeConfig(selectedNode.id, { description_template: e.currentTarget.value })}
     ></textarea>
   </div>
 </div>

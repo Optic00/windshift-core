@@ -101,7 +101,7 @@ func (h *SSOHandler) SAMLLogin(w http.ResponseWriter, r *http.Request) {
 
 	// Generate relay state containing a CSRF state token
 	state := generateRandomState()
-	rememberMe := r.URL.Query().Get("remember") == "true"
+	rememberMe := ssoRememberMeFromRequest(r)
 
 	redirectURI := r.URL.Query().Get("redirect_uri")
 	if redirectURI == "" {
@@ -416,5 +416,5 @@ func (h *SSOHandler) getBaseURL(r *http.Request) string {
 	if h.devMode {
 		scheme = "http"
 	}
-	return scheme + "://" + r.Host
+	return scheme + "://" + r.Host + requestContextPrefix(r)
 }

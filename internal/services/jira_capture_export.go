@@ -117,7 +117,7 @@ func WriteWindshiftExport(db database.Database, jobID, dir string) error {
 		item.Comments = loadItemComments(db, jobID, im.jiraKey, im.windshiftID)
 		item.Attachments = loadItemAttachments(db, jobID, im.jiraKey, im.windshiftID)
 		item.Links = loadItemLinks(db, im.windshiftID, idToKey)
-		item.Worklogs = []windshiftExportWorklog{} // Phase 1.4 will populate
+		item.Worklogs = loadItemWorklogs(db, jobID, im.jiraKey, im.windshiftID)
 
 		exp.Items = append(exp.Items, item)
 	}
@@ -401,6 +401,60 @@ func loadItemLinks(db database.Database, itemID int, idToKey map[int]string) []w
 	})
 	if out == nil {
 		return []windshiftExportLink{}
+	}
+	return out
+}
+
+func loadItemWorklogs(db database.Database, jobID, jiraKey string, itemID int) []windshiftExportWorklog {
+	rows, err := db.Query(`
+		SELECT m.jira_id,
+		       COALESCE(u.username, ''),
+		       COALESCE(w.duration_minutes, 0),
+		       COALESCE(w.start_time, 0),
+		       COALESCE(m.metadata_json, '{}')
+		FROM jira_import_id_mappings m
+		JOIN time_worklogs w ON w.id = m.windshift_id AND w.item_id = ?
+		LEFT JOIN users u ON u.id = w.user_id
+		WHERE m.job_id = ? AND m.entity_type = 'worklog' AND m.jira_key = ?
+	`, itemID, jobID, jiraKey)
+	if err != nil {
+		return []windshiftExportWorklog{}
+	}
+	defer func() { _ = rows.Close() }()
+	var out []windshiftExportWorklog
+	for rows.Next() {
+		var (
+			w            windshiftExportWorklog
+			durationMins int
+			startedUnix  int64
+			metadataJSON string
+		)
+		if err := rows.Scan(&w.JiraID, &w.AuthorUsername, &durationMins, &startedUnix, &metadataJSON); err != nil {
+			continue
+		}
+		var meta struct {
+			TimeSpentSeconds int    `json:"time_spent_seconds"`
+			Started          string `json:"started"`
+		}
+		if metadataJSON != "" {
+			_ = json.Unmarshal([]byte(metadataJSON), &meta)
+		}
+		if meta.TimeSpentSeconds > 0 {
+			w.TimeSpentSeconds = meta.TimeSpentSeconds
+		} else {
+			w.TimeSpentSeconds = durationMins * 60
+		}
+		if meta.Started != "" {
+			w.Started = meta.Started
+		} else if startedUnix > 0 {
+			w.Started = time.Unix(startedUnix, 0).UTC().Format(time.RFC3339)
+		}
+		out = append(out, w)
+	}
+	_ = rows.Err()
+	sort.Slice(out, func(i, j int) bool { return out[i].JiraID < out[j].JiraID })
+	if out == nil {
+		return []windshiftExportWorklog{}
 	}
 	return out
 }

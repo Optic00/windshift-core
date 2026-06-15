@@ -102,7 +102,10 @@ type ItemUpdateRequest struct {
 	CustomFields map[string]interface{} `json:"custom_fields,omitempty"`
 }
 
-// CommentResponse is the public API representation of a Comment
+// CommentResponse is the public API representation of a Comment.
+// Warnings surfaces sanitize mutations from create / update so the
+// frontend can toast them at info severity. omitempty when nothing
+// was modified.
 type CommentResponse struct {
 	ID        int          `json:"id"`
 	ItemID    int          `json:"item_id"`
@@ -110,6 +113,7 @@ type CommentResponse struct {
 	Author    *UserSummary `json:"author,omitempty"`
 	CreatedAt time.Time    `json:"created_at"`
 	UpdatedAt time.Time    `json:"updated_at"`
+	Warnings  []string     `json:"warnings,omitempty"`
 }
 
 // CommentCreateRequest is the request body for creating a comment
@@ -162,6 +166,15 @@ type TransitionResponse struct {
 // TransitionRequest is the body for POST /rest/api/v1/items/{id}/transition
 type TransitionRequest struct {
 	ToStatusID *int `json:"to_status_id" validate:"required"`
+}
+
+// ItemTypeChangeRequest is the body for POST /rest/api/v1/items/{id}/change-type.
+// TargetStatusID is required when the target type's workflow does not contain
+// the item's current status; otherwise the server returns 409 with the set of
+// candidate statuses.
+type ItemTypeChangeRequest struct {
+	TargetItemTypeID int  `json:"target_item_type_id" validate:"required"`
+	TargetStatusID   *int `json:"target_status_id,omitempty"`
 }
 
 // TransitionResultResponse is returned when an item transition completes.

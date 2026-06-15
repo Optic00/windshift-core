@@ -25,6 +25,7 @@ import (
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/utils"
+	"windshift/internal/validation"
 
 	"github.com/google/uuid"
 )
@@ -84,6 +85,11 @@ type ActionService struct {
 	// AI/container dependencies
 	llmConnectionManager LLMConnectionResolver
 	containerService     *ContainerService
+
+	// agentRuns dispatches container_run nodes to a remote runner pool
+	// (WI-146) when the node names a PoolCapabilityID; nil disables pool
+	// dispatch (container_run then requires containerService for local runs).
+	agentRuns *repository.AgentRunRepository
 
 	// Asset permission checker — consulted before create_asset / update_asset
 	// nodes mutate an asset set the action's actor may not control.
@@ -186,6 +192,12 @@ func (as *ActionService) SetEventCoordinator(ec *EventCoordinator) {
 // SetLLMConnectionManager sets the LLM connection manager for AI node types.
 func (as *ActionService) SetLLMConnectionManager(m LLMConnectionResolver) {
 	as.llmConnectionManager = m
+}
+
+// SetAgentRunRepository wires remote-runner-pool dispatch for container_run
+// nodes (WI-146).
+func (as *ActionService) SetAgentRunRepository(r *repository.AgentRunRepository) {
+	as.agentRuns = r
 }
 
 // SetContainerService sets the container service for container_run nodes.
@@ -1226,6 +1238,35 @@ func (as *ActionService) executeSetFieldCustom(ctx *models.ExecutionContext, ste
 		return err
 	}
 
+	// Substituted variables can carry user content — route the value
+	// through the WI-319 choke point before persisting: select/multiselect
+	// values are validated against the field's option set and text/textarea
+	// values sanitized (same path as the interactive item write surfaces).
+	// A validation failure fails this node instead of writing the raw value.
+	fieldKey := strconv.Itoa(config.CustomFieldID)
+	cfv := map[string]interface{}{fieldKey: value}
+	fieldTypes, err := validation.CustomFieldTypes(as.db, cfv)
+	if err != nil {
+		return fmt.Errorf("resolve custom field type: %w", err)
+	}
+	switch fieldTypes[fieldKey] {
+	case "select":
+		// An empty substitution clears the field rather than failing
+		// option-id validation.
+		if strings.TrimSpace(value) == "" {
+			cfv[fieldKey] = nil
+		}
+	case "multiselect":
+		// Multiselect values arrive as the substituted string form of a
+		// JSON array ("[1,2]") or a CSV of option ids — decode before
+		// validation so each element is checked against the option set.
+		cfv[fieldKey] = parseActionMultiselectValue(value)
+	}
+	if err := validation.ValidateAndNormalizeCustomFieldValues(as.db, cfv); err != nil {
+		return fmt.Errorf("set_field: custom field %d: %w", config.CustomFieldID, err)
+	}
+	newValue := cfv[fieldKey]
+
 	oldValue, err := as.itemRepo.GetItemCustomFieldValue(itemID, config.CustomFieldID)
 	if err != nil {
 		slog.Debug("failed to get current custom field value for cascade event",
@@ -1241,7 +1282,7 @@ func (as *ActionService) executeSetFieldCustom(ctx *models.ExecutionContext, ste
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := as.itemRepo.SetItemCustomFieldValue(tx, itemID, config.CustomFieldID, value); err != nil {
+	if err := as.itemRepo.SetItemCustomFieldValue(tx, itemID, config.CustomFieldID, newValue); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -1253,7 +1294,7 @@ func (as *ActionService) executeSetFieldCustom(ctx *models.ExecutionContext, ste
 		"field_name":      key,
 		"custom_field_id": config.CustomFieldID,
 		"old_value":       oldValue,
-		"new_value":       value,
+		"new_value":       newValue,
 	}
 
 	as.EmitActionEvent(&models.ActionEvent{
@@ -1262,13 +1303,34 @@ func (as *ActionService) executeSetFieldCustom(ctx *models.ExecutionContext, ste
 		ItemID:            itemID,
 		ActorUserID:       ctx.EffectiveActorID,
 		OldValues:         map[string]interface{}{key: oldValue},
-		NewValues:         map[string]interface{}{key: value},
+		NewValues:         map[string]interface{}{key: newValue},
 		TriggeredByAction: true,
 		ExecutionChainID:  ctx.ChainID,
 		CascadeDepth:      ctx.Event.CascadeDepth + 1,
 	})
 
 	return nil
+}
+
+// parseActionMultiselectValue decodes a substituted multiselect set_field
+// value: a JSON array ("[1,2]") or a CSV of option ids ("1, 2"). An empty
+// string means "clear". Elements stay untyped — option-id coercion and
+// option-set validation happen in ValidateAndNormalizeCustomFieldValues.
+func parseActionMultiselectValue(value string) interface{} {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	var arr []interface{}
+	if err := json.Unmarshal([]byte(trimmed), &arr); err == nil {
+		return arr
+	}
+	parts := strings.Split(trimmed, ",")
+	out := make([]interface{}, 0, len(parts))
+	for _, part := range parts {
+		out = append(out, strings.TrimSpace(part))
+	}
+	return out
 }
 
 // executeSetStatus executes a set_status node. The transition is routed
@@ -1703,10 +1765,9 @@ func (as *ActionService) executeNotifyUser(node *models.ActionNode, ctx *models.
 // preferring the execution context's variable map and falling back to a direct
 // DB read of the item. Returns 0 when the field is absent or NULL.
 func (as *ActionService) lookupItemUserField(ctx *models.ExecutionContext, column, varName string) int {
-	if repository.IsAllowedItemColumn(column) {
-		var nid sql.NullInt64
-		if err := as.db.QueryRow(`SELECT `+column+` FROM items WHERE id = ?`, currentActionItemID(ctx)).Scan(&nid); err == nil && nid.Valid {
-			return int(nid.Int64)
+	if val, err := as.itemRepo.GetAllowedColumnValue(currentActionItemID(ctx), column); err == nil {
+		if nid, ok := val.(int64); ok {
+			return int(nid)
 		}
 	}
 	if ctx.Item != nil {
@@ -1962,8 +2023,7 @@ func (as *ActionService) executeUpdateAsset(node *models.ActionNode, ctx *models
 
 	itemID := currentActionItemID(ctx)
 	// Get the item's custom_field_values to find the asset reference
-	var customFieldValuesJSON sql.NullString
-	err := as.db.QueryRow(`SELECT custom_field_values FROM items WHERE id = ?`, itemID).Scan(&customFieldValuesJSON)
+	customFieldValuesJSON, err := as.itemRepo.GetCustomFieldValuesRaw(itemID)
 	if err != nil {
 		return fmt.Errorf("failed to get item custom_field_values: %w", err)
 	}
@@ -2091,6 +2151,17 @@ func (as *ActionService) executeUpdateAsset(node *models.ActionNode, ctx *models
 		assetCustomFields[mapping.TargetFieldID] = sourceValue
 	}
 
+	// Substituted values can carry user content — bound text/textarea
+	// fields with the same sanitize pass the asset create/update
+	// surfaces apply (WI-319) before persisting. Other field types are
+	// unchanged.
+	if err := as.sanitizeAssetCustomFieldText(asset.AssetTypeID, assetCustomFields); err != nil {
+		return fmt.Errorf("failed to sanitize asset custom_field_values: %w", err)
+	}
+	for k := range newValues {
+		newValues[k] = assetCustomFields[k]
+	}
+
 	// Serialize updated custom_field_values
 	updatedJSON, err := json.Marshal(assetCustomFields)
 	if err != nil {
@@ -2139,6 +2210,16 @@ func (as *ActionService) executeUpdateAsset(node *models.ActionNode, ctx *models
 	return nil
 }
 
+// sanitizeAssetCustomFieldText runs the asset-side text/textarea
+// custom-field sanitize pass (the one CreateAsset/UpdateAsset apply via
+// ValidateCustomFieldsSchema) over a values map, mutating it in place.
+// Used by the create_asset / update_asset action executors, which write
+// assets.custom_field_values directly instead of going through
+// AssetService.
+func (as *ActionService) sanitizeAssetCustomFieldText(assetTypeID int, values map[string]interface{}) error {
+	return NewAssetService(as.db, repository.NewAssetRepository(as.db)).SanitizeCustomFieldTextValues(assetTypeID, values)
+}
+
 // executeCreateAsset executes a create_asset node
 func (as *ActionService) executeCreateAsset(node *models.ActionNode, ctx *models.ExecutionContext, stepResult *models.StepResult) error {
 	var config models.CreateAssetNodeConfig
@@ -2159,19 +2240,22 @@ func (as *ActionService) executeCreateAsset(node *models.ActionNode, ctx *models
 		return err
 	}
 
-	// Substitute variables in title, description, and asset_tag
+	// Substitute variables in title, description, and asset_tag.
+	// Substituted variables can carry user content — apply the same
+	// input policy the normal asset create path runs (WI-319) before
+	// anything reaches the INSERT.
 	title := as.substituteVariables(config.Title, ctx)
+	description := as.substituteVariables(config.Description, ctx)
+	assetTag := as.substituteVariables(config.AssetTag, ctx)
+	sanitizeAssetText(&title, &description, &assetTag)
 	if title == "" {
 		return fmt.Errorf("title is required and cannot be empty after substitution")
 	}
-	description := as.substituteVariables(config.Description, ctx)
-	assetTag := as.substituteVariables(config.AssetTag, ctx)
 
 	itemID := currentActionItemID(ctx)
 	// Get item's custom field values for field mapping
-	var customFieldValuesJSON sql.NullString
-	err := as.db.QueryRow(`SELECT custom_field_values FROM items WHERE id = ?`, itemID).Scan(&customFieldValuesJSON)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	customFieldValuesJSON, err := as.itemRepo.GetCustomFieldValuesRaw(itemID)
+	if err != nil && !errors.Is(err, repository.ErrNotFound) {
 		return fmt.Errorf("failed to get item custom_field_values: %w", err)
 	}
 
@@ -2205,6 +2289,12 @@ func (as *ActionService) executeCreateAsset(node *models.ActionNode, ctx *models
 		}
 
 		assetCustomFields[mapping.TargetFieldID] = sourceValue
+	}
+
+	// Same sanitize pass the asset create/update surfaces apply
+	// (WI-319): bound text/textarea values before the INSERT.
+	if err := as.sanitizeAssetCustomFieldText(config.AssetTypeID, assetCustomFields); err != nil {
+		return fmt.Errorf("failed to sanitize custom_field_values: %w", err)
 	}
 
 	// Serialize custom_field_values
@@ -2299,7 +2389,11 @@ func (as *ActionService) executeRoundRobinAssign(node *models.ActionNode, ctx *m
 
 	// Get current assignee for event emission
 	var oldAssigneeID sql.NullInt64
-	_ = as.db.QueryRow(`SELECT assignee_id FROM items WHERE id = ?`, itemID).Scan(&oldAssigneeID)
+	if val, err := as.itemRepo.GetAllowedColumnValue(itemID, "assignee_id"); err == nil {
+		if nid, ok := val.(int64); ok {
+			oldAssigneeID = sql.NullInt64{Int64: nid, Valid: true}
+		}
+	}
 
 	// Get next assignee via round-robin
 	assigneeID, err := as.teamService.GetNextRoundRobinAssignee(node.ID, config.TeamID, config.SkipOnLeaveMembers, config.UseLeaveSubstitutes)
@@ -2766,10 +2860,6 @@ func isMutatingAgentHTTPToolCall(name, arguments string) bool {
 
 // executeContainerRun executes a container_run node.
 func (as *ActionService) executeContainerRun(node *models.ActionNode, ctx *models.ExecutionContext, stepResult *models.StepResult) error {
-	if as.containerService == nil {
-		return fmt.Errorf("container service not configured")
-	}
-
 	var config models.ContainerRunNodeConfig
 	if err := json.Unmarshal([]byte(node.NodeConfig), &config); err != nil {
 		return fmt.Errorf("failed to parse container_run config: %w", err)
@@ -2785,6 +2875,47 @@ func (as *ActionService) executeContainerRun(node *models.ActionNode, ctx *model
 		return fmt.Errorf("failed to parse docker_environment config: %w", err)
 	}
 
+	// Remote pool dispatch (WI-146): enqueue an action_container run for the
+	// pool; a runner claims it and runs envConfig.Image. No local container.
+	if config.PoolCapabilityID > 0 {
+		if as.agentRuns == nil {
+			return fmt.Errorf("container_run targets runner pool %d but pool dispatch is not configured", config.PoolCapabilityID)
+		}
+		// Resolve the pool as a runner_pool capability for this workspace
+		// before enqueueing (WI-168). Without this an action could target an
+		// arbitrary capability id — including a disabled pool, a non-pool
+		// capability, or another workspace's pool — purely by number.
+		if _, err := as.resolveCapability(ctx.Event.WorkspaceID, config.PoolCapabilityID, models.CapabilityRunnerPool); err != nil {
+			return fmt.Errorf("container_run pool dispatch: %w", err)
+		}
+		pool := config.PoolCapabilityID
+		runID, derr := as.agentRuns.Insert(context.Background(), &models.AgentRun{
+			WorkspaceID:  ctx.Event.WorkspaceID,
+			Status:       models.AgentRunStatusQueued,
+			JobKind:      models.JobKindActionContainer,
+			JobImage:     envConfig.Image,
+			TargetPoolID: &pool,
+		})
+		if derr != nil {
+			return fmt.Errorf("enqueue container run for pool %d: %w", pool, derr)
+		}
+		out := map[string]interface{}{"agent_run_id": runID, "dispatched": "pool", "pool_capability_id": pool}
+		if config.OutputField != "" {
+			ctx.Variables[config.OutputField] = out
+		}
+		stepResult.Output = out
+		slog.Debug("container_run dispatched to runner pool",
+			slog.String("component", "actions"),
+			slog.Int("node_id", node.ID),
+			slog.Int("run_id", runID),
+			slog.Int("pool_capability_id", pool),
+		)
+		return nil
+	}
+
+	if as.containerService == nil {
+		return fmt.Errorf("container service not configured")
+	}
 	containerInfo, err := as.containerService.StartContainer(context.Background(), envConfig, config.TimeoutSecs)
 	if err != nil {
 		return fmt.Errorf("failed to start container: %w", err)

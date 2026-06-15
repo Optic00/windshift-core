@@ -6,8 +6,20 @@ import (
 
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
+
+// sanitizeLeaveRequest scrubs the user-facing fields on a leave-period
+// payload. Reason renders in availability views + substitute pickers;
+// StartDate / EndDate are date strings echoed back in validation errors.
+func sanitizeLeaveRequest(req *models.UserLeavePeriodRequest) {
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Reason, Policy: sanitize.RichText},
+		sanitize.Pair{Target: &req.StartDate, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.EndDate, Policy: sanitize.ShortIdentifier},
+	)
+}
 
 type LeaveHandler struct {
 	leaveRepo         *repository.LeaveRepository
@@ -146,6 +158,7 @@ func (h *LeaveHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	sanitizeLeaveRequest(&req)
 
 	if !h.validateLeaveRequest(w, r, req, userID) {
 		return
@@ -177,6 +190,7 @@ func (h *LeaveHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	sanitizeLeaveRequest(&req)
 
 	if !h.validateLeaveRequest(w, r, req, userID) {
 		return

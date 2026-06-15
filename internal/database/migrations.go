@@ -629,7 +629,7 @@ var Catalog = []Migration{
 		// agent_runs records one execution of the coding-agent harness:
 		// admission → container spawn → exit. agent_run_events captures the
 		// per-run stdio / lifecycle stream that the orchestrator reads from
-		// pi's RPC mode and forwards to the SSE hub. binding_id is the FK
+		// the agent's JSONL RPC mode and forwards to the SSE hub. binding_id is the FK
 		// back to the workspace_agent_binding that triggered the run (NULL
 		// for manually-started runs); the (binding_id, created_at) index
 		// supports per-binding budget enforcement (WI-134).
@@ -853,6 +853,318 @@ var Catalog = []Migration{
 					REFERENCES workspace_scm_connections(id) ON DELETE SET NULL;
 			CREATE INDEX IF NOT EXISTS idx_workspace_agent_bindings_scm_connection
 				ON workspace_agent_bindings(scm_connection_id);
+		`,
+	},
+	{
+		// workspace_agent_bindings.target_pool_id routes a binding's
+		// coding-agent runs to a runner_pool capability instead of the local
+		// in-process pool (WI-195). Soft ref to action_capabilities (no FK),
+		// mirroring agent_runs.target_pool_id: NULL = local. Fresh installs get
+		// it from schema/agents{,_postgres}.sql; this upgrades existing DBs.
+		Version:       "20260604_workspace_agent_bindings_target_pool_id",
+		Name:          "Add target_pool_id to workspace_agent_bindings",
+		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('workspace_agent_bindings') WHERE name='target_pool_id'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_name='workspace_agent_bindings' AND column_name='target_pool_id'",
+		SQLite:        "ALTER TABLE workspace_agent_bindings ADD COLUMN target_pool_id INTEGER",
+		Postgres:      "ALTER TABLE workspace_agent_bindings ADD COLUMN target_pool_id INTEGER",
+	},
+	{
+		// Remote runner pools (Initiative WI-141). A pool is an
+		// action_capabilities row of type 'runner_pool'; these tables hang
+		// off it by soft ref (no FK), mirroring the agent-table convention.
+		// runner_registration_tokens: single-use (consumed on first
+		// registration), revocable, pool-scoped tokens a runner presents to
+		// register; runner_instances: one registered runner with its
+		// per-instance credential + heartbeat.
+		// Fresh installs get these from schema/agents{,_postgres}.sql; this
+		// entry upgrades existing DBs (its Check stamps without re-running
+		// once runner_instances exists).
+		Version:       "20260602_runner_pool_tables",
+		Name:          "Create runner_registration_tokens + runner_instances",
+		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='runner_instances'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='runner_instances'",
+		SQLite: `
+			CREATE TABLE IF NOT EXISTS runner_registration_tokens (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				pool_capability_id INTEGER NOT NULL,
+				token_hash TEXT NOT NULL UNIQUE,
+				token_prefix TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				created_by_user_id INTEGER,
+				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				expires_at DATETIME,
+				revoked_at DATETIME
+			);
+			CREATE INDEX IF NOT EXISTS idx_runner_registration_tokens_pool
+				ON runner_registration_tokens(pool_capability_id);
+			CREATE TABLE IF NOT EXISTS runner_instances (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				pool_capability_id INTEGER NOT NULL,
+				name TEXT NOT NULL DEFAULT '',
+				credential_hash TEXT NOT NULL UNIQUE,
+				status TEXT NOT NULL DEFAULT 'active'
+					CHECK (status IN ('active','revoked')),
+				registered_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				last_heartbeat_at DATETIME,
+				revoked_at DATETIME
+			);
+			CREATE INDEX IF NOT EXISTS idx_runner_instances_pool ON runner_instances(pool_capability_id);
+			CREATE INDEX IF NOT EXISTS idx_runner_instances_status ON runner_instances(status);
+		`,
+		Postgres: `
+			CREATE TABLE IF NOT EXISTS runner_registration_tokens (
+				id SERIAL PRIMARY KEY,
+				pool_capability_id INTEGER NOT NULL,
+				token_hash TEXT NOT NULL UNIQUE,
+				token_prefix TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				created_by_user_id INTEGER,
+				created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				expires_at TIMESTAMPTZ,
+				revoked_at TIMESTAMPTZ
+			);
+			CREATE INDEX IF NOT EXISTS idx_runner_registration_tokens_pool
+				ON runner_registration_tokens(pool_capability_id);
+			CREATE TABLE IF NOT EXISTS runner_instances (
+				id SERIAL PRIMARY KEY,
+				pool_capability_id INTEGER NOT NULL,
+				name TEXT NOT NULL DEFAULT '',
+				credential_hash TEXT NOT NULL UNIQUE,
+				status TEXT NOT NULL DEFAULT 'active'
+					CHECK (status IN ('active','revoked')),
+				registered_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				last_heartbeat_at TIMESTAMPTZ,
+				revoked_at TIMESTAMPTZ
+			);
+			CREATE INDEX IF NOT EXISTS idx_runner_instances_pool ON runner_instances(pool_capability_id);
+			CREATE INDEX IF NOT EXISTS idx_runner_instances_status ON runner_instances(status);
+		`,
+	},
+	{
+		// agent_runs.runner_id records which remote runner executed a run
+		// (NULL for the in-process local runner). Soft ref to
+		// runner_instances; runs outlive instances for audit.
+		Version:       "20260602_agent_runs_runner_id",
+		Name:          "Add runner_id to agent_runs",
+		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('agent_runs') WHERE name='runner_id'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_name='agent_runs' AND column_name='runner_id'",
+		SQLite: `
+			ALTER TABLE agent_runs ADD COLUMN runner_id INTEGER;
+			CREATE INDEX IF NOT EXISTS idx_agent_runs_runner ON agent_runs(runner_id);
+		`,
+		Postgres: `
+			ALTER TABLE agent_runs ADD COLUMN runner_id INTEGER;
+			CREATE INDEX IF NOT EXISTS idx_agent_runs_runner ON agent_runs(runner_id);
+		`,
+	},
+	{
+		// agent_runs.target_pool_id routes a run to a runner_pool capability
+		// (NULL = local in-process pool). Remote runners claim queued runs
+		// scoped by this value; the index supports that DB-as-queue claim.
+		Version:       "20260602_agent_runs_target_pool_id",
+		Name:          "Add target_pool_id to agent_runs",
+		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('agent_runs') WHERE name='target_pool_id'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_name='agent_runs' AND column_name='target_pool_id'",
+		SQLite: `
+			ALTER TABLE agent_runs ADD COLUMN target_pool_id INTEGER;
+			CREATE INDEX IF NOT EXISTS idx_agent_runs_pool_claim ON agent_runs(target_pool_id, status, queued_at);
+		`,
+		Postgres: `
+			ALTER TABLE agent_runs ADD COLUMN target_pool_id INTEGER;
+			CREATE INDEX IF NOT EXISTS idx_agent_runs_pool_claim ON agent_runs(target_pool_id, status, queued_at);
+		`,
+	},
+	{
+		// agent_runs.cancel_requested_at signals that a running remote run
+		// should abort. The orchestrator sets it (POST /agent-runs/{id}/cancel
+		// for a remote run); the runner learns via its heartbeat response and
+		// cancels the job, then reports canceled.
+		Version:       "20260602_agent_runs_cancel_requested_at",
+		Name:          "Add cancel_requested_at to agent_runs",
+		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('agent_runs') WHERE name='cancel_requested_at'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_name='agent_runs' AND column_name='cancel_requested_at'",
+		SQLite:        `ALTER TABLE agent_runs ADD COLUMN cancel_requested_at DATETIME;`,
+		Postgres:      `ALTER TABLE agent_runs ADD COLUMN cancel_requested_at TIMESTAMPTZ;`,
+	},
+	{
+		// agent_runs.grants_json + run_token_id back the secretless access
+		// layer (WI-144): grants_json is the RunGrants snapshot the brokers
+		// authorize against; run_token_id binds a presented credential to
+		// this run's grants. Both nullable/additive.
+		Version:       "20260602_agent_runs_grants",
+		Name:          "Add grants_json + run_token_id to agent_runs",
+		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('agent_runs') WHERE name='grants_json'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_name='agent_runs' AND column_name='grants_json'",
+		SQLite: `
+			ALTER TABLE agent_runs ADD COLUMN grants_json TEXT;
+			ALTER TABLE agent_runs ADD COLUMN run_token_id INTEGER;
+		`,
+		Postgres: `
+			ALTER TABLE agent_runs ADD COLUMN grants_json TEXT;
+			ALTER TABLE agent_runs ADD COLUMN run_token_id INTEGER;
+		`,
+	},
+	{
+		// agent_runs.job_kind + job_image let non-coding-agent jobs
+		// (action_container, ci_task) ride the same runner substrate (WI-146):
+		// the runner picks its execution mode by kind and runs job_image for
+		// container jobs (the fixed runner image is used for coding_agent).
+		Version:       "20260602_agent_runs_job_kind",
+		Name:          "Add job_kind + job_image to agent_runs",
+		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('agent_runs') WHERE name='job_kind'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_name='agent_runs' AND column_name='job_kind'",
+		SQLite: `
+			ALTER TABLE agent_runs ADD COLUMN job_kind TEXT NOT NULL DEFAULT 'coding_agent';
+			ALTER TABLE agent_runs ADD COLUMN job_image TEXT;
+		`,
+		Postgres: `
+			ALTER TABLE agent_runs ADD COLUMN job_kind TEXT NOT NULL DEFAULT 'coding_agent';
+			ALTER TABLE agent_runs ADD COLUMN job_image TEXT;
+		`,
+	},
+	{
+		// agent_runs.binding_id is a soft ref to workspace_agent_bindings (a run
+		// outlives its binding for audit). It has always been in the CREATE TABLE
+		// but never had an ADD-COLUMN migration, so a database created before
+		// binding_id entered the schema never got the column and the run insert
+		// fails. This backfills it; on a DB that already has the column the Check
+		// matches and the migration is stamped without re-running the DDL.
+		Version:       "20260609_agent_runs_binding_id",
+		Name:          "Add binding_id to agent_runs",
+		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('agent_runs') WHERE name='binding_id'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_name='agent_runs' AND column_name='binding_id'",
+		SQLite: `
+			ALTER TABLE agent_runs ADD COLUMN binding_id INTEGER;
+			CREATE INDEX IF NOT EXISTS idx_agent_runs_binding_created ON agent_runs(binding_id, created_at DESC);
+		`,
+		Postgres: `
+			ALTER TABLE agent_runs ADD COLUMN binding_id INTEGER;
+			CREATE INDEX IF NOT EXISTS idx_agent_runs_binding_created ON agent_runs(binding_id, created_at DESC);
+		`,
+	},
+	{
+		// agent_runs.triggered_by_user_id records who caused the run (the
+		// user whose assignment fired the binding trigger, or the admin who
+		// started a test run). On OAuth SCM connections this user's personal
+		// token is the credential for the run's git traffic and PR creation
+		// (WI-275). Soft ref to users: runs must outlive users for audit.
+		Version:       "20260610_agent_runs_triggered_by",
+		Name:          "Add triggered_by_user_id to agent_runs",
+		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('agent_runs') WHERE name='triggered_by_user_id'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_name='agent_runs' AND column_name='triggered_by_user_id'",
+		SQLite: `
+			ALTER TABLE agent_runs ADD COLUMN triggered_by_user_id INTEGER;
+		`,
+		Postgres: `
+			ALTER TABLE agent_runs ADD COLUMN triggered_by_user_id INTEGER;
+		`,
+	},
+	{
+		// WI-258: per-workspace agent skills library + per-binding custom
+		// instructions. Skills are markdown knowledge packs (Anthropic Agent
+		// Skills shape) attached to bindings m:n; the run's initial prompt
+		// indexes them and the agent fetches bodies via `ws skill get`.
+		// binding.instructions is appended to the initial prompt as the
+		// agent's role/persona.
+		Version:       "20260610_workspace_agent_skills",
+		Name:          "Agent skills library + binding instructions",
+		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('workspace_agent_bindings') WHERE name='instructions'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_name='workspace_agent_bindings' AND column_name='instructions'",
+		SQLite: `
+			ALTER TABLE workspace_agent_bindings ADD COLUMN instructions TEXT NOT NULL DEFAULT '';
+			CREATE TABLE IF NOT EXISTS workspace_agent_skills (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				workspace_id INTEGER NOT NULL,
+				name TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				body TEXT NOT NULL DEFAULT '',
+				enabled BOOLEAN NOT NULL DEFAULT 1,
+				created_by_user_id INTEGER,
+				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+				FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+			);
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_agent_skills_workspace_name
+				ON workspace_agent_skills(workspace_id, name);
+			CREATE TABLE IF NOT EXISTS workspace_agent_binding_skills (
+				binding_id INTEGER NOT NULL,
+				skill_id INTEGER NOT NULL,
+				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				PRIMARY KEY (binding_id, skill_id),
+				FOREIGN KEY (binding_id) REFERENCES workspace_agent_bindings(id) ON DELETE CASCADE,
+				FOREIGN KEY (skill_id) REFERENCES workspace_agent_skills(id) ON DELETE CASCADE
+			);
+			CREATE INDEX IF NOT EXISTS idx_workspace_agent_binding_skills_skill
+				ON workspace_agent_binding_skills(skill_id);
+		`,
+		Postgres: `
+			ALTER TABLE workspace_agent_bindings ADD COLUMN instructions TEXT NOT NULL DEFAULT '';
+			CREATE TABLE IF NOT EXISTS workspace_agent_skills (
+				id SERIAL PRIMARY KEY,
+				workspace_id INTEGER NOT NULL,
+				name TEXT NOT NULL,
+				description TEXT NOT NULL DEFAULT '',
+				body TEXT NOT NULL DEFAULT '',
+				enabled BOOLEAN NOT NULL DEFAULT TRUE,
+				created_by_user_id INTEGER,
+				created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+				FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+			);
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_agent_skills_workspace_name
+				ON workspace_agent_skills(workspace_id, name);
+			CREATE TABLE IF NOT EXISTS workspace_agent_binding_skills (
+				binding_id INTEGER NOT NULL,
+				skill_id INTEGER NOT NULL,
+				created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				PRIMARY KEY (binding_id, skill_id),
+				FOREIGN KEY (binding_id) REFERENCES workspace_agent_bindings(id) ON DELETE CASCADE,
+				FOREIGN KEY (skill_id) REFERENCES workspace_agent_skills(id) ON DELETE CASCADE
+			);
+			CREATE INDEX IF NOT EXISTS idx_workspace_agent_binding_skills_skill
+				ON workspace_agent_binding_skills(skill_id);
+		`,
+	},
+	{
+		// active_timers "only one running timer per user" was enforced solely by
+		// a TOCTOU check (HasActiveTimerForUser → CreateTimer, two statements, no
+		// txn) in TimerService.StartTimer, so concurrent starts could create
+		// multiple running timers. Make the user_id index UNIQUE so the DB is the
+		// backstop; the repo maps the resulting constraint violation to
+		// ErrTimerAlreadyRunning (WI-298). Before swapping the index we delete all
+		// but the latest active timer per user so any pre-existing duplicates
+		// don't block the UNIQUE index creation.
+		//
+		// The schema (system{,_postgres}.sql) creates idx_active_timers_user_id as
+		// a plain index; this migration drops it and recreates it UNIQUE. The
+		// Check reports the effect present once the index is already unique, so it
+		// is idempotent on installs that already have it (incl. fresh installs
+		// whose schema bootstrap will adopt the UNIQUE form on SQLite but not on
+		// Postgres — this migration unifies both).
+		Version: "20260610_active_timers_unique_user",
+		Name:    "Enforce one active timer per user via UNIQUE(user_id)",
+		CheckSQLite: `SELECT COUNT(*) FROM pragma_index_list('active_timers')
+			WHERE name='idx_active_timers_user_id' AND "unique"=1`,
+		CheckPostgres: `SELECT COUNT(*) FROM pg_index i
+			JOIN pg_class c ON c.oid = i.indexrelid
+			WHERE c.relname='idx_active_timers_user_id' AND i.indisunique`,
+		SQLite: `
+			DELETE FROM active_timers
+			WHERE id NOT IN (
+				SELECT MAX(id) FROM active_timers GROUP BY user_id
+			);
+			DROP INDEX IF EXISTS idx_active_timers_user_id;
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_active_timers_user_id ON active_timers(user_id);
+		`,
+		Postgres: `
+			DELETE FROM active_timers
+			WHERE id NOT IN (
+				SELECT MAX(id) FROM active_timers GROUP BY user_id
+			);
+			DROP INDEX IF EXISTS idx_active_timers_user_id;
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_active_timers_user_id ON active_timers(user_id);
 		`,
 	},
 }

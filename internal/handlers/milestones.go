@@ -5,27 +5,26 @@ import (
 	"strconv"
 	"strings"
 
-	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
 	"windshift/internal/scm"
 	"windshift/internal/services"
-	"windshift/internal/utils"
 )
 
 type MilestoneHandler struct {
-	db                 database.Database
 	permissionService  *services.PermissionService
 	planningService    *services.PlanningService
 	credentialResolver *scm.CredentialResolver
+	auditor            *logger.Auditor
 }
 
-func NewMilestoneHandler(db database.Database, permissionService *services.PermissionService, credentialResolver *scm.CredentialResolver) *MilestoneHandler {
+func NewMilestoneHandler(planningService *services.PlanningService, permissionService *services.PermissionService, credentialResolver *scm.CredentialResolver, auditor *logger.Auditor) *MilestoneHandler {
 	return &MilestoneHandler{
-		db:                 db,
 		permissionService:  permissionService,
-		planningService:    services.NewPlanningService(db),
+		planningService:    planningService,
 		credentialResolver: credentialResolver,
+		auditor:            auditor,
 	}
 }
 
@@ -212,8 +211,8 @@ func (h *MilestoneHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Sanitize user input to prevent XSS
-	milestone.Name = utils.StripHTMLTags(milestone.Name)
-	milestone.Description = utils.SanitizeCommentContent(milestone.Description)
+	milestone.Name = sanitize.PlainTextField.Sanitize(milestone.Name)
+	milestone.Description = sanitize.Comment.Sanitize(milestone.Description)
 
 	// Use service to create milestone
 	result, err := h.planningService.CreateMilestone(services.CreateMilestoneParams{
@@ -231,7 +230,7 @@ func (h *MilestoneHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	createdMilestone := h.milestoneResultToModel(result, user.ID)
-	logAudit(h.db, r, user, logger.ActionMilestoneCreate, logger.ResourceMilestone, &createdMilestone.ID, createdMilestone.Name)
+	h.auditor.Log(r, user, logger.ActionMilestoneCreate, logger.ResourceMilestone, &createdMilestone.ID, createdMilestone.Name)
 	respondJSONCreated(w, createdMilestone)
 }
 
@@ -282,8 +281,8 @@ func (h *MilestoneHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Sanitize user input to prevent XSS
-	milestone.Name = utils.StripHTMLTags(milestone.Name)
-	milestone.Description = utils.SanitizeCommentContent(milestone.Description)
+	milestone.Name = sanitize.PlainTextField.Sanitize(milestone.Name)
+	milestone.Description = sanitize.Comment.Sanitize(milestone.Description)
 
 	result, err := h.planningService.UpdateMilestone(services.UpdateMilestoneParams{
 		ID:          id,
@@ -304,7 +303,7 @@ func (h *MilestoneHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	updatedMilestone := h.milestoneResultToModel(result, user.ID)
-	logAudit(h.db, r, user, logger.ActionMilestoneUpdate, logger.ResourceMilestone, &updatedMilestone.ID, updatedMilestone.Name)
+	h.auditor.Log(r, user, logger.ActionMilestoneUpdate, logger.ResourceMilestone, &updatedMilestone.ID, updatedMilestone.Name)
 	respondJSONOK(w, updatedMilestone)
 }
 
@@ -320,7 +319,7 @@ func (h *MilestoneHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logAudit(h.db, r, user, logger.ActionMilestoneDelete, logger.ResourceMilestone, &id, "")
+	h.auditor.Log(r, user, logger.ActionMilestoneDelete, logger.ResourceMilestone, &id, "")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -659,6 +658,6 @@ func (h *MilestoneHandler) Release(w http.ResponseWriter, r *http.Request) {
 	}
 
 	milestone := h.milestoneResultToModel(result, user.ID)
-	logAudit(h.db, r, user, logger.ActionMilestoneRelease, logger.ResourceMilestone, &id, milestone.Name)
+	h.auditor.Log(r, user, logger.ActionMilestoneRelease, logger.ResourceMilestone, &id, milestone.Name)
 	respondJSONOK(w, milestone)
 }

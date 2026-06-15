@@ -12,7 +12,11 @@
     applyMappingsChange,
   } from './shared/assetConfigHelpers.svelte.js';
 
-  let { selectedNode, showPlaceholderModal = $bindable(false) } = $props();
+  let {
+    selectedNode,
+    flowStore = actionFlowStore,
+    showPlaceholderModal = $bindable(false),
+  } = $props();
 
   // Data state
   let assetSets = $state([]);
@@ -20,6 +24,7 @@
   let categories = $state([]);
   let statuses = $state([]);
   let loading = $state(true);
+  let assetSetLoadToken = 0;
 
   const assetTypeFields = useAssetTypeFields(
     () => selectedNode?.data?.config?.asset_type_id
@@ -42,6 +47,7 @@
     if (setId) {
       loadAssetSetData(setId);
     } else {
+      assetSetLoadToken += 1;
       assetTypes = [];
       categories = [];
       statuses = [];
@@ -49,16 +55,19 @@
   });
 
   async function loadAssetSetData(setId) {
+    const token = ++assetSetLoadToken;
     try {
       const [typesResult, categoriesResult, statusesResult] = await Promise.all([
         api.assetTypes.getAll(setId),
         api.assetCategories.getAll(setId),
         api.assetStatuses.getAll(setId)
       ]);
+      if (token !== assetSetLoadToken) return;
       assetTypes = typesResult || [];
       categories = categoriesResult || [];
       statuses = statusesResult || [];
     } catch (error) {
+      if (token !== assetSetLoadToken) return;
       console.error('Failed to load asset set data:', error);
       assetTypes = [];
       categories = [];
@@ -68,7 +77,7 @@
 
   function handleAssetSetChange(e) {
     const value = parseInt(e.target.value) || 0;
-    actionFlowStore.updateNodeConfig(selectedNode.id, {
+    flowStore.updateNodeConfig(selectedNode.id, {
       asset_set_id: value,
       asset_type_id: 0,
       category_id: null,
@@ -78,43 +87,43 @@
   }
 
   function handleAssetTypeChange(e) {
-    applyAssetTypeChange(selectedNode.id, e.target.value);
+    applyAssetTypeChange(selectedNode.id, e.target.value, {}, flowStore);
   }
 
   function handleTitleChange(e) {
-    actionFlowStore.updateNodeConfig(selectedNode.id, {
+    flowStore.updateNodeConfig(selectedNode.id, {
       title: e.target.value
     });
   }
 
   function handleDescriptionChange(e) {
-    actionFlowStore.updateNodeConfig(selectedNode.id, {
+    flowStore.updateNodeConfig(selectedNode.id, {
       description: e.target.value
     });
   }
 
   function handleAssetTagChange(e) {
-    actionFlowStore.updateNodeConfig(selectedNode.id, {
+    flowStore.updateNodeConfig(selectedNode.id, {
       asset_tag: e.target.value
     });
   }
 
   function handleCategoryChange(e) {
     const value = e.target.value ? parseInt(e.target.value) : null;
-    actionFlowStore.updateNodeConfig(selectedNode.id, {
+    flowStore.updateNodeConfig(selectedNode.id, {
       category_id: value
     });
   }
 
   function handleStatusChange(e) {
     const value = e.target.value ? parseInt(e.target.value) : null;
-    actionFlowStore.updateNodeConfig(selectedNode.id, {
+    flowStore.updateNodeConfig(selectedNode.id, {
       status_id: value
     });
   }
 
   function handleMappingsChange(mappings) {
-    applyMappingsChange(selectedNode.id, mappings);
+    applyMappingsChange(selectedNode.id, mappings, flowStore);
   }
 </script>
 

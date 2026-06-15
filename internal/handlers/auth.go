@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"windshift/internal/auth"
-	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/middleware"
 	"windshift/internal/models"
@@ -29,9 +28,9 @@ var dummyPasswordHash = []byte("$2a$10$dummyHashForTimingAttackPrevention1234567
 
 // AuthHandler handles authentication endpoints
 type AuthHandler struct {
-	db                       database.Database
 	userRepo                 *repository.UserRepository
 	credentialRepo           *repository.CredentialRepository
+	auditor                  *logger.Auditor
 	sessionManager           *auth.SessionManager
 	rateLimiter              *middleware.RateLimiter
 	permissionService        *services.PermissionService
@@ -81,11 +80,11 @@ type SessionInfo struct {
 // NewAuthHandler creates a new authentication handler
 // emailVerificationService can be nil if SMTP is not configured
 // authPolicyHandler and adminRateLimiter can be nil for backwards compatibility
-func NewAuthHandler(db database.Database, sessionManager *auth.SessionManager, rateLimiter *middleware.RateLimiter, permissionService *services.PermissionService, emailVerificationService *services.EmailVerificationService, ipExtractor *utils.IPExtractor, authPolicyHandler *AuthPolicyHandler, adminRateLimiter *middleware.AdminFallbackRateLimiter) *AuthHandler {
+func NewAuthHandler(userRepo *repository.UserRepository, credentialRepo *repository.CredentialRepository, auditor *logger.Auditor, sessionManager *auth.SessionManager, rateLimiter *middleware.RateLimiter, permissionService *services.PermissionService, emailVerificationService *services.EmailVerificationService, ipExtractor *utils.IPExtractor, authPolicyHandler *AuthPolicyHandler, adminRateLimiter *middleware.AdminFallbackRateLimiter) *AuthHandler {
 	return &AuthHandler{
-		db:                       db,
-		userRepo:                 repository.NewUserRepository(db),
-		credentialRepo:           repository.NewCredentialRepository(db),
+		userRepo:                 userRepo,
+		credentialRepo:           credentialRepo,
+		auditor:                  auditor,
 		sessionManager:           sessionManager,
 		rateLimiter:              rateLimiter,
 		permissionService:        permissionService,
@@ -160,21 +159,9 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		// check, leaking which usernames are agents (often higher-value
 		// automation accounts).
 		_ = bcrypt.CompareHashAndPassword(dummyPasswordHash, []byte(req.Password))
-		_ = logger.LogAudit(h.db, logger.AuditEvent{
-			UserID:       user.ID,
-			Username:     user.Username,
-			IPAddress:    utils.GetClientIP(r),
-			UserAgent:    r.UserAgent(),
-			ActionType:   logger.ActionLoginFailure,
-			ResourceType: logger.ResourceUser,
-			ResourceID:   &user.ID,
-			ResourceName: user.Username,
-			Details: map[string]interface{}{
-				"reason":   "agent_user_login_blocked",
-				"is_agent": true,
-			},
-			Success:      false,
-			ErrorMessage: "agent users cannot log in interactively",
+		h.auditor.LogFailure(r, user, logger.ActionLoginFailure, logger.ResourceUser, &user.ID, user.Username, "agent users cannot log in interactively", map[string]interface{}{
+			"reason":   "agent_user_login_blocked",
+			"is_agent": true,
 		})
 		respondUnauthorized(w, r)
 		return
@@ -293,17 +280,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	user.FullName = fmt.Sprintf("%s %s", user.FirstName, user.LastName)
 	user.PasswordHash = "" // Never send password hash
 
-	_ = logger.LogAudit(h.db, logger.AuditEvent{
-		UserID:       user.ID,
-		Username:     user.Username,
-		IPAddress:    utils.GetClientIP(r),
-		UserAgent:    r.UserAgent(),
-		ActionType:   logger.ActionLoginSuccess,
-		ResourceType: logger.ResourceUser,
-		ResourceID:   &user.ID,
-		ResourceName: user.Username,
-		Success:      true,
-	})
+	h.auditor.Log(r, user, logger.ActionLoginSuccess, logger.ResourceUser, &user.ID, user.Username)
 
 	response := LoginResponse{
 		Success:            true,
@@ -344,14 +321,7 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 
 	session, _ := r.Context().Value(middleware.ContextKeySession).(*auth.Session)
 	if session != nil {
-		_ = logger.LogAudit(h.db, logger.AuditEvent{
-			UserID:       session.UserID,
-			IPAddress:    utils.GetClientIP(r),
-			UserAgent:    r.UserAgent(),
-			ActionType:   logger.ActionLogout,
-			ResourceType: logger.ResourceUser,
-			Success:      true,
-		})
+		h.auditor.Log(r, &models.User{ID: session.UserID}, logger.ActionLogout, logger.ResourceUser, nil, "")
 	}
 
 	respondJSONOK(w, map[string]interface{}{
@@ -470,16 +440,7 @@ func (h *AuthHandler) LogoutAll(w http.ResponseWriter, r *http.Request) {
 // audit details but long enough to make collisions effectively impossible
 // for the volume of failed logins a single deployment sees.
 func (h *AuthHandler) logFailedLogin(r *http.Request, emailOrUsername string) {
-	_ = logger.LogAudit(h.db, logger.AuditEvent{
-		UserID:       0,
-		IPAddress:    utils.GetClientIP(r),
-		UserAgent:    r.UserAgent(),
-		ActionType:   logger.ActionLoginFailure,
-		ResourceType: logger.ResourceUser,
-		ResourceName: hashIdentifier(emailOrUsername),
-		Success:      false,
-		ErrorMessage: "invalid credentials",
-	})
+	h.auditor.LogFailure(r, nil, logger.ActionLoginFailure, logger.ResourceUser, nil, hashIdentifier(emailOrUsername), "invalid credentials", nil)
 }
 
 // hashIdentifier returns a stable, non-reversible tag for an attempted
@@ -555,14 +516,7 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = logger.LogAudit(h.db, logger.AuditEvent{
-		UserID:       session.UserID,
-		IPAddress:    utils.GetClientIP(r),
-		UserAgent:    r.UserAgent(),
-		ActionType:   logger.ActionPasswordChange,
-		ResourceType: logger.ResourceUser,
-		Success:      true,
-	})
+	h.auditor.Log(r, &models.User{ID: session.UserID}, logger.ActionPasswordChange, logger.ResourceUser, nil, "")
 
 	// Optionally logout all other sessions
 	if req.LogoutAll {

@@ -1,10 +1,14 @@
 <script>
-  import { AlertTriangle, X, Check } from '@lucide/svelte';
+  import { AlertTriangle, X } from '@lucide/svelte';
   import Button from '../components/Button.svelte';
+  import Input from '../components/Input.svelte';
   import ModalBackdrop from '../components/ModalBackdrop.svelte';
   import { t } from '../stores/i18n.svelte.js';
   import { getShortcut, matchesShortcut } from '../utils/keyboardShortcuts.js';
 
+  // With requireReason, the Confirm button stays disabled until the reason is
+  // non-empty and onconfirm receives the trimmed reason string so callers can
+  // audit-log it. Without it, onconfirm is called with no arguments.
   let {
     show = $bindable(false),
     title = null,
@@ -13,6 +17,10 @@
     cancelText = null,
     variant = 'danger',  // 'danger', 'warning', 'info'
     icon: Icon = AlertTriangle,
+    requireReason = false,
+    reasonLabel = null,
+    reasonPlaceholder = null,
+    testIdPrefix = 'dialog',
     onconfirm = null,
     oncancel = null
   } = $props();
@@ -22,8 +30,24 @@
   // Use translations for defaults
   const resolvedTitle = $derived(title ?? t('common.areYouSure'));
   const resolvedMessage = $derived(message ?? t('common.confirmAction'));
+  const resolvedReasonLabel = $derived(reasonLabel ?? 'Reason (audit-logged)');
+  const resolvedReasonPlaceholder = $derived(reasonPlaceholder ?? 'Why are you making this change?');
   const resolvedConfirmText = $derived(confirmText ?? t('common.confirm'));
   const resolvedCancelText = $derived(cancelText ?? t('common.cancel'));
+
+  let reason = $state('');
+  let reasonInputEl = $state(null);
+
+  // Reset the reason whenever the dialog opens; focus the input after the
+  // backdrop has rendered.
+  $effect(() => {
+    if (show && requireReason) {
+      reason = '';
+      queueMicrotask(() => reasonInputEl?.focus());
+    }
+  });
+
+  let canConfirm = $derived(!requireReason || reason.trim().length > 0);
 
   // Handle keyboard navigation for submit shortcuts
   function handleKeydown(event) {
@@ -37,7 +61,7 @@
     }
 
     // Enter without modifier confirms (unless on cancel button)
-    if (event.key === 'Enter' && !event.ctrlKey && !event.metaKey) {
+    if (event.key === 'Enter' && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
       const activeElement = document.activeElement;
       const isOnCancelButton = activeElement?.textContent?.trim() === resolvedCancelText;
       if (!isOnCancelButton) {
@@ -48,7 +72,12 @@
   }
 
   function doConfirm() {
-    onconfirm?.();
+    if (!canConfirm) return;
+    if (requireReason) {
+      onconfirm?.(reason.trim());
+    } else {
+      onconfirm?.();
+    }
     show = false;
   }
 
@@ -88,7 +117,7 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<ModalBackdrop bind:show onclose={cancel} ariaLabelledBy="dialog-title" zIndex={70}>
+<ModalBackdrop bind:show onclose={cancel} ariaLabelledBy="{testIdPrefix}-title" zIndex={70}>
     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
     <div
       role="presentation"
@@ -108,7 +137,7 @@
             </div>
           {/if}
           <h3
-            id="dialog-title"
+            id="{testIdPrefix}-title"
             class="text-lg font-medium flex-1"
             style="color: var(--ds-text);"
           >
@@ -124,14 +153,28 @@
       </div>
       
       <!-- Body -->
-      <div class="px-6 py-4">
+      <div class="px-6 py-4 space-y-4">
         <p
-          id="dialog-description"
+          id="{testIdPrefix}-description"
           class="text-sm leading-relaxed"
           style="color: var(--ds-text-subtle);"
         >
           {resolvedMessage}
         </p>
+        {#if requireReason}
+          <div>
+            <label for="confirm-reason-input" class="block text-sm font-medium mb-2" style="color: var(--ds-text);">
+              {resolvedReasonLabel}
+            </label>
+            <Input
+              id="confirm-reason-input"
+              bind:value={reason}
+              bind:inputRef={reasonInputEl}
+              placeholder={resolvedReasonPlaceholder}
+              required
+            />
+          </div>
+        {/if}
       </div>
 
       <!-- Footer -->
@@ -141,7 +184,7 @@
           onclick={cancel}
           size="small"
           keyboardHint="Esc"
-          dataTestid="dialog-cancel"
+          dataTestid="{testIdPrefix}-cancel"
         >
           {resolvedCancelText}
         </Button>
@@ -151,7 +194,8 @@
           onclick={doConfirm}
           size="small"
           keyboardHint="↵"
-          dataTestid="dialog-confirm"
+          disabled={!canConfirm}
+          dataTestid="{testIdPrefix}-confirm"
         >
           {resolvedConfirmText}
         </Button>

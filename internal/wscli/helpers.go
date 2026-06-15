@@ -74,7 +74,7 @@ func itemDisplayFields(item *Item) (key, status, assignee, itemType string) {
 		status = item.Status.Name
 	}
 	if item.Assignee != nil {
-		assignee = item.Assignee.Name
+		assignee = item.Assignee.FullName
 	}
 	if item.ItemType != nil {
 		itemType = item.ItemType.Name

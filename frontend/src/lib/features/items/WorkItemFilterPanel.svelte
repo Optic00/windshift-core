@@ -100,6 +100,7 @@
   </div>
 {/if}
 <div
+  data-testid="work-item-filter-panel"
   class:pointer-events-none={disabled}
   class:opacity-50={disabled}
   aria-disabled={disabled ? 'true' : undefined}

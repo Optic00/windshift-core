@@ -14,9 +14,10 @@ type OnCallSchedule struct {
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 	// Joined/computed fields
-	CreatedByName string                `json:"created_by_name,omitempty"`
-	TeamName      string                `json:"team_name,omitempty"`
-	Layers        []OnCallScheduleLayer `json:"layers,omitempty"`
+	CreatedByName string                   `json:"created_by_name,omitempty"`
+	TeamName      string                   `json:"team_name,omitempty"`
+	Layers        []OnCallScheduleLayer    `json:"layers,omitempty"`
+	Overrides     []OnCallScheduleOverride `json:"overrides,omitempty"`
 }
 
 // OnCallScheduleRequest represents the API request for creating/updating a schedule

@@ -9,6 +9,7 @@
   import SchedulerRunsSection from './diagnostics/SchedulerRunsSection.svelte';
   import FracIndexSection from './diagnostics/FracIndexSection.svelte';
   import LLMHealthSection from './diagnostics/LLMHealthSection.svelte';
+  import RunnerPoolsSection from './diagnostics/RunnerPoolsSection.svelte';
 
   const tabs = [
     { id: 'clock', label: 'Server clock' },
@@ -17,6 +18,7 @@
     { id: 'schedulers', label: 'Background jobs' },
     { id: 'frac-index', label: 'Frac index' },
     { id: 'llm-health', label: 'AI / LLM' },
+    { id: 'runner-pools', label: 'Runner pools' },
   ];
 
   const subtab = $derived($currentRoute.query?.subtab || 'clock');
@@ -44,6 +46,8 @@
         <FracIndexSection />
       {:else if subtab === 'llm-health'}
         <LLMHealthSection />
+      {:else if subtab === 'runner-pools'}
+        <RunnerPoolsSection />
       {/if}
     </div>
   </div>

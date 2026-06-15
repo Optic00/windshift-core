@@ -204,6 +204,7 @@
       {@const isHighlighted = highlightedIndex === index}
       <div
         id="select-option-{index}"
+        data-option-id={opt.value}
         role="option"
         tabindex="-1"
         aria-selected={isSelected}

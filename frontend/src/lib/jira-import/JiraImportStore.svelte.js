@@ -79,6 +79,8 @@ let importState = $state({
   phase: 'idle',
   progress: null,
   error: null,
+  errorCode: null,
+  conflictingImports: [],
   result: null,
 });
 
@@ -162,6 +164,16 @@ export const jiraImport = {
       return { success: true };
     } catch (err) {
       return { success: false, error: err.message || 'Failed to delete connection' };
+    }
+  },
+
+  async deleteImportedData(jobId, confirmation) {
+    try {
+      await api.jiraImport.deleteImportedData(jobId, confirmation);
+      await this.loadImportJobs();
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message || 'Failed to delete imported data' };
     }
   },
 
@@ -513,6 +525,8 @@ export const jiraImport = {
 
     importState.isImporting = true;
     importState.error = null;
+    importState.errorCode = null;
+    importState.conflictingImports = [];
 
     try {
       const response = await api.jiraImport.startImport({
@@ -531,8 +545,13 @@ export const jiraImport = {
 
       return { success: true, jobId: response.job_id };
     } catch (err) {
-      importState.error = err.message || 'Failed to start import';
-      return { success: false, error: importState.error };
+      /** @type {any} */
+      const e = err || {};
+      importState.error = e.message || 'Failed to start import';
+      importState.errorCode = e.code || e.errorCode || null;
+      importState.conflictingImports = e.details?.conflicting_imports || [];
+      wizardState.currentStep = 4; // Surface start failures in the visible import step
+      return { success: false, error: importState.error, code: importState.errorCode };
     } finally {
       importState.isImporting = false;
     }
@@ -612,6 +631,8 @@ export const jiraImport = {
       phase: 'idle',
       progress: null,
       error: null,
+      errorCode: null,
+      conflictingImports: [],
       result: null,
     };
 

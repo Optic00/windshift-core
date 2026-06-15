@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"unicode/utf8"
 
 	"windshift/internal/database"
 	"windshift/internal/models"
@@ -15,13 +16,18 @@ import (
 // OpenPRRequest is what AgentPRService hands to the OpenPRFn adapter.
 type OpenPRRequest struct {
 	ConnectionID int
-	Owner        string
-	Repo         string
-	HeadBranch   string
-	BaseBranch   string
-	Title        string
-	Body         string
-	Draft        bool
+	// UserID is the credential principal: on OAuth connections the PR is
+	// opened with this user's personal token (the run's triggering user,
+	// WI-275). 0 = connection-level credential (PAT / GitHub App, and
+	// legacy runs with no recorded triggering user).
+	UserID     int
+	Owner      string
+	Repo       string
+	HeadBranch string
+	BaseBranch string
+	Title      string
+	Body       string
+	Draft      bool
 }
 
 // OpenedPR is what the adapter returns. Mirrors the subset of
@@ -126,13 +132,19 @@ func (s *AgentPRService) AfterRun(ctx context.Context, info PostRunInfo) {
 	if info.ItemID != nil {
 		title = fmt.Sprintf("agent: work item %d (run %d)", *info.ItemID, info.RunID)
 	}
+	// The agent's finish summary (WI-400), when present, leads the body as the
+	// PR note; the harness footer (run id / base / branch) follows a rule.
 	body := fmt.Sprintf(
 		"Opened by the Windshift coding-agent harness.\n\nRun id: %d\nBase commit: %s\nBranch: %s\n",
 		info.RunID, info.BaseCommit, info.Branch,
 	)
+	if note := boundPRNote(info.Summary); note != "" {
+		body = note + "\n\n---\n\n" + body
+	}
 
 	pr, err := s.openPR(ctx, OpenPRRequest{
 		ConnectionID: *binding.SCMConnectionID,
+		UserID:       info.TriggeredByUserID,
 		Owner:        owner,
 		Repo:         repo,
 		HeadBranch:   info.Branch,
@@ -193,6 +205,27 @@ func (s *AgentPRService) upsertItemSCMLink(ctx context.Context, itemID, connecti
 		pr.Title, state, pr.Author,
 	)
 	return err
+}
+
+// maxPRNoteBytes bounds the agent-supplied PR note (WI-400) well under common
+// SCM pull-request body limits (GitHub caps the body at 65536 chars), leaving
+// room for the harness footer. The note is already HTML-stripped + sanitized
+// upstream (RichText at the result handler); this is the final length guard
+// before it reaches the provider, so a runaway summary can't 422 the create.
+const maxPRNoteBytes = 16384
+
+// boundPRNote trims the note and caps it at maxPRNoteBytes on a rune boundary,
+// flagging a truncation so a clipped note never reads as the whole story.
+func boundPRNote(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= maxPRNoteBytes {
+		return s
+	}
+	cut := maxPRNoteBytes
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return strings.TrimSpace(s[:cut]) + "\n\n…(truncated)"
 }
 
 // splitRepoSlug splits "owner/repo" into its parts. Returns ok=false

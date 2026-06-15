@@ -2,12 +2,14 @@ package handlers
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/services"
 )
 
 // GetItemHistory returns the history of changes for a specific item
@@ -58,33 +60,49 @@ func (h *ItemHandler) GetItemHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Determine which time projects the caller may see by name so project_id
+	// history rows don't disclose restricted project names. nil = full access
+	// (GetAccessibleProjects sentinel); otherwise only listed IDs resolve.
+	var allowedProjects map[int]struct{}
+	if accessible, accErr := services.NewTimePermissionService(h.db, h.permissionService).GetAccessibleProjects(user.ID); accErr != nil {
+		slog.Warn("failed to load accessible projects for history masking", slog.Int("user_id", user.ID), slog.Any("error", accErr))
+		allowedProjects = map[int]struct{}{} // fail closed: resolve no project names
+	} else if accessible != nil {
+		allowedProjects = make(map[int]struct{}, len(accessible))
+		for _, pid := range accessible {
+			allowedProjects[pid] = struct{}{}
+		}
+	}
+
 	// Resolve ID values to human-readable names
 	for i := range history {
-		h.resolveHistoryValues(&history[i])
+		h.resolveHistoryValues(&history[i], allowedProjects)
 	}
 
 	respondJSONOK(w, history)
 }
 
-// resolveHistoryValues resolves ID values to human-readable names based on field name
-func (h *ItemHandler) resolveHistoryValues(entry *models.ItemHistory) {
+// resolveHistoryValues resolves ID values to human-readable names based on field name.
+// allowedProjects gates project_id name resolution: nil means full access,
+// otherwise only project IDs in the set resolve to a name.
+func (h *ItemHandler) resolveHistoryValues(entry *models.ItemHistory, allowedProjects map[int]struct{}) {
 	// Resolve old value if present
 	if entry.OldValue != nil && *entry.OldValue != "" {
-		if resolved := h.resolveValue(entry.FieldName, *entry.OldValue); resolved != "" {
+		if resolved := h.resolveValue(entry.FieldName, *entry.OldValue, allowedProjects); resolved != "" {
 			entry.ResolvedOldValue = &resolved
 		}
 	}
 
 	// Resolve new value if present
 	if entry.NewValue != nil && *entry.NewValue != "" {
-		if resolved := h.resolveValue(entry.FieldName, *entry.NewValue); resolved != "" {
+		if resolved := h.resolveValue(entry.FieldName, *entry.NewValue, allowedProjects); resolved != "" {
 			entry.ResolvedNewValue = &resolved
 		}
 	}
 }
 
 // resolveValue resolves a single value based on field name
-func (h *ItemHandler) resolveValue(fieldName, value string) string {
+func (h *ItemHandler) resolveValue(fieldName, value string, allowedProjects map[int]struct{}) string {
 	// Multi-milestone history rows store a comma-joined ID list in
 	// old/new_value (e.g. "1,4,5"). Resolve each ID to a name before
 	// the single-int Atoi path below.
@@ -118,6 +136,13 @@ func (h *ItemHandler) resolveValue(fieldName, value string) string {
 	case "parent_id":
 		return h.idResolver.ResolveItemKey(id)
 	case "project_id":
+		// Leave the resolved value empty for projects the caller can't
+		// access; the raw ID stays but the name is not disclosed.
+		if allowedProjects != nil {
+			if _, ok := allowedProjects[id]; !ok {
+				return ""
+			}
+		}
 		return h.idResolver.ResolveProjectName(id)
 	case "milestone_id": // legacy field name kept for old history rows
 		return h.idResolver.ResolveMilestoneName(id)

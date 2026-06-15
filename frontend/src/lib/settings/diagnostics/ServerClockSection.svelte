@@ -1,8 +1,9 @@
 <script>
-  import { onDestroy, onMount } from 'svelte';
   import { IconClock, IconActivity, IconAlertTriangle, IconRulerMeasure } from '@tabler/icons-svelte-runes';
   import StatCard from '../../components/StatCard.svelte';
   import DataTable from '../../components/DataTable.svelte';
+  import DiagnosticsSection from './DiagnosticsSection.svelte';
+  import { formatUtcTime } from './format-utils.js';
   import {
     DRIFT_THRESHOLD_MS,
     getClockOffset,
@@ -15,18 +16,12 @@
   let samples = $state(getSamples());
   let now = $state(Date.now());
 
-  let interval;
-  onMount(() => {
-    interval = setInterval(() => {
-      offsetMs = getClockOffset();
-      sampleCount = getSampleCount();
-      samples = getSamples();
-      now = Date.now();
-    }, 2000);
-  });
-  onDestroy(() => {
-    if (interval) clearInterval(interval);
-  });
+  function refresh() {
+    offsetMs = getClockOffset();
+    sampleCount = getSampleCount();
+    samples = getSamples();
+    now = Date.now();
+  }
 
   function formatOffset(ms) {
     if (sampleCount === 0) return '—';
@@ -59,10 +54,6 @@
     return `${min}m ${sec % 60}s ago`;
   }
 
-  function formatTime(ms) {
-    return new Date(ms).toISOString().replace('T', ' ').replace('Z', ' UTC');
-  }
-
   const isOverThreshold = $derived(sampleCount > 0 && Math.abs(offsetMs) > DRIFT_THRESHOLD_MS);
   const statusLabel = $derived(
     sampleCount === 0 ? 'No samples yet' : isOverThreshold ? 'Over threshold' : 'Within threshold'
@@ -72,20 +63,21 @@
 
   const sampleColumns = [
     { key: 'when', label: 'When', render: (s) => formatRelative(s.at) },
-    { key: 'clientTime', label: 'Client time (UTC)', render: (s) => formatTime(s.clientTime), textColor: 'var(--ds-text-subtle)' },
-    { key: 'serverTime', label: 'Server time (UTC)', render: (s) => formatTime(s.serverTime), textColor: 'var(--ds-text-subtle)' },
+    { key: 'clientTime', label: 'Client time (UTC)', render: (s) => formatUtcTime(s.clientTime), textColor: 'var(--ds-text-subtle)' },
+    { key: 'serverTime', label: 'Server time (UTC)', render: (s) => formatUtcTime(s.serverTime), textColor: 'var(--ds-text-subtle)' },
     { key: 'offsetMs', label: 'Offset', align: 'text-right', render: (s) => formatSampleOffset(s.offsetMs) },
   ];
 </script>
 
-<section class="space-y-4" data-testid="diagnostics-server-clock">
-  <div>
-    <h3 class="text-base font-semibold" style="color: var(--ds-text);">Server clock</h3>
-    <p class="text-sm" style="color: var(--ds-text-subtle);">
-      Compares the HTTP <code>Date</code> header on every API response against the browser clock. The rolling median across the last 5 samples is used to correct timestamp display. The warning toast fires when |offset| exceeds the threshold.
-    </p>
-  </div>
-
+<DiagnosticsSection
+  title="Server clock"
+  subtitle="Compares the HTTP Date header on every API response against the browser clock. The rolling median across the last 5 samples is used to correct timestamp display. The warning toast fires when |offset| exceeds the threshold."
+  dataTestId="diagnostics-server-clock"
+  onLoad={refresh}
+  refreshInterval={2_000}
+  showRefresh={false}
+>
+  {#snippet children()}
   <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
     <div data-testid="clock-stat-offset">
       <StatCard
@@ -133,4 +125,5 @@
       emptyMessage="No samples collected yet. Samples are recorded automatically as API requests complete."
     />
   </div>
-</section>
+  {/snippet}
+</DiagnosticsSection>

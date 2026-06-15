@@ -35,6 +35,10 @@ func NewItemUpdateService(db database.Database) *ItemUpdateService {
 // that don't touch parent_id may omit it.
 func (s *ItemUpdateService) WithPermissionService(permService *PermissionService) *ItemUpdateService {
 	s.validator = s.validator.WithPermissionChecker(permService)
+	// Also enforce that the caller may assign the project_id / time_project_id
+	// they pass. CanViewProject is pure-SQL plus the global-admin check on the
+	// supplied permission service, so this reuses the same identity.
+	s.validator = s.validator.WithProjectAccessChecker(NewTimePermissionService(s.db, permService))
 	return s
 }
 
@@ -104,30 +108,11 @@ func (s *ItemUpdateService) UpdateItem(req UpdateItemRequest) (*UpdateItemResult
 		return nil, fmt.Errorf("validation failed: %w", err)
 	}
 
-	// Convert custom field values to JSON for database storage
-	customFieldValuesJSON, err := validation.ConvertCustomFieldValuesToJSON(existingItem.CustomFieldValues)
-	if err != nil {
-		return nil, err
-	}
-
-	// Update the item in database
+	// Update the item in database (the repository marshals custom field
+	// values and bumps updated_at)
 	now := time.Now()
-	_, err = tx.Exec(`
-		UPDATE items
-		SET workspace_id = ?, title = ?, description = ?, status_id = ?, priority_id = ?, due_date = ?,
-		    start_date = ?, end_date = ?,
-		    iteration_id = ?, project_id = ?, inherit_project = ?, assignee_id = ?, creator_id = ?,
-		    custom_field_values = ?, parent_id = ?, related_work_item_id = ?, story_points = ?, estimate_minutes = ?, updated_at = ?
-		WHERE id = ?
-	`, existingItem.WorkspaceID, existingItem.Title, existingItem.Description,
-		existingItem.StatusID, existingItem.PriorityID, existingItem.DueDate,
-		existingItem.StartDate, existingItem.EndDate,
-		existingItem.IterationID, existingItem.ProjectID, existingItem.InheritProject, existingItem.AssigneeID,
-		existingItem.CreatorID, customFieldValuesJSON, existingItem.ParentID, existingItem.RelatedWorkItemID,
-		existingItem.StoryPoints, existingItem.EstimateMinutes, now, req.ItemID)
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to update item: %w", err)
+	if err := repository.NewItemRepository(s.db).Update(tx, &existingItem); err != nil {
+		return nil, err
 	}
 
 	// Apply milestone-set replace if the validator parsed milestone_ids. The
@@ -206,6 +191,12 @@ func (s *ItemUpdateService) UpdateItem(req UpdateItemRequest) (*UpdateItemResult
 	// Check if status changed (for event emission)
 	statusChanged := s.hasStatusChanged(originalItem, updatedItem)
 
+	// Coding-agent binding trigger (WI-88), fired here so every update
+	// surface — cookie handlers, REST v1, MCP/AI tools, automation actions —
+	// gets it. The trigger no-ops when the assignee did not change or no
+	// binding matches the new assignee.
+	maybeTriggerAssigneeRun(updatedItem.WorkspaceID, updatedItem.ID, originalItem.AssigneeID, updatedItem.AssigneeID, req.UserID)
+
 	return &UpdateItemResult{
 		OriginalItem:  originalItem,
 		Item:          updatedItem,
@@ -271,6 +262,7 @@ func (s *ItemUpdateService) compareAndGenerateHistory(original, updated *models.
 	addHistory("priority_id", intPtrToString(original.PriorityID), intPtrToString(updated.PriorityID))
 	addHistory("iteration_id", intPtrToString(original.IterationID), intPtrToString(updated.IterationID))
 	addHistory("project_id", intPtrToString(original.ProjectID), intPtrToString(updated.ProjectID))
+	addHistory("time_project_id", intPtrToString(original.TimeProjectID), intPtrToString(updated.TimeProjectID))
 	addHistory("assignee_id", intPtrToString(original.AssigneeID), intPtrToString(updated.AssigneeID))
 	addHistory("creator_id", intPtrToString(original.CreatorID), intPtrToString(updated.CreatorID))
 	addHistory("parent_id", intPtrToString(original.ParentID), intPtrToString(updated.ParentID))
@@ -353,6 +345,7 @@ func (s *ItemUpdateService) recordItemCreationHistory(db database.Database, item
 	addHistory("priority_id", intPtrToString(item.PriorityID))
 	addHistory("iteration_id", intPtrToString(item.IterationID))
 	addHistory("project_id", intPtrToString(item.ProjectID))
+	addHistory("time_project_id", intPtrToString(item.TimeProjectID))
 	addHistory("assignee_id", intPtrToString(item.AssigneeID))
 	addHistory("creator_id", intPtrToString(item.CreatorID))
 	addHistory("parent_id", intPtrToString(item.ParentID))
@@ -362,6 +355,11 @@ func (s *ItemUpdateService) recordItemCreationHistory(db database.Database, item
 	addHistory("workspace_id", fmt.Sprintf("%d", item.WorkspaceID))
 	addHistory("story_points", float64PtrToString(item.StoryPoints))
 	addHistory("estimate_minutes", intPtrToString(item.EstimateMinutes))
+	// Only record inherit_project when set; the default (false) on root items
+	// would otherwise add a no-op entry to every creation event.
+	if item.InheritProject {
+		addHistory("inherit_project", "true")
+	}
 
 	// Record history entries directly (no transaction needed here, caller should manage)
 	for _, entry := range history {

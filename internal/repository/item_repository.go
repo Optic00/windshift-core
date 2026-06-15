@@ -27,7 +27,7 @@ func NewItemRepository(db database.Database) *ItemRepository {
 
 const itemBaseColumns = `id, workspace_id, workspace_item_number, item_type_id, title, description, status_id,
        priority_id, due_date, start_date, end_date, is_task, iteration_id, project_id, inherit_project,
-       assignee_id, creator_id, creator_portal_customer_id, custom_field_values, parent_id, related_work_item_id,
+       time_project_id, assignee_id, creator_id, creator_portal_customer_id, custom_field_values, parent_id, related_work_item_id,
        story_points, estimate_minutes, frac_index, created_at, updated_at`
 
 func scanItemBase(scanner interface {
@@ -36,7 +36,7 @@ func scanItemBase(scanner interface {
 	var item models.Item
 	var customFieldValuesJSON sql.NullString
 	var itemTypeID, parentID, statusID, iterationID, projectID, priorityID sql.NullInt64
-	var assigneeID, creatorID, creatorPortalCustomerID, relatedWorkItemID sql.NullInt64
+	var timeProjectID, assigneeID, creatorID, creatorPortalCustomerID, relatedWorkItemID sql.NullInt64
 	var dueDate, startDate, endDate sql.NullTime
 	var storyPoints sql.NullFloat64
 	var estimateMinutes sql.NullInt64
@@ -45,7 +45,7 @@ func scanItemBase(scanner interface {
 	err := scanner.Scan(
 		&item.ID, &item.WorkspaceID, &item.WorkspaceItemNumber, &itemTypeID, &item.Title, &item.Description,
 		&statusID, &priorityID, &dueDate, &startDate, &endDate, &item.IsTask, &iterationID,
-		&projectID, &item.InheritProject, &assigneeID, &creatorID, &creatorPortalCustomerID, &customFieldValuesJSON, &parentID,
+		&projectID, &item.InheritProject, &timeProjectID, &assigneeID, &creatorID, &creatorPortalCustomerID, &customFieldValuesJSON, &parentID,
 		&relatedWorkItemID, &storyPoints, &estimateMinutes, &fracIndex, &item.CreatedAt, &item.UpdatedAt,
 	)
 	if err != nil {
@@ -58,6 +58,7 @@ func scanItemBase(scanner interface {
 	assignNullableInt(&item.PriorityID, priorityID)
 	assignNullableInt(&item.IterationID, iterationID)
 	assignNullableInt(&item.ProjectID, projectID)
+	assignNullableInt(&item.TimeProjectID, timeProjectID)
 	assignNullableInt(&item.AssigneeID, assigneeID)
 	assignNullableInt(&item.CreatorID, creatorID)
 	assignNullableInt(&item.CreatorPortalCustomerID, creatorPortalCustomerID)
@@ -380,24 +381,41 @@ type ItemRefByCustomField struct {
 }
 
 // ListItemsReferencingAssetInCustomField scans items whose
-// custom_field_values JSON contains the given asset ID, either as a plain int
-// value or as an object with an `id` key, for the given custom-field key.
-// fieldKey and assetIDStr must already be stringified by the caller.
+// custom_field_values JSON contains the given asset ID, either as a plain int,
+// as an object with an `id` key, or inside a multi-asset array for the given
+// custom-field key. fieldKey and assetIDStr must already be stringified by the
+// caller.
 func (r *ItemRepository) ListItemsReferencingAssetInCustomField(fieldKey, assetIDStr string) ([]ItemRefByCustomField, error) {
-	var directExpr, nestedExpr string
+	var query string
 	if r.db.GetDriverName() == "postgres" {
-		directExpr = fmt.Sprintf("i.custom_field_values->>'%s'", fieldKey)
-		nestedExpr = fmt.Sprintf("i.custom_field_values->'%s'->>'id'", fieldKey)
+		directExpr := fmt.Sprintf("i.custom_field_values->>'%s'", fieldKey)
+		nestedExpr := fmt.Sprintf("i.custom_field_values->'%s'->>'id'", fieldKey)
+		arrayExpr := fmt.Sprintf(`EXISTS (
+			SELECT 1 FROM jsonb_array_elements(CASE
+				WHEN jsonb_typeof(i.custom_field_values->'%s') = 'array' THEN i.custom_field_values->'%s'
+				ELSE '[]'::jsonb
+			END) AS elem
+			WHERE elem #>> '{}' = ? OR elem->>'id' = ?
+		)`, fieldKey, fieldKey)
+		query = fmt.Sprintf(`
+			SELECT i.id, i.title, i.workspace_id
+			FROM items i
+			WHERE (%s = ? OR %s = ? OR %s)
+		`, directExpr, nestedExpr, arrayExpr)
 	} else {
-		directExpr = fmt.Sprintf(`NULLIF(i.custom_field_values,'') ->> '$."%s"'`, fieldKey)    //nolint:gocritic // SQL JSON path, not Go quoting
-		nestedExpr = fmt.Sprintf(`NULLIF(i.custom_field_values,'') ->> '$."%s".id'`, fieldKey) //nolint:gocritic // SQL JSON path, not Go quoting
+		directExpr := fmt.Sprintf(`NULLIF(i.custom_field_values,'') ->> '$."%s"'`, fieldKey)    //nolint:gocritic // SQL JSON path, not Go quoting
+		nestedExpr := fmt.Sprintf(`NULLIF(i.custom_field_values,'') ->> '$."%s".id'`, fieldKey) //nolint:gocritic // SQL JSON path, not Go quoting
+		arrayExpr := fmt.Sprintf(`EXISTS (
+			SELECT 1 FROM json_each(NULLIF(i.custom_field_values,'') -> '$."%s"') AS elem
+			WHERE CAST(elem.value AS TEXT) = ? OR elem.value ->> '$.id' = ?
+		)`, fieldKey) //nolint:gocritic // SQL JSON path, not Go quoting
+		query = fmt.Sprintf(`
+			SELECT i.id, i.title, i.workspace_id
+			FROM items i
+			WHERE (%s = ? OR %s = ? OR %s)
+		`, directExpr, nestedExpr, arrayExpr)
 	}
-	query := fmt.Sprintf(`
-		SELECT i.id, i.title, i.workspace_id
-		FROM items i
-		WHERE (%s = ? OR %s = ?)
-	`, directExpr, nestedExpr)
-	rows, err := r.db.Query(query, assetIDStr, assetIDStr)
+	rows, err := r.db.Query(query, assetIDStr, assetIDStr, assetIDStr, assetIDStr)
 	if err != nil {
 		return nil, fmt.Errorf("list items referencing asset in custom field: %w", err)
 	}
@@ -457,6 +475,131 @@ func (r *ItemRepository) GetCustomFieldValuesRaw(itemID int) (sql.NullString, er
 		return sql.NullString{}, fmt.Errorf("failed to get custom field values: %w", err)
 	}
 	return data, nil
+}
+
+// SetCustomFieldValuesRaw replaces an item's entire custom_field_values JSON
+// payload. Callers own marshaling; no history is recorded.
+func (r *ItemRepository) SetCustomFieldValuesRaw(ctx context.Context, itemID int, raw string) error {
+	if _, err := r.db.ExecWriteContext(ctx, `UPDATE items SET custom_field_values = ? WHERE id = ?`, raw, itemID); err != nil {
+		return fmt.Errorf("set custom field values: %w", err)
+	}
+	return nil
+}
+
+// SetVirtualFieldDataRaw replaces an item's virtual_field_data JSON payload.
+func (r *ItemRepository) SetVirtualFieldDataRaw(ctx context.Context, itemID int, raw string) error {
+	if _, err := r.db.ExecWriteContext(ctx, `UPDATE items SET virtual_field_data = ? WHERE id = ?`, raw, itemID); err != nil {
+		return fmt.Errorf("set virtual field data: %w", err)
+	}
+	return nil
+}
+
+// ItemCFVRow is one (id, custom_field_values) pair from a paged scan.
+type ItemCFVRow struct {
+	ID  int
+	CFV string
+}
+
+// ListCustomFieldValuesPageByKey returns up to limit items after afterID whose
+// custom_field_values JSON contains the given field key, ordered by id. Used
+// by the cleanup scheduler to iterate the table with bounded memory.
+func (r *ItemRepository) ListCustomFieldValuesPageByKey(afterID int, fieldKey string, limit int) ([]ItemCFVRow, error) {
+	rows, err := r.db.Query(
+		`SELECT id, custom_field_values
+		   FROM items
+		  WHERE id > ?
+		    AND custom_field_values IS NOT NULL
+		    AND custom_field_values != ''
+		    AND custom_field_values LIKE ?
+		  ORDER BY id ASC
+		  LIMIT ?`,
+		afterID, `%"`+fieldKey+`"%`, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list custom field values page: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []ItemCFVRow
+	for rows.Next() {
+		var row ItemCFVRow
+		if err := rows.Scan(&row.ID, &row.CFV); err != nil {
+			return nil, fmt.Errorf("scan custom field values row: %w", err)
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+// itemRemapColumns lists the reference columns that configuration-set
+// migration may bulk-remap across workspaces.
+var itemRemapColumns = map[string]bool{
+	"status_id":    true,
+	"priority_id":  true,
+	"item_type_id": true,
+}
+
+// RemapFieldForWorkspacesTx bulk-updates one reference column from one value
+// (nil meaning NULL) to another across the given workspaces, optionally
+// restricted to a single item type. Returns the number of rows updated.
+func (r *ItemRepository) RemapFieldForWorkspacesTx(tx database.Tx, column string, fromID *int, toID int, itemTypeID *int, workspaceIDs []int, now time.Time) (int, error) {
+	if !itemRemapColumns[column] {
+		return 0, fmt.Errorf("RemapFieldForWorkspacesTx: column %q is not in the allow-list", column)
+	}
+	if len(workspaceIDs) == 0 {
+		return 0, nil
+	}
+	// The column name is validated against the fixed allow-list above, so the
+	// fmt.Sprintf cannot splice attacker-controlled input.
+	query := fmt.Sprintf("UPDATE items SET %s = ?, updated_at = ?", column)
+	args := []interface{}{toID, now}
+	if fromID == nil {
+		query += fmt.Sprintf(" WHERE %s IS NULL", column)
+	} else {
+		query += fmt.Sprintf(" WHERE %s = ?", column)
+		args = append(args, *fromID)
+	}
+	if itemTypeID != nil {
+		query += " AND item_type_id = ?"
+		args = append(args, *itemTypeID)
+	}
+	ph, wsArgs := inPlaceholders(workspaceIDs)
+	query += " AND workspace_id IN (" + ph + ")"
+	args = append(args, wsArgs...)
+
+	res, err := tx.Exec(query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("remap %s: %w", column, err)
+	}
+	rows, _ := res.RowsAffected()
+	return int(rows), nil
+}
+
+// SetCustomFieldValuesRawTx replaces an item's custom_field_values JSON and
+// bumps updated_at inside the caller's transaction.
+func (r *ItemRepository) SetCustomFieldValuesRawTx(tx database.Tx, itemID int, raw string, now time.Time) error {
+	if _, err := tx.Exec(`UPDATE items SET custom_field_values = ?, updated_at = ? WHERE id = ?`, raw, now, itemID); err != nil {
+		return fmt.Errorf("set custom field values: %w", err)
+	}
+	return nil
+}
+
+// DeleteByWorkspaceTx deletes every item in the given workspace. Used by user
+// offboarding to tear down personal workspaces.
+func (r *ItemRepository) DeleteByWorkspaceTx(tx database.Tx, workspaceID int) error {
+	if _, err := tx.Exec(`DELETE FROM items WHERE workspace_id = ?`, workspaceID); err != nil {
+		return fmt.Errorf("delete items by workspace: %w", err)
+	}
+	return nil
+}
+
+// ClearAssigneeForUserTx unassigns the given user from every item. Used by
+// user offboarding; intentionally does not bump updated_at.
+func (r *ItemRepository) ClearAssigneeForUserTx(tx database.Tx, userID int) error {
+	if _, err := tx.Exec(`UPDATE items SET assignee_id = NULL WHERE assignee_id = ?`, userID); err != nil {
+		return fmt.Errorf("clear assignee for user: %w", err)
+	}
+	return nil
 }
 
 // ListCustomFieldValuesByWorkspace streams every (item_id, custom_field_values)
@@ -530,13 +673,13 @@ func (r *ItemRepository) Update(tx database.Tx, item *models.Item) error {
 		UPDATE items
 		SET workspace_id = ?, title = ?, description = ?, status_id = ?, priority_id = ?,
 		    due_date = ?, start_date = ?, end_date = ?, iteration_id = ?, project_id = ?, inherit_project = ?,
-		    assignee_id = ?, creator_id = ?, custom_field_values = ?, parent_id = ?,
+		    time_project_id = ?, assignee_id = ?, creator_id = ?, custom_field_values = ?, parent_id = ?,
 		    related_work_item_id = ?, story_points = ?, estimate_minutes = ?, updated_at = ?
 		WHERE id = ?
 	`,
 		item.WorkspaceID, item.Title, item.Description, item.StatusID, item.PriorityID,
 		item.DueDate, item.StartDate, item.EndDate, item.IterationID, item.ProjectID, item.InheritProject,
-		item.AssigneeID, item.CreatorID, customFieldValuesJSON, item.ParentID,
+		item.TimeProjectID, item.AssigneeID, item.CreatorID, customFieldValuesJSON, item.ParentID,
 		item.RelatedWorkItemID, item.StoryPoints, item.EstimateMinutes, now, item.ID,
 	)
 
@@ -827,6 +970,72 @@ func (r *ItemRepository) FindIDByKeyAndNumber(workspaceKey string, itemNumber in
 	}
 	if err != nil {
 		return 0, fmt.Errorf("failed to resolve item by key: %w", err)
+	}
+	return id, nil
+}
+
+// GetItemKey returns the "KEY-NUMBER" display key for an item (e.g. "WI-42").
+// Returns ErrNotFound when the item does not exist.
+func (r *ItemRepository) GetItemKey(itemID int) (string, error) {
+	var workspaceKey string
+	var itemNumber int
+	err := r.db.QueryRow(`
+		SELECT w.key, i.workspace_item_number
+		FROM items i
+		JOIN workspaces w ON i.workspace_id = w.id
+		WHERE i.id = ?
+	`, itemID).Scan(&workspaceKey, &itemNumber)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to get item key: %w", err)
+	}
+	return fmt.Sprintf("%s-%d", workspaceKey, itemNumber), nil
+}
+
+// itemUserRefColumns lists the read-only user-reference columns on items that
+// resolvers (e.g. approval steps) may select dynamically. Kept separate from
+// allowedItemColumns because that list also gates writes via UpdateFields.
+var itemUserRefColumns = map[string]bool{
+	"assignee_id": true,
+	"creator_id":  true,
+	"reporter_id": true,
+}
+
+// GetUserFieldTx returns the given user-reference column of an item inside a
+// transaction. Returns nil (without error) when the column is NULL.
+func (r *ItemRepository) GetUserFieldTx(ctx context.Context, tx database.Tx, itemID int, col string) (*int, error) {
+	if !itemUserRefColumns[col] {
+		return nil, fmt.Errorf("unknown item user column: %s", col)
+	}
+	var nid sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `SELECT `+col+` FROM items WHERE id = ?`, itemID).Scan(&nid); err != nil {
+		return nil, fmt.Errorf("get item column %s: %w", col, err)
+	}
+	if !nid.Valid {
+		return nil, nil
+	}
+	v := int(nid.Int64)
+	return &v, nil
+}
+
+// FindIDByKeyAndNumberInWorkspace resolves an item by workspace key + number,
+// additionally constrained to the given workspace — the key must belong to
+// that workspace or the lookup returns ErrNotFound. Used by SCM sync, where
+// commit/PR references may only resolve inside the repository's bound
+// workspace.
+func (r *ItemRepository) FindIDByKeyAndNumberInWorkspace(workspaceID int, workspaceKey string, itemNumber int) (int, error) {
+	var id int
+	err := r.db.QueryRow(
+		"SELECT i.id FROM items i JOIN workspaces w ON i.workspace_id = w.id WHERE i.workspace_id = ? AND i.workspace_item_number = ? AND UPPER(w.key) = UPPER(?)",
+		workspaceID, itemNumber, workspaceKey,
+	).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("failed to resolve item by key in workspace: %w", err)
 	}
 	return id, nil
 }

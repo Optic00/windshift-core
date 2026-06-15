@@ -89,6 +89,31 @@ const (
 	ScopeTestsRead  = "tests:read"
 	ScopeTestsWrite = "tests:write"
 
+	// Assets (sets, types, categories, statuses, asset entities). :write
+	// covers mutations to asset entities and CSV import; :delete is required
+	// for hard-delete. Mutating sets / types / categories / statuses / actions
+	// stays admin-UI-only. The per-set asset role (Viewer / Editor /
+	// Administrator, asset.view / edit / delete / admin keys) still gates
+	// individual actions in-handler via AssetPermissionService — token scope
+	// alone never grants access to a set the user can't see.
+	ScopeAssetsRead   = "assets:read"
+	ScopeAssetsWrite  = "assets:write"
+	ScopeAssetsDelete = "assets:delete"
+
+	// Time tracking (worklogs, timers, time projects). :write covers create/edit;
+	// :delete is required for worklog deletion. Per-project membership is enforced
+	// in-handler via TimePermService — token scope alone never grants access to a
+	// project the user isn't a member of.
+	ScopeTimeRead   = "time:read"
+	ScopeTimeWrite  = "time:write"
+	ScopeTimeDelete = "time:delete"
+
+	// Agent skills (WI-258): the per-workspace library of markdown knowledge
+	// packs a run's prompt indexes and the agent reads via `ws skill get`.
+	// Read-only by design on the token surface — authoring is a workspace-
+	// admin UI concern, not an API-token one.
+	ScopeAgentSkillsRead = "agent-skills:read"
+
 	// Admin scopes (require system admin role AND scope on token)
 	ScopeAdminUsersRead      = "admin:users:read"
 	ScopeAdminUsersWrite     = "admin:users:write"
@@ -113,6 +138,40 @@ var DefaultAgentScopes = []string{
 	ScopeMilestonesRead, ScopeIterationsRead, ScopeProjectsRead,
 	ScopePagesRead, ScopePagesWrite, ScopePagesDelete,
 	ScopeTestsRead, ScopeTestsWrite,
+	ScopeTimeRead, ScopeTimeWrite,
+	// assets:read + assets:write are default-on; the per-set asset role
+	// model (Viewer / Editor / Administrator on each asset_management_set,
+	// enforced by services.AssetPermissionService) is the real guard, so
+	// the scope flag alone never grants access to a set the user can't
+	// already act on. assets:delete is opt-in only — matches items:delete
+	// posture and the original asset-api-v1-security-review-2026-06-03
+	// finding 1 concern that legacy 'write' shouldn't silently grant
+	// destructive ops.
+	ScopeAssetsRead, ScopeAssetsWrite,
+	ScopeAgentSkillsRead,
+	ScopeMCPAccess,
+}
+
+// DefaultCodingAgentRunScopes is the narrowed scope set granted to short-lived
+// per-run coding-agent tokens when a binding does not explicitly request
+// scopes. It is intentionally smaller than DefaultAgentScopes: no workspace
+// write, no pages delete/write, no assets write, and no tests write.
+var DefaultCodingAgentRunScopes = []string{
+	ScopeItemsRead, ScopeItemsWrite,
+	ScopeWorkspacesRead,
+	ScopeUsersRead,
+	ScopeItemTypesRead, ScopeWorkflowsRead,
+	ScopeStatusesRead, ScopePrioritiesRead, ScopeCustomFieldsRead,
+	ScopeMilestonesRead, ScopeIterationsRead, ScopeProjectsRead,
+	ScopePagesRead,
+	ScopeTestsRead,
+	ScopeTimeRead, ScopeTimeWrite,
+	ScopeAgentSkillsRead,
+	// mcp:access is safe to grant since WI-351: the MCP server enforces
+	// each tool's required token scopes at dispatch, so this narrowed set
+	// holds on the MCP surface too — e.g. a run token (no pages:write,
+	// no items:delete, no actions:*) is refused page-writing, item-delete
+	// and automation tools there just like on the v1 REST surface.
 	ScopeMCPAccess,
 }
 
@@ -131,6 +190,9 @@ var AllValidScopes = []string{
 	ScopeActionsRead, ScopeActionsWrite,
 	ScopePagesRead, ScopePagesWrite, ScopePagesDelete,
 	ScopeTestsRead, ScopeTestsWrite,
+	ScopeAssetsRead, ScopeAssetsWrite, ScopeAssetsDelete,
+	ScopeTimeRead, ScopeTimeWrite, ScopeTimeDelete,
+	ScopeAgentSkillsRead,
 	ScopeAdminUsersRead, ScopeAdminUsersWrite,
 	ScopeAdminGroupsRead, ScopeAdminGroupsWrite,
 	ScopeAdminAuditLogsRead,
@@ -138,15 +200,25 @@ var AllValidScopes = []string{
 }
 
 // allNonAdminReadScopes is the set of non-admin :read scopes (for legacy "read" mapping).
+// assets:read is included: the per-set asset role model is the real guard,
+// so a legacy read-scoped token can never reach a set the user isn't
+// authorized on. (Legacy 'read' still can't reach assets:write or
+// assets:delete — those require an explicit upgrade.)
 var allNonAdminReadScopes = []string{
 	ScopeItemsRead, ScopeWorkspacesRead, ScopeStatusesRead,
 	ScopeWorkflowsRead, ScopeItemTypesRead, ScopePrioritiesRead,
 	ScopeCustomFieldsRead, ScopeUsersRead, ScopeMilestonesRead,
 	ScopeIterationsRead, ScopeProjectsRead, ScopeCollectionsRead,
 	ScopeActionsRead, ScopePagesRead, ScopeTestsRead,
+	ScopeAssetsRead, ScopeTimeRead,
 }
 
 // allNonAdminScopes is the set of all non-admin scopes (for legacy "write" mapping).
+// assets:read + assets:write are included (the per-set role guard applies).
+// assets:delete is deliberately excluded so legacy 'write' doesn't silently
+// grant destructive ops — matches the items posture and the spirit of
+// asset-api-v1-security-review-2026-06-03 finding 1 around destructive
+// auto-grants.
 var allNonAdminScopes = []string{
 	ScopeItemsRead, ScopeItemsWrite, ScopeItemsDelete,
 	ScopeWorkspacesRead, ScopeWorkspacesWrite, ScopeWorkspacesDelete,
@@ -161,6 +233,8 @@ var allNonAdminScopes = []string{
 	ScopeActionsRead, ScopeActionsWrite,
 	ScopePagesRead, ScopePagesWrite, ScopePagesDelete,
 	ScopeTestsRead, ScopeTestsWrite,
+	ScopeAssetsRead, ScopeAssetsWrite,
+	ScopeTimeRead, ScopeTimeWrite,
 }
 
 // AdminScopes returns the set of scopes that require system admin role.
@@ -202,15 +276,17 @@ func ValidateScopes(scopes []string) error {
 	return nil
 }
 
-// ValidateAgentScopes restricts coding-agent run tokens to the
-// DefaultAgentScopes set: no admin:* scopes, no legacy "read"/"write"/
-// "admin" strings, no items:delete or planning :write/:delete scopes that
-// the default set deliberately excludes. The harness mints tokens that
-// run inside an attacker-reachable container, so the surface must stay
-// narrow regardless of what the binding's workspace admin requested.
+// ValidateAgentScopes restricts coding-agent run tokens to the narrowed
+// DefaultCodingAgentRunScopes set: no admin:* scopes, no legacy
+// "read"/"write"/"admin" strings, no destructive scopes, and no broad
+// workspace writes. mcp:access is permitted since WI-351 because the MCP
+// server enforces per-tool token scopes, so it cannot widen the set. The
+// harness mints tokens that run inside an attacker-reachable container, so
+// the surface must stay narrow regardless of what the binding's workspace
+// admin requested.
 func ValidateAgentScopes(scopes []string) error {
-	allowed := make(map[string]bool, len(DefaultAgentScopes))
-	for _, s := range DefaultAgentScopes {
+	allowed := make(map[string]bool, len(DefaultCodingAgentRunScopes))
+	for _, s := range DefaultCodingAgentRunScopes {
 		allowed[s] = true
 	}
 	var rejected []string

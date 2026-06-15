@@ -15,8 +15,40 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
+
+// sanitizeHubConfig scrubs the user-facing fields on the hub config
+// payload. Title, description, search copy, sections, and footer links
+// all render on the hub landing page; Theme and section IDs are
+// identifier-shaped.
+func sanitizeHubConfig(config *models.PortalHubConfig) {
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &config.Title, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &config.Description, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &config.Theme, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &config.SearchPlaceholder, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &config.SearchHint, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &config.LogoURL, Policy: sanitize.PlainTextField},
+	)
+	for i := range config.Sections {
+		sanitize.ApplyAll(
+			sanitize.Pair{Target: &config.Sections[i].ID, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: &config.Sections[i].Title, Policy: sanitize.PlainTextField},
+			sanitize.Pair{Target: &config.Sections[i].Content, Policy: sanitize.RichText},
+		)
+	}
+	for i := range config.FooterColumns {
+		sanitize.Apply(&config.FooterColumns[i].Title, sanitize.PlainTextField)
+		for j := range config.FooterColumns[i].Links {
+			sanitize.ApplyAll(
+				sanitize.Pair{Target: &config.FooterColumns[i].Links[j].Text, Policy: sanitize.PlainTextField},
+				sanitize.Pair{Target: &config.FooterColumns[i].Links[j].URL, Policy: sanitize.PlainTextField},
+			)
+		}
+	}
+}
 
 // HubHandler handles HTTP requests for the Portal Hub
 type HubHandler struct {
@@ -135,6 +167,7 @@ func (h *HubHandler) UpdateHubConfig(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	sanitizeHubConfig(&config)
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()

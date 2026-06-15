@@ -10,6 +10,7 @@
 	import FormField from '../components/FormField.svelte';
 	import AlertBox from '../components/AlertBox.svelte';
 	import EmptyState from '../components/EmptyState.svelte';
+	import DropdownMenu from '../layout/DropdownMenu.svelte';
 	import Lozenge from '../components/Lozenge.svelte';
 	import SectionHeader from '../layout/SectionHeader.svelte';
 	import { toHotkeyString } from '../utils/keyboardShortcuts.js';
@@ -26,11 +27,15 @@
 		{ value: 'items:delete', label: 'Delete items' },
 		{ value: 'workspaces:read', label: 'Read workspaces and configuration' },
 		{ value: 'workspaces:write', label: 'Modify workspaces and configuration' },
+		{ value: 'collections:read', label: 'Read collections and reports' },
 		{ value: 'pages:read', label: 'Read knowledge pages' },
 		{ value: 'pages:write', label: 'Create and update knowledge pages' },
 		{ value: 'pages:delete', label: 'Archive knowledge pages' },
 		{ value: 'users:read', label: 'Read user directory' },
 	];
+
+	const DOCMOST_REQUIRED_SCOPES = ['items:read', 'workspaces:read', 'collections:read'];
+	const DOCMOST_LOCAL_CALLBACK = 'http://localhost:3000/api/integrations/oauth/windshift/callback';
 
 	let clients = $state([]);
 	let loading = $state(true);
@@ -69,9 +74,8 @@
 		}
 	}
 
-	function openCreate() {
-		editingClient = null;
-		formData = {
+	function blankFormData() {
+		return {
 			slug: '',
 			display_name: '',
 			client_type: 'confidential',
@@ -79,6 +83,32 @@
 			allowed_scopes: [],
 			enabled: true,
 		};
+	}
+
+	function docmostTemplateFormData() {
+		return {
+			slug: 'docmost',
+			display_name: 'Docmost',
+			client_type: 'confidential',
+			redirect_uris_text: DOCMOST_LOCAL_CALLBACK,
+			allowed_scopes: DOCMOST_REQUIRED_SCOPES,
+			enabled: true,
+		};
+	}
+
+	function openCreate() {
+		editingClient = null;
+		formData = blankFormData();
+		showFormModal = true;
+	}
+
+	function openCreateFromTemplate(template) {
+		editingClient = null;
+		if (template === 'docmost') {
+			formData = docmostTemplateFormData();
+		} else {
+			formData = blankFormData();
+		}
 		showFormModal = true;
 	}
 
@@ -194,6 +224,11 @@
 	const callbackHelp = $derived(
 		'After this client redeems an authorization code at /api/oauth/token, every issued access token will be a Windshift API token (crw_…) bound to a per-user agent. Tokens inherit the requesting user\'s permissions, intersected with the scopes selected here.'
 	);
+
+	function displayClientId(clientId) {
+		if (!clientId || clientId.length <= 16) return clientId || '';
+		return `${clientId.slice(0, 9)}…${clientId.slice(-6)}`;
+	}
 </script>
 
 <div>
@@ -203,16 +238,33 @@
 		class="mb-6"
 	>
 		{#snippet actions()}
-			<Button
-				variant="primary"
-				size="small"
-				icon={Plus}
-				onclick={openCreate}
-				keyboardHint="A"
-				hotkeyConfig={{ key: toHotkeyString('oauthClients', 'addClient'), guard: () => !showFormModal && !secretModal }}
-			>
-				Register Client
-			</Button>
+			<div class="flex items-center gap-2">
+				<DropdownMenu
+					triggerText="Template"
+					placement="bottom-end"
+					maxWidth="max-w-sm"
+					triggerClass="px-3.5 py-1.5 border"
+					triggerStyle="background-color: var(--ds-surface-raised); border-color: var(--ds-border); color: var(--ds-text);"
+					items={[
+						{
+							id: 'docmost',
+							title: 'Docmost',
+							subtitle: `${DOCMOST_REQUIRED_SCOPES.join(' ')} · OAuth callback`,
+							onClick: () => openCreateFromTemplate('docmost'),
+						},
+					]}
+				/>
+				<Button
+					variant="primary"
+					size="small"
+					icon={Plus}
+					onclick={openCreate}
+					keyboardHint="A"
+					hotkeyConfig={{ key: toHotkeyString('oauthClients', 'addClient'), guard: () => !showFormModal && !secretModal }}
+				>
+					Register Client
+				</Button>
+			</div>
 		{/snippet}
 	</SectionHeader>
 
@@ -253,10 +305,11 @@
 								</Lozenge>
 							{/if}
 						</div>
-						<p class="text-xs mt-1" style="color: var(--ds-text-subtle);">
-							<code>{client.client_id}</code>
+						<p class="text-xs mt-1 flex items-center gap-1 flex-wrap" style="color: var(--ds-text-subtle);">
+							<code title={client.client_id}>{displayClientId(client.client_id)}</code>
+							<CopyButton getText={() => client.client_id} title="Client ID" />
 							{#if client.client_type === 'confidential'}
-								&middot; secret {client.has_secret ? 'set' : 'missing'}
+								<span>&middot; secret {client.has_secret ? 'set' : 'missing'}</span>
 							{/if}
 							&middot; {(client.redirect_uris || []).length} redirect URI{(client.redirect_uris || []).length === 1 ? '' : 's'}
 						</p>
@@ -302,7 +355,7 @@
 		<FormField label="Display name" required>
 			<Input
 				bind:value={formData.display_name}
-				placeholder="e.g. Omni — connector for Windshift"
+				placeholder="e.g. Docmost"
 			/>
 		</FormField>
 
@@ -335,10 +388,10 @@
 				rows="3"
 				class="w-full px-3 py-2 text-sm border rounded-md font-mono"
 				style="background-color: var(--ds-surface-raised); border-color: var(--ds-border); color: var(--ds-text);"
-				placeholder={'https://app.example.com/oauth/callback\nhttps://staging.example.com/oauth/callback'}
+				placeholder={`https://docmost.example.com/api/integrations/oauth/windshift/callback\n${DOCMOST_LOCAL_CALLBACK}`}
 			></textarea>
 			<p class="text-xs mt-1" style="color: var(--ds-text-subtle);">
-				One URI per line. The redirect_uri parameter on /authorize must exactly match one of these.
+				One URI per line. For Docmost, register {`{DOCMOST_APP_URL}/api/integrations/oauth/windshift/callback`}. The redirect_uri parameter on /authorize must exactly match one of these.
 			</p>
 		</FormField>
 
@@ -399,7 +452,7 @@
 		<div class="p-4 space-y-4">
 			<AlertBox
 				appearance="warning"
-				message="The client secret is shown exactly once. Windshift only stores its bcrypt hash — once you close this dialog there is no way to recover it. If you lose it, use 'Rotate secret' to generate a new one."
+				message="The client secret is shown exactly once. Windshift only stores its bcrypt hash — once you close this dialog there is no way to recover it. Copy it into Docmost Settings → Workspace integrations. If you lose it, use 'Rotate secret' to generate a new one."
 			/>
 
 			<div>

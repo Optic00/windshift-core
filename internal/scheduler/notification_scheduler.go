@@ -35,9 +35,9 @@ const failureCooldown = 30 * time.Minute
 
 // NotificationScheduler handles batching and sending of notifications every 5 minutes
 type NotificationScheduler struct {
-	db         database.Database
-	ticker     *time.Ticker
-	stopChan   chan struct{}
+	db            database.Database
+	ticker        *time.Ticker
+	stopChan      chan struct{}
 	mu            sync.RWMutex
 	running       bool
 	smtpSender    SMTPSender
@@ -69,7 +69,6 @@ func NewNotificationScheduler(db database.Database, smtpSender SMTPSender, batch
 	}
 	return &NotificationScheduler{
 		db:            db,
-		ticker:        time.NewTicker(batchInterval),
 		stopChan:      make(chan struct{}),
 		running:       false,
 		smtpSender:    smtpSender,
@@ -90,10 +89,12 @@ func (ns *NotificationScheduler) Start() {
 		return
 	}
 
+	ns.ticker = time.NewTicker(ns.batchInterval)
+	ns.stopChan = make(chan struct{})
 	ns.running = true
 	slog.Debug("Starting notification scheduler", slog.String("component", "scheduler"), slog.String("interval", ns.batchInterval.String()))
 
-	go ns.schedulerLoop()
+	go ns.schedulerLoop(ns.ticker, ns.stopChan)
 }
 
 // Stop stops the notification scheduler
@@ -106,18 +107,21 @@ func (ns *NotificationScheduler) Stop() {
 	}
 
 	ns.running = false
-	ns.ticker.Stop()
+	if ns.ticker != nil {
+		ns.ticker.Stop()
+		ns.ticker = nil
+	}
 	close(ns.stopChan)
 	slog.Debug("Notification scheduler stopped", slog.String("component", "scheduler"))
 }
 
 // schedulerLoop runs the main scheduler loop
-func (ns *NotificationScheduler) schedulerLoop() {
+func (ns *NotificationScheduler) schedulerLoop(ticker *time.Ticker, stopChan <-chan struct{}) {
 	for {
 		select {
-		case <-ns.ticker.C:
+		case <-ticker.C:
 			ns.processPendingNotifications()
-		case <-ns.stopChan:
+		case <-stopChan:
 			return
 		}
 	}

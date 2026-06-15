@@ -52,6 +52,7 @@ export default {
       relatedItems: 'Para cada elemento relacionado',
       transitionItem: 'Transicionar elemento',
       roundRobinAssign: 'Asignar por turno rotativo',
+      createMilestone: 'Crear hito',
     },
 
     aiUpdated: 'Acción actualizada por IA',
@@ -106,6 +107,9 @@ export default {
       sourceTypeLiteral: 'Valor Literal',
       selectTargetField: 'Seleccionar campo destino...',
       addMapping: 'Agregar Mapeo',
+      milestonePickerHint:
+        'Guarda los IDs de hitos para la acción; los nombres solo se muestran al editar.',
+      userPickerHint: 'Elige un usuario específico o escribe un ID de usuario/plantilla abajo.',
       // Create Asset config
       assetSet: 'Conjunto de Activos',
       selectAssetSet: 'Seleccionar conjunto de activos...',

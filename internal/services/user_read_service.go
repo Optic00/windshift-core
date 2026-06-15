@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"windshift/internal/database"
 	"windshift/internal/models"
@@ -13,6 +14,23 @@ import (
 // UserReadService provides read operations for users
 type UserReadService struct {
 	db database.Database
+}
+
+// AdminUserUpdate holds optional user fields for system-admin updates. Empty
+// string values are ignored to preserve the existing REST v1 semantics.
+type AdminUserUpdate struct {
+	FirstName *string
+	LastName  *string
+	Email     *string
+	IsActive  *bool
+}
+
+// IsEmpty reports whether the update would touch no persisted fields.
+func (u AdminUserUpdate) IsEmpty() bool {
+	return (u.FirstName == nil || *u.FirstName == "") &&
+		(u.LastName == nil || *u.LastName == "") &&
+		(u.Email == nil || *u.Email == "") &&
+		u.IsActive == nil
 }
 
 // NewUserReadService creates a new user read service
@@ -112,6 +130,70 @@ func (s *UserReadService) GetByID(id int) (*models.User, error) {
 	return &u, nil
 }
 
+// UpdateAdmin applies a partial system-admin update to a user. Callers should
+// check AdminUserUpdate.IsEmpty before invoking it. ErrUserNotFound is returned
+// when no row is updated.
+func (s *UserReadService) UpdateAdmin(id int, update AdminUserUpdate) error {
+	sets := []string{}
+	args := []interface{}{}
+	if update.FirstName != nil && *update.FirstName != "" {
+		sets = append(sets, "first_name = ?")
+		args = append(args, *update.FirstName)
+	}
+	if update.LastName != nil && *update.LastName != "" {
+		sets = append(sets, "last_name = ?")
+		args = append(args, *update.LastName)
+	}
+	if update.Email != nil && *update.Email != "" {
+		sets = append(sets, "email = ?")
+		args = append(args, *update.Email)
+	}
+	if update.IsActive != nil {
+		sets = append(sets, "is_active = ?")
+		args = append(args, *update.IsActive)
+	}
+	if len(sets) == 0 {
+		return nil
+	}
+	sets = append(sets, "updated_at = CURRENT_TIMESTAMP")
+	args = append(args, id)
+
+	result, err := s.db.ExecWrite("UPDATE users SET "+strings.Join(sets, ", ")+" WHERE id = ?", args...)
+	if err != nil {
+		return fmt.Errorf("update user: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("update user rows affected: %w", err)
+	}
+	if rows == 0 {
+		return ErrUserNotFound
+	}
+	return nil
+}
+
+// GetGroupIDs returns active group membership IDs for a user.
+func (s *UserReadService) GetGroupIDs(userID int) ([]int, error) {
+	rows, err := s.db.Query("SELECT group_id FROM group_members WHERE user_id = ?", userID)
+	if err != nil {
+		return nil, fmt.Errorf("list user groups: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	ids := []int{}
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan user group: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate user groups: %w", err)
+	}
+	return ids, nil
+}
+
 // ListAll retrieves all active users without pagination.
 func (s *UserReadService) ListAll() ([]models.User, error) {
 	rows, err := s.db.Query(`
@@ -164,45 +246,6 @@ func (s *UserReadService) Exists(id int) (bool, error) {
 	return exists, nil
 }
 
-// ListOwnedAgents returns the agent users owned by the given user, in
-// display-name order. Used by the workspace agent-bindings picker so a
-// workspace admin can pick an agent they themselves provisioned (which
-// the WI-87 chokepoint accepts without further gating).
-func (s *UserReadService) ListOwnedAgents(ctx context.Context, ownerID int) ([]models.User, error) {
-	if ownerID <= 0 {
-		return []models.User{}, nil
-	}
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, email, username, first_name, last_name, is_active,
-		       avatar_url, timezone, language,
-		       COALESCE(is_agent, false), agent_owner_user_id, created_at
-		FROM users
-		WHERE COALESCE(is_agent, 0) = 1
-		  AND agent_owner_user_id = ?
-		  AND COALESCE(is_active, 1) = 1
-		ORDER BY first_name, last_name, username
-	`, ownerID)
-	if err != nil {
-		return nil, fmt.Errorf("list owned agents: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	var out []models.User
-	for rows.Next() {
-		u, err := scanUserRow(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, u)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if out == nil {
-		out = []models.User{}
-	}
-	return out, nil
-}
-
 // ListAllowlistedCentralizedServiceUsers returns the active, unowned
 // agent users (is_agent + agent_owner_user_id IS NULL) that the WI-87
 // global allowlist makes reachable from this workspace — either via a
@@ -219,9 +262,9 @@ func (s *UserReadService) ListAllowlistedCentralizedServiceUsers(ctx context.Con
 		       COALESCE(u.is_agent, false), u.agent_owner_user_id, u.created_at
 		FROM users u
 		INNER JOIN global_agent_acting_user_allowlist a ON a.user_id = u.id
-		WHERE COALESCE(u.is_agent, 0) = 1
+		WHERE COALESCE(u.is_agent, false) = true
 		  AND u.agent_owner_user_id IS NULL
-		  AND COALESCE(u.is_active, 1) = 1
+		  AND COALESCE(u.is_active, true) = true
 		  AND (a.workspace_id IS NULL OR a.workspace_id = ?)
 		GROUP BY u.id, u.email, u.username, u.first_name, u.last_name, u.is_active,
 		         u.avatar_url, u.timezone, u.language, u.is_agent, u.agent_owner_user_id, u.created_at
@@ -265,7 +308,7 @@ func (s *UserReadService) IsCentralizedServiceUser(ctx context.Context, userID i
 		hasOwner bool
 	)
 	err := s.db.QueryRowContext(ctx, `
-		SELECT COALESCE(is_agent, 0), agent_owner_user_id IS NOT NULL
+		SELECT COALESCE(is_agent, false), agent_owner_user_id IS NOT NULL
 		FROM users WHERE id = ?
 	`, userID).Scan(&isAgent, &hasOwner)
 	if errors.Is(err, sql.ErrNoRows) {

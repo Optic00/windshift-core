@@ -15,7 +15,7 @@
 		email_verification_expires DATETIME, -- Expiry time for verification token
 		scim_external_id TEXT, -- SCIM externalId from identity provider
 		scim_managed BOOLEAN DEFAULT false, -- If true, user is managed via SCIM
-		is_agent BOOLEAN DEFAULT false, -- If true, user is a non-human agent (API-only; cannot log in)
+		is_agent BOOLEAN DEFAULT 0, -- If true, user is a non-human agent (API-only; cannot log in)
 		agent_owner_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, -- NULL = service user (admin-provisioned); non-NULL = owned agent (inherits owner permissions)
 		-- Distinguishes how an agent row got created. 'user' covers both the
 		-- profile-page agent UI and CLI onboarding (both are gated by
@@ -91,6 +91,27 @@
 	WHEN NEW.oauth_client_id IS NOT OLD.oauth_client_id
 	BEGIN
 		SELECT RAISE(ABORT, 'oauth_client_id is immutable');
+	END;
+
+	-- An oauth-provenance agent MUST carry an oauth_client_id. The companion
+	-- check below rejects oauth_client_id on rows that aren't oauth-agents.
+	-- Together they pin the (is_agent, agent_provenance, oauth_client_id)
+	-- tuple to the only valid combination for oauth-issued service users.
+	CREATE TRIGGER IF NOT EXISTS users_oauth_provenance_requires_client
+	BEFORE INSERT ON users
+	FOR EACH ROW
+	WHEN NEW.agent_provenance = 'oauth' AND NEW.oauth_client_id IS NULL
+	BEGIN
+		SELECT RAISE(ABORT, 'agent_provenance=oauth requires oauth_client_id');
+	END;
+
+	CREATE TRIGGER IF NOT EXISTS users_oauth_client_requires_oauth_agent
+	BEFORE INSERT ON users
+	FOR EACH ROW
+	WHEN NEW.oauth_client_id IS NOT NULL
+	  AND (IFNULL(NEW.is_agent, 0) = 0 OR NEW.agent_provenance != 'oauth')
+	BEGIN
+		SELECT RAISE(ABORT, 'oauth_client_id requires is_agent and agent_provenance=oauth');
 	END;
 
 	CREATE TABLE IF NOT EXISTS user_credentials (

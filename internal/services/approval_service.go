@@ -1480,15 +1480,14 @@ func (s *ApprovalService) resolveApproverSource(ctx context.Context, tx database
 		if _, ok := models.AllowedRegularApproverFields[step.ApproverFieldIdentifier]; !ok {
 			return nil, fmt.Errorf("regular_field %q is not in the approver whitelist", step.ApproverFieldIdentifier)
 		}
-		var userID sql.NullInt64
-		query := fmt.Sprintf(`SELECT %s FROM items WHERE id = ?`, step.ApproverFieldIdentifier)
-		if err := tx.QueryRowContext(ctx, query, item.ID).Scan(&userID); err != nil {
+		userID, err := repository.NewItemRepository(s.db).GetUserFieldTx(ctx, tx, item.ID, step.ApproverFieldIdentifier)
+		if err != nil {
 			return nil, err
 		}
-		if !userID.Valid || userID.Int64 == 0 {
+		if userID == nil || *userID == 0 {
 			return nil, nil
 		}
-		return []resolvedApprover{{UserID: int(userID.Int64)}}, nil
+		return []resolvedApprover{{UserID: *userID}}, nil
 
 	case models.ApprovalSourceCustomField:
 		if step.ApproverFieldID == nil {

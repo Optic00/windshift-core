@@ -40,6 +40,13 @@ else
     echo "  WARNING: frontend/ directory not found, skipping frontend checks"
 fi
 
+# --- Handler DB access guard ---
+# Blocks new direct SQL/database/sql use in HTTP handler surfaces.
+echo "  Running handler DB access guard..."
+if ! "$REPO_ROOT/scripts/check-handler-db-access.sh"; then
+    FAILED=1
+fi
+
 # --- Layering guard ---
 # Blocks new violations of architectural import rules (see scripts/check-layering.sh).
 # Existing violations are recorded in scripts/.layering-baseline so the guard

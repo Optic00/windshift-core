@@ -1,0 +1,30 @@
+[Unit]
+Description=Windshift remote runner (claims and executes coding-agent jobs)
+Documentation=https://windshift.example.com
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=windshift-runner
+# The runner drives the docker daemon; membership in the docker group is what
+# grants that. NOTE: docker group access is root-equivalent on this host.
+SupplementaryGroups=docker
+EnvironmentFile=/etc/windshift-runner/runner.env
+ExecStart=/usr/local/bin/windshift-runner
+Restart=always
+RestartSec=5
+# Graceful drain: the runner finishes the in-flight job on SIGTERM.
+TimeoutStopSec=600
+KillSignal=SIGTERM
+
+# Hardening (the runner itself holds no SCM creds; jobs are sandboxed by docker).
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+# The cache lives here and must stay writable.
+ReadWritePaths=/var/lib/windshift-runner
+
+[Install]
+WantedBy=multi-user.target

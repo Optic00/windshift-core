@@ -74,10 +74,11 @@ func (s *CFVCleanupScheduler) Start() {
 	if s.running {
 		return
 	}
-	s.running = true
 	s.ticker = time.NewTicker(s.checkInterval)
+	s.stopChan = make(chan struct{})
+	s.running = true
 	slog.Info("starting cfv cleanup scheduler", "interval", s.checkInterval, "batch_size", s.batchSize)
-	go s.loop()
+	go s.loop(s.ticker, s.stopChan)
 }
 
 // Stop halts the scheduler. Safe to call multiple times.
@@ -88,20 +89,23 @@ func (s *CFVCleanupScheduler) Stop() {
 		return
 	}
 	s.running = false
-	s.ticker.Stop()
+	if s.ticker != nil {
+		s.ticker.Stop()
+		s.ticker = nil
+	}
 	close(s.stopChan)
 	slog.Info("cfv cleanup scheduler stopped")
 }
 
-func (s *CFVCleanupScheduler) loop() {
+func (s *CFVCleanupScheduler) loop(ticker *time.Ticker, stopChan <-chan struct{}) {
 	// Process immediately on startup so a queued job from a previous
 	// process generation doesn't wait the full interval.
 	s.tick()
 	for {
 		select {
-		case <-s.ticker.C:
+		case <-ticker.C:
 			s.tick()
-		case <-s.stopChan:
+		case <-stopChan:
 			return
 		}
 	}
@@ -203,61 +207,30 @@ func (s *CFVCleanupScheduler) processJob(fieldID int) (int, error) {
 	fieldKey := strconv.Itoa(fieldID)
 	totalProcessed := 0
 	lastID := 0
+	itemRepo := repository.NewItemRepository(s.db)
 
 	for {
-		rows, err := s.db.Query(
-			`SELECT id, custom_field_values
-			   FROM items
-			  WHERE id > ?
-			    AND custom_field_values IS NOT NULL
-			    AND custom_field_values != ''
-			    AND custom_field_values LIKE ?
-			  ORDER BY id ASC
-			  LIMIT ?`,
-			lastID, "%\""+fieldKey+"\"%", s.batchSize,
-		)
+		batch, err := itemRepo.ListCustomFieldValuesPageByKey(lastID, fieldKey, s.batchSize)
 		if err != nil {
 			return totalProcessed, err
 		}
-
-		type itemRow struct {
-			id  int
-			cfv string
-		}
-		var batch []itemRow
-		for rows.Next() {
-			var ir itemRow
-			if err := rows.Scan(&ir.id, &ir.cfv); err != nil {
-				_ = rows.Close()
-				return totalProcessed, err
-			}
-			batch = append(batch, ir)
-		}
-		if err := rows.Err(); err != nil {
-			_ = rows.Close()
-			return totalProcessed, err
-		}
-		_ = rows.Close()
 		if len(batch) == 0 {
 			return totalProcessed, nil
 		}
 
 		for _, ir := range batch {
-			lastID = ir.id
-			cleaned, changed, err := stripCFVKey(ir.cfv, fieldKey)
+			lastID = ir.ID
+			cleaned, changed, err := stripCFVKey(ir.CFV, fieldKey)
 			if err != nil {
 				// Malformed JSON in cfv — log and skip the row rather
 				// than failing the whole job.
-				slog.Warn("cfv_cleanup: skip malformed cfv", "item_id", ir.id, "error", err)
+				slog.Warn("cfv_cleanup: skip malformed cfv", "item_id", ir.ID, "error", err)
 				continue
 			}
 			if !changed {
 				continue
 			}
-			if _, err := s.db.ExecWrite(
-				`UPDATE items SET custom_field_values = ? WHERE id = ?`,
-				cleaned, ir.id,
-			); err != nil {
+			if err := itemRepo.SetCustomFieldValuesRaw(context.Background(), ir.ID, cleaned); err != nil {
 				return totalProcessed, err
 			}
 			totalProcessed++

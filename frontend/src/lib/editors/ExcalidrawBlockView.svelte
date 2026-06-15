@@ -65,7 +65,7 @@
   }
 </script>
 
-<figure class="excalidraw-block" class:readonly>
+<figure class="excalidraw-block" class:readonly data-excalidraw-block data-status={status}>
   <div
     class="excalidraw-block__canvas"
     bind:this={svgHost}

@@ -16,6 +16,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 	"windshift/internal/webauthn"
@@ -83,6 +84,7 @@ func (h *WebAuthnHandler) StartFIDORegistrationNew(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
+	sanitize.Apply(&req.CredentialName, sanitize.PlainTextField)
 
 	trimmedName := strings.TrimSpace(req.CredentialName)
 	if trimmedName == "" {
@@ -174,6 +176,10 @@ func (h *WebAuthnHandler) CompleteFIDORegistrationNew(w http.ResponseWriter, r *
 	if !ok {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.SessionID, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.CredentialName, Policy: sanitize.PlainTextField},
+	)
 
 	trimmedName := strings.TrimSpace(req.CredentialName)
 	if trimmedName == "" {
@@ -398,6 +404,7 @@ func (h *WebAuthnHandler) StartFIDOLoginNew(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
+	sanitize.Apply(&req.EmailOrUsername, sanitize.ShortIdentifier)
 
 	if strings.TrimSpace(req.EmailOrUsername) == "" {
 		respondValidationError(w, r, "Email or username is required")
@@ -486,6 +493,7 @@ func (h *WebAuthnHandler) CompleteFIDOLoginNew(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
+	sanitize.Apply(&req.SessionID, sanitize.ShortIdentifier)
 
 	// Get session data
 	sessionData, err := h.sessionStore.GetAuthenticationSession(req.SessionID)

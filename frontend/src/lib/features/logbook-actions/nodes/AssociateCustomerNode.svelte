@@ -6,7 +6,7 @@
   let { data = {}, selected = false } = $props();
 </script>
 
-<GenericActionNode {data} {selected} flowStore={logbookActionFlowStore} icon={Users} title="Associate Customer" accentColor="purple">
+<GenericActionNode {data} {selected} flowStore={data.flowStore || logbookActionFlowStore} icon={Users} title="Associate Customer" accentColor="purple">
   {#snippet body()}
     {#if data.config?.customer_organisation_id || data.config?.portal_customer_id}
       <div class="config-line">
@@ -23,9 +23,4 @@
   {/snippet}
 </GenericActionNode>
 
-<style>
-  .config-line {
-    font-size: 12px;
-    color: var(--ds-text-subtle);
-  }
-</style>
+

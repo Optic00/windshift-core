@@ -2,64 +2,47 @@
   import { CheckSquare } from '@lucide/svelte';
   import { authStore } from '../../stores';
   import { api } from '../../api.js';
-  import { navigate } from '../../router.js';
   import DashboardItemRow from './DashboardItemRow.svelte';
+  import { normalizeTaskResponse, openTask } from './taskWidgetState.js';
 
   let tasks = $state([]);
   let loading = $state(false);
   let errored = $state(false);
-  let fetchVersion = 0;
   let lastUserId = null;
+  let version = 0;
 
   const currentUserId = $derived($authStore?.currentUser?.id ?? null);
 
   $effect(() => {
     if (currentUserId && currentUserId !== lastUserId) {
       lastUserId = currentUserId;
-      load(currentUserId);
+      load();
     } else if (!currentUserId && lastUserId !== null) {
       lastUserId = null;
       tasks = [];
     }
   });
 
-  async function load(userId) {
-    const version = ++fetchVersion;
+  async function load() {
+    const v = ++version;
     loading = true;
     errored = false;
     try {
       const response = await api.items.getAll({
-        ql: `assignee_id = ${userId} AND status_completed = false`,
+        ql: `assignee_id = ${currentUserId} AND status_completed = false`,
         limit: 30,
         order_by: 'updated_at',
       });
-      if (version !== fetchVersion) return;
-      const raw = Array.isArray(response) ? response : (response?.items ?? []);
-      const active = raw
-        .filter((i) => i && i.id)
-        .map((i) => ({
-          ...i,
-          dueDate: i.due_date ? new Date(i.due_date) : null,
-        }));
-      active.sort((a, b) => {
-        if (a.dueDate && b.dueDate) return a.dueDate - b.dueDate;
-        if (a.dueDate) return -1;
-        if (b.dueDate) return 1;
-        return 0;
-      });
-      tasks = active.slice(0, 6);
+      if (v !== version) return;
+      tasks = normalizeTaskResponse(response);
     } catch (err) {
-      if (version !== fetchVersion) return;
+      if (v !== version) return;
       console.error('Failed to load assigned items:', err);
       errored = true;
       tasks = [];
     } finally {
-      if (version === fetchVersion) loading = false;
+      if (v === version) loading = false;
     }
-  }
-
-  function open(task) {
-    navigate(`/workspaces/${task.workspace_id}/items/${task.id}`);
   }
 </script>
 
@@ -91,7 +74,7 @@
           priorityName={task.priority_name}
           priorityColor={task.priority_color}
           dueDate={task.dueDate}
-          onclick={() => open(task)}
+          onclick={() => openTask(task)}
         />
       </li>
     {/each}

@@ -1,0 +1,806 @@
+package services
+
+import (
+	"encoding/csv"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strconv"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	"windshift/internal/database"
+	"windshift/internal/logger"
+	"windshift/internal/models"
+	"windshift/internal/repository"
+	"windshift/internal/sanitize"
+	"windshift/internal/utils"
+)
+
+// sanitizeAssetText runs the asset-text input policy in one call:
+// PlainTextField on the title, RichText on the description (HTML except
+// <br /> stripped, dangerous Markdown URLs filtered, length-capped),
+// ShortIdentifier on the asset tag (tighter 100-rune cap matching the
+// db column shape for identifier-like fields). Both the cookie-auth
+// and bearer-auth surfaces flow through this so the input policy lives
+// in exactly one place.
+func sanitizeAssetText(title, description, assetTag *string) {
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: title, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: description, Policy: sanitize.RichText},
+		sanitize.Pair{Target: assetTag, Policy: sanitize.ShortIdentifier},
+	)
+}
+
+// reencodeCustomFieldValues refreshes the pre-encoded JSON payload from
+// the (caller-supplied) values map. Handlers marshal custom_field_values
+// before calling the service, but ValidateCustomFieldsSchema sanitizes
+// text/textarea values in the map afterwards — without a re-encode the
+// sanitized values would never reach persistence. No-op when the caller
+// didn't supply a values map (partial update keeping stored values).
+func reencodeCustomFieldValues(values map[string]interface{}, target **string) error {
+	if values == nil {
+		return nil
+	}
+	b, err := json.Marshal(values)
+	if err != nil {
+		return fmt.Errorf("encode custom field values: %w", err)
+	}
+	s := string(b)
+	*target = &s
+	return nil
+}
+
+// AuditActor carries the actor + transport context an audit event needs.
+// Both the cookie-auth and bearer-auth surfaces build this from their
+// *http.Request before calling into AssetService so the service layer
+// stays HTTP-agnostic and the two surfaces produce identical audit rows
+// for equivalent operations.
+//
+// AuthMethod / APITokenID / APITokenPrefix / APITokenName are populated
+// when the request was bearer-token authenticated; cookie-auth requests
+// leave them zero. Compromised-token investigations switch on these to
+// identify the specific token that drove a mutation under a user the
+// attacker may share with many tokens.
+type AuditActor struct {
+	UserID         int
+	Username       string
+	IPAddress      string
+	UserAgent      string
+	AuthMethod     string
+	APITokenID     int
+	APITokenPrefix string
+	APITokenName   string
+}
+
+// NewAuditActorFromRequest extracts the audit fields from a request +
+// authenticated user. Convenience shared by both surfaces. authMethod
+// is "cookie" or "bearer" (handlers know which they are); apiToken is
+// non-nil only on the bearer path and gets unpacked into the actor's
+// token-attribution fields. Passing both args explicitly keeps the
+// services package off the restapi import path (no context-key dep).
+func NewAuditActorFromRequest(r *http.Request, user *models.User, apiToken *models.APIToken, authMethod string) AuditActor {
+	actor := AuditActor{
+		IPAddress:  utils.GetClientIP(r),
+		UserAgent:  r.UserAgent(),
+		AuthMethod: authMethod,
+	}
+	if user != nil {
+		actor.UserID = user.ID
+		actor.Username = user.Username
+	}
+	if apiToken != nil {
+		actor.APITokenID = apiToken.ID
+		actor.APITokenPrefix = apiToken.TokenPrefix
+		actor.APITokenName = apiToken.Name
+		if actor.AuthMethod == "" {
+			actor.AuthMethod = "bearer"
+		}
+	}
+	return actor
+}
+
+// AssetValidationError signals a user-facing validation failure (400 at
+// the HTTP layer) — as opposed to repo / IO errors which the caller
+// renders as 500. Handlers use errors.As to switch on it.
+type AssetValidationError struct{ Msg string }
+
+func (e *AssetValidationError) Error() string { return e.Msg }
+
+// IsAssetValidationError reports whether err is (or wraps) an
+// AssetValidationError. Handlers use this when rendering 400 vs 500.
+func IsAssetValidationError(err error) (*AssetValidationError, bool) {
+	var ve *AssetValidationError
+	if errors.As(err, &ve) {
+		return ve, true
+	}
+	return nil, false
+}
+
+// AssetService owns the asset mutation pipeline: repo writes, audit
+// emission, automation-event emission, and custom-field schema
+// validation. Both /api/assets (cookie auth) and /rest/api/v1/assets
+// (bearer auth) flow through here so a single audit row + a single
+// automation event is produced per mutation, regardless of which
+// surface drove it.
+type AssetService struct {
+	db   database.Database
+	repo *repository.AssetRepository
+	// actionService is set lazily via SetActionService after the asset
+	// action service is constructed (its dependencies — EventCoordinator,
+	// NotificationService — aren't available at startup-init time). Nil
+	// means automation events are silently skipped, which is intentional
+	// for very early boot and tests that don't exercise automation.
+	actionService atomic.Pointer[AssetActionService]
+}
+
+// NewAssetService constructs an AssetService backed by the given asset
+// repository. The asset action service can be attached later via
+// SetActionService.
+func NewAssetService(db database.Database, repo *repository.AssetRepository) *AssetService {
+	return &AssetService{db: db, repo: repo}
+}
+
+// SetActionService attaches an AssetActionService for automation event
+// emission. Safe to call once after boot; subsequent calls overwrite.
+func (s *AssetService) SetActionService(a *AssetActionService) {
+	s.actionService.Store(a)
+}
+
+func (s *AssetService) actions() *AssetActionService {
+	return s.actionService.Load()
+}
+
+// CustomFieldsValidationOpts toggles required-field enforcement.
+// EnforceRequired is on for creates (the caller has to satisfy the
+// asset type's required-field set up front) and for updates that
+// replace the custom_field_values map. Partial updates that don't
+// touch custom_field_values leave it off.
+type CustomFieldsValidationOpts struct {
+	EnforceRequired bool
+}
+
+// ValidateCustomFieldsSchema enforces the asset type's custom-field
+// schema against the supplied values. Three checks run in order:
+//
+//  1. Unknown keys (keys not declared on the type) are rejected.
+//  2. Each supplied value is type-checked against the declared
+//     field_type (text / textarea / number / boolean / date / select
+//     / multiselect / user). Select/multiselect values are checked
+//     against the field's Options whitelist. Text/textarea values are
+//     sanitized IN PLACE (PlainTextField / RichText — matching how
+//     they render) so the values map comes out write-safe; callers
+//     that pre-encoded a JSON payload must re-encode after this call.
+//  3. When opts.EnforceRequired is set, every required field on the
+//     type must be present (non-empty) in values.
+//
+// Both legacy field-id-string keys ("12") and lower-cased field-name
+// keys ("hostname") are accepted, matching the UI + CSV import
+// conventions.
+func (s *AssetService) ValidateCustomFieldsSchema(assetTypeID int, values map[string]interface{}, opts CustomFieldsValidationOpts) error {
+	if len(values) == 0 && !opts.EnforceRequired {
+		return nil
+	}
+	fields, err := s.repo.FindAssetTypeFields(assetTypeID)
+	if err != nil {
+		return fmt.Errorf("load asset type fields: %w", err)
+	}
+	byKey := make(map[string]models.AssetTypeField, len(fields)*2)
+	for _, f := range fields {
+		byKey[fmt.Sprintf("%d", f.CustomFieldID)] = f
+		byKey[strings.ToLower(f.FieldName)] = f
+	}
+
+	var unknown []string
+	for k := range values {
+		if _, ok := byKey[k]; ok {
+			continue
+		}
+		if _, ok := byKey[strings.ToLower(k)]; ok {
+			continue
+		}
+		unknown = append(unknown, k)
+	}
+	if len(unknown) > 0 {
+		return &AssetValidationError{
+			Msg: "custom_field_values contains key(s) not declared on the asset type: " + strings.Join(unknown, ", "),
+		}
+	}
+
+	for k, v := range values {
+		f, ok := byKey[k]
+		if !ok {
+			f = byKey[strings.ToLower(k)]
+		}
+		if err := validateAssetFieldValue(f, v); err != nil {
+			return &AssetValidationError{Msg: fmt.Sprintf("custom_field_values[%q]: %s", k, err.Error())}
+		}
+		switch f.FieldType {
+		case "text", "textarea":
+			if s, ok := v.(string); ok {
+				if f.FieldType == "textarea" {
+					values[k] = sanitize.RichText.Sanitize(s)
+				} else {
+					values[k] = sanitize.PlainTextField.Sanitize(s)
+				}
+			}
+		}
+	}
+
+	if opts.EnforceRequired {
+		for _, f := range fields {
+			if !f.IsRequired {
+				continue
+			}
+			if !customFieldValuePresent(values, f) {
+				return &AssetValidationError{Msg: fmt.Sprintf("custom field %q is required", f.FieldName)}
+			}
+		}
+	}
+	return nil
+}
+
+// SanitizeCustomFieldTextValues runs only the text/textarea sanitize
+// pass of ValidateCustomFieldsSchema over a values map, mutating it in
+// place. For write paths (automation actions) that merge values into
+// stored custom_field_values without the full schema validation —
+// unknown keys and non-string values are left untouched so existing
+// behavior for those callers is preserved; only string values on
+// text/textarea fields get the rendering-matched policies applied.
+func (s *AssetService) SanitizeCustomFieldTextValues(assetTypeID int, values map[string]interface{}) error {
+	if len(values) == 0 {
+		return nil
+	}
+	fields, err := s.repo.FindAssetTypeFields(assetTypeID)
+	if err != nil {
+		return fmt.Errorf("load asset type fields: %w", err)
+	}
+	byKey := make(map[string]models.AssetTypeField, len(fields)*2)
+	for _, f := range fields {
+		byKey[fmt.Sprintf("%d", f.CustomFieldID)] = f
+		byKey[strings.ToLower(f.FieldName)] = f
+	}
+	for k, v := range values {
+		f, ok := byKey[k]
+		if !ok {
+			if f, ok = byKey[strings.ToLower(k)]; !ok {
+				continue
+			}
+		}
+		switch f.FieldType {
+		case "text", "textarea":
+			if s, ok := v.(string); ok {
+				if f.FieldType == "textarea" {
+					values[k] = sanitize.RichText.Sanitize(s)
+				} else {
+					values[k] = sanitize.PlainTextField.Sanitize(s)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// validateAssetFieldValue type-checks a single field value. Returns
+// nil for empty / null values — required-field presence is enforced
+// separately by ValidateCustomFieldsSchema when opts.EnforceRequired
+// is set, so a value of explicit-null here just means "not set this
+// time", not "schema violation".
+func validateAssetFieldValue(f models.AssetTypeField, v interface{}) error {
+	if v == nil {
+		return nil
+	}
+	switch f.FieldType {
+	case "text", "textarea", "":
+		// Empty FieldType (unknown legacy types) accept anything stringy.
+		if _, ok := v.(string); !ok {
+			return fmt.Errorf("expected string for %s field", f.FieldType)
+		}
+	case "number":
+		switch x := v.(type) {
+		case float64, int, int64:
+			return nil
+		case string:
+			if _, err := strconv.ParseFloat(x, 64); err != nil {
+				return fmt.Errorf("expected numeric value, got %q", x)
+			}
+		default:
+			return fmt.Errorf("expected number")
+		}
+	case "boolean":
+		if _, ok := v.(bool); !ok {
+			return fmt.Errorf("expected boolean")
+		}
+	case "date":
+		s, ok := v.(string)
+		if !ok {
+			return fmt.Errorf("expected date string")
+		}
+		if _, err := time.Parse("2006-01-02", s); err == nil {
+			return nil
+		}
+		if _, err := time.Parse(time.RFC3339, s); err == nil {
+			return nil
+		}
+		return fmt.Errorf("expected YYYY-MM-DD or RFC3339 date, got %q", s)
+	case "select":
+		s, ok := v.(string)
+		if !ok {
+			return fmt.Errorf("expected string for select field")
+		}
+		if !assetFieldOptionAllowed(f, s) {
+			return fmt.Errorf("value %q is not an allowed option for this field", s)
+		}
+	case "multiselect":
+		arr, ok := v.([]interface{})
+		if !ok {
+			return fmt.Errorf("expected array for multiselect field")
+		}
+		for _, elem := range arr {
+			s, ok := elem.(string)
+			if !ok {
+				return fmt.Errorf("expected string elements in multiselect array")
+			}
+			if !assetFieldOptionAllowed(f, s) {
+				return fmt.Errorf("value %q is not an allowed option for this field", s)
+			}
+		}
+	case "user":
+		switch x := v.(type) {
+		case float64, int, int64:
+			return nil
+		case map[string]interface{}:
+			if _, ok := x["id"]; ok {
+				return nil
+			}
+			return fmt.Errorf("user object missing 'id' key")
+		default:
+			return fmt.Errorf("expected user id (int) or {id: int}")
+		}
+	}
+	return nil
+}
+
+// assetFieldOptionAllowed reports whether the given value matches any
+// option in the field's declared option whitelist. Returns true when
+// no options are declared (the field accepts any string) or when the
+// stored options JSON is malformed (fail-open — better to accept than
+// to block legitimate writes against a misconfigured field; the
+// schema is logged at write time).
+func assetFieldOptionAllowed(f models.AssetTypeField, value string) bool {
+	if f.Options == "" {
+		return true
+	}
+	var opts []string
+	if err := json.Unmarshal([]byte(f.Options), &opts); err != nil {
+		return true
+	}
+	for _, o := range opts {
+		if o == value {
+			return true
+		}
+	}
+	return false
+}
+
+// customFieldValuePresent reports whether the values map carries a
+// non-empty value for the given field. Accepts the field-id-string
+// key, the lowercased field-name key, and the raw field-name key
+// (so an editor that sends mixed-case names is satisfied).
+func customFieldValuePresent(values map[string]interface{}, f models.AssetTypeField) bool {
+	keys := []string{
+		fmt.Sprintf("%d", f.CustomFieldID),
+		strings.ToLower(f.FieldName),
+		f.FieldName,
+	}
+	for _, k := range keys {
+		if v, ok := values[k]; ok && !isEmptyCustomFieldValue(v) {
+			return true
+		}
+	}
+	return false
+}
+
+func isEmptyCustomFieldValue(v interface{}) bool {
+	if v == nil {
+		return true
+	}
+	switch x := v.(type) {
+	case string:
+		return strings.TrimSpace(x) == ""
+	case []interface{}:
+		return len(x) == 0
+	}
+	return false
+}
+
+// CreateAsset writes the asset, validates custom field schema, emits the
+// audit event, and emits an asset_created automation event when an
+// action service is wired. Returns the freshly-loaded row.
+//
+// All required fields declared on the asset type must be present in
+// customFieldValues (EnforceRequired is on for creates).
+func (s *AssetService) CreateAsset(actor AuditActor, in repository.CreateAssetInput, customFieldValues map[string]interface{}) (*models.Asset, error) {
+	if err := s.ValidateCustomFieldsSchema(in.AssetTypeID, customFieldValues, CustomFieldsValidationOpts{EnforceRequired: true}); err != nil {
+		return nil, err
+	}
+	if err := reencodeCustomFieldValues(customFieldValues, &in.CustomFieldValuesJSON); err != nil {
+		return nil, err
+	}
+	sanitizeAssetText(&in.Title, &in.Description, &in.AssetTag)
+	assetID, err := s.repo.CreateAsset(in)
+	if err != nil {
+		return nil, fmt.Errorf("create asset: %w", err)
+	}
+	s.emitAudit(actor, logger.ActionAssetCreate, &assetID, in.Title, nil)
+	if a := s.actions(); a != nil {
+		a.EmitAssetActionEvent(&models.AssetActionEvent{
+			EventType:   models.AssetTriggerAssetCreated,
+			SetID:       in.SetID,
+			AssetID:     assetID,
+			ActorUserID: actor.UserID,
+			NewValues: map[string]interface{}{
+				"title":         in.Title,
+				"asset_type_id": in.AssetTypeID,
+				"status_id":     in.StatusID,
+			},
+		})
+	}
+	row, err := s.repo.FindAssetFullByID(assetID)
+	if err != nil {
+		return nil, fmt.Errorf("reload after create: %w", err)
+	}
+	m := repository.AssetRowToModel(*row)
+	return &m, nil
+}
+
+// UpdateAsset writes the (partial) update, validates the custom-field
+// schema, emits the audit event, and emits asset_updated +
+// asset_status_changed automation events when applicable. oldSnap (read
+// from repo.GetAssetUpdateSnapshot before the call) is used to detect
+// the status transition.
+func (s *AssetService) UpdateAsset(actor AuditActor, assetID int, oldSnap repository.AssetUpdateSnapshot, in repository.UpdateAssetInput, customFieldValues map[string]interface{}) (*models.Asset, error) {
+	// Type change: any persisted custom field that's incompatible with
+	// the new type would slip through if we only validated the supplied
+	// values map (which the caller may have omitted on a partial-update
+	// PUT). Force a re-validation pass — caller-supplied values win,
+	// otherwise we run the persisted values through the new type's
+	// schema so stale or required-but-missing fields surface as 400.
+	typeChanged := oldSnap.AssetTypeID != 0 && oldSnap.AssetTypeID != in.AssetTypeID
+	toValidate := customFieldValues
+	enforceRequired := customFieldValues != nil
+	if typeChanged {
+		if toValidate == nil {
+			toValidate = loadStoredCustomFieldValues(in.CustomFieldValuesJSON)
+		}
+		enforceRequired = true
+	}
+	if err := s.ValidateCustomFieldsSchema(in.AssetTypeID, toValidate, CustomFieldsValidationOpts{EnforceRequired: enforceRequired}); err != nil {
+		return nil, err
+	}
+	if err := reencodeCustomFieldValues(customFieldValues, &in.CustomFieldValuesJSON); err != nil {
+		return nil, err
+	}
+	sanitizeAssetText(&in.Title, &in.Description, &in.AssetTag)
+	if err := s.repo.UpdateAsset(assetID, in); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("update asset: %w", err)
+	}
+	s.emitAudit(actor, logger.ActionAssetUpdate, &assetID, in.Title, nil)
+	if a := s.actions(); a != nil {
+		oldSID := 0
+		if oldSnap.StatusID.Valid {
+			oldSID = int(oldSnap.StatusID.Int64)
+		}
+		newSID := 0
+		if in.StatusID != nil {
+			newSID = *in.StatusID
+		}
+		if oldSID != newSID {
+			a.EmitAssetActionEvent(&models.AssetActionEvent{
+				EventType:   models.AssetTriggerAssetStatusChanged,
+				SetID:       oldSnap.SetID,
+				AssetID:     assetID,
+				ActorUserID: actor.UserID,
+				OldValues:   map[string]interface{}{"status_id": oldSID},
+				NewValues:   map[string]interface{}{"status_id": newSID},
+			})
+		}
+		a.EmitAssetActionEvent(&models.AssetActionEvent{
+			EventType:   models.AssetTriggerAssetUpdated,
+			SetID:       oldSnap.SetID,
+			AssetID:     assetID,
+			ActorUserID: actor.UserID,
+			NewValues: map[string]interface{}{
+				"title":         in.Title,
+				"asset_type_id": in.AssetTypeID,
+				"status_id":     in.StatusID,
+			},
+		})
+	}
+	row, err := s.repo.FindAssetFullByID(assetID)
+	if err != nil {
+		return nil, fmt.Errorf("reload after update: %w", err)
+	}
+	m := repository.AssetRowToModel(*row)
+	return &m, nil
+}
+
+// DeleteAsset resolves the title via GetAssetSetAndTitle (so the audit
+// row carries human-readable context post-delete), removes the asset +
+// its item_links rows, and emits the audit event + an
+// asset_deleted automation event.
+func (s *AssetService) DeleteAsset(actor AuditActor, assetID int) error {
+	setID, title, err := s.repo.GetAssetSetAndTitle(assetID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return err
+	}
+	if err != nil {
+		return fmt.Errorf("load asset for delete: %w", err)
+	}
+	if err := s.repo.DeleteAssetWithLinks(assetID); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return err
+		}
+		return fmt.Errorf("delete asset: %w", err)
+	}
+	s.emitAudit(actor, logger.ActionAssetDelete, &assetID, title, nil)
+	if a := s.actions(); a != nil {
+		a.EmitAssetActionEvent(&models.AssetActionEvent{
+			EventType:   models.AssetTriggerAssetDeleted,
+			SetID:       setID,
+			AssetID:     assetID,
+			ActorUserID: actor.UserID,
+			OldValues:   map[string]interface{}{"title": title},
+		})
+	}
+	return nil
+}
+
+// ImportCSVDefaults carries the optional column defaults that apply to
+// every row of a sync CSV import.
+type ImportCSVDefaults struct {
+	StatusID   *int
+	CategoryID *int
+}
+
+// ImportCSVSummary is the aggregate result of a sync CSV import.
+type ImportCSVSummary struct {
+	SetID         int
+	AssetTypeID   int
+	TotalRows     int
+	ProcessedRows int
+	CreatedRows   int
+	ErrorRows     int
+	Status        string
+	ErrorMessage  string
+	StartedAt     time.Time
+	CompletedAt   time.Time
+}
+
+// ImportAssetsCSV parses csvBody as a CSV with a header row, then creates
+// one asset per data row. Header columns "title" / "description" /
+// "asset_tag"|"tag" map to built-in fields; every other header is
+// matched case-insensitively against the asset type's declared custom
+// field names. Rows missing a non-empty title are counted as errors but
+// don't abort the import.
+//
+// Emits one aggregate audit row at the end (mirroring the cookie-auth
+// async-import pattern, which audits the job, not each inserted row).
+// Per-row audit would balloon the trail without changing what an
+// investigator can reconstruct.
+func (s *AssetService) ImportAssetsCSV(actor AuditActor, setID, assetTypeID int, defaults ImportCSVDefaults, csvBody io.Reader, filename string) (*ImportCSVSummary, error) {
+	fields, err := s.repo.FindAssetTypeFields(assetTypeID)
+	if err != nil {
+		return nil, fmt.Errorf("load asset type fields: %w", err)
+	}
+	fieldByName := make(map[string]string, len(fields))
+	for _, f := range fields {
+		fieldByName[strings.ToLower(f.FieldName)] = f.FieldName
+	}
+
+	reader := csv.NewReader(csvBody)
+	reader.FieldsPerRecord = -1
+	headers, err := reader.Read()
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil, &AssetValidationError{Msg: "CSV is empty"}
+		}
+		return nil, &AssetValidationError{Msg: fmt.Sprintf("CSV parse error: %v", err)}
+	}
+
+	summary := &ImportCSVSummary{
+		SetID:       setID,
+		AssetTypeID: assetTypeID,
+		Status:      "running",
+		StartedAt:   time.Now().UTC(),
+	}
+	for {
+		record, err := reader.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			summary.TotalRows++
+			summary.ProcessedRows++
+			summary.ErrorRows++
+			continue
+		}
+		summary.TotalRows++
+		summary.ProcessedRows++
+
+		row := buildCSVRow(headers, record, fieldByName)
+		title := strings.TrimSpace(row.title)
+		if title == "" {
+			summary.ErrorRows++
+			continue
+		}
+		cfJSON, _ := encodeCustomFieldValuesJSON(row.customFields)
+		description := row.description
+		assetTag := row.assetTag
+		sanitizeAssetText(&title, &description, &assetTag)
+		if _, err := s.repo.CreateAsset(repository.CreateAssetInput{
+			SetID:                 setID,
+			AssetTypeID:           assetTypeID,
+			CategoryID:            defaults.CategoryID,
+			StatusID:              defaults.StatusID,
+			Title:                 title,
+			Description:           description,
+			AssetTag:              assetTag,
+			CustomFieldValuesJSON: cfJSON,
+			CreatedBy:             actor.UserID,
+			CreatedAt:             time.Now().UTC(),
+		}); err != nil {
+			summary.ErrorRows++
+			continue
+		}
+		summary.CreatedRows++
+	}
+	summary.CompletedAt = time.Now().UTC()
+	switch {
+	case summary.TotalRows == 0:
+		summary.Status = "empty"
+		summary.ErrorMessage = "no data rows in CSV"
+	case summary.ErrorRows == 0:
+		summary.Status = "succeeded"
+	case summary.CreatedRows == 0:
+		summary.Status = "failed"
+	default:
+		summary.Status = "partial"
+	}
+
+	s.emitAudit(actor, logger.ActionAssetCreate, nil, "csv_import:"+filename, map[string]interface{}{
+		"source":        "csv_import_sync",
+		"set_id":        setID,
+		"asset_type_id": assetTypeID,
+		"total":         summary.TotalRows,
+		"created":       summary.CreatedRows,
+		"errors":        summary.ErrorRows,
+		"status":        summary.Status,
+	})
+	return summary, nil
+}
+
+// emitAudit writes a success-row to the audit trail. Best-effort — the
+// underlying logger.LogAudit already swallows + slog-warns marshal
+// failures, and an audit-write failure should never fail the mutation
+// it's recording.
+//
+// Bearer-token attribution (auth_method / api_token_id / api_token_prefix
+// / api_token_name) is folded into Details so a single token's footprint
+// is queryable from the audit table even when the same user has
+// minted many.
+func (s *AssetService) emitAudit(actor AuditActor, action string, resourceID *int, resourceName string, extra map[string]interface{}) {
+	details := mergeAuditDetails(extra, actor)
+	_ = logger.LogAudit(s.db, logger.AuditEvent{
+		UserID:       actor.UserID,
+		Username:     actor.Username,
+		IPAddress:    actor.IPAddress,
+		UserAgent:    actor.UserAgent,
+		ActionType:   action,
+		ResourceType: logger.ResourceAsset,
+		ResourceID:   resourceID,
+		ResourceName: resourceName,
+		Details:      details,
+		Success:      true,
+	})
+}
+
+// mergeAuditDetails composes the caller's extra map with the auth/token
+// attribution stamped onto every row. Caller-supplied keys win on a
+// collision so route-specific context (e.g. csv_import totals) isn't
+// clobbered by the actor stamp.
+func mergeAuditDetails(extra map[string]interface{}, actor AuditActor) map[string]interface{} {
+	if actor.AuthMethod == "" && actor.APITokenID == 0 && len(extra) == 0 {
+		return nil
+	}
+	merged := make(map[string]interface{}, len(extra)+4)
+	if actor.AuthMethod != "" {
+		merged["auth_method"] = actor.AuthMethod
+	}
+	if actor.APITokenID != 0 {
+		merged["api_token_id"] = actor.APITokenID
+	}
+	if actor.APITokenPrefix != "" {
+		merged["api_token_prefix"] = actor.APITokenPrefix
+	}
+	if actor.APITokenName != "" {
+		merged["api_token_name"] = actor.APITokenName
+	}
+	for k, v := range extra {
+		merged[k] = v
+	}
+	return merged
+}
+
+// csvRow holds the field values for a single CSV row, split by where
+// they route on the asset model.
+type csvRow struct {
+	title        string
+	description  string
+	assetTag     string
+	customFields map[string]interface{}
+}
+
+// buildCSVRow walks the CSV record against its header row and routes
+// each cell to either a built-in column or a custom field on the type,
+// matched case-insensitively by header name.
+func buildCSVRow(headers, record []string, customFieldByName map[string]string) csvRow {
+	row := csvRow{customFields: map[string]interface{}{}}
+	for i, h := range headers {
+		if i >= len(record) {
+			break
+		}
+		key := strings.ToLower(strings.TrimSpace(h))
+		val := strings.TrimSpace(record[i])
+		switch key {
+		case "title":
+			row.title = val
+		case "description":
+			row.description = val
+		case "asset_tag", "tag":
+			row.assetTag = val
+		default:
+			if canonical, ok := customFieldByName[key]; ok && val != "" {
+				row.customFields[canonical] = val
+			}
+		}
+	}
+	return row
+}
+
+// loadStoredCustomFieldValues unmarshals the persisted CFV column the
+// handler re-encoded onto in.CustomFieldValuesJSON for a partial
+// update. Returns nil for nil / empty / unparseable JSON — callers
+// fall back to "empty map" semantics, which the validator then runs
+// against the new type's required-field set.
+func loadStoredCustomFieldValues(stored *string) map[string]interface{} {
+	if stored == nil || *stored == "" {
+		return nil
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal([]byte(*stored), &m); err != nil {
+		return nil
+	}
+	return m
+}
+
+// encodeCustomFieldValuesJSON marshals the values map for storage.
+// Returns nil for nil / empty maps so the column stores NULL rather
+// than "null" or "{}".
+func encodeCustomFieldValuesJSON(m map[string]interface{}) (*string, error) {
+	if len(m) == 0 {
+		return nil, nil
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return nil, err
+	}
+	s := string(b)
+	return &s, nil
+}

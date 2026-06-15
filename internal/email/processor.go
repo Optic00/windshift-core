@@ -15,8 +15,8 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
-	"windshift/internal/utils"
 
 	"github.com/google/uuid"
 )
@@ -377,14 +377,8 @@ func (p *Processor) senderIsThreadParticipant(ctx context.Context, itemID, chann
 		return true
 	}
 	// Original creator via portal customer.
-	var creatorEmail sql.NullString
-	if err := p.db.QueryRowContext(ctx, `
-		SELECT pc.email
-		FROM items i
-		JOIN portal_customers pc ON pc.id = i.creator_portal_customer_id
-		WHERE i.id = ? AND i.channel_id = ?
-	`, itemID, channelID).Scan(&creatorEmail); err == nil && creatorEmail.Valid {
-		if normalizedEmail(creatorEmail.String) == senderEmail {
+	if creatorEmail, err := repository.NewItemRepository(p.db).GetPortalCreatorEmail(itemID, channelID); err == nil {
+		if normalizedEmail(creatorEmail) == senderEmail {
 			return true
 		}
 	}
@@ -432,8 +426,8 @@ func (p *Processor) createItemFromEmail( //nolint:unparam // ctx reserved for fu
 	// these here with a global query, which failed for custom workflows.
 	params := services.ItemCreationParams{
 		WorkspaceID:             config.EmailWorkspaceID,
-		Title:                   utils.StripHTMLTags(email.GetSubjectForItem()),
-		Description:             utils.SanitizeCommentContent(StripSignature(email.GetBodyText())),
+		Title:                   sanitize.PlainTextField.Sanitize(email.GetSubjectForItem()),
+		Description:             sanitize.Comment.Sanitize(StripSignature(email.GetBodyText())),
 		ItemTypeID:              config.EmailItemTypeID,
 		PriorityID:              config.EmailDefaultPriorityID,
 		CreatorPortalCustomerID: &customerID,

@@ -6,48 +6,18 @@ import (
 	"fmt"
 
 	"windshift/internal/aitools"
-	"windshift/internal/database"
 	"windshift/internal/llm"
-	"windshift/internal/services"
 )
 
 // ToolExecutor executes tool calls on behalf of the agentic chat loop.
 // It enforces workspace access via a pre-computed list of accessible workspace IDs.
 type ToolExecutor struct {
-	db                     database.Database
-	accessibleWorkspaceIDs []int
-	userID                 int
-	username               string
-	timePermService        *services.TimePermissionService
-	permService            *services.PermissionService
-	commentService         *services.CommentService
-	timerService           *services.TimerService
-	actionService          *services.ActionService
+	toolEnv *aitools.Env
 }
 
-// NewToolExecutor creates a tool executor scoped to the given user's accessible workspaces.
-func NewToolExecutor(
-	db database.Database,
-	accessibleWorkspaceIDs []int,
-	userID int,
-	username string,
-	timePermService *services.TimePermissionService,
-	permService *services.PermissionService,
-	commentService *services.CommentService,
-	timerService *services.TimerService,
-	actionService *services.ActionService,
-) *ToolExecutor {
-	return &ToolExecutor{
-		db:                     db,
-		accessibleWorkspaceIDs: accessibleWorkspaceIDs,
-		userID:                 userID,
-		username:               username,
-		timePermService:        timePermService,
-		permService:            permService,
-		commentService:         commentService,
-		timerService:           timerService,
-		actionService:          actionService,
-	}
+// NewToolExecutor creates a tool executor scoped to the given tool environment.
+func NewToolExecutor(env *aitools.Env) *ToolExecutor {
+	return &ToolExecutor{toolEnv: env}
 }
 
 // Execute dispatches a tool call by name and returns the JSON result.
@@ -65,18 +35,7 @@ func (e *ToolExecutor) Execute(ctx context.Context, name, arguments string) (str
 // executor's pre-computed accessibleWorkspaceIDs and injected services
 // are reused so behavior matches the legacy in-line handlers exactly.
 func (e *ToolExecutor) env() *aitools.Env {
-	return &aitools.Env{
-		DB:                     e.db,
-		UserID:                 e.userID,
-		Username:               e.username,
-		Source:                 aitools.SourceAIChat,
-		AccessibleWorkspaceIDs: e.accessibleWorkspaceIDs,
-		PermService:            e.permService,
-		TimePermService:        e.timePermService,
-		TimerService:           e.timerService,
-		CommentService:         e.commentService,
-		ActionService:          e.actionService,
-	}
+	return e.toolEnv
 }
 
 // runRegistryTool unmarshals raw JSON args into the entry's typed Args,

@@ -457,7 +457,7 @@ export default {
       members: 'Membros',
       configurationSets: 'Conjuntos de Configuração',
       sourceControl: 'Controle de Versão',
-      codingAgents: 'Agentes de codificação',
+      codingAgents: 'Agentes',
       removeWorkspace: 'Remover Workspace',
       issueSync: 'Sincronização de issues',
     },

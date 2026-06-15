@@ -130,6 +130,7 @@
       data={team.mapped_groups}
       keyField="group_id"
       actionItems={buildRowDropdown}
+      rowAttrs={(g) => ({ 'data-testid': 'group-row', 'data-group-id': String(g.group_id) })}
     />
   {/if}
 </div>

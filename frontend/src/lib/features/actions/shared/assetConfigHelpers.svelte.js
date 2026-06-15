@@ -14,9 +14,11 @@ import { actionFlowStore } from '../../../stores/actionFlowStore.svelte.js';
  */
 export function useAssetTypeFields(getAssetTypeId) {
   let assetTypeFields = $state([]);
+  let requestToken = 0;
 
   $effect(() => {
     const assetTypeId = getAssetTypeId();
+    const token = ++requestToken;
     if (!assetTypeId) {
       assetTypeFields = [];
       return;
@@ -24,9 +26,10 @@ export function useAssetTypeFields(getAssetTypeId) {
     api.assetTypes
       .getFields(assetTypeId)
       .then((result) => {
-        assetTypeFields = result || [];
+        if (token === requestToken) assetTypeFields = result || [];
       })
       .catch((error) => {
+        if (token !== requestToken) return;
         console.error('Failed to load asset type fields:', error);
         assetTypeFields = [];
       });
@@ -43,9 +46,14 @@ export function useAssetTypeFields(getAssetTypeId) {
  * Apply an asset-type change to the action flow store, resetting field_mappings
  * (always) plus any caller-supplied keys (e.g. Create resets category/status).
  */
-export function applyAssetTypeChange(nodeId, rawValue, extraReset = {}) {
+export function applyAssetTypeChange(
+  nodeId,
+  rawValue,
+  extraReset = {},
+  flowStore = actionFlowStore
+) {
   const value = parseInt(rawValue, 10) || 0;
-  actionFlowStore.updateNodeConfig(nodeId, {
+  flowStore.updateNodeConfig(nodeId, {
     asset_type_id: value,
     field_mappings: [],
     ...extraReset,
@@ -55,6 +63,6 @@ export function applyAssetTypeChange(nodeId, rawValue, extraReset = {}) {
 /**
  * Persist a field-mappings change against the selected node.
  */
-export function applyMappingsChange(nodeId, mappings) {
-  actionFlowStore.updateNodeConfig(nodeId, { field_mappings: mappings });
+export function applyMappingsChange(nodeId, mappings, flowStore = actionFlowStore) {
+  flowStore.updateNodeConfig(nodeId, { field_mappings: mappings });
 }

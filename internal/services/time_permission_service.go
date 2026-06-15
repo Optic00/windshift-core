@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"windshift/internal/database"
 	"windshift/internal/models"
@@ -96,6 +97,26 @@ func (s *TimePermissionService) IsTimeProjectManager(userID, projectID int) (boo
 	}
 
 	// 3. Managers exist - check if user is assigned as manager
+	return s.isProjectManager(userID, projectID)
+}
+
+// CanGrantProjectAccess checks if a user has real authority to add/remove project
+// managers or members. Unlike IsTimeProjectManager, it deliberately does NOT treat
+// the "no managers configured → open to all" default as authority: that default would
+// let any authenticated user seize control of a brand-new project by inserting
+// themselves as its first manager. Authority requires either the global project.manage
+// permission OR a direct/group manager assignment on this specific project.
+func (s *TimePermissionService) CanGrantProjectAccess(userID, projectID int) (bool, error) {
+	// 1. Global full access (system.admin OR project.manage)
+	hasFullAccess, err := s.HasProjectManagePermission(userID)
+	if err != nil {
+		return false, err
+	}
+	if hasFullAccess {
+		return true, nil
+	}
+
+	// 2. Must be an actually-assigned manager of this project (not the open-to-all default)
 	return s.isProjectManager(userID, projectID)
 }
 
@@ -263,7 +284,10 @@ func (s *TimePermissionService) GetAccessibleProjects(userID int) ([]int, error)
 	}
 	defer rows.Close()
 
-	var projectIDs []int
+	// Initialize as a non-nil slice: nil is reserved for the full-access
+	// sentinel above, so a user with zero accessible projects must return
+	// an empty slice rather than accidentally signal full access.
+	projectIDs := []int{}
 	for rows.Next() {
 		var id int
 		if err := rows.Scan(&id); err != nil {
@@ -276,6 +300,51 @@ func (s *TimePermissionService) GetAccessibleProjects(userID int) ([]int, error)
 	}
 
 	return projectIDs, nil
+}
+
+// MaskInaccessibleProjectNames blanks the human-readable project name fields on
+// items whose project / time-project / effective-project the user is not allowed
+// to view, so a restricted time project's name isn't disclosed to item viewers
+// who lack time-project access. Project *IDs* are left intact (they carry no
+// name); only the names are stripped. A user with full project access (the
+// GetAccessibleProjects nil sentinel) is never masked.
+func (s *TimePermissionService) MaskInaccessibleProjectNames(userID int, items []models.Item) {
+	accessible, err := s.GetAccessibleProjects(userID)
+	if err != nil {
+		slog.Warn("failed to load accessible projects for masking", slog.Int("user_id", userID), slog.Any("error", err))
+		// Fail closed: if we can't determine access, strip names rather than leak.
+		for i := range items {
+			items[i].ProjectName = ""
+			items[i].TimeProjectName = ""
+			items[i].EffectiveProjectName = ""
+		}
+		return
+	}
+	if accessible == nil {
+		return // full access: nothing to mask
+	}
+	allowed := make(map[int]struct{}, len(accessible))
+	for _, id := range accessible {
+		allowed[id] = struct{}{}
+	}
+	canSee := func(p *int) bool {
+		if p == nil {
+			return true // no project assigned → no name to hide
+		}
+		_, ok := allowed[*p]
+		return ok
+	}
+	for i := range items {
+		if !canSee(items[i].ProjectID) {
+			items[i].ProjectName = ""
+		}
+		if !canSee(items[i].TimeProjectID) {
+			items[i].TimeProjectName = ""
+		}
+		if !canSee(items[i].EffectiveProjectID) {
+			items[i].EffectiveProjectName = ""
+		}
+	}
 }
 
 // CanEditWorklog checks if user can edit/delete a worklog

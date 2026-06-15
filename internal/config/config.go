@@ -14,6 +14,7 @@ type Config struct {
 	// HTTP / network
 	Port              string
 	BaseURL           string
+	ContextPath       string
 	AllowedHosts      string
 	AllowedPort       string
 	UseProxy          bool
@@ -23,11 +24,24 @@ type Config struct {
 	TLSKeyPath        string
 	DisableCSRF       bool
 
+	// AllowInsecureHTTP permits credentialed browser access from plain-http
+	// origins other than localhost (e.g. http://lanhost:8080). Without it,
+	// such a BASE_URL fails CORS middleware construction, because credentialed
+	// CORS over insecure origins is interceptable. For trusted LANs and
+	// testing only; unlike UseProxy it does not affect forwarded-header trust.
+	AllowInsecureHTTP bool
+
+	// AllowLocalConnections, when true, lets every server-side SSRF-safe HTTP
+	// client/dialer reach loopback and private/RFC1918 destinations. It is the
+	// single switch operators flip to run self-hosted SCM (Gitea / GitHub
+	// Enterprise), Jira Data Center, or a local LLM gateway on a private
+	// network — instead of allowlisting each endpoint's CIDR. Off by default.
+	AllowLocalConnections bool
+
 	// Sub-configs grouped by concern
 	DB           DBConfig
 	SSH          SSHConfig
 	Auth         AuthConfig
-	SSO          SSOConfig
 	WebAuthn     WebAuthnConfig
 	Logging      LoggingConfig
 	Plugins      PluginsConfig
@@ -75,14 +89,6 @@ type AuthConfig struct {
 	SessionSecret string
 }
 
-// SSOConfig holds SSO-specific runtime options.
-type SSOConfig struct {
-	// OIDCAllowedPrivateCIDRs is a comma-separated list of private / CGNAT CIDRs
-	// that OIDC discovery, JWKS, and token HTTP calls may dial. Empty keeps the
-	// SSRF guard fully public-internet-only.
-	OIDCAllowedPrivateCIDRs string
-}
-
 // WebAuthnConfig holds WebAuthn relying-party identity.
 type WebAuthnConfig struct {
 	// RPID is the relying party ID (usually the hostname). In production it is
@@ -113,28 +119,21 @@ type LLMConfig struct {
 	PromptsDir    string
 }
 
-// CodingAgentConfig configures the coding-agent harness (WI-89). When
-// RunnerImage is non-empty the server constructs a production RunService
-// that spawns pi-coding-agent inside that container image, wires it
-// through the BindingService, and the assignee-change trigger fires
-// real runs. When empty the harness stays in observer mode — bindings
-// can still be created, the trigger logs but no-ops.
+// CodingAgentConfig configures the coding-agent harness (WI-89). The harness is
+// opt-in: set --enable-coding-agent (or CODING_AGENT_ENABLED=true) to activate
+// it. When enabled, the server wires the orchestration surface — the
+// BindingService trigger that queues runs, the /runner/* control plane that
+// remote runner pools register/claim against, and the post-run PR hook — but it
+// does NOT execute agents on the orchestrator host. All runs are dispatched to
+// remote runner pools (windshift-runner); there is no in-process LLM loop.
 //
-// Sandbox knobs (Network/PidsLimit/Memory/CPUs) layer onto the hardened
-// `docker run` defaults baked into DockerPiRunner. They are tunables for
-// operator-specific resource budgets, NOT switches that can turn the
-// hardening off.
+// The agent reaches the model only through the llm-proxy broker, so no
+// provider key or provider selection is injected; it needs only an
+// LLM_BASE_URL (set per-run to the run-scoped proxy) and a model id, both
+// derived from the binding's LLM connection at claim time.
 type CodingAgentConfig struct {
-	RunnerImage  string // e.g. "windshift/coding-agent:wi-89"
-	DockerBinary string // defaults to "docker"
-	WorktreeRoot string // absolute host path; required if RunnerImage is set
-	GlobalCap    int    // RunService.GlobalCap; defaults to 8
-	LLMProvider  string // env LLM_PROVIDER for the container
-	LLMModel     string // env LLM_MODEL for the container
-	Network      string // docker --network value; defaults to "coding-agent-egress" (operator-created, egress-filtered)
-	PidsLimit    int    // docker --pids-limit; defaults to 512
-	Memory       string // docker --memory + --memory-swap; defaults to "4g"
-	CPUs         string // docker --cpus; defaults to "2"
+	Enabled  bool
+	WSAPIURL string // URL the runner reaches this Windshift API on; defaults to BASE_URL
 }
 
 // LogbookConfig holds the URL of the logbook sidecar (if any).

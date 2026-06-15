@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -10,15 +9,16 @@ import (
 	"time"
 
 	"windshift/internal/auth"
-	"windshift/internal/database"
 	"windshift/internal/models"
+	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
 
 // PortalAuthHandler handles portal customer authentication
 type PortalAuthHandler struct {
-	db                   database.Database
+	portalAuthRepo       *repository.PortalAuthRepository
 	portalSessionManager *auth.PortalSessionManager
 	sessionManager       *auth.SessionManager // internal session manager
 	magicLinkService     *services.MagicLinkService
@@ -27,14 +27,14 @@ type PortalAuthHandler struct {
 
 // NewPortalAuthHandler creates a new portal auth handler
 func NewPortalAuthHandler(
-	db database.Database,
+	portalAuthRepo *repository.PortalAuthRepository,
 	portalSessionManager *auth.PortalSessionManager,
 	sessionManager *auth.SessionManager,
 	magicLinkService *services.MagicLinkService,
 	ipExtractor *utils.IPExtractor,
 ) *PortalAuthHandler {
 	return &PortalAuthHandler{
-		db:                   db,
+		portalAuthRepo:       portalAuthRepo,
 		portalSessionManager: portalSessionManager,
 		sessionManager:       sessionManager,
 		magicLinkService:     magicLinkService,
@@ -52,13 +52,7 @@ func (h *PortalAuthHandler) getClientIP(r *http.Request) string {
 // the same error-logging and rows.Err() handling FormHandler and PortalHandler
 // already get.
 func (h *PortalAuthHandler) findPortalBySlug(ctx context.Context, slug string) (*models.Channel, *models.ChannelConfig, error) {
-	res, err := findChannelBySlug(ctx, h.db, "portal", slug, func(c *models.ChannelConfig) string { return c.PortalSlug })
-	if err != nil {
-		return nil, nil, err
-	}
-	channel := res.channel
-	config := res.config
-	return &channel, &config, nil
+	return h.portalAuthRepo.FindPortalBySlug(ctx, slug)
 }
 
 // RequestMagicLink handles POST /portal/{slug}/auth/request
@@ -83,16 +77,22 @@ func (h *PortalAuthHandler) RequestMagicLink(w http.ResponseWriter, r *http.Requ
 
 	// Parse request body
 	var request struct {
-		Email string `json:"email"`
+		Email string `json:"email" validate:"required,email,max=255"`
 	}
 	if err = json.NewDecoder(r.Body).Decode(&request); err != nil {
 		respondBadRequest(w, r, "Invalid request body")
 		return
 	}
+	sanitize.Apply(&request.Email, sanitize.ShortIdentifier)
 
 	email := strings.TrimSpace(strings.ToLower(request.Email))
 	if email == "" {
 		respondValidationError(w, r, "Email is required")
+		return
+	}
+	request.Email = email
+	if err = utils.Validate(request); err != nil {
+		respondValidationError(w, r, err.Error())
 		return
 	}
 
@@ -123,14 +123,7 @@ func (h *PortalAuthHandler) RequestMagicLink(w http.ResponseWriter, r *http.Requ
 	// access can sign in. Return the generic success response for unknown emails
 	// to avoid leaking who is a customer.
 	if config.PortalRegistrationMode == "manual" {
-		var hasAccess bool
-		err := h.db.QueryRowContext(ctx, `
-			SELECT EXISTS(
-				SELECT 1 FROM portal_customer_channels pcc
-				JOIN portal_customers pc ON pc.id = pcc.portal_customer_id
-				WHERE pc.email = ? AND pcc.channel_id = ?
-			)
-		`, email, channel.ID).Scan(&hasAccess)
+		hasAccess, err := h.portalAuthRepo.CustomerEmailHasChannelAccess(ctx, email, channel.ID)
 		if err != nil || !hasAccess {
 			if err != nil {
 				slog.Error("failed to check portal customer access", slog.String("component", "portal_auth"), slog.Any("error", err))
@@ -337,28 +330,25 @@ func (h *PortalAuthHandler) GetCurrentCustomer(w http.ResponseWriter, r *http.Re
 	// the customer did not authenticate to.
 	token, err := h.portalSessionManager.GetPortalSessionFromRequest(r)
 	if err == nil {
-		session, err := h.portalSessionManager.ValidatePortalSession(token)
+		clientIP := h.getClientIP(r)
+		session, err := h.portalSessionManager.ValidatePortalSession(token, clientIP)
 		if err == nil && session.ChannelID != nil && *session.ChannelID == channel.ID {
 			// Look up passkey state used by the frontend to drive both the
 			// "set up a passkey" banner and the login modal's passkey button.
-			var passkeyCount int
-			_ = h.db.QueryRowContext(ctx, `
-				SELECT COUNT(*) FROM portal_webauthn_credentials WHERE portal_customer_id = ?
-			`, session.Customer.ID).Scan(&passkeyCount)
-
-			var dismissedAt sql.NullTime
-			_ = h.db.QueryRowContext(ctx, `
-				SELECT dismissed_passkey_prompt_at FROM portal_customers WHERE id = ?
-			`, session.Customer.ID).Scan(&dismissedAt)
+			info, err := h.portalAuthRepo.GetCustomerSessionInfo(ctx, session.Customer.ID)
+			if err != nil {
+				slog.Warn("failed to load portal customer session info", slog.String("component", "portal_auth"), slog.Any("error", err))
+				info = &repository.PortalCustomerSessionInfo{}
+			}
 
 			customerPayload := map[string]interface{}{
 				"id":            session.Customer.ID,
 				"email":         session.Customer.Email,
 				"name":          session.Customer.Name,
-				"passkey_count": passkeyCount,
+				"passkey_count": info.PasskeyCount,
 			}
-			if dismissedAt.Valid {
-				customerPayload["dismissed_passkey_prompt_at"] = dismissedAt.Time.Format(time.RFC3339)
+			if info.DismissedPasskeyPromptAt != nil {
+				customerPayload["dismissed_passkey_prompt_at"] = info.DismissedPasskeyPromptAt.Format(time.RFC3339)
 			} else {
 				customerPayload["dismissed_passkey_prompt_at"] = nil
 			}

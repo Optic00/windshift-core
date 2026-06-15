@@ -11,8 +11,22 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
 	"windshift/internal/utils"
 )
+
+// sanitizeItemTypeRequest scrubs the user-facing fields on an item-type
+// payload. Name renders in type pickers + board cards, Description in
+// the type editor; Icon (Lucide icon name) and Color (hex) are
+// identifier-shaped.
+func sanitizeItemTypeRequest(it *models.ItemType) {
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &it.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &it.Description, Policy: sanitize.RichText},
+		sanitize.Pair{Target: &it.Icon, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &it.Color, Policy: sanitize.ShortIdentifier},
+	)
+}
 
 type ItemTypeHandler struct {
 	db database.Database
@@ -117,6 +131,7 @@ func (h *ItemTypeHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	sanitizeItemTypeRequest(&it)
 
 	// Validate required fields
 	if strings.TrimSpace(it.Name) == "" {
@@ -258,6 +273,7 @@ func (h *ItemTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	sanitizeItemTypeRequest(&it)
 
 	// Validate required fields
 	if strings.TrimSpace(it.Name) == "" {

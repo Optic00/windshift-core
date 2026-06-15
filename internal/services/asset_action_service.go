@@ -635,6 +635,12 @@ func (as *AssetActionService) executeSetField(node *models.AssetActionNode, ctx 
 
 	value := as.substituteVariables(config.Value, ctx)
 
+	// Substituted variables can carry user content — built-in columns get
+	// the same per-column input policy the asset create/update path applies
+	// via sanitizeAssetText (WI-319) before the value reaches the UPDATE.
+	// Custom-field values get the asset CF text pass in the default branch.
+	value = sanitizeAssetBuiltinFieldValue(config.FieldName, value)
+
 	var oldValue interface{}
 
 	// Built-in asset fields use hard-coded SQL per column — never interpolate
@@ -682,8 +688,9 @@ func (as *AssetActionService) executeSetField(node *models.AssetActionNode, ctx 
 
 	default:
 		// Custom field: update custom_field_values JSON
+		var assetTypeID sql.NullInt64
 		var customFieldsJSON sql.NullString
-		err := as.db.QueryRow(`SELECT custom_field_values FROM assets WHERE id = ?`, ctx.Event.AssetID).Scan(&customFieldsJSON)
+		err := as.db.QueryRow(`SELECT asset_type_id, custom_field_values FROM assets WHERE id = ?`, ctx.Event.AssetID).Scan(&assetTypeID, &customFieldsJSON)
 		if err != nil {
 			return fmt.Errorf("failed to get asset custom_field_values: %w", err)
 		}
@@ -699,6 +706,16 @@ func (as *AssetActionService) executeSetField(node *models.AssetActionNode, ctx 
 
 		oldValue = customFields[config.FieldName]
 		customFields[config.FieldName] = value
+
+		// Same text/textarea sanitize pass the asset CF write paths apply
+		// (WI-319) before the merged map is persisted. Refresh the local
+		// value so the step output / cascade event carry the sanitized form.
+		if err := NewAssetService(as.db, repository.NewAssetRepository(as.db)).SanitizeCustomFieldTextValues(int(assetTypeID.Int64), customFields); err != nil {
+			return fmt.Errorf("failed to sanitize asset custom_field_values: %w", err)
+		}
+		if sanitized, ok := customFields[config.FieldName].(string); ok {
+			value = sanitized
+		}
 
 		updatedJSON, err := json.Marshal(customFields)
 		if err != nil {
@@ -733,6 +750,35 @@ func (as *AssetActionService) executeSetField(node *models.AssetActionNode, ctx 
 	})
 
 	return nil
+}
+
+// sanitizeAssetBuiltinFieldValue routes a single built-in asset column value
+// through sanitizeAssetText — the same choke point CreateAsset/UpdateAsset
+// use — so the per-column policies (PlainTextField for title, RichText for
+// description, ShortIdentifier for asset_tag) stay defined in exactly one
+// place. Non built-in field names pass through unchanged; custom-field
+// values get the asset CF text pass instead.
+func sanitizeAssetBuiltinFieldValue(fieldName, value string) string {
+	var title, description, assetTag string
+	switch fieldName {
+	case "title":
+		title = value
+	case "description":
+		description = value
+	case "asset_tag":
+		assetTag = value
+	default:
+		return value
+	}
+	sanitizeAssetText(&title, &description, &assetTag)
+	switch fieldName {
+	case "title":
+		return title
+	case "description":
+		return description
+	default:
+		return assetTag
+	}
 }
 
 // executeSetStatus updates an asset's status_id

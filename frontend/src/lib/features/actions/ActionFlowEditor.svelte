@@ -51,7 +51,15 @@
   // change this; others see a read-only display of the current value.
   // svelte-ignore state_referenced_locally
   let actorUserId = $state(action?.actor_user_id ?? null);
+  let lastActorSource = $state(null);
   let canSetActor = $derived(permissionStore.hasPermissionKey('action.set_actor'));
+
+  $effect(() => {
+    const source = `${action?.id ?? 'new'}:${action?.actor_user_id ?? ''}`;
+    if (source === lastActorSource) return;
+    lastActorSource = source;
+    actorUserId = action?.actor_user_id ?? null;
+  });
 
   const nodeTypes = {
     trigger: TriggerNode,
@@ -244,7 +252,7 @@
       if (!action?.id) return;
       try {
         const fresh = await api.get(`/workspaces/${action.workspace_id}/actions/${action.id}`);
-        actionFlowStore.init(fresh);
+        actionFlowStore.init(fresh, statuses);
         infoToast(t('actions.aiUpdated', 'Action updated by AI'));
       } catch (err) {
         console.error('Failed to reload action after agent run:', err);
@@ -292,12 +300,30 @@
     Object.entries(fieldIdToBackendName).map(([k, v]) => [v, k])
   );
 
+  const standardFieldTypes = {
+    title: 'text',
+    description: 'text',
+    status: 'enum',
+    priority: 'enum',
+    assignee: 'user',
+    reporter: 'user',
+    milestone: 'enum',
+    iteration: 'enum',
+    dueDate: 'date',
+    startDate: 'date',
+    storyPoints: 'number',
+    parent: 'reference',
+    project: 'enum',
+    itemType: 'enum',
+  };
+
   function getFieldSelectorValue(config) {
     if (config?.target === 'custom_field' && config?.custom_field_id) {
       return {
         id: `cf_${config.custom_field_id}`,
         customFieldId: config.custom_field_id,
         name: config.field_display_name || `Custom field ${config.custom_field_id}`,
+        type: config.field_type || '',
         isCustom: true,
       };
     }
@@ -305,7 +331,7 @@
     if (!backendName) return null;
     if (backendName.startsWith('custom_field_')) {
       const customFieldId = parseInt(backendName.slice('custom_field_'.length), 10);
-      return { id: `cf_${customFieldId}`, customFieldId, name: config.field_display_name || backendName, isCustom: true };
+      return { id: `cf_${customFieldId}`, customFieldId, name: config.field_display_name || backendName, type: config.field_type || '', isCustom: true };
     }
     if (backendName.startsWith('cf_')) {
       return { id: backendName, name: backendName.slice(3), isCustom: true };
@@ -314,7 +340,9 @@
     if (fieldId === 'milestone') {
       return { id: fieldId, name: t('common.milestone', 'Milestone'), type: 'enum' };
     }
-    return fieldId ? { id: fieldId, name: fieldId } : { id: backendName, name: backendName };
+    return fieldId
+      ? { id: fieldId, name: fieldId, type: standardFieldTypes[fieldId] || '' }
+      : { id: backendName, name: backendName, type: config?.field_type || '' };
   }
 
   function backendFieldName(field) {
@@ -330,6 +358,8 @@
         custom_field_id: field.customFieldId,
         field_name: '',
         field_display_name: field.name,
+        field_type: field.type || '',
+        value: '',
         value_display_name: '',
       };
     }
@@ -339,6 +369,8 @@
       custom_field_id: 0,
       field_name: fieldName,
       field_display_name: field.name,
+      field_type: field.type || standardFieldTypes[field.id] || '',
+      value: '',
       value_display_name: '',
     };
     if (fieldName === 'milestone_ids') updates.value = '[]';
@@ -369,11 +401,48 @@
     actionFlowStore.updateNodeConfig(nodeId, {
       field_name: 'milestone_ids',
       field_display_name: t('common.milestone', 'Milestone'),
+      field_type: 'enum',
       value: JSON.stringify(safeIDs),
       value_display_name: safeIDs
         .map((id) => milestones.find((m) => m.id === id)?.name)
         .filter(Boolean)
         .join(', '),
+    });
+  }
+
+  function isUserSetField(config) {
+    return config?.field_type === 'user' || config?.field_name === 'assignee_id' || config?.field_name === 'creator_id';
+  }
+
+  function getSetFieldUserID(config) {
+    const raw = config?.value;
+    if (raw === null || raw === undefined || raw === '') return null;
+    if (typeof raw === 'number') return raw;
+    if (typeof raw === 'string') {
+      const trimmed = raw.trim();
+      if (/^\d+$/.test(trimmed)) return parseInt(trimmed, 10);
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (typeof parsed === 'number') return parsed;
+        if (parsed?.id) return parseInt(parsed.id, 10) || null;
+      } catch {
+        // Template values like {{item.creator_id}} intentionally stay editable in the text input below.
+      }
+    }
+    if (typeof raw === 'object' && raw?.id) return parseInt(raw.id, 10) || null;
+    return null;
+  }
+
+  function getUserDisplayName(user) {
+    if (!user) return '';
+    const fullName = `${user.first_name || ''} ${user.last_name || ''}`.trim();
+    return fullName || user.username || user.email || `User #${user.id}`;
+  }
+
+  function updateSetFieldUser(nodeId, user) {
+    actionFlowStore.updateNodeConfig(nodeId, {
+      value: user ? String(user.id) : '',
+      value_display_name: user ? getUserDisplayName(user) : '',
     });
   }
 
@@ -526,7 +595,7 @@
           onSelect={(field) => {
             store.updateNodeConfig(selectedNode.id, setFieldConfigForSelection(field));
           }}
-          onClear={() => store.updateNodeConfig(selectedNode.id, { target: 'column', custom_field_id: 0, field_name: '', field_display_name: '', value: '', value_display_name: '' })}
+          onClear={() => store.updateNodeConfig(selectedNode.id, { target: 'column', custom_field_id: 0, field_name: '', field_display_name: '', field_type: '', value: '', value_display_name: '' })}
         />
       </div>
       <div>
@@ -549,8 +618,27 @@
             onSelect={({ ids }) => updateSetFieldMilestones(selectedNode.id, ids)}
           />
           <p class="text-xs mt-1 sidebar-hints">
-            {t('actions.config.milestonePickerHint', 'Stores milestone IDs for the action; names are shown only for editing.')}
+            {t('actions.config.milestonePickerHint')}
           </p>
+        {:else if isUserSetField(selectedNode.data?.config)}
+          <UserPicker
+            value={getSetFieldUserID(selectedNode.data?.config)}
+            workspaceId={action?.workspace_id}
+            placeholder={t('pickers.selectUser')}
+            showUnassigned={true}
+            onSelect={(user) => updateSetFieldUser(selectedNode.id, user)}
+          />
+          <p class="text-xs mt-1 sidebar-hints">
+            {t('actions.config.userPickerHint')}
+          </p>
+          <input
+            id="config-set-field-value"
+            type="text"
+            class="w-full px-3 py-2 border rounded-md text-sm config-input mt-2"
+            value={selectedNode.data?.config?.value || ''}
+            oninput={(e) => store.updateNodeConfig(selectedNode.id, { value: e.currentTarget.value, value_display_name: '' })}
+            placeholder="{'{{'}item.creator_id{'}}'}"
+          />
         {:else}
           <input
             id="config-set-field-value"
@@ -668,11 +756,11 @@
         size="small"
       />
     {:else if selectedNode.type === 'update_asset'}
-      <UpdateAssetConfigPanel {selectedNode} bind:showPlaceholderModal />
+      <UpdateAssetConfigPanel {selectedNode} flowStore={store} bind:showPlaceholderModal />
     {:else if selectedNode.type === 'create_asset'}
-      <CreateAssetConfigPanel {selectedNode} bind:showPlaceholderModal />
+      <CreateAssetConfigPanel {selectedNode} flowStore={store} bind:showPlaceholderModal />
     {:else if selectedNode.type === 'create_milestone'}
-      <CreateMilestoneConfigPanel {selectedNode} bind:showPlaceholderModal />
+      <CreateMilestoneConfigPanel {selectedNode} flowStore={store} bind:showPlaceholderModal />
     {:else if selectedNode.type === 'related_items'}
       <div>
         <label for="config-related-relation" class="block text-xs font-medium mb-1">Relation</label>

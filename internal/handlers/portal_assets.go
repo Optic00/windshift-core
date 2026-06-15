@@ -295,6 +295,18 @@ func (h *PortalHandler) ExecuteAssetReport(w http.ResponseWriter, r *http.Reques
 
 	columns := decodeColumnConfig(report.ColumnConfig)
 
+	// The report's column_config is the only mechanism limiting which custom
+	// fields a portal customer may see (asset custom fields have no
+	// per-field portal-visibility flag), so derive the set of permitted custom
+	// field keys from the cf_<id> columns and project the stored JSON down to
+	// them — never serialize fields the report did not opt into.
+	allowedCustomFieldKeys := make(map[string]struct{})
+	for _, col := range columns {
+		if strings.HasPrefix(col, "cf_") {
+			allowedCustomFieldKeys[strings.TrimPrefix(col, "cf_")] = struct{}{}
+		}
+	}
+
 	// Build the query for assets, scoped to the report's set and optionally filtered by CQL.
 	whereClause := "a.set_id = ?"
 	queryArgs := []interface{}{report.AssetSetID}
@@ -367,8 +379,19 @@ func (h *PortalHandler) ExecuteAssetReport(w http.ResponseWriter, r *http.Reques
 			id := int(categoryID.Int64)
 			asset.CategoryID = &id
 		}
-		if customFieldValuesStr.Valid && customFieldValuesStr.String != "" {
-			_ = json.Unmarshal([]byte(customFieldValuesStr.String), &asset.CustomFieldValues)
+		if customFieldValuesStr.Valid && customFieldValuesStr.String != "" && len(allowedCustomFieldKeys) > 0 {
+			var allValues map[string]interface{}
+			if json.Unmarshal([]byte(customFieldValuesStr.String), &allValues) == nil {
+				projected := make(map[string]interface{}, len(allowedCustomFieldKeys))
+				for key := range allowedCustomFieldKeys {
+					if v, present := allValues[key]; present {
+						projected[key] = v
+					}
+				}
+				if len(projected) > 0 {
+					asset.CustomFieldValues = projected
+				}
+			}
 		}
 		if assetTypeName.Valid {
 			asset.AssetTypeName = &assetTypeName.String

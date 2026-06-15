@@ -19,7 +19,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
-	"windshift/internal/utils"
+	"windshift/internal/sanitize"
 )
 
 // PageService is the entry point for all page CRUD and tree operations.
@@ -98,12 +98,12 @@ type CreatePageInput struct {
 // Create inserts a new page after sanitizing inputs and computing derived
 // columns. Returns the persisted page.
 func (s *PageService) Create(actorID int, in CreatePageInput) (*models.Page, error) {
-	title := utils.SanitizeTitle(in.Title)
+	title := sanitize.PlainTextField.Sanitize(in.Title)
 	if title == "" {
 		return nil, ErrPageTitleRequired
 	}
 
-	content := utils.SanitizePageMarkdown(in.Content)
+	content := sanitize.LongDocument.Sanitize(in.Content)
 	excerpt := deriveExcerpt(content)
 	hash := contentHash(content)
 
@@ -198,11 +198,11 @@ type UpdatePageInput struct {
 // admin-gated call so the audit trail and handler authorization paths
 // stay distinct.
 func (s *PageService) Update(actorID int, in UpdatePageInput) (*models.Page, error) {
-	title := utils.SanitizeTitle(in.Title)
+	title := sanitize.PlainTextField.Sanitize(in.Title)
 	if title == "" {
 		return nil, ErrPageTitleRequired
 	}
-	content := utils.SanitizePageMarkdown(in.Content)
+	content := sanitize.LongDocument.Sanitize(in.Content)
 	excerpt := deriveExcerpt(content)
 	hash := contentHash(content)
 
@@ -392,6 +392,9 @@ func (s *PageService) Move(actorID, pageID int, newParentID, prevSiblingID, next
 // reversible by restoring an explicit revision, which unarchives only the
 // addressed page. Use ArchiveChecked from HTTP handlers so descendant ACL
 // checks run inside the archive transaction.
+//
+// deadcode-keep: called by core-tests/internal/services/page_service_test.go;
+// production handlers use ArchiveChecked.
 func (s *PageService) Archive(actorID, pageID int) error {
 	return s.ArchiveChecked(actorID, pageID, nil)
 }
@@ -419,22 +422,41 @@ func (s *PageService) ArchiveChecked(actorID, pageID int, authorize func([]model
 		if len(subtree) == 0 {
 			return ErrPageNotFound
 		}
+
+		// Only pages that are not already archived actually transition state.
+		// Re-touching an already-archived descendant would (a) fail the caller's
+		// admin authorization — archived pages are frozen to every op but
+		// view/restore, so the check returns false and surfaces as a misleading
+		// 404 — and (b) needlessly reset its archived_at and append a spurious
+		// "archived with subtree" revision. So scope authorization and the write
+		// to the live subset.
+		live := make([]models.Page, 0, len(subtree))
+		for i := range subtree {
+			if subtree[i].ArchivedAt == nil {
+				live = append(live, subtree[i])
+			}
+		}
+		if len(live) == 0 {
+			// The whole subtree is already archived; nothing to do.
+			return nil
+		}
 		if authorize != nil {
-			if err := authorize(subtree); err != nil {
+			if err := authorize(live); err != nil {
 				return err
 			}
 		}
 
-		// Archive the page and every descendant by materialized-path prefix.
-		// A single statement keeps the operation atomic and targets the same
-		// locked subtree rows authorized above.
+		// Archive the page and every not-yet-archived descendant by
+		// materialized-path prefix. A single statement keeps the operation
+		// atomic and targets the same locked subtree rows authorized above; the
+		// archived_at IS NULL guard leaves already-archived rows untouched.
 		if _, err := tx.Exec(`
 			UPDATE pages
 			SET archived_at = CURRENT_TIMESTAMP,
 			    archived_by = ?,
 			    updated_at = CURRENT_TIMESTAMP,
 			    updated_by = ?
-			WHERE id = ? OR (workspace_id = ? AND path LIKE ?)
+			WHERE (id = ? OR (workspace_id = ? AND path LIKE ?)) AND archived_at IS NULL
 		`, actorID, actorID, pageID, page.WorkspaceID, pathLike); err != nil {
 			return fmt.Errorf("archive subtree: %w", err)
 		}
@@ -446,10 +468,12 @@ func (s *PageService) ArchiveChecked(actorID, pageID int, authorize func([]model
 			return err
 		}
 
-		// Every archived row gets its own revision entry so descendants have a
-		// local audit trail explaining why/when they disappeared.
-		for i := range subtree {
-			if _, err := s.writeRevisionTx(tx, &subtree[i], actorID, models.PageRevisionChangeTypeArchive, "archived with subtree"); err != nil {
+		// Every newly archived row gets its own revision entry so descendants
+		// have a local audit trail explaining why/when they disappeared.
+		// Already-archived rows are skipped — they kept their original archive
+		// revision and weren't re-touched above.
+		for i := range live {
+			if _, err := s.writeRevisionTx(tx, &live[i], actorID, models.PageRevisionChangeTypeArchive, "archived with subtree"); err != nil {
 				return err
 			}
 		}
@@ -981,7 +1005,7 @@ func (s *PageService) resolveSiblingFracIndex(
 		// No non-moved siblings → the moved page is the lone child;
 		// pick a deterministic starting key.
 		if len(siblingByID) == 0 {
-			key, kerr := KeyBetween("", "")
+			key, kerr := repository.KeyBetween("", "")
 			if kerr != nil {
 				return nil, fmt.Errorf("compute initial frac_index for empty parent: %w", kerr)
 			}
@@ -1024,7 +1048,7 @@ func (s *PageService) resolveSiblingFracIndex(
 			if siblings[i].ID == movedPageID {
 				continue
 			}
-			fresh, kerr := KeyBetween(lastKey, "")
+			fresh, kerr := repository.KeyBetween(lastKey, "")
 			if kerr != nil {
 				return nil, fmt.Errorf("backfill frac_index for sibling %d: %w", siblings[i].ID, kerr)
 			}
@@ -1050,7 +1074,7 @@ func (s *PageService) resolveSiblingFracIndex(
 		}
 	}
 
-	newKey, err := KeyBetween(prevKey, nextKey)
+	newKey, err := repository.KeyBetween(prevKey, nextKey)
 	if err != nil {
 		return nil, fmt.Errorf("compute frac_index between %q and %q: %w", prevKey, nextKey, err)
 	}

@@ -13,6 +13,7 @@
   import UserPicker from '../pickers/UserPicker.svelte';
   import WorkspacePicker from '../pickers/WorkspacePicker.svelte';
   import Input from '../components/Input.svelte';
+  import Button from '../components/Button.svelte';
   import ConfirmWithReasonDialog from '../dialogs/ConfirmWithReasonDialog.svelte';
   import DescriptionText from '../components/DescriptionText.svelte';
   import { errorToast } from '../stores/toasts.svelte.js';
@@ -209,7 +210,7 @@
         <div class="md:col-span-4">
           <label for="add-user" class="block text-xs mb-1" style="color: var(--ds-text-subtle);">User</label>
           <div id="add-user">
-            <UserPicker bind:value={addUserId} users={serviceUsers} placeholder="Pick a service user" />
+            <UserPicker bind:value={addUserId} users={serviceUsers} placeholder="Pick a service user" class="min-h-[38px]" />
           </div>
         </div>
         <div class="md:col-span-3">
@@ -224,23 +225,21 @@
         </div>
         <div class="md:col-span-4">
           <label for="add-reason" class="block text-xs mb-1" style="color: var(--ds-text-subtle);">Reason (audit-logged)</label>
-          <Input id="add-reason" bind:value={addReason} placeholder="e.g. pilot rollout for acme-agent" />
+          <Input id="add-reason" size="small" class="min-h-[38px]" bind:value={addReason} placeholder="e.g. pilot rollout for acme-agent" />
         </div>
         <div class="md:col-span-1">
-          <button
-            type="button"
-            onclick={addEntry}
+          <!-- shortcut-guard-exempt: admin settings tab action, not a primary global-create surface -->
+          <Button
+            variant="primary"
+            fullWidth
+            icon={Plus}
+            loading={adding}
             disabled={!canAdd}
-            class="w-full inline-flex items-center justify-center gap-1 px-3 py-2 rounded text-sm font-medium disabled:opacity-50"
-            style="background-color: var(--ds-interactive); color: var(--ds-text-inverse);"
+            onclick={addEntry}
+            class="min-h-[38px]"
           >
-            {#if adding}
-              <Loader2 class="w-4 h-4 animate-spin" />
-            {:else}
-              <Plus class="w-4 h-4" />
-            {/if}
             Add
-          </button>
+          </Button>
         </div>
       </div>
     </div>

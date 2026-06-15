@@ -23,7 +23,16 @@ export default {
     menuMove: 'Move',
     menuPermissions: 'Permissions',
     menuHistory: 'History',
+    menuPrint: 'Print',
     menuArchive: 'Archive',
+
+    // Chrome-free print / save-to-PDF view (opened in a new tab)
+    print: {
+      button: 'Print',
+      back: 'Back to page',
+      loading: 'Preparing page for print…',
+      error: 'Failed to load page.',
+    },
 
     // Revision history drawer
     history: {

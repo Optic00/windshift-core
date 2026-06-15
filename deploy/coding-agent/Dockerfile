@@ -1,26 +1,27 @@
 # =============================================================================
-# Windshift Coding Agent Runner
+# Windshift ws-carrier image
 #
-# Per-run sandbox the coding-agent harness spawns to execute pi-coding-agent
-# against a mounted worktree. Phase 3 (WI-86) is the first variant that
-# bakes the real ws CLI + pi-coding-agent + windshift-guard.ts extension +
-# ws.toml.template; Phase 1-2 (WI-84 / WI-85) shipped a node-only skeleton.
+# A thin image whose ONLY purpose is to ship the cross-built `ws` CLI at
+# /usr/local/bin/ws. The windshift-agent image (the node-free codehamr fork,
+# WI-204 — the actual coding agent) lifts `ws` from here via its WS_IMAGE build
+# arg, because `ws` lives in this repo while the agent lives in the sibling
+# windshift-agent repo.
+#
+# This image no longer bakes the retired Node agent, Node/npm, the windshift-guard
+# extension, or an RPC entrypoint — those moved out when the coding agent was
+# replaced by windshift-agent (WI-238). The hardened `docker run` sandbox is
+# still assembled by the windshift-runner (DockerAgentRunner) around whichever
+# agent image the operator points WSRUNNER_IMAGE at.
 #
 # Built from the *repo root* (the build context needs cmd/ws + go.mod):
 #
-#   docker build -f deploy/coding-agent/Dockerfile \
-#     -t windshift/coding-agent:wi-86-skeleton \
-#     [--build-arg INSTALL_PI=false] [--build-arg PI_VERSION=<tag>] \
-#     .
-#
-# Set INSTALL_PI=false when iterating on the ws/env path locally — it skips
-# the multi-MB npm install. Production builds keep INSTALL_PI=true (default).
+#   docker build -f deploy/coding-agent/Dockerfile -t windshift/ws-carrier:local .
 # =============================================================================
 
 # --------------------------------------------------------------------
 # Stage 1: cross-compile the ws CLI for linux/<TARGETARCH>
 # --------------------------------------------------------------------
-FROM golang:1.26-bookworm AS ws-build
+FROM golang:1.26.4-bookworm@sha256:dc8e692a67c88c1a76afc36bea0814e8be5ab0d37210695f19e47cf136e0fcd5 AS ws-build
 
 WORKDIR /src
 
@@ -31,55 +32,25 @@ RUN go mod download
 
 COPY . .
 
-ARG TARGETOS=linux
-ARG TARGETARCH=amd64
+# Populated by BuildKit when --platform is passed (CI does); empty otherwise,
+# which makes Go build for the native arch. A hard =amd64 default here once
+# shipped an x86_64 ws binary inside the arm64 image (WI-394).
+ARG TARGETOS
+ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w" -o /out/ws ./cmd/ws
 
 # --------------------------------------------------------------------
-# Stage 2: runner image
+# Stage 2: thin ws-carrier
 # --------------------------------------------------------------------
-FROM node:lts-slim AS runner
+FROM alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        ca-certificates \
-        gettext-base \
-        git \
-    && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache ca-certificates
 
-# pi-coding-agent install. PI_VERSION must resolve to a published tag on
-# @earendil-works/pi-coding-agent. WI-89 (Phase 6) is where the
-# orchestrator actually drives `pi --mode rpc`; until then the binary is
-# along for the ride.
-ARG INSTALL_PI=true
-ARG PI_VERSION=latest
-RUN if [ "${INSTALL_PI}" = "true" ]; then \
-        npm install -g --omit=dev --ignore-scripts \
-            "@earendil-works/pi-coding-agent@${PI_VERSION}"; \
-    fi
-
-RUN groupadd --gid 1000 agent \
-    && useradd --uid 1000 --gid 1000 --create-home --home-dir /home/agent agent
-
-# ws binary, baked extension, ws.toml template, entrypoint.
 COPY --from=ws-build /out/ws /usr/local/bin/ws
-COPY deploy/coding-agent/ws.toml.template /etc/windshift/ws.toml.template
-COPY deploy/coding-agent/windshift-guard.ts /opt/windshift/extensions/windshift-guard.ts
-COPY deploy/coding-agent/windshift-entrypoint.sh /usr/local/bin/windshift-entrypoint.sh
+RUN chmod +x /usr/local/bin/ws
 
-# Per-user state: agent owns its ~/.config/ws and ~/.pi tree. The
-# extension is copied (not bind-symlinked) so the agent user owns it
-# without giving write access to /opt/windshift.
-RUN install -d -o agent -g agent -m 0750 /home/agent/.config/ws \
-    && install -d -o agent -g agent -m 0750 /home/agent/.pi/agent/extensions \
-    && cp /opt/windshift/extensions/windshift-guard.ts /home/agent/.pi/agent/extensions/windshift-guard.ts \
-    && chown -R agent:agent /home/agent \
-    && chmod +x /usr/local/bin/windshift-entrypoint.sh /usr/local/bin/ws \
-    && chmod 0644 /etc/windshift/ws.toml.template
+# Numeric non-root user matching the agent images that consume this CLI.
+USER 1000:1000
 
-USER agent
-WORKDIR /home/agent
-ENV PATH=/usr/local/bin:$PATH
-
-ENTRYPOINT ["/usr/local/bin/windshift-entrypoint.sh"]
+ENTRYPOINT ["/usr/local/bin/ws"]

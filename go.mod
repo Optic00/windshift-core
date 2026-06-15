@@ -1,6 +1,6 @@
 module windshift
 
-go 1.26.3
+go 1.26.4
 
 require (
 	charm.land/bubbles/v2 v2.1.0
@@ -38,7 +38,7 @@ require (
 	github.com/teambition/rrule-go v1.8.2
 	github.com/zitadel/oidc/v3 v3.45.3
 	golang.org/x/crypto v0.52.0
-	golang.org/x/image v0.39.0
+	golang.org/x/image v0.41.0
 	golang.org/x/text v0.37.0
 	golang.org/x/time v0.15.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -48,7 +48,7 @@ require (
 
 require (
 	charm.land/log/v2 v2.0.0 // indirect
-	github.com/Azure/go-ntlmssp v0.0.0-20221128193559-754e69321358 // indirect
+	github.com/Azure/go-ntlmssp v0.1.1 // indirect
 	github.com/KyleBanks/depth v1.2.1 // indirect
 	github.com/PuerkitoBio/purell v1.1.1 // indirect
 	github.com/PuerkitoBio/urlesc v0.0.0-20170810143723-de5bf2ad4578 // indirect
@@ -141,9 +141,9 @@ require (
 	github.com/zitadel/logging v0.6.2 // indirect
 	github.com/zitadel/schema v1.3.2 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
-	go.opentelemetry.io/otel v1.39.0 // indirect
-	go.opentelemetry.io/otel/metric v1.39.0 // indirect
-	go.opentelemetry.io/otel/trace v1.39.0 // indirect
+	go.opentelemetry.io/otel v1.41.0 // indirect
+	go.opentelemetry.io/otel/metric v1.41.0 // indirect
+	go.opentelemetry.io/otel/trace v1.41.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.3.1 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	golang.org/x/exp v0.0.0-20251023183803-a4bb9ffd2546 // indirect

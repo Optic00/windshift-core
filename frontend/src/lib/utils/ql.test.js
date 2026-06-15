@@ -145,4 +145,35 @@ describe('QLBuilder.tryParseToBuilder', () => {
     ]);
     expect(parsed.dropped).toBe(false);
   });
+
+  test('recovers name-based status / priority clauses via catalogs', () => {
+    const r = QLBuilder.tryParseToBuilder('status = "Open" AND priority IN ("High", "Low")', {
+      statuses: [
+        { id: 1, name: 'Open' },
+        { id: 2, name: 'Closed' },
+      ],
+      priorities: [
+        { id: 5, name: 'High' },
+        { id: 6, name: 'Low' },
+      ],
+    });
+    expect(r.statuses).toEqual([1]);
+    expect(r.priorities).toEqual([5, 6]);
+    expect(r.dropped).toBe(false);
+  });
+
+  test('does not confuse status_id with the name-based status clause', () => {
+    const r = QLBuilder.tryParseToBuilder('status_id = 3', {
+      statuses: [{ id: 1, name: 'Open' }],
+    });
+    expect(r.statuses).toEqual([3]);
+    expect(r.dropped).toBe(false);
+  });
+
+  test('marks dropped when a name-based clause cannot be resolved', () => {
+    const r = QLBuilder.tryParseToBuilder('workspace = "alpha" AND status = "Nope"', {
+      statuses: [{ id: 1, name: 'Open' }],
+    });
+    expect(r.dropped).toBe(true);
+  });
 });

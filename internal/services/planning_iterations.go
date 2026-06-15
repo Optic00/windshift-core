@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
+	"windshift/internal/repository"
 )
 
 // iterationScanner is satisfied by both *sql.Row and *sql.Rows.
@@ -343,7 +345,7 @@ func (s *PlanningService) GetIterationProgress(iterationID int) (*IterationProgr
 	report.TypeColor = typeColor.String
 
 	// Get status breakdown and items grouped by status category
-	acc, err := queryProgressItems(s.db, "i.iteration_id = ?", iterationID)
+	acc, err := s.buildProgressReport(repository.ItemFilters{IterationID: &iterationID})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get iteration progress: %w", err)
 	}

@@ -8,6 +8,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 )
 
 // AssetStatusHandler handles asset status operations
@@ -68,6 +69,17 @@ func (h *AssetStatusHandler) requireStatusSetID(w http.ResponseWriter, r *http.R
 func (h *AssetStatusHandler) requireStatusAdminAccess(w http.ResponseWriter, r *http.Request) (user *models.User, statusID, setID int, ok bool) {
 	currentUser, statusID, setID, ok := h.requireStatusSetID(w, r)
 	if !ok {
+		return nil, 0, 0, false
+	}
+	// Gate on view first so a caller who cannot see the set gets 404 rather
+	// than a 403 that would disclose the status/set exists.
+	canView, err := h.assetHandler.canViewSet(currentUser.ID, setID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return nil, 0, 0, false
+	}
+	if !canView {
+		respondNotFound(w, r, "asset_status")
 		return nil, 0, 0, false
 	}
 	canAdmin, err := h.assetHandler.canAdminSet(currentUser.ID, setID)
@@ -132,6 +144,11 @@ func (h *AssetStatusHandler) CreateAssetStatus(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &req.Color, Policy: sanitize.ShortIdentifier, Label: "Color"},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
+	)
 
 	if req.Name == "" {
 		respondValidationError(w, r, "Name is required")
@@ -170,7 +187,10 @@ func (h *AssetStatusHandler) CreateAssetStatus(w http.ResponseWriter, r *http.Re
 	status.ID = id
 	h.auditor.Log(r, currentUser, logger.ActionAssetStatusCreate, logger.ResourceAssetStatus, &id, req.Name)
 
-	respondJSONCreated(w, status)
+	respondJSONCreated(w, struct {
+		models.AssetStatus
+		Warnings []string `json:"warnings,omitempty"`
+	}{status, warnings})
 }
 
 // UpdateAssetStatusRequest represents the request body for updating an asset status
@@ -193,6 +213,11 @@ func (h *AssetStatusHandler) UpdateAssetStatus(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &req.Color, Policy: sanitize.ShortIdentifier, Label: "Color"},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
+	)
 
 	if req.Name == "" {
 		respondValidationError(w, r, "Name is required")
@@ -230,7 +255,10 @@ func (h *AssetStatusHandler) UpdateAssetStatus(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	respondJSONOK(w, status)
+	respondJSONOK(w, struct {
+		*models.AssetStatus
+		Warnings []string `json:"warnings,omitempty"`
+	}{status, warnings})
 }
 
 // DeleteAssetStatus deletes an asset status

@@ -21,6 +21,7 @@
 	import { t } from '../stores/i18n.svelte.js';
 	import { formatDateSimple } from '../utils/dateFormatter.js';
 	import { confirm } from '../composables/useConfirm.js';
+	import { publicBaseURL } from '../runtime/contextPath.js';
 
 	let users = $state([]);
 	let loading = $state(false);
@@ -68,6 +69,7 @@
 		{ value: 'items:write', label: 'Create/update items' },
 		{ value: 'workspaces:read', label: 'Read workspaces' },
 		{ value: 'workspaces:write', label: 'Modify workspaces' },
+		{ value: 'collections:read', label: 'Read collections and reports' },
 		{ value: 'pages:read', label: 'Read pages' },
 		{ value: 'pages:write', label: 'Create/update pages' },
 		{ value: 'pages:delete', label: 'Archive pages' },
@@ -97,7 +99,9 @@
 	}
 
 	async function saveUser() {
-		if (!editingUser && !isInviteMode && !formData.password.trim()) {
+		// Service users (agents) authenticate via API token only, so a password is
+		// never required for them; only interactive users need one at creation.
+		if (!editingUser && !isInviteMode && !formData.is_agent && !formData.password.trim()) {
 			errorToast(t('auth.passwordRequired'));
 			return;
 		}
@@ -106,7 +110,7 @@
 				await api.updateUser(editingUser.id, formData);
 			} else if (isInviteMode) {
 				const result = await api.inviteUser(formData);
-				invitationLink = `${window.location.origin}/set-password/${result.token}`;
+				invitationLink = `${publicBaseURL()}/set-password/${result.token}`;
 				emailSent = result.email_sent;
 				showInviteResultModal = true;
 			} else {

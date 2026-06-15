@@ -33,6 +33,7 @@ RULES=(
     "internal/cacheutil|windshift/internal|cacheutil must stay a leaf (only stdlib + 3rd-party deps)"
     "internal/database|windshift/internal/emailutil|database is infrastructure; domain helpers should be injected, not imported"
     "internal/handlers|windshift/internal/database|handlers must go through repositories, not raw database access"
+    "internal/restapi/v1|windshift/internal/handlers|REST v1 must call shared services/use cases, not legacy cookie-auth handlers"
 )
 
 found=0

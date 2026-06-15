@@ -15,6 +15,10 @@
   import { formatCustomFieldDate } from '../../utils/dateFormatter.js';
   import { parseFieldOptions, resolveOptionLabel, resolveOptionLabels } from '../../utils/optionUtils.js';
   import { safeHref } from '../../utils/sanitize';
+  import {
+    milestonePickerConfig as milestoneConfig,
+    iterationPickerConfig as iterationConfig,
+  } from '../../pickers/pickerConfigs.js';
 
   // Helper to parse field options into [{id, label}] items
   function parseOptions(optionsStr) {
@@ -66,22 +70,6 @@
 
   const isRequired = $derived(required || field.required || field.is_required);
 
-  // Milestone config for ItemPicker
-  const milestoneConfig = {
-    getValue: (item) => item.id,
-    getLabel: (item) => item.name,
-    searchFields: ['name'],
-    groupBy: null
-  };
-
-  // Iteration config for ItemPicker
-  const iterationConfig = {
-    getValue: (item) => item.id,
-    getLabel: (item) => item.name,
-    searchFields: ['name'],
-    groupBy: (item) => item.is_global ? 'Global' : 'Team'
-  };
-
   // Custom-field dates are calendar days, not moments in time — keep them as
   // YYYY-MM-DD strings end-to-end to avoid timezone drift.
   function formatDateDisplay(dateValue) {
@@ -109,6 +97,32 @@
     return Boolean(raw);
   }
 
+  function parseAssetConfig() {
+    try { return field.options ? JSON.parse(field.options) : {}; }
+    catch { return {}; }
+  }
+
+  const assetConfig = $derived(parseAssetConfig());
+  const isMultiAssetField = $derived(field.field_type === 'asset' && assetConfig.multi === true);
+
+  function assetDisplayName(asset) {
+    if (asset && typeof asset === 'object') {
+      if (asset.title) return asset.asset_tag ? `${asset.asset_tag} - ${asset.title}` : asset.title;
+      if (asset.id) return `Asset #${asset.id}`;
+    }
+    return `Asset #${asset}`;
+  }
+
+  function normalizedAssetIDs() {
+    const raw = /** @type {any} */ (value);
+    if (!raw) return [];
+    const entries = Array.isArray(raw) ? raw : [raw];
+    return entries.map((entry) => {
+      if (entry && typeof entry === 'object') return parseInt(entry.id, 10);
+      return parseInt(entry, 10);
+    }).filter((id) => Number.isFinite(id) && id > 0);
+  }
+
   // Helper to render value text for display
   function renderDisplayValue() {
     if (value === null || value === undefined || value === '') {
@@ -123,6 +137,8 @@
           return v.name;
         }
         return v;
+      case 'multi_user':
+        return multiUserNames().join(', ');
       case 'iteration':
         if (v && iterations) {
           const iteration = iterations.find(i => i.id === parseInt(v));
@@ -136,10 +152,10 @@
         }
         return v;
       case 'asset':
-        if (typeof v === 'object' && v.title) {
-          return v.asset_tag ? `${v.asset_tag} - ${v.title}` : v.title;
+        if (Array.isArray(v)) {
+          return v.map(assetDisplayName).join(', ');
         }
-        return `Asset #${v}`;
+        return assetDisplayName(v);
       case 'portalcustomer':
         if (typeof v === 'object' && v.name) {
           return v.name;
@@ -196,9 +212,12 @@
       : null
   );
 
-  // Load users when we need to look up a user by ID
+  // Load users when we need to look up user IDs
   $effect(() => {
     if (readonly && field.field_type === 'user' && value && typeof value !== 'object') {
+      loadUsers();
+    }
+    if (field.field_type === 'multi_user' && normalizedMultiUserIDs().length > 0) {
       loadUsers();
     }
   });
@@ -220,6 +239,49 @@
     }
     return null;
   })());
+
+  function normalizedMultiUserIDs() {
+    const raw = /** @type {any} */ (value);
+    if (!raw) return [];
+    const entries = Array.isArray(raw) ? raw : [raw];
+    return entries.map((entry) => {
+      if (typeof entry === 'object') return parseInt(entry.id ?? entry.user_id, 10);
+      return parseInt(entry, 10);
+    }).filter((id) => Number.isFinite(id) && id > 0);
+  }
+
+  function multiUserNames() {
+    const raw = /** @type {any} */ (value);
+    if (!raw) return [];
+    const entries = Array.isArray(raw) ? raw : [raw];
+    return entries.map((entry) => {
+      if (typeof entry === 'object' && entry.name) return entry.name;
+      const id = typeof entry === 'object' ? parseInt(entry.id ?? entry.user_id, 10) : parseInt(entry, 10);
+      const user = users.find((u) => u.id === id);
+      return user ? `${user.first_name} ${user.last_name}`.trim() || user.username : `#${id}`;
+    }).filter(Boolean);
+  }
+
+  function multiUserObjects() {
+    return normalizedMultiUserIDs().map((id) => {
+      const user = users.find((u) => u.id === id);
+      return {
+        id,
+        name: user ? `${user.first_name} ${user.last_name}`.trim() || user.username : `#${id}`
+      };
+    });
+  }
+
+  function addMultiUser(selectedUser) {
+    if (!selectedUser) return;
+    const ids = normalizedMultiUserIDs();
+    if (!ids.includes(selectedUser.id)) ids.push(selectedUser.id);
+    onChange(ids);
+  }
+
+  function removeMultiUser(id) {
+    onChange(normalizedMultiUserIDs().filter((existing) => existing !== id));
+  }
 
   // Reactive milestone data computation
   const milestoneData = $derived((() => {
@@ -469,6 +531,29 @@
         }}
         onCancel={() => onCancel?.()}
       />
+    {:else if field.field_type === 'multi_user'}
+      <div class="space-y-2">
+        {#if multiUserObjects().length > 0}
+          <div class="flex flex-wrap gap-1.5">
+            {#each multiUserObjects() as selectedUser (selectedUser.id)}
+              <span class="inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs" style="background: var(--ds-background-neutral); color: var(--ds-text);">
+                {selectedUser.name}
+                <button type="button" class="hover:opacity-70" onclick={() => removeMultiUser(selectedUser.id)} aria-label={`Remove ${selectedUser.name}`}>×</button>
+              </span>
+            {/each}
+          </div>
+        {/if}
+        <UserPicker
+          value={null}
+          placeholder={t('pickers.selectUser')}
+          showUnassigned={false}
+          showSelectedInTrigger={false}
+          class="w-full"
+          {disabled}
+          onSelect={addMultiUser}
+          onCancel={() => onCancel?.()}
+        />
+      </div>
     {:else if field.field_type === 'iteration'}
       <ItemPicker
         {value}
@@ -484,18 +569,15 @@
         onCancel={() => onCancel?.()}
       />
     {:else if field.field_type === 'asset'}
-      {@const assetConfig = (() => {
-        try { return field.options ? JSON.parse(field.options) : {}; }
-        catch { return {}; }
-      })()}
-      {@const assetValue = value && typeof value === 'object' ? /** @type {any} */ (value).id : (value ?? null)}
+      {@const assetValue = isMultiAssetField ? normalizedAssetIDs() : (value && typeof value === 'object' ? /** @type {any} */ (value).id : (value ?? null))}
       <AssetPicker
         value={assetValue}
         assetSetId={assetConfig.asset_set_id}
-        cqlQuery={assetConfig.cql_query}
+        cqlQuery={assetConfig.cql_query || assetConfig.ql_query}
         placeholder={t('pickers.selectAsset')}
-        showUnassigned={true}
+        showUnassigned={!isMultiAssetField}
         autoOpen={autoOpenPickers}
+        multiple={isMultiAssetField}
         class="w-full"
         {disabled}
         onSelect={(asset) => {
@@ -505,6 +587,7 @@
             asset_tag: asset.asset_tag || ''
           } : null);
         }}
+        onChange={(assets) => onChange(assets)}
         onCancel={() => onCancel?.()}
       />
     {:else if field.field_type === 'portalcustomer'}

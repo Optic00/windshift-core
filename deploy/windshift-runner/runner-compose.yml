@@ -1,0 +1,35 @@
+# Run the Windshift remote runner as a container (Docker-out-of-Docker).
+#
+# The runner talks to the HOST Docker daemon via the mounted socket and asks it
+# to spawn sibling agent containers. Fill in WS_API_URL, the registration token,
+# and the agent image, then `docker compose up -d`.
+#
+# Podman: works with the rootful Podman socket — point the first volume at it,
+# e.g. /run/podman/podman.sock:/var/run/docker.sock. Rootless Podman needs extra
+# UID-mapping care on the checkout mount; see the docs.
+#
+# Same host as Windshift? Use the commented windshift-runner service in
+# deploy/docker-compose.yml instead: one compose file, and a shared internal
+# network replaces the egress firewall rules entirely (see README.md, "Same
+# host as Windshift").
+services:
+  windshift-runner:
+    image: ghcr.io/windshiftapp/windshift-runner:latest
+    restart: unless-stopped
+    environment:
+      WS_API_URL: https://windshift.example.com/api   # control plane + brokers live under /api
+      WSRUNNER_REGISTRATION_TOKEN: wsrt_replace_me
+      # WSRUNNER_IMAGE is the agent image. The runner pulls it on the host
+      # daemon the first time it spawns an agent container (per job); there is
+      # no separate agent service.
+      WSRUNNER_IMAGE: ghcr.io/windshiftapp/windshift-agent:latest
+      # WSRUNNER_CACHE_ROOT defaults to /var/lib/windshift-runner/cache (baked
+      # into the image) — keep it under the same-path bind-mount below.
+    volumes:
+      # Drive the host Docker daemon (spawns the sandboxed agent containers).
+      - /var/run/docker.sock:/var/run/docker.sock
+      # SAME path on host and in-container. The host daemon — not this
+      # container — bind-mounts each prepared checkout (created under the cache
+      # root) into the agent container as /workspace, so the path must resolve
+      # identically on the host.
+      - /var/lib/windshift-runner:/var/lib/windshift-runner

@@ -152,6 +152,20 @@ func (b *BaseHandler) RequireWorkspaceEditAccess(w http.ResponseWriter, r *http.
 	return wsID, true
 }
 
+// maskProjectNames blanks restricted time-project names (direct, time-tracking
+// and inherited effective project) on items before they are mapped to response
+// DTOs, mirroring the cookie-auth surface. IDs are kept; only names are stripped.
+func (b *BaseHandler) maskProjectNames(userID int, items []models.Item) {
+	services.NewTimePermissionService(b.DB, b.PermissionService).MaskInaccessibleProjectNames(userID, items)
+}
+
+// maskProjectNamesOne applies maskProjectNames to a single item in place.
+func (b *BaseHandler) maskProjectNamesOne(userID int, item *models.Item) {
+	masked := []models.Item{*item}
+	b.maskProjectNames(userID, masked)
+	*item = masked[0]
+}
+
 // ValidateRequiredString checks a required string field.
 func (b *BaseHandler) ValidateRequiredString(w http.ResponseWriter, r *http.Request, value, fieldName string) bool {
 	if strings.TrimSpace(value) == "" {
@@ -161,65 +175,11 @@ func (b *BaseHandler) ValidateRequiredString(w http.ResponseWriter, r *http.Requ
 	return true
 }
 
-// ValidateNoFields checks if a dynamic update has no fields set.
-func (b *BaseHandler) ValidateNoFields(w http.ResponseWriter, r *http.Request, builder *DynamicUpdateBuilder) bool {
-	if builder.IsEmpty() {
-		restapi.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "No fields to update"))
-		return false
-	}
-	return true
-}
-
-// DynamicUpdateBuilder accumulates SET clauses for UPDATE statements.
-// This handler-side version works with any database.Database.
-type DynamicUpdateBuilder struct {
-	sets []string
-	args []interface{}
-}
-
-// NewDynamicUpdateBuilder creates a new dynamic update builder.
-func NewDynamicUpdateBuilder() *DynamicUpdateBuilder {
-	return &DynamicUpdateBuilder{}
-}
-
-// AddString adds a string field update if the value is non-nil and non-empty.
-func (b *DynamicUpdateBuilder) AddString(field string, value *string) {
-	if value != nil && *value != "" {
-		b.sets = append(b.sets, field+" = ?")
-		b.args = append(b.args, *value)
-	}
-}
-
-// AddBool adds a boolean field update if the value is non-nil.
-func (b *DynamicUpdateBuilder) AddBool(field string, value *bool) {
-	if value != nil {
-		b.sets = append(b.sets, field+" = ?")
-		b.args = append(b.args, *value)
-	}
-}
-
-// IsEmpty returns true if no fields have been added.
-func (b *DynamicUpdateBuilder) IsEmpty() bool {
-	return len(b.sets) == 0
-}
-
-// Sets returns the SET clauses and args.
-func (b *DynamicUpdateBuilder) Sets() (sets []string, args []interface{}) {
-	return b.sets, b.args
-}
-
-// AddTimestamp adds an updated_at = CURRENT_TIMESTAMP clause.
-func (b *DynamicUpdateBuilder) AddTimestamp() {
-	b.sets = append(b.sets, "updated_at = CURRENT_TIMESTAMP")
-}
-
-// BuildUpdateByID builds an "UPDATE <table> SET ... WHERE id = ?" query
-// and returns the query string and args (with id appended).
-func (b *DynamicUpdateBuilder) BuildUpdateByID(table string, id int) (query string, args []interface{}) {
-	var sets []string
-	sets, args = b.Sets()
-	args = append(args, id)
-
-	query = "UPDATE " + table + " SET " + strings.Join(sets, ", ") + " WHERE id = ?"
-	return query, args
+// ExcludePersonal reports whether the request opts out of personal-workspace
+// results via the exclude_personal query parameter. Integration surfaces that
+// republish items into shared contexts (e.g. document embeds) set this so the
+// caller's own personal items never leak into pages other people read.
+func ExcludePersonal(r *http.Request) bool {
+	v := r.URL.Query().Get("exclude_personal")
+	return v == "true" || v == "1"
 }

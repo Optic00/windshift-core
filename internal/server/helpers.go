@@ -124,7 +124,7 @@ func buildAllowedOrigins(allowedHosts, serverPort, scheme string, useProxy bool)
 	return origins
 }
 
-func createCORSMiddleware(allowedHosts, serverPort, scheme string, disableCSRF, useProxy bool) func(http.Handler) http.Handler {
+func createCORSMiddleware(allowedHosts, serverPort, scheme string, disableCSRF, useProxy, allowInsecureHTTP bool) func(http.Handler) http.Handler {
 	var origins []string
 
 	if disableCSRF {
@@ -153,17 +153,22 @@ func createCORSMiddleware(allowedHosts, serverPort, scheme string, disableCSRF, 
 		}
 	}
 
-	// When behind a trusted proxy, we emit both http:// and https:// variants
-	// of each host (see buildAllowedOrigins). jub0bs/cors rejects http origins
-	// under credentialed mode by default, so opt in explicitly. The proxy is
-	// responsible for TLS; the host is the security boundary.
+	// jub0bs/cors rejects non-localhost http origins under credentialed mode
+	// by default. Two deployments legitimately need them: behind a trusted
+	// proxy we emit both http:// and https:// variants of each host (see
+	// buildAllowedOrigins) because the proxy terminates TLS and the host is
+	// the security boundary, and --allow-insecure-http opts a trusted-LAN /
+	// testing deployment into plain http explicitly.
+	if allowInsecureHTTP {
+		slog.Warn("ALLOW_INSECURE_HTTP enabled: credentialed requests from non-localhost http origins are allowed; sessions are interceptable on the network path")
+	}
 	cfg := cors.Config{
 		Origins:                            origins,
 		Methods:                            []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete},
 		RequestHeaders:                     []string{"Content-Type", "Authorization"},
 		Credentialed:                       !disableCSRF,
 		MaxAgeInSeconds:                    86400,
-		DangerouslyTolerateInsecureOrigins: useProxy,
+		DangerouslyTolerateInsecureOrigins: useProxy || allowInsecureHTTP,
 	}
 
 	slog.Info("CORS middleware configured", "allowed_origins", origins)

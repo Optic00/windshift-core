@@ -8,12 +8,12 @@ import (
 	"net/http"
 	"strings"
 
-	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/repository/actionutil"
 	"windshift/internal/restapi"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/services/actioncatalog"
 	"windshift/internal/utils"
@@ -21,20 +21,22 @@ import (
 
 // ActionsHandler handles action automation API endpoints
 type ActionsHandler struct {
-	db                database.Database
 	repo              *repository.ActionRepository
 	credentialRepo    *repository.ActionCredentialRepository
+	itemRepo          *repository.ItemRepository
+	auditor           *logger.Auditor
 	actionService     *services.ActionService
 	permissionService *services.PermissionService
 	keyCache          *WorkspaceKeyCache
 }
 
 // NewActionsHandler creates a new actions handler
-func NewActionsHandler(db database.Database, actionService *services.ActionService, permissionService *services.PermissionService, keyCache *WorkspaceKeyCache) *ActionsHandler {
+func NewActionsHandler(repo *repository.ActionRepository, credentialRepo *repository.ActionCredentialRepository, itemRepo *repository.ItemRepository, auditor *logger.Auditor, actionService *services.ActionService, permissionService *services.PermissionService, keyCache *WorkspaceKeyCache) *ActionsHandler {
 	return &ActionsHandler{
-		db:                db,
-		repo:              repository.NewActionRepository(db),
-		credentialRepo:    repository.NewActionCredentialRepository(db),
+		repo:              repo,
+		credentialRepo:    credentialRepo,
+		itemRepo:          itemRepo,
+		auditor:           auditor,
 		actionService:     actionService,
 		permissionService: permissionService,
 		keyCache:          keyCache,
@@ -253,6 +255,10 @@ func (h *ActionsHandler) CreateAction(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
+	)
 
 	// Unified validator covers required fields, trigger/node config schemas,
 	// edge sanity, graph cycles, iterator-body containment, and capability
@@ -328,15 +334,18 @@ func (h *ActionsHandler) CreateAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logAudit(h.db, r, currentUser, logger.ActionAutomationCreate, logger.ResourceAutomation, &createdAction.ID, createdAction.Name)
+	h.auditor.Log(r, currentUser, logger.ActionAutomationCreate, logger.ResourceAutomation, &createdAction.ID, createdAction.Name)
 	if createdAction.ActorUserID != nil {
-		logAuditWithDetails(h.db, r, currentUser, logger.ActionAutomationSetActor, logger.ResourceAutomation, &createdAction.ID, createdAction.Name, map[string]interface{}{
+		h.auditor.LogWithDetails(r, currentUser, logger.ActionAutomationSetActor, logger.ResourceAutomation, &createdAction.ID, createdAction.Name, map[string]interface{}{
 			"actor_user_id": *createdAction.ActorUserID,
 			"context":       "create",
 		})
 	}
 
-	respondJSONCreated(w, createdAction)
+	respondJSONCreated(w, struct {
+		*models.Action
+		Warnings []string `json:"warnings,omitempty"`
+	}{createdAction, warnings})
 }
 
 // applyActionUpdateFields applies non-nil fields from the update request to the action.
@@ -372,6 +381,10 @@ func (h *ActionsHandler) UpdateAction(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: req.Description, Policy: sanitize.RichText, Label: "Description"},
+	)
 
 	currentUser := utils.GetCurrentUser(r)
 
@@ -451,18 +464,21 @@ func (h *ActionsHandler) UpdateAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if currentUser != nil {
-		logAudit(h.db, r, currentUser, logger.ActionAutomationUpdate, logger.ResourceAutomation, &actionID, updatedAction.Name)
+		h.auditor.Log(r, currentUser, logger.ActionAutomationUpdate, logger.ResourceAutomation, &actionID, updatedAction.Name)
 		if actorChanging {
 			details := map[string]interface{}{
 				"previous_actor_user_id": intPtrForAudit(previousActor),
 				"new_actor_user_id":      intPtrForAudit(req.ActorUserID.Value),
 				"context":                "update",
 			}
-			logAuditWithDetails(h.db, r, currentUser, logger.ActionAutomationSetActor, logger.ResourceAutomation, &actionID, updatedAction.Name, details)
+			h.auditor.LogWithDetails(r, currentUser, logger.ActionAutomationSetActor, logger.ResourceAutomation, &actionID, updatedAction.Name, details)
 		}
 	}
 
-	respondJSONOK(w, updatedAction)
+	respondJSONOK(w, struct {
+		*models.Action
+		Warnings []string `json:"warnings,omitempty"`
+	}{updatedAction, warnings})
 }
 
 // equalIntPtr returns true when both pointers are nil or both point to the same int.
@@ -509,7 +525,7 @@ func (h *ActionsHandler) DeleteAction(w http.ResponseWriter, r *http.Request) {
 
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
-		logAudit(h.db, r, currentUser, logger.ActionAutomationDelete, logger.ResourceAutomation, &actionID, "")
+		h.auditor.Log(r, currentUser, logger.ActionAutomationDelete, logger.ResourceAutomation, &actionID, "")
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -555,7 +571,7 @@ func (h *ActionsHandler) ToggleAction(w http.ResponseWriter, r *http.Request) {
 
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
-		logAudit(h.db, r, currentUser, logger.ActionAutomationToggle, logger.ResourceAutomation, &actionID, updatedAction.Name)
+		h.auditor.Log(r, currentUser, logger.ActionAutomationToggle, logger.ResourceAutomation, &actionID, updatedAction.Name)
 	}
 
 	respondJSONOK(w, updatedAction)
@@ -653,7 +669,7 @@ func (h *ActionsHandler) ExecuteAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify user has edit permission on the item's workspace
-	if !CheckItemPermission(w, r, repository.NewItemRepository(h.db), h.permissionService, req.ItemID, models.PermissionItemEdit) {
+	if !CheckItemPermission(w, r, h.itemRepo, h.permissionService, req.ItemID, models.PermissionItemEdit) {
 		return
 	}
 
@@ -746,6 +762,16 @@ func (h *ActionsHandler) validateCapabilityConfig(w http.ResponseWriter, r *http
 		}
 		if !h.isEnabledLLMConnection(config.ConnectionID) {
 			respondValidationError(w, r, fmt.Sprintf("LLM connection %d does not exist or is disabled", config.ConnectionID))
+			return false
+		}
+	case models.CapabilityRunnerPool:
+		var config models.RunnerPoolConfig
+		if err := json.Unmarshal([]byte(configStr), &config); err != nil {
+			respondValidationError(w, r, fmt.Sprintf("Invalid runner_pool config: %v", err))
+			return false
+		}
+		if config.MaxConcurrentRuns < 0 {
+			respondValidationError(w, r, "max_concurrent_runs cannot be negative (0 = unlimited)")
 			return false
 		}
 	}
@@ -878,6 +904,7 @@ func (h *ActionsHandler) CreateCapability(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	sanitize.Apply(&req.Name, sanitize.PlainTextField)
 
 	if req.Name == "" {
 		respondValidationError(w, r, "Name is required")
@@ -889,7 +916,7 @@ func (h *ActionsHandler) CreateCapability(w http.ResponseWriter, r *http.Request
 	}
 	// Validate capability type
 	switch req.CapabilityType {
-	case models.CapabilityDockerEnvironment, models.CapabilityHTTPClient, models.CapabilityLLMConnection:
+	case models.CapabilityDockerEnvironment, models.CapabilityHTTPClient, models.CapabilityLLMConnection, models.CapabilityRunnerPool:
 		// valid
 	default:
 		respondValidationError(w, r, fmt.Sprintf("Invalid capability type: %s", req.CapabilityType))
@@ -968,6 +995,7 @@ func (h *ActionsHandler) UpdateCapability(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	sanitize.Apply(req.Name, sanitize.PlainTextField)
 
 	if req.Name != nil {
 		capability.Name = *req.Name
@@ -1047,7 +1075,7 @@ func (h *ActionsHandler) ListWorkspaceCapabilities(w http.ResponseWriter, r *htt
 	capType := r.URL.Query().Get("type")
 	if capType != "" {
 		switch models.CapabilityType(capType) {
-		case models.CapabilityDockerEnvironment, models.CapabilityHTTPClient, models.CapabilityLLMConnection:
+		case models.CapabilityDockerEnvironment, models.CapabilityHTTPClient, models.CapabilityLLMConnection, models.CapabilityRunnerPool:
 			// valid
 		default:
 			respondValidationError(w, r, fmt.Sprintf("Invalid capability type: %s", capType))
@@ -1171,7 +1199,7 @@ func (h *ActionsHandler) auditCapability(r *http.Request, user *models.User, act
 	if user == nil || capability == nil {
 		return
 	}
-	logAuditWithDetails(h.db, r, user, action, logger.ResourceAutomationCapability, &capability.ID, capability.Name, map[string]interface{}{
+	h.auditor.LogWithDetails(r, user, action, logger.ResourceAutomationCapability, &capability.ID, capability.Name, map[string]interface{}{
 		"capability_type":           capability.CapabilityType,
 		"is_enabled":                capability.IsEnabled,
 		"applies_to_all_workspaces": capability.AppliesToAllWorkspaces,

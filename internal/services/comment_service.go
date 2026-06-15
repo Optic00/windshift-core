@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -10,7 +11,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
-	"windshift/internal/utils"
+	"windshift/internal/sanitize"
 )
 
 // WebhookDispatcher is an interface for dispatching webhook events.
@@ -35,6 +36,14 @@ type HandleCommentParams struct {
 	IsPrivate        bool
 }
 
+// AgentMentionTrigger is the coding-agent harness's interest in new
+// comments (WI-264): @mentions of a binding's acting user start a run on
+// the commented item. Kept as an interface so CommentService stays
+// decoupled from BindingService (which satisfies it) and tests can stub it.
+type AgentMentionTrigger interface {
+	MaybeStartRunsForMentions(ctx context.Context, workspaceID, itemID int, mentionedUserIDs []int, commentAuthorID int) error
+}
+
 // CommentService encapsulates comment creation logic used by both HTTP handlers
 // and action automation service.
 type CommentService struct {
@@ -44,6 +53,7 @@ type CommentService struct {
 	mentionService      *MentionService
 	webhookSender       WebhookDispatcher
 	emailReplyService   EmailReplyHandler
+	agentMentionTrigger AgentMentionTrigger
 }
 
 // CreateCommentParams contains the parameters for creating a comment.
@@ -96,26 +106,22 @@ func (s *CommentService) SetEmailReplyService(ers EmailReplyHandler) {
 	s.emailReplyService = ers
 }
 
+// SetAgentMentionTrigger wires the optional coding-agent @mention trigger
+// (WI-264). Nil disables the hook; Create calls it once per created comment.
+func (s *CommentService) SetAgentMentionTrigger(trigger AgentMentionTrigger) {
+	s.agentMentionTrigger = trigger
+}
+
 // Create creates a new comment with all associated side effects:
 // activity tracking, notifications, mentions, and webhooks.
 func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResult, error) {
 	// 1. Sanitize content (XSS prevention — strips HTML tags + dangerous Markdown URLs)
-	sanitizedContent := utils.SanitizeCommentContent(params.Content)
+	sanitizedContent := sanitize.Comment.Sanitize(params.Content)
 
-	// 2. Get item details for notifications
-	var workspaceID int
-	var itemTitle string
-	var workspaceItemNumber int
-	var workspaceKey string
-	var assigneeID, creatorID sql.NullInt64
-	err := s.db.QueryRow(`
-		SELECT i.workspace_id, i.title, i.workspace_item_number, w.key, i.assignee_id, i.creator_id
-		FROM items i
-		JOIN workspaces w ON i.workspace_id = w.id
-		WHERE i.id = ?
-	`, params.ItemID).Scan(&workspaceID, &itemTitle, &workspaceItemNumber, &workspaceKey, &assigneeID, &creatorID)
+	// 2. Get item details for notifications and the webhook payload
+	item, err := repository.NewItemRepository(s.db).FindByIDWithDetails(params.ItemID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, repository.ErrNotFound) {
 			return nil, fmt.Errorf("item not found: %d", params.ItemID)
 		}
 		return nil, fmt.Errorf("failed to fetch item details: %w", err)
@@ -165,9 +171,6 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 	if !params.SuppressNotifications {
 		// 5. Emit notification event (if notificationService != nil)
 		if s.notificationService != nil {
-			assigneeIDPtr := utils.NullInt64ToPtr(assigneeID)
-			creatorIDPtr := utils.NullInt64ToPtr(creatorID)
-
 			// Get actor name for notification
 			var actorName string
 			if params.PortalCustomerID != nil {
@@ -188,7 +191,7 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 			}
 
 			// Construct the item key (e.g., "TST-1")
-			itemKey := fmt.Sprintf("%s-%d", workspaceKey, workspaceItemNumber)
+			itemKey := fmt.Sprintf("%s-%d", item.WorkspaceKey, item.WorkspaceItemNumber)
 
 			slog.Debug("emitting notification event for comment",
 				slog.String("component", "comment_service"),
@@ -198,14 +201,14 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 
 			s.notificationService.EmitEvent(&NotificationEvent{
 				EventType:   models.EventCommentCreated,
-				WorkspaceID: workspaceID,
+				WorkspaceID: item.WorkspaceID,
 				ActorUserID: params.ActorUserID,
 				ItemID:      params.ItemID,
-				AssigneeID:  assigneeIDPtr,
-				CreatorID:   creatorIDPtr,
+				AssigneeID:  item.AssigneeID,
+				CreatorID:   item.CreatorID,
 				Title:       "New Comment Added",
 				TemplateData: map[string]interface{}{
-					"item.title": itemTitle,
+					"item.title": item.Title,
 					"item.key":   itemKey,
 					"item.id":    params.ItemID,
 					"user.name":  actorName,
@@ -220,7 +223,7 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 				SourceID:    int(commentID),
 				Content:     params.Content, // Use original content for mention parsing
 				ItemID:      params.ItemID,
-				WorkspaceID: workspaceID,
+				WorkspaceID: item.WorkspaceID,
 				ActorUserID: params.ActorUserID,
 			}); err != nil {
 				slog.Warn("failed to process mentions",
@@ -232,13 +235,37 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 			}
 		}
 
+		// 6b. Coding-agent @mention trigger (WI-264). Create-only by
+		// construction: this hook lives here and not in ProcessMentions,
+		// which also runs on comment EDITS — adding an @ by editing must
+		// not re-trigger. Portal-customer comments (ActorUserID 0) are
+		// skipped: the trigger needs a real user as the run's credential
+		// principal (WI-275). Failures are logged, never surfaced — a
+		// refused run must not block the comment.
+		if s.agentMentionTrigger != nil && s.mentionService != nil && params.ActorUserID > 0 {
+			if ids, err := s.mentionService.ResolveMentionedUserIDs(params.Content); err != nil {
+				slog.Warn("failed to resolve mentions for agent trigger",
+					slog.String("component", "comment_service"),
+					slog.Int64("comment_id", commentID),
+					slog.Any("error", err),
+				)
+			} else if len(ids) > 0 {
+				// Background context: the run outlives the comment request,
+				// and a client disconnect must not abort run admission.
+				if err := s.agentMentionTrigger.MaybeStartRunsForMentions(context.Background(), item.WorkspaceID, params.ItemID, ids, params.ActorUserID); err != nil {
+					slog.Warn("coding-agent mention trigger failed",
+						slog.String("component", "comment_service"),
+						slog.Int("item_id", params.ItemID),
+						slog.Int64("comment_id", commentID),
+						slog.Any("error", err),
+					)
+				}
+			}
+		}
+
 		// 7. Dispatch webhook (if webhookSender != nil)
 		if s.webhookSender != nil {
-			// Get full item for webhook payload
-			itemRepo := repository.NewItemRepository(s.db)
-			if item, err := itemRepo.FindByIDWithDetails(params.ItemID); err == nil {
-				go s.webhookSender.DispatchEvent("comment.created", item)
-			}
+			go s.webhookSender.DispatchEvent("comment.created", item)
 		}
 
 		// 8. Handle outbound email reply (if emailReplyService != nil)
@@ -276,21 +303,23 @@ type CommentWithDetails struct {
 // Get retrieves a comment by ID with author details
 func (s *CommentService) Get(commentID int) (*CommentWithDetails, error) {
 	var comment CommentWithDetails
-	var authorID sql.NullInt64
-	var authorFirstName, authorLastName, authorEmail sql.NullString
+	var authorID, portalCustomerID sql.NullInt64
+	var authorName, authorEmail sql.NullString
 
 	err := s.db.QueryRow(`
-		SELECT c.id, c.item_id, c.author_id, c.content, c.is_private, c.created_at, c.updated_at,
-		       u.first_name, u.last_name, u.email,
+		SELECT c.id, c.item_id, c.author_id, c.portal_customer_id, c.content, c.is_private, c.created_at, c.updated_at,
+		       COALESCE(NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), ''), pc.name) AS author_name,
+		       COALESCE(u.email, pc.email) AS author_email,
 		       i.workspace_id, i.title
 		FROM comments c
 		LEFT JOIN users u ON c.author_id = u.id
+		LEFT JOIN portal_customers pc ON c.portal_customer_id = pc.id
 		JOIN items i ON c.item_id = i.id
 		WHERE c.id = ?
 	`, commentID).Scan(
-		&comment.ID, &comment.ItemID, &authorID, &comment.Content, &comment.IsPrivate,
+		&comment.ID, &comment.ItemID, &authorID, &portalCustomerID, &comment.Content, &comment.IsPrivate,
 		&comment.CreatedAt, &comment.UpdatedAt,
-		&authorFirstName, &authorLastName, &authorEmail,
+		&authorName, &authorEmail,
 		&comment.WorkspaceID, &comment.ItemTitle,
 	)
 
@@ -305,8 +334,12 @@ func (s *CommentService) Get(commentID int) (*CommentWithDetails, error) {
 		id := int(authorID.Int64)
 		comment.AuthorID = &id
 	}
-	if authorFirstName.Valid && authorLastName.Valid {
-		comment.AuthorName = fmt.Sprintf("%s %s", authorFirstName.String, authorLastName.String)
+	if portalCustomerID.Valid {
+		id := int(portalCustomerID.Int64)
+		comment.PortalCustomerID = &id
+	}
+	if authorName.Valid {
+		comment.AuthorName = authorName.String
 	}
 	if authorEmail.Valid {
 		comment.AuthorEmail = authorEmail.String
@@ -318,16 +351,17 @@ func (s *CommentService) Get(commentID int) (*CommentWithDetails, error) {
 // Update updates a comment's content
 func (s *CommentService) Update(commentID int, content string, userID int) (*models.Comment, error) {
 	// Sanitize content (strips HTML tags + dangerous Markdown URLs)
-	sanitizedContent := utils.SanitizeCommentContent(content)
+	sanitizedContent := sanitize.Comment.Sanitize(content)
 
-	// Check if comment exists and get author
-	var authorID int
-	err := s.db.QueryRow("SELECT author_id FROM comments WHERE id = ?", commentID).Scan(&authorID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("comment not found: %d", commentID)
-	}
+	// Check if comment exists. Portal-authored comments have a NULL author_id,
+	// so existence must not depend on scanning author_id into a non-null int.
+	var exists bool
+	err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM comments WHERE id = ?)", commentID).Scan(&exists)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check comment: %w", err)
+	}
+	if !exists {
+		return nil, fmt.Errorf("comment not found: %d", commentID)
 	}
 
 	// Update the comment
@@ -341,19 +375,21 @@ func (s *CommentService) Update(commentID int, content string, userID int) (*mod
 
 	// Fetch and return the updated comment
 	var comment models.Comment
-	var authorFirstName, authorLastName, authorEmail sql.NullString
-	var authorIDNull sql.NullInt64
+	var authorName, authorEmail sql.NullString
+	var authorIDNull, portalCustomerID sql.NullInt64
 
 	err = s.db.QueryRow(`
-		SELECT c.id, c.item_id, c.author_id, c.content, c.is_private, c.created_at, c.updated_at,
-		       u.first_name, u.last_name, u.email
+		SELECT c.id, c.item_id, c.author_id, c.portal_customer_id, c.content, c.is_private, c.created_at, c.updated_at,
+		       COALESCE(NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), ''), pc.name) AS author_name,
+		       COALESCE(u.email, pc.email) AS author_email
 		FROM comments c
 		LEFT JOIN users u ON c.author_id = u.id
+		LEFT JOIN portal_customers pc ON c.portal_customer_id = pc.id
 		WHERE c.id = ?
 	`, commentID).Scan(
-		&comment.ID, &comment.ItemID, &authorIDNull, &comment.Content, &comment.IsPrivate,
+		&comment.ID, &comment.ItemID, &authorIDNull, &portalCustomerID, &comment.Content, &comment.IsPrivate,
 		&comment.CreatedAt, &comment.UpdatedAt,
-		&authorFirstName, &authorLastName, &authorEmail,
+		&authorName, &authorEmail,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch updated comment: %w", err)
@@ -363,8 +399,12 @@ func (s *CommentService) Update(commentID int, content string, userID int) (*mod
 		id := int(authorIDNull.Int64)
 		comment.AuthorID = &id
 	}
-	if authorFirstName.Valid && authorLastName.Valid {
-		comment.AuthorName = fmt.Sprintf("%s %s", authorFirstName.String, authorLastName.String)
+	if portalCustomerID.Valid {
+		id := int(portalCustomerID.Int64)
+		comment.PortalCustomerID = &id
+	}
+	if authorName.Valid {
+		comment.AuthorName = authorName.String
 	}
 	if authorEmail.Valid {
 		comment.AuthorEmail = authorEmail.String
@@ -396,10 +436,12 @@ func (s *CommentService) Delete(commentID int) error {
 // GetByItemID retrieves all comments for an item
 func (s *CommentService) GetByItemID(itemID int) ([]models.Comment, error) {
 	rows, err := s.db.Query(`
-		SELECT c.id, c.item_id, c.author_id, c.content, c.is_private, c.created_at, c.updated_at,
-		       u.first_name || ' ' || u.last_name as author_name, u.email as author_email
+		SELECT c.id, c.item_id, c.author_id, c.portal_customer_id, c.content, c.is_private, c.created_at, c.updated_at,
+		       COALESCE(NULLIF(TRIM(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')), ''), pc.name) AS author_name,
+		       COALESCE(u.email, pc.email) AS author_email
 		FROM comments c
 		LEFT JOIN users u ON c.author_id = u.id
+		LEFT JOIN portal_customers pc ON c.portal_customer_id = pc.id
 		WHERE c.item_id = ?
 		ORDER BY c.created_at DESC
 	`, itemID)
@@ -411,11 +453,11 @@ func (s *CommentService) GetByItemID(itemID int) ([]models.Comment, error) {
 	var comments []models.Comment
 	for rows.Next() {
 		var c models.Comment
-		var authorID sql.NullInt64
+		var authorID, portalCustomerID sql.NullInt64
 		var authorName, authorEmail sql.NullString
 
 		err := rows.Scan(
-			&c.ID, &c.ItemID, &authorID, &c.Content, &c.IsPrivate,
+			&c.ID, &c.ItemID, &authorID, &portalCustomerID, &c.Content, &c.IsPrivate,
 			&c.CreatedAt, &c.UpdatedAt, &authorName, &authorEmail,
 		)
 		if err != nil {
@@ -425,6 +467,10 @@ func (s *CommentService) GetByItemID(itemID int) ([]models.Comment, error) {
 		if authorID.Valid {
 			id := int(authorID.Int64)
 			c.AuthorID = &id
+		}
+		if portalCustomerID.Valid {
+			id := int(portalCustomerID.Int64)
+			c.PortalCustomerID = &id
 		}
 		if authorName.Valid {
 			c.AuthorName = authorName.String
@@ -464,15 +510,20 @@ func (s *CommentService) GetWorkspaceIDForComment(commentID int) (int, error) {
 	return workspaceID, nil
 }
 
-// GetAuthorID returns the author ID of a comment
-func (s *CommentService) GetAuthorID(commentID int) (int, error) {
-	var authorID int
+// GetAuthorID returns the internal author ID of a comment. Portal-authored
+// comments have no internal author, so they return nil rather than an error.
+func (s *CommentService) GetAuthorID(commentID int) (*int, error) {
+	var authorID sql.NullInt64
 	err := s.db.QueryRow("SELECT author_id FROM comments WHERE id = ?", commentID).Scan(&authorID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, fmt.Errorf("comment not found: %d", commentID)
+		return nil, fmt.Errorf("comment not found: %d", commentID)
 	}
 	if err != nil {
-		return 0, fmt.Errorf("failed to get author ID: %w", err)
+		return nil, fmt.Errorf("failed to get author ID: %w", err)
 	}
-	return authorID, nil
+	if !authorID.Valid {
+		return nil, nil
+	}
+	id := int(authorID.Int64)
+	return &id, nil
 }

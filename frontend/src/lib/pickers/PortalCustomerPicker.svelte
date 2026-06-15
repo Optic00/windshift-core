@@ -1,5 +1,5 @@
 <script>
-  import ItemPicker from './ItemPicker.svelte';
+  import BasePicker from './BasePicker.svelte';
   import { User } from '@lucide/svelte';
   import { createAsyncLoader } from '../composables';
   import { api } from '../api.js';
@@ -12,38 +12,38 @@
     unassignedLabel = 'None',
     disabled = false,
     class: className = '',
-    children = null,
     onSelect = () => {},
     onCancel = () => {}
   } = $props();
 
   const customers = createAsyncLoader(() => api.portalCustomers.getAll());
   onMount(() => customers.load());
-
-  const config = {
-    icon: {
-      type: 'component',
-      source: () => User
-    },
-    primary: { text: (item) => item.name || '' },
-    secondary: { text: (item) => item.email || '' },
-    searchFields: ['name', 'email', 'customer_organisation_name'],
-    getValue: (item) => item?.id,
-    getLabel: (item) => item?.name || ''
-  };
 </script>
 
-<ItemPicker
+{#snippet customerRow({ item })}
+  <User class="w-4 h-4 flex-shrink-0" />
+  <div class="flex flex-col min-w-0">
+    <span class="font-medium truncate">{item?.name || ''}</span>
+    {#if item?.email}
+      <span class="text-xs truncate" style="color: var(--ds-text-subtle);">{item.email}</span>
+    {/if}
+  </div>
+{/snippet}
+
+<BasePicker
   bind:value
   items={customers.data || []}
-  {config}
+  loading={customers.loading}
   {placeholder}
   {showUnassigned}
   {unassignedLabel}
   {disabled}
-  loading={customers.loading}
+  allowClear={true}
   class={className}
-  {children}
+  itemSnippet={customerRow}
+  searchFields={['name', 'email', 'customer_organisation_name']}
+  getValue={(item) => item?.id}
+  getLabel={(item) => item?.name || ''}
   onSelect={(item) => onSelect(item)}
   onCancel={() => onCancel()}
 />

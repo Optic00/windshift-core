@@ -7,6 +7,7 @@ import (
 
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
 
@@ -289,6 +290,9 @@ func (h *PageHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Sanitization happens in PageService.Create — the documented choke
+	// point. Re-sanitizing here would double-decode HTML entities and
+	// corrupt escaped-HTML content (e.g. code samples) in a single save.
 	if req.Title == "" {
 		respondValidationError(w, r, "title is required")
 		return
@@ -341,6 +345,7 @@ func (h *PageHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Sanitization happens in PageService.Update (choke point); see Create.
 	if req.Title == "" {
 		respondValidationError(w, r, "title is required")
 		return
@@ -563,6 +568,10 @@ func (h *PageHandler) GrantPermission(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.PrincipalType, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.PermissionLevel, Policy: sanitize.ShortIdentifier},
+	)
 	if req.PrincipalType == "" || req.PrincipalID == 0 || req.PermissionLevel == "" {
 		respondValidationError(w, r, "principal_type, principal_id, and permission_level are required")
 		return

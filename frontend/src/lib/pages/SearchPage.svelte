@@ -1,10 +1,7 @@
 <script>
   import { onMount } from 'svelte';
-  import { api } from '../api.js';
-  import { Search, Eye, Trash2 } from '@lucide/svelte';
+  import { Search } from '@lucide/svelte';
   import { t } from '../stores/i18n.svelte.js';
-  import { errorToast } from '../stores/toasts.svelte.js';
-  import { confirm } from '../composables/useConfirm.js';
   import PageHeader from '../layout/PageHeader.svelte';
   import Card from '../components/Card.svelte';
   import DataTable from '../components/DataTable.svelte';
@@ -17,6 +14,12 @@
   import { navigate } from '../router.js';
   import { createWorkItemSearchHandlers } from '../composables/useWorkItemSearch.svelte.js';
   import { buildWorkItemColumns, updatedAtColumn } from '../utils/workItemColumns.js';
+  import {
+    decorateWorkItems,
+    createDeleteItemHandler,
+    createItemActionsBuilder,
+    createSearchPaginationHandlers,
+  } from '../utils/workItemTableHelpers.js';
 
   const store = createWorkItemSearchStore();
   /** @type {Record<string, any>} */
@@ -69,14 +72,6 @@
     },
   });
 
-  function getWorkspaceName(workspaceId) {
-    return workspaces.find((w) => w.id === workspaceId)?.name || 'Unknown';
-  }
-
-  function getWorkspaceKey(workspaceId) {
-    return workspaces.find((w) => w.id === workspaceId)?.key || 'WORK';
-  }
-
   let workItemColumns = $derived(
     buildWorkItemColumns({
       itemUrl: (item) => itemUrl({ workspaceId: item.workspace_id, itemId: item.id }),
@@ -86,64 +81,27 @@
     })
   );
 
-  let tableData = $derived(
-    workItems.map((item) => ({
-      ...item,
-      display_key: `${getWorkspaceKey(item.workspace_id)}-${item.id}`,
-      workspace_name: getWorkspaceName(item.workspace_id),
-    }))
-  );
+  let tableData = $derived(decorateWorkItems(workItems, workspaces));
 
   function viewItem(item) {
     navigate(itemUrl({ workspaceId: item.workspace_id, itemId: item.id }));
   }
 
-  async function deleteItem(item) {
-    const confirmed = await confirm({
-      title: t('common.delete'),
-      message: t('dialogs.confirmations.deleteItem', { name: item.title }),
-      confirmText: t('common.delete'),
-      cancelText: t('common.cancel'),
-      variant: 'danger',
-    });
-    if (!confirmed) return;
+  const deleteItem = createDeleteItemHandler({
+    confirmMessage: (item) => t('dialogs.confirmations.deleteItem', { name: item.title }),
+    onDeleted: () => store.executeSearch({ page: currentPage, limit: itemsPerPage }),
+  });
 
-    try {
-      await api.items.delete(item.id);
-      await store.executeSearch({ page: currentPage, limit: itemsPerPage });
-    } catch (error) {
-      console.error('Failed to delete item:', error);
-      errorToast(t('dialogs.alerts.failedToDelete', { error: error.message || error }));
-    }
-  }
+  const buildItemActions = createItemActionsBuilder({
+    viewItem,
+    deleteItem,
+    viewTitleKey: 'common.viewDetails',
+  });
 
-  function buildItemActions(item) {
-    return [
-      { id: 'view', type: 'regular', icon: Eye, title: t('common.viewDetails'), onClick: () => viewItem(item) },
-      { type: 'divider' },
-      {
-        id: 'delete',
-        type: 'regular',
-        icon: Trash2,
-        title: t('common.delete'),
-        color: 'var(--ds-text-danger)',
-        hoverClass: 'hover-danger',
-        onClick: () => deleteItem(item),
-      },
-    ];
-  }
-
-  async function handlePageChange(event) {
-    currentPage = event.detail.page;
-    itemsPerPage = event.detail.itemsPerPage;
-    await store.executeSearch({ page: currentPage, limit: itemsPerPage });
-  }
-
-  async function handlePageSizeChange(event) {
-    currentPage = event.detail.page;
-    itemsPerPage = event.detail.itemsPerPage;
-    await store.executeSearch({ page: currentPage, limit: itemsPerPage });
-  }
+  const { handlePageChange, handlePageSizeChange } = createSearchPaginationHandlers(store, {
+    setPage: (page) => (currentPage = page),
+    setItemsPerPage: (size) => (itemsPerPage = size),
+  });
 </script>
 
 <div class="min-h-screen" style="background-color: var(--ds-surface);">

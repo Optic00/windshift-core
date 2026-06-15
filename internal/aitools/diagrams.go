@@ -7,10 +7,11 @@ import (
 	"fmt"
 	"strings"
 
+	"windshift/internal/auth"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
-	"windshift/internal/utils"
 )
 
 // Storage contract: item_diagrams.diagram_data is opaque TEXT. Existing rows
@@ -159,6 +160,7 @@ func init() {
 	Register(Default, Tool[listDiagramsArgs]{
 		Name:        "list_diagrams",
 		Description: "List diagrams attached to a work item. Returns summaries (id, name, kind, timestamps); use get_diagram to fetch the full Excalidraw/mermaid payload.",
+		Scopes:      []string{auth.ScopeItemsRead},
 		Run: func(_ context.Context, env *Env, args listDiagramsArgs) (any, error) {
 			itemID, wsID, toolErr := itemWorkspaceForDiagram(env, args.ItemID, args.ItemKey)
 			if toolErr != nil {
@@ -189,6 +191,7 @@ func init() {
 	Register(Default, Tool[getDiagramArgs]{
 		Name:        "get_diagram",
 		Description: "Get a single diagram by ID, including its full diagram_data payload (an Excalidraw scene JSON or a {type:mermaid,source} seed wrapper).",
+		Scopes:      []string{auth.ScopeItemsRead},
 		Run: func(_ context.Context, env *Env, args getDiagramArgs) (any, error) {
 			if args.ID <= 0 {
 				return map[string]string{"error": "id is required"}, nil
@@ -228,8 +231,9 @@ func init() {
 	Register(Default, Tool[createDiagramArgs]{
 		Name:        "create_diagram",
 		Description: "Attach a new diagram to a work item. Provide either `mermaid` (a mermaid source string, stored as a seed and converted on first open) or `excalidraw` (a fully-formed Excalidraw scene JSON, stored as-is).",
+		Scopes:      []string{auth.ScopeItemsWrite},
 		Run: func(_ context.Context, env *Env, args createDiagramArgs) (any, error) {
-			name := utils.SanitizeName(args.Name)
+			name := sanitize.ShortIdentifier.Sanitize(args.Name)
 			if name == "" {
 				return map[string]string{"error": "name is required"}, nil
 			}
@@ -259,6 +263,7 @@ func init() {
 				// History is best-effort, mirroring the handler.
 				_ = herr
 			}
+			env.AuditWrite(resourceDiagram, int(id), "create_diagram", name)
 			return diagramSummaryDTO{
 				ID:        int(id),
 				ItemID:    itemID,
@@ -276,6 +281,7 @@ func init() {
 	Register(Default, Tool[updateDiagramArgs]{
 		Name:        "update_diagram",
 		Description: "Update a diagram. Each of name / mermaid / excalidraw is optional; omit to keep the existing value. Mermaid and excalidraw are mutually exclusive.",
+		Scopes:      []string{auth.ScopeItemsWrite},
 		Run: func(_ context.Context, env *Env, args updateDiagramArgs) (any, error) {
 			if args.ID <= 0 {
 				return map[string]string{"error": "id is required"}, nil
@@ -305,7 +311,7 @@ func init() {
 
 			newName := existing.Name
 			if strings.TrimSpace(args.Name) != "" {
-				newName = utils.SanitizeName(args.Name)
+				newName = sanitize.ShortIdentifier.Sanitize(args.Name)
 				if newName == "" {
 					return map[string]string{"error": "name cannot be blank"}, nil
 				}
@@ -338,6 +344,7 @@ func init() {
 			}
 			_ = repo.RecordHistory(existing.ItemID, env.UserID, "diagram_updated", oldName,
 				fmt.Sprintf("diagram:%d:%s", args.ID, newName))
+			env.AuditWrite(resourceDiagram, args.ID, "update_diagram", newName)
 
 			return diagramSummaryDTO{
 				ID:     args.ID,
@@ -354,6 +361,7 @@ func init() {
 	Register(Default, Tool[deleteDiagramArgs]{
 		Name:        "delete_diagram",
 		Description: "Delete a diagram by ID.",
+		Scopes:      []string{auth.ScopeItemsWrite}, // matches v1 DELETE /diagrams/{id} (items:write, not items:delete)
 		Run: func(_ context.Context, env *Env, args deleteDiagramArgs) (any, error) {
 			if args.ID <= 0 {
 				return map[string]string{"error": "id is required"}, nil
@@ -387,6 +395,7 @@ func init() {
 				}
 				return nil, err
 			}
+			env.AuditWrite(resourceDiagram, args.ID, "delete_diagram", name)
 			return map[string]any{
 				"success": true,
 				"id":      args.ID,

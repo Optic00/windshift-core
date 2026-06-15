@@ -6,9 +6,32 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
+
+// allowLocalConnections is the global "allow loopback/private destinations"
+// override consulted by every SSRF-safe dialer and client in this package. It
+// is off by default — server-side, config-driven HTTP clients block private
+// targets so a malicious/mistyped endpoint can't reach localhost, RFC1918
+// services, or the cloud metadata endpoint.
+//
+// Operators running self-hosted SCM (Gitea / GitHub Enterprise), Jira Data
+// Center, or a local LLM gateway on a private network — or developing against
+// localhost — flip it on once via the --allow-local-connections flag /
+// ALLOW_LOCAL_CONNECTIONS env (wired in cmd startup), instead of allowlisting
+// every endpoint's CIDR individually. It is a single process-wide switch, so it
+// is set once at startup before any request is served.
+var allowLocalConnections atomic.Bool
+
+// SetAllowLocalConnections sets the global override (see allowLocalConnections).
+// Call once at startup from the resolved config.
+func SetAllowLocalConnections(v bool) { allowLocalConnections.Store(v) }
+
+// AllowLocalConnections reports whether the global loopback/private override is
+// enabled.
+func AllowLocalConnections() bool { return allowLocalConnections.Load() }
 
 // ErrBlockedSSRFAddr is returned by SafeNetDialer when the resolved IP
 // for a connection is in a non-public range (loopback, RFC1918, link-local,
@@ -21,6 +44,8 @@ var ErrBlockedSSRFAddr = errors.New("dial host resolves to a blocked IP range")
 // also rejects unspecified, multicast, and CGNAT 100.64.0.0/10 (covers cloud
 // metadata endpoints and other internal-only ranges that some
 // IsPrivate-equivalents miss).
+//
+// deadcode-keep: called by core-tests/internal/utils/dialer_test.go
 func IsBlockedSSRFAddr(ip net.IP) bool {
 	return IsBlockedSSRFAddrWithAllowedCIDRs(ip, nil)
 }
@@ -34,11 +59,27 @@ func IsBlockedSSRFAddrWithAllowedCIDRs(ip net.IP, allowedCIDRs []*net.IPNet) boo
 	if ip == nil {
 		return true
 	}
+	// Global escape hatch for self-hosted/local deployments — supersedes the
+	// per-endpoint CIDR allowlists. Off by default.
+	if allowLocalConnections.Load() {
+		return false
+	}
 	if isAlwaysBlockedSSRFAddr(ip) {
 		return true
 	}
 	if isPrivateOrCGNAT(ip) {
 		return !ipInCIDRs(ip, allowedCIDRs)
+	}
+	// Encoding-safe: unwrap IPv4-compatible / 6to4 / NAT64 forms and re-check
+	// the embedded IPv4, so e.g. ::127.0.0.1 or 2002:0a00:0001:: can't smuggle a
+	// blocked target past the predicates above (which only normalize IPv4-mapped).
+	if v4 := embeddedIPv4(ip); v4 != nil {
+		if isAlwaysBlockedSSRFAddr(v4) {
+			return true
+		}
+		if isPrivateOrCGNAT(v4) {
+			return !ipInCIDRs(v4, allowedCIDRs)
+		}
 	}
 	return false
 }

@@ -50,22 +50,18 @@ type CreateAttachmentParams struct {
 // For portal customers: can only modify attachments on items they created.
 func (s *AttachmentService) CanModifyItemAttachment(userID, portalCustomerID *int, itemID int) (bool, error) {
 	// Get item's workspace_id and creator_portal_customer_id
-	var workspaceID int
-	var creatorPortalCustomerID sql.NullInt64
-	err := s.db.QueryRow(`
-		SELECT workspace_id, creator_portal_customer_id
-		FROM items WHERE id = ?
-	`, itemID).Scan(&workspaceID, &creatorPortalCustomerID)
+	item, err := repository.NewItemRepository(s.db).FindByID(itemID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, repository.ErrNotFound) {
 			return false, nil // Item not found
 		}
 		return false, fmt.Errorf("failed to get item for permission check: %w", err)
 	}
+	workspaceID := item.WorkspaceID
 
 	// Portal customer: can only access their own items
 	if portalCustomerID != nil {
-		if creatorPortalCustomerID.Valid && int(creatorPortalCustomerID.Int64) == *portalCustomerID {
+		if item.CreatorPortalCustomerID != nil && *item.CreatorPortalCustomerID == *portalCustomerID {
 			return true, nil
 		}
 		return false, nil

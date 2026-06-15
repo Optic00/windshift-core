@@ -1,0 +1,1761 @@
+{
+  "captured_at": "2026-06-07T21:07:31Z",
+  "project_key": "ASFJ",
+  "project_id": "10004",
+  "deployment_type": "cloud",
+  "field_count": 95,
+  "suggestion_count": 46,
+  "fields": [
+    {
+      "id": "customfield_10024",
+      "key": "",
+      "name": "[CHART] Date of First Response",
+      "description": "",
+      "type": "",
+      "schema": {
+        "type": "datetime",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.ext.charting:firstresponsedate",
+        "customId": 10024
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10025",
+      "key": "",
+      "name": "[CHART] Time in Status",
+      "description": "",
+      "type": "",
+      "schema": {
+        "type": "any",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.ext.charting:timeinstatus",
+        "customId": 10025
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10009",
+      "key": "",
+      "name": "Actual end",
+      "description": "Enter when the change actually ended.",
+      "type": "",
+      "schema": {
+        "type": "datetime",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:datetime",
+        "customId": 10009
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10008",
+      "key": "",
+      "name": "Actual start",
+      "description": "Enter when the change actually started.",
+      "type": "",
+      "schema": {
+        "type": "datetime",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:datetime",
+        "customId": 10008
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10053",
+      "key": "",
+      "name": "Affected hardware",
+      "description": "",
+      "type": "",
+      "schema": {
+        "type": "string",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:textfield",
+        "customId": 10053
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10054",
+      "key": "",
+      "name": "Affected services",
+      "description": "Link services from the service registry to an issue.",
+      "type": "",
+      "schema": {
+        "type": "array",
+        "items": "service-entity-field",
+        "system": "",
+        "custom": "com.atlassian.jira.plugins.service-entity:service-entity-field-cftype",
+        "customId": 10054
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10043",
+      "key": "",
+      "name": "Approvals",
+      "description": "Provides search options for Jira approvals information. This custom field is created programmatically and required by Jira.",
+      "type": "",
+      "schema": {
+        "type": "sd-approvals",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.servicedesk.approvals-plugin:sd-approvals",
+        "customId": 10043
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10052",
+      "key": "",
+      "name": "Approver groups",
+      "description": "Contains groups of users needed for approval. This custom field was created by Jira Service Management.",
+      "type": "",
+      "schema": {
+        "type": "array",
+        "items": "group",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:multigrouppicker",
+        "customId": 10052
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10003",
+      "key": "",
+      "name": "Approvers",
+      "description": "Contains users needed for approval. This custom field was created by Jira.",
+      "type": "",
+      "schema": {
+        "type": "array",
+        "items": "user",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:multiuserpicker",
+        "customId": 10003
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10174",
+      "key": "",
+      "name": "Atlassian project",
+      "description": "",
+      "type": "",
+      "schema": {
+        "type": "string",
+        "items": "",
+        "system": "",
+        "custom": "jira.polaris:atlassian-project",
+        "customId": 10174
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10175",
+      "key": "",
+      "name": "Atlassian project status",
+      "description": "",
+      "type": "",
+      "schema": {
+        "type": "string",
+        "items": "",
+        "system": "",
+        "custom": "jira.polaris:atlassian-project-status",
+        "customId": 10175
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10058",
+      "key": "",
+      "name": "Backout plan",
+      "description": "",
+      "type": "",
+      "schema": {
+        "type": "string",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:textarea",
+        "customId": 10058
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10098",
+      "key": "",
+      "name": "Basic Number",
+      "description": "",
+      "type": "",
+      "schema": {
+        "type": "number",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:float",
+        "customId": 10098
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10088",
+      "key": "",
+      "name": "Category",
+      "description": "Choose a category using a popup picker window.",
+      "type": "",
+      "schema": {
+        "type": "option",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:jwm-category",
+        "customId": 10088
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10007",
+      "key": "",
+      "name": "Change reason",
+      "description": "Choose the reason for the change request",
+      "type": "",
+      "schema": {
+        "type": "option",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:select",
+        "customId": 10007
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10006",
+      "key": "",
+      "name": "Change risk",
+      "description": "",
+      "type": "",
+      "schema": {
+        "type": "option",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:select",
+        "customId": 10006
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10005",
+      "key": "",
+      "name": "Change type",
+      "description": "",
+      "type": "",
+      "schema": {
+        "type": "option",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:select",
+        "customId": 10005
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10072",
+      "key": "",
+      "name": "Checklist Progress",
+      "description": "Custom field with Checklist progress, e.g. 'Checklist: 12/14' (read-only)",
+      "type": "",
+      "schema": {
+        "type": "string",
+        "items": "",
+        "system": "",
+        "custom": "read-only-string-issue-field",
+        "customId": 10072
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10073",
+      "key": "",
+      "name": "Checklist Progress %",
+      "description": "Custom field with Checklist progress in %, e.g. 17 (read-only)",
+      "type": "",
+      "schema": {
+        "type": "number",
+        "items": "",
+        "system": "",
+        "custom": "read-only-number-issue-field",
+        "customId": 10073
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10074",
+      "key": "",
+      "name": "Checklist Template",
+      "description": "Pick a checklist template to add when issue is created or transitioned (it will replace the default checklist)",
+      "type": "",
+      "schema": {
+        "type": "option2",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.plugins.atlassian-connect-plugin:com.herocoders.plugins.jira.issuechecklist-free__issue-checklist-templates",
+        "customId": 10074
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10075",
+      "key": "",
+      "name": "Checklist Text (view-only)",
+      "description": "Custom field containing checklist items in plain text format and without user mentions and item description. Do not update the field. It is designed for read-only use.",
+      "type": "",
+      "schema": {
+        "type": "string",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:textarea",
+        "customId": 10075
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10177",
+      "key": "",
+      "name": "Comments",
+      "description": "The number of comments added to the idea",
+      "type": "",
+      "schema": {
+        "type": "number",
+        "items": "",
+        "system": "",
+        "custom": "jira.polaris:count-issue-comments",
+        "customId": 10177
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10087",
+      "key": "",
+      "name": "Cross Project Release",
+      "description": "",
+      "type": "",
+      "schema": {
+        "type": "option",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:select",
+        "customId": 10087
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10179",
+      "key": "",
+      "name": "Delivery progress",
+      "description": "An estimation of the progress of delivery work items from Jira such as epics that are linked to the idea. For more details open each idea and the \"Delivery\" section",
+      "type": "",
+      "schema": {
+        "type": "string",
+        "items": "",
+        "system": "",
+        "custom": "jira.polaris:delivery-progress",
+        "customId": 10179
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10180",
+      "key": "",
+      "name": "Delivery status",
+      "description": "The status of delivery work items from Jira such as epics that are linked to an idea. For more details open each idea and the \"Delivery\" section",
+      "type": "",
+      "schema": {
+        "type": "string",
+        "items": "",
+        "system": "",
+        "custom": "jira.polaris:delivery-status",
+        "customId": 10180
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10099",
+      "key": "",
+      "name": "Design",
+      "description": "Custom field that stores design information",
+      "type": "",
+      "schema": {
+        "type": "array",
+        "items": "design.field.name",
+        "system": "",
+        "custom": "com.atlassian.jira.plugins.jira-development-integration-plugin:designcf",
+        "customId": 10099
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10000",
+      "key": "",
+      "name": "development",
+      "description": "Includes development summary panel information used in JQL",
+      "type": "",
+      "schema": {
+        "type": "any",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugins.jira-development-integration-plugin:devsummarycf",
+        "customId": 10000
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10013",
+      "key": "",
+      "name": "Epic Color",
+      "description": "Epic Color field for Jira Software use only.",
+      "type": "",
+      "schema": {
+        "type": "string",
+        "items": "",
+        "system": "",
+        "custom": "com.pyxis.greenhopper.jira:gh-epic-color",
+        "customId": 10013
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10014",
+      "key": "",
+      "name": "Epic Link",
+      "description": "Choose an epic to assign this issue to.",
+      "type": "",
+      "schema": {
+        "type": "any",
+        "items": "",
+        "system": "",
+        "custom": "com.pyxis.greenhopper.jira:gh-epic-link",
+        "customId": 10014
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10011",
+      "key": "",
+      "name": "Epic Name",
+      "description": "Provide a short name to identify this epic.",
+      "type": "",
+      "schema": {
+        "type": "string",
+        "items": "",
+        "system": "",
+        "custom": "com.pyxis.greenhopper.jira:gh-epic-label",
+        "customId": 10011
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10012",
+      "key": "",
+      "name": "Epic Status",
+      "description": "Epic Status field for Jira Software use only.",
+      "type": "",
+      "schema": {
+        "type": "option",
+        "items": "",
+        "system": "",
+        "custom": "com.pyxis.greenhopper.jira:gh-epic-status",
+        "customId": 10012
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10021",
+      "key": "",
+      "name": "Flagged",
+      "description": "Allows to flag issues with impediments.",
+      "type": "",
+      "schema": {
+        "type": "array",
+        "items": "option",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:multicheckboxes",
+        "customId": 10021
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10138",
+      "key": "",
+      "name": "Focus Areas",
+      "description": "Link focus areas to work items",
+      "type": "",
+      "schema": {
+        "type": "array",
+        "items": "Focus Areas",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:focus-areas",
+        "customId": 10138
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10103",
+      "key": "",
+      "name": "Goals",
+      "description": "Link goals to issues",
+      "type": "",
+      "schema": {
+        "type": "array",
+        "items": "Goals",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:goals",
+        "customId": 10103
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10171",
+      "key": "",
+      "name": "Idea archived",
+      "description": "A product field that represents when an idea has been archived.",
+      "type": "",
+      "schema": {
+        "type": "option",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:select",
+        "customId": 10171
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10172",
+      "key": "",
+      "name": "Idea archived by",
+      "description": "A product field that represents the user who archived an idea.",
+      "type": "",
+      "schema": {
+        "type": "array",
+        "items": "user",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:people",
+        "customId": 10172
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10173",
+      "key": "",
+      "name": "Idea archived on",
+      "description": "A product field that represents when an idea was archived.",
+      "type": "",
+      "schema": {
+        "type": "datetime",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:datetime",
+        "customId": 10173
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10004",
+      "key": "",
+      "name": "Impact",
+      "description": "",
+      "type": "",
+      "schema": {
+        "type": "option",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:select",
+        "customId": 10004
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10057",
+      "key": "",
+      "name": "Implementation plan",
+      "description": "",
+      "type": "",
+      "schema": {
+        "type": "string",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:textarea",
+        "customId": 10057
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10085",
+      "key": "",
+      "name": "Importance to Persona",
+      "description": "Importance to Persona for Easy Agile Personas.",
+      "type": "",
+      "schema": {
+        "type": "option2",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.plugins.atlassian-connect-plugin:com.easyagile.personas__importance",
+        "customId": 10085
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10176",
+      "key": "",
+      "name": "Insights",
+      "description": "Add snippets from customer interviews, link user research to support cases, and capture sales opportunities or messages from stakeholders.",
+      "type": "",
+      "schema": {
+        "type": "number",
+        "items": "",
+        "system": "",
+        "custom": "jira.polaris:count-insights",
+        "customId": 10176
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10062",
+      "key": "",
+      "name": "Investigation reason",
+      "description": "Reason for problem investigation",
+      "type": "",
+      "schema": {
+        "type": "option",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:select",
+        "customId": 10062
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10017",
+      "key": "",
+      "name": "Issue color",
+      "description": "",
+      "type": "",
+      "schema": {
+        "type": "string",
+        "items": "",
+        "system": "",
+        "custom": "com.pyxis.greenhopper.jira:jsw-issue-color",
+        "customId": 10017
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10178",
+      "key": "",
+      "name": "Linked items",
+      "description": "Number of Jira work items linked to an idea",
+      "type": "",
+      "schema": {
+        "type": "number",
+        "items": "",
+        "system": "",
+        "custom": "jira.polaris:count-linked-issues",
+        "customId": 10178
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10081",
+      "key": "",
+      "name": "Locked forms",
+      "description": "The number of locked forms on the issue",
+      "type": "",
+      "schema": {
+        "type": "number",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugins.proforma-managed-fields:forms-locked-field-cftype",
+        "customId": 10081
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10066",
+      "key": "",
+      "name": "Major incident",
+      "description": "Mark incident as major.",
+      "type": "",
+      "schema": {
+        "type": "string",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.modules.servicemanagement.major-incident-entity:major-incident-entity-field-cftype",
+        "customId": 10066
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10090",
+      "key": "",
+      "name": "Multi Select List",
+      "description": "",
+      "type": "",
+      "schema": {
+        "type": "array",
+        "items": "option",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:multiselect",
+        "customId": 10090
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10079",
+      "key": "",
+      "name": "Open forms",
+      "description": "The number of open forms on the issue",
+      "type": "",
+      "schema": {
+        "type": "number",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugins.proforma-managed-fields:forms-open-field-cftype",
+        "customId": 10079
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10051",
+      "key": "",
+      "name": "Operational categorization",
+      "description": "",
+      "type": "",
+      "schema": {
+        "type": "option-with-child",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:cascadingselect",
+        "customId": 10051
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10002",
+      "key": "",
+      "name": "Organizations",
+      "description": "Stores the organizations that are associated with a Service Desk customer portal requests. This custom field is created programmatically and required by Service Desk.",
+      "type": "",
+      "schema": {
+        "type": "array",
+        "items": "sd-customerorganization",
+        "system": "",
+        "custom": "com.atlassian.servicedesk:sd-customer-organizations",
+        "customId": 10002
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10018",
+      "key": "",
+      "name": "Parent Link",
+      "description": "",
+      "type": "",
+      "schema": {
+        "type": "any",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jpo:jpo-custom-field-parent",
+        "customId": 10018
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10049",
+      "key": "",
+      "name": "Pending reason",
+      "description": "Specify the reason for moving the issue to the Pending status",
+      "type": "",
+      "schema": {
+        "type": "option",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:select",
+        "customId": 10049
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10031",
+      "key": "",
+      "name": "Persona",
+      "description": "Add a persona to issues.",
+      "type": "",
+      "schema": {
+        "type": "object",
+        "items": "",
+        "system": "",
+        "custom": "ari:cloud:ecosystem::extension/e99fa58b-ff09-4968-b3ee-eb9703ae4b6d/7ab3b7c9-40ce-4883-8596-a5437af6b086/static/persona-field",
+        "customId": 10031
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10084",
+      "key": "",
+      "name": "Persona",
+      "description": "Persona for Easy Agile Personas.",
+      "type": "",
+      "schema": {
+        "type": "option2",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.plugins.atlassian-connect-plugin:com.easyagile.personas__persona",
+        "customId": 10084
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10086",
+      "key": "",
+      "name": "Personas",
+      "description": "Persona (Personas for Jira App).",
+      "type": "",
+      "schema": {
+        "type": "array",
+        "items": "option2",
+        "system": "",
+        "custom": "com.atlassian.plugins.atlassian-connect-plugin:tech.realigned__persona",
+        "customId": 10086
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10061",
+      "key": "",
+      "name": "Planned end",
+      "description": "Enter when the change is planned to end.",
+      "type": "",
+      "schema": {
+        "type": "datetime",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:datetime",
+        "customId": 10061
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10060",
+      "key": "",
+      "name": "Planned start",
+      "description": "Enter when the change is planned to start.",
+      "type": "",
+      "schema": {
+        "type": "datetime",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:datetime",
+        "customId": 10060
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10109",
+      "key": "",
+      "name": "Priority Score [ICE]",
+      "description": "DO NOT DELETE! This field is created by Foxly and kept in sync with Priority Score",
+      "type": "",
+      "schema": {
+        "type": "number",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:float",
+        "customId": 10109
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10030",
+      "key": "",
+      "name": "Priority Score for Advanced Roadmaps",
+      "description": "DO NOT DELETE! This field is created by Foxly and kept in sync with Priority Score to be used only with Advanced Roadmaps configuration",
+      "type": "",
+      "schema": {
+        "type": "number",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:float",
+        "customId": 10030
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10050",
+      "key": "",
+      "name": "Product categorization",
+      "description": "",
+      "type": "",
+      "schema": {
+        "type": "option-with-child",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:cascadingselect",
+        "customId": 10050
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10231",
+      "key": "",
+      "name": "Project",
+      "description": "Add a project to work items to track progress and share updates more easily.",
+      "type": "",
+      "schema": {
+        "type": "atlas-project",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:atlas-project",
+        "customId": 10231
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10092",
+      "key": "",
+      "name": "Project overview key",
+      "description": "Key of project overview connected via Atlassian Home for Jira Cloud",
+      "type": "",
+      "schema": {
+        "type": "string",
+        "items": "",
+        "system": "",
+        "custom": "read-only-string-issue-field",
+        "customId": 10092
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10093",
+      "key": "",
+      "name": "Project overview status",
+      "description": "Status of project overview connected via Atlassian Home for Jira Cloud",
+      "type": "",
+      "schema": {
+        "type": "string",
+        "items": "",
+        "system": "",
+        "custom": "read-only-string-issue-field",
+        "customId": 10093
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10019",
+      "key": "",
+      "name": "Rank",
+      "description": "Global rank field for Jira Software use only.",
+      "type": "",
+      "schema": {
+        "type": "any",
+        "items": "",
+        "system": "",
+        "custom": "com.pyxis.greenhopper.jira:gh-lexo-rank",
+        "customId": 10019
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10047",
+      "key": "",
+      "name": "Request language",
+      "description": "The language which a request was raised in.",
+      "type": "",
+      "schema": {
+        "type": "sd-request-lang",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.servicedesk.servicedesk-lingo-integration-plugin:sd-request-language",
+        "customId": 10047
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10044",
+      "key": "",
+      "name": "Request participants",
+      "description": "Stores the users that are participants in service project customer portal requests. This custom field is created programmatically and required by service project.",
+      "type": "",
+      "schema": {
+        "type": "array",
+        "items": "user",
+        "system": "",
+        "custom": "com.atlassian.servicedesk:sd-request-participants",
+        "customId": 10044
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10010",
+      "key": "",
+      "name": "Request Type",
+      "description": "Holds information about which Service Desk was used to create a ticket. This custom field is created programmatically and must not be modified.",
+      "type": "",
+      "schema": {
+        "type": "sd-customerrequesttype",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.servicedesk:vp-origin",
+        "customId": 10010
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10065",
+      "key": "",
+      "name": "Responders",
+      "description": "Add responders to an incident.",
+      "type": "",
+      "schema": {
+        "type": "array",
+        "items": "string",
+        "system": "",
+        "custom": "com.atlassian.jira.modules.servicemanagement.responders-entity:responders-entity-field-cftype",
+        "customId": 10065
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10063",
+      "key": "",
+      "name": "Root cause",
+      "description": "Describe the root cause for the problem",
+      "type": "",
+      "schema": {
+        "type": "string",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:textarea",
+        "customId": 10063
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10045",
+      "key": "",
+      "name": "Satisfaction",
+      "description": "Stores request feedback in service project requests. This custom field is created programmatically and required by service project.",
+      "type": "",
+      "schema": {
+        "type": "sd-feedback",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.servicedesk:sd-request-feedback",
+        "customId": 10045
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10046",
+      "key": "",
+      "name": "Satisfaction date",
+      "description": "Stores request feedback date in service project requests. This custom field is created programmatically and required by service project.",
+      "type": "",
+      "schema": {
+        "type": "datetime",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.servicedesk:sd-request-feedback-date",
+        "customId": 10046
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10102",
+      "key": "",
+      "name": "Sentiment",
+      "description": "Sentiment is determined by content in the issue and latest comments from the customer. Content quality may vary",
+      "type": "",
+      "schema": {
+        "type": "array",
+        "items": "sd-sentiment",
+        "system": "",
+        "custom": "com.atlassian.servicedesk.sentiment:sd-sentiment",
+        "customId": 10102
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10055",
+      "key": "",
+      "name": "Severity",
+      "description": "",
+      "type": "",
+      "schema": {
+        "type": "option",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:select",
+        "customId": 10055
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10056",
+      "key": "",
+      "name": "Source",
+      "description": "Captures the reporting source for this issue",
+      "type": "",
+      "schema": {
+        "type": "option",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:select",
+        "customId": 10056
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10020",
+      "key": "",
+      "name": "Sprint",
+      "description": "Jira Software sprint field",
+      "type": "",
+      "schema": {
+        "type": "array",
+        "items": "json",
+        "system": "",
+        "custom": "com.pyxis.greenhopper.jira:gh-sprint",
+        "customId": 10020
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10097",
+      "key": "",
+      "name": "STAGIL Table and Checklists updated",
+      "description": "STAGIL Table and Checklists updated",
+      "type": "",
+      "schema": {
+        "type": "string",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.plugins.atlassian-connect-plugin:de.stagil.jira.stagil-table-field__stagil-table-updated-field",
+        "customId": 10097
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10015",
+      "key": "",
+      "name": "Start date",
+      "description": "Allows the planned start date for a piece of work to be set.",
+      "type": "",
+      "schema": {
+        "type": "date",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:datepicker",
+        "customId": 10015
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10016",
+      "key": "",
+      "name": "Story point estimate",
+      "description": "Measurement of complexity and/or size of a requirement.",
+      "type": "",
+      "schema": {
+        "type": "number",
+        "items": "",
+        "system": "",
+        "custom": "com.pyxis.greenhopper.jira:jsw-story-points",
+        "customId": 10016
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10026",
+      "key": "",
+      "name": "Story Points",
+      "description": "Measurement of complexity and/or size of a requirement.",
+      "type": "",
+      "schema": {
+        "type": "number",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:float",
+        "customId": 10026
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10080",
+      "key": "",
+      "name": "Submitted forms",
+      "description": "The number of submitted forms on the issue",
+      "type": "",
+      "schema": {
+        "type": "number",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugins.proforma-managed-fields:forms-submitted-field-cftype",
+        "customId": 10080
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10023",
+      "key": "",
+      "name": "Target end",
+      "description": "The targeted end date. This custom field is created and required by Advanced Roadmaps for Jira.",
+      "type": "",
+      "schema": {
+        "type": "date",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jpo:jpo-custom-field-baseline-end",
+        "customId": 10023
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10022",
+      "key": "",
+      "name": "Target start",
+      "description": "The targeted start date. This custom field is created and required by Advanced Roadmaps for Jira.",
+      "type": "",
+      "schema": {
+        "type": "date",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jpo:jpo-custom-field-baseline-start",
+        "customId": 10022
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10001",
+      "key": "",
+      "name": "Team",
+      "description": "Associates a team to an issue. You can use this field to search and filter issues by team.",
+      "type": "",
+      "schema": {
+        "type": "team",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:atlassian-team",
+        "customId": 10001
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10100",
+      "key": "",
+      "name": "Test Category",
+      "description": "Custom field for test category. (TTM)",
+      "type": "",
+      "schema": {
+        "type": "option",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:select",
+        "customId": 10100
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10059",
+      "key": "",
+      "name": "Test plan",
+      "description": "",
+      "type": "",
+      "schema": {
+        "type": "string",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:textarea",
+        "customId": 10059
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10069",
+      "key": "",
+      "name": "Time to close after resolution",
+      "description": "This custom field was created by Jira Service Management.",
+      "type": "",
+      "schema": {
+        "type": "sd-servicelevelagreement",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.servicedesk:sd-sla-field",
+        "customId": 10069
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10068",
+      "key": "",
+      "name": "Time to first response",
+      "description": "This custom field was created by Jira Service Management.",
+      "type": "",
+      "schema": {
+        "type": "sd-servicelevelagreement",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.servicedesk:sd-sla-field",
+        "customId": 10068
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10067",
+      "key": "",
+      "name": "Time to resolution",
+      "description": "This custom field was created by Jira Service Management.",
+      "type": "",
+      "schema": {
+        "type": "sd-servicelevelagreement",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.servicedesk:sd-sla-field",
+        "customId": 10067
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10071",
+      "key": "",
+      "name": "Time to resolution",
+      "description": "This custom field was created by Jira Service Management.",
+      "type": "",
+      "schema": {
+        "type": "sd-servicelevelagreement",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.servicedesk:sd-sla-field",
+        "customId": 10071
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10070",
+      "key": "",
+      "name": "Time to review normal change",
+      "description": "This custom field was created by Jira Service Management.",
+      "type": "",
+      "schema": {
+        "type": "sd-servicelevelagreement",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.servicedesk:sd-sla-field",
+        "customId": 10070
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10082",
+      "key": "",
+      "name": "Total forms",
+      "description": "The total number of forms on the issue",
+      "type": "",
+      "schema": {
+        "type": "number",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugins.proforma-managed-fields:forms-total-field-cftype",
+        "customId": 10082
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10048",
+      "key": "",
+      "name": "Urgency",
+      "description": "",
+      "type": "",
+      "schema": {
+        "type": "option",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:select",
+        "customId": 10048
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10101",
+      "key": "",
+      "name": "Vulnerability",
+      "description": "This field type is managed by JIRA Software and a default custom field has already been created.",
+      "type": "",
+      "schema": {
+        "type": "any",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugins.jira-development-integration-plugin:vulnerabilitycf",
+        "customId": 10101
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10042",
+      "key": "",
+      "name": "Work category",
+      "description": "Jira system field that displays the category of work a specific issue belongs to.",
+      "type": "",
+      "schema": {
+        "type": "string",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugins.work-category-field:work-category-field-cftype",
+        "customId": 10042
+      },
+      "custom": false
+    },
+    {
+      "id": "customfield_10064",
+      "key": "",
+      "name": "Workaround",
+      "description": "Describe the workaround for the problem",
+      "type": "",
+      "schema": {
+        "type": "string",
+        "items": "",
+        "system": "",
+        "custom": "com.atlassian.jira.plugin.system.customfieldtypes:textarea",
+        "customId": 10064
+      },
+      "custom": false
+    }
+  ],
+  "suggestions": [
+    {
+      "jira_field_id": "customfield_10025",
+      "jira_field_name": "[CHART] Time in Status",
+      "jira_field_type": "com.atlassian.jira.ext.charting:timeinstatus",
+      "windshift_field_type": "unmapped",
+      "can_map": false,
+      "notes": "This field type cannot be directly mapped and will be skipped"
+    },
+    {
+      "jira_field_id": "customfield_10009",
+      "jira_field_name": "Actual end",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:datetime",
+      "windshift_field_type": "date",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10008",
+      "jira_field_name": "Actual start",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:datetime",
+      "windshift_field_type": "date",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10053",
+      "jira_field_name": "Affected hardware",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:textfield",
+      "windshift_field_type": "text",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10052",
+      "jira_field_name": "Approver groups",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:multigrouppicker",
+      "windshift_field_type": "multiselect",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10003",
+      "jira_field_name": "Approvers",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:multiuserpicker",
+      "windshift_field_type": "multi_user",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10058",
+      "jira_field_name": "Backout plan",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:textarea",
+      "windshift_field_type": "textarea",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10098",
+      "jira_field_name": "Basic Number",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:float",
+      "windshift_field_type": "number",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10007",
+      "jira_field_name": "Change reason",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:select",
+      "windshift_field_type": "select",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10006",
+      "jira_field_name": "Change risk",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:select",
+      "windshift_field_type": "select",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10005",
+      "jira_field_name": "Change type",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:select",
+      "windshift_field_type": "select",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10075",
+      "jira_field_name": "Checklist Text (view-only)",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:textarea",
+      "windshift_field_type": "textarea",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10087",
+      "jira_field_name": "Cross Project Release",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:select",
+      "windshift_field_type": "select",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10013",
+      "jira_field_name": "Epic Color",
+      "jira_field_type": "com.pyxis.greenhopper.jira:gh-epic-color",
+      "windshift_field_type": "text",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10014",
+      "jira_field_name": "Epic Link",
+      "jira_field_type": "com.pyxis.greenhopper.jira:gh-epic-link",
+      "windshift_field_type": "text",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10011",
+      "jira_field_name": "Epic Name",
+      "jira_field_type": "com.pyxis.greenhopper.jira:gh-epic-label",
+      "windshift_field_type": "text",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10012",
+      "jira_field_name": "Epic Status",
+      "jira_field_type": "com.pyxis.greenhopper.jira:gh-epic-status",
+      "windshift_field_type": "select",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10021",
+      "jira_field_name": "Flagged",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:multicheckboxes",
+      "windshift_field_type": "multiselect",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10171",
+      "jira_field_name": "Idea archived",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:select",
+      "windshift_field_type": "select",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10173",
+      "jira_field_name": "Idea archived on",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:datetime",
+      "windshift_field_type": "date",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10004",
+      "jira_field_name": "Impact",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:select",
+      "windshift_field_type": "select",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10057",
+      "jira_field_name": "Implementation plan",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:textarea",
+      "windshift_field_type": "textarea",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10062",
+      "jira_field_name": "Investigation reason",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:select",
+      "windshift_field_type": "select",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10090",
+      "jira_field_name": "Multi Select List",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:multiselect",
+      "windshift_field_type": "multiselect",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10051",
+      "jira_field_name": "Operational categorization",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:cascadingselect",
+      "windshift_field_type": "select",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10002",
+      "jira_field_name": "Organizations",
+      "jira_field_type": "com.atlassian.servicedesk:sd-customer-organizations",
+      "windshift_field_type": "multiselect",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10049",
+      "jira_field_name": "Pending reason",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:select",
+      "windshift_field_type": "select",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10061",
+      "jira_field_name": "Planned end",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:datetime",
+      "windshift_field_type": "date",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10060",
+      "jira_field_name": "Planned start",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:datetime",
+      "windshift_field_type": "date",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10109",
+      "jira_field_name": "Priority Score [ICE]",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:float",
+      "windshift_field_type": "number",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10030",
+      "jira_field_name": "Priority Score for Advanced Roadmaps",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:float",
+      "windshift_field_type": "number",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10050",
+      "jira_field_name": "Product categorization",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:cascadingselect",
+      "windshift_field_type": "select",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10019",
+      "jira_field_name": "Rank",
+      "jira_field_type": "com.pyxis.greenhopper.jira:gh-lexo-rank",
+      "windshift_field_type": "unmapped",
+      "can_map": false,
+      "notes": "This field type cannot be directly mapped and will be skipped"
+    },
+    {
+      "jira_field_id": "customfield_10044",
+      "jira_field_name": "Request participants",
+      "jira_field_type": "com.atlassian.servicedesk:sd-request-participants",
+      "windshift_field_type": "multiselect",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10010",
+      "jira_field_name": "Request Type",
+      "jira_field_type": "com.atlassian.servicedesk:vp-origin",
+      "windshift_field_type": "text",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10063",
+      "jira_field_name": "Root cause",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:textarea",
+      "windshift_field_type": "textarea",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10055",
+      "jira_field_name": "Severity",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:select",
+      "windshift_field_type": "select",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10056",
+      "jira_field_name": "Source",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:select",
+      "windshift_field_type": "select",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10020",
+      "jira_field_name": "Sprint",
+      "jira_field_type": "com.pyxis.greenhopper.jira:gh-sprint",
+      "windshift_field_type": "iteration",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10015",
+      "jira_field_name": "Start date",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:datepicker",
+      "windshift_field_type": "date",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10016",
+      "jira_field_name": "Story point estimate",
+      "jira_field_type": "com.pyxis.greenhopper.jira:jsw-story-points",
+      "windshift_field_type": "number",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10026",
+      "jira_field_name": "Story Points",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:float",
+      "windshift_field_type": "number",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10100",
+      "jira_field_name": "Test Category",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:select",
+      "windshift_field_type": "select",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10059",
+      "jira_field_name": "Test plan",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:textarea",
+      "windshift_field_type": "textarea",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10048",
+      "jira_field_name": "Urgency",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:select",
+      "windshift_field_type": "select",
+      "can_map": true
+    },
+    {
+      "jira_field_id": "customfield_10064",
+      "jira_field_name": "Workaround",
+      "jira_field_type": "com.atlassian.jira.plugin.system.customfieldtypes:textarea",
+      "windshift_field_type": "textarea",
+      "can_map": true
+    }
+  ]
+}

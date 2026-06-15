@@ -125,38 +125,15 @@ func (s *SyncService) SetActionEvents(e ActionEventEmitter) {
 	s.actionEvents = e
 }
 
-// resolveProvider creates an SCM provider for a connection by resolving credentials,
-// refreshing OAuth tokens if needed, and instantiating the provider.
+// resolveProvider creates an SCM provider for a connection. Credential
+// resolution (including the OAuth refresh-if-expiring step) lives in
+// CredentialResolver, shared with every other consumer.
 func (s *SyncService) resolveProvider(ctx context.Context, connectionID int) (Provider, error) {
 	credResolver := NewCredentialResolver(s.db, s.encryption)
-	creds, err := credResolver.GetCredentialsByConnectionID(ctx, connectionID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get credentials: %w", err)
-	}
-
-	// Refresh OAuth token if needed (e.g., expired Gitea tokens)
-	if creds.OAuthAccessToken != "" {
-		newToken, refreshErr := credResolver.RefreshOAuthTokenIfNeeded(ctx, connectionID, creds)
-		if refreshErr != nil {
-			// A dead refresh token is terminal — the credentials are
-			// already wiped by RefreshOAuthTokenIfNeeded, so trying to
-			// proceed with the (now-stale or absent) access token is just
-			// a guaranteed 401 on the next provider call. Surface the
-			// error so the caller can return cleanly instead of grinding.
-			if errors.Is(refreshErr, ErrRefreshTokenInvalid) {
-				return nil, fmt.Errorf("scm credentials require reconnect: %w", refreshErr)
-			}
-			slog.Warn("Failed to refresh OAuth token, using existing", slog.String("component", "scm"), slog.Int("connection_id", connectionID), slog.Any("error", refreshErr))
-		} else {
-			creds.OAuthAccessToken = newToken
-		}
-	}
-
-	provider, err := credResolver.CreateProvider(creds)
+	provider, err := credResolver.GetProviderForConnection(ctx, connectionID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create provider: %w", err)
 	}
-
 	return provider, nil
 }
 
@@ -656,16 +633,11 @@ func (s *SyncService) syncBranches(ctx context.Context, provider Provider, owner
 	return nil
 }
 
-// findItemByKey finds an item by its workspace key and number
-func (s *SyncService) findItemByKey(ctx context.Context, workspaceID int, workspaceKey string, itemNumber int) (int, error) {
-	var itemID int
-	err := s.db.QueryRowContext(ctx, `
-		SELECT i.id FROM items i
-		JOIN workspaces w ON w.id = i.workspace_id
-		WHERE i.workspace_id = ? AND i.workspace_item_number = ? AND UPPER(w.key) = ?
-	`, workspaceID, itemNumber, strings.ToUpper(workspaceKey)).Scan(&itemID)
-
-	if errors.Is(err, sql.ErrNoRows) {
+// findItemByKey finds an item by its workspace key and number. Returns 0
+// (without error) when no item matches.
+func (s *SyncService) findItemByKey(_ context.Context, workspaceID int, workspaceKey string, itemNumber int) (int, error) {
+	itemID, err := repository.NewItemRepository(s.db).FindIDByKeyAndNumberInWorkspace(workspaceID, workspaceKey, itemNumber)
+	if errors.Is(err, repository.ErrNotFound) {
 		return 0, nil
 	}
 	return itemID, err
@@ -999,8 +971,7 @@ func (s *SyncService) CreateItemSCMLink(ctx context.Context, itemID, workspaceRe
 	}
 
 	// Verify the item exists
-	var exists bool
-	err := s.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM items WHERE id = ?)", itemID).Scan(&exists)
+	exists, err := repository.NewItemRepository(s.db).Exists(itemID)
 	if err != nil || !exists {
 		return 0, fmt.Errorf("item not found: %d", itemID)
 	}

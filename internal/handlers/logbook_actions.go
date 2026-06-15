@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"time"
 
-	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
 
@@ -24,21 +24,25 @@ import (
 // acting user is authorized against the target workspace or asset set before
 // performing a write.
 type LogbookNodeExecutionHandler struct {
-	db                database.Database
 	secret            string
 	eventCoordinator  *services.EventCoordinator
 	permissionService *services.PermissionService
 	assetHandler      *AssetHandler
+	createItem        func(services.ItemCreationParams) (int64, error)
+	workspaceRepo     *repository.WorkspaceRepository
+	assetRepo         *repository.AssetRepository
 }
 
 // NewLogbookNodeExecutionHandler creates a new node execution handler.
-func NewLogbookNodeExecutionHandler(db database.Database, secret string, eventCoordinator *services.EventCoordinator, permissionService *services.PermissionService, assetHandler *AssetHandler) *LogbookNodeExecutionHandler {
+func NewLogbookNodeExecutionHandler(secret string, eventCoordinator *services.EventCoordinator, permissionService *services.PermissionService, assetHandler *AssetHandler, createItem func(services.ItemCreationParams) (int64, error), workspaceRepo *repository.WorkspaceRepository, assetRepo *repository.AssetRepository) *LogbookNodeExecutionHandler {
 	return &LogbookNodeExecutionHandler{
-		db:                db,
 		secret:            secret,
 		eventCoordinator:  eventCoordinator,
 		permissionService: permissionService,
 		assetHandler:      assetHandler,
+		createItem:        createItem,
+		workspaceRepo:     workspaceRepo,
+		assetRepo:         assetRepo,
 	}
 }
 
@@ -60,6 +64,9 @@ func (h *LogbookNodeExecutionHandler) HandleNodeExecution(w http.ResponseWriter,
 		})
 		return
 	}
+	// Event.Title is the sidecar-relayed document title — user-supplied
+	// text that feeds fallback item/asset titles below.
+	sanitize.Apply(&req.Event.Title, sanitize.PlainTextField)
 
 	slog.Info("received node execution request",
 		slog.String("component", "logbook-actions"),
@@ -105,6 +112,10 @@ func (h *LogbookNodeExecutionHandler) executeCreateItem(nodeConfig string, event
 	if err := json.Unmarshal([]byte(nodeConfig), &config); err != nil {
 		return nil, fmt.Errorf("failed to parse create_item config: %w", err)
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &config.Title, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &config.Description, Policy: sanitize.RichText},
+	)
 
 	title := config.Title
 	if title == "" {
@@ -134,7 +145,7 @@ func (h *LogbookNodeExecutionHandler) executeCreateItem(nodeConfig string, event
 		slog.Int("creator_id", creatorID),
 	)
 
-	itemID, err := services.CreateItem(h.db, services.ItemCreationParams{
+	itemID, err := h.createItem(services.ItemCreationParams{
 		WorkspaceID: config.WorkspaceID,
 		Title:       title,
 		Description: config.Description,
@@ -161,7 +172,7 @@ func (h *LogbookNodeExecutionHandler) executeCreateItem(nodeConfig string, event
 			CreatorID:   &creatorID,
 		}
 		// Load workspace key for event emission
-		if key, err := repository.NewWorkspaceRepository(h.db).GetKey(config.WorkspaceID); err == nil {
+		if key, err := h.workspaceRepo.GetKey(config.WorkspaceID); err == nil {
 			item.WorkspaceKey = key
 		}
 
@@ -185,6 +196,11 @@ func (h *LogbookNodeExecutionHandler) executeCreateAsset(nodeConfig string, even
 	if err := json.Unmarshal([]byte(nodeConfig), &config); err != nil {
 		return nil, fmt.Errorf("failed to parse create_asset config: %w", err)
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &config.Title, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &config.Description, Policy: sanitize.RichText},
+		sanitize.Pair{Target: &config.AssetTag, Policy: sanitize.ShortIdentifier},
+	)
 
 	title := config.Title
 	if title == "" {
@@ -194,7 +210,7 @@ func (h *LogbookNodeExecutionHandler) executeCreateAsset(nodeConfig string, even
 	// Authorize: the action config may target any asset set, so verify the
 	// acting user has create permission on the target set before inserting.
 	if h.assetHandler != nil {
-		hasPerm, permErr := h.assetHandler.HasAssetSetPermission(event.ActorUserID, config.AssetSetID, AssetPermissionKeyCreate)
+		hasPerm, permErr := h.assetHandler.HasAssetSetPermission(event.ActorUserID, config.AssetSetID, services.AssetPermissionKeyCreate)
 		if permErr != nil {
 			return nil, fmt.Errorf("failed to check asset set permission: %w", permErr)
 		}
@@ -204,7 +220,7 @@ func (h *LogbookNodeExecutionHandler) executeCreateAsset(nodeConfig string, even
 	}
 
 	createdAt := time.Now()
-	assetID, err := repository.NewAssetRepository(h.db).CreateAsset(repository.CreateAssetInput{
+	assetID, err := h.assetRepo.CreateAsset(repository.CreateAssetInput{
 		SetID:       config.AssetSetID,
 		AssetTypeID: config.AssetTypeID,
 		CategoryID:  config.CategoryID,

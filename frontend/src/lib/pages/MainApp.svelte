@@ -11,6 +11,7 @@
   import { logbookStore } from '../stores/logbook.svelte.js';
   import { capabilitiesStore } from '../stores/capabilities.svelte.js';
   import { startNotificationPoller } from '../stores/notifications.js';
+  import { desktopBridge } from '../desktop/bridge.svelte.js';
   import { initDesktopFocusRefresh } from '../utils/desktopFocusRefresh.svelte.js';
   import { api } from '../api.js';
   import { t } from '../stores/i18n.svelte.js';
@@ -67,6 +68,9 @@
   let isResizingTerminal = $state(false);
   let resizeStartX = $state(0);
   let resizeStartPercent = $state(50);
+  let PomodoroSettingsModalComponent = $state(null);
+  let AboutModalComponent = $state(null);
+  let desktopModalLoading = $state(false);
 
   async function loadTerminalPanel() {
     if (TerminalPanelComponent || terminalLoading) return;
@@ -85,6 +89,27 @@
     terminalStore.toggle();
     if (!TerminalPanelComponent) {
       loadTerminalPanel();
+    }
+  }
+
+  async function loadDesktopModal(modal) {
+    if (desktopModalLoading) return;
+    if (modal === 'pomodoro-settings' && PomodoroSettingsModalComponent) return;
+    if (modal === 'about' && AboutModalComponent) return;
+
+    desktopModalLoading = true;
+    try {
+      if (modal === 'pomodoro-settings') {
+        const module = await import('../dialogs/PomodoroSettingsModal.svelte');
+        PomodoroSettingsModalComponent = module.default;
+      } else if (modal === 'about') {
+        const module = await import('../dialogs/AboutModal.svelte');
+        AboutModalComponent = module.default;
+      }
+    } catch (err) {
+      console.error('Failed to load desktop modal:', err);
+    } finally {
+      desktopModalLoading = false;
     }
   }
 
@@ -448,12 +473,24 @@
     'item-detail': {
       loadingMsg: 'Loading Item Details...',
       errorMsg: 'Failed to load Item Details',
-      getProps: (route) => ({
-        workspaceId: route.path.startsWith('/personal') ? $workspacesStore.personalWorkspace?.id : route.params.id,
-        itemId: route.params.itemId,
-        tab: route.query.tab || 'comments',
-        moduleSettings: $moduleSettings
-      })
+      getProps: (route) => {
+        const personal = route.path.startsWith('/personal');
+        const workspaceParam = route.params.workspaceKey || route.params.id;
+        const itemParam = route.params.itemKey || route.params.itemNumber || route.params.itemId;
+        const fullKeyMatch = !personal ? String(itemParam || '').match(/^([^/\s-]+)-(\d+)$/) : null;
+        const workspaceParamIsKey = !!workspaceParam && !/^\d+$/.test(String(workspaceParam));
+        const keyWorkspace = fullKeyMatch?.[1] || (workspaceParamIsKey ? workspaceParam : null);
+        const keyItemNumber = fullKeyMatch?.[2] || (keyWorkspace ? itemParam : null);
+        return {
+          workspaceId: personal ? $workspacesStore.personalWorkspace?.id : (keyWorkspace ? null : workspaceParam),
+          itemId: keyItemNumber || itemParam,
+          workspaceKey: !personal ? keyWorkspace : null,
+          itemNumber: !personal ? keyItemNumber : null,
+          canonicalizeKeyRoute: !personal && !!keyWorkspace,
+          tab: route.query.tab || 'comments',
+          moduleSettings: $moduleSettings
+        };
+      }
     },
     'personal-task-detail': {
       loadingMsg: 'Loading Task...',
@@ -600,6 +637,7 @@
     // backend changes (CLI edits, other users, agents) appear without a
     // manual reload. Browser-only no-op.
     initDesktopFocusRefresh();
+    desktopBridge.init();
 
     // Start the shared notification poller (feeds tray, toasts, and the
     // new-notification bus used by item views to refresh instantly).
@@ -758,7 +796,7 @@
       }
     }
     // Handle regular workspace routes
-    else if ($currentRoute.params?.id && ($currentRoute.view?.startsWith('workspace-') || $currentRoute.view === 'workspace' || $currentRoute.view === 'item-detail' || $currentRoute.view === 'item' || testViews.has($currentRoute.view))) {
+    else if ($currentRoute.params?.id && /^\d+$/.test(String($currentRoute.params.id)) && ($currentRoute.view?.startsWith('workspace-') || $currentRoute.view === 'workspace' || $currentRoute.view === 'item-detail' || $currentRoute.view === 'item' || testViews.has($currentRoute.view))) {
       currentWorkspace.load($currentRoute.params.id);
       workspaceDataStore.initialize($currentRoute.params.id);
     }
@@ -795,6 +833,12 @@
   $effect(() => {
     if (terminalState.visible && !TerminalPanelComponent) {
       loadTerminalPanel();
+    }
+  });
+
+  $effect(() => {
+    if (desktopBridge.modal) {
+      loadDesktopModal(desktopBridge.modal);
     }
   });
 
@@ -1203,6 +1247,18 @@
 
 <!-- Global Confirmation Dialog -->
 <GlobalConfirmDialog />
+
+{#if desktopBridge.modal === 'pomodoro-settings' && PomodoroSettingsModalComponent}
+  <PomodoroSettingsModalComponent
+    show={true}
+    onclose={() => desktopBridge.close()}
+  />
+{:else if desktopBridge.modal === 'about' && AboutModalComponent}
+  <AboutModalComponent
+    show={true}
+    onclose={() => desktopBridge.close()}
+  />
+{/if}
 
 <!-- Floating Timer -->
 <FloatingTimer />

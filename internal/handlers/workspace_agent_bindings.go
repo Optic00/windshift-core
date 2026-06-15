@@ -10,6 +10,8 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/restapi"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
 
@@ -23,6 +25,7 @@ type WorkspaceAgentBindingHandler struct {
 	identity          *services.AgentActingIdentityService
 	permissionService *services.PermissionService
 	auditor           *logger.Auditor
+	skills            *repository.WorkspaceAgentSkillRepository
 }
 
 // NewWorkspaceAgentBindingHandler constructs the handler.
@@ -38,6 +41,13 @@ func NewWorkspaceAgentBindingHandler(
 		permissionService: permissionService,
 		auditor:           auditor,
 	}
+}
+
+// SetSkillsRepo wires the optional agent-skills repository (WI-258) so
+// binding responses can include attached skill ids and the agent-config
+// update endpoint can replace attachments.
+func (h *WorkspaceAgentBindingHandler) SetSkillsRepo(repo *repository.WorkspaceAgentSkillRepository) {
+	h.skills = repo
 }
 
 // Candidates returns the acting-identity options the workspace admin
@@ -77,9 +87,12 @@ type bindingResponse struct {
 	RepoBaseRef     string   `json:"repo_base_ref,omitempty"`
 	LLMConnectionID *int     `json:"llm_connection_id,omitempty"`
 	SCMConnectionID *int     `json:"scm_connection_id,omitempty"`
+	TargetPoolID    *int     `json:"target_pool_id,omitempty"`
 	TokenScopes     []string `json:"token_scopes,omitempty"`
 	TokenTTLMinutes int      `json:"token_ttl_minutes"`
 	MaxRunsPerDay   int      `json:"max_runs_per_day"`
+	Instructions    string   `json:"instructions,omitempty"`
+	SkillIDs        []int    `json:"skill_ids,omitempty"`
 }
 
 func toBindingResponse(b *models.WorkspaceAgentBinding) bindingResponse {
@@ -92,10 +105,26 @@ func toBindingResponse(b *models.WorkspaceAgentBinding) bindingResponse {
 		RepoBaseRef:     b.RepoBaseRef,
 		LLMConnectionID: b.LLMConnectionID,
 		SCMConnectionID: b.SCMConnectionID,
+		TargetPoolID:    b.TargetPoolID,
 		TokenScopes:     b.TokenScopes,
 		TokenTTLMinutes: b.TokenTTLMinutes,
 		MaxRunsPerDay:   b.MaxRunsPerDay,
+		Instructions:    b.Instructions,
 	}
+}
+
+// withSkillIDs decorates a binding response with its attached skill ids.
+// Best-effort: a skills lookup failure leaves the field empty rather than
+// failing the listing.
+func (h *WorkspaceAgentBindingHandler) withSkillIDs(r *http.Request, resp bindingResponse) bindingResponse {
+	if h.skills == nil {
+		return resp
+	}
+	ids, err := h.skills.SkillIDsForBinding(r.Context(), resp.ID)
+	if err == nil {
+		resp.SkillIDs = ids
+	}
+	return resp
 }
 
 type createBindingBody struct {
@@ -104,9 +133,12 @@ type createBindingBody struct {
 	RepoBaseRef     string   `json:"repo_base_ref,omitempty"`
 	LLMConnectionID *int     `json:"llm_connection_id,omitempty"`
 	SCMConnectionID *int     `json:"scm_connection_id,omitempty"`
+	TargetPoolID    *int     `json:"target_pool_id,omitempty"`
 	TokenScopes     []string `json:"token_scopes,omitempty"`
 	TokenTTLMinutes int      `json:"token_ttl_minutes,omitempty"`
 	MaxRunsPerDay   int      `json:"max_runs_per_day,omitempty"`
+	Instructions    string   `json:"instructions,omitempty"`
+	SkillIDs        []int    `json:"skill_ids,omitempty"`
 }
 
 // List returns every binding configured in the workspace.
@@ -129,7 +161,7 @@ func (h *WorkspaceAgentBindingHandler) List(w http.ResponseWriter, r *http.Reque
 	}
 	out := make([]bindingResponse, 0, len(bindings))
 	for _, b := range bindings {
-		out = append(out, toBindingResponse(b))
+		out = append(out, h.withSkillIDs(r, toBindingResponse(b)))
 	}
 	respondJSON(w, http.StatusOK, out)
 }
@@ -159,6 +191,13 @@ func (h *WorkspaceAgentBindingHandler) Create(w http.ResponseWriter, r *http.Req
 		respondBadRequest(w, r, "acting_user_id is required")
 		return
 	}
+	// RepoSlug/RepoBaseRef are identifier-shaped (owner/repo, git ref);
+	// Instructions is free-form persona text rendered in the binding editor.
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &body.RepoSlug, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &body.RepoBaseRef, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &body.Instructions, Policy: sanitize.RichText},
+	)
 
 	binding, err := h.bindings.Create(r.Context(), services.CreateBindingRequest{
 		WorkspaceID:     workspaceID,
@@ -167,20 +206,27 @@ func (h *WorkspaceAgentBindingHandler) Create(w http.ResponseWriter, r *http.Req
 		RepoBaseRef:     body.RepoBaseRef,
 		LLMConnectionID: body.LLMConnectionID,
 		SCMConnectionID: body.SCMConnectionID,
+		TargetPoolID:    body.TargetPoolID,
 		TokenScopes:     body.TokenScopes,
 		TokenTTLMinutes: body.TokenTTLMinutes,
 		MaxRunsPerDay:   body.MaxRunsPerDay,
+		Instructions:    body.Instructions,
+		SkillIDs:        body.SkillIDs,
 		CreatedByUserID: user.ID,
 	})
 	if err != nil {
 		switch {
 		case errors.Is(err, repository.ErrBindingDuplicate):
 			respondConflict(w, r, err.Error())
-		case errors.Is(err, services.ErrLLMConnectionNotExposed):
+		case errors.Is(err, services.ErrLLMConnectionRequired),
+			errors.Is(err, services.ErrLLMConnectionInvalid):
 			respondBadRequest(w, r, err.Error())
 		case errors.Is(err, services.ErrBindingTokenTTLOverCap),
 			errors.Is(err, services.ErrBindingRepoNeedsSCMConnection),
-			errors.Is(err, services.ErrBindingInvalidRepoSlug):
+			errors.Is(err, services.ErrBindingInvalidRepoSlug),
+			errors.Is(err, services.ErrBindingInvalidPool),
+			errors.Is(err, services.ErrBindingInstructionsTooLong),
+			isSkillAttachError(err):
 			respondBadRequest(w, r, err.Error())
 		case isAgentScopeError(err):
 			respondBadRequest(w, r, err.Error())
@@ -196,7 +242,63 @@ func (h *WorkspaceAgentBindingHandler) Create(w http.ResponseWriter, r *http.Req
 		"acting_user_id":   binding.ActingUserID,
 		"acting_user_kind": binding.ActingUserKind,
 	})
-	respondJSON(w, http.StatusCreated, toBindingResponse(binding))
+	respondJSON(w, http.StatusCreated, h.withSkillIDs(r, toBindingResponse(binding)))
+}
+
+// isSkillAttachError reports whether the error came from skill-id
+// validation during binding create/update (bad or foreign ids → 400).
+func isSkillAttachError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "skill")
+}
+
+type updateAgentConfigBody struct {
+	Instructions string `json:"instructions"`
+	SkillIDs     []int  `json:"skill_ids"`
+}
+
+// UpdateAgentConfig rewrites the binding's prompt-shaping configuration —
+// custom instructions + skill attachments (WI-258). Bindings stay
+// create/delete-only for everything else; this narrow update lets admins
+// iterate on personas without recreating the binding.
+func (h *WorkspaceAgentBindingHandler) UpdateAgentConfig(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := requireIDParam(w, r, "workspaceId")
+	if !ok {
+		return
+	}
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+	if !RequireWorkspacePermission(w, r, user.ID, workspaceID, models.PermissionWorkspaceAdmin, h.permissionService) {
+		return
+	}
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil || id <= 0 {
+		respondBadRequest(w, r, "id path param must be a positive integer")
+		return
+	}
+	var body updateAgentConfigBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respondBadRequest(w, r, "invalid request body")
+		return
+	}
+	sanitize.Apply(&body.Instructions, sanitize.RichText)
+	if err := h.bindings.UpdateAgentConfig(r.Context(), workspaceID, id, body.Instructions, body.SkillIDs); err != nil {
+		switch {
+		case errors.Is(err, services.ErrBindingNotFound):
+			respondNotFound(w, r, "agent binding")
+		case errors.Is(err, services.ErrBindingInstructionsTooLong), isSkillAttachError(err):
+			respondBadRequest(w, r, err.Error())
+		default:
+			respondInternalError(w, r, err)
+		}
+		return
+	}
+	h.auditor.LogWithDetails(r, user, "agent_binding.update_config", "workspace_agent_binding", &id, "", map[string]interface{}{
+		"workspace_id": workspaceID,
+		"skill_count":  len(body.SkillIDs),
+	})
+	respondJSON(w, http.StatusOK, map[string]any{"updated": true})
 }
 
 // Delete removes a binding by id. Returns 404 when the binding is absent.
@@ -231,6 +333,126 @@ func (h *WorkspaceAgentBindingHandler) Delete(w http.ResponseWriter, r *http.Req
 		"workspace_id": workspaceID,
 	})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// testLLMRequest is the optional body for TestLLM. A blank/absent prompt
+// falls back to the service default.
+type testLLMRequest struct {
+	Prompt string `json:"prompt,omitempty"`
+}
+
+// testLLMResponse carries the model's reply back to the admin. It proves only
+// that the binding's LLM connection is reachable; the full chain (repo checked
+// out, agent can read its files) is exercised by the heavier TestRun.
+type testLLMResponse struct {
+	Prompt string `json:"prompt"`
+	Answer string `json:"answer"`
+}
+
+// TestLLM round-trips a prompt through a binding's LLM connection and returns
+// the model's reply, so a workspace admin can confirm the agent's model is
+// reachable before assigning real work. Workspace-admin gated, like the other
+// mutations. A provider/connection failure is surfaced as 502 so the admin
+// sees the upstream message rather than an opaque 500.
+func (h *WorkspaceAgentBindingHandler) TestLLM(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := requireIDParam(w, r, "workspaceId")
+	if !ok {
+		return
+	}
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+	if !RequireWorkspacePermission(w, r, user.ID, workspaceID, models.PermissionWorkspaceAdmin, h.permissionService) {
+		return
+	}
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil || id <= 0 {
+		respondBadRequest(w, r, "id path param must be a positive integer")
+		return
+	}
+	body, ok := decodeOptionalJSON[testLLMRequest](w, r)
+	if !ok {
+		return
+	}
+	// Prompt is echoed back verbatim in the response.
+	sanitize.Apply(&body.Prompt, sanitize.RichText)
+	answer, err := h.bindings.TestLLM(r.Context(), id, workspaceID, body.Prompt)
+	if err != nil {
+		switch {
+		case errors.Is(err, services.ErrBindingNotFound):
+			respondNotFound(w, r, "agent binding")
+		case errors.Is(err, services.ErrLLMConnectionRequired):
+			respondBadRequest(w, r, "this binding has no LLM connection — edit it to choose one")
+		default:
+			respondError(w, r, restapi.NewAPIError(http.StatusBadGateway, restapi.ErrCodeConnectionTestFailed,
+				"LLM test failed: "+err.Error()))
+		}
+		return
+	}
+	prompt := body.Prompt
+	if strings.TrimSpace(prompt) == "" {
+		prompt = services.DefaultLLMTestPrompt
+	}
+	respondJSONOK(w, testLLMResponse{Prompt: prompt, Answer: answer})
+}
+
+// testRunResponse returns the id of the provisioned test run so the UI can
+// watch it via the agent-runs events endpoints.
+type testRunResponse struct {
+	RunID int `json:"run_id"`
+}
+
+// TestRun provisions a real, ephemeral coding-agent container run for the
+// binding (no work item, read-only prompt) so a workspace admin can confirm the
+// full chain end-to-end: the model is reachable, the repo clones into a
+// worktree, and the agent can read its files. Workspace-admin gated. The run
+// executes asynchronously; the response carries its id for event polling.
+//
+// 404 when the binding is absent, 400 when it has no repo configured, and 409
+// when the coding-agent runner isn't configured on this server or the binding
+// targets a remote runner pool (test runs are local-runtime only).
+func (h *WorkspaceAgentBindingHandler) TestRun(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := requireIDParam(w, r, "workspaceId")
+	if !ok {
+		return
+	}
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+	if !RequireWorkspacePermission(w, r, user.ID, workspaceID, models.PermissionWorkspaceAdmin, h.permissionService) {
+		return
+	}
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil || id <= 0 {
+		respondBadRequest(w, r, "id path param must be a positive integer")
+		return
+	}
+	runID, err := h.bindings.StartTestRun(r.Context(), id, workspaceID, user.ID)
+	if err != nil {
+		switch {
+		case errors.Is(err, services.ErrBindingNotFound):
+			respondNotFound(w, r, "agent binding")
+		case errors.Is(err, services.ErrBindingNoRepo):
+			respondBadRequest(w, r, "this binding has no repo configured — a test run needs a repo to check out")
+		case errors.Is(err, services.ErrBindingRunnerNotConfigured):
+			respondConflict(w, r, "the coding-agent runner is not configured on this server")
+		case errors.Is(err, services.ErrBindingTestRunRemotePool):
+			respondConflict(w, r, "test runs execute on this server's local runtime and are not supported for bindings that target a remote runner pool — assign a real work item to verify the pool instead")
+		case errors.Is(err, services.ErrTriggerUserSCMNotConnected):
+			respondConflict(w, r, "you have no connected SCM account for this binding's OAuth connection — connect your GitHub/Gitea account under profile settings first")
+		default:
+			respondError(w, r, restapi.NewAPIError(http.StatusBadGateway, restapi.ErrCodeConnectionTestFailed,
+				"failed to start test run: "+err.Error()))
+		}
+		return
+	}
+	h.auditor.LogWithDetails(r, user, "agent_binding.test_run", "workspace_agent_binding", &id, "", map[string]interface{}{
+		"workspace_id": workspaceID,
+		"run_id":       runID,
+	})
+	respondJSONOK(w, testRunResponse{RunID: runID})
 }
 
 // isIdentityGateError reports whether the error came from the WI-87

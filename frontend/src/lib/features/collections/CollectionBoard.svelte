@@ -8,6 +8,7 @@
   import { useGradientStyles, loadWorkspaceGradient } from '../../stores/workspaceGradient.svelte.js';
   import QuickAddForm from './QuickAddForm.svelte';
   import { getCollection, checkItemVisibility } from './collectionService.js';
+  import { RIGHTMOST_COLUMN_LIMIT, buildDisplayColumns } from './boardColumns.js';
   import { infoToast, successToast, warningToast } from '../../stores/toasts.svelte.js';
   import { Plus, ChevronDown, ChevronRight, MoreHorizontal, Layers } from '@lucide/svelte';
   import ItemPicker from '../../pickers/ItemPicker.svelte';
@@ -20,7 +21,9 @@
   import ViewHeader from '../../layout/ViewHeader.svelte';
   import StaticViewBackground from '../../layout/StaticViewBackground.svelte';
   import Button from '../../components/Button.svelte';
+  import SearchInput from '../../components/SearchInput.svelte';
   import SubFilterBar from './SubFilterBar.svelte';
+  import CardFieldChip from './CardFieldChip.svelte';
   import ItemKey from '../items/ItemKey.svelte';
   import CollectionViewSwitcher from './CollectionViewSwitcher.svelte';
   import Tooltip from '../../components/Tooltip.svelte';
@@ -29,8 +32,6 @@
   import { useWorkItemPoller } from '../../composables/useWorkItemPoller.svelte.js';
   import { agentRuns } from '../../stores/agentRuns.svelte.js';
   import { getVisibleColor, hexToRgb } from '../../utils/colorUtils.js';
-  import { formatDateShort } from '../../utils/dateFormatter.js';
-  import { resolveOptionLabel } from '../../utils/optionUtils.js';
   import { showCreatedItemToast } from '../../utils/createdItemToast.js';
 
   // Props
@@ -48,8 +49,6 @@
   let projects = $derived(workspaceDataStore.projects);
   let customFieldDefinitions = $derived(workspaceDataStore.customFieldDefinitions);
 
-  const RIGHTMOST_COLUMN_LIMIT = 50;
-
   // Dynamic view-specific state — derived directly from central store
   let items = $derived(collectionStore.items);
   let transitions = $state([]);
@@ -63,6 +62,7 @@
   let pendingDrops = new Set(); // Track pending drop operations to prevent duplicates
   let showItemModal = $state(false);
   let selectedItemId = $state(null);
+  let searchQuery = $state('');
 
   // Quick-add state per column
   let quickAddState = $state({});
@@ -77,6 +77,7 @@
 
   // Swimlane grouping state
   let groupByItemTypeId = $state(null);
+  let excludeRightmostSwimlaneParents = $state(false);
   let swimlaneCollapsed = $state({});
 
   // Edge-based drag state
@@ -218,8 +219,7 @@
 
       // Toast feedback
       showCreatedItemToast(fullItem);
-      const total = collectionStore.itemsPagination?.total ?? 0;
-      if (total > collectionStore.items.length) {
+      if (collectionStore.itemsHasMore) {
         warningToast('The board has more items than can be displayed. Use "Load More" to see all items.');
       }
 
@@ -267,6 +267,10 @@
       const savedGroupById = savedGroupBy ? parseInt(savedGroupBy, 10) : null;
       if (savedGroupById) {
         groupByItemTypeId = savedGroupById;
+      }
+      const savedExcludeRightmost = localStorage.getItem(excludeRightmostSwimlaneParentsStorageKey());
+      if (savedExcludeRightmost !== null) {
+        excludeRightmostSwimlaneParents = savedExcludeRightmost === 'true';
       }
     } catch (e) { /* ignore storage errors */ }
     loading = false;
@@ -327,9 +331,22 @@
     });
   });
 
-  let filteredItems = $derived(
-    iterationFilterId ? items.filter(i => i.iteration_id === iterationFilterId) : items
-  );
+  let filteredItems = $derived.by(() => {
+    let nextItems = iterationFilterId
+      ? items.filter(item => item.iteration_id === iterationFilterId)
+      : items;
+
+    if (!searchQuery.trim()) return nextItems;
+
+    const query = searchQuery.toLowerCase();
+    return nextItems.filter(item => {
+      if (item.title?.toLowerCase().includes(query)) return true;
+      if (item.description?.toLowerCase().includes(query)) return true;
+      const itemKey = `${item.workspace_key || ''}-${item.workspace_item_number}`.toLowerCase();
+      if (itemKey.includes(query)) return true;
+      return false;
+    });
+  });
 
   function getItemsByStatus(statusId, itemSubset = filteredItems) {
     return itemSubset.filter(item => item.status_id === statusId);
@@ -346,10 +363,18 @@
     return Number.isFinite(parsed) ? parsed : null;
   }
 
+  function isExcludedRightmostSwimlaneParent(item) {
+    return Boolean(excludeRightmostSwimlaneParents && rightmostBoardColumnStatusIds.has(item.status_id));
+  }
+
+  function isEligibleSwimlaneParent(item) {
+    return item.item_type_id === groupByItemTypeId && !isExcludedRightmostSwimlaneParent(item);
+  }
+
   function getItemsForLaneParent(parentId) {
     if (!groupByItemTypeId) return filteredItems;
     const parentIds = new Set(items
-      .filter(item => item.item_type_id === groupByItemTypeId)
+      .filter(isEligibleSwimlaneParent)
       .map(item => item.id));
 
     if (parentId != null) {
@@ -427,8 +452,16 @@
     }
   }
 
+  function boardPreferenceScope() {
+    return collectionId ? `collection-${collectionId}` : `workspace-${workspaceId || 'global'}`;
+  }
+
   function groupByStorageKey() {
-    return `board-group-by-item-type-${collectionId ? `collection-${collectionId}` : `workspace-${workspaceId || 'global'}`}`;
+    return `board-group-by-item-type-${boardPreferenceScope()}`;
+  }
+
+  function excludeRightmostSwimlaneParentsStorageKey() {
+    return `board-exclude-rightmost-swimlane-parents-${boardPreferenceScope()}`;
   }
 
   function setGroupByItemType(itemTypeId) {
@@ -440,6 +473,14 @@
       } else {
         localStorage.removeItem(groupByStorageKey());
       }
+    } catch (e) { /* ignore storage errors */ }
+  }
+
+  function setExcludeRightmostSwimlaneParents(value) {
+    excludeRightmostSwimlaneParents = value;
+    swimlaneCollapsed = {};
+    try {
+      localStorage.setItem(excludeRightmostSwimlaneParentsStorageKey(), String(value));
     } catch (e) { /* ignore storage errors */ }
   }
 
@@ -457,44 +498,14 @@
 
   // Backlog items are loaded from backend in loadData()
 
-  // Sort statuses by category order (To Do -> In Progress -> Done categories)
-  let sortedStatuses = $derived.by(() => {
-    return statuses.slice().sort((a, b) => {
-      // First sort by category priority
-      const categoryOrder = {
-        'To Do': 1,
-        'In Progress': 2,
-        'Done': 3
-      };
-
-      const aCategoryOrder = categoryOrder[a.category_name] || 999;
-      const bCategoryOrder = categoryOrder[b.category_name] || 999;
-
-      if (aCategoryOrder !== bCategoryOrder) {
-        return aCategoryOrder - bCategoryOrder;
-      }
-
-      // Within same category, sort by name
-      return a.name.localeCompare(b.name);
-    });
-  });
-
-  // Compute display columns based on board configuration or fall back to sorted statuses
-  let displayColumns = $derived.by(() => {
-    if (boardConfig?.columns?.length > 0) {
-      return boardConfig.columns.slice().sort((a, b) => a.display_order - b.display_order);
-    }
-    return sortedStatuses.map(status => ({
-      id: status.id,
-      name: status.name,
-      status_ids: [status.id],
-      color: status.category_color,
-      wip_limit: null,
-      is_default_column: true
-    }));
-  });
+  // Compute display columns based on board configuration or fall back to
+  // sorted statuses. Shared with collectionContext's split-fetch logic so
+  // the store excludes exactly the statuses rendered in the capped column.
+  let displayColumns = $derived(buildDisplayColumns(boardConfig, statuses));
 
   let validColumns = $derived(displayColumns.filter(col => col.status_ids?.length > 0));
+  let rightmostBoardColumn = $derived(validColumns[validColumns.length - 1] ?? null);
+  let rightmostBoardColumnStatusIds = $derived(new Set(rightmostBoardColumn?.status_ids || []));
 
   function shouldLimitRightmostColumn(columnIndex, columnsForBoard = validColumns) {
     return Boolean(boardConfig?.show_rightmost_column_last_50 && columnIndex === columnsForBoard.length - 1);
@@ -514,12 +525,37 @@
       : columnItems;
   }
 
+  // Total item count for a column header. When the store split-fetched a
+  // capped rightmost column, only the latest RIGHTMOST_COLUMN_LIMIT of its
+  // items are loaded, so the loaded count undercounts — use the server-side
+  // total instead. Swimlane boards keep client-derived per-lane counts (the
+  // server total is board-wide, not per lane). Skipped while quick-search or
+  // the iteration filter narrows the visible set — those filter the loaded
+  // items, so loaded counts are the honest numbers.
+  function getColumnTotal(columnIndex, allColumnItems) {
+    const useServerTotal =
+      collectionStore.rightmostCap &&
+      !selectedGroupByItemType &&
+      !searchQuery.trim() &&
+      !iterationFilterId &&
+      shouldLimitRightmostColumn(columnIndex);
+    return useServerTotal
+      ? Math.max(collectionStore.rightmostCap.total, allColumnItems.length)
+      : allColumnItems.length;
+  }
+
   let selectedGroupByItemType = $derived(
     groupByItemTypeId ? itemTypes.find(type => type.id === groupByItemTypeId) : null
   );
 
+  let hiddenRightmostSwimlaneParentCount = $derived.by(() => {
+    if (!groupByItemTypeId || !excludeRightmostSwimlaneParents || !rightmostBoardColumn) return 0;
+    return items.filter(item => item.item_type_id === groupByItemTypeId && isExcludedRightmostSwimlaneParent(item)).length;
+  });
+
   let groupByMenuItems = $derived.by(() => {
     const sortedTypes = (itemTypes || []).slice().sort((a, b) => (a.hierarchy_level ?? 999) - (b.hierarchy_level ?? 999) || (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.name.localeCompare(b.name));
+    const rightmostColumnName = rightmostBoardColumn?.name || 'rightmost column';
     return [
       {
         id: 'group-none',
@@ -528,6 +564,21 @@
         badge: groupByItemTypeId ? '' : 'Selected',
         onClick: () => setGroupByItemType(null)
       },
+      ...(groupByItemTypeId ? [
+        { id: 'group-rightmost-toggle-divider', type: 'divider' },
+        {
+          id: 'group-rightmost-toggle',
+          type: 'checkbox',
+          title: `Hide ${rightmostColumnName} swimlanes`,
+          subtitle: selectedGroupByItemType
+            ? `Only group by ${selectedGroupByItemType.name} items outside ${rightmostColumnName}`
+            : `Only group by items outside ${rightmostColumnName}`,
+          badge: hiddenRightmostSwimlaneParentCount > 0 ? `${hiddenRightmostSwimlaneParentCount} hidden` : '',
+          checked: excludeRightmostSwimlaneParents,
+          closeOnSelect: false,
+          onChange: setExcludeRightmostSwimlaneParents
+        }
+      ] : []),
       ...(sortedTypes.length > 0 ? [{ id: 'group-divider', type: 'divider' }] : []),
       ...sortedTypes.map(type => {
         const TypeIcon = itemTypeIconMap[type.icon] || itemTypeIconMap.FileText;
@@ -558,7 +609,7 @@
       }];
     }
 
-    const parentItems = items.filter(item => item.item_type_id === groupByItemTypeId);
+    const parentItems = items.filter(isEligibleSwimlaneParent);
     const parentIds = new Set(parentItems.map(item => item.id));
     const visibleItemIds = new Set(filteredItems.map(item => item.id));
 
@@ -1089,7 +1140,7 @@
           workspaceName={workspace?.name || ''}
           collection={currentCollectionName}
           viewName="Board"
-          itemCount={collectionStore.itemsPagination?.total ?? filteredItems.length}
+          itemCount={(collectionStore.itemsPagination?.total ?? filteredItems.length) + (collectionStore.rightmostCap?.total ?? 0)}
         >
           {#snippet actions()}
             <div class="flex items-center gap-3">
@@ -1168,7 +1219,11 @@
       </div>
 
       <!-- Controls Bar -->
-      <div class="flex items-center mb-6">
+      <div class="flex items-center gap-4 mb-6">
+        <SearchInput
+          bind:value={searchQuery}
+          placeholder={t('common.search')}
+        />
         <SubFilterBar {workspaceId} />
       </div>
 
@@ -1232,7 +1287,7 @@
                         </span>
                       {:else}
                         <span class="block text-xs font-normal truncate" style="color: var(--ds-text-subtle);">
-                          Items without a {selectedGroupByItemType.name} parent
+                          Items without {excludeRightmostSwimlaneParents ? 'a visible' : 'a'} {selectedGroupByItemType.name} parent
                         </span>
                       {/if}
                     </span>
@@ -1249,7 +1304,8 @@
                     {@const quickAddKey = `${lane.id}-${column.id}`}
                     {@const allColumnItems = getItemsByColumn(column, lane.items)}
                     {@const columnItems = getDisplayItemsByColumn(column, columnIndex, validColumns, lane.items)}
-                    {@const hiddenColumnItemCount = allColumnItems.length - columnItems.length}
+                    {@const columnTotal = getColumnTotal(columnIndex, allColumnItems)}
+                    {@const hiddenColumnItemCount = columnTotal - columnItems.length}
                     {@const isOverWip = column.wip_limit && allColumnItems.length > column.wip_limit}
                     <div
                       class="relative rounded border shadow-sm transition-colors"
@@ -1277,9 +1333,9 @@
                         <div class="flex items-center justify-between">
                           <span class="text-sm" style={styles.glassSubtleTextStyle}>
                             {#if hiddenColumnItemCount > 0}
-                              {columnItems.length} of {allColumnItems.length} {t('items.item')}
+                              {columnItems.length} of {columnTotal} {t('items.item')}
                             {:else}
-                              {allColumnItems.length} {t('items.item')}
+                              {columnTotal} {t('items.item')}
                             {/if}
                           </span>
                           {#if column.wip_limit}
@@ -1315,7 +1371,7 @@
                         {:else}
                           {#if hiddenColumnItemCount > 0}
                             <p class="text-xs mb-3" style={styles.glassSubtleTextStyle}>
-                              Showing latest {RIGHTMOST_COLUMN_LIMIT} of {allColumnItems.length} items in this column.
+                              Showing latest {columnItems.length} of {columnTotal} items in this column.
                             </p>
                           {/if}
                           <div class="space-y-1">
@@ -1366,82 +1422,17 @@
                                     {#if cardFields.length > 0}
                                       <div class="flex flex-wrap gap-1.5 mt-1 mb-1.5">
                                         {#each cardFields as cardField}
-                                          {#if cardField.field_type === 'system'}
-                                            {#if cardField.field_identifier === 'priority' && item.priority_id}
-                                              {@const prio = priorities.find(p => p.id === item.priority_id)}
-                                              {#if prio}
-                                                <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium" style="background: {prio.color}20; color: {prio.color};">
-                                                  {prio.name}
-                                                </span>
-                                              {/if}
-                                            {:else if cardField.field_identifier === 'due_date' && item.due_date}
-                                              <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]" style="background: var(--ds-surface); color: var(--ds-text-subtle);">
-                                                {formatDateShort(item.due_date)}
-                                              </span>
-                                            {:else if cardField.field_identifier === 'milestone' && (item.milestones?.length ?? 0) > 0}
-                                              {#each item.milestones as ms (ms.id)}
-                                                <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]" style="background: var(--ds-surface); color: var(--ds-text-subtle);">
-                                                  <span class="w-2 h-2 rounded-full flex-shrink-0" style="background-color: {ms.category_color || '#6b7280'};"></span>
-                                                  {ms.name}
-                                                </span>
-                                              {/each}
-                                            {:else if cardField.field_identifier === 'iteration' && item.iteration_id}
-                                              {@const iter = iterations.find(i => i.id === item.iteration_id)}
-                                              {#if iter}
-                                                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px]" style="background: var(--ds-surface); color: var(--ds-text-subtle);">
-                                                  {iter.name}
-                                                </span>
-                                              {/if}
-                                            {:else if cardField.field_identifier === 'labels' && item.label_ids?.length > 0}
-                                              {#each item.label_ids.slice(0, 3) as labelId}
-                                                {@const lbl = wdsLabels.find(l => l.id === labelId)}
-                                                {#if lbl}
-                                                  <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] text-white font-medium" style="background-color: {lbl.color || '#6b7280'};">
-                                                    {lbl.name}
-                                                  </span>
-                                                {/if}
-                                              {/each}
-                                              {#if item.label_ids.length > 3}
-                                                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px]" style="background: var(--ds-surface); color: var(--ds-text-subtle);">
-                                                  +{item.label_ids.length - 3}
-                                                </span>
-                                              {/if}
-                                            {:else if cardField.field_identifier === 'status' && item.status_id}
-                                              {@const st = statuses.find(s => s.id === item.status_id)}
-                                              {#if st}
-                                                <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px]" style="background: var(--ds-surface); color: var(--ds-text-subtle);">
-                                                  <span class="w-2 h-2 rounded-full flex-shrink-0" style="background-color: {st.color || st.category_color || '#6b7280'};"></span>
-                                                  {st.name}
-                                                </span>
-                                              {/if}
-                                            {:else if cardField.field_identifier === 'created_at' && item.created_at}
-                                              <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px]" style="background: var(--ds-surface); color: var(--ds-text-subtle);">
-                                                {formatDateShort(item.created_at)}
-                                              </span>
-                                            {:else if cardField.field_identifier === 'project' && item.project_id}
-                                              {@const proj = projects.find(p => p.id === item.project_id)}
-                                              {#if proj}
-                                                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px]" style="background: var(--ds-surface); color: var(--ds-text-subtle);">
-                                                  {proj.name}
-                                                </span>
-                                              {/if}
-                                            {/if}
-                                          {:else if cardField.field_type === 'custom'}
-                                            {@const cfId = parseInt(cardField.field_identifier.replace('custom_field_', ''))}
-                                            {@const cfDef = customFieldDefinitions.find(d => d.id === cfId)}
-                                            {@const cfVal = item.custom_field_values?.[cfId] ?? item.custom_field_values?.[String(cfId)]}
-                                            {#if cfDef && cfVal}
-                                              <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px]" style="background: var(--ds-surface); color: var(--ds-text-subtle);">
-                                                {#if cfDef.field_type === 'date'}
-                                                  {formatDateShort(cfVal)}
-                                                {:else if (cfDef.field_type === 'select' || cfDef.field_type === 'multiselect') && cfDef.options}
-                                                  {resolveOptionLabel(cfDef.options, cfVal) || cfVal}
-                                                {:else}
-                                                  {cfVal}
-                                                {/if}
-                                              </span>
-                                            {/if}
-                                          {/if}
+                                          <CardFieldChip
+                                            {cardField}
+                                            {item}
+                                            {priorities}
+                                            {statuses}
+                                            {iterations}
+                                            {projects}
+                                            labels={wdsLabels}
+                                            {customFieldDefinitions}
+                                            {users}
+                                          />
                                         {/each}
                                       </div>
                                     {/if}
@@ -1501,6 +1492,7 @@
         {#if collectionStore.itemsHasMore}
           <div class="mt-6 text-center">
             <button
+              data-testid="board-load-more"
               onclick={() => collectionStore.loadMoreItems()}
               disabled={collectionStore.itemsLoadingMore}
               class="px-4 py-2 text-sm  rounded-lg border transition-colors"
@@ -1508,7 +1500,7 @@
             >
               {collectionStore.itemsLoadingMore ? t('common.loading') : t('common.loadMore')}
               {#if collectionStore.itemsPagination?.total && !iterationFilterId}
-                ({collectionStore.itemsPagination.total - collectionStore.items.length} {t('common.remaining')})
+                ({collectionStore.itemsPagination.total - collectionStore.mainItemsLoadedCount} {t('common.remaining')})
               {/if}
             </button>
           </div>

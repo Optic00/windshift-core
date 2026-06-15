@@ -9,6 +9,18 @@ import (
 	"time"
 )
 
+// DefaultRequestTimeout bounds a single in-product AI operation end to end. It
+// is the one knob behind every in-product AI feature's time budget: the LLM
+// client's per-call HTTP timeout, the agentic loop's overall budget (RunAgent),
+// and the request/job context that the AI handlers and the briefing scheduler
+// wrap around their LLM calls all derive from it. It is deliberately generous —
+// multi-iteration agentic chat routinely runs longer than a minute — but
+// bounded so a hung upstream cannot pin a connection or goroutine indefinitely.
+//
+// The coding-agent runner path (runner_broker) has its own, much longer budget
+// and is intentionally independent of this value.
+const DefaultRequestTimeout = 5 * time.Minute
+
 // Client provides methods to interact with an OpenAI-compatible LLM API.
 type Client interface {
 	// ChatCompletion sends a chat completion request and returns the response.
@@ -23,7 +35,7 @@ type Client interface {
 type Config struct {
 	Endpoint string        // Base URL (e.g., http://llm:8081)
 	APIKey   string        // Bearer token for authenticated endpoints
-	Timeout  time.Duration // HTTP timeout (default: 120s)
+	Timeout  time.Duration // HTTP timeout (default: DefaultRequestTimeout)
 }
 
 // NewClient creates a new LLM client.
@@ -36,7 +48,7 @@ func NewClient(cfg Config) Client {
 
 	timeout := cfg.Timeout
 	if timeout == 0 {
-		timeout = 120 * time.Second
+		timeout = DefaultRequestTimeout
 	}
 
 	return &httpClient{

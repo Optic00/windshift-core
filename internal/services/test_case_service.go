@@ -7,7 +7,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
-	"windshift/internal/utils"
+	"windshift/internal/sanitize"
 )
 
 // TestCaseService handles test case business logic
@@ -72,8 +72,12 @@ type TestCaseCreateRequest struct {
 // Create creates a new test case
 func (s *TestCaseService) Create(workspaceID int, req TestCaseCreateRequest) (*models.TestCase, error) {
 	// Sanitize input
-	req.Title = utils.StripHTMLTags(req.Title)
-	req.Preconditions = utils.SanitizeCommentContent(req.Preconditions)
+	req.Title = sanitize.PlainTextField.Sanitize(req.Title)
+	req.Preconditions = sanitize.Comment.Sanitize(req.Preconditions)
+
+	if req.Title == "" {
+		return nil, fmt.Errorf("test case title is required")
+	}
 
 	// Set defaults
 	if req.Priority == "" {
@@ -146,8 +150,12 @@ type TestCaseUpdateRequest struct {
 // Update updates an existing test case
 func (s *TestCaseService) Update(id, workspaceID int, req TestCaseUpdateRequest) (*models.TestCase, error) {
 	// Sanitize input
-	req.Title = utils.StripHTMLTags(req.Title)
-	req.Preconditions = utils.SanitizeCommentContent(req.Preconditions)
+	req.Title = sanitize.PlainTextField.Sanitize(req.Title)
+	req.Preconditions = sanitize.Comment.Sanitize(req.Preconditions)
+
+	if req.Title == "" {
+		return nil, fmt.Errorf("test case title is required")
+	}
 
 	// Validate priority if provided
 	if req.Priority != "" && !isValidTestCasePriority(req.Priority) {
@@ -255,9 +263,9 @@ type TestStepCreateRequest struct {
 // CreateStep creates a new test step
 func (s *TestCaseService) CreateStep(testCaseID int, req TestStepCreateRequest) (*models.TestStep, error) {
 	// Sanitize input
-	req.Action = utils.SanitizeCommentContent(req.Action)
-	req.Data = utils.SanitizeCommentContent(req.Data)
-	req.Expected = utils.SanitizeCommentContent(req.Expected)
+	req.Action = sanitize.Comment.Sanitize(req.Action)
+	req.Data = sanitize.Comment.Sanitize(req.Data)
+	req.Expected = sanitize.Comment.Sanitize(req.Expected)
 
 	// Get max step number
 	maxStepNumber, err := s.repo.GetMaxStepNumber(testCaseID)
@@ -297,9 +305,9 @@ type TestStepUpdateRequest struct {
 // UpdateStep updates an existing test step
 func (s *TestCaseService) UpdateStep(stepID, testCaseID int, req TestStepUpdateRequest) (*models.TestStep, error) {
 	// Sanitize input
-	req.Action = utils.SanitizeCommentContent(req.Action)
-	req.Data = utils.SanitizeCommentContent(req.Data)
-	req.Expected = utils.SanitizeCommentContent(req.Expected)
+	req.Action = sanitize.Comment.Sanitize(req.Action)
+	req.Data = sanitize.Comment.Sanitize(req.Data)
+	req.Expected = sanitize.Comment.Sanitize(req.Expected)
 
 	step := &models.TestStep{
 		ID:         stepID,

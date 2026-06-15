@@ -458,7 +458,7 @@ export default {
       members: 'الأعضاء',
       configurationSets: 'مجموعات التكوين',
       sourceControl: 'التحكم بالمصدر',
-      codingAgents: 'وكلاء البرمجة',
+      codingAgents: 'الوكلاء',
       removeWorkspace: 'إزالة مساحة العمل',
       issueSync: 'مزامنة المشكلات',
     },

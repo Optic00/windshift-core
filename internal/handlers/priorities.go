@@ -12,6 +12,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/utils"
 )
 
@@ -268,8 +269,8 @@ func (h *PriorityHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	configSetIDs := p.ConfigurationSetIDs
-	p.Name = utils.SanitizeTitle(p.Name)
-	p.Description = utils.SanitizeCommentContent(p.Description)
+	p.Name = sanitize.PlainTextField.Sanitize(p.Name)
+	p.Description = sanitize.Comment.Sanitize(p.Description)
 
 	now := time.Now()
 	var id int64
@@ -347,8 +348,8 @@ func (h *PriorityHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	configSetIDs := p.ConfigurationSetIDs
-	p.Name = utils.SanitizeTitle(p.Name)
-	p.Description = utils.SanitizeCommentContent(p.Description)
+	p.Name = sanitize.PlainTextField.Sanitize(p.Name)
+	p.Description = sanitize.Comment.Sanitize(p.Description)
 
 	// Update priority
 	now := time.Now()

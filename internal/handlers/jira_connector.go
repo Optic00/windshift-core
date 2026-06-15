@@ -10,6 +10,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/jira"
 	"windshift/internal/logger"
+	"windshift/internal/sanitize"
 	"windshift/internal/sso"
 	"windshift/internal/utils"
 
@@ -44,6 +45,13 @@ func (h *JiraImportHandler) Connect(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// InstanceURL + Email render in the connections list, audit log, and
+	// warn-level logs; APIToken is a secret and DeploymentType a strict
+	// enum — both stay untouched.
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.InstanceURL, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Email, Policy: sanitize.ShortIdentifier},
+	)
 
 	// Validate required fields
 	if req.InstanceURL == "" || req.Email == "" || req.APIToken == "" {

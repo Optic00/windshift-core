@@ -7,6 +7,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 )
 
 // AssetCategoryHandler handles asset category operations
@@ -181,6 +182,10 @@ func (h *AssetCategoryHandler) CreateCategory(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
+	)
 
 	if req.Name == "" {
 		respondValidationError(w, r, "Name is required")
@@ -216,15 +221,21 @@ func (h *AssetCategoryHandler) CreateCategory(w http.ResponseWriter, r *http.Req
 
 	h.auditor.Log(r, currentUser, logger.ActionAssetCategoryCreate, logger.ResourceAssetCategory, &id, req.Name)
 
-	respondJSONCreated(w, models.AssetCategory{
-		ID:          id,
-		SetID:       setID,
-		Name:        req.Name,
-		Description: req.Description,
-		ParentID:    req.ParentID,
-		Path:        "/",
-		CreatedAt:   createdAt,
-		UpdatedAt:   createdAt,
+	respondJSONCreated(w, struct {
+		models.AssetCategory
+		Warnings []string `json:"warnings,omitempty"`
+	}{
+		AssetCategory: models.AssetCategory{
+			ID:          id,
+			SetID:       setID,
+			Name:        req.Name,
+			Description: req.Description,
+			ParentID:    req.ParentID,
+			Path:        "/",
+			CreatedAt:   createdAt,
+			UpdatedAt:   createdAt,
+		},
+		Warnings: warnings,
 	})
 }
 
@@ -245,6 +256,10 @@ func (h *AssetCategoryHandler) UpdateCategory(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
+	)
 
 	if req.Name == "" {
 		respondValidationError(w, r, "Name is required")
@@ -269,7 +284,10 @@ func (h *AssetCategoryHandler) UpdateCategory(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	respondJSONOK(w, cat)
+	respondJSONOK(w, struct {
+		*models.AssetCategory
+		Warnings []string `json:"warnings,omitempty"`
+	}{cat, warnings})
 }
 
 // DeleteCategory deletes a category

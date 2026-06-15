@@ -8,6 +8,8 @@
   import { dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter';
   import { IconPlus, IconX, IconTerminal, IconFolder, IconCheck, IconAlertTriangle } from '@tabler/icons-svelte-runes';
   import WsTomlProvisioner from './WsTomlProvisioner.svelte';
+  import { publicBaseURL } from '../../runtime/contextPath.js';
+  import { isTauri as getIsTauri } from '../../utils/isTauri.js';
 
   let terminalContainer = $state(null);
   let isDropTarget = $state(false);
@@ -26,7 +28,7 @@
   let prevEffectWsId; // undefined = not yet initialized
 
   // Detect if running inside Tauri
-  const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+  const isTauri = getIsTauri();
 
   function handleTerminalWrite(event) {
     const { text } = event.detail;
@@ -612,7 +614,7 @@
       <WsTomlProvisioner
         folderPath={workspacePathStore.path}
         workspaceKey={workspace?.key || ''}
-        serverUrl={typeof window !== 'undefined' ? window.location.origin : ''}
+        serverUrl={publicBaseURL()}
         onComplete={handleProvisionerComplete}
         onCancel={() => { showProvisioner = false; }}
       />

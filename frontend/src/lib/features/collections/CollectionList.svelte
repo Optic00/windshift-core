@@ -5,13 +5,13 @@
   import { errorToast } from '../../stores/toasts.svelte.js';
   import { api } from '../../api.js';
   import { navigate } from '../../router.js';
-  import { confirm } from '../../composables/useConfirm.js';
   import { collectionStore, reloadCollection } from '../../stores/collectionContext.js';
+  import { createDeleteItemHandler, createItemActionsBuilder } from '../../utils/workItemTableHelpers.js';
   import { getSystemFieldName } from '../../stores/fieldConfig.js';
   import { useGradientStyles } from '../../stores/workspaceGradient.svelte.js';
   import { workspacePermissions } from '../../stores/workspacePermissions.svelte.js';
   import { workspaceDataStore } from '../../stores/index.js';
-  import { MoreHorizontal, Trash2, Eye, ArrowUp, ArrowDown, ArrowUpDown } from '@lucide/svelte';
+  import { MoreHorizontal, ArrowUp, ArrowDown, ArrowUpDown } from '@lucide/svelte';
   import { draggable } from '@atlaskit/pragmatic-drag-and-drop/element/adapter';
   import SearchInput from '../../components/SearchInput.svelte';
   import DropdownMenu from '../../layout/DropdownMenu.svelte';
@@ -272,47 +272,12 @@
     navigate(url);
   }
 
-  async function deleteItem(item) {
-    const confirmed = await confirm({
-      title: t('common.delete'),
-      message: t('collections.confirmDeleteItem', { title: item.title }),
-      confirmText: t('common.delete'),
-      cancelText: t('common.cancel'),
-      variant: 'danger'
-    });
-    if (!confirmed) return;
+  const deleteItem = createDeleteItemHandler({
+    confirmMessage: (item) => t('collections.confirmDeleteItem', { title: item.title }),
+    onDeleted: () => reloadCollection(),
+  });
 
-    try {
-      await api.items.delete(item.id);
-      // Refresh the work items list
-      reloadCollection();
-    } catch (error) {
-      console.error('Failed to delete item:', error);
-      errorToast(t('dialogs.alerts.failedToDelete', { error: error.message || error }));
-    }
-  }
-
-  function buildItemActions(item) {
-    return [
-      {
-        id: 'view',
-        type: 'regular',
-        icon: Eye,
-        title: t('items.viewItem'),
-        onClick: () => viewItem(item)
-      },
-      { type: 'divider' },
-      {
-        id: 'delete',
-        type: 'regular',
-        icon: Trash2,
-        title: t('common.delete'),
-        color: 'var(--ds-text-danger)',
-        hoverClass: 'hover-danger',
-        onClick: () => deleteItem(item)
-      }
-    ];
-  }
+  const buildItemActions = createItemActionsBuilder({ viewItem, deleteItem });
 
   // Handle inline editing events — reload from server to get fresh data
   function handleItemUpdated(data) {

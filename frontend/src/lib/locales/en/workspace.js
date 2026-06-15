@@ -135,6 +135,19 @@ export default {
     // Item Detail Tabs
     timeTracking: 'Time Tracking',
     details: 'Details',
+    agentLog: 'Agent log',
+    agentLogEmpty: 'No agent runs for this item yet',
+    agentLogTriggeredBy: 'triggered by',
+    agentLogWaiting: 'Waiting for output…',
+    agentRunSingular: 'run',
+    agentRunPlural: 'runs',
+    agentRerunLabel: 'Re-run agent',
+    agentRerunStarting: 'Starting…',
+    agentRerunBusy: 'Run in progress',
+    agentRerunTitle: 'Run the agent again on this item',
+    agentRerunFailed: 'Could not start a new run',
+    agentReviewFlagTitle: 'Needs human review',
+    agentReviewFlagBody: "The agent misused a tool and didn't recover — its output may not be reliable.",
     created: 'Created',
     lastUpdated: 'Last Updated',
     by: 'by',
@@ -539,7 +552,7 @@ export default {
       members: 'Members',
       configurationSets: 'Configuration Sets',
       sourceControl: 'Source Control',
-      codingAgents: 'Coding Agents',
+      codingAgents: 'Agents',
       issueSync: 'Issue Sync',
       recurrence: 'Recurrence',
       removeWorkspace: 'Remove Workspace',
@@ -551,6 +564,19 @@ export default {
     breadcrumbs: {
       workspaces: 'Workspaces',
       settings: 'Settings',
+    },
+
+    // Per-module page header subtitles (folded admin sidebar)
+    headers: {
+      general: 'Basic workspace details and defaults',
+      categories: 'Restrict which project categories apply',
+      members: 'Manage who can access this workspace',
+      configuration: 'Assign configuration sets to this workspace',
+      sourceControl: 'Connect repositories and source control',
+      codingAgents: 'Configure coding agents and their skills',
+      issueSync: 'Sync external issues into this workspace',
+      recurrence: 'Manage recurring item rules',
+      danger: 'Permanently remove this workspace',
     },
 
     // Access denied

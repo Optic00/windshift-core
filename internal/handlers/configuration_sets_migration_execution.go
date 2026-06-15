@@ -8,15 +8,82 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/utils"
 )
+
+// sanitizeStatusMappings bounds the user-facing status label carried on each
+// mapping. FromStatus is the display name echoed back from the analyzer; the
+// IDs are validated numerically and stay untouched.
+func sanitizeStatusMappings(mappings []models.StatusMigrationMapping) {
+	for i := range mappings {
+		sanitize.Apply(&mappings[i].FromStatus, sanitize.PlainTextField)
+	}
+}
+
+// defaultValueNodeBudget caps the total number of JSON nodes (strings,
+// array elements, object entries, scalars) retained from a single
+// DefaultValue. Legitimate defaults are a scalar or a small array of
+// option ids; 256 nodes is far beyond anything the migration UI emits.
+const defaultValueNodeBudget = 256
+
+// sanitizeJSONValue recursively bounds the free-form strings inside a
+// decoded JSON value: every string (including object keys) gets the
+// PlainTextField scrub, arrays and objects are walked, and a shared node
+// budget caps the total structure retained. Without the recursion a
+// client could bypass the string-typed scrub by wrapping the same
+// free-form text in an array or object (e.g. ["<multi-MB string>"]).
+// Numbers, bools, and nulls are bounded by construction and pass through.
+func sanitizeJSONValue(v interface{}, budget *int) interface{} {
+	if *budget <= 0 {
+		return nil
+	}
+	*budget--
+	switch x := v.(type) {
+	case string:
+		return sanitize.PlainTextField.Sanitize(x)
+	case []interface{}:
+		out := make([]interface{}, 0, len(x))
+		for _, e := range x {
+			if *budget <= 0 {
+				break
+			}
+			out = append(out, sanitizeJSONValue(e, budget))
+		}
+		return out
+	case map[string]interface{}:
+		out := make(map[string]interface{}, len(x))
+		for k, e := range x {
+			if *budget <= 0 {
+				break
+			}
+			out[sanitize.PlainTextField.Sanitize(k)] = sanitizeJSONValue(e, budget)
+		}
+		return out
+	default:
+		return x
+	}
+}
+
+// sanitizeCustomFieldMappings scrubs the custom-field migration batch. Action
+// is identifier-shaped ("keep"/"orphan"/"add_default"); DefaultValue is
+// persisted verbatim into item custom-field JSON and rendered on item views,
+// so every string anywhere in its decoded shape gets the plain-text scrub —
+// not just a top-level string, which would leave array/object wrappers as a
+// trivial bypass. The node budget bounds the structure itself.
+func sanitizeCustomFieldMappings(mappings []models.CustomFieldMigrationMapping) {
+	for i := range mappings {
+		sanitize.Apply(&mappings[i].Action, sanitize.ShortIdentifier)
+		budget := defaultValueNodeBudget
+		mappings[i].DefaultValue = sanitizeJSONValue(mappings[i].DefaultValue, &budget)
+	}
+}
 
 // errMigrationConflict signals that a compare-and-swap on
 // workspace_configuration_sets failed because another caller changed the
@@ -28,6 +95,7 @@ func (h *ConfigurationSetHandler) ExecuteMigration(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
+	sanitizeStatusMappings(migrationReq.StatusMappings)
 
 	// Validate configuration set exists and load its workflow_id for membership checks.
 	var configSetExists bool
@@ -107,6 +175,8 @@ func (h *ConfigurationSetHandler) ExecuteComprehensiveMigration(w http.ResponseW
 	if !ok {
 		return
 	}
+	sanitizeStatusMappings(req.StatusMappings)
+	sanitizeCustomFieldMappings(req.CustomFieldMappings)
 
 	// Validate configuration sets exist. OldConfigurationSetID == 0 is allowed
 	// and means "the workspace had no configuration set assigned".
@@ -217,36 +287,17 @@ func (h *ConfigurationSetHandler) ExecuteComprehensiveMigration(w http.ResponseW
 		CustomFieldsUpdated int `json:"custom_fields_updated"`
 	}{}
 
-	wsPlaceholders := "?" + strings.Repeat(",?", len(req.WorkspaceIDs)-1)
+	itemRepo := repository.NewItemRepository(h.db)
 
 	// 1. Execute Item Type Migrations
 	for _, mapping := range req.ItemTypeMappings {
-		var updateQuery string
-		var updateArgs []interface{}
-
-		if mapping.FromItemTypeID == nil {
-			updateQuery = fmt.Sprintf(`
-				UPDATE items SET item_type_id = ?, updated_at = ?
-				WHERE item_type_id IS NULL
-				AND workspace_id IN (%s)`, wsPlaceholders)
-			updateArgs = []interface{}{mapping.ToItemTypeID, now}
-		} else {
-			updateQuery = fmt.Sprintf(`
-				UPDATE items SET item_type_id = ?, updated_at = ?
-				WHERE item_type_id = ?
-				AND workspace_id IN (%s)`, wsPlaceholders)
-			updateArgs = []interface{}{mapping.ToItemTypeID, now, *mapping.FromItemTypeID}
-		}
-		updateArgs = appendInts(updateArgs, req.WorkspaceIDs)
-
-		var result sql.Result
-		result, err = tx.Exec(updateQuery, updateArgs...)
+		var rowsAffected int
+		rowsAffected, err = itemRepo.RemapFieldForWorkspacesTx(tx, "item_type_id", mapping.FromItemTypeID, mapping.ToItemTypeID, nil, req.WorkspaceIDs, now)
 		if err != nil {
 			respondInternalError(w, r, fmt.Errorf("failed to migrate item types: %w", err))
 			return
 		}
-		rowsAffected, _ := result.RowsAffected()
-		stats.ItemTypesMigrated += int(rowsAffected)
+		stats.ItemTypesMigrated += rowsAffected
 	}
 
 	// 2. Execute Custom Field Migrations (only add_default needs action)
@@ -265,7 +316,7 @@ func (h *ConfigurationSetHandler) ExecuteComprehensiveMigration(w http.ResponseW
 
 	// 3. Execute Status Migrations (NULL-aware via *int FromStatusID)
 	for _, mapping := range req.StatusMappings {
-		rows, err := h.applyStatusMappingTx(tx, mapping, req.WorkspaceIDs, wsPlaceholders, now)
+		rows, err := h.applyStatusMappingTx(tx, mapping, req.WorkspaceIDs, now)
 		if err != nil {
 			respondInternalError(w, r, fmt.Errorf("failed to migrate statuses: %w", err))
 			return
@@ -275,32 +326,13 @@ func (h *ConfigurationSetHandler) ExecuteComprehensiveMigration(w http.ResponseW
 
 	// 4. Execute Priority Migrations
 	for _, mapping := range req.PriorityMappings {
-		var updateQuery string
-		var updateArgs []interface{}
-
-		if mapping.FromPriorityID == nil {
-			updateQuery = fmt.Sprintf(`
-				UPDATE items SET priority_id = ?, updated_at = ?
-				WHERE priority_id IS NULL
-				AND workspace_id IN (%s)`, wsPlaceholders)
-			updateArgs = []interface{}{mapping.ToPriorityID, now}
-		} else {
-			updateQuery = fmt.Sprintf(`
-				UPDATE items SET priority_id = ?, updated_at = ?
-				WHERE priority_id = ?
-				AND workspace_id IN (%s)`, wsPlaceholders)
-			updateArgs = []interface{}{mapping.ToPriorityID, now, *mapping.FromPriorityID}
-		}
-		updateArgs = appendInts(updateArgs, req.WorkspaceIDs)
-
-		var result sql.Result
-		result, err = tx.Exec(updateQuery, updateArgs...)
+		var rowsAffected int
+		rowsAffected, err = itemRepo.RemapFieldForWorkspacesTx(tx, "priority_id", mapping.FromPriorityID, mapping.ToPriorityID, nil, req.WorkspaceIDs, now)
 		if err != nil {
 			respondInternalError(w, r, fmt.Errorf("failed to migrate priorities: %w", err))
 			return
 		}
-		rowsAffected, _ := result.RowsAffected()
-		stats.PrioritiesMigrated += int(rowsAffected)
+		stats.PrioritiesMigrated += rowsAffected
 	}
 
 	// 5. Optional atomic attach: swap each workspace's configuration_set_id
@@ -404,54 +436,17 @@ func (h *ConfigurationSetHandler) ExecuteComprehensiveMigration(w http.ResponseW
 // caller addressed items via NULL status_id (FromStatusID == nil) or a
 // concrete status_id, since SQL `=` does not match NULL.
 func (h *ConfigurationSetHandler) applyStatusMapping(tx database.Tx, mapping models.StatusMigrationMapping, workspaceIDs []int) (int, error) {
-	wsPlaceholders := "?" + strings.Repeat(",?", len(workspaceIDs)-1)
-	return h.applyStatusMappingTx(tx, mapping, workspaceIDs, wsPlaceholders, time.Now())
+	return h.applyStatusMappingTx(tx, mapping, workspaceIDs, time.Now())
 }
 
-func (h *ConfigurationSetHandler) applyStatusMappingTx(tx database.Tx, mapping models.StatusMigrationMapping, workspaceIDs []int, wsPlaceholders string, now time.Time) (int, error) {
+func (h *ConfigurationSetHandler) applyStatusMappingTx(tx database.Tx, mapping models.StatusMigrationMapping, workspaceIDs []int, now time.Time) (int, error) {
 	// FromStatusID == nil OR == 0 both mean "items with status_id IS NULL".
 	// Older clients may send 0; treat it the same as nil for back-compat.
-	fromIsNull := mapping.FromStatusID == nil || *mapping.FromStatusID == 0
-
-	var query string
-	var args []interface{}
-
-	switch {
-	case fromIsNull && mapping.ItemTypeID != nil:
-		query = fmt.Sprintf(`
-			UPDATE items SET status_id = ?, updated_at = ?
-			WHERE status_id IS NULL
-			AND item_type_id = ?
-			AND workspace_id IN (%s)`, wsPlaceholders)
-		args = []interface{}{mapping.ToStatusID, now, *mapping.ItemTypeID}
-	case fromIsNull:
-		query = fmt.Sprintf(`
-			UPDATE items SET status_id = ?, updated_at = ?
-			WHERE status_id IS NULL
-			AND workspace_id IN (%s)`, wsPlaceholders)
-		args = []interface{}{mapping.ToStatusID, now}
-	case mapping.ItemTypeID != nil:
-		query = fmt.Sprintf(`
-			UPDATE items SET status_id = ?, updated_at = ?
-			WHERE status_id = ?
-			AND item_type_id = ?
-			AND workspace_id IN (%s)`, wsPlaceholders)
-		args = []interface{}{mapping.ToStatusID, now, *mapping.FromStatusID, *mapping.ItemTypeID}
-	default:
-		query = fmt.Sprintf(`
-			UPDATE items SET status_id = ?, updated_at = ?
-			WHERE status_id = ?
-			AND workspace_id IN (%s)`, wsPlaceholders)
-		args = []interface{}{mapping.ToStatusID, now, *mapping.FromStatusID}
+	fromStatusID := mapping.FromStatusID
+	if fromStatusID != nil && *fromStatusID == 0 {
+		fromStatusID = nil
 	}
-	args = appendInts(args, workspaceIDs)
-
-	res, err := tx.Exec(query, args...)
-	if err != nil {
-		return 0, err
-	}
-	rows, _ := res.RowsAffected()
-	return int(rows), nil
+	return repository.NewItemRepository(h.db).RemapFieldForWorkspacesTx(tx, "status_id", fromStatusID, mapping.ToStatusID, mapping.ItemTypeID, workspaceIDs, now)
 }
 
 // statusIsInWorkflow reports whether statusID participates in workflowID via
@@ -647,23 +642,15 @@ func (h *ConfigurationSetHandler) addDefaultFieldValue(tx database.Tx, workspace
 
 	// Apply updates
 	now := time.Now()
+	itemRepo := repository.NewItemRepository(h.db)
 	for _, update := range updates {
-		_, err := tx.Exec(`UPDATE items SET custom_field_values = ?, updated_at = ? WHERE id = ?`,
-			update.newCFV, now, update.id)
-		if err != nil {
+		if err := itemRepo.SetCustomFieldValuesRawTx(tx, update.id, update.newCFV, now); err != nil {
 			return 0, err
 		}
 		count++
 	}
 
 	return count, nil
-}
-
-func appendInts(dst []interface{}, src []int) []interface{} {
-	for _, v := range src {
-		dst = append(dst, v)
-	}
-	return dst
 }
 
 func inIntSet(s map[int]struct{}, v int) bool {

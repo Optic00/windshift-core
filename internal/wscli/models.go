@@ -38,10 +38,10 @@ type User struct {
 }
 
 type UserSummary struct {
-	ID     int    `json:"id"`
-	Name   string `json:"name,omitempty"`
-	Email  string `json:"email,omitempty"`
-	Avatar string `json:"avatar,omitempty"`
+	ID        int    `json:"id"`
+	FullName  string `json:"full_name,omitempty"`
+	Email     string `json:"email,omitempty"`
+	AvatarURL string `json:"avatar_url,omitempty"`
 }
 
 // ============================================
@@ -75,6 +75,8 @@ type Item struct {
 	Description         string                 `json:"description,omitempty"`
 	IsTask              bool                   `json:"is_task"`
 	DueDate             *time.Time             `json:"due_date,omitempty"`
+	StartDate           *time.Time             `json:"start_date,omitempty"`
+	EndDate             *time.Time             `json:"end_date,omitempty"`
 	CustomFields        map[string]interface{} `json:"custom_fields,omitempty"`
 
 	// Hierarchy
@@ -117,6 +119,8 @@ type ItemCreateRequest struct {
 	IterationID  *int                   `json:"iteration_id,omitempty"`
 	ProjectID    *int                   `json:"project_id,omitempty"`
 	DueDate      *time.Time             `json:"due_date,omitempty"`
+	StartDate    *time.Time             `json:"start_date,omitempty"`
+	EndDate      *time.Time             `json:"end_date,omitempty"`
 	IsTask       bool                   `json:"is_task,omitempty"`
 	CustomFields map[string]interface{} `json:"custom_fields,omitempty"`
 }
@@ -135,6 +139,8 @@ type ItemUpdateRequest struct {
 	IterationID  *int                   `json:"iteration_id,omitempty"`
 	ProjectID    *int                   `json:"project_id,omitempty"`
 	DueDate      *time.Time             `json:"due_date,omitempty"`
+	StartDate    *time.Time             `json:"start_date,omitempty"`
+	EndDate      *time.Time             `json:"end_date,omitempty"`
 	IsTask       *bool                  `json:"is_task,omitempty"`
 	CustomFields map[string]interface{} `json:"custom_fields,omitempty"`
 }
@@ -142,6 +148,12 @@ type ItemUpdateRequest struct {
 // TransitionRequest is the body for POST /rest/api/v1/items/{id}/transition.
 type TransitionRequest struct {
 	ToStatusID int `json:"to_status_id"`
+}
+
+// ItemTypeChangeRequest is the body for POST /rest/api/v1/items/{id}/change-type.
+type ItemTypeChangeRequest struct {
+	TargetItemTypeID int  `json:"target_item_type_id"`
+	TargetStatusID   *int `json:"target_status_id,omitempty"`
 }
 
 // TransitionResult is the response from a transition call.
@@ -322,9 +334,72 @@ type IterationSummary struct {
 	Name string `json:"name,omitempty"`
 }
 
+// Iteration mirrors the v1 IterationResponse payload returned by
+// /rest/api/v1/iterations and /rest/api/v1/workspaces/{id}/iterations.
+type Iteration struct {
+	ID          int    `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	StartDate   string `json:"start_date"`
+	EndDate     string `json:"end_date"`
+	Status      string `json:"status"`
+	IsGlobal    bool   `json:"is_global"`
+	WorkspaceID *int   `json:"workspace_id,omitempty"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
 type ProjectSummary struct {
 	ID   int    `json:"id"`
 	Name string `json:"name,omitempty"`
+}
+
+// ============================================
+// Custom Fields
+// ============================================
+
+// CustomField mirrors the v1 CustomFieldResponse payload returned by
+// /rest/api/v1/custom-fields. Options is a JSON string for select /
+// multiselect fields.
+type CustomField struct {
+	ID           int    `json:"id"`
+	Name         string `json:"name"`
+	FieldType    string `json:"field_type"`
+	Description  string `json:"description,omitempty"`
+	Options      string `json:"options,omitempty"`
+	Required     bool   `json:"required"`
+	DisplayOrder int    `json:"display_order"`
+}
+
+// ============================================
+// Item Labels
+// ============================================
+
+// Label is a workspace-scoped work-item label (fully separate from the
+// page-label system). Mirrors models.Label on the wire.
+type Label struct {
+	ID          int       `json:"id"`
+	Name        string    `json:"name"`
+	Color       string    `json:"color"`
+	WorkspaceID int       `json:"workspace_id"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// LabelListResponse is the {items:[...]} envelope used by the v1
+// workspace-label and item-label endpoints.
+type LabelListResponse struct {
+	Items []Label `json:"items"`
+}
+
+// ItemLabelSetRequest is the body for PUT /rest/api/v1/items/{id}/labels.
+type ItemLabelSetRequest struct {
+	LabelIDs []int `json:"label_ids"`
+}
+
+// ItemLabelAddRequest is the body for POST /rest/api/v1/items/{id}/labels.
+type ItemLabelAddRequest struct {
+	LabelID int `json:"label_id"`
 }
 
 // ============================================
@@ -715,4 +790,226 @@ type LinkCreateRequest struct {
 type LinkListResponse struct {
 	Outgoing []ItemLink `json:"outgoing"`
 	Incoming []ItemLink `json:"incoming"`
+}
+
+// Asset is the CLI-side mirror of dto.AssetResponse.
+type Asset struct {
+	ID                int                    `json:"id"`
+	SetID             int                    `json:"set_id"`
+	Title             string                 `json:"title"`
+	Description       string                 `json:"description,omitempty"`
+	AssetTag          string                 `json:"asset_tag,omitempty"`
+	AssetTypeID       int                    `json:"asset_type_id"`
+	CategoryID        *int                   `json:"category_id,omitempty"`
+	StatusID          *int                   `json:"status_id,omitempty"`
+	CreatedBy         *int                   `json:"created_by,omitempty"`
+	CreatedAt         string                 `json:"created_at"`
+	UpdatedAt         string                 `json:"updated_at"`
+	CustomFieldValues map[string]interface{} `json:"custom_field_values,omitempty"`
+	Set               *AssetSetSummary       `json:"set,omitempty"`
+	AssetType         *AssetTypeSummary      `json:"asset_type,omitempty"`
+	Category          *AssetCategorySummary  `json:"category,omitempty"`
+	Status            *AssetStatusSummary    `json:"status,omitempty"`
+	Creator           *UserSummary           `json:"creator,omitempty"`
+	LinkedItemCount   int                    `json:"linked_item_count,omitempty"`
+	Warnings          []string               `json:"warnings"`
+}
+
+// AssetCreateRequest is the JSON body for POST /asset-sets/{setId}/assets.
+type AssetCreateRequest struct {
+	Title             string                 `json:"title"`
+	Description       string                 `json:"description,omitempty"`
+	AssetTag          string                 `json:"asset_tag,omitempty"`
+	AssetTypeID       int                    `json:"asset_type_id"`
+	CategoryID        *int                   `json:"category_id,omitempty"`
+	StatusID          *int                   `json:"status_id,omitempty"`
+	CustomFieldValues map[string]interface{} `json:"custom_field_values,omitempty"`
+}
+
+// AssetUpdateRequest is the JSON body for PUT /assets/{id}. Pointers so
+// "not set" is distinguishable from "set to zero value".
+type AssetUpdateRequest struct {
+	Title             *string                 `json:"title,omitempty"`
+	Description       *string                 `json:"description,omitempty"`
+	AssetTag          *string                 `json:"asset_tag,omitempty"`
+	AssetTypeID       *int                    `json:"asset_type_id,omitempty"`
+	CategoryID        *int                    `json:"category_id,omitempty"`
+	StatusID          *int                    `json:"status_id,omitempty"`
+	CustomFieldValues *map[string]interface{} `json:"custom_field_values,omitempty"`
+}
+
+// AssetSet mirrors dto.AssetSetResponse.
+type AssetSet struct {
+	ID             int    `json:"id"`
+	Name           string `json:"name"`
+	Description    string `json:"description,omitempty"`
+	IsDefault      bool   `json:"is_default"`
+	AssetTypeCount int    `json:"asset_type_count,omitempty"`
+	AssetCount     int    `json:"asset_count,omitempty"`
+	UserPermission string `json:"user_permission,omitempty"`
+	CreatedBy      *int   `json:"created_by,omitempty"`
+	CreatedAt      string `json:"created_at"`
+	UpdatedAt      string `json:"updated_at"`
+}
+
+// AssetSetSummary is the inline shape used inside Asset.
+type AssetSetSummary struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+// AssetType mirrors dto.AssetTypeResponse.
+type AssetType struct {
+	ID           int              `json:"id"`
+	SetID        int              `json:"set_id"`
+	Name         string           `json:"name"`
+	Description  string           `json:"description,omitempty"`
+	Icon         string           `json:"icon,omitempty"`
+	Color        string           `json:"color,omitempty"`
+	DisplayOrder int              `json:"display_order"`
+	IsActive     bool             `json:"is_active"`
+	AssetCount   int              `json:"asset_count,omitempty"`
+	Fields       []AssetTypeField `json:"fields"`
+	CreatedAt    string           `json:"created_at"`
+	UpdatedAt    string           `json:"updated_at"`
+}
+
+// AssetTypeField mirrors dto.AssetTypeFieldResponse.
+type AssetTypeField struct {
+	ID               int    `json:"id"`
+	CustomFieldID    int    `json:"custom_field_id"`
+	FieldName        string `json:"field_name"`
+	FieldType        string `json:"field_type"`
+	FieldDescription string `json:"field_description,omitempty"`
+	Options          string `json:"options,omitempty"`
+	IsRequired       bool   `json:"is_required"`
+	DisplayOrder     int    `json:"display_order"`
+}
+
+// AssetTypeSummary is the inline shape used inside Asset.
+type AssetTypeSummary struct {
+	ID    int    `json:"id"`
+	Name  string `json:"name"`
+	Icon  string `json:"icon,omitempty"`
+	Color string `json:"color,omitempty"`
+}
+
+// AssetCategory mirrors dto.AssetCategoryResponse.
+type AssetCategory struct {
+	ID               int    `json:"id"`
+	SetID            int    `json:"set_id"`
+	Name             string `json:"name"`
+	Description      string `json:"description,omitempty"`
+	ParentID         *int   `json:"parent_id,omitempty"`
+	Path             string `json:"path,omitempty"`
+	HasChildren      bool   `json:"has_children"`
+	ChildrenCount    int    `json:"children_count"`
+	DescendantsCount int    `json:"descendants_count"`
+	AssetCount       int    `json:"asset_count,omitempty"`
+	CreatedAt        string `json:"created_at"`
+	UpdatedAt        string `json:"updated_at"`
+}
+
+// AssetCategorySummary is the inline shape used inside Asset.
+type AssetCategorySummary struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+	Path string `json:"path,omitempty"`
+}
+
+// AssetStatus mirrors dto.AssetStatusResponse.
+type AssetStatus struct {
+	ID           int    `json:"id"`
+	SetID        int    `json:"set_id"`
+	Name         string `json:"name"`
+	Color        string `json:"color,omitempty"`
+	Description  string `json:"description,omitempty"`
+	IsDefault    bool   `json:"is_default"`
+	DisplayOrder int    `json:"display_order"`
+	CreatedAt    string `json:"created_at"`
+	UpdatedAt    string `json:"updated_at"`
+}
+
+// AssetStatusSummary is the inline shape used inside Asset.
+type AssetStatusSummary struct {
+	ID    int    `json:"id"`
+	Name  string `json:"name"`
+	Color string `json:"color,omitempty"`
+}
+
+// TimeProject mirrors the v1 time-projects response.
+type TimeProject struct {
+	ID            int                    `json:"id"`
+	CustomerID    *int                   `json:"customer_id,omitempty"`
+	CategoryID    *int                   `json:"category_id,omitempty"`
+	Name          string                 `json:"name"`
+	Description   string                 `json:"description"`
+	Status        string                 `json:"status"`
+	Color         string                 `json:"color,omitempty"`
+	HourlyRate    float64                `json:"hourly_rate"`
+	Settings      map[string]interface{} `json:"settings,omitempty"`
+	CustomerName  string                 `json:"customer_name,omitempty"`
+	CategoryName  string                 `json:"category_name,omitempty"`
+	CategoryColor string                 `json:"category_color,omitempty"`
+	TotalHours    *float64               `json:"total_hours,omitempty"`
+}
+
+// TimeWorklog mirrors the v1 worklog response.
+type TimeWorklog struct {
+	ID                  int      `json:"id"`
+	ProjectID           int      `json:"project_id"`
+	CustomerID          int      `json:"customer_id"`
+	ItemID              *int     `json:"item_id,omitempty"`
+	Description         string   `json:"description"`
+	Date                int64    `json:"date"`
+	StartTime           int64    `json:"start_time"`
+	EndTime             int64    `json:"end_time"`
+	DurationMinutes     int      `json:"duration_minutes"`
+	CreatedAt           int64    `json:"created_at"`
+	UpdatedAt           int64    `json:"updated_at"`
+	CustomerName        string   `json:"customer_name,omitempty"`
+	ProjectName         string   `json:"project_name,omitempty"`
+	ItemTitle           string   `json:"item_title,omitempty"`
+	WorkspaceID         *int     `json:"workspace_id,omitempty"`
+	WorkspaceKey        string   `json:"workspace_key,omitempty"`
+	WorkspaceItemNumber int      `json:"workspace_item_number,omitempty"`
+	ProjectMaxHours     *float64 `json:"project_max_hours,omitempty"`
+	ProjectTotalHours   *float64 `json:"project_total_hours,omitempty"`
+}
+
+// TimeWorklogCreateRequest mirrors the v1 create-worklog request body.
+type TimeWorklogCreateRequest struct {
+	ProjectID       int    `json:"project_id"`
+	Description     string `json:"description"`
+	Date            string `json:"date"`
+	Duration        string `json:"duration,omitempty"`
+	DurationMinutes int    `json:"duration_minutes,omitempty"`
+	StartTime       string `json:"start_time,omitempty"`
+	EndTime         string `json:"end_time,omitempty"`
+	ItemID          *int   `json:"item_id,omitempty"`
+	ItemKey         string `json:"item_key,omitempty"`
+}
+
+// TimerStartRequest mirrors the v1 start-timer request body.
+type TimerStartRequest struct {
+	WorkspaceID int    `json:"workspace_id"`
+	ProjectID   int    `json:"project_id"`
+	ItemID      *int   `json:"item_id,omitempty"`
+	Description string `json:"description"`
+}
+
+// AssetImportJob mirrors dto.AssetImportJobResponse.
+type AssetImportJob struct {
+	ID            int     `json:"id"`
+	SetID         int     `json:"set_id"`
+	AssetTypeID   int     `json:"asset_type_id,omitempty"`
+	Status        string  `json:"status"`
+	TotalRows     int     `json:"total_rows"`
+	ProcessedRows int     `json:"processed_rows"`
+	CreatedRows   int     `json:"created_rows"`
+	ErrorRows     int     `json:"error_rows"`
+	ErrorMessage  string  `json:"error_message,omitempty"`
+	CreatedAt     string  `json:"created_at"`
+	StartedAt     *string `json:"started_at,omitempty"`
+	CompletedAt   *string `json:"completed_at,omitempty"`
 }

@@ -130,7 +130,10 @@ type WorkspaceHandlers struct {
 	Approval              *handlers.ApprovalHandler
 	TransitionGovernance  *handlers.TransitionGovernanceHandler
 	AgentBinding          *handlers.WorkspaceAgentBindingHandler
+	AgentSkill            *handlers.AgentSkillHandler
 	AgentRun              *handlers.AgentRunHandler
+	RunnerControl         *handlers.RunnerControlHandler
+	RunnerBroker          *handlers.RunnerBrokerHandler
 }
 
 // UserHandlers groups user-related handlers.
@@ -255,8 +258,9 @@ type PageHandlers struct {
 
 // MiscHandlers groups miscellaneous handlers.
 type MiscHandlers struct {
-	Homepage     *handlers.HomepageHandler
-	Review       *handlers.ReviewHandler
-	CalendarFeed *handlers.CalendarFeedHandler
-	CustomField  *handlers.CustomFieldHandler
+	Homepage      *handlers.HomepageHandler
+	Review        *handlers.ReviewHandler
+	CalendarFeed  *handlers.CalendarFeedHandler
+	CustomField   *handlers.CustomFieldHandler
+	RunnerInstall *handlers.RunnerInstallHandler
 }

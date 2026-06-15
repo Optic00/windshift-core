@@ -82,3 +82,6 @@ CREATE TABLE IF NOT EXISTS configuration_set_notification_settings (
 
 CREATE INDEX IF NOT EXISTS idx_config_set_notification_settings_config_set ON configuration_set_notification_settings(configuration_set_id);
 CREATE INDEX IF NOT EXISTS idx_config_set_notification_settings_notification ON configuration_set_notification_settings(notification_setting_id);
+-- One notification setting per configuration set (matches schema/notifications.sql).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_config_set_notification_setting_one_per_set
+    ON configuration_set_notification_settings(configuration_set_id);

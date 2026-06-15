@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/services"
 )
@@ -99,8 +100,14 @@ func (h *ItemHandler) Transition(w http.ResponseWriter, r *http.Request) {
 		}(*result.NewStatusID)
 	}
 
+	// Strip names of time projects the caller has no access to (incl. the
+	// inherited effective project), matching the masked read paths. Mask a
+	// copy so async consumers of result.Item aren't mutated.
+	maskedItem := []models.Item{*result.Item}
+	h.maskInaccessibleProjectNames(user.ID, maskedItem)
+
 	respondJSONOK(w, map[string]interface{}{
-		"item":          result.Item,
+		"item":          maskedItem[0],
 		"old_status_id": result.OldStatusID,
 		"new_status_id": result.NewStatusID,
 		"no_op":         result.NoOp,

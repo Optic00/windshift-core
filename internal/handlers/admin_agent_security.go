@@ -7,6 +7,7 @@ import (
 
 	"windshift/internal/logger"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
 
@@ -86,6 +87,7 @@ func (h *AgentSecurityHandler) UpdateSettings(w http.ResponseWriter, r *http.Req
 		respondBadRequest(w, r, "invalid request body")
 		return
 	}
+	sanitize.Apply(&body.Reason, sanitize.PlainTextField)
 	if body.Reason == "" {
 		respondBadRequest(w, r, "reason is required")
 		return
@@ -161,6 +163,7 @@ func (h *AgentSecurityHandler) AddAllowlist(w http.ResponseWriter, r *http.Reque
 		respondBadRequest(w, r, "invalid request body")
 		return
 	}
+	sanitize.Apply(&body.Reason, sanitize.PlainTextField)
 	if body.UserID <= 0 {
 		respondBadRequest(w, r, "user_id is required")
 		return
@@ -241,6 +244,7 @@ func (h *AgentSecurityHandler) RemoveAllowlist(w http.ResponseWriter, r *http.Re
 		workspaceID = &ws
 	}
 	reason := r.URL.Query().Get("reason")
+	sanitize.Apply(&reason, sanitize.PlainTextField)
 	if reason == "" {
 		respondBadRequest(w, r, "reason query param is required")
 		return

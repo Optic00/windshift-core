@@ -4,8 +4,7 @@
   import { navigate } from '../../router.js';
   import { t } from '../../stores/i18n.svelte.js';
   import { errorToast, warningToast } from '../../stores/toasts.svelte.js';
-  import { confirm } from '../../composables/useConfirm.js';
-  import { IconFilter as Filter, IconSearch as Search, IconTrash as Trash2, IconEye as Eye } from '@tabler/icons-svelte-runes';
+  import { IconFilter as Filter, IconSearch as Search } from '@tabler/icons-svelte-runes';
   import Button from '../../components/Button.svelte';
   import Card from '../../components/Card.svelte';
   import DataTable from '../../components/DataTable.svelte';
@@ -17,6 +16,12 @@
   import { createWorkItemSearchStore } from '../../stores/searchStore.svelte.js';
   import { createWorkItemSearchHandlers } from '../../composables/useWorkItemSearch.svelte.js';
   import { buildWorkItemColumns, createdAtColumn } from '../../utils/workItemColumns.js';
+  import {
+    decorateWorkItems,
+    createDeleteItemHandler,
+    createItemActionsBuilder,
+    createSearchPaginationHandlers,
+  } from '../../utils/workItemTableHelpers.js';
   import Modal from '../../dialogs/Modal.svelte';
   import WorkspacePicker from '../../pickers/WorkspacePicker.svelte';
   import { collectionCategoriesStore } from '../../stores/collectionCategories.js';
@@ -176,14 +181,6 @@
 
   // ===== Table data =====
 
-  function getWorkspaceName(workspaceId) {
-    return workspaces.find((w) => w.id === workspaceId)?.name || 'Unknown';
-  }
-
-  function getWorkspaceKey(workspaceId) {
-    return workspaces.find((w) => w.id === workspaceId)?.key || 'WORK';
-  }
-
   let workItemColumns = $derived(
     buildWorkItemColumns({
       itemUrl: (item) => `/workspaces/${item.workspace_id}/items/${item.id}`,
@@ -193,64 +190,23 @@
     })
   );
 
-  let tableData = $derived(
-    workItems.map((item) => ({
-      ...item,
-      display_key: `${getWorkspaceKey(item.workspace_id)}-${item.id}`,
-      workspace_name: getWorkspaceName(item.workspace_id),
-    }))
-  );
+  let tableData = $derived(decorateWorkItems(workItems, workspaces));
 
   function viewItem(item) {
     navigate(`/workspaces/${item.workspace_id}/items/${item.id}`);
   }
 
-  async function deleteItem(item) {
-    const confirmed = await confirm({
-      title: t('common.delete'),
-      message: t('collections.confirmDeleteItem', { title: item.title }),
-      confirmText: t('common.delete'),
-      cancelText: t('common.cancel'),
-      variant: 'danger',
-    });
-    if (!confirmed) return;
+  const deleteItem = createDeleteItemHandler({
+    confirmMessage: (item) => t('collections.confirmDeleteItem', { title: item.title }),
+    onDeleted: () => store.executeSearch({ page: currentPage, limit: itemsPerPage }),
+  });
 
-    try {
-      await api.items.delete(item.id);
-      await store.executeSearch({ page: currentPage, limit: itemsPerPage });
-    } catch (error) {
-      console.error('Failed to delete item:', error);
-      errorToast(t('dialogs.alerts.failedToDelete', { error: error.message || error }));
-    }
-  }
+  const buildItemActions = createItemActionsBuilder({ viewItem, deleteItem });
 
-  function buildItemActions(item) {
-    return [
-      { id: 'view', type: 'regular', icon: Eye, title: t('items.viewItem'), onClick: () => viewItem(item) },
-      { type: 'divider' },
-      {
-        id: 'delete',
-        type: 'regular',
-        icon: Trash2,
-        title: t('common.delete'),
-        color: 'var(--ds-text-danger)',
-        hoverClass: 'hover-danger',
-        onClick: () => deleteItem(item),
-      },
-    ];
-  }
-
-  async function handlePageChange(event) {
-    currentPage = event.detail.page;
-    itemsPerPage = event.detail.itemsPerPage;
-    await store.executeSearch({ page: currentPage, limit: itemsPerPage });
-  }
-
-  async function handlePageSizeChange(event) {
-    currentPage = event.detail.page;
-    itemsPerPage = event.detail.itemsPerPage;
-    await store.executeSearch({ page: currentPage, limit: itemsPerPage });
-  }
+  const { handlePageChange, handlePageSizeChange } = createSearchPaginationHandlers(store, {
+    setPage: (page) => (currentPage = page),
+    setItemsPerPage: (size) => (itemsPerPage = size),
+  });
 
   // ===== Public sharing =====
 

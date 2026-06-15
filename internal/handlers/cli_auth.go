@@ -11,12 +11,11 @@ import (
 	"time"
 
 	"windshift/internal/auth"
-	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
-	"windshift/internal/utils"
 )
 
 // cliAuthCodeTTL bounds how long an approved code can sit waiting for the
@@ -29,8 +28,8 @@ const cliAuthCodeTTL = 2 * time.Minute
 // "Allow" in the browser and have a ws-cli-* agent + token materialize on
 // the machine that started the flow.
 type CLIAuthHandler struct {
-	db                database.Database
 	cliAuthRepo       *repository.CLIAuthRepository
+	auditor           *logger.Auditor
 	agent             *AgentHandler
 	tokenManager      *auth.TokenManager
 	apiToken          *APITokenHandler
@@ -39,10 +38,10 @@ type CLIAuthHandler struct {
 
 // NewCLIAuthHandler wires the handler. All four deps must be non-nil — the
 // flow refuses to register routes otherwise (see routes/users.go).
-func NewCLIAuthHandler(db database.Database, agent *AgentHandler, tm *auth.TokenManager, apiToken *APITokenHandler, permService *services.PermissionService) *CLIAuthHandler {
+func NewCLIAuthHandler(cliAuthRepo *repository.CLIAuthRepository, auditor *logger.Auditor, agent *AgentHandler, tm *auth.TokenManager, apiToken *APITokenHandler, permService *services.PermissionService) *CLIAuthHandler {
 	return &CLIAuthHandler{
-		db:                db,
-		cliAuthRepo:       repository.NewCLIAuthRepository(db),
+		cliAuthRepo:       cliAuthRepo,
+		auditor:           auditor,
 		agent:             agent,
 		tokenManager:      tm,
 		apiToken:          apiToken,
@@ -84,6 +83,22 @@ type ApproveRequest struct {
 	Scopes      []string `json:"scopes"`
 }
 
+// sanitizeApproveRequest scrubs the user-facing fields on the consent
+// payload. Hostname surfaces in token names + audit details, FirstName /
+// LastName seed the agent profile; State is identifier-shaped (opaque
+// random from the CLI). CallbackURL goes through the strict loopback
+// validator (which also length-caps it — a sanitize policy would silently
+// rewrite a redirect target) and AgentName through sanitizeAgentName
+// instead.
+func sanitizeApproveRequest(req *ApproveRequest) {
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.State, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.Hostname, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.FirstName, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.LastName, Policy: sanitize.PlainTextField},
+	)
+}
+
 // Approve is called when the user clicks "Allow" on the consent page. It
 // creates (or reuses) an agent owned by the current user, mints a token,
 // and returns a one-time `code` the CLI can redeem at /exchange.
@@ -97,6 +112,7 @@ func (h *CLIAuthHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	sanitizeApproveRequest(&req)
 
 	if err := validateLoopbackCallback(req.CallbackURL); err != nil {
 		respondBadRequest(w, r, err.Error())
@@ -188,22 +204,11 @@ func (h *CLIAuthHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		}
 		agent = created
 
-		_ = logger.LogAudit(h.db, logger.AuditEvent{
-			UserID:       currentUser.ID,
-			Username:     currentUser.Username,
-			IPAddress:    utils.GetClientIP(r),
-			UserAgent:    r.UserAgent(),
-			ActionType:   logger.ActionAgentCreate,
-			ResourceType: logger.ResourceUser,
-			ResourceID:   &agent.ID,
-			ResourceName: agent.Username,
-			Details: map[string]interface{}{
-				"agent_kind":    "owned",
-				"origin":        "cli_onboarding",
-				"owner_user_id": currentUser.ID,
-				"hostname":      req.Hostname,
-			},
-			Success: true,
+		h.auditor.LogWithDetails(r, currentUser, logger.ActionAgentCreate, logger.ResourceUser, &agent.ID, agent.Username, map[string]interface{}{
+			"agent_kind":    "owned",
+			"origin":        "cli_onboarding",
+			"owner_user_id": currentUser.ID,
+			"hostname":      req.Hostname,
 		})
 	}
 
@@ -248,22 +253,11 @@ func (h *CLIAuthHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = logger.LogAudit(h.db, logger.AuditEvent{
-		UserID:       currentUser.ID,
-		Username:     currentUser.Username,
-		IPAddress:    utils.GetClientIP(r),
-		UserAgent:    r.UserAgent(),
-		ActionType:   logger.ActionAPITokenCreate,
-		ResourceType: logger.ResourceAPIToken,
-		ResourceID:   &tokenResp.APIToken.ID,
-		ResourceName: tokenResp.APIToken.Name,
-		Details: map[string]interface{}{
-			"origin":         "cli_onboarding",
-			"target_user_id": agent.ID,
-			"hostname":       req.Hostname,
-			"token_prefix":   tokenResp.APIToken.TokenPrefix,
-		},
-		Success: true,
+	h.auditor.LogWithDetails(r, currentUser, logger.ActionAPITokenCreate, logger.ResourceAPIToken, &tokenResp.APIToken.ID, tokenResp.APIToken.Name, map[string]interface{}{
+		"origin":         "cli_onboarding",
+		"target_user_id": agent.ID,
+		"hostname":       req.Hostname,
+		"token_prefix":   tokenResp.APIToken.TokenPrefix,
 	})
 
 	respondJSONOK(w, map[string]interface{}{
@@ -286,19 +280,11 @@ func (h *CLIAuthHandler) Deny(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req, _ := decodeJSON[ApproveRequest](w, r) // best-effort body, optional fields
+	sanitizeApproveRequest(&req)
 
-	_ = logger.LogAudit(h.db, logger.AuditEvent{
-		UserID:       currentUser.ID,
-		Username:     currentUser.Username,
-		IPAddress:    utils.GetClientIP(r),
-		UserAgent:    r.UserAgent(),
-		ActionType:   "cli_onboarding.deny",
-		ResourceType: logger.ResourceUser,
-		Details: map[string]interface{}{
-			"hostname":   req.Hostname,
-			"agent_name": sanitizeAgentName(req.AgentName),
-		},
-		Success: true,
+	h.auditor.LogWithDetails(r, currentUser, "cli_onboarding.deny", logger.ResourceUser, nil, "", map[string]interface{}{
+		"hostname":   req.Hostname,
+		"agent_name": sanitizeAgentName(req.AgentName),
 	})
 
 	w.WriteHeader(http.StatusNoContent)
@@ -378,13 +364,24 @@ func (h *CLIAuthHandler) Exchange(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// maxCallbackURLBytes bounds the callback_url persisted into
+// cli_auth_codes and echoed in the Approve response (WI-185). The CLI
+// generates tiny loopback URLs; rejecting overlong input (rather than
+// truncating through a sanitize policy) keeps a redirect target from
+// being silently rewritten.
+const maxCallbackURLBytes = 512
+
 // validateLoopbackCallback rejects anything that isn't http(s)://127.0.0.1
 // or http(s)://localhost with a non-empty path — i.e. it keeps the minted
 // token inside the user's machine. Preventing open redirect + exfiltration
-// to an attacker-controlled URL is the whole point of this check.
+// to an attacker-controlled URL is the whole point of this check. It also
+// length-caps the URL so the stored + echoed value is bounded.
 func validateLoopbackCallback(raw string) error {
 	if strings.TrimSpace(raw) == "" {
 		return fmt.Errorf("callback_url is required")
+	}
+	if len(raw) > maxCallbackURLBytes {
+		return fmt.Errorf("callback_url is too long")
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -448,16 +445,5 @@ func cliAuthAgentID(code *repository.CLIAuthCode) int64 {
 }
 
 func (h *CLIAuthHandler) auditApproveFailure(r *http.Request, user *models.User, agentName, reason string) {
-	_ = logger.LogAudit(h.db, logger.AuditEvent{
-		UserID:       user.ID,
-		Username:     user.Username,
-		IPAddress:    utils.GetClientIP(r),
-		UserAgent:    r.UserAgent(),
-		ActionType:   "cli_onboarding.approve",
-		ResourceType: logger.ResourceUser,
-		ResourceName: agentName,
-		Details:      map[string]interface{}{"reason": reason},
-		Success:      false,
-		ErrorMessage: reason,
-	})
+	h.auditor.LogFailure(r, user, "cli_onboarding.approve", logger.ResourceUser, nil, agentName, reason, map[string]interface{}{"reason": reason})
 }

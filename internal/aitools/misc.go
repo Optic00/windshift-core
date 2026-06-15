@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"windshift/internal/auth"
+	"windshift/internal/repository"
 )
 
 // oneYearAgoCutoff returns a dialect-appropriate SQL fragment that evaluates
@@ -126,6 +129,7 @@ func init() {
 	Register(Default, Tool[listMilestonesArgs]{
 		Name:        "list_milestones",
 		Description: "List milestones the user can see, with optional workspace, status and global-include filters.",
+		Scopes:      []string{auth.ScopeMilestonesRead}, // cross-workspace list — matches v1 GET /milestones
 		Run: func(_ context.Context, env *Env, args listMilestonesArgs) (any, error) {
 			includeGlobal := true
 			if args.IncludeGlobal != nil {
@@ -191,6 +195,7 @@ func init() {
 	Register(Default, Tool[listIterationsArgs]{
 		Name:        "list_iterations",
 		Description: "List iterations (sprints, PIs, releases) the user can see.",
+		Scopes:      []string{auth.ScopeIterationsRead}, // cross-workspace list — matches v1 GET /iterations
 		Run: func(_ context.Context, env *Env, args listIterationsArgs) (any, error) {
 			includeGlobal := true
 			if args.IncludeGlobal != nil {
@@ -268,6 +273,7 @@ func init() {
 	Register(Default, Tool[listCustomFieldsArgs]{
 		Name:        "list_custom_fields",
 		Description: "List available custom field definitions. Use this to discover what custom fields exist before filtering items with cf_<name> in the filter parameter of list_items.",
+		Scopes:      []string{auth.ScopeCustomFieldsRead},
 		Run: func(_ context.Context, env *Env, _ listCustomFieldsArgs) (any, error) {
 			rows, err := env.DB.Query(
 				"SELECT id, name, field_type, COALESCE(description, ''), required, COALESCE(options, '') FROM custom_field_definitions ORDER BY display_order, name",
@@ -294,13 +300,15 @@ func init() {
 	Register(Default, Tool[listRecentActivityArgs]{
 		Name:        "list_recent_activity",
 		Description: "List recent changes and comments across accessible workspaces. Useful for understanding what happened recently.",
+		Scopes:      []string{auth.ScopeItemsRead}, // activity is item history — matches v1 GET /items/{id}/history
 		Run: func(_ context.Context, env *Env, args listRecentActivityArgs) (any, error) {
 			sinceDate := args.SinceDate
 			if sinceDate == "" {
 				sinceDate = time.Now().AddDate(0, 0, -1).Format("2006-01-02")
 			}
-			if _, err := time.Parse("2006-01-02", sinceDate); err != nil {
-				return map[string]string{"error": "invalid since_date format, use YYYY-MM-DD"}, nil
+			since, err := time.Parse("2006-01-02", sinceDate)
+			if err != nil {
+				return map[string]string{"error": "invalid since_date format, use YYYY-MM-DD"}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
 			}
 			limit := args.Limit
 			if limit <= 0 {
@@ -322,71 +330,39 @@ func init() {
 			if len(wsIDs) == 0 {
 				return out, nil
 			}
-			ph := make([]string, len(wsIDs))
-			wsArgs := make([]interface{}, len(wsIDs))
-			for i, id := range wsIDs {
-				ph[i] = "?"
-				wsArgs[i] = id
-			}
-			wsIn := strings.Join(ph, ",")
-
-			changeQuery := fmt.Sprintf(`SELECT ih.field_name, COALESCE(ih.old_value, ''), COALESCE(ih.new_value, ''), ih.changed_at,
-				w.key || '-' || CAST(i.workspace_item_number AS TEXT) as item_key, i.title,
-				COALESCE(u.first_name || ' ' || u.last_name, 'Unknown') as changed_by
-				FROM item_history ih
-				JOIN items i ON ih.item_id = i.id
-				JOIN workspaces w ON i.workspace_id = w.id
-				LEFT JOIN users u ON ih.user_id = u.id
-				WHERE i.workspace_id IN (%s) AND ih.changed_at >= ?
-				ORDER BY ih.changed_at DESC LIMIT ?`, wsIn)
-			cArgs := append(append([]interface{}{}, wsArgs...), sinceDate, limit)
-			rows, err := env.DB.Query(changeQuery, cArgs...)
+			itemRepo := repository.NewItemRepository(env.DB)
+			changes, err := itemRepo.RecentItemChanges(wsIDs, since, limit)
 			if err != nil {
 				return nil, err
 			}
-			defer func() { _ = rows.Close() }()
-			for rows.Next() {
-				var c recentChangeDTO
-				var changedAt time.Time
-				if err := rows.Scan(&c.FieldName, &c.OldValue, &c.NewValue, &changedAt, &c.ItemKey, &c.ItemTitle, &c.ChangedBy); err != nil {
-					continue
-				}
-				c.ChangedAt = changedAt.Format(time.RFC3339)
-				out.Changes = append(out.Changes, c)
-			}
-			if err := rows.Err(); err != nil {
-				return nil, err
+			for _, c := range changes {
+				out.Changes = append(out.Changes, recentChangeDTO{
+					FieldName: c.FieldName,
+					OldValue:  c.OldValue,
+					NewValue:  c.NewValue,
+					ChangedAt: c.ChangedAt.Format(time.RFC3339),
+					ItemKey:   c.ItemKey,
+					ItemTitle: c.Title,
+					ChangedBy: c.ChangedBy,
+				})
 			}
 
-			commentQuery := fmt.Sprintf(`SELECT c.content, c.created_at,
-				w.key || '-' || CAST(i.workspace_item_number AS TEXT) as item_key, i.title,
-				COALESCE(u.first_name || ' ' || u.last_name, 'Unknown') as author
-				FROM comments c
-				JOIN items i ON c.item_id = i.id
-				JOIN workspaces w ON i.workspace_id = w.id
-				LEFT JOIN users u ON c.author_id = u.id
-				WHERE i.workspace_id IN (%s) AND c.created_at >= ? AND c.is_private = false
-				ORDER BY c.created_at DESC LIMIT ?`, wsIn)
-			ccArgs := append(append([]interface{}{}, wsArgs...), sinceDate, 30)
-			cRows, err := env.DB.Query(commentQuery, ccArgs...)
+			comments, err := itemRepo.RecentComments(wsIDs, since, 30)
 			if err != nil {
 				return nil, err
 			}
-			defer func() { _ = cRows.Close() }()
-			for cRows.Next() {
-				var cm recentCommentDTO
-				var createdAt time.Time
-				if err := cRows.Scan(&cm.Content, &createdAt, &cm.ItemKey, &cm.ItemTitle, &cm.Author); err != nil {
-					continue
+			for _, c := range comments {
+				cm := recentCommentDTO{
+					Content:   c.Content,
+					CreatedAt: c.CreatedAt.Format(time.RFC3339),
+					ItemKey:   c.ItemKey,
+					ItemTitle: c.Title,
+					Author:    c.Author,
 				}
-				cm.CreatedAt = createdAt.Format(time.RFC3339)
 				if len(cm.Content) > 200 {
 					cm.Content = cm.Content[:200] + "..."
 				}
 				out.Comments = append(out.Comments, cm)
-			}
-			if err := cRows.Err(); err != nil {
-				return nil, err
 			}
 			return out, nil
 		},

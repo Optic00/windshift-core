@@ -3,6 +3,7 @@ package repository
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -16,6 +17,27 @@ const maxItemHierarchyDepth = 30
 // aggregation. Sized so the IN-list stays well under SQLite's default
 // SQLITE_MAX_VARIABLE_NUMBER (32766) even with a handful of extra params.
 const defaultTimeRollupMaxItems = 500
+
+// GetItemTypeAndHierarchyLevel returns an item's item_type_id (nil when unset)
+// and the hierarchy level of that type (0 when the type has none). Returns
+// ErrNotFound when the item does not exist.
+func (r *ItemRepository) GetItemTypeAndHierarchyLevel(itemID int) (typeID *int, level int, err error) {
+	var itemTypeID sql.NullInt64
+	err = r.db.QueryRow(`
+		SELECT i.item_type_id, COALESCE(it.hierarchy_level, 0)
+		FROM items i
+		LEFT JOIN item_types it ON i.item_type_id = it.id
+		WHERE i.id = ?
+	`, itemID).Scan(&itemTypeID, &level)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, 0, ErrNotFound
+	}
+	if err != nil {
+		return nil, 0, fmt.Errorf("get item type hierarchy level: %w", err)
+	}
+	assignNullableInt(&typeID, itemTypeID)
+	return typeID, level, nil
+}
 
 // GetChildren returns direct children of an item
 func (r *ItemRepository) GetChildren(parentID int) ([]*models.Item, error) {
@@ -364,6 +386,147 @@ func (r *ItemRepository) GetDescendantIDs(parentID int) ([]int, error) {
 	}
 
 	return ids, nil
+}
+
+// GetItemHierarchyLevel returns the hierarchy level of an item's type, or nil
+// when the item does not exist, has no type, or the type has no level set.
+func (r *ItemRepository) GetItemHierarchyLevel(itemID int) (*int, error) {
+	var level sql.NullInt64
+	err := r.db.QueryRow(`
+		SELECT it.hierarchy_level
+		FROM items p
+		LEFT JOIN item_types it ON p.item_type_id = it.id
+		WHERE p.id = ?
+	`, itemID).Scan(&level)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get item hierarchy level: %w", err)
+	}
+	var out *int
+	assignNullableInt(&out, level)
+	return out, nil
+}
+
+// CountChildrenWithHierarchyLevelNot returns how many direct children of an
+// item have a typed hierarchy level different from the given level. Children
+// without a type are not counted.
+func (r *ItemRepository) CountChildrenWithHierarchyLevelNot(parentID, level int) (int, error) {
+	var count int
+	err := r.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM items c
+		JOIN item_types it ON c.item_type_id = it.id
+		WHERE c.parent_id = ? AND it.hierarchy_level != ?
+	`, parentID, level).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count children by hierarchy level: %w", err)
+	}
+	return count, nil
+}
+
+// CountDescendants returns the total number of descendants of an item. The
+// recursive walk is capped at maxItemHierarchyDepth so a stored cycle can't
+// loop the DB.
+func (r *ItemRepository) CountDescendants(itemID int) (int, error) {
+	var count int
+	err := r.db.QueryRow(`
+		WITH RECURSIVE descendants AS (
+			SELECT id, parent_id, 1 as depth
+			FROM items
+			WHERE parent_id = ?
+
+			UNION ALL
+
+			SELECT i.id, i.parent_id, d.depth + 1
+			FROM items i
+			JOIN descendants d ON i.parent_id = d.id
+			WHERE d.depth < ?
+		)
+		SELECT COUNT(*) FROM descendants
+	`, itemID, maxItemHierarchyDepth).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count descendants: %w", err)
+	}
+	return count, nil
+}
+
+// EffectiveProjectResolution is the result of walking an item's hierarchy to
+// resolve project inheritance.
+type EffectiveProjectResolution struct {
+	DirectProjectID    *int // the item's own project_id (nil when unset)
+	InheritProject     bool // the item's inherit_project flag
+	EffectiveProjectID *int // resolved project after walking inherit_project up the chain
+}
+
+// ResolveEffectiveProject walks up an item's parent chain (capped at 10
+// levels) to resolve the inherited time-tracking project.
+func (r *ItemRepository) ResolveEffectiveProject(itemID int) (*EffectiveProjectResolution, error) {
+	query := `
+		WITH RECURSIVE effective_projects AS (
+			-- Base case: the item itself
+			SELECT
+				id,
+				project_id,
+				inherit_project,
+				parent_id,
+				CASE
+					WHEN inherit_project = true THEN NULL
+					ELSE project_id
+				END as effective_project_id,
+				0 as depth
+			FROM items
+			WHERE id = ?
+
+			UNION ALL
+
+			-- Recursive case: climb up hierarchy to find inherited project
+			SELECT
+				ep.id,
+				ep.project_id,
+				ep.inherit_project,
+				i.parent_id,
+				CASE
+					WHEN i.project_id IS NOT NULL AND i.inherit_project = false THEN i.project_id
+					ELSE ep.effective_project_id
+				END as effective_project_id,
+				ep.depth + 1
+			FROM effective_projects ep
+			JOIN items i ON ep.parent_id = i.id
+			WHERE ep.effective_project_id IS NULL
+			  AND ep.inherit_project = true
+			  AND ep.depth < 10
+		)
+		SELECT
+			project_id,
+			inherit_project,
+			effective_project_id
+		FROM effective_projects
+		WHERE id = ?
+		ORDER BY depth DESC
+		LIMIT 1
+	`
+
+	var out EffectiveProjectResolution
+	var directProjectID, effectiveProjectID sql.NullInt64
+	err := r.db.QueryRow(query, itemID, itemID).Scan(&directProjectID, &out.InheritProject, &effectiveProjectID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to calculate effective project: %w", err)
+	}
+	assignNullableInt(&out.DirectProjectID, directProjectID)
+	assignNullableInt(&out.EffectiveProjectID, effectiveProjectID)
+	return &out, nil
+}
+
+// SetParentDirect sets parent_id without recording history or bumping
+// updated_at. Used by the Jira import, which runs without a user context and
+// must preserve imported timestamps.
+func (r *ItemRepository) SetParentDirect(itemID, parentID int) error {
+	if _, err := r.db.ExecWrite(`UPDATE items SET parent_id = ? WHERE id = ?`, parentID, itemID); err != nil {
+		return fmt.Errorf("set parent: %w", err)
+	}
+	return nil
 }
 
 // UpdateParent updates the parent_id for an item

@@ -1,9 +1,11 @@
 <script>
-  import { MessageSquare, Clock, Play, Info, History, Edit, Trash2, MoreHorizontal } from '@lucide/svelte';
+  import { MessageSquare, Clock, Play, Info, History, Edit, Trash2, MoreHorizontal, Bot } from '@lucide/svelte';
   import Button from '../../components/Button.svelte';
   import DropdownMenu from '../../layout/DropdownMenu.svelte';
   import Comments from '../items/Comments.svelte';
   import ItemHistory from '../items/ItemHistory.svelte';
+  import ItemAgentLog from '../items/ItemAgentLog.svelte';
+  import { agentRuns } from '../../api/agentRuns.js';
   import { confirm } from '../../composables/useConfirm.js';
   import { formatDateTimeLocale, formatDateShort } from '../../utils/dateFormatter.js';
   import { t } from '../../stores/i18n.svelte.js';
@@ -41,6 +43,20 @@
   }
 
   let commentCount = $state(0);
+
+  // Agent log tab (WI-260): only rendered when the item has at least one
+  // agent run — one cheap limit=1 probe per item; a 404/permission failure
+  // simply hides the tab.
+  let hasAgentRuns = $state(false);
+  $effect(() => {
+    const id = item?.id;
+    hasAgentRuns = false;
+    if (!id) return;
+    agentRuns
+      .listForItem(id, { limit: 1 })
+      .then((runs) => { if (item?.id === id) hasAgentRuns = (runs?.length ?? 0) > 0; })
+      .catch(() => {});
+  });
 
   // Sum logged worklog minutes for the time tab header. When the
   // "Include child items" toggle is on, swap to the server-side rollup totals
@@ -204,6 +220,17 @@
         <History class="w-4 h-4" />
         {t('items.history')}
       </button>
+      {#if hasAgentRuns}
+        <button
+          data-testid="item-detail-agent-log-tab"
+          class="flex items-center gap-2 px-4 py-3 text-sm font-medium transition-all relative"
+          style="{tab === 'agent-log' ? 'background-color: var(--ds-surface-raised); color: var(--ds-interactive); margin-bottom: -1px; border-bottom: 2px solid var(--ds-interactive);' : 'color: var(--ds-text-subtle);'}"
+          onclick={() => switchTab('agent-log')}
+        >
+          <Bot class="w-4 h-4" />
+          {t('items.agentLog')}
+        </button>
+      {/if}
     </div>
 
     <!-- Tab Content -->
@@ -409,6 +436,8 @@
         {/if}
       {:else if tab === 'history'}
         <ItemHistory itemId={item.id} />
+      {:else if tab === 'agent-log'}
+        <ItemAgentLog itemId={item.id} workspaceId={item.workspace_id} />
       {/if}
     </div>
   </div>

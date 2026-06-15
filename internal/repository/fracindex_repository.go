@@ -28,7 +28,7 @@ func NewFracIndexRepository(db database.Database) *FracIndexRepository {
 // so the generator hands out successors that already exist.
 //
 // PredictedCollision is non-nil when the next key the generator would produce
-// (computed by the caller via services.KeyBetween over ByteMax) is already
+// (computed by the caller via KeyBetween over ByteMax) is already
 // present in the table — i.e. the next append would fail the UNIQUE index.
 type FracIndexDBStats struct {
 	ColumnCollation    *string  `json:"column_collation"`            // NULL if default DB collation

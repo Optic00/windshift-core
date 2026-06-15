@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strings"
 
-	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/plugins"
 	"windshift/internal/repository"
@@ -24,11 +23,11 @@ type PluginHandler struct {
 }
 
 // NewPluginHandler creates a new plugin handler
-func NewPluginHandler(db database.Database, manager *plugins.Manager, disabled bool) *PluginHandler {
+func NewPluginHandler(manager *plugins.Manager, registry *repository.PluginRegistryRepository, auditor *logger.Auditor, disabled bool) *PluginHandler {
 	return &PluginHandler{
 		manager:         manager,
-		registry:        repository.NewPluginRegistryRepository(db),
-		auditor:         logger.NewAuditor(db),
+		registry:        registry,
+		auditor:         auditor,
 		pluginsDisabled: disabled,
 	}
 }
@@ -229,8 +228,45 @@ func (h *PluginHandler) GetAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// This route is unauthenticated and the Content-Type is derived from the
+	// asset's file extension, so an HTML/JS/SVG asset would otherwise render
+	// inline in the app's same-origin context. Mirror the attachment download
+	// hardening: always forbid MIME sniffing + framing, and for non-passive
+	// (script-capable) types force a sandboxed download instead of inline
+	// rendering. Plugins are admin-installed, so this is defense-in-depth.
 	w.Header().Set("Content-Type", mimeType)
-	_, _ = w.Write(data) //nolint:gosec // G705: static plugin assets served with correct Content-Type
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	if !isPassivePluginAssetType(mimeType) {
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+		w.Header().Set("Content-Disposition", "attachment")
+	}
+	_, _ = w.Write(data) //nolint:gosec // G705: static plugin assets served with hardened headers
+}
+
+// isPassivePluginAssetType reports whether a plugin asset MIME type is inert
+// when served inline (images, fonts, stylesheets, plain media). Anything else —
+// notably text/html, SVG, and any */*script* type — is treated as
+// script-capable and forced to a sandboxed download.
+func isPassivePluginAssetType(mimeType string) bool {
+	mt := strings.ToLower(strings.TrimSpace(mimeType))
+	if i := strings.IndexByte(mt, ';'); i >= 0 {
+		mt = strings.TrimSpace(mt[:i])
+	}
+	if strings.Contains(mt, "script") || mt == "image/svg+xml" {
+		return false
+	}
+	switch {
+	case strings.HasPrefix(mt, "image/"),
+		strings.HasPrefix(mt, "font/"),
+		strings.HasPrefix(mt, "audio/"),
+		strings.HasPrefix(mt, "video/"),
+		mt == "text/css",
+		mt == "application/font-woff",
+		mt == "application/font-woff2":
+		return true
+	}
+	return false
 }
 
 // TogglePlugin enables or disables a plugin

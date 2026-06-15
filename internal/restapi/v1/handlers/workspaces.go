@@ -8,6 +8,7 @@ import (
 	"windshift/internal/models"
 	"windshift/internal/restapi"
 	"windshift/internal/restapi/v1/dto"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 )
 
@@ -29,19 +30,23 @@ func NewWorkspaceHandler(db database.Database, permissionService *services.Permi
 	}
 }
 
-// WorkspaceResponse is the public API representation of a Workspace
+// WorkspaceResponse is the public API representation of a Workspace.
+// Warnings carries user-facing strings for any field the handler had
+// to sanitize at decode time; the frontend toasts them at info
+// severity. omitempty when nothing was modified.
 type WorkspaceResponse struct {
-	ID                      int    `json:"id"`
-	Name                    string `json:"name"`
-	Key                     string `json:"key"`
-	Description             string `json:"description"`
-	Active                  bool   `json:"active"`
-	IsPersonal              bool   `json:"is_personal"`
-	InternalCommentsEnabled bool   `json:"internal_comments_enabled"`
-	Icon                    string `json:"icon,omitempty"`
-	Color                   string `json:"color,omitempty"`
-	CreatedAt               string `json:"created_at"`
-	UpdatedAt               string `json:"updated_at"`
+	ID                      int      `json:"id"`
+	Name                    string   `json:"name"`
+	Key                     string   `json:"key"`
+	Description             string   `json:"description"`
+	Active                  bool     `json:"active"`
+	IsPersonal              bool     `json:"is_personal"`
+	InternalCommentsEnabled bool     `json:"internal_comments_enabled"`
+	Icon                    string   `json:"icon,omitempty"`
+	Color                   string   `json:"color,omitempty"`
+	CreatedAt               string   `json:"created_at"`
+	UpdatedAt               string   `json:"updated_at"`
+	Warnings                []string `json:"warnings,omitempty"`
 }
 
 // WorkspaceCreateRequest is the request body for creating a workspace
@@ -182,6 +187,13 @@ func (h *WorkspaceHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField, Label: "Workspace name"},
+		sanitize.Pair{Target: &req.Key, Policy: sanitize.ShortIdentifier, Label: "Workspace key"},
+		sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText, Label: "Description"},
+		sanitize.Pair{Target: &req.Icon, Policy: sanitize.ShortIdentifier, Label: "Icon"},
+		sanitize.Pair{Target: &req.Color, Policy: sanitize.ShortIdentifier, Label: "Color"},
+	)
 
 	if !h.ValidateRequiredString(w, r, req.Name, "name") {
 		return
@@ -209,7 +221,9 @@ func (h *WorkspaceHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.RespondCreated(w, toWorkspaceResponse(result.Workspace))
+	resp := toWorkspaceResponse(result.Workspace)
+	resp.Warnings = warnings
+	h.RespondCreated(w, resp)
 }
 
 // Update handles PUT /rest/api/v1/workspaces/{id}
@@ -249,6 +263,12 @@ func (h *WorkspaceHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	warnings := sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: req.Name, Policy: sanitize.PlainTextField, Label: "Workspace name"},
+		sanitize.Pair{Target: req.Description, Policy: sanitize.RichText, Label: "Description"},
+		sanitize.Pair{Target: req.Icon, Policy: sanitize.ShortIdentifier, Label: "Icon"},
+		sanitize.Pair{Target: req.Color, Policy: sanitize.ShortIdentifier, Label: "Color"},
+	)
 
 	ws, err := h.workspaceService.Update(services.UpdateWorkspaceParams{
 		ID:          wsID,
@@ -267,7 +287,9 @@ func (h *WorkspaceHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.RespondOK(w, toWorkspaceResponse(ws))
+	resp := toWorkspaceResponse(ws)
+	resp.Warnings = warnings
+	h.RespondOK(w, resp)
 }
 
 // Delete handles DELETE /rest/api/v1/workspaces/{id}
@@ -331,6 +353,10 @@ func (h *WorkspaceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 // @Failure      500    {object}  handlers.ErrorResponse
 // @Router       /workspaces/{id}/items [get]
 func (h *WorkspaceHandler) GetItems(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.RequireAuth(w, r)
+	if !ok {
+		return
+	}
 	wsID, ok := h.RequireWorkspaceViewAccess(w, r)
 	if !ok {
 		return
@@ -352,6 +378,8 @@ func (h *WorkspaceHandler) GetItems(w http.ResponseWriter, r *http.Request) {
 		h.RespondInternalError(w, r)
 		return
 	}
+
+	h.maskProjectNames(user.ID, items)
 
 	response := dto.MapItemsToResponse(items, baseURL)
 	h.RespondPaginated(w, response, pagination, total)

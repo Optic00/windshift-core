@@ -1,0 +1,280 @@
+// Package sanitize is the single home for input-sanitization policies
+// across the app. Every service that accepts user-supplied text should
+// route through these intent-named policies; the goal is that picking
+// the right policy is the obvious thing — wrong choices read wrong.
+//
+// Policies are named by *what kind of field they sanitize*, not by the
+// underlying primitive. PlainTextField (titles, labels) and RichText
+// (descriptions, notes) have very different shapes, so collapsing them
+// would lose the contract; what we centralize is the policy library
+// itself so a new entity-handling service doesn't reinvent the bundle.
+//
+// # Length caps
+//
+// Each policy enforces a maximum length. The schema is unbounded TEXT
+// everywhere, the frontend has near-zero maxlength attributes — these
+// caps are the PRIMARY length defense in the stack, not defense-in-depth
+// on top of the DB. Numbers are picked from how the field is rendered:
+//
+//   - PlainTextField — 256 runes. Titles + names surface across the
+//     frontend in board cards, breadcrumbs, picker chips, browser tabs;
+//     pathological lengths break layout. 256 is roomy enough for any
+//     legitimate human-written title without breaking the renderers.
+//   - ShortIdentifier — 100 runes. Asset tags, slugs, codes. Intentionally
+//     tighter than PlainTextField because these are identifier-shaped:
+//     "LAP-001", URL slugs, link-type names.
+//   - RichText / LongDocument / Comment — 256 KiB each. The unified
+//     "any long-form user text" cap. Comfortably accommodates rich
+//     descriptions, wiki-style pages, and long discussion comments
+//     without enabling DOS via unbounded payloads.
+//
+// Every policy is stateless and safe for concurrent use.
+package sanitize
+
+import (
+	"fmt"
+	"html"
+	"regexp"
+	"strings"
+	"unicode/utf8"
+
+	"github.com/microcosm-cc/bluemonday"
+)
+
+// Policy is the input-sanitization contract. Implementations must be
+// stateless and safe for concurrent use; the package's exported policies
+// are package-level singletons.
+type Policy interface {
+	Sanitize(input string) string
+}
+
+// PolicyFunc adapts a plain function into a Policy.
+type PolicyFunc func(string) string
+
+// Sanitize implements Policy.
+func (f PolicyFunc) Sanitize(input string) string { return f(input) }
+
+// Apply runs the policy in-place on a string pointer. Convenience for
+// the common "sanitize this struct field before persisting" pattern;
+// no-op when target is nil.
+func Apply(target *string, policy Policy) {
+	if target == nil {
+		return
+	}
+	*target = policy.Sanitize(*target)
+}
+
+// Pair binds a target pointer with the policy that should clean it.
+// Use with ApplyAll to express a service's input policy declaratively.
+//
+// Label is the user-facing name for the field ("Title", "Description",
+// "Group name"). It's optional — ApplyAll ignores it entirely;
+// ApplyAllWithWarnings uses it to build the user-friendly warning
+// strings handlers can stamp on a response.warnings field. Empty
+// label means no warning is produced even if the value was modified.
+type Pair struct {
+	Target *string
+	Policy Policy
+	Label  string
+}
+
+// ApplyAll runs each (target, policy) pair in order. The canonical
+// "sanitize this entity's text fields" call site:
+//
+//	sanitize.ApplyAll(
+//	    sanitize.Pair{Target: &req.Title, Policy: sanitize.PlainTextField},
+//	    sanitize.Pair{Target: &req.Description, Policy: sanitize.RichText},
+//	    sanitize.Pair{Target: &req.Tag, Policy: sanitize.ShortIdentifier},
+//	)
+func ApplyAll(pairs ...Pair) {
+	for _, p := range pairs {
+		Apply(p.Target, p.Policy)
+	}
+}
+
+// ApplyAllWithWarnings runs each policy and returns user-friendly
+// warning strings for every field that was modified AND has a
+// non-empty Label. Returned warnings are safe to drop directly into a
+// response.warnings field so the frontend toast machinery can surface
+// them at info severity. Empty slice when nothing changed.
+//
+// Callers that don't yet want warning surfacing should keep using
+// ApplyAll — the value semantics are identical, ApplyAll just throws
+// the warning information away.
+func ApplyAllWithWarnings(pairs ...Pair) []string {
+	var warnings []string
+	for _, p := range pairs {
+		if p.Target == nil {
+			continue
+		}
+		before := *p.Target
+		*p.Target = p.Policy.Sanitize(before)
+		if p.Label == "" || *p.Target == before {
+			continue
+		}
+		warnings = append(warnings, describeMutation(before, *p.Target, p.Label))
+	}
+	return warnings
+}
+
+// describeMutation classifies a sanitize-time change into the
+// user-facing warning copy the frontend will toast. Three buckets:
+//
+//   - Truncated (output shorter than input, no HTML markers in input)
+//   - HTML stripped (input had < / > / & markers, output differs)
+//   - Both (truncated + HTML stripped)
+//
+// HTML detection is a heuristic (presence of HTML markers in input);
+// false-positives just downgrade to the generic "was modified" copy
+// rather than mislabel the change.
+func describeMutation(before, after, label string) string {
+	beforeRunes := utf8.RuneCountInString(before)
+	afterRunes := utf8.RuneCountInString(after)
+	truncated := afterRunes < beforeRunes
+	hadHTMLMarkers := strings.ContainsAny(before, "<>&")
+	switch {
+	case truncated && hadHTMLMarkers:
+		return fmt.Sprintf("%s had HTML formatting removed and was shortened to %d characters.", label, afterRunes)
+	case truncated:
+		return fmt.Sprintf("%s was shortened to %d characters to fit the maximum length.", label, afterRunes)
+	case hadHTMLMarkers:
+		return fmt.Sprintf("%s had HTML formatting removed.", label)
+	default:
+		return fmt.Sprintf("%s was cleaned up for safe storage.", label)
+	}
+}
+
+// PlainTextField — short, single-line user-facing label or title:
+// item / asset / milestone / workspace / page / label names + titles.
+// Strips every HTML tag (any HTML here is an injection attempt), trims
+// surrounding whitespace, caps at 256 runes (titles surface across
+// board cards, breadcrumbs, picker chips, browser tabs — pathological
+// lengths break layout).
+var PlainTextField Policy = PolicyFunc(plainTextField)
+
+// ShortIdentifier — short identifier-like value (asset_tag, slug, code,
+// link-type name). Same shape as PlainTextField with a 100-rune cap;
+// intentionally tighter because these fields are identifier-shaped
+// (e.g. "LAP-001", URL slugs) rather than free-form titles.
+var ShortIdentifier Policy = PolicyFunc(shortIdentifier)
+
+// RichText — multi-line body content (descriptions, notes, test-step
+// actual results). Strips HTML except <br /> (Milkdown uses this to
+// preserve blank lines on round-trip), decodes HTML entities back to
+// plain text, neutralizes dangerous Markdown URL schemes
+// (javascript:, vbscript:, data:), caps at 256 KiB.
+var RichText Policy = PolicyFunc(richText)
+
+// LongDocument — long-form Markdown document (workspace knowledge
+// pages, runbooks). Same policy shape as RichText, same 256 KiB cap.
+// Kept as a distinct policy from RichText so callers can express the
+// intent ("this is a document, not a description") at the call site,
+// and so the cap can diverge in future without churning every caller.
+var LongDocument Policy = PolicyFunc(longDocument)
+
+// Comment — user-submitted comment content (Markdown editor input).
+// Strips every HTML tag + neutralizes dangerous Markdown URLs.
+// Caps at 256 KiB (matches RichText / LongDocument — one uniform
+// upper bound for any long-form user text).
+var Comment Policy = PolicyFunc(commentPolicy)
+
+// MarkdownURLOnly neutralizes dangerous URL schemes in Markdown
+// link / image syntax without touching anything else. Most callers
+// should reach for RichText / LongDocument / Comment instead — those
+// fold this in. Use this directly only when the input is already
+// HTML-stripped upstream and you just need the URL-scheme guard.
+var MarkdownURLOnly Policy = PolicyFunc(markdownURLOnly)
+
+// --- internals ---
+
+var (
+	strictPolicy = bluemonday.StrictPolicy()
+	brOnlyPolicy = func() *bluemonday.Policy {
+		p := bluemonday.StrictPolicy()
+		p.AllowElements("br")
+		return p
+	}()
+	// Dangerous URL schemes in Markdown links: [text](javascript:...)
+	// or ![alt](data:...). Matches both link and image syntax,
+	// case-insensitive. The URL body alternates between a single-level
+	// paren group `\([^)]*\)` and any non-paren character to swallow
+	// payloads like `javascript:alert(1)` without stopping at the
+	// inner `)` and leaving the markdown link's closing `)` as
+	// residue. Two levels of nesting won't fully match — that's fine,
+	// the outer `)` still terminates the match and the cleaner
+	// replaces what it found.
+	dangerousMarkdownURLRegex = regexp.MustCompile(`(?i)(!?\[[^\]]*\])\(\s*(javascript|vbscript|data)\s*:(?:\([^)]*\)|[^)])*\)`)
+)
+
+// stripAndCap is the common path for PlainTextField + ShortIdentifier:
+// strip every HTML tag, decode entities so we don't store
+// double-encoded text, trim whitespace, length-cap by rune count.
+func stripAndCap(input string, maxRunes int) string {
+	if input == "" {
+		return input
+	}
+	s := html.UnescapeString(strictPolicy.Sanitize(input))
+	s = strings.TrimSpace(s)
+	if maxRunes > 0 && utf8.RuneCountInString(s) > maxRunes {
+		s = string([]rune(s)[:maxRunes])
+	}
+	return s
+}
+
+// Length caps — see the package doc + per-policy comments for rationale.
+const (
+	// PlainTextFieldMaxRunes bounds titles + names. 256 runes keeps
+	// pathological lengths from breaking board cards / breadcrumbs /
+	// picker chips that render these fields verbatim.
+	PlainTextFieldMaxRunes = 256
+	// ShortIdentifierMaxRunes bounds identifier-shaped values
+	// (asset_tag, slug, link-type name). Tighter on purpose — these
+	// aren't free-form titles.
+	ShortIdentifierMaxRunes = 100
+	// LongTextMaxBytes is the unified upper bound on any long-form
+	// user-supplied text (descriptions, page bodies, comments). One
+	// number, one place to evolve it.
+	LongTextMaxBytes = 256 * 1024
+)
+
+func plainTextField(s string) string  { return stripAndCap(s, PlainTextFieldMaxRunes) }
+func shortIdentifier(s string) string { return stripAndCap(s, ShortIdentifierMaxRunes) }
+
+// brAllowAndCap is the common path for RichText + LongDocument: strip
+// HTML except <br />, decode entities, normalize the bluemonday <br/>
+// output back to <br /> for Milkdown compatibility, neutralize
+// dangerous URL schemes, byte-cap.
+func brAllowAndCap(input string, maxBytes int) string {
+	if input == "" || input == "null" {
+		return ""
+	}
+	s := brOnlyPolicy.Sanitize(input)
+	s = html.UnescapeString(s)
+	s = strings.ReplaceAll(s, "<br/>", "<br />")
+	s = markdownURLOnly(s)
+	if maxBytes > 0 && len(s) > maxBytes {
+		s = s[:maxBytes]
+	}
+	return s
+}
+
+func richText(s string) string     { return brAllowAndCap(s, LongTextMaxBytes) }
+func longDocument(s string) string { return brAllowAndCap(s, LongTextMaxBytes) }
+
+func commentPolicy(s string) string {
+	if s == "" {
+		return ""
+	}
+	out := markdownURLOnly(html.UnescapeString(strictPolicy.Sanitize(s)))
+	if len(out) > LongTextMaxBytes {
+		out = out[:LongTextMaxBytes]
+	}
+	return out
+}
+
+func markdownURLOnly(s string) string {
+	if s == "" {
+		return ""
+	}
+	return dangerousMarkdownURLRegex.ReplaceAllString(s, "${1}(#unsafe-link-removed)")
+}

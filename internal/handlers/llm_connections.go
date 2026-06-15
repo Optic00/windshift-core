@@ -9,6 +9,7 @@ import (
 	"windshift/internal/llm"
 	"windshift/internal/logger"
 	"windshift/internal/restapi"
+	"windshift/internal/sanitize"
 	"windshift/internal/utils"
 )
 
@@ -62,6 +63,14 @@ func validateConnectionRequest(w http.ResponseWriter, r *http.Request, name stri
 		respondBadRequest(w, r, "name, provider_type, and model are required")
 		return false
 	}
+	if llm.GetProvider(providerType) == nil {
+		respondBadRequest(w, r, fmt.Sprintf("unknown provider_type %q", providerType))
+		return false
+	}
+	if providerType == llm.ProviderType("local") && baseURL == "" {
+		respondBadRequest(w, r, "base URL is required for Local / Custom providers")
+		return false
+	}
 	if baseURL != "" {
 		if err := utils.ValidateHTTPBaseURL(baseURL); err != nil {
 			respondBadRequest(w, r, "invalid base URL: "+err.Error())
@@ -77,6 +86,10 @@ func (h *LLMConnectionHandler) CreateConnection(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Model, Policy: sanitize.ShortIdentifier},
+	)
 	if !validateConnectionRequest(w, r, req.Name, req.ProviderType, req.Model, req.BaseURL) {
 		return
 	}
@@ -104,6 +117,10 @@ func (h *LLMConnectionHandler) UpdateConnection(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Model, Policy: sanitize.ShortIdentifier},
+	)
 	if !validateConnectionRequest(w, r, req.Name, req.ProviderType, req.Model, req.BaseURL) {
 		return
 	}
@@ -185,9 +202,18 @@ func (h *LLMConnectionHandler) GetProviders(w http.ResponseWriter, _ *http.Reque
 				entry.LastError = cached.LastError
 			}
 		}
+		if p.HasDynamicModels() && len(entry.CachedModels) == 0 && len(p.Models) > 0 {
+			entry.CachedModels = p.Models
+		}
 		out = append(out, entry)
 	}
 	respondJSONOK(w, out)
+}
+
+type refreshProviderModelsRequest struct {
+	ConnectionID int    `json:"connection_id,omitempty"`
+	BaseURL      string `json:"base_url,omitempty"`
+	APIKey       string `json:"api_key,omitempty"`
 }
 
 // RefreshProviderModels triggers a network fetch of a dynamic-models provider's
@@ -210,23 +236,17 @@ func (h *LLMConnectionHandler) RefreshProviderModels(w http.ResponseWriter, r *h
 		return
 	}
 
-	// Look up an API key from an existing enabled connection of this provider.
-	// OpenRouter's /models is unauthenticated, so an empty key is fine there;
-	// every other provider that supports dynamic refresh requires auth.
-	apiKey, err := h.manager.GetAnyAPIKeyForProvider(providerType)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	if apiKey == "" && providerType != llm.ProviderType("openrouter") {
-		respondBadRequest(w, r, fmt.Sprintf(
-			"configure an enabled %s connection with an API key before refreshing its model catalog",
-			provider.Name,
-		))
+	req, ok := decodeOptionalJSON[refreshProviderModelsRequest](w, r)
+	if !ok {
 		return
 	}
 
-	models, err := h.refresher.Refresh(r.Context(), *provider, apiKey)
+	apiKey, baseURL, ok := h.resolveCatalogRefreshConfig(w, r, providerType, *provider, req)
+	if !ok {
+		return
+	}
+
+	models, err := h.refresher.Refresh(r.Context(), *provider, apiKey, baseURL)
 	if err != nil {
 		slog.Warn("LLM model refresh failed", slog.String("provider", string(providerType)), slog.Any("error", err))
 		respondError(w, r, restapi.NewAPIError(http.StatusBadGateway, restapi.ErrCodeConnectionTestFailed,
@@ -243,6 +263,68 @@ func (h *LLMConnectionHandler) RefreshProviderModels(w http.ResponseWriter, r *h
 		"models":            models,
 		"last_refreshed_at": time.Now(),
 	})
+}
+
+func (h *LLMConnectionHandler) resolveCatalogRefreshConfig(w http.ResponseWriter, r *http.Request, providerType llm.ProviderType, provider llm.ProviderInfo, req refreshProviderModelsRequest) (apiKey, baseURL string, ok bool) {
+	var runtime *llm.CatalogRuntime
+	if req.ConnectionID > 0 {
+		connProvider, rt, err := h.manager.GetCatalogRuntimeForConnection(req.ConnectionID)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return "", "", false
+		}
+		if rt == nil {
+			respondBadRequest(w, r, "connection not found or disabled")
+			return "", "", false
+		}
+		if connProvider != providerType {
+			respondBadRequest(w, r, fmt.Sprintf("connection %d is %s, not %s", req.ConnectionID, connProvider, providerType))
+			return "", "", false
+		}
+		runtime = rt
+	} else {
+		rt, err := h.manager.GetCatalogRuntimeForProvider(providerType)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return "", "", false
+		}
+		runtime = rt
+	}
+	if runtime != nil {
+		apiKey = runtime.APIKey
+		baseURL = runtime.BaseURL
+	}
+	if req.APIKey != "" {
+		apiKey = req.APIKey
+	}
+	if req.BaseURL != "" {
+		if err := utils.ValidateHTTPBaseURL(req.BaseURL); err != nil {
+			respondBadRequest(w, r, "invalid base URL: "+err.Error())
+			return "", "", false
+		}
+		baseURL = req.BaseURL
+	}
+	if baseURL == "" && provider.BaseURL == "" {
+		respondBadRequest(w, r, fmt.Sprintf("configure a base URL before refreshing %s models", provider.Name))
+		return "", "", false
+	}
+	if apiKey == "" && providerRequiresCatalogAPIKey(providerType) {
+		respondBadRequest(w, r, fmt.Sprintf(
+			"configure an enabled %s connection with an API key before refreshing its model catalog",
+			provider.Name,
+		))
+		return "", "", false
+	}
+	return apiKey, baseURL, true
+}
+
+func providerRequiresCatalogAPIKey(providerType llm.ProviderType) bool {
+	switch providerType {
+	case llm.ProviderType("openrouter"), llm.ProviderType("local"):
+		return false
+	default:
+		return true
+	}
 }
 
 // GetEnabledConnections returns all enabled connections (user).

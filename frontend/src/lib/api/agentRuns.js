@@ -20,6 +20,20 @@ export const agentRuns = {
     return fetchAPI(`/workspaces/${workspaceId}/agent-runs${qs ? `?${qs}` : ''}`);
   },
 
+  /**
+   * List the runs triggered against one work item (newest first) — backs
+   * the item-detail "Agent log" tab (WI-260).
+   * @param {number} itemId
+   * @param {{ limit?: number, beforeId?: number }} [opts]
+   */
+  listForItem: (itemId, opts = {}) => {
+    const params = new URLSearchParams();
+    if (opts.limit) params.set('limit', String(opts.limit));
+    if (opts.beforeId) params.set('before_id', String(opts.beforeId));
+    const qs = params.toString();
+    return fetchAPI(`/items/${itemId}/agent-runs${qs ? `?${qs}` : ''}`);
+  },
+
   /** Get a single run by id. */
   get: (runId) => fetchAPI(`/agent-runs/${runId}`),
 
@@ -40,6 +54,17 @@ export const agentRuns = {
    * the run is already terminal. */
   cancel: (runId) =>
     fetchAPI(`/agent-runs/${runId}/cancel`, {
+      method: 'POST',
+    }),
+
+  /**
+   * Manually re-run the agent that last worked an item (the item agent-log
+   * "Re-run" button). Enqueues a fresh run reusing the last run's binding.
+   * Returns { started }: false means a run was already queued/running, so the
+   * call was a no-op. Requires item.edit.
+   */
+  rerun: (itemId) =>
+    fetchAPI(`/items/${itemId}/agent-runs`, {
       method: 'POST',
     }),
 };

@@ -8,6 +8,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 )
@@ -47,6 +48,23 @@ func (h *ThemeHandler) GetActiveTheme(w http.ResponseWriter, r *http.Request) {
 	respondJSONOK(w, theme)
 }
 
+// sanitizeThemeFields runs the canonical sanitize policies against the
+// six free-form text fields on a theme create/update payload (Name +
+// Description plus the four nav-color CSS values). Returns the labeled
+// warnings so the handler can surface them on the response. Colors are
+// short identifier-shaped CSS values (hex / rgb / hsl); HTML inside
+// them would corrupt the rendered CSS rule.
+func sanitizeThemeFields(name, description, navBgLight, navTextLight, navBgDark, navTextDark *string) []string {
+	return sanitize.ApplyAllWithWarnings(
+		sanitize.Pair{Target: name, Policy: sanitize.PlainTextField, Label: "Name"},
+		sanitize.Pair{Target: description, Policy: sanitize.RichText, Label: "Description"},
+		sanitize.Pair{Target: navBgLight, Policy: sanitize.ShortIdentifier, Label: "Light navigation background color"},
+		sanitize.Pair{Target: navTextLight, Policy: sanitize.ShortIdentifier, Label: "Light navigation text color"},
+		sanitize.Pair{Target: navBgDark, Policy: sanitize.ShortIdentifier, Label: "Dark navigation background color"},
+		sanitize.Pair{Target: navTextDark, Policy: sanitize.ShortIdentifier, Label: "Dark navigation text color"},
+	)
+}
+
 // validateThemeFields checks the required color and name fields shared by create and update requests.
 func validateThemeFields(name, navBgLight, navTextLight, navBgDark, navTextDark string) string {
 	if name == "" {
@@ -73,6 +91,9 @@ func (h *ThemeHandler) CreateTheme(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	warnings := sanitizeThemeFields(&req.Name, &req.Description,
+		&req.NavBackgroundColorLight, &req.NavTextColorLight,
+		&req.NavBackgroundColorDark, &req.NavTextColorDark)
 	if msg := validateThemeFields(req.Name, req.NavBackgroundColorLight, req.NavTextColorLight, req.NavBackgroundColorDark, req.NavTextColorDark); msg != "" {
 		respondValidationError(w, r, msg)
 		return
@@ -88,7 +109,10 @@ func (h *ThemeHandler) CreateTheme(w http.ResponseWriter, r *http.Request) {
 	if currentUser != nil {
 		h.auditor.Log(r, currentUser, logger.ActionThemeCreate, logger.ResourceTheme, &theme.ID, theme.Name)
 	}
-	respondJSONCreated(w, theme)
+	respondJSONCreated(w, struct {
+		models.Theme
+		Warnings []string `json:"warnings,omitempty"`
+	}{theme, warnings})
 }
 
 // UpdateTheme updates an existing theme
@@ -101,6 +125,9 @@ func (h *ThemeHandler) UpdateTheme(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	warnings := sanitizeThemeFields(&req.Name, &req.Description,
+		&req.NavBackgroundColorLight, &req.NavTextColorLight,
+		&req.NavBackgroundColorDark, &req.NavTextColorDark)
 	if msg := validateThemeFields(req.Name, req.NavBackgroundColorLight, req.NavTextColorLight, req.NavBackgroundColorDark, req.NavTextColorDark); msg != "" {
 		respondValidationError(w, r, msg)
 		return
@@ -120,7 +147,10 @@ func (h *ThemeHandler) UpdateTheme(w http.ResponseWriter, r *http.Request) {
 	if currentUser != nil {
 		h.auditor.Log(r, currentUser, logger.ActionThemeUpdate, logger.ResourceTheme, &themeID, theme.Name)
 	}
-	respondJSONOK(w, theme)
+	respondJSONOK(w, struct {
+		models.Theme
+		Warnings []string `json:"warnings,omitempty"`
+	}{theme, warnings})
 }
 
 // DeleteTheme deletes a theme

@@ -8,10 +8,12 @@ import (
 	"log/slog"
 	"math/big"
 	"net/http"
+	"strconv"
 
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/sanitize"
 	"windshift/internal/services"
 	"windshift/internal/utils"
 
@@ -26,6 +28,13 @@ type UserHandler struct {
 	userSvc           *services.UserReadService
 	offboardUser      func(id int) error
 	deactivateCascade func(id int) (services.AgentDeactivationResult, error)
+	agentPresence     *services.AgentPresenceService // optional; nil when the agent harness is off
+}
+
+// SetAgentPresenceService wires the optional presence resolver used to
+// decorate agent users in the assignable-users response (WI-272).
+func (h *UserHandler) SetAgentPresenceService(s *services.AgentPresenceService) {
+	h.agentPresence = s
 }
 
 // CreateUserRequest represents the request payload for creating a user.
@@ -173,6 +182,14 @@ func (h *UserHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Names render in member lists, mentions, comment author bylines,
+	// and audit log entries. Username is identifier-shaped (URL slug
+	// for @mentions). AvatarURL is validated separately as a URL.
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.FirstName, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.LastName, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Username, Policy: sanitize.ShortIdentifier},
+	)
 
 	if err := utils.Validate(req); err != nil {
 		respondValidationError(w, r, err.Error())
@@ -263,6 +280,11 @@ func (h *UserHandler) InviteUser(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.FirstName, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.LastName, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Username, Policy: sanitize.ShortIdentifier},
+	)
 
 	if err := utils.Validate(req); err != nil {
 		respondValidationError(w, r, err.Error())
@@ -349,6 +371,13 @@ func (h *UserHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.FirstName, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.LastName, Policy: sanitize.PlainTextField},
+		sanitize.Pair{Target: &req.Username, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.Timezone, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.Language, Policy: sanitize.ShortIdentifier},
+	)
 
 	if err := utils.Validate(req); err != nil {
 		respondValidationError(w, r, err.Error())
@@ -543,6 +572,10 @@ func (h *UserHandler) UpdateRegionalSettings(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
+	sanitize.ApplyAll(
+		sanitize.Pair{Target: &req.Timezone, Policy: sanitize.ShortIdentifier},
+		sanitize.Pair{Target: &req.Language, Policy: sanitize.ShortIdentifier},
+	)
 
 	old, err := h.repo.GetRegionalSnapshot(id)
 	if errors.Is(err, repository.ErrNotFound) {
@@ -726,8 +759,10 @@ func (h *UserHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	respondJSONOK(w, response)
 }
 
-// GetAssignable returns only active users with limited fields for assignment pickers.
-// The workspaceId path parameter is accepted for future workspace-scoped filtering but not yet used.
+// GetAssignable returns only active users with limited fields for assignment
+// pickers. Agent users are decorated with a workspace-scoped presence signal
+// (online/offline/local/unbound, WI-272) so assigners can see whether
+// assigning to the agent would actually start a run.
 func (h *UserHandler) GetAssignable(w http.ResponseWriter, r *http.Request) {
 	if _, ok := RequireAuth(w, r); !ok {
 		return
@@ -738,10 +773,30 @@ func (h *UserHandler) GetAssignable(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+
+	// Presence enrichment is best-effort: a resolver failure degrades to
+	// undecorated users, never a failed picker.
+	var presence map[int]string
+	if h.agentPresence != nil {
+		if workspaceID, err := strconv.Atoi(r.PathValue("workspaceId")); err == nil && workspaceID > 0 {
+			if presence, err = h.agentPresence.ForWorkspace(r.Context(), workspaceID); err != nil {
+				slog.Warn("assignable users: resolve agent presence", "workspace_id", workspaceID, "error", err)
+				presence = nil
+			}
+		}
+	}
+
 	for i := range users {
 		users[i].Email = ""
 		users[i].Timezone = ""
 		users[i].Language = ""
+		if users[i].IsAgent && presence != nil {
+			if p, ok := presence[users[i].ID]; ok {
+				users[i].AgentPresence = p
+			} else {
+				users[i].AgentPresence = services.AgentPresenceUnbound
+			}
+		}
 	}
 
 	respondJSONOK(w, users)
