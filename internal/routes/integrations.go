@@ -8,9 +8,10 @@ import (
 
 // IntegrationHandlers groups integration-related handlers.
 type IntegrationHandlers struct {
-	Provider  *handlers.IntegrationProviderHandler
-	OAuth     *handlers.IntegrationOAuthHandler
-	ItemLinks *handlers.IntegrationItemLinksHandler
+	Provider    *handlers.IntegrationProviderHandler
+	OAuth       *handlers.IntegrationOAuthHandler
+	ItemLinks   *handlers.IntegrationItemLinksHandler
+	TodoistSync *handlers.TodoistSyncHandler
 }
 
 // RegisterIntegrationRoutes registers integration provider, OAuth, and item link routes.
@@ -34,6 +35,12 @@ func RegisterIntegrationRoutes(deps *Deps) {
 	api.HandleH("GET /users/me/integration-connections", auth(http.HandlerFunc(deps.Integrations.OAuth.GetUserConnections)))
 	api.HandleH("GET /users/me/integration-connections/available", auth(http.HandlerFunc(deps.Integrations.OAuth.GetAvailableProviders)))
 	api.HandleH("DELETE /users/me/integration-connections/{provider_id}", auth(http.HandlerFunc(deps.Integrations.OAuth.DisconnectProvider)))
+
+	// Todoist personal-task sync
+	api.HandleH("GET /users/me/todoist-sync", auth(http.HandlerFunc(deps.Integrations.TodoistSync.GetSync)))
+	api.HandleH("PUT /users/me/todoist-sync", auth(http.HandlerFunc(deps.Integrations.TodoistSync.UpdateSync)))
+	api.HandleH("GET /users/me/todoist-sync/projects", auth(http.HandlerFunc(deps.Integrations.TodoistSync.GetProjects)))
+	api.HandleH("POST /users/me/todoist-sync/run", auth(http.HandlerFunc(deps.Integrations.TodoistSync.RunSync)))
 
 	// Item links
 	api.HandleH("GET /items/{id}/integration-links", auth(http.HandlerFunc(deps.Integrations.ItemLinks.GetItemLinks)))

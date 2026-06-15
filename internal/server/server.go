@@ -824,6 +824,7 @@ func (s *Server) initialize() error {
 	integrationProviderHandler := handlers.NewIntegrationProviderHandler(repository.NewIntegrationProviderRepository(s.db), scmProviderHandler.GetEncryption(), logger.NewAuditor(s.db))
 	integrationOAuthHandler := handlers.NewIntegrationOAuthHandler(s.db, scmProviderHandler.GetEncryption(), baseURL)
 	integrationItemLinksHandler := handlers.NewIntegrationItemLinksHandler(s.db, scmProviderHandler.GetEncryption(), permService)
+	todoistSyncHandler := handlers.NewTodoistSyncHandler(s.db, scmProviderHandler.GetEncryption())
 
 	// SCM sync service (started below once smart-commit dependencies exist)
 	scmSyncService := scm.NewSyncService(s.db, scmProviderHandler.GetEncryption())
@@ -1371,9 +1372,10 @@ func (s *Server) initialize() error {
 			OnCall: onCallHandler,
 		},
 		Integrations: routes.IntegrationHandlers{
-			Provider:  integrationProviderHandler,
-			OAuth:     integrationOAuthHandler,
-			ItemLinks: integrationItemLinksHandler,
+			Provider:    integrationProviderHandler,
+			OAuth:       integrationOAuthHandler,
+			ItemLinks:   integrationItemLinksHandler,
+			TodoistSync: todoistSyncHandler,
 		},
 		Pages: routes.PageHandlers{
 			Page:            pageHandler,
