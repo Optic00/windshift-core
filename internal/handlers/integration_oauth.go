@@ -14,6 +14,7 @@ import (
 
 	"windshift/internal/database"
 	"windshift/internal/integrations/notion"
+	"windshift/internal/integrations/todoist"
 	"windshift/internal/models"
 	"windshift/internal/sso"
 
@@ -102,6 +103,8 @@ func (h *IntegrationOAuthHandler) StartOAuth(w http.ResponseWriter, r *http.Requ
 			state,
 			url.QueryEscape(redirectURI),
 		)
+	case models.IntegrationProviderTodoist:
+		authURL = todoist.AuthorizeURL(clientID.String, "data:read_write", state)
 	default:
 		respondBadRequest(w, r, "OAuth not supported for this provider type")
 		return
@@ -180,9 +183,46 @@ func (h *IntegrationOAuthHandler) OAuthCallback(w http.ResponseWriter, r *http.R
 	switch providerType {
 	case models.IntegrationProviderNotion:
 		h.handleNotionCallback(w, r, clientIDVal.String, clientSecret, code, redirectURI, providerID, userID, providerSlug)
+	case models.IntegrationProviderTodoist:
+		h.handleTodoistCallback(w, r, clientIDVal.String, clientSecret, code, providerID, userID, providerSlug)
 	default:
 		h.redirectWithError(w, r, "Unsupported provider type")
 	}
+}
+
+func (h *IntegrationOAuthHandler) handleTodoistCallback(w http.ResponseWriter, r *http.Request, clientID, clientSecret, code, providerID, userID, providerSlug string) {
+	result, err := todoist.ExchangeOAuthCode(clientID, clientSecret, code)
+	if err != nil {
+		slog.Error("failed to exchange Todoist OAuth code", slog.String("component", "integrations"), slog.Any("error", err))
+		h.redirectWithError(w, r, "Failed to exchange token")
+		return
+	}
+
+	encToken, err := h.encryption.Encrypt(result.AccessToken)
+	if err != nil {
+		slog.Error("failed to encrypt integration token", slog.String("component", "integrations"), slog.Any("error", err))
+		h.redirectWithError(w, r, "Failed to store token")
+		return
+	}
+
+	_, err = h.db.Exec(`
+		INSERT INTO user_integration_tokens (id, user_id, integration_provider_id, oauth_access_token_encrypted, provider_metadata, connected_at)
+		VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT (user_id, integration_provider_id) DO UPDATE SET
+			oauth_access_token_encrypted = excluded.oauth_access_token_encrypted,
+			provider_metadata = excluded.provider_metadata,
+			connected_at = CURRENT_TIMESTAMP,
+			updated_at = CURRENT_TIMESTAMP
+	`, uuid.New().String(), userID, providerID, encToken, "{}")
+	if err != nil {
+		slog.Error("failed to store integration token", slog.String("component", "integrations"), slog.Any("error", err))
+		h.redirectWithError(w, r, "Failed to store token")
+		return
+	}
+
+	slog.Info("integration OAuth completed", slog.String("component", "integrations"), slog.String("provider", providerSlug), slog.String("user_id", userID))
+
+	http.Redirect(w, r, "/profile?tab=connected-accounts&oauth=success&provider="+url.QueryEscape(providerSlug), http.StatusFound)
 }
 
 func (h *IntegrationOAuthHandler) handleNotionCallback(w http.ResponseWriter, r *http.Request, clientID, clientSecret, code, redirectURI, providerID, userID, providerSlug string) {

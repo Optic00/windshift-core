@@ -103,10 +103,11 @@ func (h *IntegrationProviderHandler) CreateProvider(w http.ResponseWriter, r *ht
 
 	// Validate provider type
 	validTypes := map[string]bool{
-		string(models.IntegrationProviderNotion): true,
+		string(models.IntegrationProviderNotion):  true,
+		string(models.IntegrationProviderTodoist): true,
 	}
 	if !validTypes[req.ProviderType] {
-		respondBadRequest(w, r, "Invalid provider type. Supported: notion")
+		respondBadRequest(w, r, "Invalid provider type. Supported: notion, todoist")
 		return
 	}
 
