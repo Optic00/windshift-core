@@ -165,6 +165,13 @@ func respondTooManyRequests(w http.ResponseWriter, r *http.Request, message stri
 	restapi.RespondError(w, r, err)
 }
 
+// respondRequestTooLarge writes a 413 Request Entity Too Large JSON response.
+// Used when a request body exceeds a handler's http.MaxBytesReader cap.
+func respondRequestTooLarge(w http.ResponseWriter, r *http.Request) {
+	err := restapi.NewAPIError(http.StatusRequestEntityTooLarge, restapi.ErrCodeRequestTooLarge, "Request body too large")
+	restapi.RespondError(w, r, err)
+}
+
 // respondGone writes a 410 Gone JSON response
 func respondGone(w http.ResponseWriter, r *http.Request, message string) {
 	err := restapi.NewAPIError(http.StatusGone, "GONE", message)

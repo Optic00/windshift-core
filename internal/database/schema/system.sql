@@ -130,7 +130,7 @@ CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
 	redirect_uri TEXT NOT NULL,
 	scopes TEXT NOT NULL DEFAULT '[]',
 	code_challenge TEXT,
-	code_challenge_method TEXT,          -- 'S256' | 'plain'
+	code_challenge_method TEXT,          -- 'S256' only (plain PKCE is rejected at /authorize and /token)
 	state TEXT,
 	expires_at DATETIME NOT NULL,
 	consumed_at DATETIME,

@@ -32,6 +32,11 @@ const (
 	oauthAccessTTL   = 1 * time.Hour
 	oauthRefreshTTL  = 30 * 24 * time.Hour
 	oauthAgentPrefix = "oauth-" // agent username = oauth-{slug}-{user_id}
+
+	// oauthTokenRequestMaxBytes caps the /token request body. Token requests
+	// carry only a handful of short form/JSON fields; 64 KiB is generous while
+	// bounding the per-request memory/CPU an unauthenticated caller can spend.
+	oauthTokenRequestMaxBytes = 64 << 10
 )
 
 // Standard RFC 6749 §5.2 error codes used in /token + redirect-back error
@@ -144,17 +149,17 @@ func (h *OAuthHandler) AuthorizeInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Public clients must use PKCE. Confidential clients may use it.
+	// Public clients must use PKCE. Confidential clients may use it. When PKCE
+	// is in play we require S256: `plain` (and the RFC 7636 default of `plain`
+	// when the method is omitted) exposes the verifier-equivalent challenge in
+	// the authorization request, defeating interception protection.
 	if client.ClientType == "public" && codeChallenge == "" {
 		respondBadRequest(w, r, "code_challenge is required for public clients")
 		return
 	}
 	if codeChallenge != "" {
-		if codeChallengeMethod == "" {
-			codeChallengeMethod = "plain" // RFC 7636 default
-		}
-		if codeChallengeMethod != "S256" && codeChallengeMethod != "plain" {
-			respondBadRequest(w, r, "code_challenge_method must be 'S256' or 'plain'")
+		if err := requireS256(codeChallengeMethod); err != nil {
+			respondBadRequest(w, r, err.Error())
 			return
 		}
 	}
@@ -225,16 +230,15 @@ func (h *OAuthHandler) AuthorizeApprove(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Enforce S256 here too — the SPA echoes the /authorize/info params back,
+	// but a caller could POST straight to /approve and bypass that check.
 	if client.ClientType == "public" && req.CodeChallenge == "" {
 		respondBadRequest(w, r, "code_challenge is required for public clients")
 		return
 	}
 	if req.CodeChallenge != "" {
-		if req.CodeChallengeMethod == "" {
-			req.CodeChallengeMethod = "plain"
-		}
-		if req.CodeChallengeMethod != "S256" && req.CodeChallengeMethod != "plain" {
-			respondBadRequest(w, r, "code_challenge_method must be 'S256' or 'plain'")
+		if err := requireS256(req.CodeChallengeMethod); err != nil {
+			respondBadRequest(w, r, err.Error())
 			return
 		}
 	}
@@ -377,8 +381,16 @@ func (h *OAuthHandler) Token(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Cap the body before parsing (form or JSON) so an oversized request can't
+	// exhaust memory/CPU on this unauthenticated endpoint.
+	r.Body = http.MaxBytesReader(w, r.Body, oauthTokenRequestMaxBytes)
+
 	params, err := parseTokenRequest(r)
 	if err != nil {
+		if isRequestBodyTooLarge(err) {
+			writeOAuthTokenError(w, http.StatusRequestEntityTooLarge, oauthErrInvalidRequest, "request body too large")
+			return
+		}
 		writeOAuthTokenError(w, http.StatusBadRequest, oauthErrInvalidRequest, err.Error())
 		return
 	}
@@ -1040,8 +1052,25 @@ func redirectURIAllowed(allowed []string, candidate string) bool {
 	return false
 }
 
+// requireS256 validates a client-supplied code_challenge_method. Only S256 is
+// accepted: a missing method (RFC 7636 would default it to `plain`) and an
+// explicit `plain` are both rejected so the weaker transform can't be used.
+func requireS256(method string) error {
+	switch method {
+	case "S256":
+		return nil
+	case "", "plain":
+		return fmt.Errorf("code_challenge_method must be 'S256' — plain PKCE is not supported")
+	default:
+		return fmt.Errorf("unsupported code_challenge_method %q — use 'S256'", method)
+	}
+}
+
 // verifyPKCE compares a code_verifier against a stored code_challenge per
-// RFC 7636. Constant-time comparison to avoid leaking match-prefix info.
+// RFC 7636. Only the S256 transform is accepted; a stored `plain` or empty
+// method is rejected (codes are only minted with S256 now, but a code issued
+// before this change, or a tampered row, must not fall back to plain).
+// Constant-time comparison avoids leaking match-prefix info.
 func verifyPKCE(challenge, method, verifier string) error {
 	switch method {
 	case "S256":
@@ -1051,13 +1080,8 @@ func verifyPKCE(challenge, method, verifier string) error {
 			return fmt.Errorf("PKCE verification failed")
 		}
 		return nil
-	case "plain", "":
-		if subtle.ConstantTimeCompare([]byte(verifier), []byte(challenge)) != 1 {
-			return fmt.Errorf("PKCE verification failed")
-		}
-		return nil
 	default:
-		return fmt.Errorf("unsupported code_challenge_method: %s", method)
+		return fmt.Errorf("unsupported code_challenge_method %q — only S256 is supported", method)
 	}
 }
 

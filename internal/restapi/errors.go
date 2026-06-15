@@ -46,6 +46,9 @@ const (
 	// Rate limiting
 	ErrCodeRateLimited = "RATE_LIMITED"
 
+	// Request too large
+	ErrCodeRequestTooLarge = "REQUEST_TOO_LARGE"
+
 	// Server errors
 	ErrCodeInternalError        = "INTERNAL_ERROR"
 	ErrCodeServiceUnavailable   = "SERVICE_UNAVAILABLE"

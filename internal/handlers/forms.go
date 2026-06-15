@@ -20,6 +20,11 @@ import (
 	"windshift/internal/utils"
 )
 
+// formSubmissionMaxBytes caps the public form submission body. A submission
+// can carry a description plus custom-field values, so it gets 1 MiB of
+// headroom while still bounding per-request memory on this public endpoint.
+const formSubmissionMaxBytes = 1 << 20
+
 // FormHandler handles public form channel submissions
 type FormHandler struct {
 	db                   database.Database
@@ -265,6 +270,7 @@ func (h *FormHandler) SubmitForm(w http.ResponseWriter, r *http.Request) {
 	config := chResult.config
 
 	// Parse submission
+	r.Body = http.MaxBytesReader(w, r.Body, formSubmissionMaxBytes)
 	var submission struct {
 		RequestTypeID *int                   `json:"request_type_id"`
 		Title         string                 `json:"title"`
@@ -273,6 +279,10 @@ func (h *FormHandler) SubmitForm(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err = json.NewDecoder(r.Body).Decode(&submission); err != nil {
+		if isRequestBodyTooLarge(err) {
+			respondRequestTooLarge(w, r)
+			return
+		}
 		respondBadRequest(w, r, "Invalid submission")
 		return
 	}

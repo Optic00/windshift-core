@@ -67,6 +67,14 @@ func decodeJSON[T any](w http.ResponseWriter, r *http.Request) (T, bool) {
 	return v, true
 }
 
+// isRequestBodyTooLarge reports whether err is the error http.MaxBytesReader
+// returns once a request body exceeds its cap. Used to distinguish an
+// oversized body (413) from otherwise-malformed input (400) after a decode.
+func isRequestBodyTooLarge(err error) bool {
+	var maxErr *http.MaxBytesError
+	return errors.As(err, &maxErr)
+}
+
 // decodeOptionalJSON decodes a JSON request body into a value of type T when one
 // is present. A nil or empty body is treated as success and v is left zero.
 // Malformed JSON writes a 400 and returns false. Use this for endpoints whose
