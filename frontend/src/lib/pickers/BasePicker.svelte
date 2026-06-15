@@ -397,9 +397,14 @@
   {/if}
 
   {#if popoverMode}
-    <!-- Popover mode: custom trigger (children) toggles dropdown -->
-    <div>
-      <input use:melt={$input} type="hidden" aria-hidden="true" />
+    <!-- Popover mode: custom trigger (children) toggles dropdown.
+         The melt combobox floats its menu relative to the $input element, so
+         the input must have a real bounding box. Lay it invisibly over the
+         trigger rather than using type="hidden"/display:none — a zero-size
+         anchor sends the portaled dropdown to the viewport origin (WI-403). -->
+    <div class="relative">
+      <input use:melt={$input} tabindex="-1" aria-hidden="true"
+             class="absolute inset-0 w-full h-full opacity-0 pointer-events-none" />
       <div
         role="combobox"
         aria-expanded={$open}
@@ -473,7 +478,7 @@
 
   <!-- Dropdown Menu -->
   {#if $open}
-    <div bind:this={menuRef} use:melt={$menu}
+    <div bind:this={menuRef} use:melt={$menu} data-testid="picker-dropdown"
          class="fixed z-[70] min-w-[250px] rounded border shadow-lg overflow-hidden"
          style="background-color: var(--ds-surface-raised); border-color: var(--ds-border);"
          transition:fly={{ duration: 150, y: -5 }}>
