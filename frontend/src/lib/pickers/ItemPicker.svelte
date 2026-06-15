@@ -58,13 +58,16 @@
   {autoOpen}
   {showSelectedInTrigger}
   multiple={multiSelect}
+  {maxSelections}
   class={className}
   searchFields={finalConfig.searchFields}
   getValue={finalConfig.getValue}
   getLabel={finalConfig.getLabel}
   serverSearch={!!onSearchChange}
+  {searchDebounce}
   onSearchChange={(query) => onSearchChange?.(query)}
   onSelect={(item) => onSelect?.(item)}
+  onChange={(values) => onSelect?.(values)}
   onCancel={() => onCancel?.()}
   {footer}
 >

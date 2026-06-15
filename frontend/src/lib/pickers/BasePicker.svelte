@@ -24,6 +24,7 @@
     showUnassigned = false,
     unassignedLabel = '',
     multiple = false,
+    maxSelections = null,
     showSelectedInTrigger = true,
 
     // Item configuration
@@ -48,6 +49,7 @@
     // Server-side search
     serverSearch = false,
     onSearchChange = null,
+    searchDebounce = 300,
 
     // Popover mode: open on mount
     autoOpen = false,
@@ -102,7 +104,7 @@
     if (!popoverMode && !$touchedInput) return;
     debounceTimer = setTimeout(() => {
       onSearchChange(query || '');
-    }, 300);
+    }, searchDebounce);
     return () => clearTimeout(debounceTimer);
   });
 
@@ -151,6 +153,18 @@
       .map(v => items.find(item => getValue(item) === v))
       .filter(Boolean);
   });
+
+  // Current number of selected values (multi-select)
+  const selectedCount = $derived.by(() => {
+    if (!multiple) return 0;
+    const valueArray = popoverMode ? values : value;
+    return Array.isArray(valueArray) ? valueArray.length : 0;
+  });
+
+  // Whether the multi-select cap has been reached
+  const atMaxSelections = $derived(
+    multiple && maxSelections != null && selectedCount >= maxSelections
+  );
 
   // Track highlighted index for keyboard navigation
   let highlightedIndex = $state(0);
@@ -214,6 +228,11 @@
           value = (value || []).filter(v => v !== itemValue);
         }
       } else {
+        // Enforce the selection cap when adding a new value. Leave the
+        // dropdown open so the user can deselect to make room.
+        if (maxSelections != null && selectedCount >= maxSelections) {
+          return;
+        }
         if (popoverMode) {
           values = [...(values || []), itemValue];
         } else {
@@ -234,7 +253,11 @@
       }
       onSelect(opt.item);
     }
-    $open = false;
+    // Keep the dropdown open while building a multi-selection in popover mode
+    // (matches the pre-refactor ItemPicker); single-select always closes.
+    if (!(multiple && popoverMode)) {
+      $open = false;
+    }
   }
 
   // Handle keyboard navigation
@@ -476,11 +499,12 @@
           {#each options as opt, index (opt.value ?? 'unassigned')}
             {@const itemSelected = multiple ? isItemSelected(opt.value) : $isSelected(opt)}
             {@const isHighlighted = highlightedIndex === index}
+            {@const disabledByMax = atMaxSelections && !itemSelected}
             <div use:melt={$option(opt)} data-option-value={opt.value ?? ''}
-                 onclick={() => selectOption(opt)}
+                 onclick={() => { if (!disabledByMax) selectOption(opt); }}
                  onmouseenter={() => highlightedIndex = index}
                  class="px-4 py-3 cursor-pointer border-b last:border-b-0 transition-colors duration-150"
-                 style="border-color: var(--ds-border); {itemSelected ? 'background-color: var(--ds-background-selected); color: var(--ds-text);' : isHighlighted ? 'background-color: var(--ds-background-neutral-hovered); color: var(--ds-text);' : 'color: var(--ds-text);'}">
+                 style="border-color: var(--ds-border); {disabledByMax ? 'opacity: 0.4; pointer-events: none;' : ''} {itemSelected ? 'background-color: var(--ds-background-selected); color: var(--ds-text);' : isHighlighted ? 'background-color: var(--ds-background-neutral-hovered); color: var(--ds-text);' : 'color: var(--ds-text);'}">
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-3 flex-1 min-w-0">
                   {#if opt.isUnassigned}
