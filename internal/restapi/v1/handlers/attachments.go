@@ -2,16 +2,14 @@ package handlers
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
-	"strings"
 
 	"windshift/internal/database"
+	"windshift/internal/fileserve"
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
 	"windshift/internal/services"
@@ -38,57 +36,6 @@ func NewAttachmentHandler(db database.Database, permissionService *services.Perm
 		attachmentPath: attachmentPath,
 		repo:           repository.NewAttachmentRepository(db),
 	}
-}
-
-var errV1AttachmentPathOutsideRoot = errors.New("attachment path is outside configured storage root")
-
-func (h *AttachmentHandler) resolveStoredAttachmentPath(storedPath string) (string, error) {
-	if h.attachmentPath == "" {
-		return "", errV1AttachmentPathOutsideRoot
-	}
-
-	absBase, err := filepath.Abs(h.attachmentPath)
-	if err != nil {
-		return "", err
-	}
-	isInsideRoot := func(candidate string) (string, bool, error) {
-		absPath, err := filepath.Abs(candidate)
-		if err != nil {
-			return "", false, err
-		}
-		inside := absPath == absBase || strings.HasPrefix(absPath, absBase+string(os.PathSeparator))
-		return absPath, inside, nil
-	}
-
-	if filepath.IsAbs(storedPath) {
-		absPath, inside, err := isInsideRoot(storedPath)
-		if err != nil {
-			return "", err
-		}
-		if !inside {
-			return "", errV1AttachmentPathOutsideRoot
-		}
-		return absPath, nil
-	}
-
-	// Uploads historically stored paths as filepath.Join(attachmentPath, ...).
-	// When attachmentPath itself is relative (the e2e/default setup), those rows
-	// are already root-relative. Try the stored path as-is before resolving truly
-	// relative paths like "items/123/file.txt" under the configured root.
-	if absPath, inside, err := isInsideRoot(storedPath); err != nil {
-		return "", err
-	} else if inside {
-		return absPath, nil
-	}
-
-	absPath, inside, err := isInsideRoot(filepath.Join(h.attachmentPath, storedPath))
-	if err != nil {
-		return "", err
-	}
-	if !inside {
-		return "", errV1AttachmentPathOutsideRoot
-	}
-	return absPath, nil
 }
 
 // Download handles GET /rest/api/v1/attachments/{id}/download
@@ -137,18 +84,17 @@ func (h *AttachmentHandler) Download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Path traversal guard: the resolved file path must live under the
-	// configured attachment directory. Relative rows from older email ingestion
-	// are resolved against that root before the guard is applied.
-	resolvedFilePath, err := h.resolveStoredAttachmentPath(record.FilePath)
+	// Open the file confined to the attachment storage root. os.OpenRoot (via
+	// fileserve.OpenUnderRoot) rejects ".." traversal and symlink escapes, so a
+	// malicious stored path or planted symlink cannot read outside the root.
+	// Relative rows from older email ingestion resolve against that root.
+	file, err := fileserve.OpenUnderRoot(h.attachmentPath, record.FilePath)
 	if err != nil {
-		slog.Warn("attachment path traversal blocked", slog.String("component", "v1/attachments"), slog.Int("attachment_id", attachmentID), slog.String("file_path", record.FilePath))
-		restapi.RespondError(w, r, restapi.ErrItemNotFound)
-		return
-	}
-
-	file, err := os.Open(resolvedFilePath) //nolint:gosec // path was just validated against the configured base
-	if err != nil {
+		if errors.Is(err, fileserve.ErrOutsideRoot) {
+			slog.Warn("attachment path traversal blocked", slog.String("component", "v1/attachments"), slog.Int("attachment_id", attachmentID), slog.String("file_path", record.FilePath))
+			restapi.RespondError(w, r, restapi.ErrItemNotFound)
+			return
+		}
 		if errors.Is(err, os.ErrNotExist) {
 			restapi.RespondError(w, r, restapi.ErrItemNotFound)
 			return
@@ -167,7 +113,7 @@ func (h *AttachmentHandler) Download(w http.ResponseWriter, r *http.Request) {
 	// inheriting the legacy "inline for safe MIME types" branch (the legacy
 	// handler serves the same files to browsers, which is the only case where
 	// inline display matters).
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", record.OriginalFilename))
+	w.Header().Set("Content-Disposition", fileserve.ContentDisposition("attachment", record.OriginalFilename))
 
 	if _, err := io.Copy(w, file); err != nil {
 		slog.Error("failed to stream attachment", slog.String("component", "v1/attachments"), slog.Any("error", err))
@@ -220,15 +166,13 @@ func (h *AttachmentHandler) Thumbnail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resolvedThumbnailPath, err := h.resolveStoredAttachmentPath(record.ThumbnailPath)
+	file, err := fileserve.OpenUnderRoot(h.attachmentPath, record.ThumbnailPath)
 	if err != nil {
-		slog.Warn("attachment thumbnail path traversal blocked", slog.String("component", "v1/attachments"), slog.Int("attachment_id", attachmentID), slog.String("thumbnail_path", record.ThumbnailPath))
-		restapi.RespondError(w, r, restapi.ErrItemNotFound)
-		return
-	}
-
-	file, err := os.Open(resolvedThumbnailPath) //nolint:gosec // path was just validated against the configured base
-	if err != nil {
+		if errors.Is(err, fileserve.ErrOutsideRoot) {
+			slog.Warn("attachment thumbnail path traversal blocked", slog.String("component", "v1/attachments"), slog.Int("attachment_id", attachmentID), slog.String("thumbnail_path", record.ThumbnailPath))
+			restapi.RespondError(w, r, restapi.ErrItemNotFound)
+			return
+		}
 		if errors.Is(err, os.ErrNotExist) {
 			restapi.RespondError(w, r, restapi.ErrItemNotFound)
 			return

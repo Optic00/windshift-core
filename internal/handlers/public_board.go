@@ -7,12 +7,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
 	"windshift/internal/database"
+	"windshift/internal/fileserve"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/services"
@@ -707,37 +706,17 @@ func (h *PublicBoardHandler) DownloadAttachment(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Open the storage root and resolve the attachment path within it. os.Root
-	// (Go 1.24+) rejects parent-dir traversal and refuses to follow symlinks
-	// that escape the root, so even if a malicious row in the attachments table
-	// or a symlink planted in the storage volume tries to point at /etc/passwd,
-	// the read will be confined to h.attachmentPath. This matters because the
-	// volume can be operator-managed (Docker bind-mount) and we don't want to
-	// rely on the DB or filesystem being uncompromised.
-	if h.attachmentPath == "" {
-		respondNotFound(w, r, "attachment")
-		return
-	}
-	root, err := os.OpenRoot(h.attachmentPath)
+	// Open the file confined to the storage root. fileserve.OpenUnderRoot uses
+	// os.Root (Go 1.24+), which rejects parent-dir traversal and refuses to
+	// follow symlinks that escape the root, so even if a malicious row in the
+	// attachments table or a symlink planted in the storage volume tries to
+	// point at /etc/passwd, the read stays confined to h.attachmentPath. This
+	// matters because the volume can be operator-managed (Docker bind-mount)
+	// and we don't want to rely on the DB or filesystem being uncompromised.
+	// Any failure (outside-root, not-exist, symlink escape, permission) is
+	// hidden behind a 404.
+	file, err := fileserve.OpenUnderRoot(h.attachmentPath, filePath)
 	if err != nil {
-		respondInternalError(w, r, fmt.Errorf("failed to open attachment storage: %w", err))
-		return
-	}
-	defer func() { _ = root.Close() }()
-
-	storedPath := filePath
-	if !filepath.IsAbs(storedPath) {
-		storedPath = filepath.Join(h.attachmentPath, storedPath)
-	}
-	relPath, err := filepath.Rel(h.attachmentPath, storedPath)
-	if err != nil || strings.HasPrefix(relPath, "..") || filepath.IsAbs(relPath) {
-		respondNotFound(w, r, "attachment")
-		return
-	}
-
-	file, err := root.Open(relPath)
-	if err != nil {
-		// Hide the underlying cause (not-exist, symlink escape, permission, etc.) behind a 404.
 		respondNotFound(w, r, "attachment")
 		return
 	}
@@ -748,7 +727,7 @@ func (h *PublicBoardHandler) DownloadAttachment(w http.ResponseWriter, r *http.R
 	w.Header().Set("Content-Length", strconv.FormatInt(fileSize, 10))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", originalFilename))
+	w.Header().Set("Content-Disposition", fileserve.ContentDisposition("inline", originalFilename))
 	w.Header().Set("Cache-Control", "public, max-age=86400")
 
 	_, _ = io.Copy(w, file)

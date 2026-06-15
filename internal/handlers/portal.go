@@ -11,13 +11,12 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	"windshift/internal/auth"
 	"windshift/internal/database"
+	"windshift/internal/fileserve"
 	"windshift/internal/middleware"
 	"windshift/internal/models"
 	"windshift/internal/repository"
@@ -30,6 +29,12 @@ import (
 // Portal constants
 const (
 	defaultItemStatus = "open" // Default status for new portal submissions
+
+	// Request body caps for the public (unauthenticated) portal decode paths.
+	// Knowledge-base search carries only a short query string; submissions can
+	// include a description plus custom fields, so they get more headroom.
+	portalSearchMaxBytes     = 16 << 10 // 16 KiB
+	portalSubmissionMaxBytes = 1 << 20  // 1 MiB
 )
 
 // PortalHandler handles public portal submissions
@@ -518,6 +523,7 @@ func (h *PortalHandler) SubmitToPortal(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	// Parse submission
+	r.Body = http.MaxBytesReader(w, r.Body, portalSubmissionMaxBytes)
 	var submission struct {
 		RequestTypeID *int                   `json:"request_type_id"`
 		Title         string                 `json:"title"`
@@ -526,6 +532,10 @@ func (h *PortalHandler) SubmitToPortal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&submission); err != nil {
+		if isRequestBodyTooLarge(err) {
+			respondRequestTooLarge(w, r)
+			return
+		}
 		respondBadRequest(w, r, "Invalid submission")
 		return
 	}
@@ -699,11 +709,16 @@ func (h *PortalHandler) SearchKnowledgeBase(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Parse search request
+	r.Body = http.MaxBytesReader(w, r.Body, portalSearchMaxBytes)
 	var searchRequest struct {
 		Query string `json:"query"`
 	}
 
 	if err = json.NewDecoder(r.Body).Decode(&searchRequest); err != nil {
+		if isRequestBodyTooLarge(err) {
+			respondRequestTooLarge(w, r)
+			return
+		}
 		respondBadRequest(w, r, "Invalid search request")
 		return
 	}
@@ -819,29 +834,18 @@ func (h *PortalHandler) DownloadPortalAttachment(w http.ResponseWriter, r *http.
 		return
 	}
 
-	// Validate file path is within attachment directory (prevent path traversal)
-	absPath, err := filepath.Abs(filePath)
+	// Open the file confined to the attachment storage root. os.OpenRoot (via
+	// fileserve.OpenUnderRoot) rejects ".." traversal and symlink escapes, so a
+	// malicious stored path or planted symlink cannot read outside the root.
+	// Escapes and missing files both surface as 404 to avoid disclosing
+	// filesystem details or enabling enumeration.
+	file, err := fileserve.OpenUnderRoot(h.attachmentPath, filePath)
 	if err != nil {
-		slog.Error("failed to resolve file path", slog.String("component", "portal"), slog.Any("error", err))
-		respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "File not found"))
-		return
-	}
-	absBasePath, err := filepath.Abs(h.attachmentPath)
-	if err != nil {
-		slog.Error("failed to resolve attachment base path", slog.String("component", "portal"), slog.Any("error", err))
-		respondInternalError(w, r, err)
-		return
-	}
-	if !strings.HasPrefix(absPath, absBasePath+string(os.PathSeparator)) {
-		slog.Warn("path traversal attempt detected", slog.String("component", "portal"), slog.String("file_path", filePath))
-		respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "File not found"))
-		return
-	}
-
-	// Open and serve the file
-	file, err := os.Open(filePath) //nolint:gosec // G304 — filePath validated via filepath.Abs prefix check above
-	if err != nil {
-		slog.Error("failed to open attachment file", slog.String("component", "portal"), slog.String("path", filePath), slog.Any("error", err))
+		if !errors.Is(err, fileserve.ErrOutsideRoot) && !errors.Is(err, os.ErrNotExist) {
+			slog.Error("failed to open attachment file", slog.String("component", "portal"), slog.String("path", filePath), slog.Any("error", err))
+		} else if errors.Is(err, fileserve.ErrOutsideRoot) {
+			slog.Warn("path traversal attempt blocked", slog.String("component", "portal"), slog.String("file_path", filePath))
+		}
 		respondError(w, r, restapi.NewAPIError(http.StatusNotFound, restapi.ErrCodeNotFound, "File not found"))
 		return
 	}
@@ -854,7 +858,7 @@ func (h *PortalHandler) DownloadPortalAttachment(w http.ResponseWriter, r *http.
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	w.Header().Set("Cache-Control", "public, max-age=86400") // Cache for 1 day
-	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", originalFilename))
+	w.Header().Set("Content-Disposition", fileserve.ContentDisposition("inline", originalFilename))
 
 	// Serve file
 	_, _ = io.Copy(w, file)

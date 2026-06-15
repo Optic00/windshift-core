@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"windshift/internal/database"
+	"windshift/internal/fileserve"
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
@@ -1180,33 +1181,25 @@ func (h *AttachmentHandler) Download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate file path is within attachment directory (prevent path traversal).
-	// Email ingestion stores relative paths; resolve those against the same root
-	// before applying the guard so item attachments remain downloadable.
-	resolvedFilePath, err := h.resolveStoredAttachmentPath(attachment.FilePath)
+	// Open the file confined to the attachment storage root. os.OpenRoot (used
+	// by fileserve.OpenUnderRoot) rejects ".." traversal and symlink escapes,
+	// so a malicious stored path or a planted symlink cannot read outside the
+	// root. Email ingestion stores relative paths; those resolve against the
+	// same root. Escapes and missing files both return 404 to avoid disclosing
+	// filesystem details.
+	slog.Debug("opening file under attachment root", slog.String("component", "attachments"), slog.String("file_path", attachment.FilePath))
+	file, err := fileserve.OpenUnderRoot(h.attachmentPath, attachment.FilePath)
 	if err != nil {
-		if errors.Is(err, errAttachmentPathOutsideRoot) {
-			slog.Warn("path traversal attempt detected", slog.String("component", "attachments"), slog.String("file_path", attachment.FilePath))
-			respondBadRequest(w, r, "Invalid file path")
+		if errors.Is(err, fileserve.ErrOutsideRoot) {
+			slog.Warn("path traversal attempt blocked", slog.String("component", "attachments"), slog.String("file_path", attachment.FilePath))
+			respondNotFound(w, r, "file")
 			return
 		}
-		slog.Error("failed to resolve file path", slog.String("component", "attachments"), slog.Any("error", err))
-		respondBadRequest(w, r, "Invalid file path")
-		return
-	}
-
-	// Check if file exists
-	slog.Debug("checking if file exists", slog.String("component", "attachments"), slog.String("file_path", resolvedFilePath))
-	if _, err = os.Stat(resolvedFilePath); os.IsNotExist(err) {
-		slog.Debug("file not found on disk", slog.String("component", "attachments"), slog.String("file_path", resolvedFilePath))
-		respondNotFound(w, r, "file")
-		return
-	}
-
-	// Open file
-	slog.Debug("opening file", slog.String("component", "attachments"), slog.String("file_path", resolvedFilePath))
-	file, err := os.Open(resolvedFilePath) //nolint:gosec // resolvedFilePath is confined by resolveStoredAttachmentPath.
-	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			slog.Debug("file not found on disk", slog.String("component", "attachments"), slog.String("file_path", attachment.FilePath))
+			respondNotFound(w, r, "file")
+			return
+		}
 		slog.Error("failed to open file", slog.String("component", "attachments"), slog.Any("error", err))
 		respondInternalError(w, r, fmt.Errorf("failed to open file: %w", err))
 		return
@@ -1231,12 +1224,12 @@ func (h *AttachmentHandler) Download(w http.ResponseWriter, r *http.Request) {
 		strings.HasPrefix(attachment.MimeType, "image/svg+xml") ||
 		strings.Contains(attachment.MimeType, "script") {
 		// Force download for dangerous types
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", attachment.OriginalFilename)) //nolint:gocritic // Content-Disposition requires this specific format
+		w.Header().Set("Content-Disposition", fileserve.ContentDisposition("attachment", attachment.OriginalFilename))
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
 		slog.Debug("forcing download for potentially dangerous file type", slog.String("component", "attachments"), slog.String("mime_type", attachment.MimeType))
 	} else {
 		// Allow inline display for safe types (images, PDFs, etc.)
-		w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=\"%s\"", attachment.OriginalFilename)) //nolint:gocritic // Content-Disposition requires this specific format
+		w.Header().Set("Content-Disposition", fileserve.ContentDisposition("inline", attachment.OriginalFilename))
 	}
 
 	// Serve file
@@ -1504,21 +1497,19 @@ func (h *AttachmentHandler) Thumbnail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resolvedThumbnailPath, err := h.resolveStoredAttachmentPath(thumbnailPath)
+	// Open the thumbnail confined to the attachment storage root (see Download
+	// for the rationale). Escapes and missing files both surface as 404.
+	file, err := fileserve.OpenUnderRoot(h.attachmentPath, thumbnailPath)
 	if err != nil {
-		respondNotFound(w, r, "thumbnail")
-		return
-	}
-
-	// Check if thumbnail file exists
-	if _, err = os.Stat(resolvedThumbnailPath); os.IsNotExist(err) {
-		respondNotFound(w, r, "thumbnail")
-		return
-	}
-
-	// Open thumbnail file
-	file, err := os.Open(resolvedThumbnailPath) //nolint:gosec // path validated against attachment root
-	if err != nil {
+		if errors.Is(err, fileserve.ErrOutsideRoot) {
+			slog.Warn("thumbnail path traversal attempt blocked", slog.String("component", "attachments"), slog.String("thumbnail_path", thumbnailPath))
+			respondNotFound(w, r, "thumbnail")
+			return
+		}
+		if errors.Is(err, os.ErrNotExist) {
+			respondNotFound(w, r, "thumbnail")
+			return
+		}
 		respondInternalError(w, r, fmt.Errorf("failed to open thumbnail: %w", err))
 		return
 	}
