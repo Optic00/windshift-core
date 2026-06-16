@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { useEventListener } from 'runed';
   import { t } from '../../stores/i18n.svelte.js';
   import { api } from '../../api.js';
@@ -24,6 +24,7 @@
   import SearchInput from '../../components/SearchInput.svelte';
   import SubFilterBar from './SubFilterBar.svelte';
   import CardFieldChip from './CardFieldChip.svelte';
+  import DependencySummary from './DependencySummary.svelte';
   import ItemKey from '../items/ItemKey.svelte';
   import CollectionViewSwitcher from './CollectionViewSwitcher.svelte';
   import Tooltip from '../../components/Tooltip.svelte';
@@ -63,6 +64,12 @@
   let showItemModal = $state(false);
   let selectedItemId = $state(null);
   let searchQuery = $state('');
+
+  // Dependency/blocker hover summary: lazily-fetched item links cached per
+  // item so re-renders (drag, filtering) don't refetch. Keyed by item id →
+  // merged outgoing+incoming link list.
+  let dependencyLinksByItem = $state({});
+  let dependencyLinksToken = 0; // guards against stale async when items change
 
   // Quick-add state per column
   let quickAddState = $state({});
@@ -287,6 +294,18 @@
     backlogStore.setCount(workspaceId, collectionStore.backlogPagination?.total ?? collectionStore.backlogItems.length);
   });
 
+  // Drop cached item links when the viewed collection/workspace changes so a
+  // fresh board doesn't show stale dependency summaries from a previous view.
+  // This runs synchronously (before any in-flight link fetch resolves), and the
+  // fetch is token-guarded, so a stale request from the prior view can't write
+  // back after the wipe.
+  let viewSignature = $derived(`${collectionId ?? ''}|${workspaceId ?? ''}`);
+  $effect(() => {
+    // Re-runs whenever the viewed collection/workspace changes.
+    viewSignature;
+    dependencyLinksByItem = {};
+  });
+
   // Reload view-specific data (board config, transitions) when items update
   $effect(() => {
     if (collectionStore.items.length > 0 && !collectionStore.loading) {
@@ -295,8 +314,41 @@
         statusTransitionStore.initialize(workspaceId);
       }
       statusTransitionStore.preloadForItems([...collectionStore.items, ...collectionStore.backlogItems]);
+      // untrack: the cache read inside loadDependencyLinksForItems would
+      // otherwise subscribe this effect to dependencyLinksByItem and re-run it
+      // (re-running loadBoardConfig/preloadForItems) every time links resolve.
+      untrack(() => loadDependencyLinksForItems(collectionStore.items));
     }
   });
+
+  // Fetch item links for the dependency/blocker hover summary, caching per
+  // item id. Only items we haven't already loaded links for are requested,
+  // so re-renders after drag/filter/sort stay cheap. Outgoing + incoming are
+  // merged the same way the item-detail store does so the link shape matches
+  // what DependencySummary expects.
+  async function loadDependencyLinksForItems(items) {
+    const toFetch = items.filter((i) => i?.id != null && !dependencyLinksByItem[i.id]);
+    if (toFetch.length === 0) return;
+    const token = ++dependencyLinksToken;
+    await Promise.all(
+      toFetch.map(async (item) => {
+        try {
+          const result = await api.links.getForItem('items', item.id);
+          const all = [];
+          if (result?.outgoing) all.push(...result.outgoing);
+          if (result?.incoming) all.push(...result.incoming);
+          return [item.id, all];
+        } catch {
+          return [item.id, []];
+        }
+      })
+    ).then((entries) => {
+      if (token !== dependencyLinksToken) return; // a newer load superseded us
+      const next = { ...dependencyLinksByItem };
+      for (const [id, links] of entries) next[id] = links;
+      dependencyLinksByItem = next;
+    });
+  }
 
   async function loadBoardConfig() {
     try {
@@ -1453,6 +1505,11 @@
                                         {/if}
                                       {/if}
                                       <ItemKey {item} {workspace} />
+                                      <!-- Dependency/blocker hover summary -->
+                                      <DependencySummary
+                                        {item}
+                                        links={dependencyLinksByItem[item.id] ?? []}
+                                      />
                                       <span class="flex-1"></span>
                                       {#if item.assignee_id}
                                         {@const assignee = users.find(u => u.id === item.assignee_id)}

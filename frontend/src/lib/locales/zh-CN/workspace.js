@@ -432,6 +432,13 @@ export default {
     noQueryToSave: '没有可保存的查询。请先设置一些筛选器或输入 QL 查询。',
     boardSummary: '共 {itemCount} 个工作项，分布在 {columnCount} 列',
     allItems: '全部事项',
+    // Board card dependency hover summary
+    blockedBy: '被阻塞',
+    blocking: '阻塞中',
+    blockersCount_one: '{count} 个阻塞',
+    blockersCount_other: '{count} 个阻塞',
+    blockingCount_one: '{count} 个阻塞中',
+    blockingCount_other: '{count} 个阻塞中',
   },
 
   links: {

@@ -4,10 +4,16 @@
   let {
     content,
     children,
+    /** Optional rich-content snippet rendered inside the popover instead of
+     *  the plain `content` string (e.g. a list of linked items). */
+    tip,
     /** @type {import('@floating-ui/dom').Placement} */
     placement = 'bottom',
     delay = { open: 300, close: 0 },
+    /** Class applied to the trigger wrapper. */
     class: className = '',
+    /** Extra classes appended to the popover (padding, max-width, etc.). */
+    contentClass = 'px-2 py-1 text-xs',
     disabled = false
   } = $props();
 
@@ -40,9 +46,13 @@
   {#if $open}
     <div
       use:melt={$tooltipContent}
-      class="z-[100] rounded-md bg-[#253858] px-2 py-1 text-xs text-white shadow-lg"
+      class="z-[100] rounded-md bg-[#253858] text-white shadow-lg {contentClass}"
     >
-      {content}
+      {#if tip}
+        {@render tip()}
+      {:else}
+        {content}
+      {/if}
     </div>
   {/if}
 {/if}
