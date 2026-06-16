@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strconv"
 	"sync"
@@ -16,20 +17,30 @@ import (
 	"windshift/internal/repository"
 )
 
-// CFVCleanupScheduler drains the pending_custom_field_cleanups queue.
-//
-// Each row in the queue represents a custom field that was deleted while
-// some items still carried the field's key in their custom_field_values
-// JSON. Scrubbing those references inline on the Delete request would
-// block the user for as long as the workspace has items — potentially
-// millions of rows — so the Delete handler enqueues a job here and this
-// scheduler processes it in batches.
+// Job types stored in pending_custom_field_cleanups.job_type. The queue
+// started life handling only field_scrub; option_removal (WI-419) and
+// index_build (WI-416) were added to move other heavy custom-field maintenance
+// off the admin request thread. A legacy row with an empty job_type is treated
+// as field_scrub.
+const (
+	jobFieldScrub    = "field_scrub"    // strip a deleted field's key from cfv JSON
+	jobOptionRemoval = "option_removal" // strip removed select/multiselect option ids
+	jobIndexBuild    = "index_build"    // build a Postgres cf index CONCURRENTLY
+)
+
+// CFVCleanupScheduler drains the pending_custom_field_cleanups queue — the
+// async worker for heavy custom-field maintenance that would otherwise block
+// an admin request for as long as the workspace has items/assets (potentially
+// millions of rows). Each row's job_type selects the work:
+//   - field_scrub: a deleted field's key is removed from cfv JSON.
+//   - option_removal: removed select/multiselect option ids are stripped from
+//     items, assets, and portal custom_field_values.
+//   - index_build: a Postgres custom-field index is built CONCURRENTLY.
 //
 // The scheduler:
 //   - Ticks every minute (cheap query when the queue is empty).
 //   - Picks the oldest pending job, marks it 'running'.
-//   - Iterates items that mention the deleted field's key in batches of
-//     batchSize, removes the key from the JSON, writes the row back.
+//   - Processes it in batches keyed by row id (bounded memory).
 //   - Marks the job 'done' (or 'failed' on error) with row counts.
 //
 // Best-effort semantics: a crashed process leaves the job in 'running';
@@ -129,7 +140,7 @@ func (s *CFVCleanupScheduler) tick() {
 	}
 
 	for i := 0; i < claimMaxJobsPerTick; i++ {
-		jobID, fieldID, claimed, err := s.claimNextJob()
+		job, claimed, err := s.claimNextJob()
 		if err != nil {
 			runErr = err
 			return
@@ -137,14 +148,38 @@ func (s *CFVCleanupScheduler) tick() {
 		if !claimed {
 			return
 		}
-		processed, err := s.processJob(fieldID)
+		processed, err := s.processClaimedJob(job)
 		if err != nil {
-			s.markFailed(jobID, err.Error())
+			s.markFailed(job.id, err.Error())
 			runErr = err
 			continue
 		}
-		s.markDone(jobID, processed)
+		s.markDone(job.id, processed)
 		totalItems += processed
+	}
+}
+
+// claimedJob is one row claimed from the queue, ready to dispatch.
+type claimedJob struct {
+	id      int
+	fieldID int
+	jobType string
+	payload string
+}
+
+// processClaimedJob dispatches a claimed row to its job-type handler. An empty
+// job_type is treated as field_scrub for rows enqueued before the queue grew
+// a job_type column.
+func (s *CFVCleanupScheduler) processClaimedJob(job claimedJob) (int, error) {
+	switch job.jobType {
+	case "", jobFieldScrub:
+		return s.processJob(job.fieldID)
+	case jobOptionRemoval:
+		return s.processOptionRemoval(job.payload)
+	case jobIndexBuild:
+		return s.processIndexBuild(job.payload)
+	default:
+		return 0, fmt.Errorf("unknown job type %q", job.jobType)
 	}
 }
 
@@ -167,38 +202,42 @@ func (s *CFVCleanupScheduler) requeueStaleRunning() error {
 // theoretically claim the same row. We use a UPDATE ... WHERE status=
 // 'pending' guard so only one transition succeeds; second caller sees
 // 'no row updated' and tries the next one.
-func (s *CFVCleanupScheduler) claimNextJob() (jobID, fieldID int, claimed bool, err error) {
+func (s *CFVCleanupScheduler) claimNextJob() (job claimedJob, claimed bool, err error) {
+	var jobType sql.NullString
+	var payload sql.NullString
 	row := s.db.QueryRow(
-		`SELECT id, field_id FROM pending_custom_field_cleanups
+		`SELECT id, field_id, job_type, payload FROM pending_custom_field_cleanups
 		  WHERE status = 'pending'
 		  ORDER BY created_at ASC
 		  LIMIT 1`,
 	)
-	if err = row.Scan(&jobID, &fieldID); err != nil {
+	if err = row.Scan(&job.id, &job.fieldID, &jobType, &payload); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			// Empty queue — caller exits the drain loop normally.
-			return 0, 0, false, nil
+			return claimedJob{}, false, nil
 		}
-		return 0, 0, false, err
+		return claimedJob{}, false, err
 	}
+	job.jobType = jobType.String
+	job.payload = payload.String
 
 	now := time.Now()
 	res, err := s.db.ExecWrite(
 		`UPDATE pending_custom_field_cleanups
 		    SET status = 'running', started_at = ?
 		  WHERE id = ? AND status = 'pending'`,
-		now, jobID,
+		now, job.id,
 	)
 	if err != nil {
-		return 0, 0, false, err
+		return claimedJob{}, false, err
 	}
 	affected, _ := res.RowsAffected()
 	if affected == 0 {
 		// Someone else claimed it between our SELECT and UPDATE — try the
 		// next call.
-		return 0, 0, false, nil
+		return claimedJob{}, false, nil
 	}
-	return jobID, fieldID, true, nil
+	return job, true, nil
 }
 
 // processJob scrubs every item whose cfv JSON contains the deleted
@@ -266,6 +305,252 @@ func stripCFVKey(cfvJSON, key string) (newJSON string, changed bool, err error) 
 	return string(b), true, nil
 }
 
+// optionRemovalPayload is the JSON stored in pending_custom_field_cleanups.payload
+// for an option_removal job. The removed ids are captured at request time (the
+// field's stored options no longer contain them once the job runs, so the worker
+// cannot recompute the diff).
+type optionRemovalPayload struct {
+	FieldID    int    `json:"field_id"`
+	FieldType  string `json:"field_type"` // "select" or "multiselect"
+	RemovedIDs []int  `json:"removed_ids"`
+}
+
+// processOptionRemoval strips the given removed select/multiselect option ids
+// from items, assets, and portal custom_field_values. Each surface is iterated
+// in keyset-paginated batches (bounded memory). Re-running is idempotent —
+// removing an already-absent id is a no-op — so at-least-once delivery is safe.
+func (s *CFVCleanupScheduler) processOptionRemoval(payload string) (int, error) {
+	var p optionRemovalPayload
+	if err := json.Unmarshal([]byte(payload), &p); err != nil {
+		return 0, fmt.Errorf("decode option_removal payload: %w", err)
+	}
+	if p.FieldID == 0 || len(p.RemovedIDs) == 0 {
+		return 0, nil
+	}
+	if p.FieldType != "select" && p.FieldType != "multiselect" {
+		return 0, fmt.Errorf("option_removal: unsupported field type %q", p.FieldType)
+	}
+
+	removed := make(map[int]bool, len(p.RemovedIDs))
+	for _, id := range p.RemovedIDs {
+		removed[id] = true
+	}
+	fieldKey := strconv.Itoa(p.FieldID)
+	cfRepo := repository.NewCustomFieldRepository(s.db)
+	total := 0
+
+	for _, table := range []string{"items", "assets"} {
+		n, err := s.scrubTableOptions(cfRepo, table, fieldKey, p.FieldType, removed)
+		total += n
+		if err != nil {
+			return total, err
+		}
+	}
+
+	n, err := s.scrubPortalOptions(cfRepo, p.FieldID, p.FieldType, removed)
+	total += n
+	if err != nil {
+		// The portal custom_field_values table may not exist on every
+		// deployment; treat a query failure as "nothing to clean" rather
+		// than failing the whole job, matching the inline handler's behavior.
+		slog.Warn("cfv_cleanup: portal option scrub skipped", "field_id", p.FieldID, "error", err)
+	}
+	return total, nil
+}
+
+// scrubTableOptions removes deleted option ids from items/assets cfv JSON in
+// keyset-paginated batches.
+func (s *CFVCleanupScheduler) scrubTableOptions(cfRepo *repository.CustomFieldRepository, table, fieldKey, fieldType string, removed map[int]bool) (int, error) {
+	processed := 0
+	lastID := 0
+	for {
+		batch, err := cfRepo.ListRowsWithCustomFieldsPageByKey(table, lastID, fieldKey, s.batchSize)
+		if err != nil {
+			return processed, err
+		}
+		if len(batch) == 0 {
+			return processed, nil
+		}
+		for _, row := range batch {
+			lastID = row.ID
+			cleaned, changed, err := stripCFVOptionIDs(row.Value, fieldKey, fieldType, removed)
+			if err != nil {
+				slog.Warn("cfv_cleanup: skip malformed cfv", "table", table, "id", row.ID, "error", err)
+				continue
+			}
+			if !changed {
+				continue
+			}
+			if err := cfRepo.UpdateRowCustomFields(table, row.ID, cleaned); err != nil {
+				return processed, err
+			}
+			processed++
+		}
+		if len(batch) < s.batchSize {
+			return processed, nil
+		}
+	}
+}
+
+// scrubPortalOptions removes deleted option ids from the portal
+// custom_field_values table in keyset-paginated batches. Portal values are
+// stored as a bare option id (select) or a JSON array of ids (multiselect),
+// not as a cfv map, so they are handled separately from items/assets.
+func (s *CFVCleanupScheduler) scrubPortalOptions(cfRepo *repository.CustomFieldRepository, fieldID int, fieldType string, removed map[int]bool) (int, error) {
+	processed := 0
+	lastID := 0
+	for {
+		batch, err := cfRepo.ListPortalCFVsPageByField(fieldID, lastID, s.batchSize)
+		if err != nil {
+			return processed, err
+		}
+		if len(batch) == 0 {
+			return processed, nil
+		}
+		for _, row := range batch {
+			lastID = row.ID
+			switch fieldType {
+			case "select":
+				if numVal, err := strconv.Atoi(row.Value); err == nil && removed[numVal] {
+					if err := cfRepo.DeletePortalCFV(row.ID); err != nil {
+						return processed, err
+					}
+					processed++
+				}
+			case "multiselect":
+				var ids []int
+				if err := json.Unmarshal([]byte(row.Value), &ids); err != nil {
+					continue
+				}
+				changed := false
+				filtered := make([]int, 0, len(ids))
+				for _, optID := range ids {
+					if removed[optID] {
+						changed = true
+						continue
+					}
+					filtered = append(filtered, optID)
+				}
+				if !changed {
+					continue
+				}
+				if len(filtered) == 0 {
+					if err := cfRepo.DeletePortalCFV(row.ID); err != nil {
+						return processed, err
+					}
+				} else {
+					b, err := json.Marshal(filtered)
+					if err != nil {
+						continue
+					}
+					if err := cfRepo.UpdatePortalCFV(row.ID, string(b)); err != nil {
+						return processed, err
+					}
+				}
+				processed++
+			}
+		}
+		if len(batch) < s.batchSize {
+			return processed, nil
+		}
+	}
+}
+
+// stripCFVOptionIDs removes the given option ids from one cfv JSON object's
+// entry for fieldKey. For select the whole key is dropped when its value is a
+// removed id; for multiselect the removed ids are filtered out (and the key
+// dropped if the array empties). Returns the new JSON, whether anything
+// changed, and any parse error.
+func stripCFVOptionIDs(cfvJSON, fieldKey, fieldType string, removed map[int]bool) (newJSON string, changed bool, err error) {
+	var cfv map[string]interface{}
+	if err := json.Unmarshal([]byte(cfvJSON), &cfv); err != nil {
+		return "", false, err
+	}
+	val, exists := cfv[fieldKey]
+	if !exists {
+		return cfvJSON, false, nil
+	}
+
+	switch fieldType {
+	case "select":
+		if num, ok := val.(float64); ok && removed[int(num)] {
+			delete(cfv, fieldKey)
+			changed = true
+		}
+	case "multiselect":
+		if arr, ok := val.([]interface{}); ok {
+			var filtered []interface{}
+			for _, item := range arr {
+				if num, ok := item.(float64); ok && removed[int(num)] {
+					changed = true
+					continue
+				}
+				filtered = append(filtered, item)
+			}
+			if changed {
+				if len(filtered) == 0 {
+					delete(cfv, fieldKey)
+				} else {
+					cfv[fieldKey] = filtered
+				}
+			}
+		}
+	}
+
+	if !changed {
+		return cfvJSON, false, nil
+	}
+	b, err := json.Marshal(cfv)
+	if err != nil {
+		return "", false, err
+	}
+	return string(b), true, nil
+}
+
+// indexBuildPayload is the JSON stored in pending_custom_field_cleanups.payload
+// for an index_build job (Postgres only).
+type indexBuildPayload struct {
+	FieldID     int    `json:"field_id"`
+	FieldType   string `json:"field_type"`
+	TargetTable string `json:"target_table"`
+	IndexName   string `json:"index_name"`
+}
+
+// processIndexBuild builds a Postgres custom-field index CONCURRENTLY off the
+// request thread. It first drops any leftover index of the same name — a failed
+// or interrupted CREATE INDEX CONCURRENTLY leaves an INVALID index behind, so
+// the unconditional DROP makes a retry self-healing. The job is skipped if the
+// field's index record is gone (the field was deleted between enqueue and now).
+func (s *CFVCleanupScheduler) processIndexBuild(payload string) (int, error) {
+	var p indexBuildPayload
+	if err := json.Unmarshal([]byte(payload), &p); err != nil {
+		return 0, fmt.Errorf("decode index_build payload: %w", err)
+	}
+	if p.IndexName == "" || p.TargetTable == "" {
+		return 0, fmt.Errorf("index_build: incomplete payload")
+	}
+
+	cfRepo := repository.NewCustomFieldRepository(s.db)
+	recorded, err := cfRepo.IsIndexRecorded(p.FieldID, p.TargetTable)
+	if err != nil {
+		return 0, fmt.Errorf("check index record: %w", err)
+	}
+	if !recorded {
+		// Field (or its index) was removed after the job was enqueued; the
+		// Delete handler already dropped the physical index. Nothing to do.
+		return 0, nil
+	}
+
+	if err := cfRepo.ExecDDL("DROP INDEX IF EXISTS " + p.IndexName); err != nil {
+		return 0, fmt.Errorf("drop stale index before rebuild: %w", err)
+	}
+	createSQL := database.BuildPostgresCustomFieldIndexSQL(p.FieldID, p.FieldType, p.TargetTable, p.IndexName, true)
+	if err := cfRepo.ExecDDL(createSQL); err != nil {
+		return 0, fmt.Errorf("create index concurrently: %w", err)
+	}
+	return 1, nil
+}
+
 func (s *CFVCleanupScheduler) markDone(jobID, processed int) {
 	now := time.Now()
 	if _, err := s.db.ExecWrite(
@@ -312,9 +597,87 @@ func EnqueueFieldCleanup(db database.Database, fieldID int) error {
 
 	now := time.Now()
 	_, err = db.ExecWrite(
-		`INSERT INTO pending_custom_field_cleanups (field_id, status, created_at)
-		 VALUES (?, 'pending', ?)`,
+		`INSERT INTO pending_custom_field_cleanups (field_id, job_type, status, created_at)
+		 VALUES (?, 'field_scrub', 'pending', ?)`,
 		fieldID, now,
+	)
+	return err
+}
+
+// EnqueueOptionRemoval inserts a job to strip the given removed select/
+// multiselect option ids from items, assets, and portal custom_field_values.
+// Called by handlers/custom_fields.go Update instead of cleaning inline.
+//
+// Unlike EnqueueFieldCleanup this does NOT dedup: each edit removes a distinct
+// set of option ids, and the removed-id set is captured here (the field's
+// stored options no longer contain them by the time the job runs). A no-op
+// when removedIDs is empty.
+func EnqueueOptionRemoval(db database.Database, fieldID int, fieldType string, removedIDs []int) error {
+	if len(removedIDs) == 0 {
+		return nil
+	}
+	payload, err := json.Marshal(optionRemovalPayload{
+		FieldID:    fieldID,
+		FieldType:  fieldType,
+		RemovedIDs: removedIDs,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal option_removal payload: %w", err)
+	}
+	now := time.Now()
+	_, err = db.ExecWrite(
+		`INSERT INTO pending_custom_field_cleanups (field_id, job_type, payload, status, created_at)
+		 VALUES (?, 'option_removal', ?, 'pending', ?)`,
+		fieldID, string(payload), now,
+	)
+	return err
+}
+
+// EnqueueIndexBuild inserts a job to build a Postgres custom-field index
+// CONCURRENTLY off the request thread (WI-416). Idempotent: indexName uniquely
+// identifies (field, table), so a build already pending/running for the same
+// index is a no-op. Callers only invoke this on Postgres — SQLite materializes
+// recorded indexes at startup instead.
+func EnqueueIndexBuild(db database.Database, fieldID int, fieldType, targetTable, indexName string) error {
+	payload, err := json.Marshal(indexBuildPayload{
+		FieldID:     fieldID,
+		FieldType:   fieldType,
+		TargetTable: targetTable,
+		IndexName:   indexName,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal index_build payload: %w", err)
+	}
+
+	var existing int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM pending_custom_field_cleanups
+		  WHERE job_type = 'index_build' AND status IN ('pending', 'running') AND payload LIKE ?`,
+		`%"index_name":"`+indexName+`"%`,
+	).Scan(&existing); err == nil && existing > 0 {
+		return nil
+	}
+
+	now := time.Now()
+	_, err = db.ExecWrite(
+		`INSERT INTO pending_custom_field_cleanups (field_id, job_type, payload, status, created_at)
+		 VALUES (?, 'index_build', ?, 'pending', ?)`,
+		fieldID, string(payload), now,
+	)
+	return err
+}
+
+// CancelPendingIndexBuilds marks any pending/running index_build jobs for the
+// field as done so a queued build cannot recreate an index for a field that is
+// being deleted. Called from the Delete handler after it drops the field's
+// indexes synchronously.
+func CancelPendingIndexBuilds(db database.Database, fieldID int) error {
+	now := time.Now()
+	_, err := db.ExecWrite(
+		`UPDATE pending_custom_field_cleanups
+		    SET status = 'done', completed_at = ?
+		  WHERE field_id = ? AND job_type = 'index_build' AND status IN ('pending', 'running')`,
+		now, fieldID,
 	)
 	return err
 }

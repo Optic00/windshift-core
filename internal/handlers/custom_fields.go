@@ -488,6 +488,13 @@ func (h *CustomFieldHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Cancel any still-pending async index build so it can't rebuild an index
+	// for the field we just dropped (Postgres index_build jobs; no-op on SQLite).
+	if err := scheduler.CancelPendingIndexBuilds(h.db, id); err != nil {
+		slog.Warn("custom_fields: failed to cancel pending index builds",
+			slog.Int("field_id", id), slog.Any("error", err))
+	}
+
 	if err := h.repo.Delete(id); err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -555,27 +562,24 @@ func (h *CustomFieldHandler) manageFieldIndex(fieldID int, fieldType, targetTabl
 			return false, fmt.Errorf("index limit reached: %d of %d indexes used on %s", currentCount, maxIndexes, targetTable)
 		}
 
-		// SQLite cannot create indexes concurrently; on large item/asset tables the
-		// CREATE INDEX would block writes and tie up the admin request. Record the
-		// desired index now and create the physical index during the next restart,
-		// before the server begins handling traffic.
-		if h.repo.DriverName() == "sqlite" {
-			if err := h.repo.RecordIndex(fieldID, targetTable, indexName); err != nil {
-				return false, fmt.Errorf("failed to schedule index: %w", err)
-			}
-			return true, nil
-		}
-
-		createSQL := h.buildCreateIndexSQL(fieldID, fieldType, targetTable, indexName)
-		if err := h.repo.ExecDDL(createSQL); err != nil {
-			return false, fmt.Errorf("failed to create index: %w", err)
-		}
-
+		// Building the physical index is deferred off the request thread on both
+		// drivers — on large item/asset tables a synchronous CREATE INDEX blocks
+		// writes and ties up the admin request. SQLite cannot build concurrently,
+		// so its recorded indexes are materialized at the next restart before the
+		// server takes traffic. Postgres builds CONCURRENTLY via the
+		// CFVCleanupScheduler. Either way we record the desired index now (so the
+		// index-limit check and the UI reflect intent) and report it as deferred.
 		if err := h.repo.RecordIndex(fieldID, targetTable, indexName); err != nil {
-			// Attempt to drop the index we just created
-			_ = h.repo.ExecDDL(fmt.Sprintf("DROP INDEX IF EXISTS %s", indexName))
-			return false, fmt.Errorf("failed to record index: %w", err)
+			return false, fmt.Errorf("failed to schedule index: %w", err)
 		}
+		if h.repo.DriverName() != "sqlite" {
+			if err := scheduler.EnqueueIndexBuild(h.db, fieldID, fieldType, targetTable, indexName); err != nil {
+				// The record stands so the index still builds on a later edit or
+				// retry; surface the failure rather than leaving it silent.
+				return false, fmt.Errorf("failed to enqueue index build: %w", err)
+			}
+		}
+		return true, nil
 	} else {
 		if err := h.repo.ExecDDL(fmt.Sprintf("DROP INDEX IF EXISTS %s", indexName)); err != nil {
 			return false, fmt.Errorf("failed to drop index: %w", err)
@@ -660,36 +664,6 @@ func (h *CustomFieldHandler) maxIndexesPerTable() int {
 		return defaultMaxIndexes
 	}
 	return v
-}
-
-// buildCreateIndexSQL generates the CREATE INDEX SQL based on driver and field type.
-func (h *CustomFieldHandler) buildCreateIndexSQL(fieldID int, fieldType, targetTable, indexName string) string {
-	fieldIDStr := strconv.Itoa(fieldID)
-	driver := h.repo.DriverName()
-
-	if driver == "postgres" {
-		switch fieldType {
-		case "number":
-			return fmt.Sprintf(`CREATE INDEX %s ON %s(CAST(%s->>'%s' AS NUMERIC))`,
-				indexName, targetTable, "custom_field_values", fieldIDStr)
-		case "text":
-			return fmt.Sprintf(`CREATE INDEX %s ON %s((%s->>'%s'))`,
-				indexName, targetTable, "custom_field_values", fieldIDStr)
-		case "date":
-			return fmt.Sprintf(`CREATE INDEX %s ON %s(CAST(%s->>'%s' AS TEXT))`,
-				indexName, targetTable, "custom_field_values", fieldIDStr)
-		}
-	}
-
-	// SQLite
-	castType := "TEXT"
-	if fieldType == "number" {
-		castType = "NUMERIC"
-	}
-	// %q would wrap the field ID in Go-style quoting and escape internal
-	// characters, breaking the JSON path literal embedded in the SQL.
-	return fmt.Sprintf(`CREATE INDEX %s ON %s(CAST(NULLIF(custom_field_values,'') ->> '$."%s"' AS %s))`, //nolint:gocritic // see comment above
-		indexName, targetTable, fieldIDStr, castType)
 }
 
 // linkingFieldOptions holds parsed options for linking custom fields
@@ -810,7 +784,12 @@ func (h *CustomFieldHandler) handleLinkingFieldDelete(fieldID int) {
 	}
 }
 
-// cleanupRemovedOptions detects which option IDs were removed and cleans up references.
+// cleanupRemovedOptions detects which option IDs an edit removed and enqueues an
+// async job to scrub references to them from items, assets, and portal
+// custom_field_values. Doing this inline would load every row carrying a value
+// for the field into memory and block the admin request for as long as the
+// workspace has items/assets; CFVCleanupScheduler drains the job in bounded
+// keyset-paginated batches instead (WI-419).
 func (h *CustomFieldHandler) cleanupRemovedOptions(fieldID int, oldOptionsJSON, newOptionsJSON, fieldType string) {
 	oldOpts, err := models.ParseSelectOptions(oldOptionsJSON)
 	if err != nil {
@@ -826,10 +805,10 @@ func (h *CustomFieldHandler) cleanupRemovedOptions(fieldID int, oldOptionsJSON, 
 		newIDs[item.ID] = true
 	}
 
-	removedIDs := make(map[int]bool)
+	var removedIDs []int
 	for _, item := range oldOpts.Items {
 		if !newIDs[item.ID] {
-			removedIDs[item.ID] = true
+			removedIDs = append(removedIDs, item.ID)
 		}
 	}
 
@@ -837,146 +816,12 @@ func (h *CustomFieldHandler) cleanupRemovedOptions(fieldID int, oldOptionsJSON, 
 		return
 	}
 
-	h.cleanupDeletedOptionValues(fieldID, fieldType, removedIDs)
-}
-
-// cleanupDeletedOptionValues removes references to deleted option IDs from items, assets,
-// and portal custom_field_values. Logs warnings on failure but does not propagate errors.
-func (h *CustomFieldHandler) cleanupDeletedOptionValues(fieldID int, fieldType string, removedIDs map[int]bool) {
-	fieldKey := strconv.Itoa(fieldID)
-
-	for _, table := range []string{"items", "assets"} {
-		h.cleanupTableOptionValues(table, fieldKey, fieldType, removedIDs)
-	}
-
-	h.cleanupPortalOptionValues(fieldID, fieldType, removedIDs)
-}
-
-// cleanupTableOptionValues cleans deleted option references from items or assets.
-func (h *CustomFieldHandler) cleanupTableOptionValues(tableName, fieldKey, fieldType string, removedIDs map[int]bool) {
-	rows, err := h.repo.ListRowsWithCustomFields(tableName)
-	if err != nil {
-		slog.Warn("cleanup: failed to query table", slog.String("table", tableName), slog.Any("error", err))
-		return
-	}
-
-	type rowUpdate struct {
-		id     int
-		newVal string
-	}
-	var updates []rowUpdate
-
-	for _, row := range rows {
-		var cfv map[string]interface{}
-		if err := json.Unmarshal([]byte(row.Value), &cfv); err != nil {
-			continue
-		}
-
-		val, exists := cfv[fieldKey]
-		if !exists {
-			continue
-		}
-
-		changed := false
-		if fieldType == "select" {
-			if num, ok := val.(float64); ok && removedIDs[int(num)] {
-				delete(cfv, fieldKey)
-				changed = true
-			}
-		} else if fieldType == "multiselect" {
-			if arr, ok := val.([]interface{}); ok {
-				var filtered []interface{}
-				for _, item := range arr {
-					if num, ok := item.(float64); ok && removedIDs[int(num)] {
-						changed = true
-						continue
-					}
-					filtered = append(filtered, item)
-				}
-				if changed {
-					if len(filtered) == 0 {
-						delete(cfv, fieldKey)
-					} else {
-						cfv[fieldKey] = filtered
-					}
-				}
-			}
-		}
-
-		if changed {
-			b, err := json.Marshal(cfv)
-			if err != nil {
-				continue
-			}
-			updates = append(updates, rowUpdate{id: row.ID, newVal: string(b)})
-		}
-	}
-
-	for _, u := range updates {
-		if err := h.repo.UpdateRowCustomFields(tableName, u.id, u.newVal); err != nil {
-			slog.Warn("cleanup: failed to update row", slog.String("table", tableName), slog.Int("id", u.id), slog.Any("error", err))
-		}
-	}
-
-	if len(updates) > 0 {
-		slog.Info("cleaned up deleted option references", slog.String("table", tableName), slog.Int("rows_updated", len(updates)))
-	}
-}
-
-// cleanupPortalOptionValues cleans deleted option references from the portal custom_field_values table.
-func (h *CustomFieldHandler) cleanupPortalOptionValues(fieldID int, fieldType string, removedIDs map[int]bool) {
-	rows, err := h.repo.ListPortalCFVsForField(fieldID)
-	if err != nil {
-		return // Table may not exist
-	}
-
-	var deleteIDs []int
-	type rowUpdate struct {
-		id     int
-		newVal string
-	}
-	var updates []rowUpdate
-
-	for _, row := range rows {
-		if fieldType == "select" {
-			if numVal, err := strconv.Atoi(row.Value); err == nil && removedIDs[numVal] {
-				deleteIDs = append(deleteIDs, row.ID)
-			}
-		} else if fieldType == "multiselect" {
-			var ids []int
-			if err := json.Unmarshal([]byte(row.Value), &ids); err != nil {
-				continue
-			}
-			changed := false
-			var filtered []int
-			for _, optID := range ids {
-				if removedIDs[optID] {
-					changed = true
-					continue
-				}
-				filtered = append(filtered, optID)
-			}
-			if changed {
-				if len(filtered) == 0 {
-					deleteIDs = append(deleteIDs, row.ID)
-				} else {
-					b, _ := json.Marshal(filtered)
-					updates = append(updates, rowUpdate{id: row.ID, newVal: string(b)})
-				}
-			}
-		}
-	}
-
-	for _, id := range deleteIDs {
-		if err := h.repo.DeletePortalCFV(id); err != nil {
-			slog.Warn("cleanup: failed to delete portal custom field value", slog.Int("id", id), slog.Any("error", err))
-		}
-	}
-
-	for _, u := range updates {
-		if err := h.repo.UpdatePortalCFV(u.id, u.newVal); err != nil {
-			slog.Warn("cleanup: failed to update portal custom field value", slog.Int("id", u.id), slog.Any("error", err))
-		}
+	if err := scheduler.EnqueueOptionRemoval(h.db, fieldID, fieldType, removedIDs); err != nil {
+		slog.Warn("custom_fields: failed to enqueue option-removal cleanup job",
+			slog.Int("field_id", fieldID), slog.Any("error", err))
+		// Best-effort: until the job drains, a removed option id renders as its
+		// bare value (the renderer tolerates unknown ids), so don't fail the
+		// request.
 	}
 }
 

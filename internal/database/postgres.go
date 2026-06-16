@@ -763,6 +763,8 @@ func (p *PostgresDB) Initialize() error {
 			CREATE TABLE IF NOT EXISTS pending_custom_field_cleanups (
 				id SERIAL PRIMARY KEY,
 				field_id INTEGER NOT NULL,
+				job_type TEXT NOT NULL DEFAULT 'field_scrub',
+				payload TEXT,
 				status TEXT NOT NULL DEFAULT 'pending',
 				created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 				started_at TIMESTAMPTZ,
