@@ -130,7 +130,15 @@ func (s *AgentPRService) AfterRun(ctx context.Context, info PostRunInfo) {
 	}
 	title := fmt.Sprintf("agent: run %d", info.RunID)
 	if info.ItemID != nil {
-		title = fmt.Sprintf("agent: work item %d (run %d)", *info.ItemID, info.RunID)
+		// Prefer a human-readable title derived from the bound work item
+		// ("WI-595: <item title>"), matching the manual open-PR path
+		// (scm_item_links.go). Fall back to the generic numeric form only
+		// when the item can't be loaded or has no title.
+		if itemTitle := s.itemPRTitle(ctx, *info.ItemID); itemTitle != "" {
+			title = itemTitle
+		} else {
+			title = fmt.Sprintf("agent: work item %d (run %d)", *info.ItemID, info.RunID)
+		}
 	}
 	// The agent's finish summary (WI-400), when present, leads the body as the
 	// PR note; the harness footer (run id / base / branch) follows a rule.
@@ -205,6 +213,49 @@ func (s *AgentPRService) upsertItemSCMLink(ctx context.Context, itemID, connecti
 		pr.Title, state, pr.Author,
 	)
 	return err
+}
+
+// itemPRTitle builds a human-readable PR title from the bound work item —
+// "<KEY>: <title>" (e.g. "WI-595: Add recently-viewed work items sub-palette"),
+// the same shape the manual open-PR path uses (scm_item_links.go). Returns ""
+// when the item can't be loaded or carries no title, so the caller falls back
+// to the generic "agent: work item N (run M)" form.
+func (s *AgentPRService) itemPRTitle(ctx context.Context, itemID int) string {
+	var workspaceKey, itemTitle string
+	var itemNumber int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT w.key, i.workspace_item_number, i.title
+		FROM items i
+		JOIN workspaces w ON i.workspace_id = w.id
+		WHERE i.id = ?
+	`, itemID).Scan(&workspaceKey, &itemNumber, &itemTitle)
+	if err != nil {
+		s.logger.Printf("agent pr: load item=%d for PR title: %v", itemID, err)
+		return ""
+	}
+	itemTitle = strings.TrimSpace(itemTitle)
+	if itemTitle == "" {
+		return ""
+	}
+	return boundPRTitle(fmt.Sprintf("%s-%d: %s", workspaceKey, itemNumber, itemTitle))
+}
+
+// maxPRTitleBytes caps the derived PR title well under common SCM limits
+// (GitHub allows 256 chars) so a long item title can't 422 the create.
+const maxPRTitleBytes = 200
+
+// boundPRTitle caps the title at maxPRTitleBytes on a rune boundary, marking a
+// truncation with an ellipsis so a clipped title never reads as the whole thing.
+func boundPRTitle(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= maxPRTitleBytes {
+		return s
+	}
+	cut := maxPRTitleBytes
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return strings.TrimSpace(s[:cut]) + "…"
 }
 
 // maxPRNoteBytes bounds the agent-supplied PR note (WI-400) well under common
