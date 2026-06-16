@@ -212,6 +212,11 @@ type PostRunInfo struct {
 	// Summary is the agent's finish summary, rendered as the PR note (WI-400).
 	// Already sanitized + bounded by the time it reaches the hook.
 	Summary string
+	// Trigger is the run's trigger context (nil for legacy/triggerless runs).
+	// The PR hook reads it to detect a continuation run — one that pushed to an
+	// existing PR's head branch — so it comments on that PR instead of opening a
+	// new one.
+	Trigger *models.RunTrigger
 }
 
 // BindingInputsResolver derives a binding-backed run's per-run token spec,
@@ -564,6 +569,7 @@ func (s *RunService) FinalizeRemote(ctx context.Context, runID int, result Runne
 		BaseCommit:        baseCommit,
 		TriggeredByUserID: triggeredBy,
 		Summary:           result.Summary,
+		Trigger:           run.Trigger,
 	})
 	return nil
 }

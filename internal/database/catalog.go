@@ -1000,6 +1000,36 @@ func inlineTableMigrations() []Migration {
 				CREATE INDEX IF NOT EXISTS idx_cli_auth_codes_expires_at ON cli_auth_codes(expires_at);
 			`,
 		},
+		{
+			// pr_comment_cursors: per-PR high-water mark of the last SCM comment
+			// id the continuation poller has processed, so each sync tick only
+			// looks at comments newer than this and never re-fires an old one
+			// (the load-bearing idempotency layer of the comment loop guard).
+			Version:       "inline_pr_comment_cursors",
+			Name:          "pr_comment_cursors",
+			CheckSQLite:   sqliteTableCheck("pr_comment_cursors"),
+			CheckPostgres: pgTableCheck("pr_comment_cursors"),
+			SQLite: `
+				CREATE TABLE IF NOT EXISTS pr_comment_cursors (
+					workspace_repository_id INTEGER NOT NULL,
+					pr_number INTEGER NOT NULL,
+					last_comment_id INTEGER NOT NULL,
+					updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+					PRIMARY KEY (workspace_repository_id, pr_number),
+					FOREIGN KEY (workspace_repository_id) REFERENCES workspace_repositories(id) ON DELETE CASCADE
+				);
+			`,
+			Postgres: `
+				CREATE TABLE IF NOT EXISTS pr_comment_cursors (
+					workspace_repository_id INTEGER NOT NULL,
+					pr_number INTEGER NOT NULL,
+					last_comment_id BIGINT NOT NULL,
+					updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+					PRIMARY KEY (workspace_repository_id, pr_number),
+					FOREIGN KEY (workspace_repository_id) REFERENCES workspace_repositories(id) ON DELETE CASCADE
+				);
+			`,
+		},
 	}
 }
 

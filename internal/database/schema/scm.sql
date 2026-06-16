@@ -148,6 +148,19 @@ CREATE INDEX IF NOT EXISTS idx_item_scm_links_type ON item_scm_links(link_type);
 CREATE INDEX IF NOT EXISTS idx_item_scm_links_external ON item_scm_links(external_id);
 CREATE INDEX IF NOT EXISTS idx_item_scm_links_state ON item_scm_links(state);
 
+-- PR comment cursors: per-PR high-water mark of the last SCM comment id the
+-- "@agent" continuation poller has processed, so each sync tick only looks at
+-- newer comments and never re-fires an old one (idempotency layer of the
+-- comment loop guard, WI-426).
+CREATE TABLE IF NOT EXISTS pr_comment_cursors (
+	workspace_repository_id INTEGER NOT NULL,
+	pr_number INTEGER NOT NULL,
+	last_comment_id INTEGER NOT NULL,
+	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	PRIMARY KEY (workspace_repository_id, pr_number),
+	FOREIGN KEY (workspace_repository_id) REFERENCES workspace_repositories(id) ON DELETE CASCADE
+);
+
 -- SCM Processed Commits (idempotency ledger for smart-commit actions)
 CREATE TABLE IF NOT EXISTS scm_processed_commits (
 	commit_sha              TEXT NOT NULL,

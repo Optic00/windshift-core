@@ -99,6 +99,10 @@ type JobRepo struct {
 	WorkspaceID int    `json:"workspace_id"`
 	Slug        string `json:"slug"`     // "owner/repo"
 	BaseRef     string `json:"base_ref"` // branch to cut the run branch from
+	// ContinueBranch, when set, makes this a continuation: the runner checks out
+	// this existing PR head branch and pushes commits back to it instead of
+	// cutting a fresh per-run branch from BaseRef (which is then ignored).
+	ContinueBranch string `json:"continue_branch,omitempty"`
 }
 
 // ClaimedJob pairs a JobSpec with the lease the runner holds while it

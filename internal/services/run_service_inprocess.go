@@ -294,6 +294,7 @@ func (s *RunService) Report(ctx context.Context, runID int, result RunnerResult)
 			BaseCommit:        baseCommit,
 			TriggeredByUserID: req.TriggeredByUserID,
 			Summary:           result.Summary,
+			Trigger:           req.Trigger,
 		})
 	}
 

@@ -63,6 +63,7 @@ func runPrepare(args []string) error {
 	repo := fs.String("repo", "", "repo slug owner/name")
 	remoteURL := fs.String("remote-url", "", "tokenless remote URL")
 	baseRef := fs.String("base-ref", "main", "base ref to branch from")
+	continueBranch := fs.String("continue-branch", "", "existing PR head branch to continue (overrides base-ref; pushes back to it)")
 	runID := fs.Int("run-id", 0, "run id")
 	tokenFile := fs.String("token-file", "", "file holding the SCM token (askpass)")
 	transport := fs.String("git-transport", "askpass", "askpass|proxy")
@@ -82,11 +83,12 @@ func runPrepare(args []string) error {
 		return err
 	}
 	pr, err := prep.Prepare(context.Background(), repoprep.RepoSpec{
-		WorkspaceID: *wsID,
-		RepoSlug:    *repo,
-		RemoteURL:   *remoteURL,
-		BaseRef:     *baseRef,
-		Token:       token,
+		WorkspaceID:    *wsID,
+		RepoSlug:       *repo,
+		RemoteURL:      *remoteURL,
+		BaseRef:        *baseRef,
+		ContinueBranch: *continueBranch,
+		Token:          token,
 	}, *runID)
 	if err != nil {
 		return err

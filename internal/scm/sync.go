@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -83,6 +84,23 @@ type SyncService struct {
 	// detection still happens (and the idempotency ledger fills) but
 	// nothing downstream consumes the events.
 	actionEvents ActionEventEmitter
+
+	// Optional: when wired, the PR-comment poller starts continuation runs from
+	// "@agent" PR comments (WI-426). Nil disables the poller (e.g. the
+	// coding-agent harness is off).
+	continuationStarter PRCommentContinuationStarter
+}
+
+// PRCommentContinuationStarter starts a continuation run for an "@agent" PR
+// comment detected by the poller. BindingService implements it.
+type PRCommentContinuationStarter interface {
+	StartPRCommentContinuation(ctx context.Context, in services.PRCommentContinuation) (bool, error)
+}
+
+// SetContinuationStarter wires the PR-comment continuation trigger. Optional;
+// without it the poller is inert.
+func (s *SyncService) SetContinuationStarter(st PRCommentContinuationStarter) {
+	s.continuationStarter = st
 }
 
 // NewSyncService creates a new SCM sync service
@@ -437,11 +455,13 @@ func (s *SyncService) processPullRequest(ctx context.Context, provider Provider,
 		newlyMerged = s.isPRNewlyMerged(ctx, repoID, pr.Number)
 	}
 
+	var itemIDs []int
 	for _, key := range keys {
 		itemID, err := s.findItemByKey(ctx, workspaceID, key.Prefix, key.Number)
 		if err != nil || itemID == 0 {
 			continue // Item doesn't exist in this workspace
 		}
+		itemIDs = append(itemIDs, itemID)
 
 		state := models.SCMLinkStateOpen
 		if pr.IsMerged {
@@ -456,8 +476,138 @@ func (s *SyncService) processPullRequest(ctx context.Context, provider Provider,
 		}
 	}
 
+	// Outbound "@agent" PR-comment trigger (WI-426): on an open linked PR, poll
+	// its comments and continue the PR when a human asks the agent to. Outbound
+	// only — Windshift is typically behind NAT, so no inbound webhook.
+	if !pr.IsMerged && pr.State != "closed" && len(itemIDs) > 0 {
+		s.pollPRCommentTriggers(ctx, provider, owner, repo, pr, repoID, workspaceID, itemIDs)
+	}
+
 	if newlyMerged && shouldRunSmartCommits(pr, lastSyncedAt, time.Now()) {
 		s.processSmartCommitsForPR(ctx, provider, owner, repo, pr, repoID, workspaceID, workspaceKey)
+	}
+}
+
+// prCommentTriggerRE matches the literal agent trigger token as a whole word
+// (so "@agentic" does not match) case-insensitively. Detection only — the
+// most-recently-active binding is chosen downstream, so no "@agent:<name>"
+// parsing is needed.
+var prCommentTriggerRE = regexp.MustCompile(`(?i)` + regexp.QuoteMeta(models.DefaultAgentTriggerToken) + `\b`)
+
+// pollPRCommentTriggers polls one open PR's comments and starts a continuation
+// run for each new comment that asks the agent to continue (contains the trigger
+// token, is not one the agent itself posted). A per-PR high-water comment id
+// makes each tick process only new comments; on first sight the high-water mark
+// is established WITHOUT firing, so a backlog of old "@agent" comments is not
+// replayed. Every layer here is part of the loop guard — see the four layers in
+// models.AgentCommentMarker / DefaultAgentTriggerToken and the cursor.
+func (s *SyncService) pollPRCommentTriggers(ctx context.Context, provider Provider, owner, repo string, pr PullRequest, repoID, workspaceID int, itemIDs []int) {
+	if s.continuationStarter == nil {
+		return // poller not wired (e.g. coding-agent harness disabled)
+	}
+	issues, ok := provider.(IssueProvider)
+	if !ok {
+		return // provider can't list comments
+	}
+	comments, err := issues.ListIssueComments(ctx, owner, repo, pr.Number)
+	if err != nil {
+		slog.Warn("PR comment poll: list comments failed", slog.String("component", "scm"), slog.Int("pr", pr.Number), slog.Any("error", err))
+		return
+	}
+
+	cursor, exists := s.prCommentCursor(ctx, repoID, pr.Number)
+	maxID := cursor
+	for _, c := range comments {
+		if c.ID > maxID {
+			maxID = c.ID
+		}
+	}
+	// First sight: baseline the cursor, don't replay history.
+	if !exists {
+		s.setPRCommentCursor(ctx, repoID, pr.Number, maxID)
+		return
+	}
+
+	headBranch := s.resolveHeadBranch(ctx, provider, owner, repo, pr)
+	for _, c := range comments {
+		if c.ID <= cursor {
+			continue // already processed in an earlier tick (idempotency)
+		}
+		if strings.Contains(c.Body, models.AgentCommentMarker) {
+			continue // loop guard L1: never act on the agent's own comment
+		}
+		if !prCommentTriggerRE.MatchString(c.Body) {
+			continue // not a continuation request
+		}
+		if headBranch == "" {
+			slog.Warn("PR comment poll: no head branch, cannot continue", slog.String("component", "scm"), slog.Int("pr", pr.Number))
+			break
+		}
+		// Fire on the first eligible item (most PRs map to one). The starter's
+		// own dedup / write-scope / budget checks decide whether a run actually
+		// starts; we stop at the first that does so one comment yields one run.
+		for _, itemID := range itemIDs {
+			started, serr := s.continuationStarter.StartPRCommentContinuation(ctx, services.PRCommentContinuation{
+				WorkspaceID: workspaceID,
+				ItemID:      itemID,
+				RepoSlug:    owner + "/" + repo,
+				PRNumber:    pr.Number,
+				HeadBranch:  headBranch,
+				CommentID:   c.ID,
+				CommentBody: c.Body,
+			})
+			if serr != nil {
+				slog.Warn("PR comment poll: start continuation failed", slog.String("component", "scm"), slog.Int("pr", pr.Number), slog.Int("item", itemID), slog.Any("error", serr))
+			}
+			if started {
+				break
+			}
+		}
+	}
+	s.setPRCommentCursor(ctx, repoID, pr.Number, maxID)
+}
+
+// resolveHeadBranch returns the PR's head branch, fetching the PR fresh only
+// when the listed object didn't carry one (some list endpoints omit it).
+func (s *SyncService) resolveHeadBranch(ctx context.Context, provider Provider, owner, repo string, pr PullRequest) string {
+	if pr.HeadBranch != "" {
+		return pr.HeadBranch
+	}
+	full, err := provider.GetPullRequest(ctx, owner, repo, pr.Number)
+	if err != nil || full == nil {
+		return ""
+	}
+	return full.HeadBranch
+}
+
+// prCommentCursor returns the last processed comment id for a PR and whether a
+// cursor row exists. A read error is reported as "no cursor" so the caller
+// baselines instead of firing — the safe direction.
+func (s *SyncService) prCommentCursor(ctx context.Context, repoID, prNumber int) (int64, bool) {
+	var id int64
+	err := s.db.QueryRowContext(ctx, `
+		SELECT last_comment_id FROM pr_comment_cursors
+		WHERE workspace_repository_id = ? AND pr_number = ?
+	`, repoID, prNumber).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false
+	}
+	if err != nil {
+		slog.Warn("PR comment poll: read cursor failed", slog.String("component", "scm"), slog.Int("pr", prNumber), slog.Any("error", err))
+		return 0, false
+	}
+	return id, true
+}
+
+// setPRCommentCursor upserts the high-water comment id for a PR.
+func (s *SyncService) setPRCommentCursor(ctx context.Context, repoID, prNumber int, id int64) {
+	if _, err := s.db.ExecWriteContext(ctx, `
+		INSERT INTO pr_comment_cursors (workspace_repository_id, pr_number, last_comment_id)
+		VALUES (?, ?, ?)
+		ON CONFLICT(workspace_repository_id, pr_number)
+		DO UPDATE SET last_comment_id = excluded.last_comment_id, updated_at = CURRENT_TIMESTAMP
+	`, repoID, prNumber, id); err != nil {
+		slog.Warn("PR comment poll: write cursor failed", slog.String("component", "scm"), slog.Int("pr", prNumber), slog.Any("error", err))
 	}
 }
 
