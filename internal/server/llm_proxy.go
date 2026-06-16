@@ -10,47 +10,37 @@ import (
 	"windshift/internal/llm"
 )
 
+const logbookArticlesFeature = "logbook_articles"
+
 // NewInternalLLMProxy creates an HTTP handler that proxies chat completion
 // requests to the admin-configured default LLM connection.
 // Authentication uses a shared secret (SSO_SECRET) with constant-time comparison.
 func NewInternalLLMProxy(llmManager *llm.ConnectionManager, secret string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !validateInternalToken(r, secret) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
+			writeLLMProxyError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 
 		var req llm.ChatCompletionRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte(`{"error":"invalid request body"}`))
+			writeLLMProxyError(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
 
-		client, err := llmManager.ResolveForFeature("logbook_articles")
-		if errors.Is(err, llm.ErrFeatureDisabled) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = w.Write([]byte(`{"error":"feature disabled"}`))
-			return
-		}
-		if err != nil || client == nil || !client.Available() {
-			slog.Warn("LLM proxy: no client available", "error", err)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = w.Write([]byte(`{"error":"LLM service unavailable"}`))
+		client, status, message, err := resolveLogbookLLMClient(llmManager)
+		if message != "" {
+			if message == "LLM service unavailable" {
+				slog.Warn("LLM proxy: no client available", "error", err)
+			}
+			writeLLMProxyError(w, status, message)
 			return
 		}
 
 		resp, err := client.ChatCompletion(r.Context(), req)
 		if err != nil {
 			slog.Error("LLM proxy: chat completion failed", "error", err)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadGateway)
-			_, _ = w.Write([]byte(`{"error":"LLM request failed"}`))
+			writeLLMProxyError(w, http.StatusBadGateway, "LLM request failed")
 			return
 		}
 
@@ -64,29 +54,38 @@ func NewInternalLLMProxy(llmManager *llm.ConnectionManager, secret string) http.
 func NewInternalLLMHealthCheck(llmManager *llm.ConnectionManager, secret string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !validateInternalToken(r, secret) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
+			writeLLMProxyError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 
-		client, err := llmManager.ResolveForFeature("logbook_articles")
-		if errors.Is(err, llm.ErrFeatureDisabled) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = w.Write([]byte(`{"error":"feature disabled"}`))
-			return
-		}
-		if err != nil || client == nil || !client.Available() {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = w.Write([]byte(`{"error":"LLM service unavailable"}`))
+		if _, status, message, _ := resolveLogbookLLMClient(llmManager); message != "" {
+			writeLLMProxyError(w, status, message)
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
+}
+
+func resolveLogbookLLMClient(llmManager *llm.ConnectionManager) (client llm.Client, status int, message string, err error) {
+	client, err = llmManager.ResolveForFeature(logbookArticlesFeature)
+	if errors.Is(err, llm.ErrFeatureDisabled) {
+		return nil, http.StatusServiceUnavailable, "feature disabled", err
+	}
+	if err != nil || client == nil || !client.Available() {
+		return nil, http.StatusServiceUnavailable, "LLM service unavailable", err
+	}
+	return client, http.StatusOK, "", nil
+}
+
+func writeLLMProxyError(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	body, _ := json.Marshal(struct {
+		Error string `json:"error"`
+	}{Error: message})
+	_, _ = w.Write(body)
 }
 
 // validateInternalToken extracts the bearer token from the Authorization header
