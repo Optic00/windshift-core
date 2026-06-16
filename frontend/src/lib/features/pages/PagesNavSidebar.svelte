@@ -183,6 +183,17 @@
     return m;
   });
 
+  // id -> page lookup, rebuilt once per render. The DnD wiring resolves a
+  // page by id for every rendered row (and again inside canDrop /
+  // handleDrop); a Map makes each lookup O(1) instead of pages.find O(n)
+  // per call — pages.find per row is what made setupDnd O(n^2) per tree
+  // mutation (~1M ops at 1000 nodes).
+  let pageById = $derived.by(() => {
+    const m = new Map();
+    for (const p of pages) m.set(p.id, p);
+    return m;
+  });
+
   // Effective expanded set used for visibility. When a label or title
   // filter is active, ancestors of every match are virtually expanded so
   // the user actually sees their hits — but `expandedIds` itself is not
@@ -447,9 +458,10 @@
 
   function setupDnd() {
     cleanupDnd();
+    const lookup = pageById;
     /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('[data-page-row]')).forEach((element) => {
       const pageId = Number(element.dataset.pageRow);
-      const page = pages.find((p) => p.id === pageId);
+      const page = lookup.get(pageId);
       if (!page) return;
 
       dndState.set(pageId, { closestEdge: null, over: false });
@@ -474,7 +486,7 @@
           // Quick descendant check via the materialized `path` prefix that
           // the backend returns on each PageNode.
           if (source.data.pageId === pageId) return false;
-          const dragged = pages.find((p) => p.id === source.data.pageId);
+          const dragged = lookup.get(source.data.pageId);
           if (dragged) {
             const draggedPrefix = `${dragged.path}${dragged.id}/`;
             if (page.path.startsWith(draggedPrefix)) return false;
@@ -508,7 +520,7 @@
 
   async function handleDrop(draggedId, targetId, closestEdge) {
     if (draggedId === targetId) return;
-    const target = pages.find((p) => p.id === targetId);
+    const target = pageById.get(targetId);
     if (!target) return;
     let newParentId;
     let prevSiblingId = null;
