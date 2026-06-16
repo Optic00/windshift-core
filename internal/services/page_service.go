@@ -671,6 +671,15 @@ func (s *PageService) ListTree(workspaceID int, includeArchived bool) ([]models.
 	return s.pages.ListWorkspaceTree(workspaceID, includeArchived)
 }
 
+// ListTreeMeta is ListTree without the page bodies. The tree/list endpoints
+// render titles + hierarchy only, so the heavy content column is projected
+// out of the query — never read off disk or allocated — rather than loaded
+// and then discarded. Prefer this over ListTree wherever the body is unused.
+// (WI-407.)
+func (s *PageService) ListTreeMeta(workspaceID int, includeArchived bool) ([]models.Page, error) {
+	return s.pages.ListWorkspaceTreeMeta(workspaceID, includeArchived)
+}
+
 // SearchByTitle delegates to the repository's title-substring search.
 // Permission filtering happens at the handler layer via ListVisiblePageIDs.
 func (s *PageService) SearchByTitle(workspaceID int, query string, limit int) ([]models.Page, error) {

@@ -34,22 +34,20 @@ const pageColumns = `id, workspace_id, parent_id, title, slug, content, content_
 	excerpt, created_by, updated_by, archived_by, is_home, inherit_permissions,
 	rank, frac_index, path, depth, created_at, updated_at, archived_at`
 
-// scanPage scans a single row into a Page using the package-local rowScanner
-// abstraction (declared by custom_field_repository).
-func scanPage(s rowScanner) (*models.Page, error) {
-	var p models.Page
-	var parentID, updatedBy, archivedBy sql.NullInt64
-	var rank, fracIndex sql.NullString
-	var archivedAt sql.NullTime
+// pageTreeColumns is pageColumns minus the heavy body fields (content,
+// content_hash, excerpt), in the order used by scanPageMeta. The tree/list
+// endpoints render titles and hierarchy only, so projecting the body out of
+// the SELECT means the large content column is never read off disk (nor
+// de-TOASTed on Postgres) nor allocated into a Go string — the win that
+// stripping the fields *after* the read can't give a workspace with
+// thousands of pages. (WI-407.)
+const pageTreeColumns = `id, workspace_id, parent_id, title, slug,
+	created_by, updated_by, archived_by, is_home, inherit_permissions,
+	rank, frac_index, path, depth, created_at, updated_at, archived_at`
 
-	if err := s.Scan(
-		&p.ID, &p.WorkspaceID, &parentID, &p.Title, &p.Slug, &p.Content, &p.ContentHash,
-		&p.Excerpt, &p.CreatedBy, &updatedBy, &archivedBy, &p.IsHome, &p.InheritPermissions,
-		&rank, &fracIndex, &p.Path, &p.Depth, &p.CreatedAt, &p.UpdatedAt, &archivedAt,
-	); err != nil {
-		return nil, err
-	}
-
+// applyPageNullables folds the nullable columns shared by every page scan
+// into the Page. Kept separate so scanPage and scanPageMeta stay in sync.
+func applyPageNullables(p *models.Page, parentID, updatedBy, archivedBy sql.NullInt64, rank, fracIndex sql.NullString, archivedAt sql.NullTime) {
 	if parentID.Valid {
 		v := int(parentID.Int64)
 		p.ParentID = &v
@@ -71,6 +69,46 @@ func scanPage(s rowScanner) (*models.Page, error) {
 	if archivedAt.Valid {
 		p.ArchivedAt = &archivedAt.Time
 	}
+}
+
+// scanPage scans a single row into a Page using the package-local rowScanner
+// abstraction (declared by custom_field_repository).
+func scanPage(s rowScanner) (*models.Page, error) {
+	var p models.Page
+	var parentID, updatedBy, archivedBy sql.NullInt64
+	var rank, fracIndex sql.NullString
+	var archivedAt sql.NullTime
+
+	if err := s.Scan(
+		&p.ID, &p.WorkspaceID, &parentID, &p.Title, &p.Slug, &p.Content, &p.ContentHash,
+		&p.Excerpt, &p.CreatedBy, &updatedBy, &archivedBy, &p.IsHome, &p.InheritPermissions,
+		&rank, &fracIndex, &p.Path, &p.Depth, &p.CreatedAt, &p.UpdatedAt, &archivedAt,
+	); err != nil {
+		return nil, err
+	}
+
+	applyPageNullables(&p, parentID, updatedBy, archivedBy, rank, fracIndex, archivedAt)
+	return &p, nil
+}
+
+// scanPageMeta scans a row selected via pageTreeColumns. Every Page field is
+// populated except the body (Content/ContentHash/Excerpt stay zero-valued —
+// they aren't in the SELECT).
+func scanPageMeta(s rowScanner) (*models.Page, error) {
+	var p models.Page
+	var parentID, updatedBy, archivedBy sql.NullInt64
+	var rank, fracIndex sql.NullString
+	var archivedAt sql.NullTime
+
+	if err := s.Scan(
+		&p.ID, &p.WorkspaceID, &parentID, &p.Title, &p.Slug,
+		&p.CreatedBy, &updatedBy, &archivedBy, &p.IsHome, &p.InheritPermissions,
+		&rank, &fracIndex, &p.Path, &p.Depth, &p.CreatedAt, &p.UpdatedAt, &archivedAt,
+	); err != nil {
+		return nil, err
+	}
+
+	applyPageNullables(&p, parentID, updatedBy, archivedBy, rank, fracIndex, archivedAt)
 	return &p, nil
 }
 
@@ -389,12 +427,26 @@ func (r *PageRepository) SearchByTitle(workspaceID int, query string, limit int)
 // in a workspace, ordered by depth and then by frac_index/rank/title so
 // callers can build the tree client-side with a single query.
 func (r *PageRepository) ListWorkspaceTree(workspaceID int, includeArchived bool) ([]models.Page, error) {
+	return r.listWorkspaceTree(workspaceID, includeArchived, pageColumns, scanPage)
+}
+
+// ListWorkspaceTreeMeta is ListWorkspaceTree without the page bodies: it
+// selects pageTreeColumns so the heavy content column is never read or
+// allocated. Use it for endpoints that render titles + hierarchy only
+// (the sidebar tree, the move dialog, the v1 page list). (WI-407.)
+func (r *PageRepository) ListWorkspaceTreeMeta(workspaceID int, includeArchived bool) ([]models.Page, error) {
+	return r.listWorkspaceTree(workspaceID, includeArchived, pageTreeColumns, scanPageMeta)
+}
+
+// listWorkspaceTree is the shared body of the two public variants above; the
+// only difference is which columns are selected (and the matching scan).
+func (r *PageRepository) listWorkspaceTree(workspaceID int, includeArchived bool, columns string, scan func(rowScanner) (*models.Page, error)) ([]models.Page, error) {
 	cond := "workspace_id = ? AND archived_at IS NULL"
 	if includeArchived {
 		cond = "workspace_id = ?"
 	}
 	rows, err := r.db.Query(`
-		SELECT `+pageColumns+`
+		SELECT `+columns+`
 		FROM pages
 		WHERE `+cond+`
 		ORDER BY depth ASC,
@@ -410,7 +462,7 @@ func (r *PageRepository) ListWorkspaceTree(workspaceID int, includeArchived bool
 
 	var out []models.Page
 	for rows.Next() {
-		page, scanErr := scanPage(rows)
+		page, scanErr := scan(rows)
 		if scanErr != nil {
 			return nil, fmt.Errorf("scan page: %w", scanErr)
 		}
