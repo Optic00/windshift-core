@@ -6,6 +6,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"embed"
 	"errors"
 	"fmt"
@@ -750,7 +751,10 @@ func (s *Server) initialize() error {
 		RunContext: agentBindingRepo,
 		Pools:      repository.NewActionRepository(s.db),
 		Skills:     agentSkillRepo,
-		APIURL:     agentAPIURL,
+		// @mention on an item with an open linked PR continues that PR instead of
+		// opening a competing one (WI-426).
+		Continuations: &itemPRContinuationResolver{db: s.db, cr: scmCredResolver},
+		APIURL:        agentAPIURL,
 	})
 	// Let the run service enrich remote claims from the binding (WI-195): a
 	// remote runner's claim mints the per-run token + grants the same way the
@@ -2161,6 +2165,74 @@ func commentPRViaCredentialResolver(cr *scm.CredentialResolver) services.Comment
 		_, err = issues.CreateIssueComment(ctx, req.Owner, req.Repo, req.Number, req.Body)
 		return err
 	}
+}
+
+// itemPRContinuationResolver implements services.ItemPRContinuationResolver: it
+// finds an item's most-recently-updated open linked PR and resolves its head
+// branch via the SCM provider, so the @mention trigger can land commits on that
+// PR instead of opening a new one. Read-only, so it resolves connection-level
+// credentials (no per-user principal needed just to read a PR head).
+type itemPRContinuationResolver struct {
+	db database.Database
+	cr *scm.CredentialResolver
+}
+
+func (r *itemPRContinuationResolver) ContinuationForItem(ctx context.Context, itemID int) (*services.ContinuationTarget, error) {
+	var externalID, repoName string
+	var connectionID int
+	err := r.db.QueryRowContext(ctx, `
+		SELECT l.external_id, wr.repository_name, wr.workspace_scm_connection_id
+		FROM item_scm_links l
+		JOIN workspace_repositories wr ON l.workspace_repository_id = wr.id
+		WHERE l.item_id = ? AND l.link_type = 'pull_request' AND lower(l.state) = 'open'
+		ORDER BY l.updated_at DESC
+		LIMIT 1
+	`, itemID).Scan(&externalID, &repoName, &connectionID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil // no open PR — caller starts a fresh run
+	}
+	if err != nil {
+		return nil, fmt.Errorf("query open PR link: %w", err)
+	}
+	number, err := strconv.Atoi(externalID)
+	if err != nil {
+		return nil, fmt.Errorf("PR link external_id %q is not a number: %w", externalID, err)
+	}
+	owner, repo, ok := strings.Cut(repoName, "/")
+	if !ok || owner == "" || repo == "" {
+		return nil, fmt.Errorf("repository_name %q is not owner/repo", repoName)
+	}
+	creds, err := r.cr.GetCredentialsByConnectionID(ctx, connectionID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve connection %d: %w", connectionID, err)
+	}
+	provider, err := scm.NewProvider(scm.ProviderConfig{
+		ProviderType:        creds.ProviderType,
+		AuthMethod:          creds.AuthMethod,
+		BaseURL:             creds.BaseURL,
+		OAuthAccessToken:    creds.OAuthAccessToken,
+		OAuthRefreshToken:   creds.OAuthRefreshToken,
+		PersonalAccessToken: creds.PersonalAccessToken,
+		OAuthClientID:       creds.OAuthClientID,
+		OAuthClientSecret:   creds.OAuthClientSecret,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("build provider: %w", err)
+	}
+	pr, err := provider.GetPullRequest(ctx, owner, repo, number)
+	if err != nil {
+		return nil, fmt.Errorf("get PR %s/%s#%d: %w", owner, repo, number, err)
+	}
+	// The link said open but the provider is authoritative: a since-closed/merged
+	// PR is not continuable, and an empty head branch can't be checked out.
+	if pr.IsMerged || strings.EqualFold(pr.State, "closed") || pr.HeadBranch == "" {
+		return nil, nil
+	}
+	return &services.ContinuationTarget{
+		PRNumber:   number,
+		RepoSlug:   repoName,
+		HeadBranch: pr.HeadBranch,
+	}, nil
 }
 
 // bootCodingAgentRunService builds the orchestration-only WI-89 + WI-90

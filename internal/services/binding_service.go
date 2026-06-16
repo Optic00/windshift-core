@@ -160,16 +160,35 @@ const DefaultLLMTestPrompt = "Reply in one short sentence to confirm you are rea
 // global flag off doesn't auto-purge existing bindings. Operators who
 // want stricter behavior delete the affected rows explicitly.
 type BindingService struct {
-	repo       *repository.WorkspaceAgentBindingRepository
-	identity   *AgentActingIdentityService
-	runs       *RunService
-	scmCreds   SCMCredentialResolver
-	llmRuntime LLMRuntimeResolver
-	runContext AgentRunContextResolver
-	pools      RunnerPoolLister
-	skills     *repository.WorkspaceAgentSkillRepository
-	apiURL     string
-	logger     *log.Logger
+	repo          *repository.WorkspaceAgentBindingRepository
+	identity      *AgentActingIdentityService
+	runs          *RunService
+	scmCreds      SCMCredentialResolver
+	llmRuntime    LLMRuntimeResolver
+	runContext    AgentRunContextResolver
+	pools         RunnerPoolLister
+	skills        *repository.WorkspaceAgentSkillRepository
+	continuations ItemPRContinuationResolver
+	apiURL        string
+	logger        *log.Logger
+}
+
+// ContinuationTarget identifies the open PR a continuation run should land on:
+// its per-repo number, its repo ("owner/repo"), and its head branch.
+type ContinuationTarget struct {
+	PRNumber   int
+	RepoSlug   string
+	HeadBranch string
+}
+
+// ItemPRContinuationResolver resolves the continuation target for an item's
+// most-recently-updated open linked PR, or nil when the item has none. It is the
+// seam the @mention trigger uses to decide "continue the existing PR" vs "start
+// a fresh run". Implemented in the server wiring because it needs both DB access
+// and an scm.Provider (to read the PR's head branch), which the services package
+// cannot import. Optional on BindingService — nil disables mention-continuation.
+type ItemPRContinuationResolver interface {
+	ContinuationForItem(ctx context.Context, itemID int) (*ContinuationTarget, error)
 }
 
 // BindingServiceOptions wires the service. Runs is optional: when nil,
@@ -186,8 +205,11 @@ type BindingServiceOptions struct {
 	// Skills is optional: when nil, bindings carry no skill attachments and
 	// run prompts get no skills index (WI-258).
 	Skills *repository.WorkspaceAgentSkillRepository
-	APIURL string
-	Logger *log.Logger
+	// Continuations is optional: when nil, an @mention on an item with an open
+	// linked PR starts a fresh run rather than continuing that PR.
+	Continuations ItemPRContinuationResolver
+	APIURL        string
+	Logger        *log.Logger
 }
 
 // NewBindingService constructs a BindingService. Repo + Identity are
@@ -204,16 +226,17 @@ func NewBindingService(opts BindingServiceOptions) (*BindingService, error) {
 		logger = log.Default()
 	}
 	return &BindingService{
-		repo:       opts.Repo,
-		identity:   opts.Identity,
-		runs:       opts.Runs,
-		scmCreds:   opts.SCMCreds,
-		llmRuntime: opts.LLMRuntime,
-		runContext: opts.RunContext,
-		pools:      opts.Pools,
-		skills:     opts.Skills,
-		apiURL:     opts.APIURL,
-		logger:     logger,
+		repo:          opts.Repo,
+		identity:      opts.Identity,
+		runs:          opts.Runs,
+		scmCreds:      opts.SCMCreds,
+		llmRuntime:    opts.LLMRuntime,
+		runContext:    opts.RunContext,
+		pools:         opts.Pools,
+		skills:        opts.Skills,
+		continuations: opts.Continuations,
+		apiURL:        opts.APIURL,
+		logger:        logger,
 	}, nil
 }
 
@@ -690,6 +713,11 @@ func (s *BindingService) MaybeStartRunsForMentions(ctx context.Context, workspac
 			CommentID:   commentID,
 			AuthorID:    commentAuthorID,
 		}
+		// If the item already has an open linked PR in this binding's repo, the
+		// mention continues that PR (adds commits to it) rather than opening a
+		// competing one. Resolution failures degrade to a fresh run — a missing
+		// continuation is never worse than today's behavior.
+		s.applyMentionContinuation(ctx, trigger, binding, itemID)
 		if err := s.startRunForBinding(ctx, binding, workspaceID, itemID, commentAuthorID, trigger); err != nil {
 			errs = append(errs, fmt.Errorf("start run for mentioned binding %d: %w", binding.ID, err))
 		}
@@ -757,6 +785,38 @@ func (s *BindingService) enabledSkillsForBinding(ctx context.Context, binding *m
 		return nil
 	}
 	return skills
+}
+
+// applyMentionContinuation sets the trigger's continuation fields when the
+// mentioned binding's item has an open linked PR in the binding's own repo, so
+// the run lands commits on that PR instead of cutting a fresh branch. It is a
+// no-op (leaving a normal fresh-run trigger) when no resolver is wired, the
+// binding has no repo, the item has no open PR, the PR is in a different repo
+// than the binding writes to, or resolution errors — none of which should block
+// the run.
+func (s *BindingService) applyMentionContinuation(ctx context.Context, trigger *models.RunTrigger, binding *models.WorkspaceAgentBinding, itemID int) {
+	if s.continuations == nil || !binding.HasRepo() {
+		return
+	}
+	target, err := s.continuations.ContinuationForItem(ctx, itemID)
+	if err != nil {
+		s.logger.Printf("binding service: resolve continuation for item=%d binding=%d: %v (starting fresh run)", itemID, binding.ID, err)
+		return
+	}
+	if target == nil || target.HeadBranch == "" {
+		return
+	}
+	// Write scope: only continue a PR in the repo this binding's credentials can
+	// push to. A PR in another repo would push back somewhere the binding has no
+	// business writing.
+	if target.RepoSlug != binding.RepoSlug {
+		s.logger.Printf("binding service: item=%d open PR is in %q but binding=%d writes %q — starting fresh run", itemID, target.RepoSlug, binding.ID, binding.RepoSlug)
+		return
+	}
+	trigger.ContinuePRNumber = target.PRNumber
+	trigger.ContinueRepoSlug = target.RepoSlug
+	trigger.ContinueHeadBranch = target.HeadBranch
+	s.logger.Printf("binding service: mention on item=%d will continue PR #%d (%s) on binding=%d", itemID, target.PRNumber, target.HeadBranch, binding.ID)
 }
 
 // startRunForBinding admits and dispatches one run for a matched binding —
