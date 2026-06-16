@@ -205,6 +205,24 @@
     return false;
   }
 
+  // The rows that actually get a DOM node. Previously every page rendered
+  // an <li> and collapsed / filtered-out subtrees were only display:none,
+  // so 1000+ pages meant 1000+ live DOM nodes regardless of expand state.
+  // By filtering to the visible set here, collapsed subtrees and
+  // filter-excluded rows are never added to the DOM at all — the row count
+  // tracks what's on screen, not the workspace total. DnD wiring
+  // (querySelectorAll('[data-page-row]')) only ever sees these rows, which
+  // is correct: you can only drag/drop rows that are rendered.
+  let visibleRows = $derived.by(() => {
+    const out = [];
+    for (const page of pages) {
+      if (visibleIds !== null && !visibleIds.has(page.id)) continue;
+      if (isCollapseHidden(page)) continue;
+      out.push(page);
+    }
+    return out;
+  });
+
   function onFilterToggle(label) {
     labelLookup.set(label.id, label);
     labelLookup = labelLookup; // trigger reactivity
@@ -299,9 +317,12 @@
 
   // Re-wire DnD whenever the rendered tree changes. The timeout matches
   // BoardConfigurationPage's pattern: the DOM nodes need to mount before
-  // pragmatic-drag-and-drop can attach.
+  // pragmatic-drag-and-drop can attach. We depend on `visibleRows`, not
+  // `pages`, because expanding/collapsing a subtree (or filtering) now
+  // adds/removes rows from the DOM without changing `pages` itself — the
+  // newly-rendered rows need handlers wired too.
   $effect(() => {
-    pages;
+    visibleRows;
     if (typeof document === 'undefined') return;
     if (setupTimeout) clearTimeout(setupTimeout);
     setupTimeout = setTimeout(() => setupDnd(), 50);
@@ -686,14 +707,11 @@
     </div>
   {:else}
     <ul class="tree" data-testid="page-tree">
-      {#each pages as page (page.id)}
+      {#each visibleRows as page (page.id)}
         {@const edge = dndState.get(page.id)?.closestEdge}
         {@const isOver = dndState.get(page.id)?.over}
         {@const hasChildren = (childCountById.get(page.id) || 0) > 0}
         {@const isExpanded = expandedIds.has(page.id)}
-        {@const hidden =
-          (visibleIds !== null && !visibleIds.has(page.id)) ||
-          isCollapseHidden(page)}
         {@const dimmed = isAncestorOnly(page)}
         <li
           class="tree-item"
@@ -701,7 +719,6 @@
           class:drop-top={edge === 'top'}
           class:drop-bottom={edge === 'bottom'}
           class:drop-on={isOver && !edge}
-          class:hidden
           class:dimmed
           data-page-row={page.id}
           data-testid="page-tree-item"
@@ -952,10 +969,6 @@
     gap: 0.25rem;
     padding-right: 0.5rem;
     transition: background-color var(--duration-fast, 100ms) ease;
-  }
-
-  .tree-item.hidden {
-    display: none;
   }
 
   .tree-item.dimmed .page-button {
