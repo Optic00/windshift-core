@@ -369,19 +369,30 @@ type TableCFVRow struct {
 	Value string
 }
 
-// ListRowsWithCustomFields returns every (id, custom_field_values) pair from
-// the given table whose custom_field_values is non-empty and non-'{}'.
-// tableName must be one of the trusted names "items" or "assets".
-func (r *CustomFieldRepository) ListRowsWithCustomFields(tableName string) ([]TableCFVRow, error) {
+// ListRowsWithCustomFieldsPageByKey returns up to limit (id, custom_field_values)
+// pairs from items or assets after afterID whose custom_field_values mentions the
+// given field key, ordered by id. Keyset pagination (id > ?) keeps memory bounded
+// for the async option-removal cleanup, mirroring
+// ItemRepository.ListCustomFieldValuesPageByKey. tableName must be one of the
+// trusted names "items" or "assets".
+func (r *CustomFieldRepository) ListRowsWithCustomFieldsPageByKey(tableName string, afterID int, fieldKey string, limit int) ([]TableCFVRow, error) {
 	if tableName != "items" && tableName != "assets" {
 		return nil, fmt.Errorf("invalid table for custom field values: %q", tableName)
 	}
+	// CAST(... AS TEXT) so the LIKE key prefilter works on both SQLite (TEXT
+	// column) and Postgres (JSONB column — a bare LIKE errors with "jsonb ~~").
 	rows, err := r.db.Query(fmt.Sprintf(
-		`SELECT id, custom_field_values FROM %s WHERE custom_field_values IS NOT NULL AND custom_field_values != '' AND custom_field_values != '{}'`,
-		tableName,
-	))
+		`SELECT id, custom_field_values FROM %s
+		  WHERE id > ?
+		    AND custom_field_values IS NOT NULL
+		    AND CAST(custom_field_values AS TEXT) != ''
+		    AND CAST(custom_field_values AS TEXT) LIKE ?
+		  ORDER BY id ASC
+		  LIMIT ?`, tableName),
+		afterID, `%"`+fieldKey+`"%`, limit,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("list rows with cfvs: %w", err)
+		return nil, fmt.Errorf("list rows with cfvs page: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -397,7 +408,8 @@ func (r *CustomFieldRepository) ListRowsWithCustomFields(tableName string) ([]Ta
 }
 
 // UpdateRowCustomFields overwrites custom_field_values for a single row in
-// items or assets. tableName is validated as in ListRowsWithCustomFields.
+// items or assets. tableName must be one of the trusted names "items" or
+// "assets".
 func (r *CustomFieldRepository) UpdateRowCustomFields(tableName string, id int, newVal string) error {
 	if tableName != "items" && tableName != "assets" {
 		return fmt.Errorf("invalid table for custom field values: %q", tableName)
@@ -421,15 +433,22 @@ type PortalCFVRow struct {
 	Value string
 }
 
-// ListPortalCFVsForField returns non-empty portal custom_field_values for
-// the given custom field.
-func (r *CustomFieldRepository) ListPortalCFVsForField(fieldID int) ([]PortalCFVRow, error) {
+// ListPortalCFVsPageByField returns up to limit (id, value) portal
+// custom_field_values rows for the given custom field after afterID, ordered by
+// id. Keyset pagination keeps memory bounded for the async option-removal
+// cleanup. The custom_field_values table may not exist on every deployment;
+// callers tolerate the resulting error as "nothing to clean".
+func (r *CustomFieldRepository) ListPortalCFVsPageByField(fieldID, afterID, limit int) ([]PortalCFVRow, error) {
 	rows, err := r.db.Query(
-		`SELECT id, value FROM custom_field_values WHERE custom_field_id = ? AND value IS NOT NULL AND value != ''`,
-		fieldID,
+		`SELECT id, value FROM custom_field_values
+		  WHERE custom_field_id = ? AND id > ?
+		    AND value IS NOT NULL AND value != ''
+		  ORDER BY id ASC
+		  LIMIT ?`,
+		fieldID, afterID, limit,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("list portal cfvs: %w", err)
+		return nil, fmt.Errorf("list portal cfvs page: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 

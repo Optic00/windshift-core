@@ -1295,6 +1295,24 @@ var Catalog = []Migration{
 		SQLite:        "ALTER TABLE todoist_sync_config ADD COLUMN sync_lock_until DATETIME",
 		Postgres:      "ALTER TABLE todoist_sync_config ADD COLUMN sync_lock_until TIMESTAMPTZ",
 	},
+	{
+		// Generalize the cfv-cleanup queue into a multi-purpose custom-field
+		// maintenance queue: job_type selects field_scrub / option_removal /
+		// index_build, payload carries the per-job detail. Existing in-flight
+		// rows default to 'field_scrub', their original meaning.
+		Version:       "20260616_cfv_cleanup_job_type_payload",
+		Name:          "Add job_type + payload to pending_custom_field_cleanups",
+		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('pending_custom_field_cleanups') WHERE name='job_type'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='pending_custom_field_cleanups' AND column_name='job_type'",
+		SQLite: `
+			ALTER TABLE pending_custom_field_cleanups ADD COLUMN job_type TEXT NOT NULL DEFAULT 'field_scrub';
+			ALTER TABLE pending_custom_field_cleanups ADD COLUMN payload TEXT;
+		`,
+		Postgres: `
+			ALTER TABLE pending_custom_field_cleanups ADD COLUMN job_type TEXT NOT NULL DEFAULT 'field_scrub';
+			ALTER TABLE pending_custom_field_cleanups ADD COLUMN payload TEXT;
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {
