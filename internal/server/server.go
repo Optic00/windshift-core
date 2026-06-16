@@ -2084,6 +2084,36 @@ func (a *scmCredsAdapter) mintGitHubAppToken(ctx context.Context, creds *scm.Pro
 // carries a UserID (the run's triggering user, WI-275), credentials
 // resolve per-user — on OAuth connections the PR is authored by that
 // user; PAT / GitHub App connections resolve identically either way.
+// permanentOpenPRErrors are the scm sentinel failures a retry can't fix: the
+// request reached the provider and was refused (bad/expired credentials,
+// forbidden, repo not found, a PR that already exists, an unsupported provider).
+// Everything else — a timeout, a 5xx, a dropped connection, a rate-limit — is
+// transient and left bare so AgentPRService's retry loop re-attempts it.
+var permanentOpenPRErrors = []error{
+	scm.ErrInvalidCredentials,
+	scm.ErrNotAuthenticated,
+	scm.ErrTokenExpired,
+	scm.ErrRefreshTokenInvalid,
+	scm.ErrForbidden,
+	scm.ErrNotFound,
+	scm.ErrAlreadyExists,
+	scm.ErrUserSCMNotConnected,
+	scm.ErrUnsupportedProvider,
+}
+
+// classifyOpenPRError wraps the scm errors that must not be retried so the
+// AgentPRService retry loop surfaces them immediately; transient errors pass
+// through unwrapped and stay retryable. ErrRateLimited is deliberately omitted
+// from the permanent set — the retry loop's backoff is the right response to it.
+func classifyOpenPRError(err error) error {
+	for _, sentinel := range permanentOpenPRErrors {
+		if errors.Is(err, sentinel) {
+			return services.NewPermanentOpenPRError(err)
+		}
+	}
+	return err
+}
+
 func openPRViaCredentialResolver(cr *scm.CredentialResolver) services.OpenPRFn {
 	return func(ctx context.Context, req services.OpenPRRequest) (*services.OpenedPR, error) {
 		var creds *scm.ProviderCredentials
@@ -2117,7 +2147,7 @@ func openPRViaCredentialResolver(cr *scm.CredentialResolver) services.OpenPRFn {
 			Draft:      req.Draft,
 		})
 		if err != nil {
-			return nil, err
+			return nil, classifyOpenPRError(err)
 		}
 		authorName := pr.Author.Username
 		if authorName == "" {
