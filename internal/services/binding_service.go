@@ -893,6 +893,11 @@ func (s *BindingService) startRunForBinding(ctx context.Context, binding *models
 			BaseRef:     binding.RepoBaseRef,
 			Token:       token,
 		}
+		// A continuation run checks out the bound PR's head branch and pushes
+		// back to it instead of cutting a fresh per-run branch (BaseRef ignored).
+		if trigger.IsContinuation() {
+			req.Repo.ContinueBranch = trigger.ContinueHeadBranch
+		}
 		// The SCM token stays host-side: repoprep uses it (via a per-clone
 		// GIT_ASKPASS helper) to clone the worktree and, after the run, to push
 		// the run branch. It is NOT injected into the container — the
@@ -1074,6 +1079,12 @@ func (s *BindingService) ResolveRunInputs(ctx context.Context, run *models.Agent
 			WorkspaceID: run.WorkspaceID,
 			Slug:        binding.RepoSlug,
 			BaseRef:     baseRef,
+		}
+		// Continuation: land commits on the bound PR's head branch (resolved and
+		// persisted on the trigger when the run was queued) rather than a fresh
+		// per-run branch. Survives the queue→claim hop via run.Trigger.
+		if run.Trigger.IsContinuation() {
+			repo.ContinueBranch = run.Trigger.ContinueHeadBranch
 		}
 	}
 	return &RunInputs{Token: spec, Grants: grants, Repo: repo, Env: env, PromptSuffix: promptSuffix}, nil

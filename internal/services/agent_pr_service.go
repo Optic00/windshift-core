@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -50,6 +51,24 @@ type OpenedPR struct {
 // pass a deterministic stand-in.
 type OpenPRFn func(ctx context.Context, req OpenPRRequest) (*OpenedPR, error)
 
+// PRCommentRequest is what AgentPRService hands to the CommentPRFn adapter to
+// post a comment on an existing PR — a continuation run's "pushed updates" note.
+type PRCommentRequest struct {
+	ConnectionID int
+	UserID       int // credential principal, as OpenPRRequest.UserID
+	Owner        string
+	Repo         string
+	Number       int // PR number
+	Body         string
+}
+
+// CommentPRFn is the seam to whatever SCM driver posts a PR comment. Production
+// wires it to a closure that builds a scm.Provider and calls
+// IssueProvider.CreateIssueComment (a PR is an issue on both GitHub and Gitea).
+// Optional: when nil, a continuation run still skips opening a duplicate PR, it
+// just posts no progress comment.
+type CommentPRFn func(ctx context.Context, req PRCommentRequest) error
+
 // AgentPRService is the WI-90 post-run hook: on a successful run that
 // produced a pushed branch, it opens a draft pull request via the
 // OpenPRFn adapter and writes an item_scm_links row of type=pull_request
@@ -57,18 +76,22 @@ type OpenPRFn func(ctx context.Context, req OpenPRRequest) (*OpenedPR, error)
 // Gitea because the production adapter routes through scm.Provider —
 // the service itself has no provider-specific knowledge.
 type AgentPRService struct {
-	bindings *repository.WorkspaceAgentBindingRepository
-	openPR   OpenPRFn
-	db       database.Database
-	logger   *log.Logger
+	bindings  *repository.WorkspaceAgentBindingRepository
+	openPR    OpenPRFn
+	commentPR CommentPRFn
+	db        database.Database
+	logger    *log.Logger
 }
 
 // AgentPRServiceOptions wires the service.
 type AgentPRServiceOptions struct {
 	Bindings *repository.WorkspaceAgentBindingRepository
 	OpenPR   OpenPRFn
-	DB       database.Database
-	Logger   *log.Logger
+	// CommentPR posts a comment on an existing PR for continuation runs.
+	// Optional — see CommentPRFn.
+	CommentPR CommentPRFn
+	DB        database.Database
+	Logger    *log.Logger
 }
 
 // NewAgentPRService constructs the service.
@@ -87,10 +110,11 @@ func NewAgentPRService(opts AgentPRServiceOptions) (*AgentPRService, error) {
 		logger = log.Default()
 	}
 	return &AgentPRService{
-		bindings: opts.Bindings,
-		openPR:   opts.OpenPR,
-		db:       opts.DB,
-		logger:   logger,
+		bindings:  opts.Bindings,
+		openPR:    opts.OpenPR,
+		commentPR: opts.CommentPR,
+		db:        opts.DB,
+		logger:    logger,
 	}, nil
 }
 
@@ -122,6 +146,14 @@ func (s *AgentPRService) AfterRun(ctx context.Context, info PostRunInfo) {
 	owner, repo, ok := splitRepoSlug(binding.RepoSlug)
 	if !ok {
 		s.logger.Printf("agent pr: unparseable repo_slug %q for binding=%d", binding.RepoSlug, binding.ID)
+		return
+	}
+
+	// Continuation run: the runner already pushed commits onto the existing PR's
+	// head branch (info.Branch), so the PR grew in place — opening another PR
+	// would duplicate it. Post a progress comment instead and stop.
+	if info.Trigger.IsContinuation() {
+		s.afterContinuationRun(ctx, info, binding, owner, repo)
 		return
 	}
 
@@ -174,6 +206,51 @@ func (s *AgentPRService) AfterRun(ctx context.Context, info PostRunInfo) {
 	if err := s.upsertItemSCMLink(ctx, *info.ItemID, *binding.SCMConnectionID, binding.RepoSlug, pr); err != nil {
 		s.logger.Printf("agent pr: upsert item_scm_link run=%d: %v", info.RunID, err)
 	}
+}
+
+// afterContinuationRun posts a progress comment on the PR a continuation run
+// just pushed commits to. It never opens a PR (the PR already exists) and never
+// writes a new link row (the PR was linked when it was first opened/detected).
+// A nil commentPR seam degrades to a log line — the commits are already on the
+// PR regardless.
+func (s *AgentPRService) afterContinuationRun(ctx context.Context, info PostRunInfo, binding *models.WorkspaceAgentBinding, owner, repo string) {
+	number := info.Trigger.ContinuePRNumber
+	s.logger.Printf("agent pr: continuation run=%d pushed to %s/%s PR #%d (binding=%d)", info.RunID, owner, repo, number, binding.ID)
+	if s.commentPR == nil || number <= 0 {
+		return
+	}
+	if err := s.commentPR(ctx, PRCommentRequest{
+		ConnectionID: *binding.SCMConnectionID,
+		UserID:       info.TriggeredByUserID,
+		Owner:        owner,
+		Repo:         repo,
+		Number:       number,
+		Body:         continuationComment(info.Summary),
+	}); err != nil {
+		s.logger.Printf("agent pr: comment continuation run=%d %s/%s PR #%d: %v", info.RunID, owner, repo, number, err)
+	}
+}
+
+// triggerTokenRE matches the literal agent trigger token case-insensitively so
+// it can be stripped from any agent-authored comment body. Stripping the token
+// from the agent's own output is loop-guard layer 2: even if the marker layer
+// failed, the agent's comment carries no token to re-fire the poller.
+var triggerTokenRE = regexp.MustCompile("(?i)" + regexp.QuoteMeta(models.DefaultAgentTriggerToken))
+
+// stripTriggerToken removes every occurrence of the trigger token from s.
+func stripTriggerToken(s string) string {
+	return triggerTokenRE.ReplaceAllString(s, "")
+}
+
+// continuationComment builds the PR comment body for a continuation run: the
+// hidden agent marker (loop-guard layer 1) followed by a short note and, when
+// present, the agent's finish summary — token-stripped (layer 2) and bounded.
+func continuationComment(summary string) string {
+	body := models.AgentCommentMarker + "\n\nThe Windshift coding agent pushed updates to this pull request."
+	if note := strings.TrimSpace(stripTriggerToken(summary)); note != "" {
+		body += "\n\n---\n\n" + boundPRNote(note)
+	}
+	return body
 }
 
 // upsertItemSCMLink writes (or refreshes) the pull_request link row that

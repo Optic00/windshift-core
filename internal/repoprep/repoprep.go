@@ -38,6 +38,14 @@ type RepoSpec struct {
 	RemoteURL   string // tokenless HTTPS URL
 	BaseRef     string // default "main"
 	Token       string // optional OAuth/PAT; askpass-injected, never embedded
+	// ContinueBranch, when set, makes this a CONTINUATION run: instead of cutting
+	// a fresh agent-runs/run-{id} branch from BaseRef, Prepare fetches this
+	// existing remote branch (a PR head), checks the run out on it under its own
+	// name, and the run pushes commits back to it — so an existing PR grows rather
+	// than a competing one opening. BaseRef is ignored when this is set. The push
+	// stays non-force: if the remote branch advanced during the run the push is
+	// rejected (never force-push someone's branch).
+	ContinueBranch string
 }
 
 // Prepared is the result of Prepare. Path is the host directory the runner
@@ -114,6 +122,24 @@ func (p *Preparer) lockFor(key string) *sync.Mutex {
 	return l
 }
 
+// validateBranch rejects continuation branch names that could confuse git's
+// argument parsing or refspec handling. The name flows in from an external PR's
+// head; a leading dash could be read as a flag and whitespace/control or refspec
+// metacharacters have no place in a real branch ref. Normal branch names
+// (including slashes, as in agent-runs/run-39) pass.
+func validateBranch(branch string) error {
+	if branch == "" {
+		return errors.New("branch is required")
+	}
+	if strings.HasPrefix(branch, "-") {
+		return fmt.Errorf("branch must not start with '-', got %q", branch)
+	}
+	if strings.ContainsAny(branch, " \t\n\r:?*[\\~^") {
+		return fmt.Errorf("branch contains invalid characters, got %q", branch)
+	}
+	return nil
+}
+
 func validateRepoSlug(slug string) error {
 	if slug == "" {
 		return errors.New("repo slug is required")
@@ -145,9 +171,22 @@ func (p *Preparer) Prepare(ctx context.Context, spec RepoSpec, runID int) (*Prep
 	if spec.RemoteURL == "" {
 		return nil, errors.New("repoprep: RemoteURL is required")
 	}
+	// A continuation run cuts the checkout on an existing remote branch (a PR
+	// head) and keeps its name so the run's push lands back on the same PR; a
+	// normal run cuts a fresh agent-runs/run-{id} branch from BaseRef. The ref we
+	// fetch and the branch we check out coincide for a continuation, diverge
+	// otherwise.
+	continuation := spec.ContinueBranch != ""
 	baseRef := spec.BaseRef
 	if baseRef == "" {
 		baseRef = "main"
+	}
+	fetchRef := baseRef
+	if continuation {
+		if err := validateBranch(spec.ContinueBranch); err != nil {
+			return nil, fmt.Errorf("repoprep: continue branch: %w", err)
+		}
+		fetchRef = spec.ContinueBranch
 	}
 
 	repoKey := fmt.Sprintf("%d:%s", spec.WorkspaceID, spec.RepoSlug)
@@ -160,16 +199,21 @@ func (p *Preparer) Prepare(ctx context.Context, spec RepoSpec, runID int) (*Prep
 	if err := p.ensureBare(ctx, cacheDir, spec.RemoteURL, spec.Token); err != nil {
 		return nil, fmt.Errorf("ensure bare cache: %w", err)
 	}
-	if err := p.fetchRef(ctx, cacheDir, baseRef, spec.Token); err != nil {
-		return nil, fmt.Errorf("fetch %s: %w", baseRef, err)
+	if err := p.fetchRef(ctx, cacheDir, fetchRef, spec.Token); err != nil {
+		return nil, fmt.Errorf("fetch %s: %w", fetchRef, err)
 	}
-	baseCommit, err := p.revParse(ctx, cacheDir, baseRef)
+	baseCommit, err := p.revParse(ctx, cacheDir, fetchRef)
 	if err != nil {
-		return nil, fmt.Errorf("rev-parse %s: %w", baseRef, err)
+		return nil, fmt.Errorf("rev-parse %s: %w", fetchRef, err)
 	}
 
 	dest := filepath.Join(repoRoot, "runs", fmt.Sprintf("%d", runID))
+	// A continuation keeps the PR head's branch name so Push targets the same
+	// remote branch; a normal run gets a fresh per-run branch.
 	branch := fmt.Sprintf("agent-runs/run-%d", runID)
+	if continuation {
+		branch = spec.ContinueBranch
+	}
 
 	// Retry safety: a previous attempt may have left a partial checkout.
 	if err := os.RemoveAll(dest); err != nil {

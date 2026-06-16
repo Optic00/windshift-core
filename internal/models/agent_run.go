@@ -25,6 +25,21 @@ const (
 	JobKindCITask          = "ci_task"
 )
 
+const (
+	// DefaultAgentTriggerToken is the literal token a PR comment must contain to
+	// ask the bound agent to continue that PR. There is no agent user on the SCM
+	// side (commits/PRs/comments are attributed to the connected OAuth user), so
+	// a real @-mention can't resolve to a binding the way an in-Windshift mention
+	// does; the PR-comment poller matches this literal token instead and resolves
+	// the binding via repo→workspace→linked-item.
+	DefaultAgentTriggerToken = "@agent"
+	// AgentCommentMarker is embedded (as an invisible HTML comment) in every PR
+	// comment the agent posts. The poller skips any comment carrying it, so the
+	// agent can never re-trigger itself even if its body echoes the trigger token
+	// — the first and load-bearing layer of the comment loop guard.
+	AgentCommentMarker = "<!-- windshift-agent -->"
+)
+
 // IsAgentRunTerminal reports whether the status represents a final state
 // (no further transitions will be made by the orchestrator).
 func IsAgentRunTerminal(status string) bool {
@@ -97,11 +112,35 @@ type RunTrigger struct {
 	CommentID int `json:"comment_id,omitempty"`
 	// AuthorID is the user who wrote the triggering comment (0 if none).
 	AuthorID int `json:"author_id,omitempty"`
+
+	// Continuation target. When ContinueHeadBranch is set the run does NOT cut a
+	// fresh agent-runs/run-{id} branch: it checks out this existing PR head
+	// branch and pushes commits back to it, so the existing PR grows rather than
+	// a competing one opening (review-iteration, resume, build-on-another-agent's
+	// PR — all the same mechanism). ContinuePRNumber/ContinueRepoSlug identify the
+	// PR for the post-run hook (which comments instead of opening a PR) and for
+	// the SCM-comment poller's per-PR idempotency. The head branch is resolved
+	// once when the trigger is built and persisted here, so both the local and
+	// remote (queue→claim) paths read it without another SCM round-trip.
+	ContinuePRNumber   int    `json:"continue_pr_number,omitempty"`
+	ContinueRepoSlug   string `json:"continue_repo_slug,omitempty"`
+	ContinueHeadBranch string `json:"continue_head_branch,omitempty"`
+	// ContinueCommentID is the SCM (not Windshift) comment id that triggered a
+	// poller-driven continuation, 0 otherwise. Persisted so the poller's
+	// per-comment idempotency survives restarts and never re-fires the same
+	// comment. Distinct from CommentID, which is a Windshift comment.
+	ContinueCommentID int64 `json:"continue_comment_id,omitempty"`
 }
 
 // HasInstruction reports whether the trigger carries a non-empty instruction.
 func (t *RunTrigger) HasInstruction() bool {
 	return t != nil && strings.TrimSpace(t.Instruction) != ""
+}
+
+// IsContinuation reports whether the run should land commits on an existing PR
+// head branch instead of cutting a fresh per-run branch.
+func (t *RunTrigger) IsContinuation() bool {
+	return t != nil && strings.TrimSpace(t.ContinueHeadBranch) != ""
 }
 
 // AgentRunEvent is one entry on the NDJSON-style stream the agent emits to

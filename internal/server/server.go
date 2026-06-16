@@ -2124,6 +2124,45 @@ func openPRViaCredentialResolver(cr *scm.CredentialResolver) services.OpenPRFn {
 	}
 }
 
+// commentPRViaCredentialResolver implements services.CommentPRFn. Builds a
+// scm.Provider for the connection and posts a comment on the PR via
+// IssueProvider.CreateIssueComment (a PR is an issue on both GitHub and Gitea).
+// Credentials resolve per-user when a UserID is present (WI-275), matching the
+// open-PR path. Returns an error if the provider lacks issue-comment support.
+func commentPRViaCredentialResolver(cr *scm.CredentialResolver) services.CommentPRFn {
+	return func(ctx context.Context, req services.PRCommentRequest) error {
+		var creds *scm.ProviderCredentials
+		var err error
+		if req.UserID > 0 {
+			creds, err = cr.GetCredentialsForUser(ctx, req.ConnectionID, req.UserID)
+		} else {
+			creds, err = cr.GetCredentialsByConnectionID(ctx, req.ConnectionID)
+		}
+		if err != nil {
+			return fmt.Errorf("resolve connection %d: %w", req.ConnectionID, err)
+		}
+		provider, err := scm.NewProvider(scm.ProviderConfig{
+			ProviderType:        creds.ProviderType,
+			AuthMethod:          creds.AuthMethod,
+			BaseURL:             creds.BaseURL,
+			OAuthAccessToken:    creds.OAuthAccessToken,
+			OAuthRefreshToken:   creds.OAuthRefreshToken,
+			PersonalAccessToken: creds.PersonalAccessToken,
+			OAuthClientID:       creds.OAuthClientID,
+			OAuthClientSecret:   creds.OAuthClientSecret,
+		})
+		if err != nil {
+			return fmt.Errorf("build provider: %w", err)
+		}
+		issues, ok := provider.(scm.IssueProvider)
+		if !ok {
+			return fmt.Errorf("provider %s does not support issue comments", creds.ProviderType)
+		}
+		_, err = issues.CreateIssueComment(ctx, req.Owner, req.Repo, req.Number, req.Body)
+		return err
+	}
+}
+
 // bootCodingAgentRunService builds the orchestration-only WI-89 + WI-90
 // RunService when cfg.CodingAgent.Enabled is set: initialPrompt is the static
 // coding-agent operational prompt the remote runner hands the agent as its
@@ -2152,9 +2191,10 @@ func bootCodingAgentRunService(
 	// the shared bindings repo so the hook sees the exact row the
 	// trigger fired on. It fires for remote runs via FinalizeRemote.
 	prSvc, err := services.NewAgentPRService(services.AgentPRServiceOptions{
-		Bindings: bindings,
-		OpenPR:   openPRViaCredentialResolver(cr),
-		DB:       db,
+		Bindings:  bindings,
+		OpenPR:    openPRViaCredentialResolver(cr),
+		CommentPR: commentPRViaCredentialResolver(cr),
+		DB:        db,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("coding-agent pr service: %w", err)

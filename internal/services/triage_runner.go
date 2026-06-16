@@ -112,7 +112,7 @@ func (t *TriageRunner) Run(ctx context.Context, input RunInput, emit EventSink) 
 }
 
 func (t *TriageRunner) prepare(ctx context.Context, input RunInput, proxyURL, tokenFile string) (triagePrepareOut, error) {
-	out, err := t.execTriage(ctx, "prepare",
+	args := []string{
 		"--root", t.CacheRoot,
 		"--workspace-id", fmt.Sprintf("%d", input.Repo.WorkspaceID),
 		"--repo", input.Repo.Slug,
@@ -120,7 +120,13 @@ func (t *TriageRunner) prepare(ctx context.Context, input RunInput, proxyURL, to
 		"--base-ref", input.Repo.BaseRef,
 		"--run-id", fmt.Sprintf("%d", input.RunID),
 		"--token-file", tokenFile,
-	)
+	}
+	// Continuation: check out + push back to this existing PR head branch
+	// instead of cutting a fresh per-run branch from --base-ref.
+	if input.Repo.ContinueBranch != "" {
+		args = append(args, "--continue-branch", input.Repo.ContinueBranch)
+	}
+	out, err := t.execTriage(ctx, "prepare", args...)
 	if err != nil {
 		return triagePrepareOut{}, err
 	}
