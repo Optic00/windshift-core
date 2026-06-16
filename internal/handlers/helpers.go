@@ -14,7 +14,6 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
-	"windshift/internal/utils"
 )
 
 // rowScanner abstracts sql.Row and sql.Rows for Scan.
@@ -147,34 +146,13 @@ func createCacheWarning(cacheType string, err error, ctx string) models.APIWarni
 
 // logAudit logs a successful resource action audit event.
 func logAudit(db database.Database, r *http.Request, user *models.User, actionType, resourceType string, resourceID *int, resourceName string) {
-	_ = logger.LogAudit(db, logger.AuditEvent{
-		UserID:       user.ID,
-		Username:     user.Username,
-		IPAddress:    utils.GetClientIP(r),
-		UserAgent:    r.UserAgent(),
-		ActionType:   actionType,
-		ResourceType: resourceType,
-		ResourceID:   resourceID,
-		ResourceName: resourceName,
-		Success:      true,
-	})
+	_ = logger.LogAudit(db, logger.NewRequestAuditEvent(r, user, actionType, resourceType, resourceID, resourceName, nil))
 }
 
 // logAuditWithDetails logs a successful resource action audit event with extra
 // structured details (serialized to JSON in the audit log row).
 func logAuditWithDetails(db database.Database, r *http.Request, user *models.User, actionType, resourceType string, resourceID *int, resourceName string, details map[string]interface{}) {
-	_ = logger.LogAudit(db, logger.AuditEvent{
-		UserID:       user.ID,
-		Username:     user.Username,
-		IPAddress:    utils.GetClientIP(r),
-		UserAgent:    r.UserAgent(),
-		ActionType:   actionType,
-		ResourceType: resourceType,
-		ResourceID:   resourceID,
-		ResourceName: resourceName,
-		Details:      details,
-		Success:      true,
-	})
+	_ = logger.LogAudit(db, logger.NewRequestAuditEvent(r, user, actionType, resourceType, resourceID, resourceName, details))
 }
 
 // deserializeIntArray converts a JSON string pointer to a slice of ints.
