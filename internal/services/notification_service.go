@@ -1,7 +1,9 @@
 package services
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -37,6 +39,8 @@ type RuleCache struct {
 	WorkspaceConfigSets map[int]int                            // workspace_id -> config_set_id
 	EventRules          map[int][]models.NotificationEventRule // config_set_id -> rules
 	Templates           map[string]string                      // template_name -> content
+	DefaultConfigSetID  int                                    // configuration_sets.is_default — fallback scheme when a workspace has none
+	PersonalWorkspaces  map[int]bool                           // workspace_id -> true for is_personal workspaces (never notified)
 	LastRefreshed       time.Time
 }
 
@@ -180,6 +184,7 @@ func NewNotificationService(db database.Database, notificationManager Notificati
 			WorkspaceConfigSets: make(map[int]int),
 			EventRules:          make(map[int][]models.NotificationEventRule),
 			Templates:           make(map[string]string),
+			PersonalWorkspaces:  make(map[int]bool),
 			LastRefreshed:       time.Time{},
 		},
 		eventChan: make(chan *NotificationEvent, config.EventBufferSize),
@@ -383,7 +388,38 @@ func (ns *NotificationService) refreshRuleCache() error {
 		WorkspaceConfigSets: make(map[int]int),
 		EventRules:          make(map[int][]models.NotificationEventRule),
 		Templates:           make(map[string]string),
+		PersonalWorkspaces:  make(map[int]bool),
 		LastRefreshed:       time.Now(),
+	}
+
+	// Default configuration set — the fallback notification scheme for any
+	// workspace with no config set assigned, mirroring how an unassigned
+	// workflow falls back to workflows.is_default (workflow_service.go).
+	// A missing default row leaves this 0, which resolves to "no rules" (skip).
+	if err := ns.db.QueryRow(`SELECT id FROM configuration_sets WHERE is_default = true LIMIT 1`).Scan(&newCache.DefaultConfigSetID); err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			slog.Warn("failed to load default configuration set for notifications", slog.String("component", "notifications"), slog.Any("error", err))
+		}
+	}
+
+	// Personal workspaces never receive rule-based notifications. Cache the
+	// set so the async resolver can skip them without a per-event query.
+	personalRows, err := ns.db.Query(`SELECT id FROM workspaces WHERE is_personal = true`)
+	if err != nil {
+		slog.Warn("failed to load personal workspaces for notifications", slog.String("component", "notifications"), slog.Any("error", err))
+	} else {
+		for personalRows.Next() {
+			var wsID int
+			if err := personalRows.Scan(&wsID); err != nil {
+				slog.Error("failed to scan personal workspace", slog.String("component", "notifications"), slog.Any("error", err))
+				continue
+			}
+			newCache.PersonalWorkspaces[wsID] = true
+		}
+		if err := personalRows.Err(); err != nil {
+			slog.Warn("failed to iterate personal workspaces", slog.String("component", "notifications"), slog.Any("error", err))
+		}
+		_ = personalRows.Close()
 	}
 
 	// Load workspace -> config_set mappings
@@ -484,18 +520,35 @@ func (ns *NotificationService) refreshRuleCache() error {
 	return nil
 }
 
-// getConfigSetForWorkspace retrieves config set ID for a workspace (cached)
+// getConfigSetForWorkspace resolves the notification configuration set for a
+// workspace, mirroring the workflow resolver's fallback chain
+// (WorkflowService.GetWorkflowIDForItem): use the workspace's assigned config
+// set, otherwise fall back to the default set's scheme.
+//
+//   - Personal workspaces never notify — return 0 (skip), matching the
+//     workflow resolver's is_personal early-return.
+//   - A workspace with an assigned config set uses it as-is. If that set's
+//     scheme has no rules (or none linked), no notification fires — that is the
+//     supported way to express "no notifications", so the fallback must NOT
+//     override it.
+//   - A workspace with no assigned config set falls back to the default set.
+//     DefaultConfigSetID is 0 only when no is_default row exists, which resolves
+//     to "no rules" (skip) — the safe degrade.
 func (ns *NotificationService) getConfigSetForWorkspace(workspaceID int) (int, error) {
 	ns.cacheMu.RLock()
 	defer ns.cacheMu.RUnlock()
 
-	if configSetID, exists := ns.ruleCache.WorkspaceConfigSets[workspaceID]; exists {
+	if ns.ruleCache.PersonalWorkspaces[workspaceID] {
+		return 0, nil
+	}
+
+	if configSetID, exists := ns.ruleCache.WorkspaceConfigSets[workspaceID]; exists && configSetID != 0 {
 		atomic.AddInt64(&ns.cacheHits, 1)
 		return configSetID, nil
 	}
 
 	atomic.AddInt64(&ns.cacheMisses, 1)
-	return 0, nil
+	return ns.ruleCache.DefaultConfigSetID, nil
 }
 
 // getEventRules retrieves event rules for a config set and event type (cached)
