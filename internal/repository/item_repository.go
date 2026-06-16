@@ -81,14 +81,35 @@ func assignNullableStringPtr(dest **string, src sql.NullString) {
 	}
 }
 
+// mapItemErr normalizes a QueryRow/Scan error for the single-item accessors:
+// a missing row becomes ErrNotFound, any other error is wrapped as
+// "failed to <op>". Returns nil for a nil error. This is the shared error
+// contract behind the GetX(itemID) accessors so they don't each re-spell the
+// same ErrNoRows / wrap dance.
+func mapItemErr(err error, op string) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	return fmt.Errorf("failed to %s: %w", op, err)
+}
+
+// scanItemColumn reads a single column for one item by id into dest, mapping a
+// missing row to ErrNotFound via mapItemErr. It is the common query function
+// behind the typed single-column accessors (GetWorkspaceID, GetTitle,
+// GetParentID, …) — each shrinks to one call instead of hand-rolling the query.
+// column / op are trusted literals supplied by the accessor, never caller input.
+func (r *ItemRepository) scanItemColumn(itemID int, column, op string, dest any) error {
+	return mapItemErr(r.db.QueryRow("SELECT "+column+" FROM items WHERE id = ?", itemID).Scan(dest), op)
+}
+
 // FindByID loads an item by ID with all fields (no joins)
 func (r *ItemRepository) FindByID(id int) (*models.Item, error) {
 	item, err := scanItemBase(r.db.QueryRow(`SELECT `+itemBaseColumns+` FROM items WHERE id = ?`, id))
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to find item: %w", err)
+		return nil, mapItemErr(err, "find item")
 	}
 	return item, nil
 }
@@ -102,11 +123,8 @@ func (r *ItemRepository) FindByIDForUpdate(tx database.Tx, id int) (*models.Item
 		query += " FOR UPDATE"
 	}
 	item, err := scanItemBase(tx.QueryRow(query, id))
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to find item for update: %w", err)
+		return nil, mapItemErr(err, "find item for update")
 	}
 	return item, nil
 }
@@ -284,12 +302,8 @@ func (r *ItemRepository) FindByIDWithWorkspaceStatus(id int) (*ItemWithWorkspace
 // GetWorkspaceID returns just the workspace_id for an item (frequently needed for permission checks)
 func (r *ItemRepository) GetWorkspaceID(itemID int) (int, error) {
 	var workspaceID int
-	err := r.db.QueryRow("SELECT workspace_id FROM items WHERE id = ?", itemID).Scan(&workspaceID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, ErrNotFound
-	}
-	if err != nil {
-		return 0, fmt.Errorf("failed to get workspace id: %w", err)
+	if err := r.scanItemColumn(itemID, "workspace_id", "get workspace id", &workspaceID); err != nil {
+		return 0, err
 	}
 	return workspaceID, nil
 }
@@ -299,11 +313,8 @@ func (r *ItemRepository) GetWorkspaceID(itemID int) (int, error) {
 func (r *ItemRepository) GetWorkspaceIDCtx(ctx context.Context, itemID int) (int, error) {
 	var workspaceID int
 	err := r.db.QueryRowContext(ctx, "SELECT workspace_id FROM items WHERE id = ?", itemID).Scan(&workspaceID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, ErrNotFound
-	}
 	if err != nil {
-		return 0, fmt.Errorf("failed to get workspace id: %w", err)
+		return 0, mapItemErr(err, "get workspace id")
 	}
 	return workspaceID, nil
 }
@@ -329,20 +340,6 @@ func (r *ItemRepository) ListChildTitles(parentID int) ([]string, error) {
 		return nil, fmt.Errorf("iterate child titles: %w", err)
 	}
 	return titles, nil
-}
-
-// GetTitle returns an item's title (used by link/attachment handlers that need
-// a label for notifications without fetching the whole row).
-func (r *ItemRepository) GetTitle(itemID int) (string, error) {
-	var title string
-	err := r.db.QueryRow("SELECT title FROM items WHERE id = ?", itemID).Scan(&title)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", ErrNotFound
-	}
-	if err != nil {
-		return "", fmt.Errorf("failed to get title: %w", err)
-	}
-	return title, nil
 }
 
 // GetTitles returns a map of itemID → title for all IDs that exist. Missing
@@ -456,11 +453,8 @@ func (r *ItemRepository) GetItemGraphMetadata(itemID int) (*ItemGraphMetadata, e
 		LEFT JOIN statuses s ON i.status_id = s.id
 		WHERE i.id = ?
 	`, itemID).Scan(&meta.WorkspaceKey, &meta.WorkspaceItemNumber, &meta.WorkspaceID, &meta.StatusName)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
 	if err != nil {
-		return nil, fmt.Errorf("get item graph metadata: %w", err)
+		return nil, mapItemErr(err, "get item graph metadata")
 	}
 	return &meta, nil
 }
@@ -470,12 +464,8 @@ func (r *ItemRepository) GetItemGraphMetadata(itemID int) (*ItemGraphMetadata, e
 // without parsing into a map.
 func (r *ItemRepository) GetCustomFieldValuesRaw(itemID int) (sql.NullString, error) {
 	var data sql.NullString
-	err := r.db.QueryRow("SELECT custom_field_values FROM items WHERE id = ?", itemID).Scan(&data)
-	if errors.Is(err, sql.ErrNoRows) {
-		return sql.NullString{}, ErrNotFound
-	}
-	if err != nil {
-		return sql.NullString{}, fmt.Errorf("failed to get custom field values: %w", err)
+	if err := r.scanItemColumn(itemID, "custom_field_values", "get custom field values", &data); err != nil {
+		return sql.NullString{}, err
 	}
 	return data, nil
 }
@@ -843,22 +833,10 @@ func (r *ItemRepository) ClearWorklogItemReferences(tx database.Tx, itemID int) 
 // GetParentID returns the parent_id for an item
 func (r *ItemRepository) GetParentID(itemID int) (*int, error) {
 	var parentID sql.NullInt64
-	err := r.db.QueryRow(`
-		SELECT parent_id FROM items WHERE id = ?
-	`, itemID).Scan(&parentID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
+	if err := r.scanItemColumn(itemID, "parent_id", "get parent id", &parentID); err != nil {
+		return nil, err
 	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to get parent id: %w", err)
-	}
-
-	var result *int
-	if parentID.Valid {
-		val := int(parentID.Int64)
-		result = &val
-	}
-	return result, nil
+	return nullIntPtr(parentID), nil
 }
 
 // GetParentIDTx returns the parent_id for an item using the supplied
@@ -871,20 +849,10 @@ func (r *ItemRepository) GetParentIDTx(tx database.Tx, itemID int) (*int, error)
 		query += " FOR UPDATE"
 	}
 	var parentID sql.NullInt64
-	err := tx.QueryRow(query, itemID).Scan(&parentID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
+	if err := tx.QueryRow(query, itemID).Scan(&parentID); err != nil {
+		return nil, mapItemErr(err, "get parent id")
 	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to get parent id: %w", err)
-	}
-
-	var result *int
-	if parentID.Valid {
-		val := int(parentID.Int64)
-		result = &val
-	}
-	return result, nil
+	return nullIntPtr(parentID), nil
 }
 
 // Exists checks if an item exists
@@ -907,11 +875,8 @@ func (r *ItemRepository) GetCalendarData(itemID int) (sql.NullString, int, error
 		"SELECT calendar_data, workspace_id FROM items WHERE id = ?",
 		itemID,
 	).Scan(&data, &workspaceID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return sql.NullString{}, 0, ErrNotFound
-	}
 	if err != nil {
-		return sql.NullString{}, 0, fmt.Errorf("failed to get calendar data: %w", err)
+		return sql.NullString{}, 0, mapItemErr(err, "get calendar data")
 	}
 	return data, workspaceID, nil
 }
@@ -968,11 +933,8 @@ func (r *ItemRepository) FindIDByKeyAndNumber(workspaceKey string, itemNumber in
 		"SELECT i.id FROM items i JOIN workspaces w ON i.workspace_id = w.id WHERE UPPER(w.key) = UPPER(?) AND i.workspace_item_number = ?",
 		workspaceKey, itemNumber,
 	).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, ErrNotFound
-	}
 	if err != nil {
-		return 0, fmt.Errorf("failed to resolve item by key: %w", err)
+		return 0, mapItemErr(err, "resolve item by key")
 	}
 	return id, nil
 }
@@ -988,11 +950,8 @@ func (r *ItemRepository) GetItemKey(itemID int) (string, error) {
 		JOIN workspaces w ON i.workspace_id = w.id
 		WHERE i.id = ?
 	`, itemID).Scan(&workspaceKey, &itemNumber)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", ErrNotFound
-	}
 	if err != nil {
-		return "", fmt.Errorf("failed to get item key: %w", err)
+		return "", mapItemErr(err, "get item key")
 	}
 	return fmt.Sprintf("%s-%d", workspaceKey, itemNumber), nil
 }
@@ -1016,11 +975,7 @@ func (r *ItemRepository) GetUserFieldTx(ctx context.Context, tx database.Tx, ite
 	if err := tx.QueryRowContext(ctx, `SELECT `+col+` FROM items WHERE id = ?`, itemID).Scan(&nid); err != nil {
 		return nil, fmt.Errorf("get item column %s: %w", col, err)
 	}
-	if !nid.Valid {
-		return nil, nil
-	}
-	v := int(nid.Int64)
-	return &v, nil
+	return nullIntPtr(nid), nil
 }
 
 // FindIDByKeyAndNumberInWorkspace resolves an item by workspace key + number,
@@ -1034,11 +989,8 @@ func (r *ItemRepository) FindIDByKeyAndNumberInWorkspace(workspaceID int, worksp
 		"SELECT i.id FROM items i JOIN workspaces w ON i.workspace_id = w.id WHERE i.workspace_id = ? AND i.workspace_item_number = ? AND UPPER(w.key) = UPPER(?)",
 		workspaceID, itemNumber, workspaceKey,
 	).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, ErrNotFound
-	}
 	if err != nil {
-		return 0, fmt.Errorf("failed to resolve item by key in workspace: %w", err)
+		return 0, mapItemErr(err, "resolve item by key in workspace")
 	}
 	return id, nil
 }
@@ -1048,17 +1000,10 @@ func (r *ItemRepository) FindIDByKeyAndNumberInWorkspace(workspaceID int, worksp
 // doesn't exist.
 func (r *ItemRepository) GetFracIndex(itemID int) (*string, error) {
 	var fracIndex sql.NullString
-	err := r.db.QueryRow("SELECT frac_index FROM items WHERE id = ?", itemID).Scan(&fracIndex)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
+	if err := r.scanItemColumn(itemID, "frac_index", "get frac_index", &fracIndex); err != nil {
+		return nil, err
 	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to get frac_index: %w", err)
-	}
-	if !fracIndex.Valid {
-		return nil, nil
-	}
-	return &fracIndex.String, nil
+	return nullStrPtr(fracIndex), nil
 }
 
 // ListItemsLinkedToTestResult returns the items associated with a given test
@@ -1629,22 +1574,10 @@ func (r *ItemRepository) ListHomepageItemSummaries(itemIDs []int) ([]HomepageIte
 		); err != nil {
 			return nil, fmt.Errorf("scan homepage item: %w", err)
 		}
-		if statusColor.Valid {
-			v := statusColor.String
-			s.StatusColor = &v
-		}
-		if priorityID.Valid {
-			v := int(priorityID.Int64)
-			s.PriorityID = &v
-		}
-		if priorityName.Valid {
-			v := priorityName.String
-			s.PriorityName = &v
-		}
-		if priorityColor.Valid {
-			v := priorityColor.String
-			s.PriorityColor = &v
-		}
+		s.StatusColor = nullStrPtr(statusColor)
+		s.PriorityID = nullIntPtr(priorityID)
+		s.PriorityName = nullStrPtr(priorityName)
+		s.PriorityColor = nullStrPtr(priorityColor)
 		resultIdx[s.ItemID] = len(results)
 		results = append(results, s)
 	}

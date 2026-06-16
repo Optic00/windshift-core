@@ -33,6 +33,26 @@ func assignNullableInt(dest **int, src sql.NullInt64) {
 	}
 }
 
+// nullIntPtr returns src.Int64 as a *int, or nil when src is not valid. The
+// value-returning counterpart to assignNullableInt, for methods that build a
+// *int return directly rather than populating a struct field.
+func nullIntPtr(src sql.NullInt64) *int {
+	if !src.Valid {
+		return nil
+	}
+	val := int(src.Int64)
+	return &val
+}
+
+// nullStrPtr returns src.String as a *string, or nil when src is not valid.
+func nullStrPtr(src sql.NullString) *string {
+	if !src.Valid {
+		return nil
+	}
+	val := src.String
+	return &val
+}
+
 // assignNullableString copies src.String into *dest when src.Valid.
 func assignNullableString(dest *string, src sql.NullString) {
 	if src.Valid {

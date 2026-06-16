@@ -206,6 +206,12 @@ func NewNotificationService(db database.Database, notificationManager Notificati
 	return service
 }
 
+// itemActionURL is the in-app deep link for an item, shared by every
+// notification this service stores.
+func itemActionURL(workspaceID, itemID int) string {
+	return fmt.Sprintf("/workspaces/%d/items/%d", workspaceID, itemID)
+}
+
 // NotifyUsers creates a notification directly for each user in userIDs,
 // bypassing rule-based recipient determination. Callers (e.g., action
 // notify_user nodes) that have already resolved recipients from their own
@@ -215,7 +221,7 @@ func (ns *NotificationService) NotifyUsers(userIDs []int, workspaceID, itemID, a
 	if ns.notificationManager == nil {
 		return fmt.Errorf("notification manager not configured")
 	}
-	actionURL := fmt.Sprintf("/workspaces/%d/items/%d", workspaceID, itemID)
+	actionURL := itemActionURL(workspaceID, itemID)
 	seen := make(map[int]bool, len(userIDs))
 	for _, uid := range userIDs {
 		if uid == 0 || uid == actorUserID || seen[uid] {
@@ -360,7 +366,7 @@ func (ns *NotificationService) processEvent(event *NotificationEvent) error {
 				Type:      ns.getNotificationType(event.EventType),
 				Timestamp: time.Now(),
 				Read:      false,
-				ActionURL: fmt.Sprintf("/workspaces/%d/items/%d", event.WorkspaceID, event.ItemID),
+				ActionURL: itemActionURL(event.WorkspaceID, event.ItemID),
 			}
 
 			slog.Debug("creating notification for user", slog.String("component", "notifications"), slog.Int("user_id", userID), slog.String("notification_type", notification.Type), slog.String("title", notification.Title))
@@ -627,9 +633,15 @@ func (ns *NotificationService) determineRecipients(event *NotificationEvent, rul
 	// rows (is_agent = true) are filtered out too — they're non-human API
 	// principals and don't consume notifications even when a rule routes
 	// to them as assignee, watcher, or admin.
-	recipients := make([]int, 0, len(recipientSet))
+	candidates := make([]int, 0, len(recipientSet))
 	for userID := range recipientSet {
-		if ns.isAgentUser(userID) {
+		candidates = append(candidates, userID)
+	}
+	skipAsAgent := ns.agentOrUnknownUsers(candidates)
+
+	recipients := make([]int, 0, len(candidates))
+	for _, userID := range candidates {
+		if skipAsAgent[userID] {
 			continue
 		}
 		if !ns.canViewWorkspace(userID, event.WorkspaceID) {
@@ -641,22 +653,67 @@ func (ns *NotificationService) determineRecipients(event *NotificationEvent, rul
 	return recipients
 }
 
-// isAgentUser returns true when the user row is flagged is_agent (owned
-// agent or admin-provisioned service user). On query error we fail closed
-// — treat the row as an agent and skip — matching canViewWorkspace's
-// fail-closed posture; a missing or unreadable user shouldn't receive a
-// notification anyway.
-func (ns *NotificationService) isAgentUser(userID int) bool {
-	var isAgent bool
-	err := ns.db.QueryRow(`SELECT is_agent FROM users WHERE id = ?`, userID).Scan(&isAgent)
-	if err != nil {
-		slog.Warn("is_agent check failed during recipient filtering; skipping",
-			slog.String("component", "notifications"),
-			slog.Int("user_id", userID),
-			slog.Any("error", err))
-		return true
+// agentOrUnknownUsers returns the subset of userIDs that must be excluded from
+// notifications because they are agent / service-user rows (is_agent = true) or
+// have no readable user row. It replaces a per-recipient is_agent query with a
+// single batched lookup. Fail-closed, matching the previous per-user behavior:
+// any id the query can't positively confirm as a non-agent human — a row
+// flagged is_agent, an id with no row, or a total query failure — is returned
+// as "skip", so an unreadable user never receives a notification.
+func (ns *NotificationService) agentOrUnknownUsers(userIDs []int) map[int]bool {
+	skip := make(map[int]bool, len(userIDs))
+	if len(userIDs) == 0 {
+		return skip
 	}
-	return isAgent
+
+	skipAll := func() map[int]bool {
+		for _, id := range userIDs {
+			skip[id] = true
+		}
+		return skip
+	}
+
+	placeholders := make([]string, len(userIDs))
+	args := make([]any, len(userIDs))
+	for i, id := range userIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	rows, err := ns.db.Query(
+		fmt.Sprintf(`SELECT id, is_agent FROM users WHERE id IN (%s)`, strings.Join(placeholders, ",")),
+		args...)
+	if err != nil {
+		slog.Warn("is_agent batch check failed during recipient filtering; skipping all",
+			slog.String("component", "notifications"), slog.Any("error", err))
+		return skipAll()
+	}
+	defer rows.Close()
+
+	seen := make(map[int]bool, len(userIDs))
+	for rows.Next() {
+		var id int
+		var isAgent bool
+		if err := rows.Scan(&id, &isAgent); err != nil {
+			continue
+		}
+		seen[id] = true
+		if isAgent {
+			skip[id] = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		slog.Warn("is_agent batch iteration failed during recipient filtering; skipping all",
+			slog.String("component", "notifications"), slog.Any("error", err))
+		return skipAll()
+	}
+
+	// Any candidate without a row is unknown → fail closed (skip).
+	for _, id := range userIDs {
+		if !seen[id] {
+			skip[id] = true
+		}
+	}
+	return skip
 }
 
 // canViewWorkspace returns true when the user currently has item-view
@@ -678,59 +735,48 @@ func (ns *NotificationService) canViewWorkspace(userID, workspaceID int) bool {
 	return ok
 }
 
+// queryUserIDs runs a query that selects a single user-id column and returns
+// the collected ids. Query / iteration failures are logged under errLabel and
+// yield whatever was read so far — recipient lookups degrade to "fewer
+// recipients", never a hard failure.
+func (ns *NotificationService) queryUserIDs(errLabel, query string, args ...any) []int {
+	rows, err := ns.db.Query(query, args...)
+	if err != nil {
+		slog.Error("failed to "+errLabel, slog.String("component", "notifications"), slog.Any("error", err))
+		return nil
+	}
+	defer rows.Close()
+
+	var ids []int
+	for rows.Next() {
+		var userID int
+		if err := rows.Scan(&userID); err == nil {
+			ids = append(ids, userID)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		slog.Error("failed to iterate "+errLabel, slog.String("component", "notifications"), slog.Any("error", err))
+	}
+	return ids
+}
+
 // getWorkspaceAdmins retrieves admin user IDs for a workspace
 func (ns *NotificationService) getWorkspaceAdmins(workspaceID int) []int {
-	rows, err := ns.db.Query(`
+	return ns.queryUserIDs("fetch workspace admins", `
 		SELECT DISTINCT uwr.user_id
 		FROM user_workspace_roles uwr
 		JOIN workspace_roles wr ON uwr.role_id = wr.id
 		WHERE uwr.workspace_id = ? AND wr.name = 'Administrator'
 	`, workspaceID)
-	if err != nil {
-		slog.Error("failed to fetch workspace admins", slog.String("component", "notifications"), slog.Int("workspace_id", workspaceID), slog.Any("error", err))
-		return nil
-	}
-	defer rows.Close()
-
-	var adminIDs []int
-	for rows.Next() {
-		var userID int
-		if err := rows.Scan(&userID); err == nil {
-			adminIDs = append(adminIDs, userID)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		slog.Error("failed to iterate workspace admins", slog.String("component", "notifications"), slog.Int("workspace_id", workspaceID), slog.Any("error", err))
-	}
-
-	return adminIDs
 }
 
 // getItemWatchers retrieves active watcher user IDs for an item
 func (ns *NotificationService) getItemWatchers(itemID int) []int {
-	rows, err := ns.db.Query(`
+	return ns.queryUserIDs("fetch item watchers", `
 		SELECT DISTINCT user_id
 		FROM item_watches
 		WHERE item_id = ? AND is_active = true
 	`, itemID)
-	if err != nil {
-		slog.Error("failed to fetch item watchers", slog.String("component", "notifications"), slog.Int("item_id", itemID), slog.Any("error", err))
-		return nil
-	}
-	defer rows.Close()
-
-	var watcherIDs []int
-	for rows.Next() {
-		var userID int
-		if err := rows.Scan(&userID); err == nil {
-			watcherIDs = append(watcherIDs, userID)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		slog.Error("failed to iterate item watchers", slog.String("component", "notifications"), slog.Int("item_id", itemID), slog.Any("error", err))
-	}
-
-	return watcherIDs
 }
 
 // generateNotificationMessage generates title and message for a notification

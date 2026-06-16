@@ -18,15 +18,6 @@ func NewOnCallRepository(db database.Database) *OnCallRepository {
 	return &OnCallRepository{db: db}
 }
 
-// nullIntPtr converts a sql.NullInt64 to an *int, returning nil if not valid.
-func nullIntPtr(n sql.NullInt64) *int {
-	if !n.Valid {
-		return nil
-	}
-	v := int(n.Int64)
-	return &v
-}
-
 // nullTimePtr converts a sql.NullTime to a *time.Time, returning nil if not valid.
 func nullTimePtr(n sql.NullTime) *time.Time {
 	if !n.Valid {
