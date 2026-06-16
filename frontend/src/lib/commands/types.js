@@ -10,6 +10,7 @@ import { BUCKET } from './buckets.js';
  *                                 Tokens from `label` are derived at score time, not stored here.
  * @property {string} [url]        Navigation target. Either `url` or `execute` must be set.
  * @property {() => void | Promise<void>} [execute] Custom action. Receives no args; close palette afterward.
+ * @property {string} [submenu]    Opens a sub-palette instead of navigating; CommandPalette intercepts it (e.g. 'recent').
  * @property {(ctx: CommandContext) => boolean} [isAvailable] Optional gate; defaults to true.
  * @property {string} [source]     Provider name, for debug overlay.
  * @property {boolean} [_isContextCommand] Legacy field (contextCommands.js); displayed as a chip.
