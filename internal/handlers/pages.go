@@ -153,7 +153,13 @@ func (h *PageHandler) GetTree(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pages, err := h.service.ListTree(workspaceID, false)
+	// ListTreeMeta omits the page bodies at the query layer: the sidebar
+	// renders titles only and PageMoveDialog needs id/parent only, so the
+	// heavy content column is never read off disk or allocated — not loaded
+	// and then discarded. This keeps the tree payload KB-sized instead of
+	// MB-sized at ~1000 pages (content would otherwise be shipped twice
+	// over: flat Pages + nested Tree, since PageNode embeds Page). (WI-407.)
+	pages, err := h.service.ListTreeMeta(workspaceID, false)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return

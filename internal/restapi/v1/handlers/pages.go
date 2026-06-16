@@ -120,7 +120,13 @@ func (h *PageHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pages, err := h.service.ListTree(wsID, false)
+	// ListTreeMeta omits the page bodies: this is a list endpoint (ws page
+	// list) that returns id/title/hierarchy/labels per page — the body is
+	// fetched on demand via GET .../pages/{id}. Projecting content out of
+	// the query avoids reading/allocating MBs of body text for a workspace
+	// with thousands of pages; PageResponse.Content is omitempty so the
+	// empty body simply drops from each DTO. (WI-407.)
+	pages, err := h.service.ListTreeMeta(wsID, false)
 	if err != nil {
 		h.RespondInternalError(w, r)
 		return
