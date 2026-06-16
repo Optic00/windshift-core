@@ -532,6 +532,13 @@ export default {
     boardSummary: 'Total: {itemCount} work items across {columnCount} columns',
     allItems: 'All Items',
     transition_failed: 'Status transition failed. The board has been refreshed.',
+    // Board card dependency hover summary
+    blockedBy: 'Blocked by',
+    blocking: 'Blocking',
+    blockersCount_one: '{count} blocker',
+    blockersCount_other: '{count} blockers',
+    blockingCount_one: '{count} blocking',
+    blockingCount_other: '{count} blocking',
   },
 
   links: {

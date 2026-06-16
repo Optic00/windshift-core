@@ -441,6 +441,13 @@ export default {
     noQueryToSave: 'No hay consulta para guardar. Por favor configure algunos filtros o ingrese una consulta QL primero.',
     boardSummary: 'Total: {itemCount} elementos de trabajo en {columnCount} columnas',
     allItems: 'Todos los elementos',
+    // Board card dependency hover summary
+    blockedBy: 'Bloqueado por',
+    blocking: 'Bloqueando',
+    blockersCount_one: '{count} bloqueo',
+    blockersCount_other: '{count} bloqueos',
+    blockingCount_one: '{count} bloqueando',
+    blockingCount_other: '{count} bloqueando',
   },
   links: {
     title: 'Enlaces',

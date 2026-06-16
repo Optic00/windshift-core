@@ -417,6 +417,13 @@ export default {
     confirmDeleteItem: 'Möchten Sie "{title}" wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden.',
     noQueryToSave: 'Keine Abfrage zum Speichern. Bitte richten Sie zuerst einige Filter ein oder geben Sie eine QL-Abfrage ein.',
     boardSummary: 'Gesamt: {itemCount} Vorgänge in {columnCount} Spalten',
+    // Board card dependency hover summary
+    blockedBy: 'Blockiert durch',
+    blocking: 'Blockiert',
+    blockersCount_one: '{count} Blocker',
+    blockersCount_other: '{count} Blocker',
+    blockingCount_one: '{count} blockiert',
+    blockingCount_other: '{count} blockiert',
     roadmap: 'Roadmap',
     roadmapSettings: 'Roadmap-Einstellungen',
     roadmapStartField: 'Startdatum-Feld',

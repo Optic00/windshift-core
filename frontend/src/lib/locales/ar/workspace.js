@@ -441,6 +441,13 @@ export default {
     noQueryToSave: 'لا يوجد استعلام للحفظ. يرجى إعداد بعض الفلاتر أو إدخال استعلام QL أولًا.',
     boardSummary: 'المجموع: {itemCount} عنصر عمل عبر {columnCount} أعمدة',
     allItems: 'جميع العناصر',
+    // Board card dependency hover summary
+    blockedBy: 'محظور بواسطة',
+    blocking: 'يحظر',
+    blockersCount_one: '{count} حظر',
+    blockersCount_other: '{count} حظر',
+    blockingCount_one: '{count} يحظر',
+    blockingCount_other: '{count} يحظر',
   },
   links: {
     title: 'الروابط',

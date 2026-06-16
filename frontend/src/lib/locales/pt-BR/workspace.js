@@ -426,6 +426,13 @@ export default {
     confirmDeleteItem: 'Tem certeza de que deseja excluir "{title}"? Esta ação não pode ser desfeita.',
     noQueryToSave: 'Nenhuma consulta para salvar. Por favor, configure alguns filtros ou insira uma consulta QL primeiro.',
     boardSummary: 'Total: {itemCount} itens de trabalho em {columnCount} colunas',
+    // Board card dependency hover summary
+    blockedBy: 'Bloqueado por',
+    blocking: 'Bloqueando',
+    blockersCount_one: '{count} bloqueio',
+    blockersCount_other: '{count} bloqueios',
+    blockingCount_one: '{count} bloqueando',
+    blockingCount_other: '{count} bloqueando',
     roadmap: 'Roadmap',
     roadmapSettings: 'Configurações do Roadmap',
     roadmapStartField: 'Campo de data de início',
