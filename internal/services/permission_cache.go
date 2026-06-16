@@ -561,14 +561,8 @@ func (ps *PermissionService) InvalidateWorkspaceMemberCaches(workspaceID int) er
 	}
 	defer rows.Close()
 
-	var userIDs []int
-	for rows.Next() {
-		var userID int
-		if err := rows.Scan(&userID); err == nil {
-			userIDs = append(userIDs, userID)
-		}
-	}
-	if err := rows.Err(); err != nil {
+	userIDs, err := scanIntColumn(rows)
+	if err != nil {
 		return fmt.Errorf("error iterating workspace members for cache invalidation: %w", err)
 	}
 
@@ -588,18 +582,7 @@ func (ps *PermissionService) getGroupMembers(groupID int) ([]int, error) {
 	}
 	defer rows.Close()
 
-	var userIDs []int
-	for rows.Next() {
-		var userID int
-		if err := rows.Scan(&userID); err == nil {
-			userIDs = append(userIDs, userID)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return userIDs, nil
+	return scanIntColumn(rows)
 }
 
 // OnUserPermissionChanged should be called when user permissions are modified
@@ -771,18 +754,7 @@ func (ps *PermissionService) getUsersWithRole(roleID int) ([]int, error) {
 	}
 	defer rows.Close()
 
-	var userIDs []int
-	for rows.Next() {
-		var userID int
-		if err := rows.Scan(&userID); err == nil {
-			userIDs = append(userIDs, userID)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return userIDs, nil
+	return scanIntColumn(rows)
 }
 
 // getUsersInGroupsWithRole returns all user IDs in groups that have been assigned a specific role
@@ -798,18 +770,7 @@ func (ps *PermissionService) getUsersInGroupsWithRole(roleID int) ([]int, error)
 	}
 	defer rows.Close()
 
-	var userIDs []int
-	for rows.Next() {
-		var userID int
-		if err := rows.Scan(&userID); err == nil {
-			userIDs = append(userIDs, userID)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return userIDs, nil
+	return scanIntColumn(rows)
 }
 
 // getConfigurationSetsUsingPermissionSet returns all configuration set IDs using a specific permission set
@@ -824,18 +785,7 @@ func (ps *PermissionService) getConfigurationSetsUsingPermissionSet(permissionSe
 	}
 	defer rows.Close()
 
-	var configSetIDs []int
-	for rows.Next() {
-		var id int
-		if err := rows.Scan(&id); err == nil {
-			configSetIDs = append(configSetIDs, id)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return configSetIDs, nil
+	return scanIntColumn(rows)
 }
 
 // getWorkspacesUsingConfigurationSet returns all workspace IDs using a specific configuration set
@@ -850,18 +800,7 @@ func (ps *PermissionService) getWorkspacesUsingConfigurationSet(configSetID int)
 	}
 	defer rows.Close()
 
-	var workspaceIDs []int
-	for rows.Next() {
-		var id int
-		if err := rows.Scan(&id); err == nil {
-			workspaceIDs = append(workspaceIDs, id)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return workspaceIDs, nil
+	return scanIntColumn(rows)
 }
 
 // GetCacheStats returns current cache performance statistics
@@ -1397,6 +1336,23 @@ func (ps *PermissionService) loadAllPermissionKeys() error {
 	return nil
 }
 
+// scanIntColumn collects a single-int-column result set into a slice. Rows
+// that fail to scan are skipped (matching the lenient behavior the cache
+// invalidation queries have always relied on); any iteration error surfaces.
+func scanIntColumn(rows *sql.Rows) ([]int, error) {
+	var ids []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
 func clonePermissionSet(src map[string]bool) map[string]bool {
 	dst := make(map[string]bool, len(src))
 	for k, v := range src {
@@ -1486,18 +1442,7 @@ func (ps *PermissionService) getRecentlyActiveUsers(duration time.Duration) ([]i
 	}
 	defer rows.Close()
 
-	var userIDs []int
-	for rows.Next() {
-		var userID int
-		if err := rows.Scan(&userID); err == nil {
-			userIDs = append(userIDs, userID)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return userIDs, nil
+	return scanIntColumn(rows)
 }
 
 // Close gracefully shuts down the permission service
