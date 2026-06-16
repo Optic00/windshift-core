@@ -887,14 +887,15 @@ func (s *SyncService) refreshItemSCMLink(ctx context.Context, linkID int, userID
 	var itemID, repoID, connectionID int
 	var linkType models.SCMLinkType
 	var externalID, repositoryName string
+	var externalURL sql.NullString
 
 	err := s.db.QueryRowContext(ctx, `
 		SELECT isl.item_id, isl.workspace_repository_id, isl.link_type, isl.external_id,
-			   wr.repository_name, wr.workspace_scm_connection_id
+			   isl.external_url, wr.repository_name, wr.workspace_scm_connection_id
 		FROM item_scm_links isl
 		JOIN workspace_repositories wr ON wr.id = isl.workspace_repository_id
 		WHERE isl.id = ?
-	`, linkID).Scan(&itemID, &repoID, &linkType, &externalID, &repositoryName, &connectionID)
+	`, linkID).Scan(&itemID, &repoID, &linkType, &externalID, &externalURL, &repositoryName, &connectionID)
 	if err != nil {
 		return fmt.Errorf("failed to get link info: %w", err)
 	}
@@ -919,14 +920,44 @@ func (s *SyncService) refreshItemSCMLink(ctx context.Context, linkID int, userID
 	}
 	owner, repo := parts[0], parts[1]
 
-	return s.updateLinkFromProvider(ctx, provider, owner, repo, linkID, linkType, externalID)
+	return s.updateLinkFromProvider(ctx, provider, owner, repo, linkID, linkType, externalID, externalURL.String)
+}
+
+// prNumberFromURL extracts the per-repo pull-request number from a PR's HTML
+// URL by reading its trailing path segment. Works for both GitHub
+// (".../pull/41") and Gitea/Forgejo (".../pulls/41"); query strings and
+// fragments are stripped. Returns 0 if no number can be parsed.
+func prNumberFromURL(rawURL string) int {
+	if rawURL == "" {
+		return 0
+	}
+	if i := strings.IndexAny(rawURL, "?#"); i >= 0 {
+		rawURL = rawURL[:i]
+	}
+	rawURL = strings.TrimRight(rawURL, "/")
+	seg := rawURL[strings.LastIndex(rawURL, "/")+1:]
+	n, err := strconv.Atoi(seg)
+	if err != nil {
+		return 0
+	}
+	return n
 }
 
 // updateLinkFromProvider fetches updated metadata from the SCM provider and updates the link row.
-func (s *SyncService) updateLinkFromProvider(ctx context.Context, provider Provider, owner, repo string, linkID int, linkType models.SCMLinkType, externalID string) error {
+func (s *SyncService) updateLinkFromProvider(ctx context.Context, provider Provider, owner, repo string, linkID int, linkType models.SCMLinkType, externalID, externalURL string) error {
 	switch linkType {
 	case models.SCMLinkTypePullRequest:
+		// The canonical key is the per-repo PR *number*. Links created before
+		// the WI-423 fix stored the provider's global database ID instead, so
+		// GetPullRequest(globalID) 404s and the link never updates. The stored
+		// external_url always ends in the real number — prefer it, and rewrite
+		// the stale external_id so the row self-heals and the UI stops showing
+		// the global ID as the PR "number".
 		prNumber, _ := strconv.Atoi(externalID)
+		if urlNum := prNumberFromURL(externalURL); urlNum > 0 && urlNum != prNumber {
+			prNumber = urlNum
+			externalID = strconv.Itoa(urlNum)
+		}
 		pr, err := provider.GetPullRequest(ctx, owner, repo, prNumber)
 		if err != nil {
 			return fmt.Errorf("failed to get PR: %w", err)
@@ -941,11 +972,11 @@ func (s *SyncService) updateLinkFromProvider(ctx context.Context, provider Provi
 
 		_, err = s.db.ExecContext(ctx, `
 			UPDATE item_scm_links SET
-				external_url = ?, title = ?, state = ?,
+				external_id = ?, external_url = ?, title = ?, state = ?,
 				author_external_id = ?, author_name = ?,
 				updated_at = CURRENT_TIMESTAMP
 			WHERE id = ?
-		`, pr.URL, pr.Title, state, pr.Author.ID, pr.Author.Name, linkID)
+		`, externalID, pr.URL, pr.Title, state, pr.Author.ID, pr.Author.Name, linkID)
 		return err
 
 	case models.SCMLinkTypeCommit:
