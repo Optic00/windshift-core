@@ -29,17 +29,7 @@ func NewAuditor(db database.Database) *Auditor {
 // from r; Success is implicitly true (use LogWithDetails for richer events
 // or future failure paths).
 func (a *Auditor) Log(r *http.Request, user *models.User, actionType, resourceType string, resourceID *int, resourceName string) {
-	_ = LogAudit(a.db, AuditEvent{
-		UserID:       user.ID,
-		Username:     user.Username,
-		IPAddress:    utils.GetClientIP(r),
-		UserAgent:    r.UserAgent(),
-		ActionType:   actionType,
-		ResourceType: resourceType,
-		ResourceID:   resourceID,
-		ResourceName: resourceName,
-		Success:      true,
-	})
+	_ = LogAudit(a.db, NewRequestAuditEvent(r, user, actionType, resourceType, resourceID, resourceName, nil))
 }
 
 // LogEvent persists a fully-constructed audit event. It exists for callers
@@ -53,18 +43,7 @@ func (a *Auditor) LogEvent(event AuditEvent) {
 // LogWithDetails records a successful resource action with extra structured
 // details (serialized to JSON in the audit log row).
 func (a *Auditor) LogWithDetails(r *http.Request, user *models.User, actionType, resourceType string, resourceID *int, resourceName string, details map[string]interface{}) {
-	_ = LogAudit(a.db, AuditEvent{
-		UserID:       user.ID,
-		Username:     user.Username,
-		IPAddress:    utils.GetClientIP(r),
-		UserAgent:    r.UserAgent(),
-		ActionType:   actionType,
-		ResourceType: resourceType,
-		ResourceID:   resourceID,
-		ResourceName: resourceName,
-		Details:      details,
-		Success:      true,
-	})
+	_ = LogAudit(a.db, NewRequestAuditEvent(r, user, actionType, resourceType, resourceID, resourceName, details))
 }
 
 // LogFailure records an attempted resource action that failed after the caller
@@ -105,6 +84,22 @@ func auditActor(user *models.User) (userID int, username string) {
 		return 0, "unknown"
 	}
 	return user.ID, user.Username
+}
+
+// NewRequestAuditEvent builds a successful HTTP-driven audit event.
+func NewRequestAuditEvent(r *http.Request, user *models.User, actionType, resourceType string, resourceID *int, resourceName string, details map[string]interface{}) AuditEvent {
+	return AuditEvent{
+		UserID:       user.ID,
+		Username:     user.Username,
+		IPAddress:    utils.GetClientIP(r),
+		UserAgent:    r.UserAgent(),
+		ActionType:   actionType,
+		ResourceType: resourceType,
+		ResourceID:   resourceID,
+		ResourceName: resourceName,
+		Details:      details,
+		Success:      true,
+	}
 }
 
 // AuditEvent represents a security or admin event that should be logged
