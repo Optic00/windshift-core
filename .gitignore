@@ -158,3 +158,5 @@ blog/
 .windshift-local
 /docs
 /.codehamr
+/.agents/skills/donate-trace
+/skills-lock.json
