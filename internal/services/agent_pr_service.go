@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"windshift/internal/database"
@@ -183,7 +184,7 @@ func (s *AgentPRService) AfterRun(ctx context.Context, info PostRunInfo) {
 		body = note + "\n\n---\n\n" + body
 	}
 
-	pr, err := s.openPR(ctx, OpenPRRequest{
+	pr, err := s.openPRWithRetry(ctx, info.RunID, OpenPRRequest{
 		ConnectionID: *binding.SCMConnectionID,
 		UserID:       info.TriggeredByUserID,
 		Owner:        owner,
@@ -206,6 +207,87 @@ func (s *AgentPRService) AfterRun(ctx context.Context, info PostRunInfo) {
 	if err := s.upsertItemSCMLink(ctx, *info.ItemID, *binding.SCMConnectionID, binding.RepoSlug, pr); err != nil {
 		s.logger.Printf("agent pr: upsert item_scm_link run=%d: %v", info.RunID, err)
 	}
+}
+
+// openPRRetryAttempts bounds how many times AfterRun re-tries the OpenPR
+// adapter on a transient failure. SCM PR creation occasionally times out or
+// 5xxes when the upstream (Codeberg/Gitea, GitHub) is slow; without a retry the
+// run's branch is pushed but no PR exists, forcing a human to open it by hand.
+// Three attempts with backoff turn a transient blip into a non-event.
+const openPRRetryAttempts = 3
+
+// openPRAttemptTimeout caps a single OpenPR attempt so one hung POST can't
+// swallow the whole post-run budget, leaving room for a retry. It sits under
+// the SCM HTTP client's own 30s timeout — whichever fires first aborts the
+// attempt and the loop backs off. A var (not a const) so tests can shrink it.
+var openPRAttemptTimeout = 20 * time.Second
+
+// openPRRetryBackoff is the base delay between OpenPR attempts; it doubles each
+// retry (2s, then 4s) to give a struggling upstream room to recover. A var (not
+// a const) so tests can shrink it.
+var openPRRetryBackoff = 2 * time.Second
+
+// openPRWithRetry calls the OpenPR adapter, retrying transient failures so a
+// flaky SCM API (a Codeberg/Gitea timeout, a 5xx, a dropped connection) doesn't
+// leave the run's pushed branch without a PR. Permanent failures — bad
+// credentials, repo not found, a PR that already exists — are surfaced
+// immediately (the production adapter classifies them via NewPermanentOpenPRError);
+// retrying them only burns the post-run budget. Each attempt runs under its own
+// bounded sub-context so a single hung request can't consume the whole window,
+// and the backoff aborts the moment the parent context is canceled.
+func (s *AgentPRService) openPRWithRetry(ctx context.Context, runID int, req OpenPRRequest) (*OpenedPR, error) {
+	var lastErr error
+	for attempt := 1; attempt <= openPRRetryAttempts; attempt++ {
+		attemptCtx, cancel := context.WithTimeout(ctx, openPRAttemptTimeout)
+		pr, err := s.openPR(attemptCtx, req)
+		cancel()
+		if err == nil {
+			return pr, nil
+		}
+		lastErr = err
+		// Parent budget exhausted/canceled, or a permanent provider error: a
+		// retry can't help, so surface it now.
+		if ctx.Err() != nil || IsPermanentOpenPRError(err) {
+			return nil, err
+		}
+		if attempt == openPRRetryAttempts {
+			break
+		}
+		backoff := openPRRetryBackoff << (attempt - 1)
+		s.logger.Printf("agent pr: open pr run=%d attempt %d/%d failed: %v; retrying in %s",
+			runID, attempt, openPRRetryAttempts, err, backoff)
+		select {
+		case <-time.After(backoff):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return nil, lastErr
+}
+
+// permanentOpenPRError marks an OpenPRFn failure that must not be retried — a
+// bad credential, a missing repo, or a PR that already exists. The production
+// OpenPR adapter classifies the scm package's sentinel errors into this so the
+// retry loop in AfterRun can decide retryability without importing scm (which
+// would form a services→scm→services import cycle).
+type permanentOpenPRError struct{ err error }
+
+func (e *permanentOpenPRError) Error() string { return e.err.Error() }
+func (e *permanentOpenPRError) Unwrap() error { return e.err }
+
+// NewPermanentOpenPRError wraps err so AfterRun's retry loop treats it as
+// terminal. A nil err is returned unchanged.
+func NewPermanentOpenPRError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &permanentOpenPRError{err: err}
+}
+
+// IsPermanentOpenPRError reports whether err was wrapped by NewPermanentOpenPRError.
+func IsPermanentOpenPRError(err error) bool {
+	var p *permanentOpenPRError
+	return errors.As(err, &p)
 }
 
 // afterContinuationRun posts a progress comment on the PR a continuation run
