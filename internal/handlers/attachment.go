@@ -1054,6 +1054,91 @@ func (h *AttachmentHandler) GetByItem(w http.ResponseWriter, r *http.Request) {
 	respondJSONOK(w, response)
 }
 
+// authorizeAttachmentRead gates read access to an attachment (Download and
+// Thumbnail) based on its entity_type. itemID is the attachment's item_id
+// column (nil when NULL). Returns true if the caller may serve the bytes;
+// otherwise it has already written the response and the caller must return.
+//
+// All denials respond 404 (no existence disclosure); genuine internal errors
+// respond 500. See WI-46 for why every entity_type is handled explicitly.
+func (h *AttachmentHandler) authorizeAttachmentRead(w http.ResponseWriter, r *http.Request, entityType string, itemID *int) bool {
+	switch entityType {
+	case "test_case":
+		if itemID == nil {
+			respondNotFound(w, r, "attachment")
+			return false
+		}
+		return h.authorizeTestCaseAttachmentAccess(w, r, *itemID, models.PermissionTestView)
+	case "test_result":
+		if itemID == nil {
+			respondNotFound(w, r, "attachment")
+			return false
+		}
+		return h.authorizeTestResultAttachmentAccess(w, r, *itemID, models.PermissionTestView)
+	case "item", "":
+		// Empty entity_type covers legacy rows inserted before the column
+		// existed; they're all item attachments. Item-typed rows must have a
+		// non-NULL item_id per WI-46; a NULL here means a corrupt or
+		// invariant-violating row and must not be served.
+		if itemID == nil {
+			respondNotFound(w, r, "attachment")
+			return false
+		}
+		return CheckItemPermissionAsActor(w, r, repository.NewItemRepository(h.db), h.permissionService, h.approvalService, *itemID, models.PermissionItemView)
+	case "page":
+		// Workspace knowledge pages: gate downloads on page.view via the
+		// PagePermissionService so per-page ACLs are honored. Falls back to
+		// workspace page.view if the service isn't wired (degraded mode).
+		if itemID == nil {
+			respondNotFound(w, r, "attachment")
+			return false
+		}
+		var wsID int
+		if err := h.db.QueryRow(`SELECT workspace_id FROM pages WHERE id = ?`, *itemID).Scan(&wsID); err != nil {
+			respondNotFound(w, r, "attachment")
+			return false
+		}
+		user, ok := RequireAuth(w, r)
+		if !ok {
+			return false
+		}
+		if h.pagePermissionService != nil {
+			can, perr := h.pagePermissionService.Can(user.ID, wsID, *itemID, services.PageOpView)
+			if perr != nil {
+				respondInternalError(w, r, perr)
+				return false
+			}
+			if !can {
+				respondNotFound(w, r, "attachment")
+				return false
+			}
+			return true
+		}
+		allowed, perr := h.permissionService.HasWorkspacePermission(user.ID, wsID, models.PermissionPageView)
+		if perr != nil || !allowed {
+			respondNotFound(w, r, "attachment")
+			return false
+		}
+		return true
+	case "avatar",
+		"workspace_avatar", "workspace_background",
+		"team_avatar", "customer_avatar":
+		// Branding / profile assets are non-secret and rendered widely. The
+		// route is auth-gated so portal customer sessions can't reach here.
+		_, ok := RequireAuth(w, r)
+		return ok
+	case "portal_background", "portal_logo", "hub_logo":
+		// Canonical access route is /api/portal-assets/{id}; refuse to serve
+		// portal/hub branding through the cookie-auth path so there is exactly
+		// one place that gates them.
+		respondNotFound(w, r, "attachment")
+		return false
+	default:
+		respondNotFound(w, r, "attachment")
+		return false
+	}
+}
+
 // Download serves a specific attachment file
 func (h *AttachmentHandler) Download(w http.ResponseWriter, r *http.Request) {
 	slog.Debug("download request received", slog.String("component", "attachments"), slog.String("attachment_id", r.PathValue("id")))
@@ -1098,86 +1183,7 @@ func (h *AttachmentHandler) Download(w http.ResponseWriter, r *http.Request) {
 	// non-NULL item_id as a work-item id and ran CheckItemPermissionAsActor
 	// on it, which was wrong for branding rows whose item_id was actually
 	// the workspace/portal/hub id. Now every type is explicit.
-	switch entityType.String {
-	case "test_case":
-		if attachment.ItemID == nil {
-			respondNotFound(w, r, "attachment")
-			return
-		}
-		if !h.authorizeTestCaseAttachmentAccess(w, r, *attachment.ItemID, models.PermissionTestView) {
-			return
-		}
-	case "test_result":
-		if attachment.ItemID == nil {
-			respondNotFound(w, r, "attachment")
-			return
-		}
-		if !h.authorizeTestResultAttachmentAccess(w, r, *attachment.ItemID, models.PermissionTestView) {
-			return
-		}
-	case "item", "":
-		// Empty entity_type covers legacy rows inserted before the column
-		// existed; they're all item attachments. Item-typed rows must have
-		// a non-NULL item_id per WI-46; a NULL here means a corrupt or
-		// invariant-violating row and must not be served.
-		if attachment.ItemID == nil {
-			respondNotFound(w, r, "attachment")
-			return
-		}
-		if !CheckItemPermissionAsActor(w, r, repository.NewItemRepository(h.db), h.permissionService, h.approvalService, *attachment.ItemID, models.PermissionItemView) {
-			return
-		}
-	case "avatar",
-		"workspace_avatar", "workspace_background",
-		"team_avatar", "customer_avatar":
-		// Branding / profile assets are non-secret and rendered widely.
-		// The route is auth-gated so portal customer sessions can't reach
-		// this code.
-		if _, ok := RequireAuth(w, r); !ok {
-			return
-		}
-	case "page":
-		// Workspace knowledge pages: gate downloads on page.view via the
-		// PagePermissionService so per-page ACLs are honored. Falls back
-		// to workspace page.view if the service isn't wired (degraded mode).
-		if attachment.ItemID == nil {
-			respondNotFound(w, r, "attachment")
-			return
-		}
-		var wsID int
-		if err := h.db.QueryRow(`SELECT workspace_id FROM pages WHERE id = ?`, *attachment.ItemID).Scan(&wsID); err != nil {
-			respondNotFound(w, r, "attachment")
-			return
-		}
-		user, ok := RequireAuth(w, r)
-		if !ok {
-			return
-		}
-		if h.pagePermissionService != nil {
-			can, perr := h.pagePermissionService.Can(user.ID, wsID, *attachment.ItemID, services.PageOpView)
-			if perr != nil {
-				respondInternalError(w, r, perr)
-				return
-			}
-			if !can {
-				respondNotFound(w, r, "attachment")
-				return
-			}
-		} else {
-			allowed, perr := h.permissionService.HasWorkspacePermission(user.ID, wsID, models.PermissionPageView)
-			if perr != nil || !allowed {
-				respondNotFound(w, r, "attachment")
-				return
-			}
-		}
-	case "portal_background", "portal_logo", "hub_logo":
-		// Canonical access route is /api/portal-assets/{id}; refuse to
-		// serve portal/hub branding through the cookie-auth path so there
-		// is exactly one place that gates them.
-		respondNotFound(w, r, "attachment")
-		return
-	default:
-		respondNotFound(w, r, "attachment")
+	if !h.authorizeAttachmentRead(w, r, entityType.String, attachment.ItemID) {
 		return
 	}
 
@@ -1426,69 +1432,12 @@ func (h *AttachmentHandler) Thumbnail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Authorize per entity_type — mirrors Download. See WI-46 commit notes.
-	switch thumbEntityType.String {
-	case "test_case":
-		if !thumbItemID.Valid {
-			respondNotFound(w, r, "attachment")
-			return
-		}
-		if !h.authorizeTestCaseAttachmentAccess(w, r, int(thumbItemID.Int64), models.PermissionTestView) {
-			return
-		}
-	case "test_result":
-		if !thumbItemID.Valid {
-			respondNotFound(w, r, "attachment")
-			return
-		}
-		if !h.authorizeTestResultAttachmentAccess(w, r, int(thumbItemID.Int64), models.PermissionTestView) {
-			return
-		}
-	case "item", "":
-		if !thumbItemID.Valid {
-			respondNotFound(w, r, "attachment")
-			return
-		}
-		if !CheckItemPermissionAsActor(w, r, repository.NewItemRepository(h.db), h.permissionService, h.approvalService, int(thumbItemID.Int64), models.PermissionItemView) {
-			return
-		}
-	case "page":
-		if !thumbItemID.Valid {
-			respondNotFound(w, r, "attachment")
-			return
-		}
-		var wsID int
-		if err := h.db.QueryRow(`SELECT workspace_id FROM pages WHERE id = ?`, int(thumbItemID.Int64)).Scan(&wsID); err != nil {
-			respondNotFound(w, r, "attachment")
-			return
-		}
-		user, ok := RequireAuth(w, r)
-		if !ok {
-			return
-		}
-		if h.pagePermissionService != nil {
-			can, perr := h.pagePermissionService.Can(user.ID, wsID, int(thumbItemID.Int64), services.PageOpView)
-			if perr != nil || !can {
-				respondNotFound(w, r, "attachment")
-				return
-			}
-		} else {
-			allowed, perr := h.permissionService.HasWorkspacePermission(user.ID, wsID, models.PermissionPageView)
-			if perr != nil || !allowed {
-				respondNotFound(w, r, "attachment")
-				return
-			}
-		}
-	case "avatar",
-		"workspace_avatar", "workspace_background",
-		"team_avatar", "customer_avatar":
-		if _, ok := RequireAuth(w, r); !ok {
-			return
-		}
-	case "portal_background", "portal_logo", "hub_logo":
-		respondNotFound(w, r, "attachment")
-		return
-	default:
-		respondNotFound(w, r, "attachment")
+	var thumbItemPtr *int
+	if thumbItemID.Valid {
+		id := int(thumbItemID.Int64)
+		thumbItemPtr = &id
+	}
+	if !h.authorizeAttachmentRead(w, r, thumbEntityType.String, thumbItemPtr) {
 		return
 	}
 
