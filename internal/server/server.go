@@ -931,6 +931,12 @@ func (s *Server) initialize() error {
 		repository.NewItemRepository(s.db),
 	)
 	scmSyncService.SetApprovalService(approvalService)
+	// Outbound "@agent" PR-comment continuation trigger (WI-426): the sync poller
+	// hands detected comments to the binding service to continue the PR. Nil-safe
+	// when the coding-agent harness is disabled (bindingSvc may be nil).
+	if bindingSvc != nil {
+		scmSyncService.SetContinuationStarter(bindingSvc)
+	}
 
 	// Wire the SCM-driven milestone automation:
 	//  1) sync emits ActionEvents for new tags / release branches,

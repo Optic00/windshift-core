@@ -990,6 +990,83 @@ func (s *BindingService) startRunForBinding(ctx context.Context, binding *models
 	return nil
 }
 
+// PRCommentContinuation carries one detected "@agent" PR comment that should
+// continue its PR. Built by the SCM comment poller (sync.go) and handed here.
+type PRCommentContinuation struct {
+	WorkspaceID int
+	ItemID      int
+	RepoSlug    string // "owner/repo" of the PR
+	PRNumber    int
+	HeadBranch  string
+	CommentID   int64 // SCM comment id (audit + idempotency on the trigger)
+	CommentBody string
+}
+
+// StartPRCommentContinuation starts a continuation run for a PR-comment trigger.
+// The agent is the binding that most recently ran the item (the
+// most-recently-active rule); the run lands commits on the PR's head branch and
+// the post-run hook comments on the PR rather than opening a new one.
+//
+// started=false with a nil error is the normal "nothing to do" outcome — no
+// agent has worked this item, the PR is in a different repo than that agent
+// writes, a run is already active, or the binding's budget is spent. None of
+// those are caller-actionable errors; the poller just moves on.
+func (s *BindingService) StartPRCommentContinuation(ctx context.Context, in PRCommentContinuation) (bool, error) {
+	if s.runs == nil {
+		return false, nil
+	}
+	if in.HeadBranch == "" || in.ItemID == 0 {
+		return false, nil
+	}
+	// Most-recently-active binding: the agent that last ran this item is the one
+	// the "@agent" comment continues. Its triggering user is reused as the SCM
+	// principal — that user already pushed to this PR, so their credential works.
+	latest, err := s.runs.LatestRunForItem(ctx, in.ItemID)
+	if err != nil {
+		return false, fmt.Errorf("latest run for item %d: %w", in.ItemID, err)
+	}
+	if latest == nil || latest.BindingID == nil {
+		return false, nil // no agent has worked this item — nobody to continue
+	}
+	binding, err := s.repo.Get(ctx, *latest.BindingID)
+	if err != nil {
+		return false, fmt.Errorf("load binding %d: %w", *latest.BindingID, err)
+	}
+	// Write scope: only continue a PR in the repo this binding can push to.
+	if !binding.HasRepo() || binding.RepoSlug != in.RepoSlug {
+		return false, nil
+	}
+	// Dedup: a repeat "@agent" while the agent is already working is a nudge, not
+	// a second job (mirrors the @mention trigger).
+	active, err := s.runs.CountActiveRunsForBindingItem(ctx, binding.ID, in.ItemID)
+	if err != nil {
+		return false, fmt.Errorf("count active runs for binding %d: %w", binding.ID, err)
+	}
+	if active > 0 {
+		return false, nil
+	}
+	triggeredBy := 0
+	if latest.TriggeredByUserID != nil {
+		triggeredBy = *latest.TriggeredByUserID
+	}
+	trigger := &models.RunTrigger{
+		Kind:               "pr_comment",
+		Instruction:        in.CommentBody,
+		ContinuePRNumber:   in.PRNumber,
+		ContinueRepoSlug:   in.RepoSlug,
+		ContinueHeadBranch: in.HeadBranch,
+		ContinueCommentID:  in.CommentID,
+	}
+	if err := s.startRunForBinding(ctx, binding, in.WorkspaceID, in.ItemID, triggeredBy, trigger); err != nil {
+		if errors.Is(err, ErrBindingBudgetExceeded) {
+			return false, nil // budget cap is a soft skip, not a poller error
+		}
+		return false, err
+	}
+	s.logger.Printf("binding service: PR-comment continuation run for item=%d PR #%d (binding=%d, comment=%d)", in.ItemID, in.PRNumber, binding.ID, in.CommentID)
+	return true, nil
+}
+
 // RerunForItem manually re-triggers the agent that last worked an item — the
 // "Re-run" button on the item's agent log. It derives the agent from the most
 // recent run that carried a binding and reuses that binding's full
