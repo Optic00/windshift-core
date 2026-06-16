@@ -1,5 +1,33 @@
+import { notifyItemMutation } from '../utils/crossTabSync.js';
 import { fetchAPI } from './core.js';
 import { buildQueryString } from './utils.js';
+
+/**
+ * Wrap a mutating items API method so a successful call broadcasts a
+ * cross-tab freshness notice to other open Windshift tabs. Failures are
+ * surfaced unchanged (the original promise rejects) and never broadcast.
+ *
+ * @template {(...args: any[]) => Promise<any>} F
+ * @param {F} fn
+ * @param {string} type - coarse mutation category for the broadcast payload
+ * @returns {F}
+ */
+function withCrossTabNotice(fn, type) {
+  return /** @type {F} */ (
+    async (...args) => {
+      const result = await fn(...args);
+      let itemId = null;
+      if (typeof args[0] === 'number' || typeof args[0] === 'string') {
+        itemId = args[0];
+      } else if (result && typeof result === 'object' && result.id != null) {
+        // create() takes a payload (no id arg) — pull it from the response.
+        itemId = result.id;
+      }
+      notifyItemMutation({ type, itemId });
+      return result;
+    }
+  );
+}
 
 export const items = {
   getAll: (filters = {}) => {
@@ -12,50 +40,68 @@ export const items = {
     ),
   getMany: (ids = []) => Promise.all([...new Set(ids)].map((id) => fetchAPI(`/items/${id}`))),
   getChanges: (filters = {}) => fetchAPI(`/items/changes${buildQueryString(filters)}`),
-  create: (data) =>
-    fetchAPI('/items', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-  update: (id, data) =>
-    fetchAPI(`/items/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    }),
+  create: withCrossTabNotice(
+    (data) =>
+      fetchAPI('/items', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    'create'
+  ),
+  update: withCrossTabNotice(
+    (id, data) =>
+      fetchAPI(`/items/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    'update'
+  ),
   // Perform a workflow status transition. Use this instead of passing
   // status_id to update() — the update endpoint rejects status_id so that
   // validator-mode and condition-mode workflow rules are always enforced.
   // Returns the updated item (unwrapped from the {item, old_status_id, ...} envelope).
-  transition: async (id, toStatusId) => {
+  transition: withCrossTabNotice(async (id, toStatusId) => {
     const response = await fetchAPI(`/items/${id}/transition`, {
       method: 'POST',
       body: JSON.stringify({ to_status_id: toStatusId }),
     });
     return response.item;
-  },
-  delete: (id) =>
-    fetchAPI(`/items/${id}`, {
-      method: 'DELETE',
-    }),
+  }, 'transition'),
+  delete: withCrossTabNotice(
+    (id) =>
+      fetchAPI(`/items/${id}`, {
+        method: 'DELETE',
+      }),
+    'delete'
+  ),
   getDeleteInfo: (id) => fetchAPI(`/items/${id}/delete-info`),
-  deleteCascade: (id) =>
-    fetchAPI(`/items/${id}/cascade`, {
-      method: 'DELETE',
-    }),
+  deleteCascade: withCrossTabNotice(
+    (id) =>
+      fetchAPI(`/items/${id}/cascade`, {
+        method: 'DELETE',
+      }),
+    'delete'
+  ),
   reparentChildren: (id, newParentId) =>
     fetchAPI(`/items/${id}/reparent-children`, {
       method: 'POST',
       body: JSON.stringify({ newParentId }),
     }),
-  copy: (id) =>
-    fetchAPI(`/items/${id}/copy`, {
-      method: 'POST',
-    }),
-  updateFracIndex: (id, data) =>
-    fetchAPI(`/items/${id}/frac-index`, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    }),
+  copy: withCrossTabNotice(
+    (id) =>
+      fetchAPI(`/items/${id}/copy`, {
+        method: 'POST',
+      }),
+    'create'
+  ),
+  updateFracIndex: withCrossTabNotice(
+    (id, data) =>
+      fetchAPI(`/items/${id}/frac-index`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }),
+    'reorder'
+  ),
   getBacklog: (
     workspaceId,
     ql = null,
@@ -87,11 +133,14 @@ export const items = {
     fetchAPI(`/items/${itemId}/available-status-transitions`),
   analyzeTypeChange: (itemId, targetItemTypeId) =>
     fetchAPI(`/items/${itemId}/type-change-analysis?target_item_type_id=${targetItemTypeId}`),
-  changeType: (itemId, data) =>
-    fetchAPI(`/items/${itemId}/change-type`, {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
+  changeType: withCrossTabNotice(
+    (itemId, data) =>
+      fetchAPI(`/items/${itemId}/change-type`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    'update'
+  ),
   // Get history of changes for an item
   getHistory: (itemId) => fetchAPI(`/items/${itemId}/history`),
 
