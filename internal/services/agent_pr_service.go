@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -190,11 +191,13 @@ func (s *AgentPRService) upsertItemSCMLink(ctx context.Context, itemID, connecti
 		return fmt.Errorf("locate workspace_repositories row: %w", err)
 	}
 
+	// The canonical external_id for a pull_request link is the PR *number*
+	// (the per-repo sequence number), not the provider's global database ID.
+	// Both the SCM sync detection path and CreateItemSCMLink key on the
+	// number, and RefreshItemSCMLink calls GetPullRequest(owner, repo,
+	// number) — so a link keyed on the global ID 404s on refresh.
 	state := strings.ToLower(pr.State)
-	externalID := pr.ID
-	if externalID == "" {
-		externalID = fmt.Sprintf("%d", pr.Number)
-	}
+	externalID := strconv.Itoa(pr.Number)
 
 	_, err = s.db.ExecWriteContext(ctx, `
 		INSERT INTO item_scm_links
