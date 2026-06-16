@@ -2,6 +2,7 @@ export { adminProvider } from './adminProvider.js';
 export { createProvider } from './createProvider.js';
 export { makeExternalProvider } from './externalProvider.js';
 export { globalNavigationProvider } from './globalNavigationProvider.js';
+export { recentlyViewedProvider } from './recentlyViewedProvider.js';
 export { searchProvider } from './searchProvider.js';
 export { systemProvider } from './systemProvider.js';
 export { timeProvider } from './timeProvider.js';

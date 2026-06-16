@@ -12,7 +12,7 @@
   import ModalBackdrop from '../components/ModalBackdrop.svelte';
 
   import { scoreCommand, compareCommands } from '../commands/score.js';
-  import { BUCKET_LABELS, PER_BUCKET_CAP, TOTAL_CAP } from '../commands/buckets.js';
+  import { BUCKET, BUCKET_LABELS, PER_BUCKET_CAP, TOTAL_CAP } from '../commands/buckets.js';
   import { deriveLegacyBucket } from '../commands/types.js';
   import { buildContext } from '../commands/context.js';
   import { buildCommands } from '../commands/buildCommands.js';
@@ -22,6 +22,7 @@
     createProvider,
     globalNavigationProvider,
     makeExternalProvider,
+    recentlyViewedProvider,
     searchProvider,
     systemProvider,
     timeProvider,
@@ -38,6 +39,13 @@
   let workspaces = $state([]);
   let workItems = $state([]);
   let searchTimeout;
+
+  // Sub-palette state. `mode` is 'commands' (the default command list) or
+  // 'recent' (the recently-viewed work-item picker reached from the launcher
+  // entry). recentItems holds the last 20 viewed items for that mode.
+  let mode = $state('commands');
+  let recentItems = $state([]);
+  let recentLoading = $state(false);
 
   async function loadData() {
     try {
@@ -86,6 +94,7 @@
   });
 
   $effect(() => {
+    if (mode !== 'commands') return;
     if ($inputValue && $inputValue.length >= 2) {
       debouncedSearchWorkItems($inputValue);
     } else if ($inputValue.length < 2) {
@@ -99,6 +108,7 @@
   // today) so component-pushed commands fall into the item-actions bucket
   // by default.
   const PROVIDERS = [
+    recentlyViewedProvider,
     makeExternalProvider(() => $contextCommands),
     workspaceActionsProvider,
     workspaceNavigationProvider,
@@ -160,18 +170,88 @@
     return out;
   }
 
-  let filteredCommands = $derived(rankCommands($inputValue, commands));
+  // Recently-viewed items mapped to command-shaped entries so the existing
+  // render loop + keyboard handling drive navigation. No per-bucket cap is
+  // applied here — the backend already bounds the list to the last 20.
+  const recentCommands = $derived(
+    recentItems.map((it) => {
+      const key = `${it.workspace_key || 'WORK'}-${it.workspace_item_number || it.item_id}`;
+      return {
+        id: `recent-item-${it.item_id}`,
+        label: `${key}: ${it.title}`,
+        description: it.status || '',
+        bucket: BUCKET.RECENT,
+        keywords: [key.toLowerCase(), it.title?.toLowerCase()].filter(Boolean),
+        url: `/workspaces/${it.workspace_id}/items/${it.item_id}`,
+      };
+    }),
+  );
+
+  function filterRecent(query, list) {
+    const q = query.trim();
+    if (!q) return list;
+    return list
+      .map((c) => ({
+        c,
+        s: scoreCommand(q, { label: c.label, description: c.description, keywords: c.keywords }),
+      }))
+      .filter((x) => x.s > 0)
+      .sort((a, b) => b.s - a.s)
+      .map((x) => x.c);
+  }
+
+  let filteredCommands = $derived(
+    mode === 'recent' ? filterRecent($inputValue, recentCommands) : rankCommands($inputValue, commands),
+  );
 
   let userInteracted = $state(false);
 
+  // Auto-select the first entry so Enter works immediately. In recent mode the
+  // list is meaningful with an empty query, so select even before the user
+  // types.
   $effect(() => {
-    if (filteredCommands.length > 0 && $inputValue.trim() && !userInteracted) {
+    if (filteredCommands.length > 0 && !userInteracted && (mode === 'recent' || $inputValue.trim())) {
       const first = filteredCommands[0];
       selected.set({ value: first.id, label: first.label });
     }
   });
 
+  async function loadRecentItems() {
+    recentLoading = true;
+    try {
+      const data = await api.homepage.get();
+      const list = (data?.recently_viewed ?? [])
+        .filter((a) => a && a.item_id)
+        .map((a) => ({ ...a, lastActivityDate: a.last_activity ? new Date(a.last_activity) : null }));
+      list.sort((a, b) => (b.lastActivityDate?.getTime() ?? 0) - (a.lastActivityDate?.getTime() ?? 0));
+      recentItems = list.slice(0, 20);
+    } catch (err) {
+      console.error('Failed to load recently viewed items:', err);
+      recentItems = [];
+    } finally {
+      recentLoading = false;
+    }
+  }
+
+  async function enterRecentMode() {
+    mode = 'recent';
+    userInteracted = false;
+    inputValue.set('');
+    await loadRecentItems();
+  }
+
+  function exitRecentMode() {
+    mode = 'commands';
+    userInteracted = false;
+    inputValue.set('');
+  }
+
   async function executeAndClose(cmd) {
+    // The recently-viewed launcher opens a sub-palette instead of executing.
+    if (cmd?.submenu === 'recent') {
+      await enterRecentMode();
+      return;
+    }
     try {
       await runCommand(cmd);
     } catch (err) {
@@ -185,6 +265,7 @@
     isOpen = false;
     open.set(false);
     inputValue.set('');
+    mode = 'commands';
     onclose?.();
   }
 
@@ -194,6 +275,10 @@
       e.preventDefault();
       const cmd = filteredCommands.find((c) => c.id === $selected.value);
       if (cmd) executeAndClose(cmd);
+    } else if (e.key === 'Backspace' && mode === 'recent' && $inputValue === '') {
+      // Backspace on an empty query steps back out of the sub-palette.
+      e.preventDefault();
+      exitRecentMode();
     } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
       userInteracted = true;
     }
@@ -284,8 +369,9 @@
         <input
           bind:this={searchInputRef}
           use:melt={$input}
+          data-testid="command-palette-input"
           type="text"
-          placeholder={t('commandPalette.searchPlaceholder')}
+          placeholder={mode === 'recent' ? t('commandPalette.recentlyViewed.searchPlaceholder') : t('commandPalette.searchPlaceholder')}
           class="w-full text-lg border-none outline-none bg-transparent"
           style="color: var(--ds-text);"
         />
@@ -297,14 +383,33 @@
           class="w-full"
           style="background-color: var(--ds-surface-raised);"
         >
+          {#if mode === 'recent'}
+            <button
+              type="button"
+              onclick={exitRecentMode}
+              data-testid="command-palette-recent-back"
+              class="w-full flex items-center gap-2 px-4 py-2 text-left text-sm font-medium command-option"
+              style="color: var(--ds-text-subtle); border-bottom: 1px solid var(--ds-border);"
+            >
+              <span aria-hidden="true">←</span>
+              {t('commandPalette.recentlyViewed.header')}
+            </button>
+          {/if}
+
           {#if filteredCommands.length === 0}
             <div class="p-4 text-center" style="color: var(--ds-text-subtle);">
-              {t('commandPalette.noCommandsFound')}
+              {#if mode === 'recent' && recentLoading}
+                {t('commandPalette.recentlyViewed.loading')}
+              {:else if mode === 'recent'}
+                {t('commandPalette.recentlyViewed.empty')}
+              {:else}
+                {t('commandPalette.noCommandsFound')}
+              {/if}
             </div>
           {:else}
             <div class="max-h-96 overflow-y-auto">
               {#each filteredCommands as command, i}
-                {#if i === 0 || filteredCommands[i - 1].bucket !== command.bucket}
+                {#if mode !== 'recent' && (i === 0 || filteredCommands[i - 1].bucket !== command.bucket)}
                   <div class="bucket-header" style="color: var(--ds-text-subtle); background-color: var(--ds-surface); border-color: var(--ds-border);">
                     {BUCKET_LABELS[command.bucket] || ''}
                   </div>
@@ -312,6 +417,7 @@
                 <div
                   use:melt={$option({ value: command.id, label: command.label })}
                   onclick={() => executeAndClose(command)}
+                  data-testid={`command-palette-option-${command.id}`}
                   class="w-full text-left px-4 py-2.5 transition-colors cursor-pointer command-option"
                 >
                   <div class="flex items-center gap-2">
@@ -335,6 +441,9 @@
               <div>
                 <kbd class="kbd px-1 py-0.5 rounded text-xs">↵</kbd> {t('commandPalette.toSelect')}
                 <kbd class="kbd px-1 py-0.5 rounded text-xs ml-2">↑↓</kbd> {t('commandPalette.toNavigate')}
+                {#if mode === 'recent'}
+                  <kbd class="kbd px-1 py-0.5 rounded text-xs ml-2">⌫</kbd> {t('commandPalette.recentlyViewed.backHint')}
+                {/if}
               </div>
               <div>
                 <kbd class="kbd px-1 py-0.5 rounded text-xs">ESC</kbd> {t('commandPalette.toClose')}

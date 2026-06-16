@@ -10,6 +10,7 @@
 
 /** @type {Readonly<Record<string, string>>} */
 export const BUCKET = Object.freeze({
+  RECENT: 'recent',
   ITEM_ACTIONS: 'item-actions',
   WORKSPACE_ACTIONS: 'workspace-actions',
   WORKSPACE_NAVIGATION: 'workspace-navigation',
@@ -22,6 +23,7 @@ export const BUCKET = Object.freeze({
 });
 
 const DEFAULT_ORDER = [
+  BUCKET.RECENT,
   BUCKET.ITEM_ACTIONS,
   BUCKET.WORKSPACE_ACTIONS,
   BUCKET.WORKSPACE_NAVIGATION,
@@ -59,6 +61,7 @@ export function bucketRank(bucket, query) {
 }
 
 export const BUCKET_LABELS = Object.freeze({
+  [BUCKET.RECENT]: 'Recent',
   [BUCKET.ITEM_ACTIONS]: 'Item',
   [BUCKET.WORKSPACE_ACTIONS]: 'Workspace',
   [BUCKET.WORKSPACE_NAVIGATION]: 'Workspace',

@@ -44,6 +44,15 @@ export default {
     pressToOpen: 'Press {shortcut} to open',
     advancedSearch: 'Advanced Search',
     context: 'Context',
+    recentlyViewed: {
+      label: 'Recently viewed work items',
+      description: 'Jump to one of your last 20 viewed items',
+      header: 'Recently viewed',
+      searchPlaceholder: 'Search recently viewed...',
+      empty: 'No recently viewed items',
+      loading: 'Loading recent items...',
+      backHint: 'to go back',
+    },
     // Command labels and descriptions
     commands: {
       // Navigation
