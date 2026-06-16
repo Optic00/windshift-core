@@ -211,9 +211,25 @@ func (g *GiteaProvider) ListPullRequests(ctx context.Context, owner, repo string
 		state = "open"
 	}
 
+	// Gitea and GitHub use different sort tokens for the same concept
+	// (e.g. "updated" on GitHub is "recentupdate" on Gitea). Translate the
+	// provider-agnostic value the caller passes into the token this forge
+	// understands; an unknown value is forwarded verbatim so the server
+	// can reject it rather than silently defaulting to "oldest".
+	sortParam := opts.Sort
+	if sortParam == "updated" {
+		sortParam = "recentupdate"
+	}
+
 	reqURL := fmt.Sprintf("%s?state=%s&page=%d&limit=%d",
 		g.apiURL(fmt.Sprintf("/repos/%s/%s/pulls", url.PathEscape(owner), url.PathEscape(repo))),
 		state, page, limit)
+	if sortParam != "" {
+		reqURL += "&sort=" + sortParam
+	}
+	if opts.Direction != "" {
+		reqURL += "&direction=" + opts.Direction
+	}
 
 	var giteaPRs []giteaPullRequest
 	if err := g.doJSON(ctx, "GET", reqURL, http.NoBody, http.StatusOK, &giteaPRs); err != nil {
