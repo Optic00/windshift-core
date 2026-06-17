@@ -2,11 +2,12 @@
   import { createTooltip, melt } from '@melt-ui/svelte';
 
   let {
-    content,
+    /** Plain-string tooltip body. Optional — provide this or `tip`. */
+    content = undefined,
     children,
     /** Optional rich-content snippet rendered inside the popover instead of
      *  the plain `content` string (e.g. a list of linked items). */
-    tip,
+    tip = undefined,
     /** @type {import('@floating-ui/dom').Placement} */
     placement = 'bottom',
     delay = { open: 300, close: 0 },
