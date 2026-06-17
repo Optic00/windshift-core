@@ -473,6 +473,15 @@ func (r *ItemRepository) GetCustomFieldValuesRaw(itemID int) (sql.NullString, er
 // SetCustomFieldValuesRaw replaces an item's entire custom_field_values JSON
 // payload. Callers own marshaling; no history is recorded.
 func (r *ItemRepository) SetCustomFieldValuesRaw(ctx context.Context, itemID int, raw string) error {
+	// An emptied cfv comes through as "". Write NULL rather than the empty
+	// string: the column treats empty/NULL identically, but on Postgres the
+	// JSONB column rejects '' ("invalid input syntax for type json").
+	if raw == "" {
+		if _, err := r.db.ExecWriteContext(ctx, `UPDATE items SET custom_field_values = NULL WHERE id = ?`, itemID); err != nil {
+			return fmt.Errorf("set custom field values: %w", err)
+		}
+		return nil
+	}
 	if _, err := r.db.ExecWriteContext(ctx, `UPDATE items SET custom_field_values = ? WHERE id = ?`, raw, itemID); err != nil {
 		return fmt.Errorf("set custom field values: %w", err)
 	}
@@ -497,13 +506,15 @@ type ItemCFVRow struct {
 // custom_field_values JSON contains the given field key, ordered by id. Used
 // by the cleanup scheduler to iterate the table with bounded memory.
 func (r *ItemRepository) ListCustomFieldValuesPageByKey(afterID int, fieldKey string, limit int) ([]ItemCFVRow, error) {
+	// CAST(... AS TEXT) so the LIKE key prefilter works on both SQLite (TEXT
+	// column) and Postgres (JSONB column — a bare LIKE errors with "jsonb ~~").
 	rows, err := r.db.Query(
 		`SELECT id, custom_field_values
 		   FROM items
 		  WHERE id > ?
 		    AND custom_field_values IS NOT NULL
-		    AND custom_field_values != ''
-		    AND custom_field_values LIKE ?
+		    AND CAST(custom_field_values AS TEXT) != ''
+		    AND CAST(custom_field_values AS TEXT) LIKE ?
 		  ORDER BY id ASC
 		  LIMIT ?`,
 		afterID, `%"`+fieldKey+`"%`, limit,

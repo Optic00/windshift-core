@@ -511,16 +511,23 @@ CREATE INDEX IF NOT EXISTS idx_scheduler_runs_name_started ON scheduler_runs(sch
 CREATE INDEX IF NOT EXISTS idx_scheduler_runs_started_at ON scheduler_runs(started_at);
 CREATE INDEX IF NOT EXISTS idx_scheduler_runs_success ON scheduler_runs(success);
 
--- Pending cfv cleanup jobs: when a custom field is deleted, items'
--- custom_field_values JSON still carries the deleted field's key. Doing
--- the scrub inline on Delete would block the request for as long as the
--- workspace has items (can be millions). Instead, we enqueue a row here
--- and let the CFVCleanupScheduler drain the queue in batches.
+-- Pending custom-field maintenance jobs drained by the CFVCleanupScheduler.
+-- Doing this work inline on the admin request would block it for as long as
+-- the workspace has items/assets (can be millions), so we enqueue a row here
+-- and process it off-thread in batches. job_type selects the work:
+--   field_scrub     - a deleted field's key is removed from cfv JSON
+--   option_removal   - removed select/multiselect option ids are stripped
+--                      (payload carries field_id, field_type, removed_ids)
+--   index_build      - a Postgres custom-field index is built CONCURRENTLY
+--                      (payload carries field_id, field_type, target_table,
+--                      index_name) off the request thread
 --
 -- status transitions: pending -> running -> done (or failed).
 CREATE TABLE IF NOT EXISTS pending_custom_field_cleanups (
 	id SERIAL PRIMARY KEY,
 	field_id INTEGER NOT NULL,
+	job_type TEXT NOT NULL DEFAULT 'field_scrub',
+	payload TEXT,
 	status TEXT NOT NULL DEFAULT 'pending',
 	created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 	started_at TIMESTAMPTZ,
