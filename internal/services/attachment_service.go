@@ -178,3 +178,28 @@ func (s *AttachmentService) CreateRecord(params CreateAttachmentParams) (int64, 
 
 	return attachmentID, nil
 }
+
+// RecordItemHistory appends an item_history row for an attachment lifecycle
+// event (upload/delete). It is the single source of truth for attachment
+// history shared by the cookie-auth handler and the bearer-token v1 item
+// service, so both surfaces emit identical entries. Recording is best-effort
+// and non-transactional: callers log and swallow the error so it never fails
+// an otherwise-successful upload or delete. A nil userID is a no-op (no actor
+// to attribute). new_value encodes the attachment id for uploads
+// ("attachment:<id>:<filename>") and the bare filename otherwise, matching the
+// format the activity feed already consumes.
+func (s *AttachmentService) RecordItemHistory(itemID int, userID *int, action string, oldValue *string, attachmentID int64, filename string) error {
+	if userID == nil {
+		return nil
+	}
+	value := filename
+	if action == "attachment_uploaded" {
+		value = fmt.Sprintf("attachment:%d:%s", attachmentID, filename)
+	}
+	_, err := s.db.ExecWrite(
+		`INSERT INTO item_history (item_id, user_id, field_name, old_value, new_value, changed_at)
+		 VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+		itemID, *userID, action, oldValue, value,
+	)
+	return err
+}

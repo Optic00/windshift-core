@@ -90,7 +90,7 @@ func (s *PageAttachmentUploadService) UploadPageAttachment(in PageAttachmentUplo
 		return models.AttachmentUploadResponse{}, fmt.Errorf("%w: File content validation failed: %s", ErrPageAttachmentUploadInvalid, err.Error())
 	}
 
-	settings, err := s.getAttachmentSettings()
+	settings, err := loadAttachmentSettings(s.db, s.attachmentPath)
 	if err != nil {
 		return models.AttachmentUploadResponse{}, fmt.Errorf("get attachment settings: %w", err)
 	}
@@ -197,14 +197,17 @@ func (s *PageAttachmentUploadService) authorizePageEdit(userID, pageID int) erro
 	return nil
 }
 
-func (s *PageAttachmentUploadService) getAttachmentSettings() (*models.AttachmentSettings, error) {
+// loadAttachmentSettings loads the system-wide attachment settings, falling
+// back to permissive defaults when no row exists. Shared by the page and item
+// attachment upload services so both surfaces read storage limits identically.
+func loadAttachmentSettings(db database.Database, attachmentPath string) (*models.AttachmentSettings, error) {
 	settings := &models.AttachmentSettings{
-		MaxFileSize:      52428800,
+		MaxFileSize:      52428800, // 50MB default
 		AllowedMimeTypes: "",
-		AttachmentPath:   s.attachmentPath,
+		AttachmentPath:   attachmentPath,
 		Enabled:          true,
 	}
-	err := s.db.QueryRow(`
+	err := db.QueryRow(`
 		SELECT max_file_size, allowed_mime_types, attachment_path, enabled
 		FROM attachment_settings ORDER BY id DESC LIMIT 1
 	`).Scan(&settings.MaxFileSize, &settings.AllowedMimeTypes, &settings.AttachmentPath, &settings.Enabled)

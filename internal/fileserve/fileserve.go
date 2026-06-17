@@ -54,6 +54,27 @@ func OpenUnderRoot(root, storedPath string) (*os.File, error) {
 	return r.Open(rel)
 }
 
+// RemoveUnderRoot removes storedPath confined to root, mirroring OpenUnderRoot's
+// resolution and confinement: a stored path that escapes root is refused with
+// ErrOutsideRoot rather than followed (defense against a malicious row or a
+// planted symlink), and a missing file surfaces as os.ErrNotExist. Only the
+// named file is removed — side files such as thumbnails are left untouched.
+func RemoveUnderRoot(root, storedPath string) error {
+	if root == "" {
+		return ErrOutsideRoot
+	}
+	rel, err := relWithinRoot(root, storedPath)
+	if err != nil {
+		return err
+	}
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = r.Close() }()
+	return r.Remove(rel)
+}
+
 // relWithinRoot resolves storedPath to a path relative to root, rejecting any
 // candidate that lands outside root. It mirrors the historical resolution
 // order (try the path as written first, then joined under root) so existing
