@@ -610,18 +610,37 @@ func (r *ItemRepository) ListCustomFieldValuesByWorkspace(workspaceID int) (*sql
 	return rows, nil
 }
 
-// GetNextWorkspaceItemNumber returns the next item number for a workspace (atomic increment)
+// GetNextWorkspaceItemNumber returns the next item number for a workspace.
+//
+// On Postgres the current-max row is locked via FOR UPDATE so concurrent
+// allocators for the same workspace serialize on it rather than all reading
+// the same MAX and colliding on items_workspace_id_workspace_item_number_key.
+// FOR UPDATE is illegal with an aggregate, so we select the max row itself and
+// add 1 in Go. SQLite ignores the clause; its global writer lock already
+// serializes writing transactions. The lock prevents collisions once a
+// workspace has at least one item; the very first concurrent inserts into an
+// empty workspace have no row to lock, so callers must still retry the whole
+// transaction on IsWorkspaceItemNumberUniqueViolation (after which a row
+// exists and the lock serializes the rest). Mirrors GenerateFracIndexForNewItem.
 func (r *ItemRepository) GetNextWorkspaceItemNumber(tx database.Tx, workspaceID int) (int, error) {
-	var nextNumber int
-	err := tx.QueryRow(`
-		SELECT COALESCE(MAX(workspace_item_number), 0) + 1
+	q := `
+		SELECT workspace_item_number
 		FROM items
 		WHERE workspace_id = ?
-	`, workspaceID).Scan(&nextNumber)
-	if err != nil {
+		ORDER BY workspace_item_number DESC
+		LIMIT 1`
+	if r.db.GetDriverName() == "postgres" {
+		q += " FOR UPDATE"
+	}
+	var maxNumber sql.NullInt64
+	err := tx.QueryRow(q, workspaceID).Scan(&maxNumber)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, fmt.Errorf("failed to get next item number: %w", err)
 	}
-	return nextNumber, nil
+	if !maxNumber.Valid {
+		return 1, nil
+	}
+	return int(maxNumber.Int64) + 1, nil
 }
 
 // Create inserts a new item and returns its ID

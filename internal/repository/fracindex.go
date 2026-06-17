@@ -19,6 +19,17 @@ import (
 // transactions that read the same neighbor keys before either committed.
 const FracIndexMaxRetries = 5
 
+// fracIndexAppendLockKey is the Postgres advisory-lock key that serializes
+// "append to the end" frac_index generation across all concurrent item
+// creates. A plain SELECT MAX(...) FOR UPDATE only locks the row that was the
+// max at the reader's snapshot; under a burst of concurrent appends (e.g. bulk
+// seeding, or many parallel creators) several transactions can read the same
+// max before any commits, generate the same key, and collide on
+// idx_items_frac_index — exhausting the retry budget. Taking a transaction-
+// scoped advisory lock first fully serializes the append critical section so
+// each creator sees the previous committed key. Arbitrary fixed constant.
+const fracIndexAppendLockKey = 0x6672616369647801
+
 // fracIndexRebalanceLengthThreshold is the point where a generated key is
 // considered pathologically long for an interactive reorder. A local window
 // rebalance is attempted before writing keys above this size. Normal keys are
@@ -48,6 +59,25 @@ func IsFracIndexUniqueViolation(err error) bool {
 				strings.Contains(pqErr.Message, "idx_items_frac_index"))
 	}
 	return strings.Contains(err.Error(), "UNIQUE constraint failed: items.frac_index")
+}
+
+// IsWorkspaceItemNumberUniqueViolation reports whether err is specifically a
+// UNIQUE-constraint violation on (workspace_id, workspace_item_number). Two
+// concurrent inserts into a workspace with no existing rows can both compute
+// item number 1 (nothing for GetNextWorkspaceItemNumber's FOR UPDATE to lock),
+// so callers retry the whole transaction on this; the second attempt sees the
+// committed row, locks it, and gets a fresh number.
+func IsWorkspaceItemNumberUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pqErr *pq.Error
+	if errors.As(err, &pqErr) {
+		return pqErr.Code == "23505" &&
+			(pqErr.Constraint == "items_workspace_id_workspace_item_number_key" ||
+				strings.Contains(pqErr.Message, "workspace_item_number"))
+	}
+	return strings.Contains(err.Error(), "UNIQUE constraint failed: items.workspace_id, items.workspace_item_number")
 }
 
 // Fractional indexing implementation based on https://github.com/rocicorp/fracdex
@@ -343,6 +373,14 @@ func decrementInt(x string) (string, error) {
 // IsFracIndexUniqueViolation — the lock prevents most collisions but not
 // all (e.g. a non-generator writer running concurrently).
 func GenerateFracIndexForNewItem(tx database.Tx, driverName string) (string, error) {
+	if driverName == "postgres" {
+		// Serialize concurrent appends before reading the max (see
+		// fracIndexAppendLockKey). Released automatically at tx end.
+		if _, err := tx.Exec("SELECT pg_advisory_xact_lock(?)", int64(fracIndexAppendLockKey)); err != nil {
+			return "", fmt.Errorf("acquire frac_index append lock: %w", err)
+		}
+	}
+
 	q := `SELECT frac_index
 		FROM items
 		WHERE frac_index IS NOT NULL

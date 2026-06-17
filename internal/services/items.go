@@ -348,9 +348,11 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 		return itemID, fracIndex, nil
 	}
 
-	// Catch-only retry on idx_items_frac_index unique violation. The success
-	// path takes one iteration. Each iteration runs a fresh transaction;
-	// MAX(frac_index) is re-read inside that tx, so concurrent writers'
+	// Catch-only retry on the two collision-prone unique constraints:
+	// idx_items_frac_index and (workspace_id, workspace_item_number). The
+	// success path takes one iteration. Each iteration runs a fresh
+	// transaction; both MAX(frac_index) and MAX(workspace_item_number) are
+	// re-read (locked on Postgres) inside that tx, so concurrent writers'
 	// commits are picked up automatically — no cache to invalidate.
 	var itemID int64
 	for attempt := 0; attempt < repository.FracIndexMaxRetries; attempt++ {
@@ -359,15 +361,17 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 			itemID = id
 			break
 		}
-		if !repository.IsFracIndexUniqueViolation(ierr) {
+		retriable := repository.IsFracIndexUniqueViolation(ierr) ||
+			repository.IsWorkspaceItemNumberUniqueViolation(ierr)
+		if !retriable {
 			return 0, ierr
 		}
-		slog.Warn("frac_index unique violation, retrying",
+		slog.Warn("item insert unique violation, retrying",
 			slog.Int("attempt", attempt+1),
 			slog.String("frac_index", fracIndex),
 			slog.String("component", "fracindex"))
 		if attempt == repository.FracIndexMaxRetries-1 {
-			return 0, fmt.Errorf("failed to insert item after %d frac_index retries: %w", repository.FracIndexMaxRetries, ierr)
+			return 0, fmt.Errorf("failed to insert item after %d retries: %w", repository.FracIndexMaxRetries, ierr)
 		}
 	}
 
