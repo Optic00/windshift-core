@@ -1,19 +1,16 @@
 <script>
   import { onMount } from 'svelte';
-  import { IconArrowLeft, IconExternalLink, IconSettings, IconUsers } from '@tabler/icons-svelte-runes';
-  import { currentRoute, navigate } from '../../router.js';
+  import { IconSettings, IconUsers } from '@tabler/icons-svelte-runes';
+  import { currentRoute } from '../../router.js';
   import { api } from '../../api.js';
   import { t } from '../../stores/i18n.svelte.js';
   import { errorToast, successToast } from '../../stores/toasts.svelte.js';
   import { channelCategoriesStore } from '../../stores/channelCategories.js';
-  import Button from '../../components/Button.svelte';
-  import Input from '../../components/Input.svelte';
-  import Select from '../../components/Select.svelte';
-  import Textarea from '../../components/Textarea.svelte';
-  import Label from '../../components/Label.svelte';
-  import Spinner from '../../components/Spinner.svelte';
+  import ChannelAdminShell from './ChannelAdminShell.svelte';
+  import ChannelAdminSettings from './ChannelAdminSettings.svelte';
   import ChannelPortalConfig from './ChannelPortalConfig.svelte';
   import ChannelManagersTab from '../../settings/ChannelManagersTab.svelte';
+  import { channelBasicFormData, parseChannelConfig, saveChannelSettings } from './channelAdmin.js';
 
   let channel = $state(null);
   let loading = $state(true);
@@ -45,28 +42,12 @@
     await loadChannel();
   });
 
-  // FIXME(human-review): This page duplicates most of FormChannelPage.svelte
-  // (config parsing, basic info save, status toggle, header/tabs). Extract a shared
-  // channel-admin shell/save helper before adding more channel types.
-  function parseChannelConfig(config) {
-    if (!config) return {};
-    if (typeof config === 'string') {
-      if (config.trim() === '') return {};
-      try { return JSON.parse(config); } catch { return {}; }
-    }
-    return config || {};
-  }
-
   async function loadChannel() {
     try {
       loading = true;
       channel = await api.channels.get(channelId);
 
-      channelFormData = {
-        name: channel.name || '',
-        description: channel.description || '',
-        category_id: channel.category_id || null,
-      };
+      channelFormData = channelBasicFormData(channel);
 
       const config = parseChannelConfig(channel.config);
       portalFormData = {
@@ -102,32 +83,12 @@
     try {
       saving = true;
 
-      await api.channels.update(channel.id, {
-        id: channel.id,
-        type: channel.type,
-        direction: channel.direction,
-        is_default: channel.is_default,
-        name: channelFormData.name,
-        description: channelFormData.description,
-        category_id: channelFormData.category_id,
+      await saveChannelSettings({
+        channel,
+        channelFormData,
+        configRef: portalConfigRef,
+        enabled: portalFormData.enabled,
       });
-
-      if (portalConfigRef) {
-        const existingConfig = parseChannelConfig(channel.config);
-        const configData = {
-          ...existingConfig,
-          ...portalConfigRef.getConfig(),
-        };
-        await api.channels.updateConfig(channel.id, configData);
-      }
-
-      // Channel status is managed via the dedicated toggle endpoint, not
-      // api.channels.update — flip it only when the desired state differs
-      // from what the server currently has.
-      const currentlyEnabled = channel.status === 'enabled';
-      if (portalFormData.enabled !== currentlyEnabled) {
-        await api.channels.toggle(channel.id);
-      }
 
       channel = await api.channels.get(channelId);
       successToast(t('common.saved'));
@@ -145,128 +106,31 @@
   ];
 </script>
 
-{#if loading}
-  <div class="flex-1 flex items-center justify-center py-24">
-    <Spinner />
-  </div>
-{:else if channel}
-  <div class="flex-1 flex flex-col overflow-hidden">
-    <!-- Header -->
-    <div class="px-16 pt-8 pb-0">
-      <div class="mb-4">
-        <a
-          href="/admin/channels"
-          class="inline-flex items-center gap-1 text-sm transition-colors"
-          style="color: var(--ds-text-subtle);"
-          onmouseenter={(e) => e.currentTarget.style.color = 'var(--ds-text)'}
-          onmouseleave={(e) => e.currentTarget.style.color = 'var(--ds-text-subtle)'}
-        >
-          <IconArrowLeft class="w-4 h-4" />
-          {t('channels.title')}
-        </a>
+<ChannelAdminShell
+  {loading}
+  {channel}
+  bind:activeTab
+  {tabs}
+  subtitle={t('channels.portal', 'Portal Channel')}
+  openUrl={portalFormData.slug ? `/portal/${portalFormData.slug}` : ''}
+  openLabel={t('channel.openPortal')}
+>
+  {#snippet children(tabId)}
+    {#if tabId === 'settings'}
+      <ChannelAdminSettings bind:channelFormData {saving} onSave={handleSaveSettings}>
+        <ChannelPortalConfig
+          bind:this={portalConfigRef}
+          bind:formData={portalFormData}
+        />
+      </ChannelAdminSettings>
+    {:else if tabId === 'managers'}
+      <div class="px-16 py-8">
+        <ChannelManagersTab
+          channelId={channel.id}
+          channelName={channel.name}
+          isDefault={channel.is_default}
+        />
       </div>
-
-      <div class="flex items-center justify-between mb-6">
-        <div>
-          <h1 class="text-2xl font-semibold" style="color: var(--ds-text);">
-            {channel.name}
-          </h1>
-          <p class="text-sm mt-1" style="color: var(--ds-text-subtle);">
-            {t('channels.portal', 'Portal Channel')}
-          </p>
-        </div>
-        {#if portalFormData.slug}
-          <Button
-            onclick={() => window.open(`/portal/${portalFormData.slug}`, '_blank')}
-            variant="default"
-            size="small"
-            icon={IconExternalLink}
-          >
-            {t('channel.openPortal')}
-          </Button>
-        {/if}
-      </div>
-
-      <!-- Tab Navigation -->
-      <nav class="flex gap-6 border-b" style="border-color: var(--ds-border);">
-        {#each tabs as tab}
-          <button
-            onclick={() => activeTab = tab.id}
-            class="relative py-3 text-sm font-medium transition-colors {
-              activeTab === tab.id
-                ? 'text-[var(--ds-interactive)]'
-                : 'text-[var(--ds-text-subtle)] hover:text-[var(--ds-text)]'
-            }"
-          >
-            <div class="flex items-center gap-2">
-              <tab.icon class="w-4 h-4" />
-              <span>{tab.label()}</span>
-            </div>
-            {#if activeTab === tab.id}
-              <div class="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--ds-interactive)]"></div>
-            {/if}
-          </button>
-        {/each}
-      </nav>
-    </div>
-
-    <!-- Tab Content -->
-    <div class="flex-1 overflow-y-auto">
-      {#if activeTab === 'settings'}
-        <div class="px-16 py-8 max-w-3xl">
-          <!-- Basic Info -->
-          <div class="mb-8">
-            <h4 class="text-sm font-semibold mb-4" style="color: var(--ds-text);">{t('channel.basicInformation')}</h4>
-            <div class="space-y-4">
-              <div class="grid grid-cols-2 gap-4">
-                <div>
-                  <Label color="default" class="mb-2">{t('channel.name')}</Label>
-                  <Input bind:value={channelFormData.name} placeholder={t('channel.channelName')} />
-                </div>
-                <div>
-                  <Label color="default" class="mb-2">{t('channel.category')}</Label>
-                  <Select
-                    bind:value={channelFormData.category_id}
-                    options={[
-                      { value: null, label: t('channel.noCategory') },
-                      ...$channelCategoriesStore.map(c => ({ value: c.id, label: c.name })),
-                    ]}
-                  />
-                </div>
-              </div>
-              <div>
-                <Label color="default" class="mb-2">{t('channel.description')}</Label>
-                <Textarea bind:value={channelFormData.description} rows={2} placeholder={t('channel.briefDescription')} />
-              </div>
-            </div>
-          </div>
-
-          <!-- Portal-specific Config -->
-          <ChannelPortalConfig
-            bind:this={portalConfigRef}
-            bind:formData={portalFormData}
-          />
-
-          <!-- Save Button -->
-          <div class="mt-8 flex justify-end">
-            <Button
-              onclick={handleSaveSettings}
-              variant="primary"
-              disabled={saving}
-            >
-              {saving ? t('common.saving') : t('channel.saveChanges')}
-            </Button>
-          </div>
-        </div>
-      {:else if activeTab === 'managers'}
-        <div class="px-16 py-8">
-          <ChannelManagersTab
-            channelId={channel.id}
-            channelName={channel.name}
-            isDefault={channel.is_default}
-          />
-        </div>
-      {/if}
-    </div>
-  </div>
-{/if}
+    {/if}
+  {/snippet}
+</ChannelAdminShell>
