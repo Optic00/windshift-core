@@ -324,9 +324,7 @@
   function flowOutputErrors() {
     const errors = [];
     const counts = {};
-    for (const node of actionFlowStore.nodes) {
-      const name = (node?.data?.config?.output_field || '').trim();
-      if (!name) continue;
+    for (const { name } of collectOutputFields(actionFlowStore.nodes)) {
       if (!isValidOutputFieldName(name)) {
         errors.push(`Invalid output field name: ${name}`);
       }
@@ -690,6 +688,12 @@
   {/snippet}
 
   {#snippet nodeConfig(selectedNode, store, _handleDeleteNode)}
+    {#snippet outputFieldErrorMsg(nodeId, config)}
+      {@const err = outputFieldError(nodeId, config)}
+      {#if err}
+        <p class="output-field-error" data-testid="output-field-error">{err}</p>
+      {/if}
+    {/snippet}
     {#if selectedNode.type === 'set_status'}
       <div>
         <label for="config-target-status" class="block text-xs font-medium mb-1">{t('actions.config.targetStatus')}</label>
@@ -844,11 +848,12 @@
         />
       </div>
       {#if (selectedNode.data?.config?.recipient_type || selectedNode.data?.config?.recipients?.[0]) === 'specific'}
+        {@const recipientIds = specificRecipientIds(selectedNode.data?.config)}
         <div>
           <span class="block text-xs font-medium mb-1">Recipients</span>
-          {#if specificRecipientIds(selectedNode.data?.config).length > 0}
+          {#if recipientIds.length > 0}
             <div class="flex flex-wrap gap-1.5 mb-2">
-              {#each specificRecipientIds(selectedNode.data?.config) as idStr (idStr)}
+              {#each recipientIds as idStr (idStr)}
                 <span class="chip" data-testid={`notify-recipient-chip-${idStr}`}>
                   {recipientDisplayName(idStr)}
                   <button
@@ -1073,9 +1078,7 @@
           oninput={(e) => store.updateNodeConfig(selectedNode.id, { output_field: e.currentTarget.value })}
           placeholder={t('actions.config.outputFieldPlaceholder')}
         />
-        {#if outputFieldError(selectedNode.id, selectedNode.data?.config)}
-          <p class="output-field-error" data-testid="output-field-error">{outputFieldError(selectedNode.id, selectedNode.data?.config)}</p>
-        {/if}
+        {@render outputFieldErrorMsg(selectedNode.id, selectedNode.data?.config)}
       </div>
       <div>
         <label for="config-container-timeout" class="block text-xs font-medium mb-1">{t('actions.config.timeoutSecs')}</label>
@@ -1164,9 +1167,7 @@
           oninput={(e) => store.updateNodeConfig(selectedNode.id, { output_field: e.currentTarget.value })}
           placeholder="response"
         />
-        {#if outputFieldError(selectedNode.id, selectedNode.data?.config)}
-          <p class="output-field-error" data-testid="output-field-error">{outputFieldError(selectedNode.id, selectedNode.data?.config)}</p>
-        {/if}
+        {@render outputFieldErrorMsg(selectedNode.id, selectedNode.data?.config)}
       </div>
     {:else if selectedNode.type === 'ai_extract'}
       <div>
@@ -1223,9 +1224,7 @@
           oninput={(e) => store.updateNodeConfig(selectedNode.id, { output_field: e.currentTarget.value })}
           placeholder="extracted_data"
         />
-        {#if outputFieldError(selectedNode.id, selectedNode.data?.config)}
-          <p class="output-field-error" data-testid="output-field-error">{outputFieldError(selectedNode.id, selectedNode.data?.config)}</p>
-        {/if}
+        {@render outputFieldErrorMsg(selectedNode.id, selectedNode.data?.config)}
       </div>
     {:else if selectedNode.type === 'ai_agent'}
       <div>
@@ -1330,9 +1329,7 @@
           oninput={(e) => store.updateNodeConfig(selectedNode.id, { output_field: e.currentTarget.value })}
           placeholder="agent_answer"
         />
-        {#if outputFieldError(selectedNode.id, selectedNode.data?.config)}
-          <p class="output-field-error" data-testid="output-field-error">{outputFieldError(selectedNode.id, selectedNode.data?.config)}</p>
-        {/if}
+        {@render outputFieldErrorMsg(selectedNode.id, selectedNode.data?.config)}
       </div>
     {/if}
   {/snippet}

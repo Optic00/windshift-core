@@ -60,7 +60,7 @@ const fieldIdToI18nKey = {
 export function friendlyStandardFieldName(fieldId) {
   const key = fieldIdToI18nKey[fieldId];
   if (!key) return fieldId;
-  const tr = t(`pickers.fields.${key}`);
+  const tr = /** @type {any} */ (t(`pickers.fields.${key}`));
   if (typeof tr === 'object' && tr) return tr.name || fieldId;
   return tr || fieldId;
 }
