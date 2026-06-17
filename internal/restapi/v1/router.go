@@ -98,6 +98,10 @@ func RegisterRoutes(deps restapi.Deps) {
 		handlers.NewBaseHandler(db, permissionService),
 		services.NewPageAttachmentUploadService(db, deps.AttachmentPath, permissionService, pagePermissionService),
 	)
+	itemAttachmentHandler := handlers.NewItemAttachmentHandler(
+		handlers.NewBaseHandler(db, permissionService),
+		services.NewItemAttachmentService(db, deps.AttachmentPath, permissionService),
+	)
 
 	// Time tracking
 	timePermService := services.NewTimePermissionService(db, permissionService)
@@ -142,8 +146,10 @@ func RegisterRoutes(deps restapi.Deps) {
 	v1.HandleWithMiddleware("POST /items/{id}/transition", itemHandler.Transition, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)
 	v1.HandleWithMiddleware("POST /items/{id}/change-type", itemHandler.ChangeType, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)
 	v1.HandleWithMiddleware("GET /items/{id}/attachments", itemHandler.GetAttachments, bearerAuth.RequirePermission("items:read"), router.RequireNumericID)
+	v1.HandleWithMiddleware("POST /items/{id}/attachments", itemAttachmentHandler.Upload, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)
 	v1.HandleWithMiddleware("GET /attachments/{id}/download", attachmentHandler.Download, bearerAuth.RequirePermission("items:read"), router.RequireNumericID)
 	v1.HandleWithMiddleware("GET /attachments/{id}/thumbnail", attachmentHandler.Thumbnail, bearerAuth.RequirePermission("items:read"), router.RequireNumericID)
+	v1.HandleWithMiddleware("DELETE /attachments/{id}", itemAttachmentHandler.Delete, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)
 	v1.HandleWithMiddleware("GET /items/{id}/children", itemHandler.GetChildren, bearerAuth.RequirePermission("items:read"), router.RequireNumericID)
 
 	// ============================================
