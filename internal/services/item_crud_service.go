@@ -68,25 +68,15 @@ type DeleteResult struct {
 // preserves the legacy non-cascade delete endpoint semantics; use Delete for
 // item + descendants cleanup.
 func (s *ItemCRUDService) DeleteSingle(itemID int) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if err := s.repo.DeleteItemLinks(tx, itemID); err != nil {
-		return err
-	}
-	if err := s.repo.ClearWorklogItemReferences(tx, itemID); err != nil {
-		return err
-	}
-	if err := s.repo.Delete(tx, itemID); err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
-	return nil
+	return database.WithTx(s.db, func(tx database.Tx) error {
+		if err := s.repo.DeleteItemLinks(tx, itemID); err != nil {
+			return err
+		}
+		if err := s.repo.ClearWorklogItemReferences(tx, itemID); err != nil {
+			return err
+		}
+		return s.repo.Delete(tx, itemID)
+	})
 }
 
 // Delete removes an item and all its descendants
@@ -106,44 +96,38 @@ func (s *ItemCRUDService) Delete(itemID int) (*DeleteResult, error) {
 		return nil, fmt.Errorf("failed to get descendants: %w", err)
 	}
 
-	// Start transaction
-	tx, err := s.db.Begin()
-	if err != nil {
-		return nil, fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
 	// Delete all related data for item and descendants
 	allIDs := append([]int{itemID}, descendantIDs...)
-	for _, id := range allIDs {
-		// Delete watches
-		if err := s.repo.DeleteItemWatches(tx, id); err != nil {
-			return nil, err
-		}
+	if err := database.WithTx(s.db, func(tx database.Tx) error {
+		for _, id := range allIDs {
+			// Delete watches
+			if err := s.repo.DeleteItemWatches(tx, id); err != nil {
+				return err
+			}
 
-		// Delete history
-		if err := s.repo.DeleteItemHistory(tx, id); err != nil {
-			return nil, err
-		}
+			// Delete history
+			if err := s.repo.DeleteItemHistory(tx, id); err != nil {
+				return err
+			}
 
-		// Delete links
-		if err := s.repo.DeleteItemLinks(tx, id); err != nil {
-			return nil, err
-		}
+			// Delete links
+			if err := s.repo.DeleteItemLinks(tx, id); err != nil {
+				return err
+			}
 
-		// Clear worklog references
-		if err := s.repo.ClearWorklogItemReferences(tx, id); err != nil {
-			return nil, err
-		}
+			// Clear worklog references
+			if err := s.repo.ClearWorklogItemReferences(tx, id); err != nil {
+				return err
+			}
 
-		// Delete the item itself
-		if err := s.repo.Delete(tx, id); err != nil {
-			return nil, err
+			// Delete the item itself
+			if err := s.repo.Delete(tx, id); err != nil {
+				return err
+			}
 		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	return &DeleteResult{
@@ -180,13 +164,7 @@ func (s *ItemCRUDService) Copy(itemID int, opts CopyOptions) (*CopyResult, error
 	var newID int
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
-		newID, lastErr = func() (int, error) {
-			tx, err := s.db.Begin()
-			if err != nil {
-				return 0, fmt.Errorf("failed to begin transaction: %w", err)
-			}
-			defer func() { _ = tx.Rollback() }()
-
+		newID, lastErr = database.WithTxResult(s.db, func(tx database.Tx) (int, error) {
 			fracIndex, err := repository.GenerateFracIndexForNewItem(tx, driverName)
 			if err != nil {
 				return 0, err
@@ -237,11 +215,8 @@ func (s *ItemCRUDService) Copy(itemID int, opts CopyOptions) (*CopyResult, error
 				return 0, fmt.Errorf("failed to copy milestones: %w", err)
 			}
 
-			if err := tx.Commit(); err != nil {
-				return 0, fmt.Errorf("failed to commit transaction: %w", err)
-			}
 			return id, nil
-		}()
+		})
 		if lastErr == nil {
 			break
 		}
