@@ -437,18 +437,10 @@ func (s *WorkflowService) PerformTransition(
 	}
 
 	// Transactional write + history entry.
-	tx, err := s.db.Begin()
-	if err != nil {
-		return nil, fmt.Errorf("begin tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if err := s.CommitTransition(tx, itemRepo, req.ItemID, oldStatusID, req.ToStatusID, req.ActorUserID); err != nil {
+	if err := database.WithTx(s.db, func(tx database.Tx) error {
+		return s.CommitTransition(tx, itemRepo, req.ItemID, oldStatusID, req.ToStatusID, req.ActorUserID)
+	}); err != nil {
 		return nil, err
-	}
-
-	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("commit transition: %w", err)
 	}
 
 	// Post-commit approval hooks. Cancel any pending approval (we just left the
