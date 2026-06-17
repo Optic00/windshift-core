@@ -11,26 +11,28 @@ import (
 
 // openaiClient implements Client for OpenAI-compatible APIs (OpenAI, Z.AI, local).
 type openaiClient struct {
-	endpoint string
-	chatPath string
-	model    string
-	apiKey   string
-	http     *http.Client
+	endpoint       string
+	chatPath       string
+	model          string
+	apiKey         string
+	providerConfig string
+	http           *http.Client
 }
 
 // newOpenAIClient creates a client for OpenAI-compatible endpoints.
 // chatPath overrides the default "/v1/chat/completions" path appended to the base URL.
-func newOpenAIClient(baseURL, model, apiKey string, timeout time.Duration, chatPath string) *openaiClient {
+func newOpenAIClient(baseURL, model, apiKey, providerConfig string, timeout time.Duration, chatPath string) *openaiClient {
 	endpoint := strings.TrimSuffix(baseURL, "/")
 	if chatPath == "" {
 		chatPath = "/v1/chat/completions"
 	}
 	return &openaiClient{
-		endpoint: endpoint,
-		chatPath: chatPath,
-		model:    model,
-		apiKey:   apiKey,
-		http:     newAdminConfiguredHTTPClient(timeout),
+		endpoint:       endpoint,
+		chatPath:       chatPath,
+		model:          model,
+		apiKey:         apiKey,
+		providerConfig: providerConfig,
+		http:           newAdminConfiguredHTTPClient(timeout),
 	}
 }
 
@@ -50,6 +52,9 @@ func (c *openaiClient) ChatCompletion(ctx context.Context, req ChatCompletionReq
 				},
 			}
 		}
+	}
+	if err := MergeProviderConfig(body, c.providerConfig); err != nil {
+		return nil, err
 	}
 
 	return postChatCompletion(ctx, c.http, joinProviderPath(c.endpoint, c.chatPath), c.apiKey, body)

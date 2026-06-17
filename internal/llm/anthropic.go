@@ -15,10 +15,11 @@ import (
 
 // anthropicClient implements Client for the Anthropic Messages API.
 type anthropicClient struct {
-	endpoint string
-	model    string
-	apiKey   string
-	http     *http.Client
+	endpoint       string
+	model          string
+	apiKey         string
+	providerConfig string
+	http           *http.Client
 }
 
 // Anthropic Messages API request/response types
@@ -90,13 +91,14 @@ type anthropicUsage struct {
 }
 
 // newAnthropicClient creates a client for the Anthropic Messages API.
-func newAnthropicClient(baseURL, model, apiKey string, timeout time.Duration) *anthropicClient {
+func newAnthropicClient(baseURL, model, apiKey, providerConfig string, timeout time.Duration) *anthropicClient {
 	endpoint := strings.TrimSuffix(baseURL, "/")
 	return &anthropicClient{
-		endpoint: endpoint,
-		model:    model,
-		apiKey:   apiKey,
-		http:     newAdminConfiguredHTTPClient(timeout),
+		endpoint:       endpoint,
+		model:          model,
+		apiKey:         apiKey,
+		providerConfig: providerConfig,
+		http:           newAdminConfiguredHTTPClient(timeout),
 	}
 }
 
@@ -222,7 +224,7 @@ func (c *anthropicClient) ChatCompletion(ctx context.Context, req ChatCompletion
 		useToolOutput = true
 	}
 
-	body, err := json.Marshal(anthropicReq)
+	body, err := marshalWithProviderConfig(anthropicReq, c.providerConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}

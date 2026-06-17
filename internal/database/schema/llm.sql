@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS llm_connections (
     model TEXT NOT NULL,
     api_key_encrypted TEXT,
     base_url TEXT,
+    provider_config TEXT,
     is_default BOOLEAN NOT NULL DEFAULT 0,
     is_enabled BOOLEAN NOT NULL DEFAULT 1,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

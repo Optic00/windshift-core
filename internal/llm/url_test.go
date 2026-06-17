@@ -71,6 +71,13 @@ func TestDefaultOpenRouterHasSeedModels(t *testing.T) {
 	}
 }
 
+func TestDefaultProvidersDoNotExposeDirectAnthropic(t *testing.T) {
+	LoadDefaultProviders()
+	if provider := GetProvider(ProviderType("anthropic")); provider != nil {
+		t.Fatal("direct Anthropic should not be exposed as a first-class provider; use OpenRouter for Claude models")
+	}
+}
+
 func TestAdminConfiguredHTTPClientBlocksLocalhostByDefault(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))

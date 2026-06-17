@@ -201,6 +201,21 @@ func (h *RunnerBrokerHandler) ProxyLLM(w http.ResponseWriter, r *http.Request) {
 	}
 	// Bound the request body (WI-238 security Phase 7).
 	r.Body = http.MaxBytesReader(w, r.Body, maxLLMBrokerBody)
+	if strings.TrimPrefix(upstreamPath, "/") == "v1/chat/completions" && strings.TrimSpace(cfg.ProviderConfig) != "" {
+		body, readErr := io.ReadAll(r.Body)
+		if readErr != nil {
+			respondBadRequest(w, r, "invalid llm request body")
+			return
+		}
+		merged, mergeErr := llm.MergeProviderConfigJSON(body, cfg.ProviderConfig)
+		if mergeErr != nil {
+			respondServiceUnavailable(w, r, services.RedactString(mergeErr.Error()))
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(merged))
+		r.ContentLength = int64(len(merged))
+		r.Header.Set("Content-Length", fmt.Sprintf("%d", len(merged)))
+	}
 	apiKey := cfg.APIKey
 	providerChatPath := "/v1/chat/completions"
 	if provider != nil && provider.ChatPath != "" {

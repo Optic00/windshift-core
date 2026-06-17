@@ -46,6 +46,14 @@ type Migration struct {
 // this Catalog in subsequent commits.
 var Catalog = []Migration{
 	{
+		Version:       "20260617_llm_connections_provider_config",
+		Name:          "Add provider-specific JSON config to LLM connections",
+		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('llm_connections') WHERE name='provider_config'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='llm_connections' AND column_name='provider_config'",
+		SQLite:        "ALTER TABLE llm_connections ADD COLUMN provider_config TEXT",
+		Postgres:      "ALTER TABLE llm_connections ADD COLUMN provider_config JSONB",
+	},
+	{
 		Version:       "20260528_portal_request_drafts",
 		Name:          "Create portal request form drafts table",
 		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='portal_request_drafts'",

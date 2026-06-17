@@ -268,9 +268,9 @@
     return opts;
   });
 
-  // The Go coding-agent speaks OpenAI-compatible chat completions; the broker
-  // rejects Anthropic-backed runs until translation lands. Warn at bind time.
-  let selectedLLMIsAnthropic = $derived(
+  // Legacy direct Anthropic rows can still exist on upgraded instances, but
+  // the coding-agent broker accepts OpenAI-compatible connections only.
+  let selectedLLMIsDirectAnthropic = $derived(
     (llmConnections || []).find((c) => c.id === formLLMConnectionId)?.provider_type === 'anthropic'
   );
 
@@ -782,8 +782,8 @@
             <Select id="binding-llm" bind:value={formLLMConnectionId} options={llmOptions} />
             {#if llmConnections.length === 0}
               <p class="text-xs mt-1" style="color: var(--ds-text-danger);">No enabled LLM connections. Ask a global admin to add one under Admin → AI Connections.</p>
-            {:else if selectedLLMIsAnthropic}
-              <p class="text-xs mt-1" style="color: var(--ds-text-warning, var(--ds-text-subtle));">Anthropic connections aren't usable by the coding agent yet — it speaks OpenAI-compatible APIs. Pick an OpenAI-compatible provider (e.g. OpenRouter).</p>
+            {:else if selectedLLMIsDirectAnthropic}
+              <p class="text-xs mt-1" style="color: var(--ds-text-warning, var(--ds-text-subtle));">Direct Anthropic connections are legacy and not usable by the coding agent. Pick an OpenAI-compatible provider such as OpenRouter.</p>
             {/if}
           </div>
           <div>

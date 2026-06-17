@@ -34,6 +34,7 @@
     model: '',
     api_key: '',
     base_url: '',
+    provider_config: '',
     is_default: false,
     is_enabled: true,
   });
@@ -45,6 +46,7 @@
       model: '',
       api_key: '',
       base_url: '',
+      provider_config: '',
       is_default: false,
       is_enabled: true,
     };
@@ -170,6 +172,7 @@
       model: conn.model,
       api_key: '',
       base_url: conn.base_url || '',
+      provider_config: conn.provider_config || '',
       is_default: conn.is_default,
       is_enabled: conn.is_enabled,
     };
@@ -195,7 +198,28 @@
     }
   }
 
+  function validateProviderConfig() {
+    const raw = form.provider_config?.trim() || '';
+    if (!raw) {
+      form.provider_config = '';
+      return true;
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
+        errorToast('Provider config must be a JSON object');
+        return false;
+      }
+      form.provider_config = raw;
+      return true;
+    } catch {
+      errorToast('Provider config must be valid JSON');
+      return false;
+    }
+  }
+
   async function handleCreate() {
+    if (!validateProviderConfig()) return;
     saving = true;
     try {
       await api.llmConnections.create(form);
@@ -211,6 +235,7 @@
 
   async function handleUpdate() {
     if (!editingConnection) return;
+    if (!validateProviderConfig()) return;
     saving = true;
     try {
       await api.llmConnections.update(editingConnection.id, form);
@@ -420,7 +445,7 @@
       id="llm-connection-name"
       type="text"
       bind:value={form.name}
-      placeholder="e.g. Claude Sonnet"
+      placeholder="e.g. OpenRouter Claude Sonnet"
       class="w-full px-3 py-2 text-sm rounded-md border"
       style="border-color: var(--ds-border); background: var(--ds-surface); color: var(--ds-text);"
     />
@@ -513,6 +538,23 @@
         options={availableModels.map(m => ({ value: m.id, label: m.name }))}
       />
     {/if}
+  </div>
+
+  <!-- Provider Config -->
+  <div>
+    <label for="llm-connection-provider-config" class="block text-xs font-medium mb-1" style="color: var(--ds-text-subtle);">Provider config JSON</label>
+    <textarea
+      id="llm-connection-provider-config"
+      bind:value={form.provider_config}
+      rows="5"
+      spellcheck="false"
+      placeholder={`{\n  "provider": {\n    "sort": "latency",\n    "allow_fallbacks": true\n  }\n}`}
+      class="w-full px-3 py-2 text-sm rounded-md border font-mono"
+      style="border-color: var(--ds-border); background: var(--ds-surface); color: var(--ds-text);"
+    ></textarea>
+    <div class="text-xs mt-1" style="color: var(--ds-text-subtle);">
+      Optional top-level request fields merged into provider calls. Existing Windshift fields take precedence.
+    </div>
   </div>
 
   <!-- Toggles -->

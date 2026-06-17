@@ -20,16 +20,17 @@ var ErrFeatureDisabled = errors.New("this AI feature is disabled by your adminis
 
 // ConnectionInfo represents an LLM connection without sensitive fields.
 type ConnectionInfo struct {
-	ID           int          `json:"id"`
-	Name         string       `json:"name"`
-	ProviderType ProviderType `json:"provider_type"`
-	Model        string       `json:"model"`
-	HasAPIKey    bool         `json:"has_api_key"`
-	BaseURL      string       `json:"base_url,omitempty"`
-	IsDefault    bool         `json:"is_default"`
-	IsEnabled    bool         `json:"is_enabled"`
-	CreatedAt    time.Time    `json:"created_at"`
-	UpdatedAt    time.Time    `json:"updated_at"`
+	ID             int          `json:"id"`
+	Name           string       `json:"name"`
+	ProviderType   ProviderType `json:"provider_type"`
+	Model          string       `json:"model"`
+	HasAPIKey      bool         `json:"has_api_key"`
+	BaseURL        string       `json:"base_url,omitempty"`
+	ProviderConfig string       `json:"provider_config,omitempty"`
+	IsDefault      bool         `json:"is_default"`
+	IsEnabled      bool         `json:"is_enabled"`
+	CreatedAt      time.Time    `json:"created_at"`
+	UpdatedAt      time.Time    `json:"updated_at"`
 }
 
 // ConnectionManager bridges the database and the LLM client layer.
@@ -81,14 +82,14 @@ func (m *ConnectionManager) resolve(connectionID int) (*resolvedConnection, erro
 	var row *sql.Row
 	if connectionID > 0 {
 		row = m.db.QueryRow(
-			`SELECT id, provider_type, model, api_key_encrypted, base_url
+			`SELECT id, provider_type, model, api_key_encrypted, base_url, provider_config
 			 FROM llm_connections
 			 WHERE id = ? AND is_enabled = true`,
 			connectionID,
 		)
 	} else {
 		row = m.db.QueryRow(
-			`SELECT id, provider_type, model, api_key_encrypted, base_url
+			`SELECT id, provider_type, model, api_key_encrypted, base_url, provider_config
 			 FROM llm_connections
 			 WHERE is_enabled = true
 			 ORDER BY is_default DESC, id ASC
@@ -98,8 +99,8 @@ func (m *ConnectionManager) resolve(connectionID int) (*resolvedConnection, erro
 
 	var id int
 	var providerType, model string
-	var apiKeyEncrypted, baseURL sql.NullString
-	err := row.Scan(&id, &providerType, &model, &apiKeyEncrypted, &baseURL)
+	var apiKeyEncrypted, baseURL, providerConfig sql.NullString
+	err := row.Scan(&id, &providerType, &model, &apiKeyEncrypted, &baseURL, &providerConfig)
 	if errors.Is(err, sql.ErrNoRows) {
 		if connectionID > 0 {
 			return nil, fmt.Errorf("LLM connection %d not found or disabled", connectionID)
@@ -128,10 +129,11 @@ func (m *ConnectionManager) resolve(connectionID int) (*resolvedConnection, erro
 
 	return &resolvedConnection{
 		client: NewProviderClient(ConnectionConfig{
-			ProviderType: ProviderType(providerType),
-			Model:        model,
-			APIKey:       apiKey,
-			BaseURL:      baseURL.String,
+			ProviderType:   ProviderType(providerType),
+			Model:          model,
+			APIKey:         apiKey,
+			BaseURL:        baseURL.String,
+			ProviderConfig: providerConfig.String,
 		}),
 		connectionID: id,
 		providerType: ProviderType(providerType),
@@ -144,11 +146,12 @@ func (m *ConnectionManager) resolve(connectionID int) (*resolvedConnection, erro
 // resolve the admin-selected provider for a coding-agent run (the model id for
 // the agent container; the key + base URL stay server-side in the llm-proxy).
 type ConnectionRuntimeConfig struct {
-	ProviderType string
-	APIFormat    string
-	Model        string
-	APIKey       string
-	BaseURL      string
+	ProviderType   string
+	APIFormat      string
+	Model          string
+	APIKey         string
+	BaseURL        string
+	ProviderConfig string
 }
 
 // ConnectionRuntime returns the runtime config for one enabled connection. It
@@ -156,13 +159,13 @@ type ConnectionRuntimeConfig struct {
 // have already authorized access to the selected connection.
 func (m *ConnectionManager) ConnectionRuntime(ctx context.Context, connectionID int) (*ConnectionRuntimeConfig, error) {
 	cfg := &ConnectionRuntimeConfig{}
-	var apiKeyEncrypted, baseURLNull sql.NullString
+	var apiKeyEncrypted, baseURLNull, providerConfig sql.NullString
 	err := m.db.QueryRowContext(ctx,
-		`SELECT provider_type, model, api_key_encrypted, base_url
+		`SELECT provider_type, model, api_key_encrypted, base_url, provider_config
 		 FROM llm_connections
 		 WHERE id = ? AND is_enabled = true`,
 		connectionID,
-	).Scan(&cfg.ProviderType, &cfg.Model, &apiKeyEncrypted, &baseURLNull)
+	).Scan(&cfg.ProviderType, &cfg.Model, &apiKeyEncrypted, &baseURLNull, &providerConfig)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("LLM connection %d not found or disabled", connectionID)
 	}
@@ -183,13 +186,16 @@ func (m *ConnectionManager) ConnectionRuntime(ctx context.Context, connectionID 
 	if baseURLNull.Valid {
 		cfg.BaseURL = baseURLNull.String
 	}
+	if providerConfig.Valid {
+		cfg.ProviderConfig = providerConfig.String
+	}
 	return cfg, nil
 }
 
 // ListConnections returns all connections (without secrets) for admin listing.
 func (m *ConnectionManager) ListConnections() ([]ConnectionInfo, error) {
 	rows, err := m.db.Query(
-		`SELECT id, name, provider_type, model, api_key_encrypted, base_url, is_default, is_enabled, created_at, updated_at
+		`SELECT id, name, provider_type, model, api_key_encrypted, base_url, provider_config, is_default, is_enabled, created_at, updated_at
 		 FROM llm_connections ORDER BY is_default DESC, name ASC`,
 	)
 	if err != nil {
@@ -246,11 +252,11 @@ func (m *ConnectionManager) ListEnabledPublic() ([]PublicConnectionInfo, error) 
 // GetConnection returns a single connection by ID.
 func (m *ConnectionManager) GetConnection(id int) (*ConnectionInfo, error) {
 	var c ConnectionInfo
-	var apiKeyEncrypted, baseURL sql.NullString
+	var apiKeyEncrypted, baseURL, providerConfig sql.NullString
 	err := m.db.QueryRow(
-		`SELECT id, name, provider_type, model, api_key_encrypted, base_url, is_default, is_enabled, created_at, updated_at
+		`SELECT id, name, provider_type, model, api_key_encrypted, base_url, provider_config, is_default, is_enabled, created_at, updated_at
 		 FROM llm_connections WHERE id = ?`, id,
-	).Scan(&c.ID, &c.Name, &c.ProviderType, &c.Model, &apiKeyEncrypted, &baseURL, &c.IsDefault, &c.IsEnabled, &c.CreatedAt, &c.UpdatedAt)
+	).Scan(&c.ID, &c.Name, &c.ProviderType, &c.Model, &apiKeyEncrypted, &baseURL, &providerConfig, &c.IsDefault, &c.IsEnabled, &c.CreatedAt, &c.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -261,18 +267,22 @@ func (m *ConnectionManager) GetConnection(id int) (*ConnectionInfo, error) {
 	if baseURL.Valid {
 		c.BaseURL = baseURL.String
 	}
+	if providerConfig.Valid {
+		c.ProviderConfig = providerConfig.String
+	}
 	return &c, nil
 }
 
 // CreateConnectionRequest is the input for creating a connection.
 type CreateConnectionRequest struct {
-	Name         string       `json:"name"`
-	ProviderType ProviderType `json:"provider_type"`
-	Model        string       `json:"model"`
-	APIKey       string       `json:"api_key,omitempty"`
-	BaseURL      string       `json:"base_url,omitempty"`
-	IsDefault    bool         `json:"is_default"`
-	IsEnabled    bool         `json:"is_enabled"`
+	Name           string       `json:"name"`
+	ProviderType   ProviderType `json:"provider_type"`
+	Model          string       `json:"model"`
+	APIKey         string       `json:"api_key,omitempty"`
+	BaseURL        string       `json:"base_url,omitempty"`
+	ProviderConfig string       `json:"provider_config,omitempty"`
+	IsDefault      bool         `json:"is_default"`
+	IsEnabled      bool         `json:"is_enabled"`
 }
 
 // CreateConnection creates a new LLM connection.
@@ -290,6 +300,10 @@ func (m *ConnectionManager) CreateConnection(req CreateConnectionRequest) (*Conn
 	if req.BaseURL != "" {
 		baseURL = sql.NullString{String: req.BaseURL, Valid: true}
 	}
+	var providerConfig sql.NullString
+	if req.ProviderConfig != "" {
+		providerConfig = sql.NullString{String: req.ProviderConfig, Valid: true}
+	}
 
 	// If setting as default, clear existing defaults
 	if req.IsDefault {
@@ -300,9 +314,9 @@ func (m *ConnectionManager) CreateConnection(req CreateConnectionRequest) (*Conn
 
 	var id int64
 	err := m.db.QueryRow(
-		`INSERT INTO llm_connections (name, provider_type, model, api_key_encrypted, base_url, is_default, is_enabled)
-		 VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-		req.Name, string(req.ProviderType), req.Model, encryptedKey, baseURL, req.IsDefault, req.IsEnabled,
+		`INSERT INTO llm_connections (name, provider_type, model, api_key_encrypted, base_url, provider_config, is_default, is_enabled)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+		req.Name, string(req.ProviderType), req.Model, encryptedKey, baseURL, providerConfig, req.IsDefault, req.IsEnabled,
 	).Scan(&id)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create connection: %w", err)
@@ -313,13 +327,14 @@ func (m *ConnectionManager) CreateConnection(req CreateConnectionRequest) (*Conn
 
 // UpdateConnectionRequest is the input for updating a connection.
 type UpdateConnectionRequest struct {
-	Name         string       `json:"name"`
-	ProviderType ProviderType `json:"provider_type"`
-	Model        string       `json:"model"`
-	APIKey       string       `json:"api_key,omitempty"`
-	BaseURL      string       `json:"base_url,omitempty"`
-	IsDefault    bool         `json:"is_default"`
-	IsEnabled    bool         `json:"is_enabled"`
+	Name           string       `json:"name"`
+	ProviderType   ProviderType `json:"provider_type"`
+	Model          string       `json:"model"`
+	APIKey         string       `json:"api_key,omitempty"`
+	BaseURL        string       `json:"base_url,omitempty"`
+	ProviderConfig string       `json:"provider_config,omitempty"`
+	IsDefault      bool         `json:"is_default"`
+	IsEnabled      bool         `json:"is_enabled"`
 }
 
 // UpdateConnection updates an existing LLM connection.
@@ -330,6 +345,10 @@ func (m *ConnectionManager) UpdateConnection(id int, req UpdateConnectionRequest
 			return nil, fmt.Errorf("failed to clear existing defaults: %w", err)
 		}
 	}
+	var providerConfig sql.NullString
+	if req.ProviderConfig != "" {
+		providerConfig = sql.NullString{String: req.ProviderConfig, Valid: true}
+	}
 
 	if req.APIKey != "" {
 		encrypted, err := m.encryption.Encrypt(req.APIKey)
@@ -337,9 +356,9 @@ func (m *ConnectionManager) UpdateConnection(id int, req UpdateConnectionRequest
 			return nil, fmt.Errorf("failed to encrypt API key: %w", err)
 		}
 		_, err = m.db.Exec(
-			`UPDATE llm_connections SET name = ?, provider_type = ?, model = ?, api_key_encrypted = ?, base_url = ?, is_default = ?, is_enabled = ?, updated_at = CURRENT_TIMESTAMP
+			`UPDATE llm_connections SET name = ?, provider_type = ?, model = ?, api_key_encrypted = ?, base_url = ?, provider_config = ?, is_default = ?, is_enabled = ?, updated_at = CURRENT_TIMESTAMP
 			 WHERE id = ?`,
-			req.Name, string(req.ProviderType), req.Model, encrypted, req.BaseURL, req.IsDefault, req.IsEnabled, id,
+			req.Name, string(req.ProviderType), req.Model, encrypted, req.BaseURL, providerConfig, req.IsDefault, req.IsEnabled, id,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to update connection: %w", err)
@@ -347,9 +366,9 @@ func (m *ConnectionManager) UpdateConnection(id int, req UpdateConnectionRequest
 	} else {
 		// Don't overwrite API key if not provided
 		_, err := m.db.Exec(
-			`UPDATE llm_connections SET name = ?, provider_type = ?, model = ?, base_url = ?, is_default = ?, is_enabled = ?, updated_at = CURRENT_TIMESTAMP
+			`UPDATE llm_connections SET name = ?, provider_type = ?, model = ?, base_url = ?, provider_config = ?, is_default = ?, is_enabled = ?, updated_at = CURRENT_TIMESTAMP
 			 WHERE id = ?`,
-			req.Name, string(req.ProviderType), req.Model, req.BaseURL, req.IsDefault, req.IsEnabled, id,
+			req.Name, string(req.ProviderType), req.Model, req.BaseURL, providerConfig, req.IsDefault, req.IsEnabled, id,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to update connection: %w", err)
@@ -457,10 +476,10 @@ func (m *ConnectionManager) decryptCatalogRuntime(id int, apiKeyEncrypted, baseU
 // TestConnection tests a connection by creating a client and calling Health.
 func (m *ConnectionManager) TestConnection(id int) error {
 	var providerType, model string
-	var apiKeyEncrypted, baseURL sql.NullString
+	var apiKeyEncrypted, baseURL, providerConfig sql.NullString
 	err := m.db.QueryRow(
-		"SELECT provider_type, model, api_key_encrypted, base_url FROM llm_connections WHERE id = ?", id,
-	).Scan(&providerType, &model, &apiKeyEncrypted, &baseURL)
+		"SELECT provider_type, model, api_key_encrypted, base_url, provider_config FROM llm_connections WHERE id = ?", id,
+	).Scan(&providerType, &model, &apiKeyEncrypted, &baseURL, &providerConfig)
 	if err != nil {
 		return fmt.Errorf("connection not found: %w", err)
 	}
@@ -474,11 +493,12 @@ func (m *ConnectionManager) TestConnection(id int) error {
 	}
 
 	client := NewProviderClient(ConnectionConfig{
-		ProviderType: ProviderType(providerType),
-		Model:        model,
-		APIKey:       apiKey,
-		BaseURL:      baseURL.String,
-		Timeout:      30 * time.Second,
+		ProviderType:   ProviderType(providerType),
+		Model:          model,
+		APIKey:         apiKey,
+		BaseURL:        baseURL.String,
+		ProviderConfig: providerConfig.String,
+		Timeout:        30 * time.Second,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

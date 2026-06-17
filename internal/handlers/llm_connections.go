@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"windshift/internal/llm"
@@ -58,7 +59,7 @@ func (h *LLMConnectionHandler) GetConnection(w http.ResponseWriter, r *http.Requ
 // non-empty and that base_url (when provided) is a valid admin-configured HTTP(S) URL.
 // Returns true when validation passes; on failure it writes the error response
 // and returns false.
-func validateConnectionRequest(w http.ResponseWriter, r *http.Request, name string, providerType llm.ProviderType, model, baseURL string) bool {
+func validateConnectionRequest(w http.ResponseWriter, r *http.Request, name string, providerType llm.ProviderType, model, baseURL, providerConfig string) bool {
 	if name == "" || providerType == "" || model == "" {
 		respondBadRequest(w, r, "name, provider_type, and model are required")
 		return false
@@ -77,6 +78,14 @@ func validateConnectionRequest(w http.ResponseWriter, r *http.Request, name stri
 			return false
 		}
 	}
+	if err := sanitize.ValidateJSONPayload("provider_config", providerConfig); err != nil {
+		respondBadRequest(w, r, err.Error())
+		return false
+	}
+	if err := llm.ValidateProviderConfig(providerConfig); err != nil {
+		respondBadRequest(w, r, err.Error())
+		return false
+	}
 	return true
 }
 
@@ -90,7 +99,8 @@ func (h *LLMConnectionHandler) CreateConnection(w http.ResponseWriter, r *http.R
 		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
 		sanitize.Pair{Target: &req.Model, Policy: sanitize.ShortIdentifier},
 	)
-	if !validateConnectionRequest(w, r, req.Name, req.ProviderType, req.Model, req.BaseURL) {
+	req.ProviderConfig = strings.TrimSpace(req.ProviderConfig)
+	if !validateConnectionRequest(w, r, req.Name, req.ProviderType, req.Model, req.BaseURL, req.ProviderConfig) {
 		return
 	}
 
@@ -121,7 +131,8 @@ func (h *LLMConnectionHandler) UpdateConnection(w http.ResponseWriter, r *http.R
 		sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField},
 		sanitize.Pair{Target: &req.Model, Policy: sanitize.ShortIdentifier},
 	)
-	if !validateConnectionRequest(w, r, req.Name, req.ProviderType, req.Model, req.BaseURL) {
+	req.ProviderConfig = strings.TrimSpace(req.ProviderConfig)
+	if !validateConnectionRequest(w, r, req.Name, req.ProviderType, req.Model, req.BaseURL, req.ProviderConfig) {
 		return
 	}
 
