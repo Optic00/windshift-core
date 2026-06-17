@@ -150,6 +150,10 @@ export default {
       urlTemplate: 'URL Template',
       requestBody: 'Request Body',
       requestBodyPlaceholder: 'Optional. JSON body, may use {{variables}}.',
+      httpHeaders: 'Headers',
+      addHeader: 'Add Header',
+      headerName: 'Header name',
+      headerValue: 'Value',
       // Container run node
       dockerCapability: 'Docker Environment',
       timeoutSecs: 'Timeout (seconds)',

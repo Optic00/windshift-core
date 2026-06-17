@@ -48,13 +48,53 @@ export function createActionFlowStore({
       normalized.recipients = [normalized.recipient_type];
     }
 
+    // Output field names are validated against a trimmed value, so trim before
+    // serializing too — otherwise " response " passes validation but persists
+    // with the surrounding spaces.
+    if (typeof normalized.output_field === 'string') {
+      normalized.output_field = normalized.output_field.trim();
+    }
+
     // Optional capability on http_request should be omitted when cleared;
     // JSON null fails the server schema because the field is int-or-absent.
     if (nodeType === 'http_request' && normalized.capability_id == null) {
       delete normalized.capability_id;
     }
 
+    // Drop an empty headers map so the payload stays clean (server treats it
+    // as omitempty anyway).
+    if (
+      nodeType === 'http_request' &&
+      normalized.headers &&
+      typeof normalized.headers === 'object' &&
+      Object.keys(normalized.headers).length === 0
+    ) {
+      delete normalized.headers;
+    }
+
     return normalized;
+  }
+
+  // hydrateNodeConfig massages a freshly-loaded node config so legacy payloads
+  // render in the friendly editor controls. Runs once on load, not on save.
+  function hydrateNodeConfig(nodeType, config) {
+    const hydrated = { ...(config || {}) };
+
+    // Legacy notify_user configs stored specific user IDs in `recipients`
+    // without a `recipient_type`. Without this, the recipient select falls back
+    // to recipients[0] (a numeric ID) and the specific-recipient section, which
+    // is gated on recipient_type === 'specific', never renders.
+    if (
+      nodeType === 'notify_user' &&
+      !hydrated.recipient_type &&
+      Array.isArray(hydrated.recipients) &&
+      hydrated.recipients.length > 0 &&
+      hydrated.recipients.every((r) => /^\d+$/.test(String(r)))
+    ) {
+      hydrated.recipient_type = 'specific';
+    }
+
+    return hydrated;
   }
 
   const store = {
@@ -137,7 +177,7 @@ export function createActionFlowStore({
               ...(isTrigger ? { triggerType: action.trigger_type } : {}),
               config: isTrigger
                 ? parseConfig(action.trigger_config)
-                : parseConfig(node.node_config),
+                : hydrateNodeConfig(node.node_type, parseConfig(node.node_config)),
               ...(includeStatuses ? { statuses: initStatuses } : {}),
             },
           };

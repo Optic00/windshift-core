@@ -26,6 +26,7 @@
   import CreateAssetConfigPanel from './CreateAssetConfigPanel.svelte';
   import PlaceholderReferenceModal from './PlaceholderReferenceModal.svelte';
   import BaseActionFlowEditor from './shared/BaseActionFlowEditor.svelte';
+  import HttpHeadersEditor from './shared/HttpHeadersEditor.svelte';
   import { getFieldSelectorValue, backendFieldName, standardFieldTypes, collectOutputFields, isValidOutputFieldName } from './shared/fieldNameMapping.js';
   import { t } from '../../stores/i18n.svelte.js';
   import Checkbox from '../../components/Checkbox.svelte';
@@ -949,14 +950,16 @@
             size="small"
           />
         </div>
-      {:else}
-        <Checkbox
-          checked={selectedNode.data?.config?.cross_workspace || false}
-          onchange={(checked) => store.updateNodeConfig(selectedNode.id, { cross_workspace: checked })}
-          label="Cross workspace"
-          size="small"
-        />
       {/if}
+      <!-- cross_workspace is relation-independent in the backend config, so it
+           applies to linked relations too, not only the hierarchy relations. -->
+      <Checkbox
+        checked={selectedNode.data?.config?.cross_workspace || false}
+        onchange={(checked) => store.updateNodeConfig(selectedNode.id, { cross_workspace: checked })}
+        label="Cross workspace"
+        size="small"
+        dataTestid="related-cross-workspace"
+      />
       <div>
         <label for="config-related-max-items" class="block text-xs font-medium mb-1">Max items</label>
         <input
@@ -1142,6 +1145,14 @@
           oninput={(e) => store.updateNodeConfig(selectedNode.id, { body: e.currentTarget.value })}
           placeholder={t('actions.config.requestBodyPlaceholder')}
         ></textarea>
+      </div>
+      <div>
+        <span class="block text-xs font-medium mb-1">{t('actions.config.httpHeaders')}</span>
+        <HttpHeadersEditor
+          headers={selectedNode.data?.config?.headers || {}}
+          nodeId={selectedNode.id}
+          onchange={(headers) => store.updateNodeConfig(selectedNode.id, { headers })}
+        />
       </div>
       <div>
         <label for="config-http-output" class="block text-xs font-medium mb-1">{t('actions.config.outputField')}</label>

@@ -100,7 +100,7 @@
     <label for="source-asset-field" class="block text-xs font-medium mb-1">{t('actions.config.sourceAssetField')}</label>
     <Select
       id="source-asset-field"
-      options={[{ value: '', label: t('actions.config.selectAssetField') }, ...assetFields.map(f => ({ value: f.field_name, label: f.name ?? f.field_name }))]}
+      options={[{ value: '', label: t('actions.config.selectAssetField') }, ...assetFields.map(f => ({ value: f.field_name, label: f.name ?? f.display_name ?? f.label ?? f.field_name }))]}
       value={selectedNode.data?.config?.source_field_id || ''}
       onchange={(v) => handleSourceFieldChange({ target: { value: v } })}
       disabled={loading}
