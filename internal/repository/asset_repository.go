@@ -112,11 +112,8 @@ func (r *AssetRepository) GetSetByID(setID int) (*models.AssetManagementSet, err
 		&creatorName, &set.AssetTypeCount, &set.AssetCount,
 	)
 
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to get asset set: %w", err)
+		return nil, notFoundOrWrap(err, "failed to get asset set")
 	}
 
 	set.CreatorName = creatorName.String
@@ -229,11 +226,8 @@ func (r *AssetRepository) HardDeleteSet(setID int) error {
 func (r *AssetRepository) GetAssetRoleIDByName(name string) (int, error) {
 	var id int
 	err := r.db.QueryRow(`SELECT id FROM asset_roles WHERE name = ?`, name).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, ErrNotFound
-	}
 	if err != nil {
-		return 0, fmt.Errorf("failed to find asset role: %w", err)
+		return 0, notFoundOrWrap(err, "failed to find asset role")
 	}
 	return id, nil
 }
@@ -246,11 +240,8 @@ func (r *AssetRepository) GetAssetSetCoreByID(setID int) (*models.AssetManagemen
 		SELECT id, name, description, is_default, created_by, created_at, updated_at
 		FROM asset_management_sets WHERE id = ?
 	`, setID).Scan(&set.ID, &set.Name, &set.Description, &set.IsDefault, &set.CreatedBy, &set.CreatedAt, &set.UpdatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch asset set: %w", err)
+		return nil, notFoundOrWrap(err, "failed to fetch asset set")
 	}
 	return &set, nil
 }
@@ -430,11 +421,8 @@ func (r *AssetRepository) GetRoleByID(roleID int) (*models.AssetRole, error) {
 		FROM asset_roles WHERE id = ?
 	`, roleID).Scan(&role.ID, &role.Name, &role.Description, &role.IsSystem, &role.DisplayOrder, &role.CreatedAt, &role.UpdatedAt)
 
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to get role: %w", err)
+		return nil, notFoundOrWrap(err, "failed to get role")
 	}
 
 	return &role, nil
@@ -902,11 +890,8 @@ func (r *AssetRepository) GetAssetByID(assetID int) (*models.Asset, error) {
 		&creatorName, &creatorEmail,
 	)
 
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to get asset: %w", err)
+		return nil, notFoundOrWrap(err, "failed to get asset")
 	}
 
 	// Handle nullable fields
@@ -943,11 +928,8 @@ func (r *AssetRepository) GetAssetByID(assetID int) (*models.Asset, error) {
 func (r *AssetRepository) GetAssetSetID(assetID int) (int, error) {
 	var setID int
 	err := r.db.QueryRow("SELECT set_id FROM assets WHERE id = ?", assetID).Scan(&setID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, ErrNotFound
-	}
 	if err != nil {
-		return 0, fmt.Errorf("failed to get asset set ID: %w", err)
+		return 0, notFoundOrWrap(err, "failed to get asset set ID")
 	}
 	return setID, nil
 }
@@ -1089,11 +1071,8 @@ func (r *AssetRepository) FindAssetTypeByID(typeID int) (*models.AssetType, erro
 func (r *AssetRepository) GetAssetTypeSetID(typeID int) (int, error) {
 	var setID int
 	err := r.db.QueryRow("SELECT set_id FROM asset_types WHERE id = ?", typeID).Scan(&setID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, ErrNotFound
-	}
 	if err != nil {
-		return 0, fmt.Errorf("failed to get asset type set: %w", err)
+		return 0, notFoundOrWrap(err, "failed to get asset type set")
 	}
 	return setID, nil
 }
@@ -1104,11 +1083,8 @@ func (r *AssetRepository) GetAssetTypeSetAndCount(typeID int) (setID, assetCount
 		SELECT set_id, (SELECT COUNT(*) FROM assets WHERE asset_type_id = ?) as asset_count
 		FROM asset_types WHERE id = ?
 	`, typeID, typeID).Scan(&setID, &assetCount)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, 0, ErrNotFound
-	}
 	if err != nil {
-		return 0, 0, fmt.Errorf("failed to get asset type set/count: %w", err)
+		return 0, 0, notFoundOrWrap(err, "failed to get asset type set/count")
 	}
 	return setID, assetCount, nil
 }
@@ -1194,11 +1170,8 @@ func (r *AssetRepository) GetAssetTypeCoreByID(typeID int) (*models.AssetType, e
 		&at.Icon, &at.Color, &at.DisplayOrder, &at.IsActive,
 		&at.CreatedAt, &at.UpdatedAt,
 	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch asset type: %w", err)
+		return nil, notFoundOrWrap(err, "failed to fetch asset type")
 	}
 	return &at, nil
 }
@@ -1387,11 +1360,8 @@ func (r *AssetRepository) GetAssetCategoryCoreByID(categoryID int) (*models.Asse
 func (r *AssetRepository) GetAssetCategorySetID(categoryID int) (int, error) {
 	var setID int
 	err := r.db.QueryRow("SELECT set_id FROM asset_categories WHERE id = ?", categoryID).Scan(&setID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, ErrNotFound
-	}
 	if err != nil {
-		return 0, fmt.Errorf("failed to get asset category set: %w", err)
+		return 0, notFoundOrWrap(err, "failed to get asset category set")
 	}
 	return setID, nil
 }
@@ -1400,11 +1370,8 @@ func (r *AssetRepository) GetAssetCategorySetID(categoryID int) (int, error) {
 func (r *AssetRepository) GetAssetCategoryParentID(categoryID int) (sql.NullInt64, error) {
 	var parentID sql.NullInt64
 	err := r.db.QueryRow("SELECT parent_id FROM asset_categories WHERE id = ?", categoryID).Scan(&parentID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return parentID, ErrNotFound
-	}
 	if err != nil {
-		return parentID, fmt.Errorf("failed to get parent id: %w", err)
+		return parentID, notFoundOrWrap(err, "failed to get parent id")
 	}
 	return parentID, nil
 }
@@ -1860,11 +1827,8 @@ func (r *AssetRepository) GetAssetUpdateSnapshot(assetID int) (*AssetUpdateSnaps
 		`SELECT set_id, status_id, asset_type_id FROM assets WHERE id = ?`,
 		assetID,
 	).Scan(&snap.SetID, &snap.StatusID, &snap.AssetTypeID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch asset snapshot: %w", err)
+		return nil, notFoundOrWrap(err, "failed to fetch asset snapshot")
 	}
 	return &snap, nil
 }

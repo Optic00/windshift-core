@@ -446,11 +446,8 @@ func (r *WorkspaceRepository) GetActivePersonalWorkspaceID(userID int) (int, err
 		SELECT id FROM workspaces
 		WHERE is_personal = ? AND owner_id = ? AND active = ?
 	`, true, userID, true).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, ErrNotFound
-	}
 	if err != nil {
-		return 0, fmt.Errorf("get active personal workspace for user %d: %w", userID, err)
+		return 0, notFoundOrWrap(err, fmt.Sprintf("get active personal workspace for user %d", userID))
 	}
 	return id, nil
 }
@@ -744,11 +741,8 @@ func (r *WorkspaceRepository) GetHomepageLayoutJSON(workspaceID int) (string, er
 		FROM workspaces
 		WHERE id = ?
 	`, workspaceID).Scan(&homepageLayout)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", ErrNotFound
-	}
 	if err != nil {
-		return "", fmt.Errorf("get homepage layout for workspace %d: %w", workspaceID, err)
+		return "", notFoundOrWrap(err, fmt.Sprintf("get homepage layout for workspace %d", workspaceID))
 	}
 	if !homepageLayout.Valid {
 		return "", nil

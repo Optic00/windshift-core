@@ -342,11 +342,8 @@ func (r *ChannelRepository) Exists(ctx context.Context, id int) (bool, error) {
 func (r *ChannelRepository) IsPluginManaged(ctx context.Context, id int) (bool, error) {
 	var pluginName sql.NullString
 	err := r.db.QueryRowContext(ctx, "SELECT plugin_name FROM channels WHERE id = ?", id).Scan(&pluginName)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, ErrNotFound
-	}
 	if err != nil {
-		return false, fmt.Errorf("failed to check plugin managed: %w", err)
+		return false, notFoundOrWrap(err, "failed to check plugin managed")
 	}
 	return pluginName.Valid && pluginName.String != "", nil
 }
@@ -355,11 +352,8 @@ func (r *ChannelRepository) IsPluginManaged(ctx context.Context, id int) (bool, 
 func (r *ChannelRepository) GetConfig(ctx context.Context, id int) (string, error) {
 	var config string
 	err := r.db.QueryRowContext(ctx, "SELECT config FROM channels WHERE id = ?", id).Scan(&config)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", ErrNotFound
-	}
 	if err != nil {
-		return "", fmt.Errorf("failed to get config: %w", err)
+		return "", notFoundOrWrap(err, "failed to get config")
 	}
 	return config, nil
 }
@@ -522,11 +516,8 @@ func (r *ChannelRepository) scanChannelRow(row *sql.Row) (*models.Channel, error
 		&channel.CreatedAt, &channel.UpdatedAt, &channel.LastActivity,
 		&categoryName, &categoryColor,
 	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to scan channel: %w", err)
+		return nil, notFoundOrWrap(err, "failed to scan channel")
 	}
 
 	if categoryName.Valid {
@@ -719,11 +710,8 @@ func (r *ChannelRepository) GetEmailChannelState(ctx context.Context, channelID 
 		"SELECT last_uid, last_checked_at, error_count, last_error FROM email_channel_state WHERE channel_id = ?",
 		channelID,
 	).Scan(&state.LastUID, &lastCheckedAt, &state.ErrorCount, &lastError)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
 	if err != nil {
-		return nil, fmt.Errorf("get email_channel_state for channel %d: %w", channelID, err)
+		return nil, notFoundOrWrap(err, fmt.Sprintf("get email_channel_state for channel %d", channelID))
 	}
 	if lastCheckedAt.Valid {
 		state.LastCheckedAt = &lastCheckedAt.Time
@@ -863,11 +851,8 @@ func (r *ChannelRepository) ConsumeOAuthState(ctx context.Context, state string)
 		FROM email_oauth_state
 		WHERE state = ? AND expires_at > CURRENT_TIMESTAMP
 	`, state).Scan(&providerID, &channelID, &userID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, 0, 0, ErrNotFound
-	}
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("get email_oauth_state: %w", err)
+		return 0, 0, 0, notFoundOrWrap(err, "get email_oauth_state")
 	}
 	// Best-effort delete; the caller already has the data it needs.
 	_, _ = r.db.ExecWriteContext(ctx, `DELETE FROM email_oauth_state WHERE state = ?`, state)

@@ -298,11 +298,8 @@ func (r *ApprovalRepository) GetItemIDForRequest(ctx context.Context, requestID 
 	var itemID int
 	err := r.db.QueryRowContext(ctx,
 		`SELECT item_id FROM approval_requests WHERE id = ?`, requestID).Scan(&itemID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, ErrNotFound
-	}
 	if err != nil {
-		return 0, fmt.Errorf("load item_id: %w", err)
+		return 0, notFoundOrWrap(err, "load item_id")
 	}
 	return itemID, nil
 }
@@ -374,11 +371,8 @@ func (r *ApprovalRepository) findRequestRow(ctx context.Context, requestID int) 
 		&req.ID, &req.ItemID, &req.ApprovalSetStatusID, &req.StatusID,
 		&fromStatus, &req.TriggeredByUserID, &req.Status, &req.CreatedAt, &req.CompletedAt,
 	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
 	if err != nil {
-		return nil, fmt.Errorf("load request: %w", err)
+		return nil, notFoundOrWrap(err, "load request")
 	}
 	if fromStatus.Valid {
 		v := int(fromStatus.Int64)
@@ -403,11 +397,8 @@ func (r *ApprovalRepository) LoadRequestByIDInTx(ctx context.Context, tx databas
 		&req.ID, &req.ItemID, &req.ApprovalSetStatusID, &req.StatusID,
 		&fromStatus, &req.TriggeredByUserID, &req.Status, &req.CreatedAt, &req.CompletedAt,
 	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
 	if err != nil {
-		return nil, fmt.Errorf("load request: %w", err)
+		return nil, notFoundOrWrap(err, "load request")
 	}
 	if fromStatus.Valid {
 		v := int(fromStatus.Int64)
@@ -428,11 +419,8 @@ func (r *ApprovalRepository) LoadStepInstanceByIDInTx(ctx context.Context, tx da
 		&si.ID, &si.ApprovalRequestID, &si.ApprovalStepID, &si.DisplayOrder, &si.Status,
 		&si.EscalationDueAt, &si.EscalationCount, &si.LastEscalatedAt, &si.StartedAt, &si.CompletedAt,
 	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
 	if err != nil {
-		return nil, fmt.Errorf("load step instance: %w", err)
+		return nil, notFoundOrWrap(err, "load step instance")
 	}
 	return &si, nil
 }
@@ -568,11 +556,8 @@ func (r *ApprovalRepository) GetRequestIDForStep(ctx context.Context, tx databas
 	var id int
 	err := tx.QueryRowContext(ctx,
 		`SELECT approval_request_id FROM approval_step_instances WHERE id = ?`, stepInstanceID).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, ErrNotFound
-	}
 	if err != nil {
-		return 0, fmt.Errorf("load request id for step: %w", err)
+		return 0, notFoundOrWrap(err, "load request id for step")
 	}
 	return id, nil
 }
@@ -582,11 +567,8 @@ func (r *ApprovalRepository) GetRequestIDForStep(ctx context.Context, tx databas
 func (r *ApprovalRepository) GetItemCurrentStatusID(ctx context.Context, tx database.Tx, itemID int) (int, error) {
 	var statusID int
 	err := tx.QueryRowContext(ctx, `SELECT status_id FROM items WHERE id = ?`, itemID).Scan(&statusID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, ErrNotFound
-	}
 	if err != nil {
-		return 0, fmt.Errorf("load item current status: %w", err)
+		return 0, notFoundOrWrap(err, "load item current status")
 	}
 	return statusID, nil
 }
@@ -598,11 +580,8 @@ func (r *ApprovalRepository) GetTransitionEndpoints(ctx context.Context, tx data
 	err = tx.QueryRowContext(ctx,
 		`SELECT from_status_id, to_status_id FROM workflow_transitions WHERE id = ?`, transitionID,
 	).Scan(&fromStatusID, &toStatusID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, 0, ErrNotFound
-	}
 	if err != nil {
-		return 0, 0, fmt.Errorf("load transition endpoints: %w", err)
+		return 0, 0, notFoundOrWrap(err, "load transition endpoints")
 	}
 	return fromStatusID, toStatusID, nil
 }

@@ -83,11 +83,8 @@ func (r *ApprovalSetRepository) FindByID(ctx context.Context, id int) (*models.A
 		JOIN workflows w ON a.workflow_id = w.id
 		WHERE a.id = ?
 	`, id).Scan(&s.ID, &s.Name, &description, &s.WorkflowID, &s.CreatedAt, &s.UpdatedAt, &s.WorkflowName)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
 	if err != nil {
-		return nil, fmt.Errorf("load approval set: %w", err)
+		return nil, notFoundOrWrap(err, "load approval set")
 	}
 	s.Description = description.String
 
@@ -215,11 +212,8 @@ func (r *ApprovalSetRepository) FindStatusByIDInTx(ctx context.Context, tx datab
 		FROM approval_set_statuses WHERE id = ?
 	`, id).Scan(&ass.ID, &ass.ApprovalSetID, &ass.StatusID,
 		&ass.ApproveTransitionID, &ass.DenyTransitionID, &ass.StepMode, &ass.CreatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
 	if err != nil {
-		return nil, fmt.Errorf("load approval_set_status: %w", err)
+		return nil, notFoundOrWrap(err, "load approval_set_status")
 	}
 	return &ass, nil
 }
@@ -273,11 +267,8 @@ func (r *ApprovalSetRepository) FindStepByIDInTx(ctx context.Context, tx databas
 		FROM approval_steps WHERE id = ?
 	`, id)
 	step, err := scanApprovalStepRow(row)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
 	if err != nil {
-		return nil, fmt.Errorf("load approval_step: %w", err)
+		return nil, notFoundOrWrap(err, "load approval_step")
 	}
 	return step, nil
 }
@@ -297,11 +288,8 @@ func (r *ApprovalSetRepository) WorkflowExists(ctx context.Context, workflowID i
 func (r *ApprovalSetRepository) GetWorkflowIDForSet(ctx context.Context, id int) (int, error) {
 	var workflowID int
 	err := r.db.QueryRowContext(ctx, `SELECT workflow_id FROM approval_sets WHERE id = ?`, id).Scan(&workflowID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, ErrNotFound
-	}
 	if err != nil {
-		return 0, fmt.Errorf("load workflow_id: %w", err)
+		return 0, notFoundOrWrap(err, "load workflow_id")
 	}
 	return workflowID, nil
 }
@@ -311,11 +299,8 @@ func (r *ApprovalSetRepository) GetWorkflowIDForSet(ctx context.Context, id int)
 func (r *ApprovalSetRepository) GetSetName(ctx context.Context, id int) (string, error) {
 	var name string
 	err := r.db.QueryRowContext(ctx, `SELECT name FROM approval_sets WHERE id = ?`, id).Scan(&name)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", ErrNotFound
-	}
 	if err != nil {
-		return "", fmt.Errorf("load approval_set name: %w", err)
+		return "", notFoundOrWrap(err, "load approval_set name")
 	}
 	return name, nil
 }
