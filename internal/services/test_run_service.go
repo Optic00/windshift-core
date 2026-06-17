@@ -62,7 +62,7 @@ func (s *TestRunService) validateAssignee(assigneeID *int) error {
 		return nil
 	}
 	var count int
-	err := s.db.QueryRow(`SELECT COUNT(*) FROM users WHERE id = ? AND is_active = 1`, *assigneeID).Scan(&count)
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM users WHERE id = ? AND is_active = true`, *assigneeID).Scan(&count)
 	if err != nil || count == 0 {
 		return fmt.Errorf("assignee not found")
 	}
