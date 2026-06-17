@@ -99,10 +99,13 @@ func (h *DiagnosticsHandler) GetFracIndexState(w http.ResponseWriter, r *http.Re
 	})
 }
 
-// nextAppendKey mirrors GenerateFracIndexForNewItem's "append after current max"
-// step without taking a row lock: it just runs KeyBetween over the supplied
-// byte-wise max. Empty when there are no rows (the generator would seed with
-// KeyBetween("", "") in that case, which is fine to surface).
+// nextAppendKey mirrors the deterministic base of GenerateFracIndexForNewItem's
+// "append after current max" step: it runs KeyBetween over the supplied
+// byte-wise max. The real generator appends a random jitter suffix to this base
+// (so concurrent appends don't collide), meaning the exact base is essentially
+// never inserted verbatim — so a positive ProbePredictedKey hit on it would
+// signal a genuine ordering anomaly rather than a normal append. Empty when
+// there are no rows (the generator would seed with KeyBetween("", "")).
 func nextAppendKey(byteMax *string) (string, error) {
 	last := ""
 	if byteMax != nil {

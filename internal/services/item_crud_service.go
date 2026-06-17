@@ -159,13 +159,12 @@ func (s *ItemCRUDService) Copy(itemID int, opts CopyOptions) (*CopyResult, error
 		return nil, fmt.Errorf("source item not found: %w", err)
 	}
 
-	driverName := s.db.GetDriverName()
 	const maxRetries = 5
 	var newID int
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		newID, lastErr = database.WithTxResult(s.db, func(tx database.Tx) (int, error) {
-			fracIndex, err := repository.GenerateFracIndexForNewItem(tx, driverName)
+			fracIndex, err := repository.GenerateFracIndexForNewItem(tx)
 			if err != nil {
 				return 0, err
 			}

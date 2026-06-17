@@ -258,13 +258,12 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 	}
 
 	// runInsertTx executes the per-attempt portion of CreateItem inside a
-	// single transaction: read MAX(frac_index) (locked on Postgres),
-	// compute the next key, INSERT the item, attach milestones. Hoisted
-	// into a closure so the retry loop can re-issue the whole transaction
-	// without re-running the upstream item-type / status / priority
-	// resolution. Both the MAX read and the INSERT share the same tx
-	// snapshot, so no cache is needed.
-	driverName := db.GetDriverName()
+	// single transaction: read MAX(frac_index), compute the next key (with a
+	// random jitter suffix so concurrent appends don't collide), INSERT the
+	// item, attach milestones. Hoisted into a closure so the retry loop can
+	// re-issue the whole transaction without re-running the upstream item-type
+	// / status / priority resolution. Both the MAX read and the INSERT share
+	// the same tx snapshot, so no cache is needed.
 	runInsertTx := func() (int64, string, error) {
 		tx, err := db.Begin()
 		if err != nil {
@@ -272,7 +271,7 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 		}
 		defer func() { _ = tx.Rollback() }()
 
-		fracIndex, err := repository.GenerateFracIndexForNewItem(tx, driverName)
+		fracIndex, err := repository.GenerateFracIndexForNewItem(tx)
 		if err != nil {
 			return 0, "", fmt.Errorf("failed to generate frac_index: %w", err)
 		}
@@ -351,9 +350,10 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 	// Catch-only retry on the two collision-prone unique constraints:
 	// idx_items_frac_index and (workspace_id, workspace_item_number). The
 	// success path takes one iteration. Each iteration runs a fresh
-	// transaction; both MAX(frac_index) and MAX(workspace_item_number) are
-	// re-read (locked on Postgres) inside that tx, so concurrent writers'
-	// commits are picked up automatically — no cache to invalidate.
+	// transaction; MAX(frac_index) is re-read (jitter makes a repeat collision
+	// astronomically unlikely) and MAX(workspace_item_number) is re-read locked
+	// on Postgres, so concurrent writers' commits are picked up automatically —
+	// no cache to invalidate.
 	var itemID int64
 	for attempt := 0; attempt < repository.FracIndexMaxRetries; attempt++ {
 		id, fracIndex, ierr := runInsertTx()
