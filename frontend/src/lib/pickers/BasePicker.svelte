@@ -139,6 +139,10 @@
 
     const search = query.toLowerCase();
     return items.filter(item =>
+      // Always match against the visible label so a picker whose items lack the
+      // default `name` search field (e.g. milestone status, {value,label} vs
+      // searchFields=['name']) can still be filtered by typing what's shown.
+      getLabel(item)?.toString().toLowerCase().includes(search) ||
       searchFields.some(field => {
         const fieldValue = typeof field === 'function' ? field(item) : item[field];
         return fieldValue?.toString().toLowerCase().includes(search);
