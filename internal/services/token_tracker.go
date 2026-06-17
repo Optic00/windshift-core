@@ -74,24 +74,18 @@ func (tt *TokenTracker) FlushPendingUpdates() error {
 // flushTokenBatch persists a batch of token updates to the database.
 // Called by WriteBatcher every 30s or when 100 items are queued.
 func (tt *TokenTracker) flushTokenBatch(entries []tokenUpdateEntry) error {
-	tx, err := tt.db.Begin()
-	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	for _, entry := range entries {
-		_, err := tx.Exec(`
-			UPDATE api_tokens
-			SET last_used_at = ?, updated_at = CURRENT_TIMESTAMP
-			WHERE id = ?
-		`, entry.LastUsedAt, entry.TokenID)
-		if err != nil {
-			return fmt.Errorf("update token last_used_at: %w", err)
+	return database.WithTx(tt.db, func(tx database.Tx) error {
+		for _, entry := range entries {
+			if _, err := tx.Exec(`
+				UPDATE api_tokens
+				SET last_used_at = ?, updated_at = CURRENT_TIMESTAMP
+				WHERE id = ?
+			`, entry.LastUsedAt, entry.TokenID); err != nil {
+				return fmt.Errorf("update token last_used_at: %w", err)
+			}
 		}
-	}
-
-	return tx.Commit()
+		return nil
+	})
 }
 
 // Close gracefully shuts down the tracker with final flush

@@ -536,29 +536,23 @@ func (at *ActivityTracker) FlushPendingActivities() error {
 func (at *ActivityTracker) flushWorkspaceVisitBatch(visits []WorkspaceVisit) error {
 	expiresAt := time.Now().AddDate(0, 0, at.config.RetentionDays)
 
-	tx, err := at.db.Begin()
-	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	for _, visit := range visits {
-		_, err := tx.Exec(`
-			INSERT INTO user_workspace_visits (user_id, workspace_id, last_visited_at, visit_count, expires_at)
-			VALUES (?, ?, ?, ?, ?)
-			ON CONFLICT(user_id, workspace_id) DO UPDATE SET
-				last_visited_at = CASE WHEN excluded.last_visited_at > user_workspace_visits.last_visited_at THEN excluded.last_visited_at ELSE user_workspace_visits.last_visited_at END,
-				visit_count = user_workspace_visits.visit_count + excluded.visit_count,
-				expires_at = ?,
-				updated_at = CURRENT_TIMESTAMP
-		`, visit.UserID, visit.WorkspaceID, visit.VisitedAt, visit.VisitCount, expiresAt,
-			expiresAt)
-		if err != nil {
-			return fmt.Errorf("flush workspace visit: %w", err)
+	if err := database.WithTx(at.db, func(tx database.Tx) error {
+		for _, visit := range visits {
+			if _, err := tx.Exec(`
+				INSERT INTO user_workspace_visits (user_id, workspace_id, last_visited_at, visit_count, expires_at)
+				VALUES (?, ?, ?, ?, ?)
+				ON CONFLICT(user_id, workspace_id) DO UPDATE SET
+					last_visited_at = CASE WHEN excluded.last_visited_at > user_workspace_visits.last_visited_at THEN excluded.last_visited_at ELSE user_workspace_visits.last_visited_at END,
+					visit_count = user_workspace_visits.visit_count + excluded.visit_count,
+					expires_at = ?,
+					updated_at = CURRENT_TIMESTAMP
+			`, visit.UserID, visit.WorkspaceID, visit.VisitedAt, visit.VisitCount, expiresAt,
+				expiresAt); err != nil {
+				return fmt.Errorf("flush workspace visit: %w", err)
+			}
 		}
-	}
-
-	if err := tx.Commit(); err != nil {
+		return nil
+	}); err != nil {
 		return err
 	}
 
@@ -583,29 +577,23 @@ func (at *ActivityTracker) flushWorkspaceVisitBatch(visits []WorkspaceVisit) err
 func (at *ActivityTracker) flushItemActivityBatch(activities []ItemActivity) error {
 	expiresAt := time.Now().AddDate(0, 0, at.config.RetentionDays)
 
-	tx, err := at.db.Begin()
-	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	for _, activity := range activities {
-		_, err := tx.Exec(`
-			INSERT INTO user_item_activities (user_id, item_id, activity_type, last_activity_at, activity_count, expires_at)
-			VALUES (?, ?, ?, ?, ?, ?)
-			ON CONFLICT(user_id, item_id, activity_type) DO UPDATE SET
-				last_activity_at = CASE WHEN excluded.last_activity_at > user_item_activities.last_activity_at THEN excluded.last_activity_at ELSE user_item_activities.last_activity_at END,
-				activity_count = user_item_activities.activity_count + excluded.activity_count,
-				expires_at = ?,
-				updated_at = CURRENT_TIMESTAMP
-		`, activity.UserID, activity.ItemID, activity.ActivityType, activity.ActivityAt, activity.ActivityCount, expiresAt,
-			expiresAt)
-		if err != nil {
-			return fmt.Errorf("flush item activity: %w", err)
+	if err := database.WithTx(at.db, func(tx database.Tx) error {
+		for _, activity := range activities {
+			if _, err := tx.Exec(`
+				INSERT INTO user_item_activities (user_id, item_id, activity_type, last_activity_at, activity_count, expires_at)
+				VALUES (?, ?, ?, ?, ?, ?)
+				ON CONFLICT(user_id, item_id, activity_type) DO UPDATE SET
+					last_activity_at = CASE WHEN excluded.last_activity_at > user_item_activities.last_activity_at THEN excluded.last_activity_at ELSE user_item_activities.last_activity_at END,
+					activity_count = user_item_activities.activity_count + excluded.activity_count,
+					expires_at = ?,
+					updated_at = CURRENT_TIMESTAMP
+			`, activity.UserID, activity.ItemID, activity.ActivityType, activity.ActivityAt, activity.ActivityCount, expiresAt,
+				expiresAt); err != nil {
+				return fmt.Errorf("flush item activity: %w", err)
+			}
 		}
-	}
-
-	if err := tx.Commit(); err != nil {
+		return nil
+	}); err != nil {
 		return err
 	}
 

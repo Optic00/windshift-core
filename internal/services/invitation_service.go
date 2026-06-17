@@ -168,32 +168,25 @@ func (s *InvitationService) AcceptInvitation(token, password string) error {
 	}
 
 	// 3. Update user and invitation in a transaction
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
+	if err := database.WithTx(s.db, func(tx database.Tx) error {
+		// Update user: set password, activate, mark as verified, and clear requires_password_reset
+		userQuery := `
+			UPDATE users
+			SET password_hash = ?, requires_password_reset = false, email_verified = true, is_active = true, updated_at = ?
+			WHERE id = ?
+		`
+		if _, err := tx.Exec(userQuery, string(hashedPassword), time.Now(), user.ID); err != nil {
+			return fmt.Errorf("failed to update user password: %w", err)
+		}
 
-	// Update user: set password, activate, mark as verified, and clear requires_password_reset
-	userQuery := `
-		UPDATE users
-		SET password_hash = ?, requires_password_reset = false, email_verified = true, is_active = true, updated_at = ?
-		WHERE id = ?
-	`
-	_, err = tx.Exec(userQuery, string(hashedPassword), time.Now(), user.ID)
-	if err != nil {
-		return fmt.Errorf("failed to update user password: %w", err)
-	}
-
-	// Mark invitation as used
-	inviteQuery := `UPDATE user_invitations SET used_at = ? WHERE token = ?`
-	_, err = tx.Exec(inviteQuery, time.Now(), token)
-	if err != nil {
-		return fmt.Errorf("failed to mark invitation as used: %w", err)
-	}
-
-	if err = tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
+		// Mark invitation as used
+		inviteQuery := `UPDATE user_invitations SET used_at = ? WHERE token = ?`
+		if _, err := tx.Exec(inviteQuery, time.Now(), token); err != nil {
+			return fmt.Errorf("failed to mark invitation as used: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	slog.Info("invitation accepted", slog.String("component", "invitation"), slog.Int("user_id", user.ID), slog.String("email", user.Email))
