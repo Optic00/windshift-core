@@ -42,6 +42,13 @@
     children = null,    // popover mode: custom trigger content
     footer = null,      // popover mode: rendered below items in dropdown
 
+    // E2E instrumentation. BasePicker is shared by UserPicker/ItemPicker, so
+    // picker-specific testids are threaded as props rather than hardcoded:
+    //   searchTestid — applied to the popover-mode search input
+    //   optionTestid — (opt) => string, applied per option row
+    searchTestid = undefined,
+    optionTestid = null,
+
     // Create functionality
     allowCreate = false,
     onCreate = null,
@@ -82,6 +89,12 @@
     helpers: { isSelected }
   } = createCombobox({
     forceVisible: true,
+    // Lock background scroll while the dropdown is open (melt's default). With
+    // it off, scrolling the page/modal behind an open picker makes floating-ui
+    // chase the moving trigger and the portalled menu repositions/detaches
+    // mid-interaction — inside a tall scrollable modal the option can end up
+    // behind the dialog footer and become unclickable (teams on-call layer
+    // members, test-run assignee).
     preventScroll: false,
     multiple: false, // We handle multi-select manually
     positioning: {
@@ -290,11 +303,13 @@
       if (totalItems === 0) return;
       event.preventDefault();
       event.stopPropagation();
+      highlightViaKeyboard = true;
       highlightedIndex = (highlightedIndex + 1) % totalItems;
     } else if (event.key === 'ArrowUp') {
       if (totalItems === 0) return;
       event.preventDefault();
       event.stopPropagation();
+      highlightViaKeyboard = true;
       highlightedIndex = highlightedIndex === 0 ? totalItems - 1 : highlightedIndex - 1;
     } else if (event.key === 'Enter' || (event.key === ' ' && event.target.tagName !== 'INPUT')) {
       event.preventDefault();
@@ -381,14 +396,20 @@
   // Reference to dropdown menu for scrolling
   let menuRef = $state(null);
 
-  // Scroll highlighted item into view
+  // Only scroll the highlighted option into view for KEYBOARD navigation.
+  // Mouse hover also moves the highlight (option onmouseenter), but the pointer
+  // is already on that item so there is nothing to scroll — and calling
+  // scrollIntoView on hover fires a scroll that closes the open combobox menu
+  // (the dropdown vanishes the instant the cursor reaches an option, so a
+  // programmatic click then lands on whatever is behind it). The original code
+  // also indexed menuRef.children (the search box / listbox wrappers) rather
+  // than the option elements, so it scrolled the wrong node entirely.
+  let highlightViaKeyboard = false;
+
   $effect(() => {
-    if ($open && menuRef && options.length > 0) {
-      const highlightedEl = menuRef.children[highlightedIndex];
-      if (highlightedEl) {
-        highlightedEl.scrollIntoView({ block: 'nearest' });
-      }
-    }
+    if (!highlightViaKeyboard || !$open || !menuRef) return;
+    const opts = menuRef.querySelectorAll('[data-melt-combobox-option]');
+    opts[highlightedIndex]?.scrollIntoView({ block: 'nearest' });
   });
 
   // Popover mode trigger handler
@@ -490,13 +511,14 @@
     <div bind:this={menuRef} use:melt={$menu} data-testid="picker-dropdown"
          class="fixed z-[70] min-w-[250px] rounded border shadow-lg overflow-hidden"
          style="background-color: var(--ds-surface-raised); border-color: var(--ds-border);"
-         transition:fly={{ duration: 150, y: -5 }}>
+         in:fly={{ duration: 150, y: -5 }}>
       {#if popoverMode}
         <!-- Search input inside dropdown -->
         <div class="p-2 border-b" style="border-color: var(--ds-border);">
           <div class="relative">
             <Search size={14} class="absolute left-2.5 top-1/2 -translate-y-1/2" style="color: var(--ds-text-subtle);" />
             <input bind:this={searchInputRef} bind:value={popoverSearchTerm} type="text"
+                   data-testid={searchTestid}
                    placeholder={t('pickers.search')}
                    onkeydown={handleKeydown}
                    class="w-full pl-8 pr-3 py-2 rounded text-sm outline-none"
@@ -515,8 +537,10 @@
             {@const isHighlighted = highlightedIndex === index}
             {@const disabledByMax = atMaxSelections && !itemSelected}
             <div use:melt={$option(opt)} data-option-value={opt.value ?? ''}
+                 data-option-id={opt.value ?? ''}
+                 data-testid={optionTestid ? optionTestid(opt) : undefined}
                  onclick={() => { if (!disabledByMax) selectOption(opt); }}
-                 onmouseenter={() => highlightedIndex = index}
+                 onmouseenter={() => { highlightViaKeyboard = false; highlightedIndex = index; }}
                  class="px-4 py-3 cursor-pointer border-b last:border-b-0 transition-colors duration-150"
                  style="border-color: var(--ds-border); {disabledByMax ? 'opacity: 0.4; pointer-events: none;' : ''} {itemSelected ? 'background-color: var(--ds-background-selected); color: var(--ds-text);' : isHighlighted ? 'background-color: var(--ds-background-neutral-hovered); color: var(--ds-text);' : 'color: var(--ds-text);'}">
               <div class="flex items-center justify-between">

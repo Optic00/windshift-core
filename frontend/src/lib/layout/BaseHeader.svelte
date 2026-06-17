@@ -37,7 +37,7 @@
           <Icon class="w-3.5 h-3.5" style={iconStyleProp} />
         {/if}
         {#if subtitleText}
-          <span>{subtitleText}</span>
+          <span data-testid="page-header-subtitle">{subtitleText}</span>
         {/if}
         {#if count !== null}
           {#if subtitleText}<span style="color: var(--ds-text-disabled);">•</span>{/if}

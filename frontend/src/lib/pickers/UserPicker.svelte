@@ -84,6 +84,8 @@
   searchFields={['first_name', 'last_name', 'email', 'username']}
   getValue={(user) => user?.id}
   getLabel={getUserLabel}
+  searchTestid="user-picker-search"
+  optionTestid={(opt) => `user-picker-option-${opt.value}`}
   onSelect={handleSelect}
   onCancel={handleCancel}
 >
