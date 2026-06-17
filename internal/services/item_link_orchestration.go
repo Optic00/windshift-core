@@ -296,8 +296,12 @@ func (s *ItemLinkService) ListLinksForEntityWithChecks(userID int, entityType st
 		return nil, nil, err
 	}
 
-	accessibleKeys := s.AccessibleWorkspaceKeys(userID)
-	accessibleWsIDs := s.AccessibleWorkspaceIDs(userID)
+	// Compute the key-set and id-set of viewable workspaces in a single
+	// workspace scan + permission pass. AccessibleWorkspaceKeys and
+	// AccessibleWorkspaceIDs each do this independently; calling both per
+	// request doubled the scan and the HasWorkspacePermission loop over every
+	// active workspace.
+	accessibleKeys, accessibleWsIDs := s.accessibleWorkspaces(userID)
 	accessibleSets := s.AccessibleAssetSetIDs(userID)
 
 	outgoing = s.FilterLinksByAccess(outgoing, accessibleKeys, accessibleWsIDs, accessibleSets)
@@ -494,6 +498,35 @@ func (s *ItemLinkService) AccessibleWorkspaceKeys(userID int) map[string]bool {
 	return out
 }
 
+// accessibleWorkspaces returns, from a single workspace scan and a single
+// HasWorkspacePermission pass, both the key-set and id-set of workspaces
+// userID can view. The links endpoint needs both forms (item endpoints match
+// by pre-joined key, test_case/page endpoints by id), so computing them
+// together avoids the duplicate work of calling AccessibleWorkspaceKeys and
+// AccessibleWorkspaceIDs back to back.
+func (s *ItemLinkService) accessibleWorkspaces(userID int) (keys map[string]bool, ids map[int]bool) {
+	keys = map[string]bool{}
+	ids = map[int]bool{}
+	if s.perm == nil {
+		return keys, ids
+	}
+	pairs, err := repository.NewWorkspaceRepository(s.db).ListActiveIDKeys()
+	if err != nil {
+		return keys, ids
+	}
+	for _, p := range pairs {
+		hasView, err := s.perm.HasWorkspacePermission(userID, p.ID, models.PermissionItemView)
+		if err != nil {
+			continue
+		}
+		if hasView {
+			keys[p.Key] = true
+			ids[p.ID] = true
+		}
+	}
+	return keys, ids
+}
+
 // AccessibleAssetSetIDs returns the set of asset-set IDs userID can view.
 // Iterates every set and asks the asset checker (matches the pattern
 // AssetHandler.canAccessEntity uses). Empty when no asset checker.
@@ -548,16 +581,144 @@ func (s *ItemLinkService) EndpointVisible(entityType string, entityID int, works
 
 // FilterLinksByAccess drops links whose endpoints are in workspaces /
 // asset sets the user cannot view. Counterpart of EndpointVisible.
+//
+// The scope (workspace_id / set_id) of every non-item endpoint is resolved up
+// front in one query per entity type — rather than a QueryRow per endpoint as
+// the per-link EndpointVisible path would — so a heavily-linked item no longer
+// fans out into dozens of serial round-trips (each holding a pooled connection)
+// per request.
 func (s *ItemLinkService) FilterLinksByAccess(links []models.ItemLink, accessibleKeys map[string]bool, accessibleWs, accessibleSets map[int]bool) []models.ItemLink {
+	scopes := s.resolveEndpointScopes(links)
 	out := make([]models.ItemLink, 0, len(links))
 	for _, l := range links {
-		if !s.EndpointVisible(l.SourceType, l.SourceID, l.SourceWorkspaceKey, accessibleKeys, accessibleWs, accessibleSets) {
+		if !s.endpointVisibleScoped(l.SourceType, l.SourceID, l.SourceWorkspaceKey, accessibleKeys, accessibleWs, accessibleSets, scopes) {
 			continue
 		}
-		if !s.EndpointVisible(l.TargetType, l.TargetID, l.TargetWorkspaceKey, accessibleKeys, accessibleWs, accessibleSets) {
+		if !s.endpointVisibleScoped(l.TargetType, l.TargetID, l.TargetWorkspaceKey, accessibleKeys, accessibleWs, accessibleSets, scopes) {
 			continue
 		}
 		out = append(out, l)
+	}
+	return out
+}
+
+// scopeKey identifies a link endpoint for the pre-resolved scope map.
+type scopeKey struct {
+	typ string
+	id  int
+}
+
+// endpointScope is the batch-resolved scoping id for an endpoint: workspace_id
+// for test_cases/pages, set_id for assets. Absence from the map means the row
+// no longer exists, which callers treat as not-visible (fail closed).
+type endpointScope struct {
+	wsID  int
+	setID int
+}
+
+// resolveEndpointScopes batch-resolves the workspace/set scope for every
+// non-item endpoint referenced by links, keyed by (entityType, entityID).
+// Item endpoints are omitted — they are filtered by their pre-joined workspace
+// key and need no lookup.
+func (s *ItemLinkService) resolveEndpointScopes(links []models.ItemLink) map[scopeKey]endpointScope {
+	testCaseIDs := map[int]bool{}
+	pageIDs := map[int]bool{}
+	assetIDs := map[int]bool{}
+	note := func(typ string, id int) {
+		switch typ {
+		case "test_case":
+			testCaseIDs[id] = true
+		case "page":
+			pageIDs[id] = true
+		case "asset":
+			assetIDs[id] = true
+		}
+	}
+	for _, l := range links {
+		note(l.SourceType, l.SourceID)
+		note(l.TargetType, l.TargetID)
+	}
+
+	out := map[scopeKey]endpointScope{}
+	s.fillWorkspaceScopes(out, "test_case", "test_cases", testCaseIDs)
+	s.fillWorkspaceScopes(out, "page", "pages", pageIDs)
+	s.fillAssetSetScopes(out, assetIDs)
+	return out
+}
+
+// fillWorkspaceScopes loads workspace_id for the given ids of a workspace-scoped
+// table (test_cases / pages) in one query and records them in out.
+func (s *ItemLinkService) fillWorkspaceScopes(out map[scopeKey]endpointScope, entityType, table string, idset map[int]bool) {
+	ids := keysOf(idset)
+	if len(ids) == 0 {
+		return
+	}
+	//nolint:gosec // G201: table is a hardcoded constant; ids are bound params.
+	q := inClauseQuery("SELECT id, workspace_id FROM "+table+" WHERE id IN (", len(ids))
+	rows, err := s.db.Query(q, toIfaceSlice(ids)...)
+	if err != nil {
+		return
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id, wsID int
+		if err := rows.Scan(&id, &wsID); err != nil {
+			continue
+		}
+		out[scopeKey{entityType, id}] = endpointScope{wsID: wsID}
+	}
+	_ = rows.Err()
+}
+
+// fillAssetSetScopes loads set_id for the given asset ids in one query.
+func (s *ItemLinkService) fillAssetSetScopes(out map[scopeKey]endpointScope, idset map[int]bool) {
+	ids := keysOf(idset)
+	if len(ids) == 0 {
+		return
+	}
+	q := inClauseQuery("SELECT id, set_id FROM assets WHERE id IN (", len(ids))
+	rows, err := s.db.Query(q, toIfaceSlice(ids)...)
+	if err != nil {
+		return
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id, setID int
+		if err := rows.Scan(&id, &setID); err != nil {
+			continue
+		}
+		out[scopeKey{"asset", id}] = endpointScope{setID: setID}
+	}
+	_ = rows.Err()
+}
+
+// endpointVisibleScoped is the batch-resolved counterpart of EndpointVisible:
+// it consults the pre-resolved scope map instead of issuing a per-endpoint query.
+func (s *ItemLinkService) endpointVisibleScoped(entityType string, entityID int, workspaceKey string, accessibleKeys map[string]bool, accessibleWs, accessibleSets map[int]bool, scopes map[scopeKey]endpointScope) bool {
+	switch entityType {
+	case "item":
+		return workspaceKey == "" || accessibleKeys[workspaceKey]
+	case "test_case", "page":
+		sc, ok := scopes[scopeKey{entityType, entityID}]
+		if !ok {
+			return false
+		}
+		return accessibleWs[sc.wsID]
+	case "asset":
+		sc, ok := scopes[scopeKey{"asset", entityID}]
+		if !ok {
+			return false
+		}
+		return accessibleSets[sc.setID]
+	}
+	return false
+}
+
+// keysOf returns the keys of a set as a slice.
+func keysOf(set map[int]bool) []int {
+	out := make([]int, 0, len(set))
+	for k := range set {
+		out = append(out, k)
 	}
 	return out
 }
