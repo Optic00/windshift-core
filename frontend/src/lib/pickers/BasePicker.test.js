@@ -175,3 +175,58 @@ describe('BasePicker — Enter selects the highlighted option vs create (WI-343)
     expect(onSelect).toHaveBeenCalledWith(items[0]);
   });
 });
+
+// Regression for WI-428: a pre-selected single-select whose items have a
+// `label` but no `name` field (e.g. milestone status, {value,label} against
+// the default searchFields=['name']) opened empty because the selected item's
+// display label — echoed into the combobox input — was treated as a live
+// search filter before the user typed anything.
+describe('BasePicker — opening a pre-selected single-select does not filter (WI-428)', () => {
+  const statusItems = [
+    { value: 'planning', label: 'Planning' },
+    { value: 'in-progress', label: 'In Progress' },
+    { value: 'completed', label: 'Completed' },
+  ];
+
+  test('all options render when opening a pre-selected picker without typing', async () => {
+    render(BasePicker, {
+      props: {
+        items: statusItems,
+        value: 'planning',
+        getValue: (item) => item.value,
+        getLabel: (item) => item.label,
+      },
+    });
+
+    const input = screen.getByRole('combobox');
+    // Open the dropdown WITHOUT typing — this is the bug's trigger.
+    await fireEvent.click(input);
+
+    await waitFor(() => {
+      expect(document.querySelector('[data-option-value="planning"]')).toBeInTheDocument();
+      expect(document.querySelector('[data-option-value="in-progress"]')).toBeInTheDocument();
+      expect(document.querySelector('[data-option-value="completed"]')).toBeInTheDocument();
+    });
+  });
+
+  test('typing still filters the list (display text is not sticky)', async () => {
+    render(BasePicker, {
+      props: {
+        items: statusItems,
+        value: 'planning',
+        getValue: (item) => item.value,
+        getLabel: (item) => item.label,
+      },
+    });
+
+    const input = screen.getByRole('combobox');
+    await fireEvent.click(input);
+    // Once the user types, the live filter must kick back in.
+    await fireEvent.input(input, { target: { value: 'Completed' } });
+
+    await waitFor(() => {
+      expect(document.querySelector('[data-option-value="completed"]')).toBeInTheDocument();
+      expect(document.querySelector('[data-option-value="planning"]')).not.toBeInTheDocument();
+    });
+  });
+});

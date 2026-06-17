@@ -112,6 +112,15 @@
   const filteredItems = $derived.by(() => {
     if (serverSearch) return items;
 
+    // Combobox mode echoes the selected item's label into $inputValue purely
+    // for display. Don't treat that display text as a live search filter until
+    // the user actually types (touchedInput) — otherwise a pre-selected
+    // single-select whose items lack the default `name` search field (e.g.
+    // milestone status, {value,label} vs searchFields=['name']) filters out
+    // every option the moment its dropdown opens (WI-428). Popover mode owns
+    // its own search term, which is cleared on open, so it needs no such guard.
+    if (!popoverMode && !$touchedInput) return items;
+
     const query = popoverMode ? popoverSearchTerm : $inputValue;
     if (!query) return items;
 
