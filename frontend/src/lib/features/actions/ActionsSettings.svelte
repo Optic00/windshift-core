@@ -12,7 +12,7 @@
   import ActionTemplatePicker from './ActionTemplatePicker.svelte';
   import Modal from '../../dialogs/Modal.svelte';
   import Button from '../../components/Button.svelte';
-  import { ShieldAlert } from '@lucide/svelte';
+  import UnauthorizedAccess from '../../pages/UnauthorizedAccess.svelte';
 
   let { workspaceId, actionId = 0 } = $props();
 
@@ -180,17 +180,7 @@
 </script>
 
 {#if !canManageActions}
-  <div class="h-full flex items-center justify-center">
-    <div class="text-center p-8 max-w-md">
-      <div class="w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center" style="background-color: var(--ds-background-danger-subtle);">
-        <ShieldAlert class="w-8 h-8" style="color: var(--ds-text-danger);" />
-      </div>
-      <h2 class="text-xl font-semibold mb-2" style="color: var(--ds-text);">{t('errors.accessDenied')}</h2>
-      <p class="text-sm" style="color: var(--ds-text-subtle);">
-        {t('errors.noPermission')}
-      </p>
-    </div>
-  </div>
+  <UnauthorizedAccess requiredPermission="action.manage" showBackButton={false} />
 {:else if editingAction}
   <div class="h-full">
     <ActionFlowEditor

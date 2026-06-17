@@ -157,6 +157,7 @@
           <div class="relative" bind:this={popoverRef}>
             <Tooltip content="Public Board">
               <button
+                data-testid="public-board-button"
                 onclick={togglePopover}
                 class="inline-flex items-center justify-center w-8 h-8 rounded-md border cursor-pointer transition-colors"
                 class:public-active={isPublic}
