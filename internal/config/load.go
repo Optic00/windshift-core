@@ -42,7 +42,7 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 		sshPort               = flag.String("ssh-port", "23234", "SSH server port")
 		sshHost               = flag.String("ssh-host", "localhost", "SSH server host")
 		sshKeyPath            = flag.String("ssh-key", ".ssh/windshift_host_key", "SSH host key file path")
-		maxReadConns          = flag.Int("max-read-conns", 120, "Max read connections")
+		maxReadConns          = flag.Int("max-read-conns", 20, "Max read connections (per pool; sum across pools × replicas must stay under Postgres max_connections)")
 		maxWriteConns         = flag.Int("max-write-conns", 1, "Max write connections")
 		logLevel              = flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 		logFormat             = flag.String("log-format", "text", "Log format (text, json, logfmt)")

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	// Register the lib/pq driver so sql.Open("postgres", ...) below works
 	// regardless of which top-level package imported us. (Previously the
@@ -197,6 +198,14 @@ func NewPostgresDB(connectionString string, maxConns int) (Database, error) {
 	}
 	db.SetMaxOpenConns(maxConns)
 	db.SetMaxIdleConns(idle)
+	// Recycle connections so the pool never holds a connection open against the
+	// server indefinitely. Without these, idle connections (up to MaxIdleConns)
+	// stay reserved forever and are never returned to Postgres — which, combined
+	// with an over-large MaxOpenConns, manifests as "sorry, too many clients
+	// already". ConnMaxLifetime caps total age; ConnMaxIdleTime drains the idle
+	// pool back to the server during quiet periods.
+	db.SetConnMaxLifetime(30 * time.Minute)
+	db.SetConnMaxIdleTime(5 * time.Minute)
 
 	return &PostgresDB{
 		db:  db,
