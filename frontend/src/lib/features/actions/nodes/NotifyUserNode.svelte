@@ -14,6 +14,12 @@
     };
     return labels[recipientType] || recipientType;
   }
+
+  // For the "specific" type, count the explicit user-id recipients so the node
+  // summary shows "Specific (2)" rather than a bare "Specific".
+  let specificCount = $derived(
+    (data.config?.recipients || []).filter((r) => /^\d+$/.test(String(r))).length
+  );
 </script>
 
 <GenericActionNode {data} {selected} flowStore={data.flowStore || actionFlowStore} icon={Bell} title={t('actions.nodes.notifyUser')} accentColor="magenta">
@@ -21,7 +27,7 @@
     {#if data.config?.recipient_type}
       <div class="recipient-info">
         <span class="recipient-label">{t('actions.config.to')}:</span>
-        <span class="recipient-value">{getRecipientLabel(data.config.recipient_type)}</span>
+        <span class="recipient-value">{getRecipientLabel(data.config.recipient_type)}{#if data.config.recipient_type === 'specific' && specificCount > 0} ({specificCount}){/if}</span>
       </div>
       {#if data.config.message}
         <div class="message-preview">{data.config.message.substring(0, 40)}...</div>

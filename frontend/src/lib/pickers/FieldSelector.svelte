@@ -197,6 +197,7 @@
   <!-- Selected Field Display / Trigger Button -->
   <div
     role="button"
+    data-testid="field-selector-trigger"
     tabindex={disabled ? -1 : 0}
     aria-disabled={disabled}
     onclick={() => { if (!disabled) toggleDropdown(); }}
@@ -206,7 +207,7 @@
   >
     {#if selectedField}
       <div class="flex items-center gap-2 flex-1 min-w-0">
-        <span class="font-medium truncate" style="color: var(--ds-text);">{selectedField.name}</span>
+        <span class="font-medium truncate" data-testid="field-selector-value" style="color: var(--ds-text);">{selectedField.name}</span>
         <span class="text-xs px-1.5 py-0.5 rounded {getFieldTypeColor(selectedField.type)}">
           {getFieldTypeLabel(selectedField.type)}
         </span>
@@ -262,6 +263,7 @@
               {#each group.fields as field}
                 <button
                   type="button"
+                  data-testid={`field-option-${field.id}`}
                   onclick={() => selectField(field)}
                   class="w-full px-3 py-2 text-left transition-colors focus:outline-none field-item-btn"
                 >

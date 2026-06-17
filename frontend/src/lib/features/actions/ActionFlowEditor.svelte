@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { Pencil, RefreshCw, MessageSquare, Bell, HelpCircle, Database, PlusSquare, Box, Globe, Sparkles, Bot, Milestone, UsersRound } from '@lucide/svelte';
+  import { Pencil, RefreshCw, MessageSquare, Bell, HelpCircle, Database, PlusSquare, Box, Globe, Sparkles, Bot, Milestone, UsersRound, X } from '@lucide/svelte';
   import { toHotkeyString, getShortcutDisplay } from '../../utils/keyboardShortcuts.js';
   import { api } from '../../api.js';
   import FieldSelector from '../../pickers/FieldSelector.svelte';
@@ -26,6 +26,7 @@
   import CreateAssetConfigPanel from './CreateAssetConfigPanel.svelte';
   import PlaceholderReferenceModal from './PlaceholderReferenceModal.svelte';
   import BaseActionFlowEditor from './shared/BaseActionFlowEditor.svelte';
+  import { getFieldSelectorValue, backendFieldName, standardFieldTypes, collectOutputFields, isValidOutputFieldName } from './shared/fieldNameMapping.js';
   import { t } from '../../stores/i18n.svelte.js';
   import Checkbox from '../../components/Checkbox.svelte';
   import Select from '../../components/Select.svelte';
@@ -45,6 +46,10 @@
   let showPlaceholderModal = $state(false);
   let milestones = $state([]);
   let teams = $state([]);
+  let linkTypes = $state([]);
+  let itemTypes = $state([]);
+  let statusCategories = $state([]);
+  let assignableUsers = $state([]);
 
   // Actor override: null means the action runs under the triggering user's
   // permissions. Only users with the global action.set_actor permission can
@@ -235,6 +240,44 @@
     }
   }
 
+  async function loadLinkTypes() {
+    try {
+      linkTypes = await api.linkTypes.getAll() || [];
+    } catch (err) {
+      console.error('Failed to load link types for action editor', err);
+      linkTypes = [];
+    }
+  }
+
+  async function loadItemTypes() {
+    if (!action?.workspace_id) return;
+    try {
+      itemTypes = await api.itemTypes.getAll({ workspace_id: action.workspace_id }) || [];
+    } catch (err) {
+      console.error('Failed to load item types for action editor', err);
+      itemTypes = [];
+    }
+  }
+
+  async function loadStatusCategories() {
+    try {
+      statusCategories = await api.statusCategories.getAll() || [];
+    } catch (err) {
+      console.error('Failed to load status categories for action editor', err);
+      statusCategories = [];
+    }
+  }
+
+  async function loadAssignableUsers() {
+    if (!action?.workspace_id) return;
+    try {
+      assignableUsers = await api.getAssignableUsers(action.workspace_id) || [];
+    } catch (err) {
+      console.error('Failed to load users for action editor', err);
+      assignableUsers = [];
+    }
+  }
+
   onMount(() => {
     if (action?.workspace_id) {
       loadCatalog();
@@ -243,6 +286,10 @@
       loadCapabilities('llm_connection');
       loadMilestones();
       loadTeams();
+      loadLinkTypes();
+      loadItemTypes();
+      loadStatusCategories();
+      loadAssignableUsers();
     }
 
     // Live-reload after every AI chat agent run, regardless of tool calls:
@@ -270,85 +317,38 @@
     return empty.concat(list.map((c) => ({ value: String(c.id), label: c.name })));
   }
 
+  // Block save on invalid or duplicate output field names. doSave() in
+  // BaseActionFlowEditor wraps onSave in try/catch + error toast, so throwing
+  // here surfaces the message and aborts the save.
+  function flowOutputErrors() {
+    const errors = [];
+    const counts = {};
+    for (const node of actionFlowStore.nodes) {
+      const name = (node?.data?.config?.output_field || '').trim();
+      if (!name) continue;
+      if (!isValidOutputFieldName(name)) {
+        errors.push(`Invalid output field name: ${name}`);
+      }
+      counts[name] = (counts[name] || 0) + 1;
+    }
+    for (const [name, count] of Object.entries(counts)) {
+      if (count > 1) {
+        errors.push(`Output field "${name}" is produced by more than one node`);
+      }
+    }
+    return errors;
+  }
+
   async function handleSave(apiData) {
+    const errors = flowOutputErrors();
+    if (errors.length > 0) {
+      throw new Error(errors[0]);
+    }
     // Inject actor override before forwarding to the caller. Backend only
     // enforces action.set_actor when the value actually changes vs the stored
     // action, so passing through unchanged is a no-op.
     apiData.actor_user_id = actorUserId;
     await onSave(apiData);
-  }
-
-  // Mapping from FieldSelector IDs to backend column names
-  const fieldIdToBackendName = {
-    title: 'title',
-    description: 'description',
-    status: 'status_id',
-    priority: 'priority_id',
-    assignee: 'assignee_id',
-    reporter: 'creator_id',
-    milestone: 'milestone_id',
-    iteration: 'iteration_id',
-    dueDate: 'due_date',
-    startDate: 'start_date',
-    storyPoints: 'story_points',
-    parent: 'parent_id',
-    project: 'project_id',
-    itemType: 'item_type_id'
-  };
-
-  const backendNameToFieldId = Object.fromEntries(
-    Object.entries(fieldIdToBackendName).map(([k, v]) => [v, k])
-  );
-
-  const standardFieldTypes = {
-    title: 'text',
-    description: 'text',
-    status: 'enum',
-    priority: 'enum',
-    assignee: 'user',
-    reporter: 'user',
-    milestone: 'enum',
-    iteration: 'enum',
-    dueDate: 'date',
-    startDate: 'date',
-    storyPoints: 'number',
-    parent: 'reference',
-    project: 'enum',
-    itemType: 'enum',
-  };
-
-  function getFieldSelectorValue(config) {
-    if (config?.target === 'custom_field' && config?.custom_field_id) {
-      return {
-        id: `cf_${config.custom_field_id}`,
-        customFieldId: config.custom_field_id,
-        name: config.field_display_name || `Custom field ${config.custom_field_id}`,
-        type: config.field_type || '',
-        isCustom: true,
-      };
-    }
-    const backendName = config?.field_name;
-    if (!backendName) return null;
-    if (backendName.startsWith('custom_field_')) {
-      const customFieldId = parseInt(backendName.slice('custom_field_'.length), 10);
-      return { id: `cf_${customFieldId}`, customFieldId, name: config.field_display_name || backendName, type: config.field_type || '', isCustom: true };
-    }
-    if (backendName.startsWith('cf_')) {
-      return { id: backendName, name: backendName.slice(3), isCustom: true };
-    }
-    const fieldId = backendNameToFieldId[backendName];
-    if (fieldId === 'milestone') {
-      return { id: fieldId, name: t('common.milestone', 'Milestone'), type: 'enum' };
-    }
-    return fieldId
-      ? { id: fieldId, name: fieldId, type: standardFieldTypes[fieldId] || '' }
-      : { id: backendName, name: backendName, type: config?.field_type || '' };
-  }
-
-  function backendFieldName(field) {
-    if (!field) return '';
-    if (field.customFieldId) return `custom_field_${field.customFieldId}`;
-    return fieldIdToBackendName[field.id] || field.id;
   }
 
   function setFieldConfigForSelection(field) {
@@ -444,6 +444,81 @@
       value: user ? String(user.id) : '',
       value_display_name: user ? getUserDisplayName(user) : '',
     });
+  }
+
+  // notify_user "specific" recipients: recipients[] holds user-id strings.
+  // The "assignee"/"creator" choices live in recipient_type, not this list, so
+  // filter to numeric ids when rendering the recipient chips.
+  function specificRecipientIds(config) {
+    return (config?.recipients || []).filter((r) => /^\d+$/.test(String(r)));
+  }
+
+  function recipientDisplayName(idStr) {
+    const user = assignableUsers.find((u) => String(u.id) === String(idStr));
+    return user ? getUserDisplayName(user) : `#${idStr}`;
+  }
+
+  function addRecipient(nodeId, config, user) {
+    if (!user?.id) return;
+    const current = config?.recipients || [];
+    const idStr = String(user.id);
+    if (current.includes(idStr)) return;
+    actionFlowStore.updateNodeConfig(nodeId, {
+      recipient_type: 'specific',
+      recipients: [...current, idStr],
+    });
+  }
+
+  function removeRecipient(nodeId, config, idStr) {
+    const current = config?.recipients || [];
+    actionFlowStore.updateNodeConfig(nodeId, {
+      recipients: current.filter((r) => String(r) !== String(idStr)),
+    });
+  }
+
+  // Common execution-context fields offered as ai_agent input suggestions
+  // alongside any output_field produced by upstream nodes.
+  const COMMON_CONTEXT_FIELDS = [
+    'item.id', 'item.title', 'item.description', 'item.status',
+    'item.assignee_id', 'item.creator_id', 'item.priority',
+  ];
+
+  function inputFieldSuggestions(currentNodeId, config) {
+    const outputs = collectOutputFields(actionFlowStore.nodes)
+      .filter((o) => o.nodeId !== currentNodeId)
+      .map((o) => o.name);
+    const current = config?.input_fields || [];
+    return [...new Set([...COMMON_CONTEXT_FIELDS, ...outputs])].filter((s) => !current.includes(s));
+  }
+
+  function addInputField(nodeId, config, name) {
+    const v = (name || '').trim();
+    if (!v) return;
+    const current = config?.input_fields || [];
+    if (current.includes(v)) return;
+    actionFlowStore.updateNodeConfig(nodeId, { input_fields: [...current, v] });
+  }
+
+  function removeInputField(nodeId, config, name) {
+    const current = config?.input_fields || [];
+    actionFlowStore.updateNodeConfig(nodeId, { input_fields: current.filter((f) => f !== name) });
+  }
+
+  // Output-field validation (container_run / http_request / ai_extract /
+  // ai_agent): the name becomes a {{context}} variable, so it must be a bare
+  // identifier and unique across the flow.
+  function outputFieldError(nodeId, config) {
+    const name = (config?.output_field || '').trim();
+    if (!name) return '';
+    if (!isValidOutputFieldName(name)) {
+      return 'Use letters, numbers and underscores (must start with a letter or underscore)';
+    }
+    const dupes = collectOutputFields(actionFlowStore.nodes)
+      .filter((o) => o.nodeId !== nodeId && o.name === name);
+    if (dupes.length > 0) {
+      return 'Another node already produces this output name';
+    }
+    return '';
   }
 
   function updateRoundRobinTeam(nodeId, teamId) {
@@ -546,7 +621,21 @@
           id="config-to-status"
           options={[{ value: '', label: t('actions.config.anyStatus') }, ...statuses.map(s => ({ value: s.id, label: s.name }))]}
           value={selectedNode.data?.config?.to_status_id || ''}
+          disabled={selectedNode.data?.config?.to_status_category_completed === true}
           onchange={(v) => store.updateNodeConfig(selectedNode.id, { to_status_id: v ? parseInt(v) : null })}
+          size="small"
+        />
+      </div>
+      <div>
+        <Checkbox
+          checked={selectedNode.data?.config?.to_status_category_completed === true}
+          onchange={(checked) => store.updateNodeConfig(selectedNode.id, {
+            to_status_category_completed: checked || undefined,
+            ...(checked ? { to_status_id: undefined } : {}),
+          })}
+          label="Any completed status"
+          hint="Fire when moving into any status in a completed category"
+          dataTestid="trigger-completed-toggle"
           size="small"
         />
       </div>
@@ -561,6 +650,30 @@
             store.updateNodeConfig(selectedNode.id, { field_name: backendFieldName(field) });
           }}
           onClear={() => store.updateNodeConfig(selectedNode.id, { field_name: '' })}
+        />
+      </div>
+    {/if}
+    {#if ['item_created', 'item_updated'].includes(selectedNode.data?.triggerType || action?.trigger_type)}
+      <div>
+        <label for="config-item-type" class="block text-xs font-medium mb-1">Item type</label>
+        <Select
+          id="config-item-type"
+          options={[{ value: '', label: 'Any item type' }, ...itemTypes.map(it => ({ value: it.id, label: it.name }))]}
+          value={selectedNode.data?.config?.item_type_id || ''}
+          onchange={(v) => store.updateNodeConfig(selectedNode.id, { item_type_id: v ? parseInt(v) : null })}
+          size="small"
+        />
+      </div>
+    {/if}
+    {#if (selectedNode.data?.triggerType || action?.trigger_type) === 'item_linked'}
+      <div>
+        <label for="config-trigger-link-type" class="block text-xs font-medium mb-1">Link type</label>
+        <Select
+          id="config-trigger-link-type"
+          options={[{ value: '', label: 'Any link type' }, ...linkTypes.map(lt => ({ value: lt.id, label: lt.name }))]}
+          value={selectedNode.data?.config?.link_type_id || ''}
+          onchange={(v) => store.updateNodeConfig(selectedNode.id, { link_type_id: v ? parseInt(v) : null })}
+          size="small"
         />
       </div>
     {/if}
@@ -725,10 +838,44 @@
             { value: 'specific', label: t('actions.recipients.specific') }
           ]}
           value={selectedNode.data?.config?.recipient_type || selectedNode.data?.config?.recipients?.[0] || 'assignee'}
-          onchange={(v) => store.updateNodeConfig(selectedNode.id, { recipient_type: v, recipients: v === 'specific' ? [] : [v] })}
+          onchange={(v) => store.updateNodeConfig(selectedNode.id, { recipient_type: v, recipients: v === 'specific' ? specificRecipientIds(selectedNode.data?.config) : [v] })}
           size="small"
         />
       </div>
+      {#if (selectedNode.data?.config?.recipient_type || selectedNode.data?.config?.recipients?.[0]) === 'specific'}
+        <div>
+          <span class="block text-xs font-medium mb-1">Recipients</span>
+          {#if specificRecipientIds(selectedNode.data?.config).length > 0}
+            <div class="flex flex-wrap gap-1.5 mb-2">
+              {#each specificRecipientIds(selectedNode.data?.config) as idStr (idStr)}
+                <span class="chip" data-testid={`notify-recipient-chip-${idStr}`}>
+                  {recipientDisplayName(idStr)}
+                  <button
+                    type="button"
+                    class="chip-remove"
+                    onclick={() => removeRecipient(selectedNode.id, selectedNode.data?.config, idStr)}
+                    aria-label="Remove recipient"
+                  >
+                    <X class="w-3 h-3" />
+                  </button>
+                </span>
+              {/each}
+            </div>
+          {/if}
+          <div data-testid="notify-recipient-add">
+            <UserPicker
+              value={null}
+              users={assignableUsers}
+              workspaceId={action?.workspace_id}
+              placeholder="Add recipient"
+              showSelectedInTrigger={false}
+              allowClear={false}
+              onSelect={(user) => addRecipient(selectedNode.id, selectedNode.data?.config, user)}
+            />
+          </div>
+          <p class="text-xs mt-1 sidebar-hints">These specific users are notified.</p>
+        </div>
+      {/if}
       <div>
         <div class="flex items-center gap-1 mb-1">
           <label for="config-notify-message" class="block text-xs font-medium">{t('actions.config.notifyMessage')}</label>
@@ -777,12 +924,52 @@
           size="small"
         />
       </div>
-      <Checkbox
-        checked={selectedNode.data?.config?.cross_workspace || false}
-        onchange={(checked) => store.updateNodeConfig(selectedNode.id, { cross_workspace: checked })}
-        label="Cross workspace"
-        size="small"
-      />
+      {#if (selectedNode.data?.config?.relation || 'descendants') === 'linked'}
+        <div>
+          <label for="config-related-link-type" class="block text-xs font-medium mb-1">Link type</label>
+          <Select
+            id="config-related-link-type"
+            options={[{ value: '', label: 'Any link type' }, ...linkTypes.map(lt => ({ value: lt.id, label: lt.name }))]}
+            value={selectedNode.data?.config?.link_type_id ?? ''}
+            onchange={(v) => store.updateNodeConfig(selectedNode.id, { link_type_id: v ? parseInt(v) : null })}
+            size="small"
+          />
+        </div>
+        <div>
+          <label for="config-related-direction" class="block text-xs font-medium mb-1">Direction</label>
+          <Select
+            id="config-related-direction"
+            options={[
+              { value: 'both', label: 'Both directions' },
+              { value: 'outgoing', label: 'Outgoing' },
+              { value: 'incoming', label: 'Incoming' },
+            ]}
+            value={selectedNode.data?.config?.link_direction || 'both'}
+            onchange={(v) => store.updateNodeConfig(selectedNode.id, { link_direction: v })}
+            size="small"
+          />
+        </div>
+      {:else}
+        <Checkbox
+          checked={selectedNode.data?.config?.cross_workspace || false}
+          onchange={(checked) => store.updateNodeConfig(selectedNode.id, { cross_workspace: checked })}
+          label="Cross workspace"
+          size="small"
+        />
+      {/if}
+      <div>
+        <label for="config-related-max-items" class="block text-xs font-medium mb-1">Max items</label>
+        <input
+          id="config-related-max-items"
+          data-testid="related-max-items"
+          type="number"
+          min="0"
+          class="w-full px-3 py-2 border rounded-md text-sm config-input"
+          value={selectedNode.data?.config?.max_items || ''}
+          oninput={(e) => store.updateNodeConfig(selectedNode.id, { max_items: e.currentTarget.value ? parseInt(e.currentTarget.value) : 0 })}
+          placeholder="Engine default"
+        />
+      </div>
     {:else if selectedNode.type === 'round_robin_assign'}
       <div>
         <label for="config-round-robin-team" class="block text-xs font-medium mb-1">Team</label>
@@ -836,14 +1023,24 @@
       {:else if target.mode === 'category_name'}
         <div>
           <label for="config-transition-category" class="block text-xs font-medium mb-1">Category name</label>
-          <input
-            id="config-transition-category"
-            type="text"
-            class="w-full px-3 py-2 border rounded-md text-sm config-input"
-            value={target.category_name || ''}
-            oninput={(e) => store.updateNodeConfig(selectedNode.id, { target: { ...target, category_name: e.currentTarget.value } })}
-            placeholder="Done"
-          />
+          {#if statusCategories.length > 0}
+            <Select
+              id="config-transition-category"
+              options={[{ value: '', label: 'Select category' }, ...statusCategories.map(c => ({ value: c.name, label: c.name }))]}
+              value={target.category_name || ''}
+              onchange={(v) => store.updateNodeConfig(selectedNode.id, { target: { ...target, category_name: v } })}
+              size="small"
+            />
+          {:else}
+            <input
+              id="config-transition-category"
+              type="text"
+              class="w-full px-3 py-2 border rounded-md text-sm config-input"
+              value={target.category_name || ''}
+              oninput={(e) => store.updateNodeConfig(selectedNode.id, { target: { ...target, category_name: e.currentTarget.value } })}
+              placeholder="Done"
+            />
+          {/if}
         </div>
       {/if}
       <Checkbox
@@ -873,6 +1070,9 @@
           oninput={(e) => store.updateNodeConfig(selectedNode.id, { output_field: e.currentTarget.value })}
           placeholder={t('actions.config.outputFieldPlaceholder')}
         />
+        {#if outputFieldError(selectedNode.id, selectedNode.data?.config)}
+          <p class="output-field-error" data-testid="output-field-error">{outputFieldError(selectedNode.id, selectedNode.data?.config)}</p>
+        {/if}
       </div>
       <div>
         <label for="config-container-timeout" class="block text-xs font-medium mb-1">{t('actions.config.timeoutSecs')}</label>
@@ -953,6 +1153,9 @@
           oninput={(e) => store.updateNodeConfig(selectedNode.id, { output_field: e.currentTarget.value })}
           placeholder="response"
         />
+        {#if outputFieldError(selectedNode.id, selectedNode.data?.config)}
+          <p class="output-field-error" data-testid="output-field-error">{outputFieldError(selectedNode.id, selectedNode.data?.config)}</p>
+        {/if}
       </div>
     {:else if selectedNode.type === 'ai_extract'}
       <div>
@@ -1009,6 +1212,9 @@
           oninput={(e) => store.updateNodeConfig(selectedNode.id, { output_field: e.currentTarget.value })}
           placeholder="extracted_data"
         />
+        {#if outputFieldError(selectedNode.id, selectedNode.data?.config)}
+          <p class="output-field-error" data-testid="output-field-error">{outputFieldError(selectedNode.id, selectedNode.data?.config)}</p>
+        {/if}
       </div>
     {:else if selectedNode.type === 'ai_agent'}
       <div>
@@ -1034,16 +1240,38 @@
       </div>
       <div>
         <label for="config-aia-input-fields" class="block text-xs font-medium mb-1">{t('actions.config.inputFields')}</label>
+        {#if (selectedNode.data?.config?.input_fields || []).length > 0}
+          <div class="flex flex-wrap gap-1.5 mb-2">
+            {#each selectedNode.data?.config?.input_fields as fieldName (fieldName)}
+              <span class="chip" data-testid={`ai-input-chip-${fieldName}`}>
+                {fieldName}
+                <button
+                  type="button"
+                  class="chip-remove"
+                  onclick={() => removeInputField(selectedNode.id, selectedNode.data?.config, fieldName)}
+                  aria-label="Remove input field"
+                >
+                  <X class="w-3 h-3" />
+                </button>
+              </span>
+            {/each}
+          </div>
+        {/if}
         <input
           id="config-aia-input-fields"
+          data-testid="ai-input-field-add"
           type="text"
+          list={`ai-input-suggestions-${selectedNode.id}`}
           class="w-full px-3 py-2 border rounded-md text-sm config-input"
-          value={(selectedNode.data?.config?.input_fields || []).join(', ')}
-          oninput={(e) => store.updateNodeConfig(selectedNode.id, {
-            input_fields: e.currentTarget.value.split(',').map((s) => s.trim()).filter(Boolean),
-          })}
           placeholder={t('actions.config.inputFieldsPlaceholder')}
+          onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addInputField(selectedNode.id, selectedNode.data?.config, e.currentTarget.value); e.currentTarget.value = ''; } }}
+          onchange={(e) => { if (e.currentTarget.value) { addInputField(selectedNode.id, selectedNode.data?.config, e.currentTarget.value); e.currentTarget.value = ''; } }}
         />
+        <datalist id={`ai-input-suggestions-${selectedNode.id}`}>
+          {#each inputFieldSuggestions(selectedNode.id, selectedNode.data?.config) as s (s)}
+            <option value={s}></option>
+          {/each}
+        </datalist>
       </div>
       <div>
         <label for="config-aia-tools" class="block text-xs font-medium mb-1">{t('actions.config.agentTools')}</label>
@@ -1091,6 +1319,9 @@
           oninput={(e) => store.updateNodeConfig(selectedNode.id, { output_field: e.currentTarget.value })}
           placeholder="agent_answer"
         />
+        {#if outputFieldError(selectedNode.id, selectedNode.data?.config)}
+          <p class="output-field-error" data-testid="output-field-error">{outputFieldError(selectedNode.id, selectedNode.data?.config)}</p>
+        {/if}
       </div>
     {/if}
   {/snippet}
@@ -1115,5 +1346,35 @@
 
   .cascade-option {
     border-color: var(--ds-border);
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 4px 2px 8px;
+    font-size: 12px;
+    border-radius: 9999px;
+    background-color: var(--ds-background-neutral);
+    color: var(--ds-text);
+    border: 1px solid var(--ds-border);
+  }
+
+  .chip-remove {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 9999px;
+    color: var(--ds-text-subtle);
+    cursor: pointer;
+  }
+
+  .chip-remove:hover {
+    color: var(--ds-icon-danger);
+  }
+
+  .output-field-error {
+    margin-top: 4px;
+    font-size: 11px;
+    color: var(--ds-text-danger, #dc2626);
   }
 </style>

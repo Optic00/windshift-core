@@ -7,7 +7,8 @@
     hint = null,               // Optional hint text (e.g., "Not visible on portal")
     labelPosition = 'right',   // 'left' | 'right'
     onchange = null,
-    class: className = ''
+    class: className = '',
+    dataTestid = null
   } = $props();
 
   // Size variants
@@ -26,6 +27,7 @@
 
 <label
   class="checkbox-wrapper inline-flex {hint ? 'items-start' : 'items-center'} gap-2 {labelPosition === 'left' ? 'flex-row-reverse' : ''} {disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'} {className}"
+  data-testid={dataTestid}
 >
   <span class="checkbox-box {currentSize.box} {hint ? 'mt-0.5' : ''}" class:checked class:disabled>
     <input

@@ -2,6 +2,8 @@
   import { Plus, Trash2, HelpCircle } from '@lucide/svelte';
   import { t } from '../../../stores/i18n.svelte.js';
   import Select from '../../../components/Select.svelte';
+  import FieldSelector from '../../../pickers/FieldSelector.svelte';
+  import { getFieldSelectorValue, backendFieldName } from './fieldNameMapping.js';
 
   let {
     mappings = [],
@@ -59,15 +61,26 @@
               onchange={(v) => handleMappingChange(index, 'source_type', v)}
               size="small"
             />
-            <input
-              type="text"
-              class="w-full px-2 py-1.5 border rounded text-xs config-input"
-              value={mapping.source_value}
-              oninput={(e) => handleMappingChange(index, 'source_value', e.currentTarget.value)}
-              placeholder={mapping.source_type === 'variable' ? '{{item.assignee_id}}' : t('actions.config.fromField')}
-            />
+            {#if mapping.source_type === 'item_field'}
+              <div data-testid={`mapping-source-field-${index}`}>
+                <FieldSelector
+                  placeholder={t('actions.config.fromField')}
+                  selectedField={getFieldSelectorValue({ field_name: mapping.source_value })}
+                  onSelect={(field) => handleMappingChange(index, 'source_value', backendFieldName(field))}
+                  onClear={() => handleMappingChange(index, 'source_value', '')}
+                />
+              </div>
+            {:else}
+              <input
+                type="text"
+                class="w-full px-2 py-1.5 border rounded text-xs config-input"
+                value={mapping.source_value}
+                oninput={(e) => handleMappingChange(index, 'source_value', e.currentTarget.value)}
+                placeholder={mapping.source_type === 'variable' ? '{{item.assignee_id}}' : t('actions.config.fromField')}
+              />
+            {/if}
             <Select
-              options={[{ value: '', label: t('actions.config.selectTargetField') }, ...targetFields.map(f => ({ value: f.field_name, label: f.field_name }))]}
+              options={[{ value: '', label: t('actions.config.selectTargetField') }, ...targetFields.map(f => ({ value: f.field_name, label: f.name ?? f.display_name ?? f.label ?? f.field_name }))]}
               value={mapping.target_field_id}
               onchange={(v) => handleMappingChange(index, 'target_field_id', v)}
               size="small"
