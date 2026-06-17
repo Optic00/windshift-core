@@ -103,6 +103,41 @@ func respondInternalError(w http.ResponseWriter, r *http.Request, err error) {
 	restapi.RespondError(w, r, restapi.ErrInternalError)
 }
 
+func (h *Handlers) requireDocumentPermission(w http.ResponseWriter, r *http.Request, permission string) (*LogbookUser, *models.LogbookDocument, bool) {
+	lbUser, ok := requireLogbookAuth(w, r)
+	if !ok {
+		return nil, nil, false
+	}
+
+	docID := r.PathValue("documentID")
+	if !isValidUUID(docID) {
+		respondNotFound(w, r)
+		return nil, nil, false
+	}
+
+	doc, err := h.repo.GetDocument(docID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return nil, nil, false
+	}
+	if doc == nil {
+		respondNotFound(w, r)
+		return nil, nil, false
+	}
+
+	has, err := h.permService.HasBucketPermission(lbUser.ID, lbUser.IsAdmin, lbUser.GroupIDs, doc.BucketID, permission)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return nil, nil, false
+	}
+	if !has {
+		respondNotFound(w, r)
+		return nil, nil, false
+	}
+
+	return lbUser, doc, true
+}
+
 // --- Bucket Handlers ---
 
 // GetBuckets lists buckets the current user can view.
@@ -553,34 +588,8 @@ func (h *Handlers) CreateNote(w http.ResponseWriter, r *http.Request) {
 
 // GetDocument returns a single document. Returns 404 on unauthorized.
 func (h *Handlers) GetDocument(w http.ResponseWriter, r *http.Request) {
-	lbUser, ok := requireLogbookAuth(w, r)
+	_, doc, ok := h.requireDocumentPermission(w, r, models.LogbookPermissionBucketView)
 	if !ok {
-		return
-	}
-
-	docID := r.PathValue("documentID")
-	if !isValidUUID(docID) {
-		respondNotFound(w, r)
-		return
-	}
-
-	doc, err := h.repo.GetDocument(docID)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	if doc == nil {
-		respondNotFound(w, r)
-		return
-	}
-
-	has, err := h.permService.HasBucketPermission(lbUser.ID, lbUser.IsAdmin, lbUser.GroupIDs, doc.BucketID, models.LogbookPermissionBucketView)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	if !has {
-		respondNotFound(w, r) // 404 not 403
 		return
 	}
 
@@ -589,34 +598,8 @@ func (h *Handlers) GetDocument(w http.ResponseWriter, r *http.Request) {
 
 // UpdateDocument updates a document and triggers reprocessing.
 func (h *Handlers) UpdateDocument(w http.ResponseWriter, r *http.Request) {
-	lbUser, ok := requireLogbookAuth(w, r)
+	_, doc, ok := h.requireDocumentPermission(w, r, models.LogbookPermissionBucketEdit)
 	if !ok {
-		return
-	}
-
-	docID := r.PathValue("documentID")
-	if !isValidUUID(docID) {
-		respondNotFound(w, r)
-		return
-	}
-
-	doc, err := h.repo.GetDocument(docID)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	if doc == nil {
-		respondNotFound(w, r)
-		return
-	}
-
-	has, err := h.permService.HasBucketPermission(lbUser.ID, lbUser.IsAdmin, lbUser.GroupIDs, doc.BucketID, models.LogbookPermissionBucketEdit)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	if !has {
-		respondNotFound(w, r)
 		return
 	}
 
@@ -633,11 +616,11 @@ func (h *Handlers) UpdateDocument(w http.ResponseWriter, r *http.Request) {
 
 	// Direct save path for notes: when article is provided, save directly without reprocessing
 	if req.Article != "" {
-		if err := h.repo.SaveNoteDirectly(docID, req.Title, req.Article); err != nil {
+		if err := h.repo.SaveNoteDirectly(doc.ID, req.Title, req.Article); err != nil {
 			respondInternalError(w, r, err)
 			return
 		}
-		updated, _ := h.repo.GetDocument(docID)
+		updated, _ := h.repo.GetDocument(doc.ID)
 		restapi.RespondOK(w, updated)
 		return
 	}
@@ -647,53 +630,27 @@ func (h *Handlers) UpdateDocument(w http.ResponseWriter, r *http.Request) {
 		content = doc.RawContent
 	}
 
-	if err := h.repo.UpdateDocument(docID, req.Title, content); err != nil {
+	if err := h.repo.UpdateDocument(doc.ID, req.Title, content); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
 
-	h.runIngestion(docID, "reprocess", func(ctx context.Context) error {
-		return h.ingestionService.ReprocessDocument(ctx, docID)
+	h.runIngestion(doc.ID, "reprocess", func(ctx context.Context) error {
+		return h.ingestionService.ReprocessDocument(ctx, doc.ID)
 	})
 
-	updated, _ := h.repo.GetDocument(docID)
+	updated, _ := h.repo.GetDocument(doc.ID)
 	restapi.RespondOK(w, updated)
 }
 
 // ArchiveDocument soft-deletes a document. Requires bucket.edit.
 func (h *Handlers) ArchiveDocument(w http.ResponseWriter, r *http.Request) {
-	lbUser, ok := requireLogbookAuth(w, r)
+	_, doc, ok := h.requireDocumentPermission(w, r, models.LogbookPermissionBucketEdit)
 	if !ok {
 		return
 	}
 
-	docID := r.PathValue("documentID")
-	if !isValidUUID(docID) {
-		respondNotFound(w, r)
-		return
-	}
-
-	doc, err := h.repo.GetDocument(docID)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	if doc == nil {
-		respondNotFound(w, r)
-		return
-	}
-
-	has, err := h.permService.HasBucketPermission(lbUser.ID, lbUser.IsAdmin, lbUser.GroupIDs, doc.BucketID, models.LogbookPermissionBucketEdit)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	if !has {
-		respondNotFound(w, r)
-		return
-	}
-
-	if err := h.repo.ArchiveDocument(docID); err != nil {
+	if err := h.repo.ArchiveDocument(doc.ID); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
@@ -844,34 +801,8 @@ func (h *Handlers) KeywordSearch(w http.ResponseWriter, r *http.Request) {
 
 // GetDocumentThumbnail serves the thumbnail image for a document.
 func (h *Handlers) GetDocumentThumbnail(w http.ResponseWriter, r *http.Request) {
-	lbUser, ok := requireLogbookAuth(w, r)
+	_, doc, ok := h.requireDocumentPermission(w, r, models.LogbookPermissionBucketView)
 	if !ok {
-		return
-	}
-
-	docID := r.PathValue("documentID")
-	if !isValidUUID(docID) {
-		respondNotFound(w, r)
-		return
-	}
-
-	doc, err := h.repo.GetDocument(docID)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	if doc == nil {
-		respondNotFound(w, r)
-		return
-	}
-
-	has, err := h.permService.HasBucketPermission(lbUser.ID, lbUser.IsAdmin, lbUser.GroupIDs, doc.BucketID, models.LogbookPermissionBucketView)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	if !has {
-		respondNotFound(w, r) // 404 not 403
 		return
 	}
 
@@ -887,34 +818,8 @@ func (h *Handlers) GetDocumentThumbnail(w http.ResponseWriter, r *http.Request) 
 
 // GetDocumentPreview serves the larger (1200px) preview image for a document.
 func (h *Handlers) GetDocumentPreview(w http.ResponseWriter, r *http.Request) {
-	lbUser, ok := requireLogbookAuth(w, r)
+	_, doc, ok := h.requireDocumentPermission(w, r, models.LogbookPermissionBucketView)
 	if !ok {
-		return
-	}
-
-	docID := r.PathValue("documentID")
-	if !isValidUUID(docID) {
-		respondNotFound(w, r)
-		return
-	}
-
-	doc, err := h.repo.GetDocument(docID)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	if doc == nil {
-		respondNotFound(w, r)
-		return
-	}
-
-	has, err := h.permService.HasBucketPermission(lbUser.ID, lbUser.IsAdmin, lbUser.GroupIDs, doc.BucketID, models.LogbookPermissionBucketView)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	if !has {
-		respondNotFound(w, r) // 404 not 403
 		return
 	}
 
@@ -932,34 +837,8 @@ func (h *Handlers) GetDocumentPreview(w http.ResponseWriter, r *http.Request) {
 
 // GetDocumentFile serves the original uploaded file for a document.
 func (h *Handlers) GetDocumentFile(w http.ResponseWriter, r *http.Request) {
-	lbUser, ok := requireLogbookAuth(w, r)
+	_, doc, ok := h.requireDocumentPermission(w, r, models.LogbookPermissionBucketView)
 	if !ok {
-		return
-	}
-
-	docID := r.PathValue("documentID")
-	if !isValidUUID(docID) {
-		respondNotFound(w, r)
-		return
-	}
-
-	doc, err := h.repo.GetDocument(docID)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	if doc == nil {
-		respondNotFound(w, r)
-		return
-	}
-
-	has, err := h.permService.HasBucketPermission(lbUser.ID, lbUser.IsAdmin, lbUser.GroupIDs, doc.BucketID, models.LogbookPermissionBucketView)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	if !has {
-		respondNotFound(w, r) // 404 not 403
 		return
 	}
 
@@ -994,34 +873,8 @@ func (h *Handlers) GetDocumentFile(w http.ResponseWriter, r *http.Request) {
 
 // UploadAttachment handles file upload for a logbook document.
 func (h *Handlers) UploadAttachment(w http.ResponseWriter, r *http.Request) {
-	lbUser, ok := requireLogbookAuth(w, r)
+	lbUser, doc, ok := h.requireDocumentPermission(w, r, models.LogbookPermissionBucketEdit)
 	if !ok {
-		return
-	}
-
-	docID := r.PathValue("documentID")
-	if !isValidUUID(docID) {
-		respondNotFound(w, r)
-		return
-	}
-
-	doc, err := h.repo.GetDocument(docID)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	if doc == nil {
-		respondNotFound(w, r)
-		return
-	}
-
-	has, err := h.permService.HasBucketPermission(lbUser.ID, lbUser.IsAdmin, lbUser.GroupIDs, doc.BucketID, models.LogbookPermissionBucketEdit)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	if !has {
-		respondNotFound(w, r)
 		return
 	}
 
@@ -1051,7 +904,7 @@ func (h *Handlers) UploadAttachment(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	dir := filepath.Join(h.storagePath, doc.BucketID, docID)
+	dir := filepath.Join(h.storagePath, doc.BucketID, doc.ID)
 	if err := os.MkdirAll(dir, 0o750); err != nil { //nolint:gosec // G703: path components are UUID-generated
 		respondInternalError(w, r, err)
 		return
@@ -1064,7 +917,7 @@ func (h *Handlers) UploadAttachment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	att := &models.LogbookAttachment{
-		DocumentID:       docID,
+		DocumentID:       doc.ID,
 		BucketID:         doc.BucketID,
 		Filename:         filepath.Base(stored.Path),
 		OriginalFilename: header.Filename,
