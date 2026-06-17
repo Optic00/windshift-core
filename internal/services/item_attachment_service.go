@@ -1,7 +1,6 @@
 package services
 
 import (
-	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"windshift/internal/database"
+	"windshift/internal/fileserve"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 )
@@ -34,15 +34,13 @@ var (
 // authorization, validation, on-disk storage, thumbnailing, DB record
 // management, and best-effort item-history rows. It is the bearer-token v1
 // counterpart to the cookie-auth AttachmentHandler's item branches; both
-// surfaces share the same validation helpers (extension/content/MIME) and
-// the same AttachmentService record layer so storage semantics stay in one
-// place.
+// surfaces share the same validation helpers (extension/content/MIME), the
+// AttachmentService record + authorization layer, and fileserve's root
+// confinement so storage semantics stay in one place.
 type ItemAttachmentService struct {
 	db                database.Database
 	attachmentPath    string
-	permissionService *PermissionService
 	attachmentService *AttachmentService
-	itemRepo          *repository.ItemRepository
 }
 
 // NewItemAttachmentService creates an item-attachment upload/delete service.
@@ -50,9 +48,7 @@ func NewItemAttachmentService(db database.Database, attachmentPath string, permi
 	return &ItemAttachmentService{
 		db:                db,
 		attachmentPath:    attachmentPath,
-		permissionService: permissionService,
-		attachmentService: NewAttachmentService(db),
-		itemRepo:          repository.NewItemRepository(db),
+		attachmentService: NewAttachmentServiceWithPermissions(db, permissionService),
 	}
 }
 
@@ -94,7 +90,7 @@ func (s *ItemAttachmentService) UploadItemAttachment(in ItemAttachmentUploadInpu
 		return models.AttachmentUploadResponse{}, fmt.Errorf("%w: File content validation failed: %s", ErrItemAttachmentInvalid, err.Error())
 	}
 
-	settings, err := s.getAttachmentSettings()
+	settings, err := loadAttachmentSettings(s.db, s.attachmentPath)
 	if err != nil {
 		return models.AttachmentUploadResponse{}, fmt.Errorf("get attachment settings: %w", err)
 	}
@@ -222,112 +218,31 @@ func (s *ItemAttachmentService) DeleteItemAttachment(attachmentID, deleterID int
 		return ErrItemAttachmentNotFound
 	}
 
-	// Best-effort blob removal. The cookie-auth delete also removes only the
-	// main file (not the thumbnail), so this matches that surface exactly;
-	// orphaned thumbnails are harmless and cleaned up by routine storage
-	// sweeps.
-	s.removeItemAttachmentFile(details.FilePath)
+	// Best-effort blob removal, confined to the attachment root by the same
+	// fileserve helper the download/thumbnail handlers use. A path that
+	// resolves outside the root (malicious row or planted symlink) is refused
+	// rather than followed. The cookie-auth delete also removes only the main
+	// file (not the thumbnail), so this matches that surface exactly; orphaned
+	// thumbnails are harmless and cleaned up by routine storage sweeps.
+	if err := fileserve.RemoveUnderRoot(s.attachmentPath, details.FilePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		slog.Warn("failed to delete attachment file", slog.String("component", "attachments"), slog.String("file_path", details.FilePath), slog.Any("error", err))
+	}
 	return nil
 }
 
-// removeItemAttachmentFile best-effort removes the stored blob, confined to
-// the configured attachment root. Paths that resolve outside the root are
-// refused rather than followed (defense against a malicious row or planted
-// symlink). A failure to remove the file is logged but does not undo the
-// DB delete — the record is already gone.
-func (s *ItemAttachmentService) removeItemAttachmentFile(storedPath string) {
-	if storedPath == "" {
-		return
-	}
-	resolved, err := s.resolveStoredPath(storedPath)
-	if err != nil {
-		slog.Warn("refusing to delete attachment file outside storage root", slog.String("component", "attachments"), slog.String("file_path", storedPath), slog.Any("error", err))
-		return
-	}
-	if err := os.Remove(resolved); err != nil && !os.IsNotExist(err) { //nolint:gosec // path validated against attachment root
-		slog.Warn("failed to delete attachment file", slog.String("component", "attachments"), slog.String("file_path", resolved), slog.Any("error", err))
-	}
-}
-
-// resolveStoredPath returns the absolute on-disk path for a stored value,
-// rejecting anything that lands outside the configured attachment root. It
-// accepts both absolute stored paths (legacy rows) and root-relative ones
-// (e.g. "items/123/file.png"), mirroring fileserve.OpenUnderRoot's
-// resolution order.
-func (s *ItemAttachmentService) resolveStoredPath(storedPath string) (string, error) {
-	if s.attachmentPath == "" {
-		return "", errors.New("attachment storage root not configured")
-	}
-	absRoot, err := filepath.Abs(s.attachmentPath)
-	if err != nil {
-		return "", err
-	}
-	inside := func(candidate string) (string, error) {
-		abs, err := filepath.Abs(candidate)
-		if err != nil {
-			return "", err
-		}
-		if abs == absRoot || strings.HasPrefix(abs, absRoot+string(os.PathSeparator)) {
-			return abs, nil
-		}
-		return "", errors.New("attachment path is outside configured storage root")
-	}
-
-	if filepath.IsAbs(storedPath) {
-		return inside(storedPath)
-	}
-	// Try the stored path as-written first (relative to CWD — covers rows
-	// written when the root was itself relative), then joined under the root.
-	if abs, err := inside(storedPath); err == nil {
-		return abs, nil
-	}
-	return inside(filepath.Join(s.attachmentPath, storedPath))
-}
-
-// authorizeItemEdit resolves the item and checks the caller holds
-// item.edit in its workspace. A missing item or insufficient permission
-// collapses to ErrItemAttachmentNotFound so existence isn't leaked.
+// authorizeItemEdit resolves the item and checks the caller holds item.edit in
+// its workspace, reusing the shared AttachmentService check (which also handles
+// portal customers). A missing item or insufficient permission collapses to
+// ErrItemAttachmentNotFound so existence isn't leaked.
 func (s *ItemAttachmentService) authorizeItemEdit(userID, itemID int) error {
-	item, err := s.itemRepo.FindByID(itemID)
+	can, err := s.attachmentService.CanModifyItemAttachment(&userID, nil, itemID)
 	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			return ErrItemAttachmentNotFound
-		}
-		return fmt.Errorf("resolve item: %w", err)
+		return fmt.Errorf("check item edit permission: %w", err)
 	}
-	if s.permissionService == nil {
-		return ErrItemAttachmentNotFound
-	}
-	allowed, err := s.permissionService.HasWorkspacePermission(userID, item.WorkspaceID, models.PermissionItemEdit)
-	if err != nil {
-		return fmt.Errorf("check workspace permission: %w", err)
-	}
-	if !allowed {
+	if !can {
 		return ErrItemAttachmentNotFound
 	}
 	return nil
-}
-
-// getAttachmentSettings loads the system-wide attachment settings, falling
-// back to permissive defaults when no row exists.
-func (s *ItemAttachmentService) getAttachmentSettings() (*models.AttachmentSettings, error) {
-	settings := &models.AttachmentSettings{
-		MaxFileSize:      52428800, // 50MB default
-		AllowedMimeTypes: "",
-		AttachmentPath:   s.attachmentPath,
-		Enabled:          true,
-	}
-	err := s.db.QueryRow(`
-		SELECT max_file_size, allowed_mime_types, attachment_path, enabled
-		FROM attachment_settings ORDER BY id DESC LIMIT 1
-	`).Scan(&settings.MaxFileSize, &settings.AllowedMimeTypes, &settings.AttachmentPath, &settings.Enabled)
-	if errors.Is(err, sql.ErrNoRows) {
-		return settings, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return settings, nil
 }
 
 // recordAttachmentHistory appends an item_history row for an attachment
