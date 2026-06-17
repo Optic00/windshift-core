@@ -149,11 +149,8 @@ func (r *UserRepository) GetByEmailOrUsernameForAuth(emailOrUsername string) (*m
 		&u.IsActive, &avatarURL, &u.PasswordHash,
 		&u.RequiresPasswordReset, &u.IsAgent, &u.CreatedAt, &u.UpdatedAt,
 	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
 	if err != nil {
-		return nil, fmt.Errorf("get auth user %q: %w", emailOrUsername, err)
+		return nil, notFoundOrWrap(err, fmt.Sprintf("get auth user %q", emailOrUsername))
 	}
 	if avatarURL.Valid {
 		u.AvatarURL = avatarURL.String
@@ -174,11 +171,8 @@ func (r *UserRepository) GetByID(id int) (*models.User, error) {
 		FROM users WHERE id = ?
 	`, id).Scan(&u.ID, &u.Email, &u.Username, &u.FirstName, &u.LastName,
 		&u.IsActive, &avatarURL, &requiresPasswordReset, &timezone, &language, &u.IsAgent, &u.CreatedAt, &u.UpdatedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
 	if err != nil {
-		return nil, fmt.Errorf("get user %d: %w", id, err)
+		return nil, notFoundOrWrap(err, fmt.Sprintf("get user %d", id))
 	}
 	u.AvatarURL = avatarURL.String
 	u.RequiresPasswordReset = requiresPasswordReset.Bool
@@ -217,11 +211,8 @@ func (r *UserRepository) GetAgentOwner(agentUserID int) (*AgentOwnerInfo, error)
 		JOIN users owner ON owner.id = a.agent_owner_user_id
 		WHERE a.id = ? AND COALESCE(a.is_agent, FALSE) = TRUE
 	`, agentUserID).Scan(&info.UserID, &info.OwnerUserID, &ownerFirst, &ownerLast, &ownerUsername)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
 	if err != nil {
-		return nil, fmt.Errorf("get agent owner for user %d: %w", agentUserID, err)
+		return nil, notFoundOrWrap(err, fmt.Sprintf("get agent owner for user %d", agentUserID))
 	}
 	name := strings.TrimSpace(ownerFirst.String + " " + ownerLast.String)
 	if name == "" {
@@ -326,11 +317,8 @@ func (r *UserRepository) GetUpdateProfileSnapshot(id int) (*UpdateProfileSnapsho
 		FROM users WHERE id = ?
 	`, id).Scan(&s.Email, &s.Username, &s.FirstName, &s.LastName, &s.IsActive,
 		&s.AvatarURL, &s.Timezone, &s.Language, &s.SCIMManaged)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
 	if err != nil {
-		return nil, fmt.Errorf("get user %d update snapshot: %w", id, err)
+		return nil, notFoundOrWrap(err, fmt.Sprintf("get user %d update snapshot", id))
 	}
 	return &s, nil
 }
@@ -392,11 +380,8 @@ func (r *UserRepository) GetRegionalSnapshot(id int) (*RegionalSnapshot, error) 
 		"SELECT username, timezone, language FROM users WHERE id = ?",
 		id,
 	).Scan(&s.Username, &s.Timezone, &s.Language)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
 	if err != nil {
-		return nil, fmt.Errorf("get user %d regional snapshot: %w", id, err)
+		return nil, notFoundOrWrap(err, fmt.Sprintf("get user %d regional snapshot", id))
 	}
 	return &s, nil
 }
@@ -429,11 +414,8 @@ func (r *UserRepository) GetDeleteSnapshot(id int) (*DeleteSnapshot, error) {
 		SELECT username, email, first_name, last_name, COALESCE(scim_managed, false)
 		FROM users WHERE id = ?
 	`, id).Scan(&s.Username, &s.Email, &s.FirstName, &s.LastName, &s.SCIMManaged)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
 	if err != nil {
-		return nil, fmt.Errorf("get user %d delete snapshot: %w", id, err)
+		return nil, notFoundOrWrap(err, fmt.Sprintf("get user %d delete snapshot", id))
 	}
 	return &s, nil
 }
@@ -452,11 +434,8 @@ func (r *UserRepository) GetPasswordResetTarget(id int) (*PasswordResetTarget, e
 		"SELECT username, email FROM users WHERE id = ?",
 		id,
 	).Scan(&t.Username, &t.Email)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
 	if err != nil {
-		return nil, fmt.Errorf("get user %d for password reset: %w", id, err)
+		return nil, notFoundOrWrap(err, fmt.Sprintf("get user %d for password reset", id))
 	}
 	return &t, nil
 }
@@ -487,11 +466,8 @@ func (r *UserRepository) GetActivationTarget(id int) (*ActivationTarget, error) 
 		"SELECT username, email, is_active FROM users WHERE id = ?",
 		id,
 	).Scan(&t.Username, &t.Email, &t.IsActive)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
 	if err != nil {
-		return nil, fmt.Errorf("get user %d activation target: %w", id, err)
+		return nil, notFoundOrWrap(err, fmt.Sprintf("get user %d activation target", id))
 	}
 	return &t, nil
 }
