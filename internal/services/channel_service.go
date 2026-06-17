@@ -162,19 +162,11 @@ func (s *ChannelService) Create(ctx context.Context, req ChannelCreateRequest) (
 		CategoryID:  req.CategoryID,
 	}
 
-	tx, err := s.db.Begin()
-	if err != nil {
-		return nil, fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	id, err := s.repo.Create(ctx, tx, channel)
+	id, err := database.WithTxResult(s.db, func(tx database.Tx) (int, error) {
+		return s.repo.Create(ctx, tx, channel)
+	})
 	if err != nil {
 		return nil, err
-	}
-
-	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	channel.ID = id
@@ -221,18 +213,10 @@ func (s *ChannelService) Update(ctx context.Context, id int, req ChannelUpdateRe
 		CategoryID:  req.CategoryID,
 	}
 
-	tx, err := s.db.Begin()
-	if err != nil {
-		return nil, fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if err := s.repo.Update(ctx, tx, channel); err != nil {
+	if err := database.WithTx(s.db, func(tx database.Tx) error {
+		return s.repo.Update(ctx, tx, channel)
+	}); err != nil {
 		return nil, err
-	}
-
-	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	// Fetch updated channel
@@ -250,21 +234,9 @@ func (s *ChannelService) Delete(ctx context.Context, id int) error {
 		return fmt.Errorf("cannot delete plugin-managed channel")
 	}
 
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if err := s.repo.Delete(ctx, tx, id); err != nil {
-		return err
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	return nil
+	return database.WithTx(s.db, func(tx database.Tx) error {
+		return s.repo.Delete(ctx, tx, id)
+	})
 }
 
 // UpdateLastActivity updates the last_activity timestamp
@@ -275,36 +247,16 @@ func (s *ChannelService) UpdateLastActivity(ctx context.Context, id int) error {
 // SetStatus updates only the status column. Plugin-managed channels are
 // rejected at the SQL level (plugin_name IS NULL), surfacing as ErrNotFound.
 func (s *ChannelService) SetStatus(ctx context.Context, id int, status string) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if err := s.repo.SetStatus(ctx, tx, id, status); err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
-	return nil
+	return database.WithTx(s.db, func(tx database.Tx) error {
+		return s.repo.SetStatus(ctx, tx, id, status)
+	})
 }
 
 // UpdateConfig updates only the config column with caller-prepared JSON.
 func (s *ChannelService) UpdateConfig(ctx context.Context, id int, config string) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if err := s.repo.UpdateConfig(ctx, tx, id, config); err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
-	return nil
+	return database.WithTx(s.db, func(tx database.Tx) error {
+		return s.repo.UpdateConfig(ctx, tx, id, config)
+	})
 }
 
 // Exists checks if a channel exists
@@ -337,21 +289,9 @@ func (s *ChannelService) AddManager(ctx context.Context, channelID int, managerT
 		return fmt.Errorf("manager type must be 'user' or 'group'")
 	}
 
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if err := s.repo.AddManager(ctx, tx, channelID, managerType, managerID, addedBy); err != nil {
-		return err
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	return nil
+	return database.WithTx(s.db, func(tx database.Tx) error {
+		return s.repo.AddManager(ctx, tx, channelID, managerType, managerID, addedBy)
+	})
 }
 
 // RemoveManager deletes a single channel_managers row by its primary key,
@@ -362,32 +302,19 @@ func (s *ChannelService) AddManager(ctx context.Context, channelID int, managerT
 // channel's manager list (e.g. when archiving). Non-admin managers get
 // ErrLastManager when their removal would drop the count to zero.
 func (s *ChannelService) RemoveManager(ctx context.Context, id, channelID int, actorIsAdmin bool) (bool, error) {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return false, fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if !actorIsAdmin {
-		count, err := s.repo.CountManagers(ctx, tx, channelID)
-		if err != nil {
-			return false, err
+	return database.WithTxResult(s.db, func(tx database.Tx) (bool, error) {
+		if !actorIsAdmin {
+			count, err := s.repo.CountManagers(ctx, tx, channelID)
+			if err != nil {
+				return false, err
+			}
+			if count <= 1 {
+				return false, ErrLastManager
+			}
 		}
-		if count <= 1 {
-			return false, ErrLastManager
-		}
-	}
 
-	removed, err := s.repo.RemoveManager(ctx, tx, id, channelID)
-	if err != nil {
-		return false, err
-	}
-
-	if err := tx.Commit(); err != nil {
-		return false, fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
-	return removed, nil
+		return s.repo.RemoveManager(ctx, tx, id, channelID)
+	})
 }
 
 // LookupManagerRow returns the (manager_type, manager_id) for one
