@@ -823,7 +823,7 @@ func (h *AttachmentHandler) Upload(w http.ResponseWriter, r *http.Request) {
 	// Record history for item attachments only (not test_case, avatars, etc.)
 	if entityType == "item" && attachmentEntityID != nil {
 		if entityIDInt, ok := attachmentEntityID.(int); ok {
-			if err = h.recordAttachmentHistory(entityIDInt, uploaderID, "attachment_uploaded", nil, attachmentID, fileHeader.Filename); err != nil {
+			if err = h.attachmentService.RecordItemHistory(entityIDInt, uploaderID, "attachment_uploaded", nil, attachmentID, fileHeader.Filename); err != nil {
 				slog.Warn("failed to record attachment history", slog.String("component", "attachments"), slog.Any("error", err))
 				// Don't fail the whole operation if history recording fails
 			}
@@ -1363,7 +1363,7 @@ func (h *AttachmentHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	// Record history if attachment is associated with a work item.
 	if details.ItemID != nil && userID != nil && (details.EntityType == "item" || details.EntityType == "") {
-		if err = h.recordAttachmentHistory(*details.ItemID, userID, "attachment_deleted", &details.OriginalFilename, 0, details.OriginalFilename); err != nil {
+		if err = h.attachmentService.RecordItemHistory(*details.ItemID, userID, "attachment_deleted", &details.OriginalFilename, 0, details.OriginalFilename); err != nil {
 			slog.Warn("failed to record attachment deletion history", slog.String("component", "attachments"), slog.Any("error", err))
 			// Don't fail the whole operation if history recording fails
 		}
@@ -1708,24 +1708,4 @@ func (h *AttachmentHandler) generateThumbnail(originalPath, filename string) (st
 
 	slog.Debug("thumbnail generation completed successfully", slog.String("component", "attachments"))
 	return thumbnailPath, nil
-}
-
-// recordAttachmentHistory records attachment-related changes to item history
-func (h *AttachmentHandler) recordAttachmentHistory(itemID int, userID *int, action string, oldValue *string, attachmentID int64, filename string) error {
-	if userID == nil {
-		return nil // Skip if no user context
-	}
-
-	var value string
-	if action == "attachment_uploaded" {
-		value = fmt.Sprintf("attachment:%d:%s", attachmentID, filename)
-	} else {
-		value = filename
-	}
-
-	query := `INSERT INTO item_history (item_id, user_id, field_name, old_value, new_value, changed_at)
-	          VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`
-
-	_, err := h.db.ExecWrite(query, itemID, *userID, action, oldValue, value)
-	return err
 }

@@ -155,7 +155,7 @@ func (s *ItemAttachmentService) UploadItemAttachment(in ItemAttachmentUploadInpu
 
 	// Best-effort history row, mirroring the cookie-auth handler. A failure
 	// here must not fail an otherwise-successful upload.
-	if histErr := s.recordAttachmentHistory(in.ItemID, &uploaderID, "attachment_uploaded", nil, attachmentID, in.OriginalFilename); histErr != nil {
+	if histErr := s.attachmentService.RecordItemHistory(in.ItemID, &uploaderID, "attachment_uploaded", nil, attachmentID, in.OriginalFilename); histErr != nil {
 		slog.Warn("failed to record attachment upload history", slog.String("component", "attachments"), slog.Any("error", histErr))
 	}
 
@@ -206,7 +206,7 @@ func (s *ItemAttachmentService) DeleteItemAttachment(attachmentID, deleterID int
 
 	// Record the deletion in item history before removing the row so the
 	// original filename survives for the `old_value` snapshot.
-	if histErr := s.recordAttachmentHistory(itemID, &deleterID, "attachment_deleted", &details.OriginalFilename, 0, details.OriginalFilename); histErr != nil {
+	if histErr := s.attachmentService.RecordItemHistory(itemID, &deleterID, "attachment_deleted", &details.OriginalFilename, 0, details.OriginalFilename); histErr != nil {
 		slog.Warn("failed to record attachment deletion history", slog.String("component", "attachments"), slog.Any("error", histErr))
 	}
 
@@ -243,25 +243,4 @@ func (s *ItemAttachmentService) authorizeItemEdit(userID, itemID int) error {
 		return ErrItemAttachmentNotFound
 	}
 	return nil
-}
-
-// recordAttachmentHistory appends an item_history row for an attachment
-// lifecycle event. Mirrors the cookie-auth AttachmentHandler.recordAttachment
-// History shape so the v1 and cookie surfaces emit identical history.
-func (s *ItemAttachmentService) recordAttachmentHistory(itemID int, userID *int, action string, oldValue *string, attachmentID int64, filename string) error {
-	if userID == nil {
-		return nil
-	}
-	var value string
-	if action == "attachment_uploaded" {
-		value = fmt.Sprintf("attachment:%d:%s", attachmentID, filename)
-	} else {
-		value = filename
-	}
-	_, err := s.db.ExecWrite(
-		`INSERT INTO item_history (item_id, user_id, field_name, old_value, new_value, changed_at)
-		 VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
-		itemID, *userID, action, oldValue, value,
-	)
-	return err
 }
