@@ -177,6 +177,39 @@ func (h *ItemLinkHandler) GetLinksForItem(w http.ResponseWriter, r *http.Request
 	})
 }
 
+// maxBatchLinkItems caps how many item ids GetLinksForItemsBatch accepts in
+// one request, bounding the IN-clause size. Callers (board / roadmap) chunk
+// larger sets across multiple requests.
+const maxBatchLinkItems = 500
+
+// GetLinksForItemsBatch returns links for many items in a single request,
+// keyed by item id. It backs the board/roadmap dependency-badge load, which
+// would otherwise fire one GET /items/{id}/links per card — a burst that under
+// HTTP/2 grabbed a DB connection per card and could exhaust the pool. Every
+// requested id is present in the response (empty arrays when there are no
+// visible links) so the client can cache misses without re-fetching.
+func (h *ItemLinkHandler) GetLinksForItemsBatch(w http.ResponseWriter, r *http.Request) {
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+	ids := parseIDListParam(r.URL.Query().Get("ids"))
+	if len(ids) == 0 {
+		respondJSONOK(w, map[int]services.EntityLinks{})
+		return
+	}
+	if len(ids) > maxBatchLinkItems {
+		respondBadRequest(w, r, fmt.Sprintf("too many ids (max %d per request)", maxBatchLinkItems))
+		return
+	}
+	groups, err := h.linkSvc.ListLinksForItemsWithChecks(user.ID, ids)
+	if err != nil {
+		respondLinkServiceError(w, r, "item", err)
+		return
+	}
+	respondJSONOK(w, groups)
+}
+
 // respondLinkServiceError maps the service's typed errors onto HTTP
 // responses. Centralized so the v1 handler (added in
 // internal/restapi/v1/handlers/links.go) can map the same set without

@@ -70,6 +70,7 @@
   // merged outgoing+incoming link list.
   let dependencyLinksByItem = $state({});
   let dependencyLinksToken = 0; // guards against stale async when items change
+  const DEPENDENCY_LINK_CHUNK = 200; // ids per batched /links/batch request (server cap 500)
 
   // Quick-add state per column
   let quickAddState = $state({});
@@ -330,24 +331,36 @@
     const toFetch = items.filter((i) => i?.id != null && !dependencyLinksByItem[i.id]);
     if (toFetch.length === 0) return;
     const token = ++dependencyLinksToken;
-    await Promise.all(
-      toFetch.map(async (item) => {
+    const ids = toFetch.map((i) => i.id);
+    // One batched request per chunk instead of one per card — a board render
+    // used to fire N concurrent /items/{id}/links requests. Chunk under the
+    // server's 500-id cap.
+    const chunks = [];
+    for (let i = 0; i < ids.length; i += DEPENDENCY_LINK_CHUNK) {
+      chunks.push(ids.slice(i, i + DEPENDENCY_LINK_CHUNK));
+    }
+    const groupsPerChunk = await Promise.all(
+      chunks.map(async (chunk) => {
         try {
-          const result = await api.links.getForItem('items', item.id);
-          const all = [];
-          if (result?.outgoing) all.push(...result.outgoing);
-          if (result?.incoming) all.push(...result.incoming);
-          return [item.id, all];
+          return await api.links.getForItems(chunk);
         } catch {
-          return [item.id, []];
+          return {};
         }
       })
-    ).then((entries) => {
-      if (token !== dependencyLinksToken) return; // a newer load superseded us
-      const next = { ...dependencyLinksByItem };
-      for (const [id, links] of entries) next[id] = links;
-      dependencyLinksByItem = next;
-    });
+    );
+    if (token !== dependencyLinksToken) return; // a newer load superseded us
+    const next = { ...dependencyLinksByItem };
+    // Seed every requested id so items with no links are cached and not re-fetched.
+    for (const id of ids) next[id] = next[id] ?? [];
+    for (const groups of groupsPerChunk) {
+      for (const [id, group] of Object.entries(groups)) {
+        const all = [];
+        if (group?.outgoing) all.push(...group.outgoing);
+        if (group?.incoming) all.push(...group.incoming);
+        next[id] = all;
+      }
+    }
+    dependencyLinksByItem = next;
   }
 
   async function loadBoardConfig() {

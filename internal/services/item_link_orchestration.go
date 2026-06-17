@@ -311,6 +311,86 @@ func (s *ItemLinkService) ListLinksForEntityWithChecks(userID int, entityType st
 	return outgoing, incoming, nil
 }
 
+// EntityLinks is the outgoing/incoming link pair for a single entity, as
+// returned by the batch links endpoint.
+type EntityLinks struct {
+	Outgoing []models.ItemLink `json:"outgoing"`
+	Incoming []models.ItemLink `json:"incoming"`
+}
+
+// ListLinksForItemsWithChecks is the batch counterpart of
+// ListLinksForEntityWithChecks for entityType "item": it returns links for
+// many items keyed by item id, in a fixed handful of queries rather than the
+// per-item pair the single-entity path runs. Board/roadmap views use it so a
+// board render is one request (and one pooled DB connection) instead of one
+// per card.
+//
+// Every requested id appears in the result (empty slices when the item has no
+// visible links) so callers can cache misses without re-fetching. Links whose
+// endpoints are in workspaces / asset sets / pages the user cannot see are
+// dropped by the same access + ACL filters the single-item path applies — so a
+// requested item the user cannot view yields empty slices and nothing leaks.
+func (s *ItemLinkService) ListLinksForItemsWithChecks(userID int, itemIDs []int) (map[int]EntityLinks, error) {
+	result := map[int]EntityLinks{}
+	ids := dedupInts(itemIDs)
+	if len(ids) == 0 {
+		return result, nil
+	}
+	for _, id := range ids {
+		result[id] = EntityLinks{Outgoing: []models.ItemLink{}, Incoming: []models.ItemLink{}}
+	}
+
+	ph := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	idArgs := toIfaceSlice(ids)
+
+	outgoing, err := s.getLinksWhere(
+		"source_type = ? AND source_id IN ("+ph+") AND il.custom_field_id IS NULL",
+		append([]interface{}{"item"}, idArgs...)...)
+	if err != nil {
+		return nil, err
+	}
+	incoming, err := s.getLinksWhere(
+		"target_type = ? AND target_id IN ("+ph+")",
+		append([]interface{}{"item"}, idArgs...)...)
+	if err != nil {
+		return nil, err
+	}
+
+	accessibleKeys, accessibleWsIDs := s.accessibleWorkspaces(userID)
+	accessibleSets := s.AccessibleAssetSetIDs(userID)
+	outgoing = s.FilterLinksByAccess(outgoing, accessibleKeys, accessibleWsIDs, accessibleSets)
+	incoming = s.FilterLinksByAccess(incoming, accessibleKeys, accessibleWsIDs, accessibleSets)
+	outgoing = s.FilterPageLinksByACL(userID, outgoing)
+	incoming = s.FilterPageLinksByACL(userID, incoming)
+
+	for _, l := range outgoing {
+		if g, ok := result[l.SourceID]; ok {
+			g.Outgoing = append(g.Outgoing, l)
+			result[l.SourceID] = g
+		}
+	}
+	for _, l := range incoming {
+		if g, ok := result[l.TargetID]; ok {
+			g.Incoming = append(g.Incoming, l)
+			result[l.TargetID] = g
+		}
+	}
+	return result, nil
+}
+
+// dedupInts returns in with duplicates removed, preserving first-seen order.
+func dedupInts(in []int) []int {
+	seen := make(map[int]bool, len(in))
+	out := make([]int, 0, len(in))
+	for _, v := range in {
+		if !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
 // ============================================
 // Internal helpers
 // ============================================
