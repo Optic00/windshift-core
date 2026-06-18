@@ -49,7 +49,7 @@ export async function fetchCollectionItems(
  * Fetches backlog items for a collection.
  * @param {string|number} workspaceId
  * @param {string|number|null} collectionId
- * @param {{ page?: number, limit?: number, sub_ql?: string }} [options]
+ * @param {{ page?: number, limit?: number, sub_ql?: string, collection?: any }} [options]
  */
 export async function fetchCollectionBacklog(
   workspaceId,
