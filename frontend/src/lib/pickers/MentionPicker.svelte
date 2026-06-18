@@ -31,6 +31,31 @@
     await loadUsers();
   });
 
+  // Clamp the requested cursor position so the whole menu stays within the
+  // viewport, with a small margin from each edge. On narrow mobile viewports
+  // the cursor sits near the right edge of the editor, so the raw coords from
+  // ProseMirror would push the menu off-screen and out of reach — no user can
+  // be selected (WI-431).
+  //
+  // The menu is a transient popup that re-renders on every keystroke (position
+  // changes as you type), so we read the window size at compute time rather
+  // than tracking it reactively, and clamp against the CSS max bounds below
+  // instead of measuring the live element. That keeps it always reachable
+  // without a ResizeObserver or resize listeners.
+  const EDGE_MARGIN = 8;
+  const MENU_MAX_W = 320; // keep in sync with .mention-picker max-width
+  const MENU_MAX_H = 300; // keep in sync with .mention-picker max-height
+  let clampedPosition = $derived.by(() => {
+    const vw = typeof window !== 'undefined' ? window.innerWidth : 0;
+    const vh = typeof window !== 'undefined' ? window.innerHeight : 0;
+    const maxX = Math.max(EDGE_MARGIN, vw - MENU_MAX_W - EDGE_MARGIN);
+    const maxY = Math.max(EDGE_MARGIN, vh - MENU_MAX_H - EDGE_MARGIN);
+    return {
+      x: Math.min(Math.max(EDGE_MARGIN, position.x), maxX),
+      y: Math.min(Math.max(EDGE_MARGIN, position.y), maxY),
+    };
+  });
+
   // Handle keyboard events using runed.
   //
   // Capture phase is required: the editor (ProseMirror) attaches its own
@@ -130,7 +155,7 @@
   <div
     bind:this={containerElement}
     class="mention-picker"
-    style="top: {position.y}px; left: {position.x}px;"
+    style="top: {clampedPosition.y}px; left: {clampedPosition.x}px;"
     role="listbox"
     id={listboxId}
     aria-label={t('pickers.mentionUsers')}
@@ -185,6 +210,19 @@
     max-width: 320px;
     max-height: 300px;
     overflow-y: auto;
+    /* Keep the menu inside the viewport on small/touch screens. The clamp in
+       the script positions it, but also cap width so a 320px menu never
+       overflows a 320px phone. */
+    box-sizing: border-box;
+  }
+
+  /* On very narrow viewports, allow the menu to shrink to fit instead of
+     forcing min-width: 240px and overflowing the screen edge. */
+  @media (max-width: 360px) {
+    .mention-picker {
+      min-width: 0;
+      width: calc(100vw - 16px);
+    }
   }
 
   .loading, .no-results {
@@ -210,6 +248,14 @@
   .mention-option:hover,
   .mention-option.highlighted {
     background: var(--ds-background-neutral-hovered, rgba(59, 130, 246, 0.08));
+  }
+
+  /* Larger, touch-friendly tap targets on small screens so a user can be
+     reliably selected by tap (WI-431). */
+  @media (max-width: 768px) {
+    .mention-option {
+      padding: 12px 12px;
+    }
   }
 
   .info {
