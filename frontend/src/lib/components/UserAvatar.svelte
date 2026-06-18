@@ -68,6 +68,13 @@
     }
   }
 
+  // Mobile-only: leave the mobile surface and remember the preference so the
+  // post-login redirect doesn't bounce the user back to /m.
+  function switchToDesktop() {
+    try { localStorage.setItem('windshift-prefer-desktop', 'true'); } catch {}
+    navigate('/');
+  }
+
   async function selectThemeMode(mode) {
     if (themeStore.colorMode === mode) return;
     themeStore.setColorMode(mode);
@@ -178,6 +185,14 @@
       ]
     },
     { type: 'divider' },
+    ...(minimal ? [{
+      id: 'desktop-site',
+      type: 'regular',
+      icon: Monitor,
+      iconColor: '#3b82f6',
+      title: t('components.userAvatar.desktopSite'),
+      onClick: switchToDesktop
+    }, { type: 'divider' }] : []),
     {
       id: 'logout',
       type: 'regular',

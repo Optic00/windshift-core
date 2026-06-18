@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { currentRoute, initRouter, isMobileRoute } from './lib/router.js';
+  import { currentRoute, initRouter, isMobileRoute, navigate } from './lib/router.js';
   import { authStore } from './lib/stores';
   import { moduleSettings } from './lib/stores/moduleSettings.js';
   import { api } from './lib/api.js';
@@ -99,6 +99,23 @@
       document.documentElement.lang = i18n.locale;
     }
   });
+
+  // After an interactive login on a phone-sized viewport, send the user to the
+  // mobile surface — unless they've opted into the desktop site, or they logged
+  // in on a deep link (only redirect from the default landing page). Installed
+  // PWAs already open at /m via the manifest start_url, so this only affects
+  // plain browsers.
+  function maybeRedirectToMobile() {
+    try {
+      if (localStorage.getItem('windshift-prefer-desktop') === 'true') return;
+    } catch {
+      // localStorage unavailable — fall through and use the viewport check.
+    }
+    const onLanding = $currentRoute.view === 'homepage' || $currentRoute.path === '/';
+    if (onLanding && window.matchMedia?.('(max-width: 768px)').matches) {
+      navigate('/m');
+    }
+  }
 
   async function checkSetupStatus() {
     // Always ask the backend. setup_completed is cheap to fetch and the
@@ -232,6 +249,7 @@
   bind:isOpen={showLoginDialog}
   onsuccess={() => {
     showLoginDialog = false;
+    maybeRedirectToMobile();
   }}
 />
 
