@@ -185,7 +185,10 @@
   }
 </script>
 
-<div class="min-h-screen flex flex-col" style="background-color: var(--ds-surface);">
+<div
+  class="flex flex-col {isMobileRoute($currentRoute.view) ? 'app-shell-mobile' : 'min-h-screen'}"
+  style="background-color: var(--ds-surface);"
+>
   <!-- Show loading screen during initial setup check -->
   {#if setupLoading}
     <div class="min-h-screen flex items-center justify-center w-full">
@@ -263,6 +266,16 @@
   :global(html) {
     --nav-bg-color: var(--ds-surface-raised);
     --nav-text-color: var(--ds-text);
+  }
+
+  /* On the mobile PWA surface the outer wrapper must be exactly the visible
+     viewport (not min-h-screen / 100vh, which on iOS is the larger "largest"
+     viewport and would overflow the 100dvh MobileShell, leaving scrollable
+     slack that lets content drag under the notch and dynamic browser chrome).
+     body{height:100%;overflow:hidden} in app.css contains it; this matches. */
+  .app-shell-mobile {
+    height: 100dvh;
+    overflow: hidden;
   }
 
   /* Themed navigation styles */
