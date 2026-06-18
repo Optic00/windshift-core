@@ -25,63 +25,31 @@
   let loading = $state(false);
   let highlightedIndex = $state(0);
   let containerElement = $state(null);
-  // Measured menu dimensions, used to keep the picker on screen. Updated via a
-  // ResizeObserver below. On narrow mobile viewports the cursor sits near the
-  // right edge of the editor, so the raw coords from ProseMirror place the menu
-  // off-screen (or partly past the viewport edge), making it unreachable — no
-  // user can be selected (WI-431).
-  let containerWidth = $state(0);
-  let containerHeight = $state(0);
-  let viewportWidth = $state(typeof window !== 'undefined' ? window.innerWidth : 0);
-  let viewportHeight = $state(typeof window !== 'undefined' ? window.innerHeight : 0);
 
   // Load users on mount
   onMount(async () => {
     await loadUsers();
   });
 
-  // Measure the menu size so viewport clamping is accurate. We update both on
-  // open (so the first clamped render is correct, before the ResizeObserver's
-  // initial callback lands) and continuously as the filtered list changes.
-  $effect(() => {
-    if (!open || !containerElement) return;
-    const measure = () => {
-      containerWidth = containerElement.offsetWidth;
-      containerHeight = containerElement.offsetHeight;
-    };
-    measure();
-    if (typeof ResizeObserver !== 'undefined') {
-      const ro = new ResizeObserver(() => measure());
-      ro.observe(containerElement);
-      return () => ro.disconnect();
-    }
-  });
-
-  // Track viewport size so clamping stays correct on rotation / resize.
-  useEventListener(() => window, 'resize', () => {
-    viewportWidth = window.innerWidth;
-    viewportHeight = window.innerHeight;
-  });
-  // visualViewport covers mobile browser chrome that hides/shows the address
-  // bar (changes the available layout height while typing). Guarded because the
-  // property is undefined in jsdom (and on very old browsers).
-  if (typeof window !== 'undefined' && window.visualViewport) {
-    useEventListener(() => window.visualViewport, 'resize', () => {
-      viewportWidth = window.visualViewport.width;
-      viewportHeight = window.visualViewport.height;
-    });
-  }
-
-  // Clamp the requested cursor position so the entire menu stays within the
-  // viewport, with a small margin from each edge. This is what makes the picker
-  // usable on mobile: the raw cursor coords can land near the right/bottom edge
-  // of a narrow screen, pushing the menu off-screen and out of reach.
+  // Clamp the requested cursor position so the whole menu stays within the
+  // viewport, with a small margin from each edge. On narrow mobile viewports
+  // the cursor sits near the right edge of the editor, so the raw coords from
+  // ProseMirror would push the menu off-screen and out of reach — no user can
+  // be selected (WI-431).
+  //
+  // The menu is a transient popup that re-renders on every keystroke (position
+  // changes as you type), so we read the window size at compute time rather
+  // than tracking it reactively, and clamp against the CSS max bounds below
+  // instead of measuring the live element. That keeps it always reachable
+  // without a ResizeObserver or resize listeners.
   const EDGE_MARGIN = 8;
+  const MENU_MAX_W = 320; // keep in sync with .mention-picker max-width
+  const MENU_MAX_H = 300; // keep in sync with .mention-picker max-height
   let clampedPosition = $derived.by(() => {
-    const w = containerWidth || 0;
-    const h = containerHeight || 0;
-    const maxX = Math.max(EDGE_MARGIN, viewportWidth - w - EDGE_MARGIN);
-    const maxY = Math.max(EDGE_MARGIN, viewportHeight - h - EDGE_MARGIN);
+    const vw = typeof window !== 'undefined' ? window.innerWidth : 0;
+    const vh = typeof window !== 'undefined' ? window.innerHeight : 0;
+    const maxX = Math.max(EDGE_MARGIN, vw - MENU_MAX_W - EDGE_MARGIN);
+    const maxY = Math.max(EDGE_MARGIN, vh - MENU_MAX_H - EDGE_MARGIN);
     return {
       x: Math.min(Math.max(EDGE_MARGIN, position.x), maxX),
       y: Math.min(Math.max(EDGE_MARGIN, position.y), maxY),
