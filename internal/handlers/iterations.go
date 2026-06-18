@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -388,6 +389,60 @@ func (h *IterationHandler) GetProgress(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSONOK(w, report)
+}
+
+// GetProgressBatch handles GET /api/iterations/progress?ids=1,2,3 — returns
+// progress reports for many iterations in one request, keyed by iteration id.
+// It backs the dashboard iteration-timeline widget, which otherwise fired one
+// GET /iterations/{id}/progress per displayed iteration. Iterations the caller
+// can't view (or that don't exist) are silently omitted, so the response is a
+// partial map the client indexes by id.
+func (h *IterationHandler) GetProgressBatch(w http.ResponseWriter, r *http.Request) {
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+
+	ids := parseIDListParam(r.URL.Query().Get("ids"))
+	if len(ids) == 0 {
+		respondJSONOK(w, map[int]*services.IterationProgressReport{})
+		return
+	}
+	if len(ids) > maxBatchItems {
+		respondBadRequest(w, r, fmt.Sprintf("too many ids (max %d per request)", maxBatchItems))
+		return
+	}
+
+	result := make(map[int]*services.IterationProgressReport, len(ids))
+	seen := make(map[int]bool, len(ids))
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+
+		isGlobal, wsID, err := h.planningService.IsIterationGlobal(id)
+		if err != nil {
+			continue // not found / error → omit (no leak)
+		}
+		if !isGlobal {
+			if wsID == nil {
+				continue
+			}
+			allowed, permErr := h.permissionService.HasWorkspacePermission(user.ID, *wsID, models.PermissionItemView)
+			if permErr != nil || !allowed {
+				continue // not visible → omit
+			}
+		}
+
+		report, err := h.planningService.GetIterationProgress(id)
+		if err != nil {
+			continue
+		}
+		result[id] = report
+	}
+
+	respondJSONOK(w, result)
 }
 
 // GetBurndown handles GET /api/iterations/{id}/burndown - returns iteration burndown chart data

@@ -53,5 +53,9 @@ export const iterations = {
       body: JSON.stringify(data),
     }),
   getProgress: (id) => fetchAPI(`/iterations/${id}/progress`),
+  // Bulk progress for many iterations in one request, keyed by iteration id.
+  // Replaces one getProgress() per iteration on the dashboard timeline.
+  getProgressMany: (ids = []) =>
+    fetchAPI(`/iterations/progress?ids=${[...new Set(ids)].join(',')}`),
   getBurndown: (id) => fetchAPI(`/iterations/${id}/burndown`),
 };
