@@ -474,7 +474,16 @@
 
   .msg { padding: 3rem 1.25rem; text-align: center; color: var(--ds-text-subtle); }
 
-  .detail { padding: 0.75rem 0.875rem 2rem; position: relative; will-change: transform; }
+  .detail { padding: 0.75rem 0.875rem 2rem; position: relative; }
+  /* Promote to its own layer only while the pull gesture is active. A
+     persistent `will-change: transform` here makes .detail a containing block
+     for position:fixed descendants — which includes the @-mention picker
+     rendered inside the comment editor. That reinterprets the picker's
+     viewport coords relative to the scrolled .detail box, so on long items
+     (e.g. ones with the commits/PR + coding-agent panels) the picker lands far
+     below the viewport and never appears (WI-431). The pull transform itself
+     establishes the layer during the gesture, so we only need the hint then. */
+  .detail.pulling { will-change: transform; }
   /* Ease the content back to rest after a release (and the snap on fire). */
   .detail:not(.pulling) { transition: transform var(--duration-fast, 100ms) ease; }
 
