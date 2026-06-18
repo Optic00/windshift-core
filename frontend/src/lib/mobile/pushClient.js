@@ -33,8 +33,9 @@ export function isStandalone() {
   if (typeof window === 'undefined') return false;
   return (
     window.matchMedia?.('(display-mode: standalone)').matches ||
-    // iOS Safari exposes navigator.standalone for Home-Screen apps.
-    window.navigator.standalone === true
+    // iOS Safari exposes the non-standard navigator.standalone for Home-Screen
+    // apps (not in the TS DOM lib, hence the cast).
+    /** @type {any} */ (window.navigator).standalone === true
   );
 }
 

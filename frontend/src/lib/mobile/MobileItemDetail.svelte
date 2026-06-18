@@ -330,7 +330,9 @@
         </button>
         {#if scmOpen}
           <div class="panel-body" data-testid="scm-panel-body">
-            <ItemSCMLinks itemId={item.id} />
+            <!-- Read-only on mobile: SCM write actions stay on desktop, so the
+                 create handlers are no-ops (also satisfies required props). -->
+            <ItemSCMLinks itemId={item.id} onaddlink={() => {}} oncreatebranch={() => {}} oncreatepr={() => {}} />
           </div>
         {/if}
       </section>
@@ -354,7 +356,7 @@
     <!-- Comments. Keyed on itemId so it reloads when navigating item → item. -->
     <section class="comments">
       {#key itemId}
-        <Comments {itemId} />
+        <Comments {itemId} onCommentsLoaded={() => {}} />
       {/key}
     </section>
   </div>

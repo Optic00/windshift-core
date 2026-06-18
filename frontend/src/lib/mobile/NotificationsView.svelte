@@ -28,7 +28,7 @@
   onMount(refreshPush);
 
   const list = $derived(
-    [...$notifications].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+    [...$notifications].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
   );
   const hasUnread = $derived($notifications.some((n) => !n.read));
 
