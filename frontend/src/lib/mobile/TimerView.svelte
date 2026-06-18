@@ -5,6 +5,7 @@
   import { timeEntryStore } from '../stores';
   import { confirm } from '../composables/useConfirm.js';
   import { t } from '../stores/i18n.svelte.js';
+  import { formatItemKey } from '../utils/itemKey.js';
   import MobileHeader from './MobileHeader.svelte';
   import TimeLogModal from '../dialogs/TimeLogModal.svelte';
 
@@ -15,20 +16,9 @@
     [...timeEntryStore.worklogs].sort((a, b) => (b.date ?? 0) - (a.date ?? 0)).slice(0, 20)
   );
 
-  function fmtMinutes(min) {
-    if (!min && min !== 0) return '';
-    const h = Math.floor(min / 60);
-    const m = Math.round(min % 60);
-    return h > 0 ? `${h}h ${m}m` : `${m}m`;
-  }
-
   function fmtDay(epochSeconds) {
     if (!epochSeconds) return '';
     return new Date(epochSeconds * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  }
-
-  function workItemKey(w) {
-    return w.workspace_key && w.workspace_item_number ? `${w.workspace_key}-${w.workspace_item_number}` : null;
   }
 
   async function stopTimer() {
@@ -66,9 +56,9 @@
     {#if activeTimer}
       <div class="t-top">
         <Clock size={18} />
-        {#if workItemKey(activeTimer)}
+        {#if formatItemKey(activeTimer)}
           <a class="t-key" href={`/m/items/${activeTimer.item_id}`} data-testid="timer-item-link">
-            {workItemKey(activeTimer)} <ExternalLink size={12} />
+            {formatItemKey(activeTimer)} <ExternalLink size={12} />
           </a>
         {:else}
           <span class="t-key">{activeTimer.project_name ?? 'Running'}</span>
@@ -110,8 +100,8 @@
             <button class="wl-main" onclick={() => timeEntryStore.editWorklog(w)} data-testid="worklog-edit" type="button">
               <span class="wl-desc">{w.description || w.project_name || 'Worklog'}</span>
               <span class="wl-sub">
-                {#if workItemKey(w)}<span class="wl-key">{workItemKey(w)}</span>{/if}
-                <span class="wl-dur">{fmtMinutes(w.duration_minutes)}</span>
+                {#if formatItemKey(w)}<span class="wl-key">{formatItemKey(w)}</span>{/if}
+                <span class="wl-dur">{timeEntryStore.formatDuration(w.duration_minutes)}</span>
                 <span class="wl-day">{fmtDay(w.date)}</span>
               </span>
             </button>

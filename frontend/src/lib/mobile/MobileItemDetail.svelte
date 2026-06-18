@@ -7,7 +7,9 @@
   import { timerStore } from '../stores/timerStore.svelte.js';
   import { renderMarkdown } from '../utils/render-markdown.js';
   import { formatDate } from '../utils/dateFormatter.js';
+  import { formatItemKey } from '../utils/itemKey.js';
   import MobileHeader from './MobileHeader.svelte';
+  import StatusPill from '../components/StatusPill.svelte';
   import Comments from '../features/items/Comments.svelte';
   import ItemSCMLinks from '../features/items/ItemSCMLinks.svelte';
   import ItemAgentLog from '../features/items/ItemAgentLog.svelte';
@@ -36,11 +38,7 @@
   let agentOpen = $state(false);
 
   const descriptionHtml = $derived(item?.description ? renderMarkdown(item.description) : '');
-  const itemKey = $derived(
-    item?.workspace_key && item?.workspace_item_number
-      ? `${item.workspace_key}-${item.workspace_item_number}`
-      : ''
-  );
+  const itemKey = $derived(formatItemKey(item) ?? '');
   const projectId = $derived(item?.time_project_id ?? item?.effective_project_id ?? null);
   const canStartTimer = $derived(!!item && !timerStore.hasActive && !!projectId);
 
@@ -198,12 +196,8 @@
         {#snippet children()}
           <div class="field" data-testid="status-picker-trigger">
             <span class="field-label">Status</span>
-            <span class="field-value">
-              <span
-                class="status-badge"
-                style={item.status_color ? `background-color: ${item.status_color}1f; color: ${item.status_color};` : ''}
-                data-testid="detail-status"
-              >{item.status_name ?? '—'}</span>
+            <span class="field-value" data-testid="detail-status">
+              <StatusPill name={item.status_name} color={item.status_color} />
               <ChevronDown size={16} class="chev" />
             </span>
           </div>
@@ -335,11 +329,6 @@
   .field-value :global(.chev) { color: var(--ds-icon-subtle, var(--ds-text-subtle)); flex-shrink: 0; }
   .assignee-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 9rem; }
   .muted { color: var(--ds-text-subtle); }
-  .status-badge {
-    display: inline-flex; align-items: center; border-radius: var(--radius-sm, 4px);
-    padding: 1px 8px; font-size: 0.8125rem; font-weight: var(--font-medium, 500);
-    background-color: var(--ds-background-neutral); color: var(--ds-text-subtle);
-  }
   .opt { display: inline-flex; align-items: center; gap: 0.5rem; }
   .opt-dot { width: 8px; height: 8px; border-radius: var(--radius-full, 9999px); background-color: var(--ds-icon-subtle, var(--ds-text-subtle)); flex-shrink: 0; }
 

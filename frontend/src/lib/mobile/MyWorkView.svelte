@@ -2,6 +2,8 @@
   import { authStore } from '../stores';
   import { api } from '../api.js';
   import { formatRelativeCompact } from '../utils/dateFormatter.js';
+  import { formatItemKey } from '../utils/itemKey.js';
+  import { assignedToMeQuery } from '../widgets/dashboard/taskWidgetState.js';
   import MobileHeader from './MobileHeader.svelte';
   import MobileItemRow from './MobileItemRow.svelte';
   import UserAvatar from '../components/UserAvatar.svelte';
@@ -22,19 +24,13 @@
   const currentUserId = $derived($authStore?.currentUser?.id ?? null);
   const rows = $derived(data[segment] ?? []);
 
-  function key(i) {
-    return i.workspace_key && i.workspace_item_number
-      ? `${i.workspace_key}-${i.workspace_item_number}`
-      : null;
-  }
-
   function loadAssigned(raw) {
     const list = Array.isArray(raw) ? raw : (raw?.items ?? []);
     return list
       .filter((i) => i?.id)
       .map((i) => ({
         itemId: i.id,
-        itemKey: key(i),
+        itemKey: formatItemKey(i),
         title: i.title,
         statusName: i.status_name,
         statusColor: i.status_color,
@@ -49,7 +45,7 @@
       .filter((w) => w?.item_id)
       .map((w) => ({
         itemId: w.item_id,
-        itemKey: key(w),
+        itemKey: formatItemKey(w),
         title: w.title,
         statusName: w.status,
         statusColor: w.status_color,
@@ -72,7 +68,7 @@
       seen.add(a.item_id);
       merged.push({
         itemId: a.item_id,
-        itemKey: key(a),
+        itemKey: formatItemKey(a),
         title: a.title,
         statusName: a.status,
         statusColor: a.status_color,
@@ -94,11 +90,7 @@
           data = { ...data, assigned: [] };
           return;
         }
-        const res = await api.items.getAll({
-          ql: `assignee_id = ${currentUserId} AND status_completed = false`,
-          limit: 30,
-          order_by: 'updated_at',
-        });
+        const res = await api.items.getAll(assignedToMeQuery(currentUserId));
         if (v !== version) return;
         data = { ...data, assigned: loadAssigned(res) };
       } else {

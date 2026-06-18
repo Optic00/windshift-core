@@ -1,6 +1,7 @@
 <script>
   import { navigate } from '../router.js';
   import { formatDueDate, getDueBadgeClass } from '../utils/dateFormatter.js';
+  import StatusPill from '../components/StatusPill.svelte';
 
   /**
    * Touch-sized work-item row for the mobile lists. Derived from
@@ -53,14 +54,7 @@
     {#if itemKey}
       <span class="key">{itemKey}</span>
     {/if}
-    {#if statusName}
-      <span
-        class="status"
-        style={statusColor
-          ? `background-color: ${statusColor}1f; color: ${statusColor};`
-          : 'background-color: var(--ds-background-neutral); color: var(--ds-text-subtle);'}
-      >{statusName}</span>
-    {/if}
+    <StatusPill name={statusName} color={statusColor} />
     {#if timestamp}
       <span class="ts">{timestamp}</span>
     {/if}
@@ -135,14 +129,6 @@
 
   .key {
     font-family: var(--font-mono, ui-monospace, monospace);
-  }
-
-  .status {
-    display: inline-flex;
-    align-items: center;
-    border-radius: var(--radius-sm, 4px);
-    padding: 1px 6px;
-    font-weight: var(--font-medium, 500);
   }
 
   .due {

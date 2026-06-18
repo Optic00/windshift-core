@@ -3,7 +3,7 @@
   import { authStore } from '../../stores';
   import { api } from '../../api.js';
   import DashboardItemRow from './DashboardItemRow.svelte';
-  import { normalizeTaskResponse, openTask } from './taskWidgetState.js';
+  import { assignedToMeQuery, normalizeTaskResponse, openTask } from './taskWidgetState.js';
 
   let tasks = $state([]);
   let loading = $state(false);
@@ -28,11 +28,7 @@
     loading = true;
     errored = false;
     try {
-      const response = await api.items.getAll({
-        ql: `assignee_id = ${currentUserId} AND status_completed = false`,
-        limit: 30,
-        order_by: 'updated_at',
-      });
+      const response = await api.items.getAll(assignedToMeQuery(currentUserId));
       if (v !== version) return;
       tasks = normalizeTaskResponse(response);
     } catch (err) {

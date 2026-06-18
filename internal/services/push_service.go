@@ -23,6 +23,11 @@ const pushTTLSeconds = 86400
 // app fetches full content after opening (see plan security note).
 const maxPushBodyLen = 140
 
+// activeSubsWhere filters to a user's non-revoked subscriptions. Shared by
+// List and deliver so the "active" invariant (revoked_at IS NULL) is defined
+// once rather than duplicated per query.
+const activeSubsWhere = "WHERE user_id = ? AND revoked_at IS NULL"
+
 // PushSubscriptionInfo is the non-sensitive view of a stored subscription
 // returned to the owning user (keys are never exposed back to the client).
 type PushSubscriptionInfo struct {
@@ -82,12 +87,9 @@ func (s *PushService) Subscribe(userID int, endpoint, authKey, p256dhKey, userAg
 
 // List returns the user's active (non-revoked) subscriptions, newest first.
 func (s *PushService) List(userID int) ([]PushSubscriptionInfo, error) {
-	rows, err := s.db.Query(`
-		SELECT id, endpoint, user_agent, created_at, last_used_at
-		FROM push_subscriptions
-		WHERE user_id = ? AND revoked_at IS NULL
-		ORDER BY created_at DESC
-	`, userID)
+	rows, err := s.db.Query(
+		"SELECT id, endpoint, user_agent, created_at, last_used_at FROM push_subscriptions "+
+			activeSubsWhere+" ORDER BY created_at DESC", userID)
 	if err != nil {
 		return nil, err
 	}
@@ -169,11 +171,8 @@ func (s *PushService) deliver(userID int, payload pushPayload) {
 		return
 	}
 
-	rows, err := s.db.Query(`
-		SELECT id, endpoint, auth_key, p256dh_key
-		FROM push_subscriptions
-		WHERE user_id = ? AND revoked_at IS NULL
-	`, userID)
+	rows, err := s.db.Query(
+		"SELECT id, endpoint, auth_key, p256dh_key FROM push_subscriptions "+activeSubsWhere, userID)
 	if err != nil {
 		slog.Error("push: load subscriptions failed", slog.String("component", "push"), slog.Any("error", err))
 		return
