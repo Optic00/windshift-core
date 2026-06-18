@@ -49,6 +49,11 @@
     } else if ($authStore.isAuthenticated) {
       // For authenticated users, let MainApp handle the data loading
       appInitialized = true;
+      // Phone viewport landing on the desktop root → mobile surface. Runs here
+      // (not only on the login-dialog callback) so it also fires for SSO
+      // returns, full-page-reload logins, and existing sessions — the cases
+      // that bypass the in-SPA onsuccess handler.
+      maybeRedirectToMobile();
     } else {
       // Setup completed but not authenticated - app is ready for login
       appInitialized = true;
