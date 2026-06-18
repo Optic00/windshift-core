@@ -22,6 +22,7 @@
     label = '',
     autoOpen = false,
     allowClear = true,
+    positioning = null,
     onSelect = () => {},
     onCancel = () => {}
   } = $props();
@@ -78,6 +79,7 @@
   {disabled}
   allowClear={true}
   {autoOpen}
+  {positioning}
   {showSelectedInTrigger}
   {label}
   class={className}

@@ -5,7 +5,16 @@
     <link rel="icon" type="image/svg+xml" href="/windshift-3.svg" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- PWA: installable mobile surface (start_url = /m). Relative href so the
+         link resolves against the injected <base href> on context-path deploys. -->
+    <link rel="manifest" href="manifest.webmanifest" />
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#1d2125" media="(prefers-color-scheme: dark)" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Windshift" />
     <title>Windshift - Work Management</title>
     <script>
       // Flash prevention: apply theme before CSS loads

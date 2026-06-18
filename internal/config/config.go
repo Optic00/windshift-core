@@ -49,6 +49,7 @@ type Config struct {
 	CodingAgent  CodingAgentConfig
 	Logbook      LogbookConfig
 	Notification NotificationConfig
+	Push         PushConfig
 	Jira         JiraConfig
 
 	// Flat fields (no logical grouping)
@@ -151,6 +152,22 @@ type NotificationConfig struct {
 	// (WINDSHIFT_NOTIFICATION_BATCH_INTERVAL). Zero means the scheduler uses
 	// its built-in default.
 	BatchInterval time.Duration
+}
+
+// PushConfig holds Web Push (VAPID) configuration. Push is enabled only when
+// both keys are present; otherwise the push endpoints and dispatch are no-ops
+// and the mobile UI hides the enable-notifications affordance.
+type PushConfig struct {
+	VAPIDPublicKey  string
+	VAPIDPrivateKey string
+	// VAPIDSubject is the "sub" claim in the VAPID JWT — a mailto: or https:
+	// contact URL for the push service operator. Defaults to the BaseURL.
+	VAPIDSubject string
+}
+
+// Enabled reports whether Web Push can be dispatched (both keys configured).
+func (p PushConfig) Enabled() bool {
+	return p.VAPIDPublicKey != "" && p.VAPIDPrivateKey != ""
 }
 
 // JiraConfig holds Jira-related runtime options.

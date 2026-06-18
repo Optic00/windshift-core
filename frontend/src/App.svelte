@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { currentRoute, initRouter } from './lib/router.js';
+  import { currentRoute, initRouter, isMobileRoute, navigate } from './lib/router.js';
   import { authStore } from './lib/stores';
   import { moduleSettings } from './lib/stores/moduleSettings.js';
   import { api } from './lib/api.js';
@@ -13,6 +13,7 @@
   import PublicFormPage from './lib/features/forms/PublicFormPage.svelte';
   import SetPassword from './lib/pages/SetPassword.svelte';
   import MainApp from './lib/pages/MainApp.svelte';
+  import MobileShell from './lib/mobile/MobileShell.svelte';
   import PublicBoard from './lib/pages/PublicBoard.svelte';
   import PagePrintView from './lib/features/pages/PagePrintView.svelte';
 
@@ -99,24 +100,34 @@
     }
   });
 
-  async function checkSetupStatus() {
-    // setup_completed is a one-way latch — once true, it stays true. Cache
-    // the positive result in sessionStorage so repeat navigations within a
-    // browser context don't re-hit the rate-limited endpoint.
+  // After an interactive login on a phone-sized viewport, send the user to the
+  // mobile surface — unless they've opted into the desktop site, or they logged
+  // in on a deep link (only redirect from the default landing page). Installed
+  // PWAs already open at /m via the manifest start_url, so this only affects
+  // plain browsers.
+  function maybeRedirectToMobile() {
     try {
-      if (sessionStorage.getItem('windshift-setup-completed') === 'true') {
-        setupCompleted = true;
-        return;
-      }
+      if (localStorage.getItem('windshift-prefer-desktop') === 'true') return;
     } catch {
-      // sessionStorage may be disabled — fall through to the network call.
+      // localStorage unavailable — fall through and use the viewport check.
     }
+    const onLanding = $currentRoute.view === 'homepage' || $currentRoute.path === '/';
+    if (onLanding && window.matchMedia?.('(max-width: 768px)').matches) {
+      navigate('/m');
+    }
+  }
+
+  async function checkSetupStatus() {
+    // Always ask the backend. setup_completed is cheap to fetch and the
+    // /setup/status rate-limit burst comfortably covers normal reloads. We
+    // deliberately do NOT cache the result client-side: a cached "completed"
+    // flag survives backend/DB swaps under the same origin (e.g. dev worktrees
+    // behind the vite proxy), making a fresh, unconfigured instance look
+    // already set up and silently skipping the setup wizard.
     try {
       const status = await api.setup.getStatus();
       setupCompleted = status.setup_completed;
-      if (status.setup_completed) {
-        try { sessionStorage.setItem('windshift-setup-completed', 'true'); } catch {}
-      } else {
+      if (!status.setup_completed) {
         showWelcomeAssistant = true;
       }
     } catch (error) {
@@ -201,6 +212,9 @@
       workspaceId={Number($currentRoute.params.id)}
       pageId={Number($currentRoute.params.pageId)}
     />
+  <!-- Mobile PWA surface (phone-focused shell, bypasses desktop MainApp chrome) -->
+  {:else if $authStore.isAuthenticated && appInitialized && isMobileRoute($currentRoute.view)}
+    <MobileShell />
   <!-- Show main app when user is authenticated -->
   {:else if $authStore.isAuthenticated && appInitialized}
     <MainApp />
@@ -235,6 +249,7 @@
   bind:isOpen={showLoginDialog}
   onsuccess={() => {
     showLoginDialog = false;
+    maybeRedirectToMobile();
   }}
 />
 

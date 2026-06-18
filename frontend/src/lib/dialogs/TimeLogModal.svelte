@@ -245,8 +245,9 @@
       />
     </div>
 
-    <!-- Time fields -->
-    <div class="grid grid-cols-4 gap-3">
+    <!-- Time fields. 2-up on phones (4 narrow columns are unusable at ~390px),
+         4-up on sm+ where the modal is wide enough. -->
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
       <!-- Start Time -->
       <div>
         <Label color="default" class="mb-2">{t('time.start')}</Label>

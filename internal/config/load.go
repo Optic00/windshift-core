@@ -162,6 +162,10 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 	}
 	rpName := firstNonEmpty(os.Getenv("WEBAUTHN_RP_NAME"), "Windshift")
 
+	// Web Push (VAPID). Both keys must be set to enable push; subject defaults
+	// to the BaseURL so the VAPID JWT carries a valid contact URL.
+	vapidSubject := firstNonEmpty(os.Getenv("VAPID_SUBJECT"), resolvedBaseURL)
+
 	return Config{
 		Port:              port,
 		BaseURL:           resolvedBaseURL,
@@ -223,6 +227,11 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 			BatchSize:     parseIntEnv("NOTIFICATION_BATCH_SIZE", 0),
 			SyncInterval:  parseDurationEnv("NOTIFICATION_SYNC_INTERVAL", 0),
 			BatchInterval: parseDurationEnv("WINDSHIFT_NOTIFICATION_BATCH_INTERVAL", 0),
+		},
+		Push: PushConfig{
+			VAPIDPublicKey:  os.Getenv("VAPID_PUBLIC_KEY"),
+			VAPIDPrivateKey: os.Getenv("VAPID_PRIVATE_KEY"),
+			VAPIDSubject:    vapidSubject,
 		},
 		Jira: JiraConfig{
 			CapturePayloadsDir: os.Getenv("JIRA_CAPTURE_PAYLOADS"),

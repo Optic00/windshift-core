@@ -55,11 +55,31 @@ type NotificationManager struct {
 	stopOnce   sync.Once
 	wg         sync.WaitGroup
 	mu         sync.RWMutex
+
+	// pushDispatcher, when set, receives every newly-created notification for
+	// fan-out to Web Push. Read under mu; set once at startup via SetPushDispatcher.
+	pushDispatcher PushDispatcher
+}
+
+// SetPushDispatcher wires the Web Push dispatcher. Safe to call once at startup
+// before the manager handles traffic; nil leaves push disabled.
+func (nm *NotificationManager) SetPushDispatcher(d PushDispatcher) {
+	nm.mu.Lock()
+	defer nm.mu.Unlock()
+	nm.pushDispatcher = d
 }
 
 // NotificationService interface for cache management
 type NotificationService interface {
 	ForceRefreshCache() error
+}
+
+// PushDispatcher delivers a freshly-created notification to the user's
+// registered Web Push subscriptions. Implemented by services.PushService.
+// Kept as an interface here so the notification manager stays decoupled from
+// the push transport (and so push is a no-op when none is wired).
+type PushDispatcher interface {
+	Dispatch(notification models.Notification)
 }
 
 // NotificationHandler handles HTTP requests for notifications
@@ -201,6 +221,12 @@ func (nm *NotificationManager) AddNotification(notification models.Notification)
 	}
 
 	slog.Debug("successfully added notification", slog.String("component", "notifications"), slog.Int("notification_id", notification.ID), slog.Int("user_id", notification.UserID), slog.Int("cache_size", len(cache.Notifications)))
+
+	// Fan out to Web Push asynchronously — never block the notification write
+	// on a remote push service. The dispatcher operates on its own copy.
+	if nm.pushDispatcher != nil {
+		go nm.pushDispatcher.Dispatch(notification)
+	}
 	return notification, nil
 }
 

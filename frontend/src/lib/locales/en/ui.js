@@ -379,6 +379,7 @@ export default {
       themeLight: 'Light',
       themeDark: 'Dark',
       themeSystem: 'System',
+      desktopSite: 'Desktop site',
     },
   },
 

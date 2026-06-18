@@ -67,6 +67,9 @@ type Deps struct {
 	Teams        TeamHandlers
 	Integrations IntegrationHandlers
 	Pages        PageHandlers
+
+	// Standalone handlers (no domain group)
+	Push *handlers.PushHandler
 }
 
 // AuthHandlers groups authentication-related handlers.
