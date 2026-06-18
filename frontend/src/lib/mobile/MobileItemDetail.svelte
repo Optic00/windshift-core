@@ -2,8 +2,10 @@
   import { Star, Play, Loader, ChevronDown, ChevronRight, GitPullRequest, Bot } from '@lucide/svelte';
   import { api } from '../api.js';
   import { agentRuns } from '../api/agentRuns.js';
+  import { agentRuns as agentRunBus } from '../stores/agentRuns.svelte.js';
   import { navigate } from '../router.js';
   import { timerStore } from '../stores/timerStore.svelte.js';
+  import { useWorkItemPoller } from '../composables/useWorkItemPoller.svelte.js';
   import { renderMarkdown } from '../utils/render-markdown.js';
   import { formatDate } from '../utils/dateFormatter.js';
   import { formatItemKey } from '../utils/itemKey.js';
@@ -220,6 +222,40 @@
       if (token === loadToken && !errored) loadAux(id, token);
     });
   });
+
+  // Silent refresh (no loading flash) of the fields that change in place —
+  // mirrors the desktop refreshCurrentItem: item record, available transitions
+  // (status may have changed), sub-items, and watch state.
+  async function refresh() {
+    const token = loadToken;
+    if (itemId == null || !item || transitioning) return;
+    try {
+      const fresh = await api.items.get(itemId);
+      if (token !== loadToken) return;
+      item = { ...item, ...fresh };
+    } catch {
+      return;
+    }
+    try {
+      const res = await api.items.getAvailableStatusTransitions(itemId);
+      if (token === loadToken) transitions = res?.available_transitions ?? [];
+    } catch { /* keep prior */ }
+    try {
+      const res = await api.items.getChildren(itemId);
+      const list = Array.isArray(res) ? res : (res?.items ?? []);
+      if (token === loadToken) children = list.filter((c) => c?.id).map(normalizeChild);
+    } catch { /* keep prior */ }
+    try {
+      const res = await api.items.getWatchStatus(itemId);
+      if (token === loadToken) isWatching = res?.watching || false;
+    } catch { /* keep prior */ }
+  }
+
+  // Match desktop freshness: adaptive background poll (30s active / 5m idle) for
+  // changes made elsewhere (other users, automations, workflow side effects),
+  // plus an instant refresh when an AI run completes (chatStore emits on the bus).
+  useWorkItemPoller(() => refresh());
+  $effect(() => agentRunBus.subscribe(() => refresh()));
 </script>
 
 <MobileHeader title={itemKey} onback={() => (window.history.length > 1 ? window.history.back() : navigate('/m'))} />
