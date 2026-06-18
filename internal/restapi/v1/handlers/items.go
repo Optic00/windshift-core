@@ -32,8 +32,14 @@ type ItemHandler struct {
 	permSvc      *services.PermissionService
 }
 
-// NewItemHandler creates a new item handler
-func NewItemHandler(db database.Database, permissionService *services.PermissionService) *ItemHandler {
+// NewItemHandler creates a new item handler. commentService is shared with the
+// cookie-auth handler so item comments created through the bearer-token surface
+// fire the same notifications/mentions/webhooks (WI-434); when nil a bare
+// service is created that persists comments but skips side effects.
+func NewItemHandler(db database.Database, permissionService *services.PermissionService, commentService *services.CommentService) *ItemHandler {
+	if commentService == nil {
+		commentService = services.NewCommentService(db)
+	}
 	workflowSvc := services.NewWorkflowService(db)
 	leaveRepo := repository.NewLeaveRepository(db)
 	return &ItemHandler{
@@ -41,7 +47,7 @@ func NewItemHandler(db database.Database, permissionService *services.Permission
 		itemRepo:     repository.NewItemRepository(db),
 		itemCRUD:     services.NewItemCRUDService(db),
 		itemUpdate:   services.NewItemUpdateService(db).WithPermissionService(permissionService),
-		commentSvc:   services.NewCommentService(db),
+		commentSvc:   commentService,
 		workflowSvc:  workflowSvc,
 		conditionSvc: services.NewConditionService(db, permissionService, services.NewScriptEngine()),
 		approvalSvc:  services.NewApprovalService(db, permissionService, leaveRepo, workflowSvc),

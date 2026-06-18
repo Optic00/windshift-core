@@ -31,6 +31,16 @@ type Deps struct {
 	// embedders that haven't wired this yet still work for everything
 	// EXCEPT link endpoints.
 	ItemLinkService *services.ItemLinkService
+	// CommentService is the fully-wired comment pipeline (notifications,
+	// mentions, webhooks, activity tracking, email replies, the coding-agent
+	// @mention trigger). Shared with the cookie-auth handler so comments
+	// created through the bearer-token surface (MCP, REST API, the coding
+	// agent) trigger the same notifications as comments created in the web
+	// UI — without this wiring a comment posted by the coding agent never
+	// notified the item creator/assignee (WI-434). The v1 router constructs
+	// a bare service when nil so embedders that haven't wired this yet still
+	// persist comments, but those comments won't fire notifications.
+	CommentService *services.CommentService
 	// AssetPermissionService gates the v1 asset surface against the
 	// per-set role model. Shared with the cookie-auth handler so both
 	// surfaces consult one role-check pipeline. The v1 router constructs

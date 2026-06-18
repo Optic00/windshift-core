@@ -1450,6 +1450,7 @@ func (s *Server) initialize() error {
 		ItemLinkService:        itemLinkHandler.LinkService(),
 		AssetPermissionService: assetHandler.AssetPermissionService(),
 		AssetService:           assetHandler.AssetService(),
+		CommentService:         commentService,
 	}, v1.RegisterRoutes)
 
 	// MCP Server (Model Context Protocol) — opt-in via --mcp or MCP_ENABLED=true
