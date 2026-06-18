@@ -1,6 +1,6 @@
 <script>
-  import { Search } from '@lucide/svelte';
-  import { authStore } from '../stores';
+  import { Search, Sparkles } from '@lucide/svelte';
+  import { authStore, aiStore } from '../stores';
   import { api } from '../api.js';
   import { navigate } from '../router.js';
   import { formatRelativeCompact } from '../utils/dateFormatter.js';
@@ -127,6 +127,11 @@
 
 <MobileHeader title="My Work">
   {#snippet right()}
+    {#if aiStore.chatAvailable}
+      <button class="hdr-search" onclick={() => navigate('/m/chat')} data-testid="mobile-chat-open" aria-label="Assistant" type="button">
+        <Sparkles size={20} />
+      </button>
+    {/if}
     <button class="hdr-search" onclick={() => navigate('/m/search')} data-testid="mobile-search-open" aria-label="Search" type="button">
       <Search size={20} />
     </button>

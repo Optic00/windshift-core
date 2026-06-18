@@ -155,6 +155,7 @@ const routes = {
   '/m/timer': 'mobile-timer',
   '/m/notifications': 'mobile-notifications',
   '/m/search': 'mobile-search',
+  '/m/chat': 'mobile-chat',
   '/m/items/:id': 'mobile-item-detail',
   '/api-docs': 'api-docs',
   '/cli/authorize': 'cli-authorize',

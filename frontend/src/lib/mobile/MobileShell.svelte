@@ -3,7 +3,7 @@
   import { Plus } from '@lucide/svelte';
   import { currentRoute } from '../router.js';
   import { timerStore } from '../stores/timerStore.svelte.js';
-  import { workspacesStore } from '../stores';
+  import { workspacesStore, aiStore } from '../stores';
   import { startNotificationPoller } from '../stores/notifications.js';
   import { registerMobileServiceWorker } from './pushClient.js';
   import MobileNav from './MobileNav.svelte';
@@ -14,12 +14,15 @@
   import NotificationsView from './NotificationsView.svelte';
   import MobileItemDetail from './MobileItemDetail.svelte';
   import SearchView from './SearchView.svelte';
+  import MobileChatView from './MobileChatView.svelte';
   import MobileCreateDialog from './MobileCreateDialog.svelte';
   import IosInstallSheet from './IosInstallSheet.svelte';
 
   const view = $derived($currentRoute.view);
   const TAB_VIEWS = ['mobile-my-work', 'mobile-personal', 'mobile-timer', 'mobile-notifications'];
   const isTabView = $derived(TAB_VIEWS.includes(view));
+  // Full-screen "pushed" views (own back button) hide the bottom nav.
+  const showNav = $derived(view !== 'mobile-item-detail' && view !== 'mobile-search' && view !== 'mobile-chat');
   let createOpen = $state(false);
 
   onMount(() => {
@@ -28,14 +31,16 @@
     timerStore.initialize();
     startNotificationPoller();
     registerMobileServiceWorker();
-    // MainApp normally loads this; the mobile shell bypasses MainApp, so load
-    // it here for the create dialog's workspace list (store guards re-loads).
+    // MainApp normally loads these; the mobile shell bypasses MainApp, so load
+    // them here (stores guard re-loads) for the create dialog's workspace list
+    // and the AI-chat availability gate.
     workspacesStore.load();
+    aiStore.load();
   });
 </script>
 
 <div class="mobile-shell" data-testid="mobile-shell">
-  <main class="mobile-scroll">
+  <main class="mobile-scroll" class:no-nav={!showNav}>
     {#if view === 'mobile-my-work'}
       <MyWorkView />
     {:else if view === 'mobile-personal'}
@@ -46,6 +51,8 @@
       <NotificationsView />
     {:else if view === 'mobile-search'}
       <SearchView />
+    {:else if view === 'mobile-chat'}
+      <MobileChatView />
     {:else if view === 'mobile-item-detail'}
       <MobileItemDetail itemId={Number($currentRoute.params.id)} />
     {/if}
@@ -57,7 +64,7 @@
     </button>
   {/if}
 
-  {#if view !== 'mobile-item-detail' && view !== 'mobile-search'}
+  {#if showNav}
     <MobileNav />
   {/if}
 </div>
@@ -92,6 +99,9 @@
     /* Clear the fixed bottom nav + iPhone home indicator. */
     padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 4rem);
   }
+  /* Pushed full-screen views (chat/search/detail) have no bottom nav; the chat
+     composer manages its own safe-area padding. */
+  .mobile-scroll.no-nav { padding-bottom: 0; }
 
   .fab {
     position: fixed;
