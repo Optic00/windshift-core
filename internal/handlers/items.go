@@ -545,6 +545,68 @@ func (h *ItemHandler) respondItemByID(w http.ResponseWriter, r *http.Request, us
 	respondJSONOK(w, item)
 }
 
+// maxBatchItems caps how many item ids GetBatch accepts in one request,
+// bounding the IN-clause size. The frontend chunks larger sets across multiple
+// requests. Mirrors maxBatchLinkItems on the links batch endpoint.
+const maxBatchItems = 500
+
+// GetBatch returns full item-detail objects for a set of ids in a single
+// request. It backs api.items.getMany(), which would otherwise fire one
+// GET /items/{id} per id — a fan-out that under HTTP/2 grabbed a DB connection
+// per item and could exhaust the pool during a collection delta refresh.
+// Items the caller cannot view (or that no longer exist) are silently omitted;
+// the consumer patches loaded rows by id and no-ops on the rest, so the
+// 404-no-leak contract is preserved without per-id error signaling.
+func (h *ItemHandler) GetBatch(w http.ResponseWriter, r *http.Request) {
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+
+	ids := parseIDListParam(r.URL.Query().Get("ids"))
+	if len(ids) == 0 {
+		respondJSONOK(w, []models.Item{})
+		return
+	}
+	if len(ids) > maxBatchItems {
+		respondBadRequest(w, r, fmt.Sprintf("too many ids (max %d per request)", maxBatchItems))
+		return
+	}
+
+	loaded, err := repository.NewItemRepository(h.db).FindByIDsWithDetails(ids)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+
+	items := make([]models.Item, len(loaded))
+	for i, it := range loaded {
+		items[i] = *it
+	}
+
+	// Drop items the user can't view (workspace-memoized), matching GetAll.
+	items, err = h.filterItemsByPermissions(user.ID, items)
+	if err != nil {
+		slog.Error("permission check failed", slog.Int("user_id", user.ID), slog.String("operation", "GetBatch"), slog.Any("error", err))
+		respondInternalError(w, r, err)
+		return
+	}
+
+	// Strip names of time projects the viewer can't access (keeps the IDs).
+	h.maskInaccessibleProjectNames(user.ID, items)
+
+	// Enrich with labels / personal labels (milestones are already attached by
+	// the repository's batched loader).
+	if err := repository.NewLabelRepository(h.db).LoadForItems(items); err != nil {
+		slog.Warn("failed to load labels for batch items", slog.Any("error", err))
+	}
+	if err := LoadPersonalLabelsForItems(h.db, items, user.ID); err != nil {
+		slog.Warn("failed to load personal labels for batch items", slog.Any("error", err))
+	}
+
+	respondJSONOK(w, items)
+}
+
 func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 	slog.Debug("item create request received")
 	createStart := time.Now()

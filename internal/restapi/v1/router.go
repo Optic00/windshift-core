@@ -135,6 +135,9 @@ func RegisterRoutes(deps restapi.Deps) {
 	// Items
 	// ============================================
 	v1.HandleWithMiddleware("GET /items", itemHandler.List, bearerAuth.RequirePermission("items:read"))
+	// Bulk fetch by id set. Literal segment, no RequireNumericID — registered
+	// before /items/{id} so it isn't swallowed by the wildcard.
+	v1.HandleWithMiddleware("GET /items/batch", itemHandler.GetBatch, bearerAuth.RequirePermission("items:read"))
 	v1.HandleWithMiddleware("POST /items", itemHandler.Create, bearerAuth.RequirePermission("items:write"))
 	v1.HandleWithMiddleware("GET /items/{id}", itemHandler.Get, bearerAuth.RequirePermission("items:read"), router.RequireNumericID)
 	v1.HandleWithMiddleware("PUT /items/{id}", itemHandler.Update, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)
