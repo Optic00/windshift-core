@@ -505,7 +505,7 @@ func (s *SyncService) pollPRCommentTriggers(ctx context.Context, provider Provid
 	if s.continuationStarter == nil {
 		return // poller not wired (e.g. coding-agent harness disabled)
 	}
-	issues, ok := provider.(IssueProvider)
+	issues, ok := provider.(IssueCommentProvider)
 	if !ok {
 		return // provider can't list comments
 	}

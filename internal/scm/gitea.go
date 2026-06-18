@@ -17,10 +17,11 @@ import (
 // Compile-time check that GiteaProvider implements the optional
 // interfaces it claims. See GitHubProvider for the same pattern.
 var (
-	_ Provider        = (*GiteaProvider)(nil)
-	_ ReleaseProvider = (*GiteaProvider)(nil)
-	_ CommitProvider  = (*GiteaProvider)(nil)
-	_ RefProvider     = (*GiteaProvider)(nil)
+	_ Provider             = (*GiteaProvider)(nil)
+	_ ReleaseProvider      = (*GiteaProvider)(nil)
+	_ CommitProvider       = (*GiteaProvider)(nil)
+	_ RefProvider          = (*GiteaProvider)(nil)
+	_ IssueCommentProvider = (*GiteaProvider)(nil) // WI-426: drives the "@agent" PR-comment trigger
 )
 
 // GiteaProvider implements the Provider interface for Gitea/Forgejo
@@ -368,6 +369,83 @@ func (g *GiteaProvider) CreatePullRequest(ctx context.Context, owner, repo strin
 
 	pr := giteaPR.toPullRequest()
 	return &pr, nil
+}
+
+// giteaComment is the Gitea issue/PR comment payload. In Gitea, pull-request
+// comments live on the issue-comments endpoint (a PR shares its issue index),
+// so the same shape covers both.
+type giteaComment struct {
+	ID        int64     `json:"id"`
+	Body      string    `json:"body"`
+	User      giteaUser `json:"user"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+func (c giteaComment) toIssueComment() IssueComment {
+	return IssueComment{
+		ID:        c.ID,
+		Body:      c.Body,
+		User:      c.User.toUser(),
+		CreatedAt: c.CreatedAt,
+		UpdatedAt: c.UpdatedAt,
+	}
+}
+
+// ListIssueComments lists all comments on an issue or pull request. Gitea routes
+// PR comments through the issue-comments endpoint (the PR's index doubles as its
+// issue index), so this serves both. Paginated to gather every comment — the
+// "@agent" PR-comment poller (WI-426) relies on seeing the full list.
+func (g *GiteaProvider) ListIssueComments(ctx context.Context, owner, repo string, number int) ([]IssueComment, error) {
+	const perPage = 50
+	var comments []IssueComment
+	for page := 1; ; page++ {
+		reqURL := g.apiURL(fmt.Sprintf("/repos/%s/%s/issues/%d/comments?page=%d&limit=%d",
+			url.PathEscape(owner), url.PathEscape(repo), number, page, perPage))
+
+		var giteaComments []giteaComment
+		if err := g.doJSON(ctx, "GET", reqURL, http.NoBody, http.StatusOK, &giteaComments); err != nil {
+			return nil, err
+		}
+		for _, c := range giteaComments {
+			comments = append(comments, c.toIssueComment())
+		}
+		if len(giteaComments) < perPage {
+			break
+		}
+	}
+	return comments, nil
+}
+
+// CreateIssueComment posts a comment on an issue or pull request and returns the
+// new comment's id. Used for the agent's reply-back, which carries
+// models.AgentCommentMarker so the poller never re-triggers on it.
+func (g *GiteaProvider) CreateIssueComment(ctx context.Context, owner, repo string, number int, commentBody string) (int64, error) {
+	reqURL := g.apiURL(fmt.Sprintf("/repos/%s/%s/issues/%d/comments",
+		url.PathEscape(owner), url.PathEscape(repo), number))
+
+	bodyJSON, err := json.Marshal(map[string]string{"body": commentBody})
+	if err != nil {
+		return 0, fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	var created giteaComment
+	if err := g.doJSON(ctx, "POST", reqURL, strings.NewReader(string(bodyJSON)), http.StatusCreated, &created); err != nil {
+		return 0, err
+	}
+	return created.ID, nil
+}
+
+// UpdateIssueComment edits an existing issue/PR comment by its id.
+func (g *GiteaProvider) UpdateIssueComment(ctx context.Context, owner, repo string, commentID int64, commentBody string) error {
+	reqURL := g.apiURL(fmt.Sprintf("/repos/%s/%s/issues/comments/%d",
+		url.PathEscape(owner), url.PathEscape(repo), commentID))
+
+	bodyJSON, err := json.Marshal(map[string]string{"body": commentBody})
+	if err != nil {
+		return fmt.Errorf("failed to marshal request body: %w", err)
+	}
+	return g.doJSON(ctx, "PATCH", reqURL, strings.NewReader(string(bodyJSON)), http.StatusOK, nil)
 }
 
 // CreateRelease creates a new release in a repository

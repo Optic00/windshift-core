@@ -347,9 +347,27 @@ type IssueComment struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// IssueCommentProvider is the narrow slice of issue operations that the
+// "@agent" PR-comment trigger (WI-426) needs: read a PR's comments and reply on
+// it (a PR is an issue on both GitHub and Gitea). It is split out from the full
+// IssueProvider so a provider only needs to support comments to drive the
+// trigger — Gitea implements this without the issue↔item sync surface.
+type IssueCommentProvider interface {
+	Provider
+
+	// CreateIssueComment creates a comment on an issue/PR and returns its id
+	CreateIssueComment(ctx context.Context, owner, repo string, number int, body string) (int64, error)
+
+	// ListIssueComments lists all comments on an issue/PR
+	ListIssueComments(ctx context.Context, owner, repo string, number int) ([]IssueComment, error)
+
+	// UpdateIssueComment updates an existing comment on an issue/PR
+	UpdateIssueComment(ctx context.Context, owner, repo string, commentID int64, body string) error
+}
+
 // IssueProvider extends Provider for providers that support issue operations
 type IssueProvider interface {
-	Provider
+	IssueCommentProvider
 
 	// ListIssues lists issues for a repository (excludes pull requests)
 	ListIssues(ctx context.Context, owner, repo string, opts ListIssueOptions) ([]Issue, error)
@@ -359,15 +377,6 @@ type IssueProvider interface {
 
 	// UpdateIssue updates an issue (state, title, body, labels, assignees, milestone)
 	UpdateIssue(ctx context.Context, owner, repo string, number int, opts UpdateIssueOptions) (*Issue, error)
-
-	// CreateIssueComment creates a comment on an issue and returns the GitHub comment ID
-	CreateIssueComment(ctx context.Context, owner, repo string, number int, body string) (int64, error)
-
-	// ListIssueComments lists all comments on an issue
-	ListIssueComments(ctx context.Context, owner, repo string, number int) ([]IssueComment, error)
-
-	// UpdateIssueComment updates an existing comment on an issue
-	UpdateIssueComment(ctx context.Context, owner, repo string, commentID int64, body string) error
 
 	// ListRepoLabels lists all labels for a repository
 	ListRepoLabels(ctx context.Context, owner, repo string) ([]IssueLabel, error)

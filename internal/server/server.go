@@ -2208,7 +2208,7 @@ func openPRViaCredentialResolver(cr *scm.CredentialResolver) services.OpenPRFn {
 
 // commentPRViaCredentialResolver implements services.CommentPRFn. Builds a
 // scm.Provider for the connection and posts a comment on the PR via
-// IssueProvider.CreateIssueComment (a PR is an issue on both GitHub and Gitea).
+// IssueCommentProvider.CreateIssueComment (a PR is an issue on both GitHub and Gitea).
 // Credentials resolve per-user when a UserID is present (WI-275), matching the
 // open-PR path. Returns an error if the provider lacks issue-comment support.
 func commentPRViaCredentialResolver(cr *scm.CredentialResolver) services.CommentPRFn {
@@ -2236,7 +2236,7 @@ func commentPRViaCredentialResolver(cr *scm.CredentialResolver) services.Comment
 		if err != nil {
 			return fmt.Errorf("build provider: %w", err)
 		}
-		issues, ok := provider.(scm.IssueProvider)
+		issues, ok := provider.(scm.IssueCommentProvider)
 		if !ok {
 			return fmt.Errorf("provider %s does not support issue comments", creds.ProviderType)
 		}
