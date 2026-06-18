@@ -46,6 +46,44 @@ type Migration struct {
 // this Catalog in subsequent commits.
 var Catalog = []Migration{
 	{
+		Version:       "20260618_push_subscriptions",
+		Name:          "Create Web Push subscriptions table",
+		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='push_subscriptions'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='push_subscriptions'",
+		SQLite: `
+			CREATE TABLE IF NOT EXISTS push_subscriptions (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				user_id INTEGER NOT NULL,
+				endpoint TEXT NOT NULL,
+				auth_key TEXT NOT NULL,
+				p256dh_key TEXT NOT NULL,
+				user_agent TEXT NOT NULL DEFAULT '',
+				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				last_used_at DATETIME,
+				revoked_at DATETIME,
+				FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+			);
+			CREATE UNIQUE INDEX IF NOT EXISTS uq_push_subscriptions_endpoint ON push_subscriptions(endpoint);
+			CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user_id ON push_subscriptions(user_id);
+		`,
+		Postgres: `
+			CREATE TABLE IF NOT EXISTS push_subscriptions (
+				id SERIAL PRIMARY KEY,
+				user_id INTEGER NOT NULL,
+				endpoint TEXT NOT NULL,
+				auth_key TEXT NOT NULL,
+				p256dh_key TEXT NOT NULL,
+				user_agent TEXT NOT NULL DEFAULT '',
+				created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+				last_used_at TIMESTAMPTZ,
+				revoked_at TIMESTAMPTZ,
+				FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+			);
+			CREATE UNIQUE INDEX IF NOT EXISTS uq_push_subscriptions_endpoint ON push_subscriptions(endpoint);
+			CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user_id ON push_subscriptions(user_id);
+		`,
+	},
+	{
 		Version:       "20260617_llm_connections_provider_config",
 		Name:          "Add provider-specific JSON config to LLM connections",
 		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('llm_connections') WHERE name='provider_config'",

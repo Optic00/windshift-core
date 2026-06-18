@@ -662,6 +662,16 @@ func (s *Server) initialize() error {
 	notificationHandler := handlers.NewNotificationHandler(s.notificationManager, s.notificationService)
 	emailTemplateHandler := handlers.NewEmailTemplateHandler(repository.NewEmailTemplateRepository(s.db), logger.NewAuditor(s.db))
 
+	// Web Push: store subscriptions + fan notifications out to them. The
+	// dispatcher is wired into the notification manager so every created
+	// notification (assignments, mentions, comments, …) triggers a push.
+	pushService := services.NewPushService(s.db, cfg.Push)
+	pushHandler := handlers.NewPushHandler(pushService)
+	s.notificationManager.SetPushDispatcher(pushService)
+	if cfg.Push.Enabled() {
+		slog.Info("Web Push enabled")
+	}
+
 	permissionMiddleware := middleware.NewPermissionMiddleware(s.db, permService)
 
 	// Setup handler
@@ -1409,6 +1419,7 @@ func (s *Server) initialize() error {
 			KnowledgeSearch: knowledgeSearchHandler,
 			PageLabel:       pageLabelHandler,
 		},
+		Push: pushHandler,
 	}
 	routes.RegisterAll(routeDeps)
 
@@ -1485,6 +1496,22 @@ func (s *Server) initialize() error {
 			mux.Handle("GET /favicon-32x32.png", revalidatingAssets)
 			mux.Handle("GET /apple-touch-icon.png", revalidatingAssets)
 			mux.Handle("GET /forms/widget.js", revalidatingAssets)
+
+			// PWA entry points. These need explicit routes (the SPA fallback at
+			// "GET /" would otherwise serve index.html for them) and explicit
+			// content types — Go has no registered MIME for .webmanifest, and the
+			// service worker needs a root scope grant + no-cache so updates land.
+			mux.Handle("GET /manifest.webmanifest", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/manifest+json")
+				w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+				fileServer.ServeHTTP(w, r)
+			}))
+			mux.Handle("GET /service-worker.js", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/javascript")
+				w.Header().Set("Service-Worker-Allowed", "/")
+				w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+				fileServer.ServeHTTP(w, r)
+			}))
 
 			// Read index.html once at startup for nonce injection
 			indexHTML, err := fs.ReadFile(distFS, "index.html")

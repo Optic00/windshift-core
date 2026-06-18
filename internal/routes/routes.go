@@ -26,4 +26,5 @@ func RegisterAll(deps *Deps) {
 	RegisterOAuthRoutes(deps)
 	RegisterPublicBoardRoutes(deps)
 	RegisterPageRoutes(deps)
+	RegisterPushRoutes(deps)
 }

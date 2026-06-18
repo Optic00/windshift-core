@@ -147,6 +147,14 @@ const routes = {
   '/forms/:slug': 'public-form',
   '/set-password/:token': 'set-password',
   '/about': 'about',
+  // Mobile PWA surface (phone-focused shell, see lib/mobile/). The literal
+  // '/m/personal' etc. must precede '/m/items/:id' so they win the
+  // sequential-iteration match in updateRoute().
+  '/m': 'mobile-my-work',
+  '/m/personal': 'mobile-personal',
+  '/m/timer': 'mobile-timer',
+  '/m/notifications': 'mobile-notifications',
+  '/m/items/:id': 'mobile-item-detail',
   '/api-docs': 'api-docs',
   '/cli/authorize': 'cli-authorize',
   '/oauth/authorize': 'oauth-authorize',
@@ -304,6 +312,12 @@ export const GLOBAL_COLLECTION_VIEWS = new Set([
   'collection-map',
   'collection-roadmap',
 ]);
+
+// Check if a view belongs to the mobile PWA surface. App.svelte uses this to
+// render MobileShell instead of the desktop MainApp chrome.
+export function isMobileRoute(view) {
+  return view?.startsWith('mobile-');
+}
 
 // Check if a view is a workspace-related route
 export function isWorkspaceRoute(view) {

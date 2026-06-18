@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { currentRoute, initRouter } from './lib/router.js';
+  import { currentRoute, initRouter, isMobileRoute } from './lib/router.js';
   import { authStore } from './lib/stores';
   import { moduleSettings } from './lib/stores/moduleSettings.js';
   import { api } from './lib/api.js';
@@ -13,6 +13,7 @@
   import PublicFormPage from './lib/features/forms/PublicFormPage.svelte';
   import SetPassword from './lib/pages/SetPassword.svelte';
   import MainApp from './lib/pages/MainApp.svelte';
+  import MobileShell from './lib/mobile/MobileShell.svelte';
   import PublicBoard from './lib/pages/PublicBoard.svelte';
   import PagePrintView from './lib/features/pages/PagePrintView.svelte';
 
@@ -201,6 +202,9 @@
       workspaceId={Number($currentRoute.params.id)}
       pageId={Number($currentRoute.params.pageId)}
     />
+  <!-- Mobile PWA surface (phone-focused shell, bypasses desktop MainApp chrome) -->
+  {:else if $authStore.isAuthenticated && appInitialized && isMobileRoute($currentRoute.view)}
+    <MobileShell />
   <!-- Show main app when user is authenticated -->
   {:else if $authStore.isAuthenticated && appInitialized}
     <MainApp />
