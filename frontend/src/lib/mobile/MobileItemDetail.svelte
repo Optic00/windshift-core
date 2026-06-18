@@ -1,5 +1,5 @@
 <script>
-  import { Star, Play, Loader, ChevronDown, GitPullRequest, Bot } from '@lucide/svelte';
+  import { Star, Play, Loader, ChevronDown, ChevronRight, GitPullRequest, Bot } from '@lucide/svelte';
   import { api } from '../api.js';
   import { agentRuns } from '../api/agentRuns.js';
   import { navigate } from '../router.js';
@@ -29,6 +29,7 @@
   let personalTaskCount = $state(0);
   let startingTimer = $state(false);
   let children = $state([]);
+  let ancestors = $state([]);
   // Bumped on every itemId change so in-flight loads for a previous item can't
   // write stale state when the user navigates item → item (e.g. tapping a
   // sub-item) without the component remounting.
@@ -104,6 +105,16 @@
       if (token === loadToken) children = list.filter((c) => c?.id).map(normalizeChild);
     } catch {
       if (token === loadToken) children = [];
+    }
+    // Parent chain (root → immediate parent) for the up-navigation breadcrumb.
+    if (item?.parent_id) {
+      try {
+        const anc = await api.items.getAncestors(id);
+        const list = Array.isArray(anc) ? anc : (anc?.items ?? []);
+        if (token === loadToken) ancestors = list.filter((a) => a?.id);
+      } catch {
+        if (token === loadToken) ancestors = [];
+      }
     }
     // SCM gate: show the panel unless the connection probe says the workspace
     // has no repositories (matches ItemSCMLinks' own has_repositories gate;
@@ -200,6 +211,7 @@
     isWatching = false;
     personalTaskCount = 0;
     children = [];
+    ancestors = [];
     scmAvailable = false;
     hasAgentRuns = false;
     scmOpen = false;
@@ -218,6 +230,17 @@
   <p class="msg" data-testid="detail-error">Couldn't load this item.</p>
 {:else}
   <div class="detail" data-testid="mobile-item-detail">
+    {#if ancestors.length > 0}
+      <nav class="breadcrumb" data-testid="detail-breadcrumb" aria-label="Parent items">
+        {#each ancestors as anc, i (anc.id)}
+          {#if i > 0}<ChevronRight size={13} class="bc-sep" />{/if}
+          <button class="bc-link" onclick={() => navigate(`/m/items/${anc.id}`)} data-testid="breadcrumb-link" type="button">
+            {formatItemKey(anc) ?? anc.title}
+          </button>
+        {/each}
+      </nav>
+    {/if}
+
     {#if item.item_type_name}
       <div class="status-line"><span class="type">{item.item_type_name}</span></div>
     {/if}
@@ -370,6 +393,17 @@
   .msg { padding: 3rem 1.25rem; text-align: center; color: var(--ds-text-subtle); }
 
   .detail { padding: 0.75rem 0.875rem 2rem; }
+
+  .breadcrumb {
+    display: flex; align-items: center; flex-wrap: nowrap; gap: 0.15rem;
+    margin-bottom: 0.6rem; overflow-x: auto; -webkit-overflow-scrolling: touch;
+  }
+  .bc-link {
+    flex-shrink: 0; border: none; background: transparent; cursor: pointer;
+    padding: 2px 4px; font-family: var(--font-mono, monospace); font-size: 0.75rem;
+    color: var(--ds-text-link, var(--ds-interactive)); white-space: nowrap;
+  }
+  .breadcrumb :global(.bc-sep) { flex-shrink: 0; color: var(--ds-text-subtlest, var(--ds-text-subtle)); }
 
   .status-line { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; }
   .type { font-size: 0.75rem; color: var(--ds-text-subtle); text-transform: uppercase; letter-spacing: 0.02em; }
