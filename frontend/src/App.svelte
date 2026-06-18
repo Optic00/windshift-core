@@ -101,23 +101,16 @@
   });
 
   async function checkSetupStatus() {
-    // setup_completed is a one-way latch — once true, it stays true. Cache
-    // the positive result in sessionStorage so repeat navigations within a
-    // browser context don't re-hit the rate-limited endpoint.
-    try {
-      if (sessionStorage.getItem('windshift-setup-completed') === 'true') {
-        setupCompleted = true;
-        return;
-      }
-    } catch {
-      // sessionStorage may be disabled — fall through to the network call.
-    }
+    // Always ask the backend. setup_completed is cheap to fetch and the
+    // /setup/status rate-limit burst comfortably covers normal reloads. We
+    // deliberately do NOT cache the result client-side: a cached "completed"
+    // flag survives backend/DB swaps under the same origin (e.g. dev worktrees
+    // behind the vite proxy), making a fresh, unconfigured instance look
+    // already set up and silently skipping the setup wizard.
     try {
       const status = await api.setup.getStatus();
       setupCompleted = status.setup_completed;
-      if (status.setup_completed) {
-        try { sessionStorage.setItem('windshift-setup-completed', 'true'); } catch {}
-      } else {
+      if (!status.setup_completed) {
         showWelcomeAssistant = true;
       }
     } catch (error) {
