@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"windshift/internal/repository"
@@ -194,6 +195,96 @@ func (h *ItemHandler) GetAvailableStatusTransitions(w http.ResponseWriter, r *ht
 	}
 
 	respondJSONOK(w, response)
+}
+
+// GetWorkspaceTransitionMatrix returns the allowed status transitions for every
+// (item_type_id, status_id) pair in a workspace, keyed "<itemTypeID>:<statusID>".
+// It backs the board's transition preload, which otherwise fired one
+// GET /items/{id}/available-status-transitions per unique (item type, status)
+// pair — many concurrent requests on a board spanning several types/statuses.
+//
+// The matrix is for DISPLAY of candidate transitions only: it deliberately
+// omits per-item approval gating and condition filtering (both item-specific),
+// which still apply when an actual transition is performed. Each pair's value
+// matches the per-item endpoint's available_transitions shape (current status
+// first, then reachable statuses).
+func (h *ItemHandler) GetWorkspaceTransitionMatrix(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := requireIDParam(w, r, "id")
+	if !ok {
+		return
+	}
+
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+
+	canView, permErr := h.canViewItem(user.ID, workspaceID)
+	if permErr != nil {
+		respondInternalError(w, r, permErr)
+		return
+	}
+	if !canView {
+		respondNotFound(w, r, "Workspace")
+		return
+	}
+
+	itemTypes, err := services.NewConfigReadService(h.db).ListItemTypes()
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	statuses, err := services.NewWorkspaceService(h.db).GetStatuses(workspaceID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+
+	workflowService := services.NewWorkflowService(h.db)
+
+	// Transitions depend only on (workflow, fromStatus), so compute once per
+	// workflow and replicate across every item type that resolves to it.
+	perWorkflow := map[int]map[int][]map[string]interface{}{}
+	computeForWorkflow := func(workflowID int) map[int][]map[string]interface{} {
+		if cached, ok := perWorkflow[workflowID]; ok {
+			return cached
+		}
+		byStatus := make(map[int][]map[string]interface{}, len(statuses))
+		for _, st := range statuses {
+			options := []map[string]interface{}{}
+			added := map[int]bool{st.ID: true}
+			// Current status first (matches the per-item endpoint).
+			if current, optErr := workflowService.GetStatusTransitionOption(int64(st.ID)); optErr == nil && current != nil {
+				options = append(options, transitionOptionResponse(*current))
+			}
+			raw, listErr := workflowService.ListAvailableTransitionOptions(workflowID, int64(st.ID))
+			if listErr == nil {
+				for _, rt := range raw {
+					if !added[rt.StatusID] {
+						options = append(options, transitionOptionResponse(rt))
+						added[rt.StatusID] = true
+					}
+				}
+			}
+			byStatus[st.ID] = options
+		}
+		perWorkflow[workflowID] = byStatus
+		return byStatus
+	}
+
+	transitions := map[string][]map[string]interface{}{}
+	for _, it := range itemTypes {
+		itemTypeID := it.ID
+		workflowID, wfErr := workflowService.GetWorkflowIDForItem(workspaceID, &itemTypeID)
+		if wfErr != nil || workflowID == nil {
+			continue
+		}
+		for statusID, options := range computeForWorkflow(*workflowID) {
+			transitions[strconv.Itoa(itemTypeID)+":"+strconv.Itoa(statusID)] = options
+		}
+	}
+
+	respondJSONOK(w, map[string]interface{}{"transitions": transitions})
 }
 
 func transitionOptionResponse(option services.StatusTransitionOption) map[string]interface{} {

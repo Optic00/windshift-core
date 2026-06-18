@@ -38,12 +38,51 @@ class StatusTransitionStore extends BaseCacheStore {
   }
 
   /**
+   * Preload the entire (itemTypeId, statusId) transition matrix for a workspace
+   * in a single request, populating the cache for every pair. Preferred over
+   * preloadForItems on board/list views: it collapses what was up to N per-pair
+   * requests into one. In-flight requests for the same workspace are deduped.
+   */
+  async preloadForWorkspace(workspaceId) {
+    if (!workspaceId) return;
+    const pendingKey = `ws:${workspaceId}`;
+    if (this._pending.has(pendingKey)) return this._pending.get(pendingKey);
+
+    const promise = (async () => {
+      try {
+        const result = await api.workspaces.getTransitionMatrix(workspaceId);
+        const matrix = result?.transitions || {};
+        const fetchedAt = Date.now();
+        for (const [key, transitions] of Object.entries(matrix)) {
+          this._cache.set(key, { transitions: transitions || [], fetchedAt });
+        }
+      } catch (err) {
+        console.error(
+          `StatusTransitionStore: failed to preload matrix for workspace ${workspaceId}`,
+          err
+        );
+      } finally {
+        this._pending.delete(pendingKey);
+      }
+    })();
+
+    this._pending.set(pendingKey, promise);
+    return promise;
+  }
+
+  /**
    * Batch-preload transitions for a list of items.
    * Groups by unique (itemTypeId, statusId), fetches only uncached pairs
    * using one representative item per pair.
    */
   async preloadForItems(items) {
     if (!items || items.length === 0) return;
+
+    // If a workspace-wide matrix preload is in flight, defer to it — it will
+    // populate every pair, leaving this call a no-op (avoids racing the matrix
+    // with per-pair fetches on first board load).
+    const wsPending = this.workspaceId ? this._pending.get(`ws:${this.workspaceId}`) : null;
+    if (wsPending) await wsPending;
 
     // Group items by unique (itemTypeId, statusId), pick one representative per group
     const representatives = new Map();

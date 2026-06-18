@@ -16,6 +16,10 @@ export const workspaces = {
       body: JSON.stringify(layout),
     }),
   getStatuses: (id) => fetchAPI(`/workspaces/${id}/statuses`),
+  // Allowed status transitions for every (item_type_id, status_id) pair in the
+  // workspace, keyed "<itemTypeId>:<statusId>". One request replaces the
+  // board's per-pair /items/{id}/available-status-transitions preload.
+  getTransitionMatrix: (id) => fetchAPI(`/workspaces/${id}/transition-matrix`),
 };
 
 // `create` and `delete` here go to the new admin endpoints

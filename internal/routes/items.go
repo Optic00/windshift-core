@@ -14,6 +14,9 @@ func RegisterItemRoutes(deps *Deps) {
 	api.HandleH("GET /items/search", auth(deps.SearchLimiter.Limit(http.HandlerFunc(deps.Items.Item.Search))))
 	api.HandleH("GET /items/changes", auth(http.HandlerFunc(deps.Items.Item.GetChanges)))
 	api.HandleH("GET /workspaces/{id}/items/changes", auth(http.HandlerFunc(deps.Items.Item.GetChanges)))
+	// Workspace-wide (item_type, status) transition matrix: replaces the board's
+	// per-pair /items/{id}/available-status-transitions preload fan-out.
+	api.HandleH("GET /workspaces/{id}/transition-matrix", auth(http.HandlerFunc(deps.Items.Item.GetWorkspaceTransitionMatrix)))
 	api.HandleH("GET /workspaces/{id}/collections/{collectionId}/items/changes", auth(http.HandlerFunc(deps.Items.Item.GetChanges)))
 	api.HandleH("GET /items/backlog", auth(http.HandlerFunc(deps.Items.Item.GetBacklogItems)))
 	// Bulk fetch by id set: kills the api.items.getMany() per-id fan-out.
