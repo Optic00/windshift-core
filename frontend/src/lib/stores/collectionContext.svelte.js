@@ -8,6 +8,7 @@ import {
   fetchCollectionItemChanges,
   fetchCollectionItems,
   fetchItemsById,
+  getCollection,
 } from '../features/collections/collectionService.js';
 import { currentRoute, GLOBAL_COLLECTION_VIEWS } from '../router.js';
 import { calcHasMore } from '../utils/paginationUtils.js';
@@ -133,9 +134,10 @@ class CollectionStore {
     this.loading = true;
 
     try {
-      const [capStatusIds] = await Promise.all([
+      const [capStatusIds, , collection] = await Promise.all([
         this.#resolveBoardCap(wsId, colId, view),
         this.#primeChangesWatermark(),
+        colId ? getCollection(colId) : Promise.resolve(null),
       ]);
       if (loadId !== this.#loadId) return; // stale
 
@@ -144,6 +146,7 @@ class CollectionStore {
           page: 1,
           limit: DEFAULT_PAGE_SIZE,
           sub_ql: this.subFilterQL || undefined,
+          collection,
           ...this.#itemSortOptions(),
           ...this.#capExclusionFilter(capStatusIds),
         }),
@@ -151,8 +154,9 @@ class CollectionStore {
           page: 1,
           limit: DEFAULT_PAGE_SIZE,
           sub_ql: this.subFilterQL || undefined,
+          collection,
         }),
-        this.#fetchCapItems(wsId, colId, capStatusIds),
+        this.#fetchCapItems(wsId, colId, capStatusIds, collection),
       ]);
 
       if (loadId !== this.#loadId) return; // stale
@@ -219,12 +223,13 @@ class CollectionStore {
   }
 
   /** Fetches the latest RIGHTMOST_COLUMN_LIMIT items of the capped column (null when no cap). */
-  #fetchCapItems(wsId, colId, capStatusIds) {
+  #fetchCapItems(wsId, colId, capStatusIds, collection) {
     if (!capStatusIds?.length) return Promise.resolve(null);
     return fetchCollectionItems(wsId, colId, {
       page: 1,
       limit: RIGHTMOST_COLUMN_LIMIT,
       sub_ql: this.subFilterQL || undefined,
+      collection,
       status_id: capStatusIds.join(','),
       order_by: 'updated_at',
       sort_direction: 'desc',
@@ -351,9 +356,10 @@ class CollectionStore {
     const backlogLimit = Math.max(DEFAULT_PAGE_SIZE, this.backlogItems.length);
 
     try {
-      const [capStatusIds] = await Promise.all([
+      const [capStatusIds, , collection] = await Promise.all([
         this.#resolveBoardCap(this.#wsId, this.#colId, this.#currentView),
         this.#primeChangesWatermark(),
+        this.#colId ? getCollection(this.#colId) : Promise.resolve(null),
       ]);
       if (loadId !== this.#loadId) return;
 
@@ -362,6 +368,7 @@ class CollectionStore {
           page: 1,
           limit: itemsLimit,
           sub_ql: this.subFilterQL || undefined,
+          collection,
           ...this.#itemSortOptions(),
           ...this.#capExclusionFilter(capStatusIds),
         }),
@@ -369,8 +376,9 @@ class CollectionStore {
           page: 1,
           limit: backlogLimit,
           sub_ql: this.subFilterQL || undefined,
+          collection,
         }),
-        this.#fetchCapItems(this.#wsId, this.#colId, capStatusIds),
+        this.#fetchCapItems(this.#wsId, this.#colId, capStatusIds, collection),
       ]);
       if (loadId !== this.#loadId) return;
 

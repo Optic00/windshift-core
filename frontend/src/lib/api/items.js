@@ -2,6 +2,10 @@ import { notifyItemMutation } from '../utils/crossTabSync.js';
 import { fetchAPI } from './core.js';
 import { buildQueryString } from './utils.js';
 
+// Item ids per GET /items/batch request. Kept under the server cap (500) and
+// aligned with the links-batch chunk size to bound URL length.
+const ITEM_BATCH_CHUNK = 200;
+
 /**
  * Wrap a mutating items API method so a successful call broadcasts a
  * cross-tab freshness notice to other open Windshift tabs. Failures are
@@ -38,7 +42,27 @@ export const items = {
     fetchAPI(
       `/workspaces/${encodeURIComponent(workspaceKey)}/items/${encodeURIComponent(itemNumber)}`
     ),
-  getMany: (ids = []) => Promise.all([...new Set(ids)].map((id) => fetchAPI(`/items/${id}`))),
+  /**
+   * Fetch many items in one (or a few) bulk requests instead of one
+   * GET /items/{id} per id. Returns an array of full item-detail objects in
+   * unspecified order; ids the caller can't view or that don't exist are
+   * silently omitted (consumers patch loaded rows by id and no-op on the
+   * rest). Chunked under the server's 500-id cap. Replaces the former
+   * Promise.all(...map(id => /items/{id})) fan-out that could exhaust the
+   * Postgres pool on a collection delta refresh.
+   */
+  getMany: async (ids = []) => {
+    const unique = [...new Set(ids)];
+    if (unique.length === 0) return [];
+    const chunks = [];
+    for (let i = 0; i < unique.length; i += ITEM_BATCH_CHUNK) {
+      chunks.push(unique.slice(i, i + ITEM_BATCH_CHUNK));
+    }
+    const results = await Promise.all(
+      chunks.map((chunk) => fetchAPI(`/items/batch?ids=${chunk.join(',')}`))
+    );
+    return results.flat();
+  },
   getChanges: (filters = {}) => fetchAPI(`/items/changes${buildQueryString(filters)}`),
   create: withCrossTabNotice(
     (data) =>

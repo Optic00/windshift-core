@@ -466,7 +466,8 @@ func (h *PortalHandler) GetRequestTypes(w http.ResponseWriter, r *http.Request) 
 		       rt.icon, rt.color, rt.display_order, rt.is_active,
 		       rt.visibility_group_ids, rt.visibility_org_ids,
 		       rt.created_at, rt.updated_at,
-		       it.name as item_type_name
+		       it.name as item_type_name,
+		       (SELECT COUNT(*) FROM request_type_fields rtf WHERE rtf.request_type_id = rt.id) AS field_count
 		FROM request_types rt
 		LEFT JOIN item_types it ON rt.item_type_id = it.id
 		WHERE rt.channel_id = ? AND rt.is_active = true
@@ -490,7 +491,7 @@ func (h *PortalHandler) GetRequestTypes(w http.ResponseWriter, r *http.Request) 
 			&rt.Icon, &rt.Color, &rt.DisplayOrder, &rt.IsActive,
 			&visibilityGroupIDs, &visibilityOrgIDs,
 			&rt.CreatedAt, &rt.UpdatedAt,
-			&rt.ItemTypeName)
+			&rt.ItemTypeName, &rt.FieldCount)
 		if err != nil {
 			continue
 		}

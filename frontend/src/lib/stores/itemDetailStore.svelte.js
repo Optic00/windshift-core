@@ -272,8 +272,19 @@ class ItemDetailStore {
       this.workspaces = workspacesData || [];
       this.requestTypeFields = requestTypeFieldsData || [];
 
+      // Resolve the workspace's configuration set once. Priorities and screen-
+      // field resolution both need it; fetching it twice was a redundant round
+      // trip on every item open.
+      const configSet = this.workspace?.configuration_set_id
+        ? await api.configurationSets.get(this.workspace.configuration_set_id).catch((err) => {
+            console.warn('Failed to load configuration set:', err);
+            return null;
+          })
+        : null;
+      if (token !== this.#loadToken) return;
+
       // Load priorities based on workspace configuration
-      await this.#loadPriorities();
+      await this.#loadPriorities(configSet);
       if (token !== this.#loadToken) return;
 
       // Load status transitions and watch status
@@ -291,6 +302,11 @@ class ItemDetailStore {
       // Sync editing state from item
       this.#syncEditingFromItem();
 
+      // Load item type / hierarchy data first so parent-hierarchy enrichment
+      // can reuse this.itemTypes instead of fetching the type list again.
+      await this.#loadItemTypeData();
+      if (token !== this.#loadToken) return;
+
       // Load parent hierarchy if item has parents
       if (this.item.parent_id) {
         await this.#loadParentHierarchy();
@@ -299,14 +315,12 @@ class ItemDetailStore {
       }
       if (token !== this.#loadToken) return;
 
-      // Load child items and hierarchy data
+      // Load child items
       await this.loadChildItems();
-      if (token !== this.#loadToken) return;
-      await this.#loadItemTypeData();
       if (token !== this.#loadToken) return;
 
       // Load workspace screen configuration
-      await this.#loadWorkspaceScreenFields();
+      await this.#loadWorkspaceScreenFields(configSet);
       if (token !== this.#loadToken) return;
 
       // Load diagrams
@@ -447,12 +461,21 @@ class ItemDetailStore {
 
   // === Private Data Loading Methods ===
 
-  async #loadPriorities() {
+  /**
+   * @param {object|null} [configSet] Pre-resolved configuration set from the
+   *   caller (loadItem resolves it once and shares it). Pass `undefined` to let
+   *   this method fetch it itself; pass `null` to signal "configured but the
+   *   fetch failed" (yields no priorities, matching the old error path).
+   */
+  async #loadPriorities(configSet = undefined) {
     if (!this.workspace) return;
     try {
       if (this.workspace.configuration_set_id) {
-        const configSet = await api.configurationSets.get(this.workspace.configuration_set_id);
-        this.priorities = configSet.priorities_detailed || [];
+        const cs =
+          configSet !== undefined
+            ? configSet
+            : await api.configurationSets.get(this.workspace.configuration_set_id);
+        this.priorities = cs?.priorities_detailed || [];
       } else {
         this.priorities = await api.priorities.getAll();
       }
@@ -505,7 +528,11 @@ class ItemDetailStore {
     try {
       const ancestors = await api.items.getAncestors(this.item.id);
       try {
-        const itemTypesData = await api.itemTypes.getAll();
+        // Reuse the already-loaded type list (set by #loadItemTypeData, which
+        // runs first); only fetch as a fallback if it isn't populated yet.
+        const itemTypesData = this.itemTypes?.length
+          ? this.itemTypes
+          : await api.itemTypes.getAll();
         this.parentHierarchy = ancestors.map((ancestor) => {
           if (ancestor.item_type_id) {
             const itemType = itemTypesData.find((type) => type.id === ancestor.item_type_id);
@@ -558,16 +585,26 @@ class ItemDetailStore {
     }
   }
 
-  async #loadWorkspaceScreenFields() {
+  /**
+   * @param {object|null} [configSet] Pre-resolved configuration set shared by
+   *   loadItem. Pass `undefined` to let this method fetch it itself (the
+   *   refresh path); `null` means "none configured / fetch failed".
+   */
+  async #loadWorkspaceScreenFields(configSet = undefined) {
     try {
       let editScreenId = null;
       let viewScreenId = null;
 
-      if (this.workspace?.configuration_set_id) {
-        const configSet = await api.configurationSets.get(this.workspace.configuration_set_id);
+      let cs = configSet;
+      if (cs === undefined) {
+        cs = this.workspace?.configuration_set_id
+          ? await api.configurationSets.get(this.workspace.configuration_set_id)
+          : null;
+      }
+      if (cs) {
         const itemTypeId = this.item?.item_type_id;
-        editScreenId = resolveScreenId(configSet, itemTypeId, 'edit');
-        viewScreenId = resolveScreenId(configSet, itemTypeId, 'view');
+        editScreenId = resolveScreenId(cs, itemTypeId, 'edit');
+        viewScreenId = resolveScreenId(cs, itemTypeId, 'view');
       }
 
       // Hardcoded fallback (preserves legacy behavior when nothing is

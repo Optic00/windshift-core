@@ -127,14 +127,22 @@
 
   useEventListener(() => window, 'refresh-work-items', () => reloadCollection());
 
-  // Sync collection name and load board config from central store
+  // Board config depends only on the viewed collection/workspace, not on the
+  // item set or load state — fetch it when the view changes, not every time
+  // the collection reloads (which toggles collectionStore.loading).
+  let viewSignature = $derived(`${collectionId ?? ''}|${workspaceId ?? ''}`);
+  $effect(() => {
+    viewSignature;
+    if (collectionId || workspaceId) {
+      untrack(() => loadBoardConfiguration());
+    }
+  });
+
+  // Sync collection name + clear local loading from the central store.
   $effect(() => {
     if (!collectionStore.loading) {
       currentCollectionName = collectionStore.collectionName;
-      untrack(() => {
-        loadBoardConfiguration();
-        loading = false;
-      });
+      loading = false;
     }
   });
 

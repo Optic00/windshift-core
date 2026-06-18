@@ -49,6 +49,9 @@ func RegisterPlanningRoutes(deps *Deps) {
 	api.HandleH("PUT /workspaces/{workspaceId}/iterations/{id}", auth(workspaceItemEdit(http.HandlerFunc(deps.Planning.Iteration.Update))))
 	api.HandleH("PUT /global/iterations/{id}", auth(globalIterationManage(http.HandlerFunc(deps.Planning.Iteration.Update))))
 	api.HandleH("DELETE /iterations/{id}", auth(http.HandlerFunc(deps.Planning.Iteration.Delete)))
+	// Bulk progress: kills the dashboard timeline's per-iteration progress fan-out.
+	// Literal segment registered before the /iterations/{id}/... wildcards.
+	api.HandleH("GET /iterations/progress", auth(http.HandlerFunc(deps.Planning.Iteration.GetProgressBatch)))
 	api.HandleH("GET /iterations/{id}/progress", auth(http.HandlerFunc(deps.Planning.Iteration.GetProgress)))
 	api.HandleH("GET /iterations/{id}/burndown", auth(http.HandlerFunc(deps.Planning.Iteration.GetBurndown)))
 

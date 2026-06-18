@@ -503,8 +503,21 @@ components:
             $ref: '#/components/schemas/dto.MilestoneSummary'
           type: array
         parent_id:
-          description: Hierarchy
+          description: |-
+            Hierarchy. ParentID is the raw DB id. ParentKey is the parent's
+            ready-to-display key (e.g. "WI-120"), computed server-side from the
+            parent's own workspace — clients must render this rather than building a
+            key from ParentID, which is a DB id in a different namespace and may even
+            point into another workspace. ParentKey and ParentTitle are populated
+            only on permission-checked single-item reads, and only when the caller
+            may view the parent (see ItemHandler.setParentSummary); they are omitted
+            from list responses and withheld across a workspace boundary the caller
+            cannot see.
           type: integer
+        parent_key:
+          type: string
+        parent_title:
+          type: string
         priority:
           $ref: '#/components/schemas/dto.PrioritySummary'
         project:
@@ -3664,6 +3677,34 @@ paths:
       summary: Update an asset
       tags:
       - assets
+  /attachments/{id}:
+    delete:
+      description: |-
+        Deletes an item-scoped attachment record and its stored blob.
+        Requires the `items:write` scope and `item.edit` in the
+        owning item's workspace. Non-item attachments (pages,
+        avatars, branding) are not removable through this endpoint.
+      parameters:
+      - description: Attachment ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        "204":
+          description: Attachment deleted
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: attachment not found or you lack item.edit
+      security:
+      - BearerAuth: []
+      summary: Delete an attachment
+      tags:
+      - items
   /attachments/{id}/download:
     get:
       parameters:
@@ -4808,6 +4849,58 @@ paths:
       summary: List attachments on an item
       tags:
       - items
+    post:
+      description: |-
+        Uploads a file as an attachment on the given item. Requires
+        the bearer token to carry the `items:write` scope and the
+        authenticated user to hold `item.edit` in the item's
+        workspace (Editor role by default). The response includes
+        the attachment id which downloads via
+        `/rest/api/v1/attachments/{id}/download`.
+      parameters:
+      - description: Item ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              properties:
+                file:
+                  description: File to upload
+                  format: binary
+                  type: string
+                  x-formData-name: file
+              required:
+              - file
+              type: object
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/models.AttachmentUploadResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: item not found or you lack item.edit
+      security:
+      - BearerAuth: []
+      summary: Upload an attachment to a work item
+      tags:
+      - items
   /items/{id}/change-type:
     post:
       description: Reassigns an item to a different item type. If the target type's
@@ -5649,6 +5742,56 @@ paths:
       security:
       - BearerAuth: []
       summary: List workflow transitions available from the item's current status
+      tags:
+      - items
+  /items/batch:
+    get:
+      description: Returns full item objects for the comma-separated `ids`. Items
+        the caller cannot view (or that don't exist) are silently omitted — existence
+        is never leaked. Cap 500 ids per request.
+      parameters:
+      - description: Comma-separated item ids, e.g. 1,2,3 (max 500)
+        in: query
+        name: ids
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/dto.ItemResponse'
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Too many ids
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the items:read scope
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Get many items by id
       tags:
       - items
   /iterations:

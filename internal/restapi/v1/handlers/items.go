@@ -301,6 +301,72 @@ func (h *ItemHandler) List(w http.ResponseWriter, r *http.Request) {
 	h.RespondPaginated(w, itemResponses, pagination, total)
 }
 
+// maxBatchItemIDs caps how many ids GetBatch accepts in one request, bounding
+// the IN-clause size. Clients chunk larger sets across multiple requests.
+const maxBatchItemIDs = 500
+
+// GetBatch handles GET /rest/api/v1/items/batch
+//
+// @Summary      Get many items by id
+// @Description  Returns full item objects for the comma-separated `ids`. Items the caller cannot view (or that don't exist) are silently omitted — existence is never leaked. Cap 500 ids per request.
+// @Tags         items
+// @Produce      json
+// @Security     BearerAuth
+// @Param        ids    query     string  true   "Comma-separated item ids, e.g. 1,2,3 (max 500)"
+// @Success      200    {array}   dto.ItemResponse
+// @Failure      400    {object}  handlers.ErrorResponse  "Too many ids"
+// @Failure      401    {object}  handlers.ErrorResponse
+// @Failure      403    {object}  handlers.ErrorResponse  "Token lacks the items:read scope"
+// @Failure      500    {object}  handlers.ErrorResponse
+// @Router       /items/batch [get]
+func (h *ItemHandler) GetBatch(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.RequireAuth(w, r)
+	if !ok {
+		return
+	}
+
+	ids := parseIDList(r.URL.Query().Get("ids"))
+	if len(ids) == 0 {
+		h.RespondOK(w, []dto.ItemResponse{})
+		return
+	}
+	if len(ids) > maxBatchItemIDs {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput,
+			fmt.Sprintf("too many ids (max %d per request)", maxBatchItemIDs)))
+		return
+	}
+
+	accessibleWorkspaceIDs, err := h.Perms.GetAccessibleWorkspaceIDs(user.ID)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	accessible := make(map[int]struct{}, len(accessibleWorkspaceIDs))
+	for _, id := range accessibleWorkspaceIDs {
+		accessible[id] = struct{}{}
+	}
+
+	loaded, err := h.itemRepo.FindByIDsWithDetails(ids)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+
+	// Keep only items in workspaces the caller can view; drop the rest silently
+	// (404-no-leak contract, mirroring requireItemAccess for the single fetch).
+	items := make([]models.Item, 0, len(loaded))
+	for _, it := range loaded {
+		if _, allowed := accessible[it.WorkspaceID]; allowed {
+			items = append(items, *it)
+		}
+	}
+
+	h.maskProjectNames(user.ID, items)
+
+	baseURL := getBaseURL(r)
+	h.RespondOK(w, dto.MapItemsToResponse(items, baseURL))
+}
+
 // Get handles GET /rest/api/v1/items/{id}
 //
 // @Summary      Get an item by ID

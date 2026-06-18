@@ -59,17 +59,18 @@
         })
         .slice(0, MAX_ITERATIONS);
 
-      // Fetch progress for each iteration
-      const withProgress = await Promise.all(
-        relevant.map(async (iteration) => {
-          try {
-            const progress = await api.iterations.getProgress(iteration.id);
-            return { ...iteration, progress };
-          } catch {
-            return { ...iteration, progress: null };
-          }
-        })
-      );
+      // Fetch progress for all relevant iterations in one request instead of
+      // one GET /iterations/{id}/progress per iteration.
+      let progressById = {};
+      try {
+        progressById = (await api.iterations.getProgressMany(relevant.map((i) => i.id))) || {};
+      } catch {
+        progressById = {};
+      }
+      const withProgress = relevant.map((iteration) => ({
+        ...iteration,
+        progress: progressById[iteration.id] ?? null,
+      }));
 
       if (fetchId === activeFetchId) {
         iterations = withProgress;

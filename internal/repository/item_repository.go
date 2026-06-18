@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"time"
@@ -145,8 +146,54 @@ func (r *ItemRepository) FindByIDWithDetails(id int) (*models.Item, error) {
 	return result.Item, nil
 }
 
-// FindByIDWithWorkspaceStatus loads an item with all joined data including workspace active status
-func (r *ItemRepository) FindByIDWithWorkspaceStatus(id int) (*ItemWithWorkspaceStatus, error) {
+// itemDetailsSelectBody is the SELECT + JOINs that hydrate a fully-joined item
+// (workspace, iteration, project, parent, assignee/creator, priority, status,
+// item type, related work item) plus the owning workspace's active flag. It is
+// shared by the single-item (FindByIDWithWorkspaceStatus) and batch
+// (FindByIDsWithDetails) loaders so both stay column-for-column identical. The
+// caller appends the WHERE clause and matches scanItemDetailsRow's order.
+const itemDetailsSelectBody = `
+	SELECT i.id, i.workspace_id, i.workspace_item_number, i.item_type_id, i.title, i.description,
+	       i.status_id, i.priority_id, i.due_date, i.start_date, i.end_date, i.is_task, i.iteration_id,
+	       i.project_id, i.inherit_project, i.time_project_id, i.assignee_id, i.creator_id, i.custom_field_values,
+	       i.virtual_field_data,
+	       i.parent_id, i.story_points, i.estimate_minutes, i.frac_index, i.created_at, i.updated_at,
+	       i.creator_portal_customer_id, i.channel_id, i.request_type_id,
+	       w.name as workspace_name, w.key as workspace_key, w.active as workspace_active,
+	       iter.name as iteration_name,
+	       proj.name as project_name,
+	       tp.name as time_project_name,
+	       p.title as parent_title,
+	       p.workspace_item_number as parent_workspace_item_number,
+	       assignee.first_name || ' ' || assignee.last_name as assignee_name, assignee.email as assignee_email, assignee.avatar_url as assignee_avatar,
+	       creator.first_name || ' ' || creator.last_name as creator_name, creator.email as creator_email,
+	       pri.name as priority_name, pri.icon as priority_icon, pri.color as priority_color,
+	       s.name as status_name,
+	       it.name as item_type_name,
+	       i.related_work_item_id,
+	       rw.title as related_work_item_title,
+	       rw_ws.key as related_work_item_workspace_key,
+	       rw.workspace_id as related_work_item_workspace_id,
+	       rw.workspace_item_number as related_work_item_number
+	FROM items i
+	JOIN workspaces w ON i.workspace_id = w.id
+	LEFT JOIN iterations iter ON i.iteration_id = iter.id
+	LEFT JOIN time_projects proj ON i.project_id = proj.id
+	LEFT JOIN time_projects tp ON i.time_project_id = tp.id
+	LEFT JOIN items p ON i.parent_id = p.id
+	LEFT JOIN users assignee ON i.assignee_id = assignee.id
+	LEFT JOIN users creator ON i.creator_id = creator.id
+	LEFT JOIN priorities pri ON i.priority_id = pri.id
+	LEFT JOIN statuses s ON i.status_id = s.id
+	LEFT JOIN item_types it ON i.item_type_id = it.id
+	LEFT JOIN items rw ON i.related_work_item_id = rw.id
+	LEFT JOIN workspaces rw_ws ON rw.workspace_id = rw_ws.id`
+
+// scanItemDetailsRow scans one row produced by itemDetailsSelectBody into a
+// fully-joined item plus the owning workspace's active flag. Milestones are NOT
+// attached here — the caller does that (per-item for the single loader, batched
+// for the set loader) to avoid a per-row round trip.
+func scanItemDetailsRow(scanner rowScanner) (models.Item, bool, error) {
 	var item models.Item
 	var customFieldValuesJSON sql.NullString
 	var virtualFieldDataJSON sql.NullString
@@ -172,44 +219,7 @@ func (r *ItemRepository) FindByIDWithWorkspaceStatus(id int) (*ItemWithWorkspace
 	var storyPoints sql.NullFloat64
 	var estimateMinutes sql.NullInt64
 
-	err := r.db.QueryRow(`
-		SELECT i.id, i.workspace_id, i.workspace_item_number, i.item_type_id, i.title, i.description,
-		       i.status_id, i.priority_id, i.due_date, i.start_date, i.end_date, i.is_task, i.iteration_id,
-		       i.project_id, i.inherit_project, i.time_project_id, i.assignee_id, i.creator_id, i.custom_field_values,
-		       i.virtual_field_data,
-		       i.parent_id, i.story_points, i.estimate_minutes, i.frac_index, i.created_at, i.updated_at,
-		       i.creator_portal_customer_id, i.channel_id, i.request_type_id,
-		       w.name as workspace_name, w.key as workspace_key, w.active as workspace_active,
-		       iter.name as iteration_name,
-		       proj.name as project_name,
-		       tp.name as time_project_name,
-		       p.title as parent_title,
-		       p.workspace_item_number as parent_workspace_item_number,
-		       assignee.first_name || ' ' || assignee.last_name as assignee_name, assignee.email as assignee_email, assignee.avatar_url as assignee_avatar,
-		       creator.first_name || ' ' || creator.last_name as creator_name, creator.email as creator_email,
-		       pri.name as priority_name, pri.icon as priority_icon, pri.color as priority_color,
-		       s.name as status_name,
-		       it.name as item_type_name,
-		       i.related_work_item_id,
-		       rw.title as related_work_item_title,
-		       rw_ws.key as related_work_item_workspace_key,
-		       rw.workspace_id as related_work_item_workspace_id,
-		       rw.workspace_item_number as related_work_item_number
-		FROM items i
-		JOIN workspaces w ON i.workspace_id = w.id
-		LEFT JOIN iterations iter ON i.iteration_id = iter.id
-		LEFT JOIN time_projects proj ON i.project_id = proj.id
-		LEFT JOIN time_projects tp ON i.time_project_id = tp.id
-		LEFT JOIN items p ON i.parent_id = p.id
-		LEFT JOIN users assignee ON i.assignee_id = assignee.id
-		LEFT JOIN users creator ON i.creator_id = creator.id
-		LEFT JOIN priorities pri ON i.priority_id = pri.id
-		LEFT JOIN statuses s ON i.status_id = s.id
-		LEFT JOIN item_types it ON i.item_type_id = it.id
-		LEFT JOIN items rw ON i.related_work_item_id = rw.id
-		LEFT JOIN workspaces rw_ws ON rw.workspace_id = rw_ws.id
-		WHERE i.id = ?
-	`, id).Scan(
+	err := scanner.Scan(
 		&item.ID, &item.WorkspaceID, &item.WorkspaceItemNumber, &itemTypeID, &item.Title, &item.Description,
 		&statusID, &priorityID, &dueDate, &startDate, &endDate, &item.IsTask, &iterationID,
 		&projectID, &item.InheritProject, &timeProjectID, &assigneeID, &creatorID, &customFieldValuesJSON,
@@ -228,12 +238,8 @@ func (r *ItemRepository) FindByIDWithWorkspaceStatus(id int) (*ItemWithWorkspace
 		&relatedWorkItemWorkspaceID,
 		&relatedWorkItemNumber,
 	)
-
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to find item with details: %w", err)
+		return models.Item{}, false, err
 	}
 
 	// Handle nullable ID fields
@@ -288,6 +294,19 @@ func (r *ItemRepository) FindByIDWithWorkspaceStatus(id int) (*ItemWithWorkspace
 
 	item.CustomFieldValues = parseCustomFieldsJSON(customFieldValuesJSON)
 	item.VirtualFieldData = parseCustomFieldsJSON(virtualFieldDataJSON)
+
+	return item, workspaceActive, nil
+}
+
+// FindByIDWithWorkspaceStatus loads an item with all joined data including workspace active status
+func (r *ItemRepository) FindByIDWithWorkspaceStatus(id int) (*ItemWithWorkspaceStatus, error) {
+	item, workspaceActive, err := scanItemDetailsRow(r.db.QueryRow(itemDetailsSelectBody+"\n\t\tWHERE i.id = ?", id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to find item with details: %w", err)
+	}
 
 	// Eager-load milestones so callers (REST mappers, ai tools, etc.) don't
 	// each have to remember to attach them after the fact.
@@ -1525,22 +1544,44 @@ func (r *ItemRepository) ListItemsWithCalendarData(workspaceIDs []int) ([]ItemWi
 }
 
 // FindByIDsWithDetails returns items for a set of IDs, each populated the same
-// way FindByIDWithDetails populates a single item. IDs not found are silently
-// omitted from the result. Returns an empty slice (not nil) when ids is empty.
+// way FindByIDWithDetails populates a single item, in a single IN (...) query
+// plus one batched milestone attach. IDs not found are silently omitted. The
+// result order is not guaranteed — callers index by item ID. Returns an empty
+// slice (not nil) when ids is empty.
 func (r *ItemRepository) FindByIDsWithDetails(ids []int) ([]*models.Item, error) {
 	if len(ids) == 0 {
 		return []*models.Item{}, nil
 	}
-	items := make([]*models.Item, 0, len(ids))
-	for _, id := range ids {
-		item, err := r.FindByIDWithDetails(id)
+	placeholders, args := inPlaceholders(ids)
+	rows, err := r.db.Query(itemDetailsSelectBody+"\n\t\tWHERE i.id IN ("+placeholders+")", args...)
+	if err != nil {
+		return nil, fmt.Errorf("find items with details: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	// Materialize into a value slice so the batched milestone attach can mutate
+	// in place, then return pointers into it.
+	scanned := make([]models.Item, 0, len(ids))
+	for rows.Next() {
+		item, _, err := scanItemDetailsRow(rows)
 		if err != nil {
-			if errors.Is(err, ErrNotFound) {
-				continue
-			}
-			return nil, err
+			return nil, fmt.Errorf("scan item with details: %w", err)
 		}
-		items = append(items, item)
+		scanned = append(scanned, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate items with details: %w", err)
+	}
+
+	// Batched milestone attach — one round trip for the whole set, mirroring
+	// the per-item eager-load in FindByIDWithWorkspaceStatus.
+	if err := NewMilestoneAttachRepository(r.db).LoadForItems(scanned); err != nil {
+		slog.Warn("failed to attach milestones for batch items", slog.Any("error", err))
+	}
+
+	items := make([]*models.Item, len(scanned))
+	for i := range scanned {
+		items[i] = &scanned[i]
 	}
 	return items, nil
 }
