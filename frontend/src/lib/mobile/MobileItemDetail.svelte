@@ -1,11 +1,12 @@
 <script>
-  import { Star, Play, Loader, ChevronDown, ChevronRight, GitPullRequest, Bot } from '@lucide/svelte';
+  import { Star, Play, Loader, ChevronDown, ChevronRight, GitPullRequest, Bot, RefreshCw } from '@lucide/svelte';
   import { api } from '../api.js';
   import { agentRuns } from '../api/agentRuns.js';
   import { agentRuns as agentRunBus } from '../stores/agentRuns.svelte.js';
   import { navigate } from '../router.js';
   import { timerStore } from '../stores/timerStore.svelte.js';
   import { useWorkItemPoller } from '../composables/useWorkItemPoller.svelte.js';
+  import { usePullToRefresh } from '../composables/usePullToRefresh.svelte.js';
   import { renderMarkdown } from '../utils/render-markdown.js';
   import { formatDate } from '../utils/dateFormatter.js';
   import { formatItemKey } from '../utils/itemKey.js';
@@ -256,6 +257,24 @@
   // plus an instant refresh when an AI run completes (chatStore emits on the bus).
   useWorkItemPoller(() => refresh());
   $effect(() => agentRunBus.subscribe(() => refresh()));
+
+  // Pull-to-refresh: dragging the canvas down from the top triggers a manual
+  // reload (same silent refresh() the background poller uses). Listeners attach
+  // to the nearest scrollable ancestor (the mobile scroll surface) so the
+  // scrollTop check + overscroll-suppression act on the real scroller.
+  let detailEl = $state(null);
+  function getScrollContainer() {
+    // Walk up from the detail content to the scroll surface owned by MobileShell.
+    let el = detailEl?.parentElement;
+    while (el) {
+      if (getComputedStyle(el).overflowY === 'auto' || getComputedStyle(el).overflowY === 'scroll') {
+        return el;
+      }
+      el = el.parentElement;
+    }
+    return null;
+  }
+  const ptr = usePullToRefresh(getScrollContainer, () => refresh());
 </script>
 
 <MobileHeader title={itemKey} onback={() => (window.history.length > 1 ? window.history.back() : navigate('/m'))} />
@@ -265,7 +284,34 @@
 {:else if errored || !item}
   <p class="msg" data-testid="detail-error">Couldn't load this item.</p>
 {:else}
-  <div class="detail" data-testid="mobile-item-detail">
+  <div
+    class="detail"
+    class:pulling={ptr.pulling || ptr.refreshing}
+    bind:this={detailEl}
+    data-testid="mobile-item-detail"
+    style:transform={ptr.pullDistance > 0 || ptr.refreshing ? `translateY(${ptr.refreshing ? ptr.threshold : ptr.pullDistance}px)` : ''}
+    style:transition={ptr.pulling ? 'none' : ''}
+  >
+    <!-- Pull-to-refresh indicator. Sits above the content, growing as the user
+         drags; spins while the reload is in flight. -->
+    <div
+      class="ptr-indicator"
+      class:ready={ptr.pullDistance >= ptr.threshold}
+      data-testid="detail-pull-indicator"
+      aria-hidden={ptr.pulling || ptr.refreshing ? 'true' : 'false'}
+    >
+      {#if ptr.refreshing}
+        <Loader size={18} class="spin" />
+      {:else}
+        <span
+          class="ptr-arrow"
+          style:transform={ptr.pullDistance > 0 ? `rotate(${Math.min(ptr.pullDistance * 3, 360)}deg)` : ''}
+        >
+          <RefreshCw size={18} />
+        </span>
+      {/if}
+    </div>
+
     {#if ancestors.length > 0}
       <nav class="breadcrumb" data-testid="detail-breadcrumb" aria-label="Parent items">
         {#each ancestors as anc, i (anc.id)}
@@ -428,7 +474,32 @@
 
   .msg { padding: 3rem 1.25rem; text-align: center; color: var(--ds-text-subtle); }
 
-  .detail { padding: 0.75rem 0.875rem 2rem; }
+  .detail { padding: 0.75rem 0.875rem 2rem; position: relative; will-change: transform; }
+  /* Ease the content back to rest after a release (and the snap on fire). */
+  .detail:not(.pulling) { transition: transform var(--duration-fast, 100ms) ease; }
+
+  /* Pull-to-refresh indicator: anchored above the content, vertically centered
+     on the threshold line. Fades/scales in as the pull grows. */
+  .ptr-indicator {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translate(-50%, -100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    margin-top: -6px;
+    color: var(--ds-icon-subtle, var(--ds-text-subtle));
+    opacity: 0;
+    transition: opacity var(--duration-fast, 100ms) ease;
+    pointer-events: none;
+  }
+  .detail.pulling .ptr-indicator { opacity: 1; }
+  /* Once past the threshold the indicator goes active/ready (brand color). */
+  .ptr-indicator.ready { color: var(--ds-interactive); }
+  .ptr-arrow { display: inline-flex; transition: transform var(--duration-fast, 100ms) ease; }
 
   .breadcrumb {
     display: flex; align-items: center; flex-wrap: nowrap; gap: 0.15rem;
