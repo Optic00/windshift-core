@@ -252,6 +252,10 @@ type RequestType struct {
 	// Joined fields for API responses
 	ChannelName  string `json:"channel_name,omitempty"`
 	ItemTypeName string `json:"item_type_name,omitempty"`
+	// FieldCount is the number of configured form fields, populated by the
+	// portal request-types listing so the UI can show counts without a
+	// per-request-type fields fetch.
+	FieldCount int `json:"field_count"`
 }
 
 // IsVisibleTo checks if this request type is visible to the given user groups and/or customer organization

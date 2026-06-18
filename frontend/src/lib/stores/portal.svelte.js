@@ -614,32 +614,20 @@ async function loadRequestTypes() {
   try {
     isLoadingRequestTypes = true;
     loadingRequestTypes = true;
-    // Use portal endpoint instead of channel endpoint for proper auth handling
+    // Use portal endpoint instead of channel endpoint for proper auth handling.
+    // The endpoint now returns field_count inline, so internal users no longer
+    // fan out one getFields() request per request type.
     const types = await api.requestTypes.getForPortal(currentSlug);
 
-    // Only fetch field counts for internal users (requires session auth).
-    // Portal customers don't have access to the internal fields endpoint.
-    // Internal users may be authenticated via either auth store.
-    if (
-      authStore.isAuthenticated ||
-      (portalAuthStore.isAuthenticated && portalAuthStore.isInternal)
-    ) {
-      const typesWithFields = await Promise.all(
-        types.map(async (rt) => {
-          try {
-            const fields = await api.requestTypes.getFields(rt.id);
-            return { ...rt, field_count: fields.length };
-          } catch (err) {
-            console.error(`Failed to load fields for request type ${rt.id}:`, err);
-            return { ...rt, field_count: 0 };
-          }
-        })
-      );
-      requestTypes = typesWithFields;
-    } else {
-      // For portal customers, skip field count fetching
-      requestTypes = types.map((rt) => ({ ...rt, field_count: 0 }));
-    }
+    // Surface the count only for internal users (preserves prior behavior where
+    // portal customers don't see field counts). Internal users may be
+    // authenticated via either auth store.
+    const isInternal =
+      authStore.isAuthenticated || (portalAuthStore.isAuthenticated && portalAuthStore.isInternal);
+    requestTypes = types.map((rt) => ({
+      ...rt,
+      field_count: isInternal ? (rt.field_count ?? 0) : 0,
+    }));
   } catch (err) {
     console.error('Failed to load request types:', err);
   } finally {
