@@ -15,6 +15,26 @@ var taskCmd = &cobra.Command{
 	Long:  `Commands for viewing, creating, and managing work items.`,
 }
 
+var taskSearchLimit int
+
+var taskSearchCmd = &cobra.Command{
+	Use:   "search <query>",
+	Short: "Full-text search over work items",
+	Long: `Search items the caller can view via the v1 search endpoint.
+Multiple arguments are joined into a single query string. This is the same
+search as the top-level "ws search", scoped under "task" for discoverability;
+when a workspace is configured the results are filtered to it client-side.
+
+Examples:
+  ws task search "login bug"
+  ws task search login bug --limit 5
+  ws task search "rate limit" -w PROJ`,
+	Args: cobra.MinimumNArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		return runItemSearch(strings.Join(args, " "), taskSearchLimit)
+	},
+}
+
 var taskMineCmd = &cobra.Command{
 	Use:   "mine",
 	Short: "List tasks assigned to me",
@@ -1019,6 +1039,7 @@ var (
 
 func init() {
 	rootCmd.AddCommand(taskCmd)
+	taskCmd.AddCommand(taskSearchCmd)
 	taskCmd.AddCommand(taskMineCmd)
 	taskCmd.AddCommand(taskCreatedCmd)
 	taskCmd.AddCommand(taskListCmd)
@@ -1048,6 +1069,9 @@ func init() {
 
 	// Set-milestone flags
 	taskSetMilestoneCmd.Flags().BoolVar(&clearMilestone, "clear", false, "remove item from milestone")
+
+	// Search flags
+	taskSearchCmd.Flags().IntVar(&taskSearchLimit, "limit", 0, "maximum results per page (server default if omitted, max 100)")
 
 	// History flags
 	taskHistoryCmd.Flags().IntVar(&historyLimit, "limit", 0, "show at most N history entries (0 = all)")

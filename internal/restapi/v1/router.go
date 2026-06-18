@@ -290,6 +290,9 @@ func RegisterRoutes(deps restapi.Deps) {
 	// drive page CRUD even if its bearer-user has the workspace role.
 	// ============================================
 	v1.HandleWithMiddleware("GET /workspaces/{id}/pages", pageHandler.List, bearerAuth.RequirePermission("pages:read"), router.RequireNumericID)
+	// Literal "search" segment; the ServeMux prefers it over the {pageId}
+	// wildcard route below, so order is not load-bearing.
+	v1.HandleWithMiddleware("GET /workspaces/{id}/pages/search", pageHandler.Search, bearerAuth.RequirePermission("pages:read"), router.RequireNumericID)
 	v1.HandleWithMiddleware("POST /workspaces/{id}/pages", pageHandler.Create, bearerAuth.RequirePermission("pages:write"), router.RequireNumericID)
 	v1.HandleWithMiddleware("GET /workspaces/{id}/pages/{pageId}", pageHandler.Get, bearerAuth.RequirePermission("pages:read"), router.RequireNumericID)
 	v1.HandleWithMiddleware("PUT /workspaces/{id}/pages/{pageId}", pageHandler.Update, bearerAuth.RequirePermission("pages:write"), router.RequireNumericID)

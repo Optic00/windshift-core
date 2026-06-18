@@ -1228,6 +1228,22 @@ func (c *Client) ListPages(workspaceID int) ([]Page, error) {
 	return resp.Items, nil
 }
 
+// SearchPages performs a title search over pages the caller can view in a
+// workspace via GET /rest/api/v1/workspaces/{id}/pages/search. limit <= 0
+// falls back to the server default. Results omit the page body.
+func (c *Client) SearchPages(workspaceID int, query string, limit int) ([]Page, error) {
+	params := url.Values{}
+	params.Set("q", query)
+	if limit > 0 {
+		params.Set("limit", strconv.Itoa(limit))
+	}
+	var resp PageListResponse
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/workspaces/%d/pages/search?%s", workspaceID, params.Encode()), &resp); err != nil {
+		return nil, err
+	}
+	return resp.Items, nil
+}
+
 // GetPage fetches a single page by id.
 func (c *Client) GetPage(workspaceID, pageID int) (*Page, error) {
 	var page Page

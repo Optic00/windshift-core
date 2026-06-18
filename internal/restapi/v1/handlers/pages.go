@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"windshift/internal/database"
 	"windshift/internal/models"
@@ -156,6 +157,73 @@ func (h *PageHandler) List(w http.ResponseWriter, r *http.Request) {
 		if !visible[pages[i].ID] {
 			continue
 		}
+		items = append(items, dto.MapPageToResponse(&pages[i], getBaseURL(r)))
+	}
+	h.RespondOK(w, pageListResponse{Items: items})
+}
+
+// Search handles GET /rest/api/v1/workspaces/{id}/pages/search
+//
+// Search returns non-archived pages in the workspace whose title matches the
+// q substring and that the caller can view. Title-only match, reusing the
+// same service search + per-page visibility logic as the cookie-auth surface
+// (handlers/pages.go). Page bodies are omitted — this is a discovery
+// endpoint; fetch a body via GET .../pages/{pageId}. The slim shape matches
+// the page list endpoint so the CLI shares its rendering.
+//
+// @Summary      Search pages by title
+// @Description  Returns non-archived pages in the workspace whose title matches the q substring and that the caller can view. Bodies are omitted; fetch via GET .../pages/{pageId}.
+// @Tags         pages
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id     path      int     true   "Workspace ID"
+// @Param        q      query     string  true   "Title search substring"
+// @Param        limit  query     int     false  "Maximum results to return (default 20, max 100)"
+// @Success      200    {object}  handlers.pageListResponse
+// @Failure      400    {object}  handlers.ErrorResponse  "Invalid workspace ID"
+// @Failure      401    {object}  handlers.ErrorResponse
+// @Failure      404    {object}  handlers.ErrorResponse  "Workspace not found or not visible to caller"
+// @Failure      500    {object}  handlers.ErrorResponse
+// @Router       /workspaces/{id}/pages/search [get]
+func (h *PageHandler) Search(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.RequireAuth(w, r)
+	if !ok {
+		return
+	}
+	wsID, ok := h.ParsePathID(w, r, "id", "workspace ID")
+	if !ok {
+		return
+	}
+
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	pages, err := h.service.SearchByTitle(wsID, query, parseSearchLimit(r))
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+
+	ids := make([]int, len(pages))
+	for i := range pages {
+		ids[i] = pages[i].ID
+	}
+	visible, err := h.pageAuth.ListVisiblePageIDs(user.ID, wsID, ids)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+	if err := h.service.PreloadLabels(pages); err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+
+	items := make([]dto.PageResponse, 0, len(pages))
+	for i := range pages {
+		if !visible[pages[i].ID] {
+			continue
+		}
+		// Discovery surface: drop the heavy body so search payloads stay
+		// small (Content is omitempty); callers fetch it via GET the page.
+		pages[i].Content = ""
 		items = append(items, dto.MapPageToResponse(&pages[i], getBaseURL(r)))
 	}
 	h.RespondOK(w, pageListResponse{Items: items})
@@ -715,6 +783,22 @@ func parseHistoryPagination(r *http.Request) (limit, offset int) {
 		}
 	}
 	return limit, offset
+}
+
+// parseSearchLimit reads the page-search result cap from the limit query
+// param (default 20, max 100). A missing, non-positive, or unparseable
+// value falls back to the default.
+func parseSearchLimit(r *http.Request) int {
+	limit := 20
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	return limit
 }
 
 // --- helpers ---

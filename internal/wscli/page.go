@@ -87,6 +87,46 @@ Examples:
 	},
 }
 
+var pageSearchLimit int
+
+var pageSearchCmd = &cobra.Command{
+	Use:   "search <query>",
+	Short: "Search pages by title in the current workspace",
+	Long: `Title search over pages the caller can view in the configured
+workspace. Multiple arguments are joined into a single query string.
+Matching is a case-insensitive substring on the page title. Results omit
+the page body — fetch it with ws page get <id>.
+
+A workspace must be configured via -w, $WS_WORKSPACE, or
+defaults.workspace_key in ws.toml.
+
+Examples:
+  ws page search runbook
+  ws page search "incident response" --limit 5
+  ws page search design -w PROJ`,
+	Args: cobra.MinimumNArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		client, err := NewClient()
+		if err != nil {
+			return err
+		}
+		wsID, err := resolveRequiredWorkspace(client)
+		if err != nil {
+			return err
+		}
+		query := strings.TrimSpace(strings.Join(args, " "))
+		if query == "" {
+			return fmt.Errorf("search query must not be empty")
+		}
+		pages, err := client.SearchPages(wsID, query, pageSearchLimit)
+		if err != nil {
+			return fmt.Errorf("failed to search pages: %w", err)
+		}
+		NewOutput().Print(pages)
+		return nil
+	},
+}
+
 var pageGetCmd = &cobra.Command{
 	Use:   "get <id>",
 	Short: "Get a page by id",
@@ -683,6 +723,7 @@ func readMarkdownFile(path string) (content, h1Title string, err error) {
 func init() {
 	rootCmd.AddCommand(pageCmd)
 	pageCmd.AddCommand(pageListCmd)
+	pageCmd.AddCommand(pageSearchCmd)
 	pageCmd.AddCommand(pageGetCmd)
 	pageCmd.AddCommand(pageCreateCmd)
 	pageCmd.AddCommand(pageEditCmd)
@@ -694,6 +735,8 @@ func init() {
 	pageCmd.AddCommand(pageGrantCmd)
 	pageCmd.AddCommand(pageRevokeCmd)
 	pageCmd.AddCommand(pageInheritanceCmd)
+
+	pageSearchCmd.Flags().IntVar(&pageSearchLimit, "limit", 0, "maximum results to return (server default 20, max 100)")
 
 	pageGetCmd.Flags().BoolVar(&pageGetRaw, "raw", false, "in table mode, omit the synthetic '# Title' header and print only the body")
 
