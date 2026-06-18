@@ -1,13 +1,16 @@
 <script>
   import { onMount } from 'svelte';
-  import { Star, Play, Loader } from '@lucide/svelte';
+  import { Star, Play, Loader, ChevronDown, GitPullRequest, Bot } from '@lucide/svelte';
   import { api } from '../api.js';
+  import { agentRuns } from '../api/agentRuns.js';
   import { navigate } from '../router.js';
   import { timerStore } from '../stores/timerStore.svelte.js';
   import { renderMarkdown } from '../utils/render-markdown.js';
   import { formatDate } from '../utils/dateFormatter.js';
   import MobileHeader from './MobileHeader.svelte';
   import Comments from '../features/items/Comments.svelte';
+  import ItemSCMLinks from '../features/items/ItemSCMLinks.svelte';
+  import ItemAgentLog from '../features/items/ItemAgentLog.svelte';
 
   let { itemId } = $props();
 
@@ -20,6 +23,14 @@
   let watchBusy = $state(false);
   let personalTaskCount = $state(0);
   let startingTimer = $state(false);
+
+  // SCM (commits/PRs) + coding-agent panels — gated exactly like the desktop
+  // ItemDetail: SCM via the per-item connection-status probe (has_repositories),
+  // agent via a one-row agent-runs probe. Bodies mount lazily on expand.
+  let scmAvailable = $state(false);
+  let hasAgentRuns = $state(false);
+  let scmOpen = $state(false);
+  let agentOpen = $state(false);
 
   const descriptionHtml = $derived(item?.description ? renderMarkdown(item.description) : '');
   const itemKey = $derived(
@@ -62,6 +73,23 @@
       personalTaskCount = Array.isArray(tasks) ? tasks.length : (tasks?.items?.length ?? 0);
     } catch {
       personalTaskCount = 0;
+    }
+    // SCM gate: show the panel unless the connection probe says the workspace
+    // has no repositories (matches ItemSCMLinks' own has_repositories gate;
+    // personal workspaces have no repos, so this also covers the desktop's
+    // non-personal check).
+    try {
+      const cs = await api.itemSCMLinks.getConnectionStatus(itemId);
+      scmAvailable = cs?.has_repositories !== false;
+    } catch {
+      scmAvailable = false;
+    }
+    // Agent gate: a coding-agent session exists iff a one-row probe is non-empty.
+    try {
+      const runs = await agentRuns.listForItem(itemId, { limit: 1 });
+      hasAgentRuns = (runs?.length ?? 0) > 0;
+    } catch {
+      hasAgentRuns = false;
     }
   }
 
@@ -188,6 +216,36 @@
       {/if}
     </div>
 
+    <!-- Commits & pull requests (collapsible; mounts on open) -->
+    {#if scmAvailable}
+      <section class="panel" data-testid="scm-panel">
+        <button class="panel-head" onclick={() => (scmOpen = !scmOpen)} aria-expanded={scmOpen} data-testid="scm-panel-toggle" type="button">
+          <span class="panel-title"><GitPullRequest size={16} /> Commits &amp; pull requests</span>
+          <ChevronDown size={18} class={scmOpen ? 'chev open' : 'chev'} />
+        </button>
+        {#if scmOpen}
+          <div class="panel-body" data-testid="scm-panel-body">
+            <ItemSCMLinks itemId={item.id} />
+          </div>
+        {/if}
+      </section>
+    {/if}
+
+    <!-- Coding agent (collapsible; only shown when a session exists) -->
+    {#if hasAgentRuns}
+      <section class="panel" data-testid="agent-panel">
+        <button class="panel-head" onclick={() => (agentOpen = !agentOpen)} aria-expanded={agentOpen} data-testid="agent-panel-toggle" type="button">
+          <span class="panel-title"><Bot size={16} /> Coding agent</span>
+          <ChevronDown size={18} class={agentOpen ? 'chev open' : 'chev'} />
+        </button>
+        {#if agentOpen}
+          <div class="panel-body" data-testid="agent-panel-body">
+            <ItemAgentLog itemId={item.id} workspaceId={item.workspace_id} />
+          </div>
+        {/if}
+      </section>
+    {/if}
+
     <!-- Comments -->
     <section class="comments">
       <Comments {itemId} />
@@ -239,6 +297,17 @@
   }
   .act.on { color: var(--ds-interactive); border-color: var(--ds-interactive); }
   .act:disabled { opacity: 0.6; }
+
+  .panel { border: 1px solid var(--ds-border); border-radius: var(--radius-lg, 8px); margin-bottom: 0.75rem; overflow: hidden; }
+  .panel-head {
+    width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+    min-height: 48px; padding: 0 0.85rem; background-color: var(--ds-surface); color: var(--ds-text);
+    border: none; cursor: pointer; font-size: 0.9375rem; font-weight: var(--font-medium, 500);
+  }
+  .panel-title { display: inline-flex; align-items: center; gap: 0.5rem; }
+  :global(.chev) { transition: transform var(--duration-fast, 100ms) ease; color: var(--ds-icon-subtle, var(--ds-text-subtle)); }
+  :global(.chev.open) { transform: rotate(180deg); }
+  .panel-body { padding: 0.5rem 0.85rem 0.85rem; border-top: 1px solid var(--ds-border); overflow-x: auto; }
 
   .comments { border-top: 1px solid var(--ds-border); padding-top: 1rem; }
 </style>
