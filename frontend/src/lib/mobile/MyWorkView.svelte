@@ -133,7 +133,7 @@
 
 <MobileHeader title="My Work">
   {#snippet right()}
-    <UserAvatar />
+    <UserAvatar minimal />
   {/snippet}
   {#snippet children()}
     <div class="segmented" role="tablist" data-testid="my-work-segments">

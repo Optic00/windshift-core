@@ -9,7 +9,11 @@
 
   let {
     expanded = false,
-    label = ''
+    label = '',
+    // minimal drops the items that navigate to the desktop app (My Workspace,
+    // Profile, Security) — used on the mobile surface where those routes render
+    // the full desktop UI. Theme + Sign Out remain.
+    minimal = false
   } = $props();
 
   // Local state
@@ -111,7 +115,7 @@
   triggerAlignment={expanded ? "start" : "center"}
   showChevron={false}
   items={[
-    ...(authStore.currentUser ? [{
+    ...((!minimal && authStore.currentUser) ? [{
       id: 'my-workspace',
       type: 'regular',
       icon: Home,
@@ -120,7 +124,7 @@
       subtitle: t('components.userAvatar.myWorkspaceSubtitle'),
       onClick: navigateToPersonalWorkspace
     }, { type: 'divider' }] : []),
-    {
+    ...(!minimal ? [{
       id: 'profile',
       type: 'regular',
       icon: User,
@@ -139,7 +143,7 @@
       subtitle: t('components.userAvatar.securitySubtitle'),
       onClick: () => navigate('/security')
     },
-    { type: 'divider' },
+    { type: 'divider' }] : []),
     {
       id: 'theme',
       type: 'accordion',
