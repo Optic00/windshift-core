@@ -1,21 +1,19 @@
 <script>
   import { onMount } from 'svelte';
-  import { Square, Clock, Plus, ExternalLink } from '@lucide/svelte';
-  import { api } from '../api.js';
-  import { navigate } from '../router.js';
+  import { Square, Clock, Plus, ExternalLink, Pencil, Trash2 } from '@lucide/svelte';
   import { timerStore } from '../stores/timerStore.svelte.js';
-  import { formatDate } from '../utils/dateFormatter.js';
+  import { timeEntryStore } from '../stores';
+  import { confirm } from '../composables/useConfirm.js';
+  import { t } from '../stores/i18n.svelte.js';
   import MobileHeader from './MobileHeader.svelte';
-
-  let worklogs = $state([]);
-  let logsLoading = $state(false);
-  let projects = $state([]);
-  let showLog = $state(false);
-  let saving = $state(false);
-  let form = $state({ project_id: '', duration: '', description: '' });
-  let version = 0;
+  import TimeLogModal from '../dialogs/TimeLogModal.svelte';
 
   const activeTimer = $derived(timerStore.activeTimer);
+  // Most-recent-first; the worklog list/edit/delete + modal all come from the
+  // same store the desktop Time view uses, so behaviour is identical.
+  const worklogs = $derived(
+    [...timeEntryStore.worklogs].sort((a, b) => (b.date ?? 0) - (a.date ?? 0)).slice(0, 20)
+  );
 
   function fmtMinutes(min) {
     if (!min && min !== 0) return '';
@@ -33,70 +31,30 @@
     return w.workspace_key && w.workspace_item_number ? `${w.workspace_key}-${w.workspace_item_number}` : null;
   }
 
-  async function loadWorklogs() {
-    const v = ++version;
-    logsLoading = true;
-    try {
-      const res = await api.time.worklogs.getAll({ limit: 20 });
-      if (v !== version) return;
-      const list = Array.isArray(res) ? res : (res?.items ?? res?.worklogs ?? []);
-      worklogs = [...list].sort((a, b) => (b.date ?? 0) - (a.date ?? 0)).slice(0, 20);
-    } catch (err) {
-      console.error('Failed to load worklogs:', err);
-      worklogs = [];
-    } finally {
-      if (v === version) logsLoading = false;
-    }
-  }
-
-  async function loadProjects() {
-    try {
-      const res = await api.time.projects.getAll();
-      projects = Array.isArray(res) ? res : (res?.items ?? res?.projects ?? []);
-    } catch (err) {
-      console.error('Failed to load projects:', err);
-      projects = [];
-    }
-  }
-
   async function stopTimer() {
     try {
       await timerStore.stop();
-      await loadWorklogs();
+      await timeEntryStore.loadWorklogs();
     } catch (err) {
       console.error('Failed to stop timer:', err);
     }
   }
 
-  function openLog() {
-    showLog = true;
-    if (projects.length === 0) loadProjects();
-  }
-
-  async function submitLog() {
-    const minutes = parseInt(form.duration, 10);
-    if (!form.project_id || !form.description.trim() || !minutes) return;
-    saving = true;
-    try {
-      await api.time.worklogs.create({
-        project_id: parseInt(form.project_id, 10),
-        description: form.description.trim(),
-        date: formatDate(new Date()),
-        duration_minutes: minutes,
-      });
-      form = { project_id: '', duration: '', description: '' };
-      showLog = false;
-      await loadWorklogs();
-    } catch (err) {
-      console.error('Failed to save worklog:', err);
-    } finally {
-      saving = false;
-    }
+  async function removeWorklog(w, e) {
+    e.stopPropagation();
+    const ok = await confirm({
+      title: t('common.delete'),
+      message: t('time.entry.confirmDelete'),
+      confirmText: t('common.delete'),
+      cancelText: t('common.cancel'),
+      variant: 'danger',
+    });
+    if (ok) await timeEntryStore.deleteWorklog(w);
   }
 
   onMount(() => {
     timerStore.initialize();
-    loadWorklogs();
+    timeEntryStore.init();
   });
 </script>
 
@@ -109,11 +67,9 @@
       <div class="t-top">
         <Clock size={18} />
         {#if workItemKey(activeTimer)}
-          <a
-            class="t-key"
-            href={`/m/items/${activeTimer.item_id}`}
-            data-testid="timer-item-link"
-          >{workItemKey(activeTimer)} <ExternalLink size={12} /></a>
+          <a class="t-key" href={`/m/items/${activeTimer.item_id}`} data-testid="timer-item-link">
+            {workItemKey(activeTimer)} <ExternalLink size={12} />
+          </a>
         {:else}
           <span class="t-key">{activeTimer.project_name ?? 'Running'}</span>
         {/if}
@@ -134,42 +90,16 @@
     {/if}
   </section>
 
-  <!-- Quick log -->
+  <!-- Recent worklogs + manual log -->
   <section class="block">
     <div class="block-head">
       <h2>Recent worklogs</h2>
-      <button class="btn-log" onclick={openLog} data-testid="quick-log-open" type="button">
-        <Plus size={16} /> Quick log
+      <button class="btn-log" onclick={() => timeEntryStore.openTimeLogModal()} data-testid="quick-log-open" type="button">
+        <Plus size={16} /> Log time
       </button>
     </div>
 
-    {#if showLog}
-      <form class="log-form" onsubmit={(e) => { e.preventDefault(); submitLog(); }} data-testid="quick-log-form">
-        <label>
-          <span>Project</span>
-          <select bind:value={form.project_id} data-testid="quick-log-project" required>
-            <option value="" disabled>Select a project…</option>
-            {#each projects as p (p.id)}
-              <option value={p.id}>{p.name}</option>
-            {/each}
-          </select>
-        </label>
-        <label>
-          <span>Minutes</span>
-          <input type="number" min="1" bind:value={form.duration} data-testid="quick-log-minutes" placeholder="30" required />
-        </label>
-        <label>
-          <span>Description</span>
-          <input type="text" bind:value={form.description} data-testid="quick-log-description" placeholder="What did you work on?" required />
-        </label>
-        <div class="log-actions">
-          <button type="button" class="btn-cancel" onclick={() => (showLog = false)}>Cancel</button>
-          <button type="submit" class="btn-save" disabled={saving} data-testid="quick-log-save">{saving ? 'Saving…' : 'Save'}</button>
-        </div>
-      </form>
-    {/if}
-
-    {#if logsLoading && worklogs.length === 0}
+    {#if timeEntryStore.worklogsLoading && worklogs.length === 0}
       <p class="msg">Loading…</p>
     {:else if worklogs.length === 0}
       <p class="msg" data-testid="worklogs-empty">No worklogs yet.</p>
@@ -177,20 +107,37 @@
       <ul class="worklogs" data-testid="worklogs-list">
         {#each worklogs as w (w.id)}
           <li class="wl">
-            <div class="wl-main">
+            <button class="wl-main" onclick={() => timeEntryStore.editWorklog(w)} data-testid="worklog-edit" type="button">
               <span class="wl-desc">{w.description || w.project_name || 'Worklog'}</span>
-              {#if workItemKey(w)}<span class="wl-key">{workItemKey(w)}</span>{/if}
-            </div>
-            <div class="wl-meta">
-              <span class="wl-dur">{fmtMinutes(w.duration_minutes)}</span>
-              <span class="wl-day">{fmtDay(w.date)}</span>
-            </div>
+              <span class="wl-sub">
+                {#if workItemKey(w)}<span class="wl-key">{workItemKey(w)}</span>{/if}
+                <span class="wl-dur">{fmtMinutes(w.duration_minutes)}</span>
+                <span class="wl-day">{fmtDay(w.date)}</span>
+              </span>
+            </button>
+            <button class="wl-del" onclick={(e) => removeWorklog(w, e)} data-testid="worklog-delete" aria-label="Delete worklog" type="button">
+              <Trash2 size={16} />
+            </button>
           </li>
         {/each}
       </ul>
     {/if}
   </section>
 </div>
+
+<!-- Full worklog dialog — identical to the desktop Time view (project/item/
+     date/start/end/duration with sync, create + edit). -->
+{#if timeEntryStore.showTimeLogModal}
+  <TimeLogModal
+    projects={timeEntryStore.projects}
+    customers={timeEntryStore.customers}
+    workItems={timeEntryStore.workItems}
+    workspaces={timeEntryStore.workspaces}
+    editingWorklog={timeEntryStore.editingWorklog}
+    onsave={(e) => timeEntryStore.saveWorklog(e.detail)}
+    oncancel={() => timeEntryStore.closeTimeLogModal()}
+  />
+{/if}
 
 <style>
   .content { padding: 0.75rem; display: flex; flex-direction: column; gap: 1rem; }
@@ -234,31 +181,24 @@
     background-color: var(--ds-surface); color: var(--ds-text); font-size: 0.8125rem; cursor: pointer;
   }
 
-  .log-form {
-    display: flex; flex-direction: column; gap: 0.6rem;
-    padding: 0.85rem; margin-bottom: 0.85rem;
-    border: 1px solid var(--ds-border); border-radius: var(--radius-lg, 8px);
-    background-color: var(--ds-surface-raised);
-  }
-  .log-form label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.75rem; color: var(--ds-text-subtle); }
-  .log-form select, .log-form input {
-    padding: 0.55rem; border: 1px solid var(--ds-border); border-radius: var(--radius-md, 6px);
-    background-color: var(--ds-background-input, var(--ds-surface)); color: var(--ds-text); font-size: 0.9375rem;
-  }
-  .log-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
-  .btn-cancel { padding: 0.5rem 1rem; border: 1px solid var(--ds-border); border-radius: var(--radius-md, 6px); background: var(--ds-surface); color: var(--ds-text); cursor: pointer; }
-  .btn-save { padding: 0.5rem 1.25rem; border: none; border-radius: var(--radius-md, 6px); background: var(--ds-interactive); color: var(--ds-text-inverse, #fff); font-weight: var(--font-semibold, 600); cursor: pointer; }
-  .btn-save:disabled { opacity: 0.6; }
-
   .worklogs { list-style: none; margin: 0; padding: 0; border: 1px solid var(--ds-border); border-radius: var(--radius-lg, 8px); overflow: hidden; }
-  .wl { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.7rem 0.85rem; }
+  .wl { display: flex; align-items: center; }
   .wl:not(:last-child) { border-bottom: 1px solid var(--ds-border); }
-  .wl-main { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .wl-main {
+    flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px;
+    padding: 0.7rem 0.85rem; text-align: left; background: none; border: none; cursor: pointer;
+  }
+  .wl-main:active { background-color: var(--ds-background-neutral-hovered); }
   .wl-desc { font-size: 0.875rem; color: var(--ds-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .wl-key { font-family: var(--font-mono, monospace); font-size: 0.6875rem; color: var(--ds-text-subtle); }
-  .wl-meta { flex-shrink: 0; text-align: right; }
-  .wl-dur { display: block; font-weight: var(--font-semibold, 600); font-size: 0.875rem; color: var(--ds-text); }
-  .wl-day { font-size: 0.6875rem; color: var(--ds-text-subtle); }
+  .wl-sub { display: flex; align-items: center; gap: 0.6rem; font-size: 0.6875rem; color: var(--ds-text-subtle); }
+  .wl-key { font-family: var(--font-mono, monospace); }
+  .wl-dur { font-weight: var(--font-semibold, 600); color: var(--ds-text); }
+  .wl-del {
+    flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
+    width: 44px; align-self: stretch; border: none; border-left: 1px solid var(--ds-border);
+    background: none; color: var(--ds-text-subtle); cursor: pointer;
+  }
+  .wl-del:active { background-color: var(--ds-background-neutral-hovered); color: var(--ds-text-danger, var(--ds-danger)); }
 
   .msg { padding: 1.5rem; text-align: center; color: var(--ds-text-subtle); font-size: 0.875rem; }
 </style>

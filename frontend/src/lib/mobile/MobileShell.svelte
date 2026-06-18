@@ -5,6 +5,7 @@
   import { startNotificationPoller } from '../stores/notifications.js';
   import { registerMobileServiceWorker } from './pushClient.js';
   import MobileNav from './MobileNav.svelte';
+  import GlobalConfirmDialog from '../dialogs/GlobalConfirmDialog.svelte';
   import MyWorkView from './MyWorkView.svelte';
   import PersonalView from './PersonalView.svelte';
   import TimerView from './TimerView.svelte';
@@ -41,6 +42,10 @@
     <MobileNav />
   {/if}
 </div>
+
+<!-- Global confirm host (the mobile shell bypasses MainApp, which normally
+     mounts this) so confirm() dialogs render on the mobile surface. -->
+<GlobalConfirmDialog />
 
 <style>
   .mobile-shell {
