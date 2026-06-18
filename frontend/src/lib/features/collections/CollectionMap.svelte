@@ -197,17 +197,16 @@ async function loadStatusesGlobal() {
         itemType: null
       });
     } else {
-      // Build the full hierarchy path by walking up from current parent
-      const pathItems = [];
-      let currentId = currentParentId;
-
       try {
-        // Walk up the hierarchy to build the path
-        while (currentId !== null) {
-          const item = await api.items.get(currentId);
-          pathItems.unshift(item); // Add to beginning of array
-          currentId = item.parent_id;
-        }
+        // Build the path from root down to the current parent. /items/{id}/ancestors
+        // returns the chain root→direct-parent (excluding the item itself) in one
+        // request; append the current parent to complete the path. Two requests
+        // total instead of one GET /items/{id} per ancestor level.
+        const [ancestors, currentItem] = await Promise.all([
+          api.items.getAncestors(currentParentId),
+          api.items.get(currentParentId),
+        ]);
+        const pathItems = [...(ancestors || []), currentItem];
 
         // Add root level first
         newBreadcrumbs.push({
