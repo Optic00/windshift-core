@@ -105,6 +105,20 @@
     }
   });
 
+  // Lock <html>/<body> to the visible viewport while the mobile PWA shell is
+  // active, so the page can't scroll or rubber-band behind the notch / dynamic
+  // browser chrome. Driven by route (the same signal that selects MobileShell)
+  // rather than a viewport media query, so it also covers iPads/tablets whose
+  // width exceeds the phone breakpoint but still render the mobile surface.
+  // app.css scopes the lock to html.mobile-shell-active.
+  $effect(() => {
+    if (typeof document === 'undefined') return;
+    document.documentElement.classList.toggle(
+      'mobile-shell-active',
+      isMobileRoute($currentRoute.view)
+    );
+  });
+
   // After an interactive login on a phone-sized viewport, send the user to the
   // mobile surface — unless they've opted into the desktop site, or they logged
   // in on a deep link (only redirect from the default landing page). Installed
@@ -185,7 +199,10 @@
   }
 </script>
 
-<div class="min-h-screen flex flex-col" style="background-color: var(--ds-surface);">
+<div
+  class="flex flex-col {isMobileRoute($currentRoute.view) ? 'h-dvh overflow-hidden' : 'min-h-screen'}"
+  style="background-color: var(--ds-surface);"
+>
   <!-- Show loading screen during initial setup check -->
   {#if setupLoading}
     <div class="min-h-screen flex items-center justify-center w-full">
