@@ -25,10 +25,67 @@
   let loading = $state(false);
   let highlightedIndex = $state(0);
   let containerElement = $state(null);
+  // Measured menu dimensions, used to keep the picker on screen. Updated via a
+  // ResizeObserver below. On narrow mobile viewports the cursor sits near the
+  // right edge of the editor, so the raw coords from ProseMirror place the menu
+  // off-screen (or partly past the viewport edge), making it unreachable — no
+  // user can be selected (WI-431).
+  let containerWidth = $state(0);
+  let containerHeight = $state(0);
+  let viewportWidth = $state(typeof window !== 'undefined' ? window.innerWidth : 0);
+  let viewportHeight = $state(typeof window !== 'undefined' ? window.innerHeight : 0);
 
   // Load users on mount
   onMount(async () => {
     await loadUsers();
+  });
+
+  // Measure the menu size so viewport clamping is accurate. We update both on
+  // open (so the first clamped render is correct, before the ResizeObserver's
+  // initial callback lands) and continuously as the filtered list changes.
+  $effect(() => {
+    if (!open || !containerElement) return;
+    const measure = () => {
+      containerWidth = containerElement.offsetWidth;
+      containerHeight = containerElement.offsetHeight;
+    };
+    measure();
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(() => measure());
+      ro.observe(containerElement);
+      return () => ro.disconnect();
+    }
+  });
+
+  // Track viewport size so clamping stays correct on rotation / resize.
+  useEventListener(() => window, 'resize', () => {
+    viewportWidth = window.innerWidth;
+    viewportHeight = window.innerHeight;
+  });
+  // visualViewport covers mobile browser chrome that hides/shows the address
+  // bar (changes the available layout height while typing). Guarded because the
+  // property is undefined in jsdom (and on very old browsers).
+  if (typeof window !== 'undefined' && window.visualViewport) {
+    useEventListener(() => window.visualViewport, 'resize', () => {
+      viewportWidth = window.visualViewport.width;
+      viewportHeight = window.visualViewport.height;
+    });
+  }
+
+  // Clamp the requested cursor position so the entire menu stays within the
+  // viewport, with a small margin from each edge. This is what makes the picker
+  // usable on mobile: the raw cursor coords can land near the right/bottom edge
+  // of a narrow screen, pushing the menu off-screen and out of reach.
+  const EDGE_MARGIN = 8;
+  let clampedPosition = $derived.by(() => {
+    const w = containerWidth || 0;
+    const h = containerHeight || 0;
+    const maxX = Math.max(EDGE_MARGIN, viewportWidth - w - EDGE_MARGIN);
+    const maxY = Math.max(EDGE_MARGIN, viewportHeight - h - EDGE_MARGIN);
+    return {
+      x: Math.min(Math.max(EDGE_MARGIN, position.x), maxX),
+      y: Math.min(Math.max(EDGE_MARGIN, position.y), maxY),
+    };
   });
 
   // Handle keyboard events using runed.
@@ -130,7 +187,7 @@
   <div
     bind:this={containerElement}
     class="mention-picker"
-    style="top: {position.y}px; left: {position.x}px;"
+    style="top: {clampedPosition.y}px; left: {clampedPosition.x}px;"
     role="listbox"
     id={listboxId}
     aria-label={t('pickers.mentionUsers')}
@@ -185,6 +242,19 @@
     max-width: 320px;
     max-height: 300px;
     overflow-y: auto;
+    /* Keep the menu inside the viewport on small/touch screens. The clamp in
+       the script positions it, but also cap width so a 320px menu never
+       overflows a 320px phone. */
+    box-sizing: border-box;
+  }
+
+  /* On very narrow viewports, allow the menu to shrink to fit instead of
+     forcing min-width: 240px and overflowing the screen edge. */
+  @media (max-width: 360px) {
+    .mention-picker {
+      min-width: 0;
+      width: calc(100vw - 16px);
+    }
   }
 
   .loading, .no-results {
@@ -210,6 +280,14 @@
   .mention-option:hover,
   .mention-option.highlighted {
     background: var(--ds-background-neutral-hovered, rgba(59, 130, 246, 0.08));
+  }
+
+  /* Larger, touch-friendly tap targets on small screens so a user can be
+     reliably selected by tap (WI-431). */
+  @media (max-width: 768px) {
+    .mention-option {
+      padding: 12px 12px;
+    }
   }
 
   .info {
