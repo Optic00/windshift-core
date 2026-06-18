@@ -1,5 +1,4 @@
 <script>
-  import { onMount } from 'svelte';
   import { Star, Play, Loader, ChevronDown, GitPullRequest, Bot } from '@lucide/svelte';
   import { api } from '../api.js';
   import { agentRuns } from '../api/agentRuns.js';
@@ -9,6 +8,7 @@
   import { formatDate } from '../utils/dateFormatter.js';
   import { formatItemKey } from '../utils/itemKey.js';
   import MobileHeader from './MobileHeader.svelte';
+  import MobileItemRow from './MobileItemRow.svelte';
   import StatusPill from '../components/StatusPill.svelte';
   import Comments from '../features/items/Comments.svelte';
   import ItemSCMLinks from '../features/items/ItemSCMLinks.svelte';
@@ -28,6 +28,11 @@
   let watchBusy = $state(false);
   let personalTaskCount = $state(0);
   let startingTimer = $state(false);
+  let children = $state([]);
+  // Bumped on every itemId change so in-flight loads for a previous item can't
+  // write stale state when the user navigates item → item (e.g. tapping a
+  // sub-item) without the component remounting.
+  let loadToken = 0;
 
   // SCM (commits/PRs) + coding-agent panels — gated exactly like the desktop
   // ItemDetail: SCM via the per-item connection-status probe (has_repositories),
@@ -42,55 +47,80 @@
   const projectId = $derived(item?.time_project_id ?? item?.effective_project_id ?? null);
   const canStartTimer = $derived(!!item && !timerStore.hasActive && !!projectId);
 
-  async function loadItem() {
+  function normalizeChild(c) {
+    return {
+      itemId: c.id,
+      itemKey: formatItemKey(c),
+      title: c.title,
+      statusName: c.status_name,
+      statusColor: c.status_color,
+      priorityName: c.priority_name,
+      priorityColor: c.priority_color,
+      dueDate: c.due_date ? new Date(c.due_date) : null,
+    };
+  }
+
+  async function loadItem(id, token) {
     loading = true;
     errored = false;
     try {
-      item = await api.items.get(itemId);
+      const loaded = await api.items.get(id);
+      if (token !== loadToken) return;
+      item = loaded;
     } catch (err) {
+      if (token !== loadToken) return;
       console.error('Failed to load item:', err);
       errored = true;
     } finally {
-      loading = false;
+      if (token === loadToken) loading = false;
     }
   }
 
-  async function loadAux() {
-    // Best-effort side data — failures here shouldn't blank the screen.
+  async function loadAux(id, token) {
+    // Best-effort side data — failures here shouldn't blank the screen. Every
+    // assignment is guarded by the load token so a stale item's response can't
+    // overwrite the current one.
     try {
-      const res = await api.items.getAvailableStatusTransitions(itemId);
-      transitions = res?.available_transitions ?? [];
+      const res = await api.items.getAvailableStatusTransitions(id);
+      if (token === loadToken) transitions = res?.available_transitions ?? [];
     } catch (err) {
       console.error('Failed to load transitions:', err);
     }
     try {
-      const res = await api.items.getWatchStatus(itemId);
-      isWatching = res?.watching || false;
+      const res = await api.items.getWatchStatus(id);
+      if (token === loadToken) isWatching = res?.watching || false;
     } catch (err) {
       console.error('Failed to load watch status:', err);
     }
     try {
-      const tasks = await api.items.getPersonalTasks(itemId);
-      personalTaskCount = Array.isArray(tasks) ? tasks.length : (tasks?.items?.length ?? 0);
+      const tasks = await api.items.getPersonalTasks(id);
+      if (token === loadToken) personalTaskCount = Array.isArray(tasks) ? tasks.length : (tasks?.items?.length ?? 0);
     } catch {
-      personalTaskCount = 0;
+      if (token === loadToken) personalTaskCount = 0;
+    }
+    try {
+      const res = await api.items.getChildren(id);
+      const list = Array.isArray(res) ? res : (res?.items ?? []);
+      if (token === loadToken) children = list.filter((c) => c?.id).map(normalizeChild);
+    } catch {
+      if (token === loadToken) children = [];
     }
     // SCM gate: show the panel unless the connection probe says the workspace
     // has no repositories (matches ItemSCMLinks' own has_repositories gate;
     // personal workspaces have no repos, so this also covers the desktop's
     // non-personal check).
     try {
-      const cs = await api.itemSCMLinks.getConnectionStatus(itemId);
-      scmAvailable = cs?.has_repositories !== false;
+      const cs = await api.itemSCMLinks.getConnectionStatus(id);
+      if (token === loadToken) scmAvailable = cs?.has_repositories !== false;
     } catch {
-      scmAvailable = false;
+      if (token === loadToken) scmAvailable = false;
     }
     // Agent gate: a coding-agent session exists iff a one-row probe is non-empty.
     try {
-      const runs = await agentRuns.listForItem(itemId, { limit: 1 });
-      hasAgentRuns = (runs?.length ?? 0) > 0;
+      const runs = await agentRuns.listForItem(id, { limit: 1 });
+      if (token === loadToken) hasAgentRuns = (runs?.length ?? 0) > 0;
     } catch {
-      hasAgentRuns = false;
+      if (token === loadToken) hasAgentRuns = false;
     }
   }
 
@@ -100,7 +130,7 @@
     try {
       const updated = await api.items.transition(itemId, statusId);
       item = { ...item, ...updated };
-      await loadAux();
+      await loadAux(itemId, loadToken);
     } catch (err) {
       console.error('Failed to transition item:', err);
     } finally {
@@ -158,9 +188,25 @@
     }
   }
 
-  onMount(async () => {
-    await loadItem();
-    if (!errored) loadAux();
+  // Reload whenever the item id changes — the component is not remounted when
+  // navigating item → item (e.g. tapping a sub-item), so onMount wouldn't fire.
+  $effect(() => {
+    const id = itemId;
+    if (id == null) return;
+    const token = ++loadToken;
+    // Reset transient state for the incoming item.
+    item = null;
+    transitions = [];
+    isWatching = false;
+    personalTaskCount = 0;
+    children = [];
+    scmAvailable = false;
+    hasAgentRuns = false;
+    scmOpen = false;
+    agentOpen = false;
+    loadItem(id, token).then(() => {
+      if (token === loadToken && !errored) loadAux(id, token);
+    });
   });
 </script>
 
@@ -263,6 +309,18 @@
       {/if}
     </div>
 
+    <!-- Sub-items -->
+    {#if children.length > 0}
+      <section class="subitems" data-testid="detail-subitems">
+        <h2 class="section-title">Sub-items <span class="count">{children.length}</span></h2>
+        <div class="subitems-list">
+          {#each children as child (child.itemId)}
+            <MobileItemRow {...child} />
+          {/each}
+        </div>
+      </section>
+    {/if}
+
     <!-- Commits & pull requests (collapsible; mounts on open) -->
     {#if scmAvailable}
       <section class="panel" data-testid="scm-panel">
@@ -293,9 +351,11 @@
       </section>
     {/if}
 
-    <!-- Comments -->
+    <!-- Comments. Keyed on itemId so it reloads when navigating item → item. -->
     <section class="comments">
-      <Comments {itemId} />
+      {#key itemId}
+        <Comments {itemId} />
+      {/key}
     </section>
   </div>
 {/if}
@@ -361,6 +421,22 @@
   :global(.chev) { transition: transform var(--duration-fast, 100ms) ease; color: var(--ds-icon-subtle, var(--ds-text-subtle)); }
   :global(.chev.open) { transform: rotate(180deg); }
   .panel-body { padding: 0.5rem 0.85rem 0.85rem; border-top: 1px solid var(--ds-border); overflow-x: auto; }
+
+  .subitems { margin-bottom: 1rem; }
+  .section-title {
+    display: flex; align-items: center; gap: 0.5rem;
+    font-size: 0.9375rem; font-weight: var(--font-semibold, 600); color: var(--ds-text); margin: 0 0 0.5rem;
+  }
+  .section-title .count {
+    font-size: 0.75rem; font-weight: var(--font-medium, 500); color: var(--ds-text-subtle);
+    background-color: var(--ds-background-neutral); border-radius: var(--radius-full, 9999px); padding: 0 0.45rem;
+  }
+  .subitems-list {
+    border: 1px solid var(--ds-border); border-radius: var(--radius-lg, 8px); overflow: hidden;
+  }
+  /* MobileItemRow draws its own bottom border; drop it on the last row so it
+     doesn't double the container border. */
+  .subitems-list :global([data-testid='mobile-item-row']:last-child) { border-bottom: none; }
 
   .comments { border-top: 1px solid var(--ds-border); padding-top: 1rem; }
 </style>
