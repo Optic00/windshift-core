@@ -159,3 +159,54 @@ describe('MentionPicker — Enter while open must not break the mention (WI-200)
     expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ username: 'bob' }));
   });
 });
+
+describe('MentionPicker — stays on the visible viewport on mobile (WI-431)', () => {
+  // jsdom reports offsetWidth/offsetHeight as 0 (no layout), so the picker
+  // falls back to its CSS max bounds (320x300) for the clamp. That's the same
+  // worst case the component guards against, so the assertions below are exact.
+  const EDGE_MARGIN = 8;
+
+  afterEach(() => {
+    delete window.visualViewport;
+  });
+
+  function styleOf(el) {
+    return { top: el.style.top, left: el.style.left };
+  }
+
+  test('clamps a bottom/right cursor into the window when no keyboard is open', async () => {
+    window.innerWidth = 320;
+    window.innerHeight = 568;
+    // Cursor near the bottom-right edge — raw coords would push the menu
+    // off-screen on both axes.
+    render(MentionPicker, { props: { open: true, position: { x: 300, y: 540 } } });
+
+    await vi.waitFor(() => {
+      expect(document.querySelector('.mention-picker')).toBeTruthy();
+    });
+    const el = document.querySelector('.mention-picker');
+
+    // maxX = max(8, 320 - 320 - 8) = 8 ; maxY = max(8, 568 - 300 - 8) = 260
+    expect(styleOf(el)).toEqual({ left: '8px', top: '260px' });
+  });
+
+  test('clamps against visualViewport so the menu clears the on-screen keyboard', async () => {
+    // Full window is tall, but the keyboard leaves only 300px visible.
+    window.innerWidth = 390;
+    window.innerHeight = 844;
+    window.visualViewport = { width: 390, height: 300, offsetLeft: 0, offsetTop: 0 };
+
+    // Composer pinned to the bottom of the *visible* area: cursor at y ~ 290.
+    render(MentionPicker, { props: { open: true, position: { x: 20, y: 290 } } });
+
+    await vi.waitFor(() => {
+      expect(document.querySelector('.mention-picker')).toBeTruthy();
+    });
+    const el = document.querySelector('.mention-picker');
+
+    // Without visualViewport this would clamp to innerHeight (844-300-8=536),
+    // leaving top:290 -> menu renders into the keyboard. With it:
+    // maxY = max(8, 300 - 300 - 8) = 8, so the menu is pulled up on-screen.
+    expect(el.style.top).toBe(`${EDGE_MARGIN}px`);
+  });
+});

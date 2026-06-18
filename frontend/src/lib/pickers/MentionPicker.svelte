@@ -25,34 +25,63 @@
   let loading = $state(false);
   let highlightedIndex = $state(0);
   let containerElement = $state(null);
+  // Measured menu size, used to keep the picker fully on-screen.
+  let menuWidth = $state(0);
+  let menuHeight = $state(0);
 
   // Load users on mount
   onMount(async () => {
     await loadUsers();
   });
 
+  // Measure the rendered menu after each content change so the clamp below is
+  // accurate. The list height changes as results load and as the query narrows
+  // it, so re-run whenever those change. The picker is a transient popup, so a
+  // plain post-render measure is enough — no ResizeObserver needed.
+  $effect(() => {
+    if (!open || !containerElement) return;
+    // Touch the reactive deps that change the menu's size.
+    filteredUsers;
+    loading;
+    isPersonalWorkspace;
+    menuWidth = containerElement.offsetWidth;
+    menuHeight = containerElement.offsetHeight;
+  });
+
   // Clamp the requested cursor position so the whole menu stays within the
-  // viewport, with a small margin from each edge. On narrow mobile viewports
-  // the cursor sits near the right edge of the editor, so the raw coords from
-  // ProseMirror would push the menu off-screen and out of reach — no user can
-  // be selected (WI-431).
+  // *visible* viewport, with a small margin from each edge (WI-431).
   //
-  // The menu is a transient popup that re-renders on every keystroke (position
-  // changes as you type), so we read the window size at compute time rather
-  // than tracking it reactively, and clamp against the CSS max bounds below
-  // instead of measuring the live element. That keeps it always reachable
-  // without a ResizeObserver or resize listeners.
+  // Two things make the raw ProseMirror cursor coords unusable on mobile:
+  //  - On a narrow screen the cursor sits near the right edge, pushing a
+  //    fixed-position menu off the right side.
+  //  - When the on-screen keyboard is open the visible area shrinks, but
+  //    window.innerHeight stays the full window height. The mobile chat
+  //    composer is pinned to the bottom, so the cursor lands near the visible
+  //    bottom and an unclamped (or innerHeight-clamped) menu renders *behind
+  //    the keyboard* — invisible and unreachable. visualViewport reports the
+  //    real visible box (size + offset), so we clamp against that.
+  //
+  // The menu re-renders on every keystroke (position changes as you type), so
+  // reading the viewport at compute time is enough — no resize listeners.
   const EDGE_MARGIN = 8;
-  const MENU_MAX_W = 320; // keep in sync with .mention-picker max-width
-  const MENU_MAX_H = 300; // keep in sync with .mention-picker max-height
+  const FALLBACK_W = 320; // .mention-picker max-width, before it is measured
+  const FALLBACK_H = 300; // .mention-picker max-height, before it is measured
   let clampedPosition = $derived.by(() => {
-    const vw = typeof window !== 'undefined' ? window.innerWidth : 0;
-    const vh = typeof window !== 'undefined' ? window.innerHeight : 0;
-    const maxX = Math.max(EDGE_MARGIN, vw - MENU_MAX_W - EDGE_MARGIN);
-    const maxY = Math.max(EDGE_MARGIN, vh - MENU_MAX_H - EDGE_MARGIN);
+    const win = typeof window !== 'undefined' ? window : null;
+    const vv = win?.visualViewport ?? null;
+    const vw = vv?.width ?? win?.innerWidth ?? 0;
+    const vh = vv?.height ?? win?.innerHeight ?? 0;
+    const offX = vv?.offsetLeft ?? 0;
+    const offY = vv?.offsetTop ?? 0;
+    const w = menuWidth || FALLBACK_W;
+    const h = menuHeight || FALLBACK_H;
+    const minX = offX + EDGE_MARGIN;
+    const minY = offY + EDGE_MARGIN;
+    const maxX = Math.max(minX, offX + vw - w - EDGE_MARGIN);
+    const maxY = Math.max(minY, offY + vh - h - EDGE_MARGIN);
     return {
-      x: Math.min(Math.max(EDGE_MARGIN, position.x), maxX),
-      y: Math.min(Math.max(EDGE_MARGIN, position.y), maxY),
+      x: Math.min(Math.max(minX, position.x), maxX),
+      y: Math.min(Math.max(minY, position.y), maxY),
     };
   });
 
