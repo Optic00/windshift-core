@@ -57,24 +57,24 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Mobile PWA surface (installed standalone or on a phone-sized viewport).
-   Locks the page to exactly the visible viewport so the app can't scroll or
-   rubber-band behind/under the notch and dynamic browser chrome. The mobile
-   shell manages its own internal scrolling via .mobile-scroll; this keeps
-   <body> from contributing extra height (which is what let fixed bars and
-   content slip under the notch). */
-@media (max-width: 768px) {
-  html,
-  body {
-    /* 100dvh tracks the dynamic viewport (shrinks when the iOS address bar
-       is shown) instead of 100vh, which is the larger "largest" viewport. */
-    height: 100%;
-    overflow: hidden;
-    /* Stop the whole-document pull-to-refresh / bounce that drags the app. */
-    overscroll-behavior: none;
-    /* Disallow the page-level pinch/double-tap zoom handled by the meta tag. */
-    touch-action: manipulation;
-  }
+/* Mobile PWA surface. Locks the page to exactly the visible viewport so the
+   app can't scroll or rubber-band behind/under the notch and dynamic browser
+   chrome. The mobile shell manages its own internal scrolling via
+   .mobile-scroll; this keeps <body> from contributing extra height (which is
+   what let fixed bars and content slip under the notch).
+
+   Scoped to html.mobile-shell-active (toggled by App.svelte for mobile routes)
+   rather than a width media query, so it applies on every device that renders
+   the mobile surface — including iPads and other tablets whose width exceeds
+   the phone breakpoint. */
+html.mobile-shell-active,
+html.mobile-shell-active body {
+  height: 100%;
+  overflow: hidden;
+  /* Stop the whole-document pull-to-refresh / bounce that drags the app. */
+  overscroll-behavior: none;
+  /* Disallow the page-level pinch/double-tap zoom handled by the meta tag. */
+  touch-action: manipulation;
 }
 
 /* Clickable elements should have pointer cursor */
