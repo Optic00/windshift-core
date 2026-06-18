@@ -15,6 +15,7 @@
   import MobileItemDetail from './MobileItemDetail.svelte';
   import SearchView from './SearchView.svelte';
   import MobileCreateDialog from './MobileCreateDialog.svelte';
+  import IosInstallSheet from './IosInstallSheet.svelte';
 
   const view = $derived($currentRoute.view);
   const TAB_VIEWS = ['mobile-my-work', 'mobile-personal', 'mobile-timer', 'mobile-notifications'];
@@ -67,6 +68,10 @@
 
 <!-- Simple create dialog, reachable from the FAB on any tab. -->
 <MobileCreateDialog bind:isOpen={createOpen} />
+
+<!-- iOS "Add to Home Screen" instructions (opened from the user menu via the
+     install helper's store; no-op until triggered). -->
+<IosInstallSheet />
 
 <style>
   .mobile-shell {

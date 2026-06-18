@@ -380,6 +380,7 @@ export default {
       themeDark: 'Dark',
       themeSystem: 'System',
       desktopSite: 'Desktop site',
+      addToHomeScreen: 'Add to Home Screen',
     },
   },
 

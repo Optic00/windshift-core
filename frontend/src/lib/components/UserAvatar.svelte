@@ -2,10 +2,11 @@
   import { authStore, workspacesStore, attachmentStatus } from '../stores';
   import { navigate } from '../router.js';
   import DropdownMenu from '../layout/DropdownMenu.svelte';
-  import { User, Home, Shield, Sun, Moon, Monitor } from '@lucide/svelte';
+  import { User, Home, Shield, Sun, Moon, Monitor, Download } from '@lucide/svelte';
   import { themeStore } from '../stores/theme.svelte.js';
   import { t } from '../stores/i18n.svelte.js';
   import { api } from '../api';
+  import { installAvailable, requestInstall } from '../mobile/installClient.js';
 
   let {
     expanded = false,
@@ -185,6 +186,14 @@
       ]
     },
     { type: 'divider' },
+    ...((minimal && installAvailable()) ? [{
+      id: 'install-app',
+      type: 'regular',
+      icon: Download,
+      iconColor: '#3b82f6',
+      title: t('components.userAvatar.addToHomeScreen'),
+      onClick: () => { requestInstall(); }
+    }, { type: 'divider' }] : []),
     ...(minimal ? [{
       id: 'desktop-site',
       type: 'regular',
