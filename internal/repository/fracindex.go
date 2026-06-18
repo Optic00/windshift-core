@@ -66,11 +66,11 @@ func IsFracIndexUniqueViolation(err error) bool {
 }
 
 // IsWorkspaceItemNumberUniqueViolation reports whether err is specifically a
-// UNIQUE-constraint violation on (workspace_id, workspace_item_number). Two
-// concurrent inserts into a workspace with no existing rows can both compute
-// item number 1 (nothing for GetNextWorkspaceItemNumber's FOR UPDATE to lock),
-// so callers retry the whole transaction on this; the second attempt sees the
-// committed row, locks it, and gets a fresh number.
+// UNIQUE-constraint violation on (workspace_id, workspace_item_number).
+// GetNextWorkspaceItemNumber now serializes allocation per workspace with an
+// advisory lock, so this should not fire in normal operation; callers keep the
+// whole-transaction retry as a defensive backstop (e.g. a number assigned
+// outside that path).
 func IsWorkspaceItemNumberUniqueViolation(err error) bool {
 	if err == nil {
 		return false

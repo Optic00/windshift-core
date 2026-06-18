@@ -621,28 +621,46 @@ func (r *ItemRepository) ListCustomFieldValuesByWorkspace(workspaceID int) (*sql
 	return rows, nil
 }
 
+// itemNumberAdvisoryLockClass namespaces the transaction-scoped advisory lock
+// taken by GetNextWorkspaceItemNumber (Postgres). pg_advisory_xact_lock's first
+// argument is a lock class; pairing it with the workspace id confines the lock
+// to per-workspace number allocation and avoids clashing with any other
+// advisory-lock keyspace.
+const itemNumberAdvisoryLockClass = 0x4954 // 'IT'
+
 // GetNextWorkspaceItemNumber returns the next item number for a workspace.
 //
-// On Postgres the current-max row is locked via FOR UPDATE so concurrent
-// allocators for the same workspace serialize on it rather than all reading
-// the same MAX and colliding on items_workspace_id_workspace_item_number_key.
-// FOR UPDATE is illegal with an aggregate, so we select the max row itself and
-// add 1 in Go. SQLite ignores the clause; its global writer lock already
-// serializes writing transactions. The lock prevents collisions once a
-// workspace has at least one item; the very first concurrent inserts into an
-// empty workspace have no row to lock, so callers must still retry the whole
-// transaction on IsWorkspaceItemNumberUniqueViolation (after which a row
-// exists and the lock serializes the rest). Mirrors GenerateFracIndexForNewItem.
+// On Postgres, allocation is serialized per workspace with a transaction-scoped
+// advisory lock so concurrent allocators don't all read the same MAX and
+// collide on items_workspace_id_workspace_item_number_key. A prior FOR UPDATE
+// on the current-max row couldn't cover an empty workspace (no row to lock), so
+// the first batch of concurrent inserts exhausted the unique-violation retry
+// budget; the advisory lock holds even when no row exists yet. SQLite needs no
+// lock — its global writer lock already serializes writing transactions.
+// Mirrors GenerateFracIndexForNewItem.
 func (r *ItemRepository) GetNextWorkspaceItemNumber(tx database.Tx, workspaceID int) (int, error) {
+	// Serialize per-workspace number assignment on Postgres. MAX+1 alone races:
+	// `ORDER BY ... DESC LIMIT 1 FOR UPDATE` has no row to lock on a fresh
+	// workspace (and a concurrently-inserted higher row isn't visible to an
+	// already-planned query), so N concurrent inserts all compute the same
+	// number. Only one wins per unique-violation retry round, so a batch of 10
+	// creates blows through the bounded retry budget and 500s. Unlike
+	// frac_index, workspace_item_number must be dense, so the jitter trick can't
+	// apply. A transaction-scoped advisory lock keyed on the workspace
+	// serializes just this numbering step — it's released on commit/rollback and
+	// leaves cross-workspace creates fully parallel. SQLite already serializes
+	// writers at the database level, so MAX+1 is safe there and needs no lock.
+	if r.db.GetDriverName() == "postgres" {
+		if _, err := tx.Exec(`SELECT pg_advisory_xact_lock(?, ?)`, itemNumberAdvisoryLockClass, workspaceID); err != nil {
+			return 0, fmt.Errorf("failed to acquire item-number lock: %w", err)
+		}
+	}
 	q := `
 		SELECT workspace_item_number
 		FROM items
 		WHERE workspace_id = ?
 		ORDER BY workspace_item_number DESC
 		LIMIT 1`
-	if r.db.GetDriverName() == "postgres" {
-		q += " FOR UPDATE"
-	}
 	var maxNumber sql.NullInt64
 	err := tx.QueryRow(q, workspaceID).Scan(&maxNumber)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
