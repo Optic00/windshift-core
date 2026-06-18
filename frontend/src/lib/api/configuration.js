@@ -109,6 +109,11 @@ export const linkTypes = {
 
 export const links = {
   getForItem: (type, id) => fetchAPI(`/${type}/${id}/links`),
+  // Batch variant of getForItem('items', ...): returns links keyed by item id
+  // ({ "<id>": { outgoing, incoming } }) for many items in one request. Used by
+  // board/roadmap dependency badges so a board render is one request instead of
+  // one per card. Callers must chunk to <= 500 ids per call (server cap).
+  getForItems: (ids) => fetchAPI(`/links/batch?ids=${ids.join(',')}`),
   // Symmetric to getForItem for the page-detail "Work items" popover.
   // Routes through the same handler (GET /pages/{id}/links).
   getForPage: (pageId) => fetchAPI(`/pages/${pageId}/links`),

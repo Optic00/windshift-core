@@ -98,6 +98,7 @@ func RegisterItemRoutes(deps *Deps) {
 	api.HandleH("POST /links", auth(http.HandlerFunc(deps.Items.ItemLink.CreateLink)))
 	api.HandleH("DELETE /links/{id}", auth(http.HandlerFunc(deps.Items.ItemLink.DeleteLink)))
 	api.HandleH("GET /links/search", auth(http.HandlerFunc(deps.Items.ItemLink.SearchLinkableItems)))
+	api.HandleH("GET /links/batch", auth(http.HandlerFunc(deps.Items.ItemLink.GetLinksForItemsBatch)))
 	api.HandleH("GET /items/{id}/links", auth(http.HandlerFunc(deps.Items.ItemLink.GetLinksForItem)))
 	api.HandleH("GET /pages/{id}/links", auth(http.HandlerFunc(deps.Items.ItemLink.GetLinksForItem)))
 	api.HandleH("GET /items/{id}/field-links/{fieldId}", auth(http.HandlerFunc(deps.Items.ItemLink.GetFieldLinks)))

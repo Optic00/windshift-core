@@ -104,6 +104,7 @@ type Server struct {
 	webhookLimiter      *middleware.RateLimiter
 	searchLimiter       *middleware.RateLimiter
 	calendarFeedLimiter *middleware.RateLimiter
+	userConcurrency     *middleware.UserConcurrencyLimiter
 
 	// Server state
 	actualPort   int
@@ -284,6 +285,10 @@ func (s *Server) initialize() error {
 	s.uploadLimiter = middleware.NewRateLimiter(10.0/60.0, 15, cfg.UseProxy, additionalProxyList, userKeyedOpts...)
 	s.webhookLimiter = middleware.NewRateLimiter(10.0/60.0, 15, cfg.UseProxy, additionalProxyList, userKeyedOpts...)
 	s.searchLimiter = middleware.NewRateLimiter(20.0/60.0, 30, cfg.UseProxy, additionalProxyList, userKeyedOpts...)
+	// Per-user in-flight concurrency cap for the whole /api surface — bounds how
+	// many shared DB-pool connections one user can hold so a runaway client
+	// can't starve the others. Applied to the api group below.
+	s.userConcurrency = middleware.NewUserConcurrencyLimiter(cfg.MaxUserConcurrency)
 
 	// Initialize token tracker
 	s.tokenTracker = services.NewTokenTracker(s.db, services.DefaultTokenTrackerConfig())
@@ -1173,6 +1178,15 @@ func (s *Server) initialize() error {
 		apiMiddleware = append(apiMiddleware, middleware.CSRFProtection(csrfOrigins))
 	} else {
 		slog.Warn("CSRF protection disabled (development mode)")
+	}
+
+	// Per-user concurrency cap goes last so it is the innermost wrapper: the
+	// slot is held only around the handler, and OptionalAuth (earlier in the
+	// chain) has already put the user in context for keying. Cheap rejections
+	// (CORS/CSRF/auth failures) never consume a slot.
+	apiMiddleware = append(apiMiddleware, s.userConcurrency.Limit)
+	if cfg.MaxUserConcurrency > 0 {
+		slog.Info("per-user API concurrency cap enabled", "max_in_flight_per_user", cfg.MaxUserConcurrency)
 	}
 
 	// Create API route group

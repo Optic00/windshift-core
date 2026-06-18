@@ -55,6 +55,7 @@ type Config struct {
 	AttachmentPath      string
 	EnableAdminFallback bool
 	DisableIPRateLimit  bool
+	MaxUserConcurrency  int
 	MCPEnabled          bool
 	RecoverUser         string
 

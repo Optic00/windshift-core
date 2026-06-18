@@ -84,6 +84,7 @@
 
   // Links/dependencies
   let itemLinks = $state({});
+  const ROADMAP_LINK_CHUNK = 200; // ids per batched /links/batch request (server cap 500)
 
   // Timeline computation
   let timelineContainer = $state(null);
@@ -532,19 +533,30 @@
     }
   });
 
-  // Load links for visible items
+  // Load links for visible items in batched requests instead of one per item.
   async function loadLinksForItems(items) {
     if (!roadmapConfig.dependency_link_type_id) return;
+    const ids = items.filter((i) => i?.id != null).map((i) => i.id);
     const newLinks = {};
-    const promises = items.map(async (item) => {
-      try {
-        const result = await api.links.getForItem('items', item.id);
-        newLinks[item.id] = result?.outgoing || [];
-      } catch {
-        newLinks[item.id] = [];
+    for (const id of ids) newLinks[id] = [];
+    const chunks = [];
+    for (let i = 0; i < ids.length; i += ROADMAP_LINK_CHUNK) {
+      chunks.push(ids.slice(i, i + ROADMAP_LINK_CHUNK));
+    }
+    const groupsPerChunk = await Promise.all(
+      chunks.map(async (chunk) => {
+        try {
+          return await api.links.getForItems(chunk);
+        } catch {
+          return {};
+        }
+      })
+    );
+    for (const groups of groupsPerChunk) {
+      for (const [id, group] of Object.entries(groups)) {
+        newLinks[id] = group?.outgoing || [];
       }
-    });
-    await Promise.all(promises);
+    }
     itemLinks = newLinks;
   }
 

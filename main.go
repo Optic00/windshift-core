@@ -116,11 +116,15 @@ func main() {
 		}
 		enableHTTPS := cfg.TLSCertPath != "" && cfg.TLSKeyPath != ""
 
-		// Create a separate DB connection for SSH auth
+		// Create a separate DB connection for SSH auth. This pool only services
+		// public-key auth + session/token lookups, so it gets a small fixed cap
+		// rather than cfg.DB.MaxReadConns — otherwise enabling SSH would double
+		// the process's draw against the server's max_connections.
+		const sshMaxReadConns = 5
 		if cfg.DB.PostgresConn != "" {
-			sshDB, err = database.NewDatabase("postgres", cfg.DB.PostgresConn, cfg.DB.MaxReadConns, cfg.DB.MaxWriteConns)
+			sshDB, err = database.NewDatabase("postgres", cfg.DB.PostgresConn, sshMaxReadConns, cfg.DB.MaxWriteConns)
 		} else {
-			sshDB, err = database.NewDatabase("sqlite3", cfg.DB.SQLitePath, cfg.DB.MaxReadConns, cfg.DB.MaxWriteConns)
+			sshDB, err = database.NewDatabase("sqlite3", cfg.DB.SQLitePath, sshMaxReadConns, cfg.DB.MaxWriteConns)
 		}
 		if err != nil {
 			slog.Error("failed to create SSH database connection", "error", err)
