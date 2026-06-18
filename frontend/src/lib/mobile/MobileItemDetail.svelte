@@ -192,6 +192,7 @@
         getLabel={(s) => s.name}
         disabled={transitioning || transitions.length === 0}
         allowClear={false}
+        positioning={{ strategy: 'fixed', placement: 'bottom-start', sameWidth: true }}
         onSelect={(s) => s && changeStatus(s.id)}
       >
         {#snippet children()}
@@ -219,6 +220,7 @@
         value={item.assignee_id ?? null}
         workspaceId={item.workspace_id}
         showUnassigned={true}
+        positioning={{ strategy: 'fixed', placement: 'bottom-start', sameWidth: true }}
         onSelect={updateAssignee}
       >
         {#snippet children()}

@@ -61,6 +61,11 @@
     // Popover mode: open on mount
     autoOpen = false,
 
+    // Floating-menu positioning override (melt positioning config). Null keeps
+    // the default bottom-start. Callers pass e.g. { sameWidth: true } for a
+    // full-width dropdown anchored under a wide trigger (mobile field rows).
+    positioning = null,
+
     // Multi-select values bindable (used in popover mode)
     values = $bindable([]),
 
@@ -97,7 +102,7 @@
     // members, test-run assignee).
     preventScroll: false,
     multiple: false, // We handle multi-select manually
-    positioning: {
+    positioning: positioning ?? {
       strategy: 'fixed',
       placement: 'bottom-start',
       sameWidth: false

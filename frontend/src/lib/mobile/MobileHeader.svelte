@@ -36,7 +36,9 @@
   .mobile-header {
     position: sticky;
     top: 0;
-    z-index: var(--z-sticky, 200);
+    /* Above scrolling content but BELOW portaled dropdown menus (DropdownMenu
+       z-60, picker z-70) so the user menu / pickers aren't clipped by the bar. */
+    z-index: 30;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -88,7 +90,7 @@
   .mobile-header-extra {
     position: sticky;
     top: 52px;
-    z-index: var(--z-sticky, 200);
+    z-index: 30;
     background-color: var(--ds-surface);
     border-bottom: 1px solid var(--ds-border);
   }
