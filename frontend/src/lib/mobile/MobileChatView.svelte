@@ -48,6 +48,7 @@
   });
 </script>
 
+<div class="chat">
 <header class="chat-header" data-testid="mobile-chat-header">
   <button class="back" onclick={back} aria-label="Back" type="button"><ChevronLeft size={24} /></button>
   <span class="title"><Sparkles size={17} /> Assistant</span>
@@ -100,10 +101,15 @@
     <Send size={18} />
   </button>
 </form>
+</div>
 
 <style>
+  /* Fill the shell's content area: header + scrollable messages + pinned
+     composer, so the input sits at the bottom regardless of message count. */
+  .chat { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+
   .chat-header {
-    position: sticky; top: 0; z-index: 30;
+    flex-shrink: 0;
     display: flex; align-items: center; gap: 0.5rem;
     min-height: 52px; padding: 0.5rem 0.75rem;
     padding-top: calc(env(safe-area-inset-top, 0px) + 0.5rem);
@@ -117,7 +123,10 @@
   .title { flex: 1; display: inline-flex; align-items: center; gap: 0.4rem; font-size: 1.0625rem; font-weight: var(--font-semibold, 600); color: var(--ds-text); }
   .spacer { width: 36px; flex-shrink: 0; }
 
-  .messages { display: flex; flex-direction: column; gap: 0.6rem; padding: 0.85rem; }
+  .messages {
+    flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    display: flex; flex-direction: column; gap: 0.6rem; padding: 0.85rem;
+  }
 
   .msg { max-width: 85%; padding: 0.6rem 0.8rem; border-radius: var(--radius-lg, 8px); font-size: 0.9375rem; line-height: 1.5; overflow-wrap: anywhere; }
   .user { align-self: flex-end; background-color: var(--ds-interactive); color: var(--ds-text-inverse, #fff); border-bottom-right-radius: var(--radius-sm, 4px); white-space: pre-wrap; }
@@ -134,7 +143,7 @@
   .empty span { font-size: 0.8125rem; }
 
   .composer {
-    position: sticky; bottom: 0; z-index: 30;
+    flex-shrink: 0;
     display: flex; align-items: flex-end; gap: 0.5rem;
     padding: 0.6rem 0.75rem; padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.6rem);
     background-color: var(--ds-surface); border-top: 1px solid var(--ds-border);
