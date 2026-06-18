@@ -11,6 +11,9 @@
   import Comments from '../features/items/Comments.svelte';
   import ItemSCMLinks from '../features/items/ItemSCMLinks.svelte';
   import ItemAgentLog from '../features/items/ItemAgentLog.svelte';
+  import BasePicker from '../pickers/BasePicker.svelte';
+  import UserPicker from '../pickers/UserPicker.svelte';
+  import Avatar from '../components/Avatar.svelte';
 
   let { itemId } = $props();
 
@@ -107,6 +110,20 @@
     }
   }
 
+  async function updateAssignee(user) {
+    const assigneeId = user?.id ?? null;
+    if (assigneeId === (item.assignee_id ?? null)) return;
+    try {
+      const updated = await api.items.update(itemId, { assignee_id: assigneeId });
+      const name = user
+        ? `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.email || user.username || ''
+        : null;
+      item = { ...item, ...updated, assignee_id: assigneeId, assignee_name: name, assignee_avatar: user?.avatar_url ?? null };
+    } catch (err) {
+      console.error('Failed to update assignee:', err);
+    }
+  }
+
   async function toggleWatch() {
     if (watchBusy) return;
     watchBusy = true;
@@ -157,51 +174,85 @@
   <p class="msg" data-testid="detail-error">Couldn't load this item.</p>
 {:else}
   <div class="detail" data-testid="mobile-item-detail">
-    <div class="status-line">
-      {#if item.item_type_name}<span class="type">{item.item_type_name}</span>{/if}
-      {#if item.status_name}
-        <span
-          class="status"
-          style={item.status_color ? `background-color: ${item.status_color}1f; color: ${item.status_color};` : ''}
-          data-testid="detail-status"
-        >{item.status_name}</span>
-      {/if}
-    </div>
+    {#if item.item_type_name}
+      <div class="status-line"><span class="type">{item.item_type_name}</span></div>
+    {/if}
 
     <h1 class="title" data-testid="detail-title">{item.title}</h1>
 
-    <!-- Status transitions -->
-    {#if transitions.length > 0}
-      <div class="transitions" data-testid="detail-transitions">
-        {#each transitions as tr (tr.id)}
-          <button
-            class="chip"
-            disabled={transitioning}
-            onclick={() => changeStatus(tr.id)}
-            data-testid="detail-transition"
-            style={tr.category_color ? `border-color: ${tr.category_color};` : ''}
-            type="button"
-          >{tr.name}</button>
-        {/each}
-      </div>
-    {/if}
+    <!-- Status + assignee pickers. Status options come from the workflow's
+         available-transitions endpoint (not hardcoded), so custom workflows
+         and custom statuses work as-is. Assignee users come from the
+         workspace-scoped assignable-users endpoint via UserPicker. -->
+    <div class="fields">
+      <BasePicker
+        value={item.status_id ?? null}
+        items={transitions}
+        getValue={(s) => s.id}
+        getLabel={(s) => s.name}
+        disabled={transitioning || transitions.length === 0}
+        allowClear={false}
+        onSelect={(s) => s && changeStatus(s.id)}
+      >
+        {#snippet children()}
+          <div class="field" data-testid="status-picker-trigger">
+            <span class="field-label">Status</span>
+            <span class="field-value">
+              <span
+                class="status-badge"
+                style={item.status_color ? `background-color: ${item.status_color}1f; color: ${item.status_color};` : ''}
+                data-testid="detail-status"
+              >{item.status_name ?? '—'}</span>
+              <ChevronDown size={16} class="chev" />
+            </span>
+          </div>
+        {/snippet}
+        {#snippet itemSnippet({ item: opt })}
+          <span class="opt">
+            <span class="opt-dot" style={opt.category_color ? `background-color: ${opt.category_color};` : ''}></span>
+            {opt.name}
+          </span>
+        {/snippet}
+      </BasePicker>
+
+      <UserPicker
+        value={item.assignee_id ?? null}
+        workspaceId={item.workspace_id}
+        showUnassigned={true}
+        onSelect={updateAssignee}
+      >
+        {#snippet children()}
+          <div class="field" data-testid="assignee-picker-trigger">
+            <span class="field-label">Assignee</span>
+            <span class="field-value">
+              {#if item.assignee_id && item.assignee_name}
+                <Avatar src={item.assignee_avatar} name={item.assignee_name} size="xs" variant="teal" />
+                <span class="assignee-name">{item.assignee_name}</span>
+              {:else}
+                <span class="muted">Unassigned</span>
+              {/if}
+              <ChevronDown size={16} class="chev" />
+            </span>
+          </div>
+        {/snippet}
+      </UserPicker>
+    </div>
 
     {#if descriptionHtml}
       <div class="html-content desc" data-testid="detail-description">{@html descriptionHtml}</div>
     {/if}
 
     <!-- Meta -->
-    <dl class="meta">
-      {#if item.assignee_name}
-        <div><dt>Assignee</dt><dd>{item.assignee_name}</dd></div>
-      {/if}
-      {#if item.due_date}
-        <div><dt>Due</dt><dd>{formatDate(item.due_date)}</dd></div>
-      {/if}
-      {#if personalTaskCount > 0}
-        <div><dt>Personal tasks</dt><dd>{personalTaskCount} linked</dd></div>
-      {/if}
-    </dl>
+    {#if item.due_date || personalTaskCount > 0}
+      <dl class="meta">
+        {#if item.due_date}
+          <div><dt>Due</dt><dd>{formatDate(item.due_date)}</dd></div>
+        {/if}
+        {#if personalTaskCount > 0}
+          <div><dt>Personal tasks</dt><dd>{personalTaskCount} linked</dd></div>
+        {/if}
+      </dl>
+    {/if}
 
     <!-- Actions -->
     <div class="actions">
@@ -264,20 +315,31 @@
 
   .status-line { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; }
   .type { font-size: 0.75rem; color: var(--ds-text-subtle); text-transform: uppercase; letter-spacing: 0.02em; }
-  .status {
+
+  .title { font-size: 1.25rem; font-weight: var(--font-semibold, 600); color: var(--ds-text); margin: 0 0 1rem; line-height: 1.3; }
+
+  /* Status + assignee picker field rows */
+  .fields {
+    margin-bottom: 1rem; border: 1px solid var(--ds-border); border-radius: var(--radius-lg, 8px); overflow: hidden;
+  }
+  .field {
+    display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+    min-height: 48px; padding: 0.5rem 0.85rem; cursor: pointer;
+  }
+  .field:not(:last-child) { border-bottom: 1px solid var(--ds-border); }
+  .field:active { background-color: var(--ds-background-neutral-hovered); }
+  .field-label { font-size: 0.8125rem; color: var(--ds-text-subtle); }
+  .field-value { display: inline-flex; align-items: center; gap: 0.5rem; min-width: 0; color: var(--ds-text); font-size: 0.875rem; }
+  .field-value :global(.chev) { color: var(--ds-icon-subtle, var(--ds-text-subtle)); flex-shrink: 0; }
+  .assignee-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 9rem; }
+  .muted { color: var(--ds-text-subtle); }
+  .status-badge {
     display: inline-flex; align-items: center; border-radius: var(--radius-sm, 4px);
-    padding: 1px 8px; font-size: 0.75rem; font-weight: var(--font-medium, 500);
+    padding: 1px 8px; font-size: 0.8125rem; font-weight: var(--font-medium, 500);
     background-color: var(--ds-background-neutral); color: var(--ds-text-subtle);
   }
-
-  .title { font-size: 1.25rem; font-weight: var(--font-semibold, 600); color: var(--ds-text); margin: 0 0 0.75rem; line-height: 1.3; }
-
-  .transitions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; }
-  .chip {
-    padding: 0.45rem 0.85rem; border: 1px solid var(--ds-border); border-radius: var(--radius-full, 9999px);
-    background-color: var(--ds-surface); color: var(--ds-text); font-size: 0.8125rem; cursor: pointer; min-height: 36px;
-  }
-  .chip:disabled { opacity: 0.5; }
+  .opt { display: inline-flex; align-items: center; gap: 0.5rem; }
+  .opt-dot { width: 8px; height: 8px; border-radius: var(--radius-full, 9999px); background-color: var(--ds-icon-subtle, var(--ds-text-subtle)); flex-shrink: 0; }
 
   .desc {
     padding: 0.5rem 0 1rem; border-bottom: 1px solid var(--ds-border); margin-bottom: 1rem;
