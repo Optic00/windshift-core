@@ -397,6 +397,22 @@
             content = markdown;
             if (onContentChange) onContentChange(markdown);
           });
+          // Detect the @-mention trigger on every document change, not just on
+          // keyup. Mobile soft keyboards (Gboard, iOS) routinely don't emit
+          // keydown/keyup for character input, so the keyup handler below never
+          // fires and the picker never opens on phones (WI-431). `updated`
+          // fires on any content change regardless of input method.
+          // checkForMentionTrigger only reads state, so overlapping with keyup
+          // on desktop is harmless.
+          ctx.get(listenerCtx).updated((updateCtx) => {
+            if (readonly) return;
+            try {
+              const view = updateCtx.get(editorViewCtx);
+              if (view) checkForMentionTrigger(view);
+            } catch {
+              // Editor view not ready yet (e.g. initial value load) — ignore.
+            }
+          });
           // Use set instead of update to handle case where context may not be initialized
           ctx.set(editorViewOptionsCtx, {
             editable: () => !readonly,
