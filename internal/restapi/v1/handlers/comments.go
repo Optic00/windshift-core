@@ -15,11 +15,17 @@ type CommentHandler struct {
 	commentService *services.CommentService
 }
 
-// NewCommentHandler creates a new comment handler
-func NewCommentHandler(db database.Database, permissionService *services.PermissionService) *CommentHandler {
+// NewCommentHandler creates a new comment handler. commentService is shared
+// with the cookie-auth handler so comments managed through the bearer-token
+// surface fire the same notifications/mentions/webhooks (WI-434); when nil a
+// bare service is created that persists comments but skips side effects.
+func NewCommentHandler(db database.Database, permissionService *services.PermissionService, commentService *services.CommentService) *CommentHandler {
+	if commentService == nil {
+		commentService = services.NewCommentService(db)
+	}
 	return &CommentHandler{
 		BaseHandler:    NewBaseHandler(db, permissionService),
-		commentService: services.NewCommentService(db),
+		commentService: commentService,
 	}
 }
 

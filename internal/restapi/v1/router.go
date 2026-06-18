@@ -71,8 +71,15 @@ func RegisterRoutes(deps restapi.Deps) {
 	// Create rate limiter (1000 requests per minute)
 	rateLimiter := middleware.NewRateLimiter(1000)
 
+	// ItemHandler / CommentHandler share the fully-wired CommentService from
+	// Deps (notifications, mentions, webhooks, etc.) so comments created via
+	// the bearer-token surface fire the same notifications as the web UI
+	// (WI-434). The constructors tolerate a nil Deps.CommentService by falling
+	// back to a bare service (persists comments, skips side effects) so
+	// embedders that haven't wired Deps yet still boot.
+
 	// Initialize handlers
-	itemHandler := handlers.NewItemHandler(db, permissionService)
+	itemHandler := handlers.NewItemHandler(db, permissionService, deps.CommentService)
 	workspaceHandler := handlers.NewWorkspaceHandler(db, permissionService)
 	statusHandler := handlers.NewStatusHandler(db, permissionService)
 	workflowHandler := handlers.NewWorkflowHandler(db, permissionService)
@@ -80,7 +87,7 @@ func RegisterRoutes(deps restapi.Deps) {
 	priorityHandler := handlers.NewPriorityHandler(db, permissionService)
 	customFieldHandler := handlers.NewCustomFieldHandler(db, permissionService)
 	userHandler := handlers.NewUserHandler(db, permissionService)
-	commentHandler := handlers.NewCommentHandler(db, permissionService)
+	commentHandler := handlers.NewCommentHandler(db, permissionService, deps.CommentService)
 	milestoneHandler := handlers.NewMilestoneHandler(db, permissionService)
 	iterationHandler := handlers.NewIterationHandler(db, permissionService)
 	collectionHandler := handlers.NewCollectionHandler(db, permissionService)
