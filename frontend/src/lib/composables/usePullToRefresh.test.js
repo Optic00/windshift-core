@@ -1,4 +1,4 @@
-import { fireEvent, render } from '@testing-library/svelte';
+import { fireEvent, render, waitFor } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import PullToRefreshHarness from './PullToRefreshHarness.svelte';
 
@@ -80,9 +80,10 @@ describe('usePullToRefresh — re-entrancy', () => {
           resolveRefresh = resolve;
         })
     );
-    const { scroll } = render(PullToRefreshHarness, {
+    const { getByTestId } = render(PullToRefreshHarness, {
       props: { onRefresh, threshold: 64, resistance: 1 },
     });
+    const scroll = getByTestId('ptr-scroll');
 
     pull(scroll, { distance: 80 });
     expect(onRefresh).toHaveBeenCalledTimes(1);
@@ -94,9 +95,9 @@ describe('usePullToRefresh — re-entrancy', () => {
     expect(onRefresh).toHaveBeenCalledTimes(1);
 
     resolveRefresh();
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(attr(scroll, 'data-refreshing')).toBe('false');
+    // The refresh promise resolves, then Svelte flushes refreshing=false to the
+    // DOM — wait for that propagation rather than guessing a microtask count.
+    await waitFor(() => expect(attr(scroll, 'data-refreshing')).toBe('false'));
   });
 });
 

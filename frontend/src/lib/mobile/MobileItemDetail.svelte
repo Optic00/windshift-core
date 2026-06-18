@@ -303,7 +303,12 @@
       {#if ptr.refreshing}
         <Loader size={18} class="spin" />
       {:else}
-        <RefreshCw size={18} class="ptr-arrow" style:transform={ptr.pullDistance > 0 ? `rotate(${Math.min(ptr.pullDistance * 3, 360)}deg)` : ''} />
+        <span
+          class="ptr-arrow"
+          style:transform={ptr.pullDistance > 0 ? `rotate(${Math.min(ptr.pullDistance * 3, 360)}deg)` : ''}
+        >
+          <RefreshCw size={18} />
+        </span>
       {/if}
     </div>
 
@@ -494,7 +499,7 @@
   .detail.pulling .ptr-indicator { opacity: 1; }
   /* Once past the threshold the indicator goes active/ready (brand color). */
   .ptr-indicator.ready { color: var(--ds-interactive); }
-  .ptr-arrow { transition: transform var(--duration-fast, 100ms) ease; }
+  .ptr-arrow { display: inline-flex; transition: transform var(--duration-fast, 100ms) ease; }
 
   .breadcrumb {
     display: flex; align-items: center; flex-wrap: nowrap; gap: 0.15rem;
