@@ -1,6 +1,8 @@
 <script>
+  import { Search } from '@lucide/svelte';
   import { authStore } from '../stores';
   import { api } from '../api.js';
+  import { navigate } from '../router.js';
   import { formatRelativeCompact } from '../utils/dateFormatter.js';
   import { formatItemKey } from '../utils/itemKey.js';
   import { assignedToMeQuery } from '../widgets/dashboard/taskWidgetState.js';
@@ -125,6 +127,9 @@
 
 <MobileHeader title="My Work">
   {#snippet right()}
+    <button class="hdr-search" onclick={() => navigate('/m/search')} data-testid="mobile-search-open" aria-label="Search" type="button">
+      <Search size={20} />
+    </button>
     <UserAvatar minimal />
   {/snippet}
   {#snippet children()}
@@ -165,6 +170,12 @@
 </div>
 
 <style>
+  .hdr-search {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 36px; height: 36px; border: none; background: transparent;
+    color: var(--ds-text); cursor: pointer;
+  }
+
   .segmented {
     display: flex;
     gap: 0.25rem;
