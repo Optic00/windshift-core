@@ -10,7 +10,7 @@ import { api } from '../../api.js';
 export async function fetchCollectionItems(
   workspaceId,
   collectionId,
-  { page, limit, sub_ql, ...extraFilters } = {}
+  { page, limit, sub_ql, collection: preloadedCollection, ...extraFilters } = {}
 ) {
   let collectionName = 'Default';
   let collection = null;
@@ -20,7 +20,10 @@ export async function fetchCollectionItems(
   if (sub_ql) filters.sub_ql = sub_ql;
 
   if (collectionId) {
-    collection = await getCollection(collectionId);
+    // Reuse a collection the caller already fetched this load cycle (one board
+    // load otherwise issued the same /collections/{id} request 2-3 times).
+    collection =
+      preloadedCollection !== undefined ? preloadedCollection : await getCollection(collectionId);
     if (collection) {
       collectionName = collection.name;
       // collection_id overrides workspace_id — let backend resolve the QL query
@@ -51,12 +54,13 @@ export async function fetchCollectionItems(
 export async function fetchCollectionBacklog(
   workspaceId,
   collectionId,
-  { page, limit, sub_ql } = {}
+  { page, limit, sub_ql, collection: preloadedCollection } = {}
 ) {
   let collectionName = 'Default';
 
   if (collectionId) {
-    const collection = await getCollection(collectionId);
+    const collection =
+      preloadedCollection !== undefined ? preloadedCollection : await getCollection(collectionId);
     if (collection) {
       collectionName = collection.name;
     }

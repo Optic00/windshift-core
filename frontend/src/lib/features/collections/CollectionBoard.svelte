@@ -302,22 +302,27 @@
   // back after the wipe.
   let viewSignature = $derived(`${collectionId ?? ''}|${workspaceId ?? ''}`);
   $effect(() => {
-    // Re-runs whenever the viewed collection/workspace changes.
+    // Re-runs whenever the viewed collection/workspace changes. Board config
+    // depends only on collection/workspace, not on the item set — loading it
+    // here (instead of in the items effect below) stops a redundant
+    // getBoardConfiguration request on every item array update.
     viewSignature;
     dependencyLinksByItem = {};
+    if (collectionId || workspaceId) {
+      loadBoardConfig();
+    }
   });
 
-  // Reload view-specific data (board config, transitions) when items update
+  // Preload transitions + dependency links when the loaded item set changes.
   $effect(() => {
     if (collectionStore.items.length > 0 && !collectionStore.loading) {
-      loadBoardConfig();
       if (workspaceId) {
         statusTransitionStore.initialize(workspaceId);
       }
       statusTransitionStore.preloadForItems([...collectionStore.items, ...collectionStore.backlogItems]);
       // untrack: the cache read inside loadDependencyLinksForItems would
       // otherwise subscribe this effect to dependencyLinksByItem and re-run it
-      // (re-running loadBoardConfig/preloadForItems) every time links resolve.
+      // (re-running preloadForItems) every time links resolve.
       untrack(() => loadDependencyLinksForItems(collectionStore.items));
     }
   });
