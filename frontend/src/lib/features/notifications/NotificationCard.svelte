@@ -6,6 +6,13 @@
 
   let { notification, onclose = undefined } = $props();
 
+  // Extract the numeric item id from an action URL, matching the
+  // /workspaces/<id>/items/<itemId> shape the backend's itemActionURL() emits.
+  function itemIdFromActionUrl(actionUrl) {
+    const m = actionUrl?.match(/\/items\/(\d+)(?:[/?#]|$)/);
+    return m ? m[1] : null;
+  }
+
   function getNotificationIcon(type) {
     const iconMap = {
       assignment: UserPlus,
@@ -34,9 +41,20 @@
       notificationActions.markAsRead(notification.id);
     }
     
-    // Navigate to the action URL if provided
+    // Navigate to the action URL if provided.
     if (notification.actionUrl) {
       navigate(notification.actionUrl);
+      // navigate() no-ops when the target URL equals the current one (standard
+      // SPA optimization), so an open item detail won't refresh on its own.
+      // Emit `reload-item-detail` so a mounted ItemDetail/Comments for this item
+      // re-fetches; they self-filter on the id, so a different/closed item is
+      // harmlessly ignored (the navigate above already loads it).
+      const targetItemId = itemIdFromActionUrl(notification.actionUrl);
+      if (targetItemId != null) {
+        window.dispatchEvent(
+          new CustomEvent('reload-item-detail', { detail: { itemId: targetItemId } })
+        );
+      }
       onclose?.();
     }
   }

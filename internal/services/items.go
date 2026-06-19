@@ -290,8 +290,8 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 				iteration_id, project_id, inherit_project, time_project_id, assignee_id, reporter_id, creator_id, creator_portal_customer_id,
 				channel_id, request_type_id, due_date, start_date, end_date, related_work_item_id,
 				story_points, estimate_minutes, custom_field_values, parent_id,
-				frac_index, created_at, updated_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				frac_index, created_at, updated_at, last_active_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			RETURNING id
 		`
 
@@ -326,6 +326,7 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 			fracIndex,
 			createdAt,
 			updatedAt,
+			updatedAt, // last_active_at: a new item is "active" as of creation
 		).Scan(&itemID); err != nil {
 			return 0, "", fmt.Errorf("failed to insert item: %w", err)
 		}

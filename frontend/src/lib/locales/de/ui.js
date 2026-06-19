@@ -192,6 +192,7 @@ export default {
     noMilestone: 'Kein Meilenstein',
     milestones: 'Meilensteine',
     noMilestonesFound: 'Keine Meilensteine gefunden',
+    showCompletedMilestones: 'Abgeschlossene anzeigen',
     selectPriority: 'Priorität auswählen',
     noPriority: 'Keine Priorität',
     loadingPriorities: 'Prioritäten werden geladen...',

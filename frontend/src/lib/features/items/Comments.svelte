@@ -3,6 +3,7 @@
 	import { api } from '../../api.js';
 	import { authStore } from '../../stores';
 	import { subscribeToNewNotifications } from '../../stores/notifications.js';
+	import { useEventListener } from 'runed';
 	import { usePoller } from '../../composables/usePoller.svelte.js';
 	import MilkdownEditor from '../../editors/LazyMilkdownEditor.svelte';
 	import Button from '../../components/Button.svelte';
@@ -101,6 +102,16 @@
 		loadComments();
 	});
 	onDestroy(() => unsubscribeFromBus?.());
+
+	// Reload when a notification points at the item already in view (clicking it
+	// would otherwise no-op navigate()). Comments load independently of the item
+	// store, so we listen for the same `reload-item-detail` event ItemDetail does
+	// and self-filter on our itemId prop, refreshing without waiting for a poll.
+	useEventListener(() => window, 'reload-item-detail', (/** @type {CustomEvent<{itemId?: number|string}>} */ event) => {
+		const id = event?.detail?.itemId;
+		if (id == null || String(id) !== String(itemId)) return;
+		loadComments();
+	});
 
 	function notificationTargetsThisItem(n) {
 		const url = n.actionUrl || n.action_url || '';

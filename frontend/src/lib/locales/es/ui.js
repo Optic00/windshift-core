@@ -195,6 +195,7 @@ export default {
     noMilestone: 'Sin hito',
     milestones: 'Hitos',
     noMilestonesFound: 'No se encontraron hitos',
+    showCompletedMilestones: 'Mostrar completados',
     selectPriority: 'Seleccionar prioridad',
     noPriority: 'Sin prioridad',
     loadingPriorities: 'Cargando prioridades...',

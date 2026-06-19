@@ -1435,6 +1435,23 @@ var Catalog = []Migration{
 			WHERE repo_slug IS NOT NULL AND repo_slug <> '';
 		`,
 	},
+	{
+		// Backfill: the migration above adds last_active_at without a DEFAULT,
+		// and the CreateItem insert path originally omitted the column, so items
+		// created via the API after the first migration landed with a NULL
+		// last_active_at. Scanning NULL into the non-nullable time.Time field
+		// 500s the entire item list. The insert path now writes last_active_at;
+		// this re-run mops up rows stranded in the window before that fix. No
+		// Check — the UPDATE is idempotent, so it is safe to always run.
+		Version: "20260619_items_last_active_at_backfill",
+		Name:    "Backfill NULL items.last_active_at left by the insert path",
+		SQLite: `
+			UPDATE items SET last_active_at = COALESCE(updated_at, created_at) WHERE last_active_at IS NULL;
+		`,
+		Postgres: `
+			UPDATE items SET last_active_at = COALESCE(updated_at, created_at) WHERE last_active_at IS NULL;
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {

@@ -123,6 +123,7 @@ export default {
     noMilestone: '无里程碑',
     milestones: '里程碑',
     noMilestonesFound: '未找到里程碑',
+    showCompletedMilestones: '显示已完成',
     selectIteration: '选择迭代',
     noIteration: '无迭代',
     selectPriority: '选择优先级',
