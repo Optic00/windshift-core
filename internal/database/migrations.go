@@ -1380,6 +1380,61 @@ var Catalog = []Migration{
 			CREATE INDEX IF NOT EXISTS idx_items_workspace_last_active ON items(workspace_id, last_active_at);
 		`,
 	},
+	{
+		// WI-449: multi-repo agent bindings. A binding may bind N repos; this
+		// child table holds them (one is_primary row per binding). Backfill
+		// each existing binding's single scalar repo as its primary repo. The
+		// legacy scalar columns on workspace_agent_bindings are kept one
+		// release as a dormant rollback net and dropped in a later migration.
+		Version:       "20260620_workspace_agent_binding_repos",
+		Name:          "Multi-repo bindings: child table + backfill primary repo",
+		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='workspace_agent_binding_repos'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='workspace_agent_binding_repos'",
+		SQLite: `
+			CREATE TABLE workspace_agent_binding_repos (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				binding_id INTEGER NOT NULL,
+				scm_connection_id INTEGER,
+				repo_slug TEXT NOT NULL,
+				repo_base_ref TEXT NOT NULL DEFAULT '',
+				is_primary BOOLEAN NOT NULL DEFAULT 0,
+				position INTEGER NOT NULL DEFAULT 0,
+				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (binding_id) REFERENCES workspace_agent_bindings(id) ON DELETE CASCADE,
+				FOREIGN KEY (scm_connection_id) REFERENCES workspace_scm_connections(id) ON DELETE SET NULL
+			);
+			CREATE UNIQUE INDEX idx_wab_repos_binding_slug ON workspace_agent_binding_repos(binding_id, repo_slug);
+			CREATE UNIQUE INDEX idx_wab_repos_one_primary ON workspace_agent_binding_repos(binding_id) WHERE is_primary;
+			CREATE INDEX idx_wab_repos_binding ON workspace_agent_binding_repos(binding_id);
+			INSERT INTO workspace_agent_binding_repos
+				(binding_id, scm_connection_id, repo_slug, repo_base_ref, is_primary, position)
+			SELECT id, scm_connection_id, repo_slug, COALESCE(repo_base_ref, ''), 1, 0
+			FROM workspace_agent_bindings
+			WHERE repo_slug IS NOT NULL AND repo_slug <> '';
+		`,
+		Postgres: `
+			CREATE TABLE workspace_agent_binding_repos (
+				id SERIAL PRIMARY KEY,
+				binding_id INTEGER NOT NULL,
+				scm_connection_id INTEGER,
+				repo_slug TEXT NOT NULL,
+				repo_base_ref TEXT NOT NULL DEFAULT '',
+				is_primary BOOLEAN NOT NULL DEFAULT FALSE,
+				position INTEGER NOT NULL DEFAULT 0,
+				created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				FOREIGN KEY (binding_id) REFERENCES workspace_agent_bindings(id) ON DELETE CASCADE,
+				FOREIGN KEY (scm_connection_id) REFERENCES workspace_scm_connections(id) ON DELETE SET NULL
+			);
+			CREATE UNIQUE INDEX idx_wab_repos_binding_slug ON workspace_agent_binding_repos(binding_id, repo_slug);
+			CREATE UNIQUE INDEX idx_wab_repos_one_primary ON workspace_agent_binding_repos(binding_id) WHERE is_primary;
+			CREATE INDEX idx_wab_repos_binding ON workspace_agent_binding_repos(binding_id);
+			INSERT INTO workspace_agent_binding_repos
+				(binding_id, scm_connection_id, repo_slug, repo_base_ref, is_primary, position)
+			SELECT id, scm_connection_id, repo_slug, COALESCE(repo_base_ref, ''), TRUE, 0
+			FROM workspace_agent_bindings
+			WHERE repo_slug IS NOT NULL AND repo_slug <> '';
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {

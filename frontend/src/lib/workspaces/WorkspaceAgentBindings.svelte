@@ -52,13 +52,13 @@
   let editingBinding = $state(null);
   let formActingUserId = $state(null);
   let formTargetPoolId = $state(null); // null = local in-process runtime
-  let formSCMConnectionId = $state(null);
-  // Repo slug is no longer typed by hand: it is derived from the repository
-  // the admin picks under the chosen SCM connection (WI-90). The backend
-  // deliberately derives remote URLs from the trusted SCM connection.
-  let formRepositoryId = $state(null);
-  let formRepoSlug = $state('');
-  let formRepoBaseRef = $state('');
+  // A binding may bind multiple repos (WI-449), each under its own SCM
+  // connection. Exactly one row is primary (its PR links to the work item).
+  // Repo slugs are never typed by hand: each is derived from the repository
+  // the admin picks under that row's SCM connection (WI-90), so the backend
+  // keeps deriving remote URLs from a trusted SCM connection.
+  // Row shape: { connId, repositoryId, repoSlug, repoBaseRef, isPrimary }
+  let formRepos = $state([]);
   let formLLMConnectionId = $state(null);
   let formTokenTTLMinutes = $state(60);
   let formMaxRunsPerDay = $state(0);
@@ -74,9 +74,10 @@
     return skill.enabled ? skill.name : `${skill.name} (disabled)`;
   }
 
-  // Linked repositories for the currently-selected SCM connection.
-  let linkedRepos = $state([]);
-  let loadingRepos = $state(false);
+  // Linked repositories cached per SCM connection id, so multiple repo rows on
+  // different connections don't refetch or clobber each other (WI-449).
+  let linkedReposByConn = $state({}); // connId -> repo[]
+  let loadingReposByConn = $state({}); // connId -> bool
 
   // Delete confirmation dialog.
   let deleteDialogOpen = $state(false);
@@ -274,56 +275,96 @@
     (llmConnections || []).find((c) => c.id === formLLMConnectionId)?.provider_type === 'anthropic'
   );
 
-  // Repository picker: populated from the linked repos of the selected
-  // SCM connection. Disabled (with an explanatory placeholder) until a
-  // connection is chosen.
-  let repoOptions = $derived(
-    !formSCMConnectionId
-      ? [{ value: null, label: 'Select an SCM connection first', disabled: true }]
-      : loadingRepos
-        ? [{ value: null, label: 'Loading repositories…', disabled: true }]
-        : linkedRepos.length === 0
-          ? [{ value: null, label: 'No repositories linked to this connection', disabled: true }]
-          : [
-              { value: null, label: 'Pick a repository', disabled: true },
-              ...linkedRepos.map((r) => ({
-                value: r.id,
-                label: r.repository_name || r.repository_url || `Repo #${r.id}`,
-                disabled: false,
-              })),
-            ]
-  );
+  // Repository <select> options for a given repo row's chosen SCM connection.
+  // Disabled (with an explanatory placeholder) until a connection is chosen.
+  function repoOptionsFor(connId) {
+    if (!connId) return [{ value: null, label: 'Select an SCM connection first', disabled: true }];
+    if (loadingReposByConn[connId]) return [{ value: null, label: 'Loading repositories…', disabled: true }];
+    const repos = linkedReposByConn[connId] || [];
+    if (repos.length === 0) return [{ value: null, label: 'No repositories linked to this connection', disabled: true }];
+    return [
+      { value: null, label: 'Pick a repository', disabled: true },
+      ...repos.map((r) => ({
+        value: r.id,
+        label: r.repository_name || r.repository_url || `Repo #${r.id}`,
+        disabled: false,
+      })),
+    ];
+  }
 
-  async function onConnectionChange(connId) {
-    formSCMConnectionId = connId;
-    // Reset the repo selection — the previous repo belonged to a
-    // different connection.
-    formRepositoryId = null;
-    formRepoSlug = '';
-    formRepoBaseRef = '';
-    linkedRepos = [];
-    if (!connId) return;
-    loadingRepos = true;
+  // Lazily load + cache a connection's linked repositories.
+  async function ensureLinkedRepos(connId) {
+    if (!connId || linkedReposByConn[connId] || loadingReposByConn[connId]) return;
+    loadingReposByConn = { ...loadingReposByConn, [connId]: true };
     try {
       const repos = await api.workspaceSCM.getLinkedRepos(workspaceId, connId);
-      linkedRepos = repos ?? [];
+      linkedReposByConn = { ...linkedReposByConn, [connId]: repos ?? [] };
     } catch (err) {
       console.error('Failed to load repositories for connection:', err);
       errorToast(err?.message || 'Failed to load repositories');
-      linkedRepos = [];
+      linkedReposByConn = { ...linkedReposByConn, [connId]: [] };
     } finally {
-      loadingRepos = false;
+      loadingReposByConn = { ...loadingReposByConn, [connId]: false };
     }
   }
 
-  function onRepositoryChange(repoId) {
-    formRepositoryId = repoId;
-    const repo = linkedRepos.find((r) => r.id === repoId);
-    // Mirror the linked repo's coordinates into the fields the create
-    // request posts. The base ref defaults to the repo's default branch
-    // but stays editable below.
-    formRepoSlug = repo?.repository_name || '';
-    formRepoBaseRef = repo?.default_branch || '';
+  function addRepoRow() {
+    const row = { connId: null, repositoryId: null, repoSlug: '', repoBaseRef: '', isPrimary: formRepos.length === 0 };
+    formRepos = [...formRepos, row];
+  }
+
+  function removeRepoRow(idx) {
+    const removed = formRepos[idx];
+    formRepos = formRepos.filter((_, i) => i !== idx);
+    // If we removed the primary, promote the first remaining row.
+    if (removed?.isPrimary && formRepos.length > 0 && !formRepos.some((r) => r.isPrimary)) {
+      formRepos[0].isPrimary = true;
+      formRepos = [...formRepos];
+    }
+  }
+
+  function setPrimaryRepo(idx) {
+    formRepos = formRepos.map((r, i) => ({ ...r, isPrimary: i === idx }));
+  }
+
+  function onRepoRowConnectionChange(idx, connId) {
+    // Reset this row's repo selection — the previous repo belonged to a
+    // different connection.
+    formRepos[idx] = { ...formRepos[idx], connId, repositoryId: null, repoSlug: '', repoBaseRef: '' };
+    formRepos = [...formRepos];
+    void ensureLinkedRepos(connId);
+  }
+
+  function onRepoRowRepositoryChange(idx, repoId) {
+    const row = formRepos[idx];
+    const repo = (linkedReposByConn[row.connId] || []).find((r) => r.id === repoId);
+    // Mirror the linked repo's coordinates into the row the create request
+    // posts. The base ref defaults to the repo's default branch but stays
+    // editable below.
+    formRepos[idx] = {
+      ...row,
+      repositoryId: repoId,
+      repoSlug: repo?.repository_name || '',
+      repoBaseRef: repo?.default_branch || '',
+    };
+    formRepos = [...formRepos];
+  }
+
+  // One-line summary of a binding's bound repos for the table / read-only edit
+  // view. Marks the primary when more than one repo is bound (WI-449). Falls
+  // back to the legacy scalar fields for rows from before the migration.
+  function bindingReposLabel(b) {
+    const repos = b?.repos || [];
+    if (repos.length === 0) {
+      return b?.repo_slug ? `${b.repo_slug}${b.repo_base_ref ? ` @ ${b.repo_base_ref}` : ''}` : '—';
+    }
+    return repos
+      .map((r) => {
+        const ref = r.repo_base_ref ? ` @ ${r.repo_base_ref}` : '';
+        const primary = repos.length > 1 && r.is_primary ? ' (primary)' : '';
+        return `${r.repo_slug}${ref}${primary}`;
+      })
+      .join(', ');
   }
 
   // Resolve display names for the existing bindings table without an
@@ -369,16 +410,12 @@
   function resetForm() {
     formActingUserId = null;
     formTargetPoolId = null;
-    formSCMConnectionId = null;
-    formRepositoryId = null;
-    formRepoSlug = '';
-    formRepoBaseRef = '';
+    formRepos = [];
     formLLMConnectionId = null;
     formTokenTTLMinutes = 60;
     formMaxRunsPerDay = 0;
     formInstructions = '';
     formSkillIds = [];
-    linkedRepos = [];
   }
 
   function openCreate() {
@@ -419,10 +456,18 @@
           max_runs_per_day: formMaxRunsPerDay || 0,
         };
         if (formTargetPoolId) body.target_pool_id = formTargetPoolId;
-        if (formSCMConnectionId) body.scm_connection_id = formSCMConnectionId;
         if (formLLMConnectionId) body.llm_connection_id = formLLMConnectionId;
-        if (formRepoSlug.trim()) body.repo_slug = formRepoSlug.trim();
-        if (formRepoBaseRef.trim()) body.repo_base_ref = formRepoBaseRef.trim();
+        // Only rows that resolved to a repo slug are sent; the backend
+        // validates exactly one primary across them.
+        const repos = formRepos
+          .filter((r) => r.repoSlug && r.repoSlug.trim() && r.connId)
+          .map((r) => ({
+            repo_slug: r.repoSlug.trim(),
+            repo_base_ref: r.repoBaseRef.trim(),
+            scm_connection_id: r.connId,
+            is_primary: !!r.isPrimary,
+          }));
+        if (repos.length) body.repos = repos;
         if (formInstructions.trim()) body.instructions = formInstructions.trim();
         if (formSkillIds.length) body.skill_ids = formSkillIds;
         await agentBindings.create(workspaceId, body);
@@ -595,7 +640,7 @@
               </td>
               <td class="px-3 py-2" style="color: var(--ds-text-subtle);">{displayTarget(b.target_pool_id)}</td>
               <td class="px-3 py-2" style="color: var(--ds-text-subtle);">
-                {b.repo_slug ? `${b.repo_slug}${b.repo_base_ref ? ` @ ${b.repo_base_ref}` : ''}` : '—'}
+                {bindingReposLabel(b)}
               </td>
               <td class="px-3 py-2" style="color: var(--ds-text-subtle);">{displaySCMConnection(b.scm_connection_id)}</td>
               <td class="px-3 py-2" style="color: var(--ds-text-subtle);">{displayLLMConnection(b.llm_connection_id)}</td>
@@ -705,7 +750,7 @@
           </div>
           <div>
             <dt class="text-xs" style="color: var(--ds-text-subtle);">Repo</dt>
-            <dd style="color: var(--ds-text);">{editingBinding.repo_slug ? `${editingBinding.repo_slug}${editingBinding.repo_base_ref ? ` @ ${editingBinding.repo_base_ref}` : ''}` : '—'}</dd>
+            <dd style="color: var(--ds-text);">{bindingReposLabel(editingBinding)}</dd>
           </div>
           <div>
             <dt class="text-xs" style="color: var(--ds-text-subtle);">LLM</dt>
@@ -765,19 +810,6 @@
             </p>
           </div>
           <div>
-            <Label for="binding-scm-connection" class="mb-1">SCM connection (for git + PR auth)</Label>
-            <Select id="binding-scm-connection" bind:value={formSCMConnectionId} onchange={onConnectionChange} options={scmConnectionOptions} />
-          </div>
-          <div>
-            <Label for="binding-repository" class="mb-1">Repository</Label>
-            <Select id="binding-repository" bind:value={formRepositoryId} onchange={onRepositoryChange} options={repoOptions} disabled={!formSCMConnectionId || loadingRepos} />
-            <p class="text-xs mt-1" style="color: var(--ds-text-subtle);">Clone URL is derived from the selected SCM connection — the orchestrator never accepts a free-form remote URL.</p>
-          </div>
-          <div>
-            <Label for="binding-repo-base" class="mb-1">Base ref</Label>
-            <Input id="binding-repo-base" bind:value={formRepoBaseRef} placeholder="main" />
-          </div>
-          <div>
             <Label for="binding-llm" required class="mb-1">LLM connection</Label>
             <Select id="binding-llm" bind:value={formLLMConnectionId} options={llmOptions} />
             {#if llmConnections.length === 0}
@@ -794,6 +826,57 @@
             <Label for="binding-budget" class="mb-1">Max runs / day (0 = unlimited)</Label>
             <Input id="binding-budget" type="number" min="0" bind:value={formMaxRunsPerDay} />
           </div>
+        </div>
+        <!-- Repositories (WI-449): a binding may bind multiple repos so the
+             agent checks them all out (e.g. core + core-tests) and opens one
+             PR per changed repo. Exactly one is primary. -->
+        <div class="mt-4" data-testid="binding-repos-section">
+          <Label class="mb-1">Repositories</Label>
+          <p class="text-xs mb-2" style="color: var(--ds-text-subtle);">
+            Each repo's clone URL is derived from its SCM connection — the orchestrator never accepts a free-form remote URL. The primary repo's PR is the one linked to the work item.
+          </p>
+          {#if formRepos.length === 0}
+            <p class="text-xs mb-2" style="color: var(--ds-text-subtle);">No repositories — the binding falls through to whatever the orchestrator picks.</p>
+          {/if}
+          {#each formRepos as repo, idx (idx)}
+            <div class="flex flex-wrap items-end gap-2 mb-2" data-testid="binding-repo-row">
+              <div class="flex-1 min-w-[180px]">
+                <Label for={`binding-repo-conn-${idx}`} class="mb-1">SCM connection</Label>
+                <Select
+                  id={`binding-repo-conn-${idx}`}
+                  value={repo.connId}
+                  onchange={(v) => onRepoRowConnectionChange(idx, v)}
+                  options={scmConnectionOptions}
+                />
+              </div>
+              <div class="flex-1 min-w-[180px]">
+                <Label for={`binding-repo-sel-${idx}`} class="mb-1">Repository</Label>
+                <Select
+                  id={`binding-repo-sel-${idx}`}
+                  value={repo.repositoryId}
+                  onchange={(v) => onRepoRowRepositoryChange(idx, v)}
+                  options={repoOptionsFor(repo.connId)}
+                  disabled={!repo.connId || loadingReposByConn[repo.connId]}
+                />
+              </div>
+              <div class="w-28">
+                <Label for={`binding-repo-base-${idx}`} class="mb-1">Base ref</Label>
+                <Input id={`binding-repo-base-${idx}`} value={repo.repoBaseRef} oninput={(e) => { formRepos[idx].repoBaseRef = e.currentTarget.value; }} placeholder="main" />
+              </div>
+              <label class="flex items-center gap-1 text-xs pb-2" style="color: var(--ds-text-subtle);">
+                <input
+                  type="radio"
+                  name="binding-primary-repo"
+                  checked={repo.isPrimary}
+                  onchange={() => setPrimaryRepo(idx)}
+                  data-testid="binding-repo-primary"
+                />
+                Primary
+              </label>
+              <Button variant="ghost" size="small" onclick={() => removeRepoRow(idx)} data-testid="binding-repo-remove" class="pb-2">Remove</Button>
+            </div>
+          {/each}
+          <Button variant="secondary" size="small" onclick={addRepoRow} data-testid="binding-repo-add">+ Add repository</Button>
         </div>
         <!-- Persona + skills (WI-258): appended to the run's standard prompt. -->
         <div class="mt-4">

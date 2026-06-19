@@ -37,6 +37,22 @@ var ErrBindingInvalidRepoSlug = errors.New("binding service: repo_slug must be o
 // allowed characters can produce them.
 var validRepoSlug = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
 
+// ErrBindingDuplicateRepoSlug is returned when a binding lists the same repo
+// slug more than once (WI-449). The handler maps it to 400.
+var ErrBindingDuplicateRepoSlug = errors.New("binding service: a repo_slug may appear only once per binding")
+
+// ErrBindingPrimaryRepoRequired is returned when a multi-repo binding does not
+// designate exactly one primary repo (WI-449). The primary's PR is the one
+// linked to the work item.
+var ErrBindingPrimaryRepoRequired = errors.New("binding service: a binding with multiple repos must mark exactly one as primary")
+
+// ErrBindingTooManyRepos caps the number of repos a single binding may bind
+// (WI-449) — each repo is a clone + worktree per run.
+var ErrBindingTooManyRepos = errors.New("binding service: too many repos bound to a single binding")
+
+// maxBindingRepos caps CreateBindingRequest.Repos.
+const maxBindingRepos = 10
+
 // ErrBindingTokenTTLOverCap is returned when a binding is created with a
 // TokenTTLMinutes value above the per-run-token ceiling (see
 // MaxAgentTokenTTL). Surfaced as 400 by the handler so the admin sees
@@ -250,8 +266,15 @@ func NewBindingService(opts BindingServiceOptions) (*BindingService, error) {
 // SCMConnectionID; the clone URL is derived from the connection's
 // provider host and the binding's RepoSlug.
 type CreateBindingRequest struct {
-	WorkspaceID     int
-	ActingUserID    int
+	WorkspaceID  int
+	ActingUserID int
+	// Repos is the set of repositories the binding checks out (WI-449). Exactly
+	// one must be primary (or, for a single repo, primary is defaulted). When
+	// empty, the legacy scalar RepoSlug/RepoBaseRef/SCMConnectionID below are
+	// folded into a single primary repo for backward compatibility.
+	Repos []RepoInput
+	// RepoSlug/RepoBaseRef/SCMConnectionID are the deprecated single-repo
+	// fields, kept for old API clients. Prefer Repos.
 	RepoSlug        string
 	RepoBaseRef     string
 	LLMConnectionID *int
@@ -270,6 +293,14 @@ type CreateBindingRequest struct {
 	// belong to the binding's workspace.
 	SkillIDs        []int
 	CreatedByUserID int
+}
+
+// RepoInput is one repository in a CreateBindingRequest (WI-449).
+type RepoInput struct {
+	RepoSlug        string
+	RepoBaseRef     string
+	SCMConnectionID *int
+	IsPrimary       bool
 }
 
 // Create validates the acting identity via the WI-87 chokepoint, then
@@ -297,13 +328,9 @@ func (s *BindingService) Create(ctx context.Context, req CreateBindingRequest) (
 			return nil, ErrBindingTokenTTLOverCap
 		}
 	}
-	if req.RepoSlug != "" {
-		if !validRepoSlug.MatchString(req.RepoSlug) {
-			return nil, ErrBindingInvalidRepoSlug
-		}
-		if req.SCMConnectionID == nil {
-			return nil, ErrBindingRepoNeedsSCMConnection
-		}
+	repos, err := normalizeBindingRepos(req)
+	if err != nil {
+		return nil, err
 	}
 	if len(req.Instructions) > maxBindingInstructionsLen {
 		return nil, ErrBindingInstructionsTooLong
@@ -339,17 +366,17 @@ func (s *BindingService) Create(ctx context.Context, req CreateBindingRequest) (
 		WorkspaceID:     req.WorkspaceID,
 		ActingUserID:    identity.UserID,
 		ActingUserKind:  identity.Kind,
-		RepoSlug:        req.RepoSlug,
-		RepoBaseRef:     req.RepoBaseRef,
 		LLMConnectionID: req.LLMConnectionID,
-		SCMConnectionID: req.SCMConnectionID,
 		TargetPoolID:    req.TargetPoolID,
 		TokenScopes:     req.TokenScopes,
 		TokenTTLMinutes: req.TokenTTLMinutes,
 		MaxRunsPerDay:   req.MaxRunsPerDay,
 		Instructions:    req.Instructions,
 		CreatedByUserID: req.CreatedByUserID,
+		Repos:           repos,
 	}
+	// Insert persists the binding row + its child repo rows atomically and
+	// mirrors the primary onto the deprecated scalar columns.
 	id, err := s.repo.Insert(ctx, binding)
 	if err != nil {
 		return nil, err
@@ -364,6 +391,61 @@ func (s *BindingService) Create(ctx context.Context, req CreateBindingRequest) (
 		}
 	}
 	return binding, nil
+}
+
+// normalizeBindingRepos validates and normalizes a create request's repos into
+// the persisted BindingRepo slice (WI-449). It folds the deprecated single-repo
+// scalar fields into a one-element primary repo when Repos is empty, validates
+// each slug + SCM connection (preserving the per-repo no-free-URL invariant),
+// rejects duplicates, and ensures exactly one primary.
+func normalizeBindingRepos(req CreateBindingRequest) ([]models.BindingRepo, error) {
+	inputs := req.Repos
+	if len(inputs) == 0 {
+		if req.RepoSlug == "" {
+			return nil, nil // no-repo binding (fall-through to orchestrator)
+		}
+		inputs = []RepoInput{{
+			RepoSlug:        req.RepoSlug,
+			RepoBaseRef:     req.RepoBaseRef,
+			SCMConnectionID: req.SCMConnectionID,
+			IsPrimary:       true,
+		}}
+	}
+	if len(inputs) > maxBindingRepos {
+		return nil, ErrBindingTooManyRepos
+	}
+	out := make([]models.BindingRepo, 0, len(inputs))
+	seen := make(map[string]bool, len(inputs))
+	primaries := 0
+	for i, in := range inputs {
+		if !validRepoSlug.MatchString(in.RepoSlug) {
+			return nil, ErrBindingInvalidRepoSlug
+		}
+		if in.SCMConnectionID == nil {
+			return nil, ErrBindingRepoNeedsSCMConnection
+		}
+		if seen[in.RepoSlug] {
+			return nil, ErrBindingDuplicateRepoSlug
+		}
+		seen[in.RepoSlug] = true
+		if in.IsPrimary {
+			primaries++
+		}
+		out = append(out, models.BindingRepo{
+			SCMConnectionID: in.SCMConnectionID,
+			RepoSlug:        in.RepoSlug,
+			RepoBaseRef:     in.RepoBaseRef,
+			IsPrimary:       in.IsPrimary,
+			Position:        i,
+		})
+	}
+	switch {
+	case primaries == 0 && len(out) == 1:
+		out[0].IsPrimary = true // default the sole repo
+	case primaries != 1:
+		return nil, ErrBindingPrimaryRepoRequired
+	}
+	return out, nil
 }
 
 // UpdateAgentConfig rewrites a binding's prompt-shaping configuration —

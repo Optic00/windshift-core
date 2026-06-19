@@ -143,6 +143,26 @@ CREATE TABLE IF NOT EXISTS workspace_agent_binding_skills (
 CREATE INDEX IF NOT EXISTS idx_workspace_agent_binding_skills_skill
     ON workspace_agent_binding_skills(skill_id);
 
+-- Workspace agent binding repos (WI-449): see agents.sql for the design note.
+CREATE TABLE IF NOT EXISTS workspace_agent_binding_repos (
+    id SERIAL PRIMARY KEY,
+    binding_id INTEGER NOT NULL,
+    scm_connection_id INTEGER,
+    repo_slug TEXT NOT NULL,
+    repo_base_ref TEXT NOT NULL DEFAULT '',
+    is_primary BOOLEAN NOT NULL DEFAULT FALSE,
+    position INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (binding_id) REFERENCES workspace_agent_bindings(id) ON DELETE CASCADE,
+    FOREIGN KEY (scm_connection_id) REFERENCES workspace_scm_connections(id) ON DELETE SET NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_wab_repos_binding_slug
+    ON workspace_agent_binding_repos(binding_id, repo_slug);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_wab_repos_one_primary
+    ON workspace_agent_binding_repos(binding_id) WHERE is_primary;
+CREATE INDEX IF NOT EXISTS idx_wab_repos_binding
+    ON workspace_agent_binding_repos(binding_id);
+
 -- Remote runner pools (Initiative WI-141). A pool is an action_capabilities
 -- row of type 'runner_pool'; these tables hang off it by soft ref (no FK,
 -- mirroring the agent-table convention).

@@ -93,10 +93,21 @@ type bindingResponse struct {
 	MaxRunsPerDay   int      `json:"max_runs_per_day"`
 	Instructions    string   `json:"instructions,omitempty"`
 	SkillIDs        []int    `json:"skill_ids,omitempty"`
+	// Repos is the binding's bound repositories (WI-449). The legacy scalar
+	// RepoSlug/RepoBaseRef/SCMConnectionID above mirror the primary repo.
+	Repos []bindingRepoResponse `json:"repos,omitempty"`
+}
+
+type bindingRepoResponse struct {
+	RepoSlug        string `json:"repo_slug"`
+	RepoBaseRef     string `json:"repo_base_ref,omitempty"`
+	SCMConnectionID *int   `json:"scm_connection_id,omitempty"`
+	IsPrimary       bool   `json:"is_primary"`
+	Position        int    `json:"position"`
 }
 
 func toBindingResponse(b *models.WorkspaceAgentBinding) bindingResponse {
-	return bindingResponse{
+	resp := bindingResponse{
 		ID:              b.ID,
 		WorkspaceID:     b.WorkspaceID,
 		ActingUserID:    b.ActingUserID,
@@ -111,6 +122,16 @@ func toBindingResponse(b *models.WorkspaceAgentBinding) bindingResponse {
 		MaxRunsPerDay:   b.MaxRunsPerDay,
 		Instructions:    b.Instructions,
 	}
+	for _, rp := range b.Repos {
+		resp.Repos = append(resp.Repos, bindingRepoResponse{
+			RepoSlug:        rp.RepoSlug,
+			RepoBaseRef:     rp.RepoBaseRef,
+			SCMConnectionID: rp.SCMConnectionID,
+			IsPrimary:       rp.IsPrimary,
+			Position:        rp.Position,
+		})
+	}
+	return resp
 }
 
 // withSkillIDs decorates a binding response with its attached skill ids.
@@ -128,17 +149,28 @@ func (h *WorkspaceAgentBindingHandler) withSkillIDs(r *http.Request, resp bindin
 }
 
 type createBindingBody struct {
-	ActingUserID    int      `json:"acting_user_id"`
-	RepoSlug        string   `json:"repo_slug,omitempty"`
-	RepoBaseRef     string   `json:"repo_base_ref,omitempty"`
-	LLMConnectionID *int     `json:"llm_connection_id,omitempty"`
-	SCMConnectionID *int     `json:"scm_connection_id,omitempty"`
-	TargetPoolID    *int     `json:"target_pool_id,omitempty"`
-	TokenScopes     []string `json:"token_scopes,omitempty"`
-	TokenTTLMinutes int      `json:"token_ttl_minutes,omitempty"`
-	MaxRunsPerDay   int      `json:"max_runs_per_day,omitempty"`
-	Instructions    string   `json:"instructions,omitempty"`
-	SkillIDs        []int    `json:"skill_ids,omitempty"`
+	ActingUserID int `json:"acting_user_id"`
+	// Repos is the preferred multi-repo input (WI-449). When empty, the legacy
+	// scalar repo_slug/repo_base_ref/scm_connection_id below are folded into a
+	// single primary repo for old clients.
+	Repos           []createBindingRepoBody `json:"repos,omitempty"`
+	RepoSlug        string                  `json:"repo_slug,omitempty"`
+	RepoBaseRef     string                  `json:"repo_base_ref,omitempty"`
+	LLMConnectionID *int                    `json:"llm_connection_id,omitempty"`
+	SCMConnectionID *int                    `json:"scm_connection_id,omitempty"`
+	TargetPoolID    *int                    `json:"target_pool_id,omitempty"`
+	TokenScopes     []string                `json:"token_scopes,omitempty"`
+	TokenTTLMinutes int                     `json:"token_ttl_minutes,omitempty"`
+	MaxRunsPerDay   int                     `json:"max_runs_per_day,omitempty"`
+	Instructions    string                  `json:"instructions,omitempty"`
+	SkillIDs        []int                   `json:"skill_ids,omitempty"`
+}
+
+type createBindingRepoBody struct {
+	RepoSlug        string `json:"repo_slug"`
+	RepoBaseRef     string `json:"repo_base_ref,omitempty"`
+	SCMConnectionID *int   `json:"scm_connection_id,omitempty"`
+	IsPrimary       bool   `json:"is_primary,omitempty"`
 }
 
 // List returns every binding configured in the workspace.
@@ -198,10 +230,24 @@ func (h *WorkspaceAgentBindingHandler) Create(w http.ResponseWriter, r *http.Req
 		sanitize.Pair{Target: &body.RepoBaseRef, Policy: sanitize.ShortIdentifier},
 		sanitize.Pair{Target: &body.Instructions, Policy: sanitize.RichText},
 	)
+	repos := make([]services.RepoInput, 0, len(body.Repos))
+	for i := range body.Repos {
+		sanitize.ApplyAll(
+			sanitize.Pair{Target: &body.Repos[i].RepoSlug, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: &body.Repos[i].RepoBaseRef, Policy: sanitize.ShortIdentifier},
+		)
+		repos = append(repos, services.RepoInput{
+			RepoSlug:        body.Repos[i].RepoSlug,
+			RepoBaseRef:     body.Repos[i].RepoBaseRef,
+			SCMConnectionID: body.Repos[i].SCMConnectionID,
+			IsPrimary:       body.Repos[i].IsPrimary,
+		})
+	}
 
 	binding, err := h.bindings.Create(r.Context(), services.CreateBindingRequest{
 		WorkspaceID:     workspaceID,
 		ActingUserID:    body.ActingUserID,
+		Repos:           repos,
 		RepoSlug:        body.RepoSlug,
 		RepoBaseRef:     body.RepoBaseRef,
 		LLMConnectionID: body.LLMConnectionID,
@@ -224,6 +270,9 @@ func (h *WorkspaceAgentBindingHandler) Create(w http.ResponseWriter, r *http.Req
 		case errors.Is(err, services.ErrBindingTokenTTLOverCap),
 			errors.Is(err, services.ErrBindingRepoNeedsSCMConnection),
 			errors.Is(err, services.ErrBindingInvalidRepoSlug),
+			errors.Is(err, services.ErrBindingDuplicateRepoSlug),
+			errors.Is(err, services.ErrBindingPrimaryRepoRequired),
+			errors.Is(err, services.ErrBindingTooManyRepos),
 			errors.Is(err, services.ErrBindingInvalidPool),
 			errors.Is(err, services.ErrBindingInstructionsTooLong),
 			isSkillAttachError(err):

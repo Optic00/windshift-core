@@ -161,6 +161,34 @@ CREATE TABLE IF NOT EXISTS workspace_agent_binding_skills (
 CREATE INDEX IF NOT EXISTS idx_workspace_agent_binding_skills_skill
     ON workspace_agent_binding_skills(skill_id);
 
+-- Workspace agent binding repos (WI-449): a binding may bind N repositories so
+-- the agent gets all of them checked out (e.g. core + core-tests) and opens one
+-- PR per changed repo. Exactly one row per binding is is_primary=1 (the repo
+-- whose PR links to the work item, and the single-repo backward-compat repo).
+-- Like the binding itself, no clone URL is stored: it is derived server-side
+-- from the trusted scm_connection_id + repo_slug (anti-SSRF). Supersedes the
+-- legacy scalar workspace_agent_bindings.repo_slug/repo_base_ref/scm_connection_id
+-- columns, which are kept one release as a dormant rollback net.
+CREATE TABLE IF NOT EXISTS workspace_agent_binding_repos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    binding_id INTEGER NOT NULL,
+    scm_connection_id INTEGER,
+    repo_slug TEXT NOT NULL,
+    repo_base_ref TEXT NOT NULL DEFAULT '',
+    is_primary BOOLEAN NOT NULL DEFAULT 0,
+    position INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (binding_id) REFERENCES workspace_agent_bindings(id) ON DELETE CASCADE,
+    FOREIGN KEY (scm_connection_id) REFERENCES workspace_scm_connections(id) ON DELETE SET NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_wab_repos_binding_slug
+    ON workspace_agent_binding_repos(binding_id, repo_slug);
+-- one primary per binding (partial unique index; SQLite 3.8+ and Postgres)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_wab_repos_one_primary
+    ON workspace_agent_binding_repos(binding_id) WHERE is_primary;
+CREATE INDEX IF NOT EXISTS idx_wab_repos_binding
+    ON workspace_agent_binding_repos(binding_id);
+
 -- Remote runner pools (Initiative WI-141). A pool is an action_capabilities
 -- row of type 'runner_pool'; these tables hang off it by soft ref (no FK,
 -- mirroring the agent-table convention) so pool deletion is handled in the
