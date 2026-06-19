@@ -435,16 +435,25 @@ func (r *ItemRepository) scanItemList(rows *sql.Rows) ([]models.Item, error) {
 		var storyPoints sql.NullFloat64
 		var estimateMinutes sql.NullInt64
 		var inheritProject bool
+		// last_active_at can be NULL on rows created before it was consistently
+		// populated, so scan through a nullable and fall back to updated_at.
+		var lastActiveAt sql.NullTime
 
 		err := rows.Scan(
 			&item.ID, &item.WorkspaceID, &item.WorkspaceItemNumber, &itemTypeID, &item.Title, &item.Description,
 			&statusID, &priorityID, &dueDate, &startDate, &endDate, &item.IsTask, &iterationID, &projectID, &inheritProject, &timeProjectID, &assigneeID, &creatorID, &customFieldValuesJSON, &calendarDataJSON, &parentID,
-			&storyPoints, &estimateMinutes, &fracIndex, &item.CreatedAt, &item.UpdatedAt, &item.LastActiveAt, &item.WorkspaceName, &item.WorkspaceKey, &itemTypeName, &parentTitle, &parentWorkspaceItemNumber, &iterationName, &iterationEndDate, &projectName, &timeProjectName,
+			&storyPoints, &estimateMinutes, &fracIndex, &item.CreatedAt, &item.UpdatedAt, &lastActiveAt, &item.WorkspaceName, &item.WorkspaceKey, &itemTypeName, &parentTitle, &parentWorkspaceItemNumber, &iterationName, &iterationEndDate, &projectName, &timeProjectName,
 			&assigneeName, &assigneeEmail, &assigneeAvatar, &creatorName, &creatorEmail, &statusName, &priorityName, &priorityIcon, &priorityColor,
 			&statusSince,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan item: %w", err)
+		}
+
+		if lastActiveAt.Valid {
+			item.LastActiveAt = lastActiveAt.Time
+		} else {
+			item.LastActiveAt = item.UpdatedAt
 		}
 
 		// Handle nullable fields
