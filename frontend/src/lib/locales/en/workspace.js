@@ -490,6 +490,8 @@ export default {
     noChildItems: 'No child items yet',
     noChildItemsLowest: 'No child items (lowest hierarchy level)',
     addCard: 'Add card',
+    collapseColumn: 'Collapse column',
+    expandColumn: 'Expand column ({name})',
     create: 'Create',
     enterSummary: 'Enter a summary...',
     selectWorkspace: 'Select workspace',

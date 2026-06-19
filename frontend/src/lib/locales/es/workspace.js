@@ -409,6 +409,8 @@ export default {
     noChildItems: 'No hay elementos secundarios aún',
     noChildItemsLowest: 'No hay elementos secundarios (nivel jerárquico más bajo)',
     addCard: 'Agregar tarjeta',
+    collapseColumn: 'Contraer columna',
+    expandColumn: 'Expandir columna ({name})',
     create: 'Crear',
     enterSummary: 'Ingrese un resumen...',
     selectWorkspace: 'Seleccionar espacio de trabajo',
