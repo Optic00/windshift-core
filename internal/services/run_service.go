@@ -114,9 +114,17 @@ type RunRequest struct {
 	WorkspaceID int
 	ItemID      *int
 	BindingID   int
-	Repo        *repoprep.RepoSpec
-	Token       *TokenSpec
-	Env         map[string]string
+	// Repo is the deprecated single-repo input (WI-449). Prefer Repos. When
+	// Repos is empty and Repo is set, the run path treats it as a one-element
+	// primary repo, keeping single-repo behavior byte-identical.
+	Repo *repoprep.RepoSpec
+	// Repos is the set of repositories to check out for the run (WI-449), the
+	// primary first. One repo → single-repo layout (cwd = that checkout, as
+	// before); more than one → each is checked out as a sibling dir under a
+	// shared per-run workspace root that becomes the agent's cwd.
+	Repos []*repoprep.RepoSpec
+	Token *TokenSpec
+	Env   map[string]string
 	// Grants, when set, is snapshotted onto the run at claim time and bound
 	// to the minted run-token (WI-144) so the access-layer brokers can
 	// authorize the run's git/llm/secret access. The git ref is filled in at
@@ -217,6 +225,21 @@ type PostRunInfo struct {
 	// existing PR's head branch — so it comments on that PR instead of opening a
 	// new one.
 	Trigger *models.RunTrigger
+	// Repos carries the per-repo push outcome for a multi-repo run (WI-449),
+	// the primary first. Branch is empty for a repo the agent left unchanged
+	// (no_changes). For single-repo runs this has one entry mirroring
+	// Branch/BaseCommit above; the PR hook prefers Repos when present and falls
+	// back to the scalar Branch/BaseCommit otherwise.
+	Repos []PostRunRepo
+}
+
+// PostRunRepo is one repo's push result handed to the PR hook (WI-449). The run
+// service fills only what it knows — RepoSlug + the pushed Branch/BaseCommit;
+// the SCM connection and primary flag are resolved by the hook from the binding.
+type PostRunRepo struct {
+	RepoSlug   string
+	Branch     string // empty when the repo had no new commits
+	BaseCommit string
 }
 
 // BindingInputsResolver derives a binding-backed run's per-run token spec,
@@ -446,7 +469,7 @@ func (s *RunService) Start(ctx context.Context, req RunRequest) (int, error) {
 		return runID, nil
 	}
 
-	if req.Repo != nil && s.preparer == nil {
+	if (req.Repo != nil || len(req.Repos) > 0) && s.preparer == nil {
 		return 0, errors.New("run service: request includes a Repo but no Preparer is configured")
 	}
 	if req.Token != nil && s.tokens == nil {

@@ -888,11 +888,11 @@ func (s *BindingService) applyMentionContinuation(ctx context.Context, trigger *
 	if target == nil || target.HeadBranch == "" {
 		return
 	}
-	// Write scope: only continue a PR in the repo this binding's credentials can
-	// push to. A PR in another repo would push back somewhere the binding has no
-	// business writing.
-	if target.RepoSlug != binding.RepoSlug {
-		s.logger.Printf("binding service: item=%d open PR is in %q but binding=%d writes %q — starting fresh run", itemID, target.RepoSlug, binding.ID, binding.RepoSlug)
+	// Write scope: only continue a PR in a repo this binding's credentials can
+	// push to. A PR in a repo the binding doesn't bind would push back somewhere
+	// it has no business writing (WI-449: any bound repo, not just the primary).
+	if !binding.HasRepoSlug(target.RepoSlug) {
+		s.logger.Printf("binding service: item=%d open PR is in %q but binding=%d binds none of its repos — starting fresh run", itemID, target.RepoSlug, binding.ID)
 		return
 	}
 	trigger.ContinuePRNumber = target.PRNumber
@@ -1002,47 +1002,62 @@ func (s *BindingService) startRunForBinding(ctx context.Context, binding *models
 		InitialPromptSuffix: s.promptSuffixForBinding(binding, skills) + renderInstruction(trigger),
 	}
 	if binding.HasRepo() {
-		// HasRepo guarantees SCMConnectionID is set; this is the only
-		// path that resolves a clone URL. The orchestrator derives the
-		// URL from the trusted SCM connection record + the binding's
-		// slug — the binding cannot carry a free-form URL.
+		// Resolve a clone URL per bound repo, primary first (WI-449). HasRepo
+		// guarantees each repo carries an SCM connection; this is the only path
+		// that resolves clone URLs. The orchestrator derives each URL from the
+		// trusted SCM connection record + the repo's slug — a binding can never
+		// carry a free-form URL.
 		if s.scmCreds == nil {
 			s.logger.Printf("binding service: binding=%d wants repo prep but no SCMCredentialResolver is configured (dropping)", binding.ID)
 			return nil
 		}
-		token, providerType, baseURL, err := s.scmCreds.ResolveForRunAsUser(ctx, *binding.SCMConnectionID, triggeredByUserID)
-		var cloneURL string
-		if err == nil {
-			cloneURL, err = deriveCloneURL(providerType, baseURL, binding.RepoSlug)
-		}
-		if err != nil {
-			// Fail visibly: without a run row the trigger evaporates and the
-			// assigner sees nothing at all (WI-275, extended past the
-			// not-connected case after the git-proxy 503 incident).
-			if _, rerr := s.runs.RecordFailedStart(ctx, req, startFailureReason("SCM connection", err)); rerr != nil {
-				s.logger.Printf("binding service: record failed run for item=%d binding=%d: %v", itemID, binding.ID, rerr)
+		for _, br := range orderReposPrimaryFirst(binding) {
+			if br.SCMConnectionID == nil {
+				// Defensive: validation guarantees this, but never derive a URL
+				// without a trusted connection.
+				err := ErrBindingRepoNeedsSCMConnection
+				if _, rerr := s.runs.RecordFailedStart(ctx, req, startFailureReason("SCM connection", err)); rerr != nil {
+					s.logger.Printf("binding service: record failed run for item=%d binding=%d: %v", itemID, binding.ID, rerr)
+				}
+				return err
 			}
-			return err
-		}
-		s.logger.Printf("binding service: derived %s clone url for binding=%d slug=%s", providerType, binding.ID, binding.RepoSlug)
-		// Token travels on RepoSpec as a separate field — never embed
-		// it in RemoteURL. repoprep injects it via a per-clone GIT_ASKPASS
-		// helper so it never appears in argv or .git/config.
-		req.Repo = &repoprep.RepoSpec{
-			WorkspaceID: workspaceID,
-			RepoSlug:    binding.RepoSlug,
-			RemoteURL:   cloneURL,
-			BaseRef:     binding.RepoBaseRef,
-			Token:       token,
-		}
-		// A continuation run checks out the bound PR's head branch and pushes
-		// back to it instead of cutting a fresh per-run branch (BaseRef ignored).
-		if trigger.IsContinuation() {
-			req.Repo.ContinueBranch = trigger.ContinueHeadBranch
+			token, providerType, baseURL, err := s.scmCreds.ResolveForRunAsUser(ctx, *br.SCMConnectionID, triggeredByUserID)
+			var cloneURL string
+			if err == nil {
+				cloneURL, err = deriveCloneURL(providerType, baseURL, br.RepoSlug)
+			}
+			if err != nil {
+				// Fail visibly: without a run row the trigger evaporates and the
+				// assigner sees nothing at all (WI-275, extended past the
+				// not-connected case after the git-proxy 503 incident). A
+				// partial multi-repo checkout is worse than a visible failure.
+				if _, rerr := s.runs.RecordFailedStart(ctx, req, startFailureReason("SCM connection", err)); rerr != nil {
+					s.logger.Printf("binding service: record failed run for item=%d binding=%d: %v", itemID, binding.ID, rerr)
+				}
+				return err
+			}
+			s.logger.Printf("binding service: derived %s clone url for binding=%d slug=%s", providerType, binding.ID, br.RepoSlug)
+			// Token travels on RepoSpec as a separate field — never embed it in
+			// RemoteURL. repoprep injects it via a per-clone GIT_ASKPASS helper
+			// so it never appears in argv or .git/config.
+			spec := &repoprep.RepoSpec{
+				WorkspaceID: workspaceID,
+				RepoSlug:    br.RepoSlug,
+				RemoteURL:   cloneURL,
+				BaseRef:     br.RepoBaseRef,
+				Token:       token,
+			}
+			// A continuation targets exactly one repo's PR head branch: only the
+			// repo matching the trigger's ContinueRepoSlug checks out that branch
+			// and pushes back to it; the other repos cut fresh per-run branches.
+			if trigger.IsContinuation() && trigger.ContinueRepoSlug == br.RepoSlug {
+				spec.ContinueBranch = trigger.ContinueHeadBranch
+			}
+			req.Repos = append(req.Repos, spec)
 		}
 		// The SCM token stays host-side: repoprep uses it (via a per-clone
-		// GIT_ASKPASS helper) to clone the worktree and, after the run, to push
-		// the run branch. It is NOT injected into the container — the
+		// GIT_ASKPASS helper) to clone each worktree and, after the run, to push
+		// the run branches. It is NOT injected into the container — the
 		// windshift-agent holds no SCM credential and never pushes (WI-238).
 		// GIT_TERMINAL_PROMPT=0 only keeps the agent's local `git commit` from
 		// blocking on a credential prompt.
@@ -1070,6 +1085,26 @@ func (s *BindingService) startRunForBinding(ctx context.Context, binding *models
 	}
 	s.logger.Printf("binding service: started run=%d for item=%d binding=%d acting_user=%d", runID, itemID, binding.ID, binding.ActingUserID)
 	return nil
+}
+
+// orderReposPrimaryFirst returns the binding's repos with the primary first,
+// then the remainder in their stored position order (WI-449). The run path
+// relies on index 0 being primary for the work-item-linked PR and the
+// single-repo-compatible grant ref.
+func orderReposPrimaryFirst(binding *models.WorkspaceAgentBinding) []models.BindingRepo {
+	repos := binding.Repos
+	out := make([]models.BindingRepo, 0, len(repos))
+	primary := binding.PrimaryRepo()
+	if primary != nil {
+		out = append(out, *primary)
+	}
+	for i := range repos {
+		if primary != nil && repos[i].RepoSlug == primary.RepoSlug {
+			continue
+		}
+		out = append(out, repos[i])
+	}
+	return out
 }
 
 // PRCommentContinuation carries one detected "@agent" PR comment that should
@@ -1114,8 +1149,9 @@ func (s *BindingService) StartPRCommentContinuation(ctx context.Context, in PRCo
 	if err != nil {
 		return false, fmt.Errorf("load binding %d: %w", *latest.BindingID, err)
 	}
-	// Write scope: only continue a PR in the repo this binding can push to.
-	if !binding.HasRepo() || binding.RepoSlug != in.RepoSlug {
+	// Write scope: only continue a PR in a repo this binding binds (WI-449:
+	// any bound repo, not just the primary).
+	if !binding.HasRepo() || !binding.HasRepoSlug(in.RepoSlug) {
 		return false, nil
 	}
 	// Dedup: a repeat "@agent" while the agent is already working is a nudge, not
