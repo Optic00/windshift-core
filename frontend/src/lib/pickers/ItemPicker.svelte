@@ -23,6 +23,7 @@
     class: className = '',
     children: customTrigger = null,  // Optional custom trigger snippet from callers
     footer = null,
+    keepOpenOnFooterTab = false,
     onSearchChange = null,
     searchDebounce = 300,
     onSelect = null,
@@ -70,6 +71,7 @@
   onChange={(values) => onSelect?.(values)}
   onCancel={() => onCancel?.()}
   {footer}
+  {keepOpenOnFooterTab}
 >
   {#snippet children()}
     {#if customTrigger}

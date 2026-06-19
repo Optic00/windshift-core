@@ -195,6 +195,7 @@ export default {
     noMilestone: 'بدون معلم',
     milestones: 'المعالم',
     noMilestonesFound: 'لم يتم العثور على معالم',
+    showCompletedMilestones: 'إظهار المكتملة',
     selectPriority: 'اختيار الأولوية',
     noPriority: 'بدون أولوية',
     loadingPriorities: 'جارٍ تحميل الأولويات...',

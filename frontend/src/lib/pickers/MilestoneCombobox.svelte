@@ -30,6 +30,14 @@
   let loading = $state(false);
   let loadToken = 0;
 
+  // Terminal milestone lifecycle statuses are hidden from the list by default
+  // so completed/cancelled milestones no longer look identical to active ones
+  // (WI-448). They can be surfaced again via the "Show completed" footer toggle.
+  const TERMINAL_STATUSES = new Set(['completed', 'cancelled']);
+
+  // Whether the user has opted to surface terminal milestones.
+  let showCompleted = $state(false);
+
   // Reload when workspaceId changes. Capture the ID for this request so an
   // earlier global load cannot overwrite a later workspace-scoped result.
   $effect(() => {
@@ -76,6 +84,55 @@
     onSelect({ ids: safe, milestones: selected });
   }
 
+  // Terminal milestones hidden by default; surfaced via the footer toggle.
+  const hasCompletedMilestones = $derived(
+    milestones.some((m) => TERMINAL_STATUSES.has(m.status))
+  );
+
+  // The currently-selected value(s) must always stay visible so the trigger
+  // reflects the real selection accurately, even when it would otherwise be
+  // filtered out as a terminal milestone.
+  const selectedIds = $derived.by(() => {
+    const ids = new Set();
+    if (multiple) {
+      const arr = Array.isArray(value) ? value : [];
+      for (const id of arr) ids.add(id);
+    } else if (value != null) {
+      ids.add(value);
+    }
+    return ids;
+  });
+
+  const visibleMilestones = $derived.by(() => {
+    if (showCompleted) return milestones;
+    return milestones.filter(
+      (m) => !TERMINAL_STATUSES.has(m.status) || selectedIds.has(m.id)
+    );
+  });
+
+  // Status-specific badge so a cancelled milestone is never mislabelled as
+  // "Completed". Cancelled uses the danger tone, completed the success tone,
+  // matching the milestone detail page's lozenge colours. Backgrounds are a
+  // subtle tint derived from the well-defined text tokens (there is no
+  // `--ds-background-success`/`-danger` semantic token in the theme).
+  function terminalBadge(milestone) {
+    if (milestone.status === 'completed') {
+      return {
+        text: t('milestones.status.completed'),
+        textColor: 'var(--ds-text-success)',
+        bgColor: 'color-mix(in srgb, var(--ds-text-success) 15%, transparent)'
+      };
+    }
+    if (milestone.status === 'cancelled') {
+      return {
+        text: t('milestones.status.cancelled'),
+        textColor: 'var(--ds-text-danger)',
+        bgColor: 'color-mix(in srgb, var(--ds-text-danger) 15%, transparent)'
+      };
+    }
+    return null;
+  }
+
   const config = {
     icon: {
       type: 'color-dot',
@@ -83,6 +140,13 @@
       size: 'w-2 h-2'
     },
     primary: { text: (item) => item.name || '' },
+    badges: [
+      {
+        text: (item) => terminalBadge(item)?.text ?? '',
+        textColor: (item) => terminalBadge(item)?.textColor ?? 'var(--ds-text-subtle)',
+        bgColor: (item) => terminalBadge(item)?.bgColor ?? 'var(--ds-background-neutral)'
+      }
+    ],
     searchFields: ['name', 'description'],
     getValue: (item) => item?.id,
     getLabel: (item) => item?.name ?? ''
@@ -92,7 +156,7 @@
 {#if multiple}
   <ItemPicker
     bind:values={value}
-    items={milestones}
+    items={visibleMilestones}
     {config}
     placeholder={resolvedPlaceholder}
     showUnassigned={false}
@@ -101,13 +165,27 @@
     multiSelect={true}
     class={className}
     {children}
+    keepOpenOnFooterTab={hasCompletedMilestones}
     onSelect={handleSelectMulti}
     onCancel={() => onCancel()}
-  />
+  >
+    {#snippet footer()}
+      {#if hasCompletedMilestones}
+        <label
+          class="flex items-center gap-2 px-4 py-2.5 cursor-pointer text-sm select-none"
+          style="color: var(--ds-text);"
+          data-testid="milestone-show-completed-toggle"
+        >
+          <input type="checkbox" bind:checked={showCompleted} class="accent-[var(--ds-interactive)]" />
+          <span>{t('pickers.showCompletedMilestones')}</span>
+        </label>
+      {/if}
+    {/snippet}
+  </ItemPicker>
 {:else}
   <ItemPicker
     bind:value
-    items={milestones}
+    items={visibleMilestones}
     {config}
     placeholder={resolvedPlaceholder}
     {showUnassigned}
@@ -117,7 +195,21 @@
     allowClear={true}
     class={className}
     {children}
+    keepOpenOnFooterTab={hasCompletedMilestones}
     onSelect={handleSelectSingle}
     onCancel={() => onCancel()}
-  />
+  >
+    {#snippet footer()}
+      {#if hasCompletedMilestones}
+        <label
+          class="flex items-center gap-2 px-4 py-2.5 cursor-pointer text-sm select-none"
+          style="color: var(--ds-text);"
+          data-testid="milestone-show-completed-toggle"
+        >
+          <input type="checkbox" bind:checked={showCompleted} class="accent-[var(--ds-interactive)]" />
+          <span>{t('pickers.showCompletedMilestones')}</span>
+        </label>
+      {/if}
+    {/snippet}
+  </ItemPicker>
 {/if}
