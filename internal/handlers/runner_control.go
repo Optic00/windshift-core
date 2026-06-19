@@ -229,6 +229,21 @@ func (h *RunnerControlHandler) Result(w http.ResponseWriter, r *http.Request) {
 		sanitize.Pair{Target: &req.Branch, Policy: sanitize.ShortIdentifier},
 		sanitize.Pair{Target: &req.BaseCommit, Policy: sanitize.ShortIdentifier},
 	)
+	// Per-repo results (WI-449) are identifier-shaped too; sanitize each before
+	// any reaches the PR hook as a branch ref / repo slug.
+	var resultRepos []services.RunnerRepoResult
+	for i := range req.Repos {
+		sanitize.ApplyAll(
+			sanitize.Pair{Target: &req.Repos[i].RepoSlug, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: &req.Repos[i].Branch, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: &req.Repos[i].BaseCommit, Policy: sanitize.ShortIdentifier},
+		)
+		resultRepos = append(resultRepos, services.RunnerRepoResult{
+			RepoSlug:   req.Repos[i].RepoSlug,
+			Branch:     req.Repos[i].Branch,
+			BaseCommit: req.Repos[i].BaseCommit,
+		})
+	}
 	status := req.Status
 	if !models.IsAgentRunTerminal(status) {
 		respondBadRequest(w, r, "status must be a terminal agent-run state")
@@ -246,6 +261,7 @@ func (h *RunnerControlHandler) Result(w http.ResponseWriter, r *http.Request) {
 			Branch:      req.Branch,
 			BaseCommit:  req.BaseCommit,
 			Summary:     req.Summary,
+			Repos:       resultRepos,
 		}, req.Branch, req.BaseCommit); err != nil {
 			respondInternalError(w, r, err)
 			return

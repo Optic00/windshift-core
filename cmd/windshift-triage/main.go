@@ -64,6 +64,7 @@ func runPrepare(args []string) error {
 	remoteURL := fs.String("remote-url", "", "tokenless remote URL")
 	baseRef := fs.String("base-ref", "main", "base ref to branch from")
 	continueBranch := fs.String("continue-branch", "", "existing PR head branch to continue (overrides base-ref; pushes back to it)")
+	destDir := fs.String("dest-dir", "", "place the checkout here instead of the default per-run location (WI-449 multi-repo sibling layout)")
 	runID := fs.Int("run-id", 0, "run id")
 	tokenFile := fs.String("token-file", "", "file holding the SCM token (askpass)")
 	transport := fs.String("git-transport", "askpass", "askpass|proxy")
@@ -88,6 +89,7 @@ func runPrepare(args []string) error {
 		RemoteURL:      *remoteURL,
 		BaseRef:        *baseRef,
 		ContinueBranch: *continueBranch,
+		DestDir:        *destDir,
 		Token:          token,
 	}, *runID)
 	if err != nil {

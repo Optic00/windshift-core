@@ -954,15 +954,23 @@ func (s *BindingService) startRunForBinding(ctx context.Context, binding *models
 		// runners reach git only through the proxy — and deriveCloneURL is
 		// the same base-URL validation the proxy applies at claim time.
 		if binding.HasRepo() && s.scmCreds != nil {
-			_, providerType, baseURL, err := s.scmCreds.ResolveForRunAsUser(ctx, *binding.SCMConnectionID, triggeredByUserID)
-			if err == nil {
-				_, err = deriveCloneURL(providerType, baseURL, binding.RepoSlug)
-			}
-			if err != nil {
-				if _, rerr := s.runs.RecordFailedStart(ctx, remoteReq, startFailureReason("SCM connection", err)); rerr != nil {
-					s.logger.Printf("binding service: record failed remote run for item=%d binding=%d: %v", itemID, binding.ID, rerr)
+			// Validate every bound repo's credential + clone host now (WI-449),
+			// not just the primary — a remote multi-repo run must fail visibly at
+			// start if any repo is misconfigured rather than half-checkout later.
+			for _, br := range binding.Repos {
+				if br.SCMConnectionID == nil {
+					continue
 				}
-				return err
+				_, providerType, baseURL, err := s.scmCreds.ResolveForRunAsUser(ctx, *br.SCMConnectionID, triggeredByUserID)
+				if err == nil {
+					_, err = deriveCloneURL(providerType, baseURL, br.RepoSlug)
+				}
+				if err != nil {
+					if _, rerr := s.runs.RecordFailedStart(ctx, remoteReq, startFailureReason("SCM connection", err)); rerr != nil {
+						s.logger.Printf("binding service: record failed remote run for item=%d binding=%d: %v", itemID, binding.ID, rerr)
+					}
+					return err
+				}
 			}
 		}
 		// Same fail-visibly treatment for the LLM connection the claim-time
@@ -1093,6 +1101,18 @@ func (s *BindingService) startRunForBinding(ctx context.Context, binding *models
 // single-repo-compatible grant ref.
 func orderReposPrimaryFirst(binding *models.WorkspaceAgentBinding) []models.BindingRepo {
 	repos := binding.Repos
+	// Transitional fallback: a binding loaded by code predating repo hydration,
+	// or constructed in-memory from the legacy scalar fields, still yields its
+	// one repo. Hydrated bindings mirror the primary onto these fields, so this
+	// only fires when Repos is genuinely empty.
+	if len(repos) == 0 && binding.RepoSlug != "" {
+		return []models.BindingRepo{{
+			SCMConnectionID: binding.SCMConnectionID,
+			RepoSlug:        binding.RepoSlug,
+			RepoBaseRef:     binding.RepoBaseRef,
+			IsPrimary:       true,
+		}}
+	}
 	out := make([]models.BindingRepo, 0, len(repos))
 	primary := binding.PrimaryRepo()
 	if primary != nil {
@@ -1266,7 +1286,25 @@ func (s *BindingService) bindingTokenAndGrants(b *models.WorkspaceAgentBinding, 
 	}
 	grants := &models.RunGrants{}
 	if b.HasRepo() {
-		grants.Git = &models.GitGrant{Repo: b.RepoSlug, ConnectionID: *b.SCMConnectionID, UserID: triggeredByUserID}
+		// One git grant per bound repo, primary first (WI-449). The broker
+		// authorizes each git request against the grant whose repo matches.
+		// Each repo's Ref (the branch the run may push) is filled at claim once
+		// the worktree branch is known (mintTokenAndGrants). Git mirrors the
+		// primary for one release / older broker code.
+		for _, br := range orderReposPrimaryFirst(b) {
+			if br.SCMConnectionID == nil {
+				continue
+			}
+			grants.GitRepos = append(grants.GitRepos, models.GitGrant{
+				Repo:         br.RepoSlug,
+				ConnectionID: *br.SCMConnectionID,
+				UserID:       triggeredByUserID,
+			})
+		}
+		if len(grants.GitRepos) > 0 {
+			primary := grants.GitRepos[0]
+			grants.Git = &primary
+		}
 	}
 	if b.LLMConnectionID != nil {
 		grants.LLM = &models.LLMGrant{ConnectionID: *b.LLMConnectionID}
@@ -1321,28 +1359,36 @@ func (s *BindingService) ResolveRunInputs(ctx context.Context, run *models.Agent
 	promptSuffix := s.promptSuffixForBinding(binding, skills) + renderInstruction(run.Trigger)
 	spec, grants := s.bindingTokenAndGrants(binding, itemID, triggeredBy, len(skills) > 0)
 
-	// Repo-prep inputs for a remote runner: only when the binding is repo-
-	// backed. Unlike the local path, no SCM token travels here — the remote
+	// Repo-prep inputs for a remote runner, one per bound repo, primary first
+	// (WI-449). Unlike the local path, no SCM token travels here — the remote
 	// runner clones + pushes through the git-proxy with its per-run token.
-	var repo *JobRepo
+	var repos []JobRepo
 	if binding.HasRepo() {
-		baseRef := binding.RepoBaseRef
-		if baseRef == "" {
-			baseRef = "main"
-		}
-		repo = &JobRepo{
-			WorkspaceID: run.WorkspaceID,
-			Slug:        binding.RepoSlug,
-			BaseRef:     baseRef,
-		}
-		// Continuation: land commits on the bound PR's head branch (resolved and
-		// persisted on the trigger when the run was queued) rather than a fresh
-		// per-run branch. Survives the queue→claim hop via run.Trigger.
-		if run.Trigger.IsContinuation() {
-			repo.ContinueBranch = run.Trigger.ContinueHeadBranch
+		for _, br := range orderReposPrimaryFirst(binding) {
+			baseRef := br.RepoBaseRef
+			if baseRef == "" {
+				baseRef = "main"
+			}
+			jr := JobRepo{
+				WorkspaceID: run.WorkspaceID,
+				Slug:        br.RepoSlug,
+				BaseRef:     baseRef,
+			}
+			// Continuation targets exactly one repo's PR head branch (resolved
+			// and persisted on the trigger when the run was queued); only that
+			// repo lands commits on it, the rest cut fresh per-run branches.
+			if run.Trigger.IsContinuation() && run.Trigger.ContinueRepoSlug == br.RepoSlug {
+				jr.ContinueBranch = run.Trigger.ContinueHeadBranch
+			}
+			repos = append(repos, jr)
 		}
 	}
-	return &RunInputs{Token: spec, Grants: grants, Repo: repo, Env: env, PromptSuffix: promptSuffix}, nil
+	var repo *JobRepo
+	if len(repos) > 0 {
+		primary := repos[0]
+		repo = &primary
+	}
+	return &RunInputs{Token: spec, Grants: grants, Repo: repo, Repos: repos, Env: env, PromptSuffix: promptSuffix}, nil
 }
 
 func (s *BindingService) buildRunEnv(ctx context.Context, workspaceID, itemID int) (map[string]string, error) {

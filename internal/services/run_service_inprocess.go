@@ -227,7 +227,13 @@ func (s *RunService) claimNext() *ClaimedJob {
 			env[k] = v
 		}
 		if job.req.Token != nil {
-			token, err := s.mintTokenAndGrants(runCtx, job.runID, *job.req.Token, job.req.Grants, st.branch)
+			// Per-repo push refs: each grant may push only its prepared branch
+			// (WI-449). Built from the parallel repos/checkouts slices.
+			refByRepo := make(map[string]string, len(st.checkouts))
+			for i, pw := range st.checkouts {
+				refByRepo[st.repos[i].RepoSlug] = pw.Branch
+			}
+			token, err := s.mintTokenAndGrants(runCtx, job.runID, *job.req.Token, job.req.Grants, refByRepo)
 			if err != nil {
 				s.logger.Printf("run service: mint ws token run=%d: %v", job.runID, err)
 				// Token-mint failure does not fire the hook (matches the

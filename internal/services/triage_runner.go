@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"windshift/internal/models"
@@ -42,6 +43,16 @@ type triagePrepareOut struct {
 
 // Run implements Runner.
 func (t *TriageRunner) Run(ctx context.Context, input RunInput, emit EventSink) RunnerResult {
+	// Multi-repo run (WI-449): each bound repo is prepared as a sibling dir
+	// under a shared workspace root and pushed independently. Handled in a
+	// dedicated path so the single-repo flow below stays byte-identical.
+	if len(input.Repos) > 1 {
+		return t.runMulti(ctx, input, emit)
+	}
+	// Normalize a one-element Repos to the single Repo field the path below uses.
+	if input.Repo == nil && len(input.Repos) == 1 {
+		input.Repo = &input.Repos[0]
+	}
 	if input.Repo == nil {
 		return t.Inner.Run(ctx, input, emit)
 	}
@@ -70,7 +81,7 @@ func (t *TriageRunner) Run(ctx context.Context, input RunInput, emit EventSink) 
 	}
 	defer cleanupToken()
 
-	prep, err := t.prepare(ctx, input, proxyURL, tokenFile)
+	prep, err := t.prepare(ctx, *input.Repo, input.RunID, proxyURL, tokenFile, "")
 	if err != nil {
 		return RunnerResult{Status: models.AgentRunStatusFailed, Error: fmt.Sprintf("triage prepare: %v", err)}
 	}
@@ -111,20 +122,130 @@ func (t *TriageRunner) Run(ctx context.Context, input RunInput, emit EventSink) 
 	return result
 }
 
-func (t *TriageRunner) prepare(ctx context.Context, input RunInput, proxyURL, tokenFile string) (triagePrepareOut, error) {
+// runMulti prepares every bound repo as a sibling dir under a shared per-run
+// workspace root, runs the agent against that root, then pushes each repo's run
+// branch through the git-proxy independently (WI-449). Mirrors the local
+// run_service multi-repo path; the broker authorizes each push against that
+// repo's grant.
+func (t *TriageRunner) runMulti(ctx context.Context, input RunInput, emit EventSink) RunnerResult {
+	if t.TriageBin == "" || t.CacheRoot == "" || t.APIBase == "" {
+		return RunnerResult{Status: models.AgentRunStatusFailed, Error: "triage runner: TriageBin, CacheRoot and APIBase are required for repo runs"}
+	}
+	token := input.Env["WS_TOKEN"]
+	if token == "" {
+		return RunnerResult{Status: models.AgentRunStatusFailed, Error: "triage runner: no WS_TOKEN for git-proxy auth"}
+	}
+	tokenFile, cleanupToken, err := writeTokenFile(token, input.RunID)
+	if err != nil {
+		return RunnerResult{Status: models.AgentRunStatusFailed, Error: fmt.Sprintf("triage runner: token file: %v", err)}
+	}
+	defer cleanupToken()
+
+	workspaceRoot := filepath.Join(t.CacheRoot, ".workspaces", fmt.Sprintf("run-%d", input.RunID))
+	defer func() {
+		if rmErr := os.RemoveAll(workspaceRoot); rmErr != nil {
+			t.logf("triage runner: cleanup workspace %s: %v", workspaceRoot, rmErr)
+		}
+	}()
+
+	type preparedRepo struct {
+		jr       JobRepo
+		out      triagePrepareOut
+		proxyURL string
+	}
+	dirNames := triageDirNames(input.Repos)
+	var preps []preparedRepo
+	for i, jr := range input.Repos {
+		owner, repo, ok := splitSlug(jr.Slug)
+		if !ok {
+			return RunnerResult{Status: models.AgentRunStatusFailed, Error: fmt.Sprintf("triage runner: bad repo slug %q", jr.Slug)}
+		}
+		proxyURL := fmt.Sprintf("%s/git-proxy/%d/%s/%s",
+			strings.TrimRight(t.APIBase, "/"), jr.WorkspaceID, owner, repo)
+		dest := filepath.Join(workspaceRoot, dirNames[i])
+		prep, perr := t.prepare(ctx, jr, input.RunID, proxyURL, tokenFile, dest)
+		if perr != nil {
+			return RunnerResult{Status: models.AgentRunStatusFailed, Error: fmt.Sprintf("triage prepare %s: %v", jr.Slug, perr)}
+		}
+		_ = emit("lifecycle", fmt.Sprintf(
+			`{"phase":"worktree_ready","repo":%q,"path":%q,"branch":%q,"base_commit":%q}`,
+			jr.Slug, prep.CheckoutPath, prep.Branch, prep.BaseCommit))
+		preps = append(preps, preparedRepo{jr: jr, out: prep, proxyURL: proxyURL})
+	}
+
+	input.WorkspacePath = workspaceRoot
+	result := t.Inner.Run(ctx, input, emit)
+	if result.Status != models.AgentRunStatusSucceeded {
+		return result
+	}
+
+	// Push each repo independently. A push error fails the whole run (a
+	// half-delivered multi-repo change is worse than a visible failure); a
+	// commit-less repo is skipped (no_changes). Only pushed repos carry a
+	// branch in the reported result, which is what the PR hook keys on.
+	for _, p := range preps {
+		head, skipped, perr := t.push(ctx, p.out, p.proxyURL, tokenFile)
+		switch {
+		case perr != nil:
+			_ = emit("lifecycle", fmt.Sprintf(`{"phase":"push_failed","repo":%q,"error":%q}`, p.jr.Slug, RedactString(perr.Error())))
+			return RunnerResult{Status: models.AgentRunStatusFailed, Error: fmt.Sprintf("triage push %s: %v", p.jr.Slug, perr)}
+		case skipped:
+			_ = emit("lifecycle", fmt.Sprintf(`{"phase":"no_changes","repo":%q}`, p.jr.Slug))
+			result.Repos = append(result.Repos, RunnerRepoResult{RepoSlug: p.jr.Slug})
+		default:
+			_ = emit("lifecycle", fmt.Sprintf(`{"phase":"pushed","repo":%q,"branch":%q,"head":%q}`, p.jr.Slug, p.out.Branch, head))
+			result.Repos = append(result.Repos, RunnerRepoResult{RepoSlug: p.jr.Slug, Branch: p.out.Branch, BaseCommit: p.out.BaseCommit})
+		}
+	}
+	// Mirror the primary (index 0) onto the scalar fields for back-compat.
+	if len(result.Repos) > 0 {
+		result.Branch = result.Repos[0].Branch
+		result.BaseCommit = result.Repos[0].BaseCommit
+	}
+	return result
+}
+
+// triageDirNames mirrors repoDirNames for the remote runner: a unique sibling
+// dir name per repo (last slug segment, numeric-suffixed on collision).
+func triageDirNames(repos []JobRepo) []string {
+	names := make([]string, len(repos))
+	seen := map[string]int{}
+	for i, r := range repos {
+		base := r.Slug
+		if idx := strings.LastIndex(base, "/"); idx >= 0 && idx < len(base)-1 {
+			base = base[idx+1:]
+		}
+		if base == "" {
+			base = fmt.Sprintf("repo%d", i)
+		}
+		name := base
+		if n, ok := seen[base]; ok {
+			name = fmt.Sprintf("%s-%d", base, n+1)
+		}
+		seen[base]++
+		names[i] = name
+	}
+	return names
+}
+
+func (t *TriageRunner) prepare(ctx context.Context, jr JobRepo, runID int, proxyURL, tokenFile, destDir string) (triagePrepareOut, error) {
 	args := []string{
 		"--root", t.CacheRoot,
-		"--workspace-id", fmt.Sprintf("%d", input.Repo.WorkspaceID),
-		"--repo", input.Repo.Slug,
+		"--workspace-id", fmt.Sprintf("%d", jr.WorkspaceID),
+		"--repo", jr.Slug,
 		"--remote-url", proxyURL,
-		"--base-ref", input.Repo.BaseRef,
-		"--run-id", fmt.Sprintf("%d", input.RunID),
+		"--base-ref", jr.BaseRef,
+		"--run-id", fmt.Sprintf("%d", runID),
 		"--token-file", tokenFile,
 	}
 	// Continuation: check out + push back to this existing PR head branch
 	// instead of cutting a fresh per-run branch from --base-ref.
-	if input.Repo.ContinueBranch != "" {
-		args = append(args, "--continue-branch", input.Repo.ContinueBranch)
+	if jr.ContinueBranch != "" {
+		args = append(args, "--continue-branch", jr.ContinueBranch)
+	}
+	// Multi-repo: place this checkout at the chosen sibling dir (WI-449).
+	if destDir != "" {
+		args = append(args, "--dest-dir", destDir)
 	}
 	out, err := t.execTriage(ctx, "prepare", args...)
 	if err != nil {

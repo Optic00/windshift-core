@@ -80,8 +80,15 @@ type JobSpec struct {
 	// WorkspacePath. It carries only what the runner needs to clone + push
 	// through the git-proxy; the run token travels in Env (WS_TOKEN). Nil for
 	// local runs (the orchestrator already prepared WorkspacePath) and for
-	// runs with no repo.
+	// runs with no repo. Deprecated by Repos; mirrors Repos[0] (the primary).
 	Repo *JobRepo `json:"repo,omitempty"`
+
+	// Repos is every repo a remote runner must check out for a multi-repo run
+	// (WI-449), primary first. When more than one, the runner checks each out
+	// as a sibling dir under a shared workspace root (named by repo) and pushes
+	// each repo's run branch through the git-proxy. One entry → single-repo
+	// layout, identical to the legacy Repo path.
+	Repos []JobRepo `json:"repos,omitempty"`
 
 	// Later phases extend JobSpec with the admin-curated image + command,
 	// the grant-set / broker endpoints (git / llm / secrets / http), and
@@ -161,6 +168,7 @@ func RunWorker(ctx context.Context, client OrchestratorClient, runner Runner, lo
 			Kind:          job.Spec.Kind,
 			Image:         job.Spec.Image,
 			Repo:          job.Spec.Repo,
+			Repos:         job.Spec.Repos,
 		}, emit)
 		if err := client.Report(jobCtx, runID, result); err != nil {
 			logger.Printf("run worker: report run=%d: %v", runID, err)
