@@ -4,8 +4,16 @@
   import { workspacesStore } from '../stores';
   import Modal from '../dialogs/Modal.svelte';
 
-  /** @type {{ isOpen?: boolean, onclose?: (() => void) | null }} */
-  let { isOpen = $bindable(false), onclose = null } = $props();
+  /**
+   * @typedef {'work' | 'personal'} CreateMode
+   * 'personal' targets the user's personal workspace and submits a
+   * title-only task (no item type) — the same shape the desktop
+   * PersonalTasksPanel uses to add a personal task. 'work' is the
+   * default full work-item form for regular workspaces.
+   */
+
+  /** @type {{ isOpen?: boolean, mode?: CreateMode, onclose?: (() => void) | null }} */
+  let { isOpen = $bindable(false), mode = 'work', onclose = null } = $props();
 
   let title = $state('');
   let description = $state('');
@@ -18,7 +26,18 @@
   let lastTypeWorkspace = null;
 
   const workspaces = $derived($workspacesStore.regularWorkspaces ?? []);
-  const canSubmit = $derived(title.trim() !== '' && !!workspaceId && !!itemTypeId && !saving);
+  // Personal workspace is loaded on-demand; the store keeps it once fetched.
+  const personalWorkspace = $derived($workspacesStore.personalWorkspace ?? null);
+  const isPersonal = $derived(mode === 'personal');
+
+  const canSubmit = $derived(
+    title.trim() !== '' &&
+      !saving &&
+      // Work mode needs a workspace + item type; personal mode just needs a
+      // resolved personal workspace (item type resolves to the default on the
+      // server, matching the desktop personal-task creation path).
+      (isPersonal ? !!personalWorkspace : !!workspaceId && !!itemTypeId)
+  );
 
   // Default the workspace when the dialog opens (first regular workspace).
   $effect(() => {
@@ -27,10 +46,18 @@
     }
   });
 
-  // Load item types whenever the chosen workspace changes.
+  // Load the personal workspace on-demand when the dialog opens in personal
+  // mode (the mobile shell otherwise never touches it outside the Personal tab).
+  $effect(() => {
+    if (isOpen && isPersonal && !personalWorkspace) {
+      workspacesStore.loadPersonalWorkspace();
+    }
+  });
+
+  // Load item types whenever the chosen workspace changes (work mode only).
   $effect(() => {
     const wsId = workspaceId;
-    if (!isOpen || !wsId || wsId === lastTypeWorkspace) return;
+    if (isPersonal || !isOpen || !wsId || wsId === lastTypeWorkspace) return;
     lastTypeWorkspace = wsId;
     loadTypes(wsId);
   });
@@ -74,14 +101,28 @@
     saving = true;
     error = '';
     try {
-      const result = await api.items.create({
-        title: title.trim(),
-        description: description.trim(),
-        workspace_id: workspaceId,
-        item_type_id: itemTypeId,
-      });
-      handleClose();
-      if (result?.id) navigate(`/m/items/${result.id}`);
+      const result = await api.items.create(
+        isPersonal
+          ? { title: title.trim(), workspace_id: personalWorkspace.id }
+          : {
+              title: title.trim(),
+              description: description.trim(),
+              workspace_id: workspaceId,
+              item_type_id: itemTypeId,
+            }
+      );
+      if (isPersonal) {
+        // The newly created personal task lives in this tab's list — let the
+        // active Personal view refresh itself. BroadcastChannel excludes the
+        // posting tab, so the same-tab notice is a window event instead.
+        window.dispatchEvent(new CustomEvent('personal-task-created'));
+        handleClose();
+        // Stay on the Personal checklist so the user can keep adding tasks,
+        // matching the desktop PersonalTasksPanel behavior.
+      } else {
+        handleClose();
+        if (result?.id) navigate(`/m/items/${result.id}`);
+      }
     } catch (err) {
       console.error('Failed to create item:', err);
       error = err?.message || 'Could not create the item.';
@@ -93,49 +134,51 @@
 
 <Modal bind:isOpen maxWidth="max-w-md" zIndexClass="z-[600]" onSubmit={submit} submitDisabled={!canSubmit} onclose={handleClose}>
   <div class="create" data-testid="mobile-create-dialog">
-    <h2 class="title">New item</h2>
+    <h2 class="title">{isPersonal ? 'New personal task' : 'New item'}</h2>
 
     <label class="field">
-      <span>Title</span>
+      <span>{isPersonal ? 'Task' : 'Title'}</span>
       <input
         bind:value={title}
-        placeholder="What needs doing?"
+        placeholder={isPersonal ? 'What do you need to do?' : 'What needs doing?'}
         data-testid="create-title"
         autocomplete="off"
       />
     </label>
 
-    <div class="row">
-      <label class="field">
-        <span>Workspace</span>
-        <select bind:value={workspaceId} data-testid="create-workspace">
-          {#each workspaces as ws (ws.id)}
-            <option value={ws.id}>{ws.name}</option>
-          {/each}
-        </select>
-      </label>
+    {#if !isPersonal}
+      <div class="row">
+        <label class="field">
+          <span>Workspace</span>
+          <select bind:value={workspaceId} data-testid="create-workspace">
+            {#each workspaces as ws (ws.id)}
+              <option value={ws.id}>{ws.name}</option>
+            {/each}
+          </select>
+        </label>
+
+        <label class="field">
+          <span>Type</span>
+          <select bind:value={itemTypeId} disabled={typesLoading || itemTypes.length === 0} data-testid="create-type">
+            {#each itemTypes as it (it.id)}
+              <option value={it.id}>{it.name}</option>
+            {/each}
+          </select>
+        </label>
+      </div>
 
       <label class="field">
-        <span>Type</span>
-        <select bind:value={itemTypeId} disabled={typesLoading || itemTypes.length === 0} data-testid="create-type">
-          {#each itemTypes as it (it.id)}
-            <option value={it.id}>{it.name}</option>
-          {/each}
-        </select>
+        <span>Description <em>(optional)</em></span>
+        <textarea bind:value={description} rows="3" placeholder="Add detail…" data-testid="create-description"></textarea>
       </label>
-    </div>
-
-    <label class="field">
-      <span>Description <em>(optional)</em></span>
-      <textarea bind:value={description} rows="3" placeholder="Add detail…" data-testid="create-description"></textarea>
-    </label>
+    {/if}
 
     {#if error}<p class="error" data-testid="create-error">{error}</p>{/if}
 
     <div class="actions">
       <button class="btn-cancel" onclick={handleClose} type="button">Cancel</button>
       <button class="btn-create" onclick={submit} disabled={!canSubmit} data-testid="create-submit" type="button">
-        {saving ? 'Creating…' : 'Create'}
+        {saving ? 'Creating…' : isPersonal ? 'Add task' : 'Create'}
       </button>
     </div>
   </div>

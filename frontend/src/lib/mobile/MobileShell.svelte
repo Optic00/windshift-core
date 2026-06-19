@@ -23,6 +23,9 @@
   const isTabView = $derived(TAB_VIEWS.includes(view));
   // Full-screen "pushed" views (own back button) hide the bottom nav.
   const showNav = $derived(view !== 'mobile-item-detail' && view !== 'mobile-search' && view !== 'mobile-chat');
+  // The Personal tab creates personal tasks; every other tab uses the full
+  // work-item form. Drives the create dialog's mode.
+  const createMode = $derived(view === 'mobile-personal' ? 'personal' : 'work');
   let createOpen = $state(false);
 
   onMount(() => {
@@ -74,7 +77,7 @@
 <GlobalConfirmDialog />
 
 <!-- Simple create dialog, reachable from the FAB on any tab. -->
-<MobileCreateDialog bind:isOpen={createOpen} />
+<MobileCreateDialog bind:isOpen={createOpen} mode={createMode} />
 
 <!-- iOS "Add to Home Screen" instructions (opened from the user menu via the
      install helper's store; no-op until triggered). -->
