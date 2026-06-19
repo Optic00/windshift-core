@@ -39,6 +39,11 @@
   let highlightedIndex = $state(0);
   let inputElement = $state(null);
   let listRef = $state(null);
+  let triggerRef = $state(null);
+
+  // Re-entry guard for the Tab-forwarded keydown dispatched from the trigger
+  // (see handleKeyDown). Prevents an infinite dispatch loop.
+  let forwardingTab = false;
 
   // Derive display value from current value
   let selectedItem = $derived(
@@ -101,7 +106,32 @@
     const total = filteredItems.length;
 
     if (e.key === 'Tab') {
+      // The popover content is portalled to <body>, so a native Tab from inside
+      // it would jump past the end of the document — escaping any dialog
+      // overlay behind which the chip lives (e.g. the create-item modal,
+      // WI-455). Close the menu, return focus to the chip trigger, and re-issue
+      // the Tab from there so the owning focus trap routes it to the next
+      // field. `forwardingTab` breaks the re-dispatch cycle (the forwarded
+      // event re-enters this handler from the trigger).
+      if (forwardingTab) {
+        forwardingTab = false;
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
       $open = false;
+      if (triggerRef) {
+        triggerRef.focus();
+        forwardingTab = true;
+        triggerRef.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: e.key,
+            shiftKey: e.shiftKey,
+            bubbles: true,
+            cancelable: true,
+          })
+        );
+      }
       return;
     }
 
@@ -134,6 +164,7 @@
 
 <!-- Chip Trigger Button -->
 <button
+  bind:this={triggerRef}
   use:melt={$trigger}
   {disabled}
   onkeydown={handleKeyDown}

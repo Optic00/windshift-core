@@ -307,7 +307,21 @@
       if (popoverMode && keepOpenOnFooterTab && !event.shiftKey) {
         return;
       }
+      // The dropdown menu is portalled to <body>, so a native Tab from inside
+      // it would jump past the end of the document — escaping any dialog
+      // overlay behind which the picker lives (e.g. the create-item modal,
+      // WI-455). Close the menu, return focus to the trigger, and re-issue the
+      // Tab from there so the owning focus trap routes it to the next field.
+      // The re-dispatched event re-enters this handler from the trigger;
+      // `forwardingTab` lets it pass through untouched so the trap can act.
+      if (forwardingTab) {
+        forwardingTab = false;
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
       $open = false;
+      restoreFocusAndForwardTab(event);
       return;
     }
 
@@ -350,6 +364,9 @@
     }
     if (!wasOpen && $open) {
       highlightedIndex = 0;
+      // Remember what had focus before we move it into the portalled dropdown,
+      // so a Tab that closes the menu can return there (WI-455).
+      activeElementBeforeOpen = document.activeElement;
       if (popoverMode) {
         popoverSearchTerm = '';
         setTimeout(() => searchInputRef?.focus(), 50);
@@ -357,6 +374,31 @@
     }
     wasOpen = $open;
   });
+
+  // Close-the-menu-on-Tab helper: return focus to the element that had it
+  // before the (portalled) dropdown opened, then re-issue the Tab from there so
+  // the owning dialog's focus trap routes it correctly instead of the focus
+  // escaping behind a modal overlay (WI-455). The guard avoids bouncing focus
+  // back into the menu we just closed; `forwardingTab` marks the re-dispatch so
+  // the handler lets the event pass through to the trap on re-entry.
+  function restoreFocusAndForwardTab(originalEvent) {
+    const target = activeElementBeforeOpen;
+    activeElementBeforeOpen = null;
+    const el = target instanceof HTMLElement && !menuRef?.contains(target) ? target : null;
+    if (!el) return;
+    el.focus();
+    // Re-dispatch a fresh Tab so it bubbles from the trigger (which lives
+    // inside the owning dialog) instead of from the portalled menu.
+    forwardingTab = true;
+    el.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: originalEvent.key,
+        shiftKey: originalEvent.shiftKey,
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+  }
 
   // Reset highlighted index when options change
   $effect(() => {
@@ -408,6 +450,17 @@
 
   // Search input inside popover dropdown
   let searchInputRef = $state(null);
+
+  // The element that was focused just before the dropdown opened. The menu is
+  // portalled to <body>; when the user Tabs out of it we restore focus here so
+  // the next Tab is routed by the owning dialog's focus trap instead of
+  // escaping behind a modal overlay such as the create-item modal (WI-455).
+  let activeElementBeforeOpen = null;
+
+  // Re-entry guard for the Tab-forwarded keydown dispatched from the trigger
+  // (see restoreFocusAndForwardTab). Prevents an infinite dispatch loop and
+  // lets the forwarded event reach the owning focus trap untouched.
+  let forwardingTab = false;
 
   // Reference to dropdown menu for scrolling
   let menuRef = $state(null);
