@@ -778,6 +778,23 @@ import Button from '../../components/Button.svelte';
     }
   });
 
+  // Reload the open item in place when a notification points at the item
+  // already in view. The itemId prop doesn't change, so the navigation effect
+  // above can't cover it; NotificationCard dispatches `reload-item-detail`
+  // (mirroring the `refresh-work-items` listener above) and we self-filter on
+  // the open item's id. Comments listens for the same event.
+  useEventListener(() => window, 'reload-item-detail', (/** @type {CustomEvent<{itemId?: number|string}>} */ event) => {
+    const id = event?.detail?.itemId;
+    if (id == null) return;
+    const currentId = itemDetailStore.item?.id;
+    if (currentId == null || String(id) !== String(currentId)) return;
+    itemDetailStore.transitioning = true;
+    loadData()
+      .then(() => populateDropdownItems())
+      .catch((error) => console.error('Failed to reload open item detail:', error))
+      .finally(() => { itemDetailStore.transitioning = false; });
+  });
+
   // --- AI Actions ---
   let aiModalType = $state(null);
   let aiLoading = $state(false);
