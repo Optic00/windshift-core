@@ -395,6 +395,8 @@ export default {
     noChildItems: 'Nenhum item filho ainda',
     noChildItemsLowest: 'Nenhum item filho (nível hierárquico mais baixo)',
     addCard: 'Adicionar cartão',
+    collapseColumn: 'Recolher coluna',
+    expandColumn: 'Expandir coluna ({name})',
     create: 'Criar',
     enterSummary: 'Digite um resumo...',
     selectWorkspace: 'Selecionar workspace',

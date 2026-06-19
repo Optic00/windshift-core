@@ -409,6 +409,8 @@ export default {
     noChildItems: 'لا توجد عناصر فرعية بعد',
     noChildItemsLowest: 'لا توجد عناصر فرعية (أدنى مستوى هرمي)',
     addCard: 'إضافة بطاقة',
+    collapseColumn: 'طي العمود',
+    expandColumn: 'توسيع العمود ({name})',
     create: 'إنشاء',
     enterSummary: 'أدخل ملخصًا...',
     selectWorkspace: 'اختيار مساحة العمل',

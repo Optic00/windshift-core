@@ -386,6 +386,8 @@ export default {
     noChildItems: 'Noch keine untergeordneten Einträge',
     noChildItemsLowest: 'Keine untergeordneten Einträge (niedrigste Hierarchieebene)',
     addCard: 'Karte hinzufügen',
+    collapseColumn: 'Spalte einklappen',
+    expandColumn: 'Spalte ausklappen ({name})',
     create: 'Erstellen',
     enterSummary: 'Zusammenfassung eingeben...',
     selectWorkspace: 'Arbeitsbereich auswählen',

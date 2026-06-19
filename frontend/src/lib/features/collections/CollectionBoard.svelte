@@ -10,7 +10,7 @@
   import { getCollection, checkItemVisibility } from './collectionService.js';
   import { RIGHTMOST_COLUMN_LIMIT, buildDisplayColumns } from './boardColumns.js';
   import { infoToast, successToast, warningToast } from '../../stores/toasts.svelte.js';
-  import { Plus, ChevronDown, ChevronRight, MoreHorizontal, Layers } from '@lucide/svelte';
+  import { Plus, ChevronDown, ChevronLeft, ChevronRight, MoreHorizontal, Layers } from '@lucide/svelte';
   import ItemPicker from '../../pickers/ItemPicker.svelte';
   import { buildIterationPickerConfig } from '../iterations/iterationPickerUtils.js';
   import { itemTypeIconMap } from '../../utils/icons.js';
@@ -87,6 +87,11 @@
   let groupByItemTypeId = $state(null);
   let excludeRightmostSwimlaneParents = $state(false);
   let swimlaneCollapsed = $state({});
+
+  // Collapsible board columns — which column ids are collapsed to a narrow
+  // strip. Persisted per-board (workspace/collection scope) like the
+  // swimlane/group-by prefs above.
+  let collapsedColumns = $state({});
 
   // Edge-based drag state
   let dragState = $state(new Map()); // Track drag state for each item: { isDragging: boolean, closestEdge: 'top'|'bottom'|null }
@@ -308,6 +313,12 @@
     // getBoardConfiguration request on every item array update.
     viewSignature;
     dependencyLinksByItem = {};
+    // Restore the per-board collapsed-column preference here (not in onMount)
+    // because MainApp reuses this component instance while updating the
+    // workspaceId/collectionId props — restoring only on mount would carry a
+    // previous board's collapsed columns into the next board and then
+    // persist that stale state under the new board key.
+    collapsedColumns = loadCollapsedColumns();
     if (collectionId || workspaceId) {
       loadBoardConfig();
     }
@@ -571,6 +582,56 @@
 
   function isSwimlaneExpanded(swimlaneId) {
     return swimlaneCollapsed[swimlaneId] !== true;
+  }
+
+  // --- Collapsible board columns ---
+  function collapsedColumnsStorageKey() {
+    return `board-collapsed-columns-${boardPreferenceScope()}`;
+  }
+
+  function loadCollapsedColumns() {
+    try {
+      const saved = localStorage.getItem(collapsedColumnsStorageKey());
+      if (!saved) return {};
+      const ids = JSON.parse(saved);
+      if (!Array.isArray(ids)) return {};
+      const map = {};
+      for (const id of ids) map[id] = true;
+      return map;
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function saveCollapsedColumns() {
+    try {
+      const collapsed = Object.keys(collapsedColumns).filter((id) => collapsedColumns[id]);
+      if (collapsed.length > 0) {
+        localStorage.setItem(collapsedColumnsStorageKey(), JSON.stringify(collapsed));
+      } else {
+        localStorage.removeItem(collapsedColumnsStorageKey());
+      }
+    } catch (e) { /* ignore storage errors */ }
+  }
+
+  function isColumnCollapsed(columnId) {
+    return collapsedColumns[columnId] === true;
+  }
+
+  function toggleColumnCollapse(columnId) {
+    collapsedColumns = {
+      ...collapsedColumns,
+      [columnId]: !collapsedColumns[columnId]
+    };
+    saveCollapsedColumns();
+  }
+
+  // Grid template for a lane: collapsed columns take a fixed narrow width,
+  // expanded columns stay flexible so they share the remaining space.
+  function boardGridTemplate(columns = validColumns) {
+    return columns
+      .map((col) => (isColumnCollapsed(col.id) ? '44px' : 'minmax(300px, 1fr)'))
+      .join(' ');
   }
 
 
@@ -1186,10 +1247,15 @@
     const itemSignature = items.map(item => `${item.id}:${item.status_id ?? ''}:${item.parent_id ?? ''}`).join('|');
     const laneSignature = boardSwimlanes.map(lane => `${lane.id}:${lane.itemCount}:${isSwimlaneExpanded(lane.id)}`).join('|');
     const columnSignature = validColumns.map(column => `${column.id}:${(column.status_ids || []).join(',')}`).join('|');
+    // Collapsing/expanding a column swaps the rendered column element
+    // (narrow strip vs full column) without changing item counts, so the
+    // drop targets must be rebuilt — track the collapse state here.
+    const collapsedSignature = validColumns.map((column) => isColumnCollapsed(column.id) ? '1' : '0').join('');
     groupByItemTypeId;
     itemSignature;
     laneSignature;
     columnSignature;
+    collapsedSignature;
 
     if (items.length > 0 && statuses.length > 0 && typeof document !== 'undefined') {
       if (setupTimeout) clearTimeout(setupTimeout);
@@ -1377,7 +1443,7 @@
               {/if}
 
               {#if !selectedGroupByItemType || laneExpanded}
-                <div class="grid gap-6 {selectedGroupByItemType ? 'p-4' : ''}" style="grid-template-columns: repeat({validColumns.length}, minmax(300px, 1fr));">
+                <div class="grid gap-6 {selectedGroupByItemType ? 'p-4' : ''}" style="grid-template-columns: {boardGridTemplate()};">
                   {#each validColumns as column, columnIndex (column.id)}
                     {@const quickAddKey = `${lane.id}-${column.id}`}
                     {@const allColumnItems = getItemsByColumn(column, lane.items)}
@@ -1385,6 +1451,33 @@
                     {@const columnTotal = getColumnTotal(columnIndex, allColumnItems)}
                     {@const hiddenColumnItemCount = columnTotal - columnItems.length}
                     {@const isOverWip = column.wip_limit && allColumnItems.length > column.wip_limit}
+                    {#if isColumnCollapsed(column.id)}
+                      <!-- Collapsed column: narrow vertical strip showing the rotated
+                           column name and item count. Clicking it re-expands. It keeps
+                           its status drop target so items can still be dropped here. -->
+                      <button
+                        type="button"
+                        class="relative rounded border shadow-sm flex flex-col items-center justify-between gap-2 py-3 px-1 text-center cursor-pointer transition-colors"
+                        style="{styles.columnStyle(12)} border-top: 4px solid {column.color};"
+                        data-testid="board-column"
+                        data-status-column
+                        data-status-column-key={`${lane.id}-${column.id}-${column.status_ids[0]}`}
+                        data-swimlane-parent-id={selectedGroupByItemType && lane.parent ? lane.parent.id : ''}
+                        data-status-id={column.status_ids[0]}
+                        aria-label={t('collections.expandColumn', { name: column.name })}
+                        aria-expanded="false"
+                        title={t('collections.expandColumn', { name: column.name })}
+                        onclick={() => toggleColumnCollapse(column.id)}
+                      >
+                        <ChevronRight class="w-4 h-4 flex-shrink-0" style={styles.glassTextStyle} />
+                        <span class="board-column-collapsed-name font-semibold text-sm break-words" style={styles.glassTextStyle}>
+                          {column.name}
+                        </span>
+                        <span class="text-xs px-1.5 py-0.5 rounded-full flex-shrink-0" style="background: var(--ds-background-neutral); color: var(--ds-text-subtle);">
+                          {columnTotal}
+                        </span>
+                      </button>
+                    {:else}
                     <div
                       class="relative rounded border shadow-sm transition-colors"
                       style="{styles.columnStyle(12)} {quickAddState[quickAddKey]?.show ? 'z-index: 30;' : ''}"
@@ -1397,16 +1490,30 @@
                       <div class="p-4 border-b border-t-4" style="border-bottom-color: var(--ctx-border, var(--ds-border)); border-top-color: {column.color};">
                         <div class="flex items-center justify-between">
                           <h3 class="font-semibold" data-testid="column-header" style={styles.glassTextStyle}>{column.name}</h3>
-                          <button
-                            onclick={() => initQuickAdd(column.id, column.status_ids[0], quickAddKey, lane.parent?.id ?? null)}
-                            class="p-1 rounded transition-colors"
-                            style="color: var(--ds-text-subtle);"
-                            onmouseenter={(e) => e.currentTarget.style.color = 'var(--ds-text)'}
-                            onmouseleave={(e) => e.currentTarget.style.color = 'var(--ds-text-subtle)'}
-                            title={t('collections.addCard')}
-                          >
-                            <Plus class="w-4 h-4" />
-                          </button>
+                          <div class="flex items-center gap-0.5">
+                            <button
+                              onclick={() => initQuickAdd(column.id, column.status_ids[0], quickAddKey, lane.parent?.id ?? null)}
+                              class="p-1 rounded transition-colors"
+                              style="color: var(--ds-text-subtle);"
+                              onmouseenter={(e) => e.currentTarget.style.color = 'var(--ds-text)'}
+                              onmouseleave={(e) => e.currentTarget.style.color = 'var(--ds-text-subtle)'}
+                              title={t('collections.addCard')}
+                            >
+                              <Plus class="w-4 h-4" />
+                            </button>
+                            <button
+                              onclick={() => toggleColumnCollapse(column.id)}
+                              class="p-1 rounded transition-colors"
+                              style="color: var(--ds-text-subtle);"
+                              onmouseenter={(e) => e.currentTarget.style.color = 'var(--ds-text)'}
+                              onmouseleave={(e) => e.currentTarget.style.color = 'var(--ds-text-subtle)'}
+                              title={t('collections.collapseColumn')}
+                              aria-label={t('collections.collapseColumn')}
+                              aria-expanded="true"
+                            >
+                              <ChevronLeft class="w-4 h-4" />
+                            </button>
+                          </div>
                         </div>
                         <div class="flex items-center justify-between">
                           <span class="text-sm" style={styles.glassSubtleTextStyle}>
@@ -1564,6 +1671,7 @@
                         {/if}
                       </div>
                     </div>
+                    {/if}
                   {/each}
                 </div>
               {/if}
@@ -1627,6 +1735,16 @@
   /* During drag, reduce opacity of non-dragged items slightly */
   :global(body.is-dragging) [data-item-card] {
     transition: opacity 0.2s ease;
+  }
+
+  /* Collapsed board column: write the column name vertically so the narrow
+     strip can still show it without overflowing. */
+  .board-column-collapsed-name {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    max-height: 240px;
+    overflow: hidden;
+    line-height: 1.1;
   }
 
 </style>

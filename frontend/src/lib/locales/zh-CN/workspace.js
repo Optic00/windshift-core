@@ -400,6 +400,8 @@ export default {
     noChildItems: '暂无子事项',
     noChildItemsLowest: '无子事项（最低层级）',
     addCard: '添加卡片',
+    collapseColumn: '折叠列',
+    expandColumn: '展开列 ({name})',
     create: '创建',
     enterSummary: '输入摘要...',
     selectWorkspace: '选择工作区',
