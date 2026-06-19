@@ -164,6 +164,7 @@ export default {
     noMilestone: 'No milestone',
     milestones: 'Milestones',
     noMilestonesFound: 'No milestones found',
+    showCompletedMilestones: 'Show completed',
 
     // Iteration Combobox
     selectIteration: 'Select iteration',

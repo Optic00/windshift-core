@@ -41,6 +41,7 @@
     createOptionSnippet = null,
     children = null,    // popover mode: custom trigger content
     footer = null,      // popover mode: rendered below items in dropdown
+    keepOpenOnFooterTab = false,
 
     // E2E instrumentation. BasePicker is shared by UserPicker/ItemPicker, so
     // picker-specific testids are threaded as props rather than hardcoded:
@@ -300,6 +301,12 @@
     }
 
     if (event.key === 'Tab') {
+      // In popover mode the search input is the first focusable element. Some
+      // callers render a focusable footer control, so they can opt into letting
+      // Tab move focus into the footer instead of closing the menu.
+      if (popoverMode && keepOpenOnFooterTab && !event.shiftKey) {
+        return;
+      }
       $open = false;
       return;
     }

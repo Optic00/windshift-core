@@ -193,6 +193,7 @@ export default {
     noMilestone: 'Sem marco',
     milestones: 'Marcos',
     noMilestonesFound: 'Nenhum marco encontrado',
+    showCompletedMilestones: 'Mostrar concluídos',
     selectPriority: 'Selecionar prioridade',
     noPriority: 'Sem prioridade',
     loadingPriorities: 'Carregando prioridades...',
