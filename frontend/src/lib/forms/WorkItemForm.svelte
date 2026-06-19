@@ -239,8 +239,10 @@
           unassignedLabel={t('createModal.noPriority')}
         >
           {#snippet children()}
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <!-- svelte-ignore a11y_no_static_element_interactions a11y_no_noninteractive_element_to_interactive_role -->
             <div
+              role="button"
+              tabindex="0"
               class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-sm transition-colors"
               style="background-color: var(--ds-surface); border: 1px solid var(--ds-border); color: {store.formData.priority_id ? 'var(--ds-text)' : 'var(--ds-text-subtle)'};"
               onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'}
@@ -273,8 +275,10 @@
         workspaceId={store.formData.workspace_id}
       >
         {#snippet children()}
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <!-- svelte-ignore a11y_no_static_element_interactions a11y_no_noninteractive_element_to_interactive_role -->
           <div
+            role="button"
+            tabindex="0"
             class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-sm transition-colors"
             style="background-color: var(--ds-surface); border: 1px solid var(--ds-border); color: {store.formData.assignee_id ? 'var(--ds-text)' : 'var(--ds-text-subtle)'};"
             onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'}
@@ -394,8 +398,10 @@
       >
         {#snippet children()}
           {@const selected = store.selectedMilestones}
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <!-- svelte-ignore a11y_no_static_element_interactions a11y_no_noninteractive_element_to_interactive_role -->
           <div
+            role="button"
+            tabindex="0"
             class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-sm transition-colors"
             style="background-color: var(--ds-surface); border: 1px solid var(--ds-border); color: {selected.length > 0 ? 'var(--ds-text)' : 'var(--ds-text-subtle)'};"
             onmouseenter={(e) => e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)'}
