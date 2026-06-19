@@ -39,6 +39,7 @@
   let highlightedIndex = $state(0);
   let inputElement = $state(null);
   let listRef = $state(null);
+  let triggerRef = $state(null);
 
   // Derive display value from current value
   let selectedItem = $derived(
@@ -101,7 +102,16 @@
     const total = filteredItems.length;
 
     if (e.key === 'Tab') {
+      // The popover content is portalled to <body>, so a native Tab from inside
+      // it would jump past the end of the document — escaping any dialog
+      // overlay behind which the chip lives (e.g. the create-item modal,
+      // WI-455). Swallow this Tab, close the menu, and return focus to the chip
+      // trigger (which lives inside the modal); the owning dialog's focus trap
+      // then routes the user's next Tab to the following field.
+      e.preventDefault();
+      e.stopPropagation();
       $open = false;
+      triggerRef?.focus();
       return;
     }
 
@@ -134,6 +144,7 @@
 
 <!-- Chip Trigger Button -->
 <button
+  bind:this={triggerRef}
   use:melt={$trigger}
   {disabled}
   onkeydown={handleKeyDown}

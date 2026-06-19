@@ -307,7 +307,16 @@
       if (popoverMode && keepOpenOnFooterTab && !event.shiftKey) {
         return;
       }
+      // The dropdown menu is portalled to <body>, so a native Tab from inside
+      // it would jump past the end of the document — escaping any dialog
+      // overlay behind which the picker lives (e.g. the create-item modal,
+      // WI-455). Swallow this Tab, close the menu, and return focus to the
+      // trigger (which lives inside the modal); the owning dialog's focus trap
+      // then routes the user's next Tab to the following field.
+      event.preventDefault();
+      event.stopPropagation();
       $open = false;
+      restoreFocusToTrigger();
       return;
     }
 
@@ -350,6 +359,9 @@
     }
     if (!wasOpen && $open) {
       highlightedIndex = 0;
+      // Remember what had focus before we move it into the portalled dropdown,
+      // so a Tab that closes the menu can return there (WI-455).
+      activeElementBeforeOpen = document.activeElement;
       if (popoverMode) {
         popoverSearchTerm = '';
         setTimeout(() => searchInputRef?.focus(), 50);
@@ -357,6 +369,19 @@
     }
     wasOpen = $open;
   });
+
+  // Close-the-menu-on-Tab helper: return focus to the element that had it
+  // before the (portalled) dropdown opened — the trigger, which lives inside
+  // the owning dialog — so the dialog's focus trap routes the next Tab instead
+  // of focus escaping behind a modal overlay (WI-455). Skip if that element is
+  // gone or somehow sits inside the menu we just closed.
+  function restoreFocusToTrigger() {
+    const target = activeElementBeforeOpen;
+    activeElementBeforeOpen = null;
+    if (target instanceof HTMLElement && !menuRef?.contains(target)) {
+      target.focus();
+    }
+  }
 
   // Reset highlighted index when options change
   $effect(() => {
@@ -408,6 +433,12 @@
 
   // Search input inside popover dropdown
   let searchInputRef = $state(null);
+
+  // The element that was focused just before the dropdown opened. The menu is
+  // portalled to <body>; when the user Tabs out of it we restore focus here so
+  // the next Tab is routed by the owning dialog's focus trap instead of
+  // escaping behind a modal overlay such as the create-item modal (WI-455).
+  let activeElementBeforeOpen = null;
 
   // Reference to dropdown menu for scrolling
   let menuRef = $state(null);
