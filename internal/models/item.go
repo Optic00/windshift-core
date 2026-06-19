@@ -50,10 +50,13 @@ type Item struct {
 	StoryPoints     *float64 `json:"story_points,omitempty"`     // Story points for velocity tracking
 	EstimateMinutes *int     `json:"estimate_minutes,omitempty"` // Time estimate in minutes (compared against logged worklog time)
 	// Manual sorting field
-	FracIndex   *string    `json:"frac_index,omitempty"` // Fractional index string for manual ordering
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	FracIndex *string   `json:"frac_index,omitempty"` // Fractional index string for manual ordering
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	// Recency for the board "Bubble Mode" sort. Bumped on activity (comments,
+	// edits, transitions) but not on manual frac_index reorder.
+	LastActiveAt time.Time  `json:"last_active_at"`
+	CompletedAt  *time.Time `json:"completed_at,omitempty"`
 	// Joined fields for API responses
 	WorkspaceName             string `json:"workspace_name,omitempty"`
 	WorkspaceKey              string `json:"workspace_key,omitempty"`

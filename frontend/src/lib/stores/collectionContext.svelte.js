@@ -231,7 +231,10 @@ class CollectionStore {
       sub_ql: this.subFilterQL || undefined,
       collection,
       status_id: capStatusIds.join(','),
-      order_by: 'updated_at',
+      // Recency for the capped rightmost column. Mirrors itemRecencyValue on the
+      // board, which prefers last_active_at (powers Bubble Mode) and falls back
+      // to updated_at server-side via COALESCE-style ordering.
+      order_by: 'last_active_at',
       sort_direction: 'desc',
     });
   }

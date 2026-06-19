@@ -44,6 +44,9 @@ CREATE TABLE IF NOT EXISTS items (
 	-- Timestamps
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	-- Recency for the board "Bubble Mode" sort; bumped on activity (comments,
+	-- edits, transitions) but not on manual frac_index reorder.
+	last_active_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
 	FOREIGN KEY (item_type_id) REFERENCES item_types(id) ON DELETE SET NULL,
 	FOREIGN KEY (parent_id) REFERENCES items(id) ON DELETE CASCADE,
@@ -74,6 +77,9 @@ CREATE INDEX IF NOT EXISTS idx_items_assignee_id ON items(assignee_id);
 CREATE INDEX IF NOT EXISTS idx_items_creator_id ON items(creator_id);
 CREATE INDEX IF NOT EXISTS idx_items_reporter_id ON items(reporter_id);
 CREATE INDEX IF NOT EXISTS idx_items_creator_portal_customer_id ON items(creator_portal_customer_id);
+
+-- Board "Bubble Mode" recency sort
+CREATE INDEX IF NOT EXISTS idx_items_workspace_last_active ON items(workspace_id, last_active_at);
 
 -- Time tracking indexes
 CREATE INDEX IF NOT EXISTS idx_items_time_project_id ON items(time_project_id);

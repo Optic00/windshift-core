@@ -1359,6 +1359,27 @@ var Catalog = []Migration{
 			ALTER TABLE pending_custom_field_cleanups ADD COLUMN payload TEXT;
 		`,
 	},
+	{
+		// Recency timestamp powering the board's "Bubble Mode" sort: cards
+		// ordered by most-recently-active first. Bumped on comments, edits and
+		// transitions (never on manual frac_index reorder) so it stays distinct
+		// from updated_at's "last edited"/change-log semantics. Backfilled from
+		// updated_at so existing rows have a sensible initial order.
+		Version:       "20260619_items_last_active_at",
+		Name:          "Add items.last_active_at for board Bubble Mode sort",
+		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('items') WHERE name='last_active_at'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='items' AND column_name='last_active_at'",
+		SQLite: `
+			ALTER TABLE items ADD COLUMN last_active_at DATETIME;
+			UPDATE items SET last_active_at = COALESCE(updated_at, created_at) WHERE last_active_at IS NULL;
+			CREATE INDEX IF NOT EXISTS idx_items_workspace_last_active ON items(workspace_id, last_active_at);
+		`,
+		Postgres: `
+			ALTER TABLE items ADD COLUMN last_active_at TIMESTAMPTZ;
+			UPDATE items SET last_active_at = COALESCE(updated_at, created_at) WHERE last_active_at IS NULL;
+			CREATE INDEX IF NOT EXISTS idx_items_workspace_last_active ON items(workspace_id, last_active_at);
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {
