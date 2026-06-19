@@ -1637,8 +1637,10 @@ func (db *DB) initializeDefaultData() error {
 	}{
 		// Item assignment - notify the assignee
 		{"item.assigned", true, false, false, false},
-		// Comments - notify assignee and creator
-		{"comment.created", true, true, false, false},
+		// Comments - notify assignee, creator, and thread watchers (commenters
+		// are auto-subscribed in CommentService.Create, so this delivers the
+		// "follow-up on your comment" notifications).
+		{"comment.created", true, true, true, false},
 		// Status changes - notify assignee and creator
 		{"status.changed", true, true, false, false},
 	}

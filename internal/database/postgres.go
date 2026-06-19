@@ -1728,10 +1728,13 @@ func (p *PostgresDB) initializePostgresDefaultData() error {
 		eventType      string
 		notifyAssignee bool
 		notifyCreator  bool
+		notifyWatchers bool
 	}{
-		{"item.assigned", true, false},
-		{"comment.created", true, true},
-		{"status.changed", true, true},
+		{"item.assigned", true, false, false},
+		// Comments notify thread watchers too: commenters are auto-subscribed
+		// in CommentService.Create, so this delivers follow-up notifications.
+		{"comment.created", true, true, true},
+		{"status.changed", true, true, false},
 	}
 	// NOTE: mention.created intentionally absent — mentions are NOT
 	// configurable; they always notify the mentioned user (subject to the
@@ -1744,7 +1747,7 @@ func (p *PostgresDB) initializePostgresDefaultData() error {
 			  notify_watchers, notify_workspace_admins)
 			 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 			notificationSettingID, rule.eventType, true, rule.notifyAssignee,
-			rule.notifyCreator, false, false,
+			rule.notifyCreator, rule.notifyWatchers, false,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to create notification rule for %s: %w", rule.eventType, err)

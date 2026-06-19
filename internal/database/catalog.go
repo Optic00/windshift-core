@@ -1751,6 +1751,22 @@ func miscMigrations() []Migration {
 				);
 			`,
 		},
+		{
+			// Commenters are now auto-subscribed as item watchers
+			// (CommentService.Create), and fresh installs seed
+			// comment.created with notify_watchers = true. Existing
+			// installs were seeded with notify_watchers = false, so the
+			// auto-subscribe would be inert there — flip those rules on so
+			// follow-up replies actually reach thread participants.
+			// Check returns 1 (skip) once no comment.created rule is still
+			// at the old default; 0 (run) while any remains.
+			Version:       "comment_created_notify_watchers",
+			Name:          "comment.created notify_watchers = true (follow-on-comment)",
+			CheckSQLite:   "SELECT CASE WHEN EXISTS(SELECT 1 FROM notification_event_rules WHERE event_type = 'comment.created' AND notify_watchers = 0) THEN 0 ELSE 1 END",
+			CheckPostgres: "SELECT CASE WHEN EXISTS(SELECT 1 FROM notification_event_rules WHERE event_type = 'comment.created' AND notify_watchers = false) THEN 0 ELSE 1 END",
+			SQLite:        "UPDATE notification_event_rules SET notify_watchers = 1 WHERE event_type = 'comment.created' AND notify_watchers = 0",
+			Postgres:      "UPDATE notification_event_rules SET notify_watchers = true WHERE event_type = 'comment.created' AND notify_watchers = false",
+		},
 	}
 }
 

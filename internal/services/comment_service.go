@@ -169,6 +169,26 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 
 	// Steps 5-8: notifications, mentions, webhooks, and email replies (skipped when SuppressNotifications is true)
 	if !params.SuppressNotifications {
+		// 4b. Auto-subscribe the commenter so they're notified of replies
+		// (GitHub/Jira-style "follow on comment"). Without this a user who
+		// joins a thread by commenting never learns of later replies unless
+		// they happen to be the assignee/creator. AddWatch is an idempotent
+		// upsert keyed on (user_id, item_id), so repeat comments are cheap and
+		// a previously-unwatched item is re-followed. ActorUserID 0 means a
+		// portal customer with no user row to watch with — skip those.
+		// Agents are watched too but never receive notifications: the recipient
+		// fan-out filters is_agent users (notification_service.agentOrUnknownUsers).
+		if s.activityTracker != nil && params.ActorUserID > 0 {
+			if err := s.activityTracker.AddWatch(params.ActorUserID, params.ItemID, "Commented on item"); err != nil {
+				slog.Warn("failed to auto-subscribe commenter to item",
+					slog.String("component", "comment_service"),
+					slog.Int("item_id", params.ItemID),
+					slog.Int("actor_user_id", params.ActorUserID),
+					slog.Any("error", err),
+				)
+			}
+		}
+
 		// 5. Emit notification event (if notificationService != nil)
 		if s.notificationService != nil {
 			// Get actor name for notification
