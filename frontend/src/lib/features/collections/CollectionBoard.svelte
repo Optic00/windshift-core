@@ -1335,26 +1335,32 @@
                   {/if}
                 </div>
               {/if}
-              <DropdownMenu
-                items={groupByMenuItems}
-                triggerIcon={Layers}
-                triggerText={selectedGroupByItemType ? `Group by: ${selectedGroupByItemType.name}` : 'Group by'}
-                placement="bottom-end"
-                maxWidth="max-w-xs"
-                triggerClass="px-3.5 py-1.5 rounded border text-sm font-medium"
-                triggerStyle="background-color: var(--ctx-surface, var(--ds-surface-raised)); color: var(--ds-text); border-color: var(--ctx-border, var(--ds-border)); backdrop-filter: var(--ctx-backdrop, none);"
-                triggerTestid="board-group-by-menu"
-              />
-              <DropdownMenu
-                items={sortByMenuItems}
-                triggerIcon={ArrowDownUp}
-                triggerText={sortMode === 'bubble' ? 'Sort: Bubble' : 'Sort by'}
-                placement="bottom-end"
-                maxWidth="max-w-xs"
-                triggerClass="px-3.5 py-1.5 rounded border text-sm font-medium"
-                triggerStyle="background-color: var(--ctx-surface, var(--ds-surface-raised)); color: var(--ds-text); border-color: var(--ctx-border, var(--ds-border)); backdrop-filter: var(--ctx-backdrop, none);"
-                triggerTestid="board-sort-by-menu"
-              />
+              <!-- Group by / Sort by segmented group, styled to match the
+                   board/backlog view switcher beside it. The trigger is
+                   highlighted (raised + shadow) when a non-default selection is
+                   active. -->
+              <div class="flex rounded p-1" style="background-color: var(--ctx-surface, var(--ds-background-neutral)); backdrop-filter: var(--ctx-backdrop, none);">
+                <DropdownMenu
+                  items={groupByMenuItems}
+                  triggerIcon={Layers}
+                  triggerText={selectedGroupByItemType ? `Group by: ${selectedGroupByItemType.name}` : 'Group by'}
+                  placement="bottom-end"
+                  maxWidth="max-w-xs"
+                  triggerClass="px-3 py-1.5 rounded text-sm font-medium transition-colors {selectedGroupByItemType ? 'shadow-sm' : ''}"
+                  triggerStyle={selectedGroupByItemType ? 'color: var(--ds-text); background-color: var(--ctx-surface-raised, var(--ds-surface-raised));' : 'color: var(--ds-text);'}
+                  triggerTestid="board-group-by-menu"
+                />
+                <DropdownMenu
+                  items={sortByMenuItems}
+                  triggerIcon={ArrowDownUp}
+                  triggerText={sortMode === 'bubble' ? 'Sort: Bubble' : 'Sort by'}
+                  placement="bottom-end"
+                  maxWidth="max-w-xs"
+                  triggerClass="px-3 py-1.5 rounded text-sm font-medium transition-colors {sortMode === 'bubble' ? 'shadow-sm' : ''}"
+                  triggerStyle={sortMode === 'bubble' ? 'color: var(--ds-text); background-color: var(--ctx-surface-raised, var(--ds-surface-raised));' : 'color: var(--ds-text);'}
+                  triggerTestid="board-sort-by-menu"
+                />
+              </div>
               <CollectionViewSwitcher
                 {workspaceId}
                 {collectionId}
