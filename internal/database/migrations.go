@@ -1445,6 +1445,12 @@ var Catalog = []Migration{
 		// Check — the UPDATE is idempotent, so it is safe to always run.
 		Version: "20260619_items_last_active_at_backfill",
 		Name:    "Backfill NULL items.last_active_at left by the insert path",
+		// Skip on a clean DB (no NULL rows) — that's a fresh install (the schema
+		// + insert path never leave last_active_at NULL) or an already-backfilled
+		// one. Returns 1 → stamp without running; 0 (NULL rows present) → run the
+		// idempotent backfill. Keeps the catalog upgrade-only for fresh installs.
+		CheckSQLite:   "SELECT CASE WHEN EXISTS(SELECT 1 FROM items WHERE last_active_at IS NULL) THEN 0 ELSE 1 END",
+		CheckPostgres: "SELECT CASE WHEN EXISTS(SELECT 1 FROM items WHERE last_active_at IS NULL) THEN 0 ELSE 1 END",
 		SQLite: `
 			UPDATE items SET last_active_at = COALESCE(updated_at, created_at) WHERE last_active_at IS NULL;
 		`,
