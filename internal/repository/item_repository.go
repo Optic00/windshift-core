@@ -705,14 +705,14 @@ func (r *ItemRepository) Create(tx database.Tx, item *models.Item) (int, error) 
 			workspace_id, workspace_item_number, item_type_id, title, description, status_id,
 			priority_id, due_date, start_date, end_date, is_task, iteration_id, project_id, inherit_project,
 			assignee_id, creator_id, custom_field_values, parent_id, related_work_item_id,
-			story_points, estimate_minutes, frac_index, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+			story_points, estimate_minutes, frac_index, created_at, updated_at, last_active_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
 	`,
 		item.WorkspaceID, item.WorkspaceItemNumber, item.ItemTypeID, item.Title, item.Description,
 		item.StatusID, item.PriorityID, item.DueDate, item.StartDate, item.EndDate, item.IsTask,
 		item.IterationID, item.ProjectID, item.InheritProject, item.AssigneeID, item.CreatorID,
 		customFieldValuesJSON, item.ParentID, item.RelatedWorkItemID,
-		item.StoryPoints, item.EstimateMinutes, item.FracIndex, now, now,
+		item.StoryPoints, item.EstimateMinutes, item.FracIndex, now, now, now,
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create item: %w", err)
@@ -734,13 +734,13 @@ func (r *ItemRepository) Update(tx database.Tx, item *models.Item) error {
 		SET workspace_id = ?, title = ?, description = ?, status_id = ?, priority_id = ?,
 		    due_date = ?, start_date = ?, end_date = ?, iteration_id = ?, project_id = ?, inherit_project = ?,
 		    time_project_id = ?, assignee_id = ?, creator_id = ?, custom_field_values = ?, parent_id = ?,
-		    related_work_item_id = ?, story_points = ?, estimate_minutes = ?, updated_at = ?
+		    related_work_item_id = ?, story_points = ?, estimate_minutes = ?, updated_at = ?, last_active_at = ?
 		WHERE id = ?
 	`,
 		item.WorkspaceID, item.Title, item.Description, item.StatusID, item.PriorityID,
 		item.DueDate, item.StartDate, item.EndDate, item.IterationID, item.ProjectID, item.InheritProject,
 		item.TimeProjectID, item.AssigneeID, item.CreatorID, customFieldValuesJSON, item.ParentID,
-		item.RelatedWorkItemID, item.StoryPoints, item.EstimateMinutes, now, item.ID,
+		item.RelatedWorkItemID, item.StoryPoints, item.EstimateMinutes, now, now, item.ID,
 	)
 
 	if err != nil {
@@ -801,14 +801,36 @@ func (r *ItemRepository) UpdateFields(tx database.Tx, itemID int, fields map[str
 		args = append(args, val)
 	}
 
-	setClauses = append(setClauses, "updated_at = ?")
-	args = append(args, time.Now())
+	// Any field edit (incl. status transitions, which flow through here) counts
+	// as activity for the board's Bubble Mode recency sort. Manual reorders write
+	// frac_index via a raw UPDATE in fracindex.go, not UpdateFields, so they are
+	// intentionally excluded from this bump.
+	now := time.Now()
+	setClauses = append(setClauses, "updated_at = ?", "last_active_at = ?")
+	args = append(args, now, now)
 	args = append(args, itemID)
 
 	query := "UPDATE items SET " + strings.Join(setClauses, ", ") + " WHERE id = ?"
 	_, err := tx.Exec(query, args...)
 	if err != nil {
 		return fmt.Errorf("failed to update item fields: %w", err)
+	}
+	return nil
+}
+
+// execer is the subset of database.Database / database.Tx that TouchActivity
+// needs, so callers can bump activity either inside a transaction or directly
+// on the pool (comment creation is non-transactional).
+type execer interface {
+	Exec(query string, args ...interface{}) (sql.Result, error)
+}
+
+// TouchActivity bumps an item's last_active_at to mark recent activity (e.g. a
+// new comment) for the board's Bubble Mode sort. It deliberately leaves
+// updated_at untouched so "last edited"/change-log semantics stay distinct.
+func (r *ItemRepository) TouchActivity(exec execer, itemID int, now time.Time) error {
+	if _, err := exec.Exec("UPDATE items SET last_active_at = ? WHERE id = ?", now, itemID); err != nil {
+		return fmt.Errorf("failed to touch item activity: %w", err)
 	}
 	return nil
 }

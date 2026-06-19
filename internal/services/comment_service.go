@@ -155,6 +155,18 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 		return nil, fmt.Errorf("failed to create comment: %w", err)
 	}
 
+	// 3b. Bump the item's recency so it floats to the top of the board's Bubble
+	// Mode sort. Every comment entry point (internal, v1, email, portal, agent)
+	// flows through here, so this is the single choke point. Best-effort: a
+	// failed bump must not fail the comment write.
+	if err := repository.NewItemRepository(s.db).TouchActivity(s.db, params.ItemID, now); err != nil {
+		slog.Warn("failed to bump item last_active_at on comment",
+			slog.String("component", "comment_service"),
+			slog.Int("item_id", params.ItemID),
+			slog.Any("error", err),
+		)
+	}
+
 	// 4. Track activity (if activityTracker != nil)
 	if s.activityTracker != nil {
 		if err := s.activityTracker.TrackItemActivity(params.ActorUserID, params.ItemID, ActivityComment); err != nil {

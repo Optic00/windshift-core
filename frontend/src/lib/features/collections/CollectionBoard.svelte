@@ -10,7 +10,7 @@
   import { getCollection, checkItemVisibility } from './collectionService.js';
   import { RIGHTMOST_COLUMN_LIMIT, buildDisplayColumns } from './boardColumns.js';
   import { infoToast, successToast, warningToast } from '../../stores/toasts.svelte.js';
-  import { Plus, ChevronDown, ChevronRight, MoreHorizontal, Layers } from '@lucide/svelte';
+  import { Plus, ChevronDown, ChevronRight, MoreHorizontal, Layers, ArrowDownUp } from '@lucide/svelte';
   import ItemPicker from '../../pickers/ItemPicker.svelte';
   import { buildIterationPickerConfig } from '../iterations/iterationPickerUtils.js';
   import { itemTypeIconMap } from '../../utils/icons.js';
@@ -87,6 +87,10 @@
   let groupByItemTypeId = $state(null);
   let excludeRightmostSwimlaneParents = $state(false);
   let swimlaneCollapsed = $state({});
+
+  // Board sort mode: 'rank' (manual frac_index order, drag-to-reorder enabled)
+  // or 'bubble' (recently-active cards rise to the top, rank reorder disabled).
+  let sortMode = $state('rank');
 
   // Edge-based drag state
   let dragState = $state(new Map()); // Track drag state for each item: { isDragging: boolean, closestEdge: 'top'|'bottom'|null }
@@ -279,6 +283,10 @@
       const savedExcludeRightmost = localStorage.getItem(excludeRightmostSwimlaneParentsStorageKey());
       if (savedExcludeRightmost !== null) {
         excludeRightmostSwimlaneParents = savedExcludeRightmost === 'true';
+      }
+      const savedSortMode = localStorage.getItem(sortModeStorageKey());
+      if (savedSortMode === 'bubble') {
+        sortMode = 'bubble';
       }
     } catch (e) { /* ignore storage errors */ }
     loading = false;
@@ -542,6 +550,21 @@
     return `board-exclude-rightmost-swimlane-parents-${boardPreferenceScope()}`;
   }
 
+  function sortModeStorageKey() {
+    return `board-sort-mode-${boardPreferenceScope()}`;
+  }
+
+  function setSortMode(mode) {
+    sortMode = mode;
+    try {
+      if (mode && mode !== 'rank') {
+        localStorage.setItem(sortModeStorageKey(), mode);
+      } else {
+        localStorage.removeItem(sortModeStorageKey());
+      }
+    } catch (e) { /* ignore storage errors */ }
+  }
+
   function setGroupByItemType(itemTypeId) {
     groupByItemTypeId = itemTypeId;
     swimlaneCollapsed = {};
@@ -590,16 +613,25 @@
   }
 
   function itemRecencyValue(item) {
-    return new Date(item.updated_at || item.created_at || 0).getTime() || 0;
+    return new Date(item.last_active_at || item.updated_at || item.created_at || 0).getTime() || 0;
+  }
+
+  function sortByRecency(items) {
+    return items.slice().sort((a, b) => itemRecencyValue(b) - itemRecencyValue(a) || b.id - a.id);
   }
 
   function getDisplayItemsByColumn(column, columnIndex, columnsForBoard = validColumns, itemSubset = filteredItems) {
     const columnItems = getItemsByColumn(column, itemSubset);
+    // Bubble Mode: most-recently-active cards rise to the top of every column.
+    if (sortMode === 'bubble') {
+      return shouldLimitRightmostColumn(columnIndex, columnsForBoard)
+        ? sortByRecency(columnItems).slice(0, RIGHTMOST_COLUMN_LIMIT)
+        : sortByRecency(columnItems);
+    }
+    // Rank Mode: backend frac_index order, except the capped rightmost column
+    // which always shows the latest by recency.
     return shouldLimitRightmostColumn(columnIndex, columnsForBoard)
-      ? columnItems
-          .slice()
-          .sort((a, b) => itemRecencyValue(b) - itemRecencyValue(a) || b.id - a.id)
-          .slice(0, RIGHTMOST_COLUMN_LIMIT)
+      ? sortByRecency(columnItems).slice(0, RIGHTMOST_COLUMN_LIMIT)
       : columnItems;
   }
 
@@ -630,6 +662,25 @@
     if (!groupByItemTypeId || !excludeRightmostSwimlaneParents || !rightmostBoardColumn) return 0;
     return items.filter(item => item.item_type_id === groupByItemTypeId && isExcludedRightmostSwimlaneParent(item)).length;
   });
+
+  let sortByMenuItems = $derived([
+    {
+      id: 'sort-rank',
+      testid: 'board-sort-rank',
+      title: 'Rank mode',
+      subtitle: 'Manual drag-and-drop order',
+      badge: sortMode === 'rank' ? 'Selected' : '',
+      onClick: () => setSortMode('rank')
+    },
+    {
+      id: 'sort-bubble',
+      testid: 'board-sort-bubble',
+      title: 'Bubble Mode',
+      subtitle: 'Recently active cards rise to the top',
+      badge: sortMode === 'bubble' ? 'Selected' : '',
+      onClick: () => setSortMode('bubble')
+    }
+  ]);
 
   let groupByMenuItems = $derived.by(() => {
     const sortedTypes = (itemTypes || []).slice().sort((a, b) => (a.hierarchy_level ?? 999) - (b.hierarchy_level ?? 999) || (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.name.localeCompare(b.name));
@@ -1111,6 +1162,15 @@
 
       draggedItem = await updateItemParentForLane(draggedItem, targetLaneParentId);
 
+      // Bubble Mode disables manual rank ordering. Cross-column drags above have
+      // already transitioned status (which bumps the card to the top via
+      // last_active_at); a same-column drag is a no-op. Either way, skip the
+      // frac_index reorder and just refresh.
+      if (sortMode === 'bubble') {
+        reloadCollection();
+        return;
+      }
+
       // Get items in the target status for position calculation
       const laneItems = targetLaneParentId === undefined ? filteredItems : getItemsForLaneParent(targetLaneParentId);
       const statusItems = getItemsByStatus(targetStatusId, laneItems);
@@ -1284,6 +1344,16 @@
                 triggerClass="px-3.5 py-1.5 rounded border text-sm font-medium"
                 triggerStyle="background-color: var(--ctx-surface, var(--ds-surface-raised)); color: var(--ds-text); border-color: var(--ctx-border, var(--ds-border)); backdrop-filter: var(--ctx-backdrop, none);"
                 triggerTestid="board-group-by-menu"
+              />
+              <DropdownMenu
+                items={sortByMenuItems}
+                triggerIcon={ArrowDownUp}
+                triggerText={sortMode === 'bubble' ? 'Sort: Bubble' : 'Sort by'}
+                placement="bottom-end"
+                maxWidth="max-w-xs"
+                triggerClass="px-3.5 py-1.5 rounded border text-sm font-medium"
+                triggerStyle="background-color: var(--ctx-surface, var(--ds-surface-raised)); color: var(--ds-text); border-color: var(--ctx-border, var(--ds-border)); backdrop-filter: var(--ctx-backdrop, none);"
+                triggerTestid="board-sort-by-menu"
               />
               <CollectionViewSwitcher
                 {workspaceId}

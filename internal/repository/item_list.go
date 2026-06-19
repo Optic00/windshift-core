@@ -81,21 +81,22 @@ type PaginationParams struct {
 // systemFieldSortColumns maps field identifiers to safe SQL column references for sorting.
 // This is the single source of truth for which system fields support server-side sorting.
 var systemFieldSortColumns = map[string]string{
-	"key":        "i.workspace_item_number",
-	"title":      "i.title",
-	"status":     "i.status_id",
-	"priority":   "i.priority_id",
-	"assignee":   "i.assignee_id",
-	"milestone":  "(SELECT MIN(milestone_id) FROM item_milestones WHERE item_id = i.id)",
-	"iteration":  "i.iteration_id",
-	"due_date":   "i.due_date",
-	"start_date": "i.start_date",
-	"end_date":   "i.end_date",
-	"created_at": "i.created_at",
-	"updated_at": "i.updated_at",
-	"project":    "i.project_id",
-	"rank":       "i.rank",
-	"frac_index": "i.frac_index",
+	"key":            "i.workspace_item_number",
+	"title":          "i.title",
+	"status":         "i.status_id",
+	"priority":       "i.priority_id",
+	"assignee":       "i.assignee_id",
+	"milestone":      "(SELECT MIN(milestone_id) FROM item_milestones WHERE item_id = i.id)",
+	"iteration":      "i.iteration_id",
+	"due_date":       "i.due_date",
+	"start_date":     "i.start_date",
+	"end_date":       "i.end_date",
+	"created_at":     "i.created_at",
+	"updated_at":     "i.updated_at",
+	"last_active_at": "i.last_active_at",
+	"project":        "i.project_id",
+	"rank":           "i.rank",
+	"frac_index":     "i.frac_index",
 }
 
 // unsortableCustomFieldTypes lists custom field types that cannot be meaningfully sorted.
@@ -119,7 +120,7 @@ func (r *ItemRepository) FindAllWithDetails(params ItemListParams) ([]models.Ite
 	selectClause := `SELECT
 		i.id, i.workspace_id, i.workspace_item_number, i.item_type_id, i.title, i.description, i.status_id, i.priority_id, i.due_date, i.start_date, i.end_date, i.is_task,
 		i.iteration_id, i.project_id, i.inherit_project, i.time_project_id, i.assignee_id, i.creator_id, i.custom_field_values, i.calendar_data, i.parent_id,
-		i.story_points, i.estimate_minutes, i.frac_index, i.created_at, i.updated_at,
+		i.story_points, i.estimate_minutes, i.frac_index, i.created_at, i.updated_at, i.last_active_at,
 		w.name as workspace_name, w.key as workspace_key, it.name as item_type_name,
 		p.title as parent_title, p.workspace_item_number as parent_workspace_item_number, iter.name as iteration_name, COALESCE(CAST(iter.end_date AS TEXT), '') as iteration_end_date, proj.name as project_name, tp.name as time_project_name,
 		assignee.first_name || ' ' || assignee.last_name as assignee_name, assignee.email as assignee_email, assignee.avatar_url as assignee_avatar,
@@ -438,7 +439,7 @@ func (r *ItemRepository) scanItemList(rows *sql.Rows) ([]models.Item, error) {
 		err := rows.Scan(
 			&item.ID, &item.WorkspaceID, &item.WorkspaceItemNumber, &itemTypeID, &item.Title, &item.Description,
 			&statusID, &priorityID, &dueDate, &startDate, &endDate, &item.IsTask, &iterationID, &projectID, &inheritProject, &timeProjectID, &assigneeID, &creatorID, &customFieldValuesJSON, &calendarDataJSON, &parentID,
-			&storyPoints, &estimateMinutes, &fracIndex, &item.CreatedAt, &item.UpdatedAt, &item.WorkspaceName, &item.WorkspaceKey, &itemTypeName, &parentTitle, &parentWorkspaceItemNumber, &iterationName, &iterationEndDate, &projectName, &timeProjectName,
+			&storyPoints, &estimateMinutes, &fracIndex, &item.CreatedAt, &item.UpdatedAt, &item.LastActiveAt, &item.WorkspaceName, &item.WorkspaceKey, &itemTypeName, &parentTitle, &parentWorkspaceItemNumber, &iterationName, &iterationEndDate, &projectName, &timeProjectName,
 			&assigneeName, &assigneeEmail, &assigneeAvatar, &creatorName, &creatorEmail, &statusName, &priorityName, &priorityIcon, &priorityColor,
 			&statusSince,
 		)
