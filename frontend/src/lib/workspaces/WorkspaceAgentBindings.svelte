@@ -873,10 +873,10 @@
                 />
                 Primary
               </label>
-              <Button variant="ghost" size="small" onclick={() => removeRepoRow(idx)} data-testid="binding-repo-remove" class="pb-2">Remove</Button>
+              <Button variant="ghost" size="small" onclick={() => removeRepoRow(idx)} dataTestid="binding-repo-remove" class="pb-2">Remove</Button>
             </div>
           {/each}
-          <Button variant="secondary" size="small" onclick={addRepoRow} data-testid="binding-repo-add">+ Add repository</Button>
+          <Button variant="secondary" size="small" onclick={addRepoRow} dataTestid="binding-repo-add">+ Add repository</Button>
         </div>
         <!-- Persona + skills (WI-258): appended to the run's standard prompt. -->
         <div class="mt-4">
