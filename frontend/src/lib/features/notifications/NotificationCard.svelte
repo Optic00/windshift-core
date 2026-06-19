@@ -100,7 +100,7 @@
 
     <!-- Unread indicator -->
     {#if !notification.read}
-      <div class="absolute left-0 top-1/2 transform -translate-y-1/2 w-1 h-8 rounded-r" style="background-color: var(--ds-background-brand-bold);"></div>
+      <div class="absolute left-0 top-1/2 transform -translate-y-1/2 w-1 h-8 rounded-r" style="background-color: var(--ds-interactive);"></div>
     {/if}
   </div>
 </div>
@@ -111,7 +111,7 @@
   }
 
   .notification-card.unread {
-    background-color: var(--ds-background-selected);
+    background-color: var(--ds-surface-selected);
   }
 
   .dismiss-btn:hover {
