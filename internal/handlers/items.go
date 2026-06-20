@@ -743,7 +743,7 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 		PermService:           h.permissionService,
 	})
 	if err != nil {
-		if errors.Is(err, services.ErrMissingItemType) || errors.Is(err, services.ErrProjectNotFound) {
+		if errors.Is(err, services.ErrMissingItemType) || errors.Is(err, services.ErrInvalidItemType) || errors.Is(err, services.ErrProjectNotFound) {
 			respondValidationError(w, r, err.Error())
 			return
 		}

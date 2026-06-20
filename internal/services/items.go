@@ -17,6 +17,12 @@ import (
 // resolved. The handler maps this to a 400 instead of a 500.
 var ErrMissingItemType = errors.New("item_type_id is required: workspace has no default item type configured")
 
+// ErrInvalidItemType is returned by CreateItem when the caller supplied an
+// item_type_id that does not exist in the item_types table. Guards against
+// dangling type references (e.g. `ws task create --type 999`). The handler
+// maps this to a 400 instead of a 500.
+var ErrInvalidItemType = errors.New("item_type_id does not reference a valid item type")
+
 // mapTextStatusToID maps legacy text status values to status IDs
 // Returns nil if the status cannot be mapped
 // Default status IDs from database setup:
@@ -168,8 +174,19 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 		}
 	}
 
-	// Enforce config set item type restrictions before anything else
+	// Validate the supplied item type before anything else. IsItemTypeAllowedInWorkspace
+	// returns true for workspaces with no config set, so a bogus numeric id (e.g.
+	// `ws task create --type 999`) would otherwise slip through and be stored as a
+	// dangling reference — verify the row exists first, then the config-set restriction.
 	if params.ItemTypeID != nil && *params.ItemTypeID != 0 {
+		var itemTypeExists bool
+		if err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM item_types WHERE id = ?)", *params.ItemTypeID).Scan(&itemTypeExists); err != nil {
+			return 0, fmt.Errorf("failed to check item type existence: %w", err)
+		}
+		if !itemTypeExists {
+			return 0, ErrInvalidItemType
+		}
+
 		allowed, err := IsItemTypeAllowedInWorkspace(db, params.WorkspaceID, *params.ItemTypeID)
 		if err != nil {
 			return 0, fmt.Errorf("failed to check item type restriction: %w", err)
