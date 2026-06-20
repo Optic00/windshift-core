@@ -1,5 +1,5 @@
 <script>
-  import { Star, Play, Loader, ChevronDown, ChevronRight, GitPullRequest, Bot, RefreshCw } from '@lucide/svelte';
+  import { Star, Play, Loader, ChevronDown, ChevronRight, GitPullRequest, Bot, RefreshCw, Plus } from '@lucide/svelte';
   import { api } from '../api.js';
   import { agentRuns } from '../api/agentRuns.js';
   import { agentRuns as agentRunBus } from '../stores/agentRuns.svelte.js';
@@ -12,6 +12,7 @@
   import { formatItemKey } from '../utils/itemKey.js';
   import MobileHeader from './MobileHeader.svelte';
   import MobileItemRow from './MobileItemRow.svelte';
+  import MobileCreateDialog from './MobileCreateDialog.svelte';
   import StatusPill from '../components/StatusPill.svelte';
   import Comments from '../features/items/Comments.svelte';
   import ItemSCMLinks from '../features/items/ItemSCMLinks.svelte';
@@ -33,6 +34,12 @@
   let startingTimer = $state(false);
   let children = $state([]);
   let ancestors = $state([]);
+  // Item types one hierarchy level below this item's type — the set allowed as
+  // children. Computed the same way the desktop itemDetailStore does
+  // (#loadItemTypeData). Empty for the lowest level, which hides the
+  // "Add sub-item" affordance (mirrors the desktop's createChild gate).
+  let availableSubIssueTypes = $state([]);
+  let createChildOpen = $state(false);
   // Bumped on every itemId change so in-flight loads for a previous item can't
   // write stale state when the user navigates item → item (e.g. tapping a
   // sub-item) without the component remounting.
@@ -50,6 +57,11 @@
   const itemKey = $derived(formatItemKey(item) ?? '');
   const projectId = $derived(item?.time_project_id ?? item?.effective_project_id ?? null);
   const canStartTimer = $derived(!!item && !timerStore.hasActive && !!projectId);
+  const canCreateChild = $derived(availableSubIssueTypes.length > 0);
+  // Stable parent context for the create-child dialog (id + title), derived so
+  // it only gets a new reference when the underlying item actually changes —
+  // avoids re-triggering the dialog's effects on unrelated re-renders.
+  const childParent = $derived(item ? { id: item.id, title: item.title } : null);
 
   function normalizeChild(c) {
     return {
@@ -136,6 +148,26 @@
     } catch {
       if (token === loadToken) hasAgentRuns = false;
     }
+    // Sub-issue types: the item types one hierarchy level below this item's
+    // type. Used to gate + populate the "Add sub-item" dialog. Mirrors the
+    // desktop itemDetailStore's #loadItemTypeData (item types + hierarchy
+    // levels, filtered to level = current + 1).
+    try {
+      const currentTypeId = item?.item_type_id ?? null;
+      const [typesRes, levelsRes] = await Promise.all([
+        api.itemTypes.getAll(),
+        api.hierarchyLevels.getAll(),
+      ]);
+      const types = Array.isArray(typesRes) ? typesRes : (typesRes?.items ?? []);
+      const levels = Array.isArray(levelsRes) ? levelsRes : (levelsRes?.items ?? []);
+      const current = currentTypeId ? types.find((t) => t.id === currentTypeId) : null;
+      const level = current ? levels.find((l) => l.level === current.hierarchy_level) : null;
+      const nextLevel = level ? level.level + 1 : null;
+      const subTypes = nextLevel != null ? types.filter((t) => t.hierarchy_level === nextLevel) : [];
+      if (token === loadToken) availableSubIssueTypes = subTypes;
+    } catch {
+      if (token === loadToken) availableSubIssueTypes = [];
+    }
   }
 
   async function changeStatus(statusId) {
@@ -202,6 +234,25 @@
     }
   }
 
+  function openCreateChild() {
+    if (!canCreateChild) return;
+    createChildOpen = true;
+  }
+
+  // Called when the create-child dialog closes (both on submit and cancel).
+  // A silent refresh of the sub-item list is cheap and side-effect-free on
+  // cancel (the list is unchanged), so it doubles as the "new child appeared"
+  // handler without needing the dialog to report success.
+  async function handleCreateChildClose() {
+    try {
+      const res = await api.items.getChildren(itemId);
+      const list = Array.isArray(res) ? res : (res?.items ?? []);
+      children = list.filter((c) => c?.id).map(normalizeChild);
+    } catch {
+      /* keep prior list */
+    }
+  }
+
   // Reload whenever the item id changes — the component is not remounted when
   // navigating item → item (e.g. tapping a sub-item), so onMount wouldn't fire.
   $effect(() => {
@@ -219,6 +270,8 @@
     hasAgentRuns = false;
     scmOpen = false;
     agentOpen = false;
+    availableSubIssueTypes = [];
+    createChildOpen = false;
     loadItem(id, token).then(() => {
       if (token === loadToken && !errored) loadAux(id, token);
     });
@@ -414,15 +467,30 @@
       {/if}
     </div>
 
-    <!-- Sub-items -->
-    {#if children.length > 0}
+    <!-- Sub-items. Shown whenever a child type is allowed for this item's
+         hierarchy level, so the "Add sub-item" affordance is reachable even
+         before any children exist (mirrors the desktop createChild gate). -->
+    {#if canCreateChild}
       <section class="subitems" data-testid="detail-subitems">
-        <h2 class="section-title">Sub-items <span class="count">{children.length}</span></h2>
-        <div class="subitems-list">
-          {#each children as child (child.itemId)}
-            <MobileItemRow {...child} />
-          {/each}
-        </div>
+        <h2 class="section-title">
+          Sub-items {#if children.length > 0}<span class="count">{children.length}</span>{/if}
+          <button
+            class="add-child"
+            onclick={openCreateChild}
+            data-testid="detail-add-sub-item"
+            type="button"
+            aria-label="Add sub-item"
+          >
+            <Plus size={16} /> Add
+          </button>
+        </h2>
+        {#if children.length > 0}
+          <div class="subitems-list">
+            {#each children as child (child.itemId)}
+              <MobileItemRow {...child} />
+            {/each}
+          </div>
+        {/if}
       </section>
     {/if}
 
@@ -465,6 +533,19 @@
       {/key}
     </section>
   </div>
+{/if}
+
+<!-- Create-child dialog. Mounted lazily once the item loads; the parent
+     context pins the new item under this one and locks the type picker to the
+     allowed sub-issue types. Closes silently refresh the sub-item list. -->
+{#if item && canCreateChild}
+  <MobileCreateDialog
+    bind:isOpen={createChildOpen}
+    onclose={handleCreateChildClose}
+    parent={childParent}
+    availableItemTypes={availableSubIssueTypes}
+    workspaceId={item.workspace_id}
+  />
 {/if}
 
 <style>
@@ -583,6 +664,14 @@
     font-size: 0.75rem; font-weight: var(--font-medium, 500); color: var(--ds-text-subtle);
     background-color: var(--ds-background-neutral); border-radius: var(--radius-full, 9999px); padding: 0 0.45rem;
   }
+  /* "Add sub-item" affordance pushed to the trailing edge of the title row. */
+  .add-child {
+    margin-left: auto; display: inline-flex; align-items: center; gap: 0.3rem;
+    border: none; background: transparent; cursor: pointer;
+    font-size: 0.8125rem; font-weight: var(--font-medium, 500); color: var(--ds-interactive);
+    padding: 0.25rem 0.4rem; border-radius: var(--radius-md, 6px);
+  }
+  .add-child:active { background-color: var(--ds-background-neutral-hovered); }
   .subitems-list {
     border: 1px solid var(--ds-border); border-radius: var(--radius-lg, 8px); overflow: hidden;
   }
