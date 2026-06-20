@@ -11,6 +11,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/logger"
 	"windshift/internal/models"
+	"windshift/internal/repository"
 	"windshift/internal/sanitize"
 	"windshift/internal/utils"
 )
@@ -438,6 +439,21 @@ func (h *ItemTypeHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		respondInternalError(w, r, err)
+		return
+	}
+
+	// Guard against deleting an item type that is still in use: existing items
+	// must be re-typed (or the type kept) before the type can be removed.
+	// Without this, the items.item_type_id FK is ON DELETE SET NULL, so the
+	// items would silently become untyped and lose type-scoped
+	// workflow/screen/approval behavior.
+	itemCount, err := repository.NewItemRepository(h.db).CountByField("item_type_id", id)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	if itemCount > 0 {
+		respondConflict(w, r, fmt.Sprintf("Cannot delete item type: it is used by %d item(s). Change the type of those items first.", itemCount))
 		return
 	}
 
