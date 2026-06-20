@@ -77,6 +77,17 @@
       load();
     }
   });
+
+  // A personal task created in this tab (mobile create dialog) won't be
+  // caught by the cross-tab BroadcastChannel, which excludes the posting
+  // tab. Refresh the list directly when one is added.
+  function onPersonalTaskCreated() {
+    load();
+  }
+  $effect(() => {
+    window.addEventListener('personal-task-created', onPersonalTaskCreated);
+    return () => window.removeEventListener('personal-task-created', onPersonalTaskCreated);
+  });
 </script>
 
 <MobileHeader title="Personal" />

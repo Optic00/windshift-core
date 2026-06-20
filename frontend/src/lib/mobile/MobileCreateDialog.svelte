@@ -5,6 +5,14 @@
   import Modal from '../dialogs/Modal.svelte';
 
   /**
+   * @typedef {'work' | 'personal'} CreateMode
+   * 'personal' targets the user's personal workspace and submits a
+   * title-only task (no item type) - the same shape the desktop
+   * PersonalTasksPanel uses to add a personal task. 'work' is the
+   * default full work-item form for regular workspaces.
+   */
+
+  /**
    * @typedef {Object} ParentItem
    * @property {number} id
    * @property {string} title
@@ -13,18 +21,20 @@
   /**
    * @param {Object} opts
    * @param {boolean} [opts.isOpen]
+   * @param {CreateMode} [opts.mode] - 'work' (default) or 'personal'.
    * @param {(() => void) | null} [opts.onclose]
-   * @param {ParentItem | null} [opts.parent] — when set, the new item is
+   * @param {ParentItem | null} [opts.parent] - when set, the new item is
    *   created as a child of this item and the type picker is locked to the
    *   available sub-issue types for that item's level.
    * @param {Array<{id: number, name?: string}> | null} [opts.availableItemTypes]
-   *   — sub-issue types allowed under `parent`; passed in by the caller (the
+   *   - sub-issue types allowed under `parent`; passed in by the caller (the
    *   mobile item detail computes them the same way the desktop store does).
-   * @param {number | null} [opts.workspaceId] — the parent item's workspace,
+   * @param {number | null} [opts.workspaceId] - the parent item's workspace,
    *   used to lock the workspace picker when creating a child.
    */
   let {
     isOpen = $bindable(false),
+    mode = 'work',
     onclose = null,
     parent = null,
     availableItemTypes = null,
@@ -43,12 +53,24 @@
 
   const isChild = $derived(!!parent);
   const workspaces = $derived($workspacesStore.regularWorkspaces ?? []);
-  const canSubmit = $derived(title.trim() !== '' && !!workspaceId && !!itemTypeId && !saving);
+  // Personal workspace is loaded on-demand; the store keeps it once fetched.
+  const personalWorkspace = $derived($workspacesStore.personalWorkspace ?? null);
+  const isPersonal = $derived(mode === 'personal');
+
+  const canSubmit = $derived(
+    title.trim() !== '' &&
+      !saving &&
+      // Work mode needs a workspace + item type; personal mode just needs a
+      // resolved personal workspace (item type resolves to the default on the
+      // server, matching the desktop personal-task creation path).
+      (isPersonal ? !!personalWorkspace : !!workspaceId && !!itemTypeId)
+  );
 
   // Default the workspace when the dialog opens (first regular workspace), or
-  // lock it to the parent item's workspace when creating a child.
+  // lock it to the parent item's workspace when creating a child. Personal
+  // mode targets the personal workspace and skips this entirely.
   $effect(() => {
-    if (!isOpen) return;
+    if (!isOpen || isPersonal) return;
     if (isChild && lockedWorkspaceId) {
       workspaceId = lockedWorkspaceId;
       return;
@@ -58,12 +80,21 @@
     }
   });
 
-  // Resolve the item-type list. When creating a child the caller hands us the
-  // exact set of allowed sub-issue types (pre-computed from the hierarchy), so
-  // there's nothing to fetch — we just adopt them. Otherwise we load the full
+  // Load the personal workspace on-demand when the dialog opens in personal
+  // mode (the mobile shell otherwise never touches it outside the Personal tab).
+  $effect(() => {
+    if (isOpen && isPersonal && !personalWorkspace) {
+      workspacesStore.loadPersonalWorkspace();
+    }
+  });
+
+  // Resolve the item-type list. Personal mode submits a title-only task and
+  // needs no type. When creating a child the caller hands us the exact set of
+  // allowed sub-issue types (pre-computed from the hierarchy), so there's
+  // nothing to fetch - we just adopt them. Otherwise we load the full
   // workspace-scoped list whenever the chosen workspace changes.
   $effect(() => {
-    if (!isOpen) return;
+    if (!isOpen || isPersonal) return;
     if (isChild) {
       const allowed = Array.isArray(availableItemTypes) ? availableItemTypes : [];
       itemTypes = allowed;
@@ -117,17 +148,29 @@
     saving = true;
     error = '';
     try {
-      const result = await api.items.create({
-        title: title.trim(),
-        description: description.trim(),
-        workspace_id: workspaceId,
-        item_type_id: itemTypeId,
-        // Creating a child: pin it to the parent so it shows up under it.
-        parent_id: isChild ? parent.id : undefined,
-      });
-      // When creating a child we stay on the parent's detail view and let the
-      // caller refresh the sub-item list rather than navigating away.
-      if (isChild) {
+      const result = await api.items.create(
+        isPersonal
+          ? { title: title.trim(), workspace_id: personalWorkspace.id }
+          : {
+              title: title.trim(),
+              description: description.trim(),
+              workspace_id: workspaceId,
+              item_type_id: itemTypeId,
+              // Creating a child: pin it to the parent so it shows up under it.
+              parent_id: isChild ? parent.id : undefined,
+            }
+      );
+      if (isPersonal) {
+        // The newly created personal task lives in this tab's list - let the
+        // active Personal view refresh itself. BroadcastChannel excludes the
+        // posting tab, so the same-tab notice is a window event instead.
+        window.dispatchEvent(new CustomEvent('personal-task-created'));
+        handleClose();
+        // Stay on the Personal checklist so the user can keep adding tasks,
+        // matching the desktop PersonalTasksPanel behavior.
+      } else if (isChild) {
+        // When creating a child we stay on the parent's detail view and let the
+        // caller refresh the sub-item list rather than navigating away.
         handleClose();
       } else {
         handleClose();
@@ -144,7 +187,7 @@
 
 <Modal bind:isOpen maxWidth="max-w-md" zIndexClass="z-[600]" onSubmit={submit} submitDisabled={!canSubmit} onclose={handleClose}>
   <div class="create" data-testid="mobile-create-dialog">
-    <h2 class="title">{isChild ? 'New sub-item' : 'New item'}</h2>
+    <h2 class="title">{isPersonal ? 'New personal task' : isChild ? 'New sub-item' : 'New item'}</h2>
 
     {#if isChild}
       <p class="parent" data-testid="create-parent">
@@ -153,46 +196,48 @@
     {/if}
 
     <label class="field">
-      <span>Title</span>
+      <span>{isPersonal ? 'Task' : 'Title'}</span>
       <input
         bind:value={title}
-        placeholder="What needs doing?"
+        placeholder={isPersonal ? 'What do you need to do?' : 'What needs doing?'}
         data-testid="create-title"
         autocomplete="off"
       />
     </label>
 
-    <div class="row">
-      <label class="field">
-        <span>Workspace</span>
-        <select bind:value={workspaceId} disabled={isChild} data-testid="create-workspace">
-          {#each workspaces as ws (ws.id)}
-            <option value={ws.id}>{ws.name}</option>
-          {/each}
-        </select>
-      </label>
+    {#if !isPersonal}
+      <div class="row">
+        <label class="field">
+          <span>Workspace</span>
+          <select bind:value={workspaceId} disabled={isChild} data-testid="create-workspace">
+            {#each workspaces as ws (ws.id)}
+              <option value={ws.id}>{ws.name}</option>
+            {/each}
+          </select>
+        </label>
+
+        <label class="field">
+          <span>Type</span>
+          <select bind:value={itemTypeId} disabled={typesLoading || itemTypes.length === 0} data-testid="create-type">
+            {#each itemTypes as it (it.id)}
+              <option value={it.id}>{it.name}</option>
+            {/each}
+          </select>
+        </label>
+      </div>
 
       <label class="field">
-        <span>Type</span>
-        <select bind:value={itemTypeId} disabled={typesLoading || itemTypes.length === 0} data-testid="create-type">
-          {#each itemTypes as it (it.id)}
-            <option value={it.id}>{it.name}</option>
-          {/each}
-        </select>
+        <span>Description <em>(optional)</em></span>
+        <textarea bind:value={description} rows="3" placeholder="Add detail…" data-testid="create-description"></textarea>
       </label>
-    </div>
-
-    <label class="field">
-      <span>Description <em>(optional)</em></span>
-      <textarea bind:value={description} rows="3" placeholder="Add detail…" data-testid="create-description"></textarea>
-    </label>
+    {/if}
 
     {#if error}<p class="error" data-testid="create-error">{error}</p>{/if}
 
     <div class="actions">
       <button class="btn-cancel" onclick={handleClose} type="button">Cancel</button>
       <button class="btn-create" onclick={submit} disabled={!canSubmit} data-testid="create-submit" type="button">
-        {saving ? 'Creating…' : 'Create'}
+        {saving ? 'Creating…' : isPersonal ? 'Add task' : 'Create'}
       </button>
     </div>
   </div>
