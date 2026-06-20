@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -11,9 +12,19 @@ import (
 
 	"windshift/internal/database"
 	"windshift/internal/llm"
+	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/services"
 )
+
+// briefingConcurrency caps how many users are briefed in parallel within one
+// tick. The previous design serialized every user with a 3s sleep between
+// them, so 1000 users took ~50 minutes of pure sleeping before any LLM work;
+// a bounded worker pool paces the LLM naturally (each call is itself bounded
+// by DefaultRequestTimeout) without an artificial inter-user delay. The LLM
+// endpoint and the Postgres connection pool are the real ceilings, so this is
+// deliberately modest.
+const briefingConcurrency = 8
 
 // BriefingScheduler generates daily briefings for all users in the background.
 type BriefingScheduler struct {
@@ -23,11 +34,15 @@ type BriefingScheduler struct {
 	timePermService *services.TimePermissionService
 	userService     *services.UserReadService
 	promptStore     *llm.PromptStore
+	aiRepo          *repository.AIRepository
 	runRepo         *repository.SchedulerRunRepository
 	ticker          *time.Ticker
 	stopChan        chan struct{}
 	mu              sync.RWMutex
 	running         bool
+
+	// now is overridable for tests; production uses wall-clock time.
+	now func() time.Time
 }
 
 // NewBriefingScheduler creates a new briefing scheduler.
@@ -39,8 +54,10 @@ func NewBriefingScheduler(db database.Database, llmManager *llm.ConnectionManage
 		timePermService: timePermService,
 		userService:     userService,
 		promptStore:     promptStore,
+		aiRepo:          repository.NewAIRepository(db),
 		runRepo:         repository.NewSchedulerRunRepository(db),
 		stopChan:        make(chan struct{}),
+		now:             func() time.Time { return time.Now() },
 	}
 }
 
@@ -134,49 +151,99 @@ func (bs *BriefingScheduler) generateAllBriefings() {
 	}
 	usersProcessed = len(users)
 
+	// The id→name reference maps are global (statuses/priorities/milestones/
+	// iterations/users), not per-user. Load them ONCE for the whole tick and
+	// share across every worker — the previous code re-ran the five SELECTs
+	// once per user, i.e. ~5000 reference reads for 1000 users.
+	lookups := repository.NewLookupRepository(bs.db).LoadNameMaps()
+	// The item/workspace repositories are stateless wrappers over the shared
+	// db handle, so one instance serves every worker.
+	itemRepo := repository.NewItemRepository(bs.db)
+	workspaceRepo := repository.NewWorkspaceRepository(bs.db)
+
 	slog.Info("generating daily briefings",
 		slog.String("component", "scheduler"),
 		slog.Int("users", len(users)),
-		slog.Int("delay_seconds", 3),
+		slog.Int("concurrency", briefingConcurrency),
 	)
 
-	failures := 0
-	for i, u := range users {
-		ok := func() (succeeded bool) {
-			succeeded = true
-			defer func() {
-				if r := recover(); r != nil {
-					slog.Error("panic in briefing generation", slog.Int("user_id", u.ID), slog.Any("panic", r))
-					succeeded = false
-				}
-			}()
-			tz := u.Timezone
-			if tz == "" {
-				tz = "UTC"
+	now := bs.now()
+	// Snapshot the current stopChan so every worker selects on a stable
+	// reference even if Start/Stop swap the field underneath us. Reading the
+	// shared field from N goroutines while Stop() reassigns it would be a data
+	// race; a local copy avoids that.
+	stop := bs.stopChan
+
+	// Bounded worker pool. A buffered channel is the semaphore; each worker
+	// claims a slot before generating and releases it on return. This replaces
+	// the old serial loop + 3s sleep between users, which scaled linearly and
+	// spent most of its wall-clock asleep.
+	var (
+		wg       sync.WaitGroup
+		failMu   sync.Mutex
+		failures int
+	)
+	sem := make(chan struct{}, briefingConcurrency)
+	for _, u := range users {
+		wg.Add(1)
+		go func(u models.User) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-stop:
+				// Server shutting down — stop dispatching new work.
+				return
 			}
-			return bs.generateBriefingForUser(llmClient, u.ID, u.FirstName, tz, regenerate)
-		}()
-		if !ok {
-			failures++
-		}
-		if i < len(users)-1 {
-			time.Sleep(3 * time.Second)
-		}
+			defer func() { <-sem }()
+
+			ok := func() (succeeded bool) {
+				defer func() {
+					if r := recover(); r != nil {
+						slog.Error("panic in briefing generation", slog.Int("user_id", u.ID), slog.Any("panic", r))
+					}
+				}()
+				return bs.generateBriefingForUser(llmClient, lookups, itemRepo, workspaceRepo, u, regenerate, now)
+			}()
+			if !ok {
+				failMu.Lock()
+				failures++
+				failMu.Unlock()
+			}
+		}(u)
 	}
+	wg.Wait()
 
 	// Surface aggregate failures to scheduler_runs. A panic-recovery path returns
 	// false too, so the success metric stays honest even when individual users
 	// hit LLM errors or DB hiccups.
 	if failures > 0 {
-		runErr = fmt.Errorf("%d of %d daily briefings failed", failures, len(users))
+		runErr = fmt.Errorf("%d of %d daily briefings failed", failures, usersProcessed)
 	}
 }
 
 // generateBriefingForUser returns true on success (or when nothing needs doing).
 // It returns false only when the actual generation step (LLM call or storage)
 // failed, so the caller can roll up failures into the scheduler_run record.
+//
+// lookups holds the global id→name reference maps, loaded once per tick and
+// shared across all users (the maps are workspace-global, not per-user).
+// nowUTC is the tick's reference instant, injected for testability.
+//
+// Cross-instance dedup (WI-418): before invoking the LLM the method takes a
+// leased claim on the (userID, date) row via ClaimBriefing. Only the instance
+// that wins the claim generates; every other concurrently-ticking instance
+// gets ErrBriefingAlreadyRunning and returns success ("nothing to do"). The
+// claim is released on every exit path so a crashed holder's lease (10m)
+// self-heals before the next tick.
 // last review: ser, 300526
-func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, userID int, firstName, timezone string, regenerate bool) bool {
+func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, lookups *repository.NameMaps, itemRepo *repository.ItemRepository, workspaceRepo *repository.WorkspaceRepository, u models.User, regenerate bool, nowUTC time.Time) bool {
+	userID := u.ID
+	firstName := u.FirstName
+	timezone := u.Timezone
+	if timezone == "" {
+		timezone = "UTC"
+	}
+
 	// Compute "today" / "yesterday" + their day boundaries in the *user's*
 	// timezone, not the server's. The previous server-local calculation meant a
 	// user in PT could get yesterday's briefing repeated after their local
@@ -186,17 +253,32 @@ func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, userI
 	if err != nil || loc == nil {
 		loc = time.UTC
 	}
-	nowLocal := time.Now().In(loc)
+	nowLocal := nowUTC.In(loc)
 	todayStart := time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), 0, 0, 0, 0, loc)
 	yesterdayStart := todayStart.AddDate(0, 0, -1)
 	today := todayStart.Format("2006-01-02")
 
-	// Skip if today's briefing already exists (successful), unless regeneration is enabled
-	if !regenerate {
-		var exists int
-		if err := bs.db.QueryRow("SELECT 1 FROM daily_briefings WHERE user_id = ? AND date = ? AND error IS NULL", userID, today).Scan(&exists); err == nil {
-			slog.Debug("briefing: already generated today", slog.Int("user_id", userID))
+	// Atomic cross-instance claim. With regenerate disabled this is also the
+	// "already generated today" short-circuit; with regenerate enabled it still
+	// ensures only one instance generates per (user, date) at a time.
+	claimed, err := bs.aiRepo.ClaimBriefing(userID, today, nowUTC, regenerate)
+	if err != nil {
+		if errors.Is(err, repository.ErrBriefingAlreadyRunning) {
+			slog.Debug("briefing: already generated or held by another instance",
+				slog.Int("user_id", userID), slog.Bool("regenerate", regenerate))
 			return true
+		}
+		slog.Warn("briefing: failed to claim generation lock", slog.Int("user_id", userID), slog.Any("error", err))
+		return false
+	}
+	// Ensure the lease is released on the early-return branches below (the
+	// storeBriefing happy/failure paths clear the lock themselves via UPSERT).
+	// claimed never changes after this point, so the closure captures it fine.
+	releaseOnExit := func() {
+		if claimed {
+			if relErr := bs.aiRepo.ReleaseBriefingLock(userID, today); relErr != nil {
+				slog.Warn("briefing: failed to release generation lock", slog.Int("user_id", userID), slog.Any("error", relErr))
+			}
 		}
 	}
 
@@ -213,11 +295,9 @@ func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, userI
 		)
 		// "No accessible workspaces" isn't a generation failure — the user simply
 		// has nothing to brief on. Don't penalize the run.
+		releaseOnExit()
 		return err == nil
 	}
-
-	itemRepo := repository.NewItemRepository(bs.db)
-	lookups := repository.NewLookupRepository(bs.db).LoadNameMaps()
 
 	// Gather context: recent activity
 	var activityLines []string
@@ -251,7 +331,7 @@ func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, userI
 	}
 
 	// Gather context: assigned open items, plus everything in the user's personal workspaces
-	personalWSIDs, err := repository.NewWorkspaceRepository(bs.db).ListActivePersonalWorkspaceIDs(userID)
+	personalWSIDs, err := workspaceRepo.ListActivePersonalWorkspaceIDs(userID)
 	if err != nil {
 		slog.Warn("briefing: personal workspaces query failed", slog.Int("user_id", userID), slog.Any("error", err))
 		personalWSIDs = nil
@@ -349,7 +429,6 @@ func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, userI
 		bs.storeBriefing(userID, today, "", time.Since(start).Milliseconds(), "")
 		return true
 	}
-
 	systemPrompt := bs.promptStore.Get(llm.PromptDailyBriefing)
 
 	userPrompt := fmt.Sprintf("Good morning %s! Today is %s (%s timezone).\n\nHere is your project data:\n\n%s",
@@ -428,11 +507,15 @@ func (bs *BriefingScheduler) storeBriefing(userID int, date, content string, dur
 		errVal = errMsg
 	}
 
-	_, err := bs.db.Exec(`INSERT INTO daily_briefings (user_id, date, content, generation_duration_ms, error)
-		VALUES (?, ?, ?, ?, ?)
+	// Writing the final result also releases the generation lease: lock_until
+	// is cleared alongside the content/error so the row isn't left claimed.
+	// This UPSERT covers both the "we claimed the row first" path (UPDATE
+	// branch) and a defensive "no row yet" path (INSERT branch).
+	_, err := bs.db.Exec(`INSERT INTO daily_briefings (user_id, date, content, generation_duration_ms, error, lock_until)
+		VALUES (?, ?, ?, ?, ?, NULL)
 		ON CONFLICT (user_id, date) DO UPDATE SET
 		content = excluded.content, generation_duration_ms = excluded.generation_duration_ms,
-		error = excluded.error, updated_at = CURRENT_TIMESTAMP`,
+		error = excluded.error, lock_until = NULL, updated_at = CURRENT_TIMESTAMP`,
 		userID, date, content, durationMs, errVal)
 	if err != nil {
 		slog.Error("failed to store briefing", slog.Int("user_id", userID), slog.Any("error", err))

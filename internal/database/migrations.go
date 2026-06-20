@@ -1397,6 +1397,24 @@ var Catalog = []Migration{
 			UPDATE items SET last_active_at = COALESCE(updated_at, created_at) WHERE last_active_at IS NULL;
 		`,
 	},
+	{
+		// daily_briefings.lock_until is the cross-instance generation lock
+		// (WI-418). With multiple app instances the per-user briefing run is a
+		// check-then-act race: both read "no briefing for today", both invoke
+		// the LLM, and the UNIQUE(user_id, date) ON CONFLICT UPDATE lets one
+		// silently overwrite the other — wasted LLM spend. A guarded
+		// UPDATE/UPSERT on lock_until is the atomic claim: the holder leases
+		// until lock_until and clears it on completion, and a crashed holder
+		// self-heals once the lease expires. The base schema
+		// (daily_briefings.sql) carries the column for fresh installs; this
+		// adds it to installs created before the column existed.
+		Version:       "20260620_daily_briefings_lock_until",
+		Name:          "Add lock_until to daily_briefings",
+		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('daily_briefings') WHERE name='lock_until'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='daily_briefings' AND column_name='lock_until'",
+		SQLite:        "ALTER TABLE daily_briefings ADD COLUMN lock_until DATETIME",
+		Postgres:      "ALTER TABLE daily_briefings ADD COLUMN lock_until TIMESTAMPTZ",
+	},
 }
 
 func (m Migration) checksum(driver string) string {

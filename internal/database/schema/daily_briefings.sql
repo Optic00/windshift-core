@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS daily_briefings (
     content TEXT NOT NULL,
     generation_duration_ms INTEGER,
     error TEXT,
+    lock_until DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
