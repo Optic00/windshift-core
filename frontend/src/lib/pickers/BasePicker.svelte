@@ -288,6 +288,10 @@
     // Keep the dropdown open while building a multi-selection in popover mode
     // (matches the pre-refactor ItemPicker); single-select always closes.
     if (!(multiple && popoverMode)) {
+      // Return focus to the in-modal trigger after selecting so the next Tab
+      // continues inside the dialog instead of escaping behind it — the core
+      // WI-455 case (e.g. picking an assignee on the create screen).
+      restoreFocusToTrigger();
       $open = false;
     }
   }
@@ -296,30 +300,18 @@
   async function handleKeydown(event) {
     if (event.key === 'Escape') {
       event.preventDefault();
+      // Return focus to the in-modal trigger so the next Tab continues inside
+      // the dialog instead of escaping behind it (WI-455).
+      restoreFocusToTrigger();
       onCancel();
       return;
     }
 
-    if (event.key === 'Tab') {
-      // In popover mode the search input is the first focusable element. Some
-      // callers render a focusable footer control, so they can opt into letting
-      // Tab move focus into the footer instead of closing the menu.
-      if (popoverMode && keepOpenOnFooterTab && !event.shiftKey) {
-        return;
-      }
-      // The dropdown menu is portalled to <body>, so a native Tab from inside
-      // it would jump past the end of the document — escaping any dialog
-      // overlay behind which the picker lives (e.g. the create-item modal,
-      // WI-455). Swallow this Tab, close the menu, and return focus to the
-      // trigger (which lives inside the modal); the owning dialog's focus trap
-      // then routes the user's next Tab to the following field.
-      event.preventDefault();
-      event.stopPropagation();
-      $open = false;
-      restoreFocusToTrigger();
-      return;
-    }
-
+    // Tab is intentionally left to native handling: when closed it advances to
+    // the next field (no trap, WI-445); when open the user selects with Enter
+    // rather than tabbing out. Focus is kept inside the modal by restoring it to
+    // the trigger on select/Escape (see restoreFocusToTrigger), not by
+    // intercepting Tab.
     if (!$open) return;
 
     const totalItems = options.length;
@@ -370,16 +362,17 @@
     wasOpen = $open;
   });
 
-  // Close-the-menu-on-Tab helper: return focus to the element that had it
-  // before the (portalled) dropdown opened — the trigger, which lives inside
-  // the owning dialog — so the dialog's focus trap routes the next Tab instead
-  // of focus escaping behind a modal overlay (WI-455). Skip if that element is
-  // gone or somehow sits inside the menu we just closed.
+  // Return focus to the element that had it before the (portalled) dropdown
+  // opened — the trigger, which lives inside the owning dialog — so the next Tab
+  // continues inside the modal instead of escaping behind it (WI-455). The rAF
+  // lets the menu unmount first: while open, focus sits on the portalled search
+  // input/list, and a synchronous focus() is undone when Svelte tears that node
+  // down, dropping focus to <body>. Skip if that element is gone or sits inside
+  // the menu being closed.
   function restoreFocusToTrigger() {
     const target = activeElementBeforeOpen;
-    activeElementBeforeOpen = null;
     if (target instanceof HTMLElement && !menuRef?.contains(target)) {
-      target.focus();
+      requestAnimationFrame(() => target.focus());
     }
   }
 
