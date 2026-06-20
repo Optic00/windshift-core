@@ -17,7 +17,8 @@
     searchable = false,
     searchFields = ['name'],
     itemSnippet = null,
-    onSelect = () => {}
+    onSelect = () => {},
+    testId = null
   } = $props();
 
   const listboxId = `chiplist-${Math.random().toString(36).slice(2, 9)}`;
@@ -92,33 +93,35 @@
     }
   });
 
+  // Close the menu and return focus to the in-modal trigger. While the menu is
+  // open, focus sits on the portalled list/search input (rendered under <body>,
+  // outside the dialog's focus trap). If we just close, Svelte tears that
+  // focused node down and focus falls to <body> — so the user's next Tab starts
+  // from behind the modal and escapes it (WI-455, e.g. selecting an assignee).
+  // Restoring focus to the trigger keeps the next Tab inside the dialog. The rAF
+  // lets the menu unmount first so the focus call isn't undone by the teardown.
+  function closeAndRestoreFocus() {
+    $open = false;
+    requestAnimationFrame(() => triggerRef?.focus());
+  }
+
   function handleSelect(item) {
     value = getValue(item);
-    $open = false;
+    closeAndRestoreFocus();
     onSelect(item);
   }
 
   function handleKeyDown(e) {
     const total = filteredItems.length;
 
-    if (e.key === 'Tab') {
-      // The popover content is portalled to <body>, so a native Tab from inside
-      // it would jump past the end of the document — escaping any dialog
-      // overlay behind which the chip lives (e.g. the create-item modal,
-      // WI-455). Swallow this Tab, close the menu, and return focus to the chip
-      // trigger (which lives inside the modal); the owning dialog's focus trap
-      // then routes the user's next Tab to the following field.
-      e.preventDefault();
-      e.stopPropagation();
-      $open = false;
-      triggerRef?.focus();
-      return;
-    }
-
+    // Tab is intentionally left to native handling: when closed it moves to the
+    // next field (no trap, WI-445); when open the user selects with Enter rather
+    // than tabbing out. Focus is kept in the modal via closeAndRestoreFocus on
+    // select/Escape, not by intercepting Tab.
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
-      $open = false;
+      closeAndRestoreFocus();
       return;
     }
 
@@ -147,6 +150,7 @@
   bind:this={triggerRef}
   use:melt={$trigger}
   {disabled}
+  data-testid={testId}
   onkeydown={handleKeyDown}
   class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-sm transition-colors"
   style="

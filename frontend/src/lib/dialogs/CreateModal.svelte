@@ -397,6 +397,7 @@
             getLabel={(t) => t.label}
             icon={typeIcons[selectedType]}
             placeholder={t('createModal.type')}
+            testId="create-type-chip"
             onSelect={(type) => selectType(type.value)}
           >
             {#snippet itemSnippet({ item })}
@@ -418,6 +419,7 @@
             placeholder={t('workspaces.workspace')}
             searchable={true}
             searchFields={['name', 'key']}
+            testId="create-workspace-chip"
             onSelect={(workspace) => {
               if (workspace) {
                 workItemFormStore.setWorkspace(workspace);
