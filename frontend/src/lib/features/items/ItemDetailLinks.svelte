@@ -303,6 +303,9 @@
           {@const linkedItemTypeColor = isCurrentSource ? link.target_item_type_color : link.source_item_type_color}
           {@const linkedItemStatusName = isCurrentSource ? link.target_status_name : link.source_status_name}
           {@const linkedItemStatusColor = isCurrentSource ? link.target_status_color : link.source_status_color}
+          {@const linkTypeName = link.link_type_name}
+          {@const linkTypeLabel = getLinkLabel(link)}
+          {@const linkTypeColor = link.link_type_color || 'var(--ds-text-subtle)'}
           <!-- Item row with card styling and hover-reveal delete -->
           <div
             class="group flex items-center justify-between px-4 py-3 rounded-lg border transition-colors"
@@ -352,8 +355,18 @@
                 </span>
               {/if}
             </div>
-            <!-- Right side: status badge + delete button -->
+            <!-- Right side: link type + status badge + delete button -->
             <div class="flex items-center gap-2 flex-shrink-0">
+              {#if linkTypeLabel}
+                <span
+                  data-testid="linked-item-link-type"
+                  class="text-xs flex-shrink-0 px-2 py-0.5 rounded-full border whitespace-nowrap"
+                  style="color: {linkTypeColor}; background-color: color-mix(in srgb, {linkTypeColor} 8%, transparent); border-color: color-mix(in srgb, {linkTypeColor} 20%, transparent);"
+                  title={linkTypeName || linkTypeLabel}
+                >
+                  {linkTypeLabel}
+                </span>
+              {/if}
               {#if linkedItemStatusName}
                 <StatusBadge
                   status={{ label: linkedItemStatusName, categoryColor: linkedItemStatusColor }}
