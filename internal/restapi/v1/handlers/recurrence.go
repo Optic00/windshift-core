@@ -3,8 +3,8 @@ package handlers
 import (
 	"errors"
 	"net/http"
-	"strconv"
 	"time"
+	"unicode/utf8"
 
 	"windshift/internal/database"
 	"windshift/internal/models"
@@ -55,6 +55,23 @@ func parseRecurrenceDate(s string) (time.Time, error) {
 	return time.Parse("2006-01-02", s)
 }
 
+// maxRRuleRunes bounds the RRULE string. It matches the sanitize
+// ShortIdentifier cap the RRULE is run through, so an over-length RRULE
+// is rejected with an explicit 400 rather than being silently truncated
+// (and thus semantically altered) by the sanitizer before validation.
+const maxRRuleRunes = sanitize.ShortIdentifierMaxRunes
+
+// rejectLongRRule writes a 400 and returns false when the RRULE exceeds
+// the length cap. Call it on the raw value before sanitizing so a valid
+// RRULE is never silently truncated.
+func (h *RecurrenceHandler) rejectLongRRule(w http.ResponseWriter, r *http.Request, rruleStr string) bool {
+	if utf8.RuneCountInString(rruleStr) > maxRRuleRunes {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, "rrule exceeds the maximum length"))
+		return false
+	}
+	return true
+}
+
 // requireItemEdit loads the {id} item and verifies the caller can edit it.
 // Returns the item on success; on any failure it writes the response and
 // returns (nil, false).
@@ -92,21 +109,21 @@ func (h *RecurrenceHandler) requireItem(w http.ResponseWriter, r *http.Request, 
 // resolveRule loads the {id} item, checks permission, then loads the
 // recurrence rule attached to it. The rule is required (404 when absent)
 // for update/delete/instance/generate operations.
-func (h *RecurrenceHandler) resolveRule(w http.ResponseWriter, r *http.Request, permCheck func(int, int) (bool, error)) (*models.RecurrenceRule, *models.User, bool) {
-	item, user, ok := h.requireItem(w, r, permCheck)
+func (h *RecurrenceHandler) resolveRule(w http.ResponseWriter, r *http.Request, permCheck func(int, int) (bool, error)) (*models.RecurrenceRule, bool) {
+	item, _, ok := h.requireItem(w, r, permCheck)
 	if !ok {
-		return nil, nil, false
+		return nil, false
 	}
 	rule, err := h.repo.GetByTemplateItemID(item.ID)
 	if errors.Is(err, repository.ErrNotFound) {
 		h.RespondError(w, r, restapi.ErrNotFound)
-		return nil, nil, false
+		return nil, false
 	}
 	if err != nil {
 		h.RespondInternalError(w, r)
-		return nil, nil, false
+		return nil, false
 	}
-	return rule, user, true
+	return rule, true
 }
 
 // GetRecurrence handles GET /rest/api/v1/items/{id}/recurrence
@@ -218,7 +235,7 @@ func (h *RecurrenceHandler) CreateRecurrence(w http.ResponseWriter, r *http.Requ
 // @Failure      500   {object}  handlers.ErrorResponse
 // @Router       /items/{id}/recurrence [put]
 func (h *RecurrenceHandler) UpdateRecurrence(w http.ResponseWriter, r *http.Request) {
-	rule, _, ok := h.resolveRule(w, r, h.Perms.CanEditWorkspace)
+	rule, ok := h.resolveRule(w, r, h.Perms.CanEditWorkspace)
 	if !ok {
 		return
 	}
@@ -260,7 +277,7 @@ func (h *RecurrenceHandler) UpdateRecurrence(w http.ResponseWriter, r *http.Requ
 // @Failure      500  {object}  handlers.ErrorResponse
 // @Router       /items/{id}/recurrence [delete]
 func (h *RecurrenceHandler) DeleteRecurrence(w http.ResponseWriter, r *http.Request) {
-	rule, _, ok := h.resolveRule(w, r, h.Perms.CanEditWorkspace)
+	rule, ok := h.resolveRule(w, r, h.Perms.CanEditWorkspace)
 	if !ok {
 		return
 	}
@@ -279,13 +296,13 @@ type recurrenceInstanceListResponse struct {
 // ListInstances handles GET /rest/api/v1/items/{id}/recurrence/instances
 //
 // @Summary      List generated instances for a recurrence rule
-// @Description  Paginated list of instances generated from the item's recurrence rule. `limit` (1-100, default 20) and `offset` (default 0) query parameters control paging.
+// @Description  Paginated list of instances generated from the item's recurrence rule. `page` (default 1) and `limit` (1-100, default 50) query parameters control paging, matching the rest of the v1 surface.
 // @Tags         recurrence
 // @Produce      json
 // @Security     BearerAuth
-// @Param        id      path   int  true   "Item ID"
-// @Param        limit   query  int  false  "Page size (1-100, default 20)"
-// @Param        offset  query  int  false  "Offset (default 0)"
+// @Param        id     path   int  true   "Item ID"
+// @Param        page   query  int  false  "Page number (1-based, default 1)"
+// @Param        limit  query  int  false  "Page size (1-100, default 50)"
 // @Success      200  {object}  handlers.recurrenceInstanceListResponse
 // @Failure      400  {object}  handlers.ErrorResponse  "Invalid item ID"
 // @Failure      401  {object}  handlers.ErrorResponse
@@ -294,28 +311,17 @@ type recurrenceInstanceListResponse struct {
 // @Failure      500  {object}  handlers.ErrorResponse
 // @Router       /items/{id}/recurrence/instances [get]
 func (h *RecurrenceHandler) ListInstances(w http.ResponseWriter, r *http.Request) {
-	rule, _, ok := h.resolveRule(w, r, h.Perms.CanViewWorkspace)
+	rule, ok := h.resolveRule(w, r, h.Perms.CanViewWorkspace)
 	if !ok {
 		return
 	}
 
-	limit := 20
-	offset := 0
-	if s := r.URL.Query().Get("limit"); s != "" {
-		if l, err := strconv.Atoi(s); err == nil && l > 0 {
-			limit = l
-			if limit > 100 {
-				limit = 100
-			}
-		}
-	}
-	if s := r.URL.Query().Get("offset"); s != "" {
-		if o, err := strconv.Atoi(s); err == nil && o >= 0 {
-			offset = o
-		}
-	}
+	// Page-based paging, consistent with the rest of the v1 surface. The
+	// derived offset drives the repo query and the same params build the
+	// response meta, so page / has_more reflect the caller's real position.
+	pagination := h.ParsePagination(r)
 
-	instances, err := h.repo.GetInstancesByRuleID(rule.ID, limit, offset)
+	instances, err := h.repo.GetInstancesByRuleID(rule.ID, pagination.Limit, pagination.Offset)
 	if err != nil {
 		h.RespondInternalError(w, r)
 		return
@@ -331,8 +337,8 @@ func (h *RecurrenceHandler) ListInstances(w http.ResponseWriter, r *http.Request
 		instancesOut = append(instancesOut, *inst)
 	}
 	h.RespondOK(w, recurrenceInstanceListResponse{
-		Items: instancesOut,
-		Pagination: restapi.NewPaginationMeta(restapi.PaginationParams{Page: 0, Limit: limit}, total),
+		Items:      instancesOut,
+		Pagination: restapi.NewPaginationMeta(pagination, total),
 	})
 }
 
@@ -356,7 +362,7 @@ type recurrenceForceGenerateResponse struct {
 // @Failure      500  {object}  handlers.ErrorResponse
 // @Router       /items/{id}/recurrence/generate [post]
 func (h *RecurrenceHandler) ForceGenerate(w http.ResponseWriter, r *http.Request) {
-	rule, _, ok := h.resolveRule(w, r, h.Perms.CanEditWorkspace)
+	rule, ok := h.resolveRule(w, r, h.Perms.CanEditWorkspace)
 	if !ok {
 		return
 	}
@@ -404,6 +410,9 @@ func (h *RecurrenceHandler) PreviewRRule(w http.ResponseWriter, r *http.Request)
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
+	if !h.rejectLongRRule(w, r, req.RRule) {
+		return
+	}
 	sanitize.ApplyAll(
 		sanitize.Pair{Target: &req.RRule, Policy: sanitize.ShortIdentifier},
 		sanitize.Pair{Target: &req.DtStart, Policy: sanitize.ShortIdentifier},
@@ -442,14 +451,18 @@ func (h *RecurrenceHandler) PreviewRRule(w http.ResponseWriter, r *http.Request)
 		count = req.Count
 	}
 
-	occurrences := rule.All()
-	if len(occurrences) > count {
-		occurrences = occurrences[:count]
-	}
-
-	dates := make([]string, len(occurrences))
-	for i, t := range occurrences {
-		dates[i] = t.Format(time.RFC3339)
+	// Pull only the first `count` occurrences via the iterator. rule.All()
+	// would materialize the entire series first (up to rrule-go's max-year
+	// guard — ~10^8 entries for an unbounded MINUTELY rule), which on this
+	// token-driven surface is a cheap memory-exhaustion vector.
+	it := rule.Iterator()
+	dates := make([]string, 0, count)
+	for len(dates) < count {
+		t, ok := it()
+		if !ok {
+			break
+		}
+		dates = append(dates, t.Format(time.RFC3339))
 	}
 
 	h.RespondOK(w, rrulePreviewResponse{
@@ -464,6 +477,11 @@ func (h *RecurrenceHandler) PreviewRRule(w http.ResponseWriter, r *http.Request)
 func decodeRecurrenceCreateRequest(h *RecurrenceHandler, w http.ResponseWriter, r *http.Request) (models.CreateRecurrenceRequest, bool) {
 	var req models.CreateRecurrenceRequest
 	if !h.DecodeBodyOrRespond(w, r, &req) {
+		return req, false
+	}
+	// Reject an over-length RRULE before sanitizing — ShortIdentifier would
+	// otherwise truncate it to 100 runes and silently change its meaning.
+	if !h.rejectLongRRule(w, r, req.RRule) {
 		return req, false
 	}
 	// Sanitize the identifier-shaped inputs before validation so bogus
@@ -506,6 +524,10 @@ func decodeRecurrenceCreateRequest(h *RecurrenceHandler, w http.ResponseWriter, 
 func decodeRecurrenceUpdateRequest(h *RecurrenceHandler, w http.ResponseWriter, r *http.Request) (models.UpdateRecurrenceRequest, bool) {
 	var req models.UpdateRecurrenceRequest
 	if !h.DecodeBodyOrRespond(w, r, &req) {
+		return req, false
+	}
+	// Reject an over-length RRULE before sanitizing (see the create path).
+	if req.RRule != nil && !h.rejectLongRRule(w, r, *req.RRule) {
 		return req, false
 	}
 	sanitize.ApplyAll(
@@ -587,7 +609,7 @@ func applyRecurrenceUpdate(rule *models.RecurrenceRule, req models.UpdateRecurre
 	if req.DtStart != nil {
 		dtstart, err := parseRecurrenceDate(*req.DtStart)
 		if err != nil {
-			return errors.New("Invalid dtstart format")
+			return errors.New("invalid dtstart format")
 		}
 		rule.DtStart = dtstart
 	}
@@ -597,7 +619,7 @@ func applyRecurrenceUpdate(rule *models.RecurrenceRule, req models.UpdateRecurre
 		} else {
 			t, err := parseRecurrenceDate(*req.DtEnd)
 			if err != nil {
-				return errors.New("Invalid dtend format")
+				return errors.New("invalid dtend format")
 			}
 			rule.DtEnd = &t
 		}
