@@ -3,8 +3,10 @@ package services
 import (
 	"database/sql"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"windshift/internal/config"
@@ -36,6 +38,18 @@ type PushSubscriptionInfo struct {
 	UserAgent  string     `json:"user_agent"`
 	CreatedAt  time.Time  `json:"created_at"`
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+}
+
+// PushTestResult reports the per-subscription outcome of a diagnostic test push.
+// It lets the mobile UI distinguish "no subscription on the server" from "the
+// push provider rejected the send" from "delivered fine, but iOS didn't show a
+// banner" — the three failure modes of WI-472.
+type PushTestResult struct {
+	SubscriptionID int    `json:"subscription_id"`
+	Endpoint       string `json:"endpoint"`
+	StatusCode     int    `json:"status_code"`
+	OK             bool   `json:"ok"`
+	Error          string `json:"error,omitempty"`
 }
 
 // pushPayload is the compact JSON delivered to the service worker's push handler.
@@ -118,15 +132,17 @@ func (s *PushService) Delete(userID, id int) error {
 	return err
 }
 
-// SendTest sends a test push to every active subscription of the user.
-func (s *PushService) SendTest(userID int) error {
-	s.deliver(userID, pushPayload{
+// SendTest sends a test push to every active subscription of the user and
+// returns the per-subscription delivery outcome for diagnostics. An empty slice
+// means the server has no active subscription for the user (the most common
+// cause of "enabled but no banner").
+func (s *PushService) SendTest(userID int) []PushTestResult {
+	return s.deliver(userID, pushPayload{
 		Title: "Windshift",
 		Body:  "Push notifications are working.",
 		Type:  "info",
 		URL:   "/m/notifications",
 	})
-	return nil
 }
 
 // Dispatch fans a created notification out to the recipient's subscriptions.
@@ -165,17 +181,19 @@ func (s *PushService) Dispatch(notification models.Notification) {
 }
 
 // deliver loads the user's active subscriptions and sends one push each,
-// pruning subscriptions the push service reports as permanently gone.
-func (s *PushService) deliver(userID int, payload pushPayload) {
+// pruning subscriptions the push service reports as permanently gone. It returns
+// the per-subscription outcome so the diagnostic test endpoint can surface it;
+// the fire-and-forget Dispatch path simply discards the result.
+func (s *PushService) deliver(userID int, payload pushPayload) []PushTestResult {
 	if !s.Enabled() {
-		return
+		return nil
 	}
 
 	rows, err := s.db.Query(
 		"SELECT id, endpoint, auth_key, p256dh_key FROM push_subscriptions "+activeSubsWhere, userID)
 	if err != nil {
 		slog.Error("push: load subscriptions failed", slog.String("component", "push"), slog.Any("error", err))
-		return
+		return nil
 	}
 
 	type sub struct {
@@ -199,13 +217,13 @@ func (s *PushService) deliver(userID int, payload pushPayload) {
 	rows.Close()
 
 	if len(subs) == 0 {
-		return
+		return nil
 	}
 
 	message, err := json.Marshal(payload)
 	if err != nil {
 		slog.Error("push: marshal payload failed", slog.String("component", "push"), slog.Any("error", err))
-		return
+		return nil
 	}
 
 	options := &webpush.Options{
@@ -215,28 +233,50 @@ func (s *PushService) deliver(userID int, payload pushPayload) {
 		TTL:             pushTTLSeconds,
 	}
 
+	results := make([]PushTestResult, 0, len(subs))
 	for _, sb := range subs {
+		res := PushTestResult{SubscriptionID: sb.id, Endpoint: sb.endpoint}
 		resp, err := webpush.SendNotification(message, &webpush.Subscription{
 			Endpoint: sb.endpoint,
 			Keys:     webpush.Keys{Auth: sb.auth, P256dh: sb.p256dh},
 		}, options)
 		if err != nil {
+			res.Error = err.Error()
 			slog.Warn("push: send failed", slog.String("component", "push"), slog.Int("sub_id", sb.id), slog.Any("error", err))
+			results = append(results, res)
 			continue
 		}
 		status := resp.StatusCode
-		resp.Body.Close()
+		res.StatusCode = status
 
-		// 404/410 mean the endpoint is permanently gone — prune it. Other
-		// non-2xx are transient; mark only last_used_at via successes below.
-		if status == http.StatusNotFound || status == http.StatusGone {
+		switch {
+		case status == http.StatusNotFound || status == http.StatusGone:
+			// The endpoint is permanently gone — prune it.
+			resp.Body.Close()
+			res.Error = "subscription expired; pruned"
 			if _, derr := s.db.Exec(`UPDATE push_subscriptions SET revoked_at = CURRENT_TIMESTAMP WHERE id = ?`, sb.id); derr != nil {
 				slog.Error("push: prune failed", slog.String("component", "push"), slog.Int("sub_id", sb.id), slog.Any("error", derr))
 			}
-			continue
-		}
-		if status >= 200 && status < 300 {
+		case status >= 200 && status < 300:
+			resp.Body.Close()
+			res.OK = true
 			_, _ = s.db.Exec(`UPDATE push_subscriptions SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?`, sb.id)
+		default:
+			// Other non-2xx (e.g. APNs rejecting the VAPID JWT) are transient
+			// from the subscription's POV, but the provider's response body is
+			// the single most useful clue for diagnosing why nothing arrives —
+			// so capture and surface it rather than dropping it on the floor.
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+			resp.Body.Close()
+			res.Error = strings.TrimSpace(string(body))
+			if res.Error == "" {
+				res.Error = resp.Status
+			}
+			slog.Warn("push: send rejected",
+				slog.String("component", "push"), slog.Int("sub_id", sb.id),
+				slog.Int("status", status), slog.String("body", res.Error))
 		}
+		results = append(results, res)
 	}
+	return results
 }

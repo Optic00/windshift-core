@@ -109,9 +109,10 @@ func (h *PushHandler) Test(w http.ResponseWriter, r *http.Request) {
 		respondBadRequest(w, r, "push notifications are not configured on this server")
 		return
 	}
-	if err := h.service.SendTest(user.ID); err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	respondJSONOK(w, map[string]any{"status": "sent"})
+	results := h.service.SendTest(user.ID)
+	respondJSONOK(w, map[string]any{
+		"status":             "sent",
+		"subscription_count": len(results),
+		"results":            results,
+	})
 }
