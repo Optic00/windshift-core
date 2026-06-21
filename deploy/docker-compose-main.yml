@@ -4,6 +4,11 @@ version: "3.8"
 services:
   windshift:
     image: ghcr.io/windshiftapp/windshift:main
+    # The :main tag is mutable. Dokploy's Deploy/Reload runs `compose up -d`
+    # without a prior `compose pull`, so a freshly pushed :main digest is
+    # ignored and the cached image keeps running (Dokploy#3522, #2211, #945).
+    # pull_policy: always forces a re-pull of the tag on every deploy.
+    pull_policy: always
     restart: unless-stopped
     tmpfs:
       - /tmp:exec,size=64M
