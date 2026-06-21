@@ -1,6 +1,8 @@
 import { derived, writable } from 'svelte/store';
 import { api } from '../api.js';
+import { desktopStartSso } from '../desktop/bridge.svelte.js';
 import { toExternal } from '../runtime/contextPath.js';
+import { isTauri } from '../utils/isTauri.js';
 
 /**
  * SSO Store - manages Single Sign-On status and configuration
@@ -131,6 +133,17 @@ function createSSOStore() {
       }
 
       const url = api.sso.startLogin(slug, type || 'oidc', remember || false);
+
+      // Inside the desktop app, the IdP login (esp. passkey/WebAuthn) can't run
+      // in the embedded webview — hand it to the system browser and return via
+      // the windshift:// deep link instead of navigating in place (WI-446).
+      if (isTauri()) {
+        desktopStartSso(url).catch((err) => {
+          console.error('Failed to start desktop SSO login:', err);
+        });
+        return;
+      }
+
       window.location.href = toExternal(url);
     },
 
