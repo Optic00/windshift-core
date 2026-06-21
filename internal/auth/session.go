@@ -255,6 +255,16 @@ func (sm *SessionManager) SetSessionCookie(w http.ResponseWriter, r *http.Reques
 	return sm.setSessionCookie(w, r, SessionCookieName, token, maxAge)
 }
 
+// EncodeSessionCookieValue returns the securecookie-encoded value for a session
+// token under the canonical session cookie name. The desktop/native SSO flow
+// (WI-446) hands this back to the app, which writes it verbatim into its
+// webview's cookie store — the app can't encode it itself, having no server
+// secret. The value is bound to SessionCookieName, so it must be written under
+// exactly that cookie name to decode on subsequent requests.
+func (sm *SessionManager) EncodeSessionCookieValue(token string) (string, error) {
+	return sm.secureCookie.Encode(SessionCookieName, token)
+}
+
 // GetSessionFromCookie extracts session token from cookie
 func (sm *SessionManager) GetSessionFromCookie(r *http.Request) (string, error) {
 	return sm.getSessionFromCookie(r, SessionCookieName)

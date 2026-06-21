@@ -1001,6 +1001,44 @@ func inlineTableMigrations() []Migration {
 			`,
 		},
 		{
+			// native_auth_codes: short-lived single-use codes bridging a
+			// system-browser SSO login back into a native client (desktop/iOS,
+			// WI-446). Each code is bound to a session and redeemed once at
+			// /api/auth/native/exchange for the encoded session cookie.
+			Version:       "inline_native_auth_codes",
+			Name:          "native_auth_codes",
+			CheckSQLite:   sqliteTableCheck("native_auth_codes"),
+			CheckPostgres: pgTableCheck("native_auth_codes"),
+			SQLite: `
+				CREATE TABLE IF NOT EXISTS native_auth_codes (
+					id INTEGER PRIMARY KEY AUTOINCREMENT,
+					code TEXT NOT NULL UNIQUE,
+					session_token TEXT NOT NULL,
+					session_expires_at DATETIME NOT NULL,
+					status TEXT NOT NULL DEFAULT 'valid',
+					created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+					expires_at DATETIME NOT NULL,
+					consumed_at DATETIME
+				);
+				CREATE INDEX IF NOT EXISTS idx_native_auth_codes_code ON native_auth_codes(code);
+				CREATE INDEX IF NOT EXISTS idx_native_auth_codes_expires_at ON native_auth_codes(expires_at);
+			`,
+			Postgres: `
+				CREATE TABLE IF NOT EXISTS native_auth_codes (
+					id SERIAL PRIMARY KEY,
+					code TEXT NOT NULL UNIQUE,
+					session_token TEXT NOT NULL,
+					session_expires_at TIMESTAMPTZ NOT NULL,
+					status TEXT NOT NULL DEFAULT 'valid',
+					created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+					expires_at TIMESTAMPTZ NOT NULL,
+					consumed_at TIMESTAMPTZ
+				);
+				CREATE INDEX IF NOT EXISTS idx_native_auth_codes_code ON native_auth_codes(code);
+				CREATE INDEX IF NOT EXISTS idx_native_auth_codes_expires_at ON native_auth_codes(expires_at);
+			`,
+		},
+		{
 			// pr_comment_cursors: per-PR high-water mark of the last SCM comment
 			// id the continuation poller has processed, so each sync tick only
 			// looks at comments newer than this and never re-fires an old one

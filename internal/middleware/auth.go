@@ -207,6 +207,9 @@ func (am *AuthMiddleware) shouldSkipAuth(r *http.Request) bool {
 		"/api/auth/login":                   true,
 		"/api/auth/webauthn/login/start":    true,
 		"/api/auth/webauthn/login/complete": true,
+		// Native SSO one-time-code redemption (WI-446): the desktop/iOS app
+		// posts its code here before it holds any session.
+		"/api/auth/native/exchange": true,
 	}
 
 	// Skip auth for static files

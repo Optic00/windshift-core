@@ -30,6 +30,9 @@ func RegisterAuthRoutes(deps *Deps) {
 	api.HandleH("GET /sso/status", deps.AuthRateLimiter.Limit(http.HandlerFunc(deps.Auth.SSO.GetStatus)))
 	api.HandleH("GET /sso/login/{slug}", deps.SSORateLimiter.Limit(http.HandlerFunc(deps.Auth.SSO.StartLogin)))
 	api.HandleH("GET /sso/callback/{slug}", deps.SSORateLimiter.Limit(http.HandlerFunc(deps.Auth.SSO.Callback)))
+	// Native (desktop/iOS) one-time-code redemption — public + rate-limited;
+	// the app has no credentials yet when it redeems (WI-446).
+	api.HandleH("POST /auth/native/exchange", deps.SSORateLimiter.Limit(http.HandlerFunc(deps.Auth.SSO.NativeExchange)))
 
 	// SSO Admin endpoints for provider management
 	api.HandleH("GET /sso/providers", admin(http.HandlerFunc(deps.Auth.SSO.ListProviders)))
