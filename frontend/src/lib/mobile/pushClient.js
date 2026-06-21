@@ -85,6 +85,14 @@ function urlBase64ToUint8Array(base64String) {
 export async function enablePush() {
   if (!pushSupported()) return { ok: false, reason: 'unsupported' };
 
+  // Request permission FIRST, synchronously inside the click's user-gesture
+  // (transient activation) window. iOS Safari silently no-ops the permission
+  // prompt once it has awaited anything (a network fetch below), which made
+  // the "Enable notifications" button appear dead on iOS PWAs. Chrome/Android
+  // are more lenient, so this never surfaced there.
+  const permission = await Notification.requestPermission();
+  if (permission !== 'granted') return { ok: false, reason: 'denied' };
+
   let config;
   try {
     config = await fetchAPI('/push/vapid-public-key');
@@ -92,9 +100,6 @@ export async function enablePush() {
     return { ok: false, reason: 'config' };
   }
   if (!config?.enabled || !config?.public_key) return { ok: false, reason: 'disabled' };
-
-  const permission = await Notification.requestPermission();
-  if (permission !== 'granted') return { ok: false, reason: 'denied' };
 
   const reg = await registerMobileServiceWorker();
   if (!reg) return { ok: false, reason: 'no-sw' };
