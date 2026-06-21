@@ -285,7 +285,11 @@ func (h *SSOHandler) StartLogin(w http.ResponseWriter, r *http.Request) {
 	if redirectAfterLogin == "" {
 		redirectAfterLogin = "/"
 	}
-	if !isValidRedirectURI(redirectAfterLogin) {
+	// The desktop/native client passes its custom-scheme callback
+	// (windshift://oauth/callback); the web app passes a same-origin relative
+	// path. Anything matching neither falls back to "/". The native value is
+	// stored verbatim in the state row and detected again in Callback.
+	if !isValidRedirectURI(redirectAfterLogin) && !isValidNativeRedirectURI(redirectAfterLogin) {
 		redirectAfterLogin = "/"
 	}
 
@@ -407,7 +411,12 @@ func (h *SSOHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		_ = repository.NewSSOStateRepository(h.db).Delete(token.ID)
 		storedRedirectURI := token.RedirectURI
 		rememberMe := token.RememberMe
-		if storedRedirectURI == "" || !isValidRedirectURI(storedRedirectURI) {
+		// A native (desktop/iOS) flow is identified by its custom-scheme
+		// redirect target, stored in StartLogin. Web flows keep the existing
+		// relative-path coercion; the native target is left intact so the
+		// branch below can hand back a one-time code instead of a cookie.
+		nativeFlow := isValidNativeRedirectURI(storedRedirectURI)
+		if !nativeFlow && (storedRedirectURI == "" || !isValidRedirectURI(storedRedirectURI)) {
 			storedRedirectURI = "/"
 		}
 
@@ -490,6 +499,24 @@ func (h *SSOHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		}
 		slog.Debug("session created", slog.String("component", "sso"))
 
+		// Native clients can't receive an HttpOnly cookie through a custom-scheme
+		// redirect, so hand back a short-lived one-time code instead and let the
+		// app redeem it for the encoded session cookie at /api/auth/native/exchange
+		// (mirrors the ws-init browser→CLI handoff). No session token ever rides in
+		// the URL — only the opaque code.
+		if nativeFlow {
+			code, codeErr := h.issueNativeAuthCode(session.Token, session.ExpiresAt)
+			if codeErr != nil {
+				slog.Error("failed to issue native auth code", slog.String("component", "sso"), slog.Any("error", codeErr))
+				h.redirectWithError(w, r, "Failed to complete sign-in")
+				return
+			}
+			target := nativeRedirectURI + "?code=" + url.QueryEscape(code)
+			slog.Debug("redirecting to native callback", slog.String("component", "sso"))
+			http.Redirect(w, r, target, http.StatusFound) // #nosec G710 -- fixed custom-scheme target; code is opaque + single-use
+			return
+		}
+
 		// Set a browser session cookie and redirect only to a validated relative
 		// path. Do not return session tokens in redirect fragments; the v1 REST API
 		// accepts only scoped crw_* API tokens, not web session tokens.
@@ -511,6 +538,79 @@ func (h *SSOHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	})
 
 	callbackHandler(w, r)
+}
+
+// nativeAuthCodeTTL bounds how long a native-client one-time code can sit
+// waiting to be redeemed. Short window because the desktop app exchanges it
+// within seconds of receiving the custom-scheme callback.
+const nativeAuthCodeTTL = 2 * time.Minute
+
+// issueNativeAuthCode persists a single-use code bound to a freshly created
+// session and returns it. The desktop/native app redeems it at
+// /api/auth/native/exchange for the encoded session cookie value.
+func (h *SSOHandler) issueNativeAuthCode(sessionToken string, sessionExpiresAt time.Time) (string, error) {
+	code, err := randomOpaqueCode()
+	if err != nil {
+		return "", err
+	}
+	expires := time.Now().Add(nativeAuthCodeTTL)
+	if err := repository.NewNativeAuthRepository(h.db).Store(code, sessionToken, sessionExpiresAt, expires); err != nil {
+		return "", err
+	}
+	return code, nil
+}
+
+// nativeExchangeRequest is the payload the native app POSTs to redeem its code.
+type nativeExchangeRequest struct {
+	Code string `json:"code"`
+}
+
+// nativeExchangeResponse hands the app everything it needs to write the session
+// cookie into its own webview's cookie store. CookieValue is the
+// securecookie-encoded blob — opaque and tamper-proof; the app cannot produce
+// it itself (it has no server secret).
+type nativeExchangeResponse struct {
+	CookieName  string    `json:"cookie_name"`
+	CookieValue string    `json:"cookie_value"`
+	ExpiresAt   time.Time `json:"expires_at"`
+}
+
+// NativeExchange redeems the one-time code minted by the native SSO callback
+// and returns the encoded session cookie. Single-use: the code is consumed
+// atomically, so a replay returns 400. Public (allowlisted) because the app
+// has no credentials yet at this point in the flow.
+func (h *SSOHandler) NativeExchange(w http.ResponseWriter, r *http.Request) {
+	req, ok := decodeJSON[nativeExchangeRequest](w, r)
+	if !ok {
+		return
+	}
+	if strings.TrimSpace(req.Code) == "" {
+		respondBadRequest(w, r, "code is required")
+		return
+	}
+
+	row, err := repository.NewNativeAuthRepository(h.db).Consume(req.Code, time.Now())
+	if errors.Is(err, repository.ErrNotFound) {
+		respondBadRequest(w, r, "invalid or expired code")
+		return
+	}
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+
+	value, err := h.sessionManager.EncodeSessionCookieValue(row.SessionToken)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+
+	slog.Info("native auth code exchanged", slog.String("component", "sso"))
+	respondJSONOK(w, nativeExchangeResponse{
+		CookieName:  auth.SessionCookieName,
+		CookieValue: value,
+		ExpiresAt:   row.SessionExpiresAt,
+	})
 }
 
 // ListProviders returns all SSO providers (admin only)

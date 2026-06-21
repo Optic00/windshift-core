@@ -381,6 +381,21 @@ func getFirstSAMLAttribute(info *sso.SAMLAssertionInfo, names ...string) string 
 	return ""
 }
 
+// nativeRedirectURI is the sole custom-scheme callback the desktop/native SSO
+// flow (WI-446) is allowed to use. Keep this an exact-match allowlist: the
+// native branch hands a session back to whatever handles this scheme, so
+// anything looser would risk delivering credentials to an attacker-registered
+// scheme handler. The token never rides in the URL — only a one-time code that
+// is redeemed at /api/auth/native/exchange.
+const nativeRedirectURI = "windshift://oauth/callback"
+
+// isValidNativeRedirectURI reports whether uri is the exact registered native
+// callback. Unlike isValidRedirectURI (relative paths only), this permits the
+// windshift:// custom scheme — but only that one literal value.
+func isValidNativeRedirectURI(uri string) bool {
+	return uri == nativeRedirectURI
+}
+
 // isValidRedirectURI validates that a post-login redirect URI is safe.
 // Only same-origin relative paths are accepted. This prevents open redirects
 // and avoids handing web session tokens to native custom-scheme handlers.
