@@ -29,6 +29,16 @@ services:
       # Temp directories for SQLite in scratch containers
       - TMPDIR=/tmp
       - SQLITE_TMPDIR=/tmp
+      # --- Web Push (VAPID) — REQUIRED for mobile/PWA push notifications ---
+      # Without both keys, push dispatch is a no-op and the mobile "Enable
+      # notifications" button silently fails. Generate ONE pair per deployment
+      # and keep it stable — rotating invalidates every existing subscription:
+      #   npx web-push generate-vapid-keys
+      # Then set VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY in your .env file.
+      - VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY:-}
+      - VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY:-}
+      # Optional VAPID "sub" contact (mailto: or https:). Defaults to BASE_URL.
+      - VAPID_SUBJECT=${VAPID_SUBJECT:-}
       # --- PostgreSQL (uncomment when using postgres service) ---
       # - DB_DRIVER=postgres
       # - DB_HOST=postgres

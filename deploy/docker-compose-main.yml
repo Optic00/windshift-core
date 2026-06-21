@@ -28,6 +28,15 @@ services:
       - CODING_AGENT_ENABLED=true
       - LOG_LEVEL=info
       - LOG_FORMAT=json
+      # Web Push (VAPID). REQUIRED for mobile/PWA push notifications — without
+      # both keys, push dispatch is a no-op and the "Enable notifications"
+      # button silently fails. Generate ONE pair per deployment and keep it
+      # stable (rotating invalidates every existing subscription):
+      #   npx web-push generate-vapid-keys
+      - VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY}
+      - VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY}
+      # Optional VAPID "sub" contact (mailto: or https:). Defaults to BASE_URL.
+      - VAPID_SUBJECT=${VAPID_SUBJECT:-}
     volumes:
       - windshift-data:/data
     depends_on:
