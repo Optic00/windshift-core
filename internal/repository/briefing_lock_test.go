@@ -22,6 +22,14 @@ func newBriefingTestDB(t *testing.T) database.Database {
 	if err := db.Initialize(); err != nil {
 		t.Fatalf("initialize db: %v", err)
 	}
+	// daily_briefings.user_id is a FK to users(id) (ON DELETE CASCADE), so a
+	// claim/seed insert is rejected unless the referenced user exists. Seed the
+	// single user every test in this file claims for.
+	if _, err := db.Exec(
+		`INSERT INTO users (id, email, username, first_name, last_name) VALUES (1, 'u1@example.com', 'u1', 'U', 'One')`,
+	); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
 	// daily_briefings.lock_until is created by the embedded schema (fresh
 	// installs) or by the 20260620_daily_briefings_lock_until migration
 	// (existing installs). The schema runner above covers the fresh-install

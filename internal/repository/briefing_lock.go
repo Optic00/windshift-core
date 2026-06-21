@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
-	"windshift/internal/database"
 )
 
 // briefingLockDuration is how long a generation claim is held. Briefings call
