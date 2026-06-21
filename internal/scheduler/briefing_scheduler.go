@@ -57,7 +57,7 @@ func NewBriefingScheduler(db database.Database, llmManager *llm.ConnectionManage
 		aiRepo:          repository.NewAIRepository(db),
 		runRepo:         repository.NewSchedulerRunRepository(db),
 		stopChan:        make(chan struct{}),
-		now:             func() time.Time { return time.Now() },
+		now:             time.Now,
 	}
 }
 

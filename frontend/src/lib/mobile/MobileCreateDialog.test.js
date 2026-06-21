@@ -113,7 +113,7 @@ describe('MobileCreateDialog — child creation', () => {
         workspace_id: 1,
         item_type_id: 10, // first allowed sub-issue type
         parent_id: 777,
-      }),
+      })
     );
     expect(onclose).toHaveBeenCalled();
   });
