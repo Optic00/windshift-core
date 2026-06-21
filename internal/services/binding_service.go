@@ -37,6 +37,22 @@ var ErrBindingInvalidRepoSlug = errors.New("binding service: repo_slug must be o
 // allowed characters can produce them.
 var validRepoSlug = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
 
+// ErrBindingDuplicateRepoSlug is returned when a binding lists the same repo
+// slug more than once (WI-449). The handler maps it to 400.
+var ErrBindingDuplicateRepoSlug = errors.New("binding service: a repo_slug may appear only once per binding")
+
+// ErrBindingPrimaryRepoRequired is returned when a multi-repo binding does not
+// designate exactly one primary repo (WI-449). The primary's PR is the one
+// linked to the work item.
+var ErrBindingPrimaryRepoRequired = errors.New("binding service: a binding with multiple repos must mark exactly one as primary")
+
+// ErrBindingTooManyRepos caps the number of repos a single binding may bind
+// (WI-449) — each repo is a clone + worktree per run.
+var ErrBindingTooManyRepos = errors.New("binding service: too many repos bound to a single binding")
+
+// maxBindingRepos caps CreateBindingRequest.Repos.
+const maxBindingRepos = 10
+
 // ErrBindingTokenTTLOverCap is returned when a binding is created with a
 // TokenTTLMinutes value above the per-run-token ceiling (see
 // MaxAgentTokenTTL). Surfaced as 400 by the handler so the admin sees
@@ -250,8 +266,15 @@ func NewBindingService(opts BindingServiceOptions) (*BindingService, error) {
 // SCMConnectionID; the clone URL is derived from the connection's
 // provider host and the binding's RepoSlug.
 type CreateBindingRequest struct {
-	WorkspaceID     int
-	ActingUserID    int
+	WorkspaceID  int
+	ActingUserID int
+	// Repos is the set of repositories the binding checks out (WI-449). Exactly
+	// one must be primary (or, for a single repo, primary is defaulted). When
+	// empty, the legacy scalar RepoSlug/RepoBaseRef/SCMConnectionID below are
+	// folded into a single primary repo for backward compatibility.
+	Repos []RepoInput
+	// RepoSlug/RepoBaseRef/SCMConnectionID are the deprecated single-repo
+	// fields, kept for old API clients. Prefer Repos.
 	RepoSlug        string
 	RepoBaseRef     string
 	LLMConnectionID *int
@@ -270,6 +293,14 @@ type CreateBindingRequest struct {
 	// belong to the binding's workspace.
 	SkillIDs        []int
 	CreatedByUserID int
+}
+
+// RepoInput is one repository in a CreateBindingRequest (WI-449).
+type RepoInput struct {
+	RepoSlug        string
+	RepoBaseRef     string
+	SCMConnectionID *int
+	IsPrimary       bool
 }
 
 // Create validates the acting identity via the WI-87 chokepoint, then
@@ -297,13 +328,9 @@ func (s *BindingService) Create(ctx context.Context, req CreateBindingRequest) (
 			return nil, ErrBindingTokenTTLOverCap
 		}
 	}
-	if req.RepoSlug != "" {
-		if !validRepoSlug.MatchString(req.RepoSlug) {
-			return nil, ErrBindingInvalidRepoSlug
-		}
-		if req.SCMConnectionID == nil {
-			return nil, ErrBindingRepoNeedsSCMConnection
-		}
+	repos, err := normalizeBindingRepos(req)
+	if err != nil {
+		return nil, err
 	}
 	if len(req.Instructions) > maxBindingInstructionsLen {
 		return nil, ErrBindingInstructionsTooLong
@@ -339,17 +366,17 @@ func (s *BindingService) Create(ctx context.Context, req CreateBindingRequest) (
 		WorkspaceID:     req.WorkspaceID,
 		ActingUserID:    identity.UserID,
 		ActingUserKind:  identity.Kind,
-		RepoSlug:        req.RepoSlug,
-		RepoBaseRef:     req.RepoBaseRef,
 		LLMConnectionID: req.LLMConnectionID,
-		SCMConnectionID: req.SCMConnectionID,
 		TargetPoolID:    req.TargetPoolID,
 		TokenScopes:     req.TokenScopes,
 		TokenTTLMinutes: req.TokenTTLMinutes,
 		MaxRunsPerDay:   req.MaxRunsPerDay,
 		Instructions:    req.Instructions,
 		CreatedByUserID: req.CreatedByUserID,
+		Repos:           repos,
 	}
+	// Insert persists the binding row + its child repo rows atomically and
+	// mirrors the primary onto the deprecated scalar columns.
 	id, err := s.repo.Insert(ctx, binding)
 	if err != nil {
 		return nil, err
@@ -364,6 +391,61 @@ func (s *BindingService) Create(ctx context.Context, req CreateBindingRequest) (
 		}
 	}
 	return binding, nil
+}
+
+// normalizeBindingRepos validates and normalizes a create request's repos into
+// the persisted BindingRepo slice (WI-449). It folds the deprecated single-repo
+// scalar fields into a one-element primary repo when Repos is empty, validates
+// each slug + SCM connection (preserving the per-repo no-free-URL invariant),
+// rejects duplicates, and ensures exactly one primary.
+func normalizeBindingRepos(req CreateBindingRequest) ([]models.BindingRepo, error) {
+	inputs := req.Repos
+	if len(inputs) == 0 {
+		if req.RepoSlug == "" {
+			return nil, nil // no-repo binding (fall-through to orchestrator)
+		}
+		inputs = []RepoInput{{
+			RepoSlug:        req.RepoSlug,
+			RepoBaseRef:     req.RepoBaseRef,
+			SCMConnectionID: req.SCMConnectionID,
+			IsPrimary:       true,
+		}}
+	}
+	if len(inputs) > maxBindingRepos {
+		return nil, ErrBindingTooManyRepos
+	}
+	out := make([]models.BindingRepo, 0, len(inputs))
+	seen := make(map[string]bool, len(inputs))
+	primaries := 0
+	for i, in := range inputs {
+		if !validRepoSlug.MatchString(in.RepoSlug) {
+			return nil, ErrBindingInvalidRepoSlug
+		}
+		if in.SCMConnectionID == nil {
+			return nil, ErrBindingRepoNeedsSCMConnection
+		}
+		if seen[in.RepoSlug] {
+			return nil, ErrBindingDuplicateRepoSlug
+		}
+		seen[in.RepoSlug] = true
+		if in.IsPrimary {
+			primaries++
+		}
+		out = append(out, models.BindingRepo{
+			SCMConnectionID: in.SCMConnectionID,
+			RepoSlug:        in.RepoSlug,
+			RepoBaseRef:     in.RepoBaseRef,
+			IsPrimary:       in.IsPrimary,
+			Position:        i,
+		})
+	}
+	switch {
+	case primaries == 0 && len(out) == 1:
+		out[0].IsPrimary = true // default the sole repo
+	case primaries != 1:
+		return nil, ErrBindingPrimaryRepoRequired
+	}
+	return out, nil
 }
 
 // UpdateAgentConfig rewrites a binding's prompt-shaping configuration —
@@ -806,11 +888,11 @@ func (s *BindingService) applyMentionContinuation(ctx context.Context, trigger *
 	if target == nil || target.HeadBranch == "" {
 		return
 	}
-	// Write scope: only continue a PR in the repo this binding's credentials can
-	// push to. A PR in another repo would push back somewhere the binding has no
-	// business writing.
-	if target.RepoSlug != binding.RepoSlug {
-		s.logger.Printf("binding service: item=%d open PR is in %q but binding=%d writes %q — starting fresh run", itemID, target.RepoSlug, binding.ID, binding.RepoSlug)
+	// Write scope: only continue a PR in a repo this binding's credentials can
+	// push to. A PR in a repo the binding doesn't bind would push back somewhere
+	// it has no business writing (WI-449: any bound repo, not just the primary).
+	if !binding.HasRepoSlug(target.RepoSlug) {
+		s.logger.Printf("binding service: item=%d open PR is in %q but binding=%d binds none of its repos — starting fresh run", itemID, target.RepoSlug, binding.ID)
 		return
 	}
 	trigger.ContinuePRNumber = target.PRNumber
@@ -872,15 +954,23 @@ func (s *BindingService) startRunForBinding(ctx context.Context, binding *models
 		// runners reach git only through the proxy — and deriveCloneURL is
 		// the same base-URL validation the proxy applies at claim time.
 		if binding.HasRepo() && s.scmCreds != nil {
-			_, providerType, baseURL, err := s.scmCreds.ResolveForRunAsUser(ctx, *binding.SCMConnectionID, triggeredByUserID)
-			if err == nil {
-				_, err = deriveCloneURL(providerType, baseURL, binding.RepoSlug)
-			}
-			if err != nil {
-				if _, rerr := s.runs.RecordFailedStart(ctx, remoteReq, startFailureReason("SCM connection", err)); rerr != nil {
-					s.logger.Printf("binding service: record failed remote run for item=%d binding=%d: %v", itemID, binding.ID, rerr)
+			// Validate every bound repo's credential + clone host now (WI-449),
+			// not just the primary — a remote multi-repo run must fail visibly at
+			// start if any repo is misconfigured rather than half-checkout later.
+			for _, br := range binding.Repos {
+				if br.SCMConnectionID == nil {
+					continue
 				}
-				return err
+				_, providerType, baseURL, err := s.scmCreds.ResolveForRunAsUser(ctx, *br.SCMConnectionID, triggeredByUserID)
+				if err == nil {
+					_, err = deriveCloneURL(providerType, baseURL, br.RepoSlug)
+				}
+				if err != nil {
+					if _, rerr := s.runs.RecordFailedStart(ctx, remoteReq, startFailureReason("SCM connection", err)); rerr != nil {
+						s.logger.Printf("binding service: record failed remote run for item=%d binding=%d: %v", itemID, binding.ID, rerr)
+					}
+					return err
+				}
 			}
 		}
 		// Same fail-visibly treatment for the LLM connection the claim-time
@@ -920,47 +1010,62 @@ func (s *BindingService) startRunForBinding(ctx context.Context, binding *models
 		InitialPromptSuffix: s.promptSuffixForBinding(binding, skills) + renderInstruction(trigger),
 	}
 	if binding.HasRepo() {
-		// HasRepo guarantees SCMConnectionID is set; this is the only
-		// path that resolves a clone URL. The orchestrator derives the
-		// URL from the trusted SCM connection record + the binding's
-		// slug — the binding cannot carry a free-form URL.
+		// Resolve a clone URL per bound repo, primary first (WI-449). HasRepo
+		// guarantees each repo carries an SCM connection; this is the only path
+		// that resolves clone URLs. The orchestrator derives each URL from the
+		// trusted SCM connection record + the repo's slug — a binding can never
+		// carry a free-form URL.
 		if s.scmCreds == nil {
 			s.logger.Printf("binding service: binding=%d wants repo prep but no SCMCredentialResolver is configured (dropping)", binding.ID)
 			return nil
 		}
-		token, providerType, baseURL, err := s.scmCreds.ResolveForRunAsUser(ctx, *binding.SCMConnectionID, triggeredByUserID)
-		var cloneURL string
-		if err == nil {
-			cloneURL, err = deriveCloneURL(providerType, baseURL, binding.RepoSlug)
-		}
-		if err != nil {
-			// Fail visibly: without a run row the trigger evaporates and the
-			// assigner sees nothing at all (WI-275, extended past the
-			// not-connected case after the git-proxy 503 incident).
-			if _, rerr := s.runs.RecordFailedStart(ctx, req, startFailureReason("SCM connection", err)); rerr != nil {
-				s.logger.Printf("binding service: record failed run for item=%d binding=%d: %v", itemID, binding.ID, rerr)
+		for _, br := range orderReposPrimaryFirst(binding) {
+			if br.SCMConnectionID == nil {
+				// Defensive: validation guarantees this, but never derive a URL
+				// without a trusted connection.
+				err := ErrBindingRepoNeedsSCMConnection
+				if _, rerr := s.runs.RecordFailedStart(ctx, req, startFailureReason("SCM connection", err)); rerr != nil {
+					s.logger.Printf("binding service: record failed run for item=%d binding=%d: %v", itemID, binding.ID, rerr)
+				}
+				return err
 			}
-			return err
-		}
-		s.logger.Printf("binding service: derived %s clone url for binding=%d slug=%s", providerType, binding.ID, binding.RepoSlug)
-		// Token travels on RepoSpec as a separate field — never embed
-		// it in RemoteURL. repoprep injects it via a per-clone GIT_ASKPASS
-		// helper so it never appears in argv or .git/config.
-		req.Repo = &repoprep.RepoSpec{
-			WorkspaceID: workspaceID,
-			RepoSlug:    binding.RepoSlug,
-			RemoteURL:   cloneURL,
-			BaseRef:     binding.RepoBaseRef,
-			Token:       token,
-		}
-		// A continuation run checks out the bound PR's head branch and pushes
-		// back to it instead of cutting a fresh per-run branch (BaseRef ignored).
-		if trigger.IsContinuation() {
-			req.Repo.ContinueBranch = trigger.ContinueHeadBranch
+			token, providerType, baseURL, err := s.scmCreds.ResolveForRunAsUser(ctx, *br.SCMConnectionID, triggeredByUserID)
+			var cloneURL string
+			if err == nil {
+				cloneURL, err = deriveCloneURL(providerType, baseURL, br.RepoSlug)
+			}
+			if err != nil {
+				// Fail visibly: without a run row the trigger evaporates and the
+				// assigner sees nothing at all (WI-275, extended past the
+				// not-connected case after the git-proxy 503 incident). A
+				// partial multi-repo checkout is worse than a visible failure.
+				if _, rerr := s.runs.RecordFailedStart(ctx, req, startFailureReason("SCM connection", err)); rerr != nil {
+					s.logger.Printf("binding service: record failed run for item=%d binding=%d: %v", itemID, binding.ID, rerr)
+				}
+				return err
+			}
+			s.logger.Printf("binding service: derived %s clone url for binding=%d slug=%s", providerType, binding.ID, br.RepoSlug)
+			// Token travels on RepoSpec as a separate field — never embed it in
+			// RemoteURL. repoprep injects it via a per-clone GIT_ASKPASS helper
+			// so it never appears in argv or .git/config.
+			spec := &repoprep.RepoSpec{
+				WorkspaceID: workspaceID,
+				RepoSlug:    br.RepoSlug,
+				RemoteURL:   cloneURL,
+				BaseRef:     br.RepoBaseRef,
+				Token:       token,
+			}
+			// A continuation targets exactly one repo's PR head branch: only the
+			// repo matching the trigger's ContinueRepoSlug checks out that branch
+			// and pushes back to it; the other repos cut fresh per-run branches.
+			if trigger.IsContinuation() && trigger.ContinueRepoSlug == br.RepoSlug {
+				spec.ContinueBranch = trigger.ContinueHeadBranch
+			}
+			req.Repos = append(req.Repos, spec)
 		}
 		// The SCM token stays host-side: repoprep uses it (via a per-clone
-		// GIT_ASKPASS helper) to clone the worktree and, after the run, to push
-		// the run branch. It is NOT injected into the container — the
+		// GIT_ASKPASS helper) to clone each worktree and, after the run, to push
+		// the run branches. It is NOT injected into the container — the
 		// windshift-agent holds no SCM credential and never pushes (WI-238).
 		// GIT_TERMINAL_PROMPT=0 only keeps the agent's local `git commit` from
 		// blocking on a credential prompt.
@@ -988,6 +1093,38 @@ func (s *BindingService) startRunForBinding(ctx context.Context, binding *models
 	}
 	s.logger.Printf("binding service: started run=%d for item=%d binding=%d acting_user=%d", runID, itemID, binding.ID, binding.ActingUserID)
 	return nil
+}
+
+// orderReposPrimaryFirst returns the binding's repos with the primary first,
+// then the remainder in their stored position order (WI-449). The run path
+// relies on index 0 being primary for the work-item-linked PR and the
+// single-repo-compatible grant ref.
+func orderReposPrimaryFirst(binding *models.WorkspaceAgentBinding) []models.BindingRepo {
+	repos := binding.Repos
+	// Transitional fallback: a binding loaded by code predating repo hydration,
+	// or constructed in-memory from the legacy scalar fields, still yields its
+	// one repo. Hydrated bindings mirror the primary onto these fields, so this
+	// only fires when Repos is genuinely empty.
+	if len(repos) == 0 && binding.RepoSlug != "" {
+		return []models.BindingRepo{{
+			SCMConnectionID: binding.SCMConnectionID,
+			RepoSlug:        binding.RepoSlug,
+			RepoBaseRef:     binding.RepoBaseRef,
+			IsPrimary:       true,
+		}}
+	}
+	out := make([]models.BindingRepo, 0, len(repos))
+	primary := binding.PrimaryRepo()
+	if primary != nil {
+		out = append(out, *primary)
+	}
+	for i := range repos {
+		if primary != nil && repos[i].RepoSlug == primary.RepoSlug {
+			continue
+		}
+		out = append(out, repos[i])
+	}
+	return out
 }
 
 // PRCommentContinuation carries one detected "@agent" PR comment that should
@@ -1032,8 +1169,9 @@ func (s *BindingService) StartPRCommentContinuation(ctx context.Context, in PRCo
 	if err != nil {
 		return false, fmt.Errorf("load binding %d: %w", *latest.BindingID, err)
 	}
-	// Write scope: only continue a PR in the repo this binding can push to.
-	if !binding.HasRepo() || binding.RepoSlug != in.RepoSlug {
+	// Write scope: only continue a PR in a repo this binding binds (WI-449:
+	// any bound repo, not just the primary).
+	if !binding.HasRepo() || !binding.HasRepoSlug(in.RepoSlug) {
 		return false, nil
 	}
 	// Dedup: a repeat "@agent" while the agent is already working is a nudge, not
@@ -1148,7 +1286,25 @@ func (s *BindingService) bindingTokenAndGrants(b *models.WorkspaceAgentBinding, 
 	}
 	grants := &models.RunGrants{}
 	if b.HasRepo() {
-		grants.Git = &models.GitGrant{Repo: b.RepoSlug, ConnectionID: *b.SCMConnectionID, UserID: triggeredByUserID}
+		// One git grant per bound repo, primary first (WI-449). The broker
+		// authorizes each git request against the grant whose repo matches.
+		// Each repo's Ref (the branch the run may push) is filled at claim once
+		// the worktree branch is known (mintTokenAndGrants). Git mirrors the
+		// primary for one release / older broker code.
+		for _, br := range orderReposPrimaryFirst(b) {
+			if br.SCMConnectionID == nil {
+				continue
+			}
+			grants.GitRepos = append(grants.GitRepos, models.GitGrant{
+				Repo:         br.RepoSlug,
+				ConnectionID: *br.SCMConnectionID,
+				UserID:       triggeredByUserID,
+			})
+		}
+		if len(grants.GitRepos) > 0 {
+			primary := grants.GitRepos[0]
+			grants.Git = &primary
+		}
 	}
 	if b.LLMConnectionID != nil {
 		grants.LLM = &models.LLMGrant{ConnectionID: *b.LLMConnectionID}
@@ -1203,28 +1359,36 @@ func (s *BindingService) ResolveRunInputs(ctx context.Context, run *models.Agent
 	promptSuffix := s.promptSuffixForBinding(binding, skills) + renderInstruction(run.Trigger)
 	spec, grants := s.bindingTokenAndGrants(binding, itemID, triggeredBy, len(skills) > 0)
 
-	// Repo-prep inputs for a remote runner: only when the binding is repo-
-	// backed. Unlike the local path, no SCM token travels here — the remote
+	// Repo-prep inputs for a remote runner, one per bound repo, primary first
+	// (WI-449). Unlike the local path, no SCM token travels here — the remote
 	// runner clones + pushes through the git-proxy with its per-run token.
-	var repo *JobRepo
+	var repos []JobRepo
 	if binding.HasRepo() {
-		baseRef := binding.RepoBaseRef
-		if baseRef == "" {
-			baseRef = "main"
-		}
-		repo = &JobRepo{
-			WorkspaceID: run.WorkspaceID,
-			Slug:        binding.RepoSlug,
-			BaseRef:     baseRef,
-		}
-		// Continuation: land commits on the bound PR's head branch (resolved and
-		// persisted on the trigger when the run was queued) rather than a fresh
-		// per-run branch. Survives the queue→claim hop via run.Trigger.
-		if run.Trigger.IsContinuation() {
-			repo.ContinueBranch = run.Trigger.ContinueHeadBranch
+		for _, br := range orderReposPrimaryFirst(binding) {
+			baseRef := br.RepoBaseRef
+			if baseRef == "" {
+				baseRef = "main"
+			}
+			jr := JobRepo{
+				WorkspaceID: run.WorkspaceID,
+				Slug:        br.RepoSlug,
+				BaseRef:     baseRef,
+			}
+			// Continuation targets exactly one repo's PR head branch (resolved
+			// and persisted on the trigger when the run was queued); only that
+			// repo lands commits on it, the rest cut fresh per-run branches.
+			if run.Trigger.IsContinuation() && run.Trigger.ContinueRepoSlug == br.RepoSlug {
+				jr.ContinueBranch = run.Trigger.ContinueHeadBranch
+			}
+			repos = append(repos, jr)
 		}
 	}
-	return &RunInputs{Token: spec, Grants: grants, Repo: repo, Env: env, PromptSuffix: promptSuffix}, nil
+	var repo *JobRepo
+	if len(repos) > 0 {
+		primary := repos[0]
+		repo = &primary
+	}
+	return &RunInputs{Token: spec, Grants: grants, Repo: repo, Repos: repos, Env: env, PromptSuffix: promptSuffix}, nil
 }
 
 func (s *BindingService) buildRunEnv(ctx context.Context, workspaceID, itemID int) (map[string]string, error) {

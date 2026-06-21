@@ -129,7 +129,12 @@ func (s *AgentPRService) AfterRun(ctx context.Context, info PostRunInfo) {
 	if info.Status != models.AgentRunStatusSucceeded {
 		return
 	}
-	if info.BindingID == 0 || info.Branch == "" {
+	// Need a binding and at least one delivered branch — either the scalar
+	// primary branch (legacy/single-repo) or any per-repo branch (WI-449).
+	if info.BindingID == 0 {
+		return
+	}
+	if info.Branch == "" && !hasPushedRepo(info.Repos) {
 		return
 	}
 	binding, err := s.bindings.Get(ctx, info.BindingID)
@@ -137,28 +142,99 @@ func (s *AgentPRService) AfterRun(ctx context.Context, info PostRunInfo) {
 		s.logger.Printf("agent pr: load binding=%d for run=%d: %v", info.BindingID, info.RunID, err)
 		return
 	}
-	if binding.SCMConnectionID == nil {
-		return
+
+	// One PR per changed repo (WI-449). Each repo the agent committed to gets
+	// its own branch + PR; only the PRIMARY repo's PR is linked to the work
+	// item. A repo with no new commits has an empty branch and is skipped.
+	for _, pr := range s.prReposFor(info, binding) {
+		owner, repo, ok := splitRepoSlug(pr.slug)
+		if !ok {
+			s.logger.Printf("agent pr: unparseable repo_slug %q for binding=%d", pr.slug, binding.ID)
+			continue
+		}
+		// Continuation run: the runner already pushed commits onto the existing
+		// PR's head branch (this repo's branch), so the PR grew in place —
+		// opening another PR would duplicate it. Comment on the continued PR
+		// instead. Sibling repos changed in the same run still open fresh PRs.
+		if info.Trigger.IsContinuation() && pr.slug == info.Trigger.ContinueRepoSlug {
+			s.afterContinuationRun(ctx, info, binding, pr.connID, owner, repo)
+			continue
+		}
+		s.openRepoPR(ctx, info, binding, pr, owner, repo)
 	}
-	if binding.RepoSlug == "" {
-		s.logger.Printf("agent pr: binding=%d has no repo_slug; skipping PR for run=%d", binding.ID, info.RunID)
-		return
+}
+
+// hasPushedRepo reports whether any per-repo result carries a delivered branch.
+func hasPushedRepo(repos []PostRunRepo) bool {
+	for _, r := range repos {
+		if r.Branch != "" {
+			return true
+		}
 	}
-	owner, repo, ok := splitRepoSlug(binding.RepoSlug)
-	if !ok {
-		s.logger.Printf("agent pr: unparseable repo_slug %q for binding=%d", binding.RepoSlug, binding.ID)
-		return
+	return false
+}
+
+// prRepo is one repo's push result enriched with the binding metadata the PR
+// hook needs: which SCM connection to authenticate with and whether it's the
+// primary (work-item-linked) repo.
+type prRepo struct {
+	slug       string
+	branch     string
+	baseCommit string
+	baseRef    string
+	connID     int
+	primary    bool
+}
+
+// prReposFor resolves the repos to open PRs for: info.Repos (WI-449) when the
+// run reported per-repo results, else the legacy single primary repo derived
+// from info.Branch. Each is enriched with its SCM connection + primary flag by
+// matching the binding's repos by slug. Repos with no branch (no_changes) or no
+// SCM connection are dropped.
+func (s *AgentPRService) prReposFor(info PostRunInfo, binding *models.WorkspaceAgentBinding) []prRepo {
+	byslug := make(map[string]models.BindingRepo, len(binding.Repos))
+	for _, br := range binding.Repos {
+		byslug[br.RepoSlug] = br
+	}
+	resolve := func(slug, branch, baseCommit string) (prRepo, bool) {
+		if branch == "" {
+			return prRepo{}, false
+		}
+		br, ok := byslug[slug]
+		if !ok {
+			// Fall back to the binding's mirrored primary fields for a repo not
+			// found in the child table (pre-migration / legacy single repo).
+			if binding.SCMConnectionID == nil || binding.RepoSlug != slug {
+				return prRepo{}, false
+			}
+			return prRepo{slug: slug, branch: branch, baseCommit: baseCommit, baseRef: binding.RepoBaseRef, connID: *binding.SCMConnectionID, primary: true}, true
+		}
+		if br.SCMConnectionID == nil {
+			return prRepo{}, false
+		}
+		return prRepo{slug: slug, branch: branch, baseCommit: baseCommit, baseRef: br.RepoBaseRef, connID: *br.SCMConnectionID, primary: br.IsPrimary}, true
 	}
 
-	// Continuation run: the runner already pushed commits onto the existing PR's
-	// head branch (info.Branch), so the PR grew in place — opening another PR
-	// would duplicate it. Post a progress comment instead and stop.
-	if info.Trigger.IsContinuation() {
-		s.afterContinuationRun(ctx, info, binding, owner, repo)
-		return
+	var out []prRepo
+	if len(info.Repos) > 0 {
+		for _, r := range info.Repos {
+			if pr, ok := resolve(r.RepoSlug, r.Branch, r.BaseCommit); ok {
+				out = append(out, pr)
+			}
+		}
+		return out
 	}
+	// Legacy single-repo run: one repo from the scalar branch fields.
+	if pr, ok := resolve(binding.RepoSlug, info.Branch, info.BaseCommit); ok {
+		out = append(out, pr)
+	}
+	return out
+}
 
-	base := binding.RepoBaseRef
+// openRepoPR opens a draft PR for one changed repo and, when it is the primary
+// repo, links it to the work item.
+func (s *AgentPRService) openRepoPR(ctx context.Context, info PostRunInfo, binding *models.WorkspaceAgentBinding, pr prRepo, owner, repo string) {
+	base := pr.baseRef
 	if base == "" {
 		base = "main"
 	}
@@ -178,18 +254,18 @@ func (s *AgentPRService) AfterRun(ctx context.Context, info PostRunInfo) {
 	// PR note; the harness footer (run id / base / branch) follows a rule.
 	body := fmt.Sprintf(
 		"Opened by the Windshift coding-agent harness.\n\nRun id: %d\nBase commit: %s\nBranch: %s\n",
-		info.RunID, info.BaseCommit, info.Branch,
+		info.RunID, pr.baseCommit, pr.branch,
 	)
 	if note := boundPRNote(info.Summary); note != "" {
 		body = note + "\n\n---\n\n" + body
 	}
 
-	pr, err := s.openPRWithRetry(ctx, info.RunID, OpenPRRequest{
-		ConnectionID: *binding.SCMConnectionID,
+	opened, err := s.openPRWithRetry(ctx, info.RunID, OpenPRRequest{
+		ConnectionID: pr.connID,
 		UserID:       info.TriggeredByUserID,
 		Owner:        owner,
 		Repo:         repo,
-		HeadBranch:   info.Branch,
+		HeadBranch:   pr.branch,
 		BaseBranch:   base,
 		Title:        title,
 		Body:         body,
@@ -199,12 +275,14 @@ func (s *AgentPRService) AfterRun(ctx context.Context, info PostRunInfo) {
 		s.logger.Printf("agent pr: open pr run=%d %s/%s: %v", info.RunID, owner, repo, err)
 		return
 	}
-	s.logger.Printf("agent pr: opened PR %s for run=%d (binding=%d, %s/%s)", pr.URL, info.RunID, binding.ID, owner, repo)
+	s.logger.Printf("agent pr: opened PR %s for run=%d (binding=%d, %s/%s, primary=%t)", opened.URL, info.RunID, binding.ID, owner, repo, pr.primary)
 
-	if info.ItemID == nil {
+	// Only the primary repo's PR represents the work item; secondary repos open
+	// PRs but are not linked back to the item.
+	if !pr.primary || info.ItemID == nil {
 		return
 	}
-	if err := s.upsertItemSCMLink(ctx, *info.ItemID, *binding.SCMConnectionID, binding.RepoSlug, pr); err != nil {
+	if err := s.upsertItemSCMLink(ctx, *info.ItemID, pr.connID, pr.slug, opened); err != nil {
 		s.logger.Printf("agent pr: upsert item_scm_link run=%d: %v", info.RunID, err)
 	}
 }
@@ -295,14 +373,14 @@ func IsPermanentOpenPRError(err error) bool {
 // writes a new link row (the PR was linked when it was first opened/detected).
 // A nil commentPR seam degrades to a log line — the commits are already on the
 // PR regardless.
-func (s *AgentPRService) afterContinuationRun(ctx context.Context, info PostRunInfo, binding *models.WorkspaceAgentBinding, owner, repo string) {
+func (s *AgentPRService) afterContinuationRun(ctx context.Context, info PostRunInfo, binding *models.WorkspaceAgentBinding, connID int, owner, repo string) {
 	number := info.Trigger.ContinuePRNumber
 	s.logger.Printf("agent pr: continuation run=%d pushed to %s/%s PR #%d (binding=%d)", info.RunID, owner, repo, number, binding.ID)
 	if s.commentPR == nil || number <= 0 {
 		return
 	}
 	if err := s.commentPR(ctx, PRCommentRequest{
-		ConnectionID: *binding.SCMConnectionID,
+		ConnectionID: connID,
 		UserID:       info.TriggeredByUserID,
 		Owner:        owner,
 		Repo:         repo,

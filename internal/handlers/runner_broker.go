@@ -346,7 +346,10 @@ func (h *RunnerBrokerHandler) ProxyGit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	repoName := owner + "/" + strings.TrimSuffix(repo, ".git")
-	if status != models.AgentRunStatusRunning || grants == nil || grants.Git == nil || grants.Git.Repo != repoName {
+	// Select the grant authorizing THIS repo (WI-449: a run may bind several).
+	// Deny-by-default: no matching grant → forbidden.
+	gitGrant := grants.GitGrantFor(repoName)
+	if status != models.AgentRunStatusRunning || gitGrant == nil {
 		respondForbidden(w, r)
 		return
 	}
@@ -389,10 +392,10 @@ func (h *RunnerBrokerHandler) ProxyGit(w http.ResponseWriter, r *http.Request) {
 	// triggering user). 0 — legacy runs queued before the field existed —
 	// keeps the connection-level credential.
 	var scmToken, scmProviderType, scmBase string
-	if grants.Git.UserID > 0 {
-		scmToken, scmProviderType, scmBase, err = h.scm.ResolveForRunAsUser(r.Context(), grants.Git.ConnectionID, grants.Git.UserID)
+	if gitGrant.UserID > 0 {
+		scmToken, scmProviderType, scmBase, err = h.scm.ResolveForRunAsUser(r.Context(), gitGrant.ConnectionID, gitGrant.UserID)
 	} else {
-		scmToken, scmProviderType, scmBase, err = h.scm.ResolveForRun(r.Context(), grants.Git.ConnectionID)
+		scmToken, scmProviderType, scmBase, err = h.scm.ResolveForRun(r.Context(), gitGrant.ConnectionID)
 	}
 	if err != nil {
 		respondServiceUnavailable(w, r, "scm credential unavailable")

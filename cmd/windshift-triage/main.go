@@ -32,6 +32,7 @@ import (
 	"fmt"
 	iofs "io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -64,6 +65,7 @@ func runPrepare(args []string) error {
 	remoteURL := fs.String("remote-url", "", "tokenless remote URL")
 	baseRef := fs.String("base-ref", "main", "base ref to branch from")
 	continueBranch := fs.String("continue-branch", "", "existing PR head branch to continue (overrides base-ref; pushes back to it)")
+	destDir := fs.String("dest-dir", "", "place the checkout here instead of the default per-run location (WI-449 multi-repo sibling layout)")
 	runID := fs.Int("run-id", 0, "run id")
 	tokenFile := fs.String("token-file", "", "file holding the SCM token (askpass)")
 	transport := fs.String("git-transport", "askpass", "askpass|proxy")
@@ -88,6 +90,7 @@ func runPrepare(args []string) error {
 		RemoteURL:      *remoteURL,
 		BaseRef:        *baseRef,
 		ContinueBranch: *continueBranch,
+		DestDir:        *destDir,
 		Token:          token,
 	}, *runID)
 	if err != nil {
@@ -95,6 +98,16 @@ func runPrepare(args []string) error {
 	}
 	if err := chownCheckoutForAgent(pr.Path); err != nil {
 		return fmt.Errorf("chown checkout for agent uid: %w", err)
+	}
+	// Multi-repo (WI-449): the agent's /workspace is the PARENT dir holding the
+	// sibling checkouts, not this single checkout. chownCheckoutForAgent only
+	// chowned this repo's subdir; without also handing the parent to the agent
+	// uid, the pinned uid=1000 agent can't `cd /workspace` (root-owned). Chown
+	// just the parent dir entry (the subdirs are already chowned recursively).
+	if *destDir != "" {
+		if err := chownDirForAgent(filepath.Dir(*destDir)); err != nil {
+			return fmt.Errorf("chown workspace parent for agent uid: %w", err)
+		}
 	}
 	return emit(map[string]string{
 		"checkout_path": pr.Path,
@@ -112,6 +125,24 @@ func runPrepare(args []string) error {
 // container is spawned by the same uid that owns the checkout there — that
 // case is skipped, every other failure is fatal so the run fails fast with a
 // clear error instead of an opaque in-container EACCES.
+// chownDirForAgent hands a single directory entry to the pinned agent uid so
+// the uid=1000 agent container can traverse into it (WI-449). Used for the
+// multi-repo workspace PARENT dir that becomes /workspace — only the dir itself
+// needs chowning (the repo checkouts beneath it are chowned recursively by
+// chownCheckoutForAgent). Non-recursive. A non-root runner can't chown and
+// doesn't need to (the agent runs as the same uid that owns the tree).
+func chownDirForAgent(dir string) error {
+	const agentUID, agentGID = 1000, 1000
+	if err := os.Lchown(dir, agentUID, agentGID); err != nil {
+		if errors.Is(err, iofs.ErrPermission) {
+			fmt.Fprintf(os.Stderr, "windshift-triage: skipping workspace-parent chown (not root): %v\n", err)
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
 func chownCheckoutForAgent(checkout string) error {
 	const agentUID, agentGID = 1000, 1000
 	root, err := os.OpenRoot(checkout)

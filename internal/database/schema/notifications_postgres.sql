@@ -85,3 +85,20 @@ CREATE INDEX IF NOT EXISTS idx_config_set_notification_settings_notification ON 
 -- One notification setting per configuration set (matches schema/notifications.sql).
 CREATE UNIQUE INDEX IF NOT EXISTS uq_config_set_notification_setting_one_per_set
     ON configuration_set_notification_settings(configuration_set_id);
+
+-- Web Push subscriptions (matches schema/notifications.sql). Mirrored by the
+-- 20260618_push_subscriptions catalog migration for existing installs.
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    endpoint TEXT NOT NULL,
+    auth_key TEXT NOT NULL,
+    p256dh_key TEXT NOT NULL,
+    user_agent TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    last_used_at TIMESTAMPTZ,
+    revoked_at TIMESTAMPTZ,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_push_subscriptions_endpoint ON push_subscriptions(endpoint);
+CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user_id ON push_subscriptions(user_id);

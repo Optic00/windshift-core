@@ -46,6 +46,14 @@ type RepoSpec struct {
 	// stays non-force: if the remote branch advanced during the run the push is
 	// rejected (never force-push someone's branch).
 	ContinueBranch string
+	// DestDir, when set, overrides where the per-run checkout is materialized
+	// (WI-449). Empty uses the default <root>/<workspace>/<slug>/runs/<runID>
+	// — the single-repo layout, unchanged. A multi-repo run sets this to a
+	// sibling dir under a shared per-run workspace root (e.g.
+	// <root>/.workspaces/run-7/core-tests) so the agent sees every bound repo
+	// checked out side by side. The bare object cache stays at its
+	// per-(workspace,slug) location regardless, so cloning is still cached.
+	DestDir string
 }
 
 // Prepared is the result of Prepare. Path is the host directory the runner
@@ -208,6 +216,9 @@ func (p *Preparer) Prepare(ctx context.Context, spec RepoSpec, runID int) (*Prep
 	}
 
 	dest := filepath.Join(repoRoot, "runs", fmt.Sprintf("%d", runID))
+	if spec.DestDir != "" {
+		dest = spec.DestDir
+	}
 	// A continuation keeps the PR head's branch name so Push targets the same
 	// remote branch; a normal run gets a fresh per-run branch.
 	branch := fmt.Sprintf("agent-runs/run-%d", runID)
@@ -408,6 +419,23 @@ func (p *Preparer) Cleanup(_ context.Context, pr *Prepared) error {
 		p.logger.Printf("repoprep: cleanup %s: %v", pr.Path, err)
 	}
 	return nil
+}
+
+// RunWorkspaceDir returns the per-run parent directory a multi-repo run uses
+// as the agent's working directory, with each bound repo checked out as a
+// subdir beneath it (WI-449). Callers pass <dir>/<repo-dir> as RepoSpec.DestDir
+// per repo, then mount this dir. CleanupWorkspaceDir removes it after the run.
+func (p *Preparer) RunWorkspaceDir(runID int) string {
+	return filepath.Join(p.rootDir, ".workspaces", fmt.Sprintf("run-%d", runID))
+}
+
+// CleanupWorkspaceDir removes a multi-repo run's parent workspace dir
+// (WI-449). Best-effort, mirroring Cleanup.
+func (p *Preparer) CleanupWorkspaceDir(runID int) {
+	dir := p.RunWorkspaceDir(runID)
+	if err := os.RemoveAll(dir); err != nil {
+		p.logger.Printf("repoprep: cleanup workspace %s: %v", dir, err)
+	}
 }
 
 // EvictIdle removes cached bare clones (and their repo trees) that have no

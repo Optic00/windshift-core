@@ -77,6 +77,16 @@ type ReportRequest struct {
 	Branch      string `json:"branch,omitempty"`
 	BaseCommit  string `json:"base_commit,omitempty"`
 	Summary     string `json:"summary,omitempty"` // agent finish summary, rendered as the PR note (WI-400)
+	// Repos is the per-repo push result of a multi-repo run (WI-449). Empty for
+	// single-repo runs, which use Branch/BaseCommit.
+	Repos []ReportRepo `json:"repos,omitempty"`
+}
+
+// ReportRepo is one repo's push result in a ReportRequest (WI-449).
+type ReportRepo struct {
+	RepoSlug   string `json:"repo_slug"`
+	Branch     string `json:"branch,omitempty"`
+	BaseCommit string `json:"base_commit,omitempty"`
 }
 
 // HeartbeatResponse is returned from POST /runner/heartbeat. Abort lists the
@@ -224,6 +234,9 @@ func (c *HTTPOrchestratorClient) Report(ctx context.Context, runID int, result R
 		Branch:      result.Branch,
 		BaseCommit:  result.BaseCommit,
 		Summary:     result.Summary,
+	}
+	for _, rr := range result.Repos {
+		req.Repos = append(req.Repos, ReportRepo(rr))
 	}
 	base := context.WithoutCancel(ctx)
 	url := fmt.Sprintf("%s/runner/runs/%d/result", c.baseURL, runID)

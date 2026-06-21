@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	"windshift/internal/models"
 	"windshift/internal/repoprep"
@@ -30,16 +32,59 @@ type queuedJob struct {
 }
 
 // claimState is the per-run bookkeeping kept between claim and Report so
-// Report can finalize, clean up the worktree, and build PostRunInfo
+// Report can finalize, clean up the worktree(s), and build PostRunInfo
 // without re-deriving anything.
+//
+// repos + checkouts are parallel slices, primary first (WI-449). path/branch/
+// baseCommit mirror the PRIMARY checkout so the existing single-repo finalize
+// and PR-hook paths keep working unchanged. workspaceRoot is the multi-repo
+// parent dir to clean up ("" for a single-repo run, which owns no parent dir).
 type claimState struct {
-	req        RunRequest
-	checkout   *repoprep.Prepared
-	path       string
-	branch     string
-	baseCommit string
-	ephemeral  bool
-	cancel     context.CancelFunc
+	req           RunRequest
+	repos         []*repoprep.RepoSpec
+	checkouts     []*repoprep.Prepared
+	path          string
+	branch        string
+	baseCommit    string
+	workspaceRoot string
+	ephemeral     bool
+	cancel        context.CancelFunc
+}
+
+// runRepos returns the run's repos primary-first: req.Repos when set, else the
+// deprecated single req.Repo as a one-element slice (WI-449).
+func runRepos(req RunRequest) []*repoprep.RepoSpec {
+	if len(req.Repos) > 0 {
+		return req.Repos
+	}
+	if req.Repo != nil {
+		return []*repoprep.RepoSpec{req.Repo}
+	}
+	return nil
+}
+
+// repoDirNames maps each repo to a unique on-disk subdir name for the multi-repo
+// workspace layout (WI-449): the slug's last segment ("owner/core-tests" ->
+// "core-tests"), disambiguated with a numeric suffix if two repos share a name.
+func repoDirNames(repos []*repoprep.RepoSpec) []string {
+	names := make([]string, len(repos))
+	seen := make(map[string]int, len(repos))
+	for i, r := range repos {
+		base := r.RepoSlug
+		if idx := strings.LastIndex(base, "/"); idx >= 0 && idx < len(base)-1 {
+			base = base[idx+1:]
+		}
+		if base == "" {
+			base = fmt.Sprintf("repo%d", i)
+		}
+		name := base
+		if n, ok := seen[base]; ok {
+			name = fmt.Sprintf("%s-%d", base, n+1)
+		}
+		seen[base]++
+		names[i] = name
+	}
+	return names
 }
 
 // queueBuffer sizes the in-process job queue. It is generous relative to
@@ -117,22 +162,59 @@ func (s *RunService) claimNext() *ClaimedJob {
 
 		st := claimState{req: job.req, ephemeral: job.req.Ephemeral, cancel: cancel}
 
-		if job.req.Repo != nil {
-			pw, err := s.preparer.Prepare(runCtx, *job.req.Repo, job.runID)
-			if err != nil {
-				s.logger.Printf("run service: prepare checkout run=%d: %v", job.runID, err)
-				// Checkout-prep failure fires the post-run hook (matches
-				// the prior inline behavior).
-				s.failClaim(job, cancel, fmt.Sprintf("prepare checkout: %v", err), true)
+		repos := runRepos(job.req)
+		if len(repos) > 0 {
+			// Single repo → the checkout dir itself is the agent's cwd (the
+			// pre-WI-449 layout, unchanged). Multiple repos → each is checked
+			// out as a sibling dir under a shared per-run workspace root that
+			// becomes the cwd, so the agent sees every bound repo at once.
+			multi := len(repos) > 1
+			if multi {
+				st.workspaceRoot = s.preparer.RunWorkspaceDir(job.runID)
+			}
+			dirNames := repoDirNames(repos)
+			prepFailed := false
+			for i, rspec := range repos {
+				spec := *rspec
+				if multi {
+					spec.DestDir = filepath.Join(st.workspaceRoot, dirNames[i])
+				}
+				pw, err := s.preparer.Prepare(runCtx, spec, job.runID)
+				if err != nil {
+					s.logger.Printf("run service: prepare checkout run=%d repo=%s: %v", job.runID, rspec.RepoSlug, err)
+					prepFailed = true
+					break
+				}
+				st.repos = append(st.repos, rspec)
+				st.checkouts = append(st.checkouts, pw)
+				_ = s.repo.AppendEvent(runCtx, job.runID, "lifecycle", fmt.Sprintf(
+					`{"phase":"worktree_ready","repo":%q,"path":%q,"branch":%q,"base_commit":%q}`,
+					rspec.RepoSlug, pw.Path, pw.Branch, pw.BaseCommit))
+			}
+			if prepFailed {
+				// A partial multi-repo checkout is unusable; clean up what we
+				// prepared and fail visibly. Checkout-prep failure fires the
+				// post-run hook (matches the prior inline behavior).
+				for _, pw := range st.checkouts {
+					_ = s.preparer.Cleanup(context.Background(), pw)
+				}
+				if st.workspaceRoot != "" {
+					s.preparer.CleanupWorkspaceDir(job.runID)
+				}
+				s.failClaim(job, cancel, "prepare checkout failed", true)
 				continue
 			}
-			st.checkout = pw
-			st.path = pw.Path
-			st.branch = pw.Branch
-			st.baseCommit = pw.BaseCommit
-			_ = s.repo.AppendEvent(runCtx, job.runID, "lifecycle", fmt.Sprintf(
-				`{"phase":"worktree_ready","path":%q,"branch":%q,"base_commit":%q}`,
-				pw.Path, pw.Branch, pw.BaseCommit))
+			// The primary checkout (index 0) drives the single-repo-compatible
+			// path: its branch is the grant ref, and it's the cwd for a
+			// single-repo run.
+			primary := st.checkouts[0]
+			st.branch = primary.Branch
+			st.baseCommit = primary.BaseCommit
+			if multi {
+				st.path = st.workspaceRoot
+			} else {
+				st.path = primary.Path
+			}
 		}
 
 		// Caller-supplied env first; the orchestrator's own injections
@@ -145,7 +227,13 @@ func (s *RunService) claimNext() *ClaimedJob {
 			env[k] = v
 		}
 		if job.req.Token != nil {
-			token, err := s.mintTokenAndGrants(runCtx, job.runID, *job.req.Token, job.req.Grants, st.branch)
+			// Per-repo push refs: each grant may push only its prepared branch
+			// (WI-449). Built from the parallel repos/checkouts slices.
+			refByRepo := make(map[string]string, len(st.checkouts))
+			for i, pw := range st.checkouts {
+				refByRepo[st.repos[i].RepoSlug] = pw.Branch
+			}
+			token, err := s.mintTokenAndGrants(runCtx, job.runID, *job.req.Token, job.req.Grants, refByRepo)
 			if err != nil {
 				s.logger.Printf("run service: mint ws token run=%d: %v", job.runID, err)
 				// Token-mint failure does not fire the hook (matches the
@@ -240,20 +328,35 @@ func (s *RunService) Report(ctx context.Context, runID int, result RunnerResult)
 	// skip the push and clear the branch below so the PR hook sees "no
 	// branch" instead of the remote growing an empty branch and the PR
 	// create call 422-ing.
-	noChanges := false
-	if status == models.AgentRunStatusSucceeded && st != nil && !st.ephemeral && st.checkout != nil && st.req.Repo != nil && s.preparer != nil {
-		switch err := s.preparer.Push(context.Background(), st.checkout, st.req.Repo.Token); {
-		case errors.Is(err, repoprep.ErrNoNewCommits):
-			noChanges = true
-			if err := s.repo.AppendEvent(ctx, runID, "lifecycle", `{"phase":"no_changes"}`); err != nil {
-				s.logger.Printf("run service: append no_changes event run=%d: %v", runID, err)
+	// Per-repo host-side push of each run branch (WI-238, WI-449). Each bound
+	// repo is pushed independently: a commit-less repo is skipped (no_changes)
+	// while its siblings still deliver; any push ERROR downgrades the whole run
+	// to failed so the PR hook never opens a PR for a branch that never landed.
+	// pushedRepos carries the per-repo outcome to PostRunInfo (Branch empty =
+	// no_changes / not pushed).
+	var pushedRepos []PostRunRepo
+	if status == models.AgentRunStatusSucceeded && st != nil && !st.ephemeral && len(st.checkouts) > 0 && s.preparer != nil {
+		for i, pw := range st.checkouts {
+			rspec := st.repos[i]
+			rr := PostRunRepo{RepoSlug: rspec.RepoSlug, Branch: pw.Branch, BaseCommit: pw.BaseCommit}
+			switch err := s.preparer.Push(context.Background(), pw, rspec.Token); {
+			case errors.Is(err, repoprep.ErrNoNewCommits):
+				rr.Branch = "" // nothing delivered for this repo
+				if err := s.repo.AppendEvent(ctx, runID, "lifecycle", fmt.Sprintf(`{"phase":"no_changes","repo":%q}`, rspec.RepoSlug)); err != nil {
+					s.logger.Printf("run service: append no_changes event run=%d: %v", runID, err)
+				}
+			case err != nil:
+				s.logger.Printf("run service: push run branch run=%d repo=%s: %v", runID, rspec.RepoSlug, err)
+				status = models.AgentRunStatusFailed
+				result.Error = fmt.Sprintf("push run branch %s: %v", rspec.RepoSlug, err)
 			}
-		case err != nil:
-			s.logger.Printf("run service: push run branch run=%d: %v", runID, err)
-			status = models.AgentRunStatusFailed
-			result.Error = fmt.Sprintf("push run branch: %v", err)
+			pushedRepos = append(pushedRepos, rr)
 		}
 	}
+	// The primary repo (index 0) backs the deprecated scalar Branch/BaseCommit
+	// on PostRunInfo. noChanges (primary unchanged) clears them, matching the
+	// pre-WI-449 single-repo contract the PR hook still falls back to.
+	noChanges := len(pushedRepos) > 0 && pushedRepos[0].Branch == ""
 
 	s.finalize(runID, status, result.Error)
 	if err := s.repo.AppendEvent(ctx, runID, "lifecycle", fmt.Sprintf(`{"phase":%q}`, status)); err != nil {
@@ -273,10 +376,13 @@ func (s *RunService) Report(ctx context.Context, runID int, result RunnerResult)
 			baseCommit = st.baseCommit
 		}
 		cancel = st.cancel
-		if st.checkout != nil {
-			if err := s.preparer.Cleanup(context.Background(), st.checkout); err != nil {
+		for _, pw := range st.checkouts {
+			if err := s.preparer.Cleanup(context.Background(), pw); err != nil {
 				s.logger.Printf("run service: cleanup checkout run=%d: %v", runID, err)
 			}
+		}
+		if st.workspaceRoot != "" {
+			s.preparer.CleanupWorkspaceDir(runID)
 		}
 	}
 
@@ -295,6 +401,7 @@ func (s *RunService) Report(ctx context.Context, runID int, result RunnerResult)
 			TriggeredByUserID: req.TriggeredByUserID,
 			Summary:           result.Summary,
 			Trigger:           req.Trigger,
+			Repos:             pushedRepos,
 		})
 	}
 

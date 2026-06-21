@@ -13,10 +13,18 @@ import (
 // (agent_runs.run_token_id) is what binds a presented credential to these
 // grants — so a leaked token for run A cannot reach run B's resources.
 type RunGrants struct {
-	Git     *GitGrant `json:"git,omitempty"`
-	LLM     *LLMGrant `json:"llm,omitempty"`
-	Secrets []int     `json:"secrets,omitempty"` // ActionCredential ids the run may fetch
-	HTTP    []string  `json:"http,omitempty"`    // allowed outbound URL prefixes
+	// Git is the deprecated single-repo git grant (WI-449). Superseded by
+	// GitRepos; kept one release as the primary repo's grant so older broker
+	// code and runs persisted before the change keep working. New grants
+	// populate both Git (= primary) and GitRepos (all repos).
+	Git *GitGrant `json:"git,omitempty"`
+	// GitRepos is one grant per repository a multi-repo run may reach (WI-449).
+	// The broker authorizes each git request against the grant whose Repo
+	// matches the requested owner/repo — deny-by-default if none matches.
+	GitRepos []GitGrant `json:"git_repos,omitempty"`
+	LLM      *LLMGrant  `json:"llm,omitempty"`
+	Secrets  []int      `json:"secrets,omitempty"` // ActionCredential ids the run may fetch
+	HTTP     []string   `json:"http,omitempty"`    // allowed outbound URL prefixes
 }
 
 // GitGrant scopes a run's git access to a single repo and the single ref it
@@ -40,21 +48,52 @@ type LLMGrant struct {
 	QuotaTokens  int `json:"quota_tokens,omitempty"`
 }
 
+// gitGrants returns the effective per-repo grant list: GitRepos when present,
+// else the deprecated single Git as a one-element list (WI-449). Returns a
+// fresh slice; callers must treat entries as read-only.
+func (g *RunGrants) gitGrants() []GitGrant {
+	if g == nil {
+		return nil
+	}
+	if len(g.GitRepos) > 0 {
+		return g.GitRepos
+	}
+	if g.Git != nil {
+		return []GitGrant{*g.Git}
+	}
+	return nil
+}
+
+// GitGrantFor returns the grant authorizing access to repo ("owner/repo"), or
+// nil if the run holds no grant for it (deny-by-default). This is the single
+// chokepoint the git broker uses to both authorize a repo and resolve the
+// credential principal/connection for it (WI-449).
+func (g *RunGrants) GitGrantFor(repo string) *GitGrant {
+	grants := g.gitGrants()
+	for i := range grants {
+		if grants[i].Repo == repo {
+			return &grants[i]
+		}
+	}
+	return nil
+}
+
 // AllowsGitRepo reports whether the run may access the given owner/repo.
 func (g *RunGrants) AllowsGitRepo(repo string) bool {
-	return g != nil && g.Git != nil && g.Git.Repo == repo
+	return g.GitGrantFor(repo) != nil
 }
 
 // AllowsGitPush reports whether the run may push the given ref to repo. The
-// push is gated to the single branch named in the grant. git-receive-pack
-// always sends the fully-qualified ref ("refs/heads/agent-runs/run-7"), while
-// the grant may store that branch either short ("agent-runs/run-7", as the run
-// service mints it) or already qualified — so both sides are normalized to
-// refs/heads/<branch> before the exact match. A tag or any other ref class
+// push is gated to the single branch named in that repo's grant. git-receive-
+// pack always sends the fully-qualified ref ("refs/heads/agent-runs/run-7"),
+// while the grant may store that branch either short ("agent-runs/run-7", as
+// the run service mints it) or already qualified — so both sides are normalized
+// to refs/heads/<branch> before the exact match. A tag or any other ref class
 // never collapses onto a branch grant, so this stays a single-branch gate.
 func (g *RunGrants) AllowsGitPush(repo, ref string) bool {
-	return g.AllowsGitRepo(repo) && g.Git.Ref != "" &&
-		qualifyBranchRef(g.Git.Ref) == qualifyBranchRef(ref)
+	grant := g.GitGrantFor(repo)
+	return grant != nil && grant.Ref != "" &&
+		qualifyBranchRef(grant.Ref) == qualifyBranchRef(ref)
 }
 
 // qualifyBranchRef returns ref in fully-qualified form, treating a bare name as

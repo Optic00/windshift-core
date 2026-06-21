@@ -49,6 +49,18 @@ type RunnerResult struct {
 	// Empty when the agent emitted no summary. Agent-generated text — bound and
 	// sanitize before it reaches an SCM PR body.
 	Summary string
+	// Repos carries the per-repo push results of a multi-repo run (WI-449),
+	// primary first. Branch is empty for a repo with no new commits. When set,
+	// it supersedes the scalar Branch/BaseCommit (which mirror the primary).
+	Repos []RunnerRepoResult
+}
+
+// RunnerRepoResult is one repo's push result reported by a (remote) runner that
+// prepared its own checkouts (WI-449).
+type RunnerRepoResult struct {
+	RepoSlug   string
+	Branch     string
+	BaseCommit string
 }
 
 // RunInput is what RunService hands to a Runner when work is admitted:
@@ -68,7 +80,12 @@ type RunInput struct {
 	// Repo, when set, asks a repo-preparing runner (the remote TriageRunner)
 	// to materialize its own checkout and push the run branch via the
 	// git-proxy. Nil for local runs (WorkspacePath is already prepared).
+	// Deprecated by Repos; mirrors Repos[0] (the primary).
 	Repo *JobRepo
+	// Repos is every repo a repo-preparing runner must check out (WI-449),
+	// primary first. One entry → single-repo layout; many → sibling checkouts
+	// under a shared workspace root, each pushed independently.
+	Repos []JobRepo
 }
 
 // Runner executes the actual work of a run: spawning a container, driving
@@ -114,9 +131,17 @@ type RunRequest struct {
 	WorkspaceID int
 	ItemID      *int
 	BindingID   int
-	Repo        *repoprep.RepoSpec
-	Token       *TokenSpec
-	Env         map[string]string
+	// Repo is the deprecated single-repo input (WI-449). Prefer Repos. When
+	// Repos is empty and Repo is set, the run path treats it as a one-element
+	// primary repo, keeping single-repo behavior byte-identical.
+	Repo *repoprep.RepoSpec
+	// Repos is the set of repositories to check out for the run (WI-449), the
+	// primary first. One repo → single-repo layout (cwd = that checkout, as
+	// before); more than one → each is checked out as a sibling dir under a
+	// shared per-run workspace root that becomes the agent's cwd.
+	Repos []*repoprep.RepoSpec
+	Token *TokenSpec
+	Env   map[string]string
 	// Grants, when set, is snapshotted onto the run at claim time and bound
 	// to the minted run-token (WI-144) so the access-layer brokers can
 	// authorize the run's git/llm/secret access. The git ref is filled in at
@@ -217,6 +242,21 @@ type PostRunInfo struct {
 	// existing PR's head branch — so it comments on that PR instead of opening a
 	// new one.
 	Trigger *models.RunTrigger
+	// Repos carries the per-repo push outcome for a multi-repo run (WI-449),
+	// the primary first. Branch is empty for a repo the agent left unchanged
+	// (no_changes). For single-repo runs this has one entry mirroring
+	// Branch/BaseCommit above; the PR hook prefers Repos when present and falls
+	// back to the scalar Branch/BaseCommit otherwise.
+	Repos []PostRunRepo
+}
+
+// PostRunRepo is one repo's push result handed to the PR hook (WI-449). The run
+// service fills only what it knows — RepoSlug + the pushed Branch/BaseCommit;
+// the SCM connection and primary flag are resolved by the hook from the binding.
+type PostRunRepo struct {
+	RepoSlug   string
+	Branch     string // empty when the repo had no new commits
+	BaseCommit string
 }
 
 // BindingInputsResolver derives a binding-backed run's per-run token spec,
@@ -234,9 +274,14 @@ type BindingInputsResolver interface {
 // env, and the per-binding prompt suffix (instructions + skills index,
 // WI-258). Nil means "no binding" — the claim proceeds without enrichment.
 type RunInputs struct {
-	Token        *TokenSpec
-	Grants       *models.RunGrants
-	Repo         *JobRepo
+	Token  *TokenSpec
+	Grants *models.RunGrants
+	// Repo is the deprecated single-repo prep input (WI-449); mirrors Repos[0]
+	// (the primary). Prefer Repos.
+	Repo *JobRepo
+	// Repos is every repo a remote runner must check out, primary first
+	// (WI-449).
+	Repos        []JobRepo
 	Env          map[string]string
 	PromptSuffix string
 }
@@ -446,7 +491,7 @@ func (s *RunService) Start(ctx context.Context, req RunRequest) (int, error) {
 		return runID, nil
 	}
 
-	if req.Repo != nil && s.preparer == nil {
+	if (req.Repo != nil || len(req.Repos) > 0) && s.preparer == nil {
 		return 0, errors.New("run service: request includes a Repo but no Preparer is configured")
 	}
 	if req.Token != nil && s.tokens == nil {
@@ -558,6 +603,17 @@ func (s *RunService) FinalizeRemote(ctx context.Context, runID int, result Runne
 	// them here, the single point where remote-reported SCM state reaches the
 	// hook (the local in-process path derives both server-side and is trusted).
 	branch, baseCommit = s.validateRemoteSCMRefs(ctx, runID, branch, baseCommit)
+	// Per-repo results (WI-449): each reported branch is an untrusted assertion,
+	// validated the same way as the scalar primary branch before it reaches the
+	// PR hook. Repos with no branch (no_changes) are dropped.
+	var repos []PostRunRepo
+	for _, rr := range result.Repos {
+		vb, vbc := s.validateRemoteSCMRefs(ctx, runID, rr.Branch, rr.BaseCommit)
+		if vb == "" {
+			continue
+		}
+		repos = append(repos, PostRunRepo{RepoSlug: rr.RepoSlug, Branch: vb, BaseCommit: vbc})
+	}
 	triggeredBy := 0
 	if run.TriggeredByUserID != nil {
 		triggeredBy = *run.TriggeredByUserID
@@ -573,6 +629,7 @@ func (s *RunService) FinalizeRemote(ctx context.Context, runID int, result Runne
 		TriggeredByUserID: triggeredBy,
 		Summary:           result.Summary,
 		Trigger:           run.Trigger,
+		Repos:             repos,
 	})
 	return nil
 }
@@ -693,7 +750,7 @@ func clipForEvent(s string) string {
 // branch for local runs, the run-branch namespace for remote runs. Grant
 // persistence is best-effort: a failure leaves the run without grants, which
 // the brokers treat as deny — safe, just no brokered access.
-func (s *RunService) mintTokenAndGrants(ctx context.Context, runID int, spec TokenSpec, grants *models.RunGrants, ref string) (string, error) {
+func (s *RunService) mintTokenAndGrants(ctx context.Context, runID int, spec TokenSpec, grants *models.RunGrants, refByRepo map[string]string) (string, error) {
 	minted, err := s.tokens.Mint(ctx, MintRequest(spec))
 	if err != nil {
 		return "", err
@@ -702,10 +759,25 @@ func (s *RunService) mintTokenAndGrants(ctx context.Context, runID int, spec Tok
 		`{"phase":"token_minted","token_id":%d,"expires_at":%q}`,
 		minted.TokenID, minted.ExpiresAt.Format(time.RFC3339)))
 	if grants != nil {
+		// Fill each repo's push ref (the branch the run may push) from the
+		// per-repo branch map, copying so the caller's grants aren't mutated
+		// (WI-449). A repo with no ref stays read-only (clone/fetch, no push).
 		g := *grants
-		if g.Git != nil && ref != "" {
+		if len(g.GitRepos) > 0 {
+			repos := make([]models.GitGrant, len(g.GitRepos))
+			copy(repos, g.GitRepos)
+			for i := range repos {
+				if ref := refByRepo[repos[i].Repo]; ref != "" {
+					repos[i].Ref = ref
+				}
+			}
+			g.GitRepos = repos
+		}
+		if g.Git != nil {
 			gg := *g.Git
-			gg.Ref = ref
+			if ref := refByRepo[gg.Repo]; ref != "" {
+				gg.Ref = ref
+			}
 			g.Git = &gg
 		}
 		if err := s.repo.SetGrants(ctx, runID, minted.TokenID, &g, s.now()); err != nil {
@@ -784,7 +856,12 @@ func (s *RunService) PrepareRemoteClaim(ctx context.Context, run *models.AgentRu
 	}
 	env["AGENT_RUN_ID"] = fmt.Sprintf("%d", run.ID)
 	if inputs.Token != nil {
-		token, err := s.mintTokenAndGrants(ctx, run.ID, *inputs.Token, inputs.Grants, fmt.Sprintf("agent-runs/run-%d", run.ID))
+		// Per-repo push refs the remote runner will create (WI-449): the fresh
+		// per-run branch for each repo, or the continuation head branch for the
+		// one repo that continues a PR. Each git grant may push only its ref.
+		runBranch := fmt.Sprintf("agent-runs/run-%d", run.ID)
+		refByRepo := remoteRefByRepo(inputs.Grants, inputs, runBranch)
+		token, err := s.mintTokenAndGrants(ctx, run.ID, *inputs.Token, inputs.Grants, refByRepo)
 		if err != nil {
 			return JobSpec{}, fmt.Errorf("remote claim: mint token run=%d: %w", run.ID, err)
 		}
@@ -792,10 +869,41 @@ func (s *RunService) PrepareRemoteClaim(ctx context.Context, run *models.AgentRu
 		applyLLMProxyEnv(env, inputs.Grants, run.ID, token)
 	}
 	spec.Env = env
-	// A remote runner prepares its own checkout from this; the host
-	// WorkspacePath stays empty on the wire.
+	// A remote runner prepares its own checkout(s) from these; the host
+	// WorkspacePath stays empty on the wire. Repo mirrors the primary for older
+	// runners that read the single field.
 	spec.Repo = inputs.Repo
+	spec.Repos = inputs.Repos
 	return spec, nil
+}
+
+// remoteRefByRepo maps each granted repo to the branch the run may push
+// (WI-449): the fresh per-run branch by default, overridden by a continuation
+// head branch for the one repo that continues a PR. Keyed off the grants (the
+// authoritative set of repos the run can reach) so it works even when the
+// resolver supplies grants without per-repo JobRepo prep inputs.
+func remoteRefByRepo(grants *models.RunGrants, inputs *RunInputs, runBranch string) map[string]string {
+	refs := map[string]string{}
+	if grants != nil {
+		for _, gg := range grants.GitRepos {
+			refs[gg.Repo] = runBranch
+		}
+		if grants.Git != nil {
+			refs[grants.Git.Repo] = runBranch
+		}
+	}
+	// Continuation overrides: the runner lands commits on the existing PR head
+	// branch for the repo that continues, not a fresh per-run branch.
+	repos := inputs.Repos
+	if len(repos) == 0 && inputs.Repo != nil {
+		repos = []JobRepo{*inputs.Repo}
+	}
+	for _, jr := range repos {
+		if jr.ContinueBranch != "" {
+			refs[jr.Slug] = jr.ContinueBranch
+		}
+	}
+	return refs
 }
 
 // Shutdown stops accepting new runs and waits for in-flight runs to drain.
