@@ -99,6 +99,7 @@ func RegisterRoutes(deps restapi.Deps) {
 	diagramHandler := handlers.NewDiagramHandler(db, permissionService)
 	labelHandler := handlers.NewLabelHandler(db, permissionService)
 	testMgmtHandler := handlers.NewTestManagementHandler(db, permissionService)
+	recurrenceHandler := handlers.NewRecurrenceHandler(db, permissionService)
 
 	pagePermissionService := services.NewPagePermissionService(db, permissionService)
 	pageAttachmentUploadHandler := handlers.NewPageAttachmentUploadHandler(
@@ -370,6 +371,23 @@ func RegisterRoutes(deps restapi.Deps) {
 	v1.HandleWithMiddleware("GET /diagrams/{id}", diagramHandler.Get, bearerAuth.RequirePermission("items:read"), router.RequireNumericID)
 	v1.HandleWithMiddleware("PUT /diagrams/{id}", diagramHandler.Update, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)
 	v1.HandleWithMiddleware("DELETE /diagrams/{id}", diagramHandler.Delete, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)
+
+	// ============================================
+	// Item recurrence (RRULE rules + generated instances + RRULE preview).
+	// Mirrors the cookie surface at /api/items/{id}/recurrence[*] and
+	// /api/recurrence-rules/preview, gated by items:* because recurrence is
+	// item-scoped content. The handler still enforces workspace view/edit on
+	// the owning item (404 on failure — existence is never leaked). A GET
+	// returns JSON null (not 404) when no rule is configured, matching the
+	// cookie handler so absence stays a normal state.
+	// ============================================
+	v1.HandleWithMiddleware("GET /items/{id}/recurrence", recurrenceHandler.GetRecurrence, bearerAuth.RequirePermission("items:read"), router.RequireNumericID)
+	v1.HandleWithMiddleware("POST /items/{id}/recurrence", recurrenceHandler.CreateRecurrence, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)
+	v1.HandleWithMiddleware("PUT /items/{id}/recurrence", recurrenceHandler.UpdateRecurrence, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)
+	v1.HandleWithMiddleware("DELETE /items/{id}/recurrence", recurrenceHandler.DeleteRecurrence, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)
+	v1.HandleWithMiddleware("GET /items/{id}/recurrence/instances", recurrenceHandler.ListInstances, bearerAuth.RequirePermission("items:read"), router.RequireNumericID)
+	v1.HandleWithMiddleware("POST /items/{id}/recurrence/generate", recurrenceHandler.ForceGenerate, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)
+	v1.HandleWithMiddleware("POST /recurrence-rules/preview", recurrenceHandler.PreviewRRule, bearerAuth.RequirePermission("items:read"))
 
 	// ============================================
 	// Item labels (workspace-scoped catalog + per-item attach/detach).
