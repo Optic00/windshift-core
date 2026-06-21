@@ -3,14 +3,30 @@
   import { Bell, Check, BellRing, BellOff } from '@lucide/svelte';
   import { notifications, notificationActions } from '../stores/notifications.js';
   import { navigate } from '../router.js';
-  import { getPushState, enablePush, disablePush } from './pushClient.js';
+  import { getPushState, enablePush, disablePush, runPushDiagnostic } from './pushClient.js';
   import MobileHeader from './MobileHeader.svelte';
 
   let push = $state({ supported: false, installed: false, permission: 'default', subscribed: false });
   let pushBusy = $state(false);
+  let testBusy = $state(false);
+  // Diagnostic outcome shown inline under the toggle. `ok` drives the styling:
+  // true = delivered, false = a problem to act on, null = neutral/idle.
+  let testResult = $state(/** @type {{ok: boolean|null, detail: string}|null} */ (null));
 
   async function refreshPush() {
     push = await getPushState();
+  }
+
+  async function runDiagnostic() {
+    if (testBusy) return;
+    testBusy = true;
+    testResult = null;
+    try {
+      const { verdict, detail } = await runPushDiagnostic();
+      testResult = { ok: verdict === 'delivered' ? true : verdict === 'unsupported' ? null : false, detail };
+    } finally {
+      testBusy = false;
+    }
   }
 
   async function togglePush() {
@@ -73,6 +89,19 @@
       <button class="pb-btn on" onclick={togglePush} disabled={pushBusy} data-testid="push-toggle" type="button">
         <BellRing size={16} /> Notifications on
       </button>
+      <button class="pb-test" onclick={runDiagnostic} disabled={testBusy} data-testid="push-test" type="button">
+        {testBusy ? 'Sending test…' : 'Send test notification'}
+      </button>
+      {#if testResult}
+        <p
+          class="pb-result"
+          class:ok={testResult.ok === true}
+          class:bad={testResult.ok === false}
+          data-testid="push-test-result"
+        >
+          {testResult.detail}
+        </p>
+      {/if}
     {:else}
       <button class="pb-btn" onclick={togglePush} disabled={pushBusy} data-testid="push-toggle" type="button">
         <Bell size={16} /> Enable notifications
@@ -136,4 +165,28 @@
   }
   .pb-btn.on { background-color: var(--ds-surface); color: var(--ds-interactive); }
   .pb-btn:disabled { opacity: 0.6; }
+
+  .pb-test {
+    width: 100%; min-height: 40px; margin-top: 0.5rem;
+    border: none; background: transparent;
+    color: var(--ds-text-link, var(--ds-interactive));
+    font-size: 0.8125rem; cursor: pointer;
+  }
+  .pb-test:disabled { opacity: 0.6; }
+
+  .pb-result {
+    margin: 0.5rem 0 0; padding: 0.5rem 0.6rem;
+    border-radius: var(--radius-md, 6px);
+    font-size: 0.8125rem; line-height: 1.35;
+    background-color: var(--ds-background-neutral, color-mix(in srgb, var(--ds-text) 6%, var(--ds-surface)));
+    color: var(--ds-text-subtle);
+  }
+  .pb-result.ok {
+    background-color: color-mix(in srgb, var(--ds-success, #16a34a) 12%, var(--ds-surface));
+    color: var(--ds-text);
+  }
+  .pb-result.bad {
+    background-color: color-mix(in srgb, var(--ds-danger, #dc2626) 12%, var(--ds-surface));
+    color: var(--ds-text);
+  }
 </style>
