@@ -97,29 +97,29 @@ func (bs *BriefingScheduler) Stop() {
 }
 
 func (bs *BriefingScheduler) schedulerLoop(ticker *time.Ticker, stopChan <-chan struct{}) {
-	bs.safeGenerateAllBriefings()
+	bs.safeGenerateAllBriefings(stopChan)
 
 	for {
 		select {
 		case <-ticker.C:
-			bs.safeGenerateAllBriefings()
+			bs.safeGenerateAllBriefings(stopChan)
 		case <-stopChan:
 			return
 		}
 	}
 }
 
-func (bs *BriefingScheduler) safeGenerateAllBriefings() {
+func (bs *BriefingScheduler) safeGenerateAllBriefings(stop <-chan struct{}) {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("briefing: panic in generateAllBriefings", slog.Any("panic", r))
 		}
 	}()
-	bs.generateAllBriefings()
+	bs.generateAllBriefings(stop)
 }
 
 // last review: ser, 300526
-func (bs *BriefingScheduler) generateAllBriefings() {
+func (bs *BriefingScheduler) generateAllBriefings(stop <-chan struct{}) {
 	start := time.Now()
 	var usersProcessed int
 	var runErr error
@@ -168,11 +168,10 @@ func (bs *BriefingScheduler) generateAllBriefings() {
 	)
 
 	now := bs.now()
-	// Snapshot the current stopChan so every worker selects on a stable
-	// reference even if Start/Stop swap the field underneath us. Reading the
-	// shared field from N goroutines while Stop() reassigns it would be a data
-	// race; a local copy avoids that.
-	stop := bs.stopChan
+	// stop is the run's stopChan, captured once in Start() and threaded down
+	// from schedulerLoop. Passing it as a parameter (rather than re-reading the
+	// bs.stopChan field here) keeps every worker on a stable reference and
+	// avoids racing Start()/Stop(), which mutate the field under bs.mu.
 
 	// Bounded worker pool. A buffered channel is the semaphore; each worker
 	// claims a slot before generating and releases it on return. This replaces
@@ -271,16 +270,21 @@ func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, looku
 		slog.Warn("briefing: failed to claim generation lock", slog.Int("user_id", userID), slog.Any("error", err))
 		return false
 	}
-	// Ensure the lease is released on the early-return branches below (the
-	// storeBriefing happy/failure paths clear the lock themselves via UPSERT).
-	// claimed never changes after this point, so the closure captures it fine.
-	releaseOnExit := func() {
-		if claimed {
+	// Release the lease on every exit. The storeBriefing paths clear the lock
+	// themselves via their UPSERT, so guard the deferred release with `stored`
+	// to avoid a redundant write on those paths — while still covering the
+	// early returns AND a panic mid-generation. The caller recovers panics, so
+	// without this defer a panic between the claim and storeBriefing would leave
+	// the row leased until it self-heals 10m later. claimed is always true here
+	// (the failure branches above returned), but the guard keeps it explicit.
+	stored := false
+	defer func() {
+		if claimed && !stored {
 			if relErr := bs.aiRepo.ReleaseBriefingLock(userID, today); relErr != nil {
 				slog.Warn("briefing: failed to release generation lock", slog.Int("user_id", userID), slog.Any("error", relErr))
 			}
 		}
-	}
+	}()
 
 	start := time.Now()
 
@@ -294,8 +298,8 @@ func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, looku
 			slog.Any("error", err),
 		)
 		// "No accessible workspaces" isn't a generation failure — the user simply
-		// has nothing to brief on. Don't penalize the run.
-		releaseOnExit()
+		// has nothing to brief on. Don't penalize the run. The deferred release
+		// clears the lease (no storeBriefing on this path).
 		return err == nil
 	}
 
@@ -427,6 +431,7 @@ func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, looku
 	if len(contextParts) == 0 {
 		slog.Info("briefing: no context found", slog.Int("user_id", userID))
 		bs.storeBriefing(userID, today, "", time.Since(start).Milliseconds(), "")
+		stored = true
 		return true
 	}
 	systemPrompt := bs.promptStore.Get(llm.PromptDailyBriefing)
@@ -455,11 +460,13 @@ func (bs *BriefingScheduler) generateBriefingForUser(llmClient llm.Client, looku
 		}
 		slog.Warn("briefing generation failed", slog.Int("user_id", userID), slog.String("error", errMsg))
 		bs.storeBriefing(userID, today, "", durationMs, errMsg)
+		stored = true
 		return false
 	}
 
 	content := resp.Choices[0].Message.Content
 	bs.storeBriefing(userID, today, content, durationMs, "")
+	stored = true
 
 	slog.Info("briefing: generated",
 		slog.Int("user_id", userID),
