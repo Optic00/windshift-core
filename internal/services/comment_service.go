@@ -65,6 +65,7 @@ type CreateCommentParams struct {
 	IsPrivate             bool       // For action automation private notes
 	ActorUserID           int        // User performing the action (for notifications, 0 for portal customers)
 	CreatedAt             *time.Time // Optional: override created_at (e.g. for imports preserving original timestamps)
+	UpdatedAt             *time.Time // Optional: override updated_at (imports preserving original timestamps); defaults to created_at
 	SuppressNotifications bool       // Skip notifications, mentions, webhooks, and email replies (e.g. plugin-created comments)
 }
 
@@ -114,6 +115,41 @@ func (s *CommentService) SetAgentMentionTrigger(trigger AgentMentionTrigger) {
 
 // Create creates a new comment with all associated side effects:
 // activity tracking, notifications, mentions, and webhooks.
+// Comment-table SQL lives here and nowhere else: every comment write in the
+// codebase (internal, v1, portal, GitHub sync, email, import, agent) goes
+// through CommentService, so the after-commit item-change publish (WI-483)
+// cannot be bypassed. A guard test fails if a direct comments-table write
+// appears outside this file.
+const (
+	insertCommentAuthorSQL = `INSERT INTO comments (item_id, author_id, content, is_private, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING id`
+	insertCommentPortalSQL = `INSERT INTO comments (item_id, portal_customer_id, content, is_private, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING id`
+	updateCommentSQL       = `UPDATE comments SET content = ?, updated_at = ? WHERE id = ?`
+	deleteCommentSQL       = `DELETE FROM comments WHERE id = ?`
+)
+
+// CreateInTx inserts a comment row inside an existing transaction and returns
+// its id, with NO side-effects (no notifications, activity bump, or publish).
+// Callers that must write a comment atomically with other rows — GitHub issue
+// sync writes its tracking rows in the same tx — use this and publish
+// themselves after they commit. authorID == 0 inserts a system (NULL author)
+// comment.
+func (s *CommentService) CreateInTx(ctx context.Context, tx database.Tx, itemID, authorID int, content string, createdAt time.Time) (int64, error) {
+	var author interface{}
+	if authorID != 0 {
+		author = authorID
+	}
+	var id int64
+	err := tx.QueryRowContext(ctx, insertCommentAuthorSQL, itemID, author, sanitize.Comment.Sanitize(content), false, createdAt, createdAt).Scan(&id)
+	return id, err
+}
+
+// UpdateContentInTx updates a comment's content inside an existing transaction,
+// with no side-effects/publish (the caller publishes after it commits).
+func (s *CommentService) UpdateContentInTx(ctx context.Context, tx database.Tx, commentID int, content string, updatedAt time.Time) error {
+	_, err := tx.ExecContext(ctx, updateCommentSQL, sanitize.Comment.Sanitize(content), updatedAt, commentID)
+	return err
+}
+
 func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResult, error) {
 	// 1. Sanitize content (XSS prevention — strips HTML tags + dangerous Markdown URLs)
 	sanitizedContent := sanitize.Comment.Sanitize(params.Content)
@@ -132,24 +168,25 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 	if params.CreatedAt != nil {
 		now = *params.CreatedAt
 	}
+	updatedAt := now
+	if params.UpdatedAt != nil {
+		updatedAt = *params.UpdatedAt
+	}
 
 	var commentID int64
 	if params.PortalCustomerID != nil && params.AuthorID == 0 {
 		// Portal customer without linked user — insert with portal_customer_id
-		err = s.db.QueryRow(`
-			INSERT INTO comments (item_id, portal_customer_id, content, is_private, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?) RETURNING id
-		`, params.ItemID, *params.PortalCustomerID, sanitizedContent, params.IsPrivate, now, now).Scan(&commentID)
+		err = s.db.QueryRow(insertCommentPortalSQL,
+			params.ItemID, *params.PortalCustomerID, sanitizedContent, params.IsPrivate, now, updatedAt).Scan(&commentID)
 	} else {
-		// Internal user or portal customer with linked user
+		// Internal user or portal customer with linked user; AuthorID == 0 with no
+		// portal customer inserts a system (NULL author) comment.
 		var authorID interface{}
 		if params.AuthorID != 0 {
 			authorID = params.AuthorID
 		}
-		err = s.db.QueryRow(`
-			INSERT INTO comments (item_id, author_id, content, is_private, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?) RETURNING id
-		`, params.ItemID, authorID, sanitizedContent, params.IsPrivate, now, now).Scan(&commentID)
+		err = s.db.QueryRow(insertCommentAuthorSQL,
+			params.ItemID, authorID, sanitizedContent, params.IsPrivate, now, updatedAt).Scan(&commentID)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to create comment: %w", err)
@@ -408,9 +445,7 @@ func (s *CommentService) Update(commentID int, content string, userID int) (*mod
 
 	// Update the comment
 	now := time.Now()
-	_, err = s.db.Exec(`
-		UPDATE comments SET content = ?, updated_at = ? WHERE id = ?
-	`, sanitizedContent, now, commentID)
+	_, err = s.db.Exec(updateCommentSQL, sanitizedContent, now, commentID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update comment: %w", err)
 	}
@@ -472,7 +507,7 @@ func (s *CommentService) Delete(commentID int) error {
 		return fmt.Errorf("failed to check comment: %w", err)
 	}
 
-	_, err = s.db.Exec("DELETE FROM comments WHERE id = ?", commentID)
+	_, err = s.db.Exec(deleteCommentSQL, commentID)
 	if err != nil {
 		return fmt.Errorf("failed to delete comment: %w", err)
 	}

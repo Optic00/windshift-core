@@ -630,6 +630,10 @@ func (s *IssueSyncService) syncComments(ctx context.Context, provider IssueProvi
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	// All comment-table writes go through CommentService (the single
+	// comment-write chokepoint); the tx-aware variants keep the comment and its
+	// sync-tracking row atomic. We publish once after commit below.
+	commentSvc := services.NewCommentService(s.db)
 	commentsChanged := false
 	for _, ghComment := range comments {
 		// Skip comments that were pushed from Windshift (contain our attribution marker)
@@ -652,11 +656,7 @@ func (s *IssueSyncService) syncComments(ctx context.Context, provider IssueProvi
 			body := fmt.Sprintf("**@%s** commented on GitHub:\n\n%s", ghComment.User.Username, ghComment.Body)
 			now := time.Now()
 
-			var wsCommentID int64
-			insertErr := tx.QueryRowContext(ctx, `
-				INSERT INTO comments (item_id, author_id, content, created_at, updated_at)
-				VALUES (?, NULL, ?, ?, ?) RETURNING id
-			`, itemID, body, now, now).Scan(&wsCommentID)
+			wsCommentID, insertErr := commentSvc.CreateInTx(ctx, tx, itemID, 0, body, now)
 			if insertErr != nil {
 				slog.Error("insert synced comment", "github_comment_id", ghComment.ID, "error", insertErr)
 				continue
@@ -687,9 +687,7 @@ func (s *IssueSyncService) syncComments(ctx context.Context, provider IssueProvi
 		// Update the Windshift comment content
 		body := fmt.Sprintf("**@%s** commented on GitHub:\n\n%s", ghComment.User.Username, ghComment.Body)
 		now := time.Now()
-		_, _ = tx.ExecContext(ctx,
-			"UPDATE comments SET content = ?, updated_at = ? WHERE id = ?",
-			body, now, existingCommentID.Int64)
+		_ = commentSvc.UpdateContentInTx(ctx, tx, int(existingCommentID.Int64), body, now)
 		_, _ = tx.ExecContext(ctx,
 			"UPDATE issue_sync_comments SET github_updated_at = ?, updated_at = ? WHERE id = ?",
 			ghComment.UpdatedAt, now, trackingID)

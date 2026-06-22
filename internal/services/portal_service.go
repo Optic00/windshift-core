@@ -96,38 +96,40 @@ type CreatedPortalComment struct {
 func (s *PortalService) CreateRequestComment(ctx context.Context, itemID int, content string, internalUserID, portalCustomerID *int) (*CreatedPortalComment, error) {
 	now := time.Now()
 	out := &CreatedPortalComment{ItemID: itemID, Content: content, CreatedAt: now, UpdatedAt: now}
+
+	// Route through CommentService — the single comment-write chokepoint, which
+	// publishes the item-change (WI-483). Portal request comments stay silent
+	// (no internal notifications/webhooks), matching prior behavior.
+	params := CreateCommentParams{
+		ItemID:                itemID,
+		Content:               content,
+		CreatedAt:             &now,
+		SuppressNotifications: true,
+	}
 	if internalUserID != nil {
-		err := s.db.QueryRowContext(ctx, `
-			INSERT INTO comments (item_id, author_id, content, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?) RETURNING id
-		`, itemID, *internalUserID, content, now, now).Scan(&out.ID)
-		if err != nil {
-			return nil, err
-		}
+		params.AuthorID = *internalUserID
+	} else if portalCustomerID != nil {
+		params.PortalCustomerID = portalCustomerID
+	}
+	res, err := NewCommentService(s.db).Create(params)
+	if err != nil {
+		return nil, err
+	}
+	out.ID = res.CommentID
+
+	if internalUserID != nil {
 		out.AuthorID = internalUserID
 		if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(first_name || ' ' || last_name, 'Unknown'), COALESCE(avatar_url, '') FROM users WHERE id = ?`, *internalUserID).Scan(&out.AuthorName, &out.AuthorAvatar); err != nil {
 			out.AuthorName = "Unknown"
 			out.AuthorAvatar = ""
 		}
-		// Live-update publish (WI-483): portal request comments write the comments
-		// table directly; refresh the item's comment list after the insert.
-		PublishItemChange(itemID, ItemChangeComment)
 		return out, nil
-	}
-	err := s.db.QueryRowContext(ctx, `
-		INSERT INTO comments (item_id, portal_customer_id, content, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?) RETURNING id
-	`, itemID, *portalCustomerID, content, now, now).Scan(&out.ID)
-	if err != nil {
-		return nil, err
 	}
 	out.PortalCustomerID = portalCustomerID
 	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(name, 'Unknown') FROM portal_customers WHERE id = ?`, *portalCustomerID).Scan(&out.AuthorName); err != nil {
 		out.AuthorName = "Unknown"
 	}
 	out.AuthorAvatar = ""
-	// Live-update publish (WI-483): same as the internal-user branch above.
-	PublishItemChange(itemID, ItemChangeComment)
 	return out, nil
 }
 

@@ -247,44 +247,27 @@ func (h *CommentHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Use CommentService if available, otherwise fall back to legacy inline logic
-	var commentID int64
-	if h.commentService != nil {
-		var result *services.CreateCommentResult
-		result, err = h.commentService.Create(services.CreateCommentParams{
-			ItemID:      itemID,
-			AuthorID:    authorID,
-			Content:     reqBody.Content,
-			IsPrivate:   reqBody.IsPrivate,
-			ActorUserID: user.ID,
-		})
-		if err != nil {
-			slog.Error("failed to create comment via service", slog.String("component", "comment"), slog.Any("error", err))
-			respondInternalError(w, r, fmt.Errorf("failed to create comment: %w", err))
-			return
-		}
-		commentID = result.CommentID
-	} else {
-		// Legacy fallback: direct DB insert without side effects
-		// This path should not be used in production - CommentService should always be set
-		slog.Warn("commentService is nil, using legacy comment creation without notifications/mentions/webhooks",
-			slog.String("component", "comment"),
-			slog.Int("item_id", itemID))
-
-		sanitizedContent := sanitize.Comment.Sanitize(reqBody.Content)
-		now := time.Now()
-		err = h.db.QueryRow(`
-			INSERT INTO comments (item_id, author_id, content, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?) RETURNING id
-		`, itemID, authorID, sanitizedContent, now, now).Scan(&commentID)
-		if err != nil {
-			respondInternalError(w, r, fmt.Errorf("failed to create comment: %w", err))
-			return
-		}
-		// Live-update publish (WI-483): the legacy fallback writes directly; the
-		// CommentService branch above publishes on its own.
-		services.PublishItemChange(itemID, services.ItemChangeComment)
+	// All comment writes go through CommentService (the single comment-write
+	// chokepoint; it publishes the item-change event). It is always wired in
+	// production; treat a nil service as a misconfiguration rather than writing
+	// SQL here.
+	if h.commentService == nil {
+		respondInternalError(w, r, fmt.Errorf("comment service not configured"))
+		return
 	}
+	result, err := h.commentService.Create(services.CreateCommentParams{
+		ItemID:      itemID,
+		AuthorID:    authorID,
+		Content:     reqBody.Content,
+		IsPrivate:   reqBody.IsPrivate,
+		ActorUserID: user.ID,
+	})
+	if err != nil {
+		slog.Error("failed to create comment via service", slog.String("component", "comment"), slog.Any("error", err))
+		respondInternalError(w, r, fmt.Errorf("failed to create comment: %w", err))
+		return
+	}
+	commentID := result.CommentID
 
 	// Push comment to GitHub if issue sync is configured
 	if h.issueSyncService != nil && !reqBody.IsPrivate {
@@ -414,29 +397,15 @@ func (h *CommentHandler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Sanitize comment content to prevent XSS (strips HTML tags + dangerous Markdown URLs)
-	sanitizedContent := sanitize.Comment.Sanitize(reqBody.Content)
-
-	// Update the comment
-	now := time.Now()
-	result, err := h.db.ExecWrite(`
-		UPDATE comments
-		SET content = ?, updated_at = ?
-		WHERE id = ?
-	`, sanitizedContent, now, commentID)
-	if err != nil {
+	// Write through CommentService (single comment-write chokepoint; sanitizes
+	// the content and publishes the item-change event). Existence was already
+	// confirmed by requireCommentEditAccess above.
+	if h.commentService == nil {
+		respondInternalError(w, r, fmt.Errorf("comment service not configured"))
+		return
+	}
+	if _, err := h.commentService.Update(commentID, reqBody.Content, user.ID); err != nil {
 		respondInternalError(w, r, fmt.Errorf("failed to update comment: %w", err))
-		return
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		respondInternalError(w, r, fmt.Errorf("failed to check update result: %w", err))
-		return
-	}
-
-	if rowsAffected == 0 {
-		respondNotFound(w, r, "comment")
 		return
 	}
 
@@ -500,10 +469,6 @@ func (h *CommentHandler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 
-	// Live-update publish (WI-483): this cookie path writes the comment directly
-	// (not via CommentService), so publish the item-change explicitly.
-	services.PublishItemChange(itemID, services.ItemChangeComment)
-
 	respondJSONOK(w, comment)
 }
 
@@ -522,20 +487,15 @@ func (h *CommentHandler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 	assigneeID := ctx.AssigneeID
 	creatorID := ctx.CreatorID
 
-	result, err := h.db.ExecWrite("DELETE FROM comments WHERE id = ?", commentID)
-	if err != nil {
+	// Write through CommentService (single comment-write chokepoint; publishes
+	// the item-change event). Existence was already confirmed by
+	// requireCommentEditAccess above.
+	if h.commentService == nil {
+		respondInternalError(w, r, fmt.Errorf("comment service not configured"))
+		return
+	}
+	if err := h.commentService.Delete(commentID); err != nil {
 		respondInternalError(w, r, fmt.Errorf("failed to delete comment: %w", err))
-		return
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		respondInternalError(w, r, fmt.Errorf("failed to check delete result: %w", err))
-		return
-	}
-
-	if rowsAffected == 0 {
-		respondNotFound(w, r, "comment")
 		return
 	}
 
@@ -578,10 +538,6 @@ func (h *CommentHandler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 			go h.webhookSender.DispatchEvent("comment.deleted", item)
 		}
 	}
-
-	// Live-update publish (WI-483): this cookie path deletes directly (not via
-	// CommentService); itemID was captured before the delete.
-	services.PublishItemChange(itemID, services.ItemChangeComment)
 
 	w.WriteHeader(http.StatusNoContent)
 }

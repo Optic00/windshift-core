@@ -496,60 +496,24 @@ func (p *Processor) addCommentFromReply(
 		slog.Warn("failed to get user_id for portal customer", "error", err)
 	}
 
-	// Use CommentService for unified comment creation (notifications, mentions, webhooks, email reply handling)
-	if p.commentService != nil {
-		var result *services.CreateCommentResult
-		result, err = p.commentService.Create(services.CreateCommentParams{
-			ItemID:           itemID,
-			AuthorID:         linkedUserID,
-			PortalCustomerID: &customerID,
-			Content:          content,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to create comment: %w", err)
-		}
-
-		commentID := int(result.CommentID)
-
-		slog.Info("added comment from email reply",
-			"comment_id", commentID,
-			"item_id", itemID,
-			"from", email.From.Address,
-		)
-
-		return &ProcessingResult{
-			Action:    ActionCommentAdded,
-			ItemID:    &itemID,
-			CommentID: &commentID,
-		}, nil
+	// All comment writes go through CommentService (notifications, mentions,
+	// webhooks, email reply handling, and the item-change publish). It is always
+	// wired in production; treat a nil service as a misconfiguration rather than
+	// writing SQL here.
+	if p.commentService == nil {
+		return nil, fmt.Errorf("comment service not configured")
 	}
-
-	// Fallback: direct DB insert (should not be used in production)
-	slog.Warn("commentService not set in email processor, using direct DB insert",
-		"item_id", itemID)
-
-	now := time.Now()
-	var commentIDInt64 int64
-	if linkedUserID != 0 {
-		err = p.db.QueryRowContext(ctx, `
-			INSERT INTO comments (item_id, author_id, content, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?) RETURNING id
-		`, itemID, linkedUserID, content, now, now).Scan(&commentIDInt64)
-	} else {
-		err = p.db.QueryRowContext(ctx, `
-			INSERT INTO comments (item_id, portal_customer_id, content, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?) RETURNING id
-		`, itemID, customerID, content, now, now).Scan(&commentIDInt64)
-	}
+	result, err := p.commentService.Create(services.CreateCommentParams{
+		ItemID:           itemID,
+		AuthorID:         linkedUserID,
+		PortalCustomerID: &customerID,
+		Content:          content,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create comment: %w", err)
 	}
 
-	// Live-update publish (WI-483): the fallback writes directly; the
-	// CommentService branch above publishes on its own.
-	services.PublishItemChange(itemID, services.ItemChangeComment)
-
-	commentID := int(commentIDInt64)
+	commentID := int(result.CommentID)
 
 	slog.Info("added comment from email reply",
 		"comment_id", commentID,

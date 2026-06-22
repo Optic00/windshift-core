@@ -1271,6 +1271,7 @@ func (h *JiraImportHandler) importComments(jobID string, itemID int, issue *jira
 			Content:     content,
 			ActorUserID: authorID,
 			CreatedAt:   createdAt,
+			UpdatedAt:   updatedAt, // preserve Jira's original updated timestamp
 		})
 		if err != nil {
 			slog.Error("Failed to import comment",
@@ -1283,15 +1284,7 @@ func (h *JiraImportHandler) importComments(jobID string, itemID int, issue *jira
 
 		commentMeta := map[string]interface{}{}
 		if updatedAt != nil {
-			if _, err := h.db.ExecWrite(`UPDATE comments SET updated_at = ? WHERE id = ?`, *updatedAt, result.CommentID); err != nil {
-				slog.Warn("Failed to preserve Jira comment updated timestamp",
-					slog.String("component", "jira"),
-					slog.String("issue", issue.Key),
-					slog.String("commentID", comment.ID),
-					slog.Any("error", err))
-			} else {
-				commentMeta["updated"] = updatedAt.UTC().Format(time.RFC3339)
-			}
+			commentMeta["updated"] = updatedAt.UTC().Format(time.RFC3339)
 		}
 		if createdAt != nil {
 			commentMeta["created"] = createdAt.UTC().Format(time.RFC3339)
