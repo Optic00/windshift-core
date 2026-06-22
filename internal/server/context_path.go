@@ -104,6 +104,14 @@ func (w *contextPathResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error
 	return nil, nil, fmt.Errorf("server: underlying ResponseWriter does not support hijacking")
 }
 
+// Unwrap exposes the wrapped writer so http.NewResponseController can reach the
+// underlying connection. Without this, SSE handlers' unbindStreamDeadlines would
+// silently no-op under a context path and the 30s WriteTimeout would sever every
+// stream (WI-484).
+func (w *contextPathResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
 // prefixLocation prepends the context path to a root-relative, same-origin
 // Location target. Absolute URLs, protocol-relative URLs, and targets already
 // under the context path are returned unchanged.

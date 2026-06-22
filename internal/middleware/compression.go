@@ -21,6 +21,10 @@ func CreateCompressionMiddleware(useProxy bool) func(http.Handler) http.Handler 
 	wrapper, _ := gzhttp.NewWrapper(
 		gzhttp.MinSize(1024), // Only compress responses > 1KB
 		gzhttp.CompressionLevel(gzip.DefaultCompression),
+		// Never buffer/compress Server-Sent Events: gzhttp's MinSize buffering
+		// would hold the initial SSE frames until 1KB accumulates, stalling the
+		// item event stream (WI-484). Excluding the type flushes frames as-is.
+		gzhttp.ExceptContentTypes([]string{"text/event-stream"}),
 	)
 
 	return func(h http.Handler) http.Handler {

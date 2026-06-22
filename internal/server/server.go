@@ -886,6 +886,13 @@ func (s *Server) initialize() error {
 	itemHandler.SetEventCoordinator(eventCoordinator)
 	commentHandler.SetWebhookSender(webhookSender)
 
+	// Item live-update stream (WI-484): register the in-memory SSE hub as the
+	// process-wide item-change publisher (WI-483 installed a no-op default), and
+	// give the item handler the hub so GET /items/{id}/events can subscribe.
+	sseHub := services.NewSSEHub()
+	services.SetItemChangePublisher(sseHub)
+	itemHandler.SetSSEHub(sseHub)
+
 	// Mention service
 	mentionService := services.NewMentionService(s.db, s.notificationService, permService)
 	itemHandler.SetMentionService(mentionService)
