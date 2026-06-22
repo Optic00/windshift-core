@@ -15,5 +15,4 @@ func RegisterPushRoutes(deps *Deps) {
 	api.HandleH("GET /push/subscriptions", auth(http.HandlerFunc(deps.Push.List)))
 	api.HandleH("POST /push/subscriptions", auth(http.HandlerFunc(deps.Push.Subscribe)))
 	api.HandleH("DELETE /push/subscriptions/{id}", auth(http.HandlerFunc(deps.Push.Delete)))
-	api.HandleH("POST /push/test", auth(http.HandlerFunc(deps.Push.Test)))
 }

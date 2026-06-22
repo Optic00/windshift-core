@@ -98,21 +98,3 @@ func (h *PushHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	respondJSONOK(w, map[string]any{"status": "deleted"})
 }
-
-// Test sends a test push to the current user's subscriptions.
-func (h *PushHandler) Test(w http.ResponseWriter, r *http.Request) {
-	user, ok := RequireAuth(w, r)
-	if !ok {
-		return
-	}
-	if !h.service.Enabled() {
-		respondBadRequest(w, r, "push notifications are not configured on this server")
-		return
-	}
-	results := h.service.SendTest(user.ID)
-	respondJSONOK(w, map[string]any{
-		"status":             "sent",
-		"subscription_count": len(results),
-		"results":            results,
-	})
-}
