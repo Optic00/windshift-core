@@ -1005,6 +1005,28 @@ func (h *ChannelHandler) UpdateChannelConfig(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
+	// Narrowing a channel's served workspace list must not strand request types
+	// that route to a workspace being removed — their submissions would
+	// silently fall back to the first remaining workspace. Reject and name the
+	// offenders so the admin retargets (or deletes) them first. finalConfig is
+	// the merged result, so unrelated updates that preserve the workspace lists
+	// can't trip this.
+	served := append([]int(nil), finalConfig.PortalWorkspaceIDs...)
+	served = append(served, finalConfig.FormWorkspaceIDs...)
+	stranded, stErr := h.channelRepo.StrandedRequestTypes(id, served)
+	if stErr != nil {
+		respondInternalError(w, r, stErr)
+		return
+	}
+	if len(stranded) > 0 {
+		names := make([]string, len(stranded))
+		for i, s := range stranded {
+			names[i] = s.Name
+		}
+		respondValidationError(w, r, fmt.Sprintf("Cannot remove workspaces still used by request types: %s. Retarget or delete them first.", strings.Join(names, ", ")))
+		return
+	}
+
 	// Slug format + uniqueness for portal/form channels. Slugs are routed
 	// via findChannelBySlug, which scans enabled channels and returns the
 	// first match by creation order. Without server-side validation a

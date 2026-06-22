@@ -629,6 +629,49 @@ func (r *ChannelRepository) FindBadWorkspaceIDs(ids []int) ([]int, error) {
 	return NewWorkspaceRepository(r.db).FindMissingOrPersonal(ids)
 }
 
+// StrandedRequestType identifies a request type whose pinned routing workspace
+// would fall outside a channel's served workspace list.
+type StrandedRequestType struct {
+	ID          int
+	Name        string
+	WorkspaceID int
+}
+
+// StrandedRequestTypes returns the channel's request types whose non-NULL
+// workspace_id is not in allowedWorkspaceIDs — i.e. the ones that would be
+// stranded if the channel's served workspace list were reduced to that set.
+// Filtering happens in Go so an empty allowed set (all targets removed)
+// correctly strands every pinned request type without a NOT IN () edge case.
+func (r *ChannelRepository) StrandedRequestTypes(channelID int, allowedWorkspaceIDs []int) ([]StrandedRequestType, error) {
+	allowed := make(map[int]bool, len(allowedWorkspaceIDs))
+	for _, id := range allowedWorkspaceIDs {
+		allowed[id] = true
+	}
+	rows, err := r.db.Query(
+		`SELECT id, name, workspace_id FROM request_types WHERE channel_id = ? AND workspace_id IS NOT NULL`,
+		channelID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query request types for channel %d: %w", channelID, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var stranded []StrandedRequestType
+	for rows.Next() {
+		var s StrandedRequestType
+		if err := rows.Scan(&s.ID, &s.Name, &s.WorkspaceID); err != nil {
+			return nil, fmt.Errorf("scan request type: %w", err)
+		}
+		if !allowed[s.WorkspaceID] {
+			stranded = append(stranded, s)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate request types: %w", err)
+	}
+	return stranded, nil
+}
+
 // SlugInUse reports whether another enabled channel of the same type already
 // uses the given slug. excludeChannelID is the row currently being edited and
 // is ignored from the comparison. JSON-path syntax differs between SQLite
