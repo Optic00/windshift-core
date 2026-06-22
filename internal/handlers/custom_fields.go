@@ -469,6 +469,22 @@ func (h *CustomFieldHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Guard against deleting a field that still holds values: items/assets/portal
+	// records store values as JSON keyed by the field id, so an unguarded delete
+	// silently strips live data (the renderer just ignores unknown keys, and the
+	// async cfv cleanup below scrubs the keys out). Mirror the item-type guard and
+	// make the admin clear the values first. The async cleanup stays as
+	// defense-in-depth for anything written concurrently with this delete.
+	inUse, err := h.repo.CountRowsUsingField(id)
+	if err != nil {
+		h.logAndRespondDatabaseError(w, r, err)
+		return
+	}
+	if inUse > 0 {
+		respondConflict(w, r, fmt.Sprintf("Cannot delete custom field: it is used by %d record(s). Clear those values first.", inUse))
+		return
+	}
+
 	// Handle linking field cascade: delete mirror or clear mirror_field_id from primary
 	if info.FieldType == "linking" {
 		h.handleLinkingFieldDelete(id)

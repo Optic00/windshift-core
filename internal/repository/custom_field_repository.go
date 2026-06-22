@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"windshift/internal/database"
@@ -359,6 +360,57 @@ func (r *CustomFieldRepository) ExecDDL(query string) error {
 // pick between SQLite and Postgres DDL syntax.
 func (r *CustomFieldRepository) DriverName() string {
 	return r.db.GetDriverName()
+}
+
+// CountRowsUsingField returns how many records currently hold a value for the
+// given custom field, across all three storage surfaces: items, assets, and the
+// portal custom_field_values table. It backs the pre-delete in-use guard in
+// CustomFieldHandler.Delete (mirrors the item-type guard) so a field still
+// holding live data can't be deleted out from under it.
+//
+// For items/assets it reuses the exact cross-driver matcher the async scrubber
+// trusts (see ListRowsWithCustomFieldsPageByKey): the field key is the
+// stringified field ID and values are stored as JSON keyed by it, so a row is
+// "using" the field iff its custom_field_values text mentions `"<id>"`. The
+// CAST(... AS TEXT) is required so the LIKE works on both SQLite (TEXT column)
+// and Postgres (JSONB column — a bare LIKE errors with "jsonb ~~"). Matching the
+// scrubber's prefilter keeps the guard and the cleanup in agreement: we block a
+// delete iff the cleanup would have had something to scrub. The prefilter can
+// over-count if a user value literally contains the quoted substring `"<id>"`,
+// but over-blocking is the safe failure mode for a delete guard.
+func (r *CustomFieldRepository) CountRowsUsingField(fieldID int) (int, error) {
+	fieldKey := strconv.Itoa(fieldID)
+	likePattern := `%"` + fieldKey + `"%`
+
+	total := 0
+	for _, table := range []string{"items", "assets"} {
+		var count int
+		err := r.db.QueryRow(fmt.Sprintf(
+			`SELECT COUNT(*) FROM %s
+			  WHERE custom_field_values IS NOT NULL
+			    AND CAST(custom_field_values AS TEXT) != ''
+			    AND CAST(custom_field_values AS TEXT) LIKE ?`, table),
+			likePattern,
+		).Scan(&count)
+		if err != nil {
+			return 0, fmt.Errorf("count %s using custom field: %w", table, err)
+		}
+		total += count
+	}
+
+	// Portal/org values live in a separate custom_field_values table keyed by a
+	// real column. The table may not exist on every deployment; tolerate a query
+	// error as "nothing here", the same convention the portal scrubber uses.
+	var portalCount int
+	if err := r.db.QueryRow(
+		`SELECT COUNT(*) FROM custom_field_values
+		  WHERE custom_field_id = ? AND value IS NOT NULL AND value != ''`,
+		fieldID,
+	).Scan(&portalCount); err == nil {
+		total += portalCount
+	}
+
+	return total, nil
 }
 
 // --- items / assets custom_field_values cleanup ----------------------------
