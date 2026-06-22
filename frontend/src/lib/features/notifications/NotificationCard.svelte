@@ -3,15 +3,9 @@
   import { notificationActions } from '../../stores/notifications.js';
   import { navigate } from '../../router.js';
   import { t } from '../../stores/i18n.svelte.js';
+  import { itemIdFromActionUrl } from '../../utils/actionUrl.js';
 
   let { notification, onclose = undefined } = $props();
-
-  // Extract the numeric item id from an action URL, matching the
-  // /workspaces/<id>/items/<itemId> shape the backend's itemActionURL() emits.
-  function itemIdFromActionUrl(actionUrl) {
-    const m = actionUrl?.match(/\/items\/(\d+)(?:[/?#]|$)/);
-    return m ? m[1] : null;
-  }
 
   function getNotificationIcon(type) {
     const iconMap = {

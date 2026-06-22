@@ -4,6 +4,7 @@
   import { notifications, notificationActions } from '../stores/notifications.js';
   import { navigate } from '../router.js';
   import { getPushState, enablePush, disablePush } from './pushClient.js';
+  import { mobileActionUrl } from '../utils/actionUrl.js';
   import MobileHeader from './MobileHeader.svelte';
 
   let push = $state({ supported: false, installed: false, permission: 'default', subscribed: false });
@@ -32,17 +33,9 @@
   );
   const hasUnread = $derived($notifications.some((n) => !n.read));
 
-  // Rewrite a desktop deep link to the mobile item-detail route when it points
-  // at a work item; otherwise fall back to the original URL.
-  function targetFor(actionUrl) {
-    if (!actionUrl) return null;
-    const m = actionUrl.match(/\/items\/(\d+)/);
-    return m ? `/m/items/${m[1]}` : actionUrl;
-  }
-
   async function open(n) {
     if (!n.read) notificationActions.markAsRead(n.id);
-    const target = targetFor(n.actionUrl);
+    const target = mobileActionUrl(n.actionUrl);
     if (target) navigate(target);
   }
 </script>
