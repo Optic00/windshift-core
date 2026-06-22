@@ -136,6 +136,7 @@
       <div class="px-16 py-8">
         <FormBuilder
           {channelId}
+          channelWorkspaceIds={formChannelFormData.workspace_ids}
           onBack={() => navigate('/admin/channels')}
           onCreateForm={() => showCreateModal = true}
           embedded={false}

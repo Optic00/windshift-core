@@ -8,22 +8,33 @@
     IconPencil
   } from '@tabler/icons-svelte-runes';
   import { t } from '../../stores/i18n.svelte.js';
+  import { api } from '../../api.js';
   import { formBuilderStore } from '../../stores/formBuilderStore.svelte.js';
   import { errorToast, successToast } from '../../stores/toasts.svelte.js';
   import { confirm } from '../../composables/useConfirm.js';
   import Button from '../../components/Button.svelte';
   import EmptyState from '../../components/EmptyState.svelte';
   import Input from '../../components/Input.svelte';
+  import Textarea from '../../components/Textarea.svelte';
   import Label from '../../components/Label.svelte';
   import Spinner from '../../components/Spinner.svelte';
+  import BasePicker from '../../pickers/BasePicker.svelte';
+  import IconSelector from '../../pickers/IconSelector.svelte';
+  import DescriptionText from '../../components/DescriptionText.svelte';
   import FormFieldPalette from './FormFieldPalette.svelte';
 
-  let { channelId, onBack = () => {}, onCreateForm = null, embedded = true } = $props();
+  let { channelId, channelWorkspaceIds = [], onBack = () => {}, onCreateForm = null, embedded = true } = $props();
 
   let saving = $state(false);
+  let savingRouting = $state(false);
   let showSettings = $state(false);
   let setupCleanups = [];
   let expandedFields = $state(new Set());
+
+  // Routing-metadata editing (workspace / item type / identity).
+  let availableWorkspaces = $state([]);
+  let routingItemTypes = $state([]);
+  let configSets = [];
 
   function toggleFieldExpanded(fieldKey) {
     const next = new Set(expandedFields);
@@ -34,7 +45,72 @@
 
   onMount(async () => {
     await formBuilderStore.loadForms(channelId);
+    try {
+      const [allWorkspaces, allConfigSets] = await Promise.all([
+        api.workspaces.getAll(),
+        api.configurationSets.getAll(),
+      ]);
+      configSets = allConfigSets?.configuration_sets || [];
+      availableWorkspaces = (channelWorkspaceIds && channelWorkspaceIds.length > 0)
+        ? allWorkspaces.filter(ws => channelWorkspaceIds.includes(ws.id))
+        : allWorkspaces;
+    } catch (err) {
+      console.error('Failed to load workspaces for routing:', err);
+    }
   });
+
+  // Reload selectable item types when the routing workspace changes, scoped to
+  // that workspace's configuration set (mirrors CreateFormModal). Only clears
+  // item_type_id when the current selection isn't valid in the new workspace,
+  // so editing an existing form doesn't wipe its item type on initial load.
+  $effect(() => {
+    const wsId = formBuilderStore.routingMeta.workspace_id;
+    if (!wsId) {
+      routingItemTypes = [];
+      return;
+    }
+    const ws = availableWorkspaces.find(w => w.id === wsId);
+    let configSetId = ws?.configuration_set_id;
+    if (!configSetId) {
+      const defaultCs = configSets.find(cs => cs.is_default);
+      if (defaultCs) configSetId = defaultCs.id;
+    }
+    const filters = configSetId ? { configuration_set_id: configSetId } : {};
+    const requestedWsId = wsId;
+    api.itemTypes.getAll(filters).then(types => {
+      if (formBuilderStore.routingMeta.workspace_id !== requestedWsId) return;
+      routingItemTypes = types;
+      const current = formBuilderStore.routingMeta.item_type_id;
+      if (current && !types.some(ty => ty.id === current)) {
+        formBuilderStore.routingMeta.item_type_id = null;
+      }
+    }).catch(err => {
+      if (formBuilderStore.routingMeta.workspace_id !== requestedWsId) return;
+      console.error('Failed to load item types for routing:', err);
+      routingItemTypes = [];
+    });
+  });
+
+  async function handleSaveRouting() {
+    const meta = formBuilderStore.routingMeta;
+    if (!meta.name.trim()) {
+      errorToast(t('forms.formNameRequired', 'Name is required'));
+      return;
+    }
+    if (!meta.workspace_id || !meta.item_type_id) {
+      errorToast(t('forms.selectItemType', 'Please select an item type'));
+      return;
+    }
+    try {
+      savingRouting = true;
+      await formBuilderStore.saveRoutingMetadata();
+      successToast(t('common.saved'));
+    } catch (err) {
+      errorToast(err.message || t('common.error'));
+    } finally {
+      savingRouting = false;
+    }
+  }
 
   onDestroy(() => {
     setupCleanups.forEach(fn => fn());
@@ -260,6 +336,7 @@
           variant="default"
           size="small"
           icon={IconSettings}
+          dataTestid="form-builder-settings-btn"
         >
           {t('forms.settings.title')}
         </Button>
@@ -289,6 +366,71 @@
         {#if showSettings}
           <!-- Per-form Settings -->
           <div class="max-w-xl mx-auto space-y-4">
+            <!-- Routing metadata: identity + where submissions are created -->
+            <h4 class="text-sm font-semibold" style="color: var(--ds-text);">{t('forms.routing.title', 'Routing')}</h4>
+
+            <div>
+              <Label color="default" required class="mb-2">{t('forms.formName')}</Label>
+              <Input id="form-routing-name" bind:value={formBuilderStore.routingMeta.name} placeholder={t('forms.formNamePlaceholder')} />
+            </div>
+
+            <div>
+              <Label color="default" class="mb-2">{t('forms.formDescription')}</Label>
+              <Textarea bind:value={formBuilderStore.routingMeta.description} rows={2} placeholder={t('forms.formDescriptionPlaceholder')} />
+            </div>
+
+            <div>
+              <IconSelector
+                bind:selectedIcon={formBuilderStore.routingMeta.icon}
+                bind:selectedColor={formBuilderStore.routingMeta.color}
+                label={t('portal.iconAndColor')}
+                compact
+              />
+            </div>
+
+            <div>
+              <Label color="default" required class="mb-2">{t('channel.targetWorkspace')}</Label>
+              <BasePicker
+                id="form-routing-workspace"
+                bind:value={formBuilderStore.routingMeta.workspace_id}
+                items={availableWorkspaces}
+                placeholder={t('channel.selectWorkspace')}
+                getValue={(item) => item.id}
+                getLabel={(item) => item.name}
+                optionTestid={(opt) => `form-routing-ws-${opt.value}`}
+              />
+            </div>
+
+            <div>
+              <Label color="default" required class="mb-2">{t('forms.createsItemType')}</Label>
+              <BasePicker
+                id="form-routing-itemtype"
+                bind:value={formBuilderStore.routingMeta.item_type_id}
+                items={routingItemTypes}
+                placeholder={t('forms.selectItemType')}
+                getValue={(item) => item.id}
+                getLabel={(item) => item.name}
+                disabled={!formBuilderStore.routingMeta.workspace_id}
+                optionTestid={(opt) => `form-routing-it-${opt.value}`}
+              />
+              {#if !formBuilderStore.routingMeta.workspace_id}
+                <DescriptionText>{t('channel.selectWorkspaceFirst')}</DescriptionText>
+              {/if}
+            </div>
+
+            <Button
+              onclick={handleSaveRouting}
+              variant="primary"
+              size="small"
+              icon={IconDeviceFloppy}
+              dataTestid="form-routing-save-btn"
+              disabled={savingRouting || !formBuilderStore.routingMeta.name.trim() || !formBuilderStore.routingMeta.workspace_id || !formBuilderStore.routingMeta.item_type_id}
+            >
+              {savingRouting ? t('common.saving') : t('forms.routing.save', 'Save routing')}
+            </Button>
+
+            <hr style="border-color: var(--ds-border);" />
+
             <h4 class="text-sm font-semibold" style="color: var(--ds-text);">{t('forms.settings.title')}</h4>
 
             <div class="flex items-center gap-3">
@@ -509,6 +651,7 @@
             <div
               role="button"
               tabindex="0"
+              data-testid={`form-row-${form.id}`}
               onclick={() => formBuilderStore.startEditFields(form)}
               onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); formBuilderStore.startEditFields(form); } }}
               class="group w-full flex items-center gap-4 p-4 rounded-lg border transition-colors hover:bg-[var(--ds-background-neutral-hovered)] cursor-pointer"

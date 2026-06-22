@@ -137,6 +137,14 @@
     return config || {};
   }
 
+  // Workspaces this channel routes submissions to — used to scope the form
+  // builder's routing-metadata pickers. Falls back to [] (all workspaces) when
+  // unparseable; the backend still validates the chosen workspace.
+  let formBuilderWorkspaceIds = $derived.by(() => {
+    const c = parseChannelConfig(channel?.config) || {};
+    return c.form_workspace_ids || c.portal_workspace_ids || [];
+  });
+
   // Initialize form data when channel changes
   $effect(() => {
     if (channel && isOpen) {
@@ -579,7 +587,7 @@
             </div>
           {/if}
         {:else if activeTab === 'forms'}
-          <FormBuilder channelId={channel.id} onBack={() => activeTab = 'configuration'} />
+          <FormBuilder channelId={channel.id} channelWorkspaceIds={formBuilderWorkspaceIds} onBack={() => activeTab = 'configuration'} />
         {:else if activeTab === 'managers'}
           <ChannelManagersTab
             channelId={channel.id}

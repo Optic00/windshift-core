@@ -31,6 +31,19 @@ class FormBuilderStore {
     redirect_url: '',
   });
 
+  // === Routing Metadata (name/description/icon/color + routing target) ===
+  // Editable identity + routing fields, persisted via the request-type Update
+  // endpoint. workspace_id / item_type_id determine where submissions land and
+  // which fields resolve, so the builder needs to correct them after create.
+  routingMeta = $state({
+    name: '',
+    description: '',
+    icon: 'FileText',
+    color: '#6b7280',
+    workspace_id: null,
+    item_type_id: null,
+  });
+
   // === Field Search ===
   fieldSearchQuery = $state('');
 
@@ -100,6 +113,14 @@ class FormBuilderStore {
   async startEditFields(form) {
     this.editingForm = form;
     this.showFieldEditor = true;
+    this.routingMeta = {
+      name: form.name || '',
+      description: form.description || '',
+      icon: form.icon || 'FileText',
+      color: form.color || '#6b7280',
+      workspace_id: form.workspace_id ?? null,
+      item_type_id: form.item_type_id ?? null,
+    };
 
     try {
       const [fields, available] = await Promise.all([
@@ -187,6 +208,32 @@ class FormBuilderStore {
       await api.requestTypes.updateConfig(this.editingForm.id, this.formConfig);
     } catch (err) {
       console.error('Failed to save form config:', err);
+      throw err;
+    }
+  }
+
+  async saveRoutingMetadata() {
+    try {
+      // is_active must be sent: the Update handler decodes the whole request
+      // type, so omitting it would reset the form to inactive.
+      const updated = await api.requestTypes.update(this.channelId, this.editingForm.id, {
+        name: this.routingMeta.name.trim(),
+        description: (this.routingMeta.description || '').trim(),
+        icon: this.routingMeta.icon,
+        color: this.routingMeta.color,
+        item_type_id: this.routingMeta.item_type_id,
+        workspace_id: this.routingMeta.workspace_id || null,
+        is_active: this.editingForm.is_active ?? true,
+      });
+      // Reflect the saved values locally so the list + header stay in sync
+      // without a full reload.
+      this.editingForm = { ...this.editingForm, ...this.routingMeta };
+      this.forms = this.forms.map((f) =>
+        f.id === this.editingForm.id ? { ...f, ...this.routingMeta } : f
+      );
+      return updated;
+    } catch (err) {
+      console.error('Failed to save routing metadata:', err);
       throw err;
     }
   }
@@ -281,6 +328,17 @@ class FormBuilderStore {
     };
   }
 
+  resetRoutingMeta() {
+    this.routingMeta = {
+      name: '',
+      description: '',
+      icon: 'FileText',
+      color: '#6b7280',
+      workspace_id: null,
+      item_type_id: null,
+    };
+  }
+
   cancelFieldEditor() {
     this.showFieldEditor = false;
     this.editingForm = null;
@@ -289,6 +347,7 @@ class FormBuilderStore {
     this.fieldSearchQuery = '';
     this.clearDragState();
     this.resetFormConfig();
+    this.resetRoutingMeta();
   }
 
   reset() {
@@ -303,6 +362,7 @@ class FormBuilderStore {
     this.draggedField = null;
     this.fieldDragState = new Map();
     this.resetFormConfig();
+    this.resetRoutingMeta();
   }
 }
 
