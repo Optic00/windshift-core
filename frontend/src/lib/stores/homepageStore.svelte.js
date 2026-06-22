@@ -9,6 +9,7 @@ import {
   getDashboardWidgetDefaultWidth,
 } from '../services/dashboardWidgetRegistry.js';
 import { formatDateSimple, formatDateWithOptions } from '../utils/dateFormatter.js';
+import { notificationActions } from './notifications.js';
 
 const ONBOARDING_STORAGE_KEY = 'windshift-dashboard-onboarding-dismissed';
 
@@ -272,6 +273,19 @@ class HomepageStore {
    */
   async refresh() {
     await this.loadDashboardData();
+  }
+
+  /**
+   * Mark a notification as read, reusing the shared notification logic (which
+   * hits the API and updates the tray store) and syncing the dashboard's own
+   * copy so the "What's New" widget reflects the read state immediately.
+   */
+  async markNotificationRead(id) {
+    if (id == null) return;
+    const target = this.notifications.find((n) => n.id === id);
+    if (!target || target.read) return;
+    await notificationActions.markAsRead(id);
+    this.notifications = this.notifications.map((n) => (n.id === id ? { ...n, read: true } : n));
   }
 
   // === Greeting Calculation ===

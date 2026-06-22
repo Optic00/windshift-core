@@ -22,6 +22,7 @@
       if (!m) continue;
       entries.push({
         id: `n-${n.id}`,
+        notificationId: n.id,
         workspaceId: parseInt(m[1], 10),
         timestamp: n.timestamp,
         source: 'notification',
@@ -72,6 +73,9 @@
   });
 
   function open(entry) {
+    if (entry?.source === 'notification' && !entry.read) {
+      homepageStore.markNotificationRead(entry.notificationId);
+    }
     if (entry?.link) navigate(entry.link);
   }
 </script>
