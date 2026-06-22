@@ -1,5 +1,6 @@
 <script>
   import { onMount } from 'svelte';
+  import { useEventListener } from 'runed';
   import { api } from '../../api.js';
   import { GitMerge, GitBranch, GitCommit, ExternalLink, Plus, RefreshCw, Trash2, ChevronDown, ChevronRight, Loader2, GitBranchPlus, Link2 } from '@lucide/svelte';
   import Button from '../../components/Button.svelte';
@@ -39,6 +40,16 @@
     } else {
       loading = false;
     }
+  });
+
+  // Live updates (WI-484): the item-detail view that owns the SSE stream
+  // dispatches this when a `link` event arrives, so the SCM-links section
+  // refreshes (manual link, branch/PR creation, or webhook-detected PR state
+  // change) without waiting for a reload. Self-filtered on itemId.
+  useEventListener(() => window, 'item-scm-links-changed', (/** @type {CustomEvent<{itemId?: number|string}>} */ event) => {
+    const id = event?.detail?.itemId;
+    if (id == null || String(id) !== String(itemId)) return;
+    if (connectionStatus?.connected) loadLinks();
   });
 
   async function checkConnectionStatus() {

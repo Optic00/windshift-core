@@ -452,6 +452,11 @@ func (s *AgentPRService) upsertItemSCMLink(ctx context.Context, itemID, connecti
 		itemID, workspaceRepoID, externalID, pr.URL,
 		pr.Title, state, pr.Author,
 	)
+	if err == nil {
+		// Live-update publish (WI-484): the coding agent opened/updated a PR link
+		// on the item; refresh its SCM-links section.
+		PublishItemChange(itemID, ItemChangeLink)
+	}
 	return err
 }
 

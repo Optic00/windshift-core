@@ -812,6 +812,11 @@ func (s *SyncService) upsertItemSCMLink(ctx context.Context, itemID, repoID int,
 				external_url, title, state, author_external_id, author_name, detection_source
 			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`, itemID, repoID, linkType, externalID, externalURL, title, state, authorExternalID, authorName, detectionSource)
+		if err == nil {
+			// Live-update publish (WI-484): a webhook/poll detected an external
+			// PR/branch/commit for this item; refresh its SCM-links section.
+			services.PublishItemChange(itemID, services.ItemChangeLink)
+		}
 		return err
 	}
 
@@ -827,6 +832,11 @@ func (s *SyncService) upsertItemSCMLink(ctx context.Context, itemID, repoID int,
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
 	`, externalURL, title, state, authorExternalID, authorName, existingID)
+	if err == nil {
+		// Live-update publish (WI-484): an external link changed state (e.g. PR
+		// merged/closed) — a visible SCM-section change.
+		services.PublishItemChange(itemID, services.ItemChangeLink)
+	}
 
 	return err
 }

@@ -326,6 +326,10 @@ func (h *SCMItemLinksHandler) CreateItemSCMLink(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// Live-update publish (WI-484): the SCM-links detail section is separate from
+	// the generic linked-items section, so announce the change for both.
+	services.PublishItemChange(itemID, services.ItemChangeLink)
+
 	respondJSONCreated(w, struct {
 		*ItemSCMLinkResponse
 		Warnings []string `json:"warnings,omitempty"`
@@ -367,6 +371,9 @@ func (h *SCMItemLinksHandler) DeleteItemSCMLink(w http.ResponseWriter, r *http.R
 		respondInternalError(w, r, err)
 		return
 	}
+
+	// Live-update publish (WI-484): itemID captured before the delete.
+	services.PublishItemChange(itemID, services.ItemChangeLink)
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -441,6 +448,10 @@ func (h *SCMItemLinksHandler) RefreshItemSCMLink(w http.ResponseWriter, r *http.
 		respondInternalError(w, r, fmt.Errorf("failed to retrieve updated link: %w", err))
 		return
 	}
+
+	// Live-update publish (WI-484): a refreshed link (e.g. PR state change) is a
+	// visible SCM-section change.
+	services.PublishItemChange(itemID, services.ItemChangeLink)
 
 	respondJSONOK(w, link)
 }
@@ -732,6 +743,9 @@ func (h *SCMItemLinksHandler) CreateBranchForItem(w http.ResponseWriter, r *http
 		}
 	}
 
+	// Live-update publish (WI-484): a branch (and optional PR) link was added.
+	services.PublishItemChange(itemID, services.ItemChangeLink)
+
 	respondJSONCreated(w, response)
 }
 
@@ -880,6 +894,9 @@ func (h *SCMItemLinksHandler) CreatePRFromBranch(w http.ResponseWriter, r *http.
 		PRNumber: pr.Number,
 		PRLink:   prLink,
 	}
+
+	// Live-update publish (WI-484): a PR link was added to the item.
+	services.PublishItemChange(itemID, services.ItemChangeLink)
 
 	respondJSONCreated(w, response)
 }
