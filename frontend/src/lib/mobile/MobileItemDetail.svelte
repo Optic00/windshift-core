@@ -320,7 +320,12 @@
   // poll did — and dispatches the comment event the embedded Comments listens
   // for. connect/reconnect/stale also run refresh() to reconcile.
   useItemEventStream(() => itemId, {
-    onReconcile: () => refresh(),
+    // Full reconcile also refreshes the embedded Comments (separate component),
+    // so a comment that arrived before the stream connected isn't missed.
+    onReconcile: () => {
+      refresh();
+      window.dispatchEvent(new CustomEvent('item-comments-changed', { detail: { itemId } }));
+    },
     onItem: () => refresh(),
     onChildren: () => refresh(),
     onLinks: () => refresh(),

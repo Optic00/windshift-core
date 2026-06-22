@@ -79,7 +79,13 @@ import Button from '../../components/Button.svelte';
   // full loadData() so every section reconciles (including ones with no granular
   // event: attachments, diagrams, worklogs, SCM links).
   useItemEventStream(() => itemId, {
-    onReconcile: () => loadData().catch((err) => console.error('SSE reconcile failed:', err)),
+    // Full reconcile (connect/reconnect/stale): reload the item AND the comments
+    // — Comments is a separate component, so loadData() alone would leave it
+    // stale and miss anything that arrived before the stream connected.
+    onReconcile: () => {
+      loadData().catch((err) => console.error('SSE reconcile failed:', err));
+      window.dispatchEvent(new CustomEvent('item-comments-changed', { detail: { itemId } }));
+    },
     onItem: () => itemDetailStore.refreshCurrentItem().catch((err) => console.error('SSE item refresh failed:', err)),
     onChildren: () => itemDetailStore.loadChildItems().catch((err) => console.error('SSE children refresh failed:', err)),
     onComment: () => window.dispatchEvent(new CustomEvent('item-comments-changed', { detail: { itemId } })),
