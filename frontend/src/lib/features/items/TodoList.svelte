@@ -12,6 +12,7 @@
   import { errorToast } from '../../stores/toasts.svelte.js';
   import Checkbox from '../../components/Checkbox.svelte';
   import EmptyState from '../../components/EmptyState.svelte';
+  import Button from '../../components/Button.svelte';
 
   let { workspaceId } = $props();
 
@@ -340,21 +341,18 @@
     {:else}
       <div class="flex flex-col gap-4">
         <!-- Completed-items range filter (caps the indefinitely-growing done list) -->
-        <div class="flex flex-wrap items-center gap-2 px-3 py-2 rounded-lg" style="background-color: var(--ds-surface-raised);">
-          <span class="text-xs font-medium mr-1" style="color: var(--ds-text-subtle);">{t('todo.doneFilterLabel')}</span>
+        <div class="flex flex-wrap items-center gap-3 px-3 py-2 rounded-lg" style="background-color: var(--ds-surface-raised);">
+          <span class="text-xs font-medium" style="color: var(--ds-text-subtle);">{t('todo.doneFilterLabel')}</span>
           <div class="flex items-center gap-1">
             {#each RANGE_PRESETS as preset (preset.value)}
-              <button
-                data-testid={`done-range-${preset.value}`}
+              <Button
+                dataTestid={`done-range-${preset.value}`}
+                variant={completedRange === preset.value ? 'primary' : 'ghost'}
+                size="small"
                 onclick={() => selectRange(preset.value)}
-                class="text-xs px-2 py-1 rounded transition-colors range-btn"
-                class:range-btn-active={completedRange === preset.value}
-                style={completedRange === preset.value
-                  ? 'background-color: var(--ds-interactive); color: white;'
-                  : 'color: var(--ds-text-subtle);'}
               >
                 {preset.label()}
-              </button>
+              </Button>
             {/each}
           </div>
           <input
@@ -363,9 +361,7 @@
             value={customDate}
             onchange={onCustomDateChange}
             aria-label={t('todo.doneFilterLabel')}
-            class="text-xs px-2 py-1 rounded border bg-transparent"
-            class:range-btn-active={completedRange === 'custom'}
-            style="border-color: var(--ds-border); color: var(--ds-text);"
+            class="date-input text-sm rounded border px-3 py-1.5 transition-colors bg-[var(--ds-background-input)] text-[var(--ds-text)] hover:border-[var(--ds-interactive)] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 {completedRange === 'custom' ? 'border-[var(--ds-interactive)]' : 'border-[var(--ds-border)]'}"
           />
         </div>
 
@@ -601,15 +597,9 @@
     background-color: rgba(239, 68, 68, 0.1);
   }
 
-  .range-btn:hover:not(.range-btn-active) {
-    background-color: rgba(0, 0, 0, 0.06);
-  }
-
-  :global(.dark) .range-btn:hover:not(.range-btn-active) {
-    background-color: rgba(255, 255, 255, 0.08);
-  }
-
-  input[type="date"].range-btn-active {
-    border-color: var(--ds-interactive) !important;
+  /* Tint the native calendar picker indicator so it reads correctly in dark
+     mode — a vendor pseudo-element that can't be targeted via Tailwind. */
+  :global(.dark) .date-input::-webkit-calendar-picker-indicator {
+    filter: invert(1) opacity(0.7);
   }
 </style>

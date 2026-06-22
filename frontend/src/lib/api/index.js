@@ -42,7 +42,12 @@ import { del, fetchAPI, get, post, put } from './core.js';
 import { emailTemplates } from './email-templates.js';
 import { forms } from './forms.js';
 import { hub } from './hub.js';
-import { integrationProviders, itemIntegrationLinks, userIntegrations } from './integrations.js';
+import {
+  integrationProviders,
+  itemIntegrationLinks,
+  todoistSync,
+  userIntegrations,
+} from './integrations.js';
 // Domain imports
 import { items } from './items.js';
 import { leave } from './leave.js';
@@ -374,6 +379,9 @@ export const api = {
 
   // User Integration Connections
   userIntegrations,
+
+  // Todoist personal-task sync
+  todoistSync,
 
   // Item Integration Links
   itemIntegrationLinks,
