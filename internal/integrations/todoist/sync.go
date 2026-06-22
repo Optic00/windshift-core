@@ -11,10 +11,10 @@ import (
 	"github.com/google/uuid"
 )
 
-// syncBaseURL is the base of the Todoist Sync API (v9). The data client batches
+// syncBaseURL is the base of the Todoist Sync API (v1). The data client batches
 // reads (incremental sync) and writes (commands) through the single /sync
 // endpoint, which is what makes 1:1 personal-task mirroring tractable.
-const syncBaseURL = "https://api.todoist.com/sync/v9"
+const syncBaseURL = "https://api.todoist.com/api/v1"
 
 // Priority constants. Todoist priority is inverted relative to its UI: the API
 // uses 1 (natural / "p4") through 4 (urgent / "p1").
