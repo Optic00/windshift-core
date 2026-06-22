@@ -3,7 +3,7 @@
   import { authStore } from '../../stores';
   import { api } from '../../api.js';
   import DashboardItemRow from './DashboardItemRow.svelte';
-  import { normalizeTaskResponse, openTask } from './taskWidgetState.js';
+  import { completedSinceCutoff, normalizeTaskResponse, openTask } from './taskWidgetState.js';
 
   let tasks = $state([]);
   let loading = $state(false);
@@ -44,6 +44,9 @@
         ql: `workspace_id = ${personalWorkspaceId}`,
         limit: 30,
         order_by: 'updated_at',
+        // Hide tasks completed more than the default window ago, matching the
+        // per-workspace TodoList done-range default.
+        completed_since: completedSinceCutoff(),
       });
       if (v !== version) return;
       tasks = normalizeTaskResponse(response);

@@ -18,6 +18,8 @@
 </script>
 
 <button
+  data-testid="dashboard-item-row"
+  data-item-key={itemKey}
   class="w-full flex items-center justify-between gap-3 p-2 rounded border text-left transition-colors"
   style="border-color: var(--ds-border); background-color: var(--ds-surface);"
   onmouseenter={(e) => (e.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)')}
