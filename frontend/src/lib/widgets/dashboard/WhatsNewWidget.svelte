@@ -105,6 +105,9 @@
           {#each g.entries as e (e.id)}
             <li>
               <button
+                data-testid="whats-new-entry"
+                data-entry-id={e.id}
+                data-read={e.read}
                 class="w-full text-left px-1 py-2 flex items-start gap-2 transition-colors"
                 style="color: var(--ds-text);"
                 onmouseenter={(e2) =>
