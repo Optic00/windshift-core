@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -183,6 +184,28 @@ func (s *PushService) Delete(userID, id int) error {
 	return err
 }
 
+// mobileItemRoutePattern matches the item deep link emitted by
+// notification_service.itemActionURL (/workspaces/<id>/items/<itemId>) so we
+// can rewrite it to the mobile item route the PWA service worker navigates to.
+// It also defensively matches a nested-collection shape
+// (.../collections/<cid>/items/<itemId>) should an action URL ever carry one,
+// since the trailing /items/<id> segment is all the rewrite needs.
+var mobileItemRoutePattern = regexp.MustCompile(`/items/(\d+)(?:[/?#]|$)`)
+
+// mobileActionURL rewrites a notification's desktop action URL into its mobile
+// equivalent for the push payload. Item deep links (/workspaces/.../items/N)
+// become /m/items/N; any non-item URL (or empty value) is returned as-is so
+// callers can fall back to the generic mobile notifications route.
+func mobileActionURL(actionURL string) string {
+	if actionURL == "" {
+		return ""
+	}
+	if m := mobileItemRoutePattern.FindStringSubmatch(actionURL); m != nil {
+		return "/m/items/" + m[1]
+	}
+	return actionURL
+}
+
 // Dispatch fans a created notification out to the recipient's subscriptions.
 // Intended to be called in a goroutine; it recovers from panics so a transport
 // failure can never take down the caller.
@@ -204,7 +227,13 @@ func (s *PushService) Dispatch(notification models.Notification) {
 	if len(body) > maxPushBodyLen {
 		body = body[:maxPushBodyLen]
 	}
-	url := notification.ActionURL
+	// Push subscriptions are registered exclusively by the mobile PWA, so the
+	// deep link we hand the service worker must target the mobile surface. The
+	// notification's ActionURL is a desktop route (itemActionURL() emits
+	// /workspaces/<id>/items/<itemId>) — rewrite it to /m/items/<itemId> so
+	// tapping a push notification doesn't drop the user onto the desktop item
+	// page, which is borderline unusable on a phone.
+	url := mobileActionURL(notification.ActionURL)
 	if url == "" {
 		url = "/m/notifications"
 	}
