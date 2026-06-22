@@ -186,7 +186,7 @@
 							<h3 class="text-base font-medium" style="color: var(--ds-text);">
 								{provider.name}
 							</h3>
-							{#if provider.connected}
+							{#if provider.is_connected}
 								<span
 									class="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full"
 									style="background-color: var(--ds-background-success); color: var(--ds-text-success);"
@@ -205,17 +205,17 @@
 							{/if}
 						</div>
 
-						{#if provider.connected && provider.username}
+						{#if provider.is_connected && provider.scm_username}
 							<div class="flex items-center gap-2 mt-1">
-								{#if provider.avatar_url}
+								{#if provider.scm_avatar_url}
 									<img
-										src={provider.avatar_url}
-										alt={provider.username}
+										src={provider.scm_avatar_url}
+										alt={provider.scm_username}
 										class="w-5 h-5 rounded-full"
 									/>
 								{/if}
 								<span class="text-sm" style="color: var(--ds-text-subtle);">
-									@{provider.username}
+									@{provider.scm_username}
 								</span>
 								{#if provider.connected_at}
 									<span class="text-xs" style="color: var(--ds-text-subtlest);">
@@ -223,7 +223,7 @@
 									</span>
 								{/if}
 							</div>
-						{:else if !provider.connected}
+						{:else if !provider.is_connected}
 							<p class="text-sm mt-1" style="color: var(--ds-text-subtle);">
 								{t('settings.connectedAccounts.connectDesc')}
 							</p>
@@ -232,7 +232,7 @@
 
 					<!-- Actions -->
 					<div class="flex items-center gap-2">
-						{#if provider.connected}
+						{#if provider.is_connected}
 							<Button
 								variant="danger"
 								size="small"
@@ -253,7 +253,7 @@
 								size="small"
 								onclick={() => connect(provider)}
 							>
-								{t('settings.connectedAccounts.connect')} {provider.provider_type || t('settings.connectedAccounts.account')}
+								{t('settings.connectedAccounts.connect')}
 							</Button>
 						{/if}
 					</div>
