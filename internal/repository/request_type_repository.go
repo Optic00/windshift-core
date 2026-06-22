@@ -163,6 +163,42 @@ func (r *RequestTypeRepository) ChannelExists(id int) (bool, error) {
 	return ok, nil
 }
 
+// ItemTypeExists reports whether an item_type row with the given id exists.
+func (r *RequestTypeRepository) ItemTypeExists(id int) (bool, error) {
+	var ok bool
+	if err := r.db.QueryRow("SELECT EXISTS(SELECT 1 FROM item_types WHERE id = ?)", id).Scan(&ok); err != nil {
+		return false, fmt.Errorf("check item_type %d: %w", id, err)
+	}
+	return ok, nil
+}
+
+// ItemTypeAllowedInWorkspace reports whether the item type is usable in the
+// workspace's configuration set: true when the workspace has no config set
+// (all types allowed) or when the item type is in that set. Mirrors
+// services.IsItemTypeAllowedInWorkspace, kept here so the request-type handler
+// can validate routing without the repository depending on the services layer.
+func (r *RequestTypeRepository) ItemTypeAllowedInWorkspace(workspaceID, itemTypeID int) (bool, error) {
+	var configSetID *int
+	err := r.db.QueryRow(
+		"SELECT configuration_set_id FROM workspace_configuration_sets WHERE workspace_id = ?",
+		workspaceID,
+	).Scan(&configSetID)
+	if errors.Is(err, sql.ErrNoRows) || configSetID == nil {
+		return true, nil // no config set → all types allowed
+	}
+	if err != nil {
+		return false, fmt.Errorf("query workspace %d config set: %w", workspaceID, err)
+	}
+	var ok bool
+	if err := r.db.QueryRow(
+		"SELECT EXISTS(SELECT 1 FROM configuration_set_item_types WHERE configuration_set_id = ? AND item_type_id = ?)",
+		*configSetID, itemTypeID,
+	).Scan(&ok); err != nil {
+		return false, fmt.Errorf("check item_type %d in config set %d: %w", itemTypeID, *configSetID, err)
+	}
+	return ok, nil
+}
+
 // MaxDisplayOrder returns the largest display_order in use within a channel
 // (0 when none exist). The handler uses it to compute a default for new rows.
 func (r *RequestTypeRepository) MaxDisplayOrder(channelID int) (int, error) {
@@ -226,10 +262,10 @@ func (r *RequestTypeRepository) Update(id, channelID int, rt *models.RequestType
 	res, err := r.db.ExecWrite(`
 		UPDATE request_types
 		SET name = ?, description = ?, item_type_id = ?, icon = ?, color = ?, display_order = ?, is_active = ?,
-		    visibility_group_ids = ?, visibility_org_ids = ?, title_template = ?, updated_at = ?
+		    visibility_group_ids = ?, visibility_org_ids = ?, workspace_id = ?, title_template = ?, updated_at = ?
 		WHERE id = ? AND channel_id = ?
 	`, rt.Name, rt.Description, rt.ItemTypeID, rt.Icon, rt.Color, rt.DisplayOrder, rt.IsActive,
-		encodeIntJSONArray(rt.VisibilityGroupIDs), encodeIntJSONArray(rt.VisibilityOrgIDs), rt.TitleTemplate, time.Now(), id, channelID,
+		encodeIntJSONArray(rt.VisibilityGroupIDs), encodeIntJSONArray(rt.VisibilityOrgIDs), rt.WorkspaceID, rt.TitleTemplate, time.Now(), id, channelID,
 	)
 	if err != nil {
 		if database.IsUniqueConstraintError(err) {

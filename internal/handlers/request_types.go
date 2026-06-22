@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -125,6 +127,56 @@ func (h *RequestTypeHandler) Get(w http.ResponseWriter, r *http.Request) {
 	respondJSONOK(w, rt)
 }
 
+// channelServedWorkspaceIDs returns the union of the channel's configured
+// portal and form target workspaces. A request type may only pin a workspace
+// the channel actually serves.
+func (h *RequestTypeHandler) channelServedWorkspaceIDs(ctx context.Context, channelID int) ([]int, error) {
+	cfgStr, err := h.channelRepo.GetConfig(ctx, channelID)
+	if err != nil {
+		return nil, err
+	}
+	var cfg models.ChannelConfig
+	if strings.TrimSpace(cfgStr) != "" {
+		if err := json.Unmarshal([]byte(cfgStr), &cfg); err != nil {
+			return nil, fmt.Errorf("parse channel %d config: %w", channelID, err)
+		}
+	}
+	ids := append([]int(nil), cfg.PortalWorkspaceIDs...)
+	ids = append(ids, cfg.FormWorkspaceIDs...)
+	return ids, nil
+}
+
+// validateRequestTypeRouting enforces, when a request type pins a workspace,
+// that (1) the workspace is one the channel serves and (2) the item type is
+// allowed in that workspace's configuration set. A nil workspace is a no-op
+// (legacy request type; submission routing falls back to the channel's first
+// configured workspace). Writes the error response and returns false on
+// failure.
+func (h *RequestTypeHandler) validateRequestTypeRouting(w http.ResponseWriter, r *http.Request, channelID int, rt *models.RequestType) bool {
+	if rt.WorkspaceID == nil {
+		return true
+	}
+	served, err := h.channelServedWorkspaceIDs(r.Context(), channelID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return false
+	}
+	if !containsID(served, *rt.WorkspaceID) {
+		respondValidationError(w, r, "Workspace is not served by this channel")
+		return false
+	}
+	allowed, err := h.repo.ItemTypeAllowedInWorkspace(*rt.WorkspaceID, rt.ItemTypeID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return false
+	}
+	if !allowed {
+		respondValidationError(w, r, "Item type is not allowed in the selected workspace")
+		return false
+	}
+	return true
+}
+
 // Create creates a new request type
 func (h *RequestTypeHandler) Create(w http.ResponseWriter, r *http.Request) {
 	channelID, ok := requireIDParam(w, r, "channel_id")
@@ -157,6 +209,9 @@ func (h *RequestTypeHandler) Create(w http.ResponseWriter, r *http.Request) {
 	itemTypeExists, err := h.itemTypeRepo.Exists(rt.ItemTypeID)
 	if err != nil || !itemTypeExists {
 		respondValidationError(w, r, "Item type not found")
+		return
+	}
+	if !h.validateRequestTypeRouting(w, r, rt.ChannelID, &rt) {
 		return
 	}
 
@@ -227,9 +282,12 @@ func (h *RequestTypeHandler) Create(w http.ResponseWriter, r *http.Request) {
 // Update updates an existing request type. The route is
 // PUT /channels/{channel_id}/request-types/{id}; channelMgmt middleware gates
 // access and the SQL UPDATE is constrained by channel_id so a request type
-// belonging to another channel cannot be touched. Body-supplied channel_id
-// and workspace_id are ignored — channel_id comes from the URL and
-// workspace_id is not mutable via this endpoint.
+// belonging to another channel cannot be touched. Body-supplied channel_id is
+// ignored (it comes from the URL). workspace_id IS mutable: a supplied value
+// retargets the request type, and an omitted value preserves the existing
+// workspace (so callers that don't manage routing can't accidentally clear
+// it). A pinned workspace must be served by the channel and must allow the
+// item type.
 func (h *RequestTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 	channelID, ok := requireIDParam(w, r, "channel_id")
 	if !ok {
@@ -268,6 +326,21 @@ func (h *RequestTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 	itemTypeExists, err := h.itemTypeRepo.Exists(rt.ItemTypeID)
 	if err != nil || !itemTypeExists {
 		respondValidationError(w, r, "Item type not found")
+		return
+	}
+
+	// workspace_id is now mutable, but omitting it must not clear the existing
+	// routing target. When the body carries no workspace_id, preserve the
+	// stored value before validating/persisting.
+	if rt.WorkspaceID == nil {
+		_, existingWorkspaceID, err := h.repo.GetItemTypeAndWorkspace(id)
+		if err != nil && !errors.Is(err, repository.ErrNotFound) {
+			respondInternalError(w, r, err)
+			return
+		}
+		rt.WorkspaceID = existingWorkspaceID
+	}
+	if !h.validateRequestTypeRouting(w, r, channelID, &rt) {
 		return
 	}
 
