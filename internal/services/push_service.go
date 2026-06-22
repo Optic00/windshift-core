@@ -3,6 +3,7 @@ package services
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -12,9 +13,71 @@ import (
 	"windshift/internal/config"
 	"windshift/internal/database"
 	"windshift/internal/models"
+	"windshift/internal/repository"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
 )
+
+// system_settings keys under which an auto-provisioned VAPID keypair is
+// persisted. The private key lives at the same trust boundary as the push
+// subscription keys already in the database and is never returned by any
+// settings API.
+const (
+	settingVAPIDPublicKey  = "push_vapid_public_key"
+	settingVAPIDPrivateKey = "push_vapid_private_key"
+)
+
+// ResolveVAPIDConfig guarantees a usable VAPID keypair so Web Push works with
+// zero operator configuration. Resolution precedence:
+//
+//  1. Explicit env (both VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY set) — returned
+//     untouched so operators can manage and rotate keys out-of-band.
+//  2. A keypair previously generated and persisted in system_settings.
+//  3. A freshly generated keypair, persisted for every future boot.
+//
+// On any error it returns cfg unchanged (push stays disabled) rather than
+// failing startup — push is a non-critical feature.
+func ResolveVAPIDConfig(db database.Database, cfg config.PushConfig, log *slog.Logger) config.PushConfig {
+	// (1) Explicit env override wins and is never persisted.
+	if cfg.VAPIDPublicKey != "" && cfg.VAPIDPrivateKey != "" {
+		return cfg
+	}
+
+	repo := repository.NewSystemSettingRepository(db)
+	pub, pubOK, errPub := repo.GetValue(settingVAPIDPublicKey)
+	priv, privOK, errPriv := repo.GetValue(settingVAPIDPrivateKey)
+	if err := errors.Join(errPub, errPriv); err != nil {
+		log.Error("reading persisted VAPID keys; Web Push disabled", "error", err)
+		return cfg
+	}
+
+	// (2) Reuse a previously persisted pair.
+	if pubOK && privOK && pub != "" && priv != "" {
+		cfg.VAPIDPublicKey, cfg.VAPIDPrivateKey = pub, priv
+		return cfg
+	}
+
+	// (3) First run with no keys anywhere: generate and persist a pair.
+	// GenerateVAPIDKeys returns (privateKey, publicKey, err) — order matters.
+	newPriv, newPub, err := webpush.GenerateVAPIDKeys()
+	if err != nil {
+		log.Error("generating VAPID keypair; Web Push disabled", "error", err)
+		return cfg
+	}
+	if err := repo.Upsert(settingVAPIDPublicKey, newPub, "string",
+		"Auto-generated VAPID public key for Web Push", "push"); err != nil {
+		log.Error("persisting VAPID public key; Web Push disabled this boot", "error", err)
+		return cfg
+	}
+	if err := repo.Upsert(settingVAPIDPrivateKey, newPriv, "string",
+		"Auto-generated VAPID private key for Web Push", "push"); err != nil {
+		log.Error("persisting VAPID private key; Web Push disabled this boot", "error", err)
+		return cfg
+	}
+	cfg.VAPIDPublicKey, cfg.VAPIDPrivateKey = newPub, newPriv
+	log.Info("auto-generated and persisted a VAPID keypair for Web Push")
+	return cfg
+}
 
 // pushTTLSeconds is how long a push service should retain an undelivered
 // message. One day matches the notification cache horizon.

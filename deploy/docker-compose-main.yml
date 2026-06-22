@@ -28,13 +28,13 @@ services:
       - CODING_AGENT_ENABLED=true
       - LOG_LEVEL=info
       - LOG_FORMAT=json
-      # Web Push (VAPID). REQUIRED for mobile/PWA push notifications — without
-      # both keys, push dispatch is a no-op and the "Enable notifications"
-      # button silently fails. Generate ONE pair per deployment and keep it
-      # stable (rotating invalidates every existing subscription):
+      # Web Push (VAPID). OPTIONAL — if unset, the server auto-generates a
+      # keypair on first boot and persists it in the database, so push works
+      # out of the box. Set these only to manage/rotate keys yourself (keep the
+      # pair stable; rotating invalidates every existing subscription):
       #   npx web-push generate-vapid-keys
-      - VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY}
-      - VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY}
+      - VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY:-}
+      - VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY:-}
       # Optional VAPID "sub" contact (mailto: or https:). Defaults to BASE_URL.
       - VAPID_SUBJECT=${VAPID_SUBJECT:-}
     volumes:

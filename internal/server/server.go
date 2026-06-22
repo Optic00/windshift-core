@@ -665,10 +665,13 @@ func (s *Server) initialize() error {
 	// Web Push: store subscriptions + fan notifications out to them. The
 	// dispatcher is wired into the notification manager so every created
 	// notification (assignments, mentions, comments, …) triggers a push.
-	pushService := services.NewPushService(s.db, cfg.Push)
+	// VAPID keys are resolved env > persisted > auto-generated, so push works
+	// out of the box on a fresh deployment with no operator configuration.
+	pushCfg := services.ResolveVAPIDConfig(s.db, cfg.Push, slog.Default())
+	pushService := services.NewPushService(s.db, pushCfg)
 	pushHandler := handlers.NewPushHandler(pushService)
 	s.notificationManager.SetPushDispatcher(pushService)
-	if cfg.Push.Enabled() {
+	if pushService.Enabled() {
 		slog.Info("Web Push enabled")
 	}
 
