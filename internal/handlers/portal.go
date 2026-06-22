@@ -624,12 +624,32 @@ func (h *PortalHandler) SubmitToPortal(w http.ResponseWriter, r *http.Request) {
 		submission.Title = sanitize.PlainTextField.Sanitize(rendered)
 	}
 
-	// Get target workspace (use first workspace for submission)
+	// Resolve the target workspace. The request type's own workspace_id is the
+	// source of truth for routing; fall back to the channel's first configured
+	// workspace only when the request type doesn't pin one (legacy/NULL). A
+	// generic submission (no request type) on a portal serving multiple
+	// workspaces is ambiguous — reject rather than silently routing to the
+	// first workspace.
 	if len(config.PortalWorkspaceIDs) == 0 {
 		respondInternalError(w, r, fmt.Errorf("portal has no configured workspaces"))
 		return
 	}
+	if submission.RequestTypeID == nil && len(config.PortalWorkspaceIDs) > 1 {
+		respondValidationError(w, r, "this portal serves multiple workspaces; select a request type so the submission can be routed")
+		return
+	}
 	targetWorkspaceID := config.PortalWorkspaceIDs[0]
+	if validationResult.WorkspaceID != nil {
+		targetWorkspaceID = *validationResult.WorkspaceID
+		// The request type's workspace must be one the portal actually serves.
+		// A mismatch means the channel's workspace list drifted away from the
+		// request type's routing target; refuse rather than create an item the
+		// portal can't surface.
+		if !containsID(config.PortalWorkspaceIDs, targetWorkspaceID) {
+			respondValidationError(w, r, "request type is misconfigured: its workspace is not served by this portal")
+			return
+		}
+	}
 
 	// Determine initial status from workflow if item type is specified
 	initialStatus := defaultItemStatus // Default fallback status

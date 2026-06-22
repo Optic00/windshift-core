@@ -337,12 +337,24 @@ func (h *FormHandler) SubmitForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get target workspace
+	// Resolve the target workspace. The request type's own workspace_id is the
+	// source of truth for routing; fall back to the channel's first configured
+	// workspace only when the request type doesn't pin one (legacy/NULL).
 	if len(config.FormWorkspaceIDs) == 0 {
 		respondInternalError(w, r, fmt.Errorf("form channel has no configured workspaces"))
 		return
 	}
 	targetWorkspaceID := config.FormWorkspaceIDs[0]
+	if validationResult.WorkspaceID != nil {
+		targetWorkspaceID = *validationResult.WorkspaceID
+		// The request type's workspace must be one the form channel serves; a
+		// mismatch means the channel's workspace list drifted away from the
+		// request type's routing target.
+		if !containsID(config.FormWorkspaceIDs, targetWorkspaceID) {
+			respondValidationError(w, r, "request type is misconfigured: its workspace is not served by this form channel")
+			return
+		}
+	}
 
 	// Determine initial status
 	initialStatus := defaultItemStatus

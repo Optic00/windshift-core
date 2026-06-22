@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -39,7 +40,13 @@ func IsBlankSubmittedField(value interface{}) bool {
 
 // RequestTypeValidationResult contains the result of request type field validation.
 type RequestTypeValidationResult struct {
-	ItemTypeID         *int
+	ItemTypeID *int
+	// WorkspaceID is the request type's own target workspace, when set. It is
+	// the source of truth for submission routing: callers create the item in
+	// this workspace, falling back to the channel's first configured workspace
+	// only when it is nil. Nullable in the schema, so a request type may not
+	// pin a workspace.
+	WorkspaceID        *int
 	VirtualFieldValues map[string]interface{}
 	CustomFieldValues  map[string]interface{}
 	// TitleFieldInForm is true when the request type's field config includes
@@ -63,13 +70,18 @@ func ValidateAndSeparateRequestFields(ctx context.Context, db database.Database,
 	var rtID int
 	var rtName string
 	var itemTypeID int
-	err := db.QueryRowContext(ctx, `SELECT id, name, item_type_id FROM request_types WHERE id = ? AND is_active = true`, *requestTypeID).Scan(
-		&rtID, &rtName, &itemTypeID,
+	var workspaceID sql.NullInt64
+	err := db.QueryRowContext(ctx, `SELECT id, name, item_type_id, workspace_id FROM request_types WHERE id = ? AND is_active = true`, *requestTypeID).Scan(
+		&rtID, &rtName, &itemTypeID, &workspaceID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("invalid request type (ID: %d): %w", *requestTypeID, err)
 	}
 	result.ItemTypeID = &itemTypeID
+	if workspaceID.Valid {
+		wsID := int(workspaceID.Int64)
+		result.WorkspaceID = &wsID
+	}
 
 	virtualFieldIDs := make(map[string]bool)
 	configuredCustomFieldIDs := make(map[string]bool)
