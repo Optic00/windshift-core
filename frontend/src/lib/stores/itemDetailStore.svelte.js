@@ -61,6 +61,10 @@ class ItemDetailStore {
   loading = $state(true);
   error = $state(null);
   saving = $state(false);
+  // Set when the open item no longer exists (deleted elsewhere — discovered via
+  // the SSE `deleted` event or a 404 on refresh). The detail view watches this
+  // and closes/navigates away instead of showing stale data (WI-484).
+  notFound = $state(false);
 
   // Workspace
   workspace = $state(null);
@@ -194,6 +198,7 @@ class ItemDetailStore {
 
     this.itemId = effectiveItemId;
     this.error = null;
+    this.notFound = false;
     if (!isSwitch) {
       this.loading = true;
       this.loadingLinks = true;
@@ -379,8 +384,22 @@ class ItemDetailStore {
         }
       }
     } catch (err) {
+      // A 404 means the item was deleted out from under us. Surface it so the
+      // view can close instead of silently keeping stale data (WI-484).
+      if (err?.status === 404) {
+        this.markDeleted();
+        return;
+      }
       console.warn('Failed to refresh item detail:', err);
     }
+  }
+
+  /**
+   * Mark the open item as gone (deleted elsewhere). Idempotent; the detail view
+   * reacts to `notFound` by closing/navigating away.
+   */
+  markDeleted() {
+    this.notFound = true;
   }
 
   /**
@@ -1130,6 +1149,7 @@ class ItemDetailStore {
     this.loading = true;
     this.error = null;
     this.saving = false;
+    this.notFound = false;
     this.workspace = null;
 
     this.editing = { ...DEFAULT_EDITING_STATE };

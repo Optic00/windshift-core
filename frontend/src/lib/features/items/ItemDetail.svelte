@@ -85,12 +85,34 @@ import Button from '../../components/Button.svelte';
     onReconcile: () => {
       loadData().catch((err) => console.error('SSE reconcile failed:', err));
       window.dispatchEvent(new CustomEvent('item-comments-changed', { detail: { itemId } }));
+      window.dispatchEvent(new CustomEvent('item-scm-links-changed', { detail: { itemId } }));
     },
     onItem: () => itemDetailStore.refreshCurrentItem().catch((err) => console.error('SSE item refresh failed:', err)),
     onChildren: () => itemDetailStore.loadChildItems().catch((err) => console.error('SSE children refresh failed:', err)),
     onComment: () => window.dispatchEvent(new CustomEvent('item-comments-changed', { detail: { itemId } })),
-    onLinks: () => loadData().catch((err) => console.error('SSE links refresh failed:', err)),
-    onDeleted: () => itemDetailStore.refreshCurrentItem().catch((err) => console.error('SSE deleted refresh failed:', err)),
+    // `link` covers both the generic linked-items section (reloaded by loadData)
+    // and the separate SCM-links section (ItemSCMLinks listens for this event).
+    onLinks: () => {
+      loadData().catch((err) => console.error('SSE links refresh failed:', err));
+      window.dispatchEvent(new CustomEvent('item-scm-links-changed', { detail: { itemId } }));
+    },
+    // The viewed item was deleted (its own topic published `deleted`). This is
+    // authoritative — mark it gone so the view closes instead of refetching
+    // (which would 404) and showing stale data.
+    onDeleted: () => itemDetailStore.markDeleted(),
+  });
+
+  // Close the detail when the open item is deleted elsewhere (SSE `deleted`, or
+  // a 404 discovered by the poll fallback). Force hasChanges=false so a deleted
+  // item never triggers an unsaved-changes prompt.
+  $effect(() => {
+    if (!itemDetailStore.notFound) return;
+    errorToast('This item was deleted.');
+    if (isModal && onclose) {
+      onclose({ hasChanges: false });
+    } else if (!isModal) {
+      closeModal();
+    }
   });
 
   // Instant refresh after the AI chat agent completes a run — don't make

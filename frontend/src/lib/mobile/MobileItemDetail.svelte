@@ -4,6 +4,7 @@
   import { agentRuns } from '../api/agentRuns.js';
   import { agentRuns as agentRunBus } from '../stores/agentRuns.svelte.js';
   import { navigate } from '../router.js';
+  import { errorToast } from '../stores/toasts.svelte.js';
   import { timerStore } from '../stores/timerStore.svelte.js';
   import { useWorkItemPoller } from '../composables/useWorkItemPoller.svelte.js';
   import { useItemEventStream } from '../composables/useItemEventStream.svelte.js';
@@ -289,7 +290,9 @@
       const fresh = await api.items.get(itemId);
       if (token !== loadToken) return;
       item = { ...item, ...fresh };
-    } catch {
+    } catch (err) {
+      // 404 => the item was deleted out from under us; leave the stale view.
+      if (err?.status === 404) handleDeleted();
       return;
     }
     try {
@@ -325,13 +328,24 @@
     onReconcile: () => {
       refresh();
       window.dispatchEvent(new CustomEvent('item-comments-changed', { detail: { itemId } }));
+      window.dispatchEvent(new CustomEvent('item-scm-links-changed', { detail: { itemId } }));
     },
     onItem: () => refresh(),
     onChildren: () => refresh(),
-    onLinks: () => refresh(),
-    onDeleted: () => refresh(),
+    onLinks: () => {
+      refresh();
+      window.dispatchEvent(new CustomEvent('item-scm-links-changed', { detail: { itemId } }));
+    },
+    onDeleted: () => handleDeleted(),
     onComment: () => window.dispatchEvent(new CustomEvent('item-comments-changed', { detail: { itemId } })),
   });
+
+  // The viewed item was deleted elsewhere: toast and leave the now-stale detail.
+  function handleDeleted() {
+    errorToast('This item was deleted.');
+    if (window.history.length > 1) window.history.back();
+    else navigate('/m');
+  }
 
   // Pull-to-refresh: dragging the canvas down from the top triggers a manual
   // reload (same silent refresh() the background poller uses). Listeners attach
