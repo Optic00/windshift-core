@@ -37,8 +37,28 @@ func (h *ItemHandler) Events(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !CheckItemPermission(w, r, repository.NewItemRepository(h.db), h.permissionService, itemID, models.PermissionItemView) {
+	user, ok := RequireAuth(w, r)
+	if !ok {
 		return
+	}
+	itemRepo := repository.NewItemRepository(h.db)
+	if !CheckItemPermission(w, r, itemRepo, h.permissionService, itemID, models.PermissionItemView) {
+		return
+	}
+
+	// authorized re-evaluates item.view for this user. The stream is authorized
+	// at connect AND re-checked on every heartbeat (below), so a mid-stream
+	// permission revocation — or the item's deletion — stops delivery within one
+	// heartbeat instead of continuing to leak changes (WI-484). The check is a
+	// brief query, not a held connection, so the idle stream still holds no DB
+	// connection between heartbeats.
+	authorized := func() bool {
+		workspaceID, err := itemRepo.GetWorkspaceID(itemID)
+		if err != nil {
+			return false // item no longer exists
+		}
+		ok, err := h.permissionService.HasWorkspacePermission(user.ID, workspaceID, models.PermissionItemView)
+		return err == nil && ok
 	}
 
 	flusher, ok := w.(http.Flusher)
@@ -84,6 +104,11 @@ func (h *ItemHandler) Events(w http.ResponseWriter, r *http.Request) {
 			}
 			flusher.Flush()
 		case <-heartbeat.C:
+			// Re-authorize before the next heartbeat write: stop streaming if the
+			// user lost item.view (or the item was deleted) since connecting.
+			if !authorized() {
+				return
+			}
 			if sub.TakeStale() {
 				writeSSEEvent(w, "reload", itemID)
 			}
