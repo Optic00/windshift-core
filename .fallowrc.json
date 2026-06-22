@@ -6,9 +6,17 @@
   ],
   "ignorePatterns": [
     "frontend/src/design-system/**",
+    "frontend/design-system.html",
     "frontend/public/**",
     "frontend/scripts/**",
     "plugin-src/**"
+  ],
+  "ignoreUnresolvedImports": [
+    "@fontsource/inter/latin.css",
+    "@xterm/xterm/css/xterm.css"
+  ],
+  "ignoreExports": [
+    { "file": "frontend/src/**/*.svelte", "exports": ["*"] }
   ],
   "dynamicallyLoaded": [
     "frontend/src/lib/locales/**/*.js"

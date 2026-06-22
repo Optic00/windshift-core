@@ -2,15 +2,15 @@ import { fireEvent, render, screen } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import DataTable from './DataTable.svelte';
 
-// Mock the lucide-svelte icons
-vi.mock('lucide-svelte', () => ({
+// Mock the lucide icons
+vi.mock('@lucide/svelte', () => ({
   MoreHorizontal: vi.fn(() => null),
   ChevronLeft: vi.fn(() => null),
   ChevronRight: vi.fn(() => null),
 }));
 
 // Mock child components - for Svelte 5, provide minimal component mocks
-vi.mock('./DropdownMenu.svelte', () => {
+vi.mock('../layout/DropdownMenu.svelte', () => {
   return {
     default: function MockDropdownMenu() {},
   };
