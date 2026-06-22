@@ -28,27 +28,33 @@ const requestTypeSelectColumns = `
 	rt.icon, rt.color, rt.display_order, rt.is_active, rt.config,
 	rt.visibility_group_ids, rt.visibility_org_ids, rt.workspace_id,
 	rt.title_template, rt.created_at, rt.updated_at,
-	c.name as channel_name, it.name as item_type_name`
+	c.name as channel_name, it.name as item_type_name,
+	ws.name as workspace_name, ws.key as workspace_key`
 
 const requestTypeFromJoins = `
 	FROM request_types rt
 	LEFT JOIN channels c ON rt.channel_id = c.id
-	LEFT JOIN item_types it ON rt.item_type_id = it.id`
+	LEFT JOIN item_types it ON rt.item_type_id = it.id
+	LEFT JOIN workspaces ws ON rt.workspace_id = ws.id`
 
 func scanRequestType(scanner interface {
 	Scan(dest ...interface{}) error
 }) (models.RequestType, error) {
 	var rt models.RequestType
 	var visibilityGroupIDs, visibilityOrgIDs *string
+	var workspaceName, workspaceKey sql.NullString
 	if err := scanner.Scan(&rt.ID, &rt.ChannelID, &rt.Name, &rt.Description, &rt.ItemTypeID,
 		&rt.Icon, &rt.Color, &rt.DisplayOrder, &rt.IsActive, &rt.Config,
 		&visibilityGroupIDs, &visibilityOrgIDs, &rt.WorkspaceID,
 		&rt.TitleTemplate, &rt.CreatedAt, &rt.UpdatedAt,
-		&rt.ChannelName, &rt.ItemTypeName); err != nil {
+		&rt.ChannelName, &rt.ItemTypeName,
+		&workspaceName, &workspaceKey); err != nil {
 		return rt, err
 	}
 	rt.VisibilityGroupIDs = decodeIntJSONArray(visibilityGroupIDs)
 	rt.VisibilityOrgIDs = decodeIntJSONArray(visibilityOrgIDs)
+	rt.WorkspaceName = workspaceName.String
+	rt.WorkspaceKey = workspaceKey.String
 	return rt, nil
 }
 

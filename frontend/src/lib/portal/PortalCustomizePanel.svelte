@@ -477,6 +477,9 @@
                     <div>
                       <div class="text-xs" style="color: {portalStore.isDarkMode ? '#94a3b8' : '#6b7280'};">
                         <div class="font-medium" style="color: {portalStore.isDarkMode ? '#e2e8f0' : '#374151'};">{requestType.item_type_name || t('common.unknown')}</div>
+                        {#if requestType.workspace_name}
+                          <div>{requestType.workspace_name}{#if requestType.workspace_key}&nbsp;({requestType.workspace_key}){/if}</div>
+                        {/if}
                       </div>
                       <button
                         onclick={() => expandedRequestTypeForFields = isExpanded ? null : requestType}

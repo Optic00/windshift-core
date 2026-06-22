@@ -467,9 +467,11 @@ func (h *PortalHandler) GetRequestTypes(w http.ResponseWriter, r *http.Request) 
 		       rt.visibility_group_ids, rt.visibility_org_ids,
 		       rt.created_at, rt.updated_at,
 		       it.name as item_type_name,
+		       rt.workspace_id, ws.name as workspace_name, ws.key as workspace_key,
 		       (SELECT COUNT(*) FROM request_type_fields rtf WHERE rtf.request_type_id = rt.id) AS field_count
 		FROM request_types rt
 		LEFT JOIN item_types it ON rt.item_type_id = it.id
+		LEFT JOIN workspaces ws ON rt.workspace_id = ws.id
 		WHERE rt.channel_id = ? AND rt.is_active = true
 		ORDER BY rt.display_order, rt.name`
 
@@ -487,14 +489,25 @@ func (h *PortalHandler) GetRequestTypes(w http.ResponseWriter, r *http.Request) 
 	for rows.Next() {
 		var rt models.RequestType
 		var visibilityGroupIDs, visibilityOrgIDs sql.NullString
+		var workspaceID sql.NullInt64
+		var workspaceName, workspaceKey sql.NullString
 		err := rows.Scan(&rt.ID, &rt.ChannelID, &rt.Name, &rt.Description, &rt.ItemTypeID,
 			&rt.Icon, &rt.Color, &rt.DisplayOrder, &rt.IsActive,
 			&visibilityGroupIDs, &visibilityOrgIDs,
 			&rt.CreatedAt, &rt.UpdatedAt,
-			&rt.ItemTypeName, &rt.FieldCount)
+			&rt.ItemTypeName,
+			&workspaceID, &workspaceName, &workspaceKey,
+			&rt.FieldCount)
 		if err != nil {
 			continue
 		}
+
+		if workspaceID.Valid {
+			wsID := int(workspaceID.Int64)
+			rt.WorkspaceID = &wsID
+		}
+		rt.WorkspaceName = workspaceName.String
+		rt.WorkspaceKey = workspaceKey.String
 
 		applyRequestTypeVisibility(&rt, visibilityGroupIDs, visibilityOrgIDs)
 

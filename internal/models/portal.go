@@ -252,6 +252,11 @@ type RequestType struct {
 	// Joined fields for API responses
 	ChannelName  string `json:"channel_name,omitempty"`
 	ItemTypeName string `json:"item_type_name,omitempty"`
+	// WorkspaceName / WorkspaceKey identify the routing target workspace in
+	// listings so admins and customers can tell same-named request types
+	// across connected workspaces apart. Empty when workspace_id is NULL.
+	WorkspaceName string `json:"workspace_name,omitempty"`
+	WorkspaceKey  string `json:"workspace_key,omitempty"`
 	// FieldCount is the number of configured form fields, populated by the
 	// portal request-types listing so the UI can show counts without a
 	// per-request-type fields fetch.

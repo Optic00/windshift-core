@@ -126,9 +126,11 @@ func (h *FormHandler) GetForms(w http.ResponseWriter, r *http.Request) {
 		SELECT rt.id, rt.channel_id, rt.name, rt.description, rt.item_type_id,
 		       rt.icon, rt.color, rt.display_order, rt.is_active, rt.config,
 		       rt.created_at, rt.updated_at,
-		       it.name as item_type_name
+		       it.name as item_type_name,
+		       rt.workspace_id, ws.name as workspace_name, ws.key as workspace_key
 		FROM request_types rt
 		LEFT JOIN item_types it ON rt.item_type_id = it.id
+		LEFT JOIN workspaces ws ON rt.workspace_id = ws.id
 		WHERE rt.channel_id = ? AND rt.is_active = true
 		ORDER BY rt.display_order, rt.name`
 
@@ -140,32 +142,44 @@ func (h *FormHandler) GetForms(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = rows.Close() }()
 
 	type formInfo struct {
-		ID           int                       `json:"id"`
-		Name         string                    `json:"name"`
-		Description  string                    `json:"description"`
-		Icon         string                    `json:"icon"`
-		Color        string                    `json:"color"`
-		DisplayOrder int                       `json:"display_order"`
-		Config       *models.RequestTypeConfig `json:"config,omitempty"`
+		ID            int                       `json:"id"`
+		Name          string                    `json:"name"`
+		Description   string                    `json:"description"`
+		Icon          string                    `json:"icon"`
+		Color         string                    `json:"color"`
+		DisplayOrder  int                       `json:"display_order"`
+		WorkspaceID   *int                      `json:"workspace_id,omitempty"`
+		WorkspaceName string                    `json:"workspace_name,omitempty"`
+		WorkspaceKey  string                    `json:"workspace_key,omitempty"`
+		Config        *models.RequestTypeConfig `json:"config,omitempty"`
 	}
 
 	var forms []formInfo
 	for rows.Next() {
 		var rt models.RequestType
+		var workspaceID sql.NullInt64
+		var workspaceName, workspaceKey sql.NullString
 		if err := rows.Scan(&rt.ID, &rt.ChannelID, &rt.Name, &rt.Description, &rt.ItemTypeID,
 			&rt.Icon, &rt.Color, &rt.DisplayOrder, &rt.IsActive, &rt.Config,
 			&rt.CreatedAt, &rt.UpdatedAt,
-			&rt.ItemTypeName); err != nil {
+			&rt.ItemTypeName,
+			&workspaceID, &workspaceName, &workspaceKey); err != nil {
 			continue
 		}
 
 		fi := formInfo{
-			ID:           rt.ID,
-			Name:         rt.Name,
-			Description:  rt.Description,
-			Icon:         rt.Icon,
-			Color:        rt.Color,
-			DisplayOrder: rt.DisplayOrder,
+			ID:            rt.ID,
+			Name:          rt.Name,
+			Description:   rt.Description,
+			Icon:          rt.Icon,
+			Color:         rt.Color,
+			DisplayOrder:  rt.DisplayOrder,
+			WorkspaceName: workspaceName.String,
+			WorkspaceKey:  workspaceKey.String,
+		}
+		if workspaceID.Valid {
+			wsID := int(workspaceID.Int64)
+			fi.WorkspaceID = &wsID
 		}
 
 		// Parse per-form config
