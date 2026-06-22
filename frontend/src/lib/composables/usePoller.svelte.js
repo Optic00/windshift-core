@@ -8,11 +8,14 @@ const DEFAULT_IDLE = 5 * 60_000;
  * when the user is active and stretches when idle / tab hidden.
  *
  * @param {() => Promise<void>|void} fetchFn
- * @param {{ active?: number, idle?: number }} [opts]
+ * @param {{ active?: number, idle?: number, enabled?: () => boolean }} [opts]
+ *   opts.enabled is a reactive predicate; while it returns false the timer is
+ *   stopped (used to demote polling while an SSE stream is healthy, WI-484).
  */
 export function usePoller(fetchFn, opts = {}) {
   const activeInterval = opts.active ?? DEFAULT_ACTIVE;
   const idleInterval = opts.idle ?? DEFAULT_IDLE;
+  const enabled = opts.enabled ?? (() => true);
 
   let isPolling = $state(false);
   let lastPollTime = $state(null);
@@ -45,6 +48,13 @@ export function usePoller(fetchFn, opts = {}) {
 
   $effect(() => {
     const idle = activityStore.isIdle;
+    // enabled() is read inside the effect so its reactive deps (e.g. SSE
+    // connection state) re-run this block, stopping/starting the timer as the
+    // stream connects or drops.
+    if (!enabled()) {
+      _stopTimer();
+      return _stopTimer;
+    }
     _startTimer(idle ? idleInterval : activeInterval);
     return _stopTimer;
   });

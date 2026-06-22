@@ -5,6 +5,7 @@
 	import { subscribeToNewNotifications } from '../../stores/notifications.js';
 	import { useEventListener } from 'runed';
 	import { usePoller } from '../../composables/usePoller.svelte.js';
+	import { itemLiveUpdates } from '../../stores/itemLiveUpdates.svelte.js';
 	import MilkdownEditor from '../../editors/LazyMilkdownEditor.svelte';
 	import Button from '../../components/Button.svelte';
 	import Avatar from '../../components/Avatar.svelte';
@@ -91,8 +92,9 @@
 	});
 
 	// Poll for new comments while viewing the item. Adaptive cadence via
-	// activityStore (30s active / 5m idle / hidden tab).
-	usePoller(() => loadComments());
+	// activityStore (30s active / 5m idle / hidden tab). Demoted while the item's
+	// SSE stream is healthy (WI-484); resumes automatically if it drops.
+	usePoller(() => loadComments(), { enabled: () => !itemLiveUpdates.isLive(itemId) });
 
 	// Instant path: a new 'comment' or 'mention' notification for the item
 	// currently open triggers a refresh without waiting for the next tick.
@@ -108,6 +110,15 @@
 	// store, so we listen for the same `reload-item-detail` event ItemDetail does
 	// and self-filter on our itemId prop, refreshing without waiting for a poll.
 	useEventListener(() => window, 'reload-item-detail', (/** @type {CustomEvent<{itemId?: number|string}>} */ event) => {
+		const id = event?.detail?.itemId;
+		if (id == null || String(id) !== String(itemId)) return;
+		loadComments();
+	});
+
+	// SSE comment events (WI-484) reach Comments via this lightweight event from
+	// the item-detail view that owns the EventSource, so we don't open a second
+	// stream. Self-filtered on itemId.
+	useEventListener(() => window, 'item-comments-changed', (/** @type {CustomEvent<{itemId?: number|string}>} */ event) => {
 		const id = event?.detail?.itemId;
 		if (id == null || String(id) !== String(itemId)) return;
 		loadComments();

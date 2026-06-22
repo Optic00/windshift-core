@@ -14,6 +14,8 @@
   import { timerStore } from '../../stores/timerStore.svelte.js';
   import { useItemAttachments } from '../../composables/useItemAttachments.svelte.js';
   import { useWorkItemPoller } from '../../composables/useWorkItemPoller.svelte.js';
+  import { useItemEventStream } from '../../composables/useItemEventStream.svelte.js';
+  import { itemLiveUpdates } from '../../stores/itemLiveUpdates.svelte.js';
   import { agentRuns } from '../../stores/agentRuns.svelte.js';
   import {
     registerContextCommands,
@@ -65,8 +67,25 @@ import Button from '../../components/Button.svelte';
   let item = $derived(itemDetailStore.item);
   let workspace = $derived(itemDetailStore.workspace);
 
-  // Keep the open issue detail in sync with agent/background changes.
-  useWorkItemPoller(() => itemDetailStore.refreshCurrentItem());
+  // Keep the open issue detail in sync with agent/background changes. While the
+  // SSE stream is healthy the poller is demoted (it resumes automatically if the
+  // stream drops or is unsupported).
+  useWorkItemPoller(() => itemDetailStore.refreshCurrentItem(), {
+    enabled: () => !itemLiveUpdates.isLive(itemId),
+  });
+
+  // Live updates (WI-484): push changes instead of waiting for the 30s poll.
+  // Maps each event kind to a targeted reload; connect/reconnect/stale run a
+  // full loadData() so every section reconciles (including ones with no granular
+  // event: attachments, diagrams, worklogs, SCM links).
+  useItemEventStream(() => itemId, {
+    onReconcile: () => loadData().catch((err) => console.error('SSE reconcile failed:', err)),
+    onItem: () => itemDetailStore.refreshCurrentItem().catch((err) => console.error('SSE item refresh failed:', err)),
+    onChildren: () => itemDetailStore.loadChildItems().catch((err) => console.error('SSE children refresh failed:', err)),
+    onComment: () => window.dispatchEvent(new CustomEvent('item-comments-changed', { detail: { itemId } })),
+    onLinks: () => loadData().catch((err) => console.error('SSE links refresh failed:', err)),
+    onDeleted: () => itemDetailStore.refreshCurrentItem().catch((err) => console.error('SSE deleted refresh failed:', err)),
+  });
 
   // Instant refresh after the AI chat agent completes a run — don't make
   // the user wait up to 30s for the next poll tick to see the agent's effects.
