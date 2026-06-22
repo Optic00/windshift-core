@@ -309,6 +309,11 @@ export default {
     task: 'Tarea',
     dueDate: 'Fecha de vencimiento',
     progress: 'Progreso',
+    doneFilterLabel: 'Tareas completadas desde',
+    range7d: '7 días',
+    range30d: '30 días',
+    range90d: '90 días',
+    rangeAll: 'Todo el tiempo',
   },
   collectionTree: {
     loading: 'Cargando...',

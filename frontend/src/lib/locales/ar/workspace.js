@@ -309,6 +309,11 @@ export default {
     task: 'مهمة',
     dueDate: 'تاريخ الاستحقاق',
     progress: 'التقدم',
+    doneFilterLabel: 'المهام المكتملة منذ',
+    range7d: '7 أيام',
+    range30d: '30 يومًا',
+    range90d: '90 يومًا',
+    rangeAll: 'كل الوقت',
   },
   collectionTree: {
     loading: 'جارٍ التحميل...',

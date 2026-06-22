@@ -308,6 +308,11 @@ export default {
     task: 'Tarefa',
     dueDate: 'Data de Vencimento',
     progress: 'Progresso',
+    doneFilterLabel: 'Tarefas concluídas desde',
+    range7d: '7 dias',
+    range30d: '30 dias',
+    range90d: '90 dias',
+    rangeAll: 'Todo o período',
   },
   collectionTree: {
     loading: 'Carregando...',

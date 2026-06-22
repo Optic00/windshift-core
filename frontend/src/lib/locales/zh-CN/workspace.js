@@ -298,6 +298,11 @@ export default {
     task: '任务',
     dueDate: '截止日期',
     progress: '进度',
+    doneFilterLabel: '已完成任务的起始时间',
+    range7d: '7 天',
+    range30d: '30 天',
+    range90d: '90 天',
+    rangeAll: '全部时间',
   },
 
   collectionTree: {
