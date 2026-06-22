@@ -286,6 +286,13 @@ func (h *ItemHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Cap completed items to those finished since this date (ISO YYYY-MM-DD or
+	// RFC3339). Only items in a completed status are constrained; everything
+	// else passes. Applies to both QL and non-QL queries.
+	if completedSince := r.URL.Query().Get("completed_since"); completedSince != "" {
+		filters.CompletedSince = &completedSince
+	}
+
 	// ID filter (applies to both QL and non-QL queries)
 	if idParam := r.URL.Query().Get("id"); idParam != "" {
 		itemID, err := strconv.Atoi(idParam)

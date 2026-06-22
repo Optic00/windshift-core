@@ -354,6 +354,11 @@ export default {
     task: 'Task',
     dueDate: 'Due Date',
     progress: 'Progress',
+    doneFilterLabel: 'Completed tasks since',
+    range7d: '7 days',
+    range30d: '30 days',
+    range90d: '90 days',
+    rangeAll: 'All time',
   },
 
   collectionTree: {

@@ -37,6 +37,30 @@
   let personalCollapsed = $state(false);
   let assignedCollapsed = $state(false);
 
+  // Done-items date range: caps the indefinitely-growing completed list.
+  // '7' | '30' | '90' | 'all' | 'custom'; default = last 7 days.
+  const RANGE_KEY = `todo-done-range-${workspaceId}`;
+  // svelte-ignore state_referenced_locally
+  let completedRange = $state('7');
+  let customDate = $state('');
+
+  // ISO date (YYYY-MM-DD) sent as completed_since, or null for "All time".
+  let completedSince = $derived.by(() => {
+    if (completedRange === 'all') return null;
+    if (completedRange === 'custom') return customDate || null;
+    const days = parseInt(completedRange, 10);
+    const d = new Date();
+    d.setDate(d.getDate() - days);
+    return d.toISOString().slice(0, 10);
+  });
+
+  const RANGE_PRESETS = [
+    { value: '7', label: () => t('todo.range7d') },
+    { value: '30', label: () => t('todo.range30d') },
+    { value: '90', label: () => t('todo.range90d') },
+    { value: 'all', label: () => t('todo.rangeAll') },
+  ];
+
   function loadCollapsedState() {
     try {
       const saved = localStorage.getItem(COLLAPSED_KEY);
@@ -67,8 +91,44 @@
     persistCollapsedState();
   }
 
+  function loadRangeState() {
+    try {
+      const saved = localStorage.getItem(RANGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        completedRange = parsed.range ?? '7';
+        customDate = parsed.customDate ?? '';
+      }
+    } catch { /* ignore */ }
+  }
+
+  function persistRangeState() {
+    try {
+      localStorage.setItem(RANGE_KEY, JSON.stringify({ range: completedRange, customDate }));
+    } catch { /* ignore */ }
+  }
+
+  async function reloadItems() {
+    await Promise.all([loadPersonalTodos(), loadAssignedWork()]);
+  }
+
+  function selectRange(value) {
+    completedRange = value;
+    if (value !== 'custom') customDate = '';
+    persistRangeState();
+    reloadItems();
+  }
+
+  function onCustomDateChange(event) {
+    customDate = event.target.value;
+    completedRange = customDate ? 'custom' : '7';
+    persistRangeState();
+    reloadItems();
+  }
+
   onMount(() => {
     loadCollapsedState();
+    loadRangeState();
     Promise.all([loadStatuses(), loadStatusCategories(), loadPersonalTodos(), loadAssignedWork()]).then(() => {
       loading = false;
     });
@@ -98,6 +158,7 @@
         workspace_id: workspaceId,
         limit: 100
       };
+      if (completedSince) filters.completed_since = completedSince;
       const response = await api.items.getAll(filters);
       personalTodos = response?.items || response || [];
     } catch (error) {
@@ -118,6 +179,7 @@
         assignee_id: user.id,
         limit: 100
       };
+      if (completedSince) filters.completed_since = completedSince;
       const response = await api.items.getAll(filters);
       let allAssigned = response?.items || response || [];
       assignedWork = allAssigned.filter(item => item.workspace_id !== parseInt(workspaceId));
@@ -277,6 +339,36 @@
       <div class="text-center py-12 animate-pulse" style="color: var(--ds-text-subtle);">{t('todo.loadingTasks')}</div>
     {:else}
       <div class="flex flex-col gap-4">
+        <!-- Completed-items range filter (caps the indefinitely-growing done list) -->
+        <div class="flex flex-wrap items-center gap-2 px-3 py-2 rounded-lg" style="background-color: var(--ds-surface-raised);">
+          <span class="text-xs font-medium mr-1" style="color: var(--ds-text-subtle);">{t('todo.doneFilterLabel')}</span>
+          <div class="flex items-center gap-1">
+            {#each RANGE_PRESETS as preset (preset.value)}
+              <button
+                data-testid={`done-range-${preset.value}`}
+                onclick={() => selectRange(preset.value)}
+                class="text-xs px-2 py-1 rounded transition-colors range-btn"
+                class:range-btn-active={completedRange === preset.value}
+                style={completedRange === preset.value
+                  ? 'background-color: var(--ds-interactive); color: white;'
+                  : 'color: var(--ds-text-subtle);'}
+              >
+                {preset.label()}
+              </button>
+            {/each}
+          </div>
+          <input
+            type="date"
+            data-testid="done-range-date"
+            value={customDate}
+            onchange={onCustomDateChange}
+            aria-label={t('todo.doneFilterLabel')}
+            class="text-xs px-2 py-1 rounded border bg-transparent"
+            class:range-btn-active={completedRange === 'custom'}
+            style="border-color: var(--ds-border); color: var(--ds-text);"
+          />
+        </div>
+
         <!-- Personal Tasks Section -->
         <div>
           <button
@@ -507,5 +599,17 @@
 
   .delete-btn:hover {
     background-color: rgba(239, 68, 68, 0.1);
+  }
+
+  .range-btn:hover:not(.range-btn-active) {
+    background-color: rgba(0, 0, 0, 0.06);
+  }
+
+  :global(.dark) .range-btn:hover:not(.range-btn-active) {
+    background-color: rgba(255, 255, 255, 0.08);
+  }
+
+  input[type="date"].range-btn-active {
+    border-color: var(--ds-interactive) !important;
   }
 </style>

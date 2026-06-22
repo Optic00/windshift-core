@@ -61,7 +61,11 @@ type ItemFilters struct {
 	Level         *int    // Hierarchy level filter
 	MaxLevel      *int    // Maximum hierarchy level filter
 	CreatedSince  *string // ISO date string
-	QLQuery       string  // Custom QL query
+	// CompletedSince constrains ONLY items in a completed status to those that
+	// entered that status on/after this ISO date; non-completed items always
+	// pass. Caps the indefinitely-growing "done" list on personal views.
+	CompletedSince *string
+	QLQuery        string // Custom QL query
 	QLArgs        []interface{}
 	StatusIDs     []int  // Multi-value status filter (for backlog + search)
 	StatusIDsNot  []int  // Multi-value negated status filter
@@ -302,6 +306,19 @@ func (r *ItemRepository) buildWhereClause(params ItemListParams) (whereClause st
 	if params.Filters.CreatedSince != nil {
 		whereClause += " AND i.created_at >= ?"
 		args = append(args, *params.Filters.CreatedSince)
+	}
+
+	// Cap completed items by when they entered their (completed) status.
+	// Non-completed items always pass; only items whose current status is in a
+	// completed category are constrained. The completion time mirrors the
+	// status_since SELECT expression (last item_history transition into the
+	// current status, falling back to created_at).
+	if params.Filters.CompletedSince != nil {
+		whereClause += ` AND (
+			COALESCE(sc.is_completed, FALSE) = FALSE
+			OR COALESCE((SELECT MAX(ih.changed_at) FROM item_history ih WHERE ih.item_id = i.id AND ih.field_name = 'status_id' AND ih.new_value = CAST(i.status_id AS TEXT)), i.created_at) >= ?
+		)`
+		args = append(args, *params.Filters.CompletedSince)
 	}
 
 	// Multi-value status filter
