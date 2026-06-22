@@ -325,6 +325,10 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 		}
 	}
 
+	// Live-update publish (WI-483): the comment row is committed. Refresh the
+	// item's comment list for anyone viewing it.
+	PublishItemChange(params.ItemID, ItemChangeComment)
+
 	// 9. Return created comment
 	return &CreateCommentResult{
 		CommentID: commentID,
@@ -448,25 +452,33 @@ func (s *CommentService) Update(commentID int, content string, userID int) (*mod
 		comment.AuthorEmail = authorEmail.String
 	}
 
+	// Live-update publish (WI-483): the comment edit committed.
+	PublishItemChange(comment.ItemID, ItemChangeComment)
+
 	return &comment, nil
 }
 
 // Delete removes a comment
 func (s *CommentService) Delete(commentID int) error {
-	// Check if comment exists
-	var exists bool
-	err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM comments WHERE id = ?)", commentID).Scan(&exists)
+	// Capture the parent item id BEFORE the destructive write (this doubles as
+	// the existence check) so we can refresh the item's comment list afterwards
+	// (WI-483).
+	var itemID int
+	err := s.db.QueryRow("SELECT item_id FROM comments WHERE id = ?", commentID).Scan(&itemID)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("comment not found: %d", commentID)
+		}
 		return fmt.Errorf("failed to check comment: %w", err)
-	}
-	if !exists {
-		return fmt.Errorf("comment not found: %d", commentID)
 	}
 
 	_, err = s.db.Exec("DELETE FROM comments WHERE id = ?", commentID)
 	if err != nil {
 		return fmt.Errorf("failed to delete comment: %w", err)
 	}
+
+	// Live-update publish (WI-483): the delete committed.
+	PublishItemChange(itemID, ItemChangeComment)
 
 	return nil
 }

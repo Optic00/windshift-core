@@ -109,6 +109,9 @@ func (s *PortalService) CreateRequestComment(ctx context.Context, itemID int, co
 			out.AuthorName = "Unknown"
 			out.AuthorAvatar = ""
 		}
+		// Live-update publish (WI-483): portal request comments write the comments
+		// table directly; refresh the item's comment list after the insert.
+		PublishItemChange(itemID, ItemChangeComment)
 		return out, nil
 	}
 	err := s.db.QueryRowContext(ctx, `
@@ -123,6 +126,8 @@ func (s *PortalService) CreateRequestComment(ctx context.Context, itemID int, co
 		out.AuthorName = "Unknown"
 	}
 	out.AuthorAvatar = ""
+	// Live-update publish (WI-483): same as the internal-user branch above.
+	PublishItemChange(itemID, ItemChangeComment)
 	return out, nil
 }
 

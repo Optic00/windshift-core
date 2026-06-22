@@ -15,6 +15,7 @@ import (
 	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/services"
 	"windshift/internal/sso"
 )
 
@@ -351,6 +352,9 @@ func (s *IssueSyncService) createItemFromIssue(ctx context.Context, config *mode
 	slog.Info("created item from GitHub issue",
 		"config_id", config.ID, "issue_number", issue.Number, "item_id", itemID)
 
+	// Live-update publish (WI-483): the GitHub-sourced item create committed.
+	services.PublishItemChange(itemID, services.ItemChangeCreated)
+
 	return nil
 }
 
@@ -404,6 +408,10 @@ func (s *IssueSyncService) updateItemFromIssue(ctx context.Context, config *mode
 
 	slog.Info("updated item from GitHub issue",
 		"config_id", config.ID, "issue_number", issue.Number, "item_id", itemID)
+
+	// Live-update publish (WI-483): the GitHub-sourced item update committed
+	// (title/description/status/assignee may all have changed).
+	services.PublishItemChange(itemID, services.ItemChangeUpdated)
 
 	return nil
 }
@@ -622,6 +630,7 @@ func (s *IssueSyncService) syncComments(ctx context.Context, provider IssueProvi
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	commentsChanged := false
 	for _, ghComment := range comments {
 		// Skip comments that were pushed from Windshift (contain our attribution marker)
 		if strings.Contains(ghComment.Body, "commented in Windshift:") && strings.HasPrefix(ghComment.Body, "**") {
@@ -659,6 +668,7 @@ func (s *IssueSyncService) syncComments(ctx context.Context, provider IssueProvi
 				VALUES (?, ?, ?, ?, ?, ?)
 			`, syncItemID, wsCommentID, ghComment.ID, ghComment.UpdatedAt, now, now)
 
+			commentsChanged = true
 			continue
 		}
 		if err != nil {
@@ -683,10 +693,18 @@ func (s *IssueSyncService) syncComments(ctx context.Context, provider IssueProvi
 		_, _ = tx.ExecContext(ctx,
 			"UPDATE issue_sync_comments SET github_updated_at = ?, updated_at = ? WHERE id = ?",
 			ghComment.UpdatedAt, now, trackingID)
+		commentsChanged = true
 	}
 
 	if err := tx.Commit(); err != nil {
 		slog.Error("commit comment sync tx", "issue_number", issueNumber, "error", err)
+		return
+	}
+
+	// Live-update publish (WI-483): GitHub-sourced comments committed; refresh
+	// the item's comment list for anyone viewing it.
+	if commentsChanged {
+		services.PublishItemChange(itemID, services.ItemChangeComment)
 	}
 }
 

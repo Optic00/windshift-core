@@ -197,6 +197,26 @@ func (s *ItemUpdateService) UpdateItem(req UpdateItemRequest) (*UpdateItemResult
 	// binding matches the new assignee.
 	maybeTriggerAssigneeRun(updatedItem.WorkspaceID, updatedItem.ID, originalItem.AssigneeID, updatedItem.AssigneeID, req.UserID)
 
+	// Live-update publish (WI-483): the update has committed. Announce the item
+	// (status kind when the status changed), and on a reparent refresh both the
+	// old and new parents' child lists.
+	updateKind := ItemChangeUpdated
+	if statusChanged {
+		updateKind = ItemChangeStatus
+	}
+	PublishItemChange(updatedItem.ID, updateKind)
+	oldParent, newParent := originalItem.ParentID, updatedItem.ParentID
+	reparented := (oldParent == nil) != (newParent == nil) ||
+		(oldParent != nil && newParent != nil && *oldParent != *newParent)
+	if reparented {
+		if oldParent != nil {
+			PublishItemChange(*oldParent, ItemChangeUpdated)
+		}
+		if newParent != nil {
+			PublishItemChange(*newParent, ItemChangeUpdated)
+		}
+	}
+
 	return &UpdateItemResult{
 		OriginalItem:  originalItem,
 		Item:          updatedItem,

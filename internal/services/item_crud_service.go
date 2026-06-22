@@ -68,7 +68,11 @@ type DeleteResult struct {
 // preserves the legacy non-cascade delete endpoint semantics; use Delete for
 // item + descendants cleanup.
 func (s *ItemCRUDService) DeleteSingle(itemID int) error {
-	return database.WithTx(s.db, func(tx database.Tx) error {
+	// Capture the parent BEFORE the destructive write so we can refresh the
+	// parent's child list after commit (WI-483). Best-effort: a lookup failure
+	// just means no parent refresh.
+	parentID, _ := s.repo.GetParentID(itemID)
+	if err := database.WithTx(s.db, func(tx database.Tx) error {
 		if err := s.repo.DeleteItemLinks(tx, itemID); err != nil {
 			return err
 		}
@@ -76,7 +80,16 @@ func (s *ItemCRUDService) DeleteSingle(itemID int) error {
 			return err
 		}
 		return s.repo.Delete(tx, itemID)
-	})
+	}); err != nil {
+		return err
+	}
+
+	// Live-update publish (WI-483): the delete has committed.
+	PublishItemChange(itemID, ItemChangeDeleted)
+	if parentID != nil {
+		PublishItemChange(*parentID, ItemChangeUpdated)
+	}
+	return nil
 }
 
 // Delete removes an item and all its descendants
@@ -128,6 +141,16 @@ func (s *ItemCRUDService) Delete(itemID int) (*DeleteResult, error) {
 		return nil
 	}); err != nil {
 		return nil, err
+	}
+
+	// Live-update publish (WI-483): the cascade delete committed. Announce every
+	// removed item (so anyone viewing a descendant reconciles) and refresh the
+	// affected parent's child list.
+	for _, id := range allIDs {
+		PublishItemChange(id, ItemChangeDeleted)
+	}
+	if parentID != nil {
+		PublishItemChange(*parentID, ItemChangeUpdated)
 	}
 
 	return &DeleteResult{
@@ -234,6 +257,17 @@ func (s *ItemCRUDService) Copy(itemID int, opts CopyOptions) (*CopyResult, error
 	updateService := NewItemUpdateService(s.db)
 	if err := updateService.recordItemCreationHistory(s.db, newID, opts.CreatorID); err != nil {
 		slog.Warn("failed to record item creation history", "error", err, "item_id", newID)
+	}
+
+	// Live-update publish (WI-483): the copy committed. Announce the new item and
+	// refresh the destination parent's child list.
+	PublishItemChange(newID, ItemChangeCreated)
+	effectiveParent := opts.NewParentID
+	if effectiveParent == nil {
+		effectiveParent = source.ParentID
+	}
+	if effectiveParent != nil {
+		PublishItemChange(*effectiveParent, ItemChangeUpdated)
 	}
 
 	return &CopyResult{NewItemID: newID, CopyCount: 1}, nil

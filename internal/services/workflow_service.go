@@ -443,6 +443,10 @@ func (s *WorkflowService) PerformTransition(
 		return nil, err
 	}
 
+	// Live-update publish (WI-483): the status transition committed. Reached only
+	// on a real transition (the no-op case short-circuits earlier).
+	PublishItemChange(req.ItemID, ItemChangeStatus)
+
 	// Post-commit approval hooks. Cancel any pending approval (we just left the
 	// approval-bound status by a non-gated transition), then open a new one if
 	// the destination status is itself approval-bound.

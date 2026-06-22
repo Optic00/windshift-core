@@ -330,7 +330,17 @@ func (rs *RecurrenceScheduler) createInstance(rule *models.RecurrenceRule, templ
 		return fmt.Errorf("failed to create instance record: %w", err)
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	// Live-update publish (WI-483): the recurrence instance committed. Announce
+	// the new item and refresh the template parent's child list if any.
+	services.PublishItemChange(itemID, services.ItemChangeCreated)
+	if item.ParentID != nil {
+		services.PublishItemChange(*item.ParentID, services.ItemChangeUpdated)
+	}
+	return nil
 }
 
 // ForceGenerate triggers immediate generation for a specific rule

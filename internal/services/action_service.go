@@ -1206,6 +1206,10 @@ func (as *ActionService) executeSetFieldColumn(ctx *models.ExecutionContext, ste
 		return fmt.Errorf("commit: %w", err)
 	}
 
+	// Live-update publish (WI-483): this action writes an item field column
+	// directly, bypassing ItemUpdateService.
+	PublishItemChange(itemID, ItemChangeUpdated)
+
 	stepResult.Output = map[string]interface{}{
 		"field_name": config.FieldName,
 		"old_value":  oldValue,
@@ -2415,6 +2419,10 @@ func (as *ActionService) executeRoundRobinAssign(node *models.ActionNode, ctx *m
 	if txErr = tx.Commit(); txErr != nil {
 		return fmt.Errorf("commit: %w", txErr)
 	}
+
+	// Live-update publish (WI-483): round-robin reassigns the item directly,
+	// bypassing ItemUpdateService.
+	PublishItemChange(itemID, ItemChangeUpdated)
 
 	// Populate step result
 	var oldVal interface{}

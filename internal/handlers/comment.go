@@ -281,6 +281,9 @@ func (h *CommentHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 			respondInternalError(w, r, fmt.Errorf("failed to create comment: %w", err))
 			return
 		}
+		// Live-update publish (WI-483): the legacy fallback writes directly; the
+		// CommentService branch above publishes on its own.
+		services.PublishItemChange(itemID, services.ItemChangeComment)
 	}
 
 	// Push comment to GitHub if issue sync is configured
@@ -497,6 +500,10 @@ func (h *CommentHandler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 
+	// Live-update publish (WI-483): this cookie path writes the comment directly
+	// (not via CommentService), so publish the item-change explicitly.
+	services.PublishItemChange(itemID, services.ItemChangeComment)
+
 	respondJSONOK(w, comment)
 }
 
@@ -571,6 +578,10 @@ func (h *CommentHandler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 			go h.webhookSender.DispatchEvent("comment.deleted", item)
 		}
 	}
+
+	// Live-update publish (WI-483): this cookie path deletes directly (not via
+	// CommentService); itemID was captured before the delete.
+	services.PublishItemChange(itemID, services.ItemChangeComment)
 
 	w.WriteHeader(http.StatusNoContent)
 }

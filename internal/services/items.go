@@ -411,6 +411,13 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 		maybeTriggerAssigneeRun(params.WorkspaceID, int(itemID), nil, params.AssigneeID, triggeredBy)
 	}
 
+	// Live-update publish (WI-483): the insert has committed. Announce the new
+	// item, and refresh the parent's child list if this item has a parent.
+	PublishItemChange(int(itemID), ItemChangeCreated)
+	if params.ParentID != nil {
+		PublishItemChange(*params.ParentID, ItemChangeUpdated)
+	}
+
 	return itemID, nil
 }
 

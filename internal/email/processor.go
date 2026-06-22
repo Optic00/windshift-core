@@ -545,6 +545,10 @@ func (p *Processor) addCommentFromReply(
 		return nil, fmt.Errorf("failed to create comment: %w", err)
 	}
 
+	// Live-update publish (WI-483): the fallback writes directly; the
+	// CommentService branch above publishes on its own.
+	services.PublishItemChange(itemID, services.ItemChangeComment)
+
 	commentID := int(commentIDInt64)
 
 	slog.Info("added comment from email reply",

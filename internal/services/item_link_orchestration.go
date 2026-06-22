@@ -239,7 +239,23 @@ func (s *ItemLinkService) CreateLinkWithChecks(userID int, params CreateItemLink
 	if params.SourceType == "item" {
 		s.emitLinkedEvents(userID, params, link)
 	}
+	// Live-update publish (WI-483): a link is bidirectional in the UI, so refresh
+	// BOTH endpoints that are items, not only the source.
+	publishItemLinkChange(params.SourceType, params.SourceID, params.TargetType, params.TargetID)
 	return link, nil
+}
+
+// publishItemLinkChange announces a link add/remove to every endpoint that is a
+// work item (WI-483). The legacy notification path fires only for an item
+// source; an item that is merely the target (or whose link source is a page)
+// would otherwise never refresh its linked-items section.
+func publishItemLinkChange(sourceType string, sourceID int, targetType string, targetID int) {
+	if sourceType == "item" {
+		PublishItemChange(sourceID, ItemChangeLink)
+	}
+	if targetType == "item" {
+		PublishItemChange(targetID, ItemChangeLink)
+	}
 }
 
 // DeleteLinkWithChecks looks up the link, requires edit permission on its
@@ -269,6 +285,8 @@ func (s *ItemLinkService) DeleteLinkWithChecks(userID, linkID int) error {
 	if link.SourceType == "item" {
 		s.emitUnlinkedEvents(userID, link)
 	}
+	// Live-update publish (WI-483): refresh both item endpoints of the removed link.
+	publishItemLinkChange(link.SourceType, link.SourceID, link.TargetType, link.TargetID)
 	return nil
 }
 

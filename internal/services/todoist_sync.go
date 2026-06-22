@@ -567,7 +567,18 @@ func (st *itemPersonalStore) UpdateTask(itemID int, s taskState, fields []string
 	if err := repository.NewItemRepository(st.db).UpdateFields(tx, itemID, update); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	// Live-update publish (WI-483): Todoist sync writes item fields directly,
+	// bypassing ItemUpdateService.
+	kind := ItemChangeUpdated
+	if _, ok := update["status_id"]; ok {
+		kind = ItemChangeStatus
+	}
+	PublishItemChange(itemID, kind)
+	return nil
 }
 
 func (st *itemPersonalStore) DeleteTask(itemID int) error {
