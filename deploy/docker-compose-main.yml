@@ -10,6 +10,12 @@ services:
     # pull_policy: always forces a re-pull of the tag on every deploy.
     pull_policy: always
     restart: unless-stopped
+    # Each live item-detail viewer holds an SSE connection (WI-484); the default
+    # 1024 fd limit is the failure point near ~1000 concurrent streams.
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     tmpfs:
       - /tmp:exec,size=64M
     environment:

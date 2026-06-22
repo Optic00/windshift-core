@@ -6,6 +6,8 @@
   import { navigate } from '../router.js';
   import { timerStore } from '../stores/timerStore.svelte.js';
   import { useWorkItemPoller } from '../composables/useWorkItemPoller.svelte.js';
+  import { useItemEventStream } from '../composables/useItemEventStream.svelte.js';
+  import { itemLiveUpdates } from '../stores/itemLiveUpdates.svelte.js';
   import { usePullToRefresh } from '../composables/usePullToRefresh.svelte.js';
   import { renderMarkdown } from '../utils/render-markdown.js';
   import { formatDate } from '../utils/dateFormatter.js';
@@ -308,8 +310,23 @@
   // Match desktop freshness: adaptive background poll (30s active / 5m idle) for
   // changes made elsewhere (other users, automations, workflow side effects),
   // plus an instant refresh when an AI run completes (chatStore emits on the bus).
-  useWorkItemPoller(() => refresh());
+  // While the SSE stream is healthy the poll is demoted (WI-484); it resumes if
+  // the stream drops or is unsupported.
+  useWorkItemPoller(() => refresh(), { enabled: () => !itemLiveUpdates.isLive(itemId) });
   $effect(() => agentRunBus.subscribe(() => refresh()));
+
+  // Live updates (WI-484). Mobile reloads via refresh() (item record,
+  // transitions, children, watch) for every granular kind — the same work the
+  // poll did — and dispatches the comment event the embedded Comments listens
+  // for. connect/reconnect/stale also run refresh() to reconcile.
+  useItemEventStream(() => itemId, {
+    onReconcile: () => refresh(),
+    onItem: () => refresh(),
+    onChildren: () => refresh(),
+    onLinks: () => refresh(),
+    onDeleted: () => refresh(),
+    onComment: () => window.dispatchEvent(new CustomEvent('item-comments-changed', { detail: { itemId } })),
+  });
 
   // Pull-to-refresh: dragging the canvas down from the top triggers a manual
   // reload (same silent refresh() the background poller uses). Listeners attach
