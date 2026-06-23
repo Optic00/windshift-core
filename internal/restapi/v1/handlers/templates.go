@@ -376,12 +376,12 @@ func (h *TemplateHandler) resolveWorkspaceTemplateAccess(w http.ResponseWriter, 
 // surface as 400 rather than a foreign-key 500 from the repository.
 func (h *TemplateHandler) itemTypeIDsValid(w http.ResponseWriter, r *http.Request, ids []int) bool {
 	for _, id := range ids {
-		var count int
-		if err := h.DB.QueryRow("SELECT COUNT(*) FROM item_types WHERE id = ?", id).Scan(&count); err != nil {
+		exists, err := h.repo.ItemTypeExists(id)
+		if err != nil {
 			h.RespondInternalError(w, r)
 			return false
 		}
-		if count == 0 {
+		if !exists {
 			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, "unknown item type id"))
 			return false
 		}
