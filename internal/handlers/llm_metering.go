@@ -120,11 +120,6 @@ func (b *usageMeteringBody) processLine(raw []byte) {
 	}
 }
 
-// meterLLMResponse returns a ReverseProxy ModifyResponse hook that meters a
-// streamed chat completion. It wraps the SSE body so the usage tail is captured
-// as bytes flow to the agent; non-streaming (JSON) responses are left untouched
-// (cost unknown). Persistence runs on stream end against a detached context so
-// the row survives the request context being canceled as the stream closes.
 // countImageParts counts image_url content parts across all messages in a
 // chat-completions request body, so the broker can price view_image usage when
 // the provider doesn't return an inline cost. A string-content message has no
@@ -155,6 +150,11 @@ func countImageParts(body []byte) int {
 	return count
 }
 
+// meterLLMResponse returns a ReverseProxy ModifyResponse hook that meters a
+// streamed chat completion. It wraps the SSE body so the usage tail is captured
+// as bytes flow to the agent; non-streaming (JSON) responses are left untouched
+// (cost unknown). Persistence runs on stream end against a detached context so
+// the row survives the request context being canceled as the stream closes.
 func (h *RunnerBrokerHandler) meterLLMResponse(runID int, model string, pricing *llm.Pricing, images int) func(*http.Response) error {
 	return func(resp *http.Response) error {
 		if h.usage == nil {
