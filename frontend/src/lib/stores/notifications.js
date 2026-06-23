@@ -23,6 +23,16 @@ let loadPromise = null;
 function loadNotifications() {
   if (loadPromise) return loadPromise;
 
+  // This module eagerly loads at import time (see the bottom-of-file call), so
+  // it can be pulled in transitively by component tests whose api mock only
+  // stubs the handful of methods under test. Guard against a missing
+  // api.notifications so importing a component never throws — in the app the
+  // slice always exists.
+  if (typeof api?.notifications?.getAll !== 'function') {
+    notifications.set([]);
+    return Promise.resolve([]);
+  }
+
   loadPromise = api.notifications
     .getAll()
     .then((data) => {
