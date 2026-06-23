@@ -181,7 +181,7 @@
 <!-- Breadcrumb Navigation -->
 <div class="group flex items-center gap-2 text-sm mb-6 min-w-0 overflow-visible flex-nowrap" style="color: var(--ds-text-subtle);">
   <a
-    href={`/workspaces/${workspaceId}`}
+    href={workspace?.is_personal ? '/personal' : `/workspaces/${workspaceId}`}
     class="transition-colors hover:underline flex-shrink-0 no-underline"
     style="color: inherit;"
   >
