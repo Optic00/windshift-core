@@ -66,13 +66,13 @@ type ItemFilters struct {
 	// pass. Caps the indefinitely-growing "done" list on personal views.
 	CompletedSince *string
 	QLQuery        string // Custom QL query
-	QLArgs        []interface{}
-	StatusIDs     []int  // Multi-value status filter (for backlog + search)
-	StatusIDsNot  []int  // Multi-value negated status filter
-	PriorityIDs   []int  // Multi-value priority filter
-	TextQuery     string // LIKE search on title/description
-	ItemKeyQuery  string // Workspace key pattern match (e.g. "OK-40")
-	ItemID        *int   // Filter by specific item ID
+	QLArgs         []interface{}
+	StatusIDs      []int  // Multi-value status filter (for backlog + search)
+	StatusIDsNot   []int  // Multi-value negated status filter
+	PriorityIDs    []int  // Multi-value priority filter
+	TextQuery      string // LIKE search on title/description
+	ItemKeyQuery   string // Workspace key pattern match (e.g. "OK-40")
+	ItemID         *int   // Filter by specific item ID
 }
 
 // PaginationParams contains pagination parameters
