@@ -14,6 +14,7 @@
   import Input from '../components/Input.svelte';
   import Label from '../components/Label.svelte';
   import Select from '../components/Select.svelte';
+  import BasePicker from '../pickers/BasePicker.svelte';
   import MilkdownEditor from '../editors/LazyMilkdownEditor.svelte';
   import SectionHeader from '../layout/SectionHeader.svelte';
   import EmptyState from '../components/EmptyState.svelte';
@@ -100,14 +101,6 @@
     editingId = null;
   }
 
-  function toggleTargetType(id, checked) {
-    if (checked) {
-      if (!formTargetTypeIds.includes(id)) formTargetTypeIds = [...formTargetTypeIds, id];
-    } else {
-      formTargetTypeIds = formTargetTypeIds.filter((t) => t !== id);
-    }
-  }
-
   // A mandatory template must target exactly one item type (the server enforces
   // this too; we surface it inline so save is blocked with a clear reason).
   const mandatoryTypeError = $derived(
@@ -125,7 +118,7 @@
       mode: formMode,
       is_active: formActive,
       item_type_ids: formTargetTypeIds,
-      workspace_id: workspaceId,
+      workspace_id: Number(workspaceId),
     };
     saving = true;
     try {
@@ -251,14 +244,17 @@
 
       <div>
         <Label class="mb-1">Target item types {formMode === 'selectable' ? '(optional — none means all)' : '(exactly one)'}</Label>
-        <div class="border rounded-md p-2 max-h-40 overflow-y-auto space-y-1" style="border-color: var(--ds-border);" data-testid="item-template-types">
-          {#each itemTypes as type (type.id)}
-            <Checkbox
-              checked={formTargetTypeIds.includes(type.id)}
-              label={type.name}
-              onchange={(e) => toggleTargetType(type.id, e?.target?.checked ?? !formTargetTypeIds.includes(type.id))}
-            />
-          {/each}
+        <div data-testid="item-template-types">
+          <BasePicker
+            bind:value={formTargetTypeIds}
+            items={itemTypes}
+            multiple={true}
+            maxSelections={formMode === 'mandatory' ? 1 : null}
+            placeholder={formMode === 'selectable' ? 'All item types' : 'Select an item type'}
+            getValue={(type) => type.id}
+            getLabel={(type) => type.name}
+            optionTestid={(opt) => `item-template-type-option-${opt.value}`}
+          />
         </div>
         {#if mandatoryTypeError}
           <p class="mt-1 text-xs" style="color: var(--ds-text-danger);" data-testid="item-template-type-error">{mandatoryTypeError}</p>

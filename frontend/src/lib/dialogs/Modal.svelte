@@ -60,7 +60,10 @@
     // Only handle submission if onSubmit is provided
     if (!onSubmit || submitDisabled) return;
 
-    const isTextArea = e.target.tagName === 'TEXTAREA';
+    // A <textarea> or a rich-text contenteditable (e.g. the Markdown editor's
+    // ProseMirror surface) owns the Enter key — bare Enter inserts a line there
+    // rather than submitting the modal.
+    const isTextArea = e.target.tagName === 'TEXTAREA' || e.target.isContentEditable;
 
     // Check for submit shortcut (Ctrl/Cmd+Enter)
     if (matchesShortcut(e, submitShortcut)) {
@@ -81,10 +84,14 @@
     }
   }
 
-  // Detect if modal contains textarea elements
+  // Detect if the modal contains a multiline editor (a <textarea> or a
+  // contenteditable rich-text surface). This drives the footer submit hint:
+  // Ctrl/Cmd+Enter when present, plain Enter otherwise. Re-run on focusin too,
+  // since a lazily-mounted editor may not exist yet at initial detection.
   function detectTextarea() {
     if (modalContentElement) {
-      hasTextarea = modalContentElement.querySelector('textarea') !== null;
+      hasTextarea =
+        modalContentElement.querySelector('textarea, [contenteditable="true"]') !== null;
     }
   }
 
@@ -104,7 +111,14 @@
           }
         }
       }, 100);
-      return () => clearTimeout(timer);
+      // A lazily-mounted editor may appear after the initial detect — keep the
+      // submit hint in sync as the modal's subtree changes.
+      const observer = new MutationObserver(detectTextarea);
+      observer.observe(modalContentElement, { childList: true, subtree: true });
+      return () => {
+        clearTimeout(timer);
+        observer.disconnect();
+      };
     }
   });
 </script>
@@ -120,6 +134,7 @@
     tabindex="-1"
     onclick={handleBackdropClick}
     onkeydown={handleKeydown}
+    onfocusin={detectTextarea}
     role="dialog"
     aria-modal="true"
   >
