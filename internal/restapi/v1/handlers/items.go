@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"windshift/internal/cql"
 	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
@@ -1309,19 +1310,30 @@ func (h *ItemHandler) GetChildren(w http.ResponseWriter, r *http.Request) {
 
 // Search handles GET /rest/api/v1/search/items
 //
+// It supports two modes over the items the caller can view:
+//
+//   - Full-text search via `q` (e.g. `q=login bug`).
+//   - Structured CQL filtering via `ql` (e.g. `ql=milestone = '0.8.2' AND status != Done`).
+//
+// When only `q` is supplied it is auto-detected: if it parses as a structured
+// CQL filter it is evaluated as CQL, otherwise it is matched as free text. The
+// explicit `ql` parameter forces CQL evaluation and returns 400 on a parse
+// error, giving callers a way to surface query mistakes.
+//
 // @Summary      Search items
-// @Description  Full-text search over items the caller can view. Requires a non-empty `q` query parameter.
+// @Description  Search items the caller can view by full-text (`q`) or structured CQL filter (`ql`). A `q` value that parses as CQL is evaluated as such.
 // @Tags         items, search
 // @Produce      json
 // @Security     BearerAuth
-// @Param        q                 query     string  true   "Search query"
+// @Param        q                 query     string  false  "Full-text search query (auto-detected as CQL when it parses as a filter)"
+// @Param        ql                query     string  false  "Structured CQL filter, e.g. milestone = '0.8.2' AND status != Done"
 // @Param        page              query     int     false  "Page number (1-based)"
 // @Param        limit             query     int     false  "Items per page (max 100)"
 // @Param        sort              query     string  false  "Sort field"
 // @Param        order             query     string  false  "Sort order: asc or desc"
 // @Param        exclude_personal  query     bool    false  "Exclude items from the caller's personal workspaces"
 // @Success      200    {object}  handlers.PaginatedResponse{data=[]dto.ItemResponse}
-// @Failure      400    {object}  handlers.ErrorResponse  "Missing or invalid q parameter"
+// @Failure      400    {object}  handlers.ErrorResponse  "Missing q/ql, or invalid CQL query"
 // @Failure      401    {object}  handlers.ErrorResponse
 // @Failure      403    {object}  handlers.ErrorResponse  "Token lacks the items:read scope"
 // @Failure      500    {object}  handlers.ErrorResponse
@@ -1332,9 +1344,19 @@ func (h *ItemHandler) Search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	query := r.URL.Query().Get("q")
-	if query == "" {
-		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeMissingField, "q query parameter is required"))
+	textQuery := strings.TrimSpace(r.URL.Query().Get("q"))
+	qlQuery := strings.TrimSpace(r.URL.Query().Get("ql"))
+
+	// Resolve the search mode. An explicit `ql` always forces CQL; otherwise a
+	// `q` that parses as a structured filter is treated as CQL, and anything
+	// else is a full-text term.
+	useCQL := qlQuery != ""
+	if !useCQL && textQuery != "" && cql.LooksLikeQuery(textQuery) {
+		qlQuery = textQuery
+		useCQL = true
+	}
+	if !useCQL && textQuery == "" {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeMissingField, "q or ql query parameter is required"))
 		return
 	}
 
@@ -1358,11 +1380,30 @@ func (h *ItemHandler) Search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Use service layer for search
-	items, total, err := h.itemCRUD.Search(query, accessibleWorkspaceIDs, services.PaginationParams{
-		Limit:  pagination.Limit,
-		Offset: pagination.Offset,
-	})
+	var items []models.Item
+	var total int
+	if useCQL {
+		items, total, err = h.itemCRUD.ListWithQL(services.ListWithQLParams{
+			QLQuery:      qlQuery,
+			WorkspaceIDs: accessibleWorkspaceIDs,
+			UserID:       user.ID,
+			Pagination: services.PaginationParams{
+				Limit:  pagination.Limit,
+				Offset: pagination.Offset,
+			},
+			SortBy:  pagination.SortBy,
+			SortAsc: pagination.SortAsc,
+		})
+		if err != nil && strings.Contains(err.Error(), "QL query error:") {
+			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, err.Error()))
+			return
+		}
+	} else {
+		items, total, err = h.itemCRUD.Search(textQuery, accessibleWorkspaceIDs, services.PaginationParams{
+			Limit:  pagination.Limit,
+			Offset: pagination.Offset,
+		})
+	}
 	if err != nil {
 		h.RespondInternalError(w, r)
 		return

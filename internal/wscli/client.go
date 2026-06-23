@@ -941,9 +941,18 @@ func (c *Client) ResolveMilestoneID(nameOrID string, workspaceID *int) (int, err
 // SearchItems performs a full-text search over items the caller can view
 // via GET /rest/api/v1/search/items. limit <= 0 falls back to the server
 // default page size.
-func (c *Client) SearchItems(query string, limit int) (*PaginatedResponse[Item], error) {
+// SearchItems searches items via the v1 search endpoint. When asCQL is true the
+// query is sent as an explicit CQL filter (`ql`), so the server reports parse
+// errors instead of falling back to full-text; otherwise it is sent as a
+// full-text term (`q`) that the server auto-detects as CQL when it parses as a
+// structured filter.
+func (c *Client) SearchItems(query string, limit int, asCQL bool) (*PaginatedResponse[Item], error) {
 	params := url.Values{}
-	params.Set("q", query)
+	if asCQL {
+		params.Set("ql", query)
+	} else {
+		params.Set("q", query)
+	}
 	if limit > 0 {
 		params.Set("limit", strconv.Itoa(limit))
 	}

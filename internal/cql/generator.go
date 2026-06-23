@@ -335,6 +335,19 @@ func (g *SQLGenerator) generateMilestoneComparison(node *ASTNode) (sql string, a
 		return "", nil, fmt.Errorf("unsupported right-hand side for milestone comparison")
 	}
 
+	// For the generic "milestone" field, a string value compares by name and a
+	// numeric value by id — mirroring the milestone IN behavior, so a filter
+	// like `milestone = '0.8.2'` matches the milestone called "0.8.2" rather
+	// than silently comparing the string against the numeric milestone_id.
+	if !byName && strings.EqualFold(node.Left.Value, "milestone") {
+		switch node.Right.Type {
+		case NodeLiteral:
+			byName = node.Right.DataType == STRING
+		case NodeIdentifier:
+			byName = true
+		}
+	}
+
 	var matchExpr string
 	if byName {
 		matchExpr = "LOWER(ms.name) = LOWER(?)"
