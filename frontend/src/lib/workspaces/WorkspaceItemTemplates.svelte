@@ -241,7 +241,7 @@
       <div class="grid grid-cols-2 gap-3">
         <div>
           <Label for="item-template-name" required class="mb-1">Name</Label>
-          <Input id="item-template-name" bind:value={formName} placeholder="bug-report" testId="item-template-name" />
+          <Input id="item-template-name" bind:value={formName} placeholder="bug-report" dataTestid="item-template-name" />
         </div>
         <div>
           <Label for="item-template-mode" class="mb-1">Mode</Label>

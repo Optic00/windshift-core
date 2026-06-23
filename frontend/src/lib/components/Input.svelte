@@ -21,6 +21,7 @@
    *   readonly?: boolean,
    *   maxlength?: number,
    *   class?: string,
+   *   dataTestid?: string,
    *   inputRef?: any,
    *   oninput?: (e?: any) => void,
    *   onchange?: (e?: any) => void,
@@ -49,6 +50,7 @@
     readonly = false,
     maxlength = undefined,
     class: className = '',
+    dataTestid = undefined,
     // Optional ref binding for parent components that need the raw input element
     inputRef = $bindable(null),
     // Event handlers
@@ -90,6 +92,7 @@
   {maxlength}
   bind:value
   bind:this={inputRef}
+  data-testid={dataTestid}
   {placeholder}
   {disabled}
   {required}
