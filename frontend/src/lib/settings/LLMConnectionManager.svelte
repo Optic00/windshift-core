@@ -83,6 +83,7 @@
   }
 
   function composeProviderConfig() {
+    /** @type {Record<string, any>} */
     let obj = {};
     const raw = form.provider_config?.trim();
     if (raw) {

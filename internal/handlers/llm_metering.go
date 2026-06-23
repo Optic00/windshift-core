@@ -125,7 +125,37 @@ func (b *usageMeteringBody) processLine(raw []byte) {
 // as bytes flow to the agent; non-streaming (JSON) responses are left untouched
 // (cost unknown). Persistence runs on stream end against a detached context so
 // the row survives the request context being canceled as the stream closes.
-func (h *RunnerBrokerHandler) meterLLMResponse(runID int, model string, pricing *llm.Pricing) func(*http.Response) error {
+// countImageParts counts image_url content parts across all messages in a
+// chat-completions request body, so the broker can price view_image usage when
+// the provider doesn't return an inline cost. A string-content message has no
+// parts and contributes zero.
+func countImageParts(body []byte) int {
+	var req struct {
+		Messages []struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return 0
+	}
+	count := 0
+	for _, m := range req.Messages {
+		var parts []struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(m.Content, &parts); err != nil {
+			continue // string content (not an array) → no image parts
+		}
+		for _, p := range parts {
+			if p.Type == "image_url" {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+func (h *RunnerBrokerHandler) meterLLMResponse(runID int, model string, pricing *llm.Pricing, images int) func(*http.Response) error {
 	return func(resp *http.Response) error {
 		if h.usage == nil {
 			return nil
@@ -151,7 +181,7 @@ func (h *RunnerBrokerHandler) meterLLMResponse(runID int, model string, pricing 
 					rec.CostUSD = u.Cost
 					rec.CostSource = "provider"
 				case pricing != nil:
-					c := pricing.CostUSD(u.PromptTokens, u.CompletionTokens, 0)
+					c := pricing.CostUSD(u.PromptTokens, u.CompletionTokens, images)
 					rec.CostUSD = &c
 					rec.CostSource = "computed"
 				}

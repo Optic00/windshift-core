@@ -158,6 +158,13 @@ func loadProvidersFromJSON(data []byte) error {
 	if err := json.Unmarshal(data, &f); err != nil {
 		return fmt.Errorf("parse providers JSON: %w", err)
 	}
+	// Enrich static seed models with the curated vision map so a providers file
+	// listing a known vision model (e.g. gpt-4o) without an explicit
+	// supports_vision still resolves vision-capable — matching the enrichment
+	// dynamic catalogs already get on refresh/cache-read.
+	for i := range f.Providers {
+		EnrichModelsVision(f.Providers[i].Type, f.Providers[i].Models)
+	}
 	providerMu.Lock()
 	providerRegistry = f.Providers
 	providerMu.Unlock()
