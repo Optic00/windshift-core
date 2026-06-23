@@ -49,6 +49,18 @@
   function handleKeydown(e) {
     onKeydown?.(e);
     e.stopPropagation();
+
+    // The submit gesture (Ctrl/Cmd+Enter) must fire even when inner content
+    // already handled the key: a rich-text editor (ProseMirror) calls
+    // preventDefault() on Cmd+Enter, which would otherwise bail at the
+    // defaultPrevented guard below and swallow the submit. Checking it first
+    // mirrors CreateModal's window-level handler.
+    if (onSubmit && !submitDisabled && matchesShortcut(e, submitShortcut)) {
+      e.preventDefault();
+      handleSubmit();
+      return;
+    }
+
     if (e.defaultPrevented) return;
 
     // Check for cancel shortcut (Escape)
@@ -60,22 +72,12 @@
     // Only handle submission if onSubmit is provided
     if (!onSubmit || submitDisabled) return;
 
-    // A <textarea> or a rich-text contenteditable (e.g. the Markdown editor's
-    // ProseMirror surface) owns the Enter key — bare Enter inserts a line there
-    // rather than submitting the modal.
-    const isTextArea = e.target.tagName === 'TEXTAREA' || e.target.isContentEditable;
-
-    // Check for submit shortcut (Ctrl/Cmd+Enter)
-    if (matchesShortcut(e, submitShortcut)) {
-      e.preventDefault();
-      handleSubmit();
-      return;
-    }
-
     // Enter without modifier
     if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
-      // In textarea: do nothing (let it create new line)
-      if (isTextArea) {
+      // A <textarea> or a rich-text contenteditable (the Markdown editor's
+      // ProseMirror surface) owns bare Enter — it inserts a line rather than
+      // submitting the modal.
+      if (e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) {
         return;
       }
       // In input field or outside input: submit
