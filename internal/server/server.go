@@ -442,6 +442,7 @@ func (s *Server) initialize() error {
 		repository.NewRequestTypeRepository(s.db),
 		repository.NewChannelRepository(s.db),
 		repository.NewScreenRepository(s.db),
+		repository.NewItemTypeRepository(s.db),
 		logger.NewAuditor(s.db),
 		channelService,
 	)

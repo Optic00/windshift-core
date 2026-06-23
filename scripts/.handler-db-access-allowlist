@@ -37,7 +37,6 @@ internal/handlers/integration_oauth.go
 internal/handlers/invitations.go
 internal/handlers/issue_sync.go
 internal/handlers/item_links.go
-internal/handlers/item_types.go
 internal/handlers/items.go
 internal/handlers/items_calendar.go
 internal/handlers/items_hierarchy.go

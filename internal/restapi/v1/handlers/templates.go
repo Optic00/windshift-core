@@ -20,7 +20,8 @@ import (
 // to avoid leaking template / workspace existence).
 type TemplateHandler struct {
 	BaseHandler
-	repo *repository.TemplateRepository
+	repo      *repository.TemplateRepository
+	itemTypes *repository.ItemTypeRepository
 }
 
 // NewTemplateHandler constructs a v1 TemplateHandler.
@@ -28,6 +29,7 @@ func NewTemplateHandler(db database.Database, permissionService *services.Permis
 	return &TemplateHandler{
 		BaseHandler: NewBaseHandler(db, permissionService),
 		repo:        repository.NewTemplateRepository(db),
+		itemTypes:   repository.NewItemTypeRepository(db),
 	}
 }
 
@@ -376,7 +378,7 @@ func (h *TemplateHandler) resolveWorkspaceTemplateAccess(w http.ResponseWriter, 
 // surface as 400 rather than a foreign-key 500 from the repository.
 func (h *TemplateHandler) itemTypeIDsValid(w http.ResponseWriter, r *http.Request, ids []int) bool {
 	for _, id := range ids {
-		exists, err := h.repo.ItemTypeExists(id)
+		exists, err := h.itemTypes.Exists(id)
 		if err != nil {
 			h.RespondInternalError(w, r)
 			return false

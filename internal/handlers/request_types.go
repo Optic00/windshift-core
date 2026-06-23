@@ -50,6 +50,7 @@ type RequestTypeHandler struct {
 	repo           *repository.RequestTypeRepository
 	channelRepo    *repository.ChannelRepository
 	screenRepo     *repository.ScreenRepository
+	itemTypeRepo   *repository.ItemTypeRepository
 	auditor        *logger.Auditor
 	channelService *services.ChannelService
 }
@@ -58,6 +59,7 @@ func NewRequestTypeHandler(
 	repo *repository.RequestTypeRepository,
 	channelRepo *repository.ChannelRepository,
 	screenRepo *repository.ScreenRepository,
+	itemTypeRepo *repository.ItemTypeRepository,
 	auditor *logger.Auditor,
 	channelService *services.ChannelService,
 ) *RequestTypeHandler {
@@ -66,6 +68,7 @@ func NewRequestTypeHandler(
 		channelRepo:    channelRepo,
 		channelService: channelService,
 		screenRepo:     screenRepo,
+		itemTypeRepo:   itemTypeRepo,
 		auditor:        auditor,
 	}
 }
@@ -151,7 +154,7 @@ func (h *RequestTypeHandler) Create(w http.ResponseWriter, r *http.Request) {
 		respondValidationError(w, r, "Channel not found")
 		return
 	}
-	itemTypeExists, err := h.repo.ItemTypeExists(rt.ItemTypeID)
+	itemTypeExists, err := h.itemTypeRepo.Exists(rt.ItemTypeID)
 	if err != nil || !itemTypeExists {
 		respondValidationError(w, r, "Item type not found")
 		return
@@ -262,7 +265,7 @@ func (h *RequestTypeHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	itemTypeExists, err := h.repo.ItemTypeExists(rt.ItemTypeID)
+	itemTypeExists, err := h.itemTypeRepo.Exists(rt.ItemTypeID)
 	if err != nil || !itemTypeExists {
 		respondValidationError(w, r, "Item type not found")
 		return

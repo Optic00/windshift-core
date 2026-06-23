@@ -12,7 +12,7 @@ import (
 )
 
 // RequestTypeRepository persists request_types, their fields, and the
-// surrounding lookups (channel/item-type existence, portal-section cleanup,
+// surrounding lookups (channel existence, portal-section cleanup,
 // screen-field resolution) that the request-type admin endpoints need.
 type RequestTypeRepository struct {
 	db database.Database
@@ -159,15 +159,6 @@ func (r *RequestTypeRepository) ChannelExists(id int) (bool, error) {
 	var ok bool
 	if err := r.db.QueryRow("SELECT EXISTS(SELECT 1 FROM channels WHERE id = ?)", id).Scan(&ok); err != nil {
 		return false, fmt.Errorf("check channel %d: %w", id, err)
-	}
-	return ok, nil
-}
-
-// ItemTypeExists reports whether an item_type row with the given id exists.
-func (r *RequestTypeRepository) ItemTypeExists(id int) (bool, error) {
-	var ok bool
-	if err := r.db.QueryRow("SELECT EXISTS(SELECT 1 FROM item_types WHERE id = ?)", id).Scan(&ok); err != nil {
-		return false, fmt.Errorf("check item_type %d: %w", id, err)
 	}
 	return ok, nil
 }

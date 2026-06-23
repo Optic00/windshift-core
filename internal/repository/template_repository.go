@@ -139,16 +139,6 @@ func (r *TemplateRepository) NameExistsInWorkspace(workspaceID int, name string,
 	return count > 0, nil
 }
 
-// ItemTypeExists reports whether an item type with the given id exists. Used to
-// validate a template's target item_type_ids before a write.
-func (r *TemplateRepository) ItemTypeExists(id int) (bool, error) {
-	var ok bool
-	if err := r.db.QueryRow("SELECT EXISTS(SELECT 1 FROM item_types WHERE id = ?)", id).Scan(&ok); err != nil {
-		return false, fmt.Errorf("check item type %d exists: %w", id, err)
-	}
-	return ok, nil
-}
-
 // GetMandatoryForType returns the active mandatory template enforced for the
 // given (workspace, item_type), or ErrNotFound when none. The service-layer
 // invariant guarantees at most one, so LIMIT 1 is exact.
