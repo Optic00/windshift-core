@@ -80,6 +80,29 @@ func (m *ConnectionManager) resolveModelVision(providerType ProviderType, modelI
 	return curatedVisionCapable(modelID)
 }
 
+// ModelPricing returns the advertised USD rates for the named model, or nil if
+// the catalog doesn't carry pricing (cost is then left unknown, not guessed).
+// Consults the refreshed cache first, then the static seed list.
+func (m *ConnectionManager) ModelPricing(providerType ProviderType, modelID string) *Pricing {
+	if m.modelCache != nil {
+		if entry, err := m.modelCache.Get(providerType); err == nil {
+			for _, mi := range entry.Models {
+				if mi.ID == modelID {
+					return mi.Pricing
+				}
+			}
+		}
+	}
+	if p := GetProvider(providerType); p != nil {
+		for _, mi := range p.Models {
+			if mi.ID == modelID {
+				return mi.Pricing
+			}
+		}
+	}
+	return nil
+}
+
 // Resolve returns a Client for the given connection ID.
 // If connectionID > 0, uses that specific enabled connection.
 // Otherwise, picks the default enabled connection (or the first enabled one).

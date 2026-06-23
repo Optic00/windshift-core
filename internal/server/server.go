@@ -799,6 +799,7 @@ func (s *Server) initialize() error {
 	// Secretless access layer (WI-144): brokers a granted credential to a
 	// running job without it ever living on the runner host.
 	runnerBrokerHandler := handlers.NewRunnerBrokerHandler(tokenManager, repository.NewAgentRunRepository(s.db), credentialSvc, llmManager, &scmCredsAdapter{cr: scmCredResolver})
+	runnerBrokerHandler.SetUsageRepository(repository.NewLLMUsageRepository(s.db)) // meter LLM token/cost at the broker (WI-493)
 	if bindingSvc != nil {
 		// Registers the coding-agent assignee trigger inside the item
 		// create/update services, so every surface that sets an assignee

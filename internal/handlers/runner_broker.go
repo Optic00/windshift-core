@@ -58,12 +58,20 @@ type RunnerBrokerHandler struct {
 	creds    *services.ActionCredentialService
 	llmConns *llm.ConnectionManager
 	scm      services.SCMCredentialResolver
+	usage    *repository.LLMUsageRepository // optional; nil disables metering
 }
 
 // NewRunnerBrokerHandler constructs the handler. Any nil dependency disables
 // the corresponding broker (503), e.g. when the harness is not configured.
 func NewRunnerBrokerHandler(tokens *auth.TokenManager, runs *repository.AgentRunRepository, creds *services.ActionCredentialService, llmConns *llm.ConnectionManager, scm services.SCMCredentialResolver) *RunnerBrokerHandler {
 	return &RunnerBrokerHandler{tokens: tokens, runs: runs, creds: creds, llmConns: llmConns, scm: scm}
+}
+
+// SetUsageRepository attaches the LLM usage repository so ProxyLLM meters token
+// usage + cost per call. Optional and nil-safe: without it, proxying works
+// unchanged but no usage is recorded.
+func (h *RunnerBrokerHandler) SetUsageRepository(usage *repository.LLMUsageRepository) {
+	h.usage = usage
 }
 
 // runFromToken authenticates the per-run token and authorizes it for the run
@@ -253,6 +261,9 @@ func (h *RunnerBrokerHandler) ProxyLLM(w http.ResponseWriter, r *http.Request) {
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			respondServiceUnavailable(w, r, services.RedactString(err.Error()))
 		},
+		// Meter token usage + cost from the SSE usage tail (WI-493). The agent is
+		// untrusted, so the broker is the trustworthy capture point.
+		ModifyResponse: h.meterLLMResponse(runID, cfg.Model, h.llmConns.ModelPricing(llm.ProviderType(cfg.ProviderType), cfg.Model)),
 	}
 	// The chat completion streams as SSE and routinely runs past the server's
 	// 30s WriteTimeout; lift the deadline so the stream is not severed mid-run.

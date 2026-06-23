@@ -33,6 +33,31 @@ type ModelInfo struct {
 	Name           string `json:"name"`
 	MaxTokens      int    `json:"max_tokens"`
 	SupportsVision bool   `json:"supports_vision"`
+	// Pricing carries per-unit USD rates when the provider catalog advertises
+	// them (OpenRouter today). nil means rates are unknown — usage is metered in
+	// tokens but cost is left unknown rather than guessed.
+	Pricing *Pricing `json:"pricing,omitempty"`
+}
+
+// Pricing is a model's per-unit cost in USD, as advertised by a provider
+// catalog. Zero on any field means "not charged / not advertised".
+type Pricing struct {
+	PromptUSD     float64 `json:"prompt"`     // per prompt (input) token
+	CompletionUSD float64 `json:"completion"` // per completion (output) token
+	ImageUSD      float64 `json:"image"`      // per image part
+	RequestUSD    float64 `json:"request"`    // per request (flat)
+}
+
+// CostUSD computes the cost of one call from token + image counts. Unknown
+// terms simply contribute zero (their rate is 0).
+func (p *Pricing) CostUSD(promptTokens, completionTokens, images int) float64 {
+	if p == nil {
+		return 0
+	}
+	return float64(promptTokens)*p.PromptUSD +
+		float64(completionTokens)*p.CompletionUSD +
+		float64(images)*p.ImageUSD +
+		p.RequestUSD
 }
 
 // ProviderInfo describes a known LLM provider and its available models.
