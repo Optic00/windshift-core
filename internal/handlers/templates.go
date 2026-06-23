@@ -15,10 +15,12 @@ import (
 )
 
 // ItemTemplateHandler backs the Svelte admin UI for work item templates
-// (WI-438) over cookie/session auth. Reads require workspace item-view; writes
-// require workspace item-edit (and the routes gate writes on system-admin,
-// mirroring the labels catalog). Workspace permission failures return 404 so
-// template / workspace existence isn't leaked.
+// (WI-438) over cookie/session auth. Reads require workspace item-view (so the
+// create-modal picker works for any item creator); catalog writes require
+// workspace.admin — matching the admin settings page's canAdminWorkspace
+// visibility, so workspace admins (not only system admins) can manage them.
+// Workspace permission failures return 404 so template/workspace existence
+// isn't leaked.
 type ItemTemplateHandler struct {
 	repo              *repository.TemplateRepository
 	permissionService *services.PermissionService
@@ -132,7 +134,7 @@ func (h *ItemTemplateHandler) Create(w http.ResponseWriter, r *http.Request) {
 		respondValidationError(w, r, "workspace_id is required")
 		return
 	}
-	if !h.requireWorkspaceEditPermission(w, r, input.WorkspaceID) {
+	if !h.requireWorkspaceAdminPermission(w, r, input.WorkspaceID) {
 		return
 	}
 
@@ -195,7 +197,7 @@ func (h *ItemTemplateHandler) Update(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
-	if !h.requireWorkspaceEditPermission(w, r, existing.WorkspaceID) {
+	if !h.requireWorkspaceAdminPermission(w, r, existing.WorkspaceID) {
 		return
 	}
 
@@ -276,7 +278,7 @@ func (h *ItemTemplateHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
-	if !h.requireWorkspaceEditPermission(w, r, existing.WorkspaceID) {
+	if !h.requireWorkspaceAdminPermission(w, r, existing.WorkspaceID) {
 		return
 	}
 	if err := h.repo.Delete(id); err != nil {
@@ -303,7 +305,11 @@ func (h *ItemTemplateHandler) canViewWorkspace(w http.ResponseWriter, r *http.Re
 	return true
 }
 
-func (h *ItemTemplateHandler) requireWorkspaceEditPermission(w http.ResponseWriter, r *http.Request, workspaceID int) bool {
+// requireWorkspaceAdminPermission gates template catalog writes on workspace.admin
+// (not item edit) — the catalog is a workspace-configuration concern, matching
+// the admin settings page's canAdminWorkspace visibility. 404 on failure so the
+// template/workspace existence isn't leaked.
+func (h *ItemTemplateHandler) requireWorkspaceAdminPermission(w http.ResponseWriter, r *http.Request, workspaceID int) bool {
 	if h.permissionService == nil {
 		return true
 	}
@@ -312,7 +318,7 @@ func (h *ItemTemplateHandler) requireWorkspaceEditPermission(w http.ResponseWrit
 		respondUnauthorized(w, r)
 		return false
 	}
-	hasPermission, err := h.permissionService.HasWorkspacePermission(user.ID, workspaceID, models.PermissionItemEdit)
+	hasPermission, err := h.permissionService.HasWorkspacePermission(user.ID, workspaceID, models.PermissionWorkspaceAdmin)
 	if err != nil || !hasPermission {
 		respondNotFound(w, r, "Template")
 		return false

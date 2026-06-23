@@ -123,14 +123,15 @@ func RegisterItemRoutes(deps *Deps) {
 	api.HandleH("PUT /labels/{id}", admin(http.HandlerFunc(deps.Items.Label.Update)))
 	api.HandleH("DELETE /labels/{id}", admin(http.HandlerFunc(deps.Items.Label.Delete)))
 
-	// Work item template CRUD (WI-438). Reads for any workspace viewer; catalog
-	// writes are system-admin like labels (the handler also enforces workspace
-	// item-edit). Used by the admin management UI and the create-modal picker.
+	// Work item template CRUD (WI-438). Reads for any workspace viewer (the
+	// create-modal picker needs them); catalog writes are gated in-handler on
+	// workspace.admin — matching the admin settings page's canAdminWorkspace
+	// visibility, so workspace admins (not only system admins) can manage them.
 	api.HandleH("GET /item-templates", auth(http.HandlerFunc(deps.Items.ItemTemplate.GetAll)))
-	api.HandleH("POST /item-templates", admin(http.HandlerFunc(deps.Items.ItemTemplate.Create)))
+	api.HandleH("POST /item-templates", auth(http.HandlerFunc(deps.Items.ItemTemplate.Create)))
 	api.HandleH("GET /item-templates/{id}", auth(http.HandlerFunc(deps.Items.ItemTemplate.Get)))
-	api.HandleH("PUT /item-templates/{id}", admin(http.HandlerFunc(deps.Items.ItemTemplate.Update)))
-	api.HandleH("DELETE /item-templates/{id}", admin(http.HandlerFunc(deps.Items.ItemTemplate.Delete)))
+	api.HandleH("PUT /item-templates/{id}", auth(http.HandlerFunc(deps.Items.ItemTemplate.Update)))
+	api.HandleH("DELETE /item-templates/{id}", auth(http.HandlerFunc(deps.Items.ItemTemplate.Delete)))
 
 	// Item-label management
 	api.HandleH("GET /items/{id}/labels", auth(http.HandlerFunc(deps.Items.Label.GetItemLabels)))

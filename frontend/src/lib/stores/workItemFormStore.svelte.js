@@ -495,9 +495,14 @@ class WorkItemFormStore {
       this.templateOptions = list.filter((t) => t.mode === 'selectable');
       this.mandatoryTemplate = mandatory;
       if (mandatory) {
-        this.formData.description = mandatory.description_body || '';
         this.selectedTemplateId = mandatory.id;
-        this.templateApplyNonce += 1;
+        // Only fill an empty description — mirrors the server's "apply only when
+        // empty" rule (services.CreateItem) so a slow async load can't clobber
+        // text the user typed after switching type. The picker still locks.
+        if (!this.formData.description?.trim()) {
+          this.formData.description = mandatory.description_body || '';
+          this.templateApplyNonce += 1;
+        }
       } else {
         this.selectedTemplateId = null;
       }
