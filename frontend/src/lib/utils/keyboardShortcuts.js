@@ -118,6 +118,9 @@ const shortcuts = {
   customFields: {
     add: { key: 'a' },
   },
+  templates: {
+    add: { key: 'a' },
+  },
   themes: {
     add: { key: 'a' },
   },

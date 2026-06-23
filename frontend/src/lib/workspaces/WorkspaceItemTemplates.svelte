@@ -23,6 +23,7 @@
   import DialogFooter from '../dialogs/DialogFooter.svelte';
   import ConfirmDialog from '../dialogs/ConfirmDialog.svelte';
   import { errorToast, successToast } from '../stores/toasts.svelte.js';
+  import { toHotkeyString } from '../utils/keyboardShortcuts.js';
 
   let { workspaceId } = $props();
 
@@ -166,8 +167,14 @@
     subtitle="Reusable description scaffolds that pre-fill a new item's description — offered in the create picker, or enforced per item type."
   >
     {#snippet actions()}
-      <!-- shortcut-guard-exempt: admin settings section, no global create hotkey is registered for templates -->
-      <Button size="sm" icon={Plus} onclick={openCreate} dataTestid="item-template-add">
+      <Button
+        size="sm"
+        icon={Plus}
+        onclick={openCreate}
+        dataTestid="item-template-add"
+        keyboardHint="A"
+        hotkeyConfig={{ key: toHotkeyString('templates', 'add'), guard: () => !showModal }}
+      >
         New template
       </Button>
     {/snippet}
@@ -208,12 +215,14 @@
               <td class="px-3 py-2" style="color: var(--ds-text-subtle);">{targetSummary(template)}</td>
               <td class="px-3 py-2" style="color: var(--ds-text-subtle);">{template.is_active ? 'active' : 'inactive'}</td>
               <td class="px-3 py-2 text-right whitespace-nowrap">
-                <Button size="sm" variant="ghost" onclick={() => openEdit(template)} title="Edit template" dataTestid="item-template-edit">
-                  <Pencil class="w-4 h-4" />
-                </Button>
-                <Button size="sm" variant="ghost" onclick={() => openDeleteDialog(template)} title="Delete template" dataTestid="item-template-delete">
-                  <Trash2 class="w-4 h-4" style="color: var(--ds-text-danger);" />
-                </Button>
+                <div class="flex items-center justify-end gap-2">
+                  <Button variant="default" size="small" icon={Pencil} onclick={() => openEdit(template)} dataTestid="item-template-edit">
+                    Edit
+                  </Button>
+                  <Button variant="default" size="small" icon={Trash2} onclick={() => openDeleteDialog(template)} dataTestid="item-template-delete">
+                    Delete
+                  </Button>
+                </div>
               </td>
             </tr>
           {/each}
