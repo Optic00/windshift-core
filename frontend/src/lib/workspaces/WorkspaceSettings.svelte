@@ -12,6 +12,7 @@
   import WorkspaceAgentSkills from './WorkspaceAgentSkills.svelte';
   import IssueSyncSettings from '../settings/IssueSyncSettings.svelte';
   import RecurrenceManager from '../settings/RecurrenceManager.svelte';
+  import WorkspaceItemTemplates from './WorkspaceItemTemplates.svelte';
   import Button from '../components/Button.svelte';
   import PageHeader from '../layout/PageHeader.svelte';
   import Input from '../components/Input.svelte';
@@ -69,6 +70,7 @@
     'coding-agents': 'workspaceSettings.headers.codingAgents',
     'issue-sync': 'workspaceSettings.headers.issueSync',
     recurrence: 'workspaceSettings.headers.recurrence',
+    templates: 'workspaceSettings.headers.templates',
     danger: 'workspaceSettings.headers.danger',
   };
 
@@ -404,6 +406,10 @@
     {:else if activeTab === 'recurrence'}
         <!-- Recurrence Rules -->
         <RecurrenceManager {workspaceId} />
+
+    {:else if activeTab === 'templates'}
+        <!-- Work item templates (WI-438) -->
+        <WorkspaceItemTemplates {workspaceId} />
 
     {:else if activeTab === 'danger'}
         <!-- Remove Workspace -->

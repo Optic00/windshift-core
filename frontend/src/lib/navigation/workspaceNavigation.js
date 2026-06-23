@@ -194,6 +194,12 @@ export const workspaceSettingsItems = [
     view: 'workspace-settings-recurrence',
   },
   {
+    id: 'templates',
+    labelKey: 'workspaceSettings.tabs.templates',
+    icon: FileStack,
+    view: 'workspace-settings-templates',
+  },
+  {
     id: 'danger',
     labelKey: 'workspaceSettings.tabs.removeWorkspace',
     icon: Trash,

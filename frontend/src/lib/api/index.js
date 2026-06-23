@@ -31,6 +31,7 @@ import {
   configurationSets,
   customFields,
   hierarchyLevels,
+  itemTemplates,
   itemTypes,
   links,
   linkTypes,
@@ -279,6 +280,7 @@ export const api = {
 
   // Item Types
   itemTypes,
+  itemTemplates,
 
   // Priorities
   priorities,

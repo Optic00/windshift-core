@@ -569,6 +569,7 @@ export default {
       codingAgents: 'Agents',
       issueSync: 'Issue Sync',
       recurrence: 'Recurrence',
+      templates: 'Templates',
       removeWorkspace: 'Remove Workspace',
     },
 
@@ -590,6 +591,7 @@ export default {
       codingAgents: 'Configure coding agents and their skills',
       issueSync: 'Sync external issues into this workspace',
       recurrence: 'Manage recurring item rules',
+      templates: 'Reusable description scaffolds for new items',
       danger: 'Permanently remove this workspace',
     },
 

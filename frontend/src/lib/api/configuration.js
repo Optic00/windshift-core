@@ -96,6 +96,11 @@ export const projectFieldRequirements = {
 
 export const itemTypes = createCrudClient('/item-types');
 
+// Work item templates (WI-438). Reads need item-view, catalog writes are
+// admin-gated server-side; both surfaces share the /item-templates path.
+// getAll({ workspace_id, item_type_id? }) → query string via createCrudClient.
+export const itemTemplates = createCrudClient('/item-templates');
+
 export const priorities = createCrudClient('/priorities');
 
 export const hierarchyLevels = createCrudClient('/hierarchy-levels');
