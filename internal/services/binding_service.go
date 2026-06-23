@@ -163,6 +163,37 @@ var ErrBindingNotFound = errors.New("binding service: binding not found")
 // handler maps it to a 400.
 var ErrBindingInvalidPool = errors.New("binding service: target pool is not a runner pool available to this workspace")
 
+// ErrBindingRunnerImageRequiresPool is returned by Create when runner_image is
+// set on a binding with no target pool. A custom image is only honored on the
+// remote (pool) runner; the local in-process runner uses its fixed image, so
+// allowing it there would silently no-op (WI-450). The handler maps it to a 400.
+var ErrBindingRunnerImageRequiresPool = errors.New("binding service: runner_image requires a target pool (custom images run only on remote pool runners)")
+
+// ErrBindingInvalidRunnerImage is returned by Create when runner_image is not a
+// syntactically valid container image reference. The handler maps it to a 400.
+var ErrBindingInvalidRunnerImage = errors.New("binding service: runner_image is not a valid container image reference")
+
+// runnerImageRE is a permissive OCI image-reference check: an optional
+// registry host (with optional port), a path of name components, and an
+// optional :tag and/or @sha256:digest. It is deliberately strict enough to
+// reject shell metacharacters and whitespace (the value is passed as a single
+// container-runtime argument) without trying to be a full reference grammar.
+var runnerImageRE = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*(?::[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?(?:@sha256:[a-f0-9]{64})?$`)
+
+// validateRunnerImage trims and validates a custom runner image reference.
+// Returns the trimmed value and nil for an empty input (meaning "use the
+// runner's default image").
+func validateRunnerImage(image string) (string, error) {
+	image = strings.TrimSpace(image)
+	if image == "" {
+		return "", nil
+	}
+	if len(image) > 512 || !runnerImageRE.MatchString(image) {
+		return "", ErrBindingInvalidRunnerImage
+	}
+	return image, nil
+}
+
 // DefaultLLMTestPrompt is the prompt TestLLM sends when the caller supplies
 // none — short enough to be cheap, open enough to prove the model replies.
 const DefaultLLMTestPrompt = "Reply in one short sentence to confirm you are reachable."
@@ -283,7 +314,11 @@ type CreateBindingRequest struct {
 	// TargetPoolID routes this binding's runs to a remote runner_pool instead of
 	// the local in-process runner. nil = local. Validated against the pools the
 	// workspace may dispatch to.
-	TargetPoolID    *int
+	TargetPoolID *int
+	// RunnerImage overrides the coding-agent container image for this binding's
+	// remote (pool) runs. Empty = the runner's default. Only valid when
+	// TargetPoolID is set (WI-450).
+	RunnerImage     string
 	TokenScopes     []string
 	TokenTTLMinutes int
 	MaxRunsPerDay   int
@@ -363,12 +398,22 @@ func (s *BindingService) Create(ctx context.Context, req CreateBindingRequest) (
 			return nil, err
 		}
 	}
+	// A custom runner image is only honored on the remote (pool) runner, so it
+	// requires a target pool; validate its reference syntax either way (WI-450).
+	runnerImage, err := validateRunnerImage(req.RunnerImage)
+	if err != nil {
+		return nil, err
+	}
+	if runnerImage != "" && req.TargetPoolID == nil {
+		return nil, ErrBindingRunnerImageRequiresPool
+	}
 	binding := &models.WorkspaceAgentBinding{
 		WorkspaceID:     req.WorkspaceID,
 		ActingUserID:    identity.UserID,
 		ActingUserKind:  identity.Kind,
 		LLMConnectionID: req.LLMConnectionID,
 		TargetPoolID:    req.TargetPoolID,
+		RunnerImage:     runnerImage,
 		TokenScopes:     req.TokenScopes,
 		TokenTTLMinutes: req.TokenTTLMinutes,
 		MaxRunsPerDay:   req.MaxRunsPerDay,
@@ -944,6 +989,9 @@ func (s *BindingService) startRunForBinding(ctx context.Context, binding *models
 			BindingID:         binding.ID,
 			TargetPoolID:      binding.TargetPoolID,
 			JobKind:           models.JobKindCodingAgent,
+			// A binding-configured custom image overrides the runner's default
+			// windshift-agent image for this pool run; empty keeps the default (WI-450).
+			JobImage:          binding.RunnerImage,
 			TriggeredByUserID: triggeredByUserID,
 			// The instruction itself is recovered + rendered into the prompt at
 			// remote claim time (ResolveRunInputs), the same place the binding

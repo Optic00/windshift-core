@@ -84,15 +84,15 @@ func (r *WorkspaceAgentBindingRepository) Insert(ctx context.Context, b *models.
 	err = r.db.QueryRowContext(ctx, `
 		INSERT INTO workspace_agent_bindings
 			(workspace_id, acting_user_id, acting_user_kind, repo_slug, repo_base_ref,
-			 llm_connection_id, scm_connection_id, target_pool_id, token_scopes_json, token_ttl_minutes, max_runs_per_day, instructions, created_by_user_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 llm_connection_id, scm_connection_id, target_pool_id, token_scopes_json, token_ttl_minutes, max_runs_per_day, instructions, runner_image, created_by_user_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		RETURNING id
 	`,
 		b.WorkspaceID, b.ActingUserID, b.ActingUserKind,
 		nullStringArg(b.RepoSlug), nullStringArg(b.RepoBaseRef),
 		nullIntArg(b.LLMConnectionID), nullIntArg(b.SCMConnectionID), nullIntArg(b.TargetPoolID),
 		string(scopesJSON), b.TokenTTLMinutes, b.MaxRunsPerDay,
-		b.Instructions, b.CreatedByUserID,
+		b.Instructions, nullStringArg(b.RunnerImage), b.CreatedByUserID,
 	).Scan(&id)
 	if err != nil {
 		if database.IsUniqueConstraintError(err) {
@@ -361,7 +361,7 @@ const bindingSelectSQL = `
 	       repo_slug, repo_base_ref,
 	       llm_connection_id, scm_connection_id, target_pool_id,
 	       token_scopes_json, token_ttl_minutes, max_runs_per_day,
-	       instructions, created_by_user_id, created_at, updated_at
+	       instructions, runner_image, created_by_user_id, created_at, updated_at
 	FROM workspace_agent_bindings
 `
 
@@ -379,16 +379,19 @@ func scanBindingRows(rows *sql.Rows) (*models.WorkspaceAgentBinding, error) {
 
 func scanBindingFrom(scanner bindingRowScanner) (*models.WorkspaceAgentBinding, error) {
 	b := &models.WorkspaceAgentBinding{}
-	var repoSlug, repoBaseRef sql.NullString
+	var repoSlug, repoBaseRef, runnerImage sql.NullString
 	var llmConn, scmConn, targetPool sql.NullInt64
 	var scopesJSON string
 	if err := scanner.Scan(
 		&b.ID, &b.WorkspaceID, &b.ActingUserID, &b.ActingUserKind,
 		&repoSlug, &repoBaseRef,
 		&llmConn, &scmConn, &targetPool, &scopesJSON, &b.TokenTTLMinutes, &b.MaxRunsPerDay,
-		&b.Instructions, &b.CreatedByUserID, &b.CreatedAt, &b.UpdatedAt,
+		&b.Instructions, &runnerImage, &b.CreatedByUserID, &b.CreatedAt, &b.UpdatedAt,
 	); err != nil {
 		return nil, err
+	}
+	if runnerImage.Valid {
+		b.RunnerImage = runnerImage.String
 	}
 	if repoSlug.Valid {
 		b.RepoSlug = repoSlug.String

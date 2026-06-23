@@ -88,6 +88,7 @@ type bindingResponse struct {
 	LLMConnectionID *int     `json:"llm_connection_id,omitempty"`
 	SCMConnectionID *int     `json:"scm_connection_id,omitempty"`
 	TargetPoolID    *int     `json:"target_pool_id,omitempty"`
+	RunnerImage     string   `json:"runner_image,omitempty"`
 	TokenScopes     []string `json:"token_scopes,omitempty"`
 	TokenTTLMinutes int      `json:"token_ttl_minutes"`
 	MaxRunsPerDay   int      `json:"max_runs_per_day"`
@@ -117,6 +118,7 @@ func toBindingResponse(b *models.WorkspaceAgentBinding) bindingResponse {
 		LLMConnectionID: b.LLMConnectionID,
 		SCMConnectionID: b.SCMConnectionID,
 		TargetPoolID:    b.TargetPoolID,
+		RunnerImage:     b.RunnerImage,
 		TokenScopes:     b.TokenScopes,
 		TokenTTLMinutes: b.TokenTTLMinutes,
 		MaxRunsPerDay:   b.MaxRunsPerDay,
@@ -159,6 +161,7 @@ type createBindingBody struct {
 	LLMConnectionID *int                    `json:"llm_connection_id,omitempty"`
 	SCMConnectionID *int                    `json:"scm_connection_id,omitempty"`
 	TargetPoolID    *int                    `json:"target_pool_id,omitempty"`
+	RunnerImage     string                  `json:"runner_image,omitempty"`
 	TokenScopes     []string                `json:"token_scopes,omitempty"`
 	TokenTTLMinutes int                     `json:"token_ttl_minutes,omitempty"`
 	MaxRunsPerDay   int                     `json:"max_runs_per_day,omitempty"`
@@ -253,6 +256,7 @@ func (h *WorkspaceAgentBindingHandler) Create(w http.ResponseWriter, r *http.Req
 		LLMConnectionID: body.LLMConnectionID,
 		SCMConnectionID: body.SCMConnectionID,
 		TargetPoolID:    body.TargetPoolID,
+		RunnerImage:     body.RunnerImage,
 		TokenScopes:     body.TokenScopes,
 		TokenTTLMinutes: body.TokenTTLMinutes,
 		MaxRunsPerDay:   body.MaxRunsPerDay,
@@ -274,6 +278,8 @@ func (h *WorkspaceAgentBindingHandler) Create(w http.ResponseWriter, r *http.Req
 			errors.Is(err, services.ErrBindingPrimaryRepoRequired),
 			errors.Is(err, services.ErrBindingTooManyRepos),
 			errors.Is(err, services.ErrBindingInvalidPool),
+			errors.Is(err, services.ErrBindingRunnerImageRequiresPool),
+			errors.Is(err, services.ErrBindingInvalidRunnerImage),
 			errors.Is(err, services.ErrBindingInstructionsTooLong),
 			isSkillAttachError(err):
 			respondBadRequest(w, r, err.Error())

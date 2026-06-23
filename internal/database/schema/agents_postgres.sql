@@ -99,6 +99,7 @@ CREATE TABLE IF NOT EXISTS workspace_agent_bindings (
     scm_connection_id INTEGER REFERENCES workspace_scm_connections(id) ON DELETE SET NULL,
     target_pool_id INTEGER, -- soft ref to action_capabilities (runner_pool); NULL = local in-process run (WI-195)
     instructions TEXT NOT NULL DEFAULT '', -- appended to the run's initial prompt as the agent's role/persona (WI-258)
+    runner_image TEXT, -- custom coding-agent container image for remote (pool) runs; NULL = the runner's default windshift-agent image (WI-450)
     created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
