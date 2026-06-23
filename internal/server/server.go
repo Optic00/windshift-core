@@ -736,6 +736,7 @@ func (s *Server) initialize() error {
 	}
 	llmManager := llm.NewConnectionManager(s.db, scmProviderHandler.GetEncryption(), fallbackLLMClient)
 	llmModelCache := llm.NewModelCache(s.db)
+	llmManager.SetModelCache(llmModelCache) // freshest vision-capability resolution
 	llmModelRefresher := llm.NewModelRefresher(llmModelCache)
 
 	var codingRunSvc *services.RunService
@@ -788,6 +789,7 @@ func (s *Server) initialize() error {
 	agentBindingHandler.SetSkillsRepo(agentSkillRepo)
 	agentSkillHandler := handlers.NewAgentSkillHandler(agentSkillRepo, permService, logger.NewAuditor(s.db))
 	agentRunHandler := handlers.NewAgentRunHandler(repository.NewAgentRunRepository(s.db), codingRunSvc, permService, repository.NewItemRepository(s.db), bindingSvc)
+	agentRunHandler.SetUsageRepository(repository.NewLLMUsageRepository(s.db)) // per-run token/cost readout (WI-494)
 	// Remote-runner control plane (WI-141). Constructed unconditionally;
 	// the handler 503s when the registry/run service is unavailable (i.e.
 	// CodingAgent.Enabled is off).
@@ -799,6 +801,7 @@ func (s *Server) initialize() error {
 	// Secretless access layer (WI-144): brokers a granted credential to a
 	// running job without it ever living on the runner host.
 	runnerBrokerHandler := handlers.NewRunnerBrokerHandler(tokenManager, repository.NewAgentRunRepository(s.db), credentialSvc, llmManager, &scmCredsAdapter{cr: scmCredResolver})
+	runnerBrokerHandler.SetUsageRepository(repository.NewLLMUsageRepository(s.db)) // meter LLM token/cost at the broker (WI-493)
 	if bindingSvc != nil {
 		// Registers the coding-agent assignee trigger inside the item
 		// create/update services, so every surface that sets an assignee

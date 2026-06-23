@@ -1550,6 +1550,42 @@ var Catalog = []Migration{
 			CREATE INDEX IF NOT EXISTS idx_item_template_item_types_type ON item_template_item_types(item_type_id, template_id);
 		`,
 	},
+	{
+		// Per-call LLM token usage + cost, metered at the broker. Foundation
+		// for the (still unenforced) RunGrants.LLM.QuotaTokens follow-up.
+		Version:       "20260623_llm_usage",
+		Name:          "Add llm_usage table for broker token/cost metering",
+		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='llm_usage'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='llm_usage'",
+		SQLite: `
+			CREATE TABLE IF NOT EXISTS llm_usage (
+				id                INTEGER PRIMARY KEY AUTOINCREMENT,
+				run_id            INTEGER NOT NULL,
+				model             TEXT NOT NULL,
+				prompt_tokens     INTEGER NOT NULL DEFAULT 0,
+				completion_tokens INTEGER NOT NULL DEFAULT 0,
+				total_tokens      INTEGER NOT NULL DEFAULT 0,
+				cost_usd          REAL,
+				cost_source       TEXT NOT NULL DEFAULT '',
+				created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+			);
+			CREATE INDEX IF NOT EXISTS idx_llm_usage_run_id ON llm_usage(run_id);
+		`,
+		Postgres: `
+			CREATE TABLE IF NOT EXISTS llm_usage (
+				id                SERIAL PRIMARY KEY,
+				run_id            INTEGER NOT NULL,
+				model             TEXT NOT NULL,
+				prompt_tokens     INTEGER NOT NULL DEFAULT 0,
+				completion_tokens INTEGER NOT NULL DEFAULT 0,
+				total_tokens      INTEGER NOT NULL DEFAULT 0,
+				cost_usd          DOUBLE PRECISION,
+				cost_source       TEXT NOT NULL DEFAULT '',
+				created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			);
+			CREATE INDEX IF NOT EXISTS idx_llm_usage_run_id ON llm_usage(run_id);
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {

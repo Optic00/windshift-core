@@ -21,10 +21,43 @@ var (
 )
 
 // ModelInfo describes a model offered by a provider.
+//
+// SupportsVision reports whether the model accepts image input. Provider
+// catalogs do not advertise this consistently, so it is resolved from two
+// sources (see vision_capability.go): an authoritative signal when the catalog
+// exposes one (OpenRouter's architecture.input_modalities), falling back to a
+// curated capability map keyed by model id. A per-connection override
+// (provider_config vision_mode) wins over both at resolution time.
 type ModelInfo struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	MaxTokens int    `json:"max_tokens"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	MaxTokens      int    `json:"max_tokens"`
+	SupportsVision bool   `json:"supports_vision"`
+	// Pricing carries per-unit USD rates when the provider catalog advertises
+	// them (OpenRouter today). nil means rates are unknown — usage is metered in
+	// tokens but cost is left unknown rather than guessed.
+	Pricing *Pricing `json:"pricing,omitempty"`
+}
+
+// Pricing is a model's per-unit cost in USD, as advertised by a provider
+// catalog. Zero on any field means "not charged / not advertised".
+type Pricing struct {
+	PromptUSD     float64 `json:"prompt"`     // per prompt (input) token
+	CompletionUSD float64 `json:"completion"` // per completion (output) token
+	ImageUSD      float64 `json:"image"`      // per image part
+	RequestUSD    float64 `json:"request"`    // per request (flat)
+}
+
+// CostUSD computes the cost of one call from token + image counts. Unknown
+// terms simply contribute zero (their rate is 0).
+func (p *Pricing) CostUSD(promptTokens, completionTokens, images int) float64 {
+	if p == nil {
+		return 0
+	}
+	return float64(promptTokens)*p.PromptUSD +
+		float64(completionTokens)*p.CompletionUSD +
+		float64(images)*p.ImageUSD +
+		p.RequestUSD
 }
 
 // ProviderInfo describes a known LLM provider and its available models.
@@ -124,6 +157,13 @@ func loadProvidersFromJSON(data []byte) error {
 	var f providersFile
 	if err := json.Unmarshal(data, &f); err != nil {
 		return fmt.Errorf("parse providers JSON: %w", err)
+	}
+	// Enrich static seed models with the curated vision map so a providers file
+	// listing a known vision model (e.g. gpt-4o) without an explicit
+	// supports_vision still resolves vision-capable — matching the enrichment
+	// dynamic catalogs already get on refresh/cache-read.
+	for i := range f.Providers {
+		EnrichModelsVision(f.Providers[i].Type, f.Providers[i].Models)
 	}
 	providerMu.Lock()
 	providerRegistry = f.Providers

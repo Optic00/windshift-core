@@ -34,6 +34,11 @@
   // tool misuse). Null when the selected run is clean.
   let reviewFlag = $state(/** @type {null | { reasons: string[] }} */ (null));
 
+  // Metered LLM token/cost totals for the selected run (WI-494), fetched
+  // alongside the transcript. Null until loaded; cost_usd is null when rates
+  // are unknown (non-OpenRouter), in which case only tokens are shown.
+  let usage = $state(/** @type {null | { prompt_tokens: number, completion_tokens: number, total_tokens: number, cost_usd: number|null, calls: number }} */ (null));
+
   // Re-run button state. A run is enqueued, not started synchronously, so the
   // button stays disabled while any run is in flight (hasActiveRun) AND while a
   // trigger request is outstanding (rerunning) — together they prevent stacking.
@@ -42,6 +47,12 @@
 
   const selectedRun = $derived(runs.find((r) => r.id === selectedRunId) || null);
   const hasActiveRun = $derived(runs.some((r) => !TERMINAL.includes(r.status)));
+
+  function formatCost(usd) {
+    if (usd == null) return null;
+    if (usd > 0 && usd < 0.01) return '<$0.01';
+    return `$${usd.toFixed(usd < 1 ? 4 : 2)}`;
+  }
 
   function statusAppearance(status) {
     switch (status) {
@@ -120,13 +131,20 @@
     }
   }
 
+  async function loadUsage(runId, token) {
+    const u = await agentRuns.usage(runId).catch(() => null);
+    if (liveToken === token) usage = u;
+  }
+
   async function selectRun(runId) {
     selectedRunId = runId;
     lines = [];
     reviewFlag = null;
+    usage = null;
     const token = Symbol('agent-log');
     liveToken = token;
     let afterId = 0;
+    loadUsage(runId, token); // best-effort initial totals
     while (liveToken === token) {
       let run;
       try {
@@ -150,6 +168,7 @@
           scanReviewFlag(tail);
           lines = [...lines, ...tail.map(eventText).filter(Boolean)];
         }
+        loadUsage(runId, token); // final totals once the run is done
         return;
       }
       await new Promise((resolve) => setTimeout(resolve, EVENTS_POLL_MS));
@@ -264,6 +283,17 @@
       {#if selectedRun.error}
         <div class="text-xs px-3 py-2 rounded" style="color: var(--ds-text-danger); border: 1px solid var(--ds-border);">
           {selectedRun.error}
+        </div>
+      {/if}
+      {#if usage && usage.calls > 0}
+        <div data-testid="agent-run-usage" class="flex items-center flex-wrap gap-x-3 gap-y-1 text-xs" style="color: var(--ds-text-subtle);">
+          <span>{usage.total_tokens.toLocaleString()} tokens</span>
+          <span>({usage.prompt_tokens.toLocaleString()} in · {usage.completion_tokens.toLocaleString()} out)</span>
+          {#if formatCost(usage.cost_usd)}
+            <span style="color: var(--ds-text);">{formatCost(usage.cost_usd)}</span>
+          {:else}
+            <span>cost unknown</span>
+          {/if}
         </div>
       {/if}
       <pre

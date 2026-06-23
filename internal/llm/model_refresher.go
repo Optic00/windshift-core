@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -39,13 +40,26 @@ func newModelRefresherWithClient(cache *ModelCache, client *http.Client) *ModelR
 }
 
 // openaiModelsResponse matches `/v1/models` on OpenAI, OpenRouter, and other
-// OpenAI-compatible servers. Fields we don't surface (pricing, architecture)
-// are ignored.
+// OpenAI-compatible servers. OpenRouter additionally returns an `architecture`
+// block whose `input_modalities` is the only reliable vision signal across the
+// catalog; other servers omit it (we fall back to the curated capability map).
+// Pricing is parsed separately for cost metering.
 type openaiModelsResponse struct {
 	Data []struct {
 		ID            string `json:"id"`
 		Name          string `json:"name"`
 		ContextLength int    `json:"context_length"`
+		Architecture  struct {
+			InputModalities []string `json:"input_modalities"`
+		} `json:"architecture"`
+		// OpenRouter advertises per-unit USD rates as strings (e.g. "0.000003").
+		// Other OpenAI-compatible catalogs omit pricing → left nil downstream.
+		Pricing struct {
+			Prompt     string `json:"prompt"`
+			Completion string `json:"completion"`
+			Image      string `json:"image"`
+			Request    string `json:"request"`
+		} `json:"pricing"`
 	} `json:"data"`
 }
 
@@ -89,6 +103,10 @@ func (r *ModelRefresher) Refresh(ctx context.Context, provider ProviderInfo, api
 		}
 		return nil, err
 	}
+	// Fill SupportsVision from the curated map for models the catalog didn't
+	// mark, so the persisted cache carries vision capability even when the
+	// provider doesn't advertise input modalities.
+	EnrichModelsVision(provider.Type, models)
 	if err := r.cache.SaveSuccess(provider.Type, models, time.Now()); err != nil {
 		return nil, err
 	}
@@ -165,9 +183,41 @@ func parseOpenAIModels(body []byte) ([]ModelInfo, error) {
 		if name == "" {
 			name = m.ID
 		}
-		out = append(out, ModelInfo{ID: m.ID, Name: name, MaxTokens: m.ContextLength})
+		out = append(out, ModelInfo{
+			ID:             m.ID,
+			Name:           name,
+			MaxTokens:      m.ContextLength,
+			SupportsVision: hasImageModality(m.Architecture.InputModalities),
+			Pricing: parsePricing(
+				m.Pricing.Prompt, m.Pricing.Completion, m.Pricing.Image, m.Pricing.Request,
+			),
+		})
 	}
 	return out, nil
+}
+
+// parsePricing builds a *Pricing from the catalog's string rates. It returns
+// nil when no rate is advertised (all empty/zero) so "cost unknown" stays
+// distinct from "free". Unparseable values are treated as zero.
+func parsePricing(prompt, completion, image, request string) *Pricing {
+	p := Pricing{
+		PromptUSD:     parseFloat(prompt),
+		CompletionUSD: parseFloat(completion),
+		ImageUSD:      parseFloat(image),
+		RequestUSD:    parseFloat(request),
+	}
+	if p == (Pricing{}) {
+		return nil
+	}
+	return &p
+}
+
+func parseFloat(s string) float64 {
+	f, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+	if err != nil {
+		return 0
+	}
+	return f
 }
 
 func parseAnthropicModels(body []byte) ([]ModelInfo, error) {

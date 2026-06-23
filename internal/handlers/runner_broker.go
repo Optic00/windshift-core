@@ -58,12 +58,20 @@ type RunnerBrokerHandler struct {
 	creds    *services.ActionCredentialService
 	llmConns *llm.ConnectionManager
 	scm      services.SCMCredentialResolver
+	usage    *repository.LLMUsageRepository // optional; nil disables metering
 }
 
 // NewRunnerBrokerHandler constructs the handler. Any nil dependency disables
 // the corresponding broker (503), e.g. when the harness is not configured.
 func NewRunnerBrokerHandler(tokens *auth.TokenManager, runs *repository.AgentRunRepository, creds *services.ActionCredentialService, llmConns *llm.ConnectionManager, scm services.SCMCredentialResolver) *RunnerBrokerHandler {
 	return &RunnerBrokerHandler{tokens: tokens, runs: runs, creds: creds, llmConns: llmConns, scm: scm}
+}
+
+// SetUsageRepository attaches the LLM usage repository so ProxyLLM meters token
+// usage + cost per call. Optional and nil-safe: without it, proxying works
+// unchanged but no usage is recorded.
+func (h *RunnerBrokerHandler) SetUsageRepository(usage *repository.LLMUsageRepository) {
+	h.usage = usage
 }
 
 // runFromToken authenticates the per-run token and authorizes it for the run
@@ -201,20 +209,30 @@ func (h *RunnerBrokerHandler) ProxyLLM(w http.ResponseWriter, r *http.Request) {
 	}
 	// Bound the request body (WI-238 security Phase 7).
 	r.Body = http.MaxBytesReader(w, r.Body, maxLLMBrokerBody)
-	if strings.TrimPrefix(upstreamPath, "/") == "v1/chat/completions" && strings.TrimSpace(cfg.ProviderConfig) != "" {
+	// Read the chat body once when we need to merge provider_config OR meter
+	// usage (image parts are priced from the request, not the SSE tail).
+	imageCount := 0
+	isChat := strings.TrimPrefix(upstreamPath, "/") == "v1/chat/completions"
+	hasProviderConfig := strings.TrimSpace(cfg.ProviderConfig) != ""
+	if isChat && (hasProviderConfig || h.usage != nil) {
 		body, readErr := io.ReadAll(r.Body)
 		if readErr != nil {
 			respondBadRequest(w, r, "invalid llm request body")
 			return
 		}
-		merged, mergeErr := llm.MergeProviderConfigJSON(body, cfg.ProviderConfig)
-		if mergeErr != nil {
-			respondServiceUnavailable(w, r, services.RedactString(mergeErr.Error()))
-			return
+		imageCount = countImageParts(body)
+		out := body
+		if hasProviderConfig {
+			merged, mergeErr := llm.MergeProviderConfigJSON(body, cfg.ProviderConfig)
+			if mergeErr != nil {
+				respondServiceUnavailable(w, r, services.RedactString(mergeErr.Error()))
+				return
+			}
+			out = merged
 		}
-		r.Body = io.NopCloser(bytes.NewReader(merged))
-		r.ContentLength = int64(len(merged))
-		r.Header.Set("Content-Length", fmt.Sprintf("%d", len(merged)))
+		r.Body = io.NopCloser(bytes.NewReader(out))
+		r.ContentLength = int64(len(out))
+		r.Header.Set("Content-Length", fmt.Sprintf("%d", len(out)))
 	}
 	apiKey := cfg.APIKey
 	providerChatPath := "/v1/chat/completions"
@@ -253,6 +271,9 @@ func (h *RunnerBrokerHandler) ProxyLLM(w http.ResponseWriter, r *http.Request) {
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			respondServiceUnavailable(w, r, services.RedactString(err.Error()))
 		},
+		// Meter token usage + cost from the SSE usage tail (WI-493). The agent is
+		// untrusted, so the broker is the trustworthy capture point.
+		ModifyResponse: h.meterLLMResponse(runID, cfg.Model, h.llmConns.ModelPricing(llm.ProviderType(cfg.ProviderType), cfg.Model), imageCount),
 	}
 	// The chat completion streams as SSE and routinely runs past the server's
 	// 30s WriteTimeout; lift the deadline so the stream is not severed mid-run.

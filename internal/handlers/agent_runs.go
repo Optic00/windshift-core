@@ -24,6 +24,7 @@ type AgentRunHandler struct {
 	permissionService *services.PermissionService
 	items             *repository.ItemRepository
 	bindings          *services.BindingService
+	usage             *repository.LLMUsageRepository // optional; nil → usage endpoint reports zeros
 }
 
 // NewAgentRunHandler constructs the handler. runs and bindings may be nil when
@@ -38,6 +39,12 @@ func NewAgentRunHandler(
 	bindings *services.BindingService,
 ) *AgentRunHandler {
 	return &AgentRunHandler{repo: repo, runs: runs, permissionService: permissionService, items: items, bindings: bindings}
+}
+
+// SetUsageRepository attaches the LLM usage repository so the per-run usage
+// endpoint can report token + cost totals. Optional and nil-safe.
+func (h *AgentRunHandler) SetUsageRepository(usage *repository.LLMUsageRepository) {
+	h.usage = usage
 }
 
 type agentRunResponse struct {
@@ -188,6 +195,37 @@ func (h *AgentRunHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondJSON(w, http.StatusOK, toAgentRunResponse(run))
+}
+
+// Usage returns the run's metered LLM token + cost totals (WI-494).
+// GET /agent-runs/{id}/usage. Same view-permission gate as Get.
+func (h *AgentRunHandler) Usage(w http.ResponseWriter, r *http.Request) {
+	runID, ok := requireIDParam(w, r, "id")
+	if !ok {
+		return
+	}
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+	run, err := h.repo.Get(r.Context(), runID)
+	if err != nil {
+		respondNotFound(w, r, "agent run")
+		return
+	}
+	if !RequireWorkspacePermission(w, r, user.ID, run.WorkspaceID, models.PermissionItemView, h.permissionService) {
+		return
+	}
+	if h.usage == nil {
+		respondJSON(w, http.StatusOK, repository.RunUsageTotals{})
+		return
+	}
+	totals, err := h.usage.TotalsForRun(r.Context(), runID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, totals)
 }
 
 // Events returns the run's event stream. ?after_id=N for "give me

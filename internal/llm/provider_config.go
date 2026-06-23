@@ -6,9 +6,24 @@ import (
 	"strings"
 )
 
+// providerConfigVisionModeKey is the reserved provider_config key holding the
+// per-connection vision override. It is windshift-private — see
+// reservedProviderConfigKeys.
+const providerConfigVisionModeKey = "vision_mode"
+
+// reservedProviderConfigKeys are provider_config keys that windshift interprets
+// itself and must NOT be merged into the outbound provider request body. The
+// blob is otherwise pass-through (MergeProviderConfig*), so without this guard a
+// key like vision_mode would be sent to OpenAI/OpenRouter as an unknown request
+// field and could be rejected.
+var reservedProviderConfigKeys = map[string]bool{
+	providerConfigVisionModeKey: true,
+}
+
 // ValidateProviderConfig verifies the per-connection provider_config blob.
 // It is intentionally generic: any provider can use it, but it must be a JSON
-// object because it is merged into the provider request body.
+// object because it is merged into the provider request body. Reserved
+// windshift keys (e.g. vision_mode) are additionally value-validated.
 func ValidateProviderConfig(raw string) error {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -21,7 +36,44 @@ func ValidateProviderConfig(raw string) error {
 	if cfg == nil {
 		return fmt.Errorf("provider_config must be a JSON object")
 	}
+	if rawMode, ok := cfg[providerConfigVisionModeKey]; ok {
+		var mode string
+		if err := json.Unmarshal(rawMode, &mode); err != nil {
+			return fmt.Errorf("provider_config.vision_mode must be a string")
+		}
+		if !isValidVisionMode(strings.ToLower(strings.TrimSpace(mode))) {
+			return fmt.Errorf("provider_config.vision_mode must be one of auto, on, off")
+		}
+	}
 	return nil
+}
+
+// ProviderConfigVisionMode extracts the vision override from a provider_config
+// blob, returning the normalized mode (auto/on/off). It defaults to "auto" for
+// an absent key, empty/invalid blob, or unparseable value — auto is the safe
+// default (defer to the model's curated capability).
+func ProviderConfigVisionMode(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return VisionModeAuto
+	}
+	var cfg map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		return VisionModeAuto
+	}
+	rawMode, ok := cfg[providerConfigVisionModeKey]
+	if !ok {
+		return VisionModeAuto
+	}
+	var mode string
+	if err := json.Unmarshal(rawMode, &mode); err != nil {
+		return VisionModeAuto
+	}
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if !isValidVisionMode(mode) {
+		return VisionModeAuto
+	}
+	return mode
 }
 
 // MergeProviderConfig adds provider_config fields to an in-memory request
@@ -40,6 +92,9 @@ func MergeProviderConfig(body map[string]interface{}, raw string) error {
 		return fmt.Errorf("provider_config must be a JSON object")
 	}
 	for k, v := range cfg {
+		if reservedProviderConfigKeys[k] {
+			continue // windshift-private key, never forwarded to the provider
+		}
 		if _, exists := body[k]; exists {
 			continue
 		}
@@ -75,6 +130,9 @@ func MergeProviderConfigJSON(body []byte, raw string) ([]byte, error) {
 		return nil, fmt.Errorf("provider_config must be a JSON object")
 	}
 	for k, v := range cfg {
+		if reservedProviderConfigKeys[k] {
+			continue // windshift-private key, never forwarded to the provider
+		}
 		if _, exists := request[k]; exists {
 			continue
 		}
