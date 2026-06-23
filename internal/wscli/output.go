@@ -442,6 +442,8 @@ func (o *Output) printItemDetailTable(w *tabwriter.Writer, item *Item) {
 	_, _ = fmt.Fprintf(w, "Created:\t%s\n", item.CreatedAt.Format(time.RFC3339))
 	_, _ = fmt.Fprintf(w, "Updated:\t%s\n", item.UpdatedAt.Format(time.RFC3339))
 
+	printImageAttachmentHint(w, item.Attachments)
+
 	if len(item.Transitions) > 0 {
 		_, _ = fmt.Fprintln(w, "\nAvailable Transitions:")
 		for _, t := range item.Transitions {
@@ -449,6 +451,35 @@ func (o *Output) printItemDetailTable(w *tabwriter.Writer, item *Item) {
 				_, _ = fmt.Fprintf(w, "  - %s (ID: %d)\n", t.ToStatus.Name, t.ToStatusID)
 			}
 		}
+	}
+}
+
+// printImageAttachmentHint surfaces image attachments and points a coding agent
+// at the view_image tool. Discovery is otherwise unreliable: the agent would
+// have to infer image-ness from raw attachment JSON. Only image attachments are
+// listed here — non-image document extraction is a separate capability and gets
+// its own hint elsewhere. The hint is omitted entirely when there are none.
+func printImageAttachmentHint(w *tabwriter.Writer, attachments []Attachment) {
+	images := make([]Attachment, 0, len(attachments))
+	for _, a := range attachments {
+		if strings.HasPrefix(a.MimeType, "image/") {
+			images = append(images, a)
+		}
+	}
+	if len(images) == 0 {
+		return
+	}
+	noun := "image attachment"
+	if len(images) > 1 {
+		noun = "image attachments"
+	}
+	_, _ = fmt.Fprintf(w, "\nThis item has %d %s; call view_image with the attachment id to see them:\n", len(images), noun)
+	for _, a := range images {
+		name := a.OriginalFilename
+		if name == "" {
+			name = a.Filename
+		}
+		_, _ = fmt.Fprintf(w, "  - id %d\t%s (%s)\n", a.ID, name, a.MimeType)
 	}
 }
 
