@@ -219,6 +219,7 @@
         getLabel={(t) => t.name}
         icon={selectedItemTypeIcon}
         placeholder={t('createModal.type')}
+        testId="create-item-type-chip"
         onSelect={(itemType) => store.setItemType(itemType.id)}
       >
         {#snippet itemSnippet({ item })}
