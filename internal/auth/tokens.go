@@ -114,6 +114,12 @@ const (
 	// admin UI concern, not an API-token one.
 	ScopeAgentSkillsRead = "agent-skills:read"
 
+	// Work item templates (WI-438): workspace-defined reusable bodies that
+	// pre-fill a new item's description. :read covers list/get (agents discover
+	// the scaffold a type enforces); :write covers admin/programmatic CRUD.
+	ScopeItemTemplatesRead  = "item-templates:read"
+	ScopeItemTemplatesWrite = "item-templates:write"
+
 	// Admin scopes (require system admin role AND scope on token)
 	ScopeAdminUsersRead      = "admin:users:read"
 	ScopeAdminUsersWrite     = "admin:users:write"
@@ -135,6 +141,7 @@ var DefaultAgentScopes = []string{
 	ScopeUsersRead,
 	ScopeItemTypesRead, ScopeWorkflowsRead,
 	ScopeStatusesRead, ScopePrioritiesRead, ScopeCustomFieldsRead,
+	ScopeItemTemplatesRead,
 	ScopeMilestonesRead, ScopeIterationsRead, ScopeProjectsRead,
 	ScopePagesRead, ScopePagesWrite, ScopePagesDelete,
 	ScopeTestsRead, ScopeTestsWrite,
@@ -162,6 +169,7 @@ var DefaultCodingAgentRunScopes = []string{
 	ScopeUsersRead,
 	ScopeItemTypesRead, ScopeWorkflowsRead,
 	ScopeStatusesRead, ScopePrioritiesRead, ScopeCustomFieldsRead,
+	ScopeItemTemplatesRead,
 	ScopeMilestonesRead, ScopeIterationsRead, ScopeProjectsRead,
 	ScopePagesRead,
 	ScopeTestsRead,
@@ -193,6 +201,7 @@ var AllValidScopes = []string{
 	ScopeAssetsRead, ScopeAssetsWrite, ScopeAssetsDelete,
 	ScopeTimeRead, ScopeTimeWrite, ScopeTimeDelete,
 	ScopeAgentSkillsRead,
+	ScopeItemTemplatesRead, ScopeItemTemplatesWrite,
 	ScopeAdminUsersRead, ScopeAdminUsersWrite,
 	ScopeAdminGroupsRead, ScopeAdminGroupsWrite,
 	ScopeAdminAuditLogsRead,
@@ -210,7 +219,7 @@ var allNonAdminReadScopes = []string{
 	ScopeCustomFieldsRead, ScopeUsersRead, ScopeMilestonesRead,
 	ScopeIterationsRead, ScopeProjectsRead, ScopeCollectionsRead,
 	ScopeActionsRead, ScopePagesRead, ScopeTestsRead,
-	ScopeAssetsRead, ScopeTimeRead,
+	ScopeAssetsRead, ScopeTimeRead, ScopeItemTemplatesRead,
 }
 
 // allNonAdminScopes is the set of all non-admin scopes (for legacy "write" mapping).
@@ -235,6 +244,7 @@ var allNonAdminScopes = []string{
 	ScopeTestsRead, ScopeTestsWrite,
 	ScopeAssetsRead, ScopeAssetsWrite,
 	ScopeTimeRead, ScopeTimeWrite,
+	ScopeItemTemplatesRead, ScopeItemTemplatesWrite,
 }
 
 // AdminScopes returns the set of scopes that require system admin role.

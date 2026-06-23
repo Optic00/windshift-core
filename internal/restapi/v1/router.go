@@ -98,6 +98,7 @@ func RegisterRoutes(deps restapi.Deps) {
 	agentSkillHandler := handlers.NewAgentSkillHandler(db, permissionService)
 	diagramHandler := handlers.NewDiagramHandler(db, permissionService)
 	labelHandler := handlers.NewLabelHandler(db, permissionService)
+	templateHandler := handlers.NewTemplateHandler(db, permissionService)
 	testMgmtHandler := handlers.NewTestManagementHandler(db, permissionService)
 	recurrenceHandler := handlers.NewRecurrenceHandler(db, permissionService)
 
@@ -401,6 +402,17 @@ func RegisterRoutes(deps restapi.Deps) {
 	v1.HandleWithMiddleware("GET /workspaces/{id}/labels/{labelId}", labelHandler.GetInWorkspace, bearerAuth.RequirePermission("items:read"), router.RequireNumericID)
 	v1.HandleWithMiddleware("PUT /workspaces/{id}/labels/{labelId}", labelHandler.UpdateInWorkspace, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)
 	v1.HandleWithMiddleware("DELETE /workspaces/{id}/labels/{labelId}", labelHandler.DeleteInWorkspace, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)
+
+	// ============================================
+	// Work item templates (WI-438): workspace-scoped catalog under
+	// /workspaces/{id}/templates. Gated by the dedicated item-templates:*
+	// scopes; the handler enforces workspace view/edit on top.
+	// ============================================
+	v1.HandleWithMiddleware("GET /workspaces/{id}/templates", templateHandler.ListForWorkspace, bearerAuth.RequirePermission("item-templates:read"), router.RequireNumericID)
+	v1.HandleWithMiddleware("POST /workspaces/{id}/templates", templateHandler.CreateInWorkspace, bearerAuth.RequirePermission("item-templates:write"), router.RequireNumericID)
+	v1.HandleWithMiddleware("GET /workspaces/{id}/templates/{templateId}", templateHandler.GetInWorkspace, bearerAuth.RequirePermission("item-templates:read"), router.RequireNumericID)
+	v1.HandleWithMiddleware("PUT /workspaces/{id}/templates/{templateId}", templateHandler.UpdateInWorkspace, bearerAuth.RequirePermission("item-templates:write"), router.RequireNumericID)
+	v1.HandleWithMiddleware("DELETE /workspaces/{id}/templates/{templateId}", templateHandler.DeleteInWorkspace, bearerAuth.RequirePermission("item-templates:write"), router.RequireNumericID)
 
 	v1.HandleWithMiddleware("GET /items/{id}/labels", labelHandler.ListForItem, bearerAuth.RequirePermission("items:read"), router.RequireNumericID)
 	v1.HandleWithMiddleware("PUT /items/{id}/labels", labelHandler.SetForItem, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)

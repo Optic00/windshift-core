@@ -2323,6 +2323,120 @@
         },
         "type": "object"
       },
+      "handlers.recurrenceForceGenerateResponse": {
+        "properties": {
+          "instances_generated": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "handlers.recurrenceInstanceListResponse": {
+        "properties": {
+          "instances": {
+            "items": {
+              "$ref": "#/components/schemas/models.RecurrenceInstance"
+            },
+            "type": "array"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/restapi.PaginationMeta"
+          }
+        },
+        "type": "object"
+      },
+      "handlers.rrulePreviewRequest": {
+        "properties": {
+          "count": {
+            "type": "integer"
+          },
+          "dtstart": {
+            "type": "string"
+          },
+          "rrule": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "handlers.rrulePreviewResponse": {
+        "properties": {
+          "dtstart": {
+            "type": "string"
+          },
+          "occurrences": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "rrule": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "handlers.templateCreateRequest": {
+        "properties": {
+          "description_body": {
+            "type": "string"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "item_type_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "handlers.templateListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/models.ItemTemplate"
+            },
+            "type": "array"
+          },
+          "mandatory_template_id": {
+            "description": "MandatoryTemplateID is set when the request filtered by item_type_id and\nthat type has an active mandatory template, so callers (create modal, CLI)\ncan flag it without re-deriving the invariant.",
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "handlers.templateUpdateRequest": {
+        "properties": {
+          "description_body": {
+            "type": "string"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "item_type_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "handlers.testResultUpdateRequest": {
         "properties": {
           "actual_result": {
@@ -2744,6 +2858,45 @@
           "CapabilityRunnerPool"
         ]
       },
+      "models.CreateRecurrenceRequest": {
+        "properties": {
+          "copy_assignee": {
+            "type": "boolean"
+          },
+          "copy_custom_fields": {
+            "type": "boolean"
+          },
+          "copy_description": {
+            "type": "boolean"
+          },
+          "copy_priority": {
+            "type": "boolean"
+          },
+          "dtend": {
+            "type": "string"
+          },
+          "dtstart": {
+            "description": "ISO 8601 format",
+            "type": "string"
+          },
+          "lead_time_days": {
+            "type": "integer"
+          },
+          "rrule": {
+            "type": "string"
+          },
+          "status_on_create": {
+            "type": "integer"
+          },
+          "template_item_id": {
+            "type": "integer"
+          },
+          "timezone": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "models.Item": {
         "properties": {
           "assignee_avatar": {
@@ -2877,6 +3030,10 @@
               "$ref": "#/components/schemas/models.Label"
             },
             "type": "array"
+          },
+          "last_active_at": {
+            "description": "Recency for the board \"Bubble Mode\" sort. Bumped on activity (comments,\nedits, transitions) but not on manual frac_index reorder.",
+            "type": "string"
           },
           "milestones": {
             "items": {
@@ -3192,6 +3349,47 @@
         },
         "type": "object"
       },
+      "models.ItemTemplate": {
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "created_by": {
+            "type": "integer"
+          },
+          "description_body": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "item_type_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "updated_by": {
+            "type": "integer"
+          },
+          "workspace_id": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
       "models.Label": {
         "properties": {
           "color": {
@@ -3437,6 +3635,123 @@
           "user_id": {
             "description": "NULL for global labels, user_id for user-specific labels",
             "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "models.RecurrenceInstance": {
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "instance_item_id": {
+            "type": "integer"
+          },
+          "item_status": {
+            "type": "string"
+          },
+          "item_title": {
+            "description": "Joined fields for API responses",
+            "type": "string"
+          },
+          "recurrence_rule_id": {
+            "type": "integer"
+          },
+          "scheduled_date": {
+            "type": "string"
+          },
+          "sequence_number": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "models.RecurrenceRule": {
+        "properties": {
+          "copy_assignee": {
+            "description": "Instance configuration (what to copy from template)",
+            "type": "boolean"
+          },
+          "copy_custom_fields": {
+            "type": "boolean"
+          },
+          "copy_description": {
+            "type": "boolean"
+          },
+          "copy_priority": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "created_by": {
+            "type": "integer"
+          },
+          "creator_name": {
+            "type": "string"
+          },
+          "dtend": {
+            "type": "string"
+          },
+          "dtstart": {
+            "description": "Recurrence start date",
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "instance_count": {
+            "type": "integer"
+          },
+          "is_active": {
+            "description": "Lifecycle",
+            "type": "boolean"
+          },
+          "last_generated_until": {
+            "type": "string"
+          },
+          "lead_time_days": {
+            "description": "Generation settings",
+            "type": "integer"
+          },
+          "next_generation_check": {
+            "type": "string"
+          },
+          "next_occurrence": {
+            "type": "string"
+          },
+          "rrule": {
+            "description": "iCalendar RRULE configuration (RFC 5545)",
+            "type": "string"
+          },
+          "status_on_create": {
+            "type": "integer"
+          },
+          "template_item_id": {
+            "type": "integer"
+          },
+          "template_title": {
+            "description": "Joined fields for API responses",
+            "type": "string"
+          },
+          "timezone": {
+            "description": "IANA timezone",
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "workspace_id": {
+            "type": "integer"
+          },
+          "workspace_key": {
+            "type": "string"
+          },
+          "workspace_name": {
+            "type": "string"
           }
         },
         "type": "object"
@@ -3707,6 +4022,44 @@
             "type": "integer"
           },
           "updated_at": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "models.UpdateRecurrenceRequest": {
+        "properties": {
+          "copy_assignee": {
+            "type": "boolean"
+          },
+          "copy_custom_fields": {
+            "type": "boolean"
+          },
+          "copy_description": {
+            "type": "boolean"
+          },
+          "copy_priority": {
+            "type": "boolean"
+          },
+          "dtend": {
+            "type": "string"
+          },
+          "dtstart": {
+            "type": "string"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "lead_time_days": {
+            "type": "integer"
+          },
+          "rrule": {
+            "type": "string"
+          },
+          "status_on_create": {
+            "type": "integer"
+          },
+          "timezone": {
             "type": "string"
           }
         },
@@ -8822,6 +9175,564 @@
         ]
       }
     },
+    "/items/{id}/recurrence": {
+      "delete": {
+        "parameters": [
+          {
+            "description": "Item ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Recurrence rule deleted"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid item ID"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the items:write scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Item or recurrence rule not found"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Delete a recurrence rule",
+        "tags": [
+          "recurrence"
+        ]
+      },
+      "get": {
+        "description": "Returns the item's recurrence rule, or JSON null when the item has no recurrence configured.",
+        "parameters": [
+          {
+            "description": "Item ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/models.RecurrenceRule"
+                }
+              }
+            },
+            "description": "null when no recurrence is configured"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid item ID"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the items:read scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Item not found or not visible to caller"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Get the recurrence rule on an item",
+        "tags": [
+          "recurrence"
+        ]
+      },
+      "post": {
+        "description": "Creates a new recurrence rule for the item. Returns 409 if a rule already exists.",
+        "parameters": [
+          {
+            "description": "Item ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/models.CreateRecurrenceRequest"
+              }
+            }
+          },
+          "description": "Recurrence rule to create",
+          "required": true,
+          "x-originalParamName": "body"
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/models.RecurrenceRule"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request body or validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the items:write scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Item not found or not visible to caller"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "A recurrence rule already exists for this item"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Create a recurrence rule on an item",
+        "tags": [
+          "recurrence"
+        ]
+      },
+      "put": {
+        "description": "Partial update of the recurrence rule attached to the item. Only fields present in the body are changed.",
+        "parameters": [
+          {
+            "description": "Item ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/models.UpdateRecurrenceRequest"
+              }
+            }
+          },
+          "description": "Fields to update",
+          "required": true,
+          "x-originalParamName": "body"
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/models.RecurrenceRule"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request body or validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the items:write scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Item or recurrence rule not found"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Update a recurrence rule",
+        "tags": [
+          "recurrence"
+        ]
+      }
+    },
+    "/items/{id}/recurrence/generate": {
+      "post": {
+        "description": "Triggers immediate generation of recurrence instances due up to the rule's lead-time horizon, bypassing the periodic scheduler.",
+        "parameters": [
+          {
+            "description": "Item ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.recurrenceForceGenerateResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid item ID"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the items:write scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Item or recurrence rule not found"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Force-generate instances for a recurrence rule",
+        "tags": [
+          "recurrence"
+        ]
+      }
+    },
+    "/items/{id}/recurrence/instances": {
+      "get": {
+        "description": "Paginated list of instances generated from the item's recurrence rule. `page` (default 1) and `limit` (1-100, default 50) query parameters control paging, matching the rest of the v1 surface.",
+        "parameters": [
+          {
+            "description": "Item ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Page number (1-based, default 1)",
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Page size (1-100, default 50)",
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.recurrenceInstanceListResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid item ID"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the items:read scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Item or recurrence rule not found"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List generated instances for a recurrence rule",
+        "tags": [
+          "recurrence"
+        ]
+      }
+    },
     "/items/{id}/transition": {
       "post": {
         "description": "Performs a workflow transition with validator-mode and condition-mode rules enforced. Pending/rejected approvals return 409.",
@@ -10593,6 +11504,84 @@
         "summary": "Get a priority by ID",
         "tags": [
           "priorities"
+        ]
+      }
+    },
+    "/recurrence-rules/preview": {
+      "post": {
+        "description": "Validates an iCalendar RRULE and returns the first N occurrences (default 10, max 50) from a given dtstart. Pure validation — no rule or item is created.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/handlers.rrulePreviewRequest"
+              }
+            }
+          },
+          "description": "RRULE to preview",
+          "required": true,
+          "x-originalParamName": "body"
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.rrulePreviewResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request body or validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the items:read scope"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Preview RRULE occurrences",
+        "tags": [
+          "recurrence"
         ]
       }
     },
@@ -15222,6 +16211,100 @@
         ]
       }
     },
+    "/workspaces/{id}/pages/search": {
+      "get": {
+        "description": "Returns non-archived pages in the workspace whose title matches the q substring and that the caller can view. Bodies are omitted; fetch via GET .../pages/{pageId}.",
+        "parameters": [
+          {
+            "description": "Workspace ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Title search substring",
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Maximum results to return (default 20, max 100)",
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.pageListResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid workspace ID"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Workspace not found or not visible to caller"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Search pages by title",
+        "tags": [
+          "pages"
+        ]
+      }
+    },
     "/workspaces/{id}/pages/{pageId}": {
       "delete": {
         "description": "Requires page.admin on the page AND workspace page.delete; re-checks page.admin on every descendant before cascading.",
@@ -16989,6 +18072,504 @@
         "tags": [
           "workspaces",
           "statuses"
+        ]
+      }
+    },
+    "/workspaces/{id}/templates": {
+      "get": {
+        "description": "Returns templates defined in the workspace. With ?item_type_id=N, returns only the templates a creator may pick for that type (type-targeted + global) and flags the type's mandatory template.",
+        "parameters": [
+          {
+            "description": "Workspace ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Filter to templates valid for this item type",
+            "in": "query",
+            "name": "item_type_id",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.templateListResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid workspace or item_type_id"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the item-templates:read scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Workspace not found or not visible to caller"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List workspace work-item templates",
+        "tags": [
+          "templates"
+        ]
+      },
+      "post": {
+        "parameters": [
+          {
+            "description": "Workspace ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/handlers.templateCreateRequest"
+              }
+            }
+          },
+          "description": "Template to create",
+          "required": true,
+          "x-originalParamName": "body"
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/models.ItemTemplate"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid body, mode, or item type"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the item-templates:write scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Workspace not found or not editable by caller"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Name taken, or a mandatory template already exists for the type"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Create a workspace work-item template",
+        "tags": [
+          "templates"
+        ]
+      }
+    },
+    "/workspaces/{id}/templates/{templateId}": {
+      "delete": {
+        "parameters": [
+          {
+            "description": "Workspace ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Template ID",
+            "in": "path",
+            "name": "templateId",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Template deleted"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the item-templates:write scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Template not found in this workspace or not editable by caller"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Delete a workspace work-item template",
+        "tags": [
+          "templates"
+        ]
+      },
+      "get": {
+        "parameters": [
+          {
+            "description": "Workspace ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Template ID",
+            "in": "path",
+            "name": "templateId",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/models.ItemTemplate"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the item-templates:read scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Template not found in this workspace or not visible to caller"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Get a workspace work-item template (with full body)",
+        "tags": [
+          "templates"
+        ]
+      },
+      "put": {
+        "description": "Partial update: only supplied fields are touched.",
+        "parameters": [
+          {
+            "description": "Workspace ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Template ID",
+            "in": "path",
+            "name": "templateId",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/handlers.templateUpdateRequest"
+              }
+            }
+          },
+          "description": "Fields to update",
+          "required": true,
+          "x-originalParamName": "body"
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/models.ItemTemplate"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the item-templates:write scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Template not found in this workspace or not editable by caller"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Name taken, or a mandatory template already exists for the type"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Update a workspace work-item template",
+        "tags": [
+          "templates"
         ]
       }
     },

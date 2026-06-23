@@ -74,6 +74,7 @@
 		{ resource: 'item-types', label: 'Item types', actions: ['read'] },
 		{ resource: 'priorities', label: 'Priorities', actions: ['read'] },
 		{ resource: 'custom-fields', label: 'Custom fields', actions: ['read'] },
+		{ resource: 'item-templates', label: 'Work item templates', actions: ['read', 'write'] },
 		{ resource: 'mcp', label: 'MCP server', actions: ['access'] },
 	];
 
@@ -87,7 +88,7 @@
 	const READ_ONLY_PRESET = [
 		'items:read', 'workspaces:read', 'milestones:read', 'iterations:read',
 		'projects:read', 'collections:read', 'pages:read', 'users:read', 'statuses:read', 'workflows:read',
-		'item-types:read', 'priorities:read', 'custom-fields:read',
+		'item-types:read', 'priorities:read', 'custom-fields:read', 'item-templates:read',
 	];
 
 	const READ_WRITE_PRESET = [

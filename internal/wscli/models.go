@@ -406,6 +406,26 @@ type ItemLabelAddRequest struct {
 	LabelID int `json:"label_id"`
 }
 
+// ItemTemplate mirrors models.ItemTemplate on the wire (WI-438): a workspace
+// reusable body that pre-fills a new item's description.
+type ItemTemplate struct {
+	ID              int    `json:"id"`
+	WorkspaceID     int    `json:"workspace_id"`
+	Name            string `json:"name"`
+	DescriptionBody string `json:"description_body"`
+	Mode            string `json:"mode"`
+	IsActive        bool   `json:"is_active"`
+	ItemTypeIDs     []int  `json:"item_type_ids"`
+}
+
+// ItemTemplateListResponse is the envelope from GET
+// /rest/api/v1/workspaces/{id}/templates. MandatoryTemplateID is set when the
+// list was filtered by item_type_id and that type enforces a mandatory template.
+type ItemTemplateListResponse struct {
+	Items               []ItemTemplate `json:"items"`
+	MandatoryTemplateID *int           `json:"mandatory_template_id,omitempty"`
+}
+
 // ============================================
 // Comments
 // ============================================

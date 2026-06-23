@@ -79,6 +79,7 @@
 		{ value: 'statuses:read', label: 'Read statuses' },
 		{ value: 'priorities:read', label: 'Read priorities' },
 		{ value: 'custom-fields:read', label: 'Read custom fields' },
+		{ value: 'item-templates:read', label: 'Read work item templates' },
 		{ value: 'milestones:read', label: 'Read milestones' },
 		{ value: 'iterations:read', label: 'Read iterations' },
 		{ value: 'projects:read', label: 'Read projects' },

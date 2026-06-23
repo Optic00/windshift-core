@@ -276,6 +276,19 @@ Examples:
 			}
 			req.ItemTypeID = &typeID
 		}
+		// --template seeds the description with a template's scaffold. It is a
+		// convenience for the get/fill flow; it is mutually exclusive with -d so
+		// the seed is never silently dropped.
+		if createTemplate != "" {
+			if req.Description != "" {
+				return fmt.Errorf("--template and -d/--description are mutually exclusive (use one)")
+			}
+			tmpl, err := resolveItemTemplate(client, wsID, createTemplate)
+			if err != nil {
+				return err
+			}
+			req.Description = tmpl.DescriptionBody
+		}
 		if createPriorityID > 0 {
 			req.PriorityID = &createPriorityID
 		}
@@ -1011,6 +1024,7 @@ var (
 	createTitle        string
 	createDescription  string
 	createType         string
+	createTemplate     string
 	createPriorityID   int
 	createStatusID     int
 	createAssigneeID   int
@@ -1099,6 +1113,7 @@ func init() {
 	taskCreateCmd.Flags().StringVarP(&createTitle, "title", "t", "", "task title (required)")
 	taskCreateCmd.Flags().StringVarP(&createDescription, "description", "d", "", "task description (supports \\n / \\t / \\\\)")
 	taskCreateCmd.Flags().StringVar(&createType, "type", "", "item type (name or ID)")
+	taskCreateCmd.Flags().StringVar(&createTemplate, "template", "", "seed the description from a work item template (name or ID); exclusive with -d")
 	taskCreateCmd.Flags().IntVar(&createPriorityID, "priority", 0, "priority ID")
 	taskCreateCmd.Flags().IntVar(&createStatusID, "status", 0, "status ID")
 	taskCreateCmd.Flags().IntVar(&createAssigneeID, "assignee", 0, "assignee user ID")

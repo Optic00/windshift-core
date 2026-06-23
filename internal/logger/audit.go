@@ -639,6 +639,11 @@ const (
 	ActionLabelUpdate = "label.update"
 	ActionLabelDelete = "label.delete"
 
+	// Work item template management (workspace-level, WI-438)
+	ActionTemplateCreate = "item_template.create"
+	ActionTemplateUpdate = "item_template.update"
+	ActionTemplateDelete = "item_template.delete"
+
 	// Page label management (workspace-level, applies to wiki pages)
 	ActionPageLabelCreate = "page_label.create"
 	ActionPageLabelUpdate = "page_label.update"
@@ -786,6 +791,7 @@ const (
 	ResourceTimeCustomer         = "time_customer"
 	ResourcePortalCustomer       = "portal_customer"
 	ResourceLabel                = "label"
+	ResourceItemTemplate         = "item_template"
 	ResourcePageLabel            = "page_label"
 	ResourceAsset                = "asset"
 	ResourceAssetType            = "asset_type"

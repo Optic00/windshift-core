@@ -1023,6 +1023,36 @@ func (c *Client) RemoveItemLabel(itemID, labelID int) error {
 }
 
 // ============================================
+//
+// Work item templates (WI-438): workspace-scoped reusable description bodies.
+// Read surface gated by item-templates:read so agents can discover the scaffold
+// a type enforces.
+
+// ListItemTemplates returns the templates defined in a workspace. When
+// itemTypeID > 0, the result is filtered to templates valid for that type
+// (type-targeted + global) and MandatoryTemplateID flags the enforced one.
+func (c *Client) ListItemTemplates(workspaceID, itemTypeID int) (ItemTemplateListResponse, error) {
+	var resp ItemTemplateListResponse
+	path := fmt.Sprintf("/rest/api/v1/workspaces/%d/templates", workspaceID)
+	if itemTypeID > 0 {
+		path += fmt.Sprintf("?item_type_id=%d", itemTypeID)
+	}
+	if err := c.GET(path, &resp); err != nil {
+		return ItemTemplateListResponse{}, err
+	}
+	return resp, nil
+}
+
+// GetItemTemplate returns a single template (with its full description_body).
+func (c *Client) GetItemTemplate(workspaceID, templateID int) (*ItemTemplate, error) {
+	var tmpl ItemTemplate
+	if err := c.GET(fmt.Sprintf("/rest/api/v1/workspaces/%d/templates/%d", workspaceID, templateID), &tmpl); err != nil {
+		return nil, err
+	}
+	return &tmpl, nil
+}
+
+// ============================================
 // Custom Field Methods
 // ============================================
 

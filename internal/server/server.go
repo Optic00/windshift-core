@@ -545,6 +545,9 @@ func (s *Server) initialize() error {
 	// Label handler
 	labelHandler := handlers.NewLabelHandler(repository.NewLabelRepository(s.db), repository.NewItemRepository(s.db), permService, logger.NewAuditor(s.db))
 
+	// Work item template handler (WI-438)
+	itemTemplateHandler := handlers.NewItemTemplateHandler(repository.NewTemplateRepository(s.db), permService, logger.NewAuditor(s.db))
+
 	// Knowledge pages handler (workspace-scoped wiki).
 	pageLabelRepo := repository.NewPageLabelRepository(s.db)
 	pageService := services.NewPageService(s.db)
@@ -1274,6 +1277,7 @@ func (s *Server) initialize() error {
 			ItemLink:           itemLinkHandler,
 			LinkType:           linkTypeHandler,
 			Label:              labelHandler,
+			ItemTemplate:       itemTemplateHandler,
 		},
 		Workspaces: routes.WorkspaceHandlers{
 			Workspace:             workspaceHandler,
