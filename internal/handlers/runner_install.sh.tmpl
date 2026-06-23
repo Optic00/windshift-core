@@ -103,6 +103,13 @@ fi
 echo "==> pulling $RUNNER_IMAGE"
 docker pull "$RUNNER_IMAGE"
 
+# Also refresh the agent image the runner spawns per job. The runner only pulls
+# it when absent (preflightAgentImage) and `docker run` pulls only if missing,
+# so a cached-but-stale agent image would otherwise never be refreshed — leaving
+# re-provisioned runners on an old agent (e.g. missing a newly added tool).
+echo "==> pulling $AGENT_IMAGE"
+docker pull "$AGENT_IMAGE"
+
 if docker inspect "$CONTAINER" >/dev/null 2>&1; then
   echo "==> replacing existing container $CONTAINER"
   docker rm -f "$CONTAINER" >/dev/null
