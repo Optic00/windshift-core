@@ -103,19 +103,6 @@ func (r *TemplateRepository) GetByID(id int) (*models.ItemTemplate, error) {
 	return t, nil
 }
 
-// GetWorkspaceID returns the workspace_id for a template or ErrNotFound.
-func (r *TemplateRepository) GetWorkspaceID(id int) (int, error) {
-	var workspaceID int
-	err := r.db.QueryRow("SELECT workspace_id FROM item_templates WHERE id = ?", id).Scan(&workspaceID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, ErrNotFound
-	}
-	if err != nil {
-		return 0, fmt.Errorf("get template %d workspace: %w", id, err)
-	}
-	return workspaceID, nil
-}
-
 // NameExistsInWorkspace reports whether a template with the given name already
 // exists in the workspace. excludeID > 0 excludes that row (so an Update does
 // not collide with itself).
