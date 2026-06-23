@@ -15,23 +15,32 @@ var taskCmd = &cobra.Command{
 	Long:  `Commands for viewing, creating, and managing work items.`,
 }
 
-var taskSearchLimit int
+var (
+	taskSearchLimit int
+	taskSearchQL    bool
+)
 
 var taskSearchCmd = &cobra.Command{
 	Use:   "search <query>",
-	Short: "Full-text search over work items",
+	Short: "Search work items by text or CQL filter",
 	Long: `Search items the caller can view via the v1 search endpoint.
 Multiple arguments are joined into a single query string. This is the same
 search as the top-level "ws search", scoped under "task" for discoverability;
 when a workspace is configured the results are filtered to it client-side.
 
+The query may be free text or a structured CQL filter. A query that parses as
+a CQL filter (e.g. "milestone = '0.8.2'") is evaluated as such; otherwise it is
+matched as free text. Pass --ql to force CQL evaluation.
+
 Examples:
   ws task search "login bug"
   ws task search login bug --limit 5
-  ws task search "rate limit" -w PROJ`,
+  ws task search "rate limit" -w PROJ
+  ws task search "milestone = '0.8.2' AND status != Done"
+  ws task search --ql "assignee = currentUser() AND status != Done"`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
-		return runItemSearch(strings.Join(args, " "), taskSearchLimit)
+		return runItemSearch(strings.Join(args, " "), taskSearchLimit, taskSearchQL)
 	},
 }
 
@@ -1098,6 +1107,7 @@ func init() {
 
 	// Search flags
 	taskSearchCmd.Flags().IntVar(&taskSearchLimit, "limit", 0, "maximum results per page (server default if omitted, max 100)")
+	taskSearchCmd.Flags().BoolVar(&taskSearchQL, "ql", false, "treat the query as a CQL filter (surfaces parse errors instead of full-text fallback)")
 
 	// History flags
 	taskHistoryCmd.Flags().IntVar(&historyLimit, "limit", 0, "show at most N history entries (0 = all)")
