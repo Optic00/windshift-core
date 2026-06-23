@@ -312,14 +312,32 @@ func (h *AgentRunHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// force (admin) terminates the row directly even when the cooperative cancel
+	// can't reach the worker — the phantom-run escape hatch (WI-512).
+	force := r.URL.Query().Get("force") == "true"
+	now := time.Now().UTC()
 	// Remote runs (claimed by a runner) cancel via a flag the owning runner
 	// observes on its next heartbeat; independent of the local harness.
 	if run.RunnerID != nil {
-		if err := h.repo.RequestCancel(r.Context(), runID, time.Now().UTC()); err != nil {
+		if err := h.repo.RequestCancel(r.Context(), runID, now); err != nil {
 			respondInternalError(w, r, err)
 			return
 		}
-		respondJSON(w, http.StatusOK, map[string]any{"canceled": true, "remote": true})
+		forced := false
+		if force {
+			// A runner that lost its terminal report never observes the flag, so
+			// force the row terminal instead of waiting for the 8h backstop.
+			forced, err = h.repo.ForceCancelRunning(r.Context(), runID, now)
+			if err != nil {
+				respondInternalError(w, r, err)
+				return
+			}
+			if forced {
+				_ = h.repo.AppendEvent(r.Context(), runID, "lifecycle",
+					`{"phase":"canceled","reason":"force-canceled by admin"}`)
+			}
+		}
+		respondJSON(w, http.StatusOK, map[string]any{"canceled": true, "remote": true, "forced": forced})
 		return
 	}
 	// Local in-process run: cancel via the RunService registry.
@@ -328,9 +346,24 @@ func (h *AgentRunHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	canceled := h.runs.Cancel(runID)
+	forced := false
+	if force && !canceled {
+		// Not in the in-process registry (e.g. orphaned by an orchestrator
+		// restart) — force the row terminal directly.
+		forced, err = h.repo.ForceCancelRunning(r.Context(), runID, now)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return
+		}
+		if forced {
+			_ = h.repo.AppendEvent(r.Context(), runID, "lifecycle",
+				`{"phase":"canceled","reason":"force-canceled by admin"}`)
+		}
+	}
 	respondJSON(w, http.StatusOK, map[string]any{
-		"canceled":     canceled,
-		"already_done": !canceled,
+		"canceled":     canceled || forced,
+		"already_done": !canceled && !forced,
+		"forced":       forced,
 	})
 }
 
