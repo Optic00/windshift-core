@@ -56,6 +56,10 @@ func (c *ModelCache) Get(providerType ProviderType) (CacheEntry, error) {
 			return CacheEntry{}, fmt.Errorf("decode cached models for %q: %w", providerType, err)
 		}
 	}
+	// Re-apply the curated vision map on read so caches persisted before the
+	// flag existed (or before a map entry was added) still resolve correctly.
+	// Idempotent: never downgrades a model the catalog marked vision-capable.
+	EnrichModelsVision(providerType, models)
 
 	entry := CacheEntry{Models: models, LastError: lastError.String}
 	if lastRefreshedAt.Valid {

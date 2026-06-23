@@ -21,10 +21,18 @@ var (
 )
 
 // ModelInfo describes a model offered by a provider.
+//
+// SupportsVision reports whether the model accepts image input. Provider
+// catalogs do not advertise this consistently, so it is resolved from two
+// sources (see vision_capability.go): an authoritative signal when the catalog
+// exposes one (OpenRouter's architecture.input_modalities), falling back to a
+// curated capability map keyed by model id. A per-connection override
+// (provider_config vision_mode) wins over both at resolution time.
 type ModelInfo struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	MaxTokens int    `json:"max_tokens"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	MaxTokens      int    `json:"max_tokens"`
+	SupportsVision bool   `json:"supports_vision"`
 }
 
 // ProviderInfo describes a known LLM provider and its available models.

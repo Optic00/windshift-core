@@ -39,13 +39,18 @@ func newModelRefresherWithClient(cache *ModelCache, client *http.Client) *ModelR
 }
 
 // openaiModelsResponse matches `/v1/models` on OpenAI, OpenRouter, and other
-// OpenAI-compatible servers. Fields we don't surface (pricing, architecture)
-// are ignored.
+// OpenAI-compatible servers. OpenRouter additionally returns an `architecture`
+// block whose `input_modalities` is the only reliable vision signal across the
+// catalog; other servers omit it (we fall back to the curated capability map).
+// Pricing is parsed separately for cost metering.
 type openaiModelsResponse struct {
 	Data []struct {
 		ID            string `json:"id"`
 		Name          string `json:"name"`
 		ContextLength int    `json:"context_length"`
+		Architecture  struct {
+			InputModalities []string `json:"input_modalities"`
+		} `json:"architecture"`
 	} `json:"data"`
 }
 
@@ -89,6 +94,10 @@ func (r *ModelRefresher) Refresh(ctx context.Context, provider ProviderInfo, api
 		}
 		return nil, err
 	}
+	// Fill SupportsVision from the curated map for models the catalog didn't
+	// mark, so the persisted cache carries vision capability even when the
+	// provider doesn't advertise input modalities.
+	EnrichModelsVision(provider.Type, models)
 	if err := r.cache.SaveSuccess(provider.Type, models, time.Now()); err != nil {
 		return nil, err
 	}
@@ -165,7 +174,12 @@ func parseOpenAIModels(body []byte) ([]ModelInfo, error) {
 		if name == "" {
 			name = m.ID
 		}
-		out = append(out, ModelInfo{ID: m.ID, Name: name, MaxTokens: m.ContextLength})
+		out = append(out, ModelInfo{
+			ID:             m.ID,
+			Name:           name,
+			MaxTokens:      m.ContextLength,
+			SupportsVision: hasImageModality(m.Architecture.InputModalities),
+		})
 	}
 	return out, nil
 }
