@@ -55,8 +55,23 @@ type ItemResponse struct {
 	UpdatedAt   time.Time  `json:"updated_at"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
 
+	// EnforcedTemplate echoes the mandatory work item template the item's type
+	// enforces (WI-438), populated only on the create response so non-UI callers
+	// learn the expected structure even when they supplied their own
+	// description. Omitted when the type enforces no mandatory template.
+	EnforcedTemplate *EnforcedTemplateSummary `json:"enforced_template,omitempty"`
+
 	// HATEOAS links
 	Links *ItemLinks `json:"_links,omitempty"`
+}
+
+// EnforcedTemplateSummary reports which mandatory template a created item's
+// type enforces and whether its body was applied (only when the caller left the
+// description empty).
+type EnforcedTemplateSummary struct {
+	TemplateID int    `json:"template_id"`
+	Name       string `json:"name"`
+	Applied    bool   `json:"applied"`
 }
 
 // ItemLinks provides HATEOAS-style links for an item

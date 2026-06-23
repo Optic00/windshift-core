@@ -364,6 +364,15 @@ components:
       required:
       - content
       type: object
+    dto.EnforcedTemplateSummary:
+      properties:
+        applied:
+          type: boolean
+        name:
+          type: string
+        template_id:
+          type: integer
+      type: object
     dto.HistoryResponse:
       properties:
         changed_at:
@@ -483,6 +492,14 @@ components:
           type: string
         end_date:
           type: string
+        enforced_template:
+          allOf:
+          - $ref: '#/components/schemas/dto.EnforcedTemplateSummary'
+          description: |-
+            EnforcedTemplate echoes the mandatory work item template the item's type
+            enforces (WI-438), populated only on the create response so non-UI callers
+            learn the expected structure even when they supplied their own
+            description. Omitted when the type enforces no mandatory template.
         history:
           items:
             $ref: '#/components/schemas/dto.HistoryResponse'

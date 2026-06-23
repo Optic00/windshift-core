@@ -128,6 +128,21 @@ type ItemCreationParams struct {
 	// copy of already-authorized items) leave them zero to skip the check.
 	ValidatingUserID int
 	PermService      *PermissionService
+	// MandatoryTemplateOut, when non-nil, is populated by CreateItem with the
+	// mandatory work item template (WI-438) the resolved item type enforces, if
+	// any — and whether its body was applied. Lets non-UI callers (v1 REST, the
+	// ws CLI) echo the enforced structure even when they supplied their own
+	// description. TemplateID == 0 after the call means the type enforces none.
+	MandatoryTemplateOut *MandatoryTemplateInfo
+}
+
+// MandatoryTemplateInfo reports the mandatory template a resolved item type
+// enforces at create time and whether CreateItem applied its body (only when
+// the incoming description was empty, per the "fill only when empty" rule).
+type MandatoryTemplateInfo struct {
+	TemplateID int    `json:"template_id"`
+	Name       string `json:"name"`
+	Applied    bool   `json:"applied"`
 }
 
 // ErrProjectNotFound is returned by CreateItem when a supplied project_id /
@@ -220,6 +235,29 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 
 	if params.ItemTypeID == nil {
 		return 0, ErrMissingItemType
+	}
+
+	// Apply a mandatory work item template (WI-438). Every create path funnels
+	// through here, so this single seam gives uniform mandatory-template
+	// behavior. If the resolved type enforces an active mandatory template,
+	// fill an empty description with its body (decision #2: only when empty so
+	// agents/importers that supply a description stay predictable), and report
+	// what was enforced regardless of whether it was applied.
+	if mandatory, terr := repository.NewTemplateRepository(db).GetMandatoryForType(params.WorkspaceID, *params.ItemTypeID); terr == nil {
+		applied := false
+		if strings.TrimSpace(params.Description) == "" {
+			params.Description = mandatory.DescriptionBody
+			applied = true
+		}
+		if params.MandatoryTemplateOut != nil {
+			*params.MandatoryTemplateOut = MandatoryTemplateInfo{
+				TemplateID: mandatory.ID,
+				Name:       mandatory.Name,
+				Applied:    applied,
+			}
+		}
+	} else if !errors.Is(terr, repository.ErrNotFound) {
+		return 0, fmt.Errorf("failed to resolve mandatory template: %w", terr)
 	}
 
 	now := time.Now()

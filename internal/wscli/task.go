@@ -358,6 +358,17 @@ Examples:
 			_, _ = fmt.Fprintf(stdout, "Created %s-%d and opened in browser\n", wsKey, item.WorkspaceItemNumber)
 		}
 
+		// Echo any mandatory template the item's type enforces (WI-438) so the
+		// caller learns the expected structure even when it passed its own
+		// description. Printed to stderr to keep stdout clean for -o json/table.
+		if item.EnforcedTemplate != nil {
+			if item.EnforcedTemplate.Applied {
+				_, _ = fmt.Fprintf(stderr, "Type enforces template %q; applied to the (empty) description.\n", item.EnforcedTemplate.Name)
+			} else {
+				_, _ = fmt.Fprintf(stderr, "Type enforces template %q; not applied (description provided). Fetch it with: ws task template get %d\n", item.EnforcedTemplate.Name, item.EnforcedTemplate.TemplateID)
+			}
+		}
+
 		output := NewOutput()
 		output.Print(item)
 		return nil

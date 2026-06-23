@@ -108,6 +108,18 @@ type Item struct {
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
+
+	// EnforcedTemplate is set on the create response when the item's type
+	// enforces a mandatory work item template (WI-438), so the CLI can echo the
+	// expected structure even when a description was supplied.
+	EnforcedTemplate *EnforcedTemplate `json:"enforced_template,omitempty"`
+}
+
+// EnforcedTemplate mirrors dto.EnforcedTemplateSummary on the create response.
+type EnforcedTemplate struct {
+	TemplateID int    `json:"template_id"`
+	Name       string `json:"name"`
+	Applied    bool   `json:"applied"`
 }
 
 type ItemCreateRequest struct {

@@ -644,6 +644,7 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// Use centralized CreateItem service
 	// StatusID and PriorityID can be nil - the service will resolve from workflow/defaults
+	var enforcedTemplate services.MandatoryTemplateInfo
 	itemID, err := services.CreateItem(h.DB, services.ItemCreationParams{
 		WorkspaceID:           req.WorkspaceID,
 		Title:                 req.Title,
@@ -664,6 +665,7 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 		CustomFieldValuesJSON: customFieldValuesJSON,
 		ValidatingUserID:      user.ID,
 		PermService:           h.permSvc,
+		MandatoryTemplateOut:  &enforcedTemplate,
 	})
 	if err != nil {
 		if errors.Is(err, services.ErrMissingItemType) || errors.Is(err, services.ErrInvalidItemType) || errors.Is(err, services.ErrProjectNotFound) {
@@ -685,6 +687,13 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	baseURL := getBaseURL(r)
 	response := dto.MapItemToResponse(fullItem, baseURL)
+	if enforcedTemplate.TemplateID != 0 {
+		response.EnforcedTemplate = &dto.EnforcedTemplateSummary{
+			TemplateID: enforcedTemplate.TemplateID,
+			Name:       enforcedTemplate.Name,
+			Applied:    enforcedTemplate.Applied,
+		}
+	}
 
 	h.RespondCreated(w, response)
 }
