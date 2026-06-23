@@ -800,7 +800,7 @@ func (s *BindingService) MaybeStartRunsForMentions(ctx context.Context, workspac
 		// mention continues that PR (adds commits to it) rather than opening a
 		// competing one. Resolution failures degrade to a fresh run — a missing
 		// continuation is never worse than today's behavior.
-		s.applyMentionContinuation(ctx, trigger, binding, itemID)
+		s.applyContinuation(ctx, trigger, binding, itemID)
 		if err := s.startRunForBinding(ctx, binding, workspaceID, itemID, commentAuthorID, trigger); err != nil {
 			errs = append(errs, fmt.Errorf("start run for mentioned binding %d: %w", binding.ID, err))
 		}
@@ -870,14 +870,16 @@ func (s *BindingService) enabledSkillsForBinding(ctx context.Context, binding *m
 	return skills
 }
 
-// applyMentionContinuation sets the trigger's continuation fields when the
-// mentioned binding's item has an open linked PR in the binding's own repo, so
-// the run lands commits on that PR instead of cutting a fresh branch. It is a
-// no-op (leaving a normal fresh-run trigger) when no resolver is wired, the
-// binding has no repo, the item has no open PR, the PR is in a different repo
-// than the binding writes to, or resolution errors — none of which should block
-// the run.
-func (s *BindingService) applyMentionContinuation(ctx context.Context, trigger *models.RunTrigger, binding *models.WorkspaceAgentBinding, itemID int) {
+// applyContinuation sets the trigger's continuation fields when the binding's
+// item has an open linked PR in the binding's own repo, so the run lands
+// commits on that PR instead of cutting a fresh branch. Shared by the triggers
+// that should grow an existing PR rather than fork a new one — @mention and the
+// manual Re-run. (The assignee-change trigger deliberately does NOT continue: a
+// re-assignment starts fresh work.) It is a no-op (leaving a normal fresh-run
+// trigger) when no resolver is wired, the binding has no repo, the item has no
+// open PR, the PR is in a different repo than the binding writes to, or
+// resolution errors — none of which should block the run.
+func (s *BindingService) applyContinuation(ctx context.Context, trigger *models.RunTrigger, binding *models.WorkspaceAgentBinding, itemID int) {
 	if s.continuations == nil || !binding.HasRepo() {
 		return
 	}
@@ -1252,6 +1254,10 @@ func (s *BindingService) RerunForItem(ctx context.Context, itemID, triggeredByUs
 		rerunTrigger.CommentID = latest.Trigger.CommentID
 		rerunTrigger.AuthorID = latest.Trigger.AuthorID
 	}
+	// If the item still has an open linked PR in this binding's repo, re-run
+	// lands on that PR rather than forking a competing branch — same posture as
+	// the @mention trigger. Resolution failures degrade to a fresh run.
+	s.applyContinuation(ctx, rerunTrigger, binding, itemID)
 	if err := s.startRunForBinding(ctx, binding, latest.WorkspaceID, itemID, triggeredByUserID, rerunTrigger); err != nil {
 		return false, err
 	}
