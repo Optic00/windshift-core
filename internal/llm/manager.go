@@ -38,6 +38,7 @@ type ConnectionManager struct {
 	db         database.Database
 	encryption *sso.SecretEncryption
 	fallback   Client
+	modelCache *ModelCache // optional; enables freshest vision-capability resolution
 }
 
 // NewConnectionManager creates a new connection manager.
@@ -47,6 +48,36 @@ func NewConnectionManager(db database.Database, encryption *sso.SecretEncryption
 		encryption: encryption,
 		fallback:   fallback,
 	}
+}
+
+// SetModelCache attaches the refreshed-model cache so vision capability resolves
+// from the freshest catalog data. Optional and nil-safe: without it, resolution
+// falls back to static seeds + the curated map.
+func (m *ConnectionManager) SetModelCache(cache *ModelCache) {
+	m.modelCache = cache
+}
+
+// resolveModelVision returns whether the named model on the provider supports
+// vision, consulting (in order) the refreshed cache, the static seed list, and
+// finally the curated capability map for ids none of the catalogs recognize.
+func (m *ConnectionManager) resolveModelVision(providerType ProviderType, modelID string) bool {
+	if m.modelCache != nil {
+		if entry, err := m.modelCache.Get(providerType); err == nil {
+			for _, mi := range entry.Models {
+				if mi.ID == modelID {
+					return mi.SupportsVision
+				}
+			}
+		}
+	}
+	if p := GetProvider(providerType); p != nil {
+		for _, mi := range p.Models {
+			if mi.ID == modelID {
+				return mi.SupportsVision
+			}
+		}
+	}
+	return curatedVisionCapable(modelID)
 }
 
 // Resolve returns a Client for the given connection ID.
@@ -152,6 +183,11 @@ type ConnectionRuntimeConfig struct {
 	APIKey         string
 	BaseURL        string
 	ProviderConfig string
+	// VisionMode is the resolved per-connection override (auto/on/off).
+	VisionMode string
+	// SupportsVision is the effective vision capability for this connection's
+	// model after applying the override — the value injected into the agent env.
+	SupportsVision bool
 }
 
 // ConnectionRuntime returns the runtime config for one enabled connection. It
@@ -189,6 +225,8 @@ func (m *ConnectionManager) ConnectionRuntime(ctx context.Context, connectionID 
 	if providerConfig.Valid {
 		cfg.ProviderConfig = providerConfig.String
 	}
+	cfg.VisionMode = ProviderConfigVisionMode(cfg.ProviderConfig)
+	cfg.SupportsVision = EffectiveVision(cfg.VisionMode, m.resolveModelVision(ProviderType(cfg.ProviderType), cfg.Model))
 	return cfg, nil
 }
 

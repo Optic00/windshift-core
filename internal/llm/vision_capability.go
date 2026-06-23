@@ -2,6 +2,40 @@ package llm
 
 import "strings"
 
+// Vision override modes for the per-connection provider_config vision_mode key.
+//   - auto: defer to the model's resolved capability (catalog signal + curated map)
+//   - on:   force vision on (e.g. a local/custom model id the map can't recognize)
+//   - off:  force vision off (a model the map wrongly marks capable)
+const (
+	VisionModeAuto = "auto"
+	VisionModeOn   = "on"
+	VisionModeOff  = "off"
+)
+
+// isValidVisionMode reports whether mode is a recognized vision override.
+func isValidVisionMode(mode string) bool {
+	switch mode {
+	case VisionModeAuto, VisionModeOn, VisionModeOff:
+		return true
+	default:
+		return false
+	}
+}
+
+// EffectiveVision resolves whether vision is enabled for a connection given its
+// override mode and the model's resolved capability. The override wins: on/off
+// are absolute; auto (or any unrecognized value) defers to modelSupportsVision.
+func EffectiveVision(visionMode string, modelSupportsVision bool) bool {
+	switch strings.ToLower(strings.TrimSpace(visionMode)) {
+	case VisionModeOn:
+		return true
+	case VisionModeOff:
+		return false
+	default:
+		return modelSupportsVision
+	}
+}
+
 // Vision capability resolution.
 //
 // Provider /models catalogs do not reliably report whether a model accepts

@@ -735,6 +735,7 @@ func (s *Server) initialize() error {
 	}
 	llmManager := llm.NewConnectionManager(s.db, scmProviderHandler.GetEncryption(), fallbackLLMClient)
 	llmModelCache := llm.NewModelCache(s.db)
+	llmManager.SetModelCache(llmModelCache) // freshest vision-capability resolution
 	llmModelRefresher := llm.NewModelRefresher(llmModelCache)
 
 	var codingRunSvc *services.RunService
