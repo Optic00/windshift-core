@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1422,17 +1423,24 @@ func (s *BindingService) buildRunEnv(ctx context.Context, workspaceID, itemID in
 	return env, nil
 }
 
-// applyLLMModelEnv sets only the model id for the agent container. The agent
-// reaches the provider exclusively through the run-scoped llm-proxy, so no raw
-// provider key, base URL, provider type, or API format is ever injected into
-// the (untrusted) container — those stay server-side in ProxyLLM, which the
-// agent calls with its per-run token (WI-238). LLM_BASE_URL + LLM_API_KEY (the
-// run token) are layered on at claim time by applyLLMProxyEnv.
+// applyLLMModelEnv sets the model id and resolved vision capability for the
+// agent container. The agent reaches the provider exclusively through the
+// run-scoped llm-proxy, so no raw provider key, base URL, provider type, or API
+// format is ever injected into the (untrusted) container — those stay
+// server-side in ProxyLLM, which the agent calls with its per-run token
+// (WI-238). LLM_BASE_URL + LLM_API_KEY (the run token) are layered on at claim
+// time by applyLLMProxyEnv.
+//
+// LLM_SUPPORTS_VISION is the capability gate (WI-491): the agent registers the
+// view_image tool only when it is true, so a no-vision model never has image
+// bytes injected into its context. The value is already resolved on the runtime
+// config (model capability + per-connection override) by ConnectionRuntime.
 func applyLLMModelEnv(env map[string]string, cfg *llm.ConnectionRuntimeConfig) {
 	if cfg == nil {
 		return
 	}
 	env["LLM_MODEL"] = cfg.Model
+	env["LLM_SUPPORTS_VISION"] = strconv.FormatBool(cfg.SupportsVision)
 }
 
 // deriveCloneURL constructs an https git remote from the trusted SCM
