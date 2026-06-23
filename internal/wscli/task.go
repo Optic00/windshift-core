@@ -189,10 +189,11 @@ Examples:
 			return fmt.Errorf("failed to resolve item: %w", err)
 		}
 
-		// Get item with transitions and comments expanded. Server returns
-		// comments newest-first; we keep at most the latest 10 so the output
-		// stays scannable on busy items.
-		item, err := client.GetItem(itemID, "transitions,comments")
+		// Get item with transitions, comments, and attachments expanded. Server
+		// returns comments newest-first; we keep at most the latest 10 so the
+		// output stays scannable on busy items. Attachments drive the
+		// image-attachment hint that points a coding agent at view_image.
+		item, err := client.GetItem(itemID, "transitions,comments,attachments")
 		if err != nil {
 			return fmt.Errorf("failed to get item: %w", err)
 		}
