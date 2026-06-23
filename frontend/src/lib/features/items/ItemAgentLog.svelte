@@ -3,13 +3,14 @@
   // with a live-tailing transcript of the selected run. Pure add-on — reads
   // only the agent_runs/agent_run_events surface, never item state.
   import { onMount, onDestroy } from 'svelte';
-  import { Bot, RefreshCw, TriangleAlert } from '@lucide/svelte';
+  import { Bot, RefreshCw, TriangleAlert, Ban } from '@lucide/svelte';
   import { agentRuns } from '../../api/agentRuns.js';
   import Lozenge from '../../components/Lozenge.svelte';
   import EmptyState from '../../components/EmptyState.svelte';
   import { formatDateTimeLocale } from '../../utils/dateFormatter.js';
   import { t } from '../../stores/i18n.svelte.js';
   import { workspacePermissions } from '../../stores';
+  import { confirm } from '../../composables/useConfirm.js';
 
   let { itemId, workspaceId } = $props();
 
@@ -17,6 +18,8 @@
   // permission the backend enforces, so view-only users don't see a button
   // that would 404 on click.
   const canRerun = $derived(workspaceId ? workspacePermissions.canEdit(workspaceId) : false);
+  // Cancel is workspace-admin only, matching the backend gate.
+  const canCancel = $derived(workspaceId ? workspacePermissions.canAdminWorkspace(workspaceId) : false);
 
   const RUNS_POLL_MS = 10_000;
   const EVENTS_POLL_MS = 1_500;
@@ -45,8 +48,46 @@
   let rerunning = $state(false);
   let rerunError = $state('');
 
+  // Cancel state. cancelRequested flips after a cooperative cancel so the
+  // control offers Force cancel when the run stays running (a phantom whose
+  // runner never observed the flag).
+  let canceling = $state(false);
+  let cancelRequested = $state(false);
+  let cancelError = $state('');
+
   const selectedRun = $derived(runs.find((r) => r.id === selectedRunId) || null);
   const hasActiveRun = $derived(runs.some((r) => !TERMINAL.includes(r.status)));
+  const activeRun = $derived(runs.find((r) => !TERMINAL.includes(r.status)) || null);
+
+  // Once the active run clears (canceled, or a later run begins), reset the
+  // cancel control back to its cooperative-first state.
+  $effect(() => {
+    if (!activeRun) cancelRequested = false;
+  });
+
+  async function doCancel(force) {
+    if (!activeRun || canceling) return;
+    const ok = await confirm({
+      title: force ? 'Force-cancel run' : 'Cancel run',
+      message: force
+        ? `Force-cancel run #${activeRun.id}? This marks it canceled immediately, regardless of the runner. Use this only for a stuck run whose worker is gone — if the runner is still working, its result will be discarded.`
+        : `Cancel run #${activeRun.id}? The runner is asked to stop at its next heartbeat.`,
+      confirmText: force ? 'Force cancel' : 'Cancel run',
+      variant: 'danger',
+    });
+    if (!ok) return;
+    canceling = true;
+    cancelError = '';
+    try {
+      await agentRuns.cancel(activeRun.id, { force });
+      cancelRequested = true;
+      await loadRuns();
+    } catch (e) {
+      cancelError = e?.message || 'Failed to cancel run';
+    } finally {
+      canceling = false;
+    }
+  }
 
   function formatCost(usd) {
     if (usd == null) return null;
@@ -214,21 +255,45 @@
       <span class="text-xs" style="color: var(--ds-text-subtle);">
         {runs.length} {runs.length === 1 ? t('items.agentRunSingular') : t('items.agentRunPlural')}
       </span>
-      {#if canRerun}
-        <button
-          type="button"
-          class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          style="border: 1px solid var(--ds-border); color: var(--ds-text); background-color: transparent;"
-          onclick={doRerun}
-          disabled={rerunning || hasActiveRun}
-          title={hasActiveRun ? t('items.agentRerunBusy') : t('items.agentRerunTitle')}
-          data-testid="agent-rerun-button"
-        >
-          <RefreshCw class={`w-3 h-3 ${rerunning ? 'animate-spin' : ''}`} />
-          {rerunning ? t('items.agentRerunStarting') : hasActiveRun ? t('items.agentRerunBusy') : t('items.agentRerunLabel')}
-        </button>
-      {/if}
+      <div class="flex items-center gap-2">
+        {#if canCancel && activeRun}
+          <button
+            type="button"
+            class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            style="border: 1px solid var(--ds-border-danger, #f87171); color: var(--ds-text-danger, #b91c1c); background-color: transparent;"
+            onclick={() => doCancel(cancelRequested)}
+            disabled={canceling}
+            title={cancelRequested
+              ? 'The run is still active — force it to canceled regardless of the runner'
+              : 'Ask the runner to stop this run'}
+            data-testid="agent-cancel-button"
+          >
+            <Ban class="w-3 h-3" />
+            {canceling ? 'Canceling…' : cancelRequested ? 'Force cancel' : 'Cancel run'}
+          </button>
+        {/if}
+        {#if canRerun}
+          <button
+            type="button"
+            class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            style="border: 1px solid var(--ds-border); color: var(--ds-text); background-color: transparent;"
+            onclick={doRerun}
+            disabled={rerunning || hasActiveRun}
+            title={hasActiveRun ? t('items.agentRerunBusy') : t('items.agentRerunTitle')}
+            data-testid="agent-rerun-button"
+          >
+            <RefreshCw class={`w-3 h-3 ${rerunning ? 'animate-spin' : ''}`} />
+            {rerunning ? t('items.agentRerunStarting') : hasActiveRun ? t('items.agentRerunBusy') : t('items.agentRerunLabel')}
+          </button>
+        {/if}
+      </div>
     </div>
+
+    {#if cancelError}
+      <div class="text-xs px-3 py-2 rounded" style="color: var(--ds-text-danger); border: 1px solid var(--ds-border-danger, #f87171); background-color: var(--ds-background-danger-subtle, #fef2f2);" data-testid="agent-cancel-error">
+        {cancelError}
+      </div>
+    {/if}
 
     {#if rerunError}
       <div class="text-xs px-3 py-2 rounded" style="color: var(--ds-text-danger); border: 1px solid var(--ds-border-danger, #f87171); background-color: var(--ds-background-danger-subtle, #fef2f2);" data-testid="agent-rerun-error">

@@ -56,10 +56,14 @@ export const agentRuns = {
     return fetchAPI(`/agent-runs/${runId}/events?${params}`);
   },
 
-  /** Cancel an in-flight run. Idempotent — returns canceled=false when
-   * the run is already terminal. */
-  cancel: (runId) =>
-    fetchAPI(`/agent-runs/${runId}/cancel`, {
+  /**
+   * Cancel an in-flight run (workspace admin). Idempotent. With { force: true }
+   * the run's row is transitioned to canceled directly even if the cooperative
+   * cancel can't reach the worker — the escape hatch for a phantom run (a runner
+   * that lost its terminal report and keeps the run 'running'). WI-512.
+   */
+  cancel: (runId, { force = false } = {}) =>
+    fetchAPI(`/agent-runs/${runId}/cancel${force ? '?force=true' : ''}`, {
       method: 'POST',
     }),
 

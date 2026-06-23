@@ -366,6 +366,32 @@ func (r *AgentRunRepository) RequestCancel(ctx context.Context, runID int, now t
 	return nil
 }
 
+// ForceCancelRunning transitions a running run straight to canceled, regardless
+// of its runner. It is the admin escape hatch for a phantom run — a runner that
+// lost its terminal report (or whose claim response never arrived) keeps the run
+// 'running' forever and never observes the cooperative cancel flag, so without
+// this it only clears via the 8h max-duration backstop. CAS on status='running'
+// so it can't clobber a run that finished in the meantime. Returns whether a row
+// transitioned.
+func (r *AgentRunRepository) ForceCancelRunning(ctx context.Context, runID int, now time.Time) (bool, error) {
+	res, err := r.db.ExecWriteContext(ctx, `
+		UPDATE agent_runs
+		SET status = ?, ended_at = ?, error = ?, updated_at = ?
+		WHERE id = ? AND status = ?
+	`,
+		models.AgentRunStatusCanceled, now, "force-canceled by admin", now,
+		runID, models.AgentRunStatusRunning,
+	)
+	if err != nil {
+		return false, fmt.Errorf("force cancel running: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("force cancel running: rows affected: %w", err)
+	}
+	return n > 0, nil
+}
+
 // ListAbortableRuns returns the ids of runs the given runner is executing
 // that have been flagged for cancellation, so the heartbeat handler can tell
 // the runner which jobs to abort.
