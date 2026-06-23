@@ -94,7 +94,7 @@
 	const READ_WRITE_PRESET = [
 		...READ_ONLY_PRESET,
 		'items:write', 'workspaces:write', 'milestones:write',
-		'iterations:write', 'projects:write', 'pages:write',
+		'iterations:write', 'projects:write', 'pages:write', 'item-templates:write',
 	];
 
 	function isScopeSelected(scope) {

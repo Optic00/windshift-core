@@ -63,6 +63,18 @@ func (a *Authz) CanEditWorkspace(userID, workspaceID int) (bool, error) {
 	return a.canEditWorkspaceFallback(userID, workspaceID)
 }
 
+// CanAdminWorkspace checks if a user can administer a workspace — manage its
+// configuration (labels, work item templates, etc.). Equivalent to
+// HasWorkspacePermission(userID, workspaceID, PermissionWorkspaceAdmin).
+func (a *Authz) CanAdminWorkspace(userID, workspaceID int) (bool, error) {
+	if a.permissionService != nil {
+		return a.permissionService.HasWorkspacePermission(userID, workspaceID, models.PermissionWorkspaceAdmin)
+	}
+	// No permission service configured (open-by-default test setups): fall back
+	// to the edit check, which is the strictest fallback available here.
+	return a.canEditWorkspaceFallback(userID, workspaceID)
+}
+
 // HasGlobalPermission checks if a user has a global permission
 // (e.g. PermissionMilestoneCreate, PermissionIterationManage).
 func (a *Authz) HasGlobalPermission(userID int, permission string) (bool, error) {

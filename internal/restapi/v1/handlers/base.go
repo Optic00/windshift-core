@@ -152,6 +152,27 @@ func (b *BaseHandler) RequireWorkspaceEditAccess(w http.ResponseWriter, r *http.
 	return wsID, true
 }
 
+// RequireWorkspaceAdminAccess is the workspace-admin counterpart to
+// RequireWorkspaceEditAccess, for routes that manage workspace configuration
+// (e.g. the work item template catalog) rather than item content. Returns 404
+// on failure so workspace existence isn't leaked.
+func (b *BaseHandler) RequireWorkspaceAdminAccess(w http.ResponseWriter, r *http.Request) (int, bool) {
+	user, ok := b.RequireAuth(w, r)
+	if !ok {
+		return 0, false
+	}
+	wsID, ok := b.ParsePathID(w, r, "id", "workspace ID")
+	if !ok {
+		return 0, false
+	}
+	canAdmin, _ := b.Perms.CanAdminWorkspace(user.ID, wsID)
+	if !canAdmin {
+		restapi.RespondError(w, r, restapi.ErrWorkspaceNotFound)
+		return 0, false
+	}
+	return wsID, true
+}
+
 // maskProjectNames blanks restricted time-project names (direct, time-tracking
 // and inherited effective project) on items before they are mapped to response
 // DTOs, mirroring the cookie-auth surface. IDs are kept; only names are stripped.

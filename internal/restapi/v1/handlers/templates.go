@@ -133,7 +133,9 @@ func (h *TemplateHandler) CreateInWorkspace(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	wsID, ok := h.RequireWorkspaceEditAccess(w, r)
+	// Template catalog writes require workspace.admin (a workspace-configuration
+	// concern), not merely item-edit — matching the cookie surface.
+	wsID, ok := h.RequireWorkspaceAdminAccess(w, r)
 	if !ok {
 		return
 	}
@@ -240,7 +242,7 @@ func (h *TemplateHandler) UpdateInWorkspace(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	wsID, templateID, ok := h.resolveWorkspaceTemplateAccess(w, r, h.Perms.CanEditWorkspace)
+	wsID, templateID, ok := h.resolveWorkspaceTemplateAccess(w, r, h.Perms.CanAdminWorkspace)
 	if !ok {
 		return
 	}
@@ -324,7 +326,7 @@ func (h *TemplateHandler) UpdateInWorkspace(w http.ResponseWriter, r *http.Reque
 // @Failure      500  {object}  handlers.ErrorResponse
 // @Router       /workspaces/{id}/templates/{templateId} [delete]
 func (h *TemplateHandler) DeleteInWorkspace(w http.ResponseWriter, r *http.Request) {
-	wsID, templateID, ok := h.resolveWorkspaceTemplateAccess(w, r, h.Perms.CanEditWorkspace)
+	wsID, templateID, ok := h.resolveWorkspaceTemplateAccess(w, r, h.Perms.CanAdminWorkspace)
 	if !ok {
 		return
 	}

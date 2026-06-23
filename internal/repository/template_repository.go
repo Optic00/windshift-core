@@ -167,7 +167,7 @@ func (r *TemplateRepository) Create(t *models.ItemTemplate) (*models.ItemTemplat
 	}
 	now := time.Now()
 	newID, err := database.WithTxResult(r.db, func(tx database.Tx) (int64, error) {
-		if err := enforceMandatoryInvariants(tx, t.WorkspaceID, t.Mode, t.IsActive, t.ItemTypeIDs, 0); err != nil {
+		if err := enforceMandatoryInvariants(tx, r.db.GetDriverName(), t.WorkspaceID, t.Mode, t.IsActive, t.ItemTypeIDs, 0); err != nil {
 			return 0, err
 		}
 		var id int64
@@ -199,7 +199,7 @@ func (r *TemplateRepository) Update(t *models.ItemTemplate) error {
 		return err
 	}
 	return database.WithTx(r.db, func(tx database.Tx) error {
-		if err := enforceMandatoryInvariants(tx, t.WorkspaceID, t.Mode, t.IsActive, t.ItemTypeIDs, t.ID); err != nil {
+		if err := enforceMandatoryInvariants(tx, r.db.GetDriverName(), t.WorkspaceID, t.Mode, t.IsActive, t.ItemTypeIDs, t.ID); err != nil {
 			return err
 		}
 		res, err := tx.Exec(`
@@ -252,7 +252,15 @@ func validateMode(mode string) error {
 // mandatory template already targets that type. excludeID skips the template
 // being updated. Selectable templates and inactive mandatory drafts are exempt
 // from the conflict check.
-func enforceMandatoryInvariants(tx database.Tx, workspaceID int, mode string, isActive bool, itemTypeIDs []int, excludeID int) error {
+//
+// The "at most one active mandatory per (workspace, item_type)" rule can't be a
+// DB unique constraint — the mode/is_active flags live on item_templates while
+// the item_type lives on the join table, so no single-table partial index
+// covers it (the plan's documented limitation). To keep the count-then-write
+// check race-free on Postgres, concurrent writers for the same (workspace,
+// item_type) are serialized with a transaction-scoped advisory lock; SQLite
+// already serializes writers at the database level so it needs none.
+func enforceMandatoryInvariants(tx database.Tx, driver string, workspaceID int, mode string, isActive bool, itemTypeIDs []int, excludeID int) error {
 	if mode != models.TemplateModeMandatory {
 		return nil
 	}
@@ -261,6 +269,14 @@ func enforceMandatoryInvariants(tx database.Tx, workspaceID int, mode string, is
 	}
 	if !isActive {
 		return nil
+	}
+	if driver == "postgres" {
+		// Single-bigint advisory keyspace (distinct from the two-int32 keyspace
+		// used for item-number allocation); key uniquely on (workspace, type).
+		lockKey := int64(workspaceID)<<32 | int64(itemTypeIDs[0])
+		if _, err := tx.Exec(`SELECT pg_advisory_xact_lock(?)`, lockKey); err != nil {
+			return fmt.Errorf("acquire mandatory-template lock: %w", err)
+		}
 	}
 	var count int
 	if err := tx.QueryRow(`
