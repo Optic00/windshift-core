@@ -38,6 +38,12 @@ export const agentRuns = {
   get: (runId) => fetchAPI(`/agent-runs/${runId}`),
 
   /**
+   * Get the run's metered LLM usage totals: prompt/completion/total tokens,
+   * cost_usd (null when rates are unknown), and call count (WI-494).
+   */
+  usage: (runId) => fetchAPI(`/agent-runs/${runId}/usage`),
+
+  /**
    * Poll the run's event stream. `afterId` is the highest event id the
    * caller has already rendered; pass 0 on the first call to get the
    * full backlog.

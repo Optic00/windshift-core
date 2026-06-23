@@ -275,6 +275,14 @@
     (llmConnections || []).find((c) => c.id === formLLMConnectionId)?.provider_type === 'anthropic'
   );
 
+  // A bound model without vision can't analyse images attached to work items.
+  // The binding is still valid (text-only agents are fine), but the operator
+  // should choose it knowingly rather than discover the gap mid-run.
+  let selectedLLMNoVision = $derived.by(() => {
+    const c = (llmConnections || []).find((x) => x.id === formLLMConnectionId);
+    return c != null && c.provider_type !== 'anthropic' && c.supports_vision === false;
+  });
+
   // Repository <select> options for a given repo row's chosen SCM connection.
   // Disabled (with an explanatory placeholder) until a connection is chosen.
   function repoOptionsFor(connId) {
@@ -816,6 +824,8 @@
               <p class="text-xs mt-1" style="color: var(--ds-text-danger);">No enabled LLM connections. Ask a global admin to add one under Admin → AI Connections.</p>
             {:else if selectedLLMIsDirectAnthropic}
               <p class="text-xs mt-1" style="color: var(--ds-text-warning, var(--ds-text-subtle));">Direct Anthropic connections are legacy and not usable by the coding agent. Pick an OpenAI-compatible provider such as OpenRouter.</p>
+            {:else if selectedLLMNoVision}
+              <p data-testid="binding-no-vision-warning" class="text-xs mt-1" style="color: var(--ds-text-warning, var(--ds-text-subtle));">This model has no vision support, so the agent can't analyse images attached to work items. Fine for text-only work; pick a vision-capable model (or set the connection's vision override) if image analysis matters.</p>
             {/if}
           </div>
           <div>

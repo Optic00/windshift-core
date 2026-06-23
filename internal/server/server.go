@@ -788,6 +788,7 @@ func (s *Server) initialize() error {
 	agentBindingHandler.SetSkillsRepo(agentSkillRepo)
 	agentSkillHandler := handlers.NewAgentSkillHandler(agentSkillRepo, permService, logger.NewAuditor(s.db))
 	agentRunHandler := handlers.NewAgentRunHandler(repository.NewAgentRunRepository(s.db), codingRunSvc, permService, repository.NewItemRepository(s.db), bindingSvc)
+	agentRunHandler.SetUsageRepository(repository.NewLLMUsageRepository(s.db)) // per-run token/cost readout (WI-494)
 	// Remote-runner control plane (WI-141). Constructed unconditionally;
 	// the handler 503s when the registry/run service is unavailable (i.e.
 	// CodingAgent.Enabled is off).

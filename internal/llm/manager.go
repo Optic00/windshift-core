@@ -277,6 +277,10 @@ type PublicConnectionInfo struct {
 	ProviderType ProviderType `json:"provider_type"`
 	Model        string       `json:"model"`
 	IsDefault    bool         `json:"is_default"`
+	// SupportsVision is the connection's effective vision capability (model
+	// capability + per-connection override), so the binding picker can warn when
+	// a bound model can't see images on work items.
+	SupportsVision bool `json:"supports_vision"`
 }
 
 // ListEnabledPublic returns the slim, user-facing view of all enabled
@@ -284,7 +288,7 @@ type PublicConnectionInfo struct {
 // (which is admin-only and returns the full ConnectionInfo).
 func (m *ConnectionManager) ListEnabledPublic() ([]PublicConnectionInfo, error) {
 	rows, err := m.db.Query(
-		`SELECT id, name, provider_type, model, is_default
+		`SELECT id, name, provider_type, model, is_default, provider_config
 		 FROM llm_connections
 		 WHERE is_enabled = true
 		 ORDER BY is_default DESC, name ASC`,
@@ -298,10 +302,12 @@ func (m *ConnectionManager) ListEnabledPublic() ([]PublicConnectionInfo, error) 
 	for rows.Next() {
 		var c PublicConnectionInfo
 		var providerType string
-		if err := rows.Scan(&c.ID, &c.Name, &providerType, &c.Model, &c.IsDefault); err != nil {
+		var providerConfig sql.NullString
+		if err := rows.Scan(&c.ID, &c.Name, &providerType, &c.Model, &c.IsDefault, &providerConfig); err != nil {
 			return nil, fmt.Errorf("failed to scan connection: %w", err)
 		}
 		c.ProviderType = ProviderType(providerType)
+		c.SupportsVision = EffectiveVision(ProviderConfigVisionMode(providerConfig.String), m.resolveModelVision(c.ProviderType, c.Model))
 		out = append(out, c)
 	}
 	if err := rows.Err(); err != nil {

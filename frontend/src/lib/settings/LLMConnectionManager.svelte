@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { api } from '../api.js';
   import {
-    Plus, Edit, Trash2, TestTube, CheckCircle, XCircle, Power, PowerOff, Star, AlertTriangle
+    Plus, Edit, Trash2, TestTube, CheckCircle, XCircle, Power, PowerOff, Star, AlertTriangle, Eye, EyeOff
   } from '@lucide/svelte';
   import Button from '../components/Button.svelte';
   import PageHeader from '../layout/PageHeader.svelte';
@@ -35,6 +35,7 @@
     api_key: '',
     base_url: '',
     provider_config: '',
+    vision_mode: 'auto',
     is_default: false,
     is_enabled: true,
   });
@@ -47,10 +48,73 @@
       api_key: '',
       base_url: '',
       provider_config: '',
+      vision_mode: 'auto',
       is_default: false,
       is_enabled: true,
     };
     testResult = null;
+  }
+
+  // vision_mode is stored inside the provider_config blob (a reserved key the
+  // backend strips before forwarding to the provider). The form manages it via a
+  // dedicated select, so we split it out of the raw JSON on edit and merge it
+  // back on save — the textarea never shows or duplicates vision_mode.
+  const VISION_MODES = ['auto', 'on', 'off'];
+
+  function splitVisionMode(providerConfig) {
+    let mode = 'auto';
+    let rest = providerConfig || '';
+    const raw = rest.trim();
+    if (raw) {
+      try {
+        const obj = JSON.parse(raw);
+        if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+          if (typeof obj.vision_mode === 'string' && VISION_MODES.includes(obj.vision_mode.toLowerCase())) {
+            mode = obj.vision_mode.toLowerCase();
+          }
+          delete obj.vision_mode;
+          rest = Object.keys(obj).length ? JSON.stringify(obj, null, 2) : '';
+        }
+      } catch {
+        // Leave malformed JSON untouched for the user to fix in the textarea.
+      }
+    }
+    return { mode, rest };
+  }
+
+  function composeProviderConfig() {
+    let obj = {};
+    const raw = form.provider_config?.trim();
+    if (raw) {
+      try { obj = JSON.parse(raw); } catch { obj = {}; }
+    }
+    if (form.vision_mode && form.vision_mode !== 'auto') {
+      obj.vision_mode = form.vision_mode;
+    } else {
+      delete obj.vision_mode;
+    }
+    return Object.keys(obj).length ? JSON.stringify(obj) : '';
+  }
+
+  // Vision/cost helpers for the model picker + table.
+  const modelById = $derived((id) => cachedModels.find((m) => m.id === id) || availableModels.find((m) => m.id === id) || null);
+
+  function rateHint(model) {
+    const p = model?.pricing;
+    if (!p || (!p.prompt && !p.completion)) return '';
+    const perM = (v) => `$${(Number(v) * 1_000_000).toFixed(2)}`;
+    return `${perM(p.prompt)}/${perM(p.completion)} per 1M tok`;
+  }
+
+  // connVision resolves a connection's effective vision capability client-side,
+  // mirroring the backend (curated/catalog capability + the connection's
+  // vision_mode override), for the per-row badge in the connections table.
+  function connVision(conn) {
+    const prov = providers.find((p) => p.type === conn.provider_type);
+    const models = prov?.cached_models?.length ? prov.cached_models : (prov?.models || []);
+    const base = !!models.find((m) => m.id === conn.model)?.supports_vision;
+    const mode = splitVisionMode(conn.provider_config || '').mode;
+    return mode === 'on' ? true : mode === 'off' ? false : base;
   }
 
   // Get models for the selected provider
@@ -166,13 +230,15 @@
 
   function openEdit(conn) {
     editingConnection = conn;
+    const { mode, rest } = splitVisionMode(conn.provider_config || '');
     form = {
       name: conn.name,
       provider_type: conn.provider_type,
       model: conn.model,
       api_key: '',
       base_url: conn.base_url || '',
-      provider_config: conn.provider_config || '',
+      provider_config: rest,
+      vision_mode: mode,
       is_default: conn.is_default,
       is_enabled: conn.is_enabled,
     };
@@ -222,7 +288,7 @@
     if (!validateProviderConfig()) return;
     saving = true;
     try {
-      await api.llmConnections.create(form);
+      await api.llmConnections.create({ ...form, provider_config: composeProviderConfig() });
       successToast('AI connection created');
       showCreateModal = false;
       await Promise.all([loadConnections(), loadActionCapabilities()]);
@@ -238,7 +304,7 @@
     if (!validateProviderConfig()) return;
     saving = true;
     try {
-      await api.llmConnections.update(editingConnection.id, form);
+      await api.llmConnections.update(editingConnection.id, { ...form, provider_config: composeProviderConfig() });
       successToast('AI connection updated');
       showEditModal = false;
       await Promise.all([loadConnections(), loadActionCapabilities()]);
@@ -308,7 +374,18 @@
         </div>
       {/snippet}
       {#snippet model(conn)}
-        <span class="font-mono text-xs px-1.5 py-0.5 rounded" style="background-color: var(--ds-surface-sunken); color: var(--ds-text-subtle);">{conn.model}</span>
+        <div class="flex items-center gap-2">
+          <span class="font-mono text-xs px-1.5 py-0.5 rounded" style="background-color: var(--ds-surface-sunken); color: var(--ds-text-subtle);">{conn.model}</span>
+          {#if connVision(conn)}
+            <span data-testid="connection-vision-badge" class="inline-flex items-center gap-1 text-xs" style="color: var(--ds-text-success);" title="This model can analyse images on work items">
+              <Eye size={12} /> Vision
+            </span>
+          {:else}
+            <span data-testid="connection-vision-badge" class="inline-flex items-center gap-1 text-xs" style="color: var(--ds-text-subtle);" title="This model is text-only and cannot see images">
+              <EyeOff size={12} /> No vision
+            </span>
+          {/if}
+        </div>
       {/snippet}
       {#snippet status(conn)}
         {#if conn.is_enabled}
@@ -507,7 +584,23 @@
           getLabel={(m) => m.name || m.id}
           allowCreate={true}
           onCreate={(query) => { form.model = query.trim(); }}
-        />
+        >
+          {#snippet itemSnippet({ item })}
+            <div class="flex items-center justify-between gap-2 w-full">
+              <span class="truncate">{item.name || item.id}</span>
+              <span class="flex items-center gap-2 shrink-0">
+                {#if rateHint(item)}
+                  <span class="text-xs" style="color: var(--ds-text-subtle);">{rateHint(item)}</span>
+                {/if}
+                {#if item.supports_vision}
+                  <span class="inline-flex items-center gap-1 text-xs" style="color: var(--ds-text-success);" title="Supports image input"><Eye size={12} /></span>
+                {:else}
+                  <span class="inline-flex items-center gap-1 text-xs" style="color: var(--ds-text-subtle);" title="Text-only"><EyeOff size={12} /></span>
+                {/if}
+              </span>
+            </div>
+          {/snippet}
+        </BasePicker>
         <div class="flex items-center justify-between text-xs" style="color: var(--ds-text-subtle);">
           <span>
             {#if lastRefreshError}
@@ -535,7 +628,7 @@
         id="llm-connection-model"
         bind:value={form.model}
         placeholder="Select a model..."
-        options={availableModels.map(m => ({ value: m.id, label: m.name }))}
+        options={availableModels.map(m => ({ value: m.id, label: m.name + (m.supports_vision ? ' · vision' : '') }))}
       />
     {/if}
   </div>
@@ -554,6 +647,23 @@
     ></textarea>
     <div class="text-xs mt-1" style="color: var(--ds-text-subtle);">
       Optional top-level request fields merged into provider calls. Existing Windshift fields take precedence.
+    </div>
+  </div>
+
+  <!-- Vision capability override -->
+  <div>
+    <label for="llm-connection-vision-mode" class="block text-xs font-medium mb-1" style="color: var(--ds-text-subtle);">Vision support</label>
+    <Select
+      id="llm-connection-vision-mode"
+      bind:value={form.vision_mode}
+      options={[
+        { value: 'auto', label: 'Auto (detect from model)' },
+        { value: 'on', label: 'On (force vision)' },
+        { value: 'off', label: 'Off (force text-only)' },
+      ]}
+    />
+    <div class="text-xs mt-1" style="color: var(--ds-text-subtle);">
+      Whether the coding agent may send images to this model. <strong>Auto</strong> uses the model's known capability; override to <strong>On</strong> for a vision-capable local/custom model the catalog can't identify, or <strong>Off</strong> to disable images.
     </div>
   </div>
 
