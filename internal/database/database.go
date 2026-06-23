@@ -105,6 +105,9 @@ var assetReportsSchema string
 //go:embed schema/labels.sql
 var labelsSchema string
 
+//go:embed schema/templates.sql
+var templatesSchema string
+
 //go:embed schema/llm.sql
 var llmSchema string
 
@@ -1215,7 +1218,7 @@ func (db *DB) Initialize() error {
 	}
 
 	// Database needs full initialization
-	schema := coreSchema + itemsSchema + requestTypeSchema + usersSchema + testsSchema + workspaceSchema + configWorkflowsSchema + timeTrackingSchema + channelsSchema + portalSchema + portalAuthSchema + portalWebauthnSchema + milestonesSchema + iterationsSchema + contentSchema + mentionsSchema + notificationsSchema + permissionsSchema + systemSchema + userPreferencesSchema + webauthnSchema + ssoSchema + scmSchema + assetsSchema + recurringTasksSchema + jiraImportSchema + actionsSchema + emailSchema + assetReportsSchema + labelsSchema + llmSchema + ldapSchema + assetActionsSchema + dailyBriefingsSchema + teamsSchema + conditionSetsSchema + approvalsSchema + integrationsSchema + authPolicySchema + pagesSchema + pageLabelsSchema + agentsSchema
+	schema := coreSchema + itemsSchema + requestTypeSchema + usersSchema + testsSchema + workspaceSchema + configWorkflowsSchema + timeTrackingSchema + channelsSchema + portalSchema + portalAuthSchema + portalWebauthnSchema + milestonesSchema + iterationsSchema + contentSchema + mentionsSchema + notificationsSchema + permissionsSchema + systemSchema + userPreferencesSchema + webauthnSchema + ssoSchema + scmSchema + assetsSchema + recurringTasksSchema + jiraImportSchema + actionsSchema + emailSchema + assetReportsSchema + labelsSchema + templatesSchema + llmSchema + ldapSchema + assetActionsSchema + dailyBriefingsSchema + teamsSchema + conditionSetsSchema + approvalsSchema + integrationsSchema + authPolicySchema + pagesSchema + pageLabelsSchema + agentsSchema
 
 	if _, err := db.Exec(schema); err != nil {
 		return fmt.Errorf("failed to initialize database schema: %w", err)

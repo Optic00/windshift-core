@@ -111,6 +111,9 @@ var actionsSchemaPostgres string
 //go:embed schema/labels_postgres.sql
 var labelsSchemaPostgres string
 
+//go:embed schema/templates_postgres.sql
+var templatesSchemaPostgres string
+
 //go:embed schema/llm_postgres.sql
 var llmSchemaPostgres string
 
@@ -1338,6 +1341,7 @@ func (p *PostgresDB) getPostgresSchemaFiles() []schemaFile {
 		{"actions_postgres.sql", actionsSchemaPostgres},
 		{"asset_actions_postgres.sql", assetActionsSchemaPostgres},
 		{"labels_postgres.sql", labelsSchemaPostgres},
+		{"templates_postgres.sql", templatesSchemaPostgres},
 		{"llm_postgres.sql", llmSchemaPostgres},
 		{"ldap_postgres.sql", ldapSchemaPostgres},
 		{"daily_briefings_postgres.sql", dailyBriefingsSchemaPostgres},
