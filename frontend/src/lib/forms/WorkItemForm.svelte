@@ -1,5 +1,5 @@
 <script>
-  import { MoreHorizontal, Calendar, Flag, User, Layers, ChevronDown } from '@lucide/svelte';
+  import { MoreHorizontal, Calendar, Flag, User, Layers, ChevronDown, FileText } from '@lucide/svelte';
   import { itemTypeIconMap } from '../utils/icons.js';
   import { workItemFormStore } from '../stores/workItemFormStore.svelte.js';
   import { workspacesStore } from '../stores';
@@ -189,18 +189,23 @@
     placeholder={t('createModal.issueTitle')}
   />
 
-  <!-- Description -->
+  <!-- Description. Keyed on templateApplyNonce so applying a template body
+       (selectable pick or mandatory auto-apply) re-mounts the editor with the
+       new content — the editable Milkdown editor does not sync external
+       content changes otherwise (WI-438). -->
   <div class="min-h-[60px]">
-    <MilkdownEditor
-      bind:content={store.formData.description}
-      placeholder={t('createModal.addDescription')}
-      compact={true}
-      showToolbar={false}
-      readonly={false}
-      itemId={null}
-      deferImageUploads={true}
-      onDeferredImageUpload={(image) => store.addPendingDescriptionImage(image)}
-    />
+    {#key store.templateApplyNonce}
+      <MilkdownEditor
+        bind:content={store.formData.description}
+        placeholder={t('createModal.addDescription')}
+        compact={true}
+        showToolbar={false}
+        readonly={false}
+        itemId={null}
+        deferImageUploads={true}
+        onDeferredImageUpload={(image) => store.addPendingDescriptionImage(image)}
+      />
+    {/key}
   </div>
 
   <!-- Field Chips Row -->
@@ -222,6 +227,32 @@
           <span>{item.name}</span>
         {/snippet}
       </ChipPicker>
+    {/if}
+
+    <!-- Template Chip (WI-438). When the selected type enforces a mandatory
+         template the picker is locked (body already auto-applied); otherwise it
+         offers the selectable templates valid for the type plus globals. -->
+    {#if store.templateLocked}
+      <span
+        class="inline-flex items-center gap-1.5 px-2 py-1 rounded text-sm"
+        style="color: var(--ds-text-subtle); background-color: var(--ds-background-neutral); opacity: 0.8;"
+        title={`This item type enforces the "${store.mandatoryTemplate?.name}" template`}
+        data-testid="template-picker-locked"
+      >
+        <FileText size={14} style="flex-shrink: 0;" />
+        <span>{store.mandatoryTemplate?.name} (enforced)</span>
+      </span>
+    {:else if store.templateOptions.length >= 1}
+      <ChipPicker
+        value={store.selectedTemplateId}
+        items={store.templateOptions}
+        getValue={(tmpl) => tmpl.id}
+        getLabel={(tmpl) => tmpl.name}
+        icon={FileText}
+        placeholder={t('createModal.template')}
+        testId="template-picker"
+        onSelect={(tmpl) => store.applyTemplate(tmpl.id)}
+      />
     {/if}
 
     <!-- Priority Chip -->

@@ -745,6 +745,7 @@ export default {
     addDescription: 'Add description...',
     // Field labels
     type: 'Type',
+    template: 'Template',
     priority: 'Priority',
     noPriority: 'No priority',
     assignee: 'Assignee',

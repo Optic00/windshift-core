@@ -53,6 +53,20 @@ class WorkItemFormStore {
   availableItemTypes = $state([]);
   itemTypesLoaded = $state(false);
 
+  // === Work item templates (WI-438) ===
+  // templateOptions: selectable templates valid for the current type (type-
+  // targeted + global). mandatoryTemplate: the active mandatory template the
+  // current type enforces (or null) — when set, its body is auto-applied and
+  // the picker is locked. templateApplyNonce forces the Milkdown editor to
+  // re-mount when a body is written into formData.description (the editable
+  // editor does not sync external content changes otherwise).
+  templateOptions = $state([]);
+  mandatoryTemplate = $state(null);
+  selectedTemplateId = $state(null);
+  templatesLoading = $state(false);
+  templateApplyNonce = $state(0);
+  #templatesLoadedForKey = null;
+
   allCustomFields = $state([]);
   customFields = $state([]);
   customFieldsLoaded = $state(false);
@@ -87,6 +101,14 @@ class WorkItemFormStore {
    */
   get selectedItemType() {
     return this.availableItemTypes.find((t) => t.id === this.formData.item_type_id) || null;
+  }
+
+  /**
+   * Whether the current item type enforces a mandatory template (so the
+   * create-modal template picker is disabled and its body auto-applied).
+   */
+  get templateLocked() {
+    return !!this.mandatoryTemplate;
   }
 
   /**
@@ -306,6 +328,10 @@ class WorkItemFormStore {
     ) {
       this.formData.item_type_id = this.availableItemTypes[0].id;
     }
+
+    // Load templates for the resolved type so a mandatory template auto-applies
+    // before the create modal's editor mounts (WI-438).
+    this.loadTemplatesForCurrentType();
   }
 
   /**
@@ -434,6 +460,66 @@ class WorkItemFormStore {
   setItemType(itemTypeId) {
     this.formData.item_type_id = itemTypeId;
     this.#persistItemTypeSelection(itemTypeId);
+    this.loadTemplatesForCurrentType();
+  }
+
+  /**
+   * Load the work item templates valid for the current (workspace, item type).
+   * Populates the selectable picker options and, when the type enforces an
+   * active mandatory template, auto-applies its body into the description and
+   * locks the picker. No-op until both workspace and item type are known.
+   */
+  async loadTemplatesForCurrentType() {
+    const workspaceId = this.formData.workspace_id;
+    const itemTypeId = this.formData.item_type_id;
+    if (!workspaceId || !itemTypeId) {
+      this.templateOptions = [];
+      this.mandatoryTemplate = null;
+      this.selectedTemplateId = null;
+      this.#templatesLoadedForKey = null;
+      return;
+    }
+    const key = `${workspaceId}:${itemTypeId}`;
+    if (this.#templatesLoadedForKey === key) return;
+    this.#templatesLoadedForKey = key;
+
+    this.templatesLoading = true;
+    try {
+      const list =
+        (await api.itemTemplates.getAll({ workspace_id: workspaceId, item_type_id: itemTypeId })) ??
+        [];
+      // Guard against an out-of-order response after another type change.
+      if (`${this.formData.workspace_id}:${this.formData.item_type_id}` !== key) return;
+
+      const mandatory = list.find((t) => t.mode === 'mandatory') || null;
+      this.templateOptions = list.filter((t) => t.mode === 'selectable');
+      this.mandatoryTemplate = mandatory;
+      if (mandatory) {
+        this.formData.description = mandatory.description_body || '';
+        this.selectedTemplateId = mandatory.id;
+        this.templateApplyNonce += 1;
+      } else {
+        this.selectedTemplateId = null;
+      }
+    } catch (err) {
+      console.error('Failed to load item templates:', err);
+      this.templateOptions = [];
+      this.mandatoryTemplate = null;
+      this.#templatesLoadedForKey = null;
+    } finally {
+      this.templatesLoading = false;
+    }
+  }
+
+  /**
+   * Apply a selectable template's body into the description (from the picker).
+   */
+  applyTemplate(templateId) {
+    const tmpl = this.templateOptions.find((t) => t.id === templateId);
+    if (!tmpl) return;
+    this.formData.description = tmpl.description_body || '';
+    this.selectedTemplateId = templateId;
+    this.templateApplyNonce += 1;
   }
 
   /**
@@ -670,6 +756,13 @@ class WorkItemFormStore {
     this.screenFieldsLoadedForKey = null;
     this.storedItemTypeApplied = false;
     this.configSetDefaultApplied = false;
+
+    // Reset template state (WI-438) so a new modal doesn't inherit the prior
+    // type's picker options / mandatory lock.
+    this.templateOptions = [];
+    this.mandatoryTemplate = null;
+    this.selectedTemplateId = null;
+    this.#templatesLoadedForKey = null;
 
     // Keep loaded data (users, milestones, itemTypes, customFields, etc.)
   }
