@@ -446,16 +446,26 @@ func (s *BindingService) Create(ctx context.Context, req CreateBindingRequest) (
 // rejects duplicates, and ensures exactly one primary.
 func normalizeBindingRepos(req CreateBindingRequest) ([]models.BindingRepo, error) {
 	inputs := req.Repos
-	if len(inputs) == 0 {
-		if req.RepoSlug == "" {
-			return nil, nil // no-repo binding (fall-through to orchestrator)
-		}
+	if len(inputs) == 0 && req.RepoSlug != "" {
+		// Legacy single-repo create shape: fold the scalar fields into one
+		// primary repo input.
 		inputs = []RepoInput{{
 			RepoSlug:        req.RepoSlug,
 			RepoBaseRef:     req.RepoBaseRef,
 			SCMConnectionID: req.SCMConnectionID,
 			IsPrimary:       true,
 		}}
+	}
+	return normalizeRepoInputs(inputs)
+}
+
+// normalizeRepoInputs validates a set of repo inputs and returns the persisted
+// BindingRepo rows (exactly one primary). An empty input set is a valid
+// no-repo binding (fall-through to the orchestrator). Shared by create and
+// update (WI-449).
+func normalizeRepoInputs(inputs []RepoInput) ([]models.BindingRepo, error) {
+	if len(inputs) == 0 {
+		return nil, nil
 	}
 	if len(inputs) > maxBindingRepos {
 		return nil, ErrBindingTooManyRepos
@@ -492,6 +502,116 @@ func normalizeBindingRepos(req CreateBindingRequest) ([]models.BindingRepo, erro
 		return nil, ErrBindingPrimaryRepoRequired
 	}
 	return out, nil
+}
+
+// UpdateBindingRequest carries the editable configuration of an existing
+// binding (WI-450 functional edit). The acting service user, its kind, the
+// workspace, and the target pool are fixed at create and are NOT updatable
+// here — only the parameters an admin commonly forgets or wants to revise.
+type UpdateBindingRequest struct {
+	WorkspaceID int
+	BindingID   int
+	// Repos fully replaces the binding's repositories (WI-449).
+	Repos           []RepoInput
+	LLMConnectionID *int
+	TokenScopes     []string
+	TokenTTLMinutes int
+	MaxRunsPerDay   int
+	Instructions    string
+	// RunnerImage is presence-aware (WI-450): nil leaves the current image
+	// untouched; a non-nil value sets it ("" clears back to the default).
+	RunnerImage *string
+	SkillIDs    []int
+}
+
+// UpdateBinding edits an existing binding's mutable configuration in place,
+// validating every field exactly as Create does. Identity (acting user/kind),
+// workspace, and target pool are immutable; everything else is replaced with
+// the request's values. Returns the reloaded binding.
+func (s *BindingService) UpdateBinding(ctx context.Context, req UpdateBindingRequest) (*models.WorkspaceAgentBinding, error) {
+	binding, err := s.repo.Get(ctx, req.BindingID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrBindingNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load binding: %w", err)
+	}
+	if binding.WorkspaceID != req.WorkspaceID {
+		return nil, ErrBindingNotFound
+	}
+	if len(req.TokenScopes) > 0 {
+		if err := auth.ValidateAgentScopes(req.TokenScopes); err != nil {
+			return nil, fmt.Errorf("binding service: %w", err)
+		}
+	}
+	if req.TokenTTLMinutes > 0 && time.Duration(req.TokenTTLMinutes)*time.Minute > MaxAgentTokenTTL {
+		return nil, ErrBindingTokenTTLOverCap
+	}
+	if len(req.Instructions) > maxBindingInstructionsLen {
+		return nil, ErrBindingInstructionsTooLong
+	}
+	if len(req.SkillIDs) > 0 && s.skills == nil {
+		return nil, errors.New("binding service: skills are not configured on this server")
+	}
+	repos, err := normalizeRepoInputs(req.Repos)
+	if err != nil {
+		return nil, err
+	}
+	// LLM connection stays mandatory (a binding with no LLM can't run an agent).
+	if req.LLMConnectionID == nil {
+		return nil, ErrLLMConnectionRequired
+	}
+	if s.llmRuntime != nil {
+		if _, err := s.llmRuntime.ConnectionRuntime(ctx, *req.LLMConnectionID); err != nil {
+			return nil, ErrLLMConnectionInvalid
+		}
+	}
+	// The runner image is validated against the binding's (immutable) pool.
+	var newRunnerImage string
+	if req.RunnerImage != nil {
+		newRunnerImage, err = validateRunnerImage(*req.RunnerImage)
+		if err != nil {
+			return nil, err
+		}
+		if newRunnerImage != "" && binding.TargetPoolID == nil {
+			return nil, ErrBindingRunnerImageRequiresPool
+		}
+	}
+
+	ttl := req.TokenTTLMinutes
+	if ttl <= 0 {
+		ttl = 60 // mirror Insert's default
+	}
+	// Apply the editable fields; identity/kind/workspace/target pool untouched.
+	binding.LLMConnectionID = req.LLMConnectionID
+	// Token scopes are presence-aware: a nil slice (key omitted, as the UI does —
+	// it doesn't manage scopes) preserves the binding's existing scopes rather
+	// than clearing API-set ones; a non-nil value (incl. empty) replaces them.
+	if req.TokenScopes != nil {
+		binding.TokenScopes = req.TokenScopes
+	}
+	binding.TokenTTLMinutes = ttl
+	binding.MaxRunsPerDay = req.MaxRunsPerDay
+	binding.Instructions = req.Instructions
+	binding.Repos = repos
+	if err := s.repo.UpdateConfig(ctx, binding); err != nil {
+		return nil, err
+	}
+	if req.RunnerImage != nil {
+		if err := s.repo.UpdateRunnerImage(ctx, req.BindingID, req.WorkspaceID, newRunnerImage); err != nil {
+			return nil, err
+		}
+	}
+	if s.skills != nil {
+		if err := s.skills.ReplaceBindingSkills(ctx, req.BindingID, req.WorkspaceID, req.SkillIDs); err != nil {
+			return nil, err
+		}
+	}
+	updated, err := s.repo.Get(ctx, req.BindingID)
+	if err != nil {
+		return nil, fmt.Errorf("reload binding: %w", err)
+	}
+	return updated, nil
 }
 
 // UpdateAgentConfig rewrites a binding's prompt-shaping configuration —

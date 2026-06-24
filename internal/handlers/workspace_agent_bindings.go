@@ -300,6 +300,102 @@ func (h *WorkspaceAgentBindingHandler) Create(w http.ResponseWriter, r *http.Req
 	respondJSON(w, http.StatusCreated, h.withSkillIDs(r, toBindingResponse(binding)))
 }
 
+// updateBindingBody is the editable subset of a binding (WI-450). The acting
+// service user, its kind, the workspace, and the target pool are fixed at
+// create and intentionally absent here.
+type updateBindingBody struct {
+	Repos           []createBindingRepoBody `json:"repos,omitempty"`
+	LLMConnectionID *int                    `json:"llm_connection_id,omitempty"`
+	TokenScopes     []string                `json:"token_scopes,omitempty"`
+	TokenTTLMinutes int                     `json:"token_ttl_minutes,omitempty"`
+	MaxRunsPerDay   int                     `json:"max_runs_per_day,omitempty"`
+	Instructions    string                  `json:"instructions,omitempty"`
+	// RunnerImage is presence-aware (WI-450): nil leaves the current image
+	// untouched; a present value (incl. "") sets/clears it.
+	RunnerImage *string `json:"runner_image"`
+	SkillIDs    []int   `json:"skill_ids,omitempty"`
+}
+
+// Update edits an existing binding's mutable configuration (WI-450). Identity
+// and target pool are immutable; see updateBindingBody.
+func (h *WorkspaceAgentBindingHandler) Update(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := requireIDParam(w, r, "workspaceId")
+	if !ok {
+		return
+	}
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+	if !RequireWorkspacePermission(w, r, user.ID, workspaceID, models.PermissionWorkspaceAdmin, h.permissionService) {
+		return
+	}
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil || id <= 0 {
+		respondBadRequest(w, r, "id path param must be a positive integer")
+		return
+	}
+	var body updateBindingBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respondBadRequest(w, r, "invalid request body")
+		return
+	}
+	sanitize.Apply(&body.Instructions, sanitize.RichText)
+	repos := make([]services.RepoInput, 0, len(body.Repos))
+	for i := range body.Repos {
+		sanitize.ApplyAll(
+			sanitize.Pair{Target: &body.Repos[i].RepoSlug, Policy: sanitize.ShortIdentifier},
+			sanitize.Pair{Target: &body.Repos[i].RepoBaseRef, Policy: sanitize.ShortIdentifier},
+		)
+		repos = append(repos, services.RepoInput{
+			RepoSlug:        body.Repos[i].RepoSlug,
+			RepoBaseRef:     body.Repos[i].RepoBaseRef,
+			SCMConnectionID: body.Repos[i].SCMConnectionID,
+			IsPrimary:       body.Repos[i].IsPrimary,
+		})
+	}
+
+	binding, err := h.bindings.UpdateBinding(r.Context(), services.UpdateBindingRequest{
+		WorkspaceID:     workspaceID,
+		BindingID:       id,
+		Repos:           repos,
+		LLMConnectionID: body.LLMConnectionID,
+		TokenScopes:     body.TokenScopes,
+		TokenTTLMinutes: body.TokenTTLMinutes,
+		MaxRunsPerDay:   body.MaxRunsPerDay,
+		Instructions:    body.Instructions,
+		RunnerImage:     body.RunnerImage,
+		SkillIDs:        body.SkillIDs,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, services.ErrBindingNotFound):
+			respondNotFound(w, r, "agent binding")
+		case errors.Is(err, services.ErrLLMConnectionRequired),
+			errors.Is(err, services.ErrLLMConnectionInvalid),
+			errors.Is(err, services.ErrBindingTokenTTLOverCap),
+			errors.Is(err, services.ErrBindingRepoNeedsSCMConnection),
+			errors.Is(err, services.ErrBindingInvalidRepoSlug),
+			errors.Is(err, services.ErrBindingDuplicateRepoSlug),
+			errors.Is(err, services.ErrBindingPrimaryRepoRequired),
+			errors.Is(err, services.ErrBindingTooManyRepos),
+			errors.Is(err, services.ErrBindingRunnerImageRequiresPool),
+			errors.Is(err, services.ErrBindingInvalidRunnerImage),
+			errors.Is(err, services.ErrBindingInstructionsTooLong),
+			isSkillAttachError(err),
+			isAgentScopeError(err):
+			respondBadRequest(w, r, err.Error())
+		default:
+			respondInternalError(w, r, err)
+		}
+		return
+	}
+	h.auditor.LogWithDetails(r, user, "agent_binding.update", "workspace_agent_binding", &binding.ID, "", map[string]interface{}{
+		"workspace_id": workspaceID,
+	})
+	respondJSON(w, http.StatusOK, h.withSkillIDs(r, toBindingResponse(binding)))
+}
+
 // isSkillAttachError reports whether the error came from skill-id
 // validation during binding create/update (bad or foreign ids → 400).
 func isSkillAttachError(err error) bool {

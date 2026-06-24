@@ -216,6 +216,46 @@ func (r *WorkspaceAgentBindingRepository) UpdateInstructions(ctx context.Context
 	return nil
 }
 
+// UpdateConfig rewrites a binding's mutable configuration in place, scoped by
+// (id, workspace_id): LLM connection, token scopes/TTL, daily budget,
+// instructions, and the repository set. The acting identity, workspace, target
+// pool, and runner image are NOT touched here (identity is immutable; runner
+// image has its own presence-aware setter). The primary repo is mirrored onto
+// the deprecated scalar columns, matching Insert (WI-450).
+func (r *WorkspaceAgentBindingRepository) UpdateConfig(ctx context.Context, b *models.WorkspaceAgentBinding) error {
+	scopesJSON, err := json.Marshal(b.TokenScopes)
+	if err != nil {
+		return fmt.Errorf("marshal token scopes: %w", err)
+	}
+	repos := bindingReposToPersist(b)
+	// Re-mirror the primary onto the scalar columns (or clear them when no repo).
+	b.RepoSlug, b.RepoBaseRef, b.SCMConnectionID = "", "", nil
+	if p := primaryOf(repos); p != nil {
+		b.RepoSlug = p.RepoSlug
+		b.RepoBaseRef = p.RepoBaseRef
+		b.SCMConnectionID = p.SCMConnectionID
+	}
+	if _, err := r.db.ExecWriteContext(ctx, `
+		UPDATE workspace_agent_bindings
+		SET llm_connection_id = ?, scm_connection_id = ?, repo_slug = ?, repo_base_ref = ?,
+		    token_scopes_json = ?, token_ttl_minutes = ?, max_runs_per_day = ?,
+		    instructions = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND workspace_id = ?
+	`,
+		nullIntArg(b.LLMConnectionID), nullIntArg(b.SCMConnectionID),
+		nullStringArg(b.RepoSlug), nullStringArg(b.RepoBaseRef),
+		string(scopesJSON), b.TokenTTLMinutes, b.MaxRunsPerDay,
+		b.Instructions, b.ID, b.WorkspaceID,
+	); err != nil {
+		return fmt.Errorf("update binding config: %w", err)
+	}
+	if err := r.ReplaceBindingRepos(ctx, b.ID, repos); err != nil {
+		return fmt.Errorf("replace binding repos: %w", err)
+	}
+	b.Repos = repos
+	return nil
+}
+
 // UpdateRunnerImage rewrites a binding's custom runner image, scoped by
 // workspace. An empty image clears the override (NULL = the runner's default
 // windshift-agent image) (WI-450).

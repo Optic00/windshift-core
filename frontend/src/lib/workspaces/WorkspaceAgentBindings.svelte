@@ -413,10 +413,10 @@
     ...(runnerPools || []).map((p) => ({ value: p.id, label: `Pool: ${p.name}` })),
   ]);
 
-  // Create requires an identity + an LLM; edit (persona/skills only) is always
-  // submittable.
+  // An LLM connection is mandatory in both modes; create additionally needs an
+  // acting identity (immutable, so not required on edit).
   let canSubmit = $derived(
-    saving ? false : editingBinding ? true : !!formActingUserId && !!formLLMConnectionId
+    saving ? false : !!formLLMConnectionId && (!!editingBinding || !!formActingUserId)
   );
 
   function resetForm() {
@@ -440,12 +440,50 @@
   function openEdit(b) {
     editingBinding = b;
     resetForm();
-    // Only the persona/skills/runner image are mutable; prime them from the binding.
+    // Prime every editable field from the binding. Acting identity + target
+    // pool are shown read-only (WI-450), but primed so gating/submit work.
+    formActingUserId = b.acting_user_id ?? null;
+    formTargetPoolId = b.target_pool_id ?? null;
+    formLLMConnectionId = b.llm_connection_id ?? null;
+    formTokenTTLMinutes = b.token_ttl_minutes || 60;
+    formMaxRunsPerDay = b.max_runs_per_day || 0;
     formInstructions = b.instructions || '';
     formRunnerImage = b.runner_image || '';
-    formTargetPoolId = b.target_pool_id ?? null; // read-only here, but gates the image field
     formSkillIds = [...(b.skill_ids || [])];
+    formRepos = (b.repos || []).map((r) => ({
+      connId: r.scm_connection_id ?? null,
+      repositoryId: null, // reconciled from the slug once the connection's repos load
+      repoSlug: r.repo_slug || '',
+      repoBaseRef: r.repo_base_ref || '',
+      isPrimary: !!r.is_primary,
+    }));
     showModal = true;
+    void reconcileEditRepos();
+  }
+
+  // Resolve each primed repo row's repositoryId (for the Repository picker) by
+  // matching its slug within the connection's linked repos. The submit payload
+  // uses repoSlug regardless, so this is display-only.
+  async function reconcileEditRepos() {
+    const connIds = [...new Set(formRepos.map((r) => r.connId).filter(Boolean))];
+    await Promise.all(connIds.map(ensureLinkedRepos));
+    formRepos = formRepos.map((r) => {
+      if (r.repositoryId || !r.connId) return r;
+      const match = (linkedReposByConn[r.connId] || []).find((x) => x.repository_name === r.repoSlug);
+      return match ? { ...r, repositoryId: match.id } : r;
+    });
+  }
+
+  // The repo rows that resolved to a slug, in the create/update payload shape.
+  function buildReposPayload() {
+    return formRepos
+      .filter((r) => r.repoSlug && r.repoSlug.trim() && r.connId)
+      .map((r) => ({
+        repo_slug: r.repoSlug.trim(),
+        repo_base_ref: r.repoBaseRef.trim(),
+        scm_connection_id: r.connId,
+        is_primary: !!r.isPrimary,
+      }));
   }
 
   function closeModal() {
@@ -459,13 +497,18 @@
     saving = true;
     try {
       if (editingBinding) {
-        await agentBindings.updateAgentConfig(workspaceId, editingBinding.id, {
+        // Full edit (WI-450): everything except the acting identity + target
+        // pool. runner_image is sent for pool bindings only ('' clears it).
+        await agentBindings.update(workspaceId, editingBinding.id, {
+          repos: buildReposPayload(),
+          llm_connection_id: formLLMConnectionId,
+          token_ttl_minutes: formTokenTTLMinutes || 60,
+          max_runs_per_day: formMaxRunsPerDay || 0,
           instructions: formInstructions,
-          // Sent for pool bindings only; '' clears any override back to the default.
           runner_image: formTargetPoolId ? formRunnerImage.trim() : '',
           skill_ids: formSkillIds,
         });
-        successToast('Agent configuration saved');
+        successToast('Agent binding saved');
       } else {
         const body = {
           acting_user_id: formActingUserId,
@@ -476,16 +519,7 @@
         // A custom runner image is only honored on a pool (remote) binding.
         if (formTargetPoolId && formRunnerImage.trim()) body.runner_image = formRunnerImage.trim();
         if (formLLMConnectionId) body.llm_connection_id = formLLMConnectionId;
-        // Only rows that resolved to a repo slug are sent; the backend
-        // validates exactly one primary across them.
-        const repos = formRepos
-          .filter((r) => r.repoSlug && r.repoSlug.trim() && r.connId)
-          .map((r) => ({
-            repo_slug: r.repoSlug.trim(),
-            repo_base_ref: r.repoBaseRef.trim(),
-            scm_connection_id: r.connId,
-            is_primary: !!r.isPrimary,
-          }));
+        const repos = buildReposPayload();
         if (repos.length) body.repos = repos;
         if (formInstructions.trim()) body.instructions = formInstructions.trim();
         if (formSkillIds.length) body.skill_ids = formSkillIds;
@@ -756,91 +790,37 @@
       onclose={closeModal}
     />
     <div class="px-6 py-4" data-testid="binding-modal">
-      {#if editingBinding}
-        <!-- Immutable context for the binding being edited. -->
-        <dl class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm mb-4 p-3 rounded border" style="border-color: var(--ds-border); background-color: var(--ds-surface-raised);">
-          <div>
-            <dt class="text-xs" style="color: var(--ds-text-subtle);">Acting identity</dt>
-            <dd style="color: var(--ds-text);">{displayActingUser(editingBinding.acting_user_id)}</dd>
-          </div>
-          <div>
-            <dt class="text-xs" style="color: var(--ds-text-subtle);">Runs on</dt>
-            <dd style="color: var(--ds-text);">{displayTarget(editingBinding.target_pool_id)}</dd>
-          </div>
-          <div>
-            <dt class="text-xs" style="color: var(--ds-text-subtle);">Repo</dt>
-            <dd style="color: var(--ds-text);">{bindingReposLabel(editingBinding)}</dd>
-          </div>
-          <div>
-            <dt class="text-xs" style="color: var(--ds-text-subtle);">LLM</dt>
-            <dd style="color: var(--ds-text);">{displayLLMConnection(editingBinding.llm_connection_id)}</dd>
-          </div>
-        </dl>
-
-        <div class="space-y-3">
-          <div>
-            <Label for="binding-instructions" class="mb-1">Custom instructions (the agent's persona, appended to the standard prompt)</Label>
-            <Textarea
-              id="binding-instructions"
-              bind:value={formInstructions}
-              rows={4}
-              size="small"
-              placeholder="You are our release manager…"
-            />
-          </div>
-          {#if editingBinding?.target_pool_id}
-            <div>
-              <Label for="binding-runner-image-edit" class="mb-1">Custom runner image</Label>
-              <Input
-                id="binding-runner-image-edit"
-                dataTestid="binding-runner-image"
-                bind:value={formRunnerImage}
-                placeholder="ghcr.io/windshiftapp/windshift-agent:latest"
-              />
-              <p class="text-xs mt-1 text-[var(--ds-text-subtle)]">
-                Optional. Container image for this pool's coding-agent runs — e.g. a Node+Chrome image for Playwright e2e. Leave blank for the default agent image.
-              </p>
-            </div>
-          {/if}
-          {#if workspaceSkills.length > 0}
-            <div data-testid="binding-skills">
-              <Label class="mb-1">Skills</Label>
-              <BasePicker
-                bind:value={formSkillIds}
-                items={workspaceSkills}
-                multiple={true}
-                placeholder="Attach skills…"
-                searchFields={['name', 'description']}
-                getValue={(s) => s?.id}
-                getLabel={skillLabel}
-                itemSnippet={skillOption}
-              />
-            </div>
-          {:else}
-            <p class="text-xs" style="color: var(--ds-text-subtle);">No skills in this workspace yet — create them in the Agent skills panel below.</p>
-          {/if}
-        </div>
-      {:else if candidates.length === 0}
+      {#if !editingBinding && candidates.length === 0}
         <AlertBox variant="warning" message="No acting identities are available. Ask a global admin to create a service user (User management → Create user → Service user), enable centralized service users in Security settings, and allowlist it for this workspace." />
       {:else}
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <Label for="binding-acting-user" required class="mb-1">Acting identity</Label>
-            <UserPicker
-              bind:value={formActingUserId}
-              users={candidateUsers}
-              placeholder="Pick a service user"
-              class="w-full"
-            />
+            <Label for="binding-acting-user" required={!editingBinding} class="mb-1">Acting identity</Label>
+            {#if editingBinding}
+              <!-- Identity is fixed at create (WI-450). -->
+              <p class="text-sm py-2" style="color: var(--ds-text);" data-testid="binding-acting-user-readonly">{displayActingUser(editingBinding.acting_user_id)}</p>
+            {:else}
+              <UserPicker
+                bind:value={formActingUserId}
+                users={candidateUsers}
+                placeholder="Pick a service user"
+                class="w-full"
+              />
+            {/if}
           </div>
           <div>
             <Label for="binding-target-pool" class="mb-1">Runs on</Label>
-            <Select id="binding-target-pool" bind:value={formTargetPoolId} options={targetPoolOptions} />
-            <p class="text-xs mt-1" style="color: var(--ds-text-subtle);">
-              {runnerPools.length === 0
-                ? 'No runner pools available — runs use the local in-process runtime.'
-                : 'Local runs the agent on this server; a pool dispatches to a registered remote runner.'}
-            </p>
+            {#if editingBinding}
+              <!-- Routing (local vs pool) is fixed at create; recreate to re-route. -->
+              <p class="text-sm py-2" style="color: var(--ds-text);" data-testid="binding-target-pool-readonly">{displayTarget(editingBinding.target_pool_id)}</p>
+            {:else}
+              <Select id="binding-target-pool" bind:value={formTargetPoolId} options={targetPoolOptions} />
+              <p class="text-xs mt-1" style="color: var(--ds-text-subtle);">
+                {runnerPools.length === 0
+                  ? 'No runner pools available — runs use the local in-process runtime.'
+                  : 'Local runs the agent on this server; a pool dispatches to a registered remote runner.'}
+              </p>
+            {/if}
           </div>
           {#if formTargetPoolId}
             <div>

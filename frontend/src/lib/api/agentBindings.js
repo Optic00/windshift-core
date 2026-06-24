@@ -57,6 +57,24 @@ export const agentBindings = {
     }),
 
   /**
+   * Edit an existing binding's mutable configuration (WI-450): LLM connection,
+   * repositories, token scopes/TTL, daily budget, instructions, runner image
+   * (pool bindings), and skills. The acting service user, workspace, and target
+   * pool are fixed at create and not accepted here. runner_image is
+   * presence-aware (omit to leave untouched, "" to clear).
+   * @param {number} workspaceId
+   * @param {number} id
+   * @param {{ repos?: object[], llm_connection_id?: number, token_scopes?: string[],
+   *   token_ttl_minutes?: number, max_runs_per_day?: number, instructions?: string,
+   *   runner_image?: string, skill_ids?: number[] }} body
+   */
+  update: (workspaceId, id, body) =>
+    fetchAPI(`/workspaces/${workspaceId}/agent-bindings/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+
+  /**
    * Round-trip a prompt through the binding's LLM connection and return the
    * model's reply, plus — when the binding is repo-backed — a snapshot of the
    * cloned worktree's project root:
