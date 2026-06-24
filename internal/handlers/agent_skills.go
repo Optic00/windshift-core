@@ -34,11 +34,20 @@ func NewAgentSkillHandler(repo *repository.WorkspaceAgentSkillRepository, permis
 	return &AgentSkillHandler{repo: repo, permissionService: permissionService, auditor: auditor}
 }
 
+// maxSkillPages caps how many workspace pages a skill may reference. Each
+// referenced page's body is inlined into what `ws skill get` returns, so an
+// unbounded list is the same context-window footgun maxSkillBodyLen guards
+// against — 25 living docs is already generous for one skill.
+const maxSkillPages = 25
+
 type skillBody struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Body        string `json:"body"`
 	Enabled     *bool  `json:"enabled,omitempty"`
+	// PageIDs are the workspace pages to reference (WI-517). Full replace:
+	// the supplied set becomes the skill's references on every write.
+	PageIDs []int `json:"page_ids"`
 }
 
 func (b *skillBody) sanitize() {
@@ -60,6 +69,8 @@ func (b skillBody) validate() string {
 		return "description must be at most 500 characters (it is the prompt-index trigger, not the content)"
 	case len(b.Body) > maxSkillBodyLen:
 		return "body must be at most 64 KiB"
+	case len(b.PageIDs) > maxSkillPages:
+		return "a skill may reference at most 25 pages"
 	}
 	return ""
 }
@@ -93,6 +104,17 @@ func (h *AgentSkillHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	if skills == nil {
 		skills = []*models.WorkspaceAgentSkill{}
+	}
+	// The editor renders each skill's referenced-page chips, so include them.
+	// Skill libraries are small (per-workspace, admin-curated), so the
+	// per-skill lookup is fine.
+	for _, s := range skills {
+		refs, err := h.repo.PageRefsForSkill(r.Context(), s.ID)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return
+		}
+		s.Pages = refs
 	}
 	respondJSON(w, http.StatusOK, skills)
 }
@@ -132,6 +154,9 @@ func (h *AgentSkillHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	skill.ID = id
+	if !h.setPageRefs(w, r, skill, body.PageIDs) {
+		return
+	}
 	h.auditor.LogWithDetails(r, user, "agent_skill.create", "workspace_agent_skill", &id, "", map[string]interface{}{
 		"workspace_id": workspaceID,
 		"name":         skill.Name,
@@ -179,6 +204,9 @@ func (h *AgentSkillHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if n == 0 {
 		respondNotFound(w, r, "agent skill")
+		return
+	}
+	if !h.setPageRefs(w, r, skill, body.PageIDs) {
 		return
 	}
 	h.auditor.LogWithDetails(r, user, "agent_skill.update", "workspace_agent_skill", &id, "", map[string]interface{}{
@@ -235,5 +263,33 @@ func (h *AgentSkillHandler) Get(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+	refs, err := h.repo.PageRefsForSkill(r.Context(), skill.ID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	skill.Pages = refs
 	respondJSON(w, http.StatusOK, skill)
+}
+
+// setPageRefs replaces the skill's referenced pages (full-replace) and
+// populates skill.Pages for the response. A page id that is not a page in the
+// skill's workspace is a client error (400); anything else is a 500. Returns
+// false when it has already written an error response.
+func (h *AgentSkillHandler) setPageRefs(w http.ResponseWriter, r *http.Request, skill *models.WorkspaceAgentSkill, pageIDs []int) bool {
+	if err := h.repo.ReplaceSkillPages(r.Context(), skill.ID, skill.WorkspaceID, pageIDs); err != nil {
+		if errors.Is(err, repository.ErrSkillPageNotInWorkspace) {
+			respondBadRequest(w, r, err.Error())
+			return false
+		}
+		respondInternalError(w, r, err)
+		return false
+	}
+	refs, err := h.repo.PageRefsForSkill(r.Context(), skill.ID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return false
+	}
+	skill.Pages = refs
+	return true
 }

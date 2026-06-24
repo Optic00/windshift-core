@@ -15,6 +15,11 @@ import (
 // exists in the workspace. The handler maps it to 409.
 var ErrSkillDuplicateName = errors.New("workspace agent skill: a skill with this name already exists in this workspace")
 
+// ErrSkillPageNotInWorkspace is returned when a page id handed to
+// ReplaceSkillPages is not a page in the skill's workspace. The handler maps
+// it to 400 (client supplied a bad id), not 500.
+var ErrSkillPageNotInWorkspace = errors.New("workspace agent skill: one or more page ids do not exist in this workspace")
+
 // WorkspaceAgentSkillRepository persists the per-workspace agent-skills
 // library (WI-258) and the binding↔skill attachments.
 type WorkspaceAgentSkillRepository struct {
@@ -209,6 +214,69 @@ func (r *WorkspaceAgentSkillRepository) ReplaceBindingSkills(ctx context.Context
 		}
 	}
 	return nil
+}
+
+// ReplaceSkillPages sets the skill's referenced pages to exactly pageIDs
+// (WI-517). Every id must be a page in workspaceID — pages from another
+// workspace are rejected, so a workspace admin cannot reference a foreign
+// workspace's page by guessing ids. Mirrors ReplaceBindingSkills.
+func (r *WorkspaceAgentSkillRepository) ReplaceSkillPages(ctx context.Context, skillID, workspaceID int, pageIDs []int) error {
+	ids := uniqueInts(pageIDs)
+	if len(ids) > 0 {
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+		args := make([]any, 0, len(ids)+1)
+		args = append(args, workspaceID)
+		for _, id := range ids {
+			args = append(args, id)
+		}
+		var n int
+		//nolint:gosec // G201: placeholders is built from a fixed "?," pattern, never user input
+		if err := r.db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM pages WHERE workspace_id = ? AND id IN (`+placeholders+`)`,
+			args...).Scan(&n); err != nil {
+			return fmt.Errorf("validate page ids: %w", err)
+		}
+		if n != len(ids) {
+			return ErrSkillPageNotInWorkspace
+		}
+	}
+	if _, err := r.db.ExecWriteContext(ctx, `DELETE FROM workspace_agent_skill_pages WHERE skill_id = ?`, skillID); err != nil {
+		return fmt.Errorf("clear skill pages: %w", err)
+	}
+	for _, id := range ids {
+		if _, err := r.db.ExecWriteContext(ctx, `
+			INSERT INTO workspace_agent_skill_pages (skill_id, page_id) VALUES (?, ?)
+		`, skillID, id); err != nil {
+			return fmt.Errorf("reference page %d: %w", id, err)
+		}
+	}
+	return nil
+}
+
+// PageRefsForSkill returns the pages a skill references (id + title), title
+// order. Rows whose page was deleted are gone via the FK cascade, so this
+// never returns dangling ids.
+func (r *WorkspaceAgentSkillRepository) PageRefsForSkill(ctx context.Context, skillID int) ([]models.SkillPageReference, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT p.id, p.title
+		FROM workspace_agent_skill_pages sp
+		JOIN pages p ON p.id = sp.page_id
+		WHERE sp.skill_id = ?
+		ORDER BY p.title ASC, p.id ASC
+	`, skillID)
+	if err != nil {
+		return nil, fmt.Errorf("list skill pages: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []models.SkillPageReference
+	for rows.Next() {
+		var ref models.SkillPageReference
+		if err := rows.Scan(&ref.ID, &ref.Title); err != nil {
+			return nil, err
+		}
+		out = append(out, ref)
+	}
+	return out, rows.Err()
 }
 
 func uniqueInts(in []int) []int {

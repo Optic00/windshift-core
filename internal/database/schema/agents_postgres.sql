@@ -144,6 +144,18 @@ CREATE TABLE IF NOT EXISTS workspace_agent_binding_skills (
 CREATE INDEX IF NOT EXISTS idx_workspace_agent_binding_skills_skill
     ON workspace_agent_binding_skills(skill_id);
 
+-- Workspace agent skill pages (WI-517): see agents.sql for the design note.
+CREATE TABLE IF NOT EXISTS workspace_agent_skill_pages (
+    skill_id INTEGER NOT NULL,
+    page_id INTEGER NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (skill_id, page_id),
+    FOREIGN KEY (skill_id) REFERENCES workspace_agent_skills(id) ON DELETE CASCADE,
+    FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_workspace_agent_skill_pages_page
+    ON workspace_agent_skill_pages(page_id);
+
 -- Workspace agent binding repos (WI-449): see agents.sql for the design note.
 CREATE TABLE IF NOT EXISTS workspace_agent_binding_repos (
     id SERIAL PRIMARY KEY,

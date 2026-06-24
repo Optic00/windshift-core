@@ -162,6 +162,23 @@ CREATE TABLE IF NOT EXISTS workspace_agent_binding_skills (
 CREATE INDEX IF NOT EXISTS idx_workspace_agent_binding_skills_skill
     ON workspace_agent_binding_skills(skill_id);
 
+-- Workspace agent skill pages (WI-517): a skill may reference N workspace
+-- pages. When the agent fetches the skill body (`ws skill get <id>`) the
+-- referenced pages' markdown is inlined into the body it receives, so the
+-- curator can build a skill out of living workspace docs instead of pasting
+-- their content (which would then go stale). Page deletion cascades the row
+-- away; the skill simply stops referencing it.
+CREATE TABLE IF NOT EXISTS workspace_agent_skill_pages (
+    skill_id INTEGER NOT NULL,
+    page_id INTEGER NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (skill_id, page_id),
+    FOREIGN KEY (skill_id) REFERENCES workspace_agent_skills(id) ON DELETE CASCADE,
+    FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_workspace_agent_skill_pages_page
+    ON workspace_agent_skill_pages(page_id);
+
 -- Workspace agent binding repos (WI-449): a binding may bind N repositories so
 -- the agent gets all of them checked out (e.g. core + core-tests) and opens one
 -- PR per changed repo. Exactly one row per binding is is_primary=1 (the repo

@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 
 	"windshift/internal/database"
 	"windshift/internal/models"
@@ -17,7 +19,8 @@ import (
 // Authoring stays on the cookie-auth admin surface.
 type AgentSkillHandler struct {
 	BaseHandler
-	repo *repository.WorkspaceAgentSkillRepository
+	repo  *repository.WorkspaceAgentSkillRepository
+	pages *repository.PageRepository
 }
 
 // NewAgentSkillHandler constructs a v1 AgentSkillHandler.
@@ -25,6 +28,7 @@ func NewAgentSkillHandler(db database.Database, permissionService *services.Perm
 	return &AgentSkillHandler{
 		BaseHandler: NewBaseHandler(db, permissionService),
 		repo:        repository.NewWorkspaceAgentSkillRepository(db),
+		pages:       repository.NewPageRepository(db),
 	}
 }
 
@@ -142,8 +146,64 @@ func (h *AgentSkillHandler) Get(w http.ResponseWriter, r *http.Request) {
 		h.RespondInternalError(w, r)
 		return
 	}
+	// Inline referenced workspace pages (WI-517): a skill can be built out of
+	// living workspace docs. Rather than make the agent chase a second fetch,
+	// the referenced pages' current markdown is appended to the body it
+	// receives here — the moment of disclosure. The curator's act of
+	// referencing a page is the authorization (equivalent to pasting its text
+	// into the body), so per-page ACLs are not re-checked; we do re-scope to
+	// the skill's workspace defensively.
+	if err := h.inlineReferencedPages(r, skill, wsID); err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
 	// Disabled skills stay readable by id: a run whose prompt indexed the
 	// skill before an admin toggled it off should not get a confusing 404
 	// mid-run.
 	h.RespondOK(w, skill)
+}
+
+// inlineReferencedPages appends the markdown of each page referenced by the
+// skill (WI-517) to skill.Body under a "Referenced pages" section, in the
+// skill's page order, and records the refs on skill.Pages. A reference to a
+// page outside wsID (which the write path forbids) is skipped defensively.
+func (h *AgentSkillHandler) inlineReferencedPages(r *http.Request, skill *models.WorkspaceAgentSkill, wsID int) error {
+	refs, err := h.repo.PageRefsForSkill(r.Context(), skill.ID)
+	if err != nil {
+		return err
+	}
+	if len(refs) == 0 {
+		return nil
+	}
+	ids := make([]int, len(refs))
+	for i, ref := range refs {
+		ids[i] = ref.ID
+	}
+	pages, err := h.pages.GetByIDs(ids)
+	if err != nil {
+		return err
+	}
+	byID := make(map[int]models.Page, len(pages))
+	for _, p := range pages {
+		if p.WorkspaceID == wsID {
+			byID[p.ID] = p
+		}
+	}
+	var b strings.Builder
+	b.WriteString(skill.Body)
+	b.WriteString("\n\n---\n\n## Referenced pages\n\nWorkspace pages attached to this skill; their current content is inlined below.\n")
+	for _, ref := range refs {
+		p, ok := byID[ref.ID]
+		if !ok {
+			continue
+		}
+		title := p.Title
+		if strings.TrimSpace(title) == "" {
+			title = "(untitled)"
+		}
+		fmt.Fprintf(&b, "\n### %s\n\n%s\n", title, p.Content)
+	}
+	skill.Body = b.String()
+	skill.Pages = refs
+	return nil
 }
