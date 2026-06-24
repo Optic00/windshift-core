@@ -401,8 +401,20 @@ func (r *DockerAgentRunner) buildDockerArgs(input RunInput, envFilePath string) 
 		args = append(args, "-v", workspaceMountSpec(input.WorkspacePath))
 	}
 	args = append(args, r.ExtraArgs...)
-	args = append(args, r.Image)
+	args = append(args, r.agentImage(input))
 	return args
+}
+
+// agentImage selects the container image for this run: a per-run override
+// (input.Image, set from a binding's runner_image for pool runs — WI-450) when
+// present, else the runner's statically configured default image. The override
+// is still a coding-agent image; only the image name changes, never the
+// baseline sandbox flags or the JSONL contract.
+func (r *DockerAgentRunner) agentImage(input RunInput) string {
+	if input.Image != "" {
+		return input.Image
+	}
+	return r.Image
 }
 
 // workspaceMountSpec renders the bind-mount argument for the per-run
@@ -418,7 +430,7 @@ func workspaceMountSpec(hostPath string) string {
 // Run implements Runner. Builds docker args from the runner's static
 // config + RunInput.Env, then dispatches through AgentRunner.
 func (r *DockerAgentRunner) Run(ctx context.Context, input RunInput, emit EventSink) RunnerResult {
-	if r.Image == "" {
+	if r.agentImage(input) == "" {
 		return RunnerResult{Status: models.AgentRunStatusFailed, Error: "docker agent runner: Image is required"}
 	}
 	bin := r.DockerBinary

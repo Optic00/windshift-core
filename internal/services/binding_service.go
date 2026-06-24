@@ -163,6 +163,37 @@ var ErrBindingNotFound = errors.New("binding service: binding not found")
 // handler maps it to a 400.
 var ErrBindingInvalidPool = errors.New("binding service: target pool is not a runner pool available to this workspace")
 
+// ErrBindingRunnerImageRequiresPool is returned by Create when runner_image is
+// set on a binding with no target pool. A custom image is only honored on the
+// remote (pool) runner; the local in-process runner uses its fixed image, so
+// allowing it there would silently no-op (WI-450). The handler maps it to a 400.
+var ErrBindingRunnerImageRequiresPool = errors.New("binding service: runner_image requires a target pool (custom images run only on remote pool runners)")
+
+// ErrBindingInvalidRunnerImage is returned by Create when runner_image is not a
+// syntactically valid container image reference. The handler maps it to a 400.
+var ErrBindingInvalidRunnerImage = errors.New("binding service: runner_image is not a valid container image reference")
+
+// runnerImageRE is a permissive OCI image-reference check: an optional
+// registry host (with optional port), a path of name components, and an
+// optional :tag and/or @sha256:digest. It is deliberately strict enough to
+// reject shell metacharacters and whitespace (the value is passed as a single
+// container-runtime argument) without trying to be a full reference grammar.
+var runnerImageRE = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*(?::[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?(?:@sha256:[a-f0-9]{64})?$`)
+
+// validateRunnerImage trims and validates a custom runner image reference.
+// Returns the trimmed value and nil for an empty input (meaning "use the
+// runner's default image").
+func validateRunnerImage(image string) (string, error) {
+	image = strings.TrimSpace(image)
+	if image == "" {
+		return "", nil
+	}
+	if len(image) > 512 || !runnerImageRE.MatchString(image) {
+		return "", ErrBindingInvalidRunnerImage
+	}
+	return image, nil
+}
+
 // DefaultLLMTestPrompt is the prompt TestLLM sends when the caller supplies
 // none — short enough to be cheap, open enough to prove the model replies.
 const DefaultLLMTestPrompt = "Reply in one short sentence to confirm you are reachable."
@@ -283,7 +314,11 @@ type CreateBindingRequest struct {
 	// TargetPoolID routes this binding's runs to a remote runner_pool instead of
 	// the local in-process runner. nil = local. Validated against the pools the
 	// workspace may dispatch to.
-	TargetPoolID    *int
+	TargetPoolID *int
+	// RunnerImage overrides the coding-agent container image for this binding's
+	// remote (pool) runs. Empty = the runner's default. Only valid when
+	// TargetPoolID is set (WI-450).
+	RunnerImage     string
 	TokenScopes     []string
 	TokenTTLMinutes int
 	MaxRunsPerDay   int
@@ -363,12 +398,22 @@ func (s *BindingService) Create(ctx context.Context, req CreateBindingRequest) (
 			return nil, err
 		}
 	}
+	// A custom runner image is only honored on the remote (pool) runner, so it
+	// requires a target pool; validate its reference syntax either way (WI-450).
+	runnerImage, err := validateRunnerImage(req.RunnerImage)
+	if err != nil {
+		return nil, err
+	}
+	if runnerImage != "" && req.TargetPoolID == nil {
+		return nil, ErrBindingRunnerImageRequiresPool
+	}
 	binding := &models.WorkspaceAgentBinding{
 		WorkspaceID:     req.WorkspaceID,
 		ActingUserID:    identity.UserID,
 		ActingUserKind:  identity.Kind,
 		LLMConnectionID: req.LLMConnectionID,
 		TargetPoolID:    req.TargetPoolID,
+		RunnerImage:     runnerImage,
 		TokenScopes:     req.TokenScopes,
 		TokenTTLMinutes: req.TokenTTLMinutes,
 		MaxRunsPerDay:   req.MaxRunsPerDay,
@@ -401,16 +446,26 @@ func (s *BindingService) Create(ctx context.Context, req CreateBindingRequest) (
 // rejects duplicates, and ensures exactly one primary.
 func normalizeBindingRepos(req CreateBindingRequest) ([]models.BindingRepo, error) {
 	inputs := req.Repos
-	if len(inputs) == 0 {
-		if req.RepoSlug == "" {
-			return nil, nil // no-repo binding (fall-through to orchestrator)
-		}
+	if len(inputs) == 0 && req.RepoSlug != "" {
+		// Legacy single-repo create shape: fold the scalar fields into one
+		// primary repo input.
 		inputs = []RepoInput{{
 			RepoSlug:        req.RepoSlug,
 			RepoBaseRef:     req.RepoBaseRef,
 			SCMConnectionID: req.SCMConnectionID,
 			IsPrimary:       true,
 		}}
+	}
+	return normalizeRepoInputs(inputs)
+}
+
+// normalizeRepoInputs validates a set of repo inputs and returns the persisted
+// BindingRepo rows (exactly one primary). An empty input set is a valid
+// no-repo binding (fall-through to the orchestrator). Shared by create and
+// update (WI-449).
+func normalizeRepoInputs(inputs []RepoInput) ([]models.BindingRepo, error) {
+	if len(inputs) == 0 {
+		return nil, nil
 	}
 	if len(inputs) > maxBindingRepos {
 		return nil, ErrBindingTooManyRepos
@@ -449,12 +504,126 @@ func normalizeBindingRepos(req CreateBindingRequest) ([]models.BindingRepo, erro
 	return out, nil
 }
 
+// UpdateBindingRequest carries the editable configuration of an existing
+// binding (WI-450 functional edit). The acting service user, its kind, the
+// workspace, and the target pool are fixed at create and are NOT updatable
+// here — only the parameters an admin commonly forgets or wants to revise.
+type UpdateBindingRequest struct {
+	WorkspaceID int
+	BindingID   int
+	// Repos fully replaces the binding's repositories (WI-449).
+	Repos           []RepoInput
+	LLMConnectionID *int
+	TokenScopes     []string
+	TokenTTLMinutes int
+	MaxRunsPerDay   int
+	Instructions    string
+	// RunnerImage is presence-aware (WI-450): nil leaves the current image
+	// untouched; a non-nil value sets it ("" clears back to the default).
+	RunnerImage *string
+	SkillIDs    []int
+}
+
+// UpdateBinding edits an existing binding's mutable configuration in place,
+// validating every field exactly as Create does. Identity (acting user/kind),
+// workspace, and target pool are immutable; everything else is replaced with
+// the request's values. Returns the reloaded binding.
+func (s *BindingService) UpdateBinding(ctx context.Context, req UpdateBindingRequest) (*models.WorkspaceAgentBinding, error) {
+	binding, err := s.repo.Get(ctx, req.BindingID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrBindingNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load binding: %w", err)
+	}
+	if binding.WorkspaceID != req.WorkspaceID {
+		return nil, ErrBindingNotFound
+	}
+	if len(req.TokenScopes) > 0 {
+		if err := auth.ValidateAgentScopes(req.TokenScopes); err != nil {
+			return nil, fmt.Errorf("binding service: %w", err)
+		}
+	}
+	if req.TokenTTLMinutes > 0 && time.Duration(req.TokenTTLMinutes)*time.Minute > MaxAgentTokenTTL {
+		return nil, ErrBindingTokenTTLOverCap
+	}
+	if len(req.Instructions) > maxBindingInstructionsLen {
+		return nil, ErrBindingInstructionsTooLong
+	}
+	if len(req.SkillIDs) > 0 && s.skills == nil {
+		return nil, errors.New("binding service: skills are not configured on this server")
+	}
+	repos, err := normalizeRepoInputs(req.Repos)
+	if err != nil {
+		return nil, err
+	}
+	// LLM connection stays mandatory (a binding with no LLM can't run an agent).
+	if req.LLMConnectionID == nil {
+		return nil, ErrLLMConnectionRequired
+	}
+	if s.llmRuntime != nil {
+		if _, err := s.llmRuntime.ConnectionRuntime(ctx, *req.LLMConnectionID); err != nil {
+			return nil, ErrLLMConnectionInvalid
+		}
+	}
+	// The runner image is validated against the binding's (immutable) pool.
+	var newRunnerImage string
+	if req.RunnerImage != nil {
+		newRunnerImage, err = validateRunnerImage(*req.RunnerImage)
+		if err != nil {
+			return nil, err
+		}
+		if newRunnerImage != "" && binding.TargetPoolID == nil {
+			return nil, ErrBindingRunnerImageRequiresPool
+		}
+	}
+
+	ttl := req.TokenTTLMinutes
+	if ttl <= 0 {
+		ttl = 60 // mirror Insert's default
+	}
+	// Apply the editable fields; identity/kind/workspace/target pool untouched.
+	binding.LLMConnectionID = req.LLMConnectionID
+	// Token scopes are presence-aware: a nil slice (key omitted, as the UI does —
+	// it doesn't manage scopes) preserves the binding's existing scopes rather
+	// than clearing API-set ones; a non-nil value (incl. empty) replaces them.
+	if req.TokenScopes != nil {
+		binding.TokenScopes = req.TokenScopes
+	}
+	binding.TokenTTLMinutes = ttl
+	binding.MaxRunsPerDay = req.MaxRunsPerDay
+	binding.Instructions = req.Instructions
+	binding.Repos = repos
+	if err := s.repo.UpdateConfig(ctx, binding); err != nil {
+		return nil, err
+	}
+	if req.RunnerImage != nil {
+		if err := s.repo.UpdateRunnerImage(ctx, req.BindingID, req.WorkspaceID, newRunnerImage); err != nil {
+			return nil, err
+		}
+	}
+	if s.skills != nil {
+		if err := s.skills.ReplaceBindingSkills(ctx, req.BindingID, req.WorkspaceID, req.SkillIDs); err != nil {
+			return nil, err
+		}
+	}
+	updated, err := s.repo.Get(ctx, req.BindingID)
+	if err != nil {
+		return nil, fmt.Errorf("reload binding: %w", err)
+	}
+	return updated, nil
+}
+
 // UpdateAgentConfig rewrites a binding's prompt-shaping configuration —
 // custom instructions and skill attachments — in place (WI-258). Bindings
 // are otherwise create/delete-only; this narrow update exists so admins can
 // iterate on personas and skills without recreating the binding (which
 // would churn its id and history). Scoped by workspace.
-func (s *BindingService) UpdateAgentConfig(ctx context.Context, workspaceID, bindingID int, instructions string, skillIDs []int) error {
+// UpdateAgentConfig rewrites a binding's prompt-shaping config. runnerImage is
+// presence-aware (WI-450): nil leaves the binding's current image untouched (so
+// a client that omits the key does not clear it), while a non-nil value sets it
+// — "" clears the override back to the runner's default.
+func (s *BindingService) UpdateAgentConfig(ctx context.Context, workspaceID, bindingID int, instructions string, runnerImage *string, skillIDs []int) error {
 	if len(instructions) > maxBindingInstructionsLen {
 		return ErrBindingInstructionsTooLong
 	}
@@ -468,8 +637,27 @@ func (s *BindingService) UpdateAgentConfig(ctx context.Context, workspaceID, bin
 	if binding.WorkspaceID != workspaceID {
 		return ErrBindingNotFound
 	}
+	// Validate the runner image up front when one was supplied. A custom image
+	// is honored only on the remote (pool) runner, so it requires the binding to
+	// target a pool; the target pool is fixed at create, so the loaded binding's
+	// TargetPoolID is authoritative here (WI-450).
+	var newRunnerImage string
+	if runnerImage != nil {
+		newRunnerImage, err = validateRunnerImage(*runnerImage)
+		if err != nil {
+			return err
+		}
+		if newRunnerImage != "" && binding.TargetPoolID == nil {
+			return ErrBindingRunnerImageRequiresPool
+		}
+	}
 	if err := s.repo.UpdateInstructions(ctx, bindingID, workspaceID, instructions); err != nil {
 		return err
+	}
+	if runnerImage != nil {
+		if err := s.repo.UpdateRunnerImage(ctx, bindingID, workspaceID, newRunnerImage); err != nil {
+			return err
+		}
 	}
 	if s.skills == nil {
 		if len(skillIDs) > 0 {
@@ -944,6 +1132,9 @@ func (s *BindingService) startRunForBinding(ctx context.Context, binding *models
 			BindingID:         binding.ID,
 			TargetPoolID:      binding.TargetPoolID,
 			JobKind:           models.JobKindCodingAgent,
+			// A binding-configured custom image overrides the runner's default
+			// windshift-agent image for this pool run; empty keeps the default (WI-450).
+			JobImage:          binding.RunnerImage,
 			TriggeredByUserID: triggeredByUserID,
 			// The instruction itself is recovered + rendered into the prompt at
 			// remote claim time (ResolveRunInputs), the same place the binding

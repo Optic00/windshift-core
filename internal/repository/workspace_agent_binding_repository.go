@@ -84,15 +84,15 @@ func (r *WorkspaceAgentBindingRepository) Insert(ctx context.Context, b *models.
 	err = r.db.QueryRowContext(ctx, `
 		INSERT INTO workspace_agent_bindings
 			(workspace_id, acting_user_id, acting_user_kind, repo_slug, repo_base_ref,
-			 llm_connection_id, scm_connection_id, target_pool_id, token_scopes_json, token_ttl_minutes, max_runs_per_day, instructions, created_by_user_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 llm_connection_id, scm_connection_id, target_pool_id, token_scopes_json, token_ttl_minutes, max_runs_per_day, instructions, runner_image, created_by_user_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		RETURNING id
 	`,
 		b.WorkspaceID, b.ActingUserID, b.ActingUserKind,
 		nullStringArg(b.RepoSlug), nullStringArg(b.RepoBaseRef),
 		nullIntArg(b.LLMConnectionID), nullIntArg(b.SCMConnectionID), nullIntArg(b.TargetPoolID),
 		string(scopesJSON), b.TokenTTLMinutes, b.MaxRunsPerDay,
-		b.Instructions, b.CreatedByUserID,
+		b.Instructions, nullStringArg(b.RunnerImage), b.CreatedByUserID,
 	).Scan(&id)
 	if err != nil {
 		if database.IsUniqueConstraintError(err) {
@@ -212,6 +212,61 @@ func (r *WorkspaceAgentBindingRepository) UpdateInstructions(ctx context.Context
 	`, instructions, id, workspaceID)
 	if err != nil {
 		return fmt.Errorf("update binding instructions: %w", err)
+	}
+	return nil
+}
+
+// UpdateConfig rewrites a binding's mutable configuration in place, scoped by
+// (id, workspace_id): LLM connection, token scopes/TTL, daily budget,
+// instructions, and the repository set. The acting identity, workspace, target
+// pool, and runner image are NOT touched here (identity is immutable; runner
+// image has its own presence-aware setter). The primary repo is mirrored onto
+// the deprecated scalar columns, matching Insert (WI-450).
+func (r *WorkspaceAgentBindingRepository) UpdateConfig(ctx context.Context, b *models.WorkspaceAgentBinding) error {
+	scopesJSON, err := json.Marshal(b.TokenScopes)
+	if err != nil {
+		return fmt.Errorf("marshal token scopes: %w", err)
+	}
+	repos := bindingReposToPersist(b)
+	// Re-mirror the primary onto the scalar columns (or clear them when no repo).
+	b.RepoSlug, b.RepoBaseRef, b.SCMConnectionID = "", "", nil
+	if p := primaryOf(repos); p != nil {
+		b.RepoSlug = p.RepoSlug
+		b.RepoBaseRef = p.RepoBaseRef
+		b.SCMConnectionID = p.SCMConnectionID
+	}
+	if _, err := r.db.ExecWriteContext(ctx, `
+		UPDATE workspace_agent_bindings
+		SET llm_connection_id = ?, scm_connection_id = ?, repo_slug = ?, repo_base_ref = ?,
+		    token_scopes_json = ?, token_ttl_minutes = ?, max_runs_per_day = ?,
+		    instructions = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND workspace_id = ?
+	`,
+		nullIntArg(b.LLMConnectionID), nullIntArg(b.SCMConnectionID),
+		nullStringArg(b.RepoSlug), nullStringArg(b.RepoBaseRef),
+		string(scopesJSON), b.TokenTTLMinutes, b.MaxRunsPerDay,
+		b.Instructions, b.ID, b.WorkspaceID,
+	); err != nil {
+		return fmt.Errorf("update binding config: %w", err)
+	}
+	if err := r.ReplaceBindingRepos(ctx, b.ID, repos); err != nil {
+		return fmt.Errorf("replace binding repos: %w", err)
+	}
+	b.Repos = repos
+	return nil
+}
+
+// UpdateRunnerImage rewrites a binding's custom runner image, scoped by
+// workspace. An empty image clears the override (NULL = the runner's default
+// windshift-agent image) (WI-450).
+func (r *WorkspaceAgentBindingRepository) UpdateRunnerImage(ctx context.Context, id, workspaceID int, image string) error {
+	_, err := r.db.ExecWriteContext(ctx, `
+		UPDATE workspace_agent_bindings
+		SET runner_image = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND workspace_id = ?
+	`, nullStringArg(image), id, workspaceID)
+	if err != nil {
+		return fmt.Errorf("update binding runner image: %w", err)
 	}
 	return nil
 }
@@ -361,7 +416,7 @@ const bindingSelectSQL = `
 	       repo_slug, repo_base_ref,
 	       llm_connection_id, scm_connection_id, target_pool_id,
 	       token_scopes_json, token_ttl_minutes, max_runs_per_day,
-	       instructions, created_by_user_id, created_at, updated_at
+	       instructions, runner_image, created_by_user_id, created_at, updated_at
 	FROM workspace_agent_bindings
 `
 
@@ -379,16 +434,19 @@ func scanBindingRows(rows *sql.Rows) (*models.WorkspaceAgentBinding, error) {
 
 func scanBindingFrom(scanner bindingRowScanner) (*models.WorkspaceAgentBinding, error) {
 	b := &models.WorkspaceAgentBinding{}
-	var repoSlug, repoBaseRef sql.NullString
+	var repoSlug, repoBaseRef, runnerImage sql.NullString
 	var llmConn, scmConn, targetPool sql.NullInt64
 	var scopesJSON string
 	if err := scanner.Scan(
 		&b.ID, &b.WorkspaceID, &b.ActingUserID, &b.ActingUserKind,
 		&repoSlug, &repoBaseRef,
 		&llmConn, &scmConn, &targetPool, &scopesJSON, &b.TokenTTLMinutes, &b.MaxRunsPerDay,
-		&b.Instructions, &b.CreatedByUserID, &b.CreatedAt, &b.UpdatedAt,
+		&b.Instructions, &runnerImage, &b.CreatedByUserID, &b.CreatedAt, &b.UpdatedAt,
 	); err != nil {
 		return nil, err
+	}
+	if runnerImage.Valid {
+		b.RunnerImage = runnerImage.String
 	}
 	if repoSlug.Valid {
 		b.RepoSlug = repoSlug.String

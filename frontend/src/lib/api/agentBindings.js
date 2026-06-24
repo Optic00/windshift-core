@@ -42,13 +42,34 @@ export const agentBindings = {
   /**
    * Rewrite the binding's prompt-shaping config: custom instructions (the
    * persona appended to the run's initial prompt) + attached skill ids
-   * (WI-258). Everything else on a binding stays create/delete-only.
+   * (WI-258), plus the optional custom runner image for pool bindings (WI-450).
+   * runner_image is presence-aware: omit it to leave the current image
+   * untouched, or pass "" to clear it back to the default. Everything else on a
+   * binding stays create/delete-only.
    * @param {number} workspaceId
    * @param {number} id
-   * @param {{ instructions: string, skill_ids: number[] }} body
+   * @param {{ instructions: string, skill_ids: number[], runner_image?: string }} body
    */
   updateAgentConfig: (workspaceId, id, body) =>
     fetchAPI(`/workspaces/${workspaceId}/agent-bindings/${id}/agent-config`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+
+  /**
+   * Edit an existing binding's mutable configuration (WI-450): LLM connection,
+   * repositories, token scopes/TTL, daily budget, instructions, runner image
+   * (pool bindings), and skills. The acting service user, workspace, and target
+   * pool are fixed at create and not accepted here. runner_image is
+   * presence-aware (omit to leave untouched, "" to clear).
+   * @param {number} workspaceId
+   * @param {number} id
+   * @param {{ repos?: object[], llm_connection_id?: number, token_scopes?: string[],
+   *   token_ttl_minutes?: number, max_runs_per_day?: number, instructions?: string,
+   *   runner_image?: string, skill_ids?: number[] }} body
+   */
+  update: (workspaceId, id, body) =>
+    fetchAPI(`/workspaces/${workspaceId}/agent-bindings/${id}`, {
       method: 'PUT',
       body: JSON.stringify(body),
     }),

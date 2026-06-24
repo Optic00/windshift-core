@@ -40,6 +40,12 @@ type WorkspaceAgentBinding struct {
 	// capability (a remote pool) instead of the local in-process pool. NULL =
 	// local. The pool's per-run token + grants are derived at claim (WI-195).
 	TargetPoolID *int `json:"target_pool_id,omitempty"`
+	// RunnerImage overrides the coding-agent container image for this binding's
+	// remote (pool) runs — e.g. a Node+Chrome image for Playwright. Empty = the
+	// runner's default windshift-agent image. Only honored for pool bindings
+	// (TargetPoolID set); the local in-process runner uses its fixed image
+	// (WI-450).
+	RunnerImage string `json:"runner_image,omitempty"`
 	// Instructions is the binding's persona/specialization, appended to the
 	// run's standard initial prompt as a "Your role" section (WI-258). It
 	// never replaces the operational prompt.

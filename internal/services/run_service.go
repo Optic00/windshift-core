@@ -468,6 +468,9 @@ func (s *RunService) Start(ctx context.Context, req RunRequest) (int, error) {
 	if req.TargetPoolID != nil {
 		run.TargetPoolID = req.TargetPoolID
 		run.JobKind = req.JobKind
+		// A custom coding-agent image (or an admin container image) for a pool
+		// run; empty means the remote runner uses its default image (WI-450).
+		run.JobImage = req.JobImage
 	}
 	runID, err := s.repo.Insert(ctx, run)
 	if err != nil {
@@ -661,6 +664,9 @@ func (s *RunService) RecordFailedStart(ctx context.Context, req RunRequest, reas
 	if req.TargetPoolID != nil {
 		run.TargetPoolID = req.TargetPoolID
 		run.JobKind = req.JobKind
+		// A custom coding-agent image (or an admin container image) for a pool
+		// run; empty means the remote runner uses its default image (WI-450).
+		run.JobImage = req.JobImage
 	}
 	runID, err := s.repo.Insert(ctx, run)
 	if err != nil {

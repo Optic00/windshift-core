@@ -915,6 +915,19 @@ var Catalog = []Migration{
 		Postgres:      "ALTER TABLE workspace_agent_bindings ADD COLUMN target_pool_id INTEGER",
 	},
 	{
+		// workspace_agent_bindings.runner_image lets a remote (pool) binding run
+		// its coding-agent on a custom container image instead of the runner's
+		// fixed default windshift-agent image (WI-450) — e.g. a Node+Chrome image
+		// for Playwright e2e. NULL = the runner's default. Fresh installs get it
+		// from schema/agents{,_postgres}.sql; this upgrades existing DBs.
+		Version:       "20260623_workspace_agent_bindings_runner_image",
+		Name:          "Add runner_image to workspace_agent_bindings",
+		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('workspace_agent_bindings') WHERE name='runner_image'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_name='workspace_agent_bindings' AND column_name='runner_image'",
+		SQLite:        "ALTER TABLE workspace_agent_bindings ADD COLUMN runner_image TEXT",
+		Postgres:      "ALTER TABLE workspace_agent_bindings ADD COLUMN runner_image TEXT",
+	},
+	{
 		// Remote runner pools (Initiative WI-141). A pool is an
 		// action_capabilities row of type 'runner_pool'; these tables hang
 		// off it by soft ref (no FK), mirroring the agent-table convention.
