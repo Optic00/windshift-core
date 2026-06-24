@@ -1599,6 +1599,45 @@ var Catalog = []Migration{
 			CREATE INDEX IF NOT EXISTS idx_llm_usage_run_id ON llm_usage(run_id);
 		`,
 	},
+	{
+		// WI-517: reference-pages picker on agent skills. A skill may
+		// reference N workspace pages; their markdown is inlined into the
+		// body the agent fetches via `ws skill get`. The matching
+		// schema/{agents,agents_postgres}.sql has the table since the WI-517
+		// PR shipped the table in the fresh-install concat, but the catalog
+		// entry was never added, so existing installs (the prod DB that hit
+		// this) upgrade past the PR without the table and 500 on
+		// GET /api/workspaces/<ws>/agent-skills (list skill pages). No data
+		// to backfill; pure CREATE.
+		Version:       "20260624_workspace_agent_skill_pages",
+		Name:          "Add workspace_agent_skill_pages reference-pages table",
+		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='workspace_agent_skill_pages'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='workspace_agent_skill_pages'",
+		SQLite: `
+			CREATE TABLE IF NOT EXISTS workspace_agent_skill_pages (
+				skill_id INTEGER NOT NULL,
+				page_id INTEGER NOT NULL,
+				created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				PRIMARY KEY (skill_id, page_id),
+				FOREIGN KEY (skill_id) REFERENCES workspace_agent_skills(id) ON DELETE CASCADE,
+				FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE
+			);
+			CREATE INDEX IF NOT EXISTS idx_workspace_agent_skill_pages_page
+				ON workspace_agent_skill_pages(page_id);
+		`,
+		Postgres: `
+			CREATE TABLE IF NOT EXISTS workspace_agent_skill_pages (
+				skill_id INTEGER NOT NULL,
+				page_id INTEGER NOT NULL,
+				created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				PRIMARY KEY (skill_id, page_id),
+				FOREIGN KEY (skill_id) REFERENCES workspace_agent_skills(id) ON DELETE CASCADE,
+				FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE
+			);
+			CREATE INDEX IF NOT EXISTS idx_workspace_agent_skill_pages_page
+				ON workspace_agent_skill_pages(page_id);
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {
