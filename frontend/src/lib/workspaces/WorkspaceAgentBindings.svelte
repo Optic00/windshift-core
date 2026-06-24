@@ -863,16 +863,20 @@
         <!-- Repositories (WI-449): a binding may bind multiple repos so the
              agent checks them all out (e.g. core + core-tests) and opens one
              PR per changed repo. Exactly one is primary. -->
-        <div class="mt-4" data-testid="binding-repos-section">
+        <div class="mt-5 pt-4 border-t" style="border-color: var(--ds-border);" data-testid="binding-repos-section">
           <Label class="mb-1">Repositories</Label>
-          <p class="text-xs mb-2" style="color: var(--ds-text-subtle);">
-            Each repo's clone URL is derived from its SCM connection — the orchestrator never accepts a free-form remote URL. The primary repo's PR is the one linked to the work item.
+          <p class="text-xs mb-3" style="color: var(--ds-text-subtle);">
+            Repos the agent checks out. The primary repo's PR is the one linked to the work item.
           </p>
           {#if formRepos.length === 0}
-            <p class="text-xs mb-2" style="color: var(--ds-text-subtle);">No repositories — the binding falls through to whatever the orchestrator picks.</p>
-          {/if}
-          {#each formRepos as repo, idx (idx)}
-            <div class="group flex flex-wrap items-end gap-2 mb-2" data-testid="binding-repo-row">
+            <div class="rounded-lg border border-dashed px-4 py-6 text-center" style="border-color: var(--ds-border);">
+              <p class="text-sm mb-3" style="color: var(--ds-text-subtle);">No repositories yet — the agent uses whatever the orchestrator picks.</p>
+              <Button variant="secondary" size="small" onclick={addRepoRow} dataTestid="binding-repo-add">+ Add repository</Button>
+            </div>
+          {:else}
+            <div class="rounded-lg border divide-y divide-[var(--ds-border)]" style="border-color: var(--ds-border);">
+              {#each formRepos as repo, idx (idx)}
+                <div class="group flex flex-wrap items-end gap-2 px-3 py-3" data-testid="binding-repo-row">
               <div class="flex-1 min-w-[180px]">
                 <Label for={`binding-repo-conn-${idx}`} class="mb-1">SCM connection</Label>
                 <Select
@@ -917,11 +921,15 @@
                 <Trash2 class="w-4 h-4" style="color: var(--ds-text-danger);" />
               </Button>
             </div>
-          {/each}
-          <Button variant="secondary" size="small" onclick={addRepoRow} dataTestid="binding-repo-add">+ Add repository</Button>
+              {/each}
+            </div>
+            <div class="mt-2">
+              <Button variant="secondary" size="small" onclick={addRepoRow} dataTestid="binding-repo-add">+ Add repository</Button>
+            </div>
+          {/if}
         </div>
         <!-- Persona + skills (WI-258): appended to the run's standard prompt. -->
-        <div class="mt-4">
+        <div class="mt-5 pt-4 border-t" style="border-color: var(--ds-border);">
           <Label for="binding-instructions" class="mb-1">Custom instructions (optional persona — "You are our release manager…")</Label>
           <Textarea
             id="binding-instructions"
