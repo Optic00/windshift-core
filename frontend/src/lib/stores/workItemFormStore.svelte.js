@@ -65,7 +65,11 @@ class WorkItemFormStore {
   selectedTemplateId = $state(null);
   templatesLoading = $state(false);
   templateApplyNonce = $state(0);
-  #templatesLoadedForKey = null;
+  // Key of the (workspace:item_type) template fetch currently in flight. Used
+  // only to dedup concurrent identical fetches — NOT to permanently cache a
+  // loaded key. See loadTemplatesForCurrentType for why permanent caching is
+  // wrong here.
+  #templatesInFlightKey = null;
 
   allCustomFields = $state([]);
   customFields = $state([]);
@@ -476,12 +480,20 @@ class WorkItemFormStore {
       this.templateOptions = [];
       this.mandatoryTemplate = null;
       this.selectedTemplateId = null;
-      this.#templatesLoadedForKey = null;
+      this.#templatesInFlightKey = null;
       return;
     }
     const key = `${workspaceId}:${itemTypeId}`;
-    if (this.#templatesLoadedForKey === key) return;
-    this.#templatesLoadedForKey = key;
+    // Dedup only against a fetch already in flight for the same key — never
+    // permanently cache a resolved key. The create modal sets item_type_id
+    // several times during init (first available type → stored type → config
+    // default), so a permanent cache would record an *empty* load for a type
+    // and then refuse to re-fetch it. A mandatory template added (or any
+    // template created) for that type after init must still be picked up when
+    // the user later selects the type (WI-438); a permanent cache silently
+    // dropped it and left the picker unlocked.
+    if (this.#templatesInFlightKey === key) return;
+    this.#templatesInFlightKey = key;
 
     this.templatesLoading = true;
     try {
@@ -510,8 +522,10 @@ class WorkItemFormStore {
       console.error('Failed to load item templates:', err);
       this.templateOptions = [];
       this.mandatoryTemplate = null;
-      this.#templatesLoadedForKey = null;
     } finally {
+      // Only clear the in-flight marker if it still points at this fetch — a
+      // newer type change may already have started its own fetch.
+      if (this.#templatesInFlightKey === key) this.#templatesInFlightKey = null;
       this.templatesLoading = false;
     }
   }
@@ -767,7 +781,7 @@ class WorkItemFormStore {
     this.templateOptions = [];
     this.mandatoryTemplate = null;
     this.selectedTemplateId = null;
-    this.#templatesLoadedForKey = null;
+    this.#templatesInFlightKey = null;
 
     // Keep loaded data (users, milestones, itemTypes, customFields, etc.)
   }
