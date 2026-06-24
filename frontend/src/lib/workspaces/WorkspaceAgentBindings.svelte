@@ -782,7 +782,7 @@
 
 <!-- Add / edit binding modal. Create shows the full wiring form; edit only
      exposes the mutable persona + skills (identity/repo/LLM are fixed). -->
-<Modal isOpen={showModal} onclose={closeModal} onSubmit={submitModal} submitDisabled={!canSubmit} maxWidth="max-w-2xl">
+<Modal isOpen={showModal} onclose={closeModal} onSubmit={submitModal} submitDisabled={!canSubmit} maxWidth="max-w-4xl">
   {#snippet children(submitHint)}
     <ModalHeader
       title={editingBinding ? 'Edit binding' : 'Add agent binding'}
