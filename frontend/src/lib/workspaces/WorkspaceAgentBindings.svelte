@@ -851,10 +851,14 @@
             <Label for="binding-ttl" class="mb-1">Per-run token TTL (minutes)</Label>
             <Input id="binding-ttl" type="number" min="5" max="1440" bind:value={formTokenTTLMinutes} />
           </div>
+          <!-- Max runs / day is hidden for now but the capability is retained:
+               formMaxRunsPerDay is still primed on edit and sent in the payload,
+               so existing budgets are preserved and the field can be restored.
           <div>
             <Label for="binding-budget" class="mb-1">Max runs / day (0 = unlimited)</Label>
             <Input id="binding-budget" type="number" min="0" bind:value={formMaxRunsPerDay} />
           </div>
+          -->
         </div>
         <!-- Repositories (WI-449): a binding may bind multiple repos so the
              agent checks them all out (e.g. core + core-tests) and opens one
@@ -868,7 +872,7 @@
             <p class="text-xs mb-2" style="color: var(--ds-text-subtle);">No repositories — the binding falls through to whatever the orchestrator picks.</p>
           {/if}
           {#each formRepos as repo, idx (idx)}
-            <div class="flex flex-wrap items-end gap-2 mb-2" data-testid="binding-repo-row">
+            <div class="group flex flex-wrap items-end gap-2 mb-2" data-testid="binding-repo-row">
               <div class="flex-1 min-w-[180px]">
                 <Label for={`binding-repo-conn-${idx}`} class="mb-1">SCM connection</Label>
                 <Select
@@ -890,7 +894,7 @@
               </div>
               <div class="w-28">
                 <Label for={`binding-repo-base-${idx}`} class="mb-1">Base ref</Label>
-                <Input id={`binding-repo-base-${idx}`} value={repo.repoBaseRef} oninput={(e) => { formRepos[idx].repoBaseRef = e.currentTarget.value; }} placeholder="main" />
+                <Input id={`binding-repo-base-${idx}`} size="small" value={repo.repoBaseRef} oninput={(e) => { formRepos[idx].repoBaseRef = e.currentTarget.value; }} placeholder="main" />
               </div>
               <label class="flex items-center gap-1 text-xs pb-2" style="color: var(--ds-text-subtle);">
                 <input
@@ -902,7 +906,16 @@
                 />
                 Primary
               </label>
-              <Button variant="ghost" size="small" onclick={() => removeRepoRow(idx)} dataTestid="binding-repo-remove" class="pb-2">Remove</Button>
+              <Button
+                variant="ghost"
+                size="small"
+                onclick={() => removeRepoRow(idx)}
+                dataTestid="binding-repo-remove"
+                title="Remove repository"
+                class="pb-2 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100"
+              >
+                <Trash2 class="w-4 h-4" style="color: var(--ds-text-danger);" />
+              </Button>
             </div>
           {/each}
           <Button variant="secondary" size="small" onclick={addRepoRow} dataTestid="binding-repo-add">+ Add repository</Button>
