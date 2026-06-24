@@ -198,7 +198,7 @@
 						<Button variant="ghost" size="small" onclick={() => openEdit(provider)}>
 							<Edit2 class="w-4 h-4" />
 						</Button>
-						<Button variant="danger" size="small" icon={Trash2} title={t('common.delete')} onclick={() => deleteProvider(provider)}></Button>
+						<Button variant="danger-ghost" size="small" icon={Trash2} title={t('common.delete')} onclick={() => deleteProvider(provider)}></Button>
 					</div>
 				</div>
 			{/each}

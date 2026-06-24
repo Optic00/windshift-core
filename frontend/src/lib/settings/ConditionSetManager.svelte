@@ -179,7 +179,7 @@
               {t('common.edit')}
             </Button>
             <Button
-              variant="danger"
+              variant="danger-ghost"
               size="small"
               icon={Trash2}
               onclick={() => deleteConditionSet(cs)}

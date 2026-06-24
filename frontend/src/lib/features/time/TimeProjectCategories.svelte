@@ -232,7 +232,7 @@
               <Edit class="w-4 h-4" style="color: var(--ds-text-subtle);" />
             </button>
             <Button
-              variant="danger"
+              variant="danger-ghost"
               size="small"
               icon={Trash2}
               onclick={() => deleteCategory(category)}

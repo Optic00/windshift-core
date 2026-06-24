@@ -565,7 +565,7 @@
             <Button variant="ghost" size="sm" onclick={() => openEditModal(provider)}>
               <Edit class="w-4 h-4" />
             </Button>
-            <Button variant="danger" size="sm" icon={Trash2} title={t('common.delete')} onclick={() => deleteProvider(provider)}></Button>
+            <Button variant="danger-ghost" size="sm" icon={Trash2} title={t('common.delete')} onclick={() => deleteProvider(provider)}></Button>
           </div>
         </div>
       {/each}
