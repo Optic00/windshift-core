@@ -831,7 +831,7 @@
                     {t('common.edit')}
                   </Button>
                   <Button
-                    variant="default"
+                    variant="danger"
                     size="small"
                     icon={Trash2}
                     onclick={() => deleteConfigurationSet(configSet)}

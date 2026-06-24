@@ -114,9 +114,7 @@
                 <Pencil size={14} />
               </Button>
             {/if}
-            <Button variant="ghost" size="small" title="Delete" onclick={() => handleDelete(action)}>
-              <Trash2 size={14} class="text-danger" />
-            </Button>
+            <Button variant="danger" size="small" icon={Trash2} title="Delete" onclick={() => handleDelete(action)}></Button>
           </div>
         </div>
       {/each}
@@ -226,9 +224,5 @@
 
   :global(.text-success) {
     color: var(--ds-success);
-  }
-
-  :global(.text-danger) {
-    color: var(--ds-danger);
   }
 </style>

@@ -198,9 +198,7 @@
 						<Button variant="ghost" size="small" onclick={() => openEdit(provider)}>
 							<Edit2 class="w-4 h-4" />
 						</Button>
-						<Button variant="ghost" size="small" onclick={() => deleteProvider(provider)}>
-							<Trash2 class="w-4 h-4" style="color: var(--ds-text-danger);" />
-						</Button>
+						<Button variant="danger" size="small" icon={Trash2} title={t('common.delete')} onclick={() => deleteProvider(provider)}></Button>
 					</div>
 				</div>
 			{/each}

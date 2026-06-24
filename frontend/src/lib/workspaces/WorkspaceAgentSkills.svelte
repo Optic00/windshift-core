@@ -186,9 +186,7 @@
                 <Button size="sm" variant="ghost" onclick={() => openEdit(skill)} title="Edit skill" dataTestid="agent-skill-edit">
                   <Pencil class="w-4 h-4" />
                 </Button>
-                <Button size="sm" variant="ghost" onclick={() => openDeleteDialog(skill)} title="Delete skill" dataTestid="agent-skill-delete">
-                  <Trash2 class="w-4 h-4" style="color: var(--ds-text-danger);" />
-                </Button>
+                <Button size="sm" variant="danger" icon={Trash2} onclick={() => openDeleteDialog(skill)} title="Delete skill" dataTestid="agent-skill-delete"></Button>
               </td>
             </tr>
           {/each}

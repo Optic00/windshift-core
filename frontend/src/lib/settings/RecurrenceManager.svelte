@@ -150,7 +150,7 @@
 
           <div class="flex items-center gap-2 ml-4 flex-shrink-0">
             <Button
-              variant="default"
+              variant="danger"
               size="small"
               icon={Trash2}
               onclick={() => deleteRule(rule)}
