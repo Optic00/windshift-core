@@ -7,7 +7,7 @@
   // candidates endpoint just keeps the picker honest.
 
   import { onDestroy, onMount, untrack } from 'svelte';
-  import { Bot, FlaskConical, Loader2, Plus, Trash2, Wand2 } from '@lucide/svelte';
+  import { Bot, FlaskConical, Loader2, Pencil, Plus, Trash2 } from '@lucide/svelte';
   import { agentBindings, agentRuns, agentSkills, api } from '../api.js';
   import Panel from '../components/Panel.svelte';
   import Button from '../components/Button.svelte';
@@ -720,10 +720,10 @@
                   size="sm"
                   variant="ghost"
                   onclick={() => openEdit(b)}
-                  title="Persona & skills"
+                  title="Edit binding"
                   dataTestid="binding-edit-{b.id}"
                 >
-                  <Wand2 class="w-4 h-4" />
+                  <Pencil class="w-4 h-4" />
                 </Button>
                 <Button size="sm" variant="ghost" onclick={() => openDeleteDialog(b)} title="Remove binding">
                   <Trash2 class="w-4 h-4" style="color: var(--ds-text-danger);" />
