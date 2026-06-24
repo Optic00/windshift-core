@@ -16,8 +16,22 @@ type WorkspaceAgentSkill struct {
 	Description string `json:"description"`
 	Body        string `json:"body,omitempty"`
 	Enabled     bool   `json:"enabled"`
+	// Pages are the workspace pages referenced by this skill (WI-517). On the
+	// admin surface they round-trip so the editor can render the current
+	// selection; on the agent-facing `ws skill get` surface their markdown is
+	// inlined into Body instead. nil/omitted when the skill references none.
+	Pages []SkillPageReference `json:"pages,omitempty"`
 	// CreatedByUserID is a soft audit ref; nil when the creator was deleted.
 	CreatedByUserID *int      `json:"created_by_user_id,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+// SkillPageReference is a lightweight handle on a workspace page referenced by
+// a skill (WI-517): enough for the editor to render a chip and for the agent
+// surface to label the inlined section, without carrying the page body around
+// until it is actually needed.
+type SkillPageReference struct {
+	ID    int    `json:"id"`
+	Title string `json:"title"`
 }
