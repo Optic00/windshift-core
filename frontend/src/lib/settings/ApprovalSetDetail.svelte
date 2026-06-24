@@ -484,7 +484,7 @@
                 </div>
               </div>
               <Button
-                variant="ghost"
+                variant="danger"
                 size="small"
                 icon={Trash2}
                 onclick={(e) => { e.stopPropagation(); removeSetStatus(idx); }}
@@ -596,7 +596,7 @@
                               {step.approver_source} · {step.quorum_mode}
                             </span>
                           </div>
-                          <Button variant="ghost" size="small" icon={Trash2}
+                          <Button variant="danger" size="small" icon={Trash2}
                                   onclick={(e) => { e.stopPropagation(); removeStep(idx, sIdx); }} />
                         </button>
 

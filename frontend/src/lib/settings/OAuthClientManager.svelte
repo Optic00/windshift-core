@@ -328,9 +328,7 @@
 						<Button variant="ghost" size="small" onclick={() => openEdit(client)}>
 							<Edit2 class="w-4 h-4" />
 						</Button>
-						<Button variant="ghost" size="small" onclick={() => deleteClient(client)}>
-							<Trash2 class="w-4 h-4" style="color: var(--ds-text-danger);" />
-						</Button>
+						<Button variant="danger" size="small" icon={Trash2} title="Delete client" onclick={() => deleteClient(client)}></Button>
 					</div>
 				</div>
 			{/each}

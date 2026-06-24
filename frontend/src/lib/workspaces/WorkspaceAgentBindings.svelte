@@ -725,9 +725,7 @@
                 >
                   <Pencil class="w-4 h-4" />
                 </Button>
-                <Button size="sm" variant="ghost" onclick={() => openDeleteDialog(b)} title="Remove binding">
-                  <Trash2 class="w-4 h-4" style="color: var(--ds-text-danger);" />
-                </Button>
+                <Button size="sm" variant="danger" icon={Trash2} onclick={() => openDeleteDialog(b)} title="Remove binding"></Button>
               </td>
             </tr>
             {#if testResults[b.id]}
@@ -916,15 +914,14 @@
                 class="flex-none overflow-hidden transition-all duration-200 ease-out max-w-0 translate-x-2 opacity-0 group-hover:max-w-12 group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:max-w-12 group-focus-within:translate-x-0 group-focus-within:opacity-100"
               >
                 <Button
-                  variant="ghost"
+                  variant="danger"
                   size="small"
+                  icon={Trash2}
                   onclick={() => removeRepoRow(idx)}
                   dataTestid="binding-repo-remove"
                   title="Remove repository"
                   class="pb-2"
-                >
-                  <Trash2 class="w-4 h-4" style="color: var(--ds-text-danger);" />
-                </Button>
+                ></Button>
               </div>
             </div>
               {/each}

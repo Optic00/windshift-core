@@ -438,14 +438,13 @@
           >
             <Edit size={14} />
           </button>
-          <button
-            class="p-1.5 rounded hover:opacity-80"
-            style="color: var(--ds-text-danger);"
+          <Button
+            variant="danger"
+            size="small"
+            icon={Trash2}
             title="Delete"
             onclick={() => deleteCapability(cap)}
-          >
-            <Trash2 size={14} />
-          </button>
+          ></Button>
         </div>
       {/snippet}
     </DataTable>

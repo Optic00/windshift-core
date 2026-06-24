@@ -457,13 +457,13 @@
                         <RefreshCw class="w-4 h-4" style="color: var(--ds-text-subtle);" />
                       </button>
 
-                      <button
+                      <Button
+                        variant="danger"
+                        size="small"
+                        icon={Trash2}
                         onclick={() => deletePlugin(plugin)}
-                        class="p-2 rounded plugin-delete-btn"
                         title={t('common.delete')}
-                      >
-                        <Trash2 class="w-4 h-4" style="color: var(--ds-text-danger);" />
-                      </button>
+                      ></Button>
                     </div>
                   {/if}
                 </div>
@@ -495,9 +495,5 @@
 
   .plugin-action-btn:hover {
     background-color: var(--ds-background-neutral-hovered);
-  }
-
-  .plugin-delete-btn:hover {
-    background-color: var(--ds-background-danger-subtle);
   }
 </style>

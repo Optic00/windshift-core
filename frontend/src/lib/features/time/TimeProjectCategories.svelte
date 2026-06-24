@@ -231,13 +231,13 @@
             >
               <Edit class="w-4 h-4" style="color: var(--ds-text-subtle);" />
             </button>
-            <button
+            <Button
+              variant="danger"
+              size="small"
+              icon={Trash2}
               onclick={() => deleteCategory(category)}
-              class="p-1.5 rounded hover-danger transition-colors"
               title={t('common.delete')}
-            >
-              <Trash2 class="w-4 h-4 text-red-600" />
-            </button>
+            ></Button>
           </div>
         {/if}
       </div>

@@ -533,16 +533,13 @@
                       <!-- svelte-ignore a11y_click_events_have_key_events -->
                       <!-- svelte-ignore a11y_no_static_element_interactions -->
                       <div class="flex items-center gap-2" onclick={(e) => e.stopPropagation()}>
-                        <button
-                          class="p-1.5 rounded transition-colors"
-                          style="color: var(--ds-text-subtle);"
+                        <Button
+                          variant="danger"
+                          size="small"
+                          icon={Trash2}
                           onclick={() => removeTransitionConditions(tc.transition_id)}
                           title={t('conditionSets.removeConditions')}
-                          onmouseenter={(e) => e.currentTarget.style.color = 'var(--ds-text-danger)'}
-                          onmouseleave={(e) => e.currentTarget.style.color = 'var(--ds-text-subtle)'}
-                        >
-                          <Trash2 class="w-4 h-4" />
-                        </button>
+                        ></Button>
                       </div>
                     </div>
 
@@ -602,11 +599,9 @@
                               </div>
                               <button
                                 class="p-1 rounded transition-colors"
-                                style="color: var(--ds-text-subtle);"
+                                style="color: var(--ds-text-danger);"
                                 onclick={() => removeCondition(tc.transition_id, condIdx)}
                                 title={t('conditionSets.removeCondition')}
-                                onmouseenter={(e) => e.currentTarget.style.color = 'var(--ds-text-danger)'}
-                                onmouseleave={(e) => e.currentTarget.style.color = 'var(--ds-text-subtle)'}
                               >
                                 <Trash2 class="w-3.5 h-3.5" />
                               </button>
