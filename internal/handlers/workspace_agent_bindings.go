@@ -308,8 +308,12 @@ func isSkillAttachError(err error) bool {
 
 type updateAgentConfigBody struct {
 	Instructions string `json:"instructions"`
-	RunnerImage  string `json:"runner_image"`
-	SkillIDs     []int  `json:"skill_ids"`
+	// RunnerImage is presence-aware (WI-450): nil (key absent) leaves the
+	// binding's current image untouched, so an older client that PUTs only
+	// instructions + skill_ids does not silently clear it; a present value
+	// (including "") sets/clears it.
+	RunnerImage *string `json:"runner_image"`
+	SkillIDs    []int   `json:"skill_ids"`
 }
 
 // UpdateAgentConfig rewrites the binding's prompt-shaping configuration —

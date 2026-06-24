@@ -499,7 +499,11 @@ func normalizeBindingRepos(req CreateBindingRequest) ([]models.BindingRepo, erro
 // are otherwise create/delete-only; this narrow update exists so admins can
 // iterate on personas and skills without recreating the binding (which
 // would churn its id and history). Scoped by workspace.
-func (s *BindingService) UpdateAgentConfig(ctx context.Context, workspaceID, bindingID int, instructions, runnerImage string, skillIDs []int) error {
+// UpdateAgentConfig rewrites a binding's prompt-shaping config. runnerImage is
+// presence-aware (WI-450): nil leaves the binding's current image untouched (so
+// a client that omits the key does not clear it), while a non-nil value sets it
+// — "" clears the override back to the runner's default.
+func (s *BindingService) UpdateAgentConfig(ctx context.Context, workspaceID, bindingID int, instructions string, runnerImage *string, skillIDs []int) error {
 	if len(instructions) > maxBindingInstructionsLen {
 		return ErrBindingInstructionsTooLong
 	}
@@ -513,22 +517,27 @@ func (s *BindingService) UpdateAgentConfig(ctx context.Context, workspaceID, bin
 	if binding.WorkspaceID != workspaceID {
 		return ErrBindingNotFound
 	}
-	// A custom runner image is honored only on the remote (pool) runner, so it
-	// requires the binding to target a pool; validate its reference either way
-	// (WI-450). The target pool is fixed at create, so the loaded binding's
-	// TargetPoolID is authoritative here.
-	runnerImage, err = validateRunnerImage(runnerImage)
-	if err != nil {
-		return err
-	}
-	if runnerImage != "" && binding.TargetPoolID == nil {
-		return ErrBindingRunnerImageRequiresPool
+	// Validate the runner image up front when one was supplied. A custom image
+	// is honored only on the remote (pool) runner, so it requires the binding to
+	// target a pool; the target pool is fixed at create, so the loaded binding's
+	// TargetPoolID is authoritative here (WI-450).
+	var newRunnerImage string
+	if runnerImage != nil {
+		newRunnerImage, err = validateRunnerImage(*runnerImage)
+		if err != nil {
+			return err
+		}
+		if newRunnerImage != "" && binding.TargetPoolID == nil {
+			return ErrBindingRunnerImageRequiresPool
+		}
 	}
 	if err := s.repo.UpdateInstructions(ctx, bindingID, workspaceID, instructions); err != nil {
 		return err
 	}
-	if err := s.repo.UpdateRunnerImage(ctx, bindingID, workspaceID, runnerImage); err != nil {
-		return err
+	if runnerImage != nil {
+		if err := s.repo.UpdateRunnerImage(ctx, bindingID, workspaceID, newRunnerImage); err != nil {
+			return err
+		}
 	}
 	if s.skills == nil {
 		if len(skillIDs) > 0 {
