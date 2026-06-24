@@ -387,7 +387,7 @@
                   <Plus class="w-4 h-4 mr-1" />
                   Link Repositories
                 </Button>
-                <Button size="sm" variant="danger" icon={Trash2} title="Disconnect" onclick={() => disconnectProvider(conn)}></Button>
+                <Button size="sm" variant="danger-ghost" icon={Trash2} title="Disconnect" onclick={() => disconnectProvider(conn)}></Button>
               </div>
             </div>
 

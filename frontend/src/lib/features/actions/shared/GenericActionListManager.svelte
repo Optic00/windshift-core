@@ -114,7 +114,7 @@
                 <Pencil size={14} />
               </Button>
             {/if}
-            <Button variant="danger" size="small" icon={Trash2} title="Delete" onclick={() => handleDelete(action)}></Button>
+            <Button variant="danger-ghost" size="small" icon={Trash2} title="Delete" onclick={() => handleDelete(action)}></Button>
           </div>
         </div>
       {/each}

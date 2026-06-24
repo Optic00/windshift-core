@@ -211,7 +211,7 @@
                   <PlayCircle size={14} class="mr-1" />
                   Start Import
                 </Button>
-                <Button variant="danger" size="small" icon={Trash2} title="Delete connection" onclick={() => deleteConnection(connection.id)}></Button>
+                <Button variant="danger-ghost" size="small" icon={Trash2} title="Delete connection" onclick={() => deleteConnection(connection.id)}></Button>
               </div>
             </div>
           {/each}
@@ -321,7 +321,7 @@
                   </td>
                   <td class="py-3 px-4">
                     {#if canDeleteImportedData(job)}
-                      <Button variant="danger" size="small" icon={Trash2} onclick={() => openDeleteImportedData(job)}>
+                      <Button variant="danger-ghost" size="small" icon={Trash2} onclick={() => openDeleteImportedData(job)}>
                         Delete data
                       </Button>
                     {:else if job.status === 'data_deleted'}

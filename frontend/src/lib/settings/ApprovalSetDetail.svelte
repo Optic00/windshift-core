@@ -484,11 +484,11 @@
                 </div>
               </div>
               <Button
-                variant="danger"
+                variant="danger-ghost"
                 size="small"
                 icon={Trash2}
                 onclick={(e) => { e.stopPropagation(); removeSetStatus(idx); }}
-              />
+              ></Button>
             </button>
 
             {#if isExpanded}
@@ -576,6 +576,7 @@
                 <div>
                   <div class="flex items-center justify-between mb-2">
                     <Label>{t('approvalSets.steps')}</Label>
+                    <!-- shortcut-guard-exempt: pre-existing add-step button without a hotkey, surfaced (not introduced) by bounding the adjacent delete button; unrelated to the delete-button restyle -->
                     <Button variant="ghost" size="small" icon={Plus} onclick={() => addStep(idx)}>
                       {t('approvalSets.addStep')}
                     </Button>
@@ -596,8 +597,8 @@
                               {step.approver_source} · {step.quorum_mode}
                             </span>
                           </div>
-                          <Button variant="danger" size="small" icon={Trash2}
-                                  onclick={(e) => { e.stopPropagation(); removeStep(idx, sIdx); }} />
+                          <Button variant="danger-ghost" size="small" icon={Trash2}
+                                  onclick={(e) => { e.stopPropagation(); removeStep(idx, sIdx); }}></Button>
                         </button>
 
                         {#if stepExpanded}

@@ -308,7 +308,7 @@
           {/snippet}
           {#snippet actions(tok)}
             {#if !tok.revoked_at}
-              <Button variant="danger" size="small" icon={Trash2} title="Revoke token" onclick={() => revokeToken(tok)}></Button>
+              <Button variant="danger-ghost" size="small" icon={Trash2} title="Revoke token" onclick={() => revokeToken(tok)}></Button>
             {/if}
           {/snippet}
         </DataTable>
@@ -339,7 +339,7 @@
           {/snippet}
           {#snippet actions(inst)}
             {#if !inst.revoked_at}
-              <Button variant="danger" size="small" icon={Trash2} title="Revoke runner" onclick={() => revokeInstance(inst)}></Button>
+              <Button variant="danger-ghost" size="small" icon={Trash2} title="Revoke runner" onclick={() => revokeInstance(inst)}></Button>
             {/if}
           {/snippet}
         </DataTable>

@@ -439,7 +439,7 @@
             <Edit size={14} />
           </button>
           <Button
-            variant="danger"
+            variant="danger-ghost"
             size="small"
             icon={Trash2}
             title="Delete"

@@ -534,7 +534,7 @@
                       <!-- svelte-ignore a11y_no_static_element_interactions -->
                       <div class="flex items-center gap-2" onclick={(e) => e.stopPropagation()}>
                         <Button
-                          variant="danger"
+                          variant="danger-ghost"
                           size="small"
                           icon={Trash2}
                           onclick={() => removeTransitionConditions(tc.transition_id)}

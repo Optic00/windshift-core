@@ -385,7 +385,7 @@
 										</div>
 										{#if !member.ldap_sync_enabled}
 											<Button
-												variant="danger"
+												variant="danger-ghost"
 												size="sm"
 												icon={UserMinus}
 												onclick={() => removeMember(member.user_id)}
