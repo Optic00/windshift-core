@@ -910,16 +910,22 @@
                 />
                 Primary
               </label>
-              <Button
-                variant="ghost"
-                size="small"
-                onclick={() => removeRepoRow(idx)}
-                dataTestid="binding-repo-remove"
-                title="Remove repository"
-                class="pb-2 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100"
+              <!-- Trash collapses to zero width when idle so the fields use the
+                   row's full width, then slides in from the right on hover/focus. -->
+              <div
+                class="flex-none overflow-hidden transition-all duration-200 ease-out max-w-0 translate-x-2 opacity-0 group-hover:max-w-12 group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:max-w-12 group-focus-within:translate-x-0 group-focus-within:opacity-100"
               >
-                <Trash2 class="w-4 h-4" style="color: var(--ds-text-danger);" />
-              </Button>
+                <Button
+                  variant="ghost"
+                  size="small"
+                  onclick={() => removeRepoRow(idx)}
+                  dataTestid="binding-repo-remove"
+                  title="Remove repository"
+                  class="pb-2"
+                >
+                  <Trash2 class="w-4 h-4" style="color: var(--ds-text-danger);" />
+                </Button>
+              </div>
             </div>
               {/each}
             </div>
