@@ -1,9 +1,10 @@
 <script>
-  import { Heart, Users, Zap } from '@lucide/svelte';
+  import { Scale } from '@lucide/svelte';
+  import { IconBrandGithub as Github } from '@tabler/icons-svelte-runes';
   import Button from '../components/Button.svelte';
+  import { navigate } from '../router.js';
   import { versionLabel } from '../version.js';
   import { t } from '../stores/i18n.svelte.js';
-    import { IconClock, IconBrandGithub as Github } from '@tabler/icons-svelte-runes';
 
   let { version = versionLabel } = $props();
 </script>
@@ -85,6 +86,14 @@
             icon={Github}
           >
             {t('about.reportIssues')}
+          </Button>
+          <Button
+            onclick={() => navigate('/licenses')}
+            variant="default"
+            size="medium"
+            icon={Scale}
+          >
+            Licenses
           </Button>
           <Button
             onclick={() => window.open('https://windshift.sh/docs/01-getting-started/01-introduction', '_blank')}

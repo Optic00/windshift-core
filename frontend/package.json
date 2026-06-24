@@ -23,6 +23,7 @@
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "licenses:generate": "node scripts/generate-license-manifest.mjs",
     "typecheck": "svelte-check --threshold error",
     "tauri:dev": "cd ../../desktop && ./build.sh && cargo tauri dev",
     "tauri:build": "cd ../../desktop && ./build.sh --all"

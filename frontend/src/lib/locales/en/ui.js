@@ -549,6 +549,7 @@ export default {
     platformName: 'Windshift Work Management Platform',
     aboutWindshift: 'About Windshift',
     apiReference: 'API reference',
+    licenses: 'Licenses',
     reportProblem: 'Report a problem',
   },
 };

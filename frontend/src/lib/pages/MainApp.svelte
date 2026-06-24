@@ -198,6 +198,7 @@
     'command-palette': () => import('../layout/CommandPalette.svelte'),
     'create-modal': () => import('../dialogs/CreateModal.svelte'),
     'homepage': () => import('./Homepage.svelte'),
+    'licenses': () => import('./Licenses.svelte'),
     'item-detail': () => import('../features/items/ItemDetail.svelte'),
     'personal-task-detail': () => import('../features/personal/PersonalTaskDetail.svelte'),
     'workspace-detail': () => import('../workspaces/WorkspaceWelcome.svelte'),
@@ -468,6 +469,11 @@
     'homepage': {
       loadingMsg: 'Loading Homepage...',
       errorMsg: 'Failed to load Homepage',
+      wrapper: 'surface-full'
+    },
+    'licenses': {
+      loadingMsg: 'Loading Licenses...',
+      errorMsg: 'Failed to load Licenses',
       wrapper: 'surface-full'
     },
     'item-detail': {

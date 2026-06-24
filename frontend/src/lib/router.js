@@ -148,6 +148,7 @@ const routes = {
   '/forms/:slug': 'public-form',
   '/set-password/:token': 'set-password',
   '/about': 'about',
+  '/licenses': 'licenses',
   // Mobile PWA surface (phone-focused shell, see lib/mobile/). The literal
   // '/m/personal' etc. must precede '/m/items/:id' so they win the
   // sequential-iteration match in updateRoute().
