@@ -878,7 +878,7 @@
               {#each formRepos as repo, idx (idx)}
                 <div class="group flex flex-wrap items-end gap-2 px-3 py-3" data-testid="binding-repo-row">
               <div class="flex-1 min-w-[180px]">
-                <Label for={`binding-repo-conn-${idx}`} class="mb-1">SCM connection</Label>
+                {#if idx === 0}<Label for={`binding-repo-conn-${idx}`} class="mb-1">SCM connection</Label>{/if}
                 <Select
                   id={`binding-repo-conn-${idx}`}
                   value={repo.connId}
@@ -887,7 +887,7 @@
                 />
               </div>
               <div class="flex-1 min-w-[180px]">
-                <Label for={`binding-repo-sel-${idx}`} class="mb-1">Repository</Label>
+                {#if idx === 0}<Label for={`binding-repo-sel-${idx}`} class="mb-1">Repository</Label>{/if}
                 <Select
                   id={`binding-repo-sel-${idx}`}
                   value={repo.repositoryId}
@@ -897,7 +897,7 @@
                 />
               </div>
               <div class="w-28">
-                <Label for={`binding-repo-base-${idx}`} class="mb-1">Base ref</Label>
+                {#if idx === 0}<Label for={`binding-repo-base-${idx}`} class="mb-1">Base ref</Label>{/if}
                 <Input id={`binding-repo-base-${idx}`} size="small" value={repo.repoBaseRef} oninput={(e) => { formRepos[idx].repoBaseRef = e.currentTarget.value; }} placeholder="main" />
               </div>
               <label class="flex items-center gap-1 text-xs pb-2" style="color: var(--ds-text-subtle);">
