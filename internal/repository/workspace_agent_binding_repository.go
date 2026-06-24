@@ -216,6 +216,21 @@ func (r *WorkspaceAgentBindingRepository) UpdateInstructions(ctx context.Context
 	return nil
 }
 
+// UpdateRunnerImage rewrites a binding's custom runner image, scoped by
+// workspace. An empty image clears the override (NULL = the runner's default
+// windshift-agent image) (WI-450).
+func (r *WorkspaceAgentBindingRepository) UpdateRunnerImage(ctx context.Context, id, workspaceID int, image string) error {
+	_, err := r.db.ExecWriteContext(ctx, `
+		UPDATE workspace_agent_bindings
+		SET runner_image = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND workspace_id = ?
+	`, nullStringArg(image), id, workspaceID)
+	if err != nil {
+		return fmt.Errorf("update binding runner image: %w", err)
+	}
+	return nil
+}
+
 // Delete removes a binding by (id, workspace_id). Returns the number of
 // rows affected so the handler can distinguish "deleted" from "no such
 // binding (or wrong workspace)". The workspace filter is required: a

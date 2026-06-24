@@ -52,6 +52,10 @@
   let editingBinding = $state(null);
   let formActingUserId = $state(null);
   let formTargetPoolId = $state(null); // null = local in-process runtime
+  // Custom coding-agent image for this binding's remote (pool) runs; '' = the
+  // runner's default windshift-agent image. Only meaningful when a pool is
+  // selected (WI-450).
+  let formRunnerImage = $state('');
   // A binding may bind multiple repos (WI-449), each under its own SCM
   // connection. Exactly one row is primary (its PR links to the work item).
   // Repo slugs are never typed by hand: each is derived from the repository
@@ -423,6 +427,7 @@
     formTokenTTLMinutes = 60;
     formMaxRunsPerDay = 0;
     formInstructions = '';
+    formRunnerImage = '';
     formSkillIds = [];
   }
 
@@ -435,8 +440,10 @@
   function openEdit(b) {
     editingBinding = b;
     resetForm();
-    // Only the persona/skills are mutable; prime them from the binding.
+    // Only the persona/skills/runner image are mutable; prime them from the binding.
     formInstructions = b.instructions || '';
+    formRunnerImage = b.runner_image || '';
+    formTargetPoolId = b.target_pool_id ?? null; // read-only here, but gates the image field
     formSkillIds = [...(b.skill_ids || [])];
     showModal = true;
   }
@@ -454,6 +461,8 @@
       if (editingBinding) {
         await agentBindings.updateAgentConfig(workspaceId, editingBinding.id, {
           instructions: formInstructions,
+          // Sent for pool bindings only; '' clears any override back to the default.
+          runner_image: formTargetPoolId ? formRunnerImage.trim() : '',
           skill_ids: formSkillIds,
         });
         successToast('Agent configuration saved');
@@ -464,6 +473,8 @@
           max_runs_per_day: formMaxRunsPerDay || 0,
         };
         if (formTargetPoolId) body.target_pool_id = formTargetPoolId;
+        // A custom runner image is only honored on a pool (remote) binding.
+        if (formTargetPoolId && formRunnerImage.trim()) body.runner_image = formRunnerImage.trim();
         if (formLLMConnectionId) body.llm_connection_id = formLLMConnectionId;
         // Only rows that resolved to a repo slug are sent; the backend
         // validates exactly one primary across them.
@@ -777,6 +788,20 @@
               placeholder="You are our release manager…"
             />
           </div>
+          {#if editingBinding?.target_pool_id}
+            <div>
+              <Label for="binding-runner-image-edit" class="mb-1">Custom runner image</Label>
+              <Input
+                id="binding-runner-image-edit"
+                dataTestid="binding-runner-image"
+                bind:value={formRunnerImage}
+                placeholder="ghcr.io/windshiftapp/windshift-agent:latest"
+              />
+              <p class="text-xs mt-1 text-[var(--ds-text-subtle)]">
+                Optional. Container image for this pool's coding-agent runs — e.g. a Node+Chrome image for Playwright e2e. Leave blank for the default agent image.
+              </p>
+            </div>
+          {/if}
           {#if workspaceSkills.length > 0}
             <div data-testid="binding-skills">
               <Label class="mb-1">Skills</Label>
@@ -817,6 +842,20 @@
                 : 'Local runs the agent on this server; a pool dispatches to a registered remote runner.'}
             </p>
           </div>
+          {#if formTargetPoolId}
+            <div>
+              <Label for="binding-runner-image" class="mb-1">Custom runner image</Label>
+              <Input
+                id="binding-runner-image"
+                dataTestid="binding-runner-image"
+                bind:value={formRunnerImage}
+                placeholder="ghcr.io/windshiftapp/windshift-agent:latest"
+              />
+              <p class="text-xs mt-1 text-[var(--ds-text-subtle)]">
+                Optional. Container image for this pool's coding-agent runs — e.g. a Node+Chrome image for Playwright e2e. Leave blank for the default agent image.
+              </p>
+            </div>
+          {/if}
           <div>
             <Label for="binding-llm" required class="mb-1">LLM connection</Label>
             <Select id="binding-llm" bind:value={formLLMConnectionId} options={llmOptions} />

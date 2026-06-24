@@ -308,6 +308,7 @@ func isSkillAttachError(err error) bool {
 
 type updateAgentConfigBody struct {
 	Instructions string `json:"instructions"`
+	RunnerImage  string `json:"runner_image"`
 	SkillIDs     []int  `json:"skill_ids"`
 }
 
@@ -338,11 +339,14 @@ func (h *WorkspaceAgentBindingHandler) UpdateAgentConfig(w http.ResponseWriter, 
 		return
 	}
 	sanitize.Apply(&body.Instructions, sanitize.RichText)
-	if err := h.bindings.UpdateAgentConfig(r.Context(), workspaceID, id, body.Instructions, body.SkillIDs); err != nil {
+	if err := h.bindings.UpdateAgentConfig(r.Context(), workspaceID, id, body.Instructions, body.RunnerImage, body.SkillIDs); err != nil {
 		switch {
 		case errors.Is(err, services.ErrBindingNotFound):
 			respondNotFound(w, r, "agent binding")
-		case errors.Is(err, services.ErrBindingInstructionsTooLong), isSkillAttachError(err):
+		case errors.Is(err, services.ErrBindingInstructionsTooLong),
+			errors.Is(err, services.ErrBindingRunnerImageRequiresPool),
+			errors.Is(err, services.ErrBindingInvalidRunnerImage),
+			isSkillAttachError(err):
 			respondBadRequest(w, r, err.Error())
 		default:
 			respondInternalError(w, r, err)
