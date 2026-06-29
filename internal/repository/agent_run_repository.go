@@ -246,11 +246,11 @@ func (r *AgentRunRepository) MarkRunningIfQueued(ctx context.Context, id int, co
 }
 
 // CancelQueued atomically cancels a run that is still queued, using the same
-// status-guarded CAS as ClaimQueued / FinalizeRunning: the UPDATE only matches
+// status-guarded CAS as ClaimQueuedForRunner / FinalizeRunning: the UPDATE only matches
 // while status is 'queued', so it can never race a claim — either this wins
-// and the run is terminal before anyone executes it (ClaimQueued's own CAS
-// then skips the row), or a claim won first, zero rows match, and the caller
-// falls through to the claimed-run cancel paths. Reports whether the
+// and the run is terminal before anyone executes it (ClaimQueuedForRunner's
+// own CAS then skips the row), or a claim won first, zero rows match, and the
+// caller falls through to the claimed-run cancel paths. Reports whether the
 // transition happened (WI-341).
 func (r *AgentRunRepository) CancelQueued(ctx context.Context, id int, now time.Time) (transitioned bool, err error) {
 	res, err := r.db.ExecWriteContext(ctx, `
@@ -271,18 +271,22 @@ func (r *AgentRunRepository) CancelQueued(ctx context.Context, id int, now time.
 	return n > 0, nil
 }
 
-// ClaimQueued atomically claims the oldest queued run targeted at the given
-// pool, transitioning it queued→running and stamping the claiming runner +
-// started_at. It is the DB-as-queue primitive a remote runner polls: the
-// agent_runs table itself is the queue (Initiative WI-141). Returns
-// (nil, nil) when no queued run is available for the pool.
+// ClaimQueuedForRunner atomically claims the oldest queued run targeted at the
+// given pool, transitioning it queued→running and stamping the claiming runner
+// (nextRunnerID) + started_at. It is the DB-as-queue primitive a remote runner
+// polls: the agent_runs table itself is the queue (Initiative WI-141).
 //
-// Atomicity uses the same status-guarded CAS as MarkRunning: pick a
-// candidate, then UPDATE ... WHERE id=? AND status='queued'. If a racing
-// runner won the row first, the guarded update affects zero rows and we
-// retry with the next candidate. This needs no FOR UPDATE / SKIP LOCKED, so
-// it behaves identically on SQLite and Postgres.
-func (r *AgentRunRepository) ClaimQueued(ctx context.Context, poolID, runnerID int, now time.Time) (*models.AgentRun, error) {
+// Which runner gets the next queued run is decided by the caller's round-robin
+// (RunnerRegistryService.NextRunner, WI-514), not by poll timing; this method
+// just executes the assignment for the chosen runner. The pool is still served
+// in FIFO order, since every runner is offered the head of the same queue.
+//
+// Atomicity uses the same status-guarded CAS as MarkRunning: pick a candidate,
+// then UPDATE ... WHERE id=? AND status='queued'. If a racing runner won the
+// row first, the guarded update affects zero rows and we retry with the next
+// candidate. This needs no FOR UPDATE / SKIP LOCKED, so it behaves identically
+// on SQLite and Postgres. Returns (nil, nil) when no queued run is available.
+func (r *AgentRunRepository) ClaimQueuedForRunner(ctx context.Context, poolID, nextRunnerID int, now time.Time) (*models.AgentRun, error) {
 	const maxAttempts = 16
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		row := r.db.QueryRowContext(ctx, `

@@ -227,6 +227,36 @@ func (r *RunnerRepository) RevokeStaleInstances(ctx context.Context, staleBefore
 	return int(n), nil
 }
 
+// ListLiveInstancesForPool returns the pool's active runners with a fresh
+// heartbeat (at or after freshSince; a never-heartbeated instance counts as
+// live only within its registration grace window), oldest-registered first
+// so round-robin (WI-514) starts with the longest-waiting runner. Returned
+// ordered by registered_at, id (both ASC) for a stable turn. Callers that
+// only need the count should prefer CountLiveInstancesForPool.
+func (r *RunnerRepository) ListLiveInstancesForPool(ctx context.Context, poolID int, freshSince time.Time) ([]*models.RunnerInstance, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, pool_capability_id, name, status, registered_at, last_heartbeat_at, revoked_at
+		FROM runner_instances
+		WHERE pool_capability_id = ? AND status = ?
+		  AND ((last_heartbeat_at IS NOT NULL AND last_heartbeat_at >= ?)
+		    OR (last_heartbeat_at IS NULL AND registered_at >= ?))
+		ORDER BY registered_at ASC, id ASC
+	`, poolID, models.RunnerInstanceStatusActive, freshSince, freshSince)
+	if err != nil {
+		return nil, fmt.Errorf("list live instances for pool: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*models.RunnerInstance
+	for rows.Next() {
+		inst, err := scanInstance(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan live runner instance: %w", err)
+		}
+		out = append(out, inst)
+	}
+	return out, rows.Err()
+}
+
 // CountLiveInstancesForPool counts the pool's active runners with a fresh
 // heartbeat (at or after freshSince; a never-heartbeated instance counts as
 // live only within its registration grace window). Observability companion

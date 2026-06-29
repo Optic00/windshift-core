@@ -816,7 +816,7 @@ func applyLLMProxyEnv(env map[string]string, grants *models.RunGrants, runID int
 }
 
 // FailRemoteClaim marks a just-claimed remote run failed when claim enrichment
-// could not complete (e.g. PrepareRemoteClaim errored after ClaimQueued already
+// could not complete (e.g. PrepareRemoteClaim errored after ClaimQueuedForRunner already
 // moved the run to running). Without this the run would sit in `running` with no
 // token or grants, holding a pool slot indefinitely (WI-238 security Phase 8).
 // CAS-guarded via FinalizeRunning so it never overwrites a run that already

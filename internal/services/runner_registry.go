@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"windshift/internal/models"
@@ -30,6 +31,12 @@ import (
 type RunnerRegistryService struct {
 	repo *repository.RunnerRepository
 	now  func() time.Time
+
+	// nextRunner cursor: pool → offset into the live-runner list. Guards the
+	// round-robin assignment (WI-514) so every live runner gets a turn before
+	// any is offered work twice. Read/modified under nextRunnerMu.
+	nextRunnerMu sync.Mutex
+	nextRunner   map[int]int
 }
 
 // NewRunnerRegistryService constructs the service.
@@ -37,7 +44,7 @@ func NewRunnerRegistryService(repo *repository.RunnerRepository, now func() time
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return &RunnerRegistryService{repo: repo, now: now}
+	return &RunnerRegistryService{repo: repo, now: now, nextRunner: map[int]int{}}
 }
 
 const (
@@ -200,3 +207,30 @@ func hashRunnerToken(full string) string {
 	sum := sha256.Sum256([]byte(full))
 	return hex.EncodeToString(sum[:])
 }
+
+// NextRunner picks the live runner in poolID whose turn it is under round-robin
+// (WI-514) and rotates the cursor so the next call yields a different one.
+// Candidates are the pool's live runners (fresh heartbeat); offset indexes
+// into them oldest-registered-first (ListLiveInstancesForPool), so the turn
+// order is stable across calls: A, B, A, B, …. Returns ErrNoLiveRunner when no
+// live runner is registered for the pool. The lock scope is deliberately
+// tiny (query + cursor advance): it serializes cursor rotation, not the claim.
+func (s *RunnerRegistryService) NextRunner(ctx context.Context, poolID int) (*models.RunnerInstance, error) {
+	freshSince := s.now().Add(-models.RunnerLivenessWindow)
+	live, err := s.repo.ListLiveInstancesForPool(ctx, poolID, freshSince)
+	if err != nil {
+		return nil, fmt.Errorf("next runner: list live: %w", err)
+	}
+	if len(live) == 0 {
+		return nil, ErrNoLiveRunner
+	}
+	s.nextRunnerMu.Lock()
+	offset := s.nextRunner[poolID] % len(live)
+	s.nextRunner[poolID] = offset + 1
+	s.nextRunnerMu.Unlock()
+	return live[offset], nil
+}
+
+// ErrNoLiveRunner is returned by NextRunner when no live runner is
+// registered for the pool (none with a heartbeat within the liveness window).
+var ErrNoLiveRunner = errors.New("runner registry: no live runner for pool")

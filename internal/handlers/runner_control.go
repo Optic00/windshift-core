@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -124,11 +125,46 @@ func (h *RunnerControlHandler) Claim(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	run, err := h.runs.ClaimQueued(r.Context(), inst.PoolCapabilityID, inst.ID, h.now())
+	// Round-robin assignment (WI-514): the server, not the runner, decides
+	// which live runner gets the next run. The pull-based model let the
+	// most-recently-registered runner always win the poll, so the last runner
+	// added was effectively the only one used. NextRunner rotates through
+	// the pool's live runners so each gets a turn before any repeats. Only
+	// "fair" runs — those for which the round-robin picks THIS caller — are
+	// handed out; an out-of-turn runner gets nothing (200, job null) and the
+	// chosen runner picks the run up on its own next poll.
+	//
+	// Flow: nextRunner = the runner whose turn it is. If that is the caller,
+	// assign the next queued run to it and rotate. Otherwise (caller is
+	// out of turn) return job=null; if the chosen runner is offline by the
+	// next tick, NextRunner will have moved past it (offline runners aren't
+	// returned by ListLiveInstancesForPool), so the turn isn't stuck.
+	next, err := h.registry.NextRunner(r.Context(), inst.PoolCapabilityID)
 	if err != nil {
+		if errors.Is(err, services.ErrNoLiveRunner) {
+			// No live runner can take work (pool empty, or all stale).
+			// Fail closed: don't hand the run to a caller the reaper is
+			// about to revoke.
+			respondJSONOK(w, services.ClaimResponse{Job: nil})
+			return
+		}
 		respondInternalError(w, r, err)
 		return
 	}
+	var run *models.AgentRun
+	if next.ID == inst.ID {
+		// This runner's turn: assign the next queued run to it. NextRunner
+		// already rotated, so a concurrent claimer is offered the next runner.
+		// A nil run means the queue was drained between NextRunner and the
+		// claim — the turn is consumed and the caller idles until more work.
+		run, err = h.runs.ClaimQueuedForRunner(r.Context(), inst.PoolCapabilityID, inst.ID, h.now())
+		if err != nil {
+			respondInternalError(w, r, err)
+			return
+		}
+	}
+	// next.ID != inst.ID: not this runner's turn. The job is offered to the
+	// chosen runner on its own next poll; the caller idles this cycle.
 	if run == nil {
 		respondJSONOK(w, services.ClaimResponse{Job: nil})
 		return
@@ -155,7 +191,7 @@ func (h *RunnerControlHandler) Claim(w http.ResponseWriter, r *http.Request) {
 	if h.runSvc != nil {
 		spec, err := h.runSvc.PrepareRemoteClaim(r.Context(), run)
 		if err != nil {
-			// ClaimQueued already moved the run to running; if enrichment fails
+			// ClaimQueuedForRunner already moved the run to running; if enrichment fails
 			// we must not leave it stranded there with no token/grants holding a
 			// pool slot. Fail it so the slot frees up (WI-238 Phase 8).
 			h.runSvc.FailRemoteClaim(r.Context(), run.ID, err.Error())

@@ -286,8 +286,8 @@ func (h *AgentRunHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 	}
 	// Queued runs have no owner yet — neither the remote heartbeat flag nor
 	// the local in-process registry knows them — so cancel them with a
-	// queued→canceled CAS on the row itself (WI-341). ClaimQueued and the
-	// in-process consumer both CAS on status='queued', so whichever side wins
+	// queued→canceled CAS on the row itself (WI-341). ClaimQueuedForRunner
+	// and the in-process consumer both CAS on status='queued', so whichever side wins
 	// this race the run executes at most once: either it is terminal before
 	// any claim, or a claim won first and we fall through to the claimed-run
 	// paths below.
