@@ -128,6 +128,29 @@ export function safeHref(url: string | null | undefined): string {
 }
 
 /**
+ * Returns a same-origin relative path safe for post-auth redirects, or an empty
+ * string if the candidate should be dropped. Mirrors the backend
+ * `isValidRedirectURI` rules: must start with `/`, must not be protocol- or
+ * backslash-relative, and must not contain backslashes, tab/newline controls, or
+ * `@` userinfo-style confusion.
+ */
+export function safeRelativeRedirectPath(uri: string | null | undefined): string {
+  if (!uri) return '';
+  const trimmed = String(uri).trim();
+  if (
+    !trimmed.startsWith('/') ||
+    trimmed.startsWith('//') ||
+    trimmed.startsWith('/\\') ||
+    trimmed.includes('\\') ||
+    trimmed.includes('@') ||
+    /[\t\n\r]/.test(trimmed)
+  ) {
+    return '';
+  }
+  return trimmed;
+}
+
+/**
  * Returns a value safe to interpolate into a CSS `url(...)` literal in an
  * inline `style` attribute, or `null` if the input is not a plain http(s) /
  * same-origin URL. Rejects characters that could break out of the `url()`

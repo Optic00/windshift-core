@@ -1,3 +1,4 @@
+import { safeRelativeRedirectPath } from '../utils/sanitize';
 import { fetchAPI } from './core.js';
 
 // SSO (Single Sign-On) endpoints
@@ -6,9 +7,19 @@ export const sso = {
   getStatus: () => fetchAPI('/sso/status'),
 
   // Start SSO login (returns redirect URL)
-  startLogin: (slug, providerType = 'oidc', rememberMe = false) => {
+  //
+  // `redirectURI` is the relative path to return to after the IdP round-trip
+  // (e.g. the current route). It is forwarded as `redirect_uri` so the backend
+  // can replay it from the OIDC state row. The backend re-validates via
+  // isValidRedirectURI, but we sanitize here too so we never send an absolute
+  // or cross-origin value over the wire.
+  startLogin: (slug, providerType = 'oidc', rememberMe = false, redirectURI = '') => {
     const params = new URLSearchParams();
     if (rememberMe) params.append('remember_me', 'true');
+    if (redirectURI) {
+      const sanitized = safeRelativeRedirectPath(redirectURI);
+      if (sanitized) params.append('redirect_uri', sanitized);
+    }
     const query = params.toString();
     // SAML and OIDC have different login URL patterns
     const basePath =

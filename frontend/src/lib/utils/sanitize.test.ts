@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { escapeHtml, sanitizeHtml, stripHtml } from './sanitize';
+import { escapeHtml, safeRelativeRedirectPath, sanitizeHtml, stripHtml } from './sanitize';
 
 describe('sanitizeHtml', () => {
   it('strips script tags', () => {
@@ -81,6 +81,28 @@ describe('stripHtml', () => {
     expect(stripHtml('')).toBe('');
     expect(stripHtml(null as unknown as string)).toBe('');
     expect(stripHtml(undefined as unknown as string)).toBe('');
+  });
+});
+
+describe('safeRelativeRedirectPath', () => {
+  it('allows relative paths with query strings', () => {
+    expect(
+      safeRelativeRedirectPath('/cli/authorize?state=abc&callback=http%3A%2F%2F127.0.0.1')
+    ).toBe('/cli/authorize?state=abc&callback=http%3A%2F%2F127.0.0.1');
+  });
+
+  it('trims surrounding whitespace', () => {
+    expect(safeRelativeRedirectPath('  /workspaces  ')).toBe('/workspaces');
+  });
+
+  it('rejects empty, absolute, protocol-relative, and malformed paths', () => {
+    expect(safeRelativeRedirectPath('')).toBe('');
+    expect(safeRelativeRedirectPath('https://example.com')).toBe('');
+    expect(safeRelativeRedirectPath('//example.com')).toBe('');
+    expect(safeRelativeRedirectPath('/\\example.com')).toBe('');
+    expect(safeRelativeRedirectPath('/path\\segment')).toBe('');
+    expect(safeRelativeRedirectPath('/@example.com')).toBe('');
+    expect(safeRelativeRedirectPath('/path\nnext')).toBe('');
   });
 });
 
