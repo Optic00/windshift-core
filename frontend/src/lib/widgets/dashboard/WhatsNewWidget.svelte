@@ -101,18 +101,18 @@
         >
           {g.workspaceName}
         </h3>
-        <ul class="flex flex-col divide-y" style="border-color: var(--ds-border);">
+        <ul class="flex flex-col gap-1.5">
           {#each g.entries as e (e.id)}
             <li>
               <button
                 data-testid="whats-new-entry"
                 data-entry-id={e.id}
                 data-read={e.read}
-                class="w-full text-left px-1 py-2 flex items-start gap-2 transition-colors"
-                style="color: var(--ds-text);"
+                class="w-full text-left p-2 flex items-start gap-2 rounded border transition-colors"
+                style="border-color: var(--ds-border); background-color: var(--ds-surface); color: var(--ds-text);"
                 onmouseenter={(e2) =>
                   (e2.currentTarget.style.backgroundColor = 'var(--ds-background-neutral-hovered)')}
-                onmouseleave={(e2) => (e2.currentTarget.style.backgroundColor = '')}
+                onmouseleave={(e2) => (e2.currentTarget.style.backgroundColor = 'var(--ds-surface)')}
                 onclick={() => open(e)}
               >
                 {#if e.source === 'watched'}
@@ -125,19 +125,19 @@
                     class="w-4 h-4 mt-0.5 flex-shrink-0"
                     style={e.read
                       ? 'color: var(--ds-text-subtlest);'
-                      : 'color: var(--ds-icon-accent);'}
+                      : 'color: var(--ds-icon-accent-blue);'}
                   />
                 {/if}
                 <div class="min-w-0 flex-1">
                   <p
-                    class="text-xs truncate"
-                    style={e.read ? 'color: var(--ds-text-subtle);' : 'font-weight: 500;'}
+                    class="text-sm truncate"
+                    style={e.read ? 'color: var(--ds-text-subtle);' : 'color: var(--ds-text); font-weight: 500;'}
                   >
                     {e.title}
                   </p>
                   <p
-                    class="text-[0.65rem] mt-0.5 flex items-center gap-1.5"
-                    style="color: var(--ds-text-subtlest);"
+                    class="text-[0.7rem] mt-0.5 flex items-center gap-1.5"
+                    style="color: var(--ds-text-subtle);"
                   >
                     {#if e.subtitle}<span class="truncate">{e.subtitle}</span><span>·</span>{/if}
                     <span>{homepageStore.formatRelativeTime(e.timestamp)}</span>
