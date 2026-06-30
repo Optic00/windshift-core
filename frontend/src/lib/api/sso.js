@@ -1,28 +1,5 @@
+import { safeRelativeRedirectPath } from '../utils/sanitize';
 import { fetchAPI } from './core.js';
-
-/**
- * Reduce a candidate redirect target to a safe same-origin relative path.
- *
- * Mirrors the server-side `isValidRedirectURI` rules (must start with "/",
- * must not start with "//" or "/\", no backslashes, no whitespace control
- * chars, no "@"). Returns the cleaned path or "" if it should be dropped.
- */
-function sanitizeRedirectURI(uri) {
-  if (typeof uri !== 'string' || uri === '') return '';
-  // Collapse any leading whitespace the browser may include.
-  const trimmed = uri.trim();
-  if (
-    !trimmed.startsWith('/') ||
-    trimmed.startsWith('//') ||
-    trimmed.startsWith('/\\') ||
-    trimmed.includes('\\') ||
-    trimmed.includes('@') ||
-    /[\t\n\r]/.test(trimmed)
-  ) {
-    return '';
-  }
-  return trimmed;
-}
 
 // SSO (Single Sign-On) endpoints
 export const sso = {
@@ -40,7 +17,7 @@ export const sso = {
     const params = new URLSearchParams();
     if (rememberMe) params.append('remember_me', 'true');
     if (redirectURI) {
-      const sanitized = sanitizeRedirectURI(redirectURI);
+      const sanitized = safeRelativeRedirectPath(redirectURI);
       if (sanitized) params.append('redirect_uri', sanitized);
     }
     const query = params.toString();
