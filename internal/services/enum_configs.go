@@ -532,7 +532,7 @@ func NewContactRoleConfig() EnumConfig {
 			var createdAtStr string
 			err := rows.Scan(&c.ID, &c.Name, &c.Description, &c.IsSystem, &createdAtStr)
 			if err == nil {
-				c.CreatedAt, _ = ParseTimestamp(createdAtStr)
+				c.CreatedAt = ParseTimestamp(createdAtStr)
 			}
 			return &c, err
 		},
@@ -542,7 +542,7 @@ func NewContactRoleConfig() EnumConfig {
 			var createdAtStr string
 			err := row.Scan(&c.ID, &c.Name, &c.Description, &c.IsSystem, &createdAtStr)
 			if err == nil {
-				c.CreatedAt, _ = ParseTimestamp(createdAtStr)
+				c.CreatedAt = ParseTimestamp(createdAtStr)
 			}
 			return &c, err
 		},

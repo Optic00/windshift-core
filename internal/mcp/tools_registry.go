@@ -30,8 +30,7 @@ func (ms *MCPServer) registerAITools() {
 		}, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			user := userFromContext(ctx)
 			if user == nil {
-				res, _, _ := errNoAuth()
-				return res, nil
+				return errNoAuth(), nil
 			}
 			// Enforce the tool's declared token scopes (Entry.Scopes).
 			// mcp:access (checked by the auth middleware) only opens the
@@ -46,25 +45,21 @@ func (ms *MCPServer) registerAITools() {
 			}
 			env, err := ms.buildEnv(user)
 			if err != nil {
-				res, _, _ := errInternal("build env", err)
-				return res, nil
+				return errInternal("build env", err), nil
 			}
 			parsed := entry.NewArgs()
 			if len(req.Params.Arguments) > 0 {
 				if err := json.Unmarshal(req.Params.Arguments, parsed); err != nil {
-					res, _, _ := toolErrorf("invalid arguments: %v", err)
-					return res, nil
+					return toolErrorf("invalid arguments: %v", err), nil
 				}
 			}
 			out, err := entry.Run(ctx, env, parsed)
 			if err != nil {
-				res, _, _ := errInternal(entry.Name, err)
-				return res, nil
+				return errInternal(entry.Name, err), nil
 			}
 			b, err := json.Marshal(out)
 			if err != nil {
-				res, _, _ := toolErrorf("marshal result: %v", err)
-				return res, nil
+				return toolErrorf("marshal result: %v", err), nil
 			}
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: string(b)}},
@@ -82,8 +77,7 @@ func (ms *MCPServer) registerAITools() {
 func (ms *MCPServer) checkToolScopes(ctx context.Context, entry aitools.Entry) (*mcp.CallToolResult, bool) {
 	token := apiTokenFromContext(ctx)
 	if token == nil {
-		res, _, _ := errNoAuth()
-		return res, false
+		return errNoAuth(), false
 	}
 	var missing []string
 	for _, scope := range entry.Scopes {
@@ -92,8 +86,7 @@ func (ms *MCPServer) checkToolScopes(ctx context.Context, entry aitools.Entry) (
 		}
 	}
 	if len(missing) > 0 {
-		res, _, _ := toolErrorf("token missing required scope: %s", strings.Join(missing, ", "))
-		return res, false
+		return toolErrorf("token missing required scope: %s", strings.Join(missing, ", ")), false
 	}
 	return nil, true
 }

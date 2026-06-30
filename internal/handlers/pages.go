@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"windshift/internal/logger"
@@ -35,7 +36,13 @@ func (h *KnowledgeSearchHandler) Search(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	query := r.URL.Query().Get("q")
-	limit, _ := parseOffsetPagination(r, 25, 100)
+	limit := 25
+	if rawLimit := r.URL.Query().Get("limit"); rawLimit != "" {
+		parsedLimit, err := strconv.Atoi(rawLimit)
+		if err == nil && parsedLimit > 0 && parsedLimit <= 100 {
+			limit = parsedLimit
+		}
+	}
 	results, err := h.retrieval.Search(services.SearchInput{
 		UserID:      user.ID,
 		WorkspaceID: workspaceID,

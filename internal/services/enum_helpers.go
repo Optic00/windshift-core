@@ -28,9 +28,9 @@ func ValidateColor(color string) bool {
 	return hexColorPattern.MatchString(color)
 }
 
-// ParseTimestamp parses a timestamp string from the database
-// Handles both ISO 8601 format and SQLite datetime format
-func ParseTimestamp(s string) (time.Time, error) {
+// ParseTimestamp parses a timestamp string from the database.
+// Handles both ISO 8601 format and SQLite datetime format.
+func ParseTimestamp(s string) time.Time {
 	// Try common formats
 	formats := []string{
 		time.RFC3339,
@@ -41,9 +41,9 @@ func ParseTimestamp(s string) (time.Time, error) {
 
 	for _, format := range formats {
 		if t, err := time.Parse(format, s); err == nil {
-			return t, nil
+			return t
 		}
 	}
 
-	return time.Time{}, nil // Return zero time if parsing fails
+	return time.Time{} // Return zero time if parsing fails
 }
