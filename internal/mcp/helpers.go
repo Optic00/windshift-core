@@ -18,11 +18,11 @@ func (ms *MCPServer) accessibleWorkspaceIDs(userID int) ([]int, error) {
 }
 
 // errNoAuth returns a standard auth error for tool handlers.
-func errNoAuth() (*mcp.CallToolResult, any, error) {
+func errNoAuth() *mcp.CallToolResult {
 	return toolError("authentication required")
 }
 
 // errInternal returns a tool error for internal failures.
-func errInternal(op string, err error) (*mcp.CallToolResult, any, error) {
+func errInternal(op string, err error) *mcp.CallToolResult {
 	return toolErrorf("failed to %s: %v", op, err)
 }

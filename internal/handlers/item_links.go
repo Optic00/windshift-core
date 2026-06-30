@@ -718,7 +718,11 @@ func (h *ItemLinkHandler) GetFieldLinks(w http.ResponseWriter, r *http.Request) 
 	// test_cases (workspace lookup), and assets (set lookup).
 	user := utils.GetCurrentUser(r)
 	if user != nil {
-		accessibleKeys, _ := GetAccessibleWorkspaceKeys(user, h.db, h.permissionService)
+		accessibleKeys, err := GetAccessibleWorkspaceKeys(user, h.db, h.permissionService)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return
+		}
 		accessibleWsIDs := h.linkSvc.AccessibleWorkspaceIDs(user.ID)
 		accessibleSetIDs := h.linkSvc.AccessibleAssetSetIDs(user.ID)
 		links = h.linkSvc.FilterLinksByAccess(links, accessibleKeys, accessibleWsIDs, accessibleSetIDs)

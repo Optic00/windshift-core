@@ -45,7 +45,9 @@ func NewInternalLLMProxy(llmManager *llm.ConnectionManager, secret string) http.
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			slog.Debug("LLM proxy: failed to write response", "error", err)
+		}
 	})
 }
 
@@ -58,13 +60,21 @@ func NewInternalLLMHealthCheck(llmManager *llm.ConnectionManager, secret string)
 			return
 		}
 
-		if _, status, message, _ := resolveLogbookLLMClient(llmManager); message != "" {
+		_, status, message, err := resolveLogbookLLMClient(llmManager)
+		if message != "" {
 			writeLLMProxyError(w, status, message)
+			return
+		}
+		if err != nil {
+			slog.Error("LLM proxy: health check failed", "error", err)
+			writeLLMProxyError(w, http.StatusServiceUnavailable, "LLM service unavailable")
 			return
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
+		if _, err := w.Write([]byte(`{"status":"ok"}`)); err != nil {
+			slog.Debug("LLM proxy: failed to write health response", "error", err)
+		}
 	})
 }
 
@@ -82,10 +92,16 @@ func resolveLogbookLLMClient(llmManager *llm.ConnectionManager) (client llm.Clie
 func writeLLMProxyError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	body, _ := json.Marshal(struct {
+	body, err := json.Marshal(struct {
 		Error string `json:"error"`
 	}{Error: message})
-	_, _ = w.Write(body)
+	if err != nil {
+		slog.Error("LLM proxy: failed to marshal error response", "error", err)
+		body = []byte(`{"error":"internal error"}`)
+	}
+	if _, err := w.Write(body); err != nil {
+		slog.Debug("LLM proxy: failed to write error response", "error", err)
+	}
 }
 
 // validateInternalToken extracts the bearer token from the Authorization header
