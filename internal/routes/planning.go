@@ -30,6 +30,11 @@ func RegisterPlanningRoutes(deps *Deps) {
 	// is allowed to touch. The handler ignores any workspace_id/is_global in the body.
 	api.HandleH("PUT /workspaces/{workspaceId}/milestones/{id}", auth(workspaceItemEdit(http.HandlerFunc(deps.Planning.Milestone.Update))))
 	api.HandleH("PUT /global/milestones/{id}", auth(globalMilestoneManage(http.HandlerFunc(deps.Planning.Milestone.Update))))
+	// Reorder is split by scope (same as Update): workspace reorder is gated
+	// by workspaceItemEdit, global reorder by globalMilestoneManage. The
+	// service UPDATE constrains by scope so cross-scope moves are impossible.
+	api.HandleH("POST /workspaces/{workspaceId}/milestones/reorder", auth(workspaceItemEdit(http.HandlerFunc(deps.Planning.Milestone.Reorder))))
+	api.HandleH("POST /global/milestones/reorder", auth(globalMilestoneManage(http.HandlerFunc(deps.Planning.Milestone.Reorder))))
 	api.HandleH("DELETE /milestones/{id}", auth(http.HandlerFunc(deps.Planning.Milestone.Delete)))
 	api.HandleH("GET /milestones/{id}/test-statistics", auth(http.HandlerFunc(deps.Planning.Milestone.GetTestStatistics)))
 	api.HandleH("GET /milestones/{id}/progress", auth(http.HandlerFunc(deps.Planning.Milestone.GetProgress)))

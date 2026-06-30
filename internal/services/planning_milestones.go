@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"windshift/internal/database"
@@ -16,6 +17,36 @@ type PlanningService struct {
 	db       database.Database
 	items    *repository.ItemRepository
 	statuses *repository.StatusRepository
+}
+
+// milestonePositionStep is the gap left between adjacent positions so that a
+// single insert between two milestones rarely needs a full renormalization.
+// Matches the test-folder reorder convention (1000).
+const milestonePositionStep = 1000
+
+var ErrInvalidMilestoneReorder = errors.New("invalid milestone reorder")
+
+// milestoneScopeClause builds the SQL WHERE fragment that pins a milestone
+// to its reorder scope. Position is scoped per (is_global, workspace_id,
+// category_id); COALESCE normalizes NULL workspace_id / category_id to 0 so
+// every row in the same logical group compares equal. The fragment uses ?
+// placeholders consumed by the scope's parameters (returned by
+// milestoneScopeArgs) — callers must append those args in the same order.
+func milestoneScopeClause() string {
+	return "is_global = ? AND COALESCE(workspace_id, 0) = ? AND COALESCE(category_id, 0) = ?"
+}
+
+// milestoneScopeArgs returns the args for milestoneScopeClause for a scope.
+func milestoneScopeArgs(isGlobal bool, workspaceID *int, categoryID *int) []interface{} {
+	ws := 0
+	if workspaceID != nil {
+		ws = *workspaceID
+	}
+	cat := 0
+	if categoryID != nil {
+		cat = *categoryID
+	}
+	return []interface{}{isGlobal, ws, cat}
 }
 
 // NewPlanningService creates a new PlanningService.
@@ -47,7 +78,7 @@ func scanMilestoneRow(sc milestoneScanner) (MilestoneResult, error) {
 
 	err := sc.Scan(&m.ID, &m.Name, &description, &targetDate, &m.Status, &categoryID,
 		&categoryName, &categoryColor, &m.IsGlobal, &workspaceID, &workspaceName,
-		&externalKey,
+		&externalKey, &m.Position,
 		&mrID, &mrTagName, &mrName, &mrBody, &mrIsDraft, &mrIsPrerelease,
 		&mrTargetCommitish, &mrSCMConnectionID, &mrSCMRepository,
 		&mrSCMReleaseID, &mrSCMReleaseURL, &mrCreatedBy, &mrCreatedAt,
@@ -131,9 +162,36 @@ type MilestoneResult struct {
 	WorkspaceID   *int
 	WorkspaceName string
 	ExternalKey   *string
+	Position      int
 	LatestRelease *MilestoneReleaseResult
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+}
+
+// milestoneOrderByClause returns the ORDER BY clause for ListMilestones.
+// With no client sort requested (SortBy empty), milestones use their manual
+// drag-and-drop order (position), with name as a stable tiebreaker. When the
+// client requests an explicit sort, that column wins; unknown sort keys fall
+// back to the manual order to avoid injecting arbitrary SQL.
+func milestoneOrderByClause(sortBy, sortOrder string) string {
+	dir := "ASC"
+	if strings.EqualFold(sortOrder, "desc") {
+		dir = "DESC"
+	}
+	switch sortBy {
+	case "name":
+		return " ORDER BY m.name " + dir + ", m.position ASC"
+	case "target_date":
+		// NULL dates sort last in ascending order on both backends via the
+		// IS NULL tiebreaker, keeping behavior consistent.
+		return " ORDER BY m.target_date IS NULL ASC, m.target_date " + dir + ", m.name ASC, m.position ASC"
+	case "status":
+		return " ORDER BY m.status " + dir + ", m.position ASC"
+	case "created_at", "updated_at":
+		return " ORDER BY m." + sortBy + " " + dir + ", m.position ASC"
+	default:
+		return " ORDER BY m.position ASC, m.name ASC"
+	}
 }
 
 // MilestoneListParams contains parameters for listing milestones.
@@ -144,6 +202,12 @@ type MilestoneListParams struct {
 	CategoryID    *int   // Filter by category
 	Status        string // Filter by status
 	IncludeGlobal bool   // Include global milestones
+	// SortBy overrides the default manual-position ordering. When empty,
+	// results are ordered by position then name (the drag-and-drop order).
+	// When set (e.g. "name", "target_date", "status"), the client sort wins.
+	SortBy string
+	// SortOrder is "asc" or "desc"; defaults to "asc" when SortBy is set.
+	SortOrder string
 }
 
 // ListMilestones retrieves milestones with pagination and filtering.
@@ -152,7 +216,7 @@ func (s *PlanningService) ListMilestones(params MilestoneListParams) ([]Mileston
 		SELECT m.id, m.name, m.description, m.target_date, m.status, m.category_id,
 		       mc.name as category_name, mc.color as category_color,
 		       m.is_global, m.workspace_id, w.name as workspace_name,
-		       m.external_key,
+		       m.external_key, m.position,
 		       mr.id, mr.tag_name, mr.name, mr.body, mr.is_draft, mr.is_prerelease,
 		       mr.target_commitish, mr.scm_connection_id, mr.scm_repository,
 		       mr.scm_release_id, mr.scm_release_url, mr.created_by, mr.created_at,
@@ -214,7 +278,7 @@ func (s *PlanningService) ListMilestones(params MilestoneListParams) ([]Mileston
 		countArgs = append(countArgs, params.Status)
 	}
 
-	query += " ORDER BY m.target_date, m.name"
+	query += milestoneOrderByClause(params.SortBy, params.SortOrder)
 	query += " LIMIT ? OFFSET ?"
 	args = append(args, params.Limit, params.Offset)
 
@@ -240,7 +304,7 @@ func (s *PlanningService) GetMilestone(id int) (*MilestoneResult, error) {
 		SELECT m.id, m.name, m.description, m.target_date, m.status, m.category_id,
 		       mc.name as category_name, mc.color as category_color,
 		       m.is_global, m.workspace_id, w.name as workspace_name,
-		       m.external_key,
+		       m.external_key, m.position,
 		       mr.id, mr.tag_name, mr.name, mr.body, mr.is_draft, mr.is_prerelease,
 		       mr.target_commitish, mr.scm_connection_id, mr.scm_repository,
 		       mr.scm_release_id, mr.scm_release_url, mr.created_by, mr.created_at,
@@ -352,11 +416,21 @@ func (s *PlanningService) CreateMilestone(params CreateMilestoneParams) (*Milest
 		status = "planning"
 	}
 
+	// New milestones land at the end of their scope's manual order. Position
+	// is scoped per (is_global, workspace_id, category_id); MaxMilestonePosition
+	// returns the current max for this scope, and we step by 1000 to leave
+	// gaps for future inserts (mirrors the test-folder reorder convention).
+	position, err := s.MaxMilestonePosition(params.IsGlobal, params.WorkspaceID, params.CategoryID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compute milestone position: %w", err)
+	}
+	position += milestonePositionStep
+
 	var id int64
-	err := s.db.QueryRow(`
-		INSERT INTO milestones (name, description, target_date, status, category_id, is_global, workspace_id, external_key)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
-	`, params.Name, params.Description, params.TargetDate, status, params.CategoryID, params.IsGlobal, params.WorkspaceID, params.ExternalKey).Scan(&id)
+	err = s.db.QueryRow(`
+		INSERT INTO milestones (name, description, target_date, status, category_id, is_global, workspace_id, external_key, position)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+	`, params.Name, params.Description, params.TargetDate, status, params.CategoryID, params.IsGlobal, params.WorkspaceID, params.ExternalKey, position).Scan(&id)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create milestone: %w", err)
 	}
@@ -724,4 +798,98 @@ func (s *PlanningService) IsMilestoneGlobal(id int) (isGlobal bool, workspaceID 
 		workspaceID = &wid
 	}
 	return isGlobal, workspaceID, nil
+}
+
+// MaxMilestonePosition returns the current maximum position for milestones
+// in the given scope, or 0 when the scope is empty. Used by CreateMilestone
+// to place a new milestone at the end of its group.
+func (s *PlanningService) MaxMilestonePosition(isGlobal bool, workspaceID, categoryID *int) (int, error) {
+	var maxPos sql.NullInt64
+	err := s.db.QueryRow(
+		"SELECT MAX(position) FROM milestones WHERE "+milestoneScopeClause(),
+		milestoneScopeArgs(isGlobal, workspaceID, categoryID)...,
+	).Scan(&maxPos)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get max milestone position: %w", err)
+	}
+	if !maxPos.Valid {
+		return 0, nil
+	}
+	return int(maxPos.Int64), nil
+}
+
+// MilestoneScope identifies the (is_global, workspace_id, category_id) group
+// a reorder operation applies to. Drag-and-drop reorders milestones within a
+// single scope only; cross-scope moves are out of scope and rejected.
+type MilestoneScope struct {
+	IsGlobal    bool
+	WorkspaceID *int
+	CategoryID  *int
+}
+
+// ReorderMilestones reassigns position for the milestones identified by
+// orderedIDs, all of which must belong to scope. Positions are normalized to
+// (index+1)*milestonePositionStep in a single transaction, leaving gaps for
+// future inserts. Any id in orderedIDs that isn't in scope is ignored (its
+// UPDATE matches 0 rows); the caller is responsible for supplying a complete,
+// in-scope ordering. Mirrors the test-folder Reorder pattern.
+func (s *PlanningService) ReorderMilestones(scope MilestoneScope, orderedIDs []int) error {
+	if len(orderedIDs) == 0 {
+		return nil
+	}
+
+	scopeClause := milestoneScopeClause()
+	scopeArgs := milestoneScopeArgs(scope.IsGlobal, scope.WorkspaceID, scope.CategoryID)
+
+	seen := make(map[int]struct{}, len(orderedIDs))
+	for _, id := range orderedIDs {
+		if id <= 0 {
+			return fmt.Errorf("%w: ordered_ids must contain positive ids", ErrInvalidMilestoneReorder)
+		}
+		if _, ok := seen[id]; ok {
+			return fmt.Errorf("%w: ordered_ids contains duplicate id %d", ErrInvalidMilestoneReorder, id)
+		}
+		seen[id] = struct{}{}
+	}
+
+	rows, err := s.db.Query("SELECT id FROM milestones WHERE "+scopeClause, scopeArgs...)
+	if err != nil {
+		return fmt.Errorf("failed to load milestone reorder scope: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	scopeIDs := make(map[int]struct{}, len(orderedIDs))
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return fmt.Errorf("failed to scan milestone reorder scope: %w", err)
+		}
+		scopeIDs[id] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("failed to iterate milestone reorder scope: %w", err)
+	}
+	if len(scopeIDs) != len(orderedIDs) {
+		return fmt.Errorf("%w: ordered_ids must include every milestone in the selected scope", ErrInvalidMilestoneReorder)
+	}
+	for id := range seen {
+		if _, ok := scopeIDs[id]; !ok {
+			return fmt.Errorf("%w: milestone %d is not in the selected scope", ErrInvalidMilestoneReorder, id)
+		}
+	}
+
+	return database.WithTx(s.db, func(tx database.Tx) error {
+		now := time.Now()
+		for i, id := range orderedIDs {
+			position := (i + 1) * milestonePositionStep
+			updateArgs := append([]interface{}{position, now, id}, scopeArgs...)
+			if _, err := tx.Exec(
+				"UPDATE milestones SET position = ?, updated_at = ? WHERE id = ? AND "+scopeClause,
+				updateArgs...,
+			); err != nil {
+				return fmt.Errorf("failed to reorder milestone %d: %w", id, err)
+			}
+		}
+		return nil
+	})
 }

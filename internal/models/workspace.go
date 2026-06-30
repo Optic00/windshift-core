@@ -137,6 +137,7 @@ type Milestone struct {
 	IsGlobal    bool      `json:"is_global"`              // false=local to workspace, true=global (shared)
 	WorkspaceID *int      `json:"workspace_id,omitempty"` // NULL if global, set if local to workspace
 	ExternalKey *string   `json:"external_key,omitempty"` // Stable upsert key set by automation (e.g. tag short-name); unique per workspace when set
+	Position    int       `json:"position"`               // Manual sort order (drag-and-drop), scoped per (is_global, workspace_id, category_id)
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 	// Joined fields for API responses

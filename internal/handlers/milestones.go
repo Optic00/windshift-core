@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -307,6 +308,62 @@ func (h *MilestoneHandler) Update(w http.ResponseWriter, r *http.Request) {
 	respondJSONOK(w, updatedMilestone)
 }
 
+// reorderRequest is the body for the milestone reorder endpoints.
+// ordered_ids is the full, in-scope ordering of milestone ids after the
+// drag; category_id optionally narrows the scope to a single category.
+type reorderRequest struct {
+	OrderedIDs []int `json:"ordered_ids"`
+	CategoryID *int  `json:"category_id,omitempty"`
+}
+
+// Reorder handles POST /workspaces/{workspaceId}/milestones/reorder and
+// POST /global/milestones/reorder. The scope is derived from the URL — a
+// workspaceId path value scopes the reorder to that workspace's local
+// milestones; absence means global. Permission is already gated by route
+// middleware (workspaceItemEdit / globalMilestoneManage), and the service
+// UPDATE additionally constrains by scope so a milestone in a different
+// scope can never be moved.
+func (h *MilestoneHandler) Reorder(w http.ResponseWriter, r *http.Request) {
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+
+	req, ok := decodeJSON[reorderRequest](w, r)
+	if !ok {
+		return
+	}
+	if len(req.OrderedIDs) == 0 {
+		respondValidationError(w, r, "ordered_ids is required")
+		return
+	}
+
+	var scope services.MilestoneScope
+	if wsStr := r.PathValue("workspaceId"); wsStr != "" {
+		ws, err := strconv.Atoi(wsStr)
+		if err != nil {
+			respondValidationError(w, r, "Invalid workspaceId")
+			return
+		}
+		wid := ws
+		scope = services.MilestoneScope{IsGlobal: false, WorkspaceID: &wid, CategoryID: req.CategoryID}
+	} else {
+		scope = services.MilestoneScope{IsGlobal: true, CategoryID: req.CategoryID}
+	}
+
+	if err := h.planningService.ReorderMilestones(scope, req.OrderedIDs); err != nil {
+		if errors.Is(err, services.ErrInvalidMilestoneReorder) {
+			respondValidationError(w, r, err.Error())
+			return
+		}
+		respondInternalError(w, r, err)
+		return
+	}
+
+	h.auditor.Log(r, user, logger.ActionMilestoneUpdate, logger.ResourceMilestone, nil, "reorder")
+	respondJSONOK(w, map[string]interface{}{"ok": true})
+}
+
 func (h *MilestoneHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	user, id, ok := h.resolveMilestone(w, r, models.PermissionItemEdit)
 	if !ok {
@@ -500,6 +557,7 @@ func (h *MilestoneHandler) milestoneResultToModel(r *services.MilestoneResult, u
 		WorkspaceID:   r.WorkspaceID,
 		WorkspaceName: r.WorkspaceName,
 		ExternalKey:   r.ExternalKey,
+		Position:      r.Position,
 		CreatedAt:     r.CreatedAt,
 		UpdatedAt:     r.UpdatedAt,
 	}

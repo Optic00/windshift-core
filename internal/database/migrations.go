@@ -1638,6 +1638,59 @@ var Catalog = []Migration{
 				ON workspace_agent_skill_pages(page_id);
 		`,
 	},
+	{
+		// WI-515: manual sort order for milestones (drag-and-drop reorder).
+		// position is scoped per (is_global, workspace_id, category_id);
+		// new milestones get MaxPosition(scope) + 1000 (mirrors test
+		// folders). The column-add is guarded by a column-exists check, but
+		// because the body also backfills, we additionally guard the backfill
+		// on position = 0 so a re-run after a manual reorder (which would
+		// leave some rows at 0 only if they were never reordered) is a no-op
+		// for already-ordered scopes. Fresh installs get the column from the
+		// schema concat and stamp without running the body.
+		Version:       "20260624_milestones_position",
+		Name:          "Add milestones.position for drag-and-drop reorder",
+		CheckSQLite:   sqliteColumnCheck("milestones", "position"),
+		CheckPostgres: pgColumnCheck("milestones", "position"),
+		SQLite: `
+			ALTER TABLE milestones ADD COLUMN position INTEGER NOT NULL DEFAULT 0;
+			-- Backfill: assign (row_number * 1000) within each scope, ordered by
+			-- the legacy target_date, name sort. Only touches rows still at the
+			-- default 0 so a post-reorder re-run is a no-op. Use a ranked derived
+			-- table keyed by id so ROW_NUMBER() sees the full scope, not only the
+			-- current outer row.
+			UPDATE milestones
+			SET position = (
+				SELECT ranked.new_position
+				FROM (
+					SELECT id, (ROW_NUMBER() OVER (
+						PARTITION BY is_global, COALESCE(workspace_id, 0), COALESCE(category_id, 0)
+						ORDER BY target_date IS NULL, target_date, name
+					) * 1000) AS new_position
+					FROM milestones
+				) ranked
+				WHERE ranked.id = milestones.id
+			)
+			WHERE position = 0;
+			CREATE INDEX IF NOT EXISTS idx_milestones_position
+				ON milestones(is_global, workspace_id, category_id, position);
+		`,
+		Postgres: `
+			ALTER TABLE milestones ADD COLUMN IF NOT EXISTS position INTEGER NOT NULL DEFAULT 0;
+			UPDATE milestones
+			SET position = sub.new_position
+			FROM (
+				SELECT id, (ROW_NUMBER() OVER (
+					PARTITION BY is_global, COALESCE(workspace_id, 0), COALESCE(category_id, 0)
+					ORDER BY target_date NULLS LAST, name
+				) * 1000) AS new_position
+				FROM milestones
+			) sub
+			WHERE milestones.id = sub.id AND milestones.position = 0;
+			CREATE INDEX IF NOT EXISTS idx_milestones_position
+				ON milestones(is_global, workspace_id, category_id, position);
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {

@@ -17,6 +17,32 @@ const baseStore = createEntityStore(
 export const milestonesStore = {
   ...baseStore,
 
+  // Reorder milestones within a scope. Optimistically reassigns local
+  // positions from the ordered id list (so the UI snaps instantly), then
+  // persists via the scope-specific reorder endpoint and rolls back on
+  // error. `scope` is { is_global, workspace_id, category_id }.
+  async reorder(scope, orderedIds, allMilestones) {
+    // Snapshot for rollback before mutating.
+    const previous = allMilestones;
+    const step = 1000;
+    const positionById = new Map(orderedIds.map((id, i) => [id, (i + 1) * step]));
+    const next = allMilestones.map((m) =>
+      positionById.has(m.id) ? { ...m, position: positionById.get(m.id) } : m
+    );
+    // Sort the snapshot by the new positions so the optimistic render matches
+    // the server's post-reorder order immediately.
+    next.sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+    milestonesStore.set(next);
+
+    try {
+      await api.milestones.reorder(scope, orderedIds);
+    } catch (error) {
+      // Roll back to the pre-drag snapshot.
+      milestonesStore.set(previous);
+      throw error;
+    }
+  },
+
   // Filter milestones by category
   filterByCategory(milestones, categoryId) {
     if (categoryId === 'all') return milestones;
