@@ -132,7 +132,12 @@ function createSSOStore() {
         return;
       }
 
-      const url = api.sso.startLogin(slug, type || 'oidc', remember || false);
+      // Capture the current route so the IdP round-trip can return the user
+      // to where they were (e.g. the CLI consent page at /cli/authorize)
+      // instead of dropping them at the dashboard root (WI-519).
+      const redirectURI = `${window.location.pathname || ''}${window.location.search || ''}`;
+
+      const url = api.sso.startLogin(slug, type || 'oidc', remember || false, redirectURI);
 
       // Inside the desktop app, the IdP login (esp. passkey/WebAuthn) can't run
       // in the embedded webview — hand it to the system browser and return via
