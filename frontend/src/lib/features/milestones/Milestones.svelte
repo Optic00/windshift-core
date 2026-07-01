@@ -1,11 +1,13 @@
 <script>
   import { onMount } from 'svelte';
+  import { draggable, dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter';
+  import { attachClosestEdge, extractClosestEdge } from '@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge';
   import { t } from '../../stores/i18n.svelte.js';
   import { confirm } from '../../composables/useConfirm.js';
   import { errorToast } from '../../stores/toasts.svelte.js';
   import {
     IconFlag as Milestone, IconCalendar as Calendar, IconCircleCheck as CheckCircle, IconClock as Clock, IconPlus as Plus, IconEdit as Edit, IconTrash as Trash2,
-    IconDots as MoreHorizontal, IconTag as Tag, IconMessage as MessageSquare, IconWorld as Globe, IconBuilding as Building2, IconGitBranch as GitBranch
+    IconDots as MoreHorizontal, IconTag as Tag, IconMessage as MessageSquare, IconWorld as Globe, IconBuilding as Building2, IconGitBranch as GitBranch, IconGripVertical as GripVertical
   } from '@tabler/icons-svelte-runes';
   import DataTable from '../../components/DataTable.svelte';
   import Button from '../../components/Button.svelte';
@@ -61,6 +63,25 @@
   let workspaces = $state([]); // For workspace picker when creating local milestones
   let showReleaseModal = $state(false);
   let releasingMilestone = $state(null);
+
+  // "Hide completed" toggle — defaults ON. Persisted in localStorage so the
+  // preference survives reloads; a missing key means ON (default).
+  const HIDE_COMPLETED_KEY = 'milestones.hideCompleted';
+  let hideCompleted = $state(localStorage.getItem(HIDE_COMPLETED_KEY) !== 'false');
+  function toggleHideCompleted() {
+    hideCompleted = !hideCompleted;
+    try {
+      localStorage.setItem(HIDE_COMPLETED_KEY, String(hideCompleted));
+    } catch {
+      // Ignore localStorage errors (private mode, quota, etc).
+    }
+  }
+
+  // Drag-and-drop reorder state. One set of cleanups per render; the
+  // milestone rows are re-wired whenever the visible list changes.
+  let dragCleanups = [];
+  let dragEdge = $state({}); // { [rowKey]: 'before' | 'after' | null }
+
   let formData = $state({
     name: '',
     description: '',
@@ -324,16 +345,163 @@
       : $milestonesStore
   );
 
+  // Layer "hide completed" over the category filter before the local/global
+  // split so both sections (and the global-view table) honor the toggle.
+  // Completed milestones remain reachable from the detail nav and detail page;
+  // the toggle only affects this list view.
+  let visibleMilestones = $derived(
+    hideCompleted ? filteredMilestones.filter(m => m.status !== 'completed') : filteredMilestones
+  );
+
   let localMilestones = $derived(
-    filteredMilestones.filter(m => !m.is_global)
+    visibleMilestones.filter(m => !m.is_global)
   );
 
   let globalMilestones = $derived(
-    filteredMilestones.filter(m => m.is_global)
+    visibleMilestones.filter(m => m.is_global)
   );
+
+  // Whether the current user may reorder milestones in the active scope(s).
+  // Mirrors the backend permission gates (workspaceItemEdit for local,
+  // globalMilestoneManage / milestone.create for global).
+  const canReorderLocal = $derived(
+    $isSystemAdmin ||
+    workspacePermissions.canAdminWorkspace(workspaceId) ||
+    workspacePermissions.hasPermission(workspaceId, 'item.edit')
+  );
+  const canReorderGlobal = $derived(canManageGlobal);
+
+  function parseOptionalInt(value) {
+    const parsed = parseInt(value, 10);
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+
+  function milestoneInReorderScope(milestone, scope) {
+    if (milestone.is_global !== scope.is_global) return false;
+    if (!scope.is_global && (milestone.workspace_id ?? null) !== (scope.workspace_id ?? null)) return false;
+    return (milestone.category_id ?? null) === (scope.category_id ?? null);
+  }
+
+  // Re-compute the ordered id list for a scope after a drag and persist it.
+  // `scope` is { is_global, workspace_id, category_id }; `sourceId` is the
+  // dragged milestone; `targetId` is the drop target; `edge` is 'before' or
+  // 'after' relative to the target. The backend requires the complete scope,
+  // so include hidden completed milestones and only move within one category.
+  async function handleReorder(scope, sourceId, targetId, edge) {
+    const allMilestones = [...$milestonesStore];
+    const list = allMilestones
+      .filter((m) => milestoneInReorderScope(m, scope))
+      .sort((a, b) => (a.position ?? 0) - (b.position ?? 0) || a.name.localeCompare(b.name));
+
+    // Build the new ordering: remove the dragged item, then insert it above
+    // or below the drop target.
+    const withoutSource = list.filter((m) => m.id !== sourceId);
+    const dragged = list.find((m) => m.id === sourceId);
+    if (!dragged) return;
+    let insertIndex = withoutSource.findIndex((m) => m.id === targetId);
+    if (insertIndex === -1) {
+      insertIndex = withoutSource.length;
+    } else if (edge === 'after') {
+      insertIndex += 1;
+    }
+    const reordered = [...withoutSource];
+    reordered.splice(insertIndex, 0, dragged);
+    const orderedIds = reordered.map((m) => m.id);
+
+    try {
+      await milestonesStore.reorder(scope, orderedIds, allMilestones);
+    } catch (error) {
+      errorToast(error.message || String(error), t('errors.failedToSave'));
+    }
+  }
+
+  // Wire pragmatic-drag-and-drop onto rendered milestone rows. Re-runs
+  // whenever the visible lists change (rows are re-created by DataTable on
+  // each render). Drag handle is the first cell's grip icon when present.
+  $effect(() => {
+    // Read the derived lists so this effect re-runs when they change.
+    void visibleMilestones;
+    void localMilestones;
+    void globalMilestones;
+
+    // Defer until after the DOM reflects the new rows.
+    const timer = setTimeout(() => {
+      dragCleanups.forEach((fn) => fn());
+      dragCleanups = [];
+      dragEdge = {};
+
+      /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('[data-milestone-row]')).forEach((row) => {
+        const id = parseInt(row.dataset.milestoneRow, 10);
+        const scopeName = row.dataset.milestoneScope; // 'global' | 'local'
+        const ws = row.dataset.milestoneWs;
+        const categoryId = row.dataset.milestoneCategory;
+        if (Number.isNaN(id)) return;
+
+        const canDrag = scopeName === 'global' ? canReorderGlobal : canReorderLocal;
+        if (!canDrag) return;
+
+        dragEdge[id] = null;
+
+        const draggableCleanup = draggable({
+          element: row,
+          dragHandle: row.querySelector('[data-milestone-drag-handle]') || row,
+          getInitialData: () => ({ id, scope: scopeName, workspaceId: ws, categoryId, type: 'milestone' }),
+          onDragStart: () => { row.style.opacity = '0.4'; },
+          onDrop: () => {
+            row.style.opacity = '';
+            dragEdge = {};
+          },
+        });
+
+        const dropTargetCleanup = dropTargetForElements({
+          element: row,
+          canDrop: ({ source }) =>
+            source.data?.type === 'milestone' &&
+            source.data?.scope === scopeName &&
+            source.data?.workspaceId === ws &&
+            source.data?.categoryId === categoryId,
+          getData: ({ input, element }) =>
+            attachClosestEdge({}, { input, element, allowedEdges: ['top', 'bottom'] }),
+          onDragEnter: ({ self }) => {
+            dragEdge[id] = extractClosestEdge(self.data) === 'bottom' ? 'after' : 'before';
+            dragEdge = { ...dragEdge };
+          },
+          onDragLeave: () => {
+            dragEdge[id] = null;
+            dragEdge = { ...dragEdge };
+          },
+          onDrop: ({ self, source }) => {
+            const edge = extractClosestEdge(self.data) === 'bottom' ? 'after' : 'before';
+            const sourceId = source.data.id;
+            dragEdge[id] = null;
+            dragEdge = { ...dragEdge };
+            if (sourceId === id) return;
+            const scope =
+              scopeName === 'global'
+                ? { is_global: true, category_id: parseOptionalInt(categoryId) }
+                : { is_global: false, workspace_id: parseOptionalInt(ws), category_id: parseOptionalInt(categoryId) };
+            handleReorder(scope, sourceId, id, edge);
+          },
+        });
+
+        dragCleanups.push(() => { draggableCleanup(); dropTargetCleanup(); });
+      });
+    }, 0);
+
+    return () => {
+      clearTimeout(timer);
+      dragCleanups.forEach((fn) => fn());
+      dragCleanups = [];
+    };
+  });
 
   // DataTable configuration
   let milestoneColumns = $derived([
+    // Drag handle column — only present when the user may reorder the
+    // active scope. The handle is the pragmatic-drag-and-drop dragHandle.
+    ...(canReorderGlobal || canReorderLocal)
+      ? [{ key: 'reorder', label: '', width: 'w-10', slot: 'reorder' }]
+      : [],
     {
       key: 'status',
       label: 'Status',
@@ -392,9 +560,22 @@
           : t('milestones.workspaceMilestones')}
         subtitle={!isGlobalView
           ? `${localMilestones.length} ${t('milestones.local').toLowerCase()}, ${globalMilestones.length} ${t('milestones.global').toLowerCase()}`
-          : `${filteredMilestones.length} milestone${filteredMilestones.length !== 1 ? 's' : ''}${activeCategoryId ? ' in this category' : ''}`}
+          : `${visibleMilestones.length} milestone${visibleMilestones.length !== 1 ? 's' : ''}${activeCategoryId ? ' in this category' : ''}`}
       >
         {#snippet actions()}
+          <button
+            type="button"
+            onclick={toggleHideCompleted}
+            class="px-3 py-1.5 text-sm rounded border transition-colors"
+            style="border-color: var(--ds-border); color: {hideCompleted ? 'var(--ds-interactive)' : 'var(--ds-text-subtle)'}; background-color: {hideCompleted ? 'var(--ds-surface-selected)' : 'transparent'};"
+            title={t('milestones.hideCompletedHelp')}
+            data-testid="milestone-hide-completed-toggle"
+          >
+            {#if hideCompleted}
+              <CheckCircle class="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
+            {/if}
+            {t('milestones.hideCompleted')}
+          </button>
           {#if canCreate}
             <Button
               variant="primary"
@@ -410,6 +591,19 @@
         {/snippet}
       </PageHeader>
 
+
+      {#snippet reorderCell(item)}
+        {#if item}
+          <span
+            data-milestone-drag-handle
+            class="inline-flex items-center justify-center cursor-grab active:cursor-grabbing"
+            style="color: var(--ds-text-subtlest);"
+            title={t('milestones.dragToReorder')}
+          >
+            <GripVertical class="w-4 h-4" />
+          </span>
+        {/if}
+      {/snippet}
 
       {#snippet nameCell(item)}
         {#if item}
@@ -486,10 +680,10 @@
       {/snippet}
 
       <!-- Empty State or DataTable -->
-      {#if filteredMilestones.length === 0}
+      {#if visibleMilestones.length === 0}
         <EmptyState
           icon={Milestone}
-          title={isGlobalView && activeCategoryId ? t('milestones.noMilestonesInCategory') : t('milestones.noMilestones')}
+          title={isGlobalView && activeCategoryId ? t('milestones.noMilestonesInCategory') : (hideCompleted ? t('milestones.noVisibleMilestones') : t('milestones.noMilestones'))}
           description={isGlobalView && activeCategoryId ? t('categories.noCategorizedWork') : t('milestones.noMilestonesDescription')}
         >
           {#snippet action()}
@@ -503,11 +697,13 @@
       {:else if isGlobalView}
         <DataTable
           columns={milestoneColumns}
-          data={filteredMilestones}
+          data={visibleMilestones}
           keyField="id"
           actionItems={buildMilestoneDropdownItems}
           class="rounded-xl border shadow-sm"
+          rowAttrs={(item) => ({ 'data-milestone-row': item.id, 'data-milestone-scope': item.is_global ? 'global' : 'local', 'data-milestone-ws': item.workspace_id ?? '', 'data-milestone-category': item.category_id ?? '' })}
         >
+        {#snippet reorder(item)}{@render reorderCell(item)}{/snippet}
         {#snippet name(item)}{@render nameCell(item)}{/snippet}
         {#snippet status(item)}<div class="flex items-center gap-2">{@render statusCell(item)}</div>{/snippet}
         {#snippet category(item)}<div class="flex items-center gap-2">{@render categoryCell(item)}</div>{/snippet}
@@ -532,7 +728,9 @@
                 keyField="id"
                 actionItems={buildMilestoneDropdownItems}
                 class="rounded-xl border shadow-sm"
+                rowAttrs={(item) => ({ 'data-milestone-row': item.id, 'data-milestone-scope': 'local', 'data-milestone-ws': workspaceId ?? '', 'data-milestone-category': item.category_id ?? '' })}
               >
+              {#snippet reorder(item)}{@render reorderCell(item)}{/snippet}
               {#snippet name(item)}{@render nameCell(item)}{/snippet}
               {#snippet status(item)}<div class="flex items-center gap-2">{@render statusCell(item)}</div>{/snippet}
               {#snippet category(item)}<div class="flex items-center gap-2">{@render categoryCell(item)}</div>{/snippet}
@@ -557,7 +755,9 @@
                 keyField="id"
                 actionItems={buildMilestoneDropdownItems}
                 class="rounded-xl border shadow-sm"
+                rowAttrs={(item) => ({ 'data-milestone-row': item.id, 'data-milestone-scope': 'global', 'data-milestone-ws': '', 'data-milestone-category': item.category_id ?? '' })}
               >
+              {#snippet reorder(item)}{@render reorderCell(item)}{/snippet}
               {#snippet name(item)}{@render nameCell(item)}{/snippet}
               {#snippet status(item)}<div class="flex items-center gap-2">{@render statusCell(item)}</div>{/snippet}
               {#snippet category(item)}<div class="flex items-center gap-2">{@render categoryCell(item)}</div>{/snippet}

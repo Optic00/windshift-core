@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 
 	"windshift/internal/database"
@@ -41,6 +42,7 @@ type MilestoneResponse struct {
 	CategoryID    *int     `json:"category_id,omitempty"`
 	CategoryName  string   `json:"category_name,omitempty"`
 	CategoryColor string   `json:"category_color,omitempty"`
+	Position      int      `json:"position"`
 	CreatedAt     string   `json:"created_at"`
 	UpdatedAt     string   `json:"updated_at"`
 	Warnings      []string `json:"warnings,omitempty"`
@@ -54,6 +56,24 @@ type MilestoneCreateRequest struct {
 	CategoryID  *int   `json:"category_id,omitempty"`
 }
 
+// sortOrderFromPagination translates the pagination SortAsc flag into the
+// "asc"/"desc" string the service layer expects.
+func sortOrderFromPagination(asc bool) string {
+	if asc {
+		return "asc"
+	}
+	return "desc"
+}
+
+// milestoneSortByFromRequest preserves the milestone service default manual
+// position ordering unless the client explicitly supplies ?sort=... .
+func milestoneSortByFromRequest(r *http.Request, sortBy string) string {
+	if r.URL.Query().Get("sort") == "" {
+		return ""
+	}
+	return sortBy
+}
+
 func toMilestoneResponse(m *services.MilestoneResult) MilestoneResponse {
 	return MilestoneResponse{
 		ID:            m.ID,
@@ -64,6 +84,7 @@ func toMilestoneResponse(m *services.MilestoneResult) MilestoneResponse {
 		CategoryID:    m.CategoryID,
 		CategoryName:  m.CategoryName,
 		CategoryColor: m.CategoryColor,
+		Position:      m.Position,
 		CreatedAt:     m.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		UpdatedAt:     m.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
@@ -94,8 +115,10 @@ func (h *MilestoneHandler) List(w http.ResponseWriter, r *http.Request) {
 	pagination := h.ParsePagination(r)
 
 	results, total, err := h.planningService.ListMilestones(services.MilestoneListParams{
-		Limit:  pagination.Limit,
-		Offset: pagination.Offset,
+		Limit:     pagination.Limit,
+		Offset:    pagination.Offset,
+		SortBy:    milestoneSortByFromRequest(r, pagination.SortBy),
+		SortOrder: sortOrderFromPagination(pagination.SortAsc),
 	})
 	if err != nil {
 		h.RespondInternalError(w, r)
@@ -348,6 +371,89 @@ func (h *MilestoneHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	h.RespondNoContent(w)
 }
 
+// milestoneReorderRequest is the body for the v1 reorder endpoints.
+type milestoneReorderRequest struct {
+	OrderedIDs []int `json:"ordered_ids"`
+	CategoryID *int  `json:"category_id,omitempty"`
+}
+
+// applyMilestoneReorder decodes a reorder request and applies it to the
+// supplied scope. Shared by the global and workspace-scoped v1 reorder
+// handlers — only the scope differs.
+func (h *MilestoneHandler) applyMilestoneReorder(w http.ResponseWriter, r *http.Request, scope services.MilestoneScope) {
+	var req milestoneReorderRequest
+	if !h.DecodeBodyOrRespond(w, r, &req) {
+		return
+	}
+	if len(req.OrderedIDs) == 0 {
+		restapi.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeMissingField, "ordered_ids is required"))
+		return
+	}
+	scope.CategoryID = req.CategoryID
+
+	if err := h.planningService.ReorderMilestones(scope, req.OrderedIDs); err != nil {
+		if errors.Is(err, services.ErrInvalidMilestoneReorder) {
+			restapi.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, err.Error()))
+			return
+		}
+		h.RespondInternalError(w, r)
+		return
+	}
+
+	h.RespondOK(w, map[string]bool{"ok": true})
+}
+
+// ReorderGlobal handles POST /rest/api/v1/milestones/reorder
+//
+// @Summary      Reorder global milestones
+// @Description  Reassigns manual sort positions for global milestones. The full, in-scope ordering is supplied as ordered_ids; category_id optionally narrows the scope to a single category. Requires the global milestone.create permission.
+// @Tags         milestones
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        body  body  handlers.milestoneReorderRequest  true  "Ordered milestone IDs"
+// @Success      200   {object}  map[string]bool
+// @Failure      400   {object}  handlers.ErrorResponse
+// @Failure      401   {object}  handlers.ErrorResponse
+// @Failure      403   {object}  handlers.ErrorResponse  "Token lacks milestones:write or caller lacks milestone.create"
+// @Failure      500   {object}  handlers.ErrorResponse
+// @Router       /milestones/reorder [post]
+func (h *MilestoneHandler) ReorderGlobal(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.RequireAuth(w, r)
+	if !ok {
+		return
+	}
+	if !h.RequireGlobalPermission(w, r, user.ID, models.PermissionMilestoneCreate, "milestone.create") {
+		return
+	}
+	h.applyMilestoneReorder(w, r, services.MilestoneScope{IsGlobal: true})
+}
+
+// ReorderInWorkspace handles POST /rest/api/v1/workspaces/{id}/milestones/reorder
+//
+// @Summary      Reorder milestones in a workspace
+// @Description  Reassigns manual sort positions for milestones owned by the workspace in the URL. Global milestones are not affected. category_id optionally narrows the scope to a single category.
+// @Tags         workspaces, milestones
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id    path  int     true  "Workspace ID"
+// @Param        body  body  handlers.milestoneReorderRequest  true  "Ordered milestone IDs"
+// @Success      200   {object}  map[string]bool
+// @Failure      400   {object}  handlers.ErrorResponse
+// @Failure      401   {object}  handlers.ErrorResponse
+// @Failure      403   {object}  handlers.ErrorResponse  "Token lacks items:write"
+// @Failure      404   {object}  handlers.ErrorResponse  "Workspace not found or not visible to caller"
+// @Failure      500   {object}  handlers.ErrorResponse
+// @Router       /workspaces/{id}/milestones/reorder [post]
+func (h *MilestoneHandler) ReorderInWorkspace(w http.ResponseWriter, r *http.Request) {
+	wsID, ok := h.RequireWorkspaceEditAccess(w, r)
+	if !ok {
+		return
+	}
+	h.applyMilestoneReorder(w, r, services.MilestoneScope{IsGlobal: false, WorkspaceID: &wsID})
+}
+
 // MilestoneProgressResponse is the v1 representation of services.MilestoneProgressReport.
 type MilestoneProgressResponse struct {
 	MilestoneID     int                                        `json:"milestone_id"`
@@ -586,6 +692,8 @@ func (h *MilestoneHandler) ListForWorkspace(w http.ResponseWriter, r *http.Reque
 		Offset:        pagination.Offset,
 		WorkspaceID:   &wsID,
 		IncludeGlobal: false,
+		SortBy:        milestoneSortByFromRequest(r, pagination.SortBy),
+		SortOrder:     sortOrderFromPagination(pagination.SortAsc),
 	})
 	if err != nil {
 		h.RespondInternalError(w, r)

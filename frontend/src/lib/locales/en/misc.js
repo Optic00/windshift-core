@@ -395,6 +395,10 @@ export default {
     workspace: 'Workspace',
     selectWorkspace: 'Select workspace',
     manageMilestoneCategories: 'Manage Milestone Categories',
+    hideCompleted: 'Hide completed',
+    hideCompletedHelp: 'Hide completed milestones from the list',
+    noVisibleMilestones: 'No visible milestones',
+    dragToReorder: 'Drag to reorder',
   },
 
   assets: {

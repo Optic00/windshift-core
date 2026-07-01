@@ -31,6 +31,22 @@ export const milestones = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
+  // Reorder is scope-specific: global milestones at /global/milestones/reorder,
+  // workspace milestones at /workspaces/{ws}/milestones/reorder. Mirrors the
+  // scope-split update routes. Pass { is_global, workspace_id } to pick the
+  // URL; category_id optionally narrows to a per-category scope.
+  reorder: (scope, orderedIds) => {
+    const url = scope?.is_global
+      ? '/global/milestones/reorder'
+      : `/workspaces/${scope.workspace_id}/milestones/reorder`;
+    return fetchAPI(url, {
+      method: 'POST',
+      body: JSON.stringify({
+        ordered_ids: orderedIds,
+        category_id: scope?.category_id ?? undefined,
+      }),
+    });
+  },
 };
 
 export const iterationTypes = createCrudClient('/iteration-types');

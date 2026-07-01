@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS milestones (
 	is_global INTEGER NOT NULL DEFAULT 1,  -- 1=global, 0=workspace-specific
 	workspace_id INTEGER,  -- NULL if global, workspace reference if local
 	external_key TEXT,     -- Stable upsert key for automation (e.g. tag short-name "2.0"). Unique per workspace when set.
+	position INTEGER NOT NULL DEFAULT 0,  -- Manual sort order, scoped per (is_global, workspace_id, category_id). Backfilled from target_date,name on upgrade.
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	FOREIGN KEY (category_id) REFERENCES milestone_categories(id) ON DELETE SET NULL,
@@ -59,6 +60,8 @@ CREATE INDEX IF NOT EXISTS idx_milestones_status ON milestones(status);
 CREATE INDEX IF NOT EXISTS idx_milestones_target_date ON milestones(target_date);
 CREATE INDEX IF NOT EXISTS idx_milestones_workspace_id ON milestones(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_milestones_is_global ON milestones(is_global);
+-- Composite index supports the per-scope position ordering used by drag-and-drop reorder.
+CREATE INDEX IF NOT EXISTS idx_milestones_position ON milestones(is_global, workspace_id, category_id, position);
 CREATE INDEX IF NOT EXISTS idx_milestone_releases_milestone_id ON milestone_releases(milestone_id);
 CREATE INDEX IF NOT EXISTS idx_item_milestones_item_id ON item_milestones(item_id);
 CREATE INDEX IF NOT EXISTS idx_item_milestones_milestone_id ON item_milestones(milestone_id);
