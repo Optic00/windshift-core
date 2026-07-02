@@ -248,9 +248,9 @@
   // DataTable columns
   const columns = [
     {
-      key: 'user',
-      label: 'User',
-      slot: 'user'
+      key: 'principal',
+      label: 'Member or group',
+      slot: 'principal'
     },
     {
       key: 'roles',
@@ -264,48 +264,57 @@
     }
   ];
 
-  function getActionItems(member) {
-    // Create a menu item for each role
-    return member.roles.map(role => ({
+  function getAssignmentActionItems(assignment) {
+    return assignment.roles.map(role => ({
       title: `Remove ${role.role_name}`,
       icon: Trash2,
-      onClick: () => handleRemoveMemberRole(member, role),
+      onClick: () => assignment.type === 'group'
+        ? handleRemoveGroupRole(assignment, role)
+        : handleRemoveMemberRole(assignment, role),
       hoverClass: 'hover-danger',
       iconClass: 'text-red-500'
     }));
   }
 
-  function getGroupActionItems(group) {
-    return group.roles.map(role => ({
-      title: `Remove ${role.role_name}`,
-      icon: Trash2,
-      onClick: () => handleRemoveGroupRole(group, role),
-      hoverClass: 'hover-danger',
-      iconClass: 'text-red-500'
+  const assignmentRows = $derived.by(() => {
+    const userRows = members.map(member => ({
+      ...member,
+      type: 'user',
+      row_key: `user-${member.user_id}`,
+      displayName: `${member.first_name || ''} ${member.last_name || ''}`.trim() || member.username || member.email || 'Unknown user',
+      detail: member.email || member.username || ''
     }));
-  }
 
-  const groupColumns = [
-    { key: 'group', label: 'Group', slot: 'group' },
-    { key: 'roles', label: 'Roles', slot: 'role' },
-    { key: 'actions', label: 'Actions', align: 'text-right' }
-  ];
+    const groupRows = groupAssignments.map(group => ({
+      ...group,
+      type: 'group',
+      row_key: `group-${group.group_id}`,
+      displayName: group.group_name,
+      detail: group.group_description || 'Group'
+    }));
+
+    return [...userRows, ...groupRows].sort((a, b) =>
+      (a.displayName || '').localeCompare(b.displayName || '', undefined, { sensitivity: 'base' })
+    );
+  });
 
   // Search filtering
-  let filteredMembers = $derived(members.filter(member => {
+  let filteredAssignments = $derived(assignmentRows.filter(assignment => {
     if (!searchQuery.trim()) return true;
 
     const query = searchQuery.toLowerCase();
     return (
-      member.first_name?.toLowerCase().includes(query) ||
-      member.last_name?.toLowerCase().includes(query) ||
-      member.email?.toLowerCase().includes(query) ||
-      member.username?.toLowerCase().includes(query)
+      assignment.displayName?.toLowerCase().includes(query) ||
+      assignment.detail?.toLowerCase().includes(query) ||
+      assignment.username?.toLowerCase().includes(query) ||
+      assignment.email?.toLowerCase().includes(query) ||
+      assignment.group_name?.toLowerCase().includes(query) ||
+      assignment.group_description?.toLowerCase().includes(query)
     );
   }));
 
   // Pagination
-  let paginatedMembers = $derived(filteredMembers.slice(
+  let paginatedAssignments = $derived(filteredAssignments.slice(
     (currentPage - 1) * itemsPerPage,
     currentPage * itemsPerPage
   ));
@@ -395,30 +404,29 @@
     </DataTable>
   </div>
 
-  <!-- Search Box and Add Member Button -->
-  <div class="flex items-center justify-between gap-4">
-    <SearchInput
-      bind:value={searchQuery}
-      placeholder="Search members by name or email..."
-      className="flex-1"
-    />
-    <div class="flex items-center gap-2">
-      <Button variant="primary" size="medium" onclick={() => showModal = true} keyboardHint="A" hotkeyConfig={{ key: toHotkeyString('workspaceMembers', 'addMember'), guard: () => !showModal }}>
-        <UserPlus class="w-4 h-4 mr-2" />
-        Add Member
-      </Button>
-      <Button
-        variant="default"
-        size="medium"
-        onclick={openGroupModal}
-        keyboardHint="G"
-        hotkeyConfig={{ key: toHotkeyString('workspaceMembers', 'addGroup'), guard: canOpenGroupModal }}
-      >
-        <Users class="w-4 h-4 mr-2" />
-        Add Group
-      </Button>
-    </div>
+  <!-- Assignment actions -->
+  <div class="flex items-center justify-end gap-2">
+    <Button variant="primary" size="medium" onclick={() => showModal = true} keyboardHint="A" hotkeyConfig={{ key: toHotkeyString('workspaceMembers', 'addMember'), guard: () => !showModal }}>
+      <UserPlus class="w-4 h-4 mr-2" />
+      Add Member
+    </Button>
+    <Button
+      variant="default"
+      size="medium"
+      onclick={openGroupModal}
+      keyboardHint="G"
+      hotkeyConfig={{ key: toHotkeyString('workspaceMembers', 'addGroup'), guard: canOpenGroupModal }}
+    >
+      <Users class="w-4 h-4 mr-2" />
+      Add Group
+    </Button>
   </div>
+
+  <!-- Search Box -->
+  <SearchInput
+    bind:value={searchQuery}
+    placeholder="Search members or groups by name or email..."
+  />
 
   <!-- Members Table -->
   {#if loading}
@@ -432,24 +440,35 @@
   {:else}
     <DataTable
       {columns}
-      data={paginatedMembers}
-      keyField="user_id"
-      emptyMessage="No members yet. Add users to this workspace to grant them access."
+      data={paginatedAssignments}
+      keyField="row_key"
+      emptyMessage="No members or groups yet. Add users or groups to this workspace to grant access."
       emptyIcon={Shield}
-      actionItems={getActionItems}
+      actionItems={getAssignmentActionItems}
     >
-      {#snippet user(item)}
+      {#snippet principal(item)}
         <div class="flex items-center gap-3">
-          <Avatar
-            src={item.avatar_url}
-            firstName={item.first_name}
-            lastName={item.last_name}
-            size="sm"
-            variant="blue"
-          />
+          {#if item.type === 'group'}
+            <div class="flex items-center justify-center w-8 h-8 rounded-full" style="background-color: var(--ds-background-accent-purple-subtler);">
+              <Users class="w-4 h-4" style="color: var(--ds-accent-purple);" />
+            </div>
+          {:else}
+            <Avatar
+              src={item.avatar_url}
+              firstName={item.first_name}
+              lastName={item.last_name}
+              size="sm"
+              variant="blue"
+            />
+          {/if}
           <div>
-            <Text size="sm" weight="medium">{item.first_name} {item.last_name}</Text>
-            <Text size="xs" variant="subtle">{item.email}</Text>
+            <div class="flex items-center gap-2">
+              <Text size="sm" weight="medium">{item.displayName}</Text>
+              {#if item.type === 'group'}
+                <Chip color="purple">Group</Chip>
+              {/if}
+            </div>
+            <Text size="xs" variant="subtle">{item.detail}</Text>
           </div>
         </div>
       {/snippet}
@@ -466,10 +485,10 @@
       {/snippet}
     </DataTable>
 
-    {#if filteredMembers.length > 0}
+    {#if filteredAssignments.length > 0}
       <Pagination
         currentPage={currentPage}
-        totalItems={filteredMembers.length}
+        totalItems={filteredAssignments.length}
         itemsPerPage={itemsPerPage}
         pageSizeOptions={[10, 20, 50]}
         onpageChange={handlePageChange}
@@ -477,54 +496,9 @@
       />
     {:else if searchQuery.trim()}
       <div class="text-sm text-center py-4" style="color: var(--ds-text-subtle);">
-        No members found matching "{searchQuery}"
+        No members or groups found matching "{searchQuery}"
       </div>
     {/if}
-
-    <!-- Group Assignments -->
-    <div class="flex items-start gap-3 mt-10 mb-4">
-      <Users class="w-4 h-4 text-blue-600 mt-0.5" />
-      <div>
-        <h3 class="text-sm font-semibold" style="color: var(--ds-text);">Groups</h3>
-        <p class="text-sm mt-1" style="color: var(--ds-text-subtle);">
-          Roles assigned to a group apply to every member of that group.
-        </p>
-      </div>
-    </div>
-
-    <DataTable
-      columns={groupColumns}
-      data={groupAssignments}
-      keyField="group_id"
-      emptyMessage="No groups assigned. Add a group to grant its members access."
-      emptyIcon={Users}
-      actionItems={getGroupActionItems}
-    >
-      {#snippet group(item)}
-        <div class="flex items-center gap-3">
-          <div class="flex items-center justify-center w-8 h-8 rounded-full" style="background-color: var(--ds-background-accent-purple-subtler);">
-            <Users class="w-4 h-4" style="color: var(--ds-accent-purple);" />
-          </div>
-          <div>
-            <Text size="sm" weight="medium">{item.group_name}</Text>
-            {#if item.group_description}
-              <Text size="xs" variant="subtle">{item.group_description}</Text>
-            {/if}
-          </div>
-        </div>
-      {/snippet}
-
-      {#snippet role(item)}
-        <div class="flex flex-wrap gap-2">
-          {#each item.roles as role}
-            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium" style={getRoleBadgeStyle(role.role_id)}>
-              <Shield class="w-3 h-3" />
-              {role.role_name}
-            </span>
-          {/each}
-        </div>
-      {/snippet}
-    </DataTable>
   {/if}
 </div>
 
