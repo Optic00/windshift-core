@@ -4,7 +4,7 @@
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import { $prose } from '@milkdown/kit/utils';
 
-const SAFE_URL_SCHEMES = /^(https?:|mailto:|tel:|#|\/)/i;
+const SAFE_URL_SCHEMES = /^(https?:|mailto:|tel:|page:|#|\/)/i;
 const SAFE_IMAGE_URL_SCHEMES = /^(https?:|blob:|#|\/)/i;
 
 /**

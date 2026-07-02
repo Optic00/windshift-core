@@ -19,6 +19,10 @@ describe('isSafeUrl', () => {
       expect(isSafeUrl('tel:+1234567890')).toBe(true);
     });
 
+    it('allows Windshift page links', () => {
+      expect(isSafeUrl('page:123')).toBe(true);
+    });
+
     it('allows fragment-only URLs', () => {
       expect(isSafeUrl('#section')).toBe(true);
     });

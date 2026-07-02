@@ -8,7 +8,8 @@
     entityId = null, onImageInsert = null, onContentChange = null, isPersonalWorkspace = false, compact = false,
     customUploadFn = null, downloadUrlBase = '/api/attachments', deferImageUploads = false,
     onDeferredImageUpload = null,
-    enableDiagrams = false
+    enableDiagrams = false,
+    workspaceId = null
   } = $props();
 
   let MilkdownEditor = $state(null);
@@ -103,6 +104,7 @@
     {deferImageUploads}
     {onDeferredImageUpload}
     {enableDiagrams}
+    {workspaceId}
   />
 {:else}
   <!-- Skeleton placeholder while loading -->
