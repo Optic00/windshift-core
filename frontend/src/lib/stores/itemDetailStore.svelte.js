@@ -26,6 +26,32 @@ function isNumericID(value) {
   return /^\d+$/.test(String(value ?? ''));
 }
 
+function childItemListsMatch(current = [], next = []) {
+  if (current === next) return true;
+  if (!Array.isArray(current) || !Array.isArray(next) || current.length !== next.length) {
+    return false;
+  }
+
+  return current.every((item, index) => childItemSummariesMatch(item, next[index]));
+}
+
+function childItemSummariesMatch(current = {}, next = {}) {
+  const fields = [
+    'id',
+    'workspace_id',
+    'workspace_key',
+    'workspace_item_number',
+    'item_type_id',
+    'title',
+    'status_id',
+    'status_name',
+    'status_color',
+    'frac_index',
+  ];
+
+  return fields.every((field) => (current?.[field] ?? null) === (next?.[field] ?? null));
+}
+
 const RELATED_ITEM_FIELDS = {
   status: ['status_id', 'status_name', 'status_color', 'status_category_id'],
   priority: ['priority_id', 'priority_name', 'priority_color'],
@@ -445,14 +471,17 @@ class ItemDetailStore {
     try {
       this.loadingChildItems = true;
       const response = await api.items.getChildren(this.itemId);
+      let nextChildItems = [];
       if (Array.isArray(response)) {
-        this.childItems = response;
+        nextChildItems = response;
       } else if (response?.items) {
-        this.childItems = response.items;
+        nextChildItems = response.items;
       } else if (response?.data) {
-        this.childItems = response.data;
-      } else {
-        this.childItems = [];
+        nextChildItems = response.data;
+      }
+
+      if (!childItemListsMatch(this.childItems, nextChildItems)) {
+        this.childItems = nextChildItems;
       }
     } catch (err) {
       console.error('Failed to load child items:', err);
