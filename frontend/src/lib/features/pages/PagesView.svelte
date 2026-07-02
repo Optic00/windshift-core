@@ -635,6 +635,7 @@
             entityType="page"
             entityId={selectedPage.id}
             enableDiagrams={true}
+            {workspaceId}
             onContentChange={onContentInput}
           />
         </div>

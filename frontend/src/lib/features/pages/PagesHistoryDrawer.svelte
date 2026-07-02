@@ -197,7 +197,7 @@
                     <div class="rev-title">{rev.title}</div>
                   {/if}
                   <div class="rev-preview">
-                    <LazyMilkdownEditor content={rev.content || ''} readonly={true} />
+                    <LazyMilkdownEditor content={rev.content || ''} readonly={true} {workspaceId} />
                   </div>
                   {#if canRestore && rev.id !== history[0]?.id}
                     <div class="rev-actions">

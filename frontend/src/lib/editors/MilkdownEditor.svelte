@@ -23,6 +23,7 @@
   import { highlightCodeBlocks } from './code-highlight.js';
   import { t } from '../stores/i18n.svelte.js';
   import { attachmentStatus } from '../stores/attachmentStatus.svelte.js';
+  import { navigate } from '../router.js';
 
   let {
     content = $bindable(''), placeholder = '', readonly = false,
@@ -30,7 +31,8 @@
     entityId = null, onImageInsert = null, onContentChange = null, isPersonalWorkspace = false, compact = false,
     customUploadFn = null, downloadUrlBase = '/api/attachments', deferImageUploads = false,
     onDeferredImageUpload = null,
-    enableDiagrams = false
+    enableDiagrams = false,
+    workspaceId = null
   } = $props();
 
   // Diagram modal state — only meaningful when enableDiagrams=true.
@@ -369,6 +371,25 @@
     diagramModal = { open: true, mode: 'create', attachmentId: null, name: '', getPos: null };
   }
 
+  function pageIdFromHref(href) {
+    const match = String(href || '').trim().match(/^page:(\d+)$/i);
+    if (!match) return null;
+    const id = Number(match[1]);
+    return Number.isSafeInteger(id) && id > 0 ? id : null;
+  }
+
+  function handleInternalPageLinkClick(event) {
+    if (!workspaceId) return false;
+    const link = event.target?.closest?.('a[href]');
+    if (!link) return false;
+    const targetPageId = pageIdFromHref(link.getAttribute('href'));
+    if (!targetPageId) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    navigate(`/workspaces/${workspaceId}/pages/${targetPageId}`);
+    return true;
+  }
+
   function handleDiagramSaved({ attachmentId, name }) {
     if (!editor) return;
     if (diagramModal.mode === 'edit' && typeof diagramModal.getPos === 'function') {
@@ -443,6 +464,9 @@
                 return false; // Don't prevent default
               },
               click: (view, event) => {
+                if (handleInternalPageLinkClick(event)) {
+                  return true;
+                }
                 // Close mention picker when clicking elsewhere
                 if (mentionPickerOpen) {
                   closeMentionPicker();

@@ -177,6 +177,7 @@
         entityType="page"
         entityId={page.id}
         enableDiagrams={true}
+        {workspaceId}
       />
     </div>
   {/if}
