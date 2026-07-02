@@ -473,7 +473,7 @@ func printImageAttachmentHint(w *tabwriter.Writer, attachments []Attachment) {
 	if len(images) > 1 {
 		noun = "image attachments"
 	}
-	_, _ = fmt.Fprintf(w, "\nThis item has %d %s; call view_image with the attachment id to see them:\n", len(images), noun)
+	_, _ = fmt.Fprintf(w, "\nThis item has %d %s. If you need to inspect visual content, call view_image with the attachment id; do not download the file or run OCR/identify/strings/xxd first:\n", len(images), noun)
 	for _, a := range images {
 		name := a.OriginalFilename
 		if name == "" {
@@ -677,6 +677,7 @@ func (o *Output) printAttachmentsTable(w *tabwriter.Writer, atts []Attachment) {
 			a.CreatedAt.Format("2006-01-02 15:04"),
 		)
 	}
+	printImageAttachmentHint(w, atts)
 }
 
 func (o *Output) printAttachmentsCSV(w *csv.Writer, atts []Attachment) {

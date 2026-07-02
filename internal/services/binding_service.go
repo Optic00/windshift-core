@@ -38,6 +38,17 @@ var ErrBindingInvalidRepoSlug = errors.New("binding service: repo_slug must be o
 // allowed characters can produce them.
 var validRepoSlug = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
 
+const codingAgentVisionPromptSuffix = `
+
+Vision is enabled for this run (LLM_SUPPORTS_VISION=true). If the work item has image attachments, inspect them with the view_image tool by attachment id. Prefer view_image over downloading image files or attempting OCR/identify/strings/xxd/tesseract: view_image sends the image directly to your vision model, while those shell/file approaches are lossy and usually miss the visual content.`
+
+func visionPromptSuffix(cfg *llm.ConnectionRuntimeConfig) string {
+	if cfg == nil || !cfg.SupportsVision {
+		return ""
+	}
+	return codingAgentVisionPromptSuffix
+}
+
 // ErrBindingDuplicateRepoSlug is returned when a binding lists the same repo
 // slug more than once (WI-449). The handler maps it to 400.
 var ErrBindingDuplicateRepoSlug = errors.New("binding service: a repo_slug may appear only once per binding")
@@ -1127,11 +1138,11 @@ func (s *BindingService) startRunForBinding(ctx context.Context, binding *models
 	// host-side credentials (WI-195).
 	if binding.TargetPoolID != nil {
 		remoteReq := RunRequest{
-			WorkspaceID:       workspaceID,
-			ItemID:            &itemID,
-			BindingID:         binding.ID,
-			TargetPoolID:      binding.TargetPoolID,
-			JobKind:           models.JobKindCodingAgent,
+			WorkspaceID:  workspaceID,
+			ItemID:       &itemID,
+			BindingID:    binding.ID,
+			TargetPoolID: binding.TargetPoolID,
+			JobKind:      models.JobKindCodingAgent,
 			// A binding-configured custom image overrides the runner's default
 			// windshift-agent image for this pool run; empty keeps the default (WI-450).
 			JobImage:          binding.RunnerImage,
@@ -1274,6 +1285,10 @@ func (s *BindingService) startRunForBinding(ctx context.Context, binding *models
 			return err
 		}
 		applyLLMModelEnv(req.Env, llmCfg)
+		if suffix := visionPromptSuffix(llmCfg); suffix != "" {
+			// Keep the per-run instruction last; it is the most specific guidance.
+			req.InitialPromptSuffix = s.promptSuffixForBinding(binding, skills) + suffix + renderInstruction(trigger)
+		}
 	}
 	// Mint a per-run ws token + snapshot the run's access-layer grants
 	// (WI-144). Shared with the remote claim path via bindingTokenAndGrants so
@@ -1539,12 +1554,14 @@ func (s *BindingService) ResolveRunInputs(ctx context.Context, run *models.Agent
 	// llm-proxy base URL are layered on at claim by applyLLMProxyEnv. No raw
 	// provider key travels to a remote runner — it reaches the model only
 	// through the llm-proxy with its per-run token (WI-238).
+	visionSuffix := ""
 	if binding.LLMConnectionID != nil && s.llmRuntime != nil {
 		llmCfg, err := s.llmRuntime.ConnectionRuntime(ctx, *binding.LLMConnectionID)
 		if err != nil {
 			return nil, fmt.Errorf("resolve run inputs: llm runtime: %w", err)
 		}
 		applyLLMModelEnv(env, llmCfg)
+		visionSuffix = visionPromptSuffix(llmCfg)
 	}
 	triggeredBy := 0
 	if run.TriggeredByUserID != nil {
@@ -1554,7 +1571,7 @@ func (s *BindingService) ResolveRunInputs(ctx context.Context, run *models.Agent
 	// Re-derive the binding persona/skills suffix, then append the run's own
 	// instruction (the @mentioning comment, persisted on the run as Trigger) so
 	// the remote claim prepares the prompt identically to the local path.
-	promptSuffix := s.promptSuffixForBinding(binding, skills) + renderInstruction(run.Trigger)
+	promptSuffix := s.promptSuffixForBinding(binding, skills) + visionSuffix + renderInstruction(run.Trigger)
 	spec, grants := s.bindingTokenAndGrants(binding, itemID, triggeredBy, len(skills) > 0)
 
 	// Repo-prep inputs for a remote runner, one per bound repo, primary first
