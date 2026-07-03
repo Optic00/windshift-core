@@ -381,6 +381,23 @@ func shouldRunSmartCommits(pr PullRequest, lastSyncedAt, now time.Time) bool {
 	return pr.MergedAt.After(now.Add(-smartCommitFirstSyncWindow))
 }
 
+// shouldEmitPRLinkEvent decides whether a newly discovered PR is recent
+// enough to fire the scm_pr_linked action trigger. Mirrors the smart-commit
+// lookback so connecting an old repository doesn't flood the action engine
+// with stale PR links.
+func shouldEmitPRLinkEvent(pr PullRequest, lastSyncedAt, now time.Time) bool {
+	if !lastSyncedAt.IsZero() {
+		return pr.UpdatedAt.After(lastSyncedAt)
+	}
+	return pr.UpdatedAt.After(now.Add(-smartCommitFirstSyncWindow))
+}
+
+// shouldEmitPRMergeEvent decides whether a newly observed merged PR is
+// recent enough to fire the scm_pr_merged action trigger.
+func shouldEmitPRMergeEvent(pr PullRequest, lastSyncedAt, now time.Time) bool {
+	return shouldRunSmartCommits(pr, lastSyncedAt, now)
+}
+
 // iteratePullRequests fetches PRs from the provider page-by-page (sorted by
 // updated desc) and invokes fn for each PR in turn. It stops when any of:
 //   - a page returns fewer than syncPRsPerPage results (last page),
@@ -439,8 +456,9 @@ func iteratePullRequests(ctx context.Context, provider Provider, owner, repo str
 	}
 }
 
-// processPullRequest handles key detection, link upsert, and smart-commit
-// dispatch for a single PR. Extracted so the paged loop above stays tight.
+// processPullRequest handles key detection, link upsert, smart-commit
+// dispatch, and action-engine events for a single PR. Extracted so the
+// paged loop above stays tight.
 func (s *SyncService) processPullRequest(ctx context.Context, provider Provider, owner, repo string, pr PullRequest, repoID, workspaceID int, workspaceKey, itemKeyPattern string, lastSyncedAt time.Time) {
 	keys := s.detectPullRequestKeys(&pr, workspaceKey, itemKeyPattern)
 	if len(keys) == 0 {
@@ -455,7 +473,9 @@ func (s *SyncService) processPullRequest(ctx context.Context, provider Provider,
 		newlyMerged = s.isPRNewlyMerged(ctx, repoID, pr.Number)
 	}
 
+	now := time.Now()
 	var itemIDs []int
+	linkedItems := make(map[int]bool) // item ids for which a *new* link was created
 	for _, key := range keys {
 		itemID, err := s.findItemByKey(ctx, workspaceID, key.Prefix, key.Number)
 		if err != nil || itemID == 0 {
@@ -470,9 +490,20 @@ func (s *SyncService) processPullRequest(ctx context.Context, provider Provider,
 			state = models.SCMLinkStateClosed
 		}
 
-		if err := s.upsertItemSCMLink(ctx, itemID, repoID, models.SCMLinkTypePullRequest,
-			strconv.Itoa(pr.Number), pr.URL, pr.Title, state, pr.Author.ID, pr.Author.Name, string(key.Source)); err != nil {
+		created, err := s.upsertItemSCMLink(ctx, itemID, repoID, models.SCMLinkTypePullRequest,
+			strconv.Itoa(pr.Number), pr.URL, pr.Title, state, pr.Author.ID, pr.Author.Name, string(key.Source))
+		if err != nil {
 			slog.Error("Failed to upsert PR link", slog.String("component", "scm"), slog.Int("item_id", itemID), slog.Any("error", err))
+			continue
+		}
+		if created && shouldEmitPRLinkEvent(pr, lastSyncedAt, now) {
+			linkedItems[itemID] = true
+		}
+	}
+
+	if len(linkedItems) > 0 {
+		for itemID := range linkedItems {
+			s.emitPRLinkedEvent(workspaceID, itemID, repoID, owner, repo, pr)
 		}
 	}
 
@@ -483,7 +514,13 @@ func (s *SyncService) processPullRequest(ctx context.Context, provider Provider,
 		s.pollPRCommentTriggers(ctx, provider, owner, repo, pr, repoID, workspaceID, itemIDs)
 	}
 
-	if newlyMerged && shouldRunSmartCommits(pr, lastSyncedAt, time.Now()) {
+	if newlyMerged && shouldEmitPRMergeEvent(pr, lastSyncedAt, now) {
+		for _, itemID := range itemIDs {
+			s.emitPRMergedEvent(workspaceID, itemID, repoID, owner, repo, pr)
+		}
+	}
+
+	if newlyMerged && shouldRunSmartCommits(pr, lastSyncedAt, now) {
 		s.processSmartCommitsForPR(ctx, provider, owner, repo, pr, repoID, workspaceID, workspaceKey)
 	}
 }
@@ -697,8 +734,9 @@ func (s *SyncService) processCommit(ctx context.Context, commit Commit, repoID, 
 		if err != nil || itemID == 0 {
 			continue
 		}
-		if err := s.upsertItemSCMLink(ctx, itemID, repoID, models.SCMLinkTypeCommit,
-			commit.SHA, commit.URL, title, "", authorExternalID, authorName, string(key.Source)); err != nil {
+		_, err = s.upsertItemSCMLink(ctx, itemID, repoID, models.SCMLinkTypeCommit,
+			commit.SHA, commit.URL, title, "", authorExternalID, authorName, string(key.Source))
+		if err != nil {
 			slog.Error("Failed to upsert commit link", slog.String("component", "scm"), slog.Int("item_id", itemID), slog.String("sha", commit.SHA), slog.Any("error", err))
 		}
 	}
@@ -772,7 +810,7 @@ func (s *SyncService) syncBranches(ctx context.Context, provider Provider, owner
 			// Construct branch URL (best effort - varies by provider)
 			branchURL := fmt.Sprintf("https://github.com/%s/%s/tree/%s", owner, repo, branch.Name)
 
-			err = s.upsertItemSCMLink(ctx, itemID, repoID, models.SCMLinkTypeBranch,
+			_, err = s.upsertItemSCMLink(ctx, itemID, repoID, models.SCMLinkTypeBranch,
 				branch.Name, branchURL, branch.Name, "", "", "", string(key.Source))
 			if err != nil {
 				slog.Error("Failed to upsert branch link", slog.String("component", "scm"), slog.Int("item_id", itemID), slog.Any("error", err))
@@ -793,9 +831,10 @@ func (s *SyncService) findItemByKey(_ context.Context, workspaceID int, workspac
 	return itemID, err
 }
 
-// upsertItemSCMLink creates or updates an SCM link for an item
+// upsertItemSCMLink creates or updates an SCM link for an item and reports
+// whether it performed an insert (true) or an update (false).
 func (s *SyncService) upsertItemSCMLink(ctx context.Context, itemID, repoID int, linkType models.SCMLinkType,
-	externalID, externalURL, title string, state models.SCMLinkState, authorExternalID, authorName, detectionSource string) error {
+	externalID, externalURL, title string, state models.SCMLinkState, authorExternalID, authorName, detectionSource string) (bool, error) {
 
 	// Try to find existing link
 	var existingID int
@@ -817,11 +856,11 @@ func (s *SyncService) upsertItemSCMLink(ctx context.Context, itemID, repoID int,
 			// PR/branch/commit for this item; refresh its SCM-links section.
 			services.PublishItemChange(itemID, services.ItemChangeLink)
 		}
-		return err
+		return true, err
 	}
 
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	// Update existing link
@@ -838,7 +877,61 @@ func (s *SyncService) upsertItemSCMLink(ctx context.Context, itemID, repoID int,
 		services.PublishItemChange(itemID, services.ItemChangeLink)
 	}
 
-	return err
+	return false, err
+}
+
+// emitPRLinkedEvent dispatches an scm_pr_linked action event for one linked
+// item. The payload mirrors the scm_tag_created / scm_release_branch_created
+// shape so templates can share repo variables and also read pr.* fields.
+func (s *SyncService) emitPRLinkedEvent(workspaceID, itemID, repoID int, owner, repo string, pr PullRequest) {
+	if s.actionEvents == nil {
+		return
+	}
+	s.actionEvents.EmitActionEvent(&models.ActionEvent{
+		EventType:   models.ActionTriggerSCMPRLinked,
+		WorkspaceID: workspaceID,
+		ItemID:      itemID,
+		ActorUserID: 0, // sync loop has no authenticated actor; action must use actor_user_id override
+		NewValues:   s.prEventValues(pr, repoID, owner, repo),
+	})
+}
+
+// emitPRMergedEvent dispatches an scm_pr_merged action event for one linked
+// item. The payload carries pr.is_merged and pr.merged_at so downstream
+// nodes can reason about the merge details.
+func (s *SyncService) emitPRMergedEvent(workspaceID, itemID, repoID int, owner, repo string, pr PullRequest) {
+	if s.actionEvents == nil {
+		return
+	}
+	s.actionEvents.EmitActionEvent(&models.ActionEvent{
+		EventType:   models.ActionTriggerSCMPRMerged,
+		WorkspaceID: workspaceID,
+		ItemID:      itemID,
+		ActorUserID: 0, // sync loop has no authenticated actor; action must use actor_user_id override
+		NewValues:   s.prEventValues(pr, repoID, owner, repo),
+	})
+}
+
+// prEventValues builds the shared NewValues payload for PR-linked and
+// PR-merged action events.
+func (s *SyncService) prEventValues(pr PullRequest, repoID int, owner, repo string) map[string]interface{} {
+	values := map[string]interface{}{
+		"pr.number":                    pr.Number,
+		"pr.title":                     pr.Title,
+		"pr.url":                       pr.URL,
+		"pr.head_branch":               pr.HeadBranch,
+		"pr.base_branch":               pr.BaseBranch,
+		"pr.state":                     pr.State,
+		"pr.is_merged":                 pr.IsMerged,
+		"repo.workspace_repository_id": repoID,
+		"repo.owner":                   owner,
+		"repo.name":                    repo,
+		"repo.full_name":               fmt.Sprintf("%s/%s", owner, repo),
+	}
+	if pr.MergedAt != nil {
+		values["pr.merged_at"] = *pr.MergedAt
+	}
+	return values
 }
 
 // getProviderInstance creates a provider instance from provider-level

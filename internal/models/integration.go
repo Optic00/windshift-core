@@ -748,6 +748,13 @@ const (
 	// and (tags only) ref.prev_name for "what shipped" range queries.
 	ActionTriggerSCMTagCreated           ActionTriggerType = "scm_tag_created"
 	ActionTriggerSCMReleaseBranchCreated ActionTriggerType = "scm_release_branch_created"
+
+	// SCM pull-request lifecycle triggers emitted by the repo sync loop when
+	// a synced repository discovers a new pull request linked to an item
+	// (scm_pr_linked) or when a linked pull request transitions to merged
+	// (scm_pr_merged).
+	ActionTriggerSCMPRLinked ActionTriggerType = "scm_pr_linked"
+	ActionTriggerSCMPRMerged ActionTriggerType = "scm_pr_merged"
 )
 
 // ActionNodeType defines the type of action node
@@ -841,6 +848,14 @@ type ActionTriggerConfig struct {
 	FieldName string `json:"field_name,omitempty"` // Which field changed
 	// For item_linked
 	LinkTypeID *int `json:"link_type_id,omitempty"` // Filter by link type (optional)
+	// For scm_pr_linked and scm_pr_merged: optional filter to a specific
+	// workspace repository. When nil the trigger fires for any repository.
+	WorkspaceRepositoryID *int `json:"workspace_repository_id,omitempty"`
+
+	// For scm_pr_linked and scm_pr_merged: optional filter to a specific
+	// repository slug (e.g. "owner/repo"). Empty matches any repository.
+	RepositoryFullName string `json:"repository_full_name,omitempty"`
+
 	// Cascade control - applies to all trigger types
 	RespondToCascades bool `json:"respond_to_cascades,omitempty"` // If true, action responds to events triggered by other actions
 }

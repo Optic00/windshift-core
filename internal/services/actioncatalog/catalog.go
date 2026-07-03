@@ -171,6 +171,20 @@ func Build() (*Catalog, error) {
 	}); err != nil {
 		return nil, err
 	}
+	if err := registerTrigger[models.ActionTriggerConfig](c, triggerSpec{
+		Type:        models.ActionTriggerSCMPRLinked,
+		Label:       "SCM: pull request linked",
+		Description: "Fires when a synced repository discovers a new pull request linked to a work item. SCM triggers have no authenticated actor, so the action must set an actor_user_id override to perform item mutations.",
+	}); err != nil {
+		return nil, err
+	}
+	if err := registerTrigger[models.ActionTriggerConfig](c, triggerSpec{
+		Type:        models.ActionTriggerSCMPRMerged,
+		Label:       "SCM: pull request merged",
+		Description: "Fires when a linked pull request transitions to merged. SCM triggers have no authenticated actor, so the action must set an actor_user_id override to perform item mutations.",
+	}); err != nil {
+		return nil, err
+	}
 
 	// Nodes ------------------------------------------------------------
 	// Order here is the order the frontend palette shows. Trigger is
@@ -464,4 +478,6 @@ var AllActionTriggerTypes = []models.ActionTriggerType{
 	models.ActionTriggerManual,
 	models.ActionTriggerSCMTagCreated,
 	models.ActionTriggerSCMReleaseBranchCreated,
+	models.ActionTriggerSCMPRLinked,
+	models.ActionTriggerSCMPRMerged,
 }

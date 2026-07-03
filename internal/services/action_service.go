@@ -594,6 +594,22 @@ func (as *ActionService) matchesTrigger(action *models.Action, event *models.Act
 				return false
 			}
 		}
+
+	case models.ActionTriggerSCMPRLinked, models.ActionTriggerSCMPRMerged:
+		// Optional workspace repository filter.
+		if config.WorkspaceRepositoryID != nil {
+			repoID := utils.InterfaceToIntPtr(event.NewValues["repo.workspace_repository_id"])
+			if repoID == nil || *repoID != *config.WorkspaceRepositoryID {
+				return false
+			}
+		}
+		// Optional repository slug filter (case-insensitive).
+		if config.RepositoryFullName != "" {
+			fullName := fmt.Sprintf("%v", event.NewValues["repo.full_name"])
+			if !strings.EqualFold(fullName, config.RepositoryFullName) {
+				return false
+			}
+		}
 	}
 
 	return true
@@ -618,17 +634,12 @@ func (as *ActionService) executeAction(action *models.Action, event *models.Acti
 	actionKey := fmt.Sprintf("workspace:%d", action.ID)
 	chain.MarkExecuted(actionKey)
 
-	// Resolve the effective actor: action.ActorUserID overrides the triggering
-	// user (subject to action.set_actor permission, enforced at CRUD time).
-	// A null override means the action runs under the triggering user's rights.
-	effectiveActorID := event.ActorUserID
-	if action.ActorUserID != nil && *action.ActorUserID > 0 {
-		effectiveActorID = *action.ActorUserID
-	}
-
 	// Create execution log — both the trigger user and the user whose perms
 	// actually governed the run are recorded for the audit trail.
 	triggerUserID := event.ActorUserID
+	// Effective actor starts as the trigger user; action.ActorUserID may
+	// override it below.
+	effectiveActorID := event.ActorUserID
 	log := &models.ActionExecutionLog{
 		ActionID:             action.ID,
 		ItemID:               &event.ItemID,
@@ -647,6 +658,28 @@ func (as *ActionService) executeAction(action *models.Action, event *models.Acti
 		)
 	}
 	log.ID = logID
+
+	// Resolve the effective actor: action.ActorUserID overrides the triggering
+	// user (subject to action.set_actor permission, enforced at CRUD time).
+	// A null override means the action runs under the triggering user's rights.
+	if action.ActorUserID != nil && *action.ActorUserID > 0 {
+		effectiveActorID = *action.ActorUserID
+		log.EffectiveActorUserID = &effectiveActorID
+	}
+
+	// SCM lifecycle triggers (PR linked/merged) are emitted by the background
+	// sync loop and have no authenticated human actor. Without an override
+	// the action cannot perform workspace mutations, so fail fast with a
+	// clear audit message instead of letting permission checks reject it
+	// opaquely downstream.
+	if (action.TriggerType == models.ActionTriggerSCMPRLinked || action.TriggerType == models.ActionTriggerSCMPRMerged) && effectiveActorID <= 0 {
+		log.Status = models.ActionStatusFailed
+		log.ErrorMessage = "SCM trigger requires an actor_user_id override because the sync loop has no authenticated user"
+		completedAt := time.Now()
+		log.CompletedAt = &completedAt
+		_ = as.repo.UpdateExecutionLog(log)
+		return fmt.Errorf("SCM trigger action %d requires an actor_user_id override", action.ID)
+	}
 
 	// Build execution context
 	ctx := &models.ExecutionContext{
