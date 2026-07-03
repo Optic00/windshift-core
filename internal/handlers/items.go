@@ -127,24 +127,31 @@ func parseIDListParam(raw string) []int {
 	return ids
 }
 
-// milestoneIDsFromItem extracts the milestone IDs from an item. On the create
-// path the decoded payload carries MilestoneIDs (the request-side form
-// `milestone_ids`); import flows instead populate the joined Milestones
-// objects, so fall back to those when MilestoneIDs is absent.
-func milestoneIDsFromItem(item models.Item) []int {
-	if len(item.MilestoneIDs) > 0 {
-		ids := make([]int, len(item.MilestoneIDs))
-		copy(ids, item.MilestoneIDs)
-		return ids
-	}
-	if len(item.Milestones) == 0 {
-		return nil
-	}
-	ids := make([]int, len(item.Milestones))
-	for i, m := range item.Milestones {
-		ids[i] = m.ID
-	}
-	return ids
+// itemCreateRequest is the legacy web/API create payload. Keep request-only
+// fields here instead of adding them to models.Item, whose milestone
+// representation on reads is the joined Milestones slice.
+type itemCreateRequest struct {
+	WorkspaceID       int                    `json:"workspace_id"`
+	Title             string                 `json:"title"`
+	Description       string                 `json:"description"`
+	StatusID          *int                   `json:"status_id,omitempty"`
+	PriorityID        *int                   `json:"priority_id,omitempty"`
+	ItemTypeID        *int                   `json:"item_type_id,omitempty"`
+	DueDate           *time.Time             `json:"due_date,omitempty"`
+	StartDate         *time.Time             `json:"start_date,omitempty"`
+	EndDate           *time.Time             `json:"end_date,omitempty"`
+	IsTask            bool                   `json:"is_task"`
+	IterationID       *int                   `json:"iteration_id,omitempty"`
+	ProjectID         *int                   `json:"project_id,omitempty"`
+	InheritProject    bool                   `json:"inherit_project"`
+	TimeProjectID     *int                   `json:"time_project_id,omitempty"`
+	AssigneeID        *int                   `json:"assignee_id,omitempty"`
+	ParentID          *int                   `json:"parent_id"`
+	RelatedWorkItemID *int                   `json:"related_work_item_id,omitempty"`
+	StoryPoints       *float64               `json:"story_points,omitempty"`
+	EstimateMinutes   *int                   `json:"estimate_minutes,omitempty"`
+	CustomFieldValues map[string]interface{} `json:"custom_field_values,omitempty"`
+	MilestoneIDs      []int                  `json:"milestone_ids,omitempty"`
 }
 
 // SetApprovalService wires the approval service so status-bound approvals gate
@@ -625,7 +632,7 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 	slog.Debug("item create request received")
 	createStart := time.Now()
 
-	item, ok := decodeJSON[models.Item](w, r)
+	item, ok := decodeJSON[itemCreateRequest](w, r)
 	if !ok {
 		return
 	}
@@ -638,8 +645,7 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Debug("user authenticated", slog.String("username", user.Username))
 
-	// Set creator to the authenticated user
-	item.CreatorID = &user.ID
+	creatorID := user.ID
 
 	// Check if user has permission to create items in this workspace
 	slog.Debug("checking permissions")
@@ -739,13 +745,13 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 		ItemTypeID:            itemTypeIDPtr,
 		IsTask:                item.IsTask,
 		ParentID:              item.ParentID,
-		MilestoneIDs:          milestoneIDsFromItem(item),
+		MilestoneIDs:          item.MilestoneIDs,
 		IterationID:           item.IterationID,
 		ProjectID:             item.ProjectID,
 		InheritProject:        item.InheritProject,
 		TimeProjectID:         item.TimeProjectID,
 		AssigneeID:            item.AssigneeID,
-		CreatorID:             item.CreatorID,
+		CreatorID:             &creatorID,
 		DueDate:               item.DueDate,
 		StartDate:             item.StartDate,
 		EndDate:               item.EndDate,
