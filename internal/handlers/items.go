@@ -332,6 +332,12 @@ func (h *ItemHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 	sortBy := r.URL.Query().Get("order_by")
 	sortAsc := strings.EqualFold(r.URL.Query().Get("sort_direction"), "asc")
 
+	// Collection cards/lists do not render item descriptions; allow callers to
+	// trim that often-large column from list responses while keeping detail
+	// endpoints unchanged.
+	omitDescriptions := strings.EqualFold(r.URL.Query().Get("omit_descriptions"), "true") ||
+		strings.EqualFold(r.URL.Query().Get("fields"), "summary")
+
 	// Call service
 	items, totalCount, err := h.itemCRUD.ListWithQL(services.ListWithQLParams{
 		WorkspaceID:  workspaceID,
@@ -345,8 +351,9 @@ func (h *ItemHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 			Limit:  limit,
 			Offset: offset,
 		},
-		SortBy:  sortBy,
-		SortAsc: sortAsc,
+		SortBy:           sortBy,
+		SortAsc:          sortAsc,
+		OmitDescriptions: omitDescriptions,
 	})
 	if err != nil {
 		// Check for QL-specific errors to return as validation errors

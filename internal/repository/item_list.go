@@ -38,11 +38,12 @@ func parseDBTime(s string) (time.Time, bool) {
 
 // ItemListParams contains parameters for listing items
 type ItemListParams struct {
-	WorkspaceIDs []int
-	Filters      ItemFilters
-	Pagination   PaginationParams
-	SortBy       string
-	SortAsc      bool
+	WorkspaceIDs     []int
+	Filters          ItemFilters
+	Pagination       PaginationParams
+	SortBy           string
+	SortAsc          bool
+	OmitDescriptions bool
 }
 
 // ItemFilters contains optional filters for item queries
@@ -120,9 +121,14 @@ func SystemSortableFieldKeys() []string {
 
 // FindAllWithDetails retrieves items with all joined data, supporting filters and pagination
 func (r *ItemRepository) FindAllWithDetails(params ItemListParams) ([]models.Item, int, error) {
-	// Build the SELECT clause
-	selectClause := `SELECT
-		i.id, i.workspace_id, i.workspace_item_number, i.item_type_id, i.title, i.description, i.status_id, i.priority_id, i.due_date, i.start_date, i.end_date, i.is_task,
+	// Build the SELECT clause. Collection/list surfaces can opt out of the
+	// heavy description payload; detail endpoints still fetch full descriptions.
+	descriptionExpr := "i.description"
+	if params.OmitDescriptions {
+		descriptionExpr = "''"
+	}
+	selectClause := fmt.Sprintf(`SELECT
+		i.id, i.workspace_id, i.workspace_item_number, i.item_type_id, i.title, %s, i.status_id, i.priority_id, i.due_date, i.start_date, i.end_date, i.is_task,
 		i.iteration_id, i.project_id, i.inherit_project, i.time_project_id, i.assignee_id, i.creator_id, i.custom_field_values, i.calendar_data, i.parent_id,
 		i.story_points, i.estimate_minutes, i.frac_index, i.created_at, i.updated_at, i.last_active_at,
 		w.name as workspace_name, w.key as workspace_key, it.name as item_type_name,
@@ -131,7 +137,7 @@ func (r *ItemRepository) FindAllWithDetails(params ItemListParams) ([]models.Ite
 		creator.first_name || ' ' || creator.last_name as creator_name, creator.email as creator_email,
 		st.name as status_name, pri.name as priority_name, pri.icon as priority_icon, pri.color as priority_color,
 		COALESCE((SELECT MAX(ih.changed_at) FROM item_history ih WHERE ih.item_id = i.id AND ih.field_name = 'status_id' AND ih.new_value = CAST(i.status_id AS TEXT)), i.created_at) as status_since
-	`
+	`, descriptionExpr)
 
 	fromClause := `FROM items i
 		JOIN workspaces w ON i.workspace_id = w.id

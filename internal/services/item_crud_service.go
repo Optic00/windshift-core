@@ -405,13 +405,14 @@ func (s *ItemCRUDService) evaluateQL(qlQuery string, ctx cql.FunctionContext) (q
 
 // BacklogParams contains parameters for retrieving backlog items
 type BacklogParams struct {
-	WorkspaceID  int    // 0 if not specified (collection-only query)
-	CollectionID int    // 0 if not specified
-	QLQuery      string // Direct QL query, overrides collection
-	SubQLQuery   string // Sub-filter QL query (ANDed with collection/direct QL)
-	WorkspaceIDs []int  // Accessible workspace IDs for security filtering
-	UserID       int    // Authenticated user ID for currentUser() resolution
-	Pagination   PaginationParams
+	WorkspaceID      int    // 0 if not specified (collection-only query)
+	CollectionID     int    // 0 if not specified
+	QLQuery          string // Direct QL query, overrides collection
+	SubQLQuery       string // Sub-filter QL query (ANDed with collection/direct QL)
+	WorkspaceIDs     []int  // Accessible workspace IDs for security filtering
+	UserID           int    // Authenticated user ID for currentUser() resolution
+	Pagination       PaginationParams
+	OmitDescriptions bool
 }
 
 // GetBacklogItems retrieves items with non-completed statuses for a workspace/collection
@@ -464,24 +465,26 @@ func (s *ItemCRUDService) GetBacklogItems(params BacklogParams) ([]models.Item, 
 	}
 
 	return s.repo.FindAllWithDetails(ItemListParams{
-		WorkspaceIDs: params.WorkspaceIDs,
-		Filters:      filters,
-		Pagination:   params.Pagination,
+		WorkspaceIDs:     params.WorkspaceIDs,
+		Filters:          filters,
+		Pagination:       params.Pagination,
+		OmitDescriptions: params.OmitDescriptions,
 	})
 }
 
 // ListWithQLParams contains parameters for listing items with QL support
 type ListWithQLParams struct {
-	WorkspaceID  int    // Single workspace filter (0 = all accessible)
-	CollectionID int    // Collection to resolve QL from (0 = none)
-	QLQuery      string // Direct QL query (overrides collection)
-	SubQLQuery   string // Sub-filter QL query (ANDed with base QL)
-	WorkspaceIDs []int  // Accessible workspace IDs for security filtering
-	UserID       int    // Authenticated user ID for currentUser() resolution
-	Filters      ItemFilters
-	Pagination   PaginationParams
-	SortBy       string
-	SortAsc      bool
+	WorkspaceID      int    // Single workspace filter (0 = all accessible)
+	CollectionID     int    // Collection to resolve QL from (0 = none)
+	QLQuery          string // Direct QL query (overrides collection)
+	SubQLQuery       string // Sub-filter QL query (ANDed with base QL)
+	WorkspaceIDs     []int  // Accessible workspace IDs for security filtering
+	UserID           int    // Authenticated user ID for currentUser() resolution
+	Filters          ItemFilters
+	Pagination       PaginationParams
+	SortBy           string
+	SortAsc          bool
+	OmitDescriptions bool
 }
 
 // ListWithQL retrieves items with QL evaluation and collection resolution
@@ -529,11 +532,12 @@ func (s *ItemCRUDService) ListWithQL(params ListWithQLParams) ([]models.Item, in
 	}
 
 	return s.repo.FindAllWithDetails(ItemListParams{
-		WorkspaceIDs: params.WorkspaceIDs,
-		Filters:      filters,
-		Pagination:   params.Pagination,
-		SortBy:       params.SortBy,
-		SortAsc:      params.SortAsc,
+		WorkspaceIDs:     params.WorkspaceIDs,
+		Filters:          filters,
+		Pagination:       params.Pagination,
+		SortBy:           params.SortBy,
+		SortAsc:          params.SortAsc,
+		OmitDescriptions: params.OmitDescriptions,
 	})
 }
 

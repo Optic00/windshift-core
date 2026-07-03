@@ -27,7 +27,24 @@ const COLLECTION_VIEWS = new Set([
 const BOARD_VIEWS = new Set(['workspace-board', 'collection-board']);
 const LIST_VIEWS = new Set(['workspace-list', 'collection-list']);
 
-const DEFAULT_PAGE_SIZE = 250;
+const DEFAULT_PAGE_SIZE = 100;
+const LIST_INITIAL_PAGE_SIZE = 50;
+const LARGE_COLLECTION_PAGE_SIZE = 250;
+
+function initialItemsPageSize(view) {
+  if (view === 'workspace-list' || view === 'collection-list') return LIST_INITIAL_PAGE_SIZE;
+  if (
+    view === 'workspace-tree' ||
+    view === 'collection-tree' ||
+    view === 'workspace-map' ||
+    view === 'collection-map' ||
+    view === 'workspace-roadmap' ||
+    view === 'collection-roadmap'
+  ) {
+    return LARGE_COLLECTION_PAGE_SIZE;
+  }
+  return DEFAULT_PAGE_SIZE;
+}
 
 class CollectionStore {
   // Reactive state
@@ -116,6 +133,28 @@ class CollectionStore {
    * Initial load: fetches page 1 of items and backlog, resets all pagination state.
    */
   async load(wsId, colId, view = this.#currentView) {
+    const sameCollection = wsId === this.#wsId && colId === this.#colId;
+    const viewChanged = view !== this.#currentView;
+    const targetInitialLimit = initialItemsPageSize(view);
+
+    // Switching between passive collection views does not need another network
+    // roundtrip when the already-loaded item page is large enough and there is
+    // no active server-side sort/filter. Board views may need capped-column
+    // fetches, so they intentionally keep loading.
+    if (
+      sameCollection &&
+      viewChanged &&
+      this.items.length > 0 &&
+      (this.itemsPagination?.limit ?? 0) >= targetInitialLimit &&
+      !this.subFilterQL &&
+      !this.#sortBy &&
+      !this.#sortDirection &&
+      !BOARD_VIEWS.has(view)
+    ) {
+      this.#currentView = view;
+      return;
+    }
+
     // Clear sub-filter and sort on navigation (workspace or collection change)
     if (wsId !== this.#wsId || colId !== this.#colId) {
       this.subFilterQL = '';
@@ -141,10 +180,11 @@ class CollectionStore {
       ]);
       if (loadId !== this.#loadId) return; // stale
 
+      const itemsLimit = targetInitialLimit;
       const [itemsResult, backlogResult, capResult] = await Promise.all([
         fetchCollectionItems(wsId, colId, {
           page: 1,
-          limit: DEFAULT_PAGE_SIZE,
+          limit: itemsLimit,
           sub_ql: this.subFilterQL || undefined,
           collection,
           ...this.#itemSortOptions(),
@@ -355,7 +395,7 @@ class CollectionStore {
     if (!this.#wsId && !this.#colId) return;
     const loadId = ++this.#loadId;
 
-    const itemsLimit = Math.max(DEFAULT_PAGE_SIZE, this.mainItemsLoadedCount);
+    const itemsLimit = Math.max(initialItemsPageSize(this.#currentView), this.mainItemsLoadedCount);
     const backlogLimit = Math.max(DEFAULT_PAGE_SIZE, this.backlogItems.length);
 
     try {
@@ -396,7 +436,6 @@ class CollectionStore {
       this.itemsHasMore = calcHasMore(itemsResult.pagination);
 
       this.backlogItems = backlogResult.items;
-
       this.backlogPagination = backlogResult.pagination;
       this.backlogHasMore = calcHasMore(backlogResult.pagination);
     } catch (error) {

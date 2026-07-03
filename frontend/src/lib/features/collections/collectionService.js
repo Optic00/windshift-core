@@ -18,6 +18,10 @@ export async function fetchCollectionItems(
   if (page) filters.page = page;
   if (limit) filters.limit = limit;
   if (sub_ql) filters.sub_ql = sub_ql;
+  // Collection views render cards/rows from metadata only. Avoid shipping large
+  // markdown/TipTap descriptions for every loaded item; item detail fetches
+  // still retrieve the full description on demand.
+  filters.omit_descriptions = true;
 
   if (collectionId) {
     // Reuse a collection the caller already fetched this load cycle (one board
@@ -70,6 +74,7 @@ export async function fetchCollectionBacklog(
     page,
     limit,
     sub_ql,
+    omit_descriptions: true,
   });
   const items = response?.items ?? (Array.isArray(response) ? response : []);
   const pagination = response?.pagination ?? null;

@@ -349,15 +349,19 @@ func (h *ItemHandler) GetBacklogItems(w http.ResponseWriter, r *http.Request) {
 
 	offset := (page - 1) * limit
 
+	omitDescriptions := strings.EqualFold(r.URL.Query().Get("omit_descriptions"), "true") ||
+		strings.EqualFold(r.URL.Query().Get("fields"), "summary")
+
 	// Call service
 	items, totalCount, err := h.itemCRUD.GetBacklogItems(services.BacklogParams{
-		WorkspaceID:  wsID,
-		CollectionID: collectionID,
-		QLQuery:      qlQuery,
-		SubQLQuery:   subQLQuery,
-		WorkspaceIDs: accessibleWorkspaceIDs,
-		UserID:       user.ID,
-		Pagination:   services.PaginationParams{Limit: limit, Offset: offset, Page: page},
+		WorkspaceID:      wsID,
+		CollectionID:     collectionID,
+		QLQuery:          qlQuery,
+		SubQLQuery:       subQLQuery,
+		WorkspaceIDs:     accessibleWorkspaceIDs,
+		UserID:           user.ID,
+		Pagination:       services.PaginationParams{Limit: limit, Offset: offset, Page: page},
+		OmitDescriptions: omitDescriptions,
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "QL query error:") {
