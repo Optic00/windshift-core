@@ -109,6 +109,22 @@ describe('Modal — backdrop click dismissal', () => {
     await fireEvent.click(backdrop);
     expect(onclose).not.toHaveBeenCalled();
   });
+
+  test('closeOnBackdropClick=false blocks backdrop dismissal', async () => {
+    const onclose = vi.fn();
+    render(Modal, {
+      props: {
+        isOpen: true,
+        closeOnBackdropClick: false,
+        onclose,
+        children: childrenSnippet(),
+      },
+    });
+
+    const backdrop = document.querySelector('[role="dialog"]');
+    await fireEvent.click(backdrop);
+    expect(onclose).not.toHaveBeenCalled();
+  });
 });
 
 describe('Modal — keyboard handling', () => {

@@ -66,6 +66,7 @@
     onSubmit={handleSubmit}
     submitDisabled={saveDisabled || saving}
     {maxWidth}
+    closeOnBackdropClick={false}
     onclose={handleCancel}
   >
     {#snippet children(submitHint)}
