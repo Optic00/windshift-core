@@ -127,10 +127,16 @@ func parseIDListParam(raw string) []int {
 	return ids
 }
 
-// milestoneIDsFromItem extracts the milestone IDs from an item's Milestones
-// slice. Used when forwarding a freshly-decoded models.Item into
-// services.CreateItem (which takes []int rather than the full Milestone slice).
+// milestoneIDsFromItem extracts the milestone IDs from an item. On the create
+// path the decoded payload carries MilestoneIDs (the request-side form
+// `milestone_ids`); import flows instead populate the joined Milestones
+// objects, so fall back to those when MilestoneIDs is absent.
 func milestoneIDsFromItem(item models.Item) []int {
+	if len(item.MilestoneIDs) > 0 {
+		ids := make([]int, len(item.MilestoneIDs))
+		copy(ids, item.MilestoneIDs)
+		return ids
+	}
 	if len(item.Milestones) == 0 {
 		return nil
 	}

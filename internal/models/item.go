@@ -104,6 +104,12 @@ type Item struct {
 	Labels                      []Label         `json:"labels,omitempty"`   // Workspace-scoped labels
 	PersonalLabels              []PersonalLabel `json:"personal_labels,omitempty"`
 	Milestones                  []Milestone     `json:"milestones,omitempty"`
+	// MilestoneIDs is the request-side representation of the milestone
+	// assignment (an array of milestone ids). The create endpoint decodes
+	// this from the payload; the read-side response uses the joined
+	// Milestones slice above instead, so this stays empty (omitempty) on
+	// responses.
+	MilestoneIDs []int `json:"milestone_ids,omitempty"`
 }
 
 // TimeRollup is the rolled-up estimate/logged total for an item plus its
