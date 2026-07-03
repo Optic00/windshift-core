@@ -144,8 +144,9 @@ func (s *AgentPRService) AfterRun(ctx context.Context, info PostRunInfo) {
 	}
 
 	// One PR per changed repo (WI-449). Each repo the agent committed to gets
-	// its own branch + PR; only the PRIMARY repo's PR is linked to the work
-	// item. A repo with no new commits has an empty branch and is skipped.
+	// its own branch + PR, and every one is linked to the work item (WI-536:
+	// a multi-repo run's non-primary PRs are part of the ticket too). A repo
+	// with no new commits has an empty branch and is skipped.
 	for _, pr := range s.prReposFor(info, binding) {
 		owner, repo, ok := splitRepoSlug(pr.slug)
 		if !ok {
@@ -175,8 +176,8 @@ func hasPushedRepo(repos []PostRunRepo) bool {
 }
 
 // prRepo is one repo's push result enriched with the binding metadata the PR
-// hook needs: which SCM connection to authenticate with and whether it's the
-// primary (work-item-linked) repo.
+// hook needs: which SCM connection to authenticate with, and whether it's the
+// binding's primary repo (kept for audit/logging — every PR links to the item).
 type prRepo struct {
 	slug       string
 	branch     string
@@ -231,8 +232,8 @@ func (s *AgentPRService) prReposFor(info PostRunInfo, binding *models.WorkspaceA
 	return out
 }
 
-// openRepoPR opens a draft PR for one changed repo and, when it is the primary
-// repo, links it to the work item.
+// openRepoPR opens a draft PR for one changed repo and links it to the work
+// item. Every PR a run opens is part of the bound item (WI-536).
 func (s *AgentPRService) openRepoPR(ctx context.Context, info PostRunInfo, binding *models.WorkspaceAgentBinding, pr prRepo, owner, repo string) {
 	base := pr.baseRef
 	if base == "" {
@@ -277,9 +278,13 @@ func (s *AgentPRService) openRepoPR(ctx context.Context, info PostRunInfo, bindi
 	}
 	s.logger.Printf("agent pr: opened PR %s for run=%d (binding=%d, %s/%s, primary=%t)", opened.URL, info.RunID, binding.ID, owner, repo, pr.primary)
 
-	// Only the primary repo's PR represents the work item; secondary repos open
-	// PRs but are not linked back to the item.
-	if !pr.primary || info.ItemID == nil {
+	// Every PR this run opened is part of the bound work item, so each is
+	// linked back to the item — not just the primary's. A multi-repo binding
+	// (WI-449) regularly lands the actual change in a non-primary repo (e.g. a
+	// tests repo); linking only the primary left those PRs created but never
+	// attached to the ticket (WI-536). The single-repo case is unchanged: its
+	// one repo is the primary, so it links as before.
+	if info.ItemID == nil {
 		return
 	}
 	if err := s.upsertItemSCMLink(ctx, *info.ItemID, pr.connID, pr.slug, opened); err != nil {
