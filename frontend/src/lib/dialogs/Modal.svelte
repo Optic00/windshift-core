@@ -14,6 +14,7 @@
     submitDisabled = false,
     zIndexClass = 'z-50',
     noBackdrop = false,
+    closeOnBackdropClick = true,
     onclose = null,
     onKeydown = null,
     children
@@ -35,7 +36,11 @@
   }
 
   function handleBackdropClick(e) {
-    if (e.target === e.currentTarget) {
+    // Clicking outside the modal content can silently dismiss it and lose
+    // anything the user has typed. Creation / editing dialogs gate this off
+    // (closeOnBackdropClick=false); the modal is closed through its explicit
+    // buttons or Escape instead.
+    if (closeOnBackdropClick && e.target === e.currentTarget) {
       close();
     }
   }

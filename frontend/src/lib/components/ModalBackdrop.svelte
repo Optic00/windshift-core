@@ -95,6 +95,9 @@
   }
 
   function handleClick(event) {
+    // Outside-click dismissal can silently discard typed-in form data, so
+    // creation / editing dialogs opt out (closeOnClick=false) and rely on
+    // their explicit buttons / Escape to close instead.
     if (closeOnClick && event.target === event.currentTarget) {
       close();
     }
