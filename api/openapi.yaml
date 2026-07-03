@@ -1150,6 +1150,8 @@ components:
           type: integer
         name:
           type: string
+        position:
+          type: integer
         status:
           type: string
         target_date:
@@ -1431,6 +1433,15 @@ components:
           type: integer
         target_type:
           type: string
+      type: object
+    handlers.milestoneReorderRequest:
+      properties:
+        category_id:
+          type: integer
+        ordered_ids:
+          items:
+            type: integer
+          type: array
       type: object
     handlers.nodeTypeDTO:
       properties:
@@ -1858,6 +1869,8 @@ components:
       - manual
       - scm_tag_created
       - scm_release_branch_created
+      - scm_pr_linked
+      - scm_pr_merged
       type: string
       x-enum-varnames:
       - ActionTriggerStatusTransition
@@ -1867,6 +1880,8 @@ components:
       - ActionTriggerManual
       - ActionTriggerSCMTagCreated
       - ActionTriggerSCMReleaseBranchCreated
+      - ActionTriggerSCMPRLinked
+      - ActionTriggerSCMPRMerged
     models.Attachment:
       properties:
         created_at:
@@ -2407,6 +2422,10 @@ components:
           $ref: '#/components/schemas/models.MilestoneRelease'
         name:
           type: string
+        position:
+          description: Manual sort order (drag-and-drop), scoped per (is_global, workspace_id,
+            category_id)
+          type: integer
         releases:
           items:
             $ref: '#/components/schemas/models.MilestoneRelease'
@@ -2584,6 +2603,13 @@ components:
         workspace_key:
           type: string
         workspace_name:
+          type: string
+      type: object
+    models.SkillPageReference:
+      properties:
+        id:
+          type: integer
+        title:
           type: string
       type: object
     models.TestCase:
@@ -2811,6 +2837,15 @@ components:
           type: integer
         name:
           type: string
+        pages:
+          description: |-
+            Pages are the workspace pages referenced by this skill (WI-517). On the
+            admin surface they round-trip so the editor can render the current
+            selection; on the agent-facing `ws skill get` surface their markdown is
+            inlined into Body instead. nil/omitted when the skill references none.
+          items:
+            $ref: '#/components/schemas/models.SkillPageReference'
+          type: array
         updated_at:
           type: string
         workspace_id:
@@ -7201,6 +7236,57 @@ paths:
       summary: Get progress report for a milestone
       tags:
       - milestones
+  /milestones/reorder:
+    post:
+      description: Reassigns manual sort positions for global milestones. The full,
+        in-scope ordering is supplied as ordered_ids; category_id optionally narrows
+        the scope to a single category. Requires the global milestone.create permission.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/handlers.milestoneReorderRequest'
+        description: Ordered milestone IDs
+        required: true
+        x-originalParamName: body
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: boolean
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks milestones:write or caller lacks milestone.create
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Reorder global milestones
+      tags:
+      - milestones
   /openapi.json:
     get:
       description: Returns the OpenAPI 3.0 description of this API. Public; no auth
@@ -7415,13 +7501,19 @@ paths:
       - recurrence
   /search/items:
     get:
-      description: Full-text search over items the caller can view. Requires a non-empty
-        `q` query parameter.
+      description: Search items the caller can view by full-text (`q`) or structured
+        CQL filter (`ql`). A `q` value that parses as CQL is evaluated as such.
       parameters:
-      - description: Search query
+      - description: Full-text search query (auto-detected as CQL when it parses as
+          a filter)
         in: query
         name: q
-        required: true
+        schema:
+          type: string
+      - description: Structured CQL filter, e.g. milestone = '0.8.2' AND status !=
+          Done
+        in: query
+        name: ql
         schema:
           type: string
       - description: Page number (1-based)
@@ -7468,7 +7560,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/handlers.ErrorResponse'
-          description: Missing or invalid q parameter
+          description: Missing q/ql, or invalid CQL query
         "401":
           content:
             application/json:
@@ -9862,6 +9954,71 @@ paths:
       security:
       - BearerAuth: []
       summary: Get progress report for a workspace milestone
+      tags:
+      - workspaces
+      - milestones
+  /workspaces/{id}/milestones/reorder:
+    post:
+      description: Reassigns manual sort positions for milestones owned by the workspace
+        in the URL. Global milestones are not affected. category_id optionally narrows
+        the scope to a single category.
+      parameters:
+      - description: Workspace ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/handlers.milestoneReorderRequest'
+        description: Ordered milestone IDs
+        required: true
+        x-originalParamName: body
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: boolean
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks items:write
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Workspace not found or not visible to caller
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Reorder milestones in a workspace
       tags:
       - workspaces
       - milestones

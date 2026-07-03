@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS actions (
 	name TEXT NOT NULL,
 	description TEXT,
 	is_enabled BOOLEAN DEFAULT true,
-	trigger_type TEXT NOT NULL,    -- status_transition, item_created, item_updated, item_linked
+	trigger_type TEXT NOT NULL,    -- status_transition, item_created, item_updated, item_linked, manual, scm_tag_created, scm_release_branch_created, scm_pr_linked, scm_pr_merged
 	trigger_config TEXT,           -- JSON with trigger-specific conditions
 	created_by INTEGER,
 	actor_user_id INTEGER,         -- NULL = run as triggering user; set = impersonate (requires action.set_actor)
