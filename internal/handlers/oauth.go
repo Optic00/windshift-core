@@ -272,7 +272,7 @@ func (h *OAuthHandler) AuthorizeApprove(w http.ResponseWriter, r *http.Request) 
 	codeChallenge := nullStringOrEmpty(req.CodeChallenge)
 	codeChallengeMethod := nullStringOrEmpty(req.CodeChallengeMethod)
 
-	if _, err := h.db.Exec(`
+	if _, err := h.db.ExecWrite(`
 		INSERT INTO oauth_authorization_codes (
 			code, client_id, user_id, agent_id, redirect_uri, scopes,
 			code_challenge, code_challenge_method, state, expires_at
@@ -568,7 +568,7 @@ func (h *OAuthHandler) tokenRefreshToken(w http.ResponseWriter, r *http.Request,
 	if err := h.db.QueryRow(
 		`SELECT id FROM oauth_refresh_tokens WHERE token_hash = ?`, newRefreshHash,
 	).Scan(&newID); err == nil {
-		_, _ = h.db.Exec(
+		_, _ = h.db.ExecWrite(
 			`UPDATE oauth_refresh_tokens SET revoked_at = CURRENT_TIMESTAMP, rotated_to_id = ? WHERE id = ?`,
 			newID, row.ID,
 		)
@@ -670,7 +670,7 @@ func (h *OAuthHandler) mintAccessAndRefresh(client *oauthClientRow, userID, agen
 	refreshHash := hashRefreshToken(refreshPlain)
 	scopesJSON, _ := json.Marshal(scopes)
 
-	if _, err := h.db.Exec(`
+	if _, err := h.db.ExecWrite(`
 		INSERT INTO oauth_refresh_tokens (
 			token_hash, api_token_id, client_id, user_id, agent_id,
 			scopes, expires_at
@@ -755,7 +755,7 @@ func (h *OAuthHandler) consumeAuthorizationCode(code string) (*oauthAuthCodeRow,
 		return nil, fmt.Errorf("authorization code has expired")
 	}
 
-	res, err := h.db.Exec(`
+	res, err := h.db.ExecWrite(`
 		UPDATE oauth_authorization_codes
 		SET consumed_at = CURRENT_TIMESTAMP
 		WHERE id = ? AND consumed_at IS NULL
@@ -835,7 +835,7 @@ func (h *OAuthHandler) cascadeRevokeRefreshChain(startID int) {
 	}
 
 	for _, id := range ids {
-		_, _ = h.db.Exec(
+		_, _ = h.db.ExecWrite(
 			`UPDATE oauth_refresh_tokens SET revoked_at = CURRENT_TIMESTAMP WHERE id = ? AND revoked_at IS NULL`, id,
 		)
 	}

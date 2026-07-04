@@ -1608,7 +1608,7 @@ func (s *Server) recoverUser(username string) {
 		slog.Info("RECOVER_USER: user is already active, no action needed", "username", username, "email", userEmail)
 		return
 	}
-	_, err = s.db.Exec(`UPDATE users SET is_active = true, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, id)
+	_, err = s.db.ExecWrite(`UPDATE users SET is_active = true, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, id)
 	if err != nil {
 		slog.Error("RECOVER_USER: failed to re-enable user", "username", username, "error", err)
 		return
@@ -1999,7 +1999,7 @@ func (s *Server) runSCMOAuthStateCleanup() {
 		select {
 		case <-ticker.C:
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			res, err := s.db.ExecContext(ctx, `DELETE FROM scm_oauth_state WHERE expires_at < CURRENT_TIMESTAMP`)
+			res, err := s.db.ExecWriteContext(ctx, `DELETE FROM scm_oauth_state WHERE expires_at < CURRENT_TIMESTAMP`)
 			cancel()
 			if err != nil {
 				slog.Error("scm_oauth_state cleanup failed", slog.Any("error", err))

@@ -166,7 +166,7 @@ func (r *TimeWorklogRepository) GetOwnerID(worklogID int) (int, error) {
 
 // UpdateDescription replaces a worklog's description, stamping updated_at.
 func (r *TimeWorklogRepository) UpdateDescription(worklogID int, description string) error {
-	_, err := r.db.Exec("UPDATE time_worklogs SET description = ?, updated_at = ? WHERE id = ?",
+	_, err := r.db.ExecWrite("UPDATE time_worklogs SET description = ?, updated_at = ? WHERE id = ?",
 		description, time.Now().Unix(), worklogID)
 	if err != nil {
 		return fmt.Errorf("update worklog description: %w", err)
@@ -176,7 +176,7 @@ func (r *TimeWorklogRepository) UpdateDescription(worklogID int, description str
 
 // Delete removes a worklog row.
 func (r *TimeWorklogRepository) Delete(worklogID int) error {
-	if _, err := r.db.Exec("DELETE FROM time_worklogs WHERE id = ?", worklogID); err != nil {
+	if _, err := r.db.ExecWrite("DELETE FROM time_worklogs WHERE id = ?", worklogID); err != nil {
 		return fmt.Errorf("delete worklog: %w", err)
 	}
 	return nil

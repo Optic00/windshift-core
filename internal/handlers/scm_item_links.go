@@ -365,7 +365,7 @@ func (h *SCMItemLinksHandler) DeleteItemSCMLink(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	_, err = h.db.Exec("DELETE FROM item_scm_links WHERE id = ?", linkID)
+	_, err = h.db.ExecWrite("DELETE FROM item_scm_links WHERE id = ?", linkID)
 	if err != nil {
 		slog.Error("failed to delete link", slog.String("component", "scm_item_links"), slog.Any("error", err))
 		respondInternalError(w, r, err)

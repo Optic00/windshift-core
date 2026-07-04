@@ -28,6 +28,10 @@ func (t *SQLiteTx) Exec(query string, args ...interface{}) (sql.Result, error) {
 	return t.tx.Exec(query, toUTCArgs(args)...)
 }
 
+func (t *SQLiteTx) ExecWrite(query string, args ...interface{}) (sql.Result, error) {
+	return t.tx.Exec(query, toUTCArgs(args)...)
+}
+
 func (t *SQLiteTx) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
 	return t.tx.QueryContext(ctx, query, toUTCArgs(args)...)
 }
@@ -37,6 +41,10 @@ func (t *SQLiteTx) QueryRowContext(ctx context.Context, query string, args ...in
 }
 
 func (t *SQLiteTx) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+	return t.tx.ExecContext(ctx, query, toUTCArgs(args)...)
+}
+
+func (t *SQLiteTx) ExecWriteContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
 	return t.tx.ExecContext(ctx, query, toUTCArgs(args)...)
 }
 
@@ -81,6 +89,11 @@ func (t *PostgresTx) Exec(query string, args ...interface{}) (sql.Result, error)
 	return t.tx.Exec(query, args...)
 }
 
+func (t *PostgresTx) ExecWrite(query string, args ...interface{}) (sql.Result, error) {
+	query = ConvertPlaceholders(query)
+	return t.tx.Exec(query, args...)
+}
+
 func (t *PostgresTx) QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error) {
 	query = ConvertPlaceholders(query)
 	return t.tx.QueryContext(ctx, query, args...)
@@ -92,6 +105,11 @@ func (t *PostgresTx) QueryRowContext(ctx context.Context, query string, args ...
 }
 
 func (t *PostgresTx) ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+	query = ConvertPlaceholders(query)
+	return t.tx.ExecContext(ctx, query, args...)
+}
+
+func (t *PostgresTx) ExecWriteContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
 	query = ConvertPlaceholders(query)
 	return t.tx.ExecContext(ctx, query, args...)
 }

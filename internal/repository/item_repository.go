@@ -1774,7 +1774,7 @@ type HomepageMilestoneProgress struct {
 
 // ClearRelatedWorkItem removes a personal task's related work item reference.
 func (r *ItemRepository) ClearRelatedWorkItem(itemID int) error {
-	res, err := r.db.Exec(`
+	res, err := r.db.ExecWrite(`
 		UPDATE items
 		SET related_work_item_id = NULL, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?

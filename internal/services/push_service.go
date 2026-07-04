@@ -137,7 +137,7 @@ func (s *PushService) PublicKey() string { return s.cfg.VAPIDPublicKey }
 // an existing endpoint (e.g. after key rotation) refreshes its keys, reattaches
 // it to the current user, and clears any revoked marker.
 func (s *PushService) Subscribe(userID int, endpoint, authKey, p256dhKey, userAgent string) error {
-	_, err := s.db.Exec(`
+	_, err := s.db.ExecWrite(`
 		INSERT INTO push_subscriptions (user_id, endpoint, auth_key, p256dh_key, user_agent, created_at, last_used_at)
 		VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		ON CONFLICT (endpoint) DO UPDATE SET
@@ -180,7 +180,7 @@ func (s *PushService) List(userID int) ([]PushSubscriptionInfo, error) {
 // Delete removes one of the user's subscriptions by id. The user_id predicate
 // enforces ownership — a user can never delete another user's subscription.
 func (s *PushService) Delete(userID, id int) error {
-	_, err := s.db.Exec(`DELETE FROM push_subscriptions WHERE id = ? AND user_id = ?`, id, userID)
+	_, err := s.db.ExecWrite(`DELETE FROM push_subscriptions WHERE id = ? AND user_id = ?`, id, userID)
 	return err
 }
 
@@ -313,12 +313,12 @@ func (s *PushService) deliver(userID int, payload pushPayload) {
 		case status == http.StatusNotFound || status == http.StatusGone:
 			// The endpoint is permanently gone — prune it.
 			resp.Body.Close()
-			if _, derr := s.db.Exec(`UPDATE push_subscriptions SET revoked_at = CURRENT_TIMESTAMP WHERE id = ?`, sb.id); derr != nil {
+			if _, derr := s.db.ExecWrite(`UPDATE push_subscriptions SET revoked_at = CURRENT_TIMESTAMP WHERE id = ?`, sb.id); derr != nil {
 				slog.Error("push: prune failed", slog.String("component", "push"), slog.Int("sub_id", sb.id), slog.Any("error", derr))
 			}
 		case status >= 200 && status < 300:
 			resp.Body.Close()
-			_, _ = s.db.Exec(`UPDATE push_subscriptions SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?`, sb.id)
+			_, _ = s.db.ExecWrite(`UPDATE push_subscriptions SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?`, sb.id)
 		default:
 			// Other non-2xx (e.g. APNs rejecting the VAPID JWT) are transient
 			// from the subscription's POV, but the provider's response body is

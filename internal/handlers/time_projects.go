@@ -454,7 +454,7 @@ func (h *TimeProjectHandler) Update(w http.ResponseWriter, r *http.Request) {
 	settingsJSON := marshalTimeProjectSettings(p.Settings)
 
 	now := time.Now()
-	_, err := h.db.Exec(`
+	_, err := h.db.ExecWrite(`
 		UPDATE time_projects
 		SET customer_id = ?, category_id = ?, name = ?, description = ?, status = ?, color = ?,
 		    hourly_rate = ?, settings = ?, updated_at = ?
@@ -505,7 +505,7 @@ func (h *TimeProjectHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	_, err := h.db.Exec("DELETE FROM time_projects WHERE id = ?", id)
+	_, err := h.db.ExecWrite("DELETE FROM time_projects WHERE id = ?", id)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return

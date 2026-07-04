@@ -13,7 +13,7 @@ var logbookSchema string
 // InitializeSchema creates the logbook tables in the database.
 // This is called by the logbook binary on startup.
 func InitializeSchema(db database.Database) error {
-	_, err := db.Exec(logbookSchema)
+	_, err := db.ExecWrite(logbookSchema)
 	if err != nil {
 		return fmt.Errorf("failed to initialize logbook schema: %w", err)
 	}

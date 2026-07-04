@@ -162,7 +162,7 @@ func (m *MilestoneAttacher) commitAlreadyProcessed(ctx context.Context, repoID i
 }
 
 func (m *MilestoneAttacher) markCommitProcessed(ctx context.Context, repoID int, sha string) error {
-	_, err := m.sync.db.ExecContext(ctx, `
+	_, err := m.sync.db.ExecWriteContext(ctx, `
 		INSERT INTO scm_processed_commits(commit_sha, workspace_repository_id, processed_at, actions_applied)
 		VALUES (?, ?, CURRENT_TIMESTAMP, 0)
 		ON CONFLICT(commit_sha, workspace_repository_id) DO NOTHING

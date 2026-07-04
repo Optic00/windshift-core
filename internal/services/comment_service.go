@@ -445,7 +445,7 @@ func (s *CommentService) Update(commentID int, content string, userID int) (*mod
 
 	// Update the comment
 	now := time.Now()
-	_, err = s.db.Exec(updateCommentSQL, sanitizedContent, now, commentID)
+	_, err = s.db.ExecWrite(updateCommentSQL, sanitizedContent, now, commentID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update comment: %w", err)
 	}
@@ -507,7 +507,7 @@ func (s *CommentService) Delete(commentID int) error {
 		return fmt.Errorf("failed to check comment: %w", err)
 	}
 
-	_, err = s.db.Exec(deleteCommentSQL, commentID)
+	_, err = s.db.ExecWrite(deleteCommentSQL, commentID)
 	if err != nil {
 		return fmt.Errorf("failed to delete comment: %w", err)
 	}

@@ -164,7 +164,7 @@ func (r *RecurrenceRepository) Create(rule *models.RecurrenceRule) (int, error) 
 
 // Update updates a recurrence rule
 func (r *RecurrenceRepository) Update(rule *models.RecurrenceRule) error {
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		UPDATE recurrence_rules SET
 			rrule = ?, dtstart = ?, dtend = ?, timezone = ?, lead_time_days = ?,
 			copy_assignee = ?, copy_priority = ?, copy_custom_fields = ?,
@@ -184,7 +184,7 @@ func (r *RecurrenceRepository) Update(rule *models.RecurrenceRule) error {
 
 // Delete deletes a recurrence rule
 func (r *RecurrenceRepository) Delete(id int) error {
-	result, err := r.db.Exec(`DELETE FROM recurrence_rules WHERE id = ?`, id)
+	result, err := r.db.ExecWrite(`DELETE FROM recurrence_rules WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("failed to delete recurrence rule: %w", err)
 	}
@@ -202,7 +202,7 @@ func (r *RecurrenceRepository) Delete(id int) error {
 
 // UpdateGenerationProgress updates the last_generated_until and next_generation_check fields
 func (r *RecurrenceRepository) UpdateGenerationProgress(id int, lastGenUntil, nextCheck time.Time) error {
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		UPDATE recurrence_rules SET
 			last_generated_until = ?, next_generation_check = ?, updated_at = ?
 		WHERE id = ?
@@ -215,7 +215,7 @@ func (r *RecurrenceRepository) UpdateGenerationProgress(id int, lastGenUntil, ne
 
 // UpdateNextCheck updates only the next_generation_check field
 func (r *RecurrenceRepository) UpdateNextCheck(id int, nextCheck time.Time) error {
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		UPDATE recurrence_rules SET next_generation_check = ?, updated_at = ?
 		WHERE id = ?
 	`, nextCheck, time.Now(), id)

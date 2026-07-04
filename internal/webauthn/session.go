@@ -21,6 +21,7 @@ type SessionStore struct {
 // Database interface for session storage
 type Database interface {
 	Exec(query string, args ...interface{}) (sql.Result, error)
+	ExecWrite(query string, args ...interface{}) (sql.Result, error)
 	QueryRow(query string, args ...interface{}) *sql.Row
 	Query(query string, args ...interface{}) (*sql.Rows, error)
 }
@@ -65,7 +66,7 @@ func (s *SessionStore) saveSession(userID any, sessionData *webauthn.SessionData
 
 	// Store in database with 5-minute expiration
 	expiresAt := time.Now().Add(5 * time.Minute)
-	_, err = s.db.Exec(`
+	_, err = s.db.ExecWrite(`
 		INSERT INTO webauthn_sessions (id, user_id, challenge, session_data, session_type, expires_at, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`, sessionID, userID, sessionData.Challenge, string(sessionJSON), sessionType, expiresAt, time.Now())
@@ -124,11 +125,11 @@ func (s *SessionStore) getSession(sessionID, sessionType string, userID *int) (*
 	}
 
 	if time.Now().After(expiresAt) {
-		_, _ = s.db.Exec(deleteQuery, deleteArgs...)
+		_, _ = s.db.ExecWrite(deleteQuery, deleteArgs...)
 		return nil, fmt.Errorf("session expired")
 	}
 
-	if _, err := s.db.Exec(deleteQuery, deleteArgs...); err != nil {
+	if _, err := s.db.ExecWrite(deleteQuery, deleteArgs...); err != nil {
 		// Session was retrieved successfully; cleanup failure is non-fatal.
 		slog.Warn("failed to delete webauthn session after retrieval", slog.Any("error", err), slog.String("session_id", sessionID))
 	}
@@ -163,7 +164,7 @@ func (s *SessionStore) cleanupExpiredSessions() {
 
 	// Run cleanup in background
 	go func() {
-		_, err := s.db.Exec(`
+		_, err := s.db.ExecWrite(`
 			DELETE FROM webauthn_sessions
 			WHERE expires_at < ?
 		`, time.Now())

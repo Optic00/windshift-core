@@ -291,7 +291,7 @@ func (h *PriorityHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// Insert configuration set associations into junction table (if any are provided)
 	if len(configSetIDs) > 0 {
 		for _, csID := range configSetIDs {
-			_, err = h.db.Exec(`
+			_, err = h.db.ExecWrite(`
 				INSERT INTO configuration_set_priorities (configuration_set_id, priority_id, created_at)
 				VALUES (?, ?, ?)
 			`, csID, id, now)

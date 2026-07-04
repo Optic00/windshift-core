@@ -158,7 +158,7 @@ func (s *EmailTrackingRetentionSweeper) sweepChannel(ctx context.Context, channe
 		return 0, fmt.Errorf("retention days out of range: %d", retentionDays)
 	}
 	cutoff := time.Now().Add(-time.Duration(retentionDays) * 24 * time.Hour)
-	res, err := s.db.ExecContext(ctx, `
+	res, err := s.db.ExecWriteContext(ctx, `
 		DELETE FROM email_message_tracking
 		WHERE channel_id = ?
 		  AND processed_at < ?

@@ -108,7 +108,7 @@ func (r *ThemeRepository) Update(id int, req models.ThemeUpdateRequest, now time
 		    nav_background_color_dark = ?, nav_text_color_dark = ?, is_active = ?, updated_at = ?
 		WHERE id = ?
 	`
-	res, err := r.db.Exec(query, req.Name, req.Description, req.NavBackgroundColorLight, req.NavTextColorLight, req.NavBackgroundColorDark, req.NavTextColorDark, req.IsActive, now, id)
+	res, err := r.db.ExecWrite(query, req.Name, req.Description, req.NavBackgroundColorLight, req.NavTextColorLight, req.NavBackgroundColorDark, req.NavTextColorDark, req.IsActive, now, id)
 	if err != nil {
 		return fmt.Errorf("update theme %d: %w", id, err)
 	}
@@ -120,7 +120,7 @@ func (r *ThemeRepository) Update(id int, req models.ThemeUpdateRequest, now time
 
 // DeactivateAllExcept deactivates every theme except id.
 func (r *ThemeRepository) DeactivateAllExcept(id int) error {
-	if _, err := r.db.Exec("UPDATE themes SET is_active = false WHERE id != ?", id); err != nil {
+	if _, err := r.db.ExecWrite("UPDATE themes SET is_active = false WHERE id != ?", id); err != nil {
 		return fmt.Errorf("deactivate other themes: %w", err)
 	}
 	return nil
@@ -128,7 +128,7 @@ func (r *ThemeRepository) DeactivateAllExcept(id int) error {
 
 // Delete removes a theme.
 func (r *ThemeRepository) Delete(id int) error {
-	res, err := r.db.Exec("DELETE FROM themes WHERE id = ?", id)
+	res, err := r.db.ExecWrite("DELETE FROM themes WHERE id = ?", id)
 	if err != nil {
 		return fmt.Errorf("delete theme %d: %w", id, err)
 	}
@@ -140,7 +140,7 @@ func (r *ThemeRepository) Delete(id int) error {
 
 // DeactivateAll deactivates every theme.
 func (r *ThemeRepository) DeactivateAll() error {
-	if _, err := r.db.Exec("UPDATE themes SET is_active = false"); err != nil {
+	if _, err := r.db.ExecWrite("UPDATE themes SET is_active = false"); err != nil {
 		return fmt.Errorf("deactivate themes: %w", err)
 	}
 	return nil
@@ -148,7 +148,7 @@ func (r *ThemeRepository) DeactivateAll() error {
 
 // Activate marks a theme active.
 func (r *ThemeRepository) Activate(id int, now time.Time) error {
-	res, err := r.db.Exec("UPDATE themes SET is_active = true, updated_at = ? WHERE id = ?", now, id)
+	res, err := r.db.ExecWrite("UPDATE themes SET is_active = true, updated_at = ? WHERE id = ?", now, id)
 	if err != nil {
 		return fmt.Errorf("activate theme %d: %w", id, err)
 	}

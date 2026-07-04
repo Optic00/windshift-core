@@ -100,7 +100,7 @@ func (s *SyncService) SyncUsers(ctx context.Context, config *models.LDAPConfig) 
 				continue
 			}
 			// Update last synced
-			_, _ = s.db.Exec("UPDATE ldap_user_mappings SET last_synced_at = CURRENT_TIMESTAMP WHERE id = ?", mapping.ID)
+			_, _ = s.db.ExecWrite("UPDATE ldap_user_mappings SET last_synced_at = CURRENT_TIMESTAMP WHERE id = ?", mapping.ID)
 			result.UsersUpdated++
 		} else if config.AutoProvisionUsers {
 			// New user - create
@@ -191,7 +191,7 @@ func (s *SyncService) createUser(configID int, ldapUser LDAPUser) error {
 	err := s.db.QueryRow("SELECT id FROM users WHERE email = ?", strings.ToLower(ldapUser.Email)).Scan(&existingID)
 	if err == nil {
 		// User exists - just create mapping
-		_, err = s.db.Exec(`
+		_, err = s.db.ExecWrite(`
 			INSERT INTO ldap_user_mappings (config_id, user_id, ldap_dn, ldap_uid)
 			VALUES (?, ?, ?, ?)
 		`, configID, existingID, ldapUser.DN, ldapUser.UID)

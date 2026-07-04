@@ -104,7 +104,7 @@ func (r *IntegrationProviderRepository) GetByID(id string) (*IntegrationProvider
 // Create inserts a new integration_provider. Returns ErrDuplicateEntry when
 // the slug collides with an existing row.
 func (r *IntegrationProviderRepository) Create(req IntegrationProviderInsert) error {
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		INSERT INTO integration_providers (
 			id, slug, name, provider_type, enabled,
 			oauth_client_id, oauth_client_secret_encrypted, provider_config
@@ -185,7 +185,7 @@ func (r *IntegrationProviderRepository) Update(id string, req IntegrationProvide
 
 // Delete removes a row. Returns ErrNotFound when no row matches.
 func (r *IntegrationProviderRepository) Delete(id string) error {
-	result, err := r.db.Exec("DELETE FROM integration_providers WHERE id = ?", id)
+	result, err := r.db.ExecWrite("DELETE FROM integration_providers WHERE id = ?", id)
 	if err != nil {
 		return fmt.Errorf("delete integration_provider %s: %w", id, err)
 	}

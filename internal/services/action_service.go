@@ -2206,7 +2206,7 @@ func (as *ActionService) executeUpdateAsset(node *models.ActionNode, ctx *models
 	}
 
 	// Update the asset
-	_, err = as.db.Exec(`
+	_, err = as.db.ExecWrite(`
 		UPDATE assets SET custom_field_values = ?, updated_at = ? WHERE id = ?
 	`, string(updatedJSON), time.Now(), assetID)
 	if err != nil {

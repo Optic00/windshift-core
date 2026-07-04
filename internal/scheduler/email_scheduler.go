@@ -455,7 +455,7 @@ func (es *EmailScheduler) getOrCreateChannelState(ctx context.Context, channelID
 	}
 
 	// Create new state
-	_, err = es.db.ExecContext(ctx, `
+	_, err = es.db.ExecWriteContext(ctx, `
 		INSERT INTO email_channel_state (channel_id, last_uid, error_count, created_at, updated_at)
 		VALUES (?, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 	`, channelID)
@@ -483,7 +483,7 @@ func (es *EmailScheduler) updateChannelState(ctx context.Context, channelID, las
 	if lastBatchError != "" {
 		lastError = sql.NullString{String: lastBatchError, Valid: true}
 	}
-	_, err := es.db.ExecContext(ctx, `
+	_, err := es.db.ExecWriteContext(ctx, `
 		UPDATE email_channel_state
 		SET last_uid = ?, uid_validity = ?, last_checked_at = CURRENT_TIMESTAMP, error_count = ?, last_error = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE channel_id = ?
@@ -495,7 +495,7 @@ func (es *EmailScheduler) updateChannelState(ctx context.Context, channelID, las
 
 // updateLastChecked updates the last checked timestamp
 func (es *EmailScheduler) updateLastChecked(ctx context.Context, channelID int) {
-	_, _ = es.db.ExecContext(ctx, `
+	_, _ = es.db.ExecWriteContext(ctx, `
 		UPDATE email_channel_state
 		SET last_checked_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
 		WHERE channel_id = ?
@@ -504,7 +504,7 @@ func (es *EmailScheduler) updateLastChecked(ctx context.Context, channelID int) 
 
 // recordError records an error for the channel
 func (es *EmailScheduler) recordError(ctx context.Context, channelID int, err error) {
-	_, _ = es.db.ExecContext(ctx, `
+	_, _ = es.db.ExecWriteContext(ctx, `
 		UPDATE email_channel_state
 		SET error_count = error_count + 1, last_error = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE channel_id = ?
@@ -513,7 +513,7 @@ func (es *EmailScheduler) recordError(ctx context.Context, channelID int, err er
 
 // updateLastActivity updates the channel's last_activity timestamp
 func (es *EmailScheduler) updateLastActivity(ctx context.Context, channelID int) {
-	_, _ = es.db.ExecContext(ctx, `
+	_, _ = es.db.ExecWriteContext(ctx, `
 		UPDATE channels SET last_activity = CURRENT_TIMESTAMP WHERE id = ?
 	`, channelID)
 }

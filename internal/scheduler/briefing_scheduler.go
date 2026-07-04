@@ -518,7 +518,7 @@ func (bs *BriefingScheduler) storeBriefing(userID int, date, content string, dur
 	// is cleared alongside the content/error so the row isn't left claimed.
 	// This UPSERT covers both the "we claimed the row first" path (UPDATE
 	// branch) and a defensive "no row yet" path (INSERT branch).
-	_, err := bs.db.Exec(`INSERT INTO daily_briefings (user_id, date, content, generation_duration_ms, error, lock_until)
+	_, err := bs.db.ExecWrite(`INSERT INTO daily_briefings (user_id, date, content, generation_duration_ms, error, lock_until)
 		VALUES (?, ?, ?, ?, ?, NULL)
 		ON CONFLICT (user_id, date) DO UPDATE SET
 		content = excluded.content, generation_duration_ms = excluded.generation_duration_ms,

@@ -175,7 +175,7 @@ func (tm *SCIMTokenManager) ValidateToken(token string) (*models.SCIMToken, erro
 
 // updateLastUsed updates the last_used_at timestamp for a token
 func (tm *SCIMTokenManager) updateLastUsed(tokenID int) {
-	_, _ = tm.db.Exec(`UPDATE scim_tokens SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?`, tokenID)
+	_, _ = tm.db.ExecWrite(`UPDATE scim_tokens SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?`, tokenID)
 }
 
 // CreateToken creates a new SCIM token
@@ -273,7 +273,7 @@ func (tm *SCIMTokenManager) ListTokens() ([]models.SCIMToken, error) {
 
 // RevokeToken revokes a SCIM token by setting is_active to false
 func (tm *SCIMTokenManager) RevokeToken(tokenID int) error {
-	result, err := tm.db.Exec(`
+	result, err := tm.db.ExecWrite(`
 		UPDATE scim_tokens SET is_active = false, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
 	`, tokenID)

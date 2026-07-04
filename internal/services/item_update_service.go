@@ -383,7 +383,7 @@ func (s *ItemUpdateService) recordItemCreationHistory(db database.Database, item
 
 	// Record history entries directly (no transaction needed here, caller should manage)
 	for _, entry := range history {
-		_, err := db.Exec(`
+		_, err := db.ExecWrite(`
 			INSERT INTO item_history (item_id, user_id, field_name, old_value, new_value, changed_at)
 			VALUES (?, ?, ?, ?, ?, ?)
 		`, entry.ItemID, entry.UserID, entry.FieldName, entry.OldValue, entry.NewValue, entry.ChangedAt)

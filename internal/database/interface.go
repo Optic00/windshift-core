@@ -71,6 +71,11 @@ type Tx interface {
 	// Exec executes a query that doesn't return rows within the transaction
 	Exec(query string, args ...interface{}) (sql.Result, error)
 
+	// ExecWrite explicitly executes a write query within the transaction.
+	// Transactions already run on SQLite's dedicated write connection; this method
+	// exists so write-oriented helpers can share database.Database/Tx call sites.
+	ExecWrite(query string, args ...interface{}) (sql.Result, error)
+
 	// QueryContext executes a query with context that returns rows
 	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
 
@@ -79,6 +84,11 @@ type Tx interface {
 
 	// ExecContext executes a query with context that doesn't return rows
 	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+
+	// ExecWriteContext explicitly executes a write query with context within the transaction.
+	// Transactions already run on SQLite's dedicated write connection; this method
+	// exists so write-oriented helpers can share database.Database/Tx call sites.
+	ExecWriteContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
 
 	// Prepare prepares a statement within the transaction
 	Prepare(query string) (*sql.Stmt, error)

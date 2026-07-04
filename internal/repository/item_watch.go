@@ -25,7 +25,7 @@ func (r *ItemRepository) IsWatching(userID, itemID int) (bool, error) {
 // Watch upserts an active watch for the (user, item) pair. If a soft-deleted
 // watch row exists from a previous Unwatch, it is reactivated.
 func (r *ItemRepository) Watch(userID, itemID int) error {
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		INSERT INTO item_watches (user_id, item_id, is_active, created_at, updated_at)
 		VALUES (?, ?, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		ON CONFLICT (user_id, item_id) DO UPDATE SET
@@ -42,7 +42,7 @@ func (r *ItemRepository) Watch(userID, itemID int) error {
 // semantics ActivityTracker uses; keeps the row so re-watching can preserve
 // any watch_reason history.
 func (r *ItemRepository) Unwatch(userID, itemID int) error {
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		UPDATE item_watches
 		SET is_active = false, updated_at = CURRENT_TIMESTAMP
 		WHERE user_id = ? AND item_id = ?

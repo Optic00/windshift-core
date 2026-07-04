@@ -345,7 +345,7 @@ func (s *SyncService) syncRepository(ctx context.Context, provider Provider, rep
 	}
 
 	// Update last_synced_at
-	_, err := s.db.Exec(`
+	_, err := s.db.ExecWrite(`
 		UPDATE workspace_repositories SET last_synced_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
 	`, repoID)
@@ -845,7 +845,7 @@ func (s *SyncService) upsertItemSCMLink(ctx context.Context, itemID, repoID int,
 
 	if errors.Is(err, sql.ErrNoRows) {
 		// Insert new link
-		_, err = s.db.ExecContext(ctx, `
+		_, err = s.db.ExecWriteContext(ctx, `
 			INSERT INTO item_scm_links (
 				item_id, workspace_repository_id, link_type, external_id,
 				external_url, title, state, author_external_id, author_name, detection_source
@@ -864,7 +864,7 @@ func (s *SyncService) upsertItemSCMLink(ctx context.Context, itemID, repoID int,
 	}
 
 	// Update existing link
-	_, err = s.db.ExecContext(ctx, `
+	_, err = s.db.ExecWriteContext(ctx, `
 		UPDATE item_scm_links SET
 			external_url = ?, title = ?, state = ?,
 			author_external_id = ?, author_name = ?,
@@ -1073,7 +1073,7 @@ func (s *SyncService) updateLinkFromProvider(ctx context.Context, provider Provi
 			state = models.SCMLinkStateClosed
 		}
 
-		_, err = s.db.ExecContext(ctx, `
+		_, err = s.db.ExecWriteContext(ctx, `
 			UPDATE item_scm_links SET
 				external_id = ?, external_url = ?, title = ?, state = ?,
 				author_external_id = ?, author_name = ?,
@@ -1090,7 +1090,7 @@ func (s *SyncService) updateLinkFromProvider(ctx context.Context, provider Provi
 
 		title := strings.SplitN(commit.Message, "\n", 2)[0]
 
-		_, err = s.db.ExecContext(ctx, `
+		_, err = s.db.ExecWriteContext(ctx, `
 			UPDATE item_scm_links SET
 				external_url = ?, title = ?,
 				author_external_id = ?, author_name = ?,
@@ -1100,7 +1100,7 @@ func (s *SyncService) updateLinkFromProvider(ctx context.Context, provider Provi
 		return err
 
 	case models.SCMLinkTypeBranch:
-		_, err := s.db.ExecContext(ctx, `
+		_, err := s.db.ExecWriteContext(ctx, `
 			UPDATE item_scm_links SET updated_at = CURRENT_TIMESTAMP WHERE id = ?
 		`, linkID)
 		return err

@@ -153,7 +153,7 @@ func (r *TeamRepository) Create(name, description, icon, color, avatarURL string
 // Update updates an existing team
 func (r *TeamRepository) Update(id int, name, description string, isActive bool, icon, color, avatarURL string) error {
 	now := time.Now()
-	result, err := r.db.Exec(`
+	result, err := r.db.ExecWrite(`
 		UPDATE teams
 		SET name = ?, description = ?, is_active = ?, icon = ?, color = ?, avatar_url = ?, updated_at = ?
 		WHERE id = ?
@@ -175,7 +175,7 @@ func (r *TeamRepository) Update(id int, name, description string, isActive bool,
 
 // Delete removes a team by ID
 func (r *TeamRepository) Delete(id int) error {
-	result, err := r.db.Exec("DELETE FROM teams WHERE id = ?", id)
+	result, err := r.db.ExecWrite("DELETE FROM teams WHERE id = ?", id)
 	if err != nil {
 		return fmt.Errorf("failed to delete team: %w", err)
 	}
@@ -236,7 +236,7 @@ func (r *TeamRepository) GetDirectMembers(teamID int) ([]models.TeamMember, erro
 // AddDirectMember adds a user as a direct member of a team (ignores if already exists)
 func (r *TeamRepository) AddDirectMember(teamID, userID int, role string, addedBy int) error {
 	now := time.Now()
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		INSERT INTO team_members (team_id, user_id, role, added_by, added_at, created_at)
 		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT DO NOTHING
@@ -249,7 +249,7 @@ func (r *TeamRepository) AddDirectMember(teamID, userID int, role string, addedB
 
 // RemoveDirectMember removes a user from a team's direct members
 func (r *TeamRepository) RemoveDirectMember(teamID, userID int) error {
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		DELETE FROM team_members WHERE team_id = ? AND user_id = ?
 	`, teamID, userID)
 	if err != nil {
@@ -260,7 +260,7 @@ func (r *TeamRepository) RemoveDirectMember(teamID, userID int) error {
 
 // UpdateMemberRole updates the role of a direct team member
 func (r *TeamRepository) UpdateMemberRole(teamID, userID int, role string) error {
-	result, err := r.db.Exec(`
+	result, err := r.db.ExecWrite(`
 		UPDATE team_members SET role = ? WHERE team_id = ? AND user_id = ?
 	`, role, teamID, userID)
 	if err != nil {
@@ -352,7 +352,7 @@ func (r *TeamRepository) GetMappedGroups(teamID int) ([]models.TeamGroupMapping,
 // AddGroupMapping adds a group mapping to a team (ignores if already exists)
 func (r *TeamRepository) AddGroupMapping(teamID, groupID, addedBy int) error {
 	now := time.Now()
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		INSERT INTO team_groups (team_id, group_id, added_by, added_at)
 		VALUES (?, ?, ?, ?)
 		ON CONFLICT DO NOTHING
@@ -365,7 +365,7 @@ func (r *TeamRepository) AddGroupMapping(teamID, groupID, addedBy int) error {
 
 // RemoveGroupMapping removes a group mapping from a team
 func (r *TeamRepository) RemoveGroupMapping(teamID, groupID int) error {
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		DELETE FROM team_groups WHERE team_id = ? AND group_id = ?
 	`, teamID, groupID)
 	if err != nil {
@@ -521,7 +521,7 @@ func (r *TeamRepository) GetRoundRobinState(actionNodeID, teamID int) (*models.R
 // UpdateRoundRobinState upserts the round-robin assignment state for a given action node and team
 func (r *TeamRepository) UpdateRoundRobinState(actionNodeID, teamID, userID int) error {
 	now := time.Now()
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		INSERT INTO team_round_robin_state (action_node_id, team_id, last_assigned_user_id, last_assigned_at, assignment_count, updated_at)
 		VALUES (?, ?, ?, ?, 1, ?)
 		ON CONFLICT (action_node_id, team_id) DO UPDATE SET

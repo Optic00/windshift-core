@@ -224,7 +224,7 @@ func (r *SCMWorkspaceRepository) CreateConnection(workspaceID, scmProviderID int
 // UpdateConnection updates the mutable settings of a connection. Empty
 // patterns are stored as NULL.
 func (r *SCMWorkspaceRepository) UpdateConnection(connID int, enabled, smartCommitsEnabled bool, defaultBranchPattern, itemKeyPattern string) error {
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		UPDATE workspace_scm_connections SET
 			enabled = ?,
 			smart_commits_enabled = ?,
@@ -238,7 +238,7 @@ func (r *SCMWorkspaceRepository) UpdateConnection(connID int, enabled, smartComm
 
 // DeleteConnection deletes a connection (cascade removes repositories and item links).
 func (r *SCMWorkspaceRepository) DeleteConnection(connID int) error {
-	_, err := r.db.Exec("DELETE FROM workspace_scm_connections WHERE id = ?", connID)
+	_, err := r.db.ExecWrite("DELETE FROM workspace_scm_connections WHERE id = ?", connID)
 	return err
 }
 
@@ -352,7 +352,7 @@ func (r *SCMWorkspaceRepository) GetRepositoryWorkspaceID(repoID int) (int, erro
 
 // DeleteRepository removes a linked repository.
 func (r *SCMWorkspaceRepository) DeleteRepository(repoID int) error {
-	_, err := r.db.Exec("DELETE FROM workspace_repositories WHERE id = ?", repoID)
+	_, err := r.db.ExecWrite("DELETE FROM workspace_repositories WHERE id = ?", repoID)
 	return err
 }
 
@@ -376,7 +376,7 @@ func (r *SCMWorkspaceRepository) UpdateRepositoryPatterns(repoID int, milestoneT
 	args = append(args, repoID)
 
 	query := "UPDATE workspace_repositories SET " + strings.Join(sets, ", ") + " WHERE id = ?"
-	_, err := r.db.Exec(query, args...)
+	_, err := r.db.ExecWrite(query, args...)
 	return err
 }
 
@@ -443,7 +443,7 @@ func (r *SCMWorkspaceRepository) GetProviderOAuthConfig(providerID int) (*SCMPro
 
 // CreateOAuthState stores a short-lived OAuth state token for a workspace flow.
 func (r *SCMWorkspaceRepository) CreateOAuthState(providerID int, state, redirectURI string, userID, workspaceID int, expiresAt time.Time) error {
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		INSERT INTO scm_oauth_state (provider_id, state, redirect_uri, user_id, workspace_id, expires_at)
 		VALUES (?, ?, ?, ?, ?, ?)
 	`, providerID, state, redirectURI, userID, workspaceID, expiresAt)
@@ -459,7 +459,7 @@ func (r *SCMWorkspaceRepository) GetProviderAuthMethod(providerID int) (models.S
 
 // SetConnectionPAT stores an encrypted personal access token on a connection.
 func (r *SCMWorkspaceRepository) SetConnectionPAT(connID int, encryptedPAT string) error {
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		UPDATE workspace_scm_connections SET
 			personal_access_token_encrypted = ?,
 			updated_at = CURRENT_TIMESTAMP
@@ -470,7 +470,7 @@ func (r *SCMWorkspaceRepository) SetConnectionPAT(connID int, encryptedPAT strin
 
 // ClearConnectionCredentials removes all workspace-level credentials from a connection.
 func (r *SCMWorkspaceRepository) ClearConnectionCredentials(connID int) error {
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		UPDATE workspace_scm_connections SET
 			oauth_access_token_encrypted = NULL,
 			oauth_refresh_token_encrypted = NULL,

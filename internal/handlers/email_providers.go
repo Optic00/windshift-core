@@ -280,7 +280,7 @@ func (h *EmailProviderHandler) UpdateEmailProvider(w http.ResponseWriter, r *htt
 	query += ` WHERE id = ?`
 	args = append(args, id)
 
-	_, err = h.db.Exec(query, args...)
+	_, err = h.db.ExecWrite(query, args...)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -308,7 +308,7 @@ func (h *EmailProviderHandler) DeleteEmailProvider(w http.ResponseWriter, r *htt
 		return
 	}
 
-	_, err = h.db.Exec(`DELETE FROM email_providers WHERE id = ?`, id)
+	_, err = h.db.ExecWrite(`DELETE FROM email_providers WHERE id = ?`, id)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -386,7 +386,7 @@ func (h *EmailProviderHandler) StartEmailOAuth(w http.ResponseWriter, r *http.Re
 
 	// Store state in database (expires in 5 minutes)
 	expiresAt := time.Now().Add(5 * time.Minute)
-	_, err = h.db.Exec(`
+	_, err = h.db.ExecWrite(`
 		INSERT INTO email_oauth_state (provider_id, channel_id, state, user_id, expires_at)
 		VALUES (?, ?, ?, ?, ?)
 	`, provider.ID, channelID, state, userID, expiresAt)
@@ -457,7 +457,7 @@ func (h *EmailProviderHandler) EmailOAuthCallback(w http.ResponseWriter, r *http
 	}
 
 	// Delete used state
-	_, _ = h.db.Exec(`DELETE FROM email_oauth_state WHERE state = ?`, state)
+	_, _ = h.db.ExecWrite(`DELETE FROM email_oauth_state WHERE state = ?`, state)
 
 	// Get provider
 	var provider models.EmailProvider
@@ -564,7 +564,7 @@ func (h *EmailProviderHandler) updateChannelProviderID(channelID, providerID int
 	config.EmailProviderID = &providerID
 
 	updatedJSON, _ := json.Marshal(config)
-	_, _ = h.db.Exec(`UPDATE channels SET config = ? WHERE id = ?`, string(updatedJSON), channelID)
+	_, _ = h.db.ExecWrite(`UPDATE channels SET config = ? WHERE id = ?`, string(updatedJSON), channelID)
 }
 
 // TestEmailChannel tests an email channel connection

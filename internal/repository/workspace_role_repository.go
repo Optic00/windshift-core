@@ -166,7 +166,7 @@ func (r *WorkspaceRoleRepository) CountAssignments(workspaceID, roleID int) (int
 // AssignToUser inserts (or refreshes) a user's role assignment in a workspace.
 func (r *WorkspaceRoleRepository) AssignToUser(userID, workspaceID, roleID, grantedBy int) error {
 	now := time.Now()
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		INSERT INTO user_workspace_roles (user_id, workspace_id, role_id, granted_by, granted_at)
 		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(user_id, workspace_id, role_id) DO UPDATE SET granted_by = ?, granted_at = ?
@@ -180,7 +180,7 @@ func (r *WorkspaceRoleRepository) AssignToUser(userID, workspaceID, roleID, gran
 // RevokeFromUser deletes a user's role assignment and returns the number of
 // rows removed (0 when the assignment did not exist).
 func (r *WorkspaceRoleRepository) RevokeFromUser(userID, workspaceID, roleID int) (int64, error) {
-	result, err := r.db.Exec(`
+	result, err := r.db.ExecWrite(`
 		DELETE FROM user_workspace_roles
 		WHERE user_id = ? AND workspace_id = ? AND role_id = ?
 	`, userID, workspaceID, roleID)
@@ -194,7 +194,7 @@ func (r *WorkspaceRoleRepository) RevokeFromUser(userID, workspaceID, roleID int
 // AssignToGroup inserts (or refreshes) a group's role assignment in a workspace.
 func (r *WorkspaceRoleRepository) AssignToGroup(groupID, workspaceID, roleID, grantedBy int) error {
 	now := time.Now()
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		INSERT INTO group_workspace_roles (group_id, workspace_id, role_id, granted_by, granted_at)
 		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(group_id, workspace_id, role_id) DO UPDATE SET granted_by = ?, granted_at = ?
@@ -208,7 +208,7 @@ func (r *WorkspaceRoleRepository) AssignToGroup(groupID, workspaceID, roleID, gr
 // RevokeFromGroup deletes a group's role assignment and returns the number of
 // rows removed (0 when the assignment did not exist).
 func (r *WorkspaceRoleRepository) RevokeFromGroup(groupID, workspaceID, roleID int) (int64, error) {
-	result, err := r.db.Exec(`
+	result, err := r.db.ExecWrite(`
 		DELETE FROM group_workspace_roles
 		WHERE group_id = ? AND workspace_id = ? AND role_id = ?
 	`, groupID, workspaceID, roleID)
@@ -440,7 +440,7 @@ func (r *WorkspaceRoleRepository) AffectedUserIDs(roleID int) map[int]bool {
 // Delete removes a workspace role. The DELETE cascades to
 // user_workspace_roles + group_workspace_roles + role_permissions via FKs.
 func (r *WorkspaceRoleRepository) Delete(id int) error {
-	if _, err := r.db.Exec(`DELETE FROM workspace_roles WHERE id = ?`, id); err != nil {
+	if _, err := r.db.ExecWrite(`DELETE FROM workspace_roles WHERE id = ?`, id); err != nil {
 		return fmt.Errorf("delete workspace_role %d: %w", id, err)
 	}
 	return nil

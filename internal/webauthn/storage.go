@@ -48,7 +48,7 @@ func (cs *CredentialStore) SaveCredential(userID int, credentialName string, cre
 	}
 
 	// Insert into database
-	_, err = cs.db.Exec(`
+	_, err = cs.db.ExecWrite(`
 		INSERT INTO webauthn_credentials (
 			id, user_id, credential_name, public_key, attestation_type,
 			aaguid, sign_count, clone_warning, transport,
@@ -150,7 +150,7 @@ func (cs *CredentialStore) UpdateCredentialCounter(credentialID []byte, signCoun
 	// Encode credential ID to base64 for query
 	credIDStr := base64.RawURLEncoding.EncodeToString(credentialID)
 
-	_, err := cs.db.Exec(`
+	_, err := cs.db.ExecWrite(`
 		UPDATE webauthn_credentials
 		SET sign_count = ?, clone_warning = ?, last_used_at = ?, updated_at = ?
 		WHERE id = ?
@@ -165,7 +165,7 @@ func (cs *CredentialStore) UpdateCredentialCounter(credentialID []byte, signCoun
 
 // DeleteCredential removes a specific credential
 func (cs *CredentialStore) DeleteCredential(credentialID string) error {
-	_, err := cs.db.Exec(`
+	_, err := cs.db.ExecWrite(`
 		DELETE FROM webauthn_credentials
 		WHERE id = ?
 	`, credentialID)

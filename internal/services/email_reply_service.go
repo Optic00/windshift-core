@@ -209,7 +209,7 @@ func (s *EmailReplyService) HandleCommentCreated(params HandleCommentParams) err
 	)
 
 	// Record outbound message in tracking
-	_, err = s.db.Exec(`
+	_, err = s.db.ExecWrite(`
 		INSERT INTO email_message_tracking (
 			channel_id, message_id, dedup_key, in_reply_to, from_email, from_name, subject,
 			item_id, comment_id, direction, processed_at

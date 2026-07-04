@@ -84,7 +84,7 @@ func (h *IntegrationOAuthHandler) StartOAuth(w http.ResponseWriter, r *http.Requ
 
 	// Store state
 	expiresAt := time.Now().Add(5 * time.Minute)
-	_, err = h.db.Exec(`
+	_, err = h.db.ExecWrite(`
 		INSERT INTO integration_oauth_state (id, provider_id, state, user_id, expires_at)
 		VALUES (?, ?, ?, ?, ?)
 	`, uuid.New().String(), providerID, state, fmt.Sprintf("%d", user.ID), expiresAt)
@@ -142,7 +142,7 @@ func (h *IntegrationOAuthHandler) OAuthCallback(w http.ResponseWriter, r *http.R
 	}
 
 	// Delete used state
-	_, _ = h.db.Exec("DELETE FROM integration_oauth_state WHERE state = ?", state)
+	_, _ = h.db.ExecWrite("DELETE FROM integration_oauth_state WHERE state = ?", state)
 
 	// Get provider details
 	var providerType models.IntegrationProviderType
@@ -205,7 +205,7 @@ func (h *IntegrationOAuthHandler) handleTodoistCallback(w http.ResponseWriter, r
 		return
 	}
 
-	_, err = h.db.Exec(`
+	_, err = h.db.ExecWrite(`
 		INSERT INTO user_integration_tokens (id, user_id, integration_provider_id, oauth_access_token_encrypted, provider_metadata, connected_at)
 		VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		ON CONFLICT (user_id, integration_provider_id) DO UPDATE SET
@@ -251,7 +251,7 @@ func (h *IntegrationOAuthHandler) handleNotionCallback(w http.ResponseWriter, r 
 	metadataJSON, _ := json.Marshal(metadata)
 
 	// Upsert user token
-	_, err = h.db.Exec(`
+	_, err = h.db.ExecWrite(`
 		INSERT INTO user_integration_tokens (id, user_id, integration_provider_id, oauth_access_token_encrypted, provider_metadata, connected_at)
 		VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		ON CONFLICT (user_id, integration_provider_id) DO UPDATE SET
@@ -336,7 +336,7 @@ func (h *IntegrationOAuthHandler) DisconnectProvider(w http.ResponseWriter, r *h
 		return
 	}
 
-	result, err := h.db.Exec(`
+	result, err := h.db.ExecWrite(`
 		DELETE FROM user_integration_tokens
 		WHERE user_id = ? AND integration_provider_id = ?
 	`, fmt.Sprintf("%d", user.ID), providerID)

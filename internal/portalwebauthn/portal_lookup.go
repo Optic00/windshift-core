@@ -130,7 +130,7 @@ func (s *PortalLookupStore) GetCredentialOwner(credentialID string) (int, error)
 // DismissPasskeyPrompt records the moment the customer dismissed the
 // "set up a passkey" banner so it doesn't reappear next session.
 func (s *PortalLookupStore) DismissPasskeyPrompt(customerID int, now time.Time) error {
-	if _, err := s.db.Exec(`
+	if _, err := s.db.ExecWrite(`
 		UPDATE portal_customers SET dismissed_passkey_prompt_at = ?, updated_at = ? WHERE id = ?
 	`, now, now, customerID); err != nil {
 		return fmt.Errorf("dismiss passkey prompt: %w", err)

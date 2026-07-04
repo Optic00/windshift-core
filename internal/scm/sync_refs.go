@@ -102,7 +102,7 @@ func (s *SyncService) isRefProcessed(ctx context.Context, repoID int, refType, r
 // after a successful event emission so a failure leaves the ref eligible
 // for retry on the next tick.
 func (s *SyncService) markRefProcessed(ctx context.Context, repoID int, refType, refName, sha string) error {
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.db.ExecWriteContext(ctx, `
 		INSERT INTO scm_processed_refs(workspace_repository_id, ref_type, ref_name, sha, processed_at)
 		VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
 	`, repoID, refType, refName, sha)

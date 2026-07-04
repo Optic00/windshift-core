@@ -128,7 +128,7 @@ func (r *TimeProjectCategoryRepository) Create(c *models.TimeProjectCategory) er
 // is set to the write time on success.
 func (r *TimeProjectCategoryRepository) Update(id int, c *models.TimeProjectCategory) error {
 	now := time.Now()
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		UPDATE time_project_categories
 		SET name = ?, description = ?, color = ?, display_order = ?, updated_at = ?
 		WHERE id = ?
@@ -143,7 +143,7 @@ func (r *TimeProjectCategoryRepository) Update(id int, c *models.TimeProjectCate
 
 // UpdateDisplayOrder sets display_order for a single category.
 func (r *TimeProjectCategoryRepository) UpdateDisplayOrder(id, displayOrder int, now time.Time) error {
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		UPDATE time_project_categories
 		SET display_order = ?, updated_at = ?
 		WHERE id = ?
@@ -156,7 +156,7 @@ func (r *TimeProjectCategoryRepository) UpdateDisplayOrder(id, displayOrder int,
 
 // Delete removes a category by id and returns the number of rows affected.
 func (r *TimeProjectCategoryRepository) Delete(id int) (int64, error) {
-	result, err := r.db.Exec("DELETE FROM time_project_categories WHERE id = ?", id)
+	result, err := r.db.ExecWrite("DELETE FROM time_project_categories WHERE id = ?", id)
 	if err != nil {
 		return 0, fmt.Errorf("delete time project category: %w", err)
 	}

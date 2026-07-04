@@ -47,7 +47,7 @@ type CLIAuthCode struct {
 }
 
 func (r *CLIAuthRepository) StoreApproved(code ApprovedCLIAuthCode) error {
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		INSERT INTO cli_auth_codes (code, state, callback_url, hostname, agent_name, requested_scopes, status, approved_by_user_id, agent_id, token_id, token_plaintext, expires_at)
 		VALUES (?, ?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?, ?)
 	`, code.Code, code.State, code.CallbackURL, code.Hostname, code.AgentName, code.RequestedScopes, code.ApprovedByUserID, code.AgentID, code.TokenID, code.TokenPlaintext, code.ExpiresAt)
@@ -87,12 +87,12 @@ func (r *CLIAuthRepository) FindByCode(code string) (*CLIAuthCode, error) {
 }
 
 func (r *CLIAuthRepository) MarkExpired(id int64) error {
-	_, err := r.db.Exec(`UPDATE cli_auth_codes SET status = 'expired', token_plaintext = NULL WHERE id = ?`, id)
+	_, err := r.db.ExecWrite(`UPDATE cli_auth_codes SET status = 'expired', token_plaintext = NULL WHERE id = ?`, id)
 	return err
 }
 
 func (r *CLIAuthRepository) ConsumeApproved(id int64) (bool, error) {
-	res, err := r.db.Exec(`
+	res, err := r.db.ExecWrite(`
 		UPDATE cli_auth_codes
 		SET status = 'consumed', consumed_at = CURRENT_TIMESTAMP, token_plaintext = NULL
 		WHERE id = ? AND status = 'approved' AND consumed_at IS NULL

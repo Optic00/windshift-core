@@ -122,7 +122,7 @@ func (h *SCMProviderHandler) AddWorkspaceToProviderAllowlist(w http.ResponseWrit
 	}
 
 	// Insert the allowlist entry
-	_, err = h.db.Exec(`
+	_, err = h.db.ExecWrite(`
 		INSERT INTO scm_provider_workspace_allowlist (provider_id, workspace_id, created_by)
 		VALUES (?, ?, ?)
 	`, providerID, req.WorkspaceID, createdBy)
@@ -158,7 +158,7 @@ func (h *SCMProviderHandler) RemoveWorkspaceFromProviderAllowlist(w http.Respons
 		return
 	}
 
-	result, err := h.db.Exec(`
+	result, err := h.db.ExecWrite(`
 		DELETE FROM scm_provider_workspace_allowlist
 		WHERE provider_id = ? AND workspace_id = ?
 	`, providerID, workspaceID)
@@ -448,7 +448,7 @@ func (h *SCMProviderHandler) RefreshGitHubAppInstallation(w http.ResponseWriter,
 	}
 
 	// Update installation_id
-	_, err = h.db.Exec(`
+	_, err = h.db.ExecWrite(`
 		UPDATE scm_providers SET
 			github_app_installation_id = ?,
 			updated_at = CURRENT_TIMESTAMP

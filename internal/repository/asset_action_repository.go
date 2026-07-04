@@ -166,7 +166,7 @@ func (r *AssetActionRepository) Create(action *models.AssetAction) (int, error) 
 
 // Update updates an asset action
 func (r *AssetActionRepository) Update(action *models.AssetAction) error {
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		UPDATE asset_actions SET
 			name = ?, description = ?, is_enabled = ?, trigger_type = ?, trigger_config = ?, updated_at = ?
 		WHERE id = ?
@@ -182,7 +182,7 @@ func (r *AssetActionRepository) Update(action *models.AssetAction) error {
 
 // Delete deletes an asset action and its associated nodes and edges (cascade)
 func (r *AssetActionRepository) Delete(id int) error {
-	result, err := r.db.Exec(`DELETE FROM asset_actions WHERE id = ?`, id)
+	result, err := r.db.ExecWrite(`DELETE FROM asset_actions WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("failed to delete asset action: %w", err)
 	}
@@ -200,7 +200,7 @@ func (r *AssetActionRepository) Delete(id int) error {
 
 // SetEnabled enables or disables an asset action
 func (r *AssetActionRepository) SetEnabled(id int, enabled bool) error {
-	_, err := r.db.Exec(`UPDATE asset_actions SET is_enabled = ?, updated_at = ? WHERE id = ?`,
+	_, err := r.db.ExecWrite(`UPDATE asset_actions SET is_enabled = ?, updated_at = ? WHERE id = ?`,
 		enabled, time.Now(), id)
 	if err != nil {
 		return fmt.Errorf("failed to set asset action enabled status: %w", err)
@@ -372,7 +372,7 @@ func (r *AssetActionRepository) CreateExecutionLog(log *models.AssetActionExecut
 
 // UpdateExecutionLog updates an asset action execution log entry
 func (r *AssetActionRepository) UpdateExecutionLog(log *models.AssetActionExecutionLog) error {
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		UPDATE asset_action_execution_logs SET
 			status = ?, completed_at = ?, error_message = ?, execution_trace = ?
 		WHERE id = ?

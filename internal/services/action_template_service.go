@@ -88,7 +88,7 @@ func (s *ActionTemplateService) ApplyToWorkspace(
 	// have to thread template_key through ActionRepository.Create's signature
 	// (the column is an automation-history concern, not part of the action's
 	// runtime semantics).
-	if _, err := s.db.Exec(`UPDATE actions SET template_key = ? WHERE id = ?`, tmpl.Key, actionID); err != nil {
+	if _, err := s.db.ExecWrite(`UPDATE actions SET template_key = ? WHERE id = ?`, tmpl.Key, actionID); err != nil {
 		return nil, fmt.Errorf("stamp template_key: %w", err)
 	}
 

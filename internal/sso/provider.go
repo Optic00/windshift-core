@@ -221,7 +221,7 @@ func (s *ProviderStore) Create(provider *SSOProvider) error {
 
 	// If this is the first provider or marked as default, ensure it's the only default
 	if provider.IsDefault {
-		_, err = s.db.Exec("UPDATE sso_providers SET is_default = false WHERE is_default = true")
+		_, err = s.db.ExecWrite("UPDATE sso_providers SET is_default = false WHERE is_default = true")
 		if err != nil {
 			return err
 		}
@@ -271,7 +271,7 @@ func (s *ProviderStore) Create(provider *SSOProvider) error {
 func (s *ProviderStore) Update(provider *SSOProvider) error {
 	// If setting as default, clear other defaults
 	if provider.IsDefault {
-		_, err := s.db.Exec("UPDATE sso_providers SET is_default = false WHERE is_default = true AND id != ?", provider.ID)
+		_, err := s.db.ExecWrite("UPDATE sso_providers SET is_default = false WHERE is_default = true AND id != ?", provider.ID)
 		if err != nil {
 			return err
 		}
@@ -289,7 +289,7 @@ func (s *ProviderStore) Update(provider *SSOProvider) error {
 		WHERE id = ?
 	`
 
-	_, err := s.db.Exec(query,
+	_, err := s.db.ExecWrite(query,
 		provider.Slug,
 		provider.Name,
 		provider.ProviderType,
@@ -314,14 +314,14 @@ func (s *ProviderStore) Update(provider *SSOProvider) error {
 // UpdateSecret updates only the client secret
 func (s *ProviderStore) UpdateSecret(id int, encryptedSecret string) error {
 	query := `UPDATE sso_providers SET client_secret_encrypted = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
-	_, err := s.db.Exec(query, encryptedSecret, id)
+	_, err := s.db.ExecWrite(query, encryptedSecret, id)
 	return err
 }
 
 // Delete deletes a provider by ID
 func (s *ProviderStore) Delete(id int) error {
 	query := `DELETE FROM sso_providers WHERE id = ?`
-	result, err := s.db.Exec(query, id)
+	result, err := s.db.ExecWrite(query, id)
 	if err != nil {
 		return err
 	}

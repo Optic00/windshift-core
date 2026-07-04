@@ -239,7 +239,7 @@ func (p *Processor) findOrCreatePortalCustomer(
 // senders just because they emailed the ingest channel).
 func (p *Processor) grantChannelAccess(ctx context.Context, customerID, channelID int, senderEmail string, config *models.ChannelConfig) {
 	// Grant access to email channel
-	_, _ = p.db.ExecContext(ctx, `
+	_, _ = p.db.ExecWriteContext(ctx, `
 		INSERT INTO portal_customer_channels (portal_customer_id, channel_id)
 		VALUES (?, ?)
 		ON CONFLICT DO NOTHING
@@ -257,7 +257,7 @@ func (p *Processor) grantChannelAccess(ctx context.Context, customerID, channelI
 		)
 		return
 	}
-	_, _ = p.db.ExecContext(ctx, `
+	_, _ = p.db.ExecWriteContext(ctx, `
 		INSERT INTO portal_customer_channels (portal_customer_id, channel_id)
 		VALUES (?, ?)
 		ON CONFLICT DO NOTHING
@@ -615,7 +615,7 @@ func (p *Processor) handleAttachments(ctx context.Context, attachments []Attachm
 		// Create attachment record. Store the path relative to attachmentPath;
 		// download handlers also tolerate older absolute rows.
 		now := time.Now()
-		_, err := p.db.ExecContext(ctx, `
+		_, err := p.db.ExecWriteContext(ctx, `
 			INSERT INTO attachments (item_id, filename, original_filename, file_path, mime_type, file_size, created_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?)
 		`, itemID, uniqueFilename, att.Filename, relPath, att.ContentType, att.Size, now)
@@ -643,7 +643,7 @@ func (p *Processor) setAttachmentsStatus(ctx context.Context, channelID int, ded
 	if status == "" {
 		return
 	}
-	if _, err := p.db.ExecContext(ctx, `
+	if _, err := p.db.ExecWriteContext(ctx, `
 		UPDATE email_message_tracking
 		SET attachments_status = ?
 		WHERE channel_id = ? AND dedup_key = ?
@@ -700,7 +700,7 @@ func (p *Processor) preclaimTracking(
 	channelID int,
 	dedupKey string,
 ) (bool, error) {
-	res, err := p.db.ExecContext(ctx, `
+	res, err := p.db.ExecWriteContext(ctx, `
 		INSERT INTO email_message_tracking (
 			channel_id, message_id, dedup_key, in_reply_to, from_email, from_name, subject,
 			item_id, comment_id, direction, processed_at
@@ -730,7 +730,7 @@ func (p *Processor) preclaimTracking(
 // effort — a failure here just leaves the row in place, which makes the email
 // look already-processed on retry (operator can re-trigger).
 func (p *Processor) releaseTrackingClaim(ctx context.Context, channelID int, dedupKey string) {
-	if _, err := p.db.ExecContext(ctx, `
+	if _, err := p.db.ExecWriteContext(ctx, `
 		DELETE FROM email_message_tracking
 		WHERE channel_id = ? AND dedup_key = ? AND item_id IS NULL AND comment_id IS NULL
 	`, channelID, dedupKey); err != nil {
@@ -747,7 +747,7 @@ func (p *Processor) finalizeTrackingClaim(
 	dedupKey string,
 	itemID, commentID *int,
 ) error {
-	_, err := p.db.ExecContext(ctx, `
+	_, err := p.db.ExecWriteContext(ctx, `
 		UPDATE email_message_tracking
 		SET item_id = ?, comment_id = ?
 		WHERE channel_id = ? AND dedup_key = ? AND item_id IS NULL AND comment_id IS NULL

@@ -199,7 +199,7 @@ func (h *SCMProviderHandler) CreateProvider(w http.ResponseWriter, r *http.Reque
 
 	// If this is set as default, unset other defaults
 	if req.IsDefault {
-		_, err = h.db.Exec("UPDATE scm_providers SET is_default = false WHERE is_default = true")
+		_, err = h.db.ExecWrite("UPDATE scm_providers SET is_default = false WHERE is_default = true")
 		if err != nil {
 			respondInternalError(w, r, err)
 			return
@@ -343,7 +343,7 @@ func (h *SCMProviderHandler) UpdateProvider(w http.ResponseWriter, r *http.Reque
 
 	// If this is set as default, unset other defaults
 	if req.IsDefault {
-		_, err = h.db.Exec("UPDATE scm_providers SET is_default = false WHERE is_default = true AND id != ?", id)
+		_, err = h.db.ExecWrite("UPDATE scm_providers SET is_default = false WHERE is_default = true AND id != ?", id)
 		if err != nil {
 			respondInternalError(w, r, err)
 			return
@@ -380,7 +380,7 @@ func (h *SCMProviderHandler) UpdateProvider(w http.ResponseWriter, r *http.Reque
 	query += " WHERE id = ?"
 	args = append(args, id)
 
-	_, err = h.db.Exec(query, args...)
+	_, err = h.db.ExecWrite(query, args...)
 	if err != nil {
 		if database.IsUniqueConstraintError(err) {
 			respondConflict(w, r, "Provider with this slug already exists")
@@ -412,7 +412,7 @@ func (h *SCMProviderHandler) DeleteProvider(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	result, err := h.db.Exec("DELETE FROM scm_providers WHERE id = ?", id)
+	result, err := h.db.ExecWrite("DELETE FROM scm_providers WHERE id = ?", id)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return

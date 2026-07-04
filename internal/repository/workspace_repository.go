@@ -752,7 +752,7 @@ func (r *WorkspaceRepository) GetHomepageLayoutJSON(workspaceID int) (string, er
 
 // UpdateHomepageLayoutJSON updates a workspace homepage layout JSON blob.
 func (r *WorkspaceRepository) UpdateHomepageLayoutJSON(workspaceID int, layoutJSON string, updatedAt time.Time) error {
-	res, err := r.db.Exec(`
+	res, err := r.db.ExecWrite(`
 		UPDATE workspaces
 		SET homepage_layout = ?, updated_at = ?
 		WHERE id = ?
@@ -813,7 +813,7 @@ func (r *WorkspaceRepository) CreateItemSequence(workspaceID int64) error {
 	// Sequence names contain only digits (workspace ID); pq.QuoteIdentifier
 	// is the canonical sanitizer but quoting a digits-only name is a no-op,
 	// so a plain interpolation is safe here.
-	_, err := r.db.Exec(fmt.Sprintf(`CREATE SEQUENCE IF NOT EXISTS %q START 1`, seqName))
+	_, err := r.db.ExecWrite(fmt.Sprintf(`CREATE SEQUENCE IF NOT EXISTS %q START 1`, seqName))
 	return err
 }
 
@@ -824,6 +824,6 @@ func (r *WorkspaceRepository) DropItemSequence(workspaceID int64) error {
 		return nil
 	}
 	seqName := fmt.Sprintf("workspace_%d_item_seq", workspaceID)
-	_, err := r.db.Exec(fmt.Sprintf(`DROP SEQUENCE IF EXISTS %q`, seqName))
+	_, err := r.db.ExecWrite(fmt.Sprintf(`DROP SEQUENCE IF EXISTS %q`, seqName))
 	return err
 }

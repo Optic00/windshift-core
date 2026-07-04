@@ -22,7 +22,7 @@ import (
 // queryExecer is the common subset of database.Database and database.Tx used by
 // helper methods so they can run inside or outside an explicit transaction.
 type queryExecer interface {
-	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+	ExecWriteContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
 	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
 }
 
@@ -143,7 +143,7 @@ func (s *IssueSyncService) SyncAll(ctx context.Context) error {
 		} else {
 			// Clear error on success and update last sync time
 			now := time.Now()
-			_, _ = s.db.ExecContext(ctx,
+			_, _ = s.db.ExecWriteContext(ctx,
 				"UPDATE issue_sync_configs SET last_full_sync_at = ?, last_sync_error = NULL, updated_at = ? WHERE id = ?",
 				now, now, j.config.ID)
 		}
@@ -251,7 +251,7 @@ func (s *IssueSyncService) syncIssue(ctx context.Context, provider IssueProvider
 	// If sync_lock is set, this was recently pushed back from Windshift — skip once and clear lock
 	if syncLock {
 		now := time.Now()
-		_, _ = s.db.ExecContext(ctx,
+		_, _ = s.db.ExecWriteContext(ctx,
 			"UPDATE issue_sync_items SET sync_lock = ?, last_github_updated_at = ?, last_synced_at = ?, updated_at = ? WHERE id = ?",
 			false, issue.UpdatedAt, now, now, syncItemID)
 		return nil
@@ -477,7 +477,7 @@ func (s *IssueSyncService) PushStatusToGitHub(ctx context.Context, itemID, newSt
 	}
 
 	// Preflight passed — claim the lock immediately before the remote write.
-	_, _ = s.db.ExecContext(ctx,
+	_, _ = s.db.ExecWriteContext(ctx,
 		"UPDATE issue_sync_items SET sync_lock = ?, updated_at = ? WHERE id = ?",
 		true, time.Now(), syncItemID)
 
@@ -487,7 +487,7 @@ func (s *IssueSyncService) PushStatusToGitHub(ctx context.Context, itemID, newSt
 	if err != nil {
 		slog.Error("push status to GitHub", "config_id", configID, "issue", issueNumber, "state", ghState, "error", err)
 		// Clear lock on failure so next sync can pick it up
-		_, _ = s.db.ExecContext(ctx,
+		_, _ = s.db.ExecWriteContext(ctx,
 			"UPDATE issue_sync_items SET sync_lock = ?, updated_at = ? WHERE id = ?",
 			false, time.Now(), syncItemID)
 	}
@@ -551,7 +551,7 @@ func (s *IssueSyncService) PushCommentToGitHub(ctx context.Context, itemID, comm
 
 	// Track the comment mapping
 	now := time.Now()
-	_, _ = s.db.ExecContext(ctx, `
+	_, _ = s.db.ExecWriteContext(ctx, `
 		INSERT INTO issue_sync_comments (issue_sync_item_id, comment_id, github_comment_id, github_updated_at, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?)
 	`, syncItemID, commentID, ghCommentID, now, now, now)
@@ -863,7 +863,7 @@ func (s *IssueSyncService) CreateSyncConfig(ctx context.Context, createdByUserID
 
 // UpdateSyncConfig updates the writable fields on a sync config row.
 func (s *IssueSyncService) UpdateSyncConfig(ctx context.Context, configID int, req models.IssueSyncConfigRequest) error {
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.db.ExecWriteContext(ctx, `
 		UPDATE issue_sync_configs SET
 			sync_enabled = ?, status_mapping = ?, reverse_status_mapping = ?,
 			label_sync_mode = ?, label_mappings = ?, filter_labels = ?,
@@ -884,7 +884,7 @@ func (s *IssueSyncService) UpdateSyncConfig(ctx context.Context, configID int, r
 // DeleteSyncConfig removes a sync config row. Cascades clean up linked
 // issue_sync_items rows.
 func (s *IssueSyncService) DeleteSyncConfig(ctx context.Context, configID int) error {
-	_, err := s.db.ExecContext(ctx, "DELETE FROM issue_sync_configs WHERE id = ?", configID)
+	_, err := s.db.ExecWriteContext(ctx, "DELETE FROM issue_sync_configs WHERE id = ?", configID)
 	return err
 }
 
@@ -995,7 +995,7 @@ func (s *IssueSyncService) TriggerSync(ctx context.Context, configID int) error 
 	}
 
 	now := time.Now()
-	_, _ = s.db.ExecContext(ctx,
+	_, _ = s.db.ExecWriteContext(ctx,
 		"UPDATE issue_sync_configs SET last_full_sync_at = ?, last_sync_error = NULL, updated_at = ? WHERE id = ?",
 		now, now, config.ID)
 	return nil
@@ -1046,7 +1046,7 @@ func (s *IssueSyncService) resolveMilestoneID(config *models.IssueSyncConfig, is
 	return nil
 }
 
-func (s *IssueSyncService) syncLabels(ctx context.Context, db queryExecer, config *models.IssueSyncConfig, issue *Issue, itemID int) {
+func (s *IssueSyncService) syncLabels(ctx context.Context, execer queryExecer, config *models.IssueSyncConfig, issue *Issue, itemID int) {
 	if config.LabelSyncMode == "" || config.LabelSyncMode == models.IssueSyncLabelNone {
 		return
 	}
@@ -1065,22 +1065,22 @@ func (s *IssueSyncService) syncLabels(ctx context.Context, db queryExecer, confi
 		}
 
 		// Clear existing labels and set mapped ones
-		_, _ = db.ExecContext(ctx, "DELETE FROM item_labels WHERE item_id = ?", itemID)
+		_, _ = execer.ExecWriteContext(ctx, "DELETE FROM item_labels WHERE item_id = ?", itemID)
 		for _, l := range issue.Labels {
 			if wsLabelID, ok := ghToWS[l.Name]; ok {
-				_, _ = db.ExecContext(ctx,
+				_, _ = execer.ExecWriteContext(ctx,
 					"INSERT INTO item_labels (item_id, label_id) VALUES (?, ?) ON CONFLICT DO NOTHING",
 					itemID, wsLabelID)
 			}
 		}
 	} else if config.LabelSyncMode == models.IssueSyncLabelMirror {
 		// Auto-create labels that don't exist
-		_, _ = db.ExecContext(ctx, "DELETE FROM item_labels WHERE item_id = ?", itemID)
+		_, _ = execer.ExecWriteContext(ctx, "DELETE FROM item_labels WHERE item_id = ?", itemID)
 
 		for _, l := range issue.Labels {
 			// Try to find existing label by name in workspace
 			var labelID int
-			err := db.QueryRowContext(ctx,
+			err := execer.QueryRowContext(ctx,
 				"SELECT id FROM labels WHERE workspace_id = ? AND LOWER(name) = LOWER(?)",
 				config.WorkspaceID, l.Name,
 			).Scan(&labelID)
@@ -1090,7 +1090,7 @@ func (s *IssueSyncService) syncLabels(ctx context.Context, db queryExecer, confi
 				if color == "" {
 					color = "808080"
 				}
-				err = db.QueryRowContext(ctx,
+				err = execer.QueryRowContext(ctx,
 					"INSERT INTO labels (workspace_id, name, color, created_at, updated_at) VALUES (?, ?, ?, ?, ?) RETURNING id",
 					config.WorkspaceID, l.Name, color, time.Now(), time.Now(),
 				).Scan(&labelID)
@@ -1101,7 +1101,7 @@ func (s *IssueSyncService) syncLabels(ctx context.Context, db queryExecer, confi
 				continue
 			}
 
-			_, _ = db.ExecContext(ctx,
+			_, _ = execer.ExecWriteContext(ctx,
 				"INSERT INTO item_labels (item_id, label_id) VALUES (?, ?) ON CONFLICT DO NOTHING",
 				itemID, labelID)
 		}
@@ -1109,7 +1109,7 @@ func (s *IssueSyncService) syncLabels(ctx context.Context, db queryExecer, confi
 }
 
 func (s *IssueSyncService) recordSyncError(configID int, errMsg string) {
-	_, _ = s.db.Exec(
+	_, _ = s.db.ExecWrite(
 		"UPDATE issue_sync_configs SET last_sync_error = ?, updated_at = ? WHERE id = ?",
 		errMsg, time.Now(), configID)
 }

@@ -228,7 +228,7 @@ func (h *AdminOAuthClientHandler) CreateClient(w http.ResponseWriter, r *http.Re
 	redirectsJSON, _ := json.Marshal(req.RedirectURIs)
 	scopesJSON, _ := json.Marshal(req.AllowedScopes)
 
-	_, err = h.db.Exec(`
+	_, err = h.db.ExecWrite(`
 		INSERT INTO oauth_clients (
 			slug, display_name, client_id, client_secret_hash, client_type,
 			redirect_uris, allowed_scopes, enabled, created_by
@@ -297,7 +297,7 @@ func (h *AdminOAuthClientHandler) UpdateClient(w http.ResponseWriter, r *http.Re
 	changes := map[string]interface{}{}
 
 	if dn := strings.TrimSpace(req.DisplayName); dn != "" && dn != existing.DisplayName {
-		if _, err := h.db.Exec(`UPDATE oauth_clients SET display_name = ? WHERE id = ?`, dn, id); err != nil {
+		if _, err := h.db.ExecWrite(`UPDATE oauth_clients SET display_name = ? WHERE id = ?`, dn, id); err != nil {
 			respondInternalError(w, r, err)
 			return
 		}
@@ -309,7 +309,7 @@ func (h *AdminOAuthClientHandler) UpdateClient(w http.ResponseWriter, r *http.Re
 			return
 		}
 		j, _ := json.Marshal(req.RedirectURIs)
-		if _, err := h.db.Exec(`UPDATE oauth_clients SET redirect_uris = ? WHERE id = ?`, string(j), id); err != nil {
+		if _, err := h.db.ExecWrite(`UPDATE oauth_clients SET redirect_uris = ? WHERE id = ?`, string(j), id); err != nil {
 			respondInternalError(w, r, err)
 			return
 		}
@@ -327,14 +327,14 @@ func (h *AdminOAuthClientHandler) UpdateClient(w http.ResponseWriter, r *http.Re
 			}
 		}
 		j, _ := json.Marshal(req.AllowedScopes)
-		if _, err := h.db.Exec(`UPDATE oauth_clients SET allowed_scopes = ? WHERE id = ?`, string(j), id); err != nil {
+		if _, err := h.db.ExecWrite(`UPDATE oauth_clients SET allowed_scopes = ? WHERE id = ?`, string(j), id); err != nil {
 			respondInternalError(w, r, err)
 			return
 		}
 		changes["allowed_scopes"] = req.AllowedScopes
 	}
 	if req.Enabled != nil && *req.Enabled != existing.Enabled {
-		if _, err := h.db.Exec(`UPDATE oauth_clients SET enabled = ? WHERE id = ?`, *req.Enabled, id); err != nil {
+		if _, err := h.db.ExecWrite(`UPDATE oauth_clients SET enabled = ? WHERE id = ?`, *req.Enabled, id); err != nil {
 			respondInternalError(w, r, err)
 			return
 		}
@@ -356,7 +356,7 @@ func (h *AdminOAuthClientHandler) UpdateClient(w http.ResponseWriter, r *http.Re
 		}
 	}
 
-	if _, err := h.db.Exec(`UPDATE oauth_clients SET updated_at = CURRENT_TIMESTAMP WHERE id = ?`, id); err != nil {
+	if _, err := h.db.ExecWrite(`UPDATE oauth_clients SET updated_at = CURRENT_TIMESTAMP WHERE id = ?`, id); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
@@ -415,7 +415,7 @@ func (h *AdminOAuthClientHandler) RotateSecret(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if _, err := h.db.Exec(
+	if _, err := h.db.ExecWrite(
 		`UPDATE oauth_clients SET client_secret_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		string(hash), id,
 	); err != nil {
@@ -464,7 +464,7 @@ func (h *AdminOAuthClientHandler) DeleteClient(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if _, err := h.db.Exec(`DELETE FROM oauth_clients WHERE id = ?`, id); err != nil {
+	if _, err := h.db.ExecWrite(`DELETE FROM oauth_clients WHERE id = ?`, id); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
@@ -521,7 +521,7 @@ func (h *AdminOAuthClientHandler) cascadeRevokeTokensForClient(clientID string) 
 
 	// Revoke the refresh-token rows so they cannot be exchanged for new access
 	// tokens (notably after a disabled client is re-enabled).
-	if _, err := h.db.Exec(
+	if _, err := h.db.ExecWrite(
 		`UPDATE oauth_refresh_tokens SET revoked_at = CURRENT_TIMESTAMP WHERE client_id = ? AND revoked_at IS NULL`,
 		clientID,
 	); err != nil {

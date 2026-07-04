@@ -655,7 +655,7 @@ func (as *AssetActionService) executeSetField(node *models.AssetActionNode, ctx 
 		if oldStr.Valid {
 			oldValue = oldStr.String
 		}
-		if _, err := as.db.Exec(`UPDATE assets SET title = ?, updated_at = ? WHERE id = ?`,
+		if _, err := as.db.ExecWrite(`UPDATE assets SET title = ?, updated_at = ? WHERE id = ?`,
 			value, time.Now(), ctx.Event.AssetID); err != nil {
 			return fmt.Errorf("failed to update asset title: %w", err)
 		}
@@ -668,7 +668,7 @@ func (as *AssetActionService) executeSetField(node *models.AssetActionNode, ctx 
 		if oldStr.Valid {
 			oldValue = oldStr.String
 		}
-		if _, err := as.db.Exec(`UPDATE assets SET asset_tag = ?, updated_at = ? WHERE id = ?`,
+		if _, err := as.db.ExecWrite(`UPDATE assets SET asset_tag = ?, updated_at = ? WHERE id = ?`,
 			value, time.Now(), ctx.Event.AssetID); err != nil {
 			return fmt.Errorf("failed to update asset asset_tag: %w", err)
 		}
@@ -681,7 +681,7 @@ func (as *AssetActionService) executeSetField(node *models.AssetActionNode, ctx 
 		if oldStr.Valid {
 			oldValue = oldStr.String
 		}
-		if _, err := as.db.Exec(`UPDATE assets SET description = ?, updated_at = ? WHERE id = ?`,
+		if _, err := as.db.ExecWrite(`UPDATE assets SET description = ?, updated_at = ? WHERE id = ?`,
 			value, time.Now(), ctx.Event.AssetID); err != nil {
 			return fmt.Errorf("failed to update asset description: %w", err)
 		}
@@ -722,7 +722,7 @@ func (as *AssetActionService) executeSetField(node *models.AssetActionNode, ctx 
 			return fmt.Errorf("failed to serialize custom_field_values: %w", err)
 		}
 
-		_, err = as.db.Exec(`UPDATE assets SET custom_field_values = ?, updated_at = ? WHERE id = ?`,
+		_, err = as.db.ExecWrite(`UPDATE assets SET custom_field_values = ?, updated_at = ? WHERE id = ?`,
 			string(updatedJSON), time.Now(), ctx.Event.AssetID)
 		if err != nil {
 			return fmt.Errorf("failed to update asset: %w", err)
@@ -795,7 +795,7 @@ func (as *AssetActionService) executeSetStatus(node *models.AssetActionNode, ctx
 		return fmt.Errorf("failed to get current asset status: %w", err)
 	}
 
-	_, err = as.db.Exec(`UPDATE assets SET status_id = ?, updated_at = ? WHERE id = ?`,
+	_, err = as.db.ExecWrite(`UPDATE assets SET status_id = ?, updated_at = ? WHERE id = ?`,
 		config.StatusID, time.Now(), ctx.Event.AssetID)
 	if err != nil {
 		return fmt.Errorf("failed to update asset status: %w", err)

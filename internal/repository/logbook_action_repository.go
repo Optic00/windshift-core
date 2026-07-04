@@ -152,7 +152,7 @@ func (r *LogbookActionRepository) Create(action *models.LogbookAction) (int, err
 
 // Update updates a logbook action
 func (r *LogbookActionRepository) Update(action *models.LogbookAction) error {
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		UPDATE logbook_actions SET
 			name = $1, description = $2, is_enabled = $3, trigger_type = $4,
 			trigger_config = $5, updated_at = $6
@@ -169,7 +169,7 @@ func (r *LogbookActionRepository) Update(action *models.LogbookAction) error {
 
 // Delete deletes a logbook action and its associated nodes and edges (cascade)
 func (r *LogbookActionRepository) Delete(id int) error {
-	result, err := r.db.Exec(`DELETE FROM logbook_actions WHERE id = $1`, id)
+	result, err := r.db.ExecWrite(`DELETE FROM logbook_actions WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("failed to delete logbook action: %w", err)
 	}
@@ -187,7 +187,7 @@ func (r *LogbookActionRepository) Delete(id int) error {
 
 // SetEnabled enables or disables a logbook action
 func (r *LogbookActionRepository) SetEnabled(id int, enabled bool) error {
-	_, err := r.db.Exec(`UPDATE logbook_actions SET is_enabled = $1, updated_at = $2 WHERE id = $3`,
+	_, err := r.db.ExecWrite(`UPDATE logbook_actions SET is_enabled = $1, updated_at = $2 WHERE id = $3`,
 		enabled, time.Now(), id)
 	if err != nil {
 		return fmt.Errorf("failed to set logbook action enabled status: %w", err)
@@ -370,7 +370,7 @@ func (r *LogbookActionRepository) CreateExecutionLog(log *models.LogbookActionEx
 
 // UpdateExecutionLog updates a logbook action execution log entry
 func (r *LogbookActionRepository) UpdateExecutionLog(log *models.LogbookActionExecutionLog) error {
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		UPDATE logbook_action_execution_logs SET
 			status = $1, completed_at = $2, error_message = $3, execution_trace = $4
 		WHERE id = $5
@@ -464,7 +464,7 @@ func (r *LogbookActionRepository) scanExecutionLogs(rows *sql.Rows) ([]*models.L
 
 // UpdateDocumentCustomerAssociation updates customer fields on a logbook document
 func (r *LogbookActionRepository) UpdateDocumentCustomerAssociation(documentID string, customerOrgID, portalCustomerID *int) error {
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		UPDATE logbook_documents SET
 			customer_organisation_id = $1, portal_customer_id = $2, updated_at = $3
 		WHERE id = $4

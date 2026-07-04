@@ -145,7 +145,7 @@ func (r *SCIMRepository) UsernameExists(username string) bool {
 
 // AdoptUser links an existing local user to SCIM management.
 func (r *SCIMRepository) AdoptUser(id int, username, externalID string, isActive bool) error {
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		UPDATE users SET username = ?, scim_managed = true, scim_external_id = ?,
 		                 is_active = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
@@ -169,7 +169,7 @@ func (r *SCIMRepository) CreateUser(email, username, firstName, lastName string,
 
 // ReplaceUser fully replaces the SCIM-managed attributes of a user.
 func (r *SCIMRepository) ReplaceUser(id int, email, username, firstName, lastName string, isActive bool, externalID string) error {
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		UPDATE users SET email = ?, username = ?, first_name = ?, last_name = ?,
 		                 is_active = ?, scim_external_id = ?, scim_managed = true,
 		                 updated_at = CURRENT_TIMESTAMP
@@ -180,43 +180,43 @@ func (r *SCIMRepository) ReplaceUser(id int, email, username, firstName, lastNam
 
 // DeactivateUser flips a user inactive (SCIM DELETE deactivates, never deletes).
 func (r *SCIMRepository) DeactivateUser(id int) error {
-	_, err := r.db.Exec(`UPDATE users SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, id)
+	_, err := r.db.ExecWrite(`UPDATE users SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, id)
 	return err
 }
 
 // SetUserActive applies a SCIM PATCH to the active flag.
 func (r *SCIMRepository) SetUserActive(id int, active bool) error {
-	_, err := r.db.Exec(`UPDATE users SET is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, active, id)
+	_, err := r.db.ExecWrite(`UPDATE users SET is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, active, id)
 	return err
 }
 
 // SetUserUsername applies a SCIM PATCH to the username.
 func (r *SCIMRepository) SetUserUsername(id int, username string) error {
-	_, err := r.db.Exec(`UPDATE users SET username = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, username, id)
+	_, err := r.db.ExecWrite(`UPDATE users SET username = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, username, id)
 	return err
 }
 
 // SetUserFirstName applies a SCIM PATCH to name.givenName.
 func (r *SCIMRepository) SetUserFirstName(id int, firstName string) error {
-	_, err := r.db.Exec(`UPDATE users SET first_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, firstName, id)
+	_, err := r.db.ExecWrite(`UPDATE users SET first_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, firstName, id)
 	return err
 }
 
 // SetUserLastName applies a SCIM PATCH to name.familyName.
 func (r *SCIMRepository) SetUserLastName(id int, lastName string) error {
-	_, err := r.db.Exec(`UPDATE users SET last_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, lastName, id)
+	_, err := r.db.ExecWrite(`UPDATE users SET last_name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, lastName, id)
 	return err
 }
 
 // SetUserExternalID applies a SCIM PATCH to externalId.
 func (r *SCIMRepository) SetUserExternalID(id int, externalID string) error {
-	_, err := r.db.Exec(`UPDATE users SET scim_external_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, externalID, id)
+	_, err := r.db.ExecWrite(`UPDATE users SET scim_external_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, externalID, id)
 	return err
 }
 
 // ClearUserExternalID applies a SCIM PATCH remove of externalId.
 func (r *SCIMRepository) ClearUserExternalID(id int) error {
-	_, err := r.db.Exec(`UPDATE users SET scim_external_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, id)
+	_, err := r.db.ExecWrite(`UPDATE users SET scim_external_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, id)
 	return err
 }
 
@@ -361,7 +361,7 @@ func (r *SCIMRepository) GetGroupMembers(groupID int) ([]SCIMGroupMemberRow, err
 // surfaces as a constraint error the caller audits, matching CreateGroup's
 // historical behavior).
 func (r *SCIMRepository) AddGroupMember(groupID, userID int) error {
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		INSERT INTO group_members (group_id, user_id, scim_managed, added_at)
 		VALUES (?, ?, true, CURRENT_TIMESTAMP)
 	`, groupID, userID)
@@ -371,7 +371,7 @@ func (r *SCIMRepository) AddGroupMember(groupID, userID int) error {
 // UpsertGroupMember inserts a SCIM-managed membership, flipping an existing
 // local membership into scim_managed state on conflict (PATCH add semantics).
 func (r *SCIMRepository) UpsertGroupMember(groupID, userID int) error {
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		INSERT INTO group_members (group_id, user_id, scim_managed, added_at)
 		VALUES (?, ?, true, CURRENT_TIMESTAMP)
 		ON CONFLICT(group_id, user_id) DO UPDATE SET scim_managed = true
@@ -383,25 +383,25 @@ func (r *SCIMRepository) UpsertGroupMember(groupID, userID int) error {
 // SCIM PATCH can't wipe a locally-added row. Matches the bulk DELETE inside
 // ReplaceGroup.
 func (r *SCIMRepository) RemoveGroupMember(groupID, userID int) error {
-	_, err := r.db.Exec(`DELETE FROM group_members WHERE group_id = ? AND user_id = ? AND scim_managed = true`, groupID, userID)
+	_, err := r.db.ExecWrite(`DELETE FROM group_members WHERE group_id = ? AND user_id = ? AND scim_managed = true`, groupID, userID)
 	return err
 }
 
 // UpdateGroupName applies a SCIM PATCH to displayName.
 func (r *SCIMRepository) UpdateGroupName(id int, name string) error {
-	_, err := r.db.Exec(`UPDATE groups SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, name, id)
+	_, err := r.db.ExecWrite(`UPDATE groups SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, name, id)
 	return err
 }
 
 // UpdateGroupExternalID applies a SCIM PATCH to externalId.
 func (r *SCIMRepository) UpdateGroupExternalID(id int, externalID string) error {
-	_, err := r.db.Exec(`UPDATE groups SET scim_external_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, externalID, id)
+	_, err := r.db.ExecWrite(`UPDATE groups SET scim_external_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, externalID, id)
 	return err
 }
 
 // DeleteGroup deletes a group row.
 func (r *SCIMRepository) DeleteGroup(id int) error {
-	_, err := r.db.Exec(`DELETE FROM groups WHERE id = ?`, id)
+	_, err := r.db.ExecWrite(`DELETE FROM groups WHERE id = ?`, id)
 	return err
 }
 

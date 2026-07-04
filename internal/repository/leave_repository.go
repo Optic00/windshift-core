@@ -191,7 +191,7 @@ func (r *LeaveRepository) Create(userID int, substituteUserID *int, startDate, e
 
 func (r *LeaveRepository) Update(id int, substituteUserID *int, startDate, endDate, reason string) error {
 	now := time.Now()
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		UPDATE user_leave_periods
 		SET substitute_user_id = ?, start_date = ?, end_date = ?, reason = ?, updated_at = ?
 		WHERE id = ?
@@ -200,6 +200,6 @@ func (r *LeaveRepository) Update(id int, substituteUserID *int, startDate, endDa
 }
 
 func (r *LeaveRepository) Delete(id int) error {
-	_, err := r.db.Exec("DELETE FROM user_leave_periods WHERE id = ?", id)
+	_, err := r.db.ExecWrite("DELETE FROM user_leave_periods WHERE id = ?", id)
 	return err
 }

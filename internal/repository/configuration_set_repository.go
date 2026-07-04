@@ -898,7 +898,7 @@ func (r *ConfigurationSetRepository) AssignNotification(configSetID, notificatio
 // UnassignNotification removes a notification-setting assignment from a
 // configuration set. Returns ErrNotFound if the row did not exist.
 func (r *ConfigurationSetRepository) UnassignNotification(configSetID, assignmentID int) error {
-	result, err := r.db.Exec(`
+	result, err := r.db.ExecWrite(`
 		DELETE FROM configuration_set_notification_settings
 		WHERE id = ? AND configuration_set_id = ?
 	`, assignmentID, configSetID)

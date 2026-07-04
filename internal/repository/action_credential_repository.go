@@ -201,7 +201,7 @@ func (r *ActionCredentialRepository) CreateActionCredential(c *models.ActionCred
 // and SetCredentialWorkspaces to change the workspace allowlist.
 func (r *ActionCredentialRepository) UpdateActionCredentialMetadata(c *models.ActionCredential) error {
 	c.UpdatedAt = time.Now()
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		UPDATE action_credentials
 		SET name = ?, secret_metadata = ?, is_enabled = ?, applies_to_all_workspaces = ?, updated_at = ?
 		WHERE id = ?
@@ -218,7 +218,7 @@ func (r *ActionCredentialRepository) RotateActionCredential(id int, encryptedSec
 	if strings.TrimSpace(encryptedSecret) == "" {
 		return errors.New("action credential rotate: encrypted_secret is required")
 	}
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		UPDATE action_credentials
 		SET encrypted_secret = ?, secret_prefix = ?, updated_at = ?
 		WHERE id = ?
@@ -231,7 +231,7 @@ func (r *ActionCredentialRepository) RotateActionCredential(id int, encryptedSec
 
 // DeleteActionCredential removes a credential by ID.
 func (r *ActionCredentialRepository) DeleteActionCredential(id int) error {
-	_, err := r.db.Exec(`DELETE FROM action_credentials WHERE id = ?`, id)
+	_, err := r.db.ExecWrite(`DELETE FROM action_credentials WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("failed to delete action credential: %w", err)
 	}
@@ -288,11 +288,11 @@ func (r *ActionCredentialRepository) GetCredentialWorkspaceIDs(credentialID int)
 // Pass an empty slice to clear (only meaningful when AppliesToAllWorkspaces is
 // false; the caller is responsible for that invariant).
 func (r *ActionCredentialRepository) SetCredentialWorkspaces(credentialID int, workspaceIDs []int) error {
-	if _, err := r.db.Exec(`DELETE FROM action_credential_workspaces WHERE credential_id = ?`, credentialID); err != nil {
+	if _, err := r.db.ExecWrite(`DELETE FROM action_credential_workspaces WHERE credential_id = ?`, credentialID); err != nil {
 		return fmt.Errorf("failed to clear credential workspace scope: %w", err)
 	}
 	for _, wsID := range workspaceIDs {
-		if _, err := r.db.Exec(`INSERT INTO action_credential_workspaces (credential_id, workspace_id) VALUES (?, ?)`, credentialID, wsID); err != nil {
+		if _, err := r.db.ExecWrite(`INSERT INTO action_credential_workspaces (credential_id, workspace_id) VALUES (?, ?)`, credentialID, wsID); err != nil {
 			return fmt.Errorf("failed to add credential workspace scope (ws %d): %w", wsID, err)
 		}
 	}

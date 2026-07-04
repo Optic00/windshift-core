@@ -293,7 +293,7 @@ func (r *ChannelRepository) Delete(ctx context.Context, tx database.Tx, id int) 
 
 // UpdateLastActivity updates the last_activity timestamp
 func (r *ChannelRepository) UpdateLastActivity(ctx context.Context, id int) error {
-	_, err := r.db.ExecContext(ctx, "UPDATE channels SET last_activity = ? WHERE id = ?", time.Now(), id)
+	_, err := r.db.ExecWriteContext(ctx, "UPDATE channels SET last_activity = ? WHERE id = ?", time.Now(), id)
 	if err != nil {
 		return fmt.Errorf("failed to update last activity: %w", err)
 	}

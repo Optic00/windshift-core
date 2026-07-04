@@ -339,7 +339,7 @@ func (h *ConditionSetHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = h.db.Exec("DELETE FROM condition_sets WHERE id = ?", id)
+	_, err = h.db.ExecWrite("DELETE FROM condition_sets WHERE id = ?", id)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return

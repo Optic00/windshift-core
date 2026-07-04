@@ -91,7 +91,7 @@ func (s *SyncService) prBodyAlreadyApplied(ctx context.Context, repoID, prNumber
 }
 
 func (s *SyncService) markPRBodyApplied(ctx context.Context, repoID, prNumber int) {
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.db.ExecWriteContext(ctx, `
 		UPDATE item_scm_links SET smart_commits_applied_at = CURRENT_TIMESTAMP
 		WHERE workspace_repository_id = ? AND link_type = 'pull_request'
 		  AND external_id = ?
@@ -113,7 +113,7 @@ func (s *SyncService) commitAlreadyProcessed(ctx context.Context, repoID int, sh
 }
 
 func (s *SyncService) markCommitProcessed(ctx context.Context, repoID int, sha string, applied int) {
-	_, err := s.db.ExecContext(ctx, `
+	_, err := s.db.ExecWriteContext(ctx, `
 		INSERT INTO scm_processed_commits (commit_sha, workspace_repository_id, actions_applied)
 		VALUES (?, ?, ?)
 	`, sha, repoID, applied)

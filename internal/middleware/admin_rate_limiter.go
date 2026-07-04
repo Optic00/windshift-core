@@ -40,7 +40,7 @@ func (rl *AdminFallbackRateLimiter) RecordAttempt(ctx context.Context, userID in
 	oneHourAgo := time.Now().Add(-time.Hour).UTC()
 
 	// Try to update existing record
-	result, err := rl.db.ExecContext(ctx, `
+	result, err := rl.db.ExecWriteContext(ctx, `
 		UPDATE admin_fallback_rate_limits
 		SET attempts = attempts + 1
 		WHERE user_id = ? AND ip_address = ?
@@ -53,13 +53,13 @@ func (rl *AdminFallbackRateLimiter) RecordAttempt(ctx context.Context, userID in
 	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
 		// Clean up old entries and insert new one
-		_, _ = rl.db.ExecContext(ctx, `
+		_, _ = rl.db.ExecWriteContext(ctx, `
 			DELETE FROM admin_fallback_rate_limits
 			WHERE user_id = ? AND ip_address = ?
 			AND first_attempt_at <= ?
 		`, userID, ipAddress, oneHourAgo)
 
-		_, err = rl.db.ExecContext(ctx, `
+		_, err = rl.db.ExecWriteContext(ctx, `
 			INSERT INTO admin_fallback_rate_limits (user_id, ip_address, attempts, first_attempt_at)
 			VALUES (?, ?, 1, CURRENT_TIMESTAMP)
 			ON CONFLICT(user_id, ip_address) DO UPDATE SET
@@ -90,7 +90,7 @@ func (rl *AdminFallbackRateLimiter) RecordAttempt(ctx context.Context, userID in
 	if attempts >= MaxAdminAttemptsPerUser {
 		// Set lockout
 		lockoutTime := time.Now().Add(time.Hour).UTC()
-		_, _ = rl.db.ExecContext(ctx, `
+		_, _ = rl.db.ExecWriteContext(ctx, `
 			UPDATE admin_fallback_rate_limits
 			SET locked_until = ?
 			WHERE user_id = ? AND ip_address = ?

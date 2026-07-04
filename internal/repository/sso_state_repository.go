@@ -23,7 +23,7 @@ type SSOStateToken struct {
 }
 
 func (r *SSOStateRepository) Store(providerID int, state, redirectURI string, rememberMe bool, expiresAt time.Time) error {
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		INSERT INTO sso_state_tokens (provider_id, state, redirect_uri, remember_me, expires_at)
 		VALUES (?, ?, ?, ?, ?)
 	`, providerID, state, redirectURI, rememberMe, expiresAt)
@@ -43,6 +43,6 @@ func (r *SSOStateRepository) GetValid(state string, providerID int, now time.Tim
 }
 
 func (r *SSOStateRepository) Delete(id int) error {
-	_, err := r.db.Exec("DELETE FROM sso_state_tokens WHERE id = ?", id)
+	_, err := r.db.ExecWrite("DELETE FROM sso_state_tokens WHERE id = ?", id)
 	return err
 }

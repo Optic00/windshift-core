@@ -14,6 +14,7 @@ import (
 // Database is the subset of *database.DB the credential store needs.
 type Database interface {
 	Exec(query string, args ...interface{}) (sql.Result, error)
+	ExecWrite(query string, args ...interface{}) (sql.Result, error)
 	QueryRow(query string, args ...interface{}) *sql.Row
 	Query(query string, args ...interface{}) (*sql.Rows, error)
 }
@@ -45,7 +46,7 @@ func (cs *CredentialStore) SaveCredential(portalCustomerID int, credentialName s
 	if err != nil {
 		return fmt.Errorf("failed to marshal transport: %w", err)
 	}
-	_, err = cs.db.Exec(`
+	_, err = cs.db.ExecWrite(`
 		INSERT INTO portal_webauthn_credentials (
 			id, portal_customer_id, credential_name, public_key, attestation_type,
 			aaguid, sign_count, clone_warning, transport,
@@ -151,7 +152,7 @@ func (cs *CredentialStore) LookupCustomerByCredentialID(credentialID []byte) (in
 // UpdateCredentialCounter persists the post-login sign count and clone flag.
 func (cs *CredentialStore) UpdateCredentialCounter(credentialID []byte, signCount uint32, cloneWarning bool) error {
 	credIDStr := base64.RawURLEncoding.EncodeToString(credentialID)
-	_, err := cs.db.Exec(`
+	_, err := cs.db.ExecWrite(`
 		UPDATE portal_webauthn_credentials
 		SET sign_count = ?, clone_warning = ?, last_used_at = ?, updated_at = ?
 		WHERE id = ?
@@ -164,7 +165,7 @@ func (cs *CredentialStore) UpdateCredentialCounter(credentialID []byte, signCoun
 
 // DeleteCredential removes a credential by its ID.
 func (cs *CredentialStore) DeleteCredential(credentialID string) error {
-	_, err := cs.db.Exec(`DELETE FROM portal_webauthn_credentials WHERE id = ?`, credentialID)
+	_, err := cs.db.ExecWrite(`DELETE FROM portal_webauthn_credentials WHERE id = ?`, credentialID)
 	if err != nil {
 		return fmt.Errorf("failed to delete credential: %w", err)
 	}

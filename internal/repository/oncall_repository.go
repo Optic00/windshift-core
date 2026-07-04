@@ -200,7 +200,7 @@ func (r *OnCallRepository) CreateSchedule(teamID int, name, description, timezon
 
 func (r *OnCallRepository) UpdateSchedule(id int, name, description, timezone string, isActive bool) error {
 	now := time.Now()
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		UPDATE on_call_schedules SET name = ?, description = ?, timezone = ?, is_active = ?, updated_at = ?
 		WHERE id = ?
 	`, name, description, timezone, isActive, now, id)
@@ -208,7 +208,7 @@ func (r *OnCallRepository) UpdateSchedule(id int, name, description, timezone st
 }
 
 func (r *OnCallRepository) DeleteSchedule(id int) error {
-	_, err := r.db.Exec("DELETE FROM on_call_schedules WHERE id = ?", id)
+	_, err := r.db.ExecWrite("DELETE FROM on_call_schedules WHERE id = ?", id)
 	return err
 }
 
@@ -276,7 +276,7 @@ func (r *OnCallRepository) AddLayer(scheduleID int, name string, priority int, r
 
 func (r *OnCallRepository) UpdateLayer(id int, name string, priority int, rotationType string, intervalDays int, handoffTime, startDate string, endDate *string) error {
 	now := time.Now()
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		UPDATE on_call_schedule_layers
 		SET name = ?, priority = ?, rotation_type = ?, rotation_interval_days = ?,
 			handoff_time = ?, start_date = ?, end_date = ?, updated_at = ?
@@ -286,7 +286,7 @@ func (r *OnCallRepository) UpdateLayer(id int, name string, priority int, rotati
 }
 
 func (r *OnCallRepository) DeleteLayer(id int) error {
-	_, err := r.db.Exec("DELETE FROM on_call_schedule_layers WHERE id = ?", id)
+	_, err := r.db.ExecWrite("DELETE FROM on_call_schedule_layers WHERE id = ?", id)
 	return err
 }
 
@@ -326,14 +326,14 @@ func (r *OnCallRepository) GetLayerMembers(layerID int) ([]models.OnCallSchedule
 
 func (r *OnCallRepository) SetLayerMembers(layerID int, userIDs []int) error {
 	// Delete existing members
-	if _, err := r.db.Exec("DELETE FROM on_call_schedule_layer_members WHERE layer_id = ?", layerID); err != nil {
+	if _, err := r.db.ExecWrite("DELETE FROM on_call_schedule_layer_members WHERE layer_id = ?", layerID); err != nil {
 		return err
 	}
 
 	// Insert new members in order
 	now := time.Now()
 	for i, userID := range userIDs {
-		_, err := r.db.Exec(`
+		_, err := r.db.ExecWrite(`
 			INSERT INTO on_call_schedule_layer_members (layer_id, user_id, position, created_at)
 			VALUES (?, ?, ?, ?)
 		`, layerID, userID, i+1, now)
@@ -362,7 +362,7 @@ func (r *OnCallRepository) CreateOverride(scheduleID, userID, overrideUserID int
 }
 
 func (r *OnCallRepository) DeleteOverride(id int) error {
-	_, err := r.db.Exec("DELETE FROM on_call_schedule_overrides WHERE id = ?", id)
+	_, err := r.db.ExecWrite("DELETE FROM on_call_schedule_overrides WHERE id = ?", id)
 	return err
 }
 
@@ -533,7 +533,7 @@ func (r *OnCallRepository) CreatePolicy(teamID int, name, description string, re
 
 func (r *OnCallRepository) UpdatePolicy(id int, name, description string, repeatCount int, isActive bool) error {
 	now := time.Now()
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		UPDATE on_call_escalation_policies SET name = ?, description = ?, repeat_count = ?, is_active = ?, updated_at = ?
 		WHERE id = ?
 	`, name, description, repeatCount, isActive, now, id)
@@ -541,7 +541,7 @@ func (r *OnCallRepository) UpdatePolicy(id int, name, description string, repeat
 }
 
 func (r *OnCallRepository) DeletePolicy(id int) error {
-	_, err := r.db.Exec("DELETE FROM on_call_escalation_policies WHERE id = ?", id)
+	_, err := r.db.ExecWrite("DELETE FROM on_call_escalation_policies WHERE id = ?", id)
 	return err
 }
 
@@ -586,7 +586,7 @@ func (r *OnCallRepository) GetEscalationRules(policyID int) ([]models.OnCallEsca
 
 func (r *OnCallRepository) SetEscalationRules(policyID int, rules []models.EscalationRuleInput) error {
 	// Delete existing rules (cascade deletes notification rules)
-	if _, err := r.db.Exec("DELETE FROM on_call_escalation_rules WHERE policy_id = ?", policyID); err != nil {
+	if _, err := r.db.ExecWrite("DELETE FROM on_call_escalation_rules WHERE policy_id = ?", policyID); err != nil {
 		return err
 	}
 
@@ -603,7 +603,7 @@ func (r *OnCallRepository) SetEscalationRules(policyID int, rules []models.Escal
 
 		// Create notification rules for this step
 		for _, nr := range rule.NotificationRules {
-			_, err := r.db.Exec(`
+			_, err := r.db.ExecWrite(`
 				INSERT INTO on_call_notification_rules (escalation_rule_id, notification_type, delay_minutes, repeat_interval_minutes, repeat_count, created_at)
 				VALUES (?, ?, ?, ?, ?, ?)
 			`, ruleID, nr.NotificationType, nr.DelayMinutes, nr.RepeatIntervalMinutes, nr.RepeatCount, now)
@@ -691,7 +691,7 @@ func (r *OnCallRepository) GetSwapRequestByID(id int) (*models.OnCallSwapRequest
 
 func (r *OnCallRepository) UpdateSwapRequestStatus(id int, status string) error {
 	now := time.Now()
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		UPDATE on_call_swap_requests SET status = ?, responded_at = ? WHERE id = ?
 	`, status, now, id)
 	return err
@@ -731,7 +731,7 @@ func (r *OnCallRepository) GetIncidentByID(id int) (*models.OnCallIncident, erro
 }
 
 func (r *OnCallRepository) UpdateIncident(id int, status string, acknowledgedAt *time.Time, acknowledgedBy *int, resolvedAt *time.Time, resolvedBy *int, step, repeatCount int) error {
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		UPDATE on_call_incidents
 		SET status = ?, acknowledged_at = ?, acknowledged_by = ?,
 			resolved_at = ?, resolved_by = ?,

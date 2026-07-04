@@ -170,14 +170,14 @@ func (s *UserStore) LinkExternalAccount(userID, providerID int, externalID, emai
 		) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 	`
 
-	_, err := s.db.Exec(query, userID, providerID, externalID, nullStringFromString(email), nullStringFromString(profileData))
+	_, err := s.db.ExecWrite(query, userID, providerID, externalID, nullStringFromString(email), nullStringFromString(profileData))
 	return err
 }
 
 // UpdateLastLogin updates the last login timestamp for an external account
 func (s *UserStore) UpdateLastLogin(accountID int) error {
 	query := `UPDATE user_external_accounts SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?`
-	_, err := s.db.Exec(query, accountID)
+	_, err := s.db.ExecWrite(query, accountID)
 	return err
 }
 
@@ -405,7 +405,7 @@ func (s *UserStore) GetExternalAccountsForUser(userID int) ([]*ExternalAccount, 
 // UnlinkExternalAccount removes an external account link
 func (s *UserStore) UnlinkExternalAccount(accountID, userID int) error {
 	query := `DELETE FROM user_external_accounts WHERE id = ? AND user_id = ?`
-	result, err := s.db.Exec(query, accountID, userID)
+	result, err := s.db.ExecWrite(query, accountID, userID)
 	if err != nil {
 		return err
 	}

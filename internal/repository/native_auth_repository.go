@@ -32,7 +32,7 @@ type NativeAuthCode struct {
 // long the code may be redeemed; sessionExpiresAt is the session's own expiry,
 // echoed back at exchange time so the app can size the cookie's lifetime.
 func (r *NativeAuthRepository) Store(code, sessionToken string, sessionExpiresAt, expiresAt time.Time) error {
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		INSERT INTO native_auth_codes (code, session_token, session_expires_at, status, expires_at)
 		VALUES (?, ?, ?, 'valid', ?)
 	`, code, sessionToken, sessionExpiresAt, expiresAt)
@@ -64,12 +64,12 @@ func (r *NativeAuthRepository) Consume(code string, now time.Time) (*NativeAuthC
 		// Best-effort: clear the secret on an expired-but-unconsumed code so it
 		// can't linger in the table. Treat every non-redeemable state as "gone".
 		if now.After(expiresAt) {
-			_, _ = r.db.Exec(`UPDATE native_auth_codes SET status = 'expired', session_token = '' WHERE id = ? AND consumed_at IS NULL`, row.ID)
+			_, _ = r.db.ExecWrite(`UPDATE native_auth_codes SET status = 'expired', session_token = '' WHERE id = ? AND consumed_at IS NULL`, row.ID)
 		}
 		return nil, ErrNotFound
 	}
 
-	res, err := r.db.Exec(`
+	res, err := r.db.ExecWrite(`
 		UPDATE native_auth_codes
 		SET status = 'consumed', consumed_at = CURRENT_TIMESTAMP, session_token = ''
 		WHERE id = ? AND status = 'valid' AND consumed_at IS NULL

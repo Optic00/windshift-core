@@ -60,7 +60,7 @@ func (s *EmailVerificationService) GenerateVerificationToken(userID int) (string
 		SET email_verification_token = ?, email_verification_expires = ?, updated_at = ?
 		WHERE id = ?
 	`
-	result, err := s.db.Exec(query, token, expiresAt, time.Now(), userID)
+	result, err := s.db.ExecWrite(query, token, expiresAt, time.Now(), userID)
 	if err != nil {
 		return "", fmt.Errorf("failed to store verification token: %w", err)
 	}
@@ -125,7 +125,7 @@ func (s *EmailVerificationService) VerifyEmail(token string) (*models.User, erro
 		SET email_verified = ?, email_verification_token = NULL, email_verification_expires = NULL, updated_at = ?
 		WHERE id = ?
 	`
-	_, err = s.db.Exec(updateQuery, true, time.Now(), user.ID)
+	_, err = s.db.ExecWrite(updateQuery, true, time.Now(), user.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update user verification status: %w", err)
 	}
@@ -191,7 +191,7 @@ func (s *EmailVerificationService) SetEmailVerified(userID int, verified bool) e
 		SET email_verified = ?, email_verification_token = NULL, email_verification_expires = NULL, updated_at = ?
 		WHERE id = ?
 	`
-	result, err := s.db.Exec(query, verified, time.Now(), userID)
+	result, err := s.db.ExecWrite(query, verified, time.Now(), userID)
 	if err != nil {
 		return fmt.Errorf("failed to update email verified status: %w", err)
 	}

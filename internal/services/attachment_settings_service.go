@@ -33,7 +33,7 @@ func (s *AttachmentSettingsService) Initialize(attachmentPath string) error {
 
 	if !exists {
 		// Create initial settings
-		_, err = s.db.Exec(`
+		_, err = s.db.ExecWrite(`
 			INSERT INTO attachment_settings (max_file_size, allowed_mime_types, attachment_path, enabled)
 			VALUES (52428800, '[]', ?, true)
 		`, attachmentPath)
@@ -44,7 +44,7 @@ func (s *AttachmentSettingsService) Initialize(attachmentPath string) error {
 	}
 
 	// Update attachment path if it has changed
-	_, err = s.db.Exec(`
+	_, err = s.db.ExecWrite(`
 		UPDATE attachment_settings
 		SET attachment_path = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = (SELECT MIN(id) FROM attachment_settings)
@@ -107,14 +107,14 @@ func (s *AttachmentSettingsService) Update(settingsID int, req *models.Attachmen
 
 	if exists {
 		// Update existing settings
-		_, err = s.db.Exec(`
+		_, err = s.db.ExecWrite(`
 			UPDATE attachment_settings
 			SET max_file_size = ?, allowed_mime_types = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP
 			WHERE id = ?
 		`, req.MaxFileSize, string(allowedMimeTypesJSON), req.Enabled, settingsID)
 	} else {
 		// Create new settings record
-		_, err = s.db.Exec(`
+		_, err = s.db.ExecWrite(`
 			INSERT INTO attachment_settings (id, max_file_size, allowed_mime_types, attachment_path, enabled)
 			VALUES (?, ?, ?, ?, ?)
 		`, settingsID, req.MaxFileSize, string(allowedMimeTypesJSON), "", req.Enabled)

@@ -374,7 +374,7 @@ func (m *CredentialManager) updateChannelTokens(
 		return fmt.Errorf("failed to marshal updated config: %w", err)
 	}
 
-	_, err = m.db.ExecContext(ctx, `
+	_, err = m.db.ExecWriteContext(ctx, `
 		UPDATE channels SET config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
 	`, string(updatedConfigJSON), channelID)
 	if err != nil {
@@ -432,7 +432,7 @@ func (m *CredentialManager) SaveOAuthTokens(
 		return fmt.Errorf("failed to marshal updated config: %w", err)
 	}
 
-	_, err = m.db.Exec(`
+	_, err = m.db.ExecWrite(`
 		UPDATE channels SET config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
 	`, string(updatedConfigJSON), channelID)
 	if err != nil {

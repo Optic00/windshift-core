@@ -374,7 +374,7 @@ func (m *ConnectionManager) CreateConnection(req CreateConnectionRequest) (*Conn
 
 	// If setting as default, clear existing defaults
 	if req.IsDefault {
-		if _, err := m.db.Exec("UPDATE llm_connections SET is_default = false WHERE is_default = true"); err != nil {
+		if _, err := m.db.ExecWrite("UPDATE llm_connections SET is_default = false WHERE is_default = true"); err != nil {
 			return nil, fmt.Errorf("failed to clear existing defaults: %w", err)
 		}
 	}
@@ -408,7 +408,7 @@ type UpdateConnectionRequest struct {
 func (m *ConnectionManager) UpdateConnection(id int, req UpdateConnectionRequest) (*ConnectionInfo, error) {
 	// If setting as default, clear existing defaults
 	if req.IsDefault {
-		if _, err := m.db.Exec("UPDATE llm_connections SET is_default = false WHERE is_default = true AND id != ?", id); err != nil {
+		if _, err := m.db.ExecWrite("UPDATE llm_connections SET is_default = false WHERE is_default = true AND id != ?", id); err != nil {
 			return nil, fmt.Errorf("failed to clear existing defaults: %w", err)
 		}
 	}
@@ -422,7 +422,7 @@ func (m *ConnectionManager) UpdateConnection(id int, req UpdateConnectionRequest
 		if err != nil {
 			return nil, fmt.Errorf("failed to encrypt API key: %w", err)
 		}
-		_, err = m.db.Exec(
+		_, err = m.db.ExecWrite(
 			`UPDATE llm_connections SET name = ?, provider_type = ?, model = ?, api_key_encrypted = ?, base_url = ?, provider_config = ?, is_default = ?, is_enabled = ?, updated_at = CURRENT_TIMESTAMP
 			 WHERE id = ?`,
 			req.Name, string(req.ProviderType), req.Model, encrypted, req.BaseURL, providerConfig, req.IsDefault, req.IsEnabled, id,
@@ -432,7 +432,7 @@ func (m *ConnectionManager) UpdateConnection(id int, req UpdateConnectionRequest
 		}
 	} else {
 		// Don't overwrite API key if not provided
-		_, err := m.db.Exec(
+		_, err := m.db.ExecWrite(
 			`UPDATE llm_connections SET name = ?, provider_type = ?, model = ?, base_url = ?, provider_config = ?, is_default = ?, is_enabled = ?, updated_at = CURRENT_TIMESTAMP
 			 WHERE id = ?`,
 			req.Name, string(req.ProviderType), req.Model, req.BaseURL, providerConfig, req.IsDefault, req.IsEnabled, id,
@@ -447,7 +447,7 @@ func (m *ConnectionManager) UpdateConnection(id int, req UpdateConnectionRequest
 
 // DeleteConnection deletes an LLM connection.
 func (m *ConnectionManager) DeleteConnection(id int) error {
-	_, err := m.db.Exec("DELETE FROM llm_connections WHERE id = ?", id)
+	_, err := m.db.ExecWrite("DELETE FROM llm_connections WHERE id = ?", id)
 	return err
 }
 
@@ -657,7 +657,7 @@ func SaveAIFeaturesConfig(db database.Database, cfg models.AIFeaturesConfig) err
 	if err != nil {
 		return fmt.Errorf("failed to marshal AI features config: %w", err)
 	}
-	_, err = db.Exec(
+	_, err = db.ExecWrite(
 		`UPDATE system_settings SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = 'ai_feature_config'`,
 		string(data),
 	)

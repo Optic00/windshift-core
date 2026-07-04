@@ -170,7 +170,7 @@ func (h *CalendarFeedHandler) CreateFeedToken(w http.ResponseWriter, r *http.Req
 	// that could permanently revoke a user's working feed when the INSERT
 	// failed after the DELETE succeeded. Both SQLite and Postgres support this
 	// syntax against the UNIQUE(user_id) constraint on calendar_feed_tokens.
-	_, err = h.db.Exec(`
+	_, err = h.db.ExecWrite(`
 		INSERT INTO calendar_feed_tokens (user_id, token, is_active, created_at, updated_at)
 		VALUES (?, ?, true, ?, ?)
 		ON CONFLICT(user_id) DO UPDATE SET
@@ -203,7 +203,7 @@ func (h *CalendarFeedHandler) RevokeFeedToken(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	result, err := h.db.Exec("DELETE FROM calendar_feed_tokens WHERE user_id = ?", user.ID)
+	result, err := h.db.ExecWrite("DELETE FROM calendar_feed_tokens WHERE user_id = ?", user.ID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -265,7 +265,7 @@ func (h *CalendarFeedHandler) ServeICSFeed(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Update last_accessed_at
-	_, _ = h.db.Exec("UPDATE calendar_feed_tokens SET last_accessed_at = ? WHERE token = ?", time.Now(), token)
+	_, _ = h.db.ExecWrite("UPDATE calendar_feed_tokens SET last_accessed_at = ? WHERE token = ?", time.Now(), token)
 
 	// Get user's scheduled items
 	icsContent, err := h.generateICSForUser(userID)

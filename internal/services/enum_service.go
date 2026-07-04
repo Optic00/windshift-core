@@ -329,7 +329,7 @@ func (s *EnumService) Update(id int, entity interface{}, r *http.Request) (EnumE
 	query := fmt.Sprintf("UPDATE %s SET %s WHERE id = ?",
 		s.config.TableName, setClause)
 
-	_, err = s.db.Exec(query, args...)
+	_, err = s.db.ExecWrite(query, args...)
 	if err != nil {
 		if database.IsUniqueConstraintError(err) {
 			return nil, NewServiceError(http.StatusConflict,
@@ -381,7 +381,7 @@ func (s *EnumService) Delete(id int, r *http.Request) error {
 
 	// Delete
 	query := fmt.Sprintf("DELETE FROM %s WHERE id = ?", s.config.TableName) //nolint:gosec // G201: TableName is from hardcoded EnumConfig, not user input
-	_, err = s.db.Exec(query, id)
+	_, err = s.db.ExecWrite(query, id)
 	if err != nil {
 		return err
 	}

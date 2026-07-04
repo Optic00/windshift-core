@@ -39,7 +39,7 @@ func (s *SessionStore) saveSession(portalCustomerID any, sessionData *webauthn.S
 		return "", fmt.Errorf("failed to marshal session data: %w", err)
 	}
 	expiresAt := time.Now().Add(5 * time.Minute)
-	_, err = s.db.Exec(`
+	_, err = s.db.ExecWrite(`
 		INSERT INTO portal_webauthn_sessions (id, portal_customer_id, challenge, session_data, session_type, expires_at, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`, id, portalCustomerID, sessionData.Challenge, string(sessionJSON), sessionType, expiresAt, time.Now())
@@ -91,10 +91,10 @@ func (s *SessionStore) getSession(sessionID, sessionType string, portalCustomerI
 	}
 
 	if time.Now().After(expiresAt) {
-		_, _ = s.db.Exec(deleteQuery, deleteArgs...)
+		_, _ = s.db.ExecWrite(deleteQuery, deleteArgs...)
 		return nil, fmt.Errorf("session expired")
 	}
-	if _, err := s.db.Exec(deleteQuery, deleteArgs...); err != nil {
+	if _, err := s.db.ExecWrite(deleteQuery, deleteArgs...); err != nil {
 		slog.Warn("failed to delete portal webauthn session after retrieval",
 			slog.String("component", "portal_webauthn"),
 			slog.Any("error", err),
@@ -124,7 +124,7 @@ func (s *SessionStore) cleanupExpiredSessions() {
 		return
 	}
 	go func() {
-		_, err := s.db.Exec(`DELETE FROM portal_webauthn_sessions WHERE expires_at < ?`, time.Now())
+		_, err := s.db.ExecWrite(`DELETE FROM portal_webauthn_sessions WHERE expires_at < ?`, time.Now())
 		if err != nil {
 			slog.Warn("failed to cleanup expired portal webauthn sessions", slog.Any("error", err))
 		}

@@ -108,7 +108,7 @@ func (h *SCMProviderHandler) StartOAuth(w http.ResponseWriter, r *http.Request) 
 
 	// Store state token
 	expiresAt := time.Now().Add(5 * time.Minute)
-	_, err = h.db.Exec(`
+	_, err = h.db.ExecWrite(`
 		INSERT INTO scm_oauth_state (provider_id, state, redirect_uri, user_id, expires_at)
 		VALUES (?, ?, ?, ?, ?)
 	`, providerID, state, redirectURI, userID, expiresAt)
@@ -188,7 +188,7 @@ func (h *SCMProviderHandler) OAuthCallback(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Delete used state (check error)
-	if _, err = h.db.Exec("DELETE FROM scm_oauth_state WHERE state = ?", state); err != nil {
+	if _, err = h.db.ExecWrite("DELETE FROM scm_oauth_state WHERE state = ?", state); err != nil {
 		slog.Warn("failed to delete OAuth state", slog.String("component", "scm"), slog.Any("error", err))
 	}
 
@@ -258,7 +258,7 @@ func (h *SCMProviderHandler) OAuthCallback(w http.ResponseWriter, r *http.Reques
 
 	// Store at workspace connection level when initiated from workspace settings
 	if workspaceID.Valid {
-		if _, err := h.db.Exec(`
+		if _, err := h.db.ExecWrite(`
 			UPDATE workspace_scm_connections SET
 				oauth_access_token_encrypted = ?,
 				oauth_refresh_token_encrypted = ?,

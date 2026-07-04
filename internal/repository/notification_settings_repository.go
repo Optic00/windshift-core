@@ -200,7 +200,7 @@ func (r *NotificationSettingsRepository) EnsureDefault() error {
 // Delete removes a notification setting. Returns ErrNotFound if no row is
 // affected. Event rules are cascade-deleted by the database.
 func (r *NotificationSettingsRepository) Delete(id int) error {
-	result, err := r.db.Exec(`DELETE FROM notification_settings WHERE id = ?`, id)
+	result, err := r.db.ExecWrite(`DELETE FROM notification_settings WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}

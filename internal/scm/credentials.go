@@ -342,7 +342,7 @@ func (r *CredentialResolver) GetCredentialsForUser(ctx context.Context, connecti
 
 		// Update last_used_at for the user token
 		go func() {
-			_, _ = r.db.Exec(`
+			_, _ = r.db.ExecWrite(`
 				UPDATE user_scm_oauth_tokens SET last_used_at = CURRENT_TIMESTAMP
 				WHERE user_id = ? AND scm_provider_id = ?
 			`, userID, providerID)
@@ -543,7 +543,7 @@ func (r *CredentialResolver) RefreshOAuthTokenIfNeeded(ctx context.Context, conn
 	// Update token storage based on auth source
 	if creds.AuthSource == "user" && creds.UserID > 0 {
 		// Update user-level token
-		_, err = r.db.Exec(`
+		_, err = r.db.ExecWrite(`
 			UPDATE user_scm_oauth_tokens SET
 				oauth_access_token_encrypted = ?,
 				oauth_refresh_token_encrypted = ?,
@@ -555,7 +555,7 @@ func (r *CredentialResolver) RefreshOAuthTokenIfNeeded(ctx context.Context, conn
 		`, newAccessTokenEnc, nullString(newRefreshTokenEnc), newTokens.ExpiresAt, creds.UserID, connectionID)
 	} else {
 		// Update workspace connection with new tokens
-		_, err = r.db.Exec(`
+		_, err = r.db.ExecWrite(`
 			UPDATE workspace_scm_connections SET
 				oauth_access_token_encrypted = ?,
 				oauth_refresh_token_encrypted = ?,
@@ -632,7 +632,7 @@ func (r *CredentialResolver) readStoredAccessToken(ctx context.Context, creds *P
 func (r *CredentialResolver) invalidateStoredCredentials(ctx context.Context, creds *ProviderCredentials, connectionID int) {
 	var err error
 	if creds.AuthSource == "user" && creds.UserID > 0 {
-		_, err = r.db.ExecContext(ctx, `
+		_, err = r.db.ExecWriteContext(ctx, `
 			DELETE FROM user_scm_oauth_tokens
 			WHERE user_id = ? AND scm_provider_id = (
 				SELECT scm_provider_id FROM workspace_scm_connections WHERE id = ?
@@ -646,7 +646,7 @@ func (r *CredentialResolver) invalidateStoredCredentials(ctx context.Context, cr
 		return
 	}
 
-	_, err = r.db.ExecContext(ctx, `
+	_, err = r.db.ExecWriteContext(ctx, `
 		UPDATE workspace_scm_connections SET
 			oauth_access_token_encrypted = NULL,
 			oauth_refresh_token_encrypted = NULL,

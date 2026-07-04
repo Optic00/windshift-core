@@ -179,7 +179,7 @@ func (h *IntegrationItemLinksHandler) CreateItemLink(w http.ResponseWriter, r *h
 	}
 
 	id := uuid.New().String()
-	_, err = h.db.Exec(`
+	_, err = h.db.ExecWrite(`
 		INSERT INTO item_integration_links (
 			id, item_id, integration_provider_id,
 			external_id, external_url, title, icon,
@@ -240,7 +240,7 @@ func (h *IntegrationItemLinksHandler) DeleteItemLink(w http.ResponseWriter, r *h
 	}
 	user := utils.GetCurrentUser(r)
 
-	_, err = h.db.Exec("DELETE FROM item_integration_links WHERE id = ?", linkID)
+	_, err = h.db.ExecWrite("DELETE FROM item_integration_links WHERE id = ?", linkID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -302,7 +302,7 @@ func (h *IntegrationItemLinksHandler) RefreshItemLink(w http.ResponseWriter, r *
 			respondBadRequest(w, r, "Failed to fetch page from Notion")
 			return
 		}
-		_, err = h.db.Exec(`
+		_, err = h.db.ExecWrite(`
 			UPDATE item_integration_links
 			SET title = ?, icon = ?, external_url = ?, updated_at = CURRENT_TIMESTAMP
 			WHERE id = ?

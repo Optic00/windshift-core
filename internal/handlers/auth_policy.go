@@ -417,7 +417,7 @@ func (h *AuthPolicyHandler) isSSOConfigured() bool {
 // upsertSetting updates or inserts a system setting
 func (h *AuthPolicyHandler) upsertSetting(key, value, valueType, description, category string) error {
 	// Try UPDATE first
-	result, err := h.db.Exec(`
+	result, err := h.db.ExecWrite(`
 		UPDATE system_settings SET value = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE key = ?
 	`, value, key)
@@ -428,7 +428,7 @@ func (h *AuthPolicyHandler) upsertSetting(key, value, valueType, description, ca
 	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
 		// INSERT if row doesn't exist
-		_, err = h.db.Exec(`
+		_, err = h.db.ExecWrite(`
 			INSERT INTO system_settings (key, value, value_type, description, category, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		`, key, value, valueType, description, category)

@@ -224,7 +224,7 @@ func (r *ActionRepository) Create(action *models.Action) (int, error) {
 
 // Update updates an action (actor_user_id is patched separately via SetActor).
 func (r *ActionRepository) Update(action *models.Action) error {
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		UPDATE actions SET
 			name = ?, description = ?, is_enabled = ?, trigger_type = ?,
 			trigger_config = ?, updated_at = ?
@@ -243,7 +243,7 @@ func (r *ActionRepository) Update(action *models.Action) error {
 // for verifying the caller has the global action.set_actor permission before
 // calling this. Passing nil clears the override (action will run as triggering user).
 func (r *ActionRepository) SetActor(actionID int, actorUserID *int) error {
-	_, err := r.db.Exec(
+	_, err := r.db.ExecWrite(
 		`UPDATE actions SET actor_user_id = ?, updated_at = ? WHERE id = ?`,
 		actorUserID, time.Now(), actionID,
 	)
@@ -255,7 +255,7 @@ func (r *ActionRepository) SetActor(actionID int, actorUserID *int) error {
 
 // Delete deletes an action and its associated nodes and edges
 func (r *ActionRepository) Delete(id int) error {
-	result, err := r.db.Exec(`DELETE FROM actions WHERE id = ?`, id)
+	result, err := r.db.ExecWrite(`DELETE FROM actions WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("failed to delete action: %w", err)
 	}
@@ -273,7 +273,7 @@ func (r *ActionRepository) Delete(id int) error {
 
 // SetEnabled enables or disables an action
 func (r *ActionRepository) SetEnabled(id int, enabled bool) error {
-	_, err := r.db.Exec(`UPDATE actions SET is_enabled = ?, updated_at = ? WHERE id = ?`,
+	_, err := r.db.ExecWrite(`UPDATE actions SET is_enabled = ?, updated_at = ? WHERE id = ?`,
 		enabled, time.Now(), id)
 	if err != nil {
 		return fmt.Errorf("failed to set action enabled status: %w", err)
@@ -324,7 +324,7 @@ func (r *ActionRepository) CreateNode(node *models.ActionNode) (int, error) {
 
 // UpdateNode updates an action node
 func (r *ActionRepository) UpdateNode(node *models.ActionNode) error {
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		UPDATE action_nodes SET
 			node_type = ?, node_config = ?, position_x = ?, position_y = ?, updated_at = ?
 		WHERE id = ?
@@ -339,7 +339,7 @@ func (r *ActionRepository) UpdateNode(node *models.ActionNode) error {
 
 // DeleteNode deletes an action node
 func (r *ActionRepository) DeleteNode(id int) error {
-	_, err := r.db.Exec(`DELETE FROM action_nodes WHERE id = ?`, id)
+	_, err := r.db.ExecWrite(`DELETE FROM action_nodes WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("failed to delete action node: %w", err)
 	}
@@ -348,7 +348,7 @@ func (r *ActionRepository) DeleteNode(id int) error {
 
 // DeleteNodesByActionID deletes all nodes for an action
 func (r *ActionRepository) DeleteNodesByActionID(actionID int) error {
-	_, err := r.db.Exec(`DELETE FROM action_nodes WHERE action_id = ?`, actionID)
+	_, err := r.db.ExecWrite(`DELETE FROM action_nodes WHERE action_id = ?`, actionID)
 	if err != nil {
 		return fmt.Errorf("failed to delete action nodes: %w", err)
 	}
@@ -399,7 +399,7 @@ func (r *ActionRepository) CreateEdge(edge *models.ActionEdge) (int, error) {
 
 // DeleteEdge deletes an action edge
 func (r *ActionRepository) DeleteEdge(id int) error {
-	_, err := r.db.Exec(`DELETE FROM action_edges WHERE id = ?`, id)
+	_, err := r.db.ExecWrite(`DELETE FROM action_edges WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("failed to delete action edge: %w", err)
 	}
@@ -408,7 +408,7 @@ func (r *ActionRepository) DeleteEdge(id int) error {
 
 // DeleteEdgesByActionID deletes all edges for an action
 func (r *ActionRepository) DeleteEdgesByActionID(actionID int) error {
-	_, err := r.db.Exec(`DELETE FROM action_edges WHERE action_id = ?`, actionID)
+	_, err := r.db.ExecWrite(`DELETE FROM action_edges WHERE action_id = ?`, actionID)
 	if err != nil {
 		return fmt.Errorf("failed to delete action edges: %w", err)
 	}
@@ -439,7 +439,7 @@ func (r *ActionRepository) CreateExecutionLog(log *models.ActionExecutionLog) (i
 
 // UpdateExecutionLog updates an execution log entry
 func (r *ActionRepository) UpdateExecutionLog(log *models.ActionExecutionLog) error {
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		UPDATE action_execution_logs SET
 			status = ?, completed_at = ?, error_message = ?, execution_trace = ?
 		WHERE id = ?
@@ -921,11 +921,11 @@ func (r *ActionRepository) GetCapabilityWorkspaceIDs(capabilityID int) ([]int, e
 // Pass an empty slice to clear (only meaningful when AppliesToAllWorkspaces is
 // false; the caller is responsible for that invariant).
 func (r *ActionRepository) SetCapabilityWorkspaces(capabilityID int, workspaceIDs []int) error {
-	if _, err := r.db.Exec(`DELETE FROM action_capability_workspaces WHERE capability_id = ?`, capabilityID); err != nil {
+	if _, err := r.db.ExecWrite(`DELETE FROM action_capability_workspaces WHERE capability_id = ?`, capabilityID); err != nil {
 		return fmt.Errorf("failed to clear capability workspace scope: %w", err)
 	}
 	for _, wsID := range workspaceIDs {
-		if _, err := r.db.Exec(`INSERT INTO action_capability_workspaces (capability_id, workspace_id) VALUES (?, ?)`, capabilityID, wsID); err != nil {
+		if _, err := r.db.ExecWrite(`INSERT INTO action_capability_workspaces (capability_id, workspace_id) VALUES (?, ?)`, capabilityID, wsID); err != nil {
 			return fmt.Errorf("failed to add capability workspace scope (ws %d): %w", wsID, err)
 		}
 	}
@@ -950,7 +950,7 @@ func (r *ActionRepository) CreateCapability(c *models.ActionCapability) (int, er
 
 // UpdateCapability updates a capability.
 func (r *ActionRepository) UpdateCapability(c *models.ActionCapability) error {
-	_, err := r.db.Exec(`
+	_, err := r.db.ExecWrite(`
 		UPDATE action_capabilities SET name = ?, config = ?, is_enabled = ?, applies_to_all_workspaces = ?, updated_at = ?
 		WHERE id = ?
 	`,
@@ -964,7 +964,7 @@ func (r *ActionRepository) UpdateCapability(c *models.ActionCapability) error {
 
 // DeleteCapability deletes a capability by ID.
 func (r *ActionRepository) DeleteCapability(id int) error {
-	_, err := r.db.Exec(`DELETE FROM action_capabilities WHERE id = ?`, id)
+	_, err := r.db.ExecWrite(`DELETE FROM action_capabilities WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("failed to delete capability: %w", err)
 	}

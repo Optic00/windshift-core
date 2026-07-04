@@ -124,7 +124,7 @@ func (r *UserSCMTokenRepository) GetEnabledProviderInfo(providerID int) (*UserSC
 }
 
 func (r *UserSCMTokenRepository) DeleteUserConnection(userID, providerID int) (bool, error) {
-	result, err := r.db.Exec(`
+	result, err := r.db.ExecWrite(`
 		DELETE FROM user_scm_oauth_tokens
 		WHERE user_id = ? AND scm_provider_id = ?
 	`, userID, providerID)
