@@ -1,5 +1,5 @@
 <script>
-  import { Star, Play, Loader, ChevronDown, ChevronRight, GitPullRequest, Bot, RefreshCw, Plus } from '@lucide/svelte';
+  import { Star, Play, Loader, ChevronDown, ChevronRight, GitPullRequest, Bot, RefreshCw, Plus, Check } from '@lucide/svelte';
   import { api } from '../api.js';
   import { agentRuns } from '../api/agentRuns.js';
   import { agentRuns as agentRunBus } from '../stores/agentRuns.svelte.js';
@@ -13,6 +13,7 @@
   import { renderMarkdown } from '../utils/render-markdown.js';
   import { formatDate } from '../utils/dateFormatter.js';
   import { formatItemKey } from '../utils/itemKey.js';
+  import { workspacesStore } from '../stores';
   import MobileHeader from './MobileHeader.svelte';
   import MobileItemRow from './MobileItemRow.svelte';
   import MobileCreateDialog from './MobileCreateDialog.svelte';
@@ -33,6 +34,17 @@
   let transitioning = $state(false);
   let isWatching = $state(false);
   let watchBusy = $state(false);
+
+  // Personal-workspace (workflow-less) items get no available status
+  // transitions from the backend, which left the workflow status picker
+  // disabled and made a personal task impossible to complete on the PWA. This
+  // mirrors the PWA's own PersonalView / the desktop personal-task view: a
+  // plain Done checkbox that toggles status_id between Open (1) and Done (3)
+  // via the existing transition endpoint, which already permits any transition
+  // for a workflow-less (personal) workspace. See WI-537.
+  // Statuses are global (workspace-agnostic), so 1/3 are stable ids.
+  const PERSONAL_STATUS_OPEN = 1;
+  const PERSONAL_STATUS_DONE = 3;
   let personalTaskCount = $state(0);
   let startingTimer = $state(false);
   let children = $state([]);
@@ -61,6 +73,12 @@
   const projectId = $derived(item?.time_project_id ?? item?.effective_project_id ?? null);
   const canStartTimer = $derived(!!item && !timerStore.hasActive && !!projectId);
   const canCreateChild = $derived(availableSubIssueTypes.length > 0);
+
+  // A personal task is one that lives in the user's personal (workflow-less)
+  // workspace. workspacesStore loads the workspace list eagerly in MobileShell;
+  // personalWorkspace is fetched on demand once an item resolves here.
+  const personalWorkspaceId = $derived($workspacesStore?.personalWorkspace?.id ?? null);
+  const isPersonalItem = $derived(!!item && personalWorkspaceId != null && item.workspace_id === personalWorkspaceId);
   // Stable parent context for the create-child dialog (id + title), derived so
   // it only gets a new reference when the underlying item actually changes —
   // avoids re-triggering the dialog's effects on unrelated re-renders.
@@ -187,6 +205,28 @@
     }
   }
 
+  // Personal-workspace (workflow-less) tasks get no available status
+  // transitions, so the workflow status picker would be permanently disabled
+  // and the task could never be completed. Mirror the PWA's PersonalView: a
+  // plain Done checkbox that toggles status_id between Open (1) and Done (3)
+  // via the existing transition endpoint (which permits any transition for a
+  // workflow-less workspace). See WI-537.
+  const personalIsDone = $derived(item?.status_id === PERSONAL_STATUS_DONE);
+
+  async function togglePersonalDone() {
+    if (transitioning) return;
+    const target = personalIsDone ? PERSONAL_STATUS_OPEN : PERSONAL_STATUS_DONE;
+    transitioning = true;
+    try {
+      const updated = await api.items.transition(itemId, target);
+      item = { ...item, ...updated };
+    } catch (err) {
+      console.error('Failed to toggle personal task:', err);
+    } finally {
+      transitioning = false;
+    }
+  }
+
   async function updateAssignee(user) {
     const assigneeId = user?.id ?? null;
     if (assigneeId === (item.assignee_id ?? null)) return;
@@ -278,6 +318,13 @@
     loadItem(id, token).then(() => {
       if (token === loadToken && !errored) loadAux(id, token);
     });
+  });
+
+  // Ensure the personal workspace is known so isPersonalItem can resolve.
+  // workspacesStore loads the workspace list eagerly in MobileShell; the
+  // personal workspace is fetched on demand here. Idempotent / guarded.
+  $effect(() => {
+    if (!personalWorkspaceId) workspacesStore.loadPersonalWorkspace?.();
   });
 
   // Silent refresh (no loading flash) of the fields that change in place —
@@ -423,6 +470,28 @@
          and custom statuses work as-is. Assignee users come from the
          workspace-scoped assignable-users endpoint via UserPicker. -->
     <div class="fields">
+      {#if isPersonalItem}
+        <!-- Personal (workflow-less) tasks: the available-transitions endpoint
+             returns nothing, so a status picker would be permanently disabled
+             and the task could never be completed. Mirror the desktop personal
+             task view instead: a Done toggle. See WI-537. -->
+        <button
+          class="field"
+          onclick={togglePersonalDone}
+          disabled={transitioning}
+          data-testid="personal-done-toggle"
+          aria-pressed={personalIsDone}
+          type="button"
+        >
+          <span class="field-label">Status</span>
+          <span class="field-value" data-testid="detail-status">
+            <span class="done-check" class:done={personalIsDone} aria-hidden="true">
+              {#if personalIsDone}<Check size={12} strokeWidth={3} />{/if}
+            </span>
+            {personalIsDone ? 'Done' : (item.status_name || 'Open')}
+          </span>
+        </button>
+      {:else}
       <BasePicker
         value={item.status_id ?? null}
         items={transitions}
@@ -449,6 +518,7 @@
           </span>
         {/snippet}
       </BasePicker>
+      {/if}
 
       <UserPicker
         value={item.assignee_id ?? null}
@@ -658,6 +728,15 @@
   .field-value :global(.chev) { color: var(--ds-icon-subtle, var(--ds-text-subtle)); flex-shrink: 0; }
   .assignee-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 9rem; }
   .muted { color: var(--ds-text-subtle); }
+  /* Personal-task Done toggle: a compact check that mirrors the desktop/
+     PersonalView affordance. Filled green when the task is complete. */
+  .done-check {
+    width: 18px; height: 18px; flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 2px solid var(--ds-border-bold, var(--ds-border)); border-radius: var(--radius-full, 9999px);
+    color: #fff; background: transparent;
+  }
+  .done-check.done { background-color: var(--ds-success, #4cb782); border-color: var(--ds-success, #4cb782); }
   .opt { display: inline-flex; align-items: center; gap: 0.5rem; }
   .opt-dot { width: 8px; height: 8px; border-radius: var(--radius-full, 9999px); background-color: var(--ds-icon-subtle, var(--ds-text-subtle)); flex-shrink: 0; }
 
