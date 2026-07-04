@@ -3,7 +3,6 @@ package scheduler
 import (
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
@@ -172,7 +171,7 @@ func (ns *NotificationScheduler) processPendingNotifications() {
 		// done. If it fails, we roll back sent_at for the batch. Without
 		// this pre-mark, a crash or mark-as-sent DB failure between send
 		// and mark would re-send the same batch on the next tick.
-		if err := ns.markNotificationsSent(batch.NotificationIDs); err != nil {
+		if err := ns.notifSvc.MarkNotificationsSent(batch.NotificationIDs); err != nil {
 			slog.Error("failed to pre-mark notifications sent; skipping batch",
 				slog.String("component", "scheduler"),
 				slog.String("user_email", userEmail),
@@ -183,7 +182,7 @@ func (ns *NotificationScheduler) processPendingNotifications() {
 		}
 		if err := ns.sendNotificationBatch(batch); err != nil {
 			slog.Error("Failed to send notification batch", slog.String("component", "scheduler"), slog.String("user_email", userEmail), slog.Any("error", err))
-			if rollbackErr := ns.rollbackSent(batch.NotificationIDs); rollbackErr != nil {
+			if rollbackErr := ns.notifSvc.RollbackNotificationsSent(batch.NotificationIDs); rollbackErr != nil {
 				slog.Error("failed to roll back sent_at after SMTP failure",
 					slog.String("component", "scheduler"),
 					slog.String("user_email", userEmail),
@@ -196,7 +195,7 @@ func (ns *NotificationScheduler) processPendingNotifications() {
 				// an operator can investigate; we deliberately don't auto-retry
 				// here because we can't tell whether the SMTP send actually went
 				// out before the rollback failed (would-be C3 territory).
-				if markErr := ns.markSendFailed(batch.NotificationIDs); markErr != nil {
+				if markErr := ns.notifSvc.MarkNotificationsSendFailed(batch.NotificationIDs); markErr != nil {
 					slog.Error("failed to mark notifications as send-failed; rows are silently wedged",
 						slog.String("component", "scheduler"),
 						slog.String("user_email", userEmail),
@@ -264,80 +263,4 @@ func (ns *NotificationScheduler) sendNotificationBatch(batch *services.UserNotif
 	}
 
 	return ns.smtpSender.SendBatchedNotifications(batch.UserEmail, batch.UserName, batch.Notifications)
-}
-
-// markNotificationsSent stamps sent_at so the scheduler will not re-batch
-// them. The function used to be named markNotificationsAsRead but it never
-// touched the `read` flag — only sent_at. Callers: pre-send optimistic mark
-// (with rollback on SMTP failure).
-func (ns *NotificationScheduler) markNotificationsSent(notificationIDs []int) error {
-	if len(notificationIDs) == 0 {
-		return nil
-	}
-
-	placeholders := make([]string, len(notificationIDs))
-	args := make([]interface{}, len(notificationIDs)+2)
-	now := time.Now()
-	args[0] = now // sent_at
-	args[1] = now // updated_at
-
-	for i, id := range notificationIDs {
-		placeholders[i] = "?"
-		args[i+2] = id
-	}
-
-	query := fmt.Sprintf(`
-		UPDATE notifications
-		SET sent_at = ?, updated_at = ?
-		WHERE id IN (%s)
-	`, strings.Join(placeholders, ","))
-
-	_, err := ns.db.Exec(query, args...)
-	return err
-}
-
-// markSendFailed flags a batch as wedged after a rollback failure so an operator
-// can find it and decide whether to clear sent_at manually. Auto-retry isn't
-// safe here because we can't tell whether the SMTP send actually went out
-// before rollback failed.
-func (ns *NotificationScheduler) markSendFailed(notificationIDs []int) error {
-	if len(notificationIDs) == 0 {
-		return nil
-	}
-	placeholders := make([]string, len(notificationIDs))
-	args := make([]interface{}, len(notificationIDs)+1)
-	args[0] = time.Now()
-	for i, id := range notificationIDs {
-		placeholders[i] = "?"
-		args[i+1] = id
-	}
-	query := fmt.Sprintf(`
-		UPDATE notifications
-		SET last_send_failed = true, updated_at = ?
-		WHERE id IN (%s)
-	`, strings.Join(placeholders, ","))
-	_, err := ns.db.Exec(query, args...)
-	return err
-}
-
-// rollbackSent clears sent_at for a batch whose SMTP send ultimately failed,
-// so the batch is eligible to retry on a future tick.
-func (ns *NotificationScheduler) rollbackSent(notificationIDs []int) error {
-	if len(notificationIDs) == 0 {
-		return nil
-	}
-	placeholders := make([]string, len(notificationIDs))
-	args := make([]interface{}, len(notificationIDs)+1)
-	args[0] = time.Now()
-	for i, id := range notificationIDs {
-		placeholders[i] = "?"
-		args[i+1] = id
-	}
-	query := fmt.Sprintf(`
-		UPDATE notifications
-		SET sent_at = NULL, updated_at = ?
-		WHERE id IN (%s)
-	`, strings.Join(placeholders, ","))
-	_, err := ns.db.Exec(query, args...)
-	return err
 }

@@ -466,17 +466,3 @@ func (r *SCIMRepository) ReplaceGroup(ctx context.Context, id int, name, externa
 
 	return priorMemberIDs, nil
 }
-
-// =============================================================================
-// Notifications
-// =============================================================================
-
-// InsertWarningNotification writes a single 'warning' notification row,
-// used to alert system admins about SCIM offboarding cascades.
-func (r *SCIMRepository) InsertWarningNotification(userID int, title, message, metadata string) error {
-	_, err := r.db.Exec(`
-		INSERT INTO notifications (user_id, title, message, type, metadata)
-		VALUES (?, ?, ?, 'warning', ?)
-	`, userID, title, message, metadata)
-	return err
-}

@@ -20,6 +20,10 @@ import (
 // callers that only need delivery can discard the returned value.
 type NotificationManager interface {
 	AddNotification(notification models.Notification) (models.Notification, error)
+	DeleteUserNotifications(userID int) error
+	MarkNotificationsSent(notificationIDs []int) error
+	MarkNotificationsSendFailed(notificationIDs []int) error
+	RollbackNotificationsSent(notificationIDs []int) error
 }
 
 // NotificationEvent represents an event that should trigger notifications
@@ -242,6 +246,50 @@ func (ns *NotificationService) NotifyUsers(userIDs []int, workspaceID, itemID, a
 		}
 	}
 	return nil
+}
+
+// CreateNotification stores a single notification through the notification
+// manager so cache, persistence, and push fan-out stay consistent.
+func (ns *NotificationService) CreateNotification(notification models.Notification) (models.Notification, error) {
+	if ns.notificationManager == nil {
+		return notification, fmt.Errorf("notification manager not configured")
+	}
+	return ns.notificationManager.AddNotification(notification)
+}
+
+// DeleteUserNotifications removes all notifications for a user through the
+// manager so any per-user notification cache is invalidated with the DB rows.
+func (ns *NotificationService) DeleteUserNotifications(userID int) error {
+	if ns.notificationManager == nil {
+		return fmt.Errorf("notification manager not configured")
+	}
+	return ns.notificationManager.DeleteUserNotifications(userID)
+}
+
+// MarkNotificationsSent stamps sent_at for email-batched notifications through
+// the manager rather than letting the scheduler mutate notification rows itself.
+func (ns *NotificationService) MarkNotificationsSent(notificationIDs []int) error {
+	if ns.notificationManager == nil {
+		return fmt.Errorf("notification manager not configured")
+	}
+	return ns.notificationManager.MarkNotificationsSent(notificationIDs)
+}
+
+// MarkNotificationsSendFailed flags notification rows whose email-send rollback
+// failed, keeping scheduler DB mutations behind the notification service layer.
+func (ns *NotificationService) MarkNotificationsSendFailed(notificationIDs []int) error {
+	if ns.notificationManager == nil {
+		return fmt.Errorf("notification manager not configured")
+	}
+	return ns.notificationManager.MarkNotificationsSendFailed(notificationIDs)
+}
+
+// RollbackNotificationsSent clears sent_at after a failed SMTP send.
+func (ns *NotificationService) RollbackNotificationsSent(notificationIDs []int) error {
+	if ns.notificationManager == nil {
+		return fmt.Errorf("notification manager not configured")
+	}
+	return ns.notificationManager.RollbackNotificationsSent(notificationIDs)
 }
 
 // EmitEvent sends an event to be processed asynchronously (non-blocking)

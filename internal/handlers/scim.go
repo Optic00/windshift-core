@@ -57,6 +57,7 @@ type SCIMHandler struct {
 	// handler stay free of the database import (same pattern as UserHandler).
 	deactivateCascade    func(ownerID int) (services.AgentDeactivationResult, error)
 	activeSystemAdminIDs func() ([]int, error)
+	notificationService  *services.NotificationService
 }
 
 // NewSCIMHandler creates a new SCIM handler
@@ -67,6 +68,7 @@ func NewSCIMHandler(
 	auditor *logger.Auditor,
 	deactivateCascade func(ownerID int) (services.AgentDeactivationResult, error),
 	activeSystemAdminIDs func() ([]int, error),
+	notificationService *services.NotificationService,
 ) *SCIMHandler {
 	return &SCIMHandler{
 		repo:                 repo,
@@ -75,6 +77,7 @@ func NewSCIMHandler(
 		auditor:              auditor,
 		deactivateCascade:    deactivateCascade,
 		activeSystemAdminIDs: activeSystemAdminIDs,
+		notificationService:  notificationService,
 	}
 }
 
@@ -1927,9 +1930,20 @@ func (h *SCIMHandler) notifyAdminsOfSCIMCascade(ownerID int, ownerUsername, trig
 		"revoked_api_tokens":    len(cascade.RevokedAPITokens),
 	})
 
+	if h.notificationService == nil {
+		slog.Warn("scim: notification service unavailable; skipping admin notifications")
+		return
+	}
 	for _, aid := range adminIDs {
-		if err := h.repo.InsertWarningNotification(aid, title, message, string(meta)); err != nil {
-			slog.Warn("scim: failed to insert admin notification",
+		_, err := h.notificationService.CreateNotification(models.Notification{
+			UserID:   aid,
+			Title:    title,
+			Message:  message,
+			Type:     "warning",
+			Metadata: string(meta),
+		})
+		if err != nil {
+			slog.Warn("scim: failed to create admin notification",
 				slog.Int("admin_id", aid), slog.Any("error", err))
 		}
 	}

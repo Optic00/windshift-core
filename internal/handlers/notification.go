@@ -407,6 +407,64 @@ func (nm *NotificationManager) MarkAllAsSeen(userID int) error {
 	return nil
 }
 
+// DeleteUserNotifications removes all notification rows for a user and drops
+// the user's tray cache. Offboarding uses this instead of deleting directly so
+// cached entries cannot survive after the DB rows are gone.
+func (nm *NotificationManager) DeleteUserNotifications(userID int) error {
+	nm.mu.Lock()
+	defer nm.mu.Unlock()
+
+	if _, err := nm.db.ExecWrite(`DELETE FROM notifications WHERE user_id = ?`, userID); err != nil {
+		return fmt.Errorf("delete user notifications: %w", err)
+	}
+	_ = nm.cache.Delete(nm.getCacheKey(userID))
+	return nil
+}
+
+// MarkNotificationsSent stamps sent_at so the email scheduler will not re-batch
+// these rows after a successful or in-flight SMTP send.
+func (nm *NotificationManager) MarkNotificationsSent(notificationIDs []int) error {
+	if len(notificationIDs) == 0 {
+		return nil
+	}
+	now := time.Now()
+	return nm.updateNotificationsByID(notificationIDs, `sent_at = ?, updated_at = ?`, now, now)
+}
+
+// MarkNotificationsSendFailed flags rows whose SMTP-send rollback failed so an
+// operator can find and repair the wedged notifications.
+func (nm *NotificationManager) MarkNotificationsSendFailed(notificationIDs []int) error {
+	if len(notificationIDs) == 0 {
+		return nil
+	}
+	return nm.updateNotificationsByID(notificationIDs, `last_send_failed = true, updated_at = ?`, time.Now())
+}
+
+// RollbackNotificationsSent clears sent_at after an SMTP send failure so the
+// rows become eligible for retry on a future scheduler tick.
+func (nm *NotificationManager) RollbackNotificationsSent(notificationIDs []int) error {
+	if len(notificationIDs) == 0 {
+		return nil
+	}
+	return nm.updateNotificationsByID(notificationIDs, `sent_at = NULL, updated_at = ?`, time.Now())
+}
+
+func (nm *NotificationManager) updateNotificationsByID(notificationIDs []int, setClause string, args ...interface{}) error {
+	nm.mu.Lock()
+	defer nm.mu.Unlock()
+
+	placeholders := make([]string, len(notificationIDs))
+	for i, id := range notificationIDs {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	query := fmt.Sprintf(`UPDATE notifications SET %s WHERE id IN (%s)`, setClause, strings.Join(placeholders, ","))
+	if _, err := nm.db.ExecWrite(query, args...); err != nil {
+		return fmt.Errorf("update notifications: %w", err)
+	}
+	return nil
+}
+
 // notificationTrayRetention bounds how far back the notification tray scrolls.
 // Older notifications stay in the DB (audit) but are hidden from the list view.
 const notificationTrayRetention = 10 * 24 * time.Hour

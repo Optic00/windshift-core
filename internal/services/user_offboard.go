@@ -2,10 +2,17 @@ package services
 
 import (
 	"fmt"
+	"log/slog"
 
 	"windshift/internal/database"
 	"windshift/internal/repository"
 )
+
+// UserNotificationDeleter removes a user's notifications through the
+// notification service/manager layer so caches are invalidated with the rows.
+type UserNotificationDeleter interface {
+	DeleteUserNotifications(userID int) error
+}
 
 // OffboardUser deactivates a user and anonymizes their PII while preserving
 // audit trails. The user row is kept (anonymized) so that FK references from
@@ -14,7 +21,7 @@ import (
 // Returns the IDs of api_tokens revoked during the transaction so the caller
 // can evict them from TokenManager's validation cache (the cache key is a
 // SHA256 of the raw token, not visible to this DB-only service).
-func OffboardUser(db database.Database, userID int) (revokedTokenIDs []int, err error) {
+func OffboardUser(db database.Database, userID int, notificationDeleter UserNotificationDeleter) (revokedTokenIDs []int, err error) {
 	tx, err := db.Begin()
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
@@ -125,7 +132,6 @@ func OffboardUser(db database.Database, userID int) (revokedTokenIDs []int, err 
 		{`DELETE FROM item_watches WHERE user_id = ?`, "item watches"},
 		{`DELETE FROM user_workspace_visits WHERE user_id = ?`, "workspace visits"},
 		{`DELETE FROM user_item_activities WHERE user_id = ?`, "item activities"},
-		{`DELETE FROM notifications WHERE user_id = ?`, "notifications"},
 	} {
 		if _, err := tx.Exec(stmt.query, userID); err != nil {
 			return nil, fmt.Errorf("failed to delete %s: %w", stmt.desc, err)
@@ -149,6 +155,16 @@ func OffboardUser(db database.Database, userID int) (revokedTokenIDs []int, err 
 
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("failed to commit offboarding transaction: %w", err)
+	}
+
+	if notificationDeleter != nil {
+		if err := notificationDeleter.DeleteUserNotifications(userID); err != nil {
+			slog.Warn("failed to delete notifications during user offboarding",
+				slog.String("component", "notifications"),
+				slog.Int("user_id", userID),
+				slog.Any("error", err),
+			)
+		}
 	}
 
 	return revokedTokenIDs, nil

@@ -465,7 +465,7 @@ func (s *Server) initialize() error {
 		invitationService,
 		services.NewUserReadService(s.db),
 		func(id int) error {
-			tokenIDs, err := services.OffboardUser(s.db, id)
+			tokenIDs, err := services.OffboardUser(s.db, id, s.notificationService)
 			if err != nil {
 				return err
 			}
@@ -511,6 +511,7 @@ func (s *Server) initialize() error {
 		func() ([]int, error) {
 			return services.ActiveSystemAdminIDs(s.db)
 		},
+		s.notificationService,
 	)
 	scimTokenHandler := handlers.NewSCIMTokenHandler(scimTokenManager, logger.NewAuditor(s.db))
 
