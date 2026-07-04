@@ -8,6 +8,7 @@ vi.mock('../api.js', () => ({
     notifications: {
       getAll: vi.fn(() => Promise.resolve([])),
       markAsRead: vi.fn(() => Promise.resolve()),
+      markItemAsRead: vi.fn(() => Promise.resolve()),
       create: vi.fn(),
     },
   },
@@ -71,6 +72,61 @@ describe('notificationActions.markAsRead', () => {
     notifications.set([{ id: 1, read: false }]);
     await notificationActions.markAsRead(99);
     expect(get(notifications)).toEqual([{ id: 1, read: false }]);
+  });
+});
+
+describe('notificationActions.markItemAsRead', () => {
+  test('marks every notification pointing at the item read, leaves others alone', async () => {
+    notifications.set([
+      { id: 1, read: false, actionUrl: '/workspaces/2/items/42' },
+      { id: 2, read: true, actionUrl: '/workspaces/2/items/42' }, // already read
+      { id: 3, read: false, actionUrl: '/workspaces/2/items/99' }, // different item
+    ]);
+
+    await notificationActions.markItemAsRead(42);
+
+    expect(api.notifications.markItemAsRead).toHaveBeenCalledWith(42);
+    expect(get(notifications)).toEqual([
+      { id: 1, read: true, actionUrl: '/workspaces/2/items/42' },
+      { id: 2, read: true, actionUrl: '/workspaces/2/items/42' },
+      { id: 3, read: false, actionUrl: '/workspaces/2/items/99' },
+    ]);
+  });
+
+  test('leaves state untouched when the API call rejects', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    api.notifications.markItemAsRead.mockRejectedValueOnce(new Error('500'));
+    notifications.set([
+      { id: 1, read: false, actionUrl: '/workspaces/2/items/42' },
+    ]);
+
+    await notificationActions.markItemAsRead(42);
+
+    expect(get(notifications)).toEqual([
+      { id: 1, read: false, actionUrl: '/workspaces/2/items/42' },
+    ]);
+    expect(errSpy).toHaveBeenCalled();
+  });
+
+  test('no-op when there are no unread notifications for the item', async () => {
+    notifications.set([
+      { id: 1, read: true, actionUrl: '/workspaces/2/items/42' },
+      { id: 2, read: false, actionUrl: '/workspaces/2/items/99' },
+    ]);
+
+    await notificationActions.markItemAsRead(42);
+
+    expect(api.notifications.markItemAsRead).not.toHaveBeenCalled();
+    expect(get(notifications)).toEqual([
+      { id: 1, read: true, actionUrl: '/workspaces/2/items/42' },
+      { id: 2, read: false, actionUrl: '/workspaces/2/items/99' },
+    ]);
+  });
+
+  test('no-op when itemId is null/undefined', async () => {
+    await notificationActions.markItemAsRead(null);
+    await notificationActions.markItemAsRead(undefined);
+    expect(api.notifications.markItemAsRead).not.toHaveBeenCalled();
   });
 });
 

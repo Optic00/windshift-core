@@ -1,6 +1,7 @@
 import { get, writable } from 'svelte/store';
 import { api } from '../api.js';
 import { navigate } from '../router.js';
+import { itemIdFromActionUrl } from '../utils/actionUrl.js';
 import { formatDateSimple } from '../utils/dateFormatter.js';
 import { isTauri } from '../utils/isTauri.js';
 import { serverNow } from '../utils/serverClock.js';
@@ -20,6 +21,7 @@ const IDLE_POLL_MS = 5 * 60_000;
 
 // Load notifications from API
 let loadPromise = null;
+let initialLoadSettled = false;
 function loadNotifications() {
   if (loadPromise) return loadPromise;
 
@@ -30,6 +32,7 @@ function loadNotifications() {
   // slice always exists.
   if (typeof api?.notifications?.getAll !== 'function') {
     notifications.set([]);
+    initialLoadSettled = true;
     return Promise.resolve([]);
   }
 
@@ -58,6 +61,7 @@ function loadNotifications() {
       return [];
     })
     .finally(() => {
+      initialLoadSettled = true;
       loadPromise = null; // Reset promise
     });
 
@@ -119,6 +123,37 @@ export const notificationActions = {
       );
     } catch (error) {
       console.error('Failed to mark all notifications as seen:', error);
+    }
+  },
+
+  // Mark every notification pointing at the given item as read. Called when an
+  // item is viewed (desktop ItemDetail / mobile MobileItemDetail) so the tray
+  // and PWA badge clear regardless of how the item was opened — not only when
+  // it's launched from the notification list. The API does the authoritative
+  // match on action_url; here we mirror it locally for an instant tray update.
+  markItemAsRead: async (itemId) => {
+    if (itemId == null) return;
+    if (!initialLoadSettled || loadPromise) {
+      await loadNotifications();
+    }
+
+    const itemIdString = String(itemId);
+    const hasUnreadMatch = get(notifications).some(
+      (item) => !item.read && itemIdFromActionUrl(item.actionUrl) === itemIdString
+    );
+    if (!hasUnreadMatch) return;
+
+    try {
+      await api.notifications.markItemAsRead(itemId);
+      notifications.update((items) =>
+        items.map((item) =>
+          !item.read && itemIdFromActionUrl(item.actionUrl) === itemIdString
+            ? { ...item, read: true }
+            : item
+        )
+      );
+    } catch (error) {
+      console.error('Failed to mark item notifications as read:', error);
     }
   },
 

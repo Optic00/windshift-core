@@ -22,6 +22,16 @@ export const notifications = {
     fetchAPI('/notifications/seen-all', {
       method: 'PATCH',
     }),
+
+  // Mark every unread notification pointing at the given item as read.
+  // Viewing an item should clear its notifications regardless of how it was
+  // opened (mobile PWA deep link, desktop tray, plain navigation) — not only
+  // when the item is opened from the notification list.
+  markItemAsRead: (itemId) =>
+    fetchAPI('/notifications/mark-item-read', {
+      method: 'POST',
+      body: JSON.stringify({ item_id: itemId }),
+    }),
 };
 
 // Notification Settings API

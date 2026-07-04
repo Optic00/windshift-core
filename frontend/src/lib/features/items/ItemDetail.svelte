@@ -16,6 +16,7 @@
   import { useWorkItemPoller } from '../../composables/useWorkItemPoller.svelte.js';
   import { useItemEventStream } from '../../composables/useItemEventStream.svelte.js';
   import { itemLiveUpdates } from '../../stores/itemLiveUpdates.svelte.js';
+  import { notificationActions } from '../../stores/notifications.js';
   import { agentRuns } from '../../stores/agentRuns.svelte.js';
   import {
     registerContextCommands,
@@ -1105,6 +1106,11 @@ import Button from '../../components/Button.svelte';
       workspaceId = itemDetailStore.workspaceId;
       itemId = itemDetailStore.item.id;
       previousItemId = itemId;
+
+      // Clear notifications pointing at this item: viewing an item should
+      // mark its notifications read regardless of how it was opened, not only
+      // when launched from the notification tray/list.
+      notificationActions.markItemAsRead(itemId);
     } else if (!workspaceId) {
       workspaceId = itemDetailStore.workspaceId;
     }

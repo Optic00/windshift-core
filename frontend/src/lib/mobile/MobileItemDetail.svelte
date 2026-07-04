@@ -4,6 +4,7 @@
   import { agentRuns } from '../api/agentRuns.js';
   import { agentRuns as agentRunBus } from '../stores/agentRuns.svelte.js';
   import { navigate } from '../router.js';
+  import { notificationActions } from '../stores/notifications.js';
   import { errorToast } from '../stores/toasts.svelte.js';
   import { timerStore } from '../stores/timerStore.svelte.js';
   import { useWorkItemPoller } from '../composables/useWorkItemPoller.svelte.js';
@@ -316,7 +317,13 @@
     availableSubIssueTypes = [];
     createChildOpen = false;
     loadItem(id, token).then(() => {
-      if (token === loadToken && !errored) loadAux(id, token);
+      if (token === loadToken && !errored) {
+        loadAux(id, token);
+        // Clear notifications pointing at this item — viewing an item should
+        // mark its notifications read regardless of entry point (PWA push,
+        // deep link), not only when opened from the notification list.
+        notificationActions.markItemAsRead(id);
+      }
     });
   });
 
