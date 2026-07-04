@@ -26,6 +26,9 @@ vi.mock('../stores', async () => {
       { id: 1, name: 'Acme', is_personal: false },
       { id: 2, name: 'Other', is_personal: false },
     ],
+    // Personal workspace is loaded on-demand; the dialog checks it in personal
+    // mode. Pre-populate it so personal-mode tests don't have to await it.
+    personalWorkspace: { id: 3, name: 'Personal', is_personal: true },
   });
   return { workspacesStore };
 });
@@ -35,6 +38,7 @@ vi.mock('../api.js', () => ({
   api: {
     items: { create: vi.fn() },
     itemTypes: { getAll: vi.fn() },
+    itemTemplates: { getAll: vi.fn().mockResolvedValue([]) },
   },
 }));
 
@@ -52,6 +56,7 @@ afterEach(() => {
 beforeEach(() => {
   api.items.create.mockReset();
   api.itemTypes.getAll.mockReset();
+  api.itemTemplates.getAll.mockReset().mockResolvedValue([]);
 });
 
 const PARENT = { id: 777, title: 'Epic: Mobile parity' };
@@ -116,5 +121,53 @@ describe('MobileCreateDialog — child creation', () => {
       })
     );
     expect(onclose).toHaveBeenCalled();
+  });
+});
+
+describe('MobileCreateDialog — work item templates (WI-538)', () => {
+  test('auto-applies a mandatory template body and locks the description', async () => {
+    api.itemTypes.getAll.mockResolvedValue([{ id: 10, name: 'Bug' }]);
+    api.itemTemplates.getAll.mockResolvedValue([
+      { id: 50, name: 'Bug report', mode: 'mandatory', description_body: '## Repro' },
+    ]);
+
+    render(MobileCreateDialog, { props: { isOpen: true } });
+
+    const description = await screen.findByTestId('create-description');
+    await waitFor(() => expect(description.value).toBe('## Repro'));
+
+    // Mandatory lock chip shown; no selectable picker.
+    expect(await screen.findByTestId('template-picker-locked')).toHaveTextContent(
+      'Bug report (enforced)'
+    );
+    expect(screen.queryByTestId('template-picker')).not.toBeInTheDocument();
+    // Description is locked against editing.
+    expect(description).toHaveAttribute('readonly');
+  });
+
+  test('offers selectable templates in a picker and applies the chosen body', async () => {
+    api.itemTypes.getAll.mockResolvedValue([{ id: 10, name: 'Task' }]);
+    api.itemTemplates.getAll.mockResolvedValue([
+      { id: 60, name: 'Standup', mode: 'selectable', description_body: '- did' },
+      { id: 61, name: 'Retro', mode: 'selectable', description_body: '- went' },
+    ]);
+
+    render(MobileCreateDialog, { props: { isOpen: true } });
+
+    const picker = await screen.findByTestId('template-picker');
+    const options = [...picker.options].map((o) => o.textContent);
+    expect(options).toEqual(['No template', 'Standup', 'Retro']);
+
+    await fireEvent.change(picker, { target: { value: '61' } });
+    expect(screen.getByTestId('create-description').value).toBe('- went');
+  });
+
+  test('skips template loading in personal mode', async () => {
+    render(MobileCreateDialog, { props: { isOpen: true, mode: 'personal' } });
+
+    // Personal tasks are title-only — no type, no description, no template UI.
+    expect(screen.queryByTestId('template-picker')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('template-picker-locked')).not.toBeInTheDocument();
+    expect(api.itemTemplates.getAll).not.toHaveBeenCalled();
   });
 });
