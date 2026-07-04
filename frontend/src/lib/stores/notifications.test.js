@@ -108,6 +108,21 @@ describe('notificationActions.markItemAsRead', () => {
     expect(errSpy).toHaveBeenCalled();
   });
 
+  test('no-op when there are no unread notifications for the item', async () => {
+    notifications.set([
+      { id: 1, read: true, actionUrl: '/workspaces/2/items/42' },
+      { id: 2, read: false, actionUrl: '/workspaces/2/items/99' },
+    ]);
+
+    await notificationActions.markItemAsRead(42);
+
+    expect(api.notifications.markItemAsRead).not.toHaveBeenCalled();
+    expect(get(notifications)).toEqual([
+      { id: 1, read: true, actionUrl: '/workspaces/2/items/42' },
+      { id: 2, read: false, actionUrl: '/workspaces/2/items/99' },
+    ]);
+  });
+
   test('no-op when itemId is null/undefined', async () => {
     await notificationActions.markItemAsRead(null);
     await notificationActions.markItemAsRead(undefined);

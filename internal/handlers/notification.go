@@ -280,54 +280,59 @@ func (nm *NotificationManager) MarkAsRead(userID, notificationID int) error {
 	return nm.cache.Set(cacheKey, cacheData)
 }
 
-// MarkItemNotificationsAsRead marks every unread notification pointing at the
+// MarkItemNotificationsAsRead marks cached unread notifications pointing at the
 // given item as read. Notifications carry their item deep link in action_url
-// (e.g. "/workspaces/<ws>/items/<itemID>"); matching is done on the
-// "/items/<itemID>" suffix so it is robust to workspace-id differences in the
-// cached URL. This decouples clearing notifications from the notification list
-// view — viewing an item (mobile PWA, desktop deep link, navigation) should
-// clear its notifications regardless of entry point.
+// (e.g. "/workspaces/<ws>/items/<itemID>"). This method intentionally follows
+// the same cache-first/batched persistence path as MarkAsRead instead of doing a
+// synchronous table-wide UPDATE on every item view; SQLite writes stay coalesced
+// by the notification WriteBatcher / periodic sync.
 func (nm *NotificationManager) MarkItemNotificationsAsRead(userID, itemID int) error {
 	if itemID <= 0 {
 		return nil
 	}
-	// action_url is always emitted by the backend as
-	// "/workspaces/<ws>/items/<itemID>" with nothing after the item id, so the
-	// pattern is anchored at the end (no trailing %). A trailing wildcard would
-	// wrongly match sibling ids ("/items/42" prefix of "/items/420").
-	pattern := "%/items/" + strconv.Itoa(itemID)
 
-	now := time.Now()
-	if _, err := nm.db.ExecWrite(`
-		UPDATE notifications
-		SET read = true, updated_at = ?
-		WHERE user_id = ? AND read = false AND action_url LIKE ?
-	`, now, userID, pattern); err != nil {
-		return fmt.Errorf("mark item notifications as read: %w", err)
-	}
+	nm.mu.Lock()
+	defer nm.mu.Unlock()
 
-	// Reflect the change in the per-user cache so the tray updates without
-	// waiting for a refresh.
 	cacheKey := nm.getCacheKey(userID)
+	var cache models.NotificationCache
 	if entry, err := nm.cache.Get(cacheKey); err == nil {
-		var cache models.NotificationCache
-		if err := json.Unmarshal(entry, &cache); err == nil {
-			changed := false
-			for i := range cache.Notifications {
-				if !cache.Notifications[i].Read && actionURLPointsToItem(cache.Notifications[i].ActionURL, itemID) {
-					cache.Notifications[i].Read = true
-					cache.Notifications[i].UpdatedAt = now
-					changed = true
-				}
-			}
-			if changed {
-				cache.IsDirty = true
-				cacheData, _ := json.Marshal(cache)
-				_ = nm.cache.Set(cacheKey, cacheData)
-			}
+		if err := json.Unmarshal(entry, &cache); err != nil {
+			return err
+		}
+	} else {
+		notifications, err := nm.loadNotificationsFromDB(userID, 1000, 0)
+		if err != nil {
+			return err
+		}
+		cache = models.NotificationCache{
+			Notifications: notifications,
+			LastSynced:    time.Now(),
+			IsDirty:       false,
 		}
 	}
-	return nil
+
+	now := time.Now()
+	changed := false
+	for i := range cache.Notifications {
+		if cache.Notifications[i].Read || !actionURLPointsToItem(cache.Notifications[i].ActionURL, itemID) {
+			continue
+		}
+		cache.Notifications[i].Read = true
+		cache.Notifications[i].UpdatedAt = now
+		cache.IsDirty = true
+		changed = true
+
+		nm.batcher.Add(notificationWrite{
+			Notification: cache.Notifications[i],
+		})
+	}
+	if !changed {
+		return nil
+	}
+
+	cacheData, _ := json.Marshal(cache)
+	return nm.cache.Set(cacheKey, cacheData)
 }
 
 // actionURLPointsToItem reports whether an action_url references the given
@@ -350,6 +355,14 @@ func actionURLPointsToItem(actionURL string, itemID int) bool {
 	}
 	if end == 0 {
 		return false
+	}
+	if end < len(rest) {
+		switch rest[end] {
+		case '/', '?', '#':
+			// valid route boundary
+		default:
+			return false
+		}
 	}
 	id, err := strconv.Atoi(rest[:end])
 	if err != nil {
