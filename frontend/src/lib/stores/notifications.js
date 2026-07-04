@@ -1,6 +1,7 @@
 import { get, writable } from 'svelte/store';
 import { api } from '../api.js';
 import { navigate } from '../router.js';
+import { itemIdFromActionUrl } from '../utils/actionUrl.js';
 import { formatDateSimple } from '../utils/dateFormatter.js';
 import { isTauri } from '../utils/isTauri.js';
 import { serverNow } from '../utils/serverClock.js';
@@ -119,6 +120,27 @@ export const notificationActions = {
       );
     } catch (error) {
       console.error('Failed to mark all notifications as seen:', error);
+    }
+  },
+
+  // Mark every notification pointing at the given item as read. Called when an
+  // item is viewed (desktop ItemDetail / mobile MobileItemDetail) so the tray
+  // and PWA badge clear regardless of how the item was opened — not only when
+  // it's launched from the notification list. The API does the authoritative
+  // match on action_url; here we mirror it locally for an instant tray update.
+  markItemAsRead: async (itemId) => {
+    if (itemId == null) return;
+    try {
+      await api.notifications.markItemAsRead(itemId);
+      notifications.update((items) =>
+        items.map((item) =>
+          item.read || itemIdFromActionUrl(item.actionUrl) === String(itemId)
+            ? { ...item, read: true }
+            : item
+        )
+      );
+    } catch (error) {
+      console.error('Failed to mark item notifications as read:', error);
     }
   },
 

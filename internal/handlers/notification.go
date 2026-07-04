@@ -280,6 +280,84 @@ func (nm *NotificationManager) MarkAsRead(userID, notificationID int) error {
 	return nm.cache.Set(cacheKey, cacheData)
 }
 
+// MarkItemNotificationsAsRead marks every unread notification pointing at the
+// given item as read. Notifications carry their item deep link in action_url
+// (e.g. "/workspaces/<ws>/items/<itemID>"); matching is done on the
+// "/items/<itemID>" suffix so it is robust to workspace-id differences in the
+// cached URL. This decouples clearing notifications from the notification list
+// view — viewing an item (mobile PWA, desktop deep link, navigation) should
+// clear its notifications regardless of entry point.
+func (nm *NotificationManager) MarkItemNotificationsAsRead(userID, itemID int) error {
+	if itemID <= 0 {
+		return nil
+	}
+	// action_url is always emitted by the backend as
+	// "/workspaces/<ws>/items/<itemID>" with nothing after the item id, so the
+	// pattern is anchored at the end (no trailing %). A trailing wildcard would
+	// wrongly match sibling ids ("/items/42" prefix of "/items/420").
+	pattern := "%/items/" + strconv.Itoa(itemID)
+
+	now := time.Now()
+	if _, err := nm.db.ExecWrite(`
+		UPDATE notifications
+		SET read = true, updated_at = ?
+		WHERE user_id = ? AND read = false AND action_url LIKE ?
+	`, now, userID, pattern); err != nil {
+		return fmt.Errorf("mark item notifications as read: %w", err)
+	}
+
+	// Reflect the change in the per-user cache so the tray updates without
+	// waiting for a refresh.
+	cacheKey := nm.getCacheKey(userID)
+	if entry, err := nm.cache.Get(cacheKey); err == nil {
+		var cache models.NotificationCache
+		if err := json.Unmarshal(entry, &cache); err == nil {
+			changed := false
+			for i := range cache.Notifications {
+				if !cache.Notifications[i].Read && actionURLPointsToItem(cache.Notifications[i].ActionURL, itemID) {
+					cache.Notifications[i].Read = true
+					cache.Notifications[i].UpdatedAt = now
+					changed = true
+				}
+			}
+			if changed {
+				cache.IsDirty = true
+				cacheData, _ := json.Marshal(cache)
+				_ = nm.cache.Set(cacheKey, cacheData)
+			}
+		}
+	}
+	return nil
+}
+
+// actionURLPointsToItem reports whether an action_url references the given
+// item id via the "/items/<id>" route segment. Kept in lockstep with the
+// actionUrl.js client-side matcher and the SQL LIKE above.
+func actionURLPointsToItem(actionURL string, itemID int) bool {
+	if actionURL == "" {
+		return false
+	}
+	// "/items/<id>" followed by end-of-string, a separator, or a fragment.
+	m := strings.Index(actionURL, "/items/")
+	if m < 0 {
+		return false
+	}
+	rest := actionURL[m+len("/items/"):]
+	// Read leading digits; the segment must be exactly the numeric item id.
+	end := 0
+	for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
+		end++
+	}
+	if end == 0 {
+		return false
+	}
+	id, err := strconv.Atoi(rest[:end])
+	if err != nil {
+		return false
+	}
+	return id == itemID
+}
+
 // MarkAllAsSeen stamps seen_at on every unseen notification for the user.
 // Distinct from MarkAllAsRead: "seen" reflects passive tray viewing and is
 // safe to fire on an auto-timer, because the email batch scheduler keys off
@@ -638,6 +716,37 @@ func (nh *NotificationHandler) MarkAllNotificationsAsSeen(w http.ResponseWriter,
 
 	if err := nh.manager.MarkAllAsSeen(user.ID); err != nil {
 		slog.Error("failed to mark all notifications as seen", slog.String("component", "notifications"), slog.Int("user_id", user.ID), slog.Any("error", err))
+		respondInternalError(w, r, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// MarkItemNotificationsAsRead handles POST /api/notifications/mark-item-read.
+// Marks every unread notification pointing at the given item as read. Viewing
+// an item should clear its notifications regardless of entry point (deep link,
+// PWA, navigation) — not only when opened from the notification tray.
+func (nh *NotificationHandler) MarkItemNotificationsAsRead(w http.ResponseWriter, r *http.Request) {
+	user := utils.GetCurrentUser(r)
+	if user == nil {
+		respondUnauthorized(w, r)
+		return
+	}
+
+	payload, ok := decodeJSON[struct {
+		ItemID int `json:"item_id"`
+	}](w, r)
+	if !ok {
+		return
+	}
+	if payload.ItemID <= 0 {
+		respondValidationError(w, r, "item_id must be a positive integer")
+		return
+	}
+
+	if err := nh.manager.MarkItemNotificationsAsRead(user.ID, payload.ItemID); err != nil {
+		slog.Error("failed to mark item notifications as read", slog.String("component", "notifications"), slog.Int("user_id", user.ID), slog.Int("item_id", payload.ItemID), slog.Any("error", err))
 		respondInternalError(w, r, err)
 		return
 	}
