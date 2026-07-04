@@ -3,6 +3,7 @@
   import { navigate } from '../router.js';
   import { workspacesStore } from '../stores';
   import Modal from '../dialogs/Modal.svelte';
+  import { FileText } from '@lucide/svelte';
 
   /**
    * @typedef {'work' | 'personal'} CreateMode
@@ -50,6 +51,20 @@
   let saving = $state(false);
   let error = $state('');
   let lastTypeWorkspace = null;
+
+  // === Work item templates (WI-538). Mirrors the desktop create modal
+  // (workItemFormStore.loadTemplatesForCurrentType): load the templates valid
+  // for the current (workspace, item type), auto-apply a mandatory template's
+  // body into an empty description and lock the picker, or offer the
+  // selectable templates. PWA previously skipped this entirely, so templates
+  // were neither enforced nor visible on mobile. ===
+  let templateOptions = $state([]);
+  let mandatoryTemplate = $state(null);
+  let selectedTemplateId = $state(null);
+  let templatesLoading = $state(false);
+  let templatesInFlightKey = $state(null);
+
+  const templateLocked = $derived(!!mandatoryTemplate);
 
   const isChild = $derived(!!parent);
   const workspaces = $derived($workspacesStore.regularWorkspaces ?? []);
@@ -109,6 +124,18 @@
     loadTypes(wsId);
   });
 
+  // Reload templates whenever the (workspace, item type) the dialog is working
+  // with changes (WI-538). Tracks both ids reactively so it fires after
+  // loadTypes resolves a new default type too. Skipped in personal mode.
+  $effect(() => {
+    if (!isOpen || isPersonal) return;
+    // Read both deps so the effect re-runs when either changes.
+    const wsId = workspaceId;
+    const typeId = itemTypeId;
+    if (!wsId || !typeId) return;
+    loadTemplatesForCurrentType();
+  });
+
   async function loadTypes(wsId) {
     typesLoading = true;
     try {
@@ -127,6 +154,66 @@
     }
   }
 
+  // Load the work item templates valid for the current (workspace, item type)
+  // (WI-538). Auto-applies a mandatory template's body into an empty
+  // description and locks the picker; otherwise offers the selectable
+  // templates for the type. No-op until both workspace and item type are set,
+  // and skipped entirely in personal mode (title-only task, no item type).
+  async function loadTemplatesForCurrentType() {
+    const wsId = workspaceId;
+    const typeId = itemTypeId;
+    if (isPersonal || !wsId || !typeId) {
+      templateOptions = [];
+      mandatoryTemplate = null;
+      selectedTemplateId = null;
+      templatesInFlightKey = null;
+      return;
+    }
+    const key = `${wsId}:${typeId}`;
+    // Dedup only against a fetch in flight for the same key (never permanently
+    // cache) — a template created after open must still be picked up.
+    if (templatesInFlightKey === key) return;
+    templatesInFlightKey = key;
+
+    templatesLoading = true;
+    try {
+      const list =
+        (await api.itemTemplates.getAll({ workspace_id: wsId, item_type_id: typeId })) ?? [];
+      // Guard against an out-of-order response after another type change.
+      if (`${workspaceId}:${itemTypeId}` !== key) return;
+
+      const mandatory = list.find((t) => t.mode === 'mandatory') || null;
+      templateOptions = list.filter((t) => t.mode === 'selectable');
+      mandatoryTemplate = mandatory;
+      if (mandatory) {
+        selectedTemplateId = mandatory.id;
+        // Only fill an empty description — mirrors the server's "apply only when
+        // empty" rule (services.CreateItem) so an async load can't clobber text
+        // the user already typed. The picker stays locked.
+        if (!description?.trim()) {
+          description = mandatory.description_body || '';
+        }
+      } else {
+        selectedTemplateId = null;
+      }
+    } catch (err) {
+      console.error('Failed to load item templates:', err);
+      templateOptions = [];
+      mandatoryTemplate = null;
+    } finally {
+      if (templatesInFlightKey === key) templatesInFlightKey = null;
+      templatesLoading = false;
+    }
+  }
+
+  // Apply a selectable template's body into the description (from the picker).
+  function applyTemplate(templateId) {
+    const tmpl = templateOptions.find((t) => t.id === templateId);
+    if (!tmpl) return;
+    description = tmpl.description_body || '';
+    selectedTemplateId = templateId;
+  }
+
   function reset() {
     title = '';
     description = '';
@@ -134,6 +221,12 @@
     itemTypes = [];
     error = '';
     lastTypeWorkspace = null;
+    // Reset template state so a new dialog doesn't inherit the prior type's
+    // picker options / mandatory lock (WI-538).
+    templateOptions = [];
+    mandatoryTemplate = null;
+    selectedTemplateId = null;
+    templatesInFlightKey = null;
     // workspaceId is intentionally kept so repeated creates default to the same.
   }
 
@@ -228,8 +321,51 @@
 
       <label class="field">
         <span>Description <em>(optional)</em></span>
-        <textarea bind:value={description} rows="3" placeholder="Add detail…" data-testid="create-description"></textarea>
+        <textarea
+          bind:value={description}
+          rows="3"
+          placeholder="Add detail…"
+          data-testid="create-description"
+          readonly={templateLocked}
+        ></textarea>
       </label>
+
+      <!-- Work item templates (WI-538). When the selected type enforces a
+           mandatory template the body is auto-applied into the description
+           above (and locked); otherwise offer the selectable templates valid
+           for the type. Mirrors the desktop create modal. -->
+      {#if templateLocked}
+        <span
+          class="template-chip template-locked"
+          title={`This item type enforces the "${mandatoryTemplate?.name}" template`}
+          data-testid="template-picker-locked"
+        >
+          <FileText size={14} style="flex-shrink: 0;" />
+          <span>{mandatoryTemplate?.name} (enforced)</span>
+        </span>
+      {:else if templateOptions.length >= 1}
+        <label class="field">
+          <span>Template</span>
+          <select
+            value={selectedTemplateId ?? ''}
+            onchange={(e) => {
+              const id = e.currentTarget.value;
+              if (id === '') {
+                selectedTemplateId = null;
+                return;
+              }
+              applyTemplate(Number(id));
+            }}
+            disabled={templatesLoading}
+            data-testid="template-picker"
+          >
+            <option value="">No template</option>
+            {#each templateOptions as tmpl (tmpl.id)}
+              <option value={tmpl.id}>{tmpl.name}</option>
+            {/each}
+          </select>
+        </label>
+      {/if}
     {/if}
 
     {#if error}<p class="error" data-testid="create-error">{error}</p>{/if}
@@ -261,6 +397,12 @@
   }
   .field textarea { resize: vertical; font-family: inherit; }
   .field select:disabled { opacity: 0.7; }
+
+  .template-chip { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.25rem 0.5rem; border-radius: var(--radius-md, 6px); font-size: 0.8125rem; }
+  .template-locked {
+    align-self: flex-start;
+    background-color: var(--ds-background-neutral); color: var(--ds-text-subtle); opacity: 0.8;
+  }
 
   .error { margin: 0; font-size: 0.8125rem; color: var(--ds-text-danger, var(--ds-danger)); }
 
