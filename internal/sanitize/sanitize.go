@@ -207,23 +207,13 @@ var (
 )
 
 // stripAndCap is the common path for PlainTextField + ShortIdentifier:
-// strip every HTML tag, decode entities so we don't store
-// double-encoded text, then run the strict policy a second time so any
-// HTML reconstituted by the entity decode is stripped before persist
-// (defense against entity-encoded tag payloads like
-// "&lt;img onerror=...&gt;"), trim whitespace, length-cap by rune count.
+// decode entities, strip every HTML tag, preserve safe decoded prose,
+// trim whitespace, length-cap by rune count.
 func stripAndCap(input string, maxRunes int) string {
 	if input == "" {
 		return input
 	}
-	s := html.UnescapeString(strictPolicy.Sanitize(input))
-	// Second sanitize strips any tag reconstituted by the entity
-	// decode (defense against "&lt;img onerror=...&gt;"-style payloads);
-	// the final UnescapeString restores plain text for the standalone
-	// < / > / & characters that survived (legit decoded prose like
-	// "5 < 6 > 4"), so we don't store double-encoded entities.
-	s = strictPolicy.Sanitize(s)
-	s = html.UnescapeString(s)
+	s := sanitizeDecoded(input, strictPolicy)
 	s = strings.TrimSpace(s)
 	if maxRunes > 0 && utf8.RuneCountInString(s) > maxRunes {
 		s = string([]rune(s)[:maxRunes])
@@ -250,27 +240,17 @@ const (
 func plainTextField(s string) string  { return stripAndCap(s, PlainTextFieldMaxRunes) }
 func shortIdentifier(s string) string { return stripAndCap(s, ShortIdentifierMaxRunes) }
 
-// brAllowAndCap is the common path for RichText + LongDocument: strip
-// HTML except <br />, decode entities, normalize the bluemonday <br/>
-// output back to <br /> for Milkdown compatibility, neutralize
+// brAllowAndCap is the common path for RichText + LongDocument:
+// decode entities, strip HTML except <br />, normalize bluemonday's
+// break output back to <br /> for Milkdown compatibility, neutralize
 // dangerous URL schemes, byte-cap.
-//
-// Sanitize is re-run after html.UnescapeString so any tag reconstituted
-// by the entity decode is stripped down to its <br />-only residue
-// before persist (defense against entity-encoded tag payloads like
-// "&lt;img onerror=...&gt;"). <br /> survives because it is the one
-// explicitly-allowed element; a trailing UnescapeString keeps legit
-// decoded prose (e.g. "5 < 6 > 4") as plain text rather than storing
-// re-escaped entities.
 func brAllowAndCap(input string, maxBytes int) string {
 	if input == "" || input == "null" {
 		return ""
 	}
-	s := brOnlyPolicy.Sanitize(input)
-	s = html.UnescapeString(s)
-	s = brOnlyPolicy.Sanitize(s)
-	s = html.UnescapeString(s)
+	s := sanitizeDecoded(input, brOnlyPolicy)
 	s = strings.ReplaceAll(s, "<br/>", "<br />")
+	s = strings.ReplaceAll(s, "<br>", "<br />")
 	s = markdownURLOnly(s)
 	if maxBytes > 0 && len(s) > maxBytes {
 		s = s[:maxBytes]
@@ -285,17 +265,39 @@ func commentPolicy(s string) string {
 	if s == "" {
 		return ""
 	}
-	// Second strict pass strips any tag reconstituted by the entity
-	// decode (defense against "&lt;img onerror=...&gt;"); the trailing
-	// UnescapeString keeps legit decoded prose as plain text.
-	out := html.UnescapeString(strictPolicy.Sanitize(s))
-	out = strictPolicy.Sanitize(out)
-	out = html.UnescapeString(out)
+	out := sanitizeDecoded(s, strictPolicy)
 	out = markdownURLOnly(out)
 	if len(out) > LongTextMaxBytes {
 		out = out[:LongTextMaxBytes]
 	}
 	return out
+}
+
+// sanitizeDecoded fully decodes HTML entities before sanitizing so nested
+// entity payloads (for example "&amp;lt;img ...&amp;gt;") cannot survive as
+// encoded markup that a later decode could reanimate. After sanitizing, it
+// decodes only when doing so is stable under the same policy; that preserves
+// legit prose like "5 < 6 > 4" without turning escaped tags back into HTML.
+func sanitizeDecoded(input string, policy *bluemonday.Policy) string {
+	s := unescapeRepeated(input)
+	s = policy.Sanitize(s)
+
+	decoded := html.UnescapeString(s)
+	if policy.Sanitize(decoded) == s {
+		return decoded
+	}
+	return s
+}
+
+func unescapeRepeated(s string) string {
+	for i := 0; i < 8; i++ {
+		u := html.UnescapeString(s)
+		if u == s {
+			return s
+		}
+		s = u
+	}
+	return s
 }
 
 func markdownURLOnly(s string) string {
