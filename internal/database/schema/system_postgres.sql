@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS reviews (
 	UNIQUE(user_id, review_date, review_type) -- One review per user per date per type
 );
 
-CREATE INDEX idx_reviews_user_date ON reviews(user_id, review_date);
+CREATE INDEX IF NOT EXISTS idx_reviews_user_date ON reviews(user_id, review_date);
 
 -- Plugin registry table
 CREATE TABLE IF NOT EXISTS plugin_registry (
@@ -74,7 +74,7 @@ CREATE INDEX IF NOT EXISTS idx_plugin_registry_name ON plugin_registry(name);
 CREATE INDEX IF NOT EXISTS idx_plugin_registry_enabled ON plugin_registry(enabled);
 
 -- API tokens table
-CREATE TABLE api_tokens (
+CREATE TABLE IF NOT EXISTS api_tokens (
 	id SERIAL PRIMARY KEY,
 	user_id INTEGER NOT NULL,
 	name TEXT NOT NULL,
@@ -225,7 +225,7 @@ DROP TRIGGER IF EXISTS trg_collections_change_update ON collections;
 CREATE TRIGGER trg_collections_change_update AFTER UPDATE OF ql_query, filter_state, workspace_id ON collections FOR EACH ROW EXECUTE FUNCTION log_collection_change();
 
 -- Active timers table
-CREATE TABLE active_timers (
+CREATE TABLE IF NOT EXISTS active_timers (
 	id SERIAL PRIMARY KEY,
 	workspace_id INTEGER NOT NULL,
 	item_id INTEGER,

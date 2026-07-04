@@ -457,11 +457,14 @@ func (p *PostgresDB) Initialize() error {
 		return fmt.Errorf("failed to bootstrap schema_migrations: %w", err)
 	}
 
-	// Check if database is already initialized by checking for core tables
+	// Check if database is already initialized by checking for core tables.
+	// Use to_regclass so the probe follows the active search_path instead of
+	// hard-coding public; deployments may put Windshift in a dedicated schema.
 	var tableCount int
 	err := p.db.QueryRow(`
-		SELECT COUNT(table_name) FROM information_schema.tables
-		WHERE table_schema = 'public' AND table_name IN ('workspaces', 'items', 'users', 'workflows')
+		SELECT COUNT(*)
+		FROM unnest(ARRAY['workspaces', 'items', 'users', 'workflows']) AS core_table(name)
+		WHERE to_regclass(core_table.name) IS NOT NULL
 	`).Scan(&tableCount)
 	if err != nil {
 		return fmt.Errorf("failed to check database initialization: %w", err)
@@ -747,8 +750,8 @@ func (p *PostgresDB) Initialize() error {
 		}
 
 		// Create scheduler_runs table (added with the admin Diagnostics page).
-		// Inlined rather than re-running system_postgres so a non-idempotent
-		// statement elsewhere in that file cannot abort this migration.
+		// Inlined rather than re-running system_postgres so this existing-install
+		// backfill stays small and independent of unrelated schema changes.
 		if _, err = p.db.Exec(`
 			CREATE TABLE IF NOT EXISTS scheduler_runs (
 				id SERIAL PRIMARY KEY,

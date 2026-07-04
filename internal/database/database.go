@@ -325,11 +325,10 @@ func (db *DB) Initialize() error {
 		}
 
 		// OAuth 2.0 server tables (oauth_clients, oauth_authorization_codes,
-		// oauth_refresh_tokens). Created here rather than via re-running
-		// systemSchema for the same reason scheduler_runs is — system.sql
-		// has non-idempotent DDL that aborts a multi-statement Exec. Must
-		// run BEFORE the migrations array below, because the oauth_client_id
-		// ALTER on users declares a FK against oauth_clients(id).
+		// oauth_refresh_tokens). Created here to backfill existing installs
+		// without re-running the full system schema. Must run BEFORE the
+		// migrations array below, because the oauth_client_id ALTER on users
+		// declares a FK against oauth_clients(id).
 		if _, err := db.Exec(`
 			CREATE TABLE IF NOT EXISTS oauth_clients (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -645,10 +644,8 @@ func (db *DB) Initialize() error {
 		}
 
 		// Create scheduler_runs table (added with the admin Diagnostics page).
-		// Inlined rather than re-running systemSchema because that file contains
-		// some non-idempotent DDL (a CREATE INDEX without IF NOT EXISTS, plus
-		// older CREATE TABLE statements) that aborts the multi-statement Exec
-		// before reaching scheduler_runs at the bottom of the file.
+		// Inlined rather than re-running systemSchema so this existing-install
+		// backfill stays small and independent of unrelated schema changes.
 		if _, err := db.Exec(`
 			CREATE TABLE IF NOT EXISTS scheduler_runs (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
