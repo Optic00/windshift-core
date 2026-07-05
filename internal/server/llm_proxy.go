@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"windshift/internal/llm"
 )
@@ -109,7 +110,7 @@ func writeLLMProxyError(w http.ResponseWriter, status int, message string) {
 func validateInternalToken(r *http.Request, secret string) bool {
 	const prefix = "Bearer "
 	auth := r.Header.Get("Authorization")
-	if len(auth) <= len(prefix) {
+	if !strings.HasPrefix(auth, prefix) || len(auth) <= len(prefix) {
 		return false
 	}
 	token := auth[len(prefix):]

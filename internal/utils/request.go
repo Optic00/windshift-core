@@ -172,30 +172,18 @@ func (e *IPExtractor) isValidClientIP(ip net.IP) bool {
 	return ip != nil && !ip.IsUnspecified()
 }
 
-// GetClientIP extracts the client IP address from request context/headers.
+// GetClientIP extracts the client IP address from request context.
 //
 // Prefer the proxy-validated client IP stored by auth middleware. When called
-// outside the API middleware chain, this falls back to legacy header parsing.
+// outside the API middleware chain, this falls back only to RemoteAddr; it must
+// not trust X-Forwarded-For/X-Real-IP because there is no trusted-proxy check
+// on this deprecated helper.
 //
 // Deprecated: Prefer IPExtractor.GetClientIP for new code, or rely on the
 // middleware-populated context value for audit logging.
 func GetClientIP(r *http.Request) string {
 	if ip, ok := r.Context().Value(contextkeys.ClientIP).(string); ok && ip != "" {
 		return ip
-	}
-
-	// Check X-Forwarded-For header (for proxies)
-	forwarded := r.Header.Get("X-Forwarded-For")
-	if forwarded != "" {
-		// Take the first IP if multiple are present
-		ips := strings.Split(forwarded, ",")
-		return strings.TrimSpace(ips[0])
-	}
-
-	// Check X-Real-IP header
-	realIP := r.Header.Get("X-Real-IP")
-	if realIP != "" {
-		return realIP
 	}
 
 	// Fall back to RemoteAddr. SplitHostPort handles "[::1]:5678" correctly;

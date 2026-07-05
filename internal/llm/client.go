@@ -54,9 +54,7 @@ func NewClient(cfg Config) Client {
 	return &httpClient{
 		endpoint: endpoint,
 		apiKey:   cfg.APIKey,
-		http: &http.Client{
-			Timeout: timeout,
-		},
+		http:     newAdminConfiguredHTTPClient(timeout),
 	}
 }
 

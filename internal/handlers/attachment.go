@@ -1389,14 +1389,15 @@ func (h *AttachmentHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Delete physical file
-	if resolvedFilePath, pathErr := h.resolveStoredAttachmentPath(details.FilePath); pathErr == nil {
-		if err := os.Remove(resolvedFilePath); err != nil && !os.IsNotExist(err) { //nolint:gosec // path validated against attachment root
-			// Log warning but don't fail the request if file removal fails
-			slog.Warn("failed to delete attachment file", slog.String("component", "attachments"), slog.String("file_path", resolvedFilePath), slog.Any("error", err))
+	// Delete physical file using the same root-confined resolver as downloads.
+	// Missing files are tolerated so stale DB rows can still be cleaned up.
+	if err := fileserve.RemoveUnderRoot(h.attachmentPath, details.FilePath); err != nil && !os.IsNotExist(err) {
+		if errors.Is(err, fileserve.ErrOutsideRoot) {
+			slog.Warn("refusing to delete attachment file outside storage root", slog.String("component", "attachments"), slog.String("file_path", details.FilePath), slog.Any("error", err))
+		} else {
+			// Log warning but don't fail the request if file removal fails.
+			slog.Warn("failed to delete attachment file", slog.String("component", "attachments"), slog.String("file_path", details.FilePath), slog.Any("error", err))
 		}
-	} else {
-		slog.Warn("refusing to delete attachment file outside storage root", slog.String("component", "attachments"), slog.String("file_path", details.FilePath), slog.Any("error", pathErr))
 	}
 
 	w.WriteHeader(http.StatusNoContent)

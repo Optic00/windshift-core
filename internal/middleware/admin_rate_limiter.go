@@ -122,8 +122,11 @@ func (rl *AdminFallbackRateLimiter) IsAllowed(ctx context.Context, userID int, i
 		return true, MaxAdminAttemptsPerUser, nil
 	}
 	if err != nil {
-		// On error, allow the attempt (fail open for availability)
-		return true, MaxAdminAttemptsPerUser, nil
+		// Fail closed: this limiter protects the admin password fallback path.
+		// If persistence is unavailable we cannot safely determine whether the
+		// caller is locked out or exhausting attempts, so deny the fallback rather
+		// than silently disabling the control.
+		return false, 0, nil
 	}
 
 	// Check if locked out

@@ -21,6 +21,8 @@ import (
 // All endpoints except Register authenticate with the per-instance runner
 // credential (Bearer), resolved via RunnerRegistryService. A runner may only
 // emit/report against a run it actually claimed (runner_id ownership check).
+const runnerControlMaxBodyBytes = 1 << 20
+
 type RunnerControlHandler struct {
 	registry *services.RunnerRegistryService
 	runs     *repository.AgentRunRepository
@@ -69,6 +71,7 @@ func (h *RunnerControlHandler) Register(w http.ResponseWriter, r *http.Request) 
 		respondServiceUnavailable(w, r, "coding-agent harness is disabled on this server")
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, runnerControlMaxBodyBytes)
 	var req services.RegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondBadRequest(w, r, "invalid request body")
@@ -171,6 +174,7 @@ func (h *RunnerControlHandler) Events(w http.ResponseWriter, r *http.Request) {
 	if !h.ownsRun(w, r, inst, runID) {
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, runnerControlMaxBodyBytes)
 	var req services.EmitRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondBadRequest(w, r, "invalid request body")
@@ -213,6 +217,7 @@ func (h *RunnerControlHandler) Result(w http.ResponseWriter, r *http.Request) {
 	if !h.ownsRun(w, r, inst, runID) {
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, runnerControlMaxBodyBytes)
 	var req services.ReportRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondBadRequest(w, r, "invalid request body")

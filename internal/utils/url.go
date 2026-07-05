@@ -118,17 +118,17 @@ func NewSSRFSafeHTTPClient(timeout time.Duration) *http.Client {
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			host, port, err := net.SplitHostPort(addr)
 			if err != nil {
-				return nil, fmt.Errorf("connection refused")
+				return nil, fmt.Errorf("split host/port: %w", err)
 			}
 
 			ips, err := net.LookupIP(host)
 			if err != nil {
-				return nil, fmt.Errorf("connection refused")
+				return nil, fmt.Errorf("lookup host: %w", err)
 			}
 
 			for _, ip := range ips {
-				if !AllowLocalConnections() && IsPrivateIP(ip) {
-					return nil, fmt.Errorf("connection refused")
+				if IsBlockedSSRFAddr(ip) {
+					return nil, fmt.Errorf("%w: %s (%s)", ErrBlockedSSRFAddr, ip.String(), network)
 				}
 			}
 

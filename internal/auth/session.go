@@ -2,7 +2,9 @@
 package auth
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -26,6 +28,13 @@ var (
 	ErrSessionExpired  = errors.New("session expired")
 	ErrInvalidSession  = errors.New("invalid session")
 )
+
+const sessionTokenHashPrefix = "sha256:"
+
+func hashSessionToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return sessionTokenHashPrefix + hex.EncodeToString(sum[:])
+}
 
 // SessionManager handles secure session management
 type SessionManager struct {
@@ -83,14 +92,17 @@ func (sm *SessionManager) CreateSession(userID int, ipAddress, userAgent string,
 	}
 	expiresAt := time.Now().Add(duration)
 
-	// Insert session into database using RETURNING clause (supported by both SQLite 3.35+ and PostgreSQL)
+	// Insert session into database using RETURNING clause (supported by both SQLite 3.35+ and PostgreSQL).
+	// Store only a hash of the bearer token; the plaintext token is returned to
+	// the caller once and lives in the secure cookie. Validation keeps a legacy
+	// plaintext fallback so existing sessions survive the upgrade.
 	query := `
 		INSERT INTO user_sessions (user_id, session_token, expires_at, ip_address, user_agent, is_active, created_at)
 		VALUES (?, ?, ?, ?, ?, true, ?)
 		RETURNING id
 	`
 	var sessionID int64
-	err = sm.db.QueryRow(query, userID, token, expiresAt, ipAddress, userAgent, time.Now()).Scan(&sessionID)
+	err = sm.db.QueryRow(query, userID, hashSessionToken(token), expiresAt, ipAddress, userAgent, time.Now()).Scan(&sessionID)
 	if err != nil {
 		slog.Error("session db insert failed", slog.String("component", "sso"), slog.Any("error", err))
 		return nil, fmt.Errorf("failed to create session: %w", err)
@@ -122,10 +134,10 @@ func (sm *SessionManager) ValidateSession(token, ipAddress string) (*Session, er
 			u.email, u.username, u.first_name, u.last_name, u.is_active, u.avatar_url, u.requires_password_reset, u.timezone, u.language, u.email_verified, u.created_at, u.updated_at
 		FROM user_sessions s
 		JOIN users u ON s.user_id = u.id
-		WHERE s.session_token = ? AND s.is_active = true
+		WHERE s.session_token IN (?, ?) AND s.is_active = true
 	`
 
-	row := sm.db.QueryRow(query, token)
+	row := sm.db.QueryRow(query, hashSessionToken(token), token)
 
 	session := &Session{User: &models.User{}}
 	var avatarURL, timezone, language sql.NullString
@@ -202,8 +214,8 @@ func (sm *SessionManager) ValidateSession(token, ipAddress string) (*Session, er
 // DeleteSession invalidates a session
 // last review: ser, 210426, NOTE: all the following still in use
 func (sm *SessionManager) DeleteSession(token string) error {
-	query := `UPDATE user_sessions SET is_active = false WHERE session_token = ?`
-	_, err := sm.db.ExecWrite(query, token)
+	query := `UPDATE user_sessions SET is_active = false WHERE session_token IN (?, ?)`
+	_, err := sm.db.ExecWrite(query, hashSessionToken(token), token)
 	if err != nil {
 		return fmt.Errorf("failed to delete session: %w", err)
 	}
@@ -238,8 +250,8 @@ func (sm *SessionManager) RefreshSession(token string, rememberMe bool) error {
 	}
 
 	newExpiresAt := time.Now().Add(duration)
-	query := `UPDATE user_sessions SET expires_at = ? WHERE session_token = ? AND is_active = true`
-	_, err := sm.db.ExecWrite(query, newExpiresAt, token)
+	query := `UPDATE user_sessions SET expires_at = ? WHERE session_token IN (?, ?) AND is_active = true`
+	_, err := sm.db.ExecWrite(query, newExpiresAt, hashSessionToken(token), token)
 	if err != nil {
 		return fmt.Errorf("failed to refresh session: %w", err)
 	}

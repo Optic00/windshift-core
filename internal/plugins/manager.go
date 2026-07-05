@@ -749,6 +749,10 @@ func (m *Manager) callFunction(ctx context.Context, instance *extism.Plugin, fun
 
 func (m *Manager) pluginConfig() extism.PluginConfig {
 	return extism.PluginConfig{
+		// Enable WASI so plugins can use standard WASM runtimes, but do not add
+		// any host filesystem preopens/allowed paths to the Extism manifest. File
+		// access should go through explicit host functions (KV/HTTP/etc.) rather
+		// than ambient access to the Windshift process filesystem.
 		EnableWasi: true,
 	}
 }
