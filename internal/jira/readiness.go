@@ -72,7 +72,7 @@ func ClassifyField(s FieldMappingSuggestion, usageCount int) Finding {
 // converter (ConvertADFToMarkdownWithUsers in field_mapper.go) renders with
 // full fidelity. Anything outside this set is flattened to its text content,
 // losing the original structure/formatting — so its presence is a lossy
-// signal. Keep this in sync with convertADFNodeWithResolver's switch (and its
+// signal. Keep this in sync with convertADFNode's switch (and its
 // helpers convertADFTable/TaskList/Panel/Expand/Media).
 //
 // This includes the structural child nodes of supported containers

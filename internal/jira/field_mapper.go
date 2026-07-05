@@ -274,11 +274,82 @@ func SuggestPriorityMapping(jiraPriorityName string) string {
 // display text.
 type MentionResolver func(accountID string) string
 
+// MediaResolution is the Markdown a MediaResolver returns for a single ADF
+// media node. When Resolved is true the converter uses Markdown verbatim
+// (already a proper image/link to the imported attachment); otherwise it falls
+// back to the lossy [media] placeholder.
+type MediaResolution struct {
+	Resolved bool
+	Markdown string
+}
+
+// MediaResolver maps an ADF media node's Jira attachment id (the `attrs.id`
+// Jira surfaces on `media` nodes, which is the same id as the issue's
+// attachment list) to a Windshift Markdown reference for that imported
+// attachment. Returning Resolved=false (or "" markdown) leaves the default
+// placeholder.
+type MediaResolver func(jiraAttachmentID string) MediaResolution
+
+// NewMediaResolver builds a MediaResolver from a Jira attachment id →
+// Windshift MediaAttachment map. Images render inline as `![alt](/api/.../download)`;
+// everything else renders as a `[name](/api/.../download)` link. An unknown or
+// missing id yields an unresolved result so the caller keeps its placeholder.
+// The reference path is the same relative path Windshift's own attachment
+// upload endpoints document (`/api/attachments/{id}/download`).
+func NewMediaResolver(refs map[string]MediaAttachment) MediaResolver {
+	return func(jiraAttachmentID string) MediaResolution {
+		if refs == nil {
+			return MediaResolution{}
+		}
+		ref, ok := refs[jiraAttachmentID]
+		if !ok || ref.ID == 0 {
+			return MediaResolution{}
+		}
+		href := fmt.Sprintf("/api/attachments/%d/download", ref.ID)
+		alt := ref.OriginalFilename
+		if alt == "" {
+			alt = "attachment"
+		}
+		if isImageMimeType(ref.MimeType) {
+			return MediaResolution{
+				Resolved: true,
+				Markdown: "![" + alt + "](" + href + ")",
+			}
+		}
+		return MediaResolution{
+			Resolved: true,
+			Markdown: "[" + alt + "](" + href + ")",
+		}
+	}
+}
+
+// isImageMimeType reports whether a MIME type represents a raster/vector
+// image that an inline Markdown image reference can render directly.
+func isImageMimeType(mimeType string) bool {
+	mimeType = strings.ToLower(strings.TrimSpace(mimeType))
+	if mimeType == "" {
+		return false
+	}
+	if !strings.HasPrefix(mimeType, "image/") {
+		return false
+	}
+	return true
+}
+
 // ConvertADFToMarkdownWithUsers is the resolver-aware variant. The supplied
 // MentionResolver is consulted for every `mention` node so the output uses
 // Windshift's `@username` syntax — picked up later by MentionService and
 // by the rendered comment view.
 func ConvertADFToMarkdownWithUsers(adf interface{}, resolver MentionResolver) string {
+	return ConvertADFToMarkdown(adf, resolver, nil)
+}
+
+// ConvertADFToMarkdown converts an ADF document to Markdown, consulting the
+// optional mention and media resolvers. mentionResolver renders `@mention`
+// nodes as Windshift `@username`s; mediaResolver links `media` nodes to the
+// imported attachments where possible (otherwise they fall back to a
+// placeholder). Either may be nil.
+func ConvertADFToMarkdown(adf interface{}, mentionResolver MentionResolver, mediaResolver MediaResolver) string {
 	if adf == nil {
 		return ""
 	}
@@ -296,14 +367,14 @@ func ConvertADFToMarkdownWithUsers(adf interface{}, resolver MentionResolver) st
 
 	var result strings.Builder
 	for _, node := range content {
-		result.WriteString(convertADFNodeWithResolver(node, resolver))
+		result.WriteString(convertADFNode(node, mentionResolver, mediaResolver))
 	}
 	return result.String()
 }
 
-// convertADFNodeWithResolver converts a single ADF node to Markdown,
-// consulting the resolver (when non-nil) for `mention` nodes.
-func convertADFNodeWithResolver(node interface{}, resolver MentionResolver) string {
+// convertADFNode converts a single ADF node to Markdown,
+// consulting the resolvers (when non-nil) for `mention` and `media` nodes.
+func convertADFNode(node interface{}, mentionResolver MentionResolver, mediaResolver MediaResolver) string {
 	nodeMap, ok := node.(map[string]interface{})
 	if !ok {
 		return ""
@@ -313,7 +384,7 @@ func convertADFNodeWithResolver(node interface{}, resolver MentionResolver) stri
 
 	switch nodeType {
 	case "paragraph":
-		return convertADFContentWithResolver(nodeMap, resolver) + "\n\n"
+		return convertADFContent(nodeMap, mentionResolver, mediaResolver) + "\n\n"
 	case "heading":
 		// Guard each step: a missing or non-map attrs would otherwise nil-deref,
 		// and a non-float64 level would silently produce a heading with zero "#".
@@ -324,38 +395,38 @@ func convertADFNodeWithResolver(node interface{}, resolver MentionResolver) stri
 			level = 1
 		}
 		prefix := strings.Repeat("#", level) + " "
-		return prefix + convertADFContentWithResolver(nodeMap, resolver) + "\n\n"
+		return prefix + convertADFContent(nodeMap, mentionResolver, mediaResolver) + "\n\n"
 	case "bulletList":
-		return convertADFListWithResolver(nodeMap, "- ", resolver)
+		return convertADFList(nodeMap, "- ", mentionResolver, mediaResolver)
 	case "orderedList":
-		return convertADFOrderedListWithResolver(nodeMap, resolver)
+		return convertADFOrderedList(nodeMap, mentionResolver, mediaResolver)
 	case "codeBlock":
 		lang := ""
 		if attrs, ok := nodeMap["attrs"].(map[string]interface{}); ok {
 			lang, _ = attrs["language"].(string)
 		}
-		return "```" + lang + "\n" + convertADFContentWithResolver(nodeMap, resolver) + "\n```\n\n"
+		return "```" + lang + "\n" + convertADFContent(nodeMap, mentionResolver, mediaResolver) + "\n```\n\n"
 	case "blockquote":
-		lines := strings.Split(convertADFContentWithResolver(nodeMap, resolver), "\n")
+		lines := strings.Split(convertADFContent(nodeMap, mentionResolver, mediaResolver), "\n")
 		var quoted strings.Builder
 		for _, line := range lines {
 			quoted.WriteString("> " + line + "\n")
 		}
 		return quoted.String() + "\n"
 	case "table":
-		return convertADFTableWithResolver(nodeMap, resolver)
+		return convertADFTable(nodeMap, mentionResolver, mediaResolver)
 	case "panel":
-		return convertADFPanelWithResolver(nodeMap, resolver)
+		return convertADFPanel(nodeMap, mentionResolver, mediaResolver)
 	case "taskList":
-		return convertADFTaskListWithResolver(nodeMap, resolver)
+		return convertADFTaskList(nodeMap, mentionResolver, mediaResolver)
 	case "inlineCard", "blockCard":
 		return convertADFCard(nodeMap)
 	case "mediaSingle", "mediaGroup":
-		return convertADFContentWithResolver(nodeMap, resolver)
+		return convertADFContent(nodeMap, mentionResolver, mediaResolver)
 	case "media":
-		return convertADFMedia(nodeMap)
+		return convertADFMedia(nodeMap, mediaResolver)
 	case "expand", "nestedExpand":
-		return convertADFExpandWithResolver(nodeMap, resolver)
+		return convertADFExpand(nodeMap, mentionResolver, mediaResolver)
 	case "status":
 		return convertADFStatus(nodeMap)
 	case "emoji":
@@ -402,9 +473,9 @@ func convertADFNodeWithResolver(node interface{}, resolver MentionResolver) stri
 		// MentionService will pick `@username` up via its regex; unresolved
 		// mentions fall back to the display text so the comment still reads
 		// naturally even when the user wasn't part of the import.
-		if resolver != nil {
+		if mentionResolver != nil {
 			if accountID, _ := attrs["id"].(string); accountID != "" {
-				if uname := resolver(accountID); uname != "" {
+				if uname := mentionResolver(accountID); uname != "" {
 					return "@" + uname
 				}
 			}
@@ -415,11 +486,11 @@ func convertADFNodeWithResolver(node interface{}, resolver MentionResolver) stri
 		return "@" + display
 	default:
 		// For unknown types, try to extract content
-		return convertADFContentWithResolver(nodeMap, resolver)
+		return convertADFContent(nodeMap, mentionResolver, mediaResolver)
 	}
 }
 
-func convertADFTableWithResolver(nodeMap map[string]interface{}, resolver MentionResolver) string {
+func convertADFTable(nodeMap map[string]interface{}, mentionResolver MentionResolver, mediaResolver MediaResolver) string {
 	rowsRaw, ok := nodeMap["content"].([]interface{})
 	if !ok || len(rowsRaw) == 0 {
 		return ""
@@ -441,7 +512,7 @@ func convertADFTableWithResolver(nodeMap map[string]interface{}, resolver Mentio
 			if !ok {
 				continue
 			}
-			row = append(row, markdownTableCell(convertADFContentWithResolver(cellMap, resolver)))
+			row = append(row, markdownTableCell(convertADFContent(cellMap, mentionResolver, mediaResolver)))
 		}
 		if len(row) > 0 {
 			rows = append(rows, row)
@@ -498,14 +569,14 @@ func writeMarkdownTableRow(out *strings.Builder, cells []string) {
 	out.WriteString(" |\n")
 }
 
-func convertADFPanelWithResolver(nodeMap map[string]interface{}, resolver MentionResolver) string {
+func convertADFPanel(nodeMap map[string]interface{}, mentionResolver MentionResolver, mediaResolver MediaResolver) string {
 	panelType := "info"
 	if attrs, ok := nodeMap["attrs"].(map[string]interface{}); ok {
 		if raw, _ := attrs["panelType"].(string); raw != "" {
 			panelType = raw
 		}
 	}
-	content := strings.TrimSpace(convertADFContentWithResolver(nodeMap, resolver))
+	content := strings.TrimSpace(convertADFContent(nodeMap, mentionResolver, mediaResolver))
 	if content == "" {
 		return ""
 	}
@@ -521,7 +592,7 @@ func convertADFPanelWithResolver(nodeMap map[string]interface{}, resolver Mentio
 	return out.String()
 }
 
-func convertADFTaskListWithResolver(nodeMap map[string]interface{}, resolver MentionResolver) string {
+func convertADFTaskList(nodeMap map[string]interface{}, mentionResolver MentionResolver, mediaResolver MediaResolver) string {
 	items, ok := nodeMap["content"].([]interface{})
 	if !ok {
 		return ""
@@ -540,7 +611,7 @@ func convertADFTaskListWithResolver(nodeMap map[string]interface{}, resolver Men
 		if strings.EqualFold(state, "DONE") || strings.EqualFold(state, "checked") {
 			checkbox = "[x]"
 		}
-		content := strings.TrimSpace(convertADFContentWithResolver(itemMap, resolver))
+		content := strings.TrimSpace(convertADFContent(itemMap, mentionResolver, mediaResolver))
 		if content == "" {
 			continue
 		}
@@ -562,10 +633,20 @@ func convertADFCard(nodeMap map[string]interface{}) string {
 	return "[" + url + "](" + url + ")"
 }
 
-func convertADFMedia(nodeMap map[string]interface{}) string {
+func convertADFMedia(nodeMap map[string]interface{}, mediaResolver MediaResolver) string {
 	attrs, ok := nodeMap["attrs"].(map[string]interface{})
 	if !ok {
 		return "[media]"
+	}
+	// `media` nodes reference an attachment by its Jira attachment id (the same
+	// id the issue's attachment list carries). Resolve it to the imported
+	// attachment's download link when the importer has one; otherwise keep the
+	// lossy placeholder so the reference isn't silently dropped.
+	id, _ := attrs["id"].(string)
+	if mediaResolver != nil && id != "" {
+		if res := mediaResolver(id); res.Resolved && res.Markdown != "" {
+			return res.Markdown
+		}
 	}
 	alt := firstADFAttrString(attrs, "alt", "id", "type")
 	if alt == "" {
@@ -574,14 +655,14 @@ func convertADFMedia(nodeMap map[string]interface{}) string {
 	return "[media: " + alt + "]"
 }
 
-func convertADFExpandWithResolver(nodeMap map[string]interface{}, resolver MentionResolver) string {
+func convertADFExpand(nodeMap map[string]interface{}, mentionResolver MentionResolver, mediaResolver MediaResolver) string {
 	title := "Details"
 	if attrs, ok := nodeMap["attrs"].(map[string]interface{}); ok {
 		if raw, _ := attrs["title"].(string); strings.TrimSpace(raw) != "" {
 			title = strings.TrimSpace(raw)
 		}
 	}
-	content := strings.TrimSpace(convertADFContentWithResolver(nodeMap, resolver))
+	content := strings.TrimSpace(convertADFContent(nodeMap, mentionResolver, mediaResolver))
 	if content == "" {
 		return ""
 	}
@@ -645,7 +726,7 @@ func collapseMarkdownWhitespace(value string) string {
 	return strings.Join(clean, " ")
 }
 
-func convertADFContentWithResolver(nodeMap map[string]interface{}, resolver MentionResolver) string {
+func convertADFContent(nodeMap map[string]interface{}, mentionResolver MentionResolver, mediaResolver MediaResolver) string {
 	content, ok := nodeMap["content"].([]interface{})
 	if !ok {
 		// Check for direct text
@@ -657,12 +738,12 @@ func convertADFContentWithResolver(nodeMap map[string]interface{}, resolver Ment
 
 	var result strings.Builder
 	for _, child := range content {
-		result.WriteString(convertADFNodeWithResolver(child, resolver))
+		result.WriteString(convertADFNode(child, mentionResolver, mediaResolver))
 	}
 	return result.String()
 }
 
-func convertADFListWithResolver(nodeMap map[string]interface{}, prefix string, resolver MentionResolver) string {
+func convertADFList(nodeMap map[string]interface{}, prefix string, mentionResolver MentionResolver, mediaResolver MediaResolver) string {
 	items, ok := nodeMap["content"].([]interface{})
 	if !ok {
 		return ""
@@ -674,12 +755,12 @@ func convertADFListWithResolver(nodeMap map[string]interface{}, prefix string, r
 		if !ok {
 			continue
 		}
-		result.WriteString(prefix + strings.TrimSpace(convertADFContentWithResolver(itemMap, resolver)) + "\n")
+		result.WriteString(prefix + strings.TrimSpace(convertADFContent(itemMap, mentionResolver, mediaResolver)) + "\n")
 	}
 	return result.String() + "\n"
 }
 
-func convertADFOrderedListWithResolver(nodeMap map[string]interface{}, resolver MentionResolver) string {
+func convertADFOrderedList(nodeMap map[string]interface{}, mentionResolver MentionResolver, mediaResolver MediaResolver) string {
 	items, ok := nodeMap["content"].([]interface{})
 	if !ok {
 		return ""
@@ -691,7 +772,7 @@ func convertADFOrderedListWithResolver(nodeMap map[string]interface{}, resolver 
 		if !ok {
 			continue
 		}
-		fmt.Fprintf(&result, "%d. %s\n", i+1, strings.TrimSpace(convertADFContentWithResolver(itemMap, resolver)))
+		fmt.Fprintf(&result, "%d. %s\n", i+1, strings.TrimSpace(convertADFContent(itemMap, mentionResolver, mediaResolver)))
 	}
 	return result.String() + "\n"
 }

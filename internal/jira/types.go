@@ -293,6 +293,29 @@ type JiraComment struct {
 	Created      string      `json:"created"`
 	Updated      string      `json:"updated"`
 	UpdateAuthor *JiraUser   `json:"updateAuthor"`
+	// Visibility scopes a comment to a role/group. Jira Cloud emits
+	// {"type":"group","value":"..."} (or "role"); Data Center uses the same
+	// shape. Windshift only models a private/internal toggle, so any
+	// restricted comment is imported as private and the original scope is
+	// preserved in the comment mapping metadata.
+	Visibility *JiraCommentVisibility `json:"visibility"`
+}
+
+// JiraCommentVisibility carries the restriction on a Jira comment.
+type JiraCommentVisibility struct {
+	Type  string `json:"type"`  // "group" or "role"
+	Value string `json:"value"` // role or group name
+}
+
+// MediaAttachment is the minimal reference to an imported Windshift
+// attachment that the ADF media resolver needs: the Windshift attachment id,
+// its MIME type, and the original filename. Jira's ADF `media` nodes carry the
+// Jira attachment id as `attrs.id`, so a map keyed by that id lets the
+// converter link the node to the imported attachment.
+type MediaAttachment struct {
+	ID               int
+	MimeType         string
+	OriginalFilename string
 }
 
 // JiraWorklogContainer holds worklogs with pagination info

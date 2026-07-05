@@ -896,10 +896,14 @@ func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, works
 	updatedAt := jira.ParseJiraTimestamp(issue.Fields.Updated)
 
 	// Convert description from ADF to markdown, resolving Jira accountIDs to
-	// Windshift usernames so MentionService picks up @mentions on import.
+	// Windshift usernames so MentionService picks up @mentions on import. Media
+	// nodes are converted without a resolver here (placeholders); once
+	// attachments are imported below we re-render with a media resolver that
+	// links them to the imported attachments, and persist the updated text.
+	rawDescription := issue.Fields.Description
 	description := ""
-	if issue.Fields.Description != nil {
-		description = jira.ConvertADFToMarkdownWithUsers(issue.Fields.Description, mentionResolver)
+	if rawDescription != nil {
+		description = jira.ConvertADFToMarkdown(rawDescription, mentionResolver, nil)
 	}
 
 	// Process custom fields. Standard top-level fields that have no dedicated
@@ -1118,11 +1122,33 @@ func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, works
 	importLabels = append(importLabels, jiraPreservationLabels(issue)...)
 	h.importLabels(workspaceID, int(itemID), importLabels)
 
-	// Import comments for this issue
-	h.importComments(jobID, int(itemID), issue, userMap, mentionResolver, progress)
+	// Import attachments for this issue before comments/description media
+	// linking so the Jira attachment ids are mapped to Windshift attachments,
+	// letting ADF media nodes reference the imported files.
+	mediaRefs := h.importAttachments(ctx, jobID, int(itemID), issue, userMap, client, progress)
+	var mediaResolver jira.MediaResolver
+	if len(mediaRefs) > 0 {
+		mediaResolver = jira.NewMediaResolver(mediaRefs)
+	}
 
-	// Import attachments for this issue
-	h.importAttachments(ctx, jobID, int(itemID), issue, userMap, client, progress)
+	// Re-render the description now that attachments are available so media
+	// nodes link to the imported attachments instead of placeholders.
+	if mediaResolver != nil && rawDescription != nil {
+		linked := jira.ConvertADFToMarkdown(rawDescription, mentionResolver, mediaResolver)
+		if linked != "" && linked != description {
+			if _, err := h.db.ExecWrite(`UPDATE items SET description = ? WHERE id = ?`, linked, itemID); err != nil {
+				slog.Warn("Failed to update item description with linked media",
+					slog.String("component", "jira"),
+					slog.String("issue", issue.Key),
+					slog.Any("error", err))
+			} else {
+				description = linked
+			}
+		}
+	}
+
+	// Import comments for this issue
+	h.importComments(jobID, int(itemID), issue, userMap, mentionResolver, mediaResolver, progress)
 
 	// Import Jira worklogs into Windshift time tracking when the project has a
 	// time-project target. Jira exposes only the first page in the issue payload;
@@ -1215,7 +1241,7 @@ func (h *JiraImportHandler) linkParents(jobID string) {
 // ================================================================
 
 // importComments imports comments from a Jira issue into Windshift
-func (h *JiraImportHandler) importComments(jobID string, itemID int, issue *jira.JiraIssue, userMap map[string]int, mentionResolver jira.MentionResolver, progress *ImportProgress) {
+func (h *JiraImportHandler) importComments(jobID string, itemID int, issue *jira.JiraIssue, userMap map[string]int, mentionResolver jira.MentionResolver, mediaResolver jira.MediaResolver, progress *ImportProgress) {
 	if issue.Fields.Comment == nil || len(issue.Fields.Comment.Comments) == 0 {
 		return
 	}
@@ -1251,7 +1277,7 @@ func (h *JiraImportHandler) importComments(jobID string, itemID int, issue *jira
 		if progress != nil {
 			progress.TotalComments++
 		}
-		content := jira.ConvertADFToMarkdownWithUsers(comment.Body, mentionResolver)
+		content := jira.ConvertADFToMarkdown(comment.Body, mentionResolver, mediaResolver)
 		if content == "" {
 			continue
 		}
@@ -1265,11 +1291,18 @@ func (h *JiraImportHandler) importComments(jobID string, itemID int, issue *jira
 		createdAt := jira.ParseJiraTimestamp(comment.Created)
 		updatedAt := jira.ParseJiraTimestamp(comment.Updated)
 
+		// Jira distinguishes "internal" (restricted to agents) from public
+		// comments via its visibility field. Windshift models only a
+		// private/internal toggle, so any restricted comment is imported as
+		// private and the original role/group scope is preserved in metadata.
+		isPrivate := comment.Visibility != nil && (comment.Visibility.Type != "" || comment.Visibility.Value != "")
+
 		result, err := commentSvc.Create(services.CreateCommentParams{
 			ItemID:      itemID,
 			AuthorID:    authorID,
 			Content:     content,
 			ActorUserID: authorID,
+			IsPrivate:   isPrivate,
 			CreatedAt:   createdAt,
 			UpdatedAt:   updatedAt, // preserve Jira's original updated timestamp
 		})
@@ -1294,6 +1327,13 @@ func (h *JiraImportHandler) importComments(jobID string, itemID int, issue *jira
 		}
 		if comment.UpdateAuthor != nil && comment.UpdateAuthor.GetIdentifier() != "" {
 			commentMeta["update_author_account_id"] = comment.UpdateAuthor.GetIdentifier()
+		}
+		if isPrivate {
+			commentMeta["is_private"] = true
+			if comment.Visibility != nil {
+				commentMeta["visibility_type"] = comment.Visibility.Type
+				commentMeta["visibility_value"] = comment.Visibility.Value
+			}
 		}
 
 		h.recordMapping(jobID, "comment", comment.ID, issue.Key, int(result.CommentID), commentMeta)
@@ -1603,10 +1643,13 @@ func (h *JiraImportHandler) importWorklogs(jobID string, itemID int, issue *jira
 // Phase 7: Attachment Import
 // ================================================================
 
-// importAttachments downloads and stores attachments from a Jira issue
-func (h *JiraImportHandler) importAttachments(ctx context.Context, jobID string, itemID int, issue *jira.JiraIssue, userMap map[string]int, client jira.Client, progress *ImportProgress) {
+// importAttachments downloads and stores attachments from a Jira issue. It
+// returns a map from Jira attachment id → the Windshift attachment reference
+// (id, mime type, original filename) so ADF media nodes can be linked to the
+// imported attachment instead of left as a placeholder.
+func (h *JiraImportHandler) importAttachments(ctx context.Context, jobID string, itemID int, issue *jira.JiraIssue, userMap map[string]int, client jira.Client, progress *ImportProgress) map[string]jira.MediaAttachment {
 	if len(issue.Fields.Attachment) == 0 {
-		return
+		return nil
 	}
 
 	// Get attachment storage path from settings
@@ -1615,9 +1658,10 @@ func (h *JiraImportHandler) importAttachments(ctx context.Context, jobID string,
 	if err != nil || attachmentPath == "" {
 		slog.Warn("Attachment settings not configured, skipping attachment import",
 			slog.String("component", "jira"), slog.String("issue", issue.Key))
-		return
+		return nil
 	}
 
+	mediaRefs := make(map[string]jira.MediaAttachment)
 	for _, attachment := range issue.Fields.Attachment {
 		if attachment.Content == "" {
 			continue
@@ -1729,5 +1773,16 @@ func (h *JiraImportHandler) importAttachments(ctx context.Context, jobID string,
 
 		h.recordMapping(jobID, "attachment", attachment.ID, issue.Key, int(attachmentID), attachmentMeta)
 		progress.ImportedAttachments++
+
+		// Record the Jira→Windshift attachment reference so ADF media nodes
+		// in the description/comments can link to the imported attachment.
+		if attachment.ID != "" {
+			mediaRefs[attachment.ID] = jira.MediaAttachment{
+				ID:               int(attachmentID),
+				MimeType:         mimeType,
+				OriginalFilename: attachment.Filename,
+			}
+		}
 	}
+	return mediaRefs
 }

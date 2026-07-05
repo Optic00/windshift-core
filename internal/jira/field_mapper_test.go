@@ -83,3 +83,46 @@ func TestConvertADFInlineRichNodesToMarkdown(t *testing.T) {
 		t.Fatalf("converted markdown missing %q\nGot:\n%s", want, got)
 	}
 }
+
+func TestConvertADFMediaLinksToImportedAttachment(t *testing.T) {
+	adf := adfFromJSON(t, `{
+		"type":"doc",
+		"version":1,
+		"content":[
+			{"type":"mediaSingle","content":[{"type":"media","attrs":{"id":"att-100","type":"file","collection":"","alt":"screenshot","width":50,"height":50}}]},
+			{"type":"paragraph","content":[{"type":"media","attrs":{"id":"att-101","type":"file"}}]}
+		]
+	}`)
+
+	mediaResolver := NewMediaResolver(map[string]MediaAttachment{
+		"att-100": {ID: 42, MimeType: "image/png", OriginalFilename: "screenshot.png"},
+		"att-101": {ID: 43, MimeType: "application/pdf", OriginalFilename: "report.pdf"},
+	})
+
+	got := ConvertADFToMarkdown(adf, nil, mediaResolver)
+	for _, want := range []string{
+		"![screenshot.png](/api/attachments/42/download)",
+		"[report.pdf](/api/attachments/43/download)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("converted markdown missing %q\nGot:\n%s", want, got)
+		}
+	}
+
+	// Without a resolver (or for an unknown id) the lossy placeholder survives.
+	placeholder := ConvertADFToMarkdown(adf, nil, nil)
+	if !strings.Contains(placeholder, "[media:") {
+		t.Fatalf("expected placeholder for unresolved media, got:\n%s", placeholder)
+	}
+
+	partial := NewMediaResolver(map[string]MediaAttachment{
+		"att-100": {ID: 42, MimeType: "image/png", OriginalFilename: "screenshot.png"},
+	})
+	partialGot := ConvertADFToMarkdown(adf, nil, partial)
+	if !strings.Contains(partialGot, "![screenshot.png](/api/attachments/42/download)") {
+		t.Fatalf("expected resolved image, got:\n%s", partialGot)
+	}
+	if !strings.Contains(partialGot, "[media:") {
+		t.Fatalf("expected placeholder for unresolved id, got:\n%s", partialGot)
+	}
+}
