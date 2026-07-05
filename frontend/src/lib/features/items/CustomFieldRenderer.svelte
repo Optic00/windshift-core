@@ -104,11 +104,54 @@
 
   const assetConfig = $derived(parseAssetConfig());
   const isMultiAssetField = $derived(field.field_type === 'asset' && assetConfig.multi === true);
+  let assetLookup = $state({});
+  const assetLookupInFlight = new Set();
+
+  function assetID(asset) {
+    if (!asset) return null;
+    const raw = asset && typeof asset === 'object' ? asset.id : asset;
+    const id = parseInt(raw, 10);
+    return Number.isFinite(id) && id > 0 ? id : null;
+  }
+
+  function assetIDsForLookup() {
+    if (field.field_type !== 'asset') return [];
+    const raw = /** @type {any} */ (value);
+    if (!raw) return [];
+    const entries = Array.isArray(raw) ? raw : [raw];
+    return entries
+      .filter((entry) => !(entry && typeof entry === 'object' && entry.title))
+      .map(assetID)
+      .filter((id) => id !== null);
+  }
+
+  async function loadAssetDisplayValues() {
+    const ids = [...new Set(assetIDsForLookup())].filter(
+      (id) => assetLookup[id] === undefined && !assetLookupInFlight.has(id)
+    );
+    if (ids.length === 0) return;
+
+    ids.forEach((id) => assetLookupInFlight.add(id));
+    await Promise.all(ids.map(async (id) => {
+      try {
+        const asset = await api.assets.get(id);
+        assetLookup = { ...assetLookup, [id]: asset || null };
+      } catch (e) {
+        console.error('Failed to load asset custom-field value:', e);
+        assetLookup = { ...assetLookup, [id]: null };
+      } finally {
+        assetLookupInFlight.delete(id);
+      }
+    }));
+  }
 
   function assetDisplayName(asset) {
-    if (asset && typeof asset === 'object') {
-      if (asset.title) return asset.asset_tag ? `${asset.asset_tag} - ${asset.title}` : asset.title;
-      if (asset.id) return `Asset #${asset.id}`;
+    const id = assetID(asset);
+    const resolved = id ? assetLookup[id] : null;
+    const displayAsset = resolved || asset;
+    if (displayAsset && typeof displayAsset === 'object') {
+      if (displayAsset.title) return displayAsset.asset_tag ? `${displayAsset.asset_tag} - ${displayAsset.title}` : displayAsset.title;
+      if (displayAsset.id) return `Asset #${displayAsset.id}`;
     }
     return `Asset #${asset}`;
   }
@@ -219,6 +262,9 @@
     }
     if (field.field_type === 'multi_user' && normalizedMultiUserIDs().length > 0) {
       loadUsers();
+    }
+    if (readonly && field.field_type === 'asset' && assetIDsForLookup().length > 0) {
+      loadAssetDisplayValues();
     }
   });
 

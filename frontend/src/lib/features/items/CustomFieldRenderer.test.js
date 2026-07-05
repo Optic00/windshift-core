@@ -7,6 +7,9 @@ import { afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
 vi.mock('../../api.js', () => ({
   api: {
     getUsers: vi.fn(),
+    assets: {
+      get: vi.fn(),
+    },
   },
 }));
 
@@ -377,11 +380,23 @@ describe('asset field', () => {
     expect(screen.getByText('Forklift')).toBeInTheDocument();
   });
 
-  test('bare-id value renders as "Asset #N"', () => {
+  test('bare-id value resolves to asset title', async () => {
+    api.assets.get.mockResolvedValueOnce({ id: 42, asset_tag: 'A-042', title: 'Loader' });
     renderReadonly({
       field: { field_type: 'asset', name: 'Machine' },
       value: 42,
     });
+    expect(screen.getByText('Asset #42')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('A-042 - Loader')).toBeInTheDocument());
+  });
+
+  test('bare-id value falls back to "Asset #N" when lookup fails', async () => {
+    api.assets.get.mockRejectedValueOnce(new Error('not found'));
+    renderReadonly({
+      field: { field_type: 'asset', name: 'Machine' },
+      value: 42,
+    });
+    await waitFor(() => expect(api.assets.get).toHaveBeenCalledWith(42));
     expect(screen.getByText('Asset #42')).toBeInTheDocument();
   });
 
