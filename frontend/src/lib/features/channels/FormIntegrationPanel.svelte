@@ -22,7 +22,7 @@
   );
 
   let widgetCode = $derived(
-    `<div id="ws-form-${slug}"></div>\n<script src="${baseUrl}/forms/widget.js" data-slug="${slug}" data-target="ws-form-${slug}"><\/script>`
+    `<div id="ws-form-${slug}"></div>\n<script src="${baseUrl}/embed/windshift-forms.js" data-slug="${slug}" data-target="ws-form-${slug}"><\/script>`
   );
 
   const tabs = [

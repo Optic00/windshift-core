@@ -10,10 +10,12 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"windshift/internal/database"
+	"windshift/internal/middleware"
 	"windshift/internal/utils"
 
 	"github.com/jub0bs/cors"
@@ -192,6 +194,97 @@ func createCORSMiddleware(allowedHosts, serverPort, scheme string, disableCSRF, 
 	}
 
 	return corsMw.Wrap
+}
+
+func createFormEmbedCORSMiddleware(formEmbedOrigins string, firstPartyOrigins []string, fallback func(http.Handler) http.Handler) func(http.Handler) http.Handler {
+	allowedEmbedOrigins := parseOriginList(formEmbedOrigins)
+	firstPartySet := make(map[string]bool, len(firstPartyOrigins))
+	for _, origin := range firstPartyOrigins {
+		firstPartySet[strings.ToLower(origin)] = true
+	}
+
+	return func(next http.Handler) http.Handler {
+		fallbackHandler := fallback(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !strings.HasPrefix(r.URL.Path, "/api/forms/") {
+				fallbackHandler.ServeHTTP(w, r)
+				return
+			}
+
+			origin := r.Header.Get("Origin")
+			if origin == "" {
+				fallbackHandler.ServeHTTP(w, r)
+				return
+			}
+
+			if !isEmbedOriginAllowed(origin, allowedEmbedOrigins) {
+				corsErrorResponse(w, http.StatusForbidden,
+					"Origin not allowed", "FORM_EMBED_ORIGIN_NOT_ALLOWED",
+					map[string]string{"origin": origin})
+				return
+			}
+
+			w.Header().Add("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.Header().Set("Access-Control-Max-Age", "86400")
+
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+
+			// Cross-site form embeds are anonymous: remove browser cookies before
+			// OptionalAuth runs, then exempt the submit from CSRF because there is no
+			// credential for a forged request to abuse. Same-origin form/portal flows
+			// keep cookies and normal CSRF protection.
+			if !firstPartySet[strings.ToLower(origin)] && !originMatchesRequestHost(origin, r) {
+				clone := r.Clone(r.Context())
+				clone.Header = r.Header.Clone()
+				clone.Header.Del("Cookie")
+				if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/submit") {
+					ctx := context.WithValue(clone.Context(), middleware.ContextKeyCSRFExempt, true)
+					clone = clone.WithContext(ctx)
+				}
+				r = clone
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func originMatchesRequestHost(origin string, r *http.Request) bool {
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(parsed.Host, r.Host)
+}
+
+func parseOriginList(origins string) []string {
+	var parsed []string
+	for _, origin := range strings.Split(origins, ",") {
+		origin = strings.TrimSpace(origin)
+		if origin != "" {
+			parsed = append(parsed, strings.ToLower(origin))
+		}
+	}
+	return parsed
+}
+
+func isEmbedOriginAllowed(origin string, allowed []string) bool {
+	if len(allowed) == 0 {
+		return true
+	}
+	origin = strings.ToLower(origin)
+	for _, allowedOrigin := range allowed {
+		if allowedOrigin == "*" || allowedOrigin == origin {
+			return true
+		}
+	}
+	return false
 }
 
 func isDefaultPort(scheme, port string) bool {

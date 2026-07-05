@@ -1197,11 +1197,12 @@ func (s *Server) initialize() error {
 			corsScheme = parsed.Scheme
 		}
 	}
+	csrfOrigins := buildAllowedOrigins(cfg.AllowedHosts, effectivePort, corsScheme, cfg.UseProxy)
 	corsMiddleware := createCORSMiddleware(cfg.AllowedHosts, effectivePort, corsScheme, cfg.DisableCSRF, cfg.UseProxy, cfg.AllowInsecureHTTP)
-	apiMiddleware := router.MiddlewareChain{corsMiddleware, authMiddleware.OptionalAuth}
+	apiCORSMiddleware := createFormEmbedCORSMiddleware(cfg.FormEmbedOrigins, csrfOrigins, corsMiddleware)
+	apiMiddleware := router.MiddlewareChain{apiCORSMiddleware, authMiddleware.OptionalAuth}
 
 	if !cfg.DisableCSRF {
-		csrfOrigins := buildAllowedOrigins(cfg.AllowedHosts, effectivePort, corsScheme, cfg.UseProxy)
 		slog.Info("CSRF protection enabled (Sec-Fetch-Site + Origin/Referer fallback)", "allowed_origins", csrfOrigins)
 		apiMiddleware = append(apiMiddleware, middleware.CSRFProtection(csrfOrigins))
 	} else {
@@ -1516,6 +1517,7 @@ func (s *Server) initialize() error {
 			mux.Handle("GET /favicon-32x32.png", revalidatingAssets)
 			mux.Handle("GET /apple-touch-icon.png", revalidatingAssets)
 			mux.Handle("GET /forms/widget.js", revalidatingAssets)
+			mux.Handle("GET /embed/", revalidatingAssets)
 
 			// PWA entry points. These need explicit routes (the SPA fallback at
 			// "GET /" would otherwise serve index.html for them) and explicit

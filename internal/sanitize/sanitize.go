@@ -32,6 +32,7 @@
 package sanitize
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"html"
 	"regexp"
@@ -162,7 +163,9 @@ var ShortIdentifier Policy = PolicyFunc(shortIdentifier)
 // actual results). Strips HTML except <br /> (Milkdown uses this to
 // preserve blank lines on round-trip), decodes HTML entities back to
 // plain text, neutralizes dangerous Markdown URL schemes
-// (javascript:, vbscript:, data:), caps at 256 KiB.
+// (javascript:, vbscript:, data:), caps at 256 KiB. Fenced Markdown
+// code blocks are preserved verbatim so documentation can show HTML
+// snippets without the sanitizer eating them.
 var RichText Policy = PolicyFunc(richText)
 
 // LongDocument — long-form Markdown document (workspace knowledge
@@ -243,15 +246,20 @@ func shortIdentifier(s string) string { return stripAndCap(s, ShortIdentifierMax
 // brAllowAndCap is the common path for RichText + LongDocument:
 // decode entities, strip HTML except <br />, normalize bluemonday's
 // break output back to <br /> for Milkdown compatibility, neutralize
-// dangerous URL schemes, byte-cap.
+// dangerous URL schemes, byte-cap. Fenced Markdown code blocks are
+// temporarily replaced with placeholders so literal examples like
+// ```html\n<script>...\n``` survive storage. Renderers must still escape code
+// spans/blocks when producing HTML.
 func brAllowAndCap(input string, maxBytes int) string {
 	if input == "" || input == "null" {
 		return ""
 	}
-	s := sanitizeDecoded(input, brOnlyPolicy)
+	s, codeBlocks := extractFencedCodeBlocks(input)
+	s = sanitizeDecoded(s, brOnlyPolicy)
 	s = strings.ReplaceAll(s, "<br/>", "<br />")
 	s = strings.ReplaceAll(s, "<br>", "<br />")
 	s = markdownURLOnly(s)
+	s = restoreFencedCodeBlocks(s, codeBlocks)
 	if maxBytes > 0 && len(s) > maxBytes {
 		s = s[:maxBytes]
 	}
@@ -265,12 +273,110 @@ func commentPolicy(s string) string {
 	if s == "" {
 		return ""
 	}
-	out := sanitizeDecoded(s, strictPolicy)
+	out, codeBlocks := extractFencedCodeBlocks(s)
+	out = sanitizeDecoded(out, strictPolicy)
 	out = markdownURLOnly(out)
+	out = restoreFencedCodeBlocks(out, codeBlocks)
 	if len(out) > LongTextMaxBytes {
 		out = out[:LongTextMaxBytes]
 	}
 	return out
+}
+
+const codeBlockPlaceholderPrefix = "%%WINDSHIFT_CODE_BLOCK_"
+
+type fencedCodeBlock struct {
+	placeholder string
+	content     string
+}
+
+func extractFencedCodeBlocks(input string) (string, []fencedCodeBlock) {
+	if input == "" {
+		return input, nil
+	}
+
+	lines := strings.SplitAfter(input, "\n")
+	var out strings.Builder
+	var blocks []fencedCodeBlock
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
+		marker, count, ok := openingFence(line)
+		if !ok {
+			out.WriteString(line)
+			continue
+		}
+
+		var block strings.Builder
+		block.WriteString(line)
+		closed := false
+		for i++; i < len(lines); i++ {
+			block.WriteString(lines[i])
+			if closingFence(lines[i], marker, count) {
+				closed = true
+				break
+			}
+		}
+		if !closed {
+			out.WriteString(block.String())
+			break
+		}
+
+		blockContent := block.String()
+		placeholder := codeBlockPlaceholder(blockContent, len(blocks), input)
+		blocks = append(blocks, fencedCodeBlock{placeholder: placeholder, content: blockContent})
+		out.WriteString(placeholder)
+	}
+
+	return out.String(), blocks
+}
+
+func codeBlockPlaceholder(content string, index int, original string) string {
+	sum := sha256.Sum256([]byte(content))
+	base := fmt.Sprintf("%s%d_%x%%", codeBlockPlaceholderPrefix, index, sum[:8])
+	placeholder := base
+	for suffix := 1; strings.Contains(original, placeholder); suffix++ {
+		placeholder = fmt.Sprintf("%s_%d", base, suffix)
+	}
+	return placeholder
+}
+
+func openingFence(line string) (byte, int, bool) {
+	trimmed := strings.TrimLeft(line, " \t")
+	if len(line)-len(trimmed) > 3 || len(trimmed) < 3 {
+		return 0, 0, false
+	}
+	marker := trimmed[0]
+	if marker != '`' && marker != '~' {
+		return 0, 0, false
+	}
+	count := 0
+	for count < len(trimmed) && trimmed[count] == marker {
+		count++
+	}
+	if count < 3 {
+		return 0, 0, false
+	}
+	return marker, count, true
+}
+
+func closingFence(line string, marker byte, openingCount int) bool {
+	trimmed := strings.TrimSpace(line)
+	if len(trimmed) < openingCount {
+		return false
+	}
+	for i := 0; i < len(trimmed); i++ {
+		if trimmed[i] != marker {
+			return false
+		}
+	}
+	return true
+}
+
+func restoreFencedCodeBlocks(s string, blocks []fencedCodeBlock) string {
+	for _, block := range blocks {
+		s = strings.ReplaceAll(s, block.placeholder, block.content)
+	}
+	return s
 }
 
 // sanitizeDecoded fully decodes HTML entities before sanitizing so nested
