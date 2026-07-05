@@ -106,3 +106,38 @@ func TestCommentNeutralizesDangerousMarkdownURL(t *testing.T) {
 		t.Errorf("Comment kept dangerous scheme: %q", got)
 	}
 }
+
+func TestLongDocumentPreservesHTMLInsideFencedCodeBlock(t *testing.T) {
+	input := "before <script>alert('x')</script>\n\n```html\n<div id=\"ws-form\"></div>\n<script src=\"/embed/windshift-forms.js\"></script>\n```\n\nafter"
+	got := LongDocument.Sanitize(input)
+	if strings.Contains(got, "before <script>") {
+		t.Fatalf("LongDocument kept executable HTML outside code block: %q", got)
+	}
+	if !strings.Contains(got, "<div id=\"ws-form\"></div>") || !strings.Contains(got, "<script src=\"/embed/windshift-forms.js\"></script>") {
+		t.Fatalf("LongDocument stripped HTML inside fenced code block: %q", got)
+	}
+}
+
+func TestLongDocumentPreservesDangerousMarkdownURLInsideFencedCodeBlockOnly(t *testing.T) {
+	input := "[bad](javascript:alert(1))\n\n```md\n[example](javascript:alert(1))\n```"
+	got := LongDocument.Sanitize(input)
+	if strings.Contains(got, "[bad](javascript:") {
+		t.Fatalf("LongDocument kept dangerous Markdown URL outside code block: %q", got)
+	}
+	if !strings.Contains(got, "[example](javascript:alert(1))") {
+		t.Fatalf("LongDocument rewrote Markdown URL inside fenced code block: %q", got)
+	}
+}
+
+func TestLongDocumentCodeBlockPlaceholderDoesNotReplaceUserText(t *testing.T) {
+	block := "```html\n<div>example</div>\n```\n"
+	placeholder := codeBlockPlaceholder(block, 0, "")
+	input := placeholder + "\n\n" + block
+	got := LongDocument.Sanitize(input)
+	if strings.Count(got, "<div>example</div>") != 1 {
+		t.Fatalf("LongDocument restored code block into user text too: %q", got)
+	}
+	if !strings.Contains(got, placeholder) {
+		t.Fatalf("LongDocument did not preserve user text resembling placeholder: %q", got)
+	}
+}

@@ -17,6 +17,7 @@ type Config struct {
 	ContextPath       string
 	AllowedHosts      string
 	AllowedPort       string
+	FormEmbedOrigins  string
 	UseProxy          bool
 	UseProxyExplicit  bool
 	AdditionalProxies string
