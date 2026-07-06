@@ -340,16 +340,15 @@ func codeBlockPlaceholder(content string, index int, original string) string {
 	return placeholder
 }
 
-func openingFence(line string) (byte, int, bool) {
+func openingFence(line string) (marker byte, count int, ok bool) {
 	trimmed := strings.TrimLeft(line, " \t")
 	if len(line)-len(trimmed) > 3 || len(trimmed) < 3 {
 		return 0, 0, false
 	}
-	marker := trimmed[0]
+	marker = trimmed[0]
 	if marker != '`' && marker != '~' {
 		return 0, 0, false
 	}
-	count := 0
 	for count < len(trimmed) && trimmed[count] == marker {
 		count++
 	}

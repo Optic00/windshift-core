@@ -14,7 +14,10 @@ export const pages = {
   getPage: (workspaceId, pageId) => fetchAPI(`/workspaces/${workspaceId}/pages/${pageId}`),
 
   /** Create a new page. parentId is optional (null/undefined = root). */
-  createPage: (workspaceId, { title, content = '', parentId = null, isHome = false, metadata = {} }) =>
+  createPage: (
+    workspaceId,
+    { title, content = '', parentId = null, isHome = false, metadata = {} }
+  ) =>
     fetchAPI(`/workspaces/${workspaceId}/pages`, {
       method: 'POST',
       body: JSON.stringify({ title, content, parent_id: parentId, is_home: isHome, metadata }),

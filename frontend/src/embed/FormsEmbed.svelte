@@ -62,9 +62,7 @@
       } catch {
         // Keep fallback.
       }
-      const err = new Error(message);
-      err.status = response.status;
-      throw err;
+      throw Object.assign(new Error(message), { status: response.status });
     }
 
     if (response.status === 204) return null;

@@ -37,7 +37,7 @@ func milestoneScopeClause() string {
 }
 
 // milestoneScopeArgs returns the args for milestoneScopeClause for a scope.
-func milestoneScopeArgs(isGlobal bool, workspaceID *int, categoryID *int) []interface{} {
+func milestoneScopeArgs(isGlobal bool, workspaceID, categoryID *int) []interface{} {
 	ws := 0
 	if workspaceID != nil {
 		ws = *workspaceID

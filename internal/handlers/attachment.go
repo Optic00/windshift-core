@@ -177,55 +177,6 @@ func (h *AttachmentHandler) IsEnabled() bool {
 	return h.attachmentPath != ""
 }
 
-func (h *AttachmentHandler) resolveStoredAttachmentPath(storedPath string) (string, error) {
-	if h.attachmentPath == "" {
-		return "", errAttachmentPathOutsideRoot
-	}
-
-	absBasePath, err := filepath.Abs(h.attachmentPath)
-	if err != nil {
-		return "", err
-	}
-	isInsideRoot := func(candidate string) (string, bool, error) {
-		absPath, err := filepath.Abs(candidate)
-		if err != nil {
-			return "", false, err
-		}
-		inside := absPath == absBasePath || strings.HasPrefix(absPath, absBasePath+string(os.PathSeparator))
-		return absPath, inside, nil
-	}
-
-	if filepath.IsAbs(storedPath) {
-		absPath, inside, err := isInsideRoot(storedPath)
-		if err != nil {
-			return "", err
-		}
-		if !inside {
-			return "", errAttachmentPathOutsideRoot
-		}
-		return absPath, nil
-	}
-
-	// Uploads historically stored paths as filepath.Join(attachmentPath, ...).
-	// When attachmentPath itself is relative (the e2e/default setup), those rows
-	// are already root-relative. Try the stored path as-is before resolving truly
-	// relative paths like "items/123/file.txt" under the configured root.
-	if absPath, inside, err := isInsideRoot(storedPath); err != nil {
-		return "", err
-	} else if inside {
-		return absPath, nil
-	}
-
-	absPath, inside, err := isInsideRoot(filepath.Join(h.attachmentPath, storedPath))
-	if err != nil {
-		return "", err
-	}
-	if !inside {
-		return "", errAttachmentPathOutsideRoot
-	}
-	return absPath, nil
-}
-
 // authorizeUploadEntity verifies the upload target exists and the caller
 // can modify it. Returns true if the upload may proceed; otherwise it has
 // already written the response and the caller must return immediately.

@@ -383,6 +383,7 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
+<!-- shortcut-guard-exempt: Cmd+Enter submit is handled via svelte:window onkeydown (matchesShortcut) above, outside the ModalBackdrop block the guard scans. -->
 <ModalBackdrop bind:show={isOpen} opacity={0.4} align="top" paddingTop="pt-16" scrollable zIndex={60} closeOnClick={false} onclose={close}>
     <!-- Modal -->
     <div class="rounded-xl shadow-2xl w-full max-w-lg mx-4 mb-8 flex flex-col" style="background-color: var(--ds-surface-raised);">

@@ -96,9 +96,7 @@ describe('notificationActions.markItemAsRead', () => {
   test('leaves state untouched when the API call rejects', async () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     api.notifications.markItemAsRead.mockRejectedValueOnce(new Error('500'));
-    notifications.set([
-      { id: 1, read: false, actionUrl: '/workspaces/2/items/42' },
-    ]);
+    notifications.set([{ id: 1, read: false, actionUrl: '/workspaces/2/items/42' }]);
 
     await notificationActions.markItemAsRead(42);
 

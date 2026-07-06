@@ -44,6 +44,7 @@ export function mountForm(element, options = {}) {
     target,
     props: {
       ...options,
+      slug: options.slug,
       baseUrl: normalizeBaseUrl(options.baseUrl),
     },
   });
