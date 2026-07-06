@@ -739,7 +739,7 @@
         {@const hasChildren = (childCountById.get(page.id) || 0) > 0}
         {@const isExpanded = expandedIds.has(page.id)}
         {@const dimmed = isAncestorOnly(page)}
-        {@const PageIcon = workspaceIconMap[page.metadata?.icon] || Book}
+        {@const PageIcon = page.metadata?.icon ? workspaceIconMap[page.metadata.icon] : null}
         {@const pageColor = page.metadata?.color || 'var(--ds-text-subtle)'}
         <li
           class="tree-item"
@@ -782,7 +782,9 @@
             <span class="chevron chevron--placeholder" aria-hidden="true"></span>
           {/if}
           <button class="page-button" type="button" onclick={() => selectPage(page.id)}>
-            <PageIcon size={14} class="page-button__icon" style="color: {pageColor};" aria-hidden="true" />
+            {#if PageIcon}
+              <PageIcon size={14} class="page-button__icon" style="color: {pageColor};" aria-hidden="true" />
+            {/if}
             <span class="page-button__title">{page.title}</span>
           </button>
           <span class="kebab-slot">

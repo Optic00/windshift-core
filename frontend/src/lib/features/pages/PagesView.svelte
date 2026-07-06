@@ -8,6 +8,8 @@
   import PagesHistoryDrawer from './PagesHistoryDrawer.svelte';
   import PageLabelPicker from './PageLabelPicker.svelte';
   import PageWorkItemsButton from './PageWorkItemsButton.svelte';
+  import IconSelector from '../../pickers/IconSelector.svelte';
+  import { workspaceIconMap } from '../../utils/icons.js';
   import { IconX } from '@tabler/icons-svelte-runes';
   import { parseMarkdownHeadings, slugify } from './markdownToc.js';
   import DropdownMenu from '../../layout/DropdownMenu.svelte';
@@ -56,6 +58,11 @@
   let historyDrawerOpen = $state(false);
   let titleInputEl = $state(null);
   let pageEffectiveLevel = $state('');
+  let appearanceSaving = $state(false);
+  let pickerIcon = $state('FileText');
+  let pickerColor = $state('#3b82f6');
+  let PageTitleIcon = $derived(selectedPage?.metadata?.icon ? workspaceIconMap[selectedPage.metadata.icon] : null);
+  let pageTitleIconColor = $derived(selectedPage?.metadata?.color || 'var(--ds-text-subtle)');
 
   // 'idle' = nothing to save; 'pending' = waiting for the debounce
   // timer; 'saving' = request in flight; 'saved' = last write
@@ -215,6 +222,8 @@
       selectedPage = page;
       draftTitle = page.title;
       draftContent = page.content;
+      pickerIcon = page.metadata?.icon || 'FileText';
+      pickerColor = page.metadata?.color || '#3b82f6';
       dirty = false;
       saveStatus = 'idle';
       pageEffectiveLevel = '';
@@ -400,6 +409,42 @@
     }
   }
 
+  async function updatePageAppearance({ icon = pickerIcon, color = pickerColor, clear = false } = {}) {
+    if (!selectedPage || appearanceSaving) return;
+    if (dirty && !saveInFlight) await flushSave();
+    const previous = selectedPage.metadata || {};
+    const metadata = { ...previous };
+    if (clear) {
+      delete metadata.icon;
+      delete metadata.color;
+    } else {
+      metadata.icon = icon;
+      metadata.color = color;
+    }
+    selectedPage.metadata = metadata;
+    selectedPage = selectedPage;
+    appearanceSaving = true;
+    try {
+      const updated = await api.pages.updatePage(workspaceId, selectedPage.id, {
+        title: draftTitle,
+        content: draftContent,
+        metadata,
+      });
+      if (selectedPage?.id === updated.id) {
+        selectedPage = { ...updated, content: draftContent };
+        pickerIcon = updated.metadata?.icon || 'FileText';
+        pickerColor = updated.metadata?.color || '#3b82f6';
+      }
+      pagesTreeRefresh.bump();
+    } catch (err) {
+      selectedPage.metadata = previous;
+      selectedPage = selectedPage;
+      error = err?.message || t('pages.errorSave');
+    } finally {
+      appearanceSaving = false;
+    }
+  }
+
   function onTitleKeydown(event) {
     if (event.key === 'Enter') {
       // Move focus into the body so the user can start typing right
@@ -517,17 +562,50 @@
   {:else if selectedPage}
     <div class="page-frame">
       <div class="toolbar">
-        <input
-          id="page-title-input"
-          bind:this={titleInputEl}
-          class="title-input"
-          type="text"
-          value={draftTitle}
-          oninput={onTitleInput}
-          onkeydown={onTitleKeydown}
-          placeholder={t('pages.titlePlaceholder')}
-        />
+        <div class="title-wrap">
+          {#if PageTitleIcon}
+            <PageTitleIcon
+              size={22}
+              class="title-icon"
+              style="color: {pageTitleIconColor};"
+              aria-hidden="true"
+            />
+          {/if}
+          <input
+            id="page-title-input"
+            bind:this={titleInputEl}
+            class="title-input"
+            type="text"
+            value={draftTitle}
+            oninput={onTitleInput}
+            onkeydown={onTitleKeydown}
+            placeholder={t('pages.titlePlaceholder')}
+          />
+        </div>
         <div class="actions">
+          {#if mode === 'edit'}
+            <div class="appearance-actions" aria-label="Page icon">
+              <IconSelector
+                bind:selectedIcon={pickerIcon}
+                bind:selectedColor={pickerColor}
+                compact
+                label=""
+                onchange={(event) => updatePageAppearance(event.detail)}
+              />
+              {#if selectedPage.metadata?.icon}
+                <button
+                  type="button"
+                  class="clear-icon-button"
+                  onclick={() => updatePageAppearance({ clear: true })}
+                  disabled={appearanceSaving}
+                  aria-label="Remove page icon"
+                  title="Remove page icon"
+                >
+                  <IconX size={14} />
+                </button>
+              {/if}
+            </div>
+          {/if}
           {#if statusLabel && mode === 'edit'}
             <span
               class="save-status"
@@ -780,8 +858,21 @@
     opacity: 1;
   }
 
+  .title-wrap {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+  }
+
+  :global(.title-icon) {
+    flex-shrink: 0;
+  }
+
   .title-input {
     flex: 1;
+    min-width: 0;
     font-size: 2rem;
     font-weight: 700;
     line-height: 1.2;
@@ -796,6 +887,35 @@
     display: flex;
     gap: 0.5rem;
     align-items: center;
+  }
+
+  .appearance-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+  }
+
+  .clear-icon-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    border: none;
+    border-radius: 0.25rem;
+    background: transparent;
+    color: var(--ds-text-subtle);
+    cursor: pointer;
+  }
+
+  .clear-icon-button:hover:not(:disabled) {
+    background: var(--ds-background-neutral-hovered);
+    color: var(--ds-text);
+  }
+
+  .clear-icon-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .save-status {
