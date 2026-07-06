@@ -21,6 +21,8 @@
     label = '',
     compact = false,
     colorOnly = false,
+    triggerVariant = 'default',
+    triggerText = '',
     onchange = null,
     iconMap = null,
     iconOptions = null
@@ -98,6 +100,22 @@
         title={t('editors.clickToChangeColor')}
         aria-label={t('editors.clickToChangeColor')}
       ></button>
+    {:else if triggerVariant === 'badge'}
+      <button
+        use:melt={$trigger}
+        type="button"
+        class="icon-badge-trigger"
+        style="--icon-selector-color: {selectedColor};"
+        title={triggerText || selectedIcon}
+        aria-label={triggerText || selectedIcon}
+      >
+        <span class="icon-badge-trigger__icon" aria-hidden="true">
+          <SelectedIcon size={12} />
+        </span>
+        {#if triggerText}
+          <span>{triggerText}</span>
+        {/if}
+      </button>
     {:else}
       <button
         use:melt={$trigger}
@@ -471,6 +489,32 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
+  }
+
+  .icon-badge-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    height: 1.5rem;
+    padding: 0 0.5rem;
+    border: 1px solid var(--icon-selector-color, var(--ds-border));
+    border-radius: 9999px;
+    background: color-mix(in srgb, var(--icon-selector-color, var(--ds-text-subtle)) 10%, transparent);
+    color: var(--ds-text);
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: background-color 120ms ease, border-color 120ms ease;
+  }
+
+  .icon-badge-trigger:hover {
+    background: color-mix(in srgb, var(--icon-selector-color, var(--ds-text-subtle)) 16%, transparent);
+  }
+
+  .icon-badge-trigger__icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--icon-selector-color, var(--ds-text-subtle));
   }
 
   /* Popover styles */

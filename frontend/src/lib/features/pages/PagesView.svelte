@@ -583,29 +583,6 @@
           />
         </div>
         <div class="actions">
-          {#if mode === 'edit'}
-            <div class="appearance-actions" aria-label="Page icon">
-              <IconSelector
-                bind:selectedIcon={pickerIcon}
-                bind:selectedColor={pickerColor}
-                compact
-                label=""
-                onchange={(event) => updatePageAppearance(event.detail)}
-              />
-              {#if selectedPage.metadata?.icon}
-                <button
-                  type="button"
-                  class="clear-icon-button"
-                  onclick={() => updatePageAppearance({ clear: true })}
-                  disabled={appearanceSaving}
-                  aria-label="Remove page icon"
-                  title="Remove page icon"
-                >
-                  <IconX size={14} />
-                </button>
-              {/if}
-            </div>
-          {/if}
           {#if statusLabel && mode === 'edit'}
             <span
               class="save-status"
@@ -668,6 +645,31 @@
         </div>
       </div>
       <div class="label-row" data-testid="page-label-row">
+        {#if mode === 'edit'}
+          <div class="appearance-actions" aria-label="Page icon">
+            <IconSelector
+              bind:selectedIcon={pickerIcon}
+              bind:selectedColor={pickerColor}
+              compact
+              label=""
+              triggerVariant="badge"
+              triggerText={selectedPage.metadata?.icon ? '' : 'Add icon'}
+              onchange={(event) => updatePageAppearance(event.detail)}
+            />
+            {#if selectedPage.metadata?.icon}
+              <button
+                type="button"
+                class="clear-icon-button"
+                onclick={() => updatePageAppearance({ clear: true })}
+                disabled={appearanceSaving}
+                aria-label="Remove page icon"
+                title="Remove page icon"
+              >
+                <IconX size={12} />
+              </button>
+            {/if}
+          </div>
+        {/if}
         {#each selectedPage.labels || [] as label (label.id)}
           <span
             class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs"
