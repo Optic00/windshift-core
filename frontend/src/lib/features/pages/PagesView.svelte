@@ -59,7 +59,7 @@
   let titleInputEl = $state(null);
   let pageEffectiveLevel = $state('');
   let appearanceSaving = $state(false);
-  let pickerIcon = $state('FileText');
+  let pickerIcon = $state('Plus');
   let pickerColor = $state('#3b82f6');
   let PageTitleIcon = $derived(selectedPage?.metadata?.icon ? workspaceIconMap[selectedPage.metadata.icon] : null);
   let pageTitleIconColor = $derived(selectedPage?.metadata?.color || 'var(--ds-text-subtle)');
@@ -222,7 +222,7 @@
       selectedPage = page;
       draftTitle = page.title;
       draftContent = page.content;
-      pickerIcon = page.metadata?.icon || 'FileText';
+      pickerIcon = page.metadata?.icon || 'Plus';
       pickerColor = page.metadata?.color || '#3b82f6';
       dirty = false;
       saveStatus = 'idle';
@@ -432,7 +432,7 @@
       });
       if (selectedPage?.id === updated.id) {
         selectedPage = { ...updated, content: draftContent };
-        pickerIcon = updated.metadata?.icon || 'FileText';
+        pickerIcon = updated.metadata?.icon || 'Plus';
         pickerColor = updated.metadata?.color || '#3b82f6';
       }
       pagesTreeRefresh.bump();
@@ -653,7 +653,7 @@
               compact
               label=""
               triggerVariant="badge"
-              triggerText={selectedPage.metadata?.icon ? '' : 'Add icon'}
+              triggerTitle={selectedPage.metadata?.icon ? 'Change page icon' : 'Add page icon'}
               onchange={(event) => updatePageAppearance(event.detail)}
             />
             {#if selectedPage.metadata?.icon}

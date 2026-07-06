@@ -23,6 +23,7 @@
     colorOnly = false,
     triggerVariant = 'default',
     triggerText = '',
+    triggerTitle = '',
     onchange = null,
     iconMap = null,
     iconOptions = null
@@ -106,8 +107,8 @@
         type="button"
         class="icon-badge-trigger"
         style="--icon-selector-color: {selectedColor};"
-        title={triggerText || selectedIcon}
-        aria-label={triggerText || selectedIcon}
+        title={triggerTitle || triggerText || selectedIcon}
+        aria-label={triggerTitle || triggerText || selectedIcon}
       >
         <span class="icon-badge-trigger__icon" aria-hidden="true">
           <SelectedIcon size={12} />
