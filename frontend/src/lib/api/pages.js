@@ -14,10 +14,10 @@ export const pages = {
   getPage: (workspaceId, pageId) => fetchAPI(`/workspaces/${workspaceId}/pages/${pageId}`),
 
   /** Create a new page. parentId is optional (null/undefined = root). */
-  createPage: (workspaceId, { title, content = '', parentId = null, isHome = false }) =>
+  createPage: (workspaceId, { title, content = '', parentId = null, isHome = false, metadata = {} }) =>
     fetchAPI(`/workspaces/${workspaceId}/pages`, {
       method: 'POST',
-      body: JSON.stringify({ title, content, parent_id: parentId, is_home: isHome }),
+      body: JSON.stringify({ title, content, parent_id: parentId, is_home: isHome, metadata }),
     }),
 
   /**
@@ -26,10 +26,10 @@ export const pages = {
    * server rejects it as an unknown field shape and an editor without
    * admin would otherwise be able to flip inheritance via a normal save.
    */
-  updatePage: (workspaceId, pageId, { title, content }) =>
+  updatePage: (workspaceId, pageId, { title, content, metadata = undefined }) =>
     fetchAPI(`/workspaces/${workspaceId}/pages/${pageId}`, {
       method: 'PUT',
-      body: JSON.stringify({ title, content }),
+      body: JSON.stringify({ title, content, ...(metadata === undefined ? {} : { metadata }) }),
     }),
 
   /** Archive a page (and every descendant). */

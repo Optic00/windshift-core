@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -115,10 +116,11 @@ type archivedPageResponse struct {
 // --- request payloads ---
 
 type createPageRequest struct {
-	ParentID *int   `json:"parent_id"`
-	Title    string `json:"title"`
-	Content  string `json:"content"`
-	IsHome   bool   `json:"is_home"`
+	ParentID *int            `json:"parent_id"`
+	Title    string          `json:"title"`
+	Metadata json.RawMessage `json:"metadata"`
+	Content  string          `json:"content"`
+	IsHome   bool            `json:"is_home"`
 }
 
 // updatePageRequest covers only title + content. Inheritance toggles go
@@ -126,8 +128,9 @@ type createPageRequest struct {
 // would let editors break inheritance via a normal save, and Go's zero
 // value would set it to false whenever clients omitted it.
 type updatePageRequest struct {
-	Title   string `json:"title"`
-	Content string `json:"content"`
+	Title    string           `json:"title"`
+	Content  string           `json:"content"`
+	Metadata *json.RawMessage `json:"metadata"`
 }
 
 type movePageRequest struct {
@@ -334,6 +337,7 @@ func (h *PageHandler) Create(w http.ResponseWriter, r *http.Request) {
 		WorkspaceID: workspaceID,
 		ParentID:    req.ParentID,
 		Title:       req.Title,
+		Metadata:    req.Metadata,
 		Content:     req.Content,
 		IsHome:      req.IsHome,
 	})
@@ -365,9 +369,10 @@ func (h *PageHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	updated, err := h.service.Update(user.ID, services.UpdatePageInput{
-		ID:      pageID,
-		Title:   req.Title,
-		Content: req.Content,
+		ID:       pageID,
+		Title:    req.Title,
+		Content:  req.Content,
+		Metadata: req.Metadata,
 	})
 	if err != nil {
 		h.respondServiceError(w, r, err)
@@ -821,6 +826,8 @@ func (h *PageHandler) respondServiceError(w http.ResponseWriter, r *http.Request
 		respondNotFound(w, r, "Page")
 	case errors.Is(err, services.ErrPageTitleRequired):
 		respondValidationError(w, r, "title is required")
+	case errors.Is(err, services.ErrPageMetadataInvalid):
+		respondValidationError(w, r, "metadata must be a JSON object")
 	case errors.Is(err, services.ErrPageParentMismatch):
 		respondValidationError(w, r, "parent belongs to a different workspace")
 	case errors.Is(err, services.ErrPageCycle):

@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -80,6 +81,7 @@ var (
 	ErrPageDepthExceeded    = errors.New("page tree depth limit exceeded")
 	ErrPageSlugConflict     = errors.New("slug conflicts with an existing sibling page")
 	ErrPageRevisionMismatch = errors.New("revision does not belong to the target page")
+	ErrPageMetadataInvalid  = errors.New("page metadata must be a JSON object")
 )
 
 // CreatePageInput is the request shape for Create. Permission inheritance
@@ -89,6 +91,7 @@ type CreatePageInput struct {
 	WorkspaceID int
 	ParentID    *int
 	Title       string
+	Metadata    json.RawMessage
 	Content     string
 	IsHome      bool
 	Rank        *string
@@ -101,6 +104,10 @@ func (s *PageService) Create(actorID int, in CreatePageInput) (*models.Page, err
 	title := sanitize.PlainTextField.Sanitize(in.Title)
 	if title == "" {
 		return nil, ErrPageTitleRequired
+	}
+	metadata, err := normalizePageMetadata(in.Metadata)
+	if err != nil {
+		return nil, err
 	}
 
 	content := sanitize.LongDocument.Sanitize(in.Content)
@@ -137,6 +144,7 @@ func (s *PageService) Create(actorID int, in CreatePageInput) (*models.Page, err
 			ParentID:           parentID,
 			Title:              title,
 			Slug:               slug,
+			Metadata:           metadata,
 			Content:            content,
 			ContentHash:        hash,
 			Excerpt:            excerpt,
@@ -188,9 +196,10 @@ func (s *PageService) GetByID(id int) (*models.Page, error) {
 // are absent for the same reason: reordering goes through Move /
 // SetFracIndex so a normal save cannot clear an existing ordering.
 type UpdatePageInput struct {
-	ID      int
-	Title   string
-	Content string
+	ID       int
+	Title    string
+	Content  string
+	Metadata *json.RawMessage
 }
 
 // Update overwrites a page's title/content and recomputes the derived
@@ -205,6 +214,14 @@ func (s *PageService) Update(actorID int, in UpdatePageInput) (*models.Page, err
 	content := sanitize.LongDocument.Sanitize(in.Content)
 	excerpt := deriveExcerpt(content)
 	hash := contentHash(content)
+	var metadata *string
+	if in.Metadata != nil {
+		normalized, metaErr := normalizePageMetadata(*in.Metadata)
+		if metaErr != nil {
+			return nil, metaErr
+		}
+		metadata = &normalized
+	}
 
 	return database.WithTxResult(s.db, func(tx database.Tx) (*models.Page, error) {
 		existing, err := s.pages.GetByIDTx(tx, in.ID)
@@ -235,6 +252,7 @@ func (s *PageService) Update(actorID int, in UpdatePageInput) (*models.Page, err
 			ContentHash:        hash,
 			Excerpt:            excerpt,
 			InheritPermissions: existing.InheritPermissions,
+			Metadata:           metadata,
 			UpdatedBy:          actorID,
 		})
 		if err != nil {
@@ -1151,6 +1169,21 @@ func makeSlug(title string) string {
 		out = strings.TrimRight(out[:80], "-")
 	}
 	return out
+}
+
+func normalizePageMetadata(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return "{}", nil
+	}
+	var obj map[string]interface{}
+	if err := json.Unmarshal(raw, &obj); err != nil || obj == nil {
+		return "", ErrPageMetadataInvalid
+	}
+	clean, err := json.Marshal(obj)
+	if err != nil {
+		return "", ErrPageMetadataInvalid
+	}
+	return string(clean), nil
 }
 
 // deriveExcerpt produces a short plain-text excerpt by stripping common

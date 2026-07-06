@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS pages (
     parent_id INTEGER,
     title TEXT NOT NULL,
     slug TEXT NOT NULL,
+    metadata TEXT NOT NULL DEFAULT '{}',
     content TEXT NOT NULL DEFAULT '',
     content_hash TEXT NOT NULL DEFAULT '',
     excerpt TEXT NOT NULL DEFAULT '',

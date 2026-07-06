@@ -1,6 +1,7 @@
 package dto
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -11,24 +12,25 @@ import (
 // page. Fields mirror models.Page minus internal-only columns and with
 // HATEOAS-style links for the CLI to discover related endpoints.
 type PageResponse struct {
-	ID                 int        `json:"id"`
-	WorkspaceID        int        `json:"workspace_id"`
-	ParentID           *int       `json:"parent_id,omitempty"`
-	Title              string     `json:"title"`
-	Slug               string     `json:"slug"`
-	Content            string     `json:"content,omitempty"`
-	Excerpt            string     `json:"excerpt,omitempty"`
-	ContentHash        string     `json:"content_hash,omitempty"`
-	Path               string     `json:"path"`
-	Depth              int        `json:"depth"`
-	IsHome             bool       `json:"is_home"`
-	InheritPermissions bool       `json:"inherit_permissions"`
-	CreatedBy          int        `json:"created_by"`
-	UpdatedBy          *int       `json:"updated_by,omitempty"`
-	ArchivedBy         *int       `json:"archived_by,omitempty"`
-	CreatedAt          time.Time  `json:"created_at"`
-	UpdatedAt          time.Time  `json:"updated_at"`
-	ArchivedAt         *time.Time `json:"archived_at,omitempty"`
+	ID                 int                    `json:"id"`
+	WorkspaceID        int                    `json:"workspace_id"`
+	ParentID           *int                   `json:"parent_id,omitempty"`
+	Title              string                 `json:"title"`
+	Slug               string                 `json:"slug"`
+	Metadata           map[string]interface{} `json:"metadata"`
+	Content            string                 `json:"content,omitempty"`
+	Excerpt            string                 `json:"excerpt,omitempty"`
+	ContentHash        string                 `json:"content_hash,omitempty"`
+	Path               string                 `json:"path"`
+	Depth              int                    `json:"depth"`
+	IsHome             bool                   `json:"is_home"`
+	InheritPermissions bool                   `json:"inherit_permissions"`
+	CreatedBy          int                    `json:"created_by"`
+	UpdatedBy          *int                   `json:"updated_by,omitempty"`
+	ArchivedBy         *int                   `json:"archived_by,omitempty"`
+	CreatedAt          time.Time              `json:"created_at"`
+	UpdatedAt          time.Time              `json:"updated_at"`
+	ArchivedAt         *time.Time             `json:"archived_at,omitempty"`
 
 	// Labels carries the workspace page-labels currently attached to the
 	// page. Populated by the service layer when the page-label repository
@@ -75,6 +77,7 @@ func MapPageToResponse(p *models.Page, baseURL string) PageResponse {
 		ParentID:           p.ParentID,
 		Title:              p.Title,
 		Slug:               p.Slug,
+		Metadata:           map[string]interface{}{},
 		Content:            p.Content,
 		Excerpt:            p.Excerpt,
 		ContentHash:        p.ContentHash,
@@ -89,6 +92,12 @@ func MapPageToResponse(p *models.Page, baseURL string) PageResponse {
 		UpdatedAt:          p.UpdatedAt,
 		ArchivedAt:         p.ArchivedAt,
 		Labels:             p.Labels,
+	}
+	if len(p.Metadata) > 0 && json.Valid(p.Metadata) {
+		_ = json.Unmarshal(p.Metadata, &resp.Metadata)
+	}
+	if resp.Metadata == nil {
+		resp.Metadata = map[string]interface{}{}
 	}
 	if resp.Labels == nil {
 		resp.Labels = []models.PageLabel{}

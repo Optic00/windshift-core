@@ -32,7 +32,7 @@
   import { uiStore } from '../stores/ui.svelte.js';
 
   const MIN_WIDTH = 180;
-  const MAX_WIDTH = 320;
+  const MAX_WIDTH = 520;
   const COLLAPSE_THRESHOLD = 100;
   const COLLAPSED_WIDTH = 48;
 

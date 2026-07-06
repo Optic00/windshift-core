@@ -54,6 +54,7 @@ describe('pages API client', () => {
       content: 'body',
       parent_id: 5,
       is_home: true,
+      metadata: {},
     });
   });
 
@@ -64,6 +65,7 @@ describe('pages API client', () => {
     expect(body.parent_id).toBeNull();
     expect(body.is_home).toBe(false);
     expect(body.content).toBe('');
+    expect(body.metadata).toEqual({});
   });
 
   test('updatePage → PUT with title and content only', async () => {

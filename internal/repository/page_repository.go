@@ -3,6 +3,7 @@ package repository
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -30,7 +31,7 @@ func NewPageRepository(db database.Database) *PageRepository {
 
 // pageColumns lists every column of the pages table in the order used by
 // scanPage. Centralized so SELECT and Scan stay in sync.
-const pageColumns = `id, workspace_id, parent_id, title, slug, content, content_hash,
+const pageColumns = `id, workspace_id, parent_id, title, slug, metadata, content, content_hash,
 	excerpt, created_by, updated_by, archived_by, is_home, inherit_permissions,
 	rank, frac_index, path, depth, created_at, updated_at, archived_at`
 
@@ -41,13 +42,16 @@ const pageColumns = `id, workspace_id, parent_id, title, slug, content, content_
 // de-TOASTed on Postgres) nor allocated into a Go string — the win that
 // stripping the fields *after* the read can't give a workspace with
 // thousands of pages. (WI-407.)
-const pageTreeColumns = `id, workspace_id, parent_id, title, slug,
+const pageTreeColumns = `id, workspace_id, parent_id, title, slug, metadata,
 	created_by, updated_by, archived_by, is_home, inherit_permissions,
 	rank, frac_index, path, depth, created_at, updated_at, archived_at`
 
 // applyPageNullables folds the nullable columns shared by every page scan
 // into the Page. Kept separate so scanPage and scanPageMeta stay in sync.
 func applyPageNullables(p *models.Page, parentID, updatedBy, archivedBy sql.NullInt64, rank, fracIndex sql.NullString, archivedAt sql.NullTime) {
+	if len(p.Metadata) == 0 || !json.Valid(p.Metadata) {
+		p.Metadata = json.RawMessage(`{}`)
+	}
 	if parentID.Valid {
 		v := int(parentID.Int64)
 		p.ParentID = &v
@@ -80,7 +84,7 @@ func scanPage(s rowScanner) (*models.Page, error) {
 	var archivedAt sql.NullTime
 
 	if err := s.Scan(
-		&p.ID, &p.WorkspaceID, &parentID, &p.Title, &p.Slug, &p.Content, &p.ContentHash,
+		&p.ID, &p.WorkspaceID, &parentID, &p.Title, &p.Slug, &p.Metadata, &p.Content, &p.ContentHash,
 		&p.Excerpt, &p.CreatedBy, &updatedBy, &archivedBy, &p.IsHome, &p.InheritPermissions,
 		&rank, &fracIndex, &p.Path, &p.Depth, &p.CreatedAt, &p.UpdatedAt, &archivedAt,
 	); err != nil {
@@ -101,7 +105,7 @@ func scanPageMeta(s rowScanner) (*models.Page, error) {
 	var archivedAt sql.NullTime
 
 	if err := s.Scan(
-		&p.ID, &p.WorkspaceID, &parentID, &p.Title, &p.Slug,
+		&p.ID, &p.WorkspaceID, &parentID, &p.Title, &p.Slug, &p.Metadata,
 		&p.CreatedBy, &updatedBy, &archivedBy, &p.IsHome, &p.InheritPermissions,
 		&rank, &fracIndex, &p.Path, &p.Depth, &p.CreatedAt, &p.UpdatedAt, &archivedAt,
 	); err != nil {
@@ -119,6 +123,7 @@ type CreateInput struct {
 	ParentID           *int
 	Title              string
 	Slug               string
+	Metadata           string
 	Content            string
 	ContentHash        string
 	Excerpt            string
@@ -137,13 +142,13 @@ func (r *PageRepository) CreateTx(tx database.Tx, in CreateInput) (int, error) {
 	var id int
 	err := tx.QueryRow(`
 		INSERT INTO pages (
-			workspace_id, parent_id, title, slug, content, content_hash, excerpt,
+			workspace_id, parent_id, title, slug, metadata, content, content_hash, excerpt,
 			created_by, updated_by, is_home, inherit_permissions,
 			rank, frac_index, path, depth, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		RETURNING id
 	`,
-		in.WorkspaceID, nullInt(in.ParentID), in.Title, in.Slug, in.Content, in.ContentHash, in.Excerpt,
+		in.WorkspaceID, nullInt(in.ParentID), in.Title, in.Slug, in.Metadata, in.Content, in.ContentHash, in.Excerpt,
 		in.CreatedBy, in.CreatedBy, in.IsHome, in.InheritPermissions,
 		nullString(in.Rank), nullString(in.FracIndex), in.Path, in.Depth, now, now,
 	).Scan(&id)
@@ -244,6 +249,7 @@ type UpdateInput struct {
 	ContentHash        string
 	Excerpt            string
 	InheritPermissions bool
+	Metadata           *string
 	UpdatedBy          int
 	// Unarchive clears archived_at/archived_by while applying the update.
 	// Used by restore; normal title/content edits leave archive state alone.
@@ -267,8 +273,13 @@ func (r *PageRepository) UpdateTx(tx database.Tx, in UpdateInput) error {
 		    inherit_permissions = ?,
 		    updated_by = ?,
 		    updated_at = ?`
-	args := make([]interface{}, 0, 9)
+	args := make([]interface{}, 0, 10)
 	args = append(args, in.Title, in.Slug, in.Content, in.ContentHash, in.Excerpt, in.InheritPermissions, in.UpdatedBy, now)
+	if in.Metadata != nil {
+		query += `,
+		    metadata = ?`
+		args = append(args, *in.Metadata)
+	}
 	if in.Unarchive {
 		query += `,
 		    archived_at = NULL,

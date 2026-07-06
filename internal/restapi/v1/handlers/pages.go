@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -43,10 +44,11 @@ func NewPageHandler(db database.Database, permissionService *services.Permission
 // --- request payloads ---
 
 type pageCreateRequest struct {
-	Title    string `json:"title"`
-	Content  string `json:"content"`
-	ParentID *int   `json:"parent_id,omitempty"`
-	IsHome   bool   `json:"is_home,omitempty"`
+	Title    string                 `json:"title"`
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
+	Content  string                 `json:"content"`
+	ParentID *int                   `json:"parent_id,omitempty"`
+	IsHome   bool                   `json:"is_home,omitempty"`
 }
 
 // pageUpdateRequest is a partial-update payload: only fields supplied get
@@ -55,8 +57,9 @@ type pageCreateRequest struct {
 // yet on v1; the cookie surface has it). Allowing it here would let an
 // editor flip the flag via a normal save.
 type pageUpdateRequest struct {
-	Title   *string `json:"title,omitempty"`
-	Content *string `json:"content,omitempty"`
+	Title    *string                 `json:"title,omitempty"`
+	Metadata *map[string]interface{} `json:"metadata,omitempty"`
+	Content  *string                 `json:"content,omitempty"`
 }
 
 type pageMoveRequest struct {
@@ -73,6 +76,17 @@ type pageGrantPermissionRequest struct {
 
 type pageSetInheritanceRequest struct {
 	InheritPermissions bool `json:"inherit_permissions"`
+}
+
+func marshalPageMetadata(metadata map[string]interface{}) json.RawMessage {
+	if metadata == nil {
+		return nil
+	}
+	b, err := json.Marshal(metadata)
+	if err != nil {
+		return nil
+	}
+	return json.RawMessage(b)
 }
 
 // --- response shapes ---
@@ -320,6 +334,7 @@ func (h *PageHandler) Create(w http.ResponseWriter, r *http.Request) {
 		WorkspaceID: wsID,
 		ParentID:    req.ParentID,
 		Title:       req.Title,
+		Metadata:    marshalPageMetadata(req.Metadata),
 		Content:     req.Content,
 		IsHome:      req.IsHome,
 	})
@@ -371,6 +386,10 @@ func (h *PageHandler) Update(w http.ResponseWriter, r *http.Request) {
 		ID:      pageID,
 		Title:   existing.Title,
 		Content: existing.Content,
+	}
+	if req.Metadata != nil {
+		metadata := marshalPageMetadata(*req.Metadata)
+		in.Metadata = &metadata
 	}
 	if req.Title != nil {
 		in.Title = *req.Title
@@ -879,6 +898,8 @@ func (h *PageHandler) respondPageServiceError(w http.ResponseWriter, r *http.Req
 		h.RespondError(w, r, restapi.NewAPIError(http.StatusConflict, restapi.ErrCodeValidationFailed, "slug conflicts with an existing sibling page"))
 	case errors.Is(err, services.ErrPageRevisionMismatch):
 		h.RespondNotFound(w, r)
+	case errors.Is(err, services.ErrPageMetadataInvalid):
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, "metadata must be a JSON object"))
 	case errors.Is(err, services.ErrPageInvalidPrincipal):
 		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, "principal_type must be user, group, or role"))
 	case errors.Is(err, services.ErrPageInvalidLevel):

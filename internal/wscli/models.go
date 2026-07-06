@@ -1,6 +1,9 @@
 package wscli
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // ============================================
 // Pagination
@@ -613,24 +616,25 @@ type TestResultUpdateRequest struct {
 // Page mirrors dto.PageResponse on the v1 surface; fields are kept
 // lowercase JSON to match what the server emits.
 type Page struct {
-	ID                 int        `json:"id"`
-	WorkspaceID        int        `json:"workspace_id"`
-	ParentID           *int       `json:"parent_id,omitempty"`
-	Title              string     `json:"title"`
-	Slug               string     `json:"slug"`
-	Content            string     `json:"content,omitempty"`
-	Excerpt            string     `json:"excerpt,omitempty"`
-	ContentHash        string     `json:"content_hash,omitempty"`
-	Path               string     `json:"path"`
-	Depth              int        `json:"depth"`
-	IsHome             bool       `json:"is_home"`
-	InheritPermissions bool       `json:"inherit_permissions"`
-	CreatedBy          int        `json:"created_by"`
-	UpdatedBy          *int       `json:"updated_by,omitempty"`
-	ArchivedBy         *int       `json:"archived_by,omitempty"`
-	CreatedAt          time.Time  `json:"created_at"`
-	UpdatedAt          time.Time  `json:"updated_at"`
-	ArchivedAt         *time.Time `json:"archived_at,omitempty"`
+	ID                 int             `json:"id"`
+	WorkspaceID        int             `json:"workspace_id"`
+	ParentID           *int            `json:"parent_id,omitempty"`
+	Title              string          `json:"title"`
+	Slug               string          `json:"slug"`
+	Metadata           json.RawMessage `json:"metadata"`
+	Content            string          `json:"content,omitempty"`
+	Excerpt            string          `json:"excerpt,omitempty"`
+	ContentHash        string          `json:"content_hash,omitempty"`
+	Path               string          `json:"path"`
+	Depth              int             `json:"depth"`
+	IsHome             bool            `json:"is_home"`
+	InheritPermissions bool            `json:"inherit_permissions"`
+	CreatedBy          int             `json:"created_by"`
+	UpdatedBy          *int            `json:"updated_by,omitempty"`
+	ArchivedBy         *int            `json:"archived_by,omitempty"`
+	CreatedAt          time.Time       `json:"created_at"`
+	UpdatedAt          time.Time       `json:"updated_at"`
+	ArchivedAt         *time.Time      `json:"archived_at,omitempty"`
 
 	// Labels carries any page labels attached to this page (always non-nil
 	// in JSON). Lets `ws page list --label foo` filter client-side without

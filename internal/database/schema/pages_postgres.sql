@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS pages (
     parent_id INTEGER REFERENCES pages(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
     slug TEXT NOT NULL,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     content TEXT NOT NULL DEFAULT '',
     content_hash TEXT NOT NULL DEFAULT '',
     excerpt TEXT NOT NULL DEFAULT '',

@@ -1,31 +1,35 @@
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Page is a workspace knowledge (wiki) page authored in Markdown.
 // Pages form a per-workspace tree via parent_id. Permission evaluation
 // uses the per-page ACL (page_permissions) with workspace-role fallback.
 type Page struct {
-	ID                 int        `json:"id" db:"id"`
-	WorkspaceID        int        `json:"workspace_id" db:"workspace_id"`
-	ParentID           *int       `json:"parent_id" db:"parent_id"`
-	Title              string     `json:"title" db:"title"`
-	Slug               string     `json:"slug" db:"slug"`
-	Content            string     `json:"content" db:"content"`
-	ContentHash        string     `json:"content_hash" db:"content_hash"`
-	Excerpt            string     `json:"excerpt" db:"excerpt"`
-	CreatedBy          int        `json:"created_by" db:"created_by"`
-	UpdatedBy          *int       `json:"updated_by" db:"updated_by"`
-	ArchivedBy         *int       `json:"archived_by" db:"archived_by"`
-	IsHome             bool       `json:"is_home" db:"is_home"`
-	InheritPermissions bool       `json:"inherit_permissions" db:"inherit_permissions"`
-	Rank               *string    `json:"rank" db:"rank"`
-	FracIndex          *string    `json:"frac_index" db:"frac_index"`
-	Path               string     `json:"path" db:"path"`
-	Depth              int        `json:"depth" db:"depth"`
-	CreatedAt          time.Time  `json:"created_at" db:"created_at"`
-	UpdatedAt          time.Time  `json:"updated_at" db:"updated_at"`
-	ArchivedAt         *time.Time `json:"archived_at" db:"archived_at"`
+	ID                 int             `json:"id" db:"id"`
+	WorkspaceID        int             `json:"workspace_id" db:"workspace_id"`
+	ParentID           *int            `json:"parent_id" db:"parent_id"`
+	Title              string          `json:"title" db:"title"`
+	Slug               string          `json:"slug" db:"slug"`
+	Metadata           json.RawMessage `json:"metadata" db:"metadata"`
+	Content            string          `json:"content" db:"content"`
+	ContentHash        string          `json:"content_hash" db:"content_hash"`
+	Excerpt            string          `json:"excerpt" db:"excerpt"`
+	CreatedBy          int             `json:"created_by" db:"created_by"`
+	UpdatedBy          *int            `json:"updated_by" db:"updated_by"`
+	ArchivedBy         *int            `json:"archived_by" db:"archived_by"`
+	IsHome             bool            `json:"is_home" db:"is_home"`
+	InheritPermissions bool            `json:"inherit_permissions" db:"inherit_permissions"`
+	Rank               *string         `json:"rank" db:"rank"`
+	FracIndex          *string         `json:"frac_index" db:"frac_index"`
+	Path               string          `json:"path" db:"path"`
+	Depth              int             `json:"depth" db:"depth"`
+	CreatedAt          time.Time       `json:"created_at" db:"created_at"`
+	UpdatedAt          time.Time       `json:"updated_at" db:"updated_at"`
+	ArchivedAt         *time.Time      `json:"archived_at" db:"archived_at"`
 
 	// Labels is populated by the page-label preload helpers
 	// (PageLabelRepository.LoadForPages); always an empty slice in the JSON

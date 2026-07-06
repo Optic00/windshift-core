@@ -1691,6 +1691,18 @@ var Catalog = []Migration{
 				ON milestones(is_global, workspace_id, category_id, position);
 		`,
 	},
+	{
+		Version:       "20260706_pages_metadata",
+		Name:          "Add pages.metadata JSON object",
+		CheckSQLite:   sqliteColumnCheck("pages", "metadata"),
+		CheckPostgres: pgColumnCheck("pages", "metadata"),
+		SQLite: `
+			ALTER TABLE pages ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}';
+		`,
+		Postgres: `
+			ALTER TABLE pages ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {

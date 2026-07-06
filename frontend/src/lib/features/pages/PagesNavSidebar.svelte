@@ -26,6 +26,7 @@
   import PagePermissionsDialog from './PagePermissionsDialog.svelte';
   import PageLabelPicker from './PageLabelPicker.svelte';
   import { workspacePermissions } from '../../stores/workspacePermissions.svelte.js';
+  import { workspaceIconMap } from '../../utils/icons.js';
   import { pagesTreeRefresh } from './pagesTreeRefresh.svelte.js';
   import { pagesFocusTitle } from './pagesFocusTitle.svelte.js';
   import { pagesFilter } from './pagesFilter.svelte.js';
@@ -738,6 +739,8 @@
         {@const hasChildren = (childCountById.get(page.id) || 0) > 0}
         {@const isExpanded = expandedIds.has(page.id)}
         {@const dimmed = isAncestorOnly(page)}
+        {@const PageIcon = workspaceIconMap[page.metadata?.icon] || Book}
+        {@const pageColor = page.metadata?.color || 'var(--ds-text-subtle)'}
         <li
           class="tree-item"
           class:active={activePageId === page.id}
@@ -779,7 +782,8 @@
             <span class="chevron chevron--placeholder" aria-hidden="true"></span>
           {/if}
           <button class="page-button" type="button" onclick={() => selectPage(page.id)}>
-            {page.title}
+            <PageIcon size={14} class="page-button__icon" style="color: {pageColor};" aria-hidden="true" />
+            <span class="page-button__title">{page.title}</span>
           </button>
           <span class="kebab-slot">
             <Tooltip content={t('common.actions')} placement="bottom" class="inline-flex">
@@ -1073,6 +1077,9 @@
   .page-button {
     flex: 1;
     min-width: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
     text-align: left;
     background: transparent;
     border: none;
@@ -1082,6 +1089,15 @@
     cursor: pointer;
     border-radius: 0.25rem;
     white-space: nowrap;
+    overflow: hidden;
+  }
+
+  :global(.page-button__icon) {
+    flex-shrink: 0;
+  }
+
+  .page-button__title {
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
   }
