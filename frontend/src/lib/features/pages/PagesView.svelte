@@ -651,6 +651,7 @@
               bind:selectedIcon={pickerIcon}
               bind:selectedColor={pickerColor}
               compact
+              hideLabel
               label=""
               triggerVariant="badge"
               triggerTitle={selectedPage.metadata?.icon ? 'Change page icon' : 'Add page icon'}

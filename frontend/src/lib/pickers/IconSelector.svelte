@@ -19,6 +19,7 @@
     selectedIcon = $bindable('Package'),
     selectedColor = $bindable('#3b82f6'),
     label = '',
+    hideLabel = false,
     compact = false,
     colorOnly = false,
     triggerVariant = 'default',
@@ -33,7 +34,7 @@
   const resolvedIconMap = $derived(iconMap || workspaceIconMap);
   const resolvedIconOptions = $derived(iconOptions || workspaceIconOptions);
 
-  const resolvedLabel = $derived(label || (colorOnly ? '' : t('pickers.iconAndColor')));
+  const resolvedLabel = $derived(hideLabel ? '' : label || (colorOnly ? '' : t('pickers.iconAndColor')));
 
   // Search functionality
   let searchQuery = $state('');
