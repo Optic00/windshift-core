@@ -202,8 +202,10 @@ func (r *RunnerRepository) RevokeInstance(ctx context.Context, id int, now time.
 
 // RevokeStaleInstances marks active runners whose heartbeat has gone stale
 // (older than staleBefore, or never seen and registered before staleBefore)
-// as revoked. Returns the number evicted. Pairs with
-// AgentRunRepository.ReapStaleRuns in the lease reaper (WI-141).
+// as revoked. Returns the number evicted. Kept as a repository primitive for
+// explicit maintenance/admin use; the normal lease reaper no longer calls it
+// automatically, so idle runners can restart with their persisted credential
+// after the liveness window (WI-545).
 func (r *RunnerRepository) RevokeStaleInstances(ctx context.Context, staleBefore, now time.Time) (int, error) {
 	res, err := r.db.ExecWriteContext(ctx, `
 		UPDATE runner_instances

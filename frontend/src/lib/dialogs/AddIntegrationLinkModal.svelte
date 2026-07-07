@@ -12,6 +12,8 @@
 
   let { itemId, oncreated, onclose } = $props();
 
+  const LINKABLE_PROVIDER_TYPES = new Set(['notion']);
+
   let loading = $state(true);
   let providers = $state([]);
   let connections = $state([]);
@@ -37,9 +39,13 @@
       providers = avail || [];
       connections = conns || [];
 
-      // Only show providers the user is connected to
+      // Only show connected providers that support item page/document links.
       const connectedProviderIds = new Set(connections.map(c => c.integration_provider_id));
-      providers = providers.filter(p => connectedProviderIds.has(p.id));
+      providers = providers.filter(
+        (p) =>
+          LINKABLE_PROVIDER_TYPES.has(p.provider_type?.toLowerCase()) &&
+          connectedProviderIds.has(p.id)
+      );
 
       if (providers.length === 1) {
         selectedProviderId = providers[0].id;

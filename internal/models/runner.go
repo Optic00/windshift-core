@@ -37,7 +37,9 @@ type RunnerRegistrationToken struct {
 // RunnerInstance is one registered runner: its pool, a per-instance
 // control-plane credential (hashed), and heartbeat liveness. Revoking one
 // instance evicts a single runner without touching the pool's registration
-// token.
+// token. Stale heartbeat means offline/dead for scheduling, not automatic
+// credential revocation; this lets idle hosts restart without a fresh one-time
+// registration token (WI-545).
 type RunnerInstance struct {
 	ID               int        `json:"id"`
 	PoolCapabilityID int        `json:"pool_capability_id"`

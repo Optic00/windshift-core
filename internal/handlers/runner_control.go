@@ -101,6 +101,14 @@ func (h *RunnerControlHandler) Claim(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Treat a successful claim poll as liveness too (WI-545). This prevents a
+	// runner whose heartbeat loop was delayed by an idle/server outage window
+	// from claiming work with an old last_heartbeat_at and then having that work
+	// reaped before the next heartbeat tick.
+	if err := h.registry.Heartbeat(r.Context(), inst.ID); err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
 	// Enforce the pool's max-concurrency quota before handing out work
 	// (WI-147). Soft cap: count + claim aren't atomic, so a burst of
 	// concurrent claimers can overshoot by at most their count — acceptable

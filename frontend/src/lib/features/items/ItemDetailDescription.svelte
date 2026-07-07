@@ -23,6 +23,8 @@
     attachments = [],
     diagrams = [],
     showLinkButton = true,
+    showDiagramButton = true,
+    showAIActions = true,
     manualActions = [],
     canCreate = false,
     onsavefield = undefined,
@@ -239,15 +241,17 @@
           }}
         />
       </label>
-      <button
-        class="action-btn inline-flex items-center gap-1.5 px-2 py-1.5 rounded text-xs transition-all"
-        style="color: var(--ds-text-subtle);"
-        onclick={handleNewDiagram}
-        title={t('items.newDiagram')}
-      >
-        <PenTool class="w-4 h-4 flex-shrink-0" />
-        <span class="action-label">{t('items.diagram')}</span>
-      </button>
+      {#if showDiagramButton}
+        <button
+          class="action-btn inline-flex items-center gap-1.5 px-2 py-1.5 rounded text-xs transition-all"
+          style="color: var(--ds-text-subtle);"
+          onclick={handleNewDiagram}
+          title={t('items.newDiagram')}
+        >
+          <PenTool class="w-4 h-4 flex-shrink-0" />
+          <span class="action-label">{t('items.diagram')}</span>
+        </button>
+      {/if}
     {/if}
     {#if manualActions.length > 0}
       <div class="relative" bind:this={actionsMenuRef}>
@@ -280,7 +284,7 @@
         {/if}
       </div>
     {/if}
-    {#if aiStore.available}
+    {#if showAIActions && aiStore.available}
       <AIActionsDropdown
         {item}
         {availableSubIssueTypes}

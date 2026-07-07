@@ -14,8 +14,13 @@ import (
 // RunnerLeaseReaper is the liveness backstop for remote agent runs
 // (Initiative WI-141). A remote runner heartbeats on an interval; if it dies
 // mid-run its heartbeat goes stale and its in-flight runs would otherwise
-// hang in 'running' forever. On each tick this sweeper fails those runs and
-// revokes the dead runner instances.
+// hang in 'running' forever. On each tick this sweeper fails those runs.
+//
+// Stale runner instances are intentionally NOT auto-revoked (WI-545): an idle
+// runner host may be stopped for longer than the liveness window, then restart
+// with its persisted per-instance credential. Auto-revoking would force a new
+// one-time registration token and make otherwise healthy pools stall after
+// inactivity. Manual admin revocation remains the eviction path.
 //
 // It mirrors the other in-process schedulers' lifecycle: Start/Stop are wired
 // into server.go alongside cfvCleanupScheduler et al.
@@ -125,9 +130,9 @@ func (s *RunnerLeaseReaper) tick() {
 }
 
 // Sweep runs one reap pass: fail runs of stale runners, fail runs that have
-// exceeded the max-run-duration backstop, then revoke the stale runners, then
-// flag remote runs that have sat queued past the stall threshold. Exported
-// for testing. Returns the reap/revoke counts.
+// exceeded the max-run-duration backstop, then flag remote runs that have sat
+// queued past the stall threshold. Exported for testing. The revokedInstances
+// return is kept for API/log compatibility and is always 0.
 func (s *RunnerLeaseReaper) Sweep(ctx context.Context) (reapedRuns, revokedInstances int, err error) {
 	now := s.now()
 	staleBefore := now.Add(-s.staleAfter)
@@ -147,10 +152,11 @@ func (s *RunnerLeaseReaper) Sweep(ctx context.Context) (reapedRuns, revokedInsta
 			"count", overdue, "max_run_duration", s.maxRunDuration)
 	}
 	reapedRuns += overdue
-	revokedInstances, err = s.runners.RevokeStaleInstances(ctx, staleBefore, now)
-	if err != nil {
-		return reapedRuns, revokedInstances, err
-	}
+	// Do not revoke stale runner instances automatically (WI-545). ReapStaleRuns
+	// above is enough to free pool capacity for any in-flight work owned by a
+	// dead runner, while preserving the runner's persisted credential so an idle
+	// host can come back without minting a fresh registration token.
+	revokedInstances = 0
 	s.flagStalledQueuedRuns(ctx, now, staleBefore)
 	return reapedRuns, revokedInstances, nil
 }

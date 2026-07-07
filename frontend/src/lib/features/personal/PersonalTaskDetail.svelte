@@ -462,6 +462,8 @@
           {saving}
           availableSubIssueTypes={[]}
           showLinkButton={false}
+          showDiagramButton={false}
+          showAIActions={false}
           {attachments}
           diagrams={[]}
           onsavefield={handleSaveField}

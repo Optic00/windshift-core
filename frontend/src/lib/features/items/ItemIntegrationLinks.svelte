@@ -12,6 +12,8 @@
 
   let { itemId, onaddlink } = $props();
 
+  const LINKABLE_PROVIDER_TYPES = new Set(['notion']);
+
   let loading = $state(true);
   let links = $state([]);
   let expanded = $state(true);
@@ -23,20 +25,24 @@
 
   onMount(async () => {
     await checkStatus();
-    if (hasConnection) {
-      await loadLinks();
-    } else {
-      loading = false;
-    }
+    await loadLinks();
   });
 
   async function checkStatus() {
     try {
       const available = await api.userIntegrations.getAvailableProviders() || [];
-      hasProviders = available.length > 0;
+      const linkableProviders = available.filter((provider) =>
+        LINKABLE_PROVIDER_TYPES.has(provider.provider_type?.toLowerCase())
+      );
+      hasProviders = linkableProviders.length > 0;
       if (hasProviders) {
         const connections = await api.userIntegrations.getConnections() || [];
-        hasConnection = connections.length > 0;
+        const connectedProviderIds = new Set(
+          connections.map((connection) => connection.integration_provider_id)
+        );
+        hasConnection = linkableProviders.some((provider) =>
+          connectedProviderIds.has(provider.id)
+        );
       }
     } catch (err) {
       console.error('Failed to check integration status:', err);
@@ -108,7 +114,7 @@
   }
 </script>
 
-{#if hasProviders || checkingStatus}
+{#if hasProviders || links.length > 0 || checkingStatus}
 <div class="mb-4">
   <div class="border-t my-4" style="border-color: var(--ds-border);"></div>
 
