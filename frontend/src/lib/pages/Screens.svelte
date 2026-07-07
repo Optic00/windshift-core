@@ -453,6 +453,7 @@
                 <div class="flex items-center gap-3 flex-shrink-0">
                   <Checkbox
                     checked={field.is_required}
+                    disabled={!field.is_required && !screenEditorStore.canFieldBeRequired(field)}
                     onchange={() => screenEditorStore.toggleFieldRequired(index)}
                     label={t('screensPage.required')}
                     size="small"

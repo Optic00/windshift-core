@@ -208,6 +208,10 @@
         }
 
         let result = await api.items.create(formData);
+        if (formData.personal_label_ids?.length > 0) {
+          const labels = await api.personalLabels.setForItem(result.id, formData.personal_label_ids);
+          result = { ...result, personal_labels: labels || [] };
+        }
         const originalDescription = formData.description || '';
         const updatedDescription = await uploadPendingDescriptionImages(result.id, originalDescription);
         if (updatedDescription !== originalDescription) {

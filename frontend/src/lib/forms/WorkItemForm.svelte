@@ -1,5 +1,5 @@
 <script>
-  import { MoreHorizontal, Calendar, Flag, User, Layers, ChevronDown, FileText } from '@lucide/svelte';
+  import { MoreHorizontal, Calendar, Flag, User, Layers, ChevronDown, FileText, Briefcase, Hash, Clock } from '@lucide/svelte';
   import { itemTypeIconMap } from '../utils/icons.js';
   import { workItemFormStore } from '../stores/workItemFormStore.svelte.js';
   import { workspacesStore } from '../stores';
@@ -11,6 +11,7 @@
   import PriorityPicker from '../pickers/PriorityPicker.svelte';
   import MilestoneCombobox from '../pickers/MilestoneCombobox.svelte';
   import UserPicker from '../pickers/UserPicker.svelte';
+  import PersonalLabelCombobox from '../pickers/PersonalLabelCombobox.svelte';
   import Label from '../components/Label.svelte';
   import AlertBox from '../components/AlertBox.svelte';
   import { createPopover, melt } from '@melt-ui/svelte'; // used for dueDateTrigger/dueDateContent
@@ -420,6 +421,74 @@
       {/if}
     {/if}
 
+    <!-- Iteration Chip -->
+    {#if store.isFieldConfigured('iteration') && !store.isFieldRequired('iteration')}
+      <ChipPicker
+        value={store.formData.iteration_id}
+        items={[{ id: null, name: t('common.none') }, ...store.iterations]}
+        getValue={(iteration) => iteration.id}
+        getLabel={(iteration) => iteration.name}
+        icon={Calendar}
+        placeholder={t('items.iteration')}
+        searchable={true}
+        searchFields={['name', 'description']}
+        onSelect={(iteration) => store.formData.iteration_id = iteration?.id || null}
+      />
+    {/if}
+
+    <!-- Project Chip -->
+    {#if store.isFieldConfigured('project') && !store.isFieldRequired('project')}
+      <ChipPicker
+        value={store.formData.project_id}
+        items={[{ id: null, name: t('common.none') }, ...store.timeProjects]}
+        getValue={(project) => project.id}
+        getLabel={(project) => project.name}
+        icon={Briefcase}
+        placeholder={t('items.project')}
+        searchable={true}
+        searchFields={['name']}
+        onSelect={(project) => store.formData.project_id = project?.id || null}
+      />
+    {/if}
+
+    <!-- Story Points Chip -->
+    {#if store.isFieldConfigured('story_points') && !store.isFieldRequired('story_points')}
+      <label
+        class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-sm transition-colors"
+        style="background-color: var(--ds-surface); border: 1px solid var(--ds-border); color: var(--ds-text-subtle);"
+      >
+        <Hash size={14} style="flex-shrink: 0;" />
+        <input
+          type="number"
+          min="0"
+          step="0.5"
+          bind:value={store.formData.story_points}
+          class="w-20 bg-transparent outline-none text-sm"
+          style="color: var(--ds-text);"
+          placeholder={t('items.storyPoints')}
+          aria-label={t('items.storyPoints')}
+        />
+      </label>
+    {/if}
+
+    <!-- Estimate Chip -->
+    {#if store.isFieldConfigured('estimate') && !store.isFieldRequired('estimate')}
+      <label
+        class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-sm transition-colors"
+        style="background-color: var(--ds-surface); border: 1px solid var(--ds-border); color: var(--ds-text-subtle);"
+      >
+        <Clock size={14} style="flex-shrink: 0;" />
+        <input
+          type="text"
+          bind:value={store.formData.estimate}
+          class="w-20 bg-transparent outline-none text-sm"
+          style="color: var(--ds-text);"
+          placeholder={t('items.estimate') || 'Estimate'}
+          aria-label={t('items.estimate') || 'Estimate'}
+        />
+      </label>
+    {/if}
+
     <!-- Milestones Chip (multi) -->
     {#if store.isFieldConfigured('milestone') && !store.isFieldRequired('milestone')}
       <MilestoneCombobox
@@ -459,8 +528,8 @@
       </MilestoneCombobox>
     {/if}
 
-    <!-- Toggle for Non-Required Custom Fields -->
-    {#if store.nonRequiredCustomFields.length > 0}
+    <!-- Toggle for additional non-required full-width fields -->
+    {#if store.nonRequiredFullSystemFields.length > 0 || store.nonRequiredCustomFields.length > 0}
       <button
         onclick={() => showAdditionalFields = !showAdditionalFields}
         class="inline-flex items-center px-2 py-1 rounded-full text-sm transition-colors"
@@ -476,11 +545,26 @@
   </div>
 
   <!-- Additional Fields (inline, shown on toggle) -->
-  {#if showAdditionalFields && store.nonRequiredCustomFields.length > 0}
+  {#if showAdditionalFields && (store.nonRequiredFullSystemFields.length > 0 || store.nonRequiredCustomFields.length > 0)}
     <div class="space-y-3 pt-3 border-t" style="border-color: var(--ds-border);">
       <div class="text-xs font-medium" style="color: var(--ds-text-subtle);">
         {t('createModal.additionalFields')}
       </div>
+      {#each store.nonRequiredFullSystemFields as field}
+        {#if field.field_identifier === 'labels'}
+          <div class="space-y-1">
+            <Label color="default">{t('items.labels') || 'Labels'}</Label>
+            <PersonalLabelCombobox
+              bind:value={store.formData.personal_label_names}
+              placeholder={t('items.selectOrCreateLabels') || 'Select or create labels...'}
+              onSelect={(result) => {
+                store.formData.personal_label_names = result?.value || [];
+                store.selectedPersonalLabels = result?.labels || [];
+              }}
+            />
+          </div>
+        {/if}
+      {/each}
       {#each store.nonRequiredCustomFields as field}
         <CustomFieldRenderer
           {field}
@@ -488,6 +572,7 @@
           readonly={false}
           onChange={(val) => store.customFieldValues[field.id] = val}
           milestones={store.milestones}
+          iterations={store.iterations}
           isDarkMode={false}
           autoOpenPickers={false}
         />
@@ -580,6 +665,83 @@
               workspaceId={store.formData.workspace_id}
             />
           </div>
+        {:else if field.field_identifier === 'iteration'}
+          <div class="space-y-1">
+            <Label color="default" for="work-item-iteration-required">
+              {t('items.iteration')} <span style="color: var(--ds-text-danger, #ef4444);">*</span>
+            </Label>
+            <select
+              id="work-item-iteration-required"
+              bind:value={store.formData.iteration_id}
+              class="w-full px-3 py-2 rounded border text-sm"
+              style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
+            >
+              <option value={null}>{t('items.selectIteration')}</option>
+              {#each store.iterations as iteration}
+                <option value={iteration.id}>{iteration.name}</option>
+              {/each}
+            </select>
+          </div>
+        {:else if field.field_identifier === 'project'}
+          <div class="space-y-1">
+            <Label color="default" for="work-item-project-required">
+              {t('items.project')} <span style="color: var(--ds-text-danger, #ef4444);">*</span>
+            </Label>
+            <select
+              id="work-item-project-required"
+              bind:value={store.formData.project_id}
+              class="w-full px-3 py-2 rounded border text-sm"
+              style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
+            >
+              <option value={null}>{t('pickers.selectProject')}</option>
+              {#each store.timeProjects as project}
+                <option value={project.id}>{project.name}</option>
+              {/each}
+            </select>
+          </div>
+        {:else if field.field_identifier === 'labels'}
+          <div class="space-y-1">
+            <Label color="default">
+              {t('items.labels') || 'Labels'} <span style="color: var(--ds-text-danger, #ef4444);">*</span>
+            </Label>
+            <PersonalLabelCombobox
+              bind:value={store.formData.personal_label_names}
+              placeholder={t('items.selectOrCreateLabels') || 'Select or create labels...'}
+              onSelect={(result) => {
+                store.formData.personal_label_names = result?.value || [];
+                store.selectedPersonalLabels = result?.labels || [];
+              }}
+            />
+          </div>
+        {:else if field.field_identifier === 'story_points'}
+          <div class="space-y-1">
+            <Label color="default" for="work-item-story-points-required">
+              {t('items.storyPoints')} <span style="color: var(--ds-text-danger, #ef4444);">*</span>
+            </Label>
+            <input
+              id="work-item-story-points-required"
+              type="number"
+              min="0"
+              step="0.5"
+              bind:value={store.formData.story_points}
+              class="w-full px-3 py-2 rounded border text-sm"
+              style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
+            />
+          </div>
+        {:else if field.field_identifier === 'estimate' || field.field_identifier === 'estimate_minutes'}
+          <div class="space-y-1">
+            <Label color="default" for="work-item-estimate-required">
+              {t('items.estimate') || 'Estimate'} <span style="color: var(--ds-text-danger, #ef4444);">*</span>
+            </Label>
+            <input
+              id="work-item-estimate-required"
+              type="text"
+              bind:value={store.formData.estimate}
+              placeholder="3d 4h"
+              class="w-full px-3 py-2 rounded border text-sm"
+              style="background-color: var(--ds-background-input); border-color: var(--ds-border); color: var(--ds-text);"
+            />
+          </div>
         {/if}
       {/each}
     </div>
@@ -599,6 +761,7 @@
             readonly={false}
             onChange={(val) => store.customFieldValues[field.id] = val}
             milestones={store.milestones}
+            iterations={store.iterations}
             isDarkMode={false}
           />
         </div>

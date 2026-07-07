@@ -4,7 +4,7 @@
  * Centralizes item data, editing states, modals, and related data loading.
  */
 import { api } from '../api.js';
-import { resolveScreenId } from '../utils/screenResolution.js';
+import { buildDetailScreenFieldConfig, resolveEffectiveScreenIds } from '../utils/screenFields.js';
 
 const FIELD_MAP = {
   title: 'title',
@@ -651,13 +651,14 @@ class ItemDetailStore {
       }
       if (cs) {
         const itemTypeId = this.item?.item_type_id;
-        editScreenId = resolveScreenId(cs, itemTypeId, 'edit');
-        viewScreenId = resolveScreenId(cs, itemTypeId, 'view');
+        const screenIds = resolveEffectiveScreenIds(cs, itemTypeId, 1);
+        editScreenId = screenIds.edit;
+        viewScreenId = screenIds.view;
       }
 
       // Hardcoded fallback (preserves legacy behavior when nothing is
-      // configured). resolveScreenId already chains through create as the
-      // universal fallback, so a null here means truly nothing is set.
+      // configured). resolveEffectiveScreenIds already chains through create as
+      // the universal fallback, so a null here means truly nothing is set.
       if (!editScreenId) editScreenId = 1;
 
       // If view screen is missing or matches edit, only fetch one — same
@@ -668,40 +669,11 @@ class ItemDetailStore {
         sameScreen ? Promise.resolve(null) : api.screens.get(viewScreenId),
       ]);
 
-      const customFromScreen = (s) => (s?.fields || []).filter((f) => f.field_type === 'custom');
-      const systemFromScreen = (s) => {
-        const fields = s?.fields || [];
-        const identifiers = fields
-          .filter((f) => f.field_type === 'system')
-          .map((f) => f.field_identifier);
-        return identifiers.length > 0 ? identifiers : s?.system_fields || [];
-      };
-
-      const editCustom = customFromScreen(editScreen);
-      const editSystem = systemFromScreen(editScreen);
-
-      if (sameScreen) {
-        this.workspaceScreenFields = editCustom;
-        this.workspaceScreenSystemFields = editSystem;
-        this.editableScreenFieldIds = null;
-        this.editableScreenSystemFields = null;
-      } else {
-        const viewCustom = customFromScreen(viewScreen);
-        const viewSystem = systemFromScreen(viewScreen);
-
-        // Visibility = union (anything either screen mentions).
-        const seenIds = new Set();
-        this.workspaceScreenFields = [...editCustom, ...viewCustom].filter((f) => {
-          if (seenIds.has(f.id)) return false;
-          seenIds.add(f.id);
-          return true;
-        });
-        this.workspaceScreenSystemFields = Array.from(new Set([...editSystem, ...viewSystem]));
-
-        // Editable = edit screen only.
-        this.editableScreenFieldIds = new Set(editCustom.map((f) => f.id));
-        this.editableScreenSystemFields = new Set(editSystem);
-      }
+      const fieldConfig = buildDetailScreenFieldConfig(editScreen, sameScreen ? null : viewScreen);
+      this.workspaceScreenFields = fieldConfig.visibleCustomFields;
+      this.workspaceScreenSystemFields = fieldConfig.visibleSystemFields;
+      this.editableScreenFieldIds = fieldConfig.editableCustomFieldIds;
+      this.editableScreenSystemFields = fieldConfig.editableSystemFields;
     } catch (err) {
       console.error('Failed to load workspace screen fields:', err);
       this.workspaceScreenFields = [];

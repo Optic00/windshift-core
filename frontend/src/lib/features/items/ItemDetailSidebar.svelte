@@ -27,6 +27,7 @@
   import { formatDateShort, formatCustomFieldDate } from '../../utils/dateFormatter.js';
   import { parseDuration, durationToString } from '../../utils/timeUtils.js';
   import { resolveOptionLabel, resolveOptionLabels } from '../../utils/optionUtils.js';
+  import { isSystemFieldConfigured, systemFieldIdentifiers } from '../../utils/screenFields.js';
   import StatusBadge from '../../components/StatusBadge.svelte';
   import Badge from '../../components/Badge.svelte';
   import ApprovalsTimeline from './ApprovalsTimeline.svelte';
@@ -433,25 +434,21 @@
     }, 0);
   }
 
-  const SYSTEM_FIELD_ALIASES = {
-    estimate: ['estimate', 'estimate_minutes'],
-    estimate_minutes: ['estimate', 'estimate_minutes'],
-  };
-
-  function systemFieldIdentifiers(fieldName) {
-    return SYSTEM_FIELD_ALIASES[fieldName] || [fieldName];
-  }
-
-  // Helper to check if a system field should be shown
+  // Helper to check if a system field should be shown. Keep the legacy
+  // "show all" fallback only when no field configuration at all was resolved.
+  // A custom-only screen is still a configured screen and should not leak every
+  // system field into the sidebar.
   function shouldShowSystemField(fieldName) {
-    // If no system fields are configured, show all fields (default behavior)
-    if (!workspaceScreenSystemFields || workspaceScreenSystemFields.length === 0) {
+    const hasConfiguredFields =
+      (workspaceScreenSystemFields && workspaceScreenSystemFields.length > 0) ||
+      (workspaceScreenFields && workspaceScreenFields.length > 0);
+    if (!hasConfiguredFields) {
       return true;
     }
-    // Otherwise, only show if the field is in the configured list
-    return systemFieldIdentifiers(fieldName).some((identifier) =>
-      workspaceScreenSystemFields.includes(identifier)
-    );
+    if (!workspaceScreenSystemFields || workspaceScreenSystemFields.length === 0) {
+      return false;
+    }
+    return isSystemFieldConfigured(workspaceScreenSystemFields, fieldName);
   }
 
   // Status sits at the top of the sidebar and the date fields live in the

@@ -39,6 +39,20 @@ vi.mock('../api.js', () => ({
     items: { create: vi.fn() },
     itemTypes: { getAll: vi.fn() },
     itemTemplates: { getAll: vi.fn().mockResolvedValue([]) },
+    customFields: { getAll: vi.fn().mockResolvedValue({ data: [] }) },
+    configurationSets: {
+      getAll: vi.fn().mockResolvedValue({ configuration_sets: [] }),
+      get: vi.fn().mockResolvedValue(null),
+    },
+    screens: { getFields: vi.fn().mockResolvedValue([]) },
+    milestones: { getAll: vi.fn().mockResolvedValue([]) },
+    iterations: { getAll: vi.fn().mockResolvedValue([]) },
+    time: { projects: { getByWorkspace: vi.fn().mockResolvedValue([]) } },
+    personalLabels: {
+      getAll: vi.fn().mockResolvedValue([]),
+      create: vi.fn(),
+      setForItem: vi.fn().mockResolvedValue([]),
+    },
   },
 }));
 
@@ -57,6 +71,16 @@ beforeEach(() => {
   api.items.create.mockReset();
   api.itemTypes.getAll.mockReset();
   api.itemTemplates.getAll.mockReset().mockResolvedValue([]);
+  api.customFields.getAll.mockReset().mockResolvedValue({ data: [] });
+  api.configurationSets.getAll.mockReset().mockResolvedValue({ configuration_sets: [] });
+  api.configurationSets.get.mockReset().mockResolvedValue(null);
+  api.screens.getFields.mockReset().mockResolvedValue([]);
+  api.milestones.getAll.mockReset().mockResolvedValue([]);
+  api.iterations.getAll.mockReset().mockResolvedValue([]);
+  api.time.projects.getByWorkspace.mockReset().mockResolvedValue([]);
+  api.personalLabels.getAll.mockReset().mockResolvedValue([]);
+  api.personalLabels.create.mockReset();
+  api.personalLabels.setForItem.mockReset().mockResolvedValue([]);
 });
 
 const PARENT = { id: 777, title: 'Epic: Mobile parity' };
@@ -121,6 +145,49 @@ describe('MobileCreateDialog — child creation', () => {
       })
     );
     expect(onclose).toHaveBeenCalled();
+  });
+});
+
+describe('MobileCreateDialog — configured fields (WI-553)', () => {
+  test('renders required configured fields and submits their values', async () => {
+    api.items.create.mockResolvedValue({ id: 999, title: 'Screened item' });
+    api.itemTypes.getAll.mockResolvedValue([{ id: 10, name: 'Story' }]);
+    api.configurationSets.getAll.mockResolvedValue({
+      configuration_sets: [{ id: 20, is_default: true, workspace_ids: [1] }],
+    });
+    api.configurationSets.get.mockResolvedValue({ id: 20, create_screen_id: 55 });
+    api.customFields.getAll.mockResolvedValue({
+      data: [{ id: 7, name: 'Risk', field_type: 'text' }],
+    });
+    api.screens.getFields.mockResolvedValue([
+      { id: 1, field_type: 'system', field_identifier: 'story_points', is_required: true },
+      { id: 2, field_type: 'custom', field_identifier: '7', is_required: true },
+    ]);
+
+    render(MobileCreateDialog, { props: { isOpen: true } });
+
+    await fireEvent.input(screen.getByTestId('create-title'), {
+      target: { value: 'Screened item' },
+    });
+
+    const storyPoints = await screen.findByTestId('configured-system-story_points');
+    await fireEvent.input(storyPoints.querySelector('input'), { target: { value: '3' } });
+
+    const risk = await screen.findByTestId('configured-custom-7');
+    await fireEvent.input(risk.querySelector('input'), { target: { value: 'High' } });
+
+    await fireEvent.click(screen.getByTestId('create-submit'));
+
+    await waitFor(() => expect(api.items.create).toHaveBeenCalledTimes(1));
+    expect(api.items.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Screened item',
+        workspace_id: 1,
+        item_type_id: 10,
+        story_points: 3,
+        custom_field_values: { 7: 'High' },
+      })
+    );
   });
 });
 

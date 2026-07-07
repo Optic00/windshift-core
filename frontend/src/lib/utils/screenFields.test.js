@@ -1,0 +1,135 @@
+import { describe, expect, it } from 'vitest';
+import {
+  buildDetailScreenFieldConfig,
+  canSystemFieldBeRequiredOnCreate,
+  dedupeScreenFields,
+  isCreateSystemFieldAutoManaged,
+  isCreateSystemFieldRenderable,
+  isSystemFieldConfigured,
+  normalizeSystemFieldIdentifier,
+  resolveEffectiveScreenIds,
+  splitScreenFields,
+} from './screenFields.js';
+
+describe('screenFields utilities', () => {
+  it('resolves effective screen ids with create fallback per context', () => {
+    const configSet = {
+      create_screen_id: 10,
+      edit_screen_id: null,
+      view_screen_id: 30,
+      item_type_configs: [
+        {
+          item_type_id: 5,
+          create_screen_id: 11,
+          edit_screen_id: null,
+          view_screen_id: null,
+        },
+      ],
+    };
+
+    expect(resolveEffectiveScreenIds(configSet, 5)).toEqual({
+      create: 11,
+      edit: 11,
+      view: 11,
+    });
+    expect(resolveEffectiveScreenIds(configSet, 7)).toEqual({
+      create: 10,
+      edit: 10,
+      view: 30,
+    });
+  });
+
+  it('uses fallback screen id only when no config screen resolves', () => {
+    expect(resolveEffectiveScreenIds(null, 1, 99)).toEqual({ create: 99, edit: 99, view: 99 });
+    expect(resolveEffectiveScreenIds({}, 1, 99)).toEqual({ create: 99, edit: 99, view: 99 });
+  });
+
+  it('splits system and custom fields', () => {
+    const fields = [
+      { field_type: 'system', field_identifier: 'priority' },
+      { field_type: 'custom', field_identifier: '42' },
+      { field_type: 'default', field_identifier: 'legacy' },
+    ];
+
+    expect(splitScreenFields(fields)).toEqual({
+      customFields: [{ field_type: 'custom', field_identifier: '42' }],
+      systemFields: [{ field_type: 'system', field_identifier: 'priority' }],
+      systemFieldIdentifiers: ['priority'],
+    });
+  });
+
+  it('handles system field aliases', () => {
+    expect(normalizeSystemFieldIdentifier('estimate_minutes')).toBe('estimate');
+    expect(isSystemFieldConfigured(['estimate_minutes'], 'estimate')).toBe(true);
+    expect(isSystemFieldConfigured(['estimate'], 'estimate_minutes')).toBe(true);
+  });
+
+  it('dedupes system aliases and field identifiers', () => {
+    const fields = [
+      { field_type: 'system', field_identifier: 'estimate_minutes' },
+      { field_type: 'system', field_identifier: 'estimate' },
+      { field_type: 'custom', field_identifier: '9' },
+      { field_type: 'custom', field_identifier: '9' },
+    ];
+
+    expect(dedupeScreenFields(fields)).toEqual([
+      { field_type: 'system', field_identifier: 'estimate_minutes' },
+      { field_type: 'custom', field_identifier: '9' },
+    ]);
+  });
+
+  it('classifies create renderable and auto-managed system fields', () => {
+    expect(isCreateSystemFieldRenderable('iteration')).toBe(true);
+    expect(isCreateSystemFieldRenderable('estimate_minutes')).toBe(true);
+    expect(isCreateSystemFieldRenderable('labels')).toBe(true);
+    expect(isCreateSystemFieldAutoManaged('status')).toBe(true);
+    expect(canSystemFieldBeRequiredOnCreate('story_points')).toBe(true);
+    expect(canSystemFieldBeRequiredOnCreate('labels')).toBe(true);
+    expect(canSystemFieldBeRequiredOnCreate('status')).toBe(false);
+  });
+
+  it('keeps edit-screen fields visible and marks only edit fields editable in detail', () => {
+    const editScreen = {
+      id: 10,
+      fields: [
+        { id: 101, field_type: 'system', field_identifier: 'priority' },
+        { id: 102, field_type: 'custom', field_identifier: '7' },
+      ],
+    };
+    const viewScreen = {
+      id: 20,
+      fields: [
+        { id: 201, field_type: 'system', field_identifier: 'assignee' },
+        { id: 202, field_type: 'custom', field_identifier: '7' },
+        { id: 203, field_type: 'custom', field_identifier: '8' },
+      ],
+    };
+
+    const config = buildDetailScreenFieldConfig(editScreen, viewScreen);
+
+    expect(config.visibleSystemFields).toEqual(['priority', 'assignee']);
+    expect(config.visibleCustomFields).toEqual([
+      { id: 102, field_type: 'custom', field_identifier: '7' },
+      { id: 203, field_type: 'custom', field_identifier: '8' },
+    ]);
+    expect(config.editableSystemFields).toEqual(new Set(['priority']));
+    expect(config.editableCustomFieldIds).toEqual(new Set([7]));
+  });
+
+  it('treats a single detail screen as legacy all-visible editable mode', () => {
+    const screen = {
+      id: 10,
+      fields: [
+        { id: 101, field_type: 'system', field_identifier: 'priority' },
+        { id: 102, field_type: 'custom', field_identifier: '7' },
+      ],
+    };
+
+    expect(buildDetailScreenFieldConfig(screen, null)).toEqual({
+      visibleCustomFields: [{ id: 102, field_type: 'custom', field_identifier: '7' }],
+      visibleSystemFields: ['priority'],
+      editableCustomFieldIds: null,
+      editableSystemFields: null,
+    });
+  });
+});

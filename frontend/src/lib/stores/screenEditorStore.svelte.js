@@ -5,6 +5,7 @@
  */
 import { api } from '../api.js';
 import { createSearchFilteredFields } from '../utils/fieldSearchUtils.js';
+import { canSystemFieldBeRequiredOnCreate } from '../utils/screenFields.js';
 import { getSystemFieldName, SYSTEM_FIELDS } from './fieldConfig.js';
 import { applyDragStateMixin } from './storeUtils.js';
 
@@ -357,8 +358,17 @@ class ScreenEditorStore {
       .map((field, i) => ({ ...field, display_order: i }));
   }
 
+  canFieldBeRequired(field) {
+    if (!field) return false;
+    if (field.field_type !== 'system') return true;
+    return canSystemFieldBeRequiredOnCreate(field.field_identifier);
+  }
+
   toggleFieldRequired(index) {
     const field = this.screenFields[index];
+    // Allow clearing legacy invalid required flags, but do not allow enabling
+    // required for fields the create form cannot satisfy.
+    if (!field.is_required && !this.canFieldBeRequired(field)) return;
     field.is_required = !field.is_required;
     this.screenFields = [...this.screenFields];
   }

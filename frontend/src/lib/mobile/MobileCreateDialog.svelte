@@ -4,6 +4,18 @@
   import { workspacesStore } from '../stores';
   import Modal from '../dialogs/Modal.svelte';
   import { FileText } from '@lucide/svelte';
+  import CustomFieldRenderer from '../features/items/CustomFieldRenderer.svelte';
+  import PriorityPicker from '../pickers/PriorityPicker.svelte';
+  import UserPicker from '../pickers/UserPicker.svelte';
+  import MilestoneCombobox from '../pickers/MilestoneCombobox.svelte';
+  import PersonalLabelCombobox from '../pickers/PersonalLabelCombobox.svelte';
+  import {
+    isCreateSystemFieldAutoManaged,
+    isCreateSystemFieldRenderable,
+    resolveEffectiveScreenIds,
+    systemFieldIdentifiers,
+  } from '../utils/screenFields.js';
+  import { parseDuration } from '../utils/timeUtils.js';
 
   /**
    * @typedef {'work' | 'personal'} CreateMode
@@ -42,6 +54,8 @@
     workspaceId: lockedWorkspaceId = null,
   } = $props();
 
+  const FIXED_SYSTEM_FIELDS = new Set(['title', 'description']);
+
   let title = $state('');
   let description = $state('');
   let workspaceId = $state(null);
@@ -51,6 +65,37 @@
   let saving = $state(false);
   let error = $state('');
   let lastTypeWorkspace = null;
+
+  // Screen-configured create fields (WI-553): mobile uses the same effective
+  // create screen resolution as desktop, but renders fields as a vertical,
+  // scrollable form. Required fields are always visible; optional fields live
+  // in a collapsible section so large screens remain usable on phones.
+  let allCustomFields = $state([]);
+  let customFieldsLoaded = $state(false);
+  let currentConfigSet = $state(null);
+  let configSetLoadedForWorkspace = $state(null);
+  let screenFields = $state([]);
+  let screenFieldsLoadedForKey = $state(null);
+  let screenFieldsLoadingForKey = $state(null);
+  let fieldsLoading = $state(false);
+  let customFieldValues = $state({});
+  let milestones = $state([]);
+  let iterations = $state([]);
+  let timeProjects = $state([]);
+  let showOptionalFields = $state(false);
+
+  let priorityId = $state(null);
+  let assigneeId = $state(null);
+  let milestoneIds = $state([]);
+  let iterationId = $state(null);
+  let projectId = $state(null);
+  let dueDate = $state('');
+  let startDate = $state('');
+  let endDate = $state('');
+  let storyPoints = $state('');
+  let estimate = $state('');
+  let personalLabelNames = $state([]);
+  let selectedPersonalLabels = $state([]);
 
   // === Work item templates (WI-538). Mirrors the desktop create modal
   // (workItemFormStore.loadTemplatesForCurrentType): load the templates valid
@@ -71,6 +116,46 @@
   // Personal workspace is loaded on-demand; the store keeps it once fetched.
   const personalWorkspace = $derived($workspacesStore.personalWorkspace ?? null);
   const isPersonal = $derived(mode === 'personal');
+
+  const customFieldsById = $derived.by(() => {
+    const map = new Map();
+    for (const field of allCustomFields) map.set(field.id, field);
+    return map;
+  });
+
+  const configuredCustomFields = $derived.by(() =>
+    screenFields
+      .filter((field) => field.field_type === 'custom')
+      .map((screenField) => ({
+        screenField,
+        fieldDef: customFieldsById.get(parseInt(screenField.field_identifier, 10)),
+      }))
+      .filter((entry) => !!entry.fieldDef)
+  );
+
+  const configuredSystemFields = $derived.by(() =>
+    screenFields.filter(
+      (field) =>
+        field.field_type === 'system' &&
+        isCreateSystemFieldRenderable(field.field_identifier) &&
+        !FIXED_SYSTEM_FIELDS.has(field.field_identifier) &&
+        !isCreateSystemFieldAutoManaged(field.field_identifier)
+    )
+  );
+
+  const requiredSystemFields = $derived(
+    configuredSystemFields.filter((field) => field.is_required === true)
+  );
+  const optionalSystemFields = $derived(
+    configuredSystemFields.filter((field) => field.is_required !== true)
+  );
+  const requiredCustomFields = $derived(
+    configuredCustomFields.filter((entry) => entry.screenField.is_required === true)
+  );
+  const optionalCustomFields = $derived(
+    configuredCustomFields.filter((entry) => entry.screenField.is_required !== true)
+  );
+  const optionalFieldCount = $derived(optionalSystemFields.length + optionalCustomFields.length);
 
   const canSubmit = $derived(
     title.trim() !== '' &&
@@ -124,6 +209,19 @@
     loadTypes(wsId);
   });
 
+  // Load reference data and config whenever the workspace changes.
+  $effect(() => {
+    if (!isOpen || isPersonal || !workspaceId) return;
+    loadWorkspaceFieldData(workspaceId);
+  });
+
+  // Load the effective create screen whenever workspace/type are known.
+  $effect(() => {
+    if (!isOpen || isPersonal || !workspaceId || !itemTypeId || !customFieldsLoaded) return;
+    if (configSetLoadedForWorkspace !== workspaceId) return;
+    loadScreenFields(workspaceId, itemTypeId);
+  });
+
   // Reload templates whenever the (workspace, item type) the dialog is working
   // with changes (WI-538). Tracks both ids reactively so it fires after
   // loadTypes resolves a new default type too. Skipped in personal mode.
@@ -151,6 +249,119 @@
       itemTypeId = null;
     } finally {
       typesLoading = false;
+    }
+  }
+
+  async function loadWorkspaceFieldData(wsId) {
+    await Promise.all([
+      loadCustomFields(),
+      loadConfigSetForWorkspace(wsId),
+      loadMilestones(wsId),
+      loadIterations(wsId),
+      loadTimeProjects(wsId),
+    ]);
+  }
+
+  async function loadCustomFields() {
+    if (customFieldsLoaded) return;
+    try {
+      const result = await api.customFields.getAll();
+      allCustomFields = result?.data || [];
+    } catch (err) {
+      console.error('Failed to load custom fields:', err);
+      allCustomFields = [];
+    } finally {
+      customFieldsLoaded = true;
+    }
+  }
+
+  async function loadConfigSetForWorkspace(wsId) {
+    if (configSetLoadedForWorkspace === wsId) return;
+    try {
+      const response = await api.configurationSets.getAll();
+      const configSets = response?.configuration_sets || [];
+      let nextConfigSet = null;
+      let defaultConfigSet = null;
+
+      for (const configSet of configSets) {
+        if (configSet.is_default) defaultConfigSet = configSet;
+        if (configSet.workspace_ids?.includes(wsId)) {
+          nextConfigSet = await api.configurationSets.get(configSet.id);
+          break;
+        }
+      }
+
+      if (!nextConfigSet && defaultConfigSet) {
+        nextConfigSet = await api.configurationSets.get(defaultConfigSet.id);
+      }
+
+      currentConfigSet = nextConfigSet;
+    } catch (err) {
+      console.error('Failed to load configuration set:', err);
+      currentConfigSet = null;
+    } finally {
+      configSetLoadedForWorkspace = wsId;
+    }
+  }
+
+  async function loadScreenFields(wsId, typeId) {
+    const key = `${wsId}-${typeId}`;
+    if (screenFieldsLoadedForKey === key || screenFieldsLoadingForKey === key) return;
+
+    fieldsLoading = true;
+    screenFieldsLoadingForKey = key;
+    try {
+      const screenId = resolveEffectiveScreenIds(currentConfigSet, typeId, 1).create;
+      const fields = (await api.screens.getFields(screenId)) || [];
+      // Ignore an out-of-order response after a workspace/type change.
+      if (`${workspaceId}-${itemTypeId}` !== key) return;
+
+      screenFields = fields;
+      const customIds = fields
+        .filter((field) => field.field_type === 'custom')
+        .map((field) => parseInt(field.field_identifier, 10));
+      customFieldValues = {};
+      for (const field of allCustomFields) {
+        if (customIds.includes(field.id)) customFieldValues[field.id] = '';
+      }
+      screenFieldsLoadedForKey = key;
+    } catch (err) {
+      console.error('Failed to load screen fields:', err);
+      screenFields = [];
+      customFieldValues = {};
+      screenFieldsLoadedForKey = key;
+    } finally {
+      if (screenFieldsLoadingForKey === key) {
+        fieldsLoading = false;
+        screenFieldsLoadingForKey = null;
+      }
+    }
+  }
+
+  async function loadMilestones(wsId) {
+    try {
+      milestones = (await api.milestones.getAll({ workspace_id: wsId, include_global: true })) || [];
+    } catch (err) {
+      console.error('Failed to load milestones:', err);
+      milestones = [];
+    }
+  }
+
+  async function loadIterations(wsId) {
+    try {
+      iterations = (await api.iterations.getAll({ workspace_id: wsId, include_global: true })) || [];
+    } catch (err) {
+      console.error('Failed to load iterations:', err);
+      iterations = [];
+    }
+  }
+
+  async function loadTimeProjects(wsId) {
+    try {
+      timeProjects = (await api.time.projects.getByWorkspace(wsId)) || [];
+    } catch (err) {
+      console.error('Failed to load time projects:', err);
+      timeProjects = [];
     }
   }
 
@@ -214,6 +425,26 @@
     selectedTemplateId = templateId;
   }
 
+  function resetConfiguredFields() {
+    screenFields = [];
+    screenFieldsLoadedForKey = null;
+    screenFieldsLoadingForKey = null;
+    customFieldValues = {};
+    showOptionalFields = false;
+    priorityId = null;
+    assigneeId = null;
+    milestoneIds = [];
+    iterationId = null;
+    projectId = null;
+    dueDate = '';
+    startDate = '';
+    endDate = '';
+    storyPoints = '';
+    estimate = '';
+    personalLabelNames = [];
+    selectedPersonalLabels = [];
+  }
+
   function reset() {
     title = '';
     description = '';
@@ -221,6 +452,7 @@
     itemTypes = [];
     error = '';
     lastTypeWorkspace = null;
+    resetConfiguredFields();
     // Reset template state so a new dialog doesn't inherit the prior type's
     // picker options / mandatory lock (WI-538).
     templateOptions = [];
@@ -236,23 +468,142 @@
     onclose?.();
   }
 
+  function labelForSystemField(field) {
+    switch (field.field_identifier) {
+      case 'priority': return 'Priority';
+      case 'assignee': return 'Assignee';
+      case 'milestone': return 'Milestone';
+      case 'iteration': return 'Iteration';
+      case 'project': return 'Project';
+      case 'labels': return 'Labels';
+      case 'due_date': return 'Due date';
+      case 'start_date': return 'Start date';
+      case 'end_date': return 'End date';
+      case 'story_points': return 'Story points';
+      case 'estimate':
+      case 'estimate_minutes': return 'Estimate';
+      default: return field.field_identifier;
+    }
+  }
+
+  function selectedLabelIds() {
+    return (selectedPersonalLabels || [])
+      .map((label) => label?.id)
+      .filter((id) => Number.isFinite(id));
+  }
+
+  function systemFieldValue(field) {
+    switch (field.field_identifier) {
+      case 'priority': return priorityId;
+      case 'assignee': return assigneeId;
+      case 'milestone': return milestoneIds;
+      case 'iteration': return iterationId;
+      case 'project': return projectId;
+      case 'labels': return selectedLabelIds();
+      case 'due_date': return dueDate;
+      case 'start_date': return startDate;
+      case 'end_date': return endDate;
+      case 'story_points': return storyPoints;
+      case 'estimate':
+      case 'estimate_minutes': return estimate;
+      default: return null;
+    }
+  }
+
+  function isEmptyValue(value) {
+    if (Array.isArray(value)) return value.length === 0;
+    return value === undefined || value === null || value === '';
+  }
+
+  function parsedStoryPoints() {
+    if (storyPoints === '' || storyPoints === null || storyPoints === undefined) return null;
+    const parsed = parseFloat(storyPoints);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+  }
+
+  function parsedEstimateMinutes() {
+    const raw = (estimate || '').trim();
+    if (!raw) return null;
+    const minutes = parseDuration(raw);
+    return Number.isFinite(minutes) && minutes > 0 ? Math.round(minutes) : null;
+  }
+
+  function validateConfiguredFields() {
+    for (const field of screenFields) {
+      if (!field.is_required) continue;
+      if (field.field_type === 'system') {
+        if (
+          isCreateSystemFieldAutoManaged(field.field_identifier) ||
+          !isCreateSystemFieldRenderable(field.field_identifier) ||
+          FIXED_SYSTEM_FIELDS.has(field.field_identifier)
+        ) {
+          continue;
+        }
+        const value = systemFieldValue(field);
+        if (isEmptyValue(value)) {
+          error = `${labelForSystemField(field)} is required.`;
+          return false;
+        }
+        if (field.field_identifier === 'story_points' && parsedStoryPoints() === null) {
+          error = 'Story points must be a valid number.';
+          return false;
+        }
+        if (
+          systemFieldIdentifiers('estimate').includes(field.field_identifier) &&
+          parsedEstimateMinutes() === null
+        ) {
+          error = 'Estimate must be a valid duration.';
+          return false;
+        }
+      } else if (field.field_type === 'custom') {
+        const fieldId = parseInt(field.field_identifier, 10);
+        const value = customFieldValues[fieldId];
+        if (isEmptyValue(value)) {
+          const fieldDef = customFieldsById.get(fieldId);
+          error = `${fieldDef?.name || 'Custom field'} is required.`;
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  function createPayload() {
+    const payload = isPersonal
+      ? { title: title.trim(), workspace_id: personalWorkspace.id }
+      : {
+          title: title.trim(),
+          description: description.trim(),
+          workspace_id: workspaceId,
+          item_type_id: itemTypeId,
+          priority_id: priorityId || null,
+          assignee_id: assigneeId || null,
+          milestone_ids: Array.isArray(milestoneIds) ? milestoneIds : [],
+          iteration_id: iterationId || null,
+          project_id: projectId || null,
+          due_date: dueDate ? new Date(dueDate).toISOString() : null,
+          start_date: startDate ? new Date(startDate).toISOString() : null,
+          end_date: endDate ? new Date(endDate).toISOString() : null,
+          story_points: parsedStoryPoints(),
+          estimate_minutes: parsedEstimateMinutes(),
+          custom_field_values: customFieldValues,
+          // Creating a child: pin it to the parent so it shows up under it.
+          parent_id: isChild ? parent.id : undefined,
+        };
+    return payload;
+  }
+
   async function submit() {
     if (!canSubmit) return;
     saving = true;
     error = '';
     try {
-      const result = await api.items.create(
-        isPersonal
-          ? { title: title.trim(), workspace_id: personalWorkspace.id }
-          : {
-              title: title.trim(),
-              description: description.trim(),
-              workspace_id: workspaceId,
-              item_type_id: itemTypeId,
-              // Creating a child: pin it to the parent so it shows up under it.
-              parent_id: isChild ? parent.id : undefined,
-            }
-      );
+      if (!isPersonal && !validateConfiguredFields()) return;
+
+      const result = await api.items.create(createPayload());
+      if (!isPersonal && selectedLabelIds().length > 0) {
+        await api.personalLabels.setForItem(result.id, selectedLabelIds());
+      }
       if (isPersonal) {
         // The newly created personal task lives in this tab's list - let the
         // active Personal view refresh itself. BroadcastChannel excludes the
@@ -366,6 +717,41 @@
           </select>
         </label>
       {/if}
+
+      {#if fieldsLoading}
+        <p class="loading">Loading configured fields…</p>
+      {/if}
+
+      {#if requiredSystemFields.length > 0 || requiredCustomFields.length > 0}
+        <section class="field-section" data-testid="configured-required-fields">
+          <h3>Required fields</h3>
+          {#each requiredSystemFields as field (field.field_identifier)}
+            {@render systemField(field, true)}
+          {/each}
+          {#each requiredCustomFields as entry (entry.screenField.field_identifier)}
+            {@render customField(entry, true)}
+          {/each}
+        </section>
+      {/if}
+
+      {#if optionalFieldCount > 0}
+        <section class="field-section optional" data-testid="configured-optional-fields">
+          <button type="button" class="optional-toggle" onclick={() => showOptionalFields = !showOptionalFields}>
+            <span>Optional fields ({optionalFieldCount})</span>
+            <span aria-hidden="true">{showOptionalFields ? '−' : '+'}</span>
+          </button>
+          {#if showOptionalFields}
+            <div class="optional-body">
+              {#each optionalSystemFields as field (field.field_identifier)}
+                {@render systemField(field, false)}
+              {/each}
+              {#each optionalCustomFields as entry (entry.screenField.field_identifier)}
+                {@render customField(entry, false)}
+              {/each}
+            </div>
+          {/if}
+        </section>
+      {/if}
     {/if}
 
     {#if error}<p class="error" data-testid="create-error">{error}</p>{/if}
@@ -379,6 +765,82 @@
   </div>
 </Modal>
 
+{#snippet systemField(field, required)}
+  <div class="field configured-field" data-testid={`configured-system-${field.field_identifier}`}>
+    <span>{labelForSystemField(field)} {#if required}<strong>*</strong>{/if}</span>
+    {#if field.field_identifier === 'priority'}
+      <PriorityPicker
+        workspaceId={workspaceId}
+        selectedPriorityId={priorityId}
+        onChange={(id) => priorityId = id}
+        placeholder="No priority"
+      />
+    {:else if field.field_identifier === 'assignee'}
+      <UserPicker
+        bind:value={assigneeId}
+        workspaceId={workspaceId}
+        showUnassigned={true}
+        placeholder="Unassigned"
+      />
+    {:else if field.field_identifier === 'milestone'}
+      <MilestoneCombobox
+        multiple={true}
+        bind:value={milestoneIds}
+        workspaceId={workspaceId}
+        placeholder="No milestone"
+      />
+    {:else if field.field_identifier === 'iteration'}
+      <select bind:value={iterationId}>
+        <option value={null}>No iteration</option>
+        {#each iterations as iteration (iteration.id)}
+          <option value={iteration.id}>{iteration.name}</option>
+        {/each}
+      </select>
+    {:else if field.field_identifier === 'project'}
+      <select bind:value={projectId}>
+        <option value={null}>No project</option>
+        {#each timeProjects as project (project.id)}
+          <option value={project.id}>{project.name}</option>
+        {/each}
+      </select>
+    {:else if field.field_identifier === 'labels'}
+      <PersonalLabelCombobox
+        bind:value={personalLabelNames}
+        placeholder="Select or create labels..."
+        onSelect={(result) => {
+          personalLabelNames = result?.value || [];
+          selectedPersonalLabels = result?.labels || [];
+        }}
+      />
+    {:else if field.field_identifier === 'due_date'}
+      <input type="date" bind:value={dueDate} />
+    {:else if field.field_identifier === 'start_date'}
+      <input type="date" bind:value={startDate} />
+    {:else if field.field_identifier === 'end_date'}
+      <input type="date" bind:value={endDate} />
+    {:else if field.field_identifier === 'story_points'}
+      <input type="number" min="0" step="0.5" bind:value={storyPoints} placeholder="Story points" />
+    {:else if field.field_identifier === 'estimate' || field.field_identifier === 'estimate_minutes'}
+      <input type="text" bind:value={estimate} placeholder="3d 4h" />
+    {/if}
+  </div>
+{/snippet}
+
+{#snippet customField(entry, required)}
+  <div class="field configured-field" data-testid={`configured-custom-${entry.fieldDef.id}`}>
+    <span>{entry.fieldDef.name} {#if required}<strong>*</strong>{/if}</span>
+    <CustomFieldRenderer
+      field={entry.fieldDef}
+      bind:value={customFieldValues[entry.fieldDef.id]}
+      readonly={false}
+      onChange={(val) => customFieldValues[entry.fieldDef.id] = val}
+      {milestones}
+      {iterations}
+      autoOpenPickers={false}
+    />
+  </div>
+{/snippet}
+
 <style>
   .create { display: flex; flex-direction: column; gap: 0.85rem; padding: 1rem; }
   .title { margin: 0; font-size: 1.0625rem; font-weight: var(--font-semibold, 600); color: var(--ds-text); }
@@ -389,6 +851,7 @@
   .row .field { flex: 1; min-width: 0; }
 
   .field { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.75rem; color: var(--ds-text-subtle); }
+  .field strong { color: var(--ds-text-danger, #ef4444); }
   .field em { font-style: normal; opacity: 0.7; }
   .field input, .field select, .field textarea {
     padding: 0.6rem; border: 1px solid var(--ds-border); border-radius: var(--radius-md, 6px);
@@ -397,6 +860,18 @@
   }
   .field textarea { resize: vertical; font-family: inherit; }
   .field select:disabled { opacity: 0.7; }
+  .configured-field :global([role='combobox']),
+  .configured-field :global(button),
+  .configured-field :global(input),
+  .configured-field :global(select),
+  .configured-field :global(textarea) { min-height: 44px; }
+
+  .field-section { border-top: 1px solid var(--ds-border); padding-top: 0.85rem; display: flex; flex-direction: column; gap: 0.75rem; }
+  .field-section h3 { margin: 0; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--ds-text-subtle); }
+  .optional { gap: 0.5rem; }
+  .optional-toggle { min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; padding: 0.6rem 0; border: 0; background: transparent; color: var(--ds-text); font-size: 0.875rem; font-weight: 600; }
+  .optional-body { display: flex; flex-direction: column; gap: 0.75rem; }
+  .loading { margin: 0; font-size: 0.8125rem; color: var(--ds-text-subtle); }
 
   .template-chip { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.25rem 0.5rem; border-radius: var(--radius-md, 6px); font-size: 0.8125rem; }
   .template-locked {

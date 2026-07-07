@@ -4,7 +4,14 @@
  * Centralizes form data, validation, data loading, and selection persistence.
  */
 import { api } from '../api.js';
-import { resolveScreenId } from '../utils/screenResolution.js';
+import {
+  isCreateSystemFieldAutoManaged,
+  isCreateSystemFieldRenderable,
+  isSystemFieldConfigured,
+  resolveEffectiveScreenIds,
+  systemFieldIdentifiers,
+} from '../utils/screenFields.js';
+import { parseDuration } from '../utils/timeUtils.js';
 import { getSystemFieldName } from './fieldConfig.js';
 
 const STORAGE_KEYS = {
@@ -12,8 +19,10 @@ const STORAGE_KEYS = {
   itemType: 'vertex_create_modal_item_type',
 };
 
-// System fields that are auto-managed and should not be shown in create form
+// System fields that are auto-managed or rendered in fixed locations and should
+// not be duplicated in the create form's generated field sections.
 const EXCLUDED_SYSTEM_FIELDS = ['status'];
+const FIXED_SYSTEM_FIELDS = ['title', 'description'];
 
 class WorkItemFormStore {
   // === Form Data ===
@@ -27,9 +36,15 @@ class WorkItemFormStore {
     priority_id: null,
     milestone_ids: [],
     assignee_id: null,
+    iteration_id: null,
+    project_id: null,
+    personal_label_names: [],
+    story_points: '',
+    estimate: '',
     item_type_id: null,
   });
   customFieldValues = $state({});
+  selectedPersonalLabels = $state([]);
   validationErrors = $state([]);
   pendingDescriptionImages = $state([]);
 
@@ -47,6 +62,16 @@ class WorkItemFormStore {
   milestonesLoading = $state(false);
   milestonesLoaded = $state(false);
   milestonesLoadedForKey = $state(null);
+
+  iterations = $state([]);
+  iterationsLoading = $state(false);
+  iterationsLoaded = $state(false);
+  iterationsLoadedForKey = $state(null);
+
+  timeProjects = $state([]);
+  timeProjectsLoading = $state(false);
+  timeProjectsLoaded = $state(false);
+  timeProjectsLoadedForKey = $state(null);
 
   itemTypes = $state([]);
   hierarchyLevels = $state([]);
@@ -97,6 +122,8 @@ class WorkItemFormStore {
   // === Initialization Flag ===
   #initialized = false;
   #milestonesLoadToken = 0;
+  #iterationsLoadToken = 0;
+  #timeProjectsLoadToken = 0;
 
   // === Derived Values (getters) ===
 
@@ -140,6 +167,29 @@ class WorkItemFormStore {
   }
 
   /**
+   * Get the currently selected iteration object.
+   */
+  get selectedIteration() {
+    return this.iterations.find((iteration) => iteration.id === this.formData.iteration_id) || null;
+  }
+
+  /**
+   * Get the currently selected time project object.
+   */
+  get selectedProject() {
+    return this.timeProjects.find((project) => project.id === this.formData.project_id) || null;
+  }
+
+  /**
+   * Get selected personal label IDs for post-create assignment.
+   */
+  get selectedPersonalLabelIds() {
+    return (this.selectedPersonalLabels || [])
+      .map((label) => label?.id)
+      .filter((id) => Number.isFinite(id));
+  }
+
+  /**
    * Get non-required custom fields for the overflow menu.
    */
   get nonRequiredCustomFields() {
@@ -152,6 +202,16 @@ class WorkItemFormStore {
   }
 
   /**
+   * Get optional system fields that should be rendered as full-width controls
+   * instead of compact chips.
+   */
+  get nonRequiredFullSystemFields() {
+    return this.screenFields.filter(
+      (f) => f.field_type === 'system' && !f.is_required && f.field_identifier === 'labels'
+    );
+  }
+
+  /**
    * Get required system fields that should be shown as full inputs.
    */
   get requiredSystemFields() {
@@ -159,7 +219,9 @@ class WorkItemFormStore {
       (f) =>
         f.is_required &&
         f.field_type === 'system' &&
-        !EXCLUDED_SYSTEM_FIELDS.includes(f.field_identifier)
+        isCreateSystemFieldRenderable(f.field_identifier) &&
+        !EXCLUDED_SYSTEM_FIELDS.includes(f.field_identifier) &&
+        !FIXED_SYSTEM_FIELDS.includes(f.field_identifier)
     );
   }
 
@@ -247,6 +309,76 @@ class WorkItemFormStore {
   }
 
   /**
+   * Load iterations scoped to the current workspace plus globals.
+   */
+  async loadIterations(workspaceId = null, forceReload = false) {
+    const numericWorkspaceId = workspaceId ? Number(workspaceId) : null;
+    const loadKey = numericWorkspaceId || 'global';
+    if (!forceReload && this.iterationsLoaded && this.iterationsLoadedForKey === loadKey) return;
+
+    const token = ++this.#iterationsLoadToken;
+    try {
+      this.iterationsLoading = true;
+      const filters = numericWorkspaceId
+        ? { workspace_id: numericWorkspaceId, include_global: true }
+        : {};
+      const result = await api.iterations.getAll(filters);
+      if (token !== this.#iterationsLoadToken) return;
+
+      this.iterations = result || [];
+      this.iterationsLoaded = true;
+      this.iterationsLoadedForKey = loadKey;
+    } catch (error) {
+      if (token !== this.#iterationsLoadToken) return;
+      console.error('Failed to load iterations:', error);
+      this.iterations = [];
+      this.iterationsLoaded = true;
+      this.iterationsLoadedForKey = loadKey;
+    } finally {
+      if (token === this.#iterationsLoadToken) {
+        this.iterationsLoading = false;
+      }
+    }
+  }
+
+  /**
+   * Load time projects available to the selected workspace.
+   */
+  async loadTimeProjects(workspaceId = null, forceReload = false) {
+    const numericWorkspaceId = workspaceId ? Number(workspaceId) : null;
+    const loadKey = numericWorkspaceId || 'none';
+    if (!numericWorkspaceId) {
+      this.timeProjects = [];
+      this.timeProjectsLoaded = false;
+      this.timeProjectsLoadedForKey = null;
+      return;
+    }
+    if (!forceReload && this.timeProjectsLoaded && this.timeProjectsLoadedForKey === loadKey)
+      return;
+
+    const token = ++this.#timeProjectsLoadToken;
+    try {
+      this.timeProjectsLoading = true;
+      const result = await api.time.projects.getByWorkspace(numericWorkspaceId);
+      if (token !== this.#timeProjectsLoadToken) return;
+
+      this.timeProjects = result || [];
+      this.timeProjectsLoaded = true;
+      this.timeProjectsLoadedForKey = loadKey;
+    } catch (error) {
+      if (token !== this.#timeProjectsLoadToken) return;
+      console.error('Failed to load time projects:', error);
+      this.timeProjects = [];
+      this.timeProjectsLoaded = true;
+      this.timeProjectsLoadedForKey = loadKey;
+    } finally {
+      if (token === this.#timeProjectsLoadToken) {
+        this.timeProjectsLoading = false;
+      }
+    }
+  }
+
+  /**
    * Filter milestones based on workspace categories, while always keeping
    * global milestones available in workspace-scoped forms.
    */
@@ -267,12 +399,18 @@ class WorkItemFormStore {
   async loadWorkspaceDetails(workspaceId) {
     if (!workspaceId) {
       this.workspaceDetails = null;
+      this.iterations = [];
+      this.timeProjects = [];
       this.#filterMilestones();
       return;
     }
     try {
       this.workspaceDetails = await api.workspaces.get(workspaceId);
-      await this.loadMilestones(workspaceId);
+      await Promise.all([
+        this.loadMilestones(workspaceId),
+        this.loadIterations(workspaceId),
+        this.loadTimeProjects(workspaceId),
+      ]);
     } catch (error) {
       console.error('Failed to load workspace details:', error);
       this.workspaceDetails = null;
@@ -375,7 +513,7 @@ class WorkItemFormStore {
    * Resolve the create screen ID for an item type.
    */
   #resolveCreateScreenId(itemTypeId) {
-    return resolveScreenId(this.currentConfigSet, itemTypeId, 'create') ?? 1;
+    return resolveEffectiveScreenIds(this.currentConfigSet, itemTypeId, 1).create;
   }
 
   /**
@@ -428,7 +566,11 @@ class WorkItemFormStore {
    * Check if a system field is required.
    */
   isFieldRequired(fieldIdentifier) {
-    const screenField = this.screenFields.find((f) => f.field_identifier === fieldIdentifier);
+    const screenField = this.screenFields.find(
+      (f) =>
+        f.field_type === 'system' &&
+        systemFieldIdentifiers(fieldIdentifier).includes(f.field_identifier)
+    );
     return screenField?.is_required === true;
   }
 
@@ -436,7 +578,7 @@ class WorkItemFormStore {
    * Check if a system field is configured (in screen fields).
    */
   isFieldConfigured(fieldIdentifier) {
-    return this.screenSystemFields.includes(fieldIdentifier);
+    return isSystemFieldConfigured(this.screenSystemFields, fieldIdentifier);
   }
 
   // === Selection Methods ===
@@ -684,6 +826,41 @@ class WorkItemFormStore {
 
   // === Validation ===
 
+  #getSystemFieldValue(identifier) {
+    switch (identifier) {
+      case 'title':
+        return this.formData.name;
+      case 'milestone':
+        return this.formData.milestone_ids;
+      case 'labels':
+        return this.selectedPersonalLabelIds;
+      case 'estimate_minutes':
+      case 'estimate':
+        return this.formData.estimate;
+      default:
+        return this.formData[identifier] ?? this.formData[`${identifier}_id`];
+    }
+  }
+
+  #isEmptyValue(value) {
+    if (Array.isArray(value)) return value.length === 0;
+    return value === undefined || value === null || value === '';
+  }
+
+  #parsedStoryPoints() {
+    const raw = this.formData.story_points;
+    if (raw === undefined || raw === null || raw === '') return null;
+    const parsed = parseFloat(raw);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+  }
+
+  #parsedEstimateMinutes() {
+    const raw = (this.formData.estimate || '').trim();
+    if (!raw) return null;
+    const minutes = parseDuration(raw);
+    return Number.isFinite(minutes) && minutes > 0 ? Math.round(minutes) : null;
+  }
+
   /**
    * Validate the form and return whether it's valid.
    */
@@ -694,15 +871,27 @@ class WorkItemFormStore {
       if (field.is_required) {
         if (field.field_type === 'system') {
           const identifier = field.field_identifier;
-          // Skip system-managed fields that are auto-assigned
-          if (EXCLUDED_SYSTEM_FIELDS.includes(identifier)) {
+          // Skip fields that create manages automatically or cannot currently
+          // submit. The screen editor is being tightened separately so admins
+          // cannot create impossible required-field states.
+          if (
+            isCreateSystemFieldAutoManaged(identifier) ||
+            !isCreateSystemFieldRenderable(identifier)
+          ) {
             continue;
           }
-          const fieldKeyMap = { title: 'name' };
-          const formKey = fieldKeyMap[identifier] || identifier;
-          const value = this.formData[formKey] ?? this.formData[`${formKey}_id`];
-          if (!value) {
-            errors.push(`${getSystemFieldName(identifier)} is required`);
+          const value = this.#getSystemFieldValue(identifier);
+          const labelIdentifier = identifier === 'estimate_minutes' ? 'estimate' : identifier;
+          const label = getSystemFieldName(labelIdentifier);
+          if (this.#isEmptyValue(value)) {
+            errors.push(`${label} is required`);
+          } else if (identifier === 'story_points' && this.#parsedStoryPoints() === null) {
+            errors.push(`${label} must be a valid number`);
+          } else if (
+            (identifier === 'estimate' || identifier === 'estimate_minutes') &&
+            this.#parsedEstimateMinutes() === null
+          ) {
+            errors.push(`${label} must be a valid duration`);
           }
         } else if (field.field_type === 'custom') {
           const fieldId = parseInt(field.field_identifier, 10);
@@ -732,6 +921,11 @@ class WorkItemFormStore {
       priority_id: this.formData.priority_id || null,
       milestone_ids: Array.isArray(this.formData.milestone_ids) ? this.formData.milestone_ids : [],
       assignee_id: this.formData.assignee_id || null,
+      personal_label_ids: this.selectedPersonalLabelIds,
+      iteration_id: this.formData.iteration_id || null,
+      project_id: this.formData.project_id || null,
+      story_points: this.#parsedStoryPoints(),
+      estimate_minutes: this.#parsedEstimateMinutes(),
       due_date: this.formData.due_date ? new Date(this.formData.due_date).toISOString() : null,
       start_date: this.formData.start_date
         ? new Date(this.formData.start_date).toISOString()
@@ -760,9 +954,15 @@ class WorkItemFormStore {
       priority_id: null,
       milestone_ids: [],
       assignee_id: null,
+      iteration_id: null,
+      project_id: null,
+      personal_label_names: [],
+      story_points: '',
+      estimate: '',
       item_type_id: this.availableItemTypes.length > 0 ? this.availableItemTypes[0].id : null,
     };
     this.customFieldValues = {};
+    this.selectedPersonalLabels = [];
     this.validationErrors = [];
     this.clearPendingDescriptionImages();
     this.selectedWorkspace = null;
@@ -800,12 +1000,21 @@ class WorkItemFormStore {
     this.milestonesLoading = false;
     this.milestonesLoaded = false;
     this.milestonesLoadedForKey = null;
+    this.iterations = [];
+    this.iterationsLoading = false;
+    this.iterationsLoaded = false;
+    this.iterationsLoadedForKey = null;
+    this.timeProjects = [];
+    this.timeProjectsLoading = false;
+    this.timeProjectsLoaded = false;
+    this.timeProjectsLoadedForKey = null;
     this.itemTypes = [];
     this.hierarchyLevels = [];
     this.availableItemTypes = [];
     this.itemTypesLoaded = false;
     this.allCustomFields = [];
     this.customFields = [];
+    this.selectedPersonalLabels = [];
     this.customFieldsLoaded = false;
     this.screenFields = [];
     this.screenSystemFields = [];
