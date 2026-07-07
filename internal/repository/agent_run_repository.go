@@ -310,7 +310,7 @@ func (r *AgentRunRepository) ClaimQueuedForRunner(ctx context.Context, poolID, n
 			SET status = ?, runner_id = ?, started_at = ?, updated_at = ?
 			WHERE id = ? AND status = ?
 		`,
-			models.AgentRunStatusRunning, runnerID, now, now,
+			models.AgentRunStatusRunning, nextRunnerID, now, now,
 			id, models.AgentRunStatusQueued,
 		)
 		if err != nil {
