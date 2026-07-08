@@ -30,10 +30,10 @@ func ValidateFlowAcyclic[
 		ep := EP(&edges[i])
 		src, dst := ep.FlowSourceNodeID(), ep.FlowTargetNodeID()
 		if _, ok := known[src]; !ok {
-			continue
+			return fmt.Errorf("edge %d references unknown source node %d", i, src)
 		}
 		if _, ok := known[dst]; !ok {
-			continue
+			return fmt.Errorf("edge %d references unknown target node %d", i, dst)
 		}
 		adj[src] = append(adj[src], dst)
 	}
@@ -138,6 +138,23 @@ func CreateFlowNodesAndEdges[
 ) error {
 	if len(nodes) == 0 {
 		return nil
+	}
+
+	known := make(map[int]struct{}, len(nodes))
+	for i := range nodes {
+		np := NP(&nodes[i])
+		known[np.FlowNodeID()] = struct{}{}
+	}
+	for i := range edges {
+		ep := EP(&edges[i])
+		if _, ok := known[ep.FlowSourceNodeID()]; !ok {
+			rollback()
+			return fmt.Errorf("edge %d references unknown source node %d", i, ep.FlowSourceNodeID())
+		}
+		if _, ok := known[ep.FlowTargetNodeID()]; !ok {
+			rollback()
+			return fmt.Errorf("edge %d references unknown target node %d", i, ep.FlowTargetNodeID())
+		}
 	}
 
 	nodeIDMap := make(map[int]int) // old client ID -> new server ID
