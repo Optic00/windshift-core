@@ -190,7 +190,7 @@ type CreateAssetRequest struct {
 
 // CreateAsset creates a new asset
 func (h *AssetHandler) CreateAsset(w http.ResponseWriter, r *http.Request) {
-	currentUser, setID, ok := h.requireSetEditAccess(w, r)
+	currentUser, setID, ok := h.requireSetCreateAccess(w, r)
 	if !ok {
 		return
 	}
@@ -380,7 +380,7 @@ func (h *AssetHandler) UpdateAsset(w http.ResponseWriter, r *http.Request) {
 
 // DeleteAsset deletes an asset
 func (h *AssetHandler) DeleteAsset(w http.ResponseWriter, r *http.Request) {
-	currentUser, assetID, ok := h.requireAssetEditAccess(w, r)
+	currentUser, assetID, ok := h.requireAssetDeleteAccess(w, r)
 	if !ok {
 		return
 	}

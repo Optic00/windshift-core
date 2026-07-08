@@ -114,6 +114,11 @@ func (h *AssetHandler) requireSetEditAccess(w http.ResponseWriter, r *http.Reque
 	return h.requireSetAccess(w, r, services.AssetPermissionKeyEdit)
 }
 
+// requireSetCreateAccess checks auth, parses setId, and verifies create permission.
+func (h *AssetHandler) requireSetCreateAccess(w http.ResponseWriter, r *http.Request) (*models.User, int, bool) {
+	return h.requireSetAccess(w, r, services.AssetPermissionKeyCreate)
+}
+
 // requireSetAdminAccess checks auth, parses setId, and verifies admin permission.
 func (h *AssetHandler) requireSetAdminAccess(w http.ResponseWriter, r *http.Request) (*models.User, int, bool) {
 	return h.requireSetAccess(w, r, services.AssetPermissionKeyAdmin)
@@ -166,4 +171,9 @@ func (h *AssetHandler) canEditSet(userID, setID int) (bool, error) {
 // canAdminSet checks if user can administer a set
 func (h *AssetHandler) canAdminSet(userID, setID int) (bool, error) {
 	return h.hasAssetPermission(userID, setID, services.AssetPermissionKeyAdmin)
+}
+
+// canDeleteAsset checks if user can delete assets in a set
+func (h *AssetHandler) canDeleteAsset(userID, setID int) (bool, error) {
+	return h.hasAssetPermission(userID, setID, services.AssetPermissionKeyDelete)
 }

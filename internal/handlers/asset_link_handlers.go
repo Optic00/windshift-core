@@ -66,6 +66,12 @@ func (h *AssetHandler) requireAssetEditAccess(w http.ResponseWriter, r *http.Req
 	return h.requireAssetAccess(w, r, h.canEditSet)
 }
 
+// requireAssetDeleteAccess authenticates the user, extracts the asset ID from the "id" route
+// param, looks up the asset's set, and checks delete permission.
+func (h *AssetHandler) requireAssetDeleteAccess(w http.ResponseWriter, r *http.Request) (*models.User, int, bool) {
+	return h.requireAssetAccess(w, r, h.canDeleteAsset)
+}
+
 // GetAssetLinks returns all links for an asset (incoming and outgoing)
 func (h *AssetHandler) GetAssetLinks(w http.ResponseWriter, r *http.Request) {
 	currentUser, assetID, ok := h.requireAssetViewAccess(w, r)
