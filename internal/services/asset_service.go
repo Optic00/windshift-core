@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -574,6 +575,13 @@ func (s *AssetService) CreateAsset(actor AuditActor, in repository.CreateAssetIn
 	if err := reencodeCustomFieldValues(customFieldValues, &in.CustomFieldValuesJSON); err != nil {
 		return nil, err
 	}
+	if in.StatusID == nil {
+		if defaultStatusID, err := s.repo.GetDefaultStatus(in.SetID); err != nil {
+			slog.Warn("failed to load default asset status", slog.String("component", "assets"), slog.Int("set_id", in.SetID), slog.Any("error", err))
+		} else if defaultStatusID != nil {
+			in.StatusID = defaultStatusID
+		}
+	}
 	sanitizeAssetText(&in.Title, &in.Description, &in.AssetTag)
 	assetID, err := s.repo.CreateAsset(in)
 	if err != nil {
@@ -764,6 +772,16 @@ func (s *AssetService) ImportAssetsCSV(actor AuditActor, setID, assetTypeID int,
 		Status:      "running",
 		StartedAt:   time.Now().UTC(),
 	}
+
+	rowStatusID := defaults.StatusID
+	if rowStatusID == nil {
+		if defaultStatusID, err := s.repo.GetDefaultStatus(setID); err != nil {
+			slog.Warn("failed to load default asset status for CSV import", slog.String("component", "assets"), slog.Int("set_id", setID), slog.Any("error", err))
+		} else {
+			rowStatusID = defaultStatusID
+		}
+	}
+
 	for {
 		record, err := reader.Read()
 		if errors.Is(err, io.EOF) {
@@ -798,7 +816,7 @@ func (s *AssetService) ImportAssetsCSV(actor AuditActor, setID, assetTypeID int,
 			SetID:                 setID,
 			AssetTypeID:           assetTypeID,
 			CategoryID:            defaults.CategoryID,
-			StatusID:              defaults.StatusID,
+			StatusID:              rowStatusID,
 			Title:                 title,
 			Description:           description,
 			AssetTag:              assetTag,
