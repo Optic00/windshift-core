@@ -122,40 +122,93 @@ func (r *AssetRepository) GetSetByID(setID int) (*models.AssetManagementSet, err
 	return &set, nil
 }
 
-// CreateSet creates a new asset management set
-func (r *AssetRepository) CreateSet(set *models.AssetManagementSet) (int, error) {
-	now := time.Now()
-	var id int
-	err := r.db.QueryRow(`
-		INSERT INTO asset_management_sets (name, description, is_default, created_by, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?) RETURNING id
-	`, set.Name, set.Description, set.IsDefault, set.CreatedBy, now, now).Scan(&id)
+const assetRoleAdministrator = "Administrator"
 
+// CreateSetAndInitialize creates an asset set, assigns the Administrator role
+// to the creator, and seeds the default statuses — all in one transaction.
+// If set.IsDefault is true, the previous default set is also cleared atomically.
+func (r *AssetRepository) CreateSetAndInitialize(set *models.AssetManagementSet, creatorUserID int) (int, error) {
+	var setID int
+	err := database.WithTx(r.db, func(tx database.Tx) error {
+		now := time.Now()
+		if set.IsDefault {
+			if _, err := tx.ExecWrite("UPDATE asset_management_sets SET is_default = false"); err != nil {
+				return fmt.Errorf("failed to clear default set: %w", err)
+			}
+		}
+		if err := tx.QueryRow(`
+			INSERT INTO asset_management_sets (name, description, is_default, created_by, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?) RETURNING id
+		`, set.Name, set.Description, set.IsDefault, set.CreatedBy, now, now).Scan(&setID); err != nil {
+			return fmt.Errorf("failed to create asset set: %w", err)
+		}
+
+		adminRoleID, err := r.GetAssetRoleIDByName(assetRoleAdministrator)
+		if err != nil {
+			return fmt.Errorf("failed to get administrator role: %w", err)
+		}
+		if _, err := tx.ExecWrite(`
+			INSERT INTO user_asset_set_roles (set_id, user_id, role_id, granted_by, granted_at)
+			VALUES (?, ?, ?, ?, ?)
+			ON CONFLICT (set_id, user_id) DO UPDATE SET role_id = ?, granted_by = ?, granted_at = ?
+		`, setID, creatorUserID, adminRoleID, creatorUserID, now, adminRoleID, creatorUserID, now); err != nil {
+			return fmt.Errorf("failed to assign admin role: %w", err)
+		}
+
+		defaultStatuses := []struct {
+			Name         string
+			Color        string
+			IsDefault    bool
+			DisplayOrder int
+		}{
+			{"Active", "#22c55e", true, 0},
+			{"Inactive", "#6b7280", false, 1},
+			{"Maintenance", "#f59e0b", false, 2},
+			{"Retired", "#ef4444", false, 3},
+		}
+		for _, s := range defaultStatuses {
+			if _, err := tx.ExecWrite(`
+				INSERT INTO asset_statuses (set_id, name, color, is_default, display_order, created_at, updated_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?)
+			`, setID, s.Name, s.Color, s.IsDefault, s.DisplayOrder, now, now); err != nil {
+				return fmt.Errorf("failed to create default status: %w", err)
+			}
+		}
+		return nil
+	})
 	if err != nil {
-		return 0, fmt.Errorf("failed to create asset set: %w", err)
+		return 0, err
 	}
-
-	return id, nil
+	return setID, nil
 }
 
-// UpdateSet updates an asset management set
-func (r *AssetRepository) UpdateSet(set *models.AssetManagementSet) error {
-	now := time.Now()
-	result, err := r.db.ExecWrite(`
-		UPDATE asset_management_sets SET name = ?, description = ?, is_default = ?, updated_at = ?
-		WHERE id = ?
-	`, set.Name, set.Description, set.IsDefault, now, set.ID)
-
-	if err != nil {
-		return fmt.Errorf("failed to update asset set: %w", err)
-	}
-
-	rowsAffected, _ := result.RowsAffected()
-	if rowsAffected == 0 {
-		return ErrNotFound
-	}
-
-	return nil
+// UpdateSetAndPromotion updates an asset set and clears the previous default
+// set when this set is being promoted to default. All writes happen in one
+// transaction so a failed update cannot leave the module without a default.
+func (r *AssetRepository) UpdateSetAndPromotion(set *models.AssetManagementSet) error {
+	return database.WithTx(r.db, func(tx database.Tx) error {
+		if set.IsDefault {
+			if _, err := tx.ExecWrite(
+				"UPDATE asset_management_sets SET is_default = false WHERE is_default = true AND id != ?",
+				set.ID,
+			); err != nil {
+				return fmt.Errorf("failed to clear default set: %w", err)
+			}
+		}
+		now := time.Now()
+		result, err := tx.ExecWrite(`
+			UPDATE asset_management_sets SET name = ?, description = ?, is_default = ?, updated_at = ?
+			WHERE id = ?
+		`, set.Name, set.Description, set.IsDefault, now, set.ID)
+		if err != nil {
+			return fmt.Errorf("failed to update asset set: %w", err)
+		}
+		rowsAffected, _ := result.RowsAffected()
+		if rowsAffected == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
 }
 
 // DeleteSet deletes an asset management set and all associated data
@@ -185,28 +238,6 @@ func (r *AssetRepository) DeleteSet(setID int) error {
 	}
 
 	return tx.Commit()
-}
-
-// ClearDefaultSet clears the is_default flag from all sets
-func (r *AssetRepository) ClearDefaultSet() error {
-	_, err := r.db.ExecWrite(`UPDATE asset_management_sets SET is_default = false`)
-	if err != nil {
-		return fmt.Errorf("failed to clear default set: %w", err)
-	}
-	return nil
-}
-
-// ClearDefaultSetExcept clears is_default on every set EXCEPT the provided one.
-// Used when promoting an existing set to default without demoting itself.
-func (r *AssetRepository) ClearDefaultSetExcept(setID int) error {
-	_, err := r.db.ExecWrite(
-		`UPDATE asset_management_sets SET is_default = false WHERE is_default = true AND id != ?`,
-		setID,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to clear default set: %w", err)
-	}
-	return nil
 }
 
 // HardDeleteSet deletes a set row only, without cascading to child data.
@@ -246,33 +277,7 @@ func (r *AssetRepository) GetAssetSetCoreByID(setID int) (*models.AssetManagemen
 	return &set, nil
 }
 
-// CreateDefaultStatuses creates default statuses for a new asset set
-func (r *AssetRepository) CreateDefaultStatuses(setID int) error {
-	now := time.Now()
-	defaultStatuses := []struct {
-		Name         string
-		Color        string
-		IsDefault    bool
-		DisplayOrder int
-	}{
-		{"Active", "#22c55e", true, 0},
-		{"Inactive", "#6b7280", false, 1},
-		{"Maintenance", "#f59e0b", false, 2},
-		{"Retired", "#ef4444", false, 3},
-	}
 
-	for _, s := range defaultStatuses {
-		_, err := r.db.ExecWrite(`
-			INSERT INTO asset_statuses (set_id, name, color, is_default, display_order, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?)
-		`, setID, s.Name, s.Color, s.IsDefault, s.DisplayOrder, now, now)
-		if err != nil {
-			return fmt.Errorf("failed to create default status: %w", err)
-		}
-	}
-
-	return nil
-}
 
 // ============================================================================
 // Role & Permission Operations
@@ -2448,42 +2453,6 @@ func (r *AssetRepository) GetAssetStatusSetID(statusID int) (int, error) {
 	return setID, nil
 }
 
-// ClearDefaultStatuses unsets is_default on every status in a set. Used before
-// installing a new default to keep the uniqueness invariant.
-func (r *AssetRepository) ClearDefaultStatuses(setID int) error {
-	_, err := r.db.ExecWrite("UPDATE asset_statuses SET is_default = false WHERE set_id = ?", setID)
-	if err != nil {
-		return fmt.Errorf("failed to clear default statuses: %w", err)
-	}
-	return nil
-}
-
-// ClearDefaultStatusesExcept unsets is_default on every status in a set EXCEPT the given id.
-// Used when promoting an existing status to default.
-func (r *AssetRepository) ClearDefaultStatusesExcept(setID, statusID int) error {
-	_, err := r.db.ExecWrite(
-		"UPDATE asset_statuses SET is_default = false WHERE set_id = ? AND id != ?",
-		setID, statusID,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to clear default statuses: %w", err)
-	}
-	return nil
-}
-
-// CreateAssetStatus inserts a new asset status and returns its id.
-func (r *AssetRepository) CreateAssetStatus(s *models.AssetStatus) (int, error) {
-	var id int64
-	err := r.db.QueryRow(`
-		INSERT INTO asset_statuses (set_id, name, color, description, is_default, display_order, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
-	`, s.SetID, s.Name, s.Color, s.Description, s.IsDefault, s.DisplayOrder, s.CreatedAt, s.UpdatedAt).Scan(&id)
-	if err != nil {
-		return 0, fmt.Errorf("failed to create asset status: %w", err)
-	}
-	return int(id), nil
-}
-
 // AssetStatusUpdate holds the patchable fields for an asset status update.
 type AssetStatusUpdate struct {
 	Name         string
@@ -2491,28 +2460,6 @@ type AssetStatusUpdate struct {
 	Description  string
 	DisplayOrder int
 	IsDefault    *bool
-}
-
-// UpdateAssetStatus applies a patch to an asset status. Returns ErrNotFound when no row matches.
-func (r *AssetRepository) UpdateAssetStatus(statusID int, patch AssetStatusUpdate) error {
-	query := "UPDATE asset_statuses SET name = ?, color = ?, description = ?, display_order = ?, updated_at = ?"
-	args := []interface{}{patch.Name, patch.Color, patch.Description, patch.DisplayOrder, time.Now()}
-
-	if patch.IsDefault != nil {
-		query += ", is_default = ?"
-		args = append(args, *patch.IsDefault)
-	}
-	query += " WHERE id = ?"
-	args = append(args, statusID)
-
-	result, err := r.db.ExecWrite(query, args...)
-	if err != nil {
-		return fmt.Errorf("failed to update asset status: %w", err)
-	}
-	if rows, _ := result.RowsAffected(); rows == 0 {
-		return ErrNotFound
-	}
-	return nil
 }
 
 // DeleteAssetStatus removes an asset status. Returns ErrNotFound when missing.
@@ -2525,6 +2472,63 @@ func (r *AssetRepository) DeleteAssetStatus(statusID int) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// CreateAssetStatusTransactional inserts an asset status and clears the set's
+// previous default flag when the new status is default. All writes occur in one
+// transaction so a failed insert cannot leave the set without a default.
+func (r *AssetRepository) CreateAssetStatusTransactional(s *models.AssetStatus) (int, error) {
+	var id int64
+	err := database.WithTx(r.db, func(tx database.Tx) error {
+		if s.IsDefault {
+			if _, err := tx.ExecWrite("UPDATE asset_statuses SET is_default = false WHERE set_id = ?", s.SetID); err != nil {
+				return fmt.Errorf("failed to clear default statuses: %w", err)
+			}
+		}
+		if err := tx.QueryRow(`
+			INSERT INTO asset_statuses (set_id, name, color, description, is_default, display_order, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+		`, s.SetID, s.Name, s.Color, s.Description, s.IsDefault, s.DisplayOrder, s.CreatedAt, s.UpdatedAt).Scan(&id); err != nil {
+			return fmt.Errorf("failed to create asset status: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return int(id), nil
+}
+
+// UpdateAssetStatusTransactional applies a patch to an asset status and clears
+// the set's previous default flag when the status is being promoted. All writes
+// happen in one transaction.
+func (r *AssetRepository) UpdateAssetStatusTransactional(statusID int, patch AssetStatusUpdate, setID int) error {
+	return database.WithTx(r.db, func(tx database.Tx) error {
+		if patch.IsDefault != nil && *patch.IsDefault {
+			if _, err := tx.ExecWrite(
+				"UPDATE asset_statuses SET is_default = false WHERE set_id = ? AND id != ?",
+				setID, statusID,
+			); err != nil {
+				return fmt.Errorf("failed to clear default statuses: %w", err)
+			}
+		}
+		query := "UPDATE asset_statuses SET name = ?, color = ?, description = ?, display_order = ?, updated_at = ?"
+		args := []interface{}{patch.Name, patch.Color, patch.Description, patch.DisplayOrder, time.Now()}
+		if patch.IsDefault != nil {
+			query += ", is_default = ?"
+			args = append(args, *patch.IsDefault)
+		}
+		query += " WHERE id = ?"
+		args = append(args, statusID)
+		result, err := tx.ExecWrite(query, args...)
+		if err != nil {
+			return fmt.Errorf("failed to update asset status: %w", err)
+		}
+		if rows, _ := result.RowsAffected(); rows == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
 }
 
 // CountAssetsUsingStatus returns the number of assets currently assigned the given status.

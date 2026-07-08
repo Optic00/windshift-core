@@ -70,11 +70,6 @@ const (
 	AssetRoleAdministrator = "Administrator"
 )
 
-// createDefaultStatuses creates default statuses for a new asset set.
-func (h *AssetHandler) createDefaultStatuses(setID int) error {
-	return h.repo.CreateDefaultStatuses(setID)
-}
-
 // getUserSetRole delegates to AssetPermissionService.
 func (h *AssetHandler) getUserSetRole(userID, setID int) (*models.AssetRole, error) {
 	return h.assetPerm.GetUserSetRole(userID, setID)

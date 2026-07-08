@@ -120,13 +120,6 @@ func (h *AssetHandler) CreateAssetSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.IsDefault {
-		if err := h.repo.ClearDefaultSet(); err != nil {
-			respondInternalError(w, r, err)
-			return
-		}
-	}
-
 	now := time.Now()
 	newSet := models.AssetManagementSet{
 		Name:        req.Name,
@@ -134,23 +127,8 @@ func (h *AssetHandler) CreateAssetSet(w http.ResponseWriter, r *http.Request) {
 		IsDefault:   req.IsDefault,
 		CreatedBy:   &currentUser.ID,
 	}
-	setID, err := h.repo.CreateSet(&newSet)
+	setID, err := h.repo.CreateSetAndInitialize(&newSet, currentUser.ID)
 	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-
-	adminRoleID, err := h.repo.GetAssetRoleIDByName(AssetRoleAdministrator)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-	if err := h.repo.AssignUserRole(setID, currentUser.ID, adminRoleID, currentUser.ID); err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-
-	if err := h.createDefaultStatuses(setID); err != nil {
 		respondInternalError(w, r, err)
 		return
 	}
@@ -203,14 +181,7 @@ func (h *AssetHandler) UpdateAssetSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.IsDefault {
-		if err := h.repo.ClearDefaultSetExcept(setID); err != nil {
-			respondInternalError(w, r, err)
-			return
-		}
-	}
-
-	err := h.repo.UpdateSet(&models.AssetManagementSet{
+	err := h.repo.UpdateSetAndPromotion(&models.AssetManagementSet{
 		ID:          setID,
 		Name:        req.Name,
 		Description: req.Description,

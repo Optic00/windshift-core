@@ -159,13 +159,6 @@ func (h *AssetStatusHandler) CreateAssetStatus(w http.ResponseWriter, r *http.Re
 		req.Color = "#6b7280"
 	}
 
-	if req.IsDefault {
-		if err := h.repo.ClearDefaultStatuses(setID); err != nil {
-			respondInternalError(w, r, err)
-			return
-		}
-	}
-
 	now := time.Now()
 	status := models.AssetStatus{
 		SetID:        setID,
@@ -178,7 +171,7 @@ func (h *AssetStatusHandler) CreateAssetStatus(w http.ResponseWriter, r *http.Re
 		UpdatedAt:    now,
 	}
 
-	id, err := h.repo.CreateAssetStatus(&status)
+	id, err := h.repo.CreateAssetStatusTransactional(&status)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -224,20 +217,13 @@ func (h *AssetStatusHandler) UpdateAssetStatus(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if req.IsDefault != nil && *req.IsDefault {
-		if err := h.repo.ClearDefaultStatusesExcept(setID, statusID); err != nil {
-			respondInternalError(w, r, err)
-			return
-		}
-	}
-
-	err := h.repo.UpdateAssetStatus(statusID, repository.AssetStatusUpdate{
+	err := h.repo.UpdateAssetStatusTransactional(statusID, repository.AssetStatusUpdate{
 		Name:         req.Name,
 		Color:        req.Color,
 		Description:  req.Description,
 		DisplayOrder: req.DisplayOrder,
 		IsDefault:    req.IsDefault,
-	})
+	}, setID)
 	if errors.Is(err, repository.ErrNotFound) {
 		respondNotFound(w, r, "asset_status")
 		return
