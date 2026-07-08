@@ -327,12 +327,8 @@ func validateAssetFieldValue(f models.AssetTypeField, v interface{}) error {
 		}
 		return fmt.Errorf("expected YYYY-MM-DD or RFC3339 date, got %q", s)
 	case "select":
-		s, ok := v.(string)
-		if !ok {
-			return fmt.Errorf("expected string for select field")
-		}
-		if !assetFieldOptionAllowed(f, s) {
-			return fmt.Errorf("value %q is not an allowed option for this field", s)
+		if !assetFieldOptionAllowed(f, v) {
+			return fmt.Errorf("value %v is not an allowed option for this field", v)
 		}
 	case "multiselect":
 		arr, ok := v.([]interface{})
@@ -340,12 +336,8 @@ func validateAssetFieldValue(f models.AssetTypeField, v interface{}) error {
 			return fmt.Errorf("expected array for multiselect field")
 		}
 		for _, elem := range arr {
-			s, ok := elem.(string)
-			if !ok {
-				return fmt.Errorf("expected string elements in multiselect array")
-			}
-			if !assetFieldOptionAllowed(f, s) {
-				return fmt.Errorf("value %q is not an allowed option for this field", s)
+			if !assetFieldOptionAllowed(f, elem) {
+				return fmt.Errorf("value %v is not an allowed option for this field", elem)
 			}
 		}
 	case "user":
@@ -365,25 +357,49 @@ func validateAssetFieldValue(f models.AssetTypeField, v interface{}) error {
 }
 
 // assetFieldOptionAllowed reports whether the given value matches any
-// option in the field's declared option whitelist. Returns true when
-// no options are declared (the field accepts any string) or when the
-// stored options JSON is malformed (fail-open — better to accept than
-// to block legitimate writes against a misconfigured field; the
-// schema is logged at write time).
-func assetFieldOptionAllowed(f models.AssetTypeField, value string) bool {
-	if f.Options == "" {
+// option in the field's declared option whitelist. It accepts either
+// an option ID (as a JSON number or numeric string) or an option label
+// (legacy string values). Returns true when no options are declared
+// (the field accepts any value) or when the stored options JSON is
+// malformed (fail-open — better to accept than to block legitimate
+// writes against a misconfigured field).
+func assetFieldOptionAllowed(f models.AssetTypeField, value interface{}) bool {
+	if value == nil || f.Options == "" {
 		return true
 	}
-	var opts []string
-	if err := json.Unmarshal([]byte(f.Options), &opts); err != nil {
+	opts, err := models.ParseSelectOptions(f.Options)
+	if err != nil {
 		return true
 	}
-	for _, o := range opts {
-		if o == value {
+	allowedIDs := make(map[int]struct{}, len(opts.Items))
+	allowedLabels := make(map[string]struct{}, len(opts.Items))
+	for _, item := range opts.Items {
+		allowedIDs[item.ID] = struct{}{}
+		allowedLabels[item.Label] = struct{}{}
+	}
+	switch v := value.(type) {
+	case int:
+		_, ok := allowedIDs[v]
+		return ok
+	case int64:
+		_, ok := allowedIDs[int(v)]
+		return ok
+	case float64:
+		_, ok := allowedIDs[int(v)]
+		return ok
+	case string:
+		if _, ok := allowedLabels[v]; ok {
 			return true
 		}
+		// Also accept numeric strings that match an option ID.
+		if id, err := strconv.Atoi(v); err == nil {
+			_, ok := allowedIDs[id]
+			return ok
+		}
+		return false
+	default:
+		return false
 	}
-	return false
 }
 
 // customFieldValuePresent reports whether the values map carries a

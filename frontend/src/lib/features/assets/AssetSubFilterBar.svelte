@@ -61,7 +61,7 @@
       type: field.field_type,
       description: '',
       isCustom: true,
-      options: field.field_options ? (typeof field.field_options === 'string' ? JSON.parse(field.field_options) : field.field_options) : null
+      options: field.options ? (typeof field.options === 'string' ? JSON.parse(field.options) : field.options) : null
     }))
   );
 

@@ -632,7 +632,7 @@
                         id: fieldDef.custom_field_id,
                         name: fieldDef.field_name,
                         field_type: fieldDef.field_type,
-                        options: fieldDef.field_options
+                        options: fieldDef.options
                       }}
                       value={value}
                       readonly={true}
@@ -1004,7 +1004,7 @@
                       id: fieldDef.custom_field_id,
                       name: fieldDef.field_name,
                       field_type: fieldDef.field_type,
-                      options: fieldDef.field_options
+                      options: fieldDef.options
                     }}
                     value={value}
                     readonly={true}
