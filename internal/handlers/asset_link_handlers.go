@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -867,43 +868,88 @@ func (h *AssetHandler) findOutgoingCustomFieldReferences(assetID int, canViewSet
 			continue
 		}
 
-		// Try plain int first
-		var refID int
-		if err := json.Unmarshal(raw, &refID); err != nil {
-			// Try {"id": N} object format
-			var obj struct {
-				ID int `json:"id"`
-			}
-			if err := json.Unmarshal(raw, &obj); err != nil || obj.ID == 0 {
+		refIDs := extractReferencedAssetIDs(raw)
+		for _, refID := range refIDs {
+			if refID == 0 || refID == assetID {
 				continue
 			}
-			refID = obj.ID
-		}
 
-		if refID == 0 || refID == assetID {
-			continue
-		}
+			var title string
+			var setID int
+			err := h.db.QueryRow("SELECT title, set_id FROM assets WHERE id = ?", refID).Scan(&title, &setID)
+			if err != nil {
+				continue
+			}
+			if !canViewSet(setID) {
+				continue
+			}
 
-		// Look up the target asset
-		var title string
-		var setID int
-		err := h.db.QueryRow("SELECT title, set_id FROM assets WHERE id = ?", refID).Scan(&title, &setID)
-		if err != nil {
-			continue
+			results = append(results, fieldRefResult{
+				entityType: "asset",
+				entityID:   refID,
+				title:      title,
+				fieldName:  f.name,
+			})
 		}
-		if !canViewSet(setID) {
-			continue
-		}
-
-		results = append(results, fieldRefResult{
-			entityType: "asset",
-			entityID:   refID,
-			title:      title,
-			fieldName:  f.name,
-		})
 	}
 
 	return results
+}
+
+// extractReferencedAssetIDs parses a single custom-field value of type 'asset'.
+// It accepts a scalar ID, a {"id": N} object, or any JSON array of those shapes.
+func extractReferencedAssetIDs(raw json.RawMessage) []int {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 {
+		return nil
+	}
+	if raw[0] == '[' {
+		var arr []interface{}
+		if err := json.Unmarshal(raw, &arr); err != nil {
+			return nil
+		}
+		ids := make([]int, 0, len(arr))
+		for _, elem := range arr {
+			if id, ok := extractReferencedAssetID(elem); ok && id != 0 {
+				ids = append(ids, id)
+			}
+		}
+		return ids
+	}
+	if id, ok := extractReferencedAssetIDFromRaw(raw); ok && id != 0 {
+		return []int{id}
+	}
+	return nil
+}
+
+func extractReferencedAssetIDFromRaw(raw json.RawMessage) (int, bool) {
+	var id int
+	if err := json.Unmarshal(raw, &id); err == nil {
+		return id, true
+	}
+	var obj struct {
+		ID int `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &obj); err == nil {
+		return obj.ID, true
+	}
+	return 0, false
+}
+
+func extractReferencedAssetID(v interface{}) (int, bool) {
+	switch x := v.(type) {
+	case float64:
+		return int(x), true
+	case int:
+		return x, true
+	case int64:
+		return int(x), true
+	case map[string]interface{}:
+		if idVal, ok := x["id"]; ok {
+			return extractReferencedAssetID(idVal)
+		}
+	}
+	return 0, false
 }
 
 // getEntityMetadata returns metadata for a graph node based on its entity type.
