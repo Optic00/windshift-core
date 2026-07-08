@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -188,6 +189,15 @@ func (s *AssetService) ValidateCustomFieldsSchema(assetTypeID int, values map[st
 	if err != nil {
 		return fmt.Errorf("load asset type fields: %w", err)
 	}
+	return validateCustomFieldsSchemaCore(fields, values, opts)
+}
+
+// validateCustomFieldsSchemaCore runs the schema validation using an already
+// loaded field list. Mutates values in place for text/textarea sanitization.
+func validateCustomFieldsSchemaCore(fields []models.AssetTypeField, values map[string]interface{}, opts CustomFieldsValidationOpts) error {
+	if len(values) == 0 && !opts.EnforceRequired {
+		return nil
+	}
 	byKey := make(map[string]models.AssetTypeField, len(fields)*2)
 	for _, f := range fields {
 		byKey[fmt.Sprintf("%d", f.CustomFieldID)] = f
@@ -241,6 +251,124 @@ func (s *AssetService) ValidateCustomFieldsSchema(assetTypeID int, values map[st
 		}
 	}
 	return nil
+}
+
+// CoerceAndValidateCustomFieldValues normalizes caller-provided custom-field
+// values (converting CSV strings to numbers, booleans, arrays, etc.) and runs
+// them through the asset type's schema validation. It returns the coerced
+// and sanitized map that should be persisted.
+func (s *AssetService) CoerceAndValidateCustomFieldValues(assetTypeID int, values map[string]interface{}) (map[string]interface{}, error) {
+	fields, err := s.repo.FindAssetTypeFields(assetTypeID)
+	if err != nil {
+		return nil, fmt.Errorf("load asset type fields: %w", err)
+	}
+	coerced := coerceCustomFieldValues(fields, values)
+	if err := validateCustomFieldsSchemaCore(fields, coerced, CustomFieldsValidationOpts{EnforceRequired: true}); err != nil {
+		return nil, err
+	}
+	return coerced, nil
+}
+
+// coerceCustomFieldValues converts string-ish CSV/import values into the
+// types expected by the field definition. Non-string values are left
+// mostly untouched so values already resolved by callers (e.g. select
+// option IDs) are preserved.
+func coerceCustomFieldValues(fields []models.AssetTypeField, values map[string]interface{}) map[string]interface{} {
+	if len(values) == 0 {
+		return values
+	}
+	byKey := make(map[string]models.AssetTypeField, len(fields)*2)
+	for _, f := range fields {
+		byKey[fmt.Sprintf("%d", f.CustomFieldID)] = f
+		byKey[strings.ToLower(f.FieldName)] = f
+		byKey[f.FieldName] = f
+	}
+	coerced := make(map[string]interface{}, len(values))
+	for k, v := range values {
+		f, ok := byKey[k]
+		if !ok {
+			if f, ok = byKey[strings.ToLower(k)]; !ok {
+				coerced[k] = v
+				continue
+			}
+		}
+		coerced[k] = coerceAssetFieldValue(f, v)
+	}
+	return coerced
+}
+
+// coerceAssetFieldValue converts a single raw value toward the type expected
+// by the asset field. The result is still validated by validateAssetFieldValue.
+func coerceAssetFieldValue(f models.AssetTypeField, v interface{}) interface{} {
+	if v == nil {
+		return nil
+	}
+	switch f.FieldType {
+	case "number":
+		switch v.(type) {
+		case float64, int, int64:
+			return v
+		}
+		if s, ok := v.(string); ok {
+			if n, err := strconv.ParseFloat(s, 64); err == nil {
+				return n
+			}
+		}
+		return v
+	case "boolean":
+		if b, ok := v.(bool); ok {
+			return b
+		}
+		if s, ok := v.(string); ok {
+			if b, err := strconv.ParseBool(strings.ToLower(s)); err == nil {
+				return b
+			}
+		}
+		return v
+	case "user":
+		switch v.(type) {
+		case float64, int, int64:
+			return v
+		}
+		if s, ok := v.(string); ok {
+			if id, err := strconv.Atoi(s); err == nil {
+				return id
+			}
+		}
+		return v
+	case "multiselect":
+		if arr, ok := toInterfaceSlice(v); ok {
+			return arr
+		}
+		if s, ok := v.(string); ok && s != "" {
+			parts := strings.Split(s, ",")
+			arr := make([]interface{}, 0, len(parts))
+			for _, part := range parts {
+				if t := strings.TrimSpace(part); t != "" {
+					arr = append(arr, t)
+				}
+			}
+			return arr
+		}
+		return v
+	case "select", "date", "text", "textarea":
+		return v
+	default:
+		return v
+	}
+}
+
+// toInterfaceSlice converts any slice or array value into []interface{}.
+func toInterfaceSlice(v interface{}) ([]interface{}, bool) {
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array {
+		return nil, false
+	}
+	out := make([]interface{}, rv.Len())
+	for i := range out {
+		out[i] = rv.Index(i).Interface()
+	}
+	return out, true
 }
 
 // SanitizeCustomFieldTextValues runs only the text/textarea sanitize
@@ -656,7 +784,13 @@ func (s *AssetService) ImportAssetsCSV(actor AuditActor, setID, assetTypeID int,
 			summary.ErrorRows++
 			continue
 		}
-		cfJSON, _ := encodeCustomFieldValuesJSON(row.customFields)
+
+		coerced := coerceCustomFieldValues(fields, row.customFields)
+		if err := validateCustomFieldsSchemaCore(fields, coerced, CustomFieldsValidationOpts{EnforceRequired: true}); err != nil {
+			summary.ErrorRows++
+			continue
+		}
+		cfJSON, _ := encodeCustomFieldValuesJSON(coerced)
 		description := row.description
 		assetTag := row.assetTag
 		sanitizeAssetText(&title, &description, &assetTag)

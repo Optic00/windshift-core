@@ -597,7 +597,11 @@ func (h *AssetHandler) importCSVRow(record []string, setID int, req StartAssetIm
 			}
 		}
 		if len(cfValues) > 0 {
-			b, err := json.Marshal(cfValues)
+			coerced, err := h.assetService.CoerceAndValidateCustomFieldValues(req.AssetTypeID, cfValues)
+			if err != nil {
+				return err
+			}
+			b, err := json.Marshal(coerced)
 			if err == nil {
 				s := string(b)
 				customFieldValuesJSON = &s
