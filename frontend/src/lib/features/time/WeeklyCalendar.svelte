@@ -355,18 +355,13 @@
         throw new Error('No personal workspace found');
       }
 
-      // Find default status
-      const defaultStatus = availableStatuses.find(s => s.is_default) ||
-                           availableStatuses.find(s => s.name.toLowerCase() === 'open') ||
-                           availableStatuses[0];
-
-      // Create the item in the database
+      // Create the item in the database. Omit status_id so the backend uses
+      // the workspace/item-type workflow initial status.
       const itemData = {
         title: title.trim(),
         description: '',
         workspace_id: workspace.id,
-        assignee_id: user.id,
-        status_id: defaultStatus?.id || 1
+        assignee_id: user.id
       };
 
       const newItem = await api.items.create(itemData);

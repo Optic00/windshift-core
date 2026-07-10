@@ -931,7 +931,6 @@ class WorkItemFormStore {
         ? new Date(this.formData.start_date).toISOString()
         : null,
       end_date: this.formData.end_date ? new Date(this.formData.end_date).toISOString() : null,
-      status: 'open',
       item_type_id: this.formData.item_type_id,
       parent_id: this.parentItem?.id || null,
       custom_field_values: this.customFieldValues,

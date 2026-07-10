@@ -207,13 +207,10 @@
     if (!newTodoTitle.trim()) return;
 
     try {
-      const defaultStatus = statuses.find(s => s.is_default) || statuses.find(s => s.name.toLowerCase() === 'open') || statuses[0];
-
       const todoData = {
         title: newTodoTitle.trim(),
         description: '',
-        workspace_id: parseInt(workspaceId),
-        status_id: defaultStatus?.id || 1
+        workspace_id: parseInt(workspaceId)
       };
 
       await api.items.create(todoData);

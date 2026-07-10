@@ -151,8 +151,7 @@
       const newTask = await api.items.create({
         workspace_id: personalWorkspace.id,
         title: newTaskTitle.trim(),
-        related_work_item_id: itemId,
-        status_id: STATUS_ID_OPEN
+        related_work_item_id: itemId
       });
 
       // Add to list

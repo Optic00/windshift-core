@@ -533,7 +533,6 @@ async function loadStatusesGlobal() {
         item_type_id: state.itemTypeId,
         title: state.title.trim(),
         description: '',
-        status: 'open',
         priority: 'medium',
         parent_id: parentId
       });
