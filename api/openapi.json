@@ -638,6 +638,7 @@
             "type": "string"
           },
           "status_id": {
+            "description": "Optional create-time placement. If omitted, the item uses the workflow initial status.\nIf provided, it must be the initial status or directly reachable from the initial status\nwithout workflow conditions, validators, or approval gates.",
             "type": "integer"
           },
           "title": {
@@ -1012,6 +1013,10 @@
               "$ref": "#/components/schemas/models.PageLabel"
             },
             "type": "array"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object"
           },
           "parent_id": {
             "type": "integer"
@@ -2201,6 +2206,10 @@
           "is_home": {
             "type": "boolean"
           },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object"
+          },
           "parent_id": {
             "type": "integer"
           },
@@ -2355,6 +2364,10 @@
         "properties": {
           "content": {
             "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "type": "object"
           },
           "title": {
             "type": "string"
@@ -7473,7 +7486,7 @@
         ]
       },
       "post": {
-        "description": "Creates an item in the workspace specified by `workspace_id`. The caller must have edit permission on that workspace.",
+        "description": "Creates an item in the workspace specified by `workspace_id`. The caller must have edit permission on that workspace. If `status_id` is omitted, the workflow initial status is used. If `status_id` is provided (for example, board column quick-add), it must be the initial status or directly reachable from the initial status without workflow conditions, validators, or approval gates.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -7505,7 +7518,7 @@
                 }
               }
             },
-            "description": "Invalid request body or missing required field"
+            "description": "Invalid request body, missing required field, or invalid create-time status_id"
           },
           "401": {
             "content": {

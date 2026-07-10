@@ -426,6 +426,10 @@ components:
         start_date:
           type: string
         status_id:
+          description: |-
+            Optional create-time placement. If omitted, the item uses the workflow initial status.
+            If provided, it must be the initial status or directly reachable from the initial status
+            without workflow conditions, validators, or approval gates.
           type: integer
         title:
           maxLength: 255
@@ -689,6 +693,9 @@ components:
           items:
             $ref: '#/components/schemas/models.PageLabel'
           type: array
+        metadata:
+          additionalProperties: true
+          type: object
         parent_id:
           type: integer
         path:
@@ -1468,6 +1475,9 @@ components:
           type: string
         is_home:
           type: boolean
+        metadata:
+          additionalProperties: true
+          type: object
         parent_id:
           type: integer
         title:
@@ -1567,6 +1577,9 @@ components:
       properties:
         content:
           type: string
+        metadata:
+          additionalProperties: true
+          type: object
         title:
           type: string
       type: object
@@ -4875,7 +4888,11 @@ paths:
       - items
     post:
       description: Creates an item in the workspace specified by `workspace_id`. The
-        caller must have edit permission on that workspace.
+        caller must have edit permission on that workspace. If `status_id` is omitted,
+        the workflow initial status is used. If `status_id` is provided (for example,
+        board column quick-add), it must be the initial status or directly reachable
+        from the initial status without workflow conditions, validators, or approval
+        gates.
       requestBody:
         content:
           application/json:
@@ -4896,7 +4913,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/handlers.ErrorResponse'
-          description: Invalid request body or missing required field
+          description: Invalid request body, missing required field, or invalid create-time
+            status_id
         "401":
           content:
             application/json:
