@@ -36,6 +36,7 @@ type Deps struct {
 	PortalSubmitLimiter RateLimiter
 	PortalSearchLimiter RateLimiter
 	PortalAuthLimiter   RateLimiter // Rate limiter for portal magic link requests (3 req/min per IP)
+	OAuthTokenLimiter   RateLimiter // IP-keyed limiter for the unauthenticated OAuth /token endpoint (never honors DisableIPRateLimit)
 	EmailVerifyLimiter  RateLimiter
 	SetupLimiter        RateLimiter
 	AIRateLimiter       RateLimiter // Rate limiter for AI/LLM endpoints (5 req/min per IP)

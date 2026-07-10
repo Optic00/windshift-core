@@ -99,6 +99,7 @@ type Server struct {
 	setupLimiter        *middleware.RateLimiter
 	ssoRateLimiter      *middleware.RateLimiter
 	portalAuthLimiter   *middleware.RateLimiter
+	oauthTokenLimiter   *middleware.RateLimiter
 	aiRateLimiter       *middleware.RateLimiter
 	uploadLimiter       *middleware.RateLimiter
 	webhookLimiter      *middleware.RateLimiter
@@ -279,6 +280,12 @@ func (s *Server) initialize() error {
 	s.ssoRateLimiter = middleware.NewRateLimiter(10.0/60.0, 5, cfg.UseProxy, additionalProxyList)
 	s.portalAuthLimiter = middleware.NewRateLimiter(3.0/60.0, 3, cfg.UseProxy, additionalProxyList)
 	s.calendarFeedLimiter = middleware.NewRateLimiter(10.0/60.0, 15, cfg.UseProxy, additionalProxyList)
+	// OAuth /token is unauthenticated (server-to-server), so it must stay
+	// IP-keyed and must NOT honor DisableIPRateLimit — otherwise enabling that
+	// flag for NAT deployments would silently remove all brute-force protection
+	// on client_secret/code guessing. Kept separate from the user-keyed
+	// authRateLimiter for exactly this reason.
+	s.oauthTokenLimiter = middleware.NewRateLimiter(20.0/60.0, 30, cfg.UseProxy, additionalProxyList)
 	// User-keyed limiters (authenticated endpoints — key by user ID, optionally skip IP)
 	s.authRateLimiter = middleware.NewRateLimiter(20.0/60.0, 30, cfg.UseProxy, additionalProxyList, userKeyedOpts...)
 	s.aiRateLimiter = middleware.NewRateLimiter(20.0/60.0, 30, cfg.UseProxy, additionalProxyList, userKeyedOpts...)
@@ -1248,6 +1255,7 @@ func (s *Server) initialize() error {
 		PortalSubmitLimiter: s.portalSubmitLimiter,
 		PortalSearchLimiter: s.portalSearchLimiter,
 		PortalAuthLimiter:   s.portalAuthLimiter,
+		OAuthTokenLimiter:   s.oauthTokenLimiter,
 		EmailVerifyLimiter:  s.emailVerifyLimiter,
 		SetupLimiter:        s.setupLimiter,
 		AIRateLimiter:       s.aiRateLimiter,
@@ -1840,6 +1848,9 @@ func (s *Server) cleanup() {
 	}
 	if s.portalAuthLimiter != nil {
 		s.portalAuthLimiter.Stop()
+	}
+	if s.oauthTokenLimiter != nil {
+		s.oauthTokenLimiter.Stop()
 	}
 	if s.aiRateLimiter != nil {
 		s.aiRateLimiter.Stop()
