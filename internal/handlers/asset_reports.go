@@ -76,6 +76,7 @@ type AssetReportHandler struct {
 	screenRepo     *repository.ScreenRepository
 	auditor        *logger.Auditor
 	channelService *services.ChannelService
+	assetPerm      *services.AssetPermissionService
 }
 
 func NewAssetReportHandler(
@@ -84,6 +85,7 @@ func NewAssetReportHandler(
 	screenRepo *repository.ScreenRepository,
 	auditor *logger.Auditor,
 	channelService *services.ChannelService,
+	assetPerm *services.AssetPermissionService,
 ) *AssetReportHandler {
 	return &AssetReportHandler{
 		repo:           repo,
@@ -91,6 +93,7 @@ func NewAssetReportHandler(
 		screenRepo:     screenRepo,
 		auditor:        auditor,
 		channelService: channelService,
+		assetPerm:      assetPerm,
 	}
 }
 
@@ -164,8 +167,32 @@ func (h *AssetReportHandler) Get(w http.ResponseWriter, r *http.Request) {
 	respondJSONOK(w, ar)
 }
 
+// requireAssetSetView confirms the acting user holds at least asset.view on the
+// target set. Asset sets are governed solely by per-set roles (they have no
+// workspace), so managing a channel must not be sufficient to bind a report to
+// — and then read, via the portal execute path — a set the user has no role on.
+// Writes the appropriate error and returns false when the check fails.
+func (h *AssetReportHandler) requireAssetSetView(w http.ResponseWriter, r *http.Request, userID, assetSetID int) bool {
+	allowed, err := h.assetPerm.HasAssetSetPermission(userID, assetSetID, services.AssetPermissionKeyView)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return false
+	}
+	if !allowed {
+		// Do not distinguish "no such set" from "no role on set".
+		respondBadRequest(w, r, "Asset set not found")
+		return false
+	}
+	return true
+}
+
 // Create creates a new asset report
 func (h *AssetReportHandler) Create(w http.ResponseWriter, r *http.Request) {
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+
 	channelID, ok := requireIDParam(w, r, "channel_id")
 	if !ok {
 		return
@@ -202,6 +229,9 @@ func (h *AssetReportHandler) Create(w http.ResponseWriter, r *http.Request) {
 	assetSetExists, err := h.repo.AssetSetExists(ar.AssetSetID)
 	if err != nil || !assetSetExists {
 		respondBadRequest(w, r, "Asset set not found")
+		return
+	}
+	if !h.requireAssetSetView(w, r, user.ID, ar.AssetSetID) {
 		return
 	}
 
@@ -281,6 +311,11 @@ func (h *AssetReportHandler) Create(w http.ResponseWriter, r *http.Request) {
 // channel_id and workspace_id are ignored — channel_id comes from the URL,
 // and workspace_id is not mutable via this endpoint.
 func (h *AssetReportHandler) Update(w http.ResponseWriter, r *http.Request) {
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+
 	channelID, ok := requireIDParam(w, r, "channel_id")
 	if !ok {
 		return
@@ -324,6 +359,9 @@ func (h *AssetReportHandler) Update(w http.ResponseWriter, r *http.Request) {
 	assetSetExists, err := h.repo.AssetSetExists(ar.AssetSetID)
 	if err != nil || !assetSetExists {
 		respondBadRequest(w, r, "Asset set not found")
+		return
+	}
+	if !h.requireAssetSetView(w, r, user.ID, ar.AssetSetID) {
 		return
 	}
 

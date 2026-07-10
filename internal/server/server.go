@@ -830,6 +830,7 @@ func (s *Server) initialize() error {
 		repository.NewScreenRepository(s.db),
 		logger.NewAuditor(s.db),
 		channelService,
+		services.NewAssetPermissionService(assetRepo, permService),
 	)
 	assetActionHandler := handlers.NewAssetActionHandler(repository.NewAssetActionRepository(s.db), assetHandler, s.assetActionService, logger.NewAuditor(s.db))
 
