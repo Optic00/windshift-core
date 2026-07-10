@@ -88,9 +88,12 @@ type ItemLinks struct {
 
 // ItemCreateRequest is the request body for creating a new item
 type ItemCreateRequest struct {
-	WorkspaceID  int                    `json:"workspace_id" validate:"required"`
-	Title        string                 `json:"title" validate:"required,max=255"`
-	Description  string                 `json:"description,omitempty"`
+	WorkspaceID int    `json:"workspace_id" validate:"required"`
+	Title       string `json:"title" validate:"required,max=255"`
+	Description string `json:"description,omitempty"`
+	// Optional create-time placement. If omitted, the item uses the workflow initial status.
+	// If provided, it must be the initial status or directly reachable from the initial status
+	// without workflow conditions, validators, or approval gates.
 	StatusID     *int                   `json:"status_id,omitempty"`
 	PriorityID   *int                   `json:"priority_id,omitempty"`
 	ItemTypeID   *int                   `json:"item_type_id,omitempty"`

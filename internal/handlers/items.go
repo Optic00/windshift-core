@@ -770,7 +770,8 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 		PermService:           h.permissionService,
 	})
 	if err != nil {
-		if errors.Is(err, services.ErrMissingItemType) || errors.Is(err, services.ErrInvalidItemType) || errors.Is(err, services.ErrProjectNotFound) {
+		var transitionRejection *services.TransitionRejection
+		if errors.Is(err, services.ErrMissingItemType) || errors.Is(err, services.ErrInvalidItemType) || errors.Is(err, services.ErrProjectNotFound) || errors.As(err, &transitionRejection) {
 			respondValidationError(w, r, err.Error())
 			return
 		}

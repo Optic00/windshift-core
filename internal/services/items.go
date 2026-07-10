@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -270,18 +271,26 @@ func CreateItem(db database.Database, params ItemCreationParams) (int64, error) 
 		updatedAt = *params.UpdatedAt
 	}
 
-	// Resolve status ID BEFORE starting the transaction to avoid holding the TX open during lookups
-	// Direct ID takes precedence, then text mapping, then workflow initial status (cached)
+	// Resolve status ID BEFORE starting the transaction to avoid holding the TX open during lookups.
+	// User/API create paths may request a non-initial status (e.g. board quick-add into a column),
+	// but only when that status is reachable from the workflow initial status without conditions,
+	// validators, or approval gates. Internal import/automation callers that do not set
+	// ValidatingUserID keep the historical direct-status behavior.
+	workflowService := NewWorkflowService(db)
 	var statusID *int
 	if params.StatusID != nil {
+		if params.ValidatingUserID > 0 {
+			if err := workflowService.ValidateCreateStatusOverride(context.Background(), params.WorkspaceID, params.ItemTypeID, *params.StatusID); err != nil {
+				return 0, err
+			}
+		}
 		statusID = params.StatusID
 	} else if params.Status != "" {
 		statusID = mapTextStatusToID(params.Status)
 	}
 
-	// If status is still nil, resolve from workflow initial status using cache
+	// If status is still nil, resolve from workflow initial status using cache.
 	if statusID == nil {
-		workflowService := NewWorkflowService(db)
 		statusID, _ = workflowService.GetInitialStatusIDCached(params.WorkspaceID, params.ItemTypeID)
 	}
 

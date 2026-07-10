@@ -249,6 +249,99 @@ func (s *WorkflowService) IsValidStatusTransition(workspaceID int, itemTypeID *i
 	return exists, nil
 }
 
+// ValidateCreateStatusOverride checks whether a user/API create request may set
+// status_id instead of letting creation use the workflow initial status. This is
+// intentionally stricter than a normal status transition: create-time placement
+// may target the initial status itself, or a direct transition from the initial
+// status, but it must not bypass condition/validator rules or approval gates.
+func (s *WorkflowService) ValidateCreateStatusOverride(ctx context.Context, workspaceID int, itemTypeID *int, requestedStatusID int) error {
+	workflowID, err := s.GetWorkflowIDForItem(workspaceID, itemTypeID)
+	if err != nil {
+		return err
+	}
+	// Workspaces without a workflow keep the legacy behavior.
+	if workflowID == nil {
+		return nil
+	}
+
+	initialStatusID, err := s.GetInitialStatusID(*workflowID)
+	if err != nil {
+		return err
+	}
+	if initialStatusID == nil {
+		return &TransitionRejection{Code: "workflow_invalid", Message: "workflow has no initial status"}
+	}
+	if requestedStatusID == *initialStatusID {
+		return nil
+	}
+
+	var transitionID int
+	err = s.db.QueryRow(`
+		SELECT id FROM workflow_transitions
+		WHERE workflow_id = ? AND from_status_id = ? AND to_status_id = ?
+	`, *workflowID, *initialStatusID, requestedStatusID).Scan(&transitionID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return &TransitionRejection{Code: "workflow_invalid", Message: "requested status is not reachable from the workflow initial status"}
+		}
+		return fmt.Errorf("check create status transition: %w", err)
+	}
+
+	conditionSetID, err := NewConditionService(s.db, nil, nil).GetConditionSetIDForItem(workspaceID, itemTypeID)
+	if err != nil {
+		return err
+	}
+	if conditionSetID != nil {
+		var conditionCount int
+		err = s.db.QueryRow(`
+			SELECT COUNT(*)
+			FROM condition_set_transitions cst
+			JOIN conditions c ON c.condition_set_transition_id = cst.id
+			WHERE cst.condition_set_id = ?
+			  AND cst.transition_id = ?
+			  AND c.mode IN ('condition', 'validator')
+		`, *conditionSetID, transitionID).Scan(&conditionCount)
+		if err != nil {
+			return fmt.Errorf("check create status conditions: %w", err)
+		}
+		if conditionCount > 0 {
+			return &TransitionRejection{Code: "condition_blocked", Message: "requested status is gated by workflow conditions or validators"}
+		}
+	}
+
+	approvalService := NewApprovalService(s.db, nil, nil, s)
+	approvalSetStatus, err := approvalService.GetApprovalSetStatusForItem(ctx, workspaceID, itemTypeID, requestedStatusID)
+	if err != nil {
+		return err
+	}
+	if approvalSetStatus != nil {
+		return &TransitionRejection{Code: "approval_pending", Message: "requested status requires approval and cannot be set during creation"}
+	}
+
+	approvalSetID, err := approvalService.GetApprovalSetIDForItem(ctx, workspaceID, itemTypeID)
+	if err != nil {
+		return err
+	}
+	if approvalSetID != nil {
+		var approvalTransitionCount int
+		err = s.db.QueryRow(`
+			SELECT COUNT(*)
+			FROM approval_set_statuses
+			WHERE approval_set_id = ?
+			  AND is_active = true
+			  AND (approve_transition_id = ? OR deny_transition_id = ?)
+		`, *approvalSetID, transitionID, transitionID).Scan(&approvalTransitionCount)
+		if err != nil {
+			return fmt.Errorf("check create status approval transitions: %w", err)
+		}
+		if approvalTransitionCount > 0 {
+			return &TransitionRejection{Code: "approval_must_decide", Message: "requested status uses an approval decision transition and cannot be set during creation"}
+		}
+	}
+
+	return nil
+}
+
 // IsValidStatusTransitionForUser checks if a transition is allowed by workflow AND conditions.
 // conditionService may be nil (in which case only workflow rules are checked).
 // Only conditions whose mode is in `modes` are enforced — callers pass

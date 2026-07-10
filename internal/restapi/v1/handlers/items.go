@@ -540,14 +540,14 @@ func (h *ItemHandler) GetByKeyAndNumber(w http.ResponseWriter, r *http.Request) 
 // Create handles POST /rest/api/v1/items
 //
 // @Summary      Create an item
-// @Description  Creates an item in the workspace specified by `workspace_id`. The caller must have edit permission on that workspace.
+// @Description  Creates an item in the workspace specified by `workspace_id`. The caller must have edit permission on that workspace. If `status_id` is omitted, the workflow initial status is used. If `status_id` is provided (for example, board column quick-add), it must be the initial status or directly reachable from the initial status without workflow conditions, validators, or approval gates.
 // @Tags         items
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
 // @Param        body  body      dto.ItemCreateRequest  true  "Item to create"
 // @Success      201   {object}  dto.ItemResponse
-// @Failure      400   {object}  handlers.ErrorResponse  "Invalid request body or missing required field"
+// @Failure      400   {object}  handlers.ErrorResponse  "Invalid request body, missing required field, or invalid create-time status_id"
 // @Failure      401   {object}  handlers.ErrorResponse
 // @Failure      403   {object}  handlers.ErrorResponse  "Token lacks the items:write scope or caller cannot edit the target workspace"
 // @Failure      500   {object}  handlers.ErrorResponse
@@ -669,7 +669,8 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 		MandatoryTemplateOut:  &enforcedTemplate,
 	})
 	if err != nil {
-		if errors.Is(err, services.ErrMissingItemType) || errors.Is(err, services.ErrInvalidItemType) || errors.Is(err, services.ErrProjectNotFound) {
+		var transitionRejection *services.TransitionRejection
+		if errors.Is(err, services.ErrMissingItemType) || errors.Is(err, services.ErrInvalidItemType) || errors.Is(err, services.ErrProjectNotFound) || errors.As(err, &transitionRejection) {
 			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, err.Error()))
 			return
 		}
