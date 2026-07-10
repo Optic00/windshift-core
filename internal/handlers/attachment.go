@@ -1173,20 +1173,21 @@ func (h *AttachmentHandler) Download(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	// Prevent embedding in iframes
 	w.Header().Set("X-Frame-Options", "DENY")
-	// Control how the file is displayed/downloaded
-	// Force download for potentially dangerous types (HTML, JS, SVG) to prevent XSS
-	if strings.HasPrefix(attachment.MimeType, "text/html") ||
-		strings.HasPrefix(attachment.MimeType, "application/javascript") ||
-		strings.HasPrefix(attachment.MimeType, "text/javascript") ||
-		strings.HasPrefix(attachment.MimeType, "image/svg+xml") ||
-		strings.Contains(attachment.MimeType, "script") {
-		// Force download for dangerous types
+	// Control how the file is displayed/downloaded.
+	//
+	// SECURITY: use an ALLOWLIST of non-executable types for inline display
+	// rather than a denylist of dangerous ones. A denylist inevitably misses
+	// renderable/script-capable types (e.g. application/xhtml+xml, image/svg+xml
+	// variants, MathML), and MIME values are not always server-verified — the
+	// Jira importer, for one, stores the remote-declared Content-Type. Anything
+	// not explicitly known-safe is forced to download under a locked-down CSP so
+	// it cannot execute in the app origin even if a browser would render it.
+	if isInlineSafeMimeType(attachment.MimeType) {
+		w.Header().Set("Content-Disposition", fileserve.ContentDisposition("inline", attachment.OriginalFilename))
+	} else {
 		w.Header().Set("Content-Disposition", fileserve.ContentDisposition("attachment", attachment.OriginalFilename))
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
-		slog.Debug("forcing download for potentially dangerous file type", slog.String("component", "attachments"), slog.String("mime_type", attachment.MimeType))
-	} else {
-		// Allow inline display for safe types (images, PDFs, etc.)
-		w.Header().Set("Content-Disposition", fileserve.ContentDisposition("inline", attachment.OriginalFilename))
+		slog.Debug("forcing download for non-allowlisted file type", slog.String("component", "attachments"), slog.String("mime_type", attachment.MimeType))
 	}
 
 	// Serve file
@@ -1477,6 +1478,43 @@ func (h *AttachmentHandler) verifyFileContentFromBytes(fileData []byte, filename
 
 	slog.Debug("content verification passed", slog.String("component", "attachments"), slog.String("filename", filename), slog.String("detected_type", detectedType))
 	return detectedType, nil
+}
+
+// inlineSafeMimeTypes is the allowlist of Content-Types that may be served with
+// an inline Content-Disposition. Every entry is a non-executable media type that
+// a browser renders without running embedded script. Anything outside this set —
+// including HTML/XHTML/SVG/MathML and any unknown type — is forced to download.
+var inlineSafeMimeTypes = map[string]struct{}{
+	"image/png":                {},
+	"image/jpeg":               {},
+	"image/gif":                {},
+	"image/webp":               {},
+	"image/bmp":                {},
+	"image/x-icon":             {},
+	"image/vnd.microsoft.icon": {},
+	"application/pdf":          {},
+	"text/plain":               {},
+	"audio/mpeg":               {},
+	"audio/ogg":                {},
+	"audio/wav":                {},
+	"audio/x-wav":              {},
+	"audio/webm":               {},
+	"video/mp4":                {},
+	"video/webm":               {},
+	"video/ogg":                {},
+}
+
+// isInlineSafeMimeType reports whether a stored Content-Type may be served
+// inline. The declared type (before any parameters such as "; charset=") is
+// matched case-insensitively against the allowlist; SVG is deliberately absent
+// because it can carry script.
+func isInlineSafeMimeType(mimeType string) bool {
+	base := strings.ToLower(strings.TrimSpace(mimeType))
+	if i := strings.IndexByte(base, ';'); i >= 0 {
+		base = strings.TrimSpace(base[:i])
+	}
+	_, ok := inlineSafeMimeTypes[base]
+	return ok
 }
 
 // isZipBasedMimeType returns true if the MIME type is a known ZIP-based container format.
