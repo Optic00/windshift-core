@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS sso_state_tokens (
 	provider_id INTEGER NOT NULL,
 	state TEXT UNIQUE NOT NULL, -- Cryptographically random state parameter
 	nonce TEXT, -- OIDC nonce (NULL for SAML)
+	request_id TEXT, -- SAML SP-issued AuthnRequest ID for InResponseTo binding (NULL for OIDC)
 	redirect_uri TEXT NOT NULL, -- Callback URL
 	remember_me BOOLEAN DEFAULT FALSE, -- Extended session flag
 	created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,

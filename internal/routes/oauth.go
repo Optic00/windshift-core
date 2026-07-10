@@ -28,8 +28,10 @@ func RegisterOAuthRoutes(deps *Deps) {
 	// must not go through the cookie-auth middleware (that surface rejects crw_).
 	api.HandleH("GET /oauth/userinfo", http.HandlerFunc(deps.Users.OAuth.Userinfo))
 
-	// /token is public (server-to-server). Rate-limited via the same
-	// limiter the rest of the auth surface uses to deter brute-force on
-	// client_secret + code.
-	api.HandleH("POST /oauth/token", deps.AuthRateLimiter.Limit(http.HandlerFunc(deps.Users.OAuth.Token)))
+	// /token is public (server-to-server). It uses a dedicated IP-keyed limiter
+	// rather than the user-keyed authRateLimiter: this endpoint is
+	// unauthenticated, so a user-keyed limiter that honors DisableIPRateLimit
+	// would skip limiting entirely and remove brute-force protection on
+	// client_secret + code. OAuthTokenLimiter is always IP-keyed.
+	api.HandleH("POST /oauth/token", deps.OAuthTokenLimiter.Limit(http.HandlerFunc(deps.Users.OAuth.Token)))
 }

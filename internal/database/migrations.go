@@ -1703,6 +1703,18 @@ var Catalog = []Migration{
 			ALTER TABLE pages ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
 		`,
 	},
+	{
+		Version:       "20260710_sso_state_request_id",
+		Name:          "Add sso_state_tokens.request_id for SAML AuthnRequest binding",
+		CheckSQLite:   sqliteColumnCheck("sso_state_tokens", "request_id"),
+		CheckPostgres: pgColumnCheck("sso_state_tokens", "request_id"),
+		SQLite: `
+			ALTER TABLE sso_state_tokens ADD COLUMN request_id TEXT;
+		`,
+		Postgres: `
+			ALTER TABLE sso_state_tokens ADD COLUMN IF NOT EXISTS request_id TEXT;
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {

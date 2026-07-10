@@ -113,19 +113,20 @@ func (h *SSOHandler) SAMLLogin(w http.ResponseWriter, r *http.Request) {
 		redirectURI = "/"
 	}
 
-	// Store state token for CSRF protection
-	storeErr := repository.NewSSOStateRepository(h.db).Store(provider.ID, state, redirectURI, rememberMe, time.Now().Add(5*time.Minute))
-	if storeErr != nil {
-		slog.Error("failed to store SAML state token", "error", storeErr)
-		h.redirectWithError(w, r, "Internal server error")
-		return
-	}
-
-	// Create AuthnRequest and redirect to IdP
-	redirectURL, err := sp.MakeAuthenticationRequest(state)
+	// Create AuthnRequest first so its ID can be bound to the state token; the
+	// ACS handler requires the returned assertion's InResponseTo to match it.
+	redirectURL, requestID, err := sp.MakeAuthenticationRequest(state)
 	if err != nil {
 		slog.Error("failed to create SAML AuthnRequest", "error", err, "provider", provider.Slug)
 		h.redirectWithError(w, r, "Failed to create authentication request")
+		return
+	}
+
+	// Store state token for CSRF protection, bound to the AuthnRequest ID.
+	storeErr := repository.NewSSOStateRepository(h.db).Store(provider.ID, state, requestID, redirectURI, rememberMe, time.Now().Add(5*time.Minute))
+	if storeErr != nil {
+		slog.Error("failed to store SAML state token", "error", storeErr)
+		h.redirectWithError(w, r, "Internal server error")
 		return
 	}
 
@@ -144,10 +145,7 @@ func (h *SSOHandler) SAMLAssertionConsumerService(w http.ResponseWriter, r *http
 	// Reject IdP-initiated flows: every legitimate response originates from
 	// SAMLLogin, which always sets RelayState to a freshly minted state token.
 	// An empty RelayState means either an IdP-initiated flow we don't support
-	// or a malformed request — fail closed before parsing the assertion so
-	// the library's AllowIDPInitiated=true setting can't be exploited if the
-	// DB-lookup defense below is ever weakened. Track AuthnRequest IDs and
-	// flip AllowIDPInitiated to false as a follow-up.
+	// or a malformed request — fail closed before parsing the assertion.
 	relayState := r.FormValue("RelayState") //nolint:gosec // G120: SAML payload size is bounded by the SAML library and reverse-proxy upload limit; FormValue here only reads the state token we minted in SAMLLogin.
 	if relayState == "" {
 		slog.Warn("SAML request rejected: empty RelayState (IdP-initiated flow not supported)", "provider", provider.Slug)
@@ -155,15 +153,9 @@ func (h *SSOHandler) SAMLAssertionConsumerService(w http.ResponseWriter, r *http
 		return
 	}
 
-	// Parse and validate the SAML response
-	assertionInfo, err := sp.ParseResponse(r)
-	if err != nil {
-		slog.Error("SAML assertion validation failed", "error", err, "provider", provider.Slug)
-		h.redirectWithError(w, r, "Authentication failed: invalid SAML response")
-		return
-	}
-
-	// Validate state token
+	// Validate the state token first so its recorded AuthnRequest ID can bind
+	// the assertion. Looking it up before parsing also means a replayed
+	// assertion whose state token was already consumed is rejected here.
 	token, err := repository.NewSSOStateRepository(h.db).GetValid(relayState, provider.ID, time.Now())
 	if err != nil {
 		slog.Warn("SAML state token not found, rejecting request", "provider", provider.Slug)
@@ -174,6 +166,15 @@ func (h *SSOHandler) SAMLAssertionConsumerService(w http.ResponseWriter, r *http
 	rememberMe := token.RememberMe
 	// Delete used state token (single-use)
 	_ = repository.NewSSOStateRepository(h.db).Delete(token.ID)
+
+	// Parse and validate the SAML response, requiring the assertion's
+	// InResponseTo to match the AuthnRequest we issued for this state token.
+	assertionInfo, err := sp.ParseResponse(r, token.RequestID)
+	if err != nil {
+		slog.Error("SAML assertion validation failed", "error", err, "provider", provider.Slug)
+		h.redirectWithError(w, r, "Authentication failed: invalid SAML response")
+		return
+	}
 
 	// Convert SAML attributes to OIDCClaims for reuse of FindOrCreateUser
 	claims := h.samlAssertionToClaims(assertionInfo, provider)
@@ -352,18 +353,22 @@ func (h *SSOHandler) samlAssertionToClaims(info *sso.SAMLAssertionInfo, provider
 		claims.Username = strings.Split(claims.Email, "@")[0]
 	}
 
-	// SAML has no standard email_verified claim. The assertion itself is
-	// signed by the IdP and the email attribute is asserted by that IdP, so
-	// in this deployment we treat IdP-authenticated SAML email as verified.
-	// This matches typical enterprise SAML deployments where the IdP is the
-	// source of truth for user identity.
+	// SAML has no standard email_verified claim, so trust in the asserted email
+	// is derived from provider configuration rather than hard-coded. The
+	// account-linking guard in FindOrCreateUser links a new SSO identity to a
+	// pre-existing account by matching email only when EmailVerified &&
+	// EmailVerifiedProvided; unconditionally forcing both true would let a SAML
+	// IdP that can assert an arbitrary email silently take over an existing
+	// account, bypassing the provider's RequireVerifiedEmail control.
 	//
-	// Without this, every SAML-provisioned new user lands with
-	// users.email_verified=false locally, which would gate them out of any
-	// future RequireVerifiedEmail-protected endpoint without ever giving them
-	// a way to verify (no IdP-side confirmation step exists for SAML).
-	claims.EmailVerified = true
+	// RequireVerifiedEmail (default true) is the operator's assertion that this
+	// IdP's email attribute is authoritative. When set, we treat SAML email as
+	// verified (enterprise IdP is the source of truth). When the operator has
+	// explicitly turned it off for a loosely-governed IdP, we report the email
+	// as provided-but-unverified so login still succeeds but email-based
+	// auto-linking to an existing account is refused.
 	claims.EmailVerifiedProvided = true
+	claims.EmailVerified = provider.RequireVerifiedEmail
 
 	return claims
 }

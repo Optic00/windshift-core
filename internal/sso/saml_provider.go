@@ -61,10 +61,14 @@ func NewSAMLServiceProvider(provider *SSOProvider, baseURL string) (*SAMLService
 	metadataURL, _ := url.Parse(baseURL + "/api/sso/" + provider.Slug + "/saml/metadata")
 
 	sp := saml.ServiceProvider{
-		EntityID:          entityIDURL.String(),
-		AcsURL:            *acsURL,
-		MetadataURL:       *metadataURL,
-		AllowIDPInitiated: true,
+		EntityID:    entityIDURL.String(),
+		AcsURL:      *acsURL,
+		MetadataURL: *metadataURL,
+		// IdP-initiated SSO is disabled: every login originates from SAMLLogin,
+		// which issues an AuthnRequest and records its ID. Requiring the
+		// assertion's InResponseTo to match a request we issued (see
+		// ParseResponse) prevents replay of a captured/forged assertion.
+		AllowIDPInitiated: false,
 	}
 
 	// If IdP metadata URL is provided, fetch and parse it
@@ -101,28 +105,35 @@ func (s *SAMLServiceProvider) Metadata() *saml.EntityDescriptor {
 	return s.SP.Metadata()
 }
 
-// MakeAuthenticationRequest creates a SAML AuthnRequest and returns the redirect URL.
-func (s *SAMLServiceProvider) MakeAuthenticationRequest(relayState string) (*url.URL, error) {
+// MakeAuthenticationRequest creates a SAML AuthnRequest and returns the redirect
+// URL together with the request ID. The caller must persist the request ID
+// alongside the relay-state token so the returned assertion can be bound to it
+// via InResponseTo in ParseResponse.
+func (s *SAMLServiceProvider) MakeAuthenticationRequest(relayState string) (*url.URL, string, error) {
 	authReq, err := s.SP.MakeAuthenticationRequest(
 		s.SP.GetSSOBindingLocation(saml.HTTPRedirectBinding),
 		saml.HTTPRedirectBinding,
 		saml.HTTPPostBinding,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create AuthnRequest: %w", err)
+		return nil, "", fmt.Errorf("failed to create AuthnRequest: %w", err)
 	}
 
 	redirectURL, err := authReq.Redirect(relayState, &s.SP)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create redirect URL: %w", err)
+		return nil, "", fmt.Errorf("failed to create redirect URL: %w", err)
 	}
 
-	return redirectURL, nil
+	return redirectURL, authReq.ID, nil
 }
 
 // ParseResponse validates a SAML response and extracts the assertion attributes.
-func (s *SAMLServiceProvider) ParseResponse(r *http.Request) (*SAMLAssertionInfo, error) {
-	possibleRequestIDs := []string{} // For SP-initiated flow, we'd track request IDs
+// expectedRequestID is the AuthnRequest ID recorded when this SP issued the
+// login request; the assertion's InResponseTo must match it. With
+// AllowIDPInitiated=false an empty or mismatched InResponseTo is rejected,
+// which defeats replay of a captured or forged assertion.
+func (s *SAMLServiceProvider) ParseResponse(r *http.Request, expectedRequestID string) (*SAMLAssertionInfo, error) {
+	possibleRequestIDs := []string{expectedRequestID}
 	assertion, err := s.SP.ParseResponse(r, possibleRequestIDs)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrSAMLAssertionInvalid, err)

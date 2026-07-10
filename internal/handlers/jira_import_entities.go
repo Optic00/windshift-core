@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -1721,7 +1722,12 @@ func (h *JiraImportHandler) importAttachments(ctx context.Context, jobID string,
 			}
 		}
 
-		mimeType := attachment.MimeType
+		// SECURITY: do not trust the remote-declared Content-Type. A malicious
+		// or compromised Jira source controls attachment.MimeType, and the
+		// download handler uses the stored MIME to decide inline rendering.
+		// Detect the type from the actual bytes so a remote source cannot get a
+		// script-capable document served inline in the app origin (stored XSS).
+		mimeType := detectStoredMimeType(filePath)
 		if mimeType == "" {
 			mimeType = "application/octet-stream"
 		}
@@ -1785,4 +1791,23 @@ func (h *JiraImportHandler) importAttachments(ctx context.Context, jobID string,
 		}
 	}
 	return mediaRefs
+}
+
+// detectStoredMimeType sniffs the Content-Type of an already-written file from
+// its leading bytes via http.DetectContentType, so the stored MIME reflects the
+// actual content rather than a remote-declared value. Returns "" if the file
+// cannot be read (caller falls back to application/octet-stream).
+func detectStoredMimeType(path string) string {
+	f, err := os.Open(path) //nolint:gosec // G304 — path is attachmentPath + UUID + filepath.Base(filename)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = f.Close() }()
+
+	buf := make([]byte, 512)
+	n, err := f.Read(buf)
+	if err != nil && n == 0 {
+		return ""
+	}
+	return http.DetectContentType(buf[:n])
 }

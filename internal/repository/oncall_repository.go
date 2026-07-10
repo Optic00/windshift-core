@@ -260,6 +260,34 @@ func (r *OnCallRepository) GetLayersForSchedule(scheduleID int) ([]models.OnCall
 	return layers, nil
 }
 
+// GetLayerByID returns a single rotation layer (without members). Used by the
+// mutation handlers to verify the layer belongs to the authorized schedule
+// before acting on it.
+func (r *OnCallRepository) GetLayerByID(id int) (*models.OnCallScheduleLayer, error) {
+	var l models.OnCallScheduleLayer
+	var endDate sql.NullString
+	err := r.db.QueryRow(`
+		SELECT id, schedule_id, name, priority, rotation_type, rotation_interval_days,
+			handoff_time, start_date, end_date, created_at, updated_at
+		FROM on_call_schedule_layers
+		WHERE id = ?
+	`, id).Scan(
+		&l.ID, &l.ScheduleID, &l.Name, &l.Priority, &l.RotationType,
+		&l.RotationIntervalDays, &l.HandoffTime, &l.StartDate, &endDate,
+		&l.CreatedAt, &l.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if endDate.Valid {
+		l.EndDate = &endDate.String
+	}
+	return &l, nil
+}
+
 func (r *OnCallRepository) AddLayer(scheduleID int, name string, priority int, rotationType string, intervalDays int, handoffTime, startDate string, endDate *string) (int, error) {
 	now := time.Now()
 	var id int64
