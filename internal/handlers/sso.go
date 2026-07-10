@@ -319,7 +319,7 @@ func (h *SSOHandler) StartLogin(w http.ResponseWriter, r *http.Request) {
 	state := generateRandomState()
 
 	// Store state token with redirect_uri and remember_me
-	storeErr := repository.NewSSOStateRepository(h.db).Store(provider.ID, state, redirectAfterLogin, rememberMe, time.Now().Add(5*time.Minute))
+	storeErr := repository.NewSSOStateRepository(h.db).Store(provider.ID, state, "", redirectAfterLogin, rememberMe, time.Now().Add(5*time.Minute))
 	if storeErr != nil {
 		slog.Error("failed to store OIDC state token", "error", storeErr)
 		respondInternalError(w, r, storeErr)
