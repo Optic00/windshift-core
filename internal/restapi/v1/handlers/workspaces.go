@@ -253,8 +253,10 @@ func (h *WorkspaceHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	canEdit, err := h.Perms.CanEditWorkspace(user.ID, wsID)
-	if err != nil || !canEdit {
+	// Renaming/deactivating the workspace record is a workspace-administration
+	// action, not item editing — require workspace.admin, not item.edit.
+	canAdmin, err := h.Perms.CanAdminWorkspace(user.ID, wsID)
+	if err != nil || !canAdmin {
 		h.RespondError(w, r, restapi.ErrWorkspaceNotFound)
 		return
 	}
@@ -316,8 +318,10 @@ func (h *WorkspaceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	canEdit, _ := h.Perms.CanEditWorkspace(user.ID, wsID)
-	if !canEdit {
+	// Deleting the workspace is a destructive administration action —
+	// require workspace.admin, not item.edit.
+	canAdmin, _ := h.Perms.CanAdminWorkspace(user.ID, wsID)
+	if !canAdmin {
 		h.RespondError(w, r, restapi.ErrWorkspaceNotFound)
 		return
 	}
