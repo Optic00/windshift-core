@@ -148,6 +148,39 @@ func (h *OnCallHandler) resolveSchedule(w http.ResponseWriter, r *http.Request, 
 	return schedule, true
 }
 
+// resolveLayerForSchedule parses a layer ID from the URL parameter named
+// paramName and verifies the layer belongs to the given schedule. Callers must
+// have already authorized management of that schedule via resolveSchedule.
+// Returns the layer ID and true on success; on a missing or foreign layer it
+// writes 404 (never revealing that the layer exists under another schedule) and
+// returns false.
+func (h *OnCallHandler) resolveLayerForSchedule(w http.ResponseWriter, r *http.Request, paramName string, schedule *models.OnCallSchedule) (int, bool) {
+	layerID, ok := requireIDParam(w, r, paramName)
+	if !ok {
+		return 0, false
+	}
+
+	layer, err := h.onCallRepo.GetLayerByID(layerID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			respondNotFound(w, r, "Layer")
+			return 0, false
+		}
+		respondInternalError(w, r, err)
+		return 0, false
+	}
+
+	if layer.ScheduleID != schedule.ID {
+		// The layer exists but belongs to a different schedule the caller may
+		// not manage. Return 404 rather than 403 to avoid confirming its
+		// existence across the team boundary.
+		respondNotFound(w, r, "Layer")
+		return 0, false
+	}
+
+	return layerID, true
+}
+
 // resolvePolicy parses an escalation-policy ID from the URL parameter named
 // paramName, fetches the policy, checks manage permission, and writes the
 // appropriate HTTP error when anything fails. Returns the policy and true on
@@ -374,12 +407,12 @@ func (h *OnCallHandler) AddLayer(w http.ResponseWriter, r *http.Request) {
 
 // UpdateLayer updates an existing rotation layer.
 func (h *OnCallHandler) UpdateLayer(w http.ResponseWriter, r *http.Request) {
-	_, ok := h.resolveSchedule(w, r, "scheduleId")
+	schedule, ok := h.resolveSchedule(w, r, "scheduleId")
 	if !ok {
 		return
 	}
 
-	layerID, ok := requireIDParam(w, r, "layerId")
+	layerID, ok := h.resolveLayerForSchedule(w, r, "layerId", schedule)
 	if !ok {
 		return
 	}
@@ -400,12 +433,12 @@ func (h *OnCallHandler) UpdateLayer(w http.ResponseWriter, r *http.Request) {
 
 // DeleteLayer removes a rotation layer.
 func (h *OnCallHandler) DeleteLayer(w http.ResponseWriter, r *http.Request) {
-	_, ok := h.resolveSchedule(w, r, "scheduleId")
+	schedule, ok := h.resolveSchedule(w, r, "scheduleId")
 	if !ok {
 		return
 	}
 
-	layerID, ok := requireIDParam(w, r, "layerId")
+	layerID, ok := h.resolveLayerForSchedule(w, r, "layerId", schedule)
 	if !ok {
 		return
 	}
@@ -420,12 +453,12 @@ func (h *OnCallHandler) DeleteLayer(w http.ResponseWriter, r *http.Request) {
 
 // SetLayerMembers replaces the member list for a rotation layer.
 func (h *OnCallHandler) SetLayerMembers(w http.ResponseWriter, r *http.Request) {
-	_, ok := h.resolveSchedule(w, r, "scheduleId")
+	schedule, ok := h.resolveSchedule(w, r, "scheduleId")
 	if !ok {
 		return
 	}
 
-	layerID, ok := requireIDParam(w, r, "layerId")
+	layerID, ok := h.resolveLayerForSchedule(w, r, "layerId", schedule)
 	if !ok {
 		return
 	}
@@ -898,6 +931,44 @@ func (h *OnCallHandler) ListIncidents(w http.ResponseWriter, r *http.Request) {
 	respondJSONOK(w, incidents)
 }
 
+// resolveIncidentForManage parses an incident ID from the URL parameter named
+// paramName, loads the incident, resolves its owning team via its escalation
+// policy, and checks manage permission on that team. Returns the incident ID
+// and true on success; writes the appropriate error and returns false
+// otherwise. Uses 404 for a missing incident/policy to avoid leaking existence.
+func (h *OnCallHandler) resolveIncidentForManage(w http.ResponseWriter, r *http.Request, paramName string) (int, bool) {
+	id, ok := requireIDParam(w, r, paramName)
+	if !ok {
+		return 0, false
+	}
+
+	incident, err := h.onCallRepo.GetIncidentByID(id)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			respondNotFound(w, r, "Incident")
+			return 0, false
+		}
+		respondInternalError(w, r, err)
+		return 0, false
+	}
+
+	policy, err := h.onCallRepo.GetPolicyByID(incident.EscalationPolicyID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			respondNotFound(w, r, "Incident")
+			return 0, false
+		}
+		respondInternalError(w, r, err)
+		return 0, false
+	}
+
+	if !h.canManageTeamOnCall(w, r, policy.TeamID) {
+		return 0, false
+	}
+
+	return id, true
+}
+
 // AcknowledgeIncident marks an incident as acknowledged.
 func (h *OnCallHandler) AcknowledgeIncident(w http.ResponseWriter, r *http.Request) {
 	user, ok := RequireAuth(w, r)
@@ -905,7 +976,7 @@ func (h *OnCallHandler) AcknowledgeIncident(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	id, ok := requireIDParam(w, r, "id")
+	id, ok := h.resolveIncidentForManage(w, r, "id")
 	if !ok {
 		return
 	}
@@ -925,7 +996,7 @@ func (h *OnCallHandler) ResolveIncident(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	id, ok := requireIDParam(w, r, "id")
+	id, ok := h.resolveIncidentForManage(w, r, "id")
 	if !ok {
 		return
 	}
