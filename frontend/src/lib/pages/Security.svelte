@@ -1,5 +1,4 @@
 <script>
-	import { onMount } from 'svelte';
 	import { currentRoute, navigate } from '../router.js';
 	import { authStore, securityStore } from '../stores';
 	import { t } from '../stores/i18n.svelte.js';
@@ -47,6 +46,7 @@
 	let sshAvailable = $derived(securityStore.sshAvailable);
 	let showEnrollmentBanner = $derived(securityStore.showEnrollmentBanner);
 	let enrollmentType = $derived(securityStore.enrollmentType);
+	let enrollmentOnly = $derived(securityStore.enrollmentOnly);
 	let showChangePassword = $derived(securityStore.showChangePassword);
 	let changePasswordData = $derived(securityStore.changePasswordData);
 	let changePasswordLoading = $derived(securityStore.changePasswordLoading);
@@ -115,20 +115,16 @@
 		securityStore.newTokenScopes = [];
 	}
 
-	// Check for enrollment query parameter
-	onMount(() => {
-		const unsubscribe = currentRoute.subscribe(route => {
-			if (route.query?.enroll === 'passkey') {
-				securityStore.checkEnrollmentRequired('passkey');
-			}
-		});
-		return unsubscribe;
-	});
-
-	// Initialize when user ID becomes available
+	// Initialize in a dedicated enrollment-only mode when login issued a
+	// restricted first-passkey session. This must happen before loading normal
+	// Security-page resources, which the server intentionally denies.
 	$effect(() => {
+		const enrollmentRequested = $currentRoute.query?.enroll === 'passkey';
+		if (enrollmentRequested) {
+			securityStore.checkEnrollmentRequired('passkey');
+		}
 		if (currentUserId) {
-			securityStore.setCurrentUserId(currentUserId);
+			securityStore.setCurrentUserId(currentUserId, { enrollmentOnly: enrollmentRequested });
 		}
 	});
 
@@ -152,6 +148,7 @@
 
 			if (result.wasEnrollmentRequired) {
 				successToast('Passkey registered successfully! Your account is now secured.');
+				navigate('/security');
 			}
 		} catch (err) {
 			errorToast(err.message || 'Failed to register security key');
@@ -299,14 +296,16 @@
 						</div>
 					</div>
 				</div>
-				<button
-					type="button"
-					onclick={dismissEnrollmentBanner}
-					class="p-1 rounded hover:bg-black/10"
-					style="color: var(--ds-text-warning-inverse);"
-				>
-					<X class="w-5 h-5" />
-				</button>
+				{#if !enrollmentOnly}
+					<button
+						type="button"
+						onclick={dismissEnrollmentBanner}
+						class="p-1 rounded hover:bg-black/10"
+						style="color: var(--ds-text-warning-inverse);"
+					>
+						<X class="w-5 h-5" />
+					</button>
+				{/if}
 			</div>
 		</div>
 	{/if}
@@ -315,16 +314,18 @@
 	<div class="shadow rounded-lg border p-6" style="background-color: var(--ds-surface-raised); border-color: var(--ds-border);">
 		<SectionHeader title={t('security.credentials')} subtitle={t('security.credentialsSubtitle')} class="mb-6">
 			{#snippet actions()}
-				<Button
-					variant="primary"
-					onclick={() => securityStore.showAddCredential = true}
-					icon={Plus}
-					size="medium"
-					keyboardHint="A"
-					hotkeyConfig={{ key: toHotkeyString('security', 'addCredential'), guard: () => !showAddCredential && !showAddToken && !showChangePassword }}
-				>
-					{t('common.add')}
-				</Button>
+				{#if !enrollmentOnly}
+					<Button
+						variant="primary"
+						onclick={() => securityStore.showAddCredential = true}
+						icon={Plus}
+						size="medium"
+						keyboardHint="A"
+						hotkeyConfig={{ key: toHotkeyString('security', 'addCredential'), guard: () => !showAddCredential && !showAddToken && !showChangePassword }}
+					>
+						{t('common.add')}
+					</Button>
+				{/if}
 			{/snippet}
 		</SectionHeader>
 
@@ -361,6 +362,7 @@
 		</div>
 	</div>
 
+	{#if !enrollmentOnly}
 	<!-- Account Security -->
 	<div class="shadow rounded-lg border p-6" style="background-color: var(--ds-surface-raised); border-color: var(--ds-border);">
 		<h2 class="text-lg font-medium mb-4" style="color: var(--ds-text);">Account Security</h2>
@@ -461,6 +463,7 @@
 			{/each}
 		</div>
 	</div>
+	{/if}
 </div>
 
 <!-- Change Password Modal -->
@@ -561,7 +564,7 @@
 						<Key class="h-4 w-4 mr-2" />
 						<span style="color: var(--ds-text);">Security Key (FIDO2)</span>
 					</label>
-					{#if sshAvailable}
+					{#if sshAvailable && !enrollmentOnly}
 					<label class="flex items-center cursor-pointer">
 						<input
 							type="radio"
@@ -630,13 +633,15 @@
 					{loading ? t('common.processing') : 'Add SSH Key'}
 				{/if}
 			</Button>
-			<Button
-				variant="default"
-				onclick={() => securityStore.resetCredentialForm()}
-				keyboardHint="Esc"
-			>
-				{t('common.cancel')}
-			</Button>
+			{#if !enrollmentOnly}
+				<Button
+					variant="default"
+					onclick={() => securityStore.resetCredentialForm()}
+					keyboardHint="Esc"
+				>
+					{t('common.cancel')}
+				</Button>
+			{/if}
 		</div>
 	</div>
 </Modal>

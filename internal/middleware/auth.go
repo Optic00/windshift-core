@@ -62,6 +62,7 @@ func NewAuthMiddleware(sessionManager *auth.SessionManager, tokenManager *auth.T
 type authResult struct {
 	ctx               context.Context // The context with auth info added (nil if not authenticated)
 	authenticated     bool            // Whether authentication succeeded
+	authPending       bool            // Valid but narrowly scoped pending-auth session
 	errorMessage      string          // Error message (only for bearer token failures)
 	shouldClearCookie bool            // Whether to clear the session cookie
 }
@@ -75,6 +76,9 @@ func (am *AuthMiddleware) tryAuthenticate(r *http.Request) authResult {
 	if sessionToken := r.Header.Get("X-Session-Token"); sessionToken != "" {
 		session, err := am.sessionManager.ValidateSession(sessionToken, clientIP)
 		if err == nil {
+			if session.EnrollmentRequired && !isPendingAuthEndpoint(r.URL.Path, session.AuthPendingType) {
+				return authResult{authPending: true, errorMessage: "Passkey enrollment or verification required"}
+			}
 			ctx := context.WithValue(r.Context(), ContextKeySession, session)
 			ctx = context.WithValue(ctx, ContextKeyUser, session.User)
 			ctx = context.WithValue(ctx, ContextKeyAuthMethod, "session-header")
@@ -122,6 +126,10 @@ func (am *AuthMiddleware) tryAuthenticate(r *http.Request) authResult {
 		return authResult{errorMessage: errMsg, shouldClearCookie: true}
 	}
 
+	if session.EnrollmentRequired && !isPendingAuthEndpoint(r.URL.Path, session.AuthPendingType) {
+		return authResult{authPending: true, errorMessage: "Passkey enrollment or verification required"}
+	}
+
 	ctx := context.WithValue(r.Context(), ContextKeySession, session)
 	ctx = context.WithValue(ctx, ContextKeyUser, session.User)
 	ctx = context.WithValue(ctx, ContextKeyAuthMethod, "session")
@@ -156,6 +164,10 @@ func (am *AuthMiddleware) RequireAuth(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(result.ctx))
 			return
 		}
+		if result.authPending {
+			am.handleAuthPendingError(w, r, result.errorMessage)
+			return
+		}
 
 		// Authentication failed - return error
 		errMsg := result.errorMessage
@@ -186,6 +198,21 @@ func (am *AuthMiddleware) OptionalAuth(next http.Handler) http.Handler {
 		// Not authenticated - continue without user context (optional auth)
 		next.ServeHTTP(w, r)
 	})
+}
+
+// isPendingAuthEndpoint applies the narrow server-side capability granted to a
+// password-verified session. Verification sessions cannot register a new
+// authenticator (which would let a password thief replace the required factor);
+// only first-passkey enrollment sessions may reach registration endpoints.
+func isPendingAuthEndpoint(path, pendingType string) bool {
+	if path == "/api/auth/me" || path == "/api/auth/logout" {
+		return true
+	}
+	if pendingType != auth.AuthPendingEnrollment || !strings.HasPrefix(path, "/api/users/") {
+		return false
+	}
+	return strings.HasSuffix(path, "/credentials/webauthn/register/start") ||
+		strings.HasSuffix(path, "/credentials/webauthn/register/complete")
 }
 
 // shouldSkipAuth determines if authentication should be skipped for a request
@@ -266,6 +293,23 @@ func (am *AuthMiddleware) MarkSetupCompleted() {
 type authErrorResponse struct {
 	Error string `json:"error"`
 	Code  string `json:"code"`
+}
+
+// handleAuthPendingError distinguishes a valid restricted session from an
+// invalid/expired login. Frontends must keep the session while directing the
+// user to the required WebAuthn ceremony.
+func (am *AuthMiddleware) handleAuthPendingError(w http.ResponseWriter, r *http.Request, message string) {
+	if strings.HasPrefix(r.URL.Path, "/api/") {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		response := authErrorResponse{Error: message, Code: "AUTHENTICATION_PENDING"}
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			slog.Error("failed to encode pending auth response", slog.Any("error", err))
+		}
+		return
+	}
+	w.WriteHeader(http.StatusForbidden)
+	_, _ = w.Write([]byte(message))
 }
 
 // handleAuthError handles authentication errors

@@ -43,7 +43,7 @@ type PortalCustomer struct {
 type PortalSession struct {
 	ID               int             `json:"id"`
 	PortalCustomerID int             `json:"portal_customer_id"`
-	Token            string          `json:"token"`
+	Token            string          `json:"-"`
 	ChannelID        *int            `json:"channel_id,omitempty"`
 	ExpiresAt        time.Time       `json:"expires_at"`
 	IPAddress        string          `json:"ip_address"`
@@ -98,7 +98,7 @@ func (sm *PortalSessionManager) CreatePortalSession(portalCustomerID, channelID 
 		RETURNING id
 	`
 	var sessionID int64
-	err = sm.db.QueryRow(query, portalCustomerID, token, channelID, expiresAt, ipAddress, userAgent, time.Now()).Scan(&sessionID)
+	err = sm.db.QueryRow(query, portalCustomerID, hashSessionToken(token), channelID, expiresAt, ipAddress, userAgent, time.Now()).Scan(&sessionID)
 	if err != nil {
 		slog.Error("portal session db insert failed", slog.String("component", "portal_auth"), slog.Any("error", err))
 		return nil, fmt.Errorf("failed to create portal session: %w", err)
@@ -136,10 +136,13 @@ func (sm *PortalSessionManager) ValidatePortalSession(token, ipAddress string) (
 			pc.name, pc.email, pc.phone, pc.customer_organisation_id, pc.created_at, pc.updated_at
 		FROM portal_customer_sessions s
 		JOIN portal_customers pc ON s.portal_customer_id = pc.id
-		WHERE s.session_token = ? AND s.is_active = true
+		WHERE s.session_token IN (?, ?) AND s.is_active = true
 	`
 
-	row := sm.db.QueryRow(query, token)
+	// New sessions are stored as SHA-256 digests. Keep a bounded plaintext
+	// fallback so sessions issued before this upgrade remain valid until their
+	// normal seven-day expiry.
+	row := sm.db.QueryRow(query, hashSessionToken(token), token)
 
 	session := &PortalSession{Customer: &PortalCustomer{}}
 	var phone sql.NullString
@@ -209,8 +212,8 @@ func (sm *PortalSessionManager) ValidatePortalSession(token, ipAddress string) (
 // DeletePortalSession invalidates a session
 // last review: ser, 210426, TODO: Remove inline sql
 func (sm *PortalSessionManager) DeletePortalSession(token string) error {
-	query := `UPDATE portal_customer_sessions SET is_active = false WHERE session_token = ?`
-	_, err := sm.db.ExecWrite(query, token)
+	query := `UPDATE portal_customer_sessions SET is_active = false WHERE session_token IN (?, ?)`
+	_, err := sm.db.ExecWrite(query, hashSessionToken(token), token)
 	if err != nil {
 		return fmt.Errorf("failed to delete portal session: %w", err)
 	}

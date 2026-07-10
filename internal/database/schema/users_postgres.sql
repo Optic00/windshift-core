@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS user_sessions (
 	ip_address TEXT,
 	user_agent TEXT,
 	is_active BOOLEAN DEFAULT true,
+	enrollment_required BOOLEAN DEFAULT false,
+	auth_pending_type TEXT,
 	created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 	FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );

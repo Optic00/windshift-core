@@ -140,8 +140,9 @@
       const loginResult = await performFidoLogin(api, emailOrUsername);
 
       if (loginResult.success || loginResult.status === 'success') {
-        // Update auth store with user info
-        authStore.setAuthData(loginResult.user, loginResult.sessionToken || loginResult.session);
+        // Verify the browser session was issued/elevated and load canonical
+        // session metadata before rendering the authenticated application.
+        await authStore.completePasskeyLogin(loginResult.user);
         isOpen = false;
         onsuccess?.();
       } else {
@@ -192,6 +193,10 @@
 
       isOpen = false;
       onsuccess?.();
+    } else if (result.passkey_required) {
+      // The password established only a server-restricted pending session.
+      // Complete the fresh passkey assertion before treating it as authenticated.
+      await handleFidoLogin();
     } else if (result.sso_required) {
       // Show SSO required message instead of regular error
       ssoRequiredMessage = result.policy_message;

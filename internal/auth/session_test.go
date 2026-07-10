@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bytes"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -33,6 +34,14 @@ func TestSessionManagerStoresHashedTokensAndValidatesLegacyPlaintext(t *testing.
 	userID := int(userID64)
 
 	sm := NewSessionManager(db, false, false, nil, "test-cookie-secret")
+	sameSecretManager := NewSessionManager(db, false, false, nil, "test-cookie-secret")
+	if !bytes.Equal(sm.DeriveOpaqueValue("test", "value"), sameSecretManager.DeriveOpaqueValue("test", "value")) {
+		t.Fatal("opaque auth values were not stable for the configured secret")
+	}
+	if bytes.Equal(sm.DeriveOpaqueValue("test", "value"), sm.DeriveOpaqueValue("other", "value")) {
+		t.Fatal("opaque auth values were not purpose-scoped")
+	}
+
 	session, err := sm.CreateSession(userID, "198.51.100.10", "test-agent", false)
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
@@ -48,8 +57,47 @@ func TestSessionManagerStoresHashedTokensAndValidatesLegacyPlaintext(t *testing.
 	if !strings.HasPrefix(stored, sessionTokenHashPrefix) {
 		t.Fatalf("stored token %q missing hash prefix", stored)
 	}
-	if _, err := sm.ValidateSession(session.Token, "198.51.100.10"); err != nil {
+	validated, err := sm.ValidateSession(session.Token, "198.51.100.10")
+	if err != nil {
 		t.Fatalf("ValidateSession hashed token: %v", err)
+	}
+	if validated.EnrollmentRequired {
+		t.Fatal("new normal session unexpectedly requires enrollment")
+	}
+	if err := sm.SetEnrollmentRequired(session.ID, true); err != nil {
+		t.Fatalf("SetEnrollmentRequired: %v", err)
+	}
+	validated, err = sm.ValidateSession(session.Token, "198.51.100.10")
+	if err != nil {
+		t.Fatalf("ValidateSession restricted token: %v", err)
+	}
+	if !validated.EnrollmentRequired || validated.AuthPendingType != AuthPendingEnrollment {
+		t.Fatalf("restricted session state = required %v, type %q", validated.EnrollmentRequired, validated.AuthPendingType)
+	}
+
+	verificationSession, err := sm.CreateSession(userID, "198.51.100.10", "verification-agent", false)
+	if err != nil {
+		t.Fatalf("CreateSession verification: %v", err)
+	}
+	if err := sm.SetAuthPending(verificationSession.ID, AuthPendingPasskeyVerification); err != nil {
+		t.Fatalf("SetAuthPending verification: %v", err)
+	}
+	if err := sm.ClearEnrollmentRequiredByUserID(userID); err != nil {
+		t.Fatalf("ClearEnrollmentRequiredByUserID: %v", err)
+	}
+	validated, err = sm.ValidateSession(session.Token, "198.51.100.10")
+	if err != nil {
+		t.Fatalf("ValidateSession enrollment after clear: %v", err)
+	}
+	if validated.EnrollmentRequired {
+		t.Fatal("enrollment session was not elevated")
+	}
+	validated, err = sm.ValidateSession(verificationSession.Token, "198.51.100.10")
+	if err != nil {
+		t.Fatalf("ValidateSession verification: %v", err)
+	}
+	if !validated.EnrollmentRequired || validated.AuthPendingType != AuthPendingPasskeyVerification {
+		t.Fatalf("verification session was incorrectly elevated: required %v, type %q", validated.EnrollmentRequired, validated.AuthPendingType)
 	}
 
 	legacyToken := "legacy-plaintext-session-token"

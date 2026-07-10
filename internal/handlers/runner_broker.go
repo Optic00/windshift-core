@@ -429,6 +429,10 @@ func (h *RunnerBrokerHandler) ProxyGit(w http.ResponseWriter, r *http.Request) {
 	}
 	upstreamPath := singleJoiningSlash(target.Path, owner+"/"+repo+"/"+gitPath)
 	proxy := &httputil.ReverseProxy{
+		// Resolve and reject non-public destinations at connection time. The
+		// transport intentionally ignores proxy environment variables so they
+		// cannot bypass the checked dialer.
+		Transport: ssrfSafeTransport(egressResponseHeaderTimeout),
 		Director: func(req *http.Request) {
 			req.URL.Scheme = target.Scheme
 			req.URL.Host = target.Host
@@ -439,6 +443,9 @@ func (h *RunnerBrokerHandler) ProxyGit(w http.ResponseWriter, r *http.Request) {
 			// agnostic oauth2:<token> Basic form).
 			req.Header.Del("Authorization")
 			req.SetBasicAuth("oauth2", scmToken)
+		},
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			respondServiceUnavailable(w, r, services.RedactString(err.Error()))
 		},
 	}
 	// Git smart-HTTP clones/fetches of a large repo stream well past 30s in

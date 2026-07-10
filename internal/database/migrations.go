@@ -1703,6 +1703,21 @@ var Catalog = []Migration{
 			ALTER TABLE pages ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
 		`,
 	},
+	{
+		Version:       "20260710_user_sessions_enrollment_required_postgres",
+		Name:          "Add missing Postgres user session enrollment state",
+		CheckSQLite:   sqliteColumnCheck("user_sessions", "enrollment_required"),
+		CheckPostgres: pgColumnCheck("user_sessions", "enrollment_required"),
+		Postgres:      "ALTER TABLE user_sessions ADD COLUMN enrollment_required BOOLEAN DEFAULT false",
+	},
+	{
+		Version:       "20260710_user_sessions_auth_pending_type",
+		Name:          "Add typed pending authentication state to user sessions",
+		CheckSQLite:   sqliteColumnCheck("user_sessions", "auth_pending_type"),
+		CheckPostgres: pgColumnCheck("user_sessions", "auth_pending_type"),
+		SQLite:        "ALTER TABLE user_sessions ADD COLUMN auth_pending_type TEXT",
+		Postgres:      "ALTER TABLE user_sessions ADD COLUMN auth_pending_type TEXT",
+	},
 }
 
 func (m Migration) checksum(driver string) string {

@@ -47,6 +47,26 @@ describe('authStore', () => {
       expect(api.auth.getCurrentUser).toHaveBeenCalledTimes(1);
     });
 
+    it('does not authenticate a refreshed password+passkey session before assertion', async () => {
+      api.auth.getCurrentUser.mockResolvedValueOnce({
+        user: { id: '1', username: 'pending-user' },
+        session: {
+          enrollment_required: true,
+          auth_pending_type: 'passkey_verification',
+        },
+      });
+
+      await authStore.init();
+
+      expect(get(authStore)).toMatchObject({
+        isAuthenticated: false,
+        user: null,
+        session: null,
+        loading: false,
+        error: null,
+      });
+    });
+
     it('should handle 401/errors gracefully and set unauthenticated state', async () => {
       api.auth.getCurrentUser.mockRejectedValueOnce(new Error('Unauthorized'));
 
@@ -132,6 +152,65 @@ describe('authStore', () => {
       const state = get(authStore);
       expect(state.isAuthenticated).toBe(false);
       expect(state.error).toBe('Network error');
+    });
+
+    it('keeps password+passkey login pending until WebAuthn completes', async () => {
+      api.auth.login.mockResolvedValueOnce({
+        success: false,
+        passkey_required: true,
+        policy_message: 'Verify your passkey',
+      });
+
+      const result = await authStore.login({ username: 'user', password: 'pass' });
+
+      expect(result).toEqual({
+        success: false,
+        passkey_required: true,
+        policy_message: 'Verify your passkey',
+      });
+      expect(get(authStore).isAuthenticated).toBe(false);
+      expect(api.auth.getCurrentUser).not.toHaveBeenCalled();
+    });
+
+    it('recognizes passkey-only policy fields from an HTTP error body', async () => {
+      const policyError = Object.assign(new Error('Password login disabled'), {
+        body: { passkey_required: true, policy_message: 'Use a passkey' },
+      });
+      api.auth.login.mockRejectedValueOnce(policyError);
+
+      const result = await authStore.login({ username: 'user', password: 'pass' });
+
+      expect(result.passkey_required).toBe(true);
+      expect(result.policy_message).toBe('Use a passkey');
+      expect(get(authStore).isAuthenticated).toBe(false);
+    });
+  });
+
+  describe('completePasskeyLogin()', () => {
+    it('loads canonical session metadata before authenticating', async () => {
+      const mockUser = { id: '1', username: 'passkey-user' };
+      const mockSession = { id: 'session-1', expires_at: '2026-01-01T00:00:00Z' };
+      api.auth.getCurrentUser.mockResolvedValueOnce({ user: mockUser, session: mockSession });
+
+      await expect(authStore.completePasskeyLogin()).resolves.toBe(true);
+
+      expect(get(authStore)).toMatchObject({
+        user: mockUser,
+        session: mockSession,
+        isAuthenticated: true,
+        loading: false,
+        error: null,
+      });
+    });
+
+    it('does not authenticate when session elevation cannot be confirmed', async () => {
+      api.auth.getCurrentUser.mockRejectedValueOnce(new Error('Still pending'));
+
+      await expect(authStore.completePasskeyLogin({ id: 'fallback' })).rejects.toThrow(
+        'Still pending'
+      );
+      expect(get(authStore).isAuthenticated).toBe(false);
+      expect(get(authStore).session).toBeNull();
     });
   });
 

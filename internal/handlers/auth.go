@@ -21,10 +21,10 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// dummyPasswordHash is a pre-computed bcrypt hash used to prevent timing attacks
-// when checking passwords for non-existent users. The actual value doesn't matter,
-// only that bcrypt.CompareHashAndPassword runs in constant time.
-var dummyPasswordHash = []byte("$2a$10$dummyHashForTimingAttackPrevention1234567890")
+// dummyPasswordHash is a valid, pre-computed cost-10 bcrypt hash used to make
+// unknown and otherwise non-login-capable accounts perform the same expensive
+// password work as an ordinary wrong-password attempt.
+var dummyPasswordHash = []byte("$2a$10$MdJYV4jL9BzSg9gDHWv9BOtYUoXp7wV5pc2UffwmgikvnYq4FvzwC")
 
 // AuthHandler handles authentication endpoints
 type AuthHandler struct {
@@ -60,6 +60,7 @@ type LoginResponse struct {
 	User               *models.User `json:"user,omitempty"`
 	Message            string       `json:"message,omitempty"`
 	EnrollmentRequired bool         `json:"enrollment_required,omitempty"`
+	PasskeyRequired    bool         `json:"passkey_required,omitempty"`
 	SSORequired        bool         `json:"sso_required,omitempty"`
 	PolicyMessage      string       `json:"policy_message,omitempty"`
 }
@@ -72,9 +73,11 @@ type UserResponse struct {
 
 // SessionInfo represents session information
 type SessionInfo struct {
-	ExpiresAt time.Time `json:"expires_at"`
-	IPAddress string    `json:"ip_address"`
-	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt          time.Time `json:"expires_at"`
+	IPAddress          string    `json:"ip_address"`
+	CreatedAt          time.Time `json:"created_at"`
+	EnrollmentRequired bool      `json:"enrollment_required"`
+	AuthPendingType    string    `json:"auth_pending_type,omitempty"`
 }
 
 // NewAuthHandler creates a new authentication handler
@@ -132,38 +135,17 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	user, err := h.findUserByEmailOrUsername(req.EmailOrUsername)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			// Record failed attempt
-			h.rateLimiter.RecordFailedLogin(ipAddress)
-			// Always perform bcrypt comparison to prevent timing attacks
-			_ = bcrypt.CompareHashAndPassword(dummyPasswordHash, []byte(req.Password))
-			h.logFailedLogin(r, req.EmailOrUsername)
-			respondUnauthorized(w, r)
+			h.rejectPasswordLogin(w, r, req.EmailOrUsername, req.Password, "")
 			return
 		}
 		respondInternalError(w, r, err)
 		return
 	}
 
-	// Check if user is active
-	if !user.IsActive {
-		respondUnauthorized(w, r)
-		return
-	}
-
-	// Agent users cannot log in interactively; they authenticate via API tokens only.
-	if user.IsAgent {
-		h.rateLimiter.RecordFailedLogin(ipAddress)
-		// Run the same dummy bcrypt the not-found path runs so an attacker
-		// can't time-distinguish "agent" from "non-existent user". Without
-		// this, agent rejection short-circuits faster than a wrong-password
-		// check, leaking which usernames are agents (often higher-value
-		// automation accounts).
-		_ = bcrypt.CompareHashAndPassword(dummyPasswordHash, []byte(req.Password))
-		h.auditor.LogFailure(r, user, logger.ActionLoginFailure, logger.ResourceUser, &user.ID, user.Username, "agent users cannot log in interactively", map[string]interface{}{
-			"reason":   "agent_user_login_blocked",
-			"is_agent": true,
-		})
-		respondUnauthorized(w, r)
+	// Inactive and agent users are externally indistinguishable from an unknown
+	// account. They still incur bcrypt work and failed-attempt accounting.
+	if !user.IsActive || user.IsAgent {
+		h.rejectPasswordLogin(w, r, req.EmailOrUsername, req.Password, user.PasswordHash)
 		return
 	}
 
@@ -185,7 +167,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check auth policy (if handler is available)
-	var enrollmentRequired bool
+	var enrollmentRequired, passkeyRequired bool
 	if h.authPolicyHandler != nil && !h.authPolicyHandler.IsPreviewMode() {
 		policy := h.authPolicyHandler.GetCurrentPolicy()
 
@@ -220,11 +202,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			}
 
 		case AuthPolicyPasskeyOnly, AuthPolicyPasswordPasskey2FA:
-			// Check if user has passkey enrolled
 			hasPasskey := h.userHasPasskey(user.ID)
 
 			if user.IsSystemAdmin && h.adminRateLimiter != nil {
-				// Admin with fallback enabled - allow password with rate limiting
+				// Explicitly enabled administrator fallback preserves emergency
+				// password access, but every use is rate-limited and audited.
 				allowed, _, lockedUntil := h.adminRateLimiter.IsAllowed(r.Context(), user.ID, ipAddress)
 				if !allowed {
 					var msg string
@@ -236,21 +218,29 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 					respondTooManyRequests(w, r, msg)
 					return
 				}
-				if !hasPasskey {
-					_ = h.adminRateLimiter.RecordAttempt(r.Context(), user.ID, ipAddress)
-					_ = h.authPolicyHandler.LogAuditEvent(user.ID, "admin_fallback_used", ipAddress, r.UserAgent(), map[string]interface{}{
-						"policy": string(policy),
-					})
-				}
+				_ = h.adminRateLimiter.RecordAttempt(r.Context(), user.ID, ipAddress)
+				_ = h.authPolicyHandler.LogAuditEvent(user.ID, "admin_fallback_used", ipAddress, r.UserAgent(), map[string]interface{}{
+					"policy": string(policy),
+				})
 			} else if !hasPasskey {
-				// Non-admin without passkey (or admin with fallback disabled) needs to enroll
+				// Password use is limited to a server-restricted enrollment
+				// session. Middleware denies every unrelated protected route.
 				enrollmentRequired = true
 				_ = h.authPolicyHandler.LogAuditEvent(user.ID, "enrollment_started", ipAddress, r.UserAgent(), map[string]interface{}{
 					"policy": string(policy),
 				})
+			} else if policy == AuthPolicyPasskeyOnly {
+				respondJSON(w, http.StatusForbidden, LoginResponse{
+					Success:         false,
+					PasskeyRequired: true,
+					PolicyMessage:   "Password login is disabled. Please use a passkey to sign in.",
+				})
+				return
+			} else {
+				// The password is valid, but this session remains restricted until
+				// a fresh WebAuthn assertion for the same user succeeds.
+				passkeyRequired = true
 			}
-			// If user has passkey and policy is password_passkey_2fa, they still need to verify with passkey
-			// But for now, we allow password login and mark enrollment_required for the frontend to handle
 		}
 	}
 
@@ -261,11 +251,20 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Mark session as requiring enrollment if needed
-	if enrollmentRequired {
-		if err := h.sessionManager.SetEnrollmentRequired(session.ID, true); err != nil {
-			slog.Warn("failed to set enrollment required", slog.String("component", "auth"), slog.Any("error", err))
+	// Enrollment and password+passkey sessions are capabilities, not normal
+	// authenticated sessions. Mark them restricted before exposing the cookie.
+	if enrollmentRequired || passkeyRequired {
+		pendingType := auth.AuthPendingEnrollment
+		if passkeyRequired {
+			pendingType = auth.AuthPendingPasskeyVerification
 		}
+		if err := h.sessionManager.SetAuthPending(session.ID, pendingType); err != nil {
+			_ = h.sessionManager.DeleteSession(session.Token)
+			respondInternalError(w, r, err)
+			return
+		}
+		session.EnrollmentRequired = true
+		session.AuthPendingType = pendingType
 	}
 
 	// Password login always establishes a browser session via cookie. Do not
@@ -280,17 +279,23 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	user.FullName = fmt.Sprintf("%s %s", user.FirstName, user.LastName)
 	user.PasswordHash = "" // Never send password hash
 
-	h.auditor.Log(r, user, logger.ActionLoginSuccess, logger.ResourceUser, &user.ID, user.Username)
-
 	response := LoginResponse{
-		Success:            true,
+		Success:            !passkeyRequired,
 		User:               user,
 		Message:            "Login successful",
 		EnrollmentRequired: enrollmentRequired,
+		PasskeyRequired:    passkeyRequired,
 	}
 
-	if enrollmentRequired {
-		response.PolicyMessage = "Please enroll a passkey to complete your account setup."
+	switch {
+	case enrollmentRequired:
+		response.Message = "Passkey enrollment required"
+		response.PolicyMessage = "Please enroll a passkey to complete authentication."
+	case passkeyRequired:
+		response.Message = "Passkey verification required"
+		response.PolicyMessage = "Verify with your passkey to complete authentication."
+	default:
+		h.auditor.Log(r, user, logger.ActionLoginSuccess, logger.ResourceUser, &user.ID, user.Username)
 	}
 
 	respondJSONOK(w, response)
@@ -357,9 +362,11 @@ func (h *AuthHandler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 
 	// Prepare response
 	sessionInfo := &SessionInfo{
-		ExpiresAt: session.ExpiresAt,
-		IPAddress: session.IPAddress,
-		CreatedAt: session.CreatedAt,
+		ExpiresAt:          session.ExpiresAt,
+		IPAddress:          session.IPAddress,
+		CreatedAt:          session.CreatedAt,
+		EnrollmentRequired: session.EnrollmentRequired,
+		AuthPendingType:    session.AuthPendingType,
 	}
 
 	response := UserResponse{
@@ -428,6 +435,23 @@ func (h *AuthHandler) LogoutAll(w http.ResponseWriter, r *http.Request) {
 		"success": true,
 		"message": "All sessions logged out",
 	})
+}
+
+// rejectPasswordLogin applies identical expensive password work, rate-limit
+// accounting, audit shape, and public response to unknown, inactive, agent, and
+// malformed-password-hash accounts.
+func (h *AuthHandler) rejectPasswordLogin(w http.ResponseWriter, r *http.Request, identifier, password, storedHash string) {
+	h.rateLimiter.RecordFailedLogin(h.getClientIP(r))
+
+	hash := dummyPasswordHash
+	if candidate := []byte(storedHash); len(candidate) > 0 {
+		if _, err := bcrypt.Cost(candidate); err == nil {
+			hash = candidate
+		}
+	}
+	_ = bcrypt.CompareHashAndPassword(hash, []byte(password))
+	h.logFailedLogin(r, identifier)
+	respondUnauthorized(w, r)
 }
 
 // logFailedLogin records an audit log entry for a failed login attempt.
