@@ -29,6 +29,10 @@ export const CREATE_AUTO_MANAGED_SYSTEM_FIELDS = new Set([
   'time_in_status',
 ]);
 
+// These are rendered in fixed item UI locations regardless of screen layout;
+// keep them present and locked in screen configuration.
+export const ALWAYS_VISIBLE_SYSTEM_FIELDS = ['title', 'description', 'status'];
+
 export const SYSTEM_FIELD_ALIASES = {
   estimate: ['estimate', 'estimate_minutes'],
   estimate_minutes: ['estimate', 'estimate_minutes'],
@@ -59,6 +63,12 @@ export function isCreateSystemFieldRenderable(fieldName) {
 export function isCreateSystemFieldAutoManaged(fieldName) {
   return systemFieldIdentifiers(fieldName).some((identifier) =>
     CREATE_AUTO_MANAGED_SYSTEM_FIELDS.has(identifier)
+  );
+}
+
+export function isAlwaysVisibleSystemField(fieldName) {
+  return systemFieldIdentifiers(fieldName).some((identifier) =>
+    ALWAYS_VISIBLE_SYSTEM_FIELDS.includes(identifier)
   );
 }
 
@@ -110,12 +120,23 @@ export function customFieldDefinitionIdFromScreenField(field) {
   return Number.isFinite(id) ? id : null;
 }
 
+export function withAlwaysVisibleSystemFields(systemFields = []) {
+  const out = [...ALWAYS_VISIBLE_SYSTEM_FIELDS];
+  for (const field of systemFields || []) {
+    const normalized = normalizeSystemFieldIdentifier(field);
+    if (!out.includes(normalized)) out.push(field);
+  }
+  return out;
+}
+
 export function systemFieldsFromScreen(screen) {
   const fields = screen?.fields || [];
   const identifiers = fields
     .filter((field) => field.field_type === 'system')
     .map((field) => field.field_identifier);
-  return identifiers.length > 0 ? identifiers : screen?.system_fields || [];
+  return withAlwaysVisibleSystemFields(
+    identifiers.length > 0 ? identifiers : screen?.system_fields || []
+  );
 }
 
 export function customFieldsFromScreen(screen) {
@@ -153,7 +174,7 @@ export function buildDetailScreenFieldConfig(editScreen, viewScreen = null) {
     editableCustomFieldIds: new Set(
       editCustom.map(customFieldDefinitionIdFromScreenField).filter((id) => id !== null)
     ),
-    editableSystemFields: new Set(editSystem),
+    editableSystemFields: new Set(withAlwaysVisibleSystemFields(editSystem)),
   };
 }
 

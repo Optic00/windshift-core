@@ -107,13 +107,34 @@ describe('screenFields utilities', () => {
 
     const config = buildDetailScreenFieldConfig(editScreen, viewScreen);
 
-    expect(config.visibleSystemFields).toEqual(['priority', 'assignee']);
+    expect(config.visibleSystemFields).toEqual([
+      'title',
+      'description',
+      'status',
+      'priority',
+      'assignee',
+    ]);
     expect(config.visibleCustomFields).toEqual([
       { id: 102, field_type: 'custom', field_identifier: '7' },
       { id: 203, field_type: 'custom', field_identifier: '8' },
     ]);
-    expect(config.editableSystemFields).toEqual(new Set(['priority']));
+    expect(config.editableSystemFields).toEqual(
+      new Set(['title', 'description', 'status', 'priority'])
+    );
     expect(config.editableCustomFieldIds).toEqual(new Set([7]));
+  });
+
+  it('keeps locked fields visible for custom-only detail screens', () => {
+    const screen = {
+      id: 10,
+      fields: [{ id: 102, field_type: 'custom', field_identifier: '7' }],
+    };
+
+    expect(buildDetailScreenFieldConfig(screen, null).visibleSystemFields).toEqual([
+      'title',
+      'description',
+      'status',
+    ]);
   });
 
   it('treats a single detail screen as legacy all-visible editable mode', () => {
@@ -127,7 +148,7 @@ describe('screenFields utilities', () => {
 
     expect(buildDetailScreenFieldConfig(screen, null)).toEqual({
       visibleCustomFields: [{ id: 102, field_type: 'custom', field_identifier: '7' }],
-      visibleSystemFields: ['priority'],
+      visibleSystemFields: ['title', 'description', 'status', 'priority'],
       editableCustomFieldIds: null,
       editableSystemFields: null,
     });

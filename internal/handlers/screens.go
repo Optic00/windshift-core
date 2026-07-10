@@ -19,6 +19,16 @@ type ScreenHandler struct {
 	db database.Database
 }
 
+var alwaysVisibleScreenFields = []struct {
+	identifier string
+	required   bool
+	width      string
+}{
+	{identifier: "title", required: true, width: "full"},
+	{identifier: "description", required: false, width: "full"},
+	{identifier: "status", required: false, width: "half"},
+}
+
 func NewScreenHandler(db database.Database) *ScreenHandler {
 	return &ScreenHandler{db: db}
 }
@@ -82,7 +92,7 @@ func (h *ScreenHandler) Get(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
-	screen.Fields = fields
+	screen.Fields = ensureAlwaysVisibleScreenFields(id, fields)
 
 	// Load system fields
 	systemFields, err := h.getSystemFields(id)
@@ -125,23 +135,16 @@ func (h *ScreenHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Add default title and status fields
-	_, err = h.db.ExecWrite(`
-		INSERT INTO screen_fields (screen_id, field_type, field_identifier, display_order, is_required, field_width)
-		VALUES (?, 'system', 'title', 0, true, 'full')
-	`, id)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-
-	_, err = h.db.ExecWrite(`
-		INSERT INTO screen_fields (screen_id, field_type, field_identifier, display_order, is_required, field_width)
-		VALUES (?, 'system', 'status', 1, false, 'half')
-	`, id)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
+	// Add fields that are always visible on item screens.
+	for displayOrder, field := range alwaysVisibleScreenFields {
+		_, err = h.db.ExecWrite(`
+			INSERT INTO screen_fields (screen_id, field_type, field_identifier, display_order, is_required, field_width)
+			VALUES (?, 'system', ?, ?, ?, ?)
+		`, id, field.identifier, displayOrder, field.required, field.width)
+		if err != nil {
+			respondInternalError(w, r, err)
+			return
+		}
 	}
 
 	// Return the created screen
@@ -255,7 +258,7 @@ func (h *ScreenHandler) GetFields(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSONOK(w, fields)
+	respondJSONOK(w, ensureAlwaysVisibleScreenFields(screenID, fields))
 }
 
 func (h *ScreenHandler) UpdateFields(w http.ResponseWriter, r *http.Request) {
@@ -268,6 +271,7 @@ func (h *ScreenHandler) UpdateFields(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	fields = ensureAlwaysVisibleScreenFields(screenID, fields)
 
 	// Start transaction
 	tx, err := h.db.Begin()
@@ -421,6 +425,69 @@ func (h *ScreenHandler) getScreenFields(screenID int) ([]models.ScreenField, err
 	}
 
 	return fields, nil
+}
+
+func ensureAlwaysVisibleScreenFields(screenID int, fields []models.ScreenField) []models.ScreenField {
+	out := append([]models.ScreenField(nil), fields...)
+	for _, requiredField := range alwaysVisibleScreenFields {
+		if index := indexOfScreenSystemField(out, requiredField.identifier); index >= 0 {
+			out[index].IsRequired = requiredField.required
+			out[index].FieldWidth = requiredField.width
+			continue
+		}
+		insertIndex := alwaysVisibleScreenFieldInsertIndex(out, requiredField.identifier)
+		out = append(out, models.ScreenField{})
+		copy(out[insertIndex+1:], out[insertIndex:])
+		out[insertIndex] = models.ScreenField{
+			ScreenID:        screenID,
+			FieldType:       "system",
+			FieldIdentifier: requiredField.identifier,
+			IsRequired:      requiredField.required,
+			FieldWidth:      requiredField.width,
+		}
+	}
+	for i := range out {
+		out[i].ScreenID = screenID
+		out[i].DisplayOrder = i
+	}
+	return out
+}
+
+func alwaysVisibleScreenFieldInsertIndex(fields []models.ScreenField, identifier string) int {
+	orderIndex := -1
+	for i, field := range alwaysVisibleScreenFields {
+		if field.identifier == identifier {
+			orderIndex = i
+			break
+		}
+	}
+	if orderIndex < 0 {
+		return len(fields)
+	}
+
+	for i := orderIndex + 1; i < len(alwaysVisibleScreenFields); i++ {
+		if index := indexOfScreenSystemField(fields, alwaysVisibleScreenFields[i].identifier); index >= 0 {
+			return index
+		}
+	}
+	for i := orderIndex - 1; i >= 0; i-- {
+		if index := indexOfScreenSystemField(fields, alwaysVisibleScreenFields[i].identifier); index >= 0 {
+			return index + 1
+		}
+	}
+	if orderIndex < len(fields) {
+		return orderIndex
+	}
+	return len(fields)
+}
+
+func indexOfScreenSystemField(fields []models.ScreenField, identifier string) int {
+	for i, field := range fields {
+		if field.FieldType == "system" && field.FieldIdentifier == identifier {
+			return i
+		}
+	}
+	return -1
 }
 
 // Helper function to get system fields for a screen

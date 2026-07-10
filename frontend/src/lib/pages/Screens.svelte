@@ -20,6 +20,7 @@
   import DropIndicator from '../layout/DropIndicator.svelte';
   import DialogFooter from '../dialogs/DialogFooter.svelte';
   import { toHotkeyString } from '../utils/keyboardShortcuts.js';
+  import { isAlwaysVisibleSystemField } from '../utils/screenFields.js';
   import Checkbox from '../components/Checkbox.svelte';
 
   // Bind to store values
@@ -459,7 +460,7 @@
                     size="small"
                   />
 
-                  {#if field.field_type === 'system' && (field.field_identifier === 'title' || field.field_identifier === 'status')}
+                  {#if field.field_type === 'system' && isAlwaysVisibleSystemField(field.field_identifier)}
                     <div class="w-9 h-9 flex items-center justify-center flex-shrink-0">
                       <svg class="w-4 h-4" style="color: var(--ds-text-disabled);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
