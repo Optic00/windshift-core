@@ -526,7 +526,7 @@
         <Label color="default" required class="mb-2">Role</Label>
         <Select
           bind:value={selectedRoleId}
-          onchange={(e) => selectedRoleId = e.target.value ? Number(e.target.value) : null}
+          onchange={(value) => selectedRoleId = value ? Number(value) : null}
           options={[{ value: null, label: 'Select role...' }, ...roles.map(role => ({ value: role.id, label: `${role.name} - ${role.description}` }))]}
         />
       </div>
@@ -580,7 +580,7 @@
         <Label color="default" required class="mb-2">Role</Label>
         <Select
           bind:value={selectedGroupRoleId}
-          onchange={(e) => selectedGroupRoleId = e.target.value ? Number(e.target.value) : null}
+          onchange={(value) => selectedGroupRoleId = value ? Number(value) : null}
           options={[{ value: null, label: 'Select role...' }, ...roles.map(role => ({ value: role.id, label: `${role.name} - ${role.description}` }))]}
         />
       </div>
