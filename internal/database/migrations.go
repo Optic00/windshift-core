@@ -49,7 +49,7 @@ var Catalog = []Migration{
 		Version:       "20260618_push_subscriptions",
 		Name:          "Create Web Push subscriptions table",
 		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='push_subscriptions'",
-		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='push_subscriptions'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='push_subscriptions'",
 		SQLite: `
 			CREATE TABLE IF NOT EXISTS push_subscriptions (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -87,7 +87,7 @@ var Catalog = []Migration{
 		Version:       "20260617_llm_connections_provider_config",
 		Name:          "Add provider-specific JSON config to LLM connections",
 		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('llm_connections') WHERE name='provider_config'",
-		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='llm_connections' AND column_name='provider_config'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='llm_connections' AND column_name='provider_config'",
 		SQLite:        "ALTER TABLE llm_connections ADD COLUMN provider_config TEXT",
 		Postgres:      "ALTER TABLE llm_connections ADD COLUMN provider_config JSONB",
 	},
@@ -95,7 +95,7 @@ var Catalog = []Migration{
 		Version:       "20260528_portal_request_drafts",
 		Name:          "Create portal request form drafts table",
 		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='portal_request_drafts'",
-		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='portal_request_drafts'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='portal_request_drafts'",
 		SQLite: `
 			CREATE TABLE IF NOT EXISTS portal_request_drafts (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -157,7 +157,7 @@ var Catalog = []Migration{
 		Version:       "20260520_item_change_log",
 		Name:          "Create item change log for collection delta polling",
 		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='item_change_log'",
-		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='item_change_log'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='item_change_log'",
 		SQLite: `
 			CREATE TABLE IF NOT EXISTS item_change_log (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -272,7 +272,7 @@ var Catalog = []Migration{
 		Version:       "20260520_board_config_rightmost_column_limit",
 		Name:          "Add rightmost board column display limit setting",
 		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('board_configurations') WHERE name='show_rightmost_column_last_50'",
-		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='board_configurations' AND column_name='show_rightmost_column_last_50'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='board_configurations' AND column_name='show_rightmost_column_last_50'",
 		SQLite:        `ALTER TABLE board_configurations ADD COLUMN show_rightmost_column_last_50 BOOLEAN DEFAULT false`,
 		Postgres:      `ALTER TABLE board_configurations ADD COLUMN show_rightmost_column_last_50 BOOLEAN DEFAULT false`,
 	},
@@ -286,10 +286,10 @@ var Catalog = []Migration{
 			AND EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='customer_organisation_members')
 			THEN 1 ELSE 0 END`,
 		CheckPostgres: `SELECT CASE WHEN
-			EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='time_project_managers')
-			AND EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='time_project_members')
-			AND EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='customer_organisation_managers')
-			AND EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='customer_organisation_members')
+			EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='time_project_managers')
+			AND EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='time_project_members')
+			AND EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='customer_organisation_managers')
+			AND EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='customer_organisation_members')
 			THEN 1 ELSE 0 END`,
 		SQLite: `
 			CREATE TABLE IF NOT EXISTS time_project_managers (
@@ -566,7 +566,7 @@ var Catalog = []Migration{
 		Version:       "20260522_pages_frac_index_scoped",
 		Name:          "Scope pages.frac_index uniqueness to (workspace_id, parent_id)",
 		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_pages_frac_index_scoped'",
-		CheckPostgres: "SELECT COUNT(*) FROM pg_indexes WHERE schemaname='public' AND indexname='idx_pages_frac_index_scoped'",
+		CheckPostgres: "SELECT COUNT(*) FROM pg_indexes WHERE schemaname=current_schema() AND indexname='idx_pages_frac_index_scoped'",
 		SQLite: `
 			UPDATE pages SET frac_index = NULL
 			WHERE frac_index IS NOT NULL
@@ -610,7 +610,7 @@ var Catalog = []Migration{
 		Version:       "20260520_llm_provider_model_cache",
 		Name:          "Add llm_provider_model_cache for dynamic model lists",
 		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='llm_provider_model_cache'",
-		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='llm_provider_model_cache'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='llm_provider_model_cache'",
 		SQLite: `CREATE TABLE llm_provider_model_cache (
 			provider_type     TEXT PRIMARY KEY,
 			models_json       TEXT NOT NULL,
@@ -643,7 +643,7 @@ var Catalog = []Migration{
 		Version:       "20260522_page_label_assignments",
 		Name:          "Ensure page_label_assignments table exists",
 		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='page_label_assignments'",
-		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='page_label_assignments'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='page_label_assignments'",
 		SQLite: `
 			CREATE TABLE IF NOT EXISTS page_label_assignments (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -682,7 +682,7 @@ var Catalog = []Migration{
 		Version:       "20260529_agent_runs",
 		Name:          "Create agent_runs + agent_run_events for the coding-agent harness",
 		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='agent_runs'",
-		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='agent_runs'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='agent_runs'",
 		SQLite: `
 			CREATE TABLE IF NOT EXISTS agent_runs (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -764,7 +764,7 @@ var Catalog = []Migration{
 		Version:       "20260529_agent_security_allowlist",
 		Name:          "Create agent acting-identity allowlist + security setting",
 		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='global_agent_acting_user_allowlist'",
-		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='global_agent_acting_user_allowlist'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='global_agent_acting_user_allowlist'",
 		SQLite: `
 			CREATE TABLE IF NOT EXISTS global_agent_acting_user_allowlist (
 				user_id INTEGER NOT NULL,
@@ -825,7 +825,7 @@ var Catalog = []Migration{
 		Version:       "20260529_workspace_agent_bindings",
 		Name:          "Create workspace_agent_bindings",
 		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='workspace_agent_bindings'",
-		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='workspace_agent_bindings'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='workspace_agent_bindings'",
 		SQLite: `
 			CREATE TABLE IF NOT EXISTS workspace_agent_bindings (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -941,7 +941,7 @@ var Catalog = []Migration{
 		Version:       "20260602_runner_pool_tables",
 		Name:          "Create runner_registration_tokens + runner_instances",
 		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='runner_instances'",
-		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='runner_instances'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='runner_instances'",
 		SQLite: `
 			CREATE TABLE IF NOT EXISTS runner_registration_tokens (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1208,7 +1208,9 @@ var Catalog = []Migration{
 			WHERE name='idx_active_timers_user_id' AND "unique"=1`,
 		CheckPostgres: `SELECT COUNT(*) FROM pg_index i
 			JOIN pg_class c ON c.oid = i.indexrelid
-			WHERE c.relname='idx_active_timers_user_id' AND i.indisunique`,
+			JOIN pg_namespace n ON n.oid = c.relnamespace
+			WHERE c.relname='idx_active_timers_user_id' AND i.indisunique
+			  AND n.nspname=current_schema()`,
 		SQLite: `
 			DELETE FROM active_timers
 			WHERE id NOT IN (
@@ -1255,7 +1257,7 @@ var Catalog = []Migration{
 		Version:       "20260615_todoist_sync_tables",
 		Name:          "Create todoist_sync_config + todoist_task_links for personal-task sync",
 		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='todoist_task_links'",
-		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='todoist_task_links'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='todoist_task_links'",
 		SQLite: `
 			CREATE TABLE IF NOT EXISTS todoist_sync_config (
 				id TEXT PRIMARY KEY,
@@ -1350,7 +1352,7 @@ var Catalog = []Migration{
 		Version:       "20260615_todoist_sync_lock_until",
 		Name:          "Add sync_lock_until to todoist_sync_config",
 		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('todoist_sync_config') WHERE name='sync_lock_until'",
-		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='todoist_sync_config' AND column_name='sync_lock_until'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='todoist_sync_config' AND column_name='sync_lock_until'",
 		SQLite:        "ALTER TABLE todoist_sync_config ADD COLUMN sync_lock_until DATETIME",
 		Postgres:      "ALTER TABLE todoist_sync_config ADD COLUMN sync_lock_until TIMESTAMPTZ",
 	},
@@ -1362,7 +1364,7 @@ var Catalog = []Migration{
 		Version:       "20260616_cfv_cleanup_job_type_payload",
 		Name:          "Add job_type + payload to pending_custom_field_cleanups",
 		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('pending_custom_field_cleanups') WHERE name='job_type'",
-		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='pending_custom_field_cleanups' AND column_name='job_type'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='pending_custom_field_cleanups' AND column_name='job_type'",
 		SQLite: `
 			ALTER TABLE pending_custom_field_cleanups ADD COLUMN job_type TEXT NOT NULL DEFAULT 'field_scrub';
 			ALTER TABLE pending_custom_field_cleanups ADD COLUMN payload TEXT;
@@ -1381,7 +1383,7 @@ var Catalog = []Migration{
 		Version:       "20260619_items_last_active_at",
 		Name:          "Add items.last_active_at for board Bubble Mode sort",
 		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('items') WHERE name='last_active_at'",
-		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='items' AND column_name='last_active_at'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='items' AND column_name='last_active_at'",
 		SQLite: `
 			ALTER TABLE items ADD COLUMN last_active_at DATETIME;
 			UPDATE items SET last_active_at = COALESCE(updated_at, created_at) WHERE last_active_at IS NULL;
@@ -1402,7 +1404,7 @@ var Catalog = []Migration{
 		Version:       "20260620_workspace_agent_binding_repos",
 		Name:          "Multi-repo bindings: child table + backfill primary repo",
 		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='workspace_agent_binding_repos'",
-		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='workspace_agent_binding_repos'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='workspace_agent_binding_repos'",
 		SQLite: `
 			CREATE TABLE workspace_agent_binding_repos (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1485,7 +1487,7 @@ var Catalog = []Migration{
 		Version:       "20260620_daily_briefings_lock_until",
 		Name:          "Add lock_until to daily_briefings",
 		CheckSQLite:   "SELECT COUNT(*) FROM pragma_table_info('daily_briefings') WHERE name='lock_until'",
-		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='daily_briefings' AND column_name='lock_until'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='daily_briefings' AND column_name='lock_until'",
 		SQLite:        "ALTER TABLE daily_briefings ADD COLUMN lock_until DATETIME",
 		Postgres:      "ALTER TABLE daily_briefings ADD COLUMN lock_until TIMESTAMPTZ",
 	},
@@ -1497,13 +1499,13 @@ var Catalog = []Migration{
 		// exactly one type, enforced in the service layer). The covering index
 		// idx_item_template_item_types_type and idx_item_templates_ws_mode_active
 		// back the (workspace, item_type) mandatory-template lookup that
-		// CreateItem runs on every create. No schema/*.sql counterpart — this
-		// catalog entry is canonical for both fresh and upgrading installs (the
+		// CreateItem runs on every create. Fresh installs get the tables from
+		// schema/templates{,_postgres}.sql; this upgrades existing DBs (the
 		// existence check stamps without re-running where the tables exist).
 		Version:       "20260619_work_item_templates",
 		Name:          "Add item_templates + item_template_item_types tables",
 		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='item_templates'",
-		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='item_templates'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='item_templates'",
 		SQLite: `
 			CREATE TABLE IF NOT EXISTS item_templates (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1569,7 +1571,7 @@ var Catalog = []Migration{
 		Version:       "20260623_llm_usage",
 		Name:          "Add llm_usage table for broker token/cost metering",
 		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='llm_usage'",
-		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='llm_usage'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='llm_usage'",
 		SQLite: `
 			CREATE TABLE IF NOT EXISTS llm_usage (
 				id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1612,7 +1614,7 @@ var Catalog = []Migration{
 		Version:       "20260624_workspace_agent_skill_pages",
 		Name:          "Add workspace_agent_skill_pages reference-pages table",
 		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='workspace_agent_skill_pages'",
-		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='workspace_agent_skill_pages'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='workspace_agent_skill_pages'",
 		SQLite: `
 			CREATE TABLE IF NOT EXISTS workspace_agent_skill_pages (
 				skill_id INTEGER NOT NULL,
