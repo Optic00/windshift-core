@@ -1,10 +1,10 @@
-package tui
+package core
 
 import "charm.land/bubbles/v2/key"
 
-// KeyMap defines every binding the TUI listens for, in one place. Per-screen
-// dispatch uses subsets exposed through the *Bindings helpers below; the help
-// component consumes the same Bindings for self-updating display.
+// KeyMap defines every binding the TUI listens for, in one place. Screens
+// expose the subset relevant to them via Screen.ShortHelp; the help dialog
+// consumes FullHelp for the complete listing.
 type KeyMap struct {
 	// Global
 	Quit key.Binding
@@ -53,29 +53,7 @@ func DefaultKeyMap() KeyMap {
 	}
 }
 
-// ShortHelp returns the bindings to show in the status bar for the given
-// screen. Order matters — they render left to right.
-func (k KeyMap) ShortHelp(screen AppScreen) []key.Binding {
-	switch screen {
-	case WorkspaceListScreen:
-		return []key.Binding{k.Up, k.Down, k.Enter, k.Refresh, k.Help, k.Quit}
-	case WorkItemListScreen:
-		return []key.Binding{k.Up, k.Down, k.Enter, k.New, k.Comments, k.LogTime, k.Back, k.Help}
-	case WorkItemDetailScreen:
-		return []key.Binding{k.Up, k.Down, k.Enter, k.Save, k.Comments, k.LogTime, k.Back}
-	case CreateWorkItemScreen:
-		return []key.Binding{k.Up, k.Down, k.Enter, k.Save, k.Back}
-	case CommentsScreen:
-		return []key.Binding{k.New, k.Refresh, k.Back}
-	case TimeLoggingScreen:
-		return []key.Binding{k.Up, k.Down, k.Enter, k.Save, k.Back}
-	case HelpScreen:
-		return []key.Binding{k.Back}
-	}
-	return []key.Binding{k.Help, k.Quit}
-}
-
-// FullHelp returns column-grouped bindings for the Help screen.
+// FullHelp returns column-grouped bindings for the help dialog.
 func (k KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Enter, k.Back, k.NextField, k.PrevField},
@@ -83,11 +61,3 @@ func (k KeyMap) FullHelp() [][]key.Binding {
 		{k.Help, k.Quit},
 	}
 }
-
-// HelpKeyMap adapts KeyMap.ShortHelp for the help.Model interface, which
-// requires ShortHelp() / FullHelp() without screen context. Used only by the
-// help screen itself; the status bar calls ShortHelp(screen) directly.
-type HelpKeyMap struct{ KeyMap }
-
-func (h HelpKeyMap) ShortHelp() []key.Binding  { return h.KeyMap.ShortHelp(HelpScreen) }
-func (h HelpKeyMap) FullHelp() [][]key.Binding { return h.KeyMap.FullHelp() }

@@ -32,3 +32,20 @@ type Action struct {
 	Selected any
 	Cmd      tea.Cmd
 }
+
+// OpenMsg asks the root model to push Dialog onto the overlay stack.
+type OpenMsg struct{ Dialog Dialog }
+
+// Open returns a command that opens d.
+func Open(d Dialog) tea.Cmd {
+	return func() tea.Msg { return OpenMsg{Dialog: d} }
+}
+
+// ResultMsg is forwarded to the active screen when a dialog closes with a
+// selection. ID is the dialog's ID; Value is what the dialog selected. The
+// screen that opened the dialog is by construction the active screen when it
+// closes, so it consumes its own result.
+type ResultMsg struct {
+	ID    string
+	Value any
+}
