@@ -5,6 +5,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
+	"windshift/internal/tui/data"
 	"windshift/internal/tui/logo"
 )
 
@@ -65,23 +66,23 @@ func (m Model) renderHeader() string {
 // headerUserLabel collapses UserInfo to a one-token display name. Mirrors
 // the precedence the old status bar used (first/last name → username → email
 // local-part → credential name).
-func headerUserLabel(u *UserInfo) string {
+func headerUserLabel(u *data.UserInfo) string {
 	if u == nil {
 		return ""
 	}
 	switch {
 	case u.FirstName != "" && u.LastName != "":
-		return sanitizeTerminalLine(u.FirstName + " " + u.LastName)
+		return data.SanitizeLine(u.FirstName + " " + u.LastName)
 	case u.Username != "":
-		return sanitizeTerminalLine(u.Username)
+		return data.SanitizeLine(u.Username)
 	case u.Email != "":
-		email := sanitizeTerminalLine(u.Email)
+		email := data.SanitizeLine(u.Email)
 		if at := strings.Index(email, "@"); at > 0 {
 			return email[:at]
 		}
 		return email
 	}
-	name := sanitizeTerminalLine(u.CredentialName)
+	name := data.SanitizeLine(u.CredentialName)
 	name = strings.TrimSuffix(name, " SSH Key")
 	name = strings.TrimSuffix(name, " Key")
 	return name

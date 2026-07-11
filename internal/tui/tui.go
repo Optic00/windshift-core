@@ -8,6 +8,7 @@ import (
 	"windshift/internal/auth"
 	"windshift/internal/middleware"
 	"windshift/internal/models"
+	"windshift/internal/tui/data"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/ssh"
@@ -42,7 +43,7 @@ var tuiTokenScopes = []string{
 func NewTUIHandler(apiURL string, sessionManager *auth.SessionManager, tokenManager *auth.TokenManager) func(s ssh.Session) (tea.Model, []tea.ProgramOption) {
 	return func(s ssh.Session) (tea.Model, []tea.ProgramOption) {
 		// Extract authenticated user information from SSH context
-		var userInfo *UserInfo
+		var userInfo *data.UserInfo
 
 		var sessionToken string
 		var bearerToken string
@@ -55,7 +56,7 @@ func NewTUIHandler(apiURL string, sessionManager *auth.SessionManager, tokenMana
 			credentialID, credentialName, _ := middleware.GetCredentialInfo(s.Context())
 			email, username, firstName, lastName, _ := middleware.GetUserInfo(s.Context())
 
-			userInfo = &UserInfo{
+			userInfo = &data.UserInfo{
 				UserID:         userID,
 				CredentialID:   credentialID,
 				CredentialName: credentialName,
@@ -93,7 +94,7 @@ func NewTUIHandler(apiURL string, sessionManager *auth.SessionManager, tokenMana
 			if tokenManager != nil {
 				exp := time.Now().Add(tuiTokenLifetime)
 				resp, err := tokenManager.CreateToken(userID, models.APITokenCreate{
-					Name:        fmt.Sprintf("ssh-tui:%s", sanitizeTerminalLine(credentialName)),
+					Name:        fmt.Sprintf("ssh-tui:%s", data.SanitizeLine(credentialName)),
 					Permissions: tuiTokenScopes,
 					ExpiresAt:   &exp,
 					IsTemporary: true,

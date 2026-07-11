@@ -7,21 +7,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"windshift/internal/tui/data"
 	"windshift/internal/tui/dialog"
 	"windshift/internal/tui/styles"
 )
-
-// UserInfo carries the authenticated identity plumbed through from SSH.
-type UserInfo struct {
-	UserID         int
-	CredentialID   string
-	CredentialName string
-	RemoteAddr     string
-	Email          string
-	Username       string
-	FirstName      string
-	LastName       string
-}
 
 // AppScreen names the foreground view. The picker overlay is no longer a
 // screen — it lives as a dialog on Model.dialogs.
@@ -52,15 +41,15 @@ const (
 type Model struct {
 	// State
 	currentScreen AppScreen
-	workspaces    []Workspace
-	workItems     []WorkItem
-	comments      []Comment
-	timeProjects  []TimeProject
-	statuses      []Status
-	priorities    []Priority
+	workspaces    []data.Workspace
+	workItems     []data.WorkItem
+	comments      []data.Comment
+	timeProjects  []data.TimeProject
+	statuses      []data.Status
+	priorities    []data.Priority
 
 	// Selections
-	currentWorkspace     *Workspace
+	currentWorkspace     *data.Workspace
 	selectedWorkspaceIdx int
 	selectedItemIdx      int
 
@@ -79,8 +68,8 @@ type Model struct {
 	successMessage string
 
 	// API client + auth
-	apiClient    *APIClient
-	userInfo     *UserInfo
+	apiClient    *data.Client
+	userInfo     *data.UserInfo
 	sessionToken string
 	bearerToken  string
 
@@ -97,10 +86,10 @@ type Model struct {
 // NewModelWithUserAndTokens builds the root Model for a given SSH session.
 // Either token may be empty — handlers that need one and don't have it will
 // surface a 401 to the user.
-func NewModelWithUserAndTokens(apiURL string, userInfo *UserInfo, sessionToken, bearerToken string) Model {
+func NewModelWithUserAndTokens(apiURL string, userInfo *data.UserInfo, sessionToken, bearerToken string) Model {
 	theme := styles.New(styles.WindshiftDark())
 
-	apiClient := NewAPIClient(apiURL)
+	apiClient := data.NewClient(apiURL)
 	if sessionToken != "" {
 		apiClient.SetSessionToken(sessionToken)
 	}
@@ -114,10 +103,10 @@ func NewModelWithUserAndTokens(apiURL string, userInfo *UserInfo, sessionToken, 
 	now := time.Now()
 	m := Model{
 		currentScreen:        WorkspaceListScreen,
-		workspaces:           []Workspace{},
-		workItems:            []WorkItem{},
-		comments:             []Comment{},
-		timeProjects:         []TimeProject{},
+		workspaces:           []data.Workspace{},
+		workItems:            []data.WorkItem{},
+		comments:             []data.Comment{},
+		timeProjects:         []data.TimeProject{},
 		selectedWorkspaceIdx: 0,
 		selectedItemIdx:      0,
 		apiClient:            apiClient,
@@ -143,7 +132,7 @@ func NewModelWithUserAndTokens(apiURL string, userInfo *UserInfo, sessionToken, 
 
 // Init kicks off the initial workspace load and the spinner tick.
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.loadWorkspaces(), m.spinner.Tick)
+	return tea.Batch(data.LoadWorkspaces(m.apiClient), m.spinner.Tick)
 }
 
 // Update is the central message router.
@@ -180,75 +169,75 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 
-	case workspacesLoadedMsg:
-		m.workspaces = msg.workspaces
+	case data.WorkspacesLoadedMsg:
+		m.workspaces = msg.Workspaces
 		m.loading = false
 		if len(m.workspaces) > 0 {
 			m.selectedWorkspaceIdx = 0
 		}
 		return m, nil
 
-	case workItemsLoadedMsg:
-		m.workItems = msg.items
+	case data.WorkItemsLoadedMsg:
+		m.workItems = msg.Items
 		m.loading = false
 		if len(m.workItems) > 0 {
 			m.selectedItemIdx = 0
 		}
 		return m, nil
 
-	case commentsLoadedMsg:
-		m.comments = msg.comments
+	case data.CommentsLoadedMsg:
+		m.comments = msg.Comments
 		m.loading = false
 		return m, nil
 
-	case commentCreatedMsg:
+	case data.CommentCreatedMsg:
 		m.commentForm = m.resetCommentForm()
 		m.successMessage = "Comment added"
 		m.errorMessage = ""
 		if len(m.workItems) > 0 && m.selectedItemIdx < len(m.workItems) {
 			item := m.workItems[m.selectedItemIdx]
-			return m, m.loadComments(item.ID)
+			return m, data.LoadComments(m.apiClient, item.ID)
 		}
 		return m, nil
 
-	case workItemCreatedMsg:
+	case data.WorkItemCreatedMsg:
 		m.createForm = m.resetCreateForm()
 		m.currentScreen = WorkItemListScreen
 		m.successMessage = "Work item created"
 		m.errorMessage = ""
 		if m.currentWorkspace != nil {
-			return m, m.loadWorkItems(m.currentWorkspace.ID)
+			return m, data.LoadWorkItems(m.apiClient, m.currentWorkspace.ID)
 		}
 		return m, nil
 
-	case statusesLoadedMsg:
-		m.statuses = msg.statuses
+	case data.StatusesLoadedMsg:
+		m.statuses = msg.Statuses
 		return m, nil
 
-	case prioritiesLoadedMsg:
-		m.priorities = msg.priorities
+	case data.PrioritiesLoadedMsg:
+		m.priorities = msg.Priorities
 		return m, nil
 
-	case timeProjectsLoadedMsg:
-		m.timeProjects = msg.projects
+	case data.TimeProjectsLoadedMsg:
+		m.timeProjects = msg.Projects
 		return m, nil
 
-	case workItemUpdatedMsg:
+	case data.WorkItemUpdatedMsg:
 		m.successMessage = "Work item saved"
 		m.errorMessage = ""
 		if m.currentWorkspace != nil {
-			return m, m.loadWorkItems(m.currentWorkspace.ID)
+			return m, data.LoadWorkItems(m.apiClient, m.currentWorkspace.ID)
 		}
 		return m, nil
 
-	case timeLogCreatedMsg:
+	case data.TimeLogCreatedMsg:
 		m.currentScreen = WorkItemDetailScreen
 		m.successMessage = "Time logged"
 		m.errorMessage = ""
 		return m, nil
 
-	case errorMsg:
-		m.errorMessage = msg.error
+	case data.ErrorMsg:
+		m.errorMessage = msg.Err
 		m.loading = false
 		return m, nil
 	}

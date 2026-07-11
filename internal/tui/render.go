@@ -6,6 +6,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
+	"windshift/internal/tui/data"
 	"windshift/internal/tui/styles"
 )
 
@@ -32,7 +33,7 @@ func (m Model) renderWorkspaceList() string {
 		}
 	}
 	if m.errorMessage != "" {
-		rows = append(rows, "", s.Status.Error.Render("● ")+sanitizeTerminalLine(m.errorMessage))
+		rows = append(rows, "", s.Status.Error.Render("● ")+data.SanitizeLine(m.errorMessage))
 	}
 	return strings.Join(rows, "\n")
 }
@@ -111,7 +112,7 @@ func (m Model) renderWorkItemList() string {
 	}
 
 	if m.errorMessage != "" {
-		rows = append(rows, "", s.Status.Error.Render("● ")+sanitizeTerminalLine(m.errorMessage))
+		rows = append(rows, "", s.Status.Error.Render("● ")+data.SanitizeLine(m.errorMessage))
 	}
 	return strings.Join(rows, "\n")
 }

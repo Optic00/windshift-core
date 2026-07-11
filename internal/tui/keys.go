@@ -6,6 +6,7 @@ import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
+	"windshift/internal/tui/data"
 	"windshift/internal/tui/dialog"
 )
 
@@ -94,7 +95,7 @@ func (m *Model) applyDialogSelection(id string, sel any) {
 	}
 	switch id {
 	case pickerStatusID:
-		s, ok := sel.(Status)
+		s, ok := sel.(data.Status)
 		if !ok {
 			return
 		}
@@ -104,7 +105,7 @@ func (m *Model) applyDialogSelection(id string, sel any) {
 			m.editForm.statusColor = s.CategoryColor
 		}
 	case pickerPriorityID:
-		p, ok := sel.(Priority)
+		p, ok := sel.(data.Priority)
 		if !ok {
 			return
 		}
@@ -119,7 +120,7 @@ func (m *Model) applyDialogSelection(id string, sel any) {
 			m.createForm.priorityColor = p.Color
 		}
 	case pickerProjectID:
-		p, ok := sel.(TimeProject)
+		p, ok := sel.(data.TimeProject)
 		if !ok {
 			return
 		}
@@ -151,16 +152,16 @@ func (m Model) handleWorkspaceKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.currentScreen = WorkItemListScreen
 			m.loading = true
 			return m, tea.Batch(
-				m.loadWorkItems(m.currentWorkspace.ID),
-				m.loadStatuses(m.currentWorkspace.ID),
-				m.loadPriorities(),
-				m.loadTimeProjects(),
+				data.LoadWorkItems(m.apiClient, m.currentWorkspace.ID),
+				data.LoadStatuses(m.apiClient, m.currentWorkspace.ID),
+				data.LoadPriorities(m.apiClient),
+				data.LoadTimeProjects(m.apiClient),
 			)
 		}
 	case key.Matches(msg, m.keys.Refresh):
 		m.loading = true
 		m.errorMessage = ""
-		return m, m.loadWorkspaces()
+		return m, data.LoadWorkspaces(m.apiClient)
 	}
 	return m, nil
 }
@@ -192,7 +193,7 @@ func (m Model) handleWorkItemKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			item := m.workItems[m.selectedItemIdx]
 			m.currentScreen = CommentsScreen
 			m.commentForm = m.resetCommentForm()
-			return m, m.loadComments(item.ID)
+			return m, data.LoadComments(m.apiClient, item.ID)
 		}
 	case key.Matches(msg, m.keys.New):
 		if m.currentWorkspace != nil {
@@ -203,7 +204,7 @@ func (m Model) handleWorkItemKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.currentWorkspace != nil {
 			m.loading = true
 			m.errorMessage = ""
-			return m, m.loadWorkItems(m.currentWorkspace.ID)
+			return m, data.LoadWorkItems(m.apiClient, m.currentWorkspace.ID)
 		}
 	case key.Matches(msg, m.keys.Back):
 		m.currentScreen = WorkspaceListScreen
@@ -242,7 +243,7 @@ func (m Model) handleWorkItemDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 	case key.Matches(msg, m.keys.Save):
 		if len(m.workItems) > 0 && m.selectedItemIdx < len(m.workItems) {
 			item := m.workItems[m.selectedItemIdx]
-			return m, m.updateWorkItem(item.ID, m.editForm.titleInput.Value(), m.editForm.descriptionTextarea.Value(), m.editForm.statusID, m.editForm.priorityID)
+			return m, data.UpdateWorkItem(m.apiClient, item.ID, m.editForm.titleInput.Value(), m.editForm.descriptionTextarea.Value(), m.editForm.statusID, m.editForm.priorityID)
 		}
 	case key.Matches(msg, m.keys.LogTime):
 		m.enterTimeLoggingForCurrentWorkspace()
@@ -251,7 +252,7 @@ func (m Model) handleWorkItemDetailKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 			item := m.workItems[m.selectedItemIdx]
 			m.currentScreen = CommentsScreen
 			m.commentForm = m.resetCommentForm()
-			return m, m.loadComments(item.ID)
+			return m, data.LoadComments(m.apiClient, item.ID)
 		}
 	case key.Matches(msg, m.keys.Back):
 		m.currentScreen = WorkItemListScreen
@@ -332,7 +333,7 @@ func (m Model) handleCreateWorkItemKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 		}
 	case key.Matches(msg, m.keys.Save):
 		if m.currentWorkspace != nil {
-			return m, m.createWorkItem(m.currentWorkspace.ID, m.createForm.titleInput.Value(), m.createForm.descInput.Value(), m.createForm.priorityID)
+			return m, data.CreateWorkItem(m.apiClient, m.currentWorkspace.ID, m.createForm.titleInput.Value(), m.createForm.descInput.Value(), m.createForm.priorityID)
 		}
 	case key.Matches(msg, m.keys.Back):
 		m.currentScreen = WorkItemListScreen
@@ -380,7 +381,7 @@ func (m Model) handleCommentsKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				item := m.workItems[m.selectedItemIdx]
 				m.commentForm.input.Blur()
 				m.commentForm.editing = false
-				return m, m.createComment(item.ID, content)
+				return m, data.CreateComment(m.apiClient, item.ID, content)
 			}
 			m.commentForm.input.Blur()
 			m.commentForm.editing = false
@@ -398,7 +399,7 @@ func (m Model) handleCommentsKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Refresh):
 		if len(m.workItems) > 0 && m.selectedItemIdx < len(m.workItems) {
 			item := m.workItems[m.selectedItemIdx]
-			return m, m.loadComments(item.ID)
+			return m, data.LoadComments(m.apiClient, item.ID)
 		}
 	case key.Matches(msg, m.keys.Back):
 		m.currentScreen = WorkItemListScreen
@@ -433,7 +434,8 @@ func (m Model) handleTimeLoggingKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			item := m.workItems[m.selectedItemIdx]
-			return m, m.createTimeLog(
+			return m, data.CreateTimeLog(
+				m.apiClient,
 				item.ID, *m.timeForm.projectID,
 				m.timeForm.descInput.Value(),
 				m.timeForm.durationInput.Value(),

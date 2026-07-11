@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"windshift/internal/tui/data"
 	"windshift/internal/tui/styles"
 )
 
@@ -109,7 +110,7 @@ func renderInput(s *styles.Styles, in textinput.Model, selected, editing bool, w
 
 // resetEditForm builds a fresh WorkItemEditForm seeded from a WorkItem and
 // sized to the current terminal.
-func (m Model) resetEditForm(item WorkItem) WorkItemEditForm {
+func (m Model) resetEditForm(item data.WorkItem) WorkItemEditForm {
 	title := newInput(m.styles, "Title", 200)
 	title.SetValue(item.Title)
 	title.SetWidth(inputWidth(m.width))

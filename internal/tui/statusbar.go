@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+
+	"windshift/internal/tui/data"
 )
 
 // renderStatusBar paints the bottom row: left side is a transient notice
@@ -41,9 +43,9 @@ func (m Model) statusLeft() string {
 	s := m.styles
 	switch {
 	case m.errorMessage != "":
-		return s.Status.Bar.Render(s.Status.Error.Render("● ") + sanitizeTerminalLine(m.errorMessage))
+		return s.Status.Bar.Render(s.Status.Error.Render("● ") + data.SanitizeLine(m.errorMessage))
 	case m.successMessage != "":
-		return s.Status.Bar.Render(s.Status.Success.Render("● ") + sanitizeTerminalLine(m.successMessage))
+		return s.Status.Bar.Render(s.Status.Success.Render("● ") + data.SanitizeLine(m.successMessage))
 	case m.loading:
 		return s.Status.Bar.Render(s.Status.Info.Render("● ") + "Loading…")
 	}
