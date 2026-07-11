@@ -1,5 +1,5 @@
 <script>
-  import { onDestroy } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import { draggable, dropTargetForElements } from '@atlaskit/pragmatic-drag-and-drop/element/adapter';
   import { attachClosestEdge, extractClosestEdge } from '@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge';
   import { api } from '../../api.js';
@@ -312,6 +312,33 @@
   let activePageId = $derived(
     $currentRoute?.params?.pageId ? Number($currentRoute.params.pageId) : null
   );
+
+  // Reveal the active page in the tree: navigating to a page (sidebar
+  // click, deep link, in-page link, search result) expands every ancestor
+  // so the highlighted row is actually visible. Runs once per navigation —
+  // the lastRevealedId guard keeps it from fighting the user if they
+  // manually collapse an ancestor while staying on the page.
+  let lastRevealedId = null;
+  $effect(() => {
+    const id = activePageId;
+    const lookup = pageById;
+    if (id == null || lastRevealedId === id) return;
+    const page = lookup.get(id);
+    if (!page) return; // tree not loaded yet, or page not in this workspace
+    lastRevealedId = id;
+    untrack(() => {
+      const ancestorIds = (page.path || '')
+        .split('/')
+        .filter(Boolean)
+        .map(Number)
+        .filter((a) => Number.isFinite(a) && !expandedIds.has(a));
+      if (ancestorIds.length === 0) return;
+      const next = new Set(expandedIds);
+      for (const a of ancestorIds) next.add(a);
+      expandedIds = next;
+      persistExpanded();
+    });
+  });
 
   onDestroy(() => {
     cleanupDnd();
