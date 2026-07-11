@@ -25,11 +25,13 @@ import (
 // interfaces it claims. Dropping a method on any of these here surfaces
 // as a build error rather than a runtime type-assertion miss.
 var (
-	_ Provider        = (*GitHubProvider)(nil)
-	_ ReleaseProvider = (*GitHubProvider)(nil)
-	_ CommitProvider  = (*GitHubProvider)(nil)
-	_ RefProvider     = (*GitHubProvider)(nil)
-	_ IssueProvider   = (*GitHubProvider)(nil)
+	_ Provider                     = (*GitHubProvider)(nil)
+	_ ReleaseProvider              = (*GitHubProvider)(nil)
+	_ CommitProvider               = (*GitHubProvider)(nil)
+	_ RefProvider                  = (*GitHubProvider)(nil)
+	_ IssueProvider                = (*GitHubProvider)(nil)
+	_ PullRequestReviewProvider    = (*GitHubProvider)(nil)
+	_ RepositoryPermissionProvider = (*GitHubProvider)(nil)
 )
 
 func githubRepoPath(owner, repo string) string {
@@ -946,11 +948,12 @@ func (g *GitHubProvider) ListIssueComments(ctx context.Context, owner, repo stri
 		reqURL := fmt.Sprintf("%s/repos/%s/issues/%d/comments?per_page=100&page=%d", g.baseURL, githubRepoPath(owner, repo), number, page)
 
 		var ghComments []struct {
-			ID        int64      `json:"id"`
-			Body      string     `json:"body"`
-			User      githubUser `json:"user"`
-			CreatedAt time.Time  `json:"created_at"`
-			UpdatedAt time.Time  `json:"updated_at"`
+			ID                int64      `json:"id"`
+			Body              string     `json:"body"`
+			User              githubUser `json:"user"`
+			AuthorAssociation string     `json:"author_association"`
+			CreatedAt         time.Time  `json:"created_at"`
+			UpdatedAt         time.Time  `json:"updated_at"`
 		}
 		if err := g.doJSON(ctx, "GET", reqURL, http.NoBody, http.StatusOK, &ghComments); err != nil {
 			return nil, err
@@ -958,11 +961,9 @@ func (g *GitHubProvider) ListIssueComments(ctx context.Context, owner, repo stri
 
 		for _, c := range ghComments {
 			allComments = append(allComments, IssueComment{
-				ID:        c.ID,
-				Body:      c.Body,
-				User:      c.User.toUser(),
-				CreatedAt: c.CreatedAt,
-				UpdatedAt: c.UpdatedAt,
+				ID: c.ID, Kind: "issue_comment", Body: c.Body,
+				User: c.User.toUser(), AuthorAssociation: c.AuthorAssociation,
+				CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
 			})
 		}
 
@@ -972,6 +973,97 @@ func (g *GitHubProvider) ListIssueComments(ctx context.Context, owner, repo stri
 		page++
 	}
 	return allComments, nil
+}
+
+// ListPullRequestReviewEvents returns submitted review bodies and inline
+// review comments, which GitHub exposes separately from issue comments.
+func (g *GitHubProvider) ListPullRequestReviewEvents(ctx context.Context, owner, repo string, number int) ([]IssueComment, error) {
+	if err := g.ensureInstallationToken(ctx); err != nil {
+		return nil, err
+	}
+	var events []IssueComment
+	for page := 1; ; page++ {
+		reqURL := fmt.Sprintf("%s/repos/%s/pulls/%d/reviews?per_page=100&page=%d", g.baseURL, githubRepoPath(owner, repo), number, page)
+		var reviews []struct {
+			ID                int64      `json:"id"`
+			Body              string     `json:"body"`
+			User              githubUser `json:"user"`
+			AuthorAssociation string     `json:"author_association"`
+			SubmittedAt       time.Time  `json:"submitted_at"`
+		}
+		if err := g.doJSON(ctx, "GET", reqURL, http.NoBody, http.StatusOK, &reviews); err != nil {
+			return nil, err
+		}
+		for _, review := range reviews {
+			if strings.TrimSpace(review.Body) == "" {
+				continue
+			}
+			events = append(events, IssueComment{
+				ID: review.ID, Kind: "review", Body: review.Body, User: review.User.toUser(),
+				AuthorAssociation: review.AuthorAssociation, CreatedAt: review.SubmittedAt, UpdatedAt: review.SubmittedAt,
+			})
+		}
+		if len(reviews) < 100 {
+			break
+		}
+	}
+	for page := 1; ; page++ {
+		reqURL := fmt.Sprintf("%s/repos/%s/pulls/%d/comments?per_page=100&page=%d", g.baseURL, githubRepoPath(owner, repo), number, page)
+		var comments []struct {
+			ID                int64      `json:"id"`
+			Body              string     `json:"body"`
+			User              githubUser `json:"user"`
+			AuthorAssociation string     `json:"author_association"`
+			Path              string     `json:"path"`
+			Line              int        `json:"line"`
+			OriginalLine      int        `json:"original_line"`
+			Side              string     `json:"side"`
+			InReplyToID       int64      `json:"in_reply_to_id"`
+			CreatedAt         time.Time  `json:"created_at"`
+			UpdatedAt         time.Time  `json:"updated_at"`
+		}
+		if err := g.doJSON(ctx, "GET", reqURL, http.NoBody, http.StatusOK, &comments); err != nil {
+			return nil, err
+		}
+		for _, c := range comments {
+			line := c.Line
+			if line == 0 {
+				line = c.OriginalLine
+			}
+			events = append(events, IssueComment{
+				ID: c.ID, Kind: "review_comment", Body: c.Body, User: c.User.toUser(),
+				AuthorAssociation: c.AuthorAssociation, Path: c.Path, Line: line, Side: c.Side,
+				ThreadID: c.InReplyToID, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
+			})
+		}
+		if len(comments) < 100 {
+			break
+		}
+	}
+	return events, nil
+}
+
+// CanUserWriteRepository checks the commenter's effective collaborator
+// permission. Triage is accepted because it is the minimum review role.
+func (g *GitHubProvider) CanUserWriteRepository(ctx context.Context, owner, repo, username string) (bool, error) {
+	if err := g.ensureInstallationToken(ctx); err != nil {
+		return false, err
+	}
+	reqURL := fmt.Sprintf("%s/repos/%s/collaborators/%s/permission", g.baseURL, githubRepoPath(owner, repo), url.PathEscape(username))
+	var out struct {
+		Permission string `json:"permission"`
+		User       struct {
+			Permissions map[string]bool `json:"permissions"`
+		} `json:"user"`
+	}
+	if err := g.doJSON(ctx, "GET", reqURL, http.NoBody, http.StatusOK, &out); err != nil {
+		return false, err
+	}
+	switch strings.ToLower(out.Permission) {
+	case "admin", "maintain", "write", "push", "triage":
+		return true, nil
+	}
+	return out.User.Permissions["admin"] || out.User.Permissions["maintain"] || out.User.Permissions["push"] || out.User.Permissions["triage"], nil
 }
 
 // UpdateIssueComment updates an existing comment on an issue
@@ -1272,8 +1364,11 @@ type githubPullRequest struct {
 	Draft   bool   `json:"draft"`
 	Merged  bool   `json:"merged"`
 	Head    struct {
-		Ref string `json:"ref"`
-		SHA string `json:"sha"`
+		Ref  string `json:"ref"`
+		SHA  string `json:"sha"`
+		Repo struct {
+			FullName string `json:"full_name"`
+		} `json:"repo"`
 	} `json:"head"`
 	Base struct {
 		Ref string `json:"ref"`
@@ -1294,6 +1389,7 @@ func (pr githubPullRequest) toPullRequest() PullRequest {
 		State:      pr.State,
 		URL:        pr.HTMLURL,
 		HeadBranch: pr.Head.Ref,
+		HeadRepo:   pr.Head.Repo.FullName,
 		HeadSHA:    pr.Head.SHA,
 		BaseBranch: pr.Base.Ref,
 		IsMerged:   pr.Merged,

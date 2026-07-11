@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 	"unicode/utf8"
@@ -18,6 +19,46 @@ import (
 // "Agent runs" UI is the dominant reader.
 type AgentRunRepository struct {
 	db database.Database
+}
+
+type AgentPROwnership struct {
+	ItemID            int
+	AgentRunID        int
+	BindingID         int
+	TriggeredByUserID int
+	HeadRepo          string
+	HeadBranch        string
+}
+
+func (r *AgentRunRepository) PRContinuationOwner(ctx context.Context, workspaceID int, repoSlug string, prNumber int) (*AgentPROwnership, error) {
+	var owner AgentPROwnership
+	err := r.db.QueryRowContext(ctx, `
+		SELECT o.item_id, o.agent_run_id, o.binding_id, COALESCE(o.triggered_by_user_id,0), o.head_repo, o.head_branch
+		FROM agent_pr_ownerships o
+		JOIN workspace_repositories wr ON wr.id = o.workspace_repository_id
+		JOIN workspace_scm_connections wsc ON wsc.id = wr.workspace_scm_connection_id
+		WHERE wsc.workspace_id = ? AND wr.repository_name = ? AND o.pr_number = ?
+		ORDER BY o.updated_at DESC LIMIT 1
+	`, workspaceID, repoSlug, prNumber).Scan(&owner.ItemID, &owner.AgentRunID, &owner.BindingID, &owner.TriggeredByUserID, &owner.HeadRepo, &owner.HeadBranch)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &owner, nil
+}
+
+func (r *AgentRunRepository) LatestForBindingItem(ctx context.Context, bindingID, itemID int) (*models.AgentRun, error) {
+	var id int
+	err := r.db.QueryRowContext(ctx, `SELECT id FROM agent_runs WHERE binding_id=? AND item_id=? ORDER BY id DESC LIMIT 1`, bindingID, itemID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return r.Get(ctx, id)
 }
 
 // NewAgentRunRepository constructs a new repository.

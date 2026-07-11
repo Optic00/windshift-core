@@ -142,13 +142,16 @@ type Repository struct {
 
 // PullRequest represents a pull request from an SCM provider
 type PullRequest struct {
-	ID         int        `json:"id"`
-	Number     int        `json:"number"`
-	Title      string     `json:"title"`
-	Body       string     `json:"body,omitempty"`
-	State      string     `json:"state"` // open, closed, merged
-	URL        string     `json:"url"`
-	HeadBranch string     `json:"head_branch"`
+	ID         int    `json:"id"`
+	Number     int    `json:"number"`
+	Title      string `json:"title"`
+	Body       string `json:"body,omitempty"`
+	State      string `json:"state"` // open, closed, merged
+	URL        string `json:"url"`
+	HeadBranch string `json:"head_branch"`
+	// HeadRepo is the full owner/repo containing HeadBranch. It differs from
+	// the base repository for fork PRs and must be known before granting push.
+	HeadRepo   string     `json:"head_repo,omitempty"`
 	HeadSHA    string     `json:"head_sha"`
 	BaseBranch string     `json:"base_branch"`
 	IsMerged   bool       `json:"is_merged"`
@@ -340,11 +343,17 @@ func NewProvider(cfg ProviderConfig) (Provider, error) {
 
 // IssueComment represents a comment on a GitHub issue
 type IssueComment struct {
-	ID        int64     `json:"id"`
-	Body      string    `json:"body"`
-	User      User      `json:"user"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID                int64     `json:"id"`
+	Kind              string    `json:"kind,omitempty"` // issue_comment | review | review_comment
+	Body              string    `json:"body"`
+	User              User      `json:"user"`
+	AuthorAssociation string    `json:"author_association,omitempty"`
+	Path              string    `json:"path,omitempty"`
+	Line              int       `json:"line,omitempty"`
+	Side              string    `json:"side,omitempty"`
+	ThreadID          int64     `json:"thread_id,omitempty"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 // IssueCommentProvider is the narrow slice of issue operations that the
@@ -363,6 +372,22 @@ type IssueCommentProvider interface {
 
 	// UpdateIssueComment updates an existing comment on an issue/PR
 	UpdateIssueComment(ctx context.Context, owner, repo string, commentID int64, body string) error
+}
+
+// PullRequestReviewProvider exposes the review surfaces that are distinct
+// from issue comments on GitHub/Gitea: submitted review bodies, inline
+// comments, and thread replies. Implementations return normalized events.
+type PullRequestReviewProvider interface {
+	Provider
+	ListPullRequestReviewEvents(ctx context.Context, owner, repo string, number int) ([]IssueComment, error)
+}
+
+// RepositoryPermissionProvider answers whether an SCM identity may request a
+// coding-agent push. The provider token performs the repository-level check;
+// callers fail closed when it cannot be established.
+type RepositoryPermissionProvider interface {
+	Provider
+	CanUserWriteRepository(ctx context.Context, owner, repo, username string) (bool, error)
 }
 
 // IssueProvider extends Provider for providers that support issue operations

@@ -250,6 +250,10 @@ type ItemPRContinuationResolver interface {
 	ContinuationForItem(ctx context.Context, itemID int) (*ContinuationTarget, error)
 }
 
+type ItemPRContinuationUserResolver interface {
+	ContinuationForItemAsUser(ctx context.Context, itemID, userID int, allowedRepoSlugs []string) (*ContinuationTarget, error)
+}
+
 // BindingServiceOptions wires the service. Runs is optional: when nil,
 // MaybeStartRunForAssignee logs and no-ops on every call — useful for
 // tests that exercise the binding CRUD path without a RunService.
@@ -999,7 +1003,7 @@ func (s *BindingService) MaybeStartRunsForMentions(ctx context.Context, workspac
 		// mention continues that PR (adds commits to it) rather than opening a
 		// competing one. Resolution failures degrade to a fresh run — a missing
 		// continuation is never worse than today's behavior.
-		s.applyContinuation(ctx, trigger, binding, itemID)
+		s.applyContinuation(ctx, trigger, binding, itemID, commentAuthorID)
 		if err := s.startRunForBinding(ctx, binding, workspaceID, itemID, commentAuthorID, trigger); err != nil {
 			errs = append(errs, fmt.Errorf("start run for mentioned binding %d: %w", binding.ID, err))
 		}
@@ -1045,7 +1049,11 @@ func renderInstruction(trigger *models.RunTrigger) string {
 	}
 	var b strings.Builder
 	b.WriteString("\n\n## Your instruction for this run\n")
-	b.WriteString("A user mentioned you in a comment on $WINDSHIFT_ITEM_ID. Treat the comment below as your primary instruction for what to do on this run — it takes precedence over any default assumption about the task. It may be terse; when it lacks detail, read the work item and its other comments (`ws task get $WINDSHIFT_ITEM_ID`, `ws comment list $WINDSHIFT_ITEM_ID`) for the surrounding context before acting.\n\n")
+	if trigger.Kind == "pr_comment" {
+		fmt.Fprintf(&b, "A reviewer asked you to continue pull request #%d in %s. The workspace is already checked out on that PR's existing head branch; commit the requested changes there and do not create another branch or pull request. Treat the review request below as your primary instruction. When it is terse, inspect the current diff and read the linked Windshift item (`ws task get $WINDSHIFT_ITEM_ID`) for context.\n\n", trigger.ContinuePRNumber, trigger.ContinueRepoSlug)
+	} else {
+		b.WriteString("A user mentioned you in a comment on $WINDSHIFT_ITEM_ID. Treat the comment below as your primary instruction for what to do on this run — it takes precedence over any default assumption about the task. It may be terse; when it lacks detail, read the work item and its other comments (`ws task get $WINDSHIFT_ITEM_ID`, `ws comment list $WINDSHIFT_ITEM_ID`) for the surrounding context before acting.\n\n")
+	}
 	for _, line := range strings.Split(strings.TrimRight(trigger.Instruction, "\n"), "\n") {
 		b.WriteString("> ")
 		b.WriteString(line)
@@ -1078,11 +1086,28 @@ func (s *BindingService) enabledSkillsForBinding(ctx context.Context, binding *m
 // trigger) when no resolver is wired, the binding has no repo, the item has no
 // open PR, the PR is in a different repo than the binding writes to, or
 // resolution errors — none of which should block the run.
-func (s *BindingService) applyContinuation(ctx context.Context, trigger *models.RunTrigger, binding *models.WorkspaceAgentBinding, itemID int) {
+func (s *BindingService) applyContinuation(ctx context.Context, trigger *models.RunTrigger, binding *models.WorkspaceAgentBinding, itemID int, userIDs ...int) {
 	if s.continuations == nil || !binding.HasRepo() {
 		return
 	}
-	target, err := s.continuations.ContinuationForItem(ctx, itemID)
+	var target *ContinuationTarget
+	var err error
+	userID := 0
+	if len(userIDs) > 0 {
+		userID = userIDs[0]
+	}
+	if resolver, ok := s.continuations.(ItemPRContinuationUserResolver); ok {
+		allowed := make([]string, 0, len(binding.Repos))
+		for _, repo := range binding.Repos {
+			allowed = append(allowed, repo.RepoSlug)
+		}
+		if len(allowed) == 0 && binding.RepoSlug != "" {
+			allowed = append(allowed, binding.RepoSlug)
+		}
+		target, err = resolver.ContinuationForItemAsUser(ctx, itemID, userID, allowed)
+	} else {
+		target, err = s.continuations.ContinuationForItem(ctx, itemID)
+	}
 	if err != nil {
 		s.logger.Printf("binding service: resolve continuation for item=%d binding=%d: %v (starting fresh run)", itemID, binding.ID, err)
 		return
@@ -1344,8 +1369,18 @@ type PRCommentContinuation struct {
 	RepoSlug    string // "owner/repo" of the PR
 	PRNumber    int
 	HeadBranch  string
+	HeadRepo    string
 	CommentID   int64 // SCM comment id (audit + idempotency on the trigger)
+	EventID     int64
+	CommentKind string
 	CommentBody string
+}
+
+type PRCommentStartResult struct {
+	Started  bool
+	RunID    int
+	Terminal bool
+	Reason   string
 }
 
 // StartPRCommentContinuation starts a continuation run for a PR-comment trigger.
@@ -1358,43 +1393,61 @@ type PRCommentContinuation struct {
 // writes, a run is already active, or the binding's budget is spent. None of
 // those are caller-actionable errors; the poller just moves on.
 func (s *BindingService) StartPRCommentContinuation(ctx context.Context, in PRCommentContinuation) (bool, error) {
+	result, err := s.StartPRCommentContinuationDetailed(ctx, in)
+	return result.Started, err
+}
+
+func (s *BindingService) StartPRCommentContinuationDetailed(ctx context.Context, in PRCommentContinuation) (PRCommentStartResult, error) {
 	if s.runs == nil {
-		return false, nil
+		return PRCommentStartResult{Terminal: true, Reason: "The coding-agent runner is not available."}, nil
 	}
 	if in.HeadBranch == "" || in.ItemID == 0 {
-		return false, nil
+		return PRCommentStartResult{Terminal: true, Reason: "This PR is not linked to a continuable Windshift item."}, nil
 	}
-	// Most-recently-active binding: the agent that last ran this item is the one
-	// the "@agent" comment continues. Its triggering user is reused as the SCM
-	// principal — that user already pushed to this PR, so their credential works.
+	if in.HeadRepo != "" && !strings.EqualFold(in.HeadRepo, in.RepoSlug) {
+		return PRCommentStartResult{Terminal: true, Reason: "The coding agent cannot update this fork PR because its head repository is not bound for push access."}, nil
+	}
+	owner, err := s.runs.PRContinuationOwner(ctx, in.WorkspaceID, in.RepoSlug, in.PRNumber)
+	if err != nil {
+		return PRCommentStartResult{}, fmt.Errorf("load PR continuation owner: %w", err)
+	}
+	if owner != nil {
+		in.ItemID = owner.ItemID
+	}
 	latest, err := s.runs.LatestRunForItem(ctx, in.ItemID)
 	if err != nil {
-		return false, fmt.Errorf("latest run for item %d: %w", in.ItemID, err)
+		return PRCommentStartResult{}, fmt.Errorf("latest run for item %d: %w", in.ItemID, err)
 	}
-	if latest == nil || latest.BindingID == nil {
-		return false, nil // no agent has worked this item — nobody to continue
+	if owner == nil && (latest == nil || latest.BindingID == nil) {
+		return PRCommentStartResult{Terminal: true, Reason: "No coding agent owns this PR yet."}, nil
 	}
-	binding, err := s.repo.Get(ctx, *latest.BindingID)
+	bindingID := 0
+	triggeredBy := 0
+	if owner != nil {
+		bindingID, triggeredBy = owner.BindingID, owner.TriggeredByUserID
+	} else {
+		bindingID = *latest.BindingID
+		if latest.TriggeredByUserID != nil {
+			triggeredBy = *latest.TriggeredByUserID
+		}
+	}
+	binding, err := s.repo.Get(ctx, bindingID)
 	if err != nil {
-		return false, fmt.Errorf("load binding %d: %w", *latest.BindingID, err)
+		return PRCommentStartResult{}, fmt.Errorf("load binding %d: %w", bindingID, err)
 	}
 	// Write scope: only continue a PR in a repo this binding binds (WI-449:
 	// any bound repo, not just the primary).
 	if !binding.HasRepo() || !binding.HasRepoSlug(in.RepoSlug) {
-		return false, nil
+		return PRCommentStartResult{Terminal: true, Reason: "The PR owner no longer has push access to this repository."}, nil
 	}
 	// Dedup: a repeat "@agent" while the agent is already working is a nudge, not
 	// a second job (mirrors the @mention trigger).
 	active, err := s.runs.CountActiveRunsForBindingItem(ctx, binding.ID, in.ItemID)
 	if err != nil {
-		return false, fmt.Errorf("count active runs for binding %d: %w", binding.ID, err)
+		return PRCommentStartResult{}, fmt.Errorf("count active runs for binding %d: %w", binding.ID, err)
 	}
 	if active > 0 {
-		return false, nil
-	}
-	triggeredBy := 0
-	if latest.TriggeredByUserID != nil {
-		triggeredBy = *latest.TriggeredByUserID
+		return PRCommentStartResult{Reason: "The coding agent is already working on this item; this request remains queued."}, nil
 	}
 	trigger := &models.RunTrigger{
 		Kind:               "pr_comment",
@@ -1403,15 +1456,27 @@ func (s *BindingService) StartPRCommentContinuation(ctx context.Context, in PRCo
 		ContinueRepoSlug:   in.RepoSlug,
 		ContinueHeadBranch: in.HeadBranch,
 		ContinueCommentID:  in.CommentID,
+		ContinueEventID:    in.EventID,
 	}
 	if err := s.startRunForBinding(ctx, binding, in.WorkspaceID, in.ItemID, triggeredBy, trigger); err != nil {
 		if errors.Is(err, ErrBindingBudgetExceeded) {
-			return false, nil // budget cap is a soft skip, not a poller error
+			return PRCommentStartResult{Terminal: true, Reason: "The coding agent's daily run budget is exhausted."}, nil
 		}
-		return false, err
+		if errors.Is(err, ErrTriggerUserSCMNotConnected) {
+			return PRCommentStartResult{Terminal: true, Reason: "The PR owner's source-control account is no longer connected."}, nil
+		}
+		return PRCommentStartResult{}, err
 	}
+	startedRun, err := s.runs.LatestRunForBindingItem(ctx, binding.ID, in.ItemID)
+	if err != nil {
+		return PRCommentStartResult{}, fmt.Errorf("read started run: %w", err)
+	}
+	if startedRun == nil {
+		return PRCommentStartResult{}, errors.New("coding-agent run was not persisted")
+	}
+	runID := startedRun.ID
 	s.logger.Printf("binding service: PR-comment continuation run for item=%d PR #%d (binding=%d, comment=%d)", in.ItemID, in.PRNumber, binding.ID, in.CommentID)
-	return true, nil
+	return PRCommentStartResult{Started: true, RunID: runID}, nil
 }
 
 // RerunForItem manually re-triggers the agent that last worked an item — the
@@ -1463,7 +1528,7 @@ func (s *BindingService) RerunForItem(ctx context.Context, itemID, triggeredByUs
 	// If the item still has an open linked PR in this binding's repo, re-run
 	// lands on that PR rather than forking a competing branch — same posture as
 	// the @mention trigger. Resolution failures degrade to a fresh run.
-	s.applyContinuation(ctx, rerunTrigger, binding, itemID)
+	s.applyContinuation(ctx, rerunTrigger, binding, itemID, triggeredByUserID)
 	if err := s.startRunForBinding(ctx, binding, latest.WorkspaceID, itemID, triggeredByUserID, rerunTrigger); err != nil {
 		return false, err
 	}

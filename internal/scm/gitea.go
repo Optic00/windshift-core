@@ -17,11 +17,13 @@ import (
 // Compile-time check that GiteaProvider implements the optional
 // interfaces it claims. See GitHubProvider for the same pattern.
 var (
-	_ Provider             = (*GiteaProvider)(nil)
-	_ ReleaseProvider      = (*GiteaProvider)(nil)
-	_ CommitProvider       = (*GiteaProvider)(nil)
-	_ RefProvider          = (*GiteaProvider)(nil)
-	_ IssueCommentProvider = (*GiteaProvider)(nil) // WI-426: drives the "@agent" PR-comment trigger
+	_ Provider                     = (*GiteaProvider)(nil)
+	_ ReleaseProvider              = (*GiteaProvider)(nil)
+	_ CommitProvider               = (*GiteaProvider)(nil)
+	_ RefProvider                  = (*GiteaProvider)(nil)
+	_ IssueCommentProvider         = (*GiteaProvider)(nil) // WI-426: drives the "@agent" PR-comment trigger
+	_ PullRequestReviewProvider    = (*GiteaProvider)(nil)
+	_ RepositoryPermissionProvider = (*GiteaProvider)(nil)
 )
 
 // GiteaProvider implements the Provider interface for Gitea/Forgejo
@@ -385,6 +387,7 @@ type giteaComment struct {
 func (c giteaComment) toIssueComment() IssueComment {
 	return IssueComment{
 		ID:        c.ID,
+		Kind:      "issue_comment",
 		Body:      c.Body,
 		User:      c.User.toUser(),
 		CreatedAt: c.CreatedAt,
@@ -415,6 +418,67 @@ func (g *GiteaProvider) ListIssueComments(ctx context.Context, owner, repo strin
 		}
 	}
 	return comments, nil
+}
+
+// ListPullRequestReviewEvents normalizes Gitea review bodies and their inline
+// comments. Inline comments are nested under a review in the Gitea API.
+func (g *GiteaProvider) ListPullRequestReviewEvents(ctx context.Context, owner, repo string, number int) ([]IssueComment, error) {
+	const perPage = 50
+	var events []IssueComment
+	for page := 1; ; page++ {
+		reqURL := g.apiURL(fmt.Sprintf("/repos/%s/%s/pulls/%d/reviews?page=%d&limit=%d", url.PathEscape(owner), url.PathEscape(repo), number, page, perPage))
+		var reviews []struct {
+			ID          int64     `json:"id"`
+			Body        string    `json:"body"`
+			User        giteaUser `json:"user"`
+			SubmittedAt time.Time `json:"submitted_at"`
+		}
+		if err := g.doJSON(ctx, "GET", reqURL, http.NoBody, http.StatusOK, &reviews); err != nil {
+			return nil, err
+		}
+		for _, review := range reviews {
+			if strings.TrimSpace(review.Body) != "" {
+				events = append(events, IssueComment{ID: review.ID, Kind: "review", Body: review.Body, User: review.User.toUser(), CreatedAt: review.SubmittedAt, UpdatedAt: review.SubmittedAt})
+			}
+			commentsURL := g.apiURL(fmt.Sprintf("/repos/%s/%s/pulls/%d/reviews/%d/comments", url.PathEscape(owner), url.PathEscape(repo), number, review.ID))
+			var comments []struct {
+				ID          int64     `json:"id"`
+				Body        string    `json:"body"`
+				User        giteaUser `json:"user"`
+				Path        string    `json:"path"`
+				NewPosition int       `json:"new_position"`
+				CreatedAt   time.Time `json:"created_at"`
+				UpdatedAt   time.Time `json:"updated_at"`
+			}
+			if err := g.doJSON(ctx, "GET", commentsURL, http.NoBody, http.StatusOK, &comments); err != nil {
+				return nil, err
+			}
+			for _, c := range comments {
+				events = append(events, IssueComment{ID: c.ID, Kind: "review_comment", Body: c.Body, User: c.User.toUser(), Path: c.Path, Line: c.NewPosition, ThreadID: review.ID, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt})
+			}
+		}
+		if len(reviews) < perPage {
+			break
+		}
+	}
+	return events, nil
+}
+
+// CanUserWriteRepository checks Gitea's effective collaborator permission.
+func (g *GiteaProvider) CanUserWriteRepository(ctx context.Context, owner, repo, username string) (bool, error) {
+	reqURL := g.apiURL(fmt.Sprintf("/repos/%s/%s/collaborators/%s/permission", url.PathEscape(owner), url.PathEscape(repo), url.PathEscape(username)))
+	var out struct {
+		Permission string `json:"permission"`
+	}
+	if err := g.doJSON(ctx, "GET", reqURL, http.NoBody, http.StatusOK, &out); err != nil {
+		return false, err
+	}
+	switch strings.ToLower(out.Permission) {
+	case "admin", "owner", "write", "push", "triage":
+		return true, nil
+	default:
+		return false, nil
+	}
 }
 
 // CreateIssueComment posts a comment on an issue or pull request and returns the
@@ -689,8 +753,11 @@ type giteaPullRequest struct {
 }
 
 type giteaPRBranch struct {
-	Ref string `json:"ref"`
-	SHA string `json:"sha"`
+	Ref  string `json:"ref"`
+	SHA  string `json:"sha"`
+	Repo struct {
+		FullName string `json:"full_name"`
+	} `json:"repo"`
 }
 
 func (pr giteaPullRequest) toPullRequest() PullRequest {
@@ -707,6 +774,7 @@ func (pr giteaPullRequest) toPullRequest() PullRequest {
 		State:      state,
 		URL:        pr.HTMLURL,
 		HeadBranch: pr.Head.Ref,
+		HeadRepo:   pr.Head.Repo.FullName,
 		HeadSHA:    pr.Head.SHA,
 		BaseBranch: pr.Base.Ref,
 		IsMerged:   pr.Merged,

@@ -228,6 +228,7 @@ type PostRunInfo struct {
 	ItemID      *int
 	BindingID   int
 	Status      string
+	Error       string
 	Branch      string
 	BaseCommit  string
 	// TriggeredByUserID is the run's triggering user (0 when unknown). The
@@ -627,6 +628,7 @@ func (s *RunService) FinalizeRemote(ctx context.Context, runID int, result Runne
 		ItemID:            run.ItemID,
 		BindingID:         bindingID,
 		Status:            status,
+		Error:             RedactString(result.Error),
 		Branch:            branch,
 		BaseCommit:        baseCommit,
 		TriggeredByUserID: triggeredBy,
@@ -989,4 +991,12 @@ func (s *RunService) LatestRunForItem(ctx context.Context, itemID int) (*models.
 		return nil, nil
 	}
 	return runs[0], nil
+}
+
+func (s *RunService) PRContinuationOwner(ctx context.Context, workspaceID int, repoSlug string, prNumber int) (*repository.AgentPROwnership, error) {
+	return s.repo.PRContinuationOwner(ctx, workspaceID, repoSlug, prNumber)
+}
+
+func (s *RunService) LatestRunForBindingItem(ctx context.Context, bindingID, itemID int) (*models.AgentRun, error) {
+	return s.repo.LatestForBindingItem(ctx, bindingID, itemID)
 }

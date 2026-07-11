@@ -6,7 +6,6 @@ package server
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"embed"
 	"errors"
 	"fmt"
@@ -2287,61 +2286,70 @@ type itemPRContinuationResolver struct {
 }
 
 func (r *itemPRContinuationResolver) ContinuationForItem(ctx context.Context, itemID int) (*services.ContinuationTarget, error) {
-	var externalID, repoName string
-	var connectionID int
-	err := r.db.QueryRowContext(ctx, `
+	return r.ContinuationForItemAsUser(ctx, itemID, 0, nil)
+}
+
+func (r *itemPRContinuationResolver) ContinuationForItemAsUser(ctx context.Context, itemID, userID int, allowedRepoSlugs []string) (*services.ContinuationTarget, error) {
+	rows, err := r.db.QueryContext(ctx, `
 		SELECT l.external_id, wr.repository_name, wr.workspace_scm_connection_id
 		FROM item_scm_links l
 		JOIN workspace_repositories wr ON l.workspace_repository_id = wr.id
 		WHERE l.item_id = ? AND l.link_type = 'pull_request' AND lower(l.state) = 'open'
 		ORDER BY l.updated_at DESC
-		LIMIT 1
-	`, itemID).Scan(&externalID, &repoName, &connectionID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil // no open PR — caller starts a fresh run
-	}
+	`, itemID)
 	if err != nil {
-		return nil, fmt.Errorf("query open PR link: %w", err)
+		return nil, fmt.Errorf("query open PR links: %w", err)
 	}
-	number, err := strconv.Atoi(externalID)
-	if err != nil {
-		return nil, fmt.Errorf("PR link external_id %q is not a number: %w", externalID, err)
+	defer func() { _ = rows.Close() }()
+	allowed := make(map[string]bool, len(allowedRepoSlugs))
+	for _, slug := range allowedRepoSlugs {
+		allowed[slug] = true
 	}
-	owner, repo, ok := strings.Cut(repoName, "/")
-	if !ok || owner == "" || repo == "" {
-		return nil, fmt.Errorf("repository_name %q is not owner/repo", repoName)
+	for rows.Next() {
+		var externalID, repoName string
+		var connectionID int
+		if err := rows.Scan(&externalID, &repoName, &connectionID); err != nil {
+			return nil, err
+		}
+		if len(allowed) > 0 && !allowed[repoName] {
+			continue
+		}
+		number, err := strconv.Atoi(externalID)
+		if err != nil {
+			continue
+		}
+		owner, repo, ok := strings.Cut(repoName, "/")
+		if !ok || owner == "" || repo == "" {
+			continue
+		}
+		var creds *scm.ProviderCredentials
+		if userID > 0 {
+			creds, err = r.cr.GetCredentialsForUser(ctx, connectionID, userID)
+		} else {
+			creds, err = r.cr.GetCredentialsByConnectionID(ctx, connectionID)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("resolve connection %d: %w", connectionID, err)
+		}
+		provider, err := scm.NewProvider(scm.ProviderConfig{ProviderType: creds.ProviderType, AuthMethod: creds.AuthMethod,
+			BaseURL: creds.BaseURL, OAuthAccessToken: creds.OAuthAccessToken, OAuthRefreshToken: creds.OAuthRefreshToken,
+			PersonalAccessToken: creds.PersonalAccessToken, OAuthClientID: creds.OAuthClientID, OAuthClientSecret: creds.OAuthClientSecret})
+		if err != nil {
+			return nil, fmt.Errorf("build provider: %w", err)
+		}
+		pr, err := provider.GetPullRequest(ctx, owner, repo, number)
+		if err != nil {
+			return nil, fmt.Errorf("get PR %s/%s#%d: %w", owner, repo, number, err)
+		}
+		if pr.IsMerged || strings.EqualFold(pr.State, "closed") || pr.HeadBranch == "" {
+			continue
+		}
+		return &services.ContinuationTarget{PRNumber: number, RepoSlug: repoName, HeadBranch: pr.HeadBranch}, nil
 	}
-	creds, err := r.cr.GetCredentialsByConnectionID(ctx, connectionID)
-	if err != nil {
-		return nil, fmt.Errorf("resolve connection %d: %w", connectionID, err)
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
-	provider, err := scm.NewProvider(scm.ProviderConfig{
-		ProviderType:        creds.ProviderType,
-		AuthMethod:          creds.AuthMethod,
-		BaseURL:             creds.BaseURL,
-		OAuthAccessToken:    creds.OAuthAccessToken,
-		OAuthRefreshToken:   creds.OAuthRefreshToken,
-		PersonalAccessToken: creds.PersonalAccessToken,
-		OAuthClientID:       creds.OAuthClientID,
-		OAuthClientSecret:   creds.OAuthClientSecret,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("build provider: %w", err)
-	}
-	pr, err := provider.GetPullRequest(ctx, owner, repo, number)
-	if err != nil {
-		return nil, fmt.Errorf("get PR %s/%s#%d: %w", owner, repo, number, err)
-	}
-	// The link said open but the provider is authoritative: a since-closed/merged
-	// PR is not continuable, and an empty head branch can't be checked out.
-	if pr.IsMerged || strings.EqualFold(pr.State, "closed") || pr.HeadBranch == "" {
-		return nil, nil
-	}
-	return &services.ContinuationTarget{
-		PRNumber:   number,
-		RepoSlug:   repoName,
-		HeadBranch: pr.HeadBranch,
-	}, nil
+	return nil, nil
 }
 
 // bootCodingAgentRunService builds the orchestration-only WI-89 + WI-90

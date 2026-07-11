@@ -97,6 +97,10 @@ type PRCommentContinuationStarter interface {
 	StartPRCommentContinuation(ctx context.Context, in services.PRCommentContinuation) (bool, error)
 }
 
+type PRCommentContinuationDetailedStarter interface {
+	StartPRCommentContinuationDetailed(ctx context.Context, in services.PRCommentContinuation) (services.PRCommentStartResult, error)
+}
+
 // SetContinuationStarter wires the PR-comment continuation trigger. Optional;
 // without it the poller is inert.
 func (s *SyncService) SetContinuationStarter(st PRCommentContinuationStarter) {
@@ -261,8 +265,73 @@ func (s *SyncService) SyncAllRepositories(ctx context.Context) error {
 		}
 		wg.Wait()
 	}
+	// OAuth has no workspace-level principal. Repositories with an agent-owned
+	// PR are synced using the user who opened that PR, so review polling and
+	// token refresh work without reintroducing a shared "last user" token.
+	if err := s.syncOAuthAgentRepositories(ctx); err != nil {
+		slog.Error("Failed to sync OAuth agent repositories", slog.String("component", "scm"), slog.Any("error", err))
+	}
 
 	slog.Debug("Completed sync of all repositories", slog.String("component", "scm"))
+	return nil
+}
+
+func (s *SyncService) syncOAuthAgentRepositories(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT wr.id, wr.repository_name, wr.default_branch, wsc.workspace_id,
+			w.key, wsc.item_key_pattern, wsc.id, wr.last_synced_at,
+			(SELECT o.triggered_by_user_id FROM agent_pr_ownerships o
+			 WHERE o.workspace_repository_id = wr.id AND o.triggered_by_user_id IS NOT NULL
+			 ORDER BY o.updated_at DESC LIMIT 1)
+		FROM workspace_repositories wr
+		JOIN workspace_scm_connections wsc ON wsc.id = wr.workspace_scm_connection_id
+		JOIN workspaces w ON w.id = wsc.workspace_id
+		JOIN scm_providers sp ON sp.id = wsc.scm_provider_id
+		WHERE wr.is_active = true AND wsc.enabled = true AND sp.auth_method = 'oauth'
+		  AND EXISTS (SELECT 1 FROM agent_pr_ownerships o WHERE o.workspace_repository_id = wr.id AND o.triggered_by_user_id IS NOT NULL)
+	`)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	type oauthRepo struct {
+		repoInfo
+		userID int
+	}
+	var repos []oauthRepo
+	for rows.Next() {
+		var r oauthRepo
+		var pattern sql.NullString
+		var last sql.NullTime
+		if err := rows.Scan(&r.ID, &r.RepositoryName, &r.DefaultBranch, &r.WorkspaceID, &r.WorkspaceKey, &pattern, &r.ConnectionID, &last, &r.userID); err != nil {
+			return err
+		}
+		if pattern.Valid {
+			r.ItemKeyPattern = pattern.String
+		}
+		if last.Valid {
+			r.LastSyncedAt = last.Time
+		}
+		repos = append(repos, r)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	resolver := NewCredentialResolver(s.db, s.encryption)
+	for _, r := range repos {
+		creds, err := resolver.GetCredentialsForUser(ctx, r.ConnectionID, r.userID)
+		if err != nil {
+			slog.Warn("OAuth agent repo: resolve user credential", slog.Int("repo", r.ID), slog.Int("user", r.userID), slog.Any("error", err))
+			continue
+		}
+		provider, err := resolver.CreateProvider(creds)
+		if err != nil {
+			continue
+		}
+		if err := s.syncRepository(ctx, provider, r.ID, r.RepositoryName, r.DefaultBranch, r.WorkspaceID, r.WorkspaceKey, r.ItemKeyPattern, r.LastSyncedAt); err != nil {
+			slog.Warn("OAuth agent repo sync failed", slog.Int("repo", r.ID), slog.Any("error", err))
+		}
+	}
 	return nil
 }
 
@@ -542,66 +611,54 @@ func (s *SyncService) pollPRCommentTriggers(ctx context.Context, provider Provid
 	if s.continuationStarter == nil {
 		return // poller not wired (e.g. coding-agent harness disabled)
 	}
-	issues, ok := provider.(IssueCommentProvider)
-	if !ok {
-		return // provider can't list comments
-	}
-	comments, err := issues.ListIssueComments(ctx, owner, repo, pr.Number)
+	events, err := listPRReviewEvents(ctx, provider, owner, repo, pr.Number)
 	if err != nil {
-		slog.Warn("PR comment poll: list comments failed", slog.String("component", "scm"), slog.Int("pr", pr.Number), slog.Any("error", err))
+		slog.Warn("PR review poll: list events failed", slog.String("component", "scm"), slog.Int("pr", pr.Number), slog.Any("error", err))
 		return
 	}
 
 	cursor, exists := s.prCommentCursor(ctx, repoID, pr.Number)
 	maxID := cursor
-	for _, c := range comments {
-		if c.ID > maxID {
-			maxID = c.ID
+	for _, event := range events {
+		if normalizeEventKind(event.Kind) == "issue_comment" && event.ID > maxID {
+			maxID = event.ID
 		}
 	}
-	// First sight: baseline the cursor, don't replay history.
-	if !exists {
-		s.setPRCommentCursor(ctx, repoID, pr.Number, maxID)
-		return
+	now := time.Now().UTC()
+	itemID := 0
+	if len(itemIDs) > 0 {
+		itemID = itemIDs[0]
 	}
-
-	headBranch := s.resolveHeadBranch(ctx, provider, owner, repo, pr)
-	for _, c := range comments {
-		if c.ID <= cursor {
-			continue // already processed in an earlier tick (idempotency)
+	itemID = s.ownedItemForPR(ctx, repoID, pr.Number, itemID)
+	reviewKindSeen := map[string]bool{
+		"review":         s.hasReviewKindLedger(ctx, repoID, pr.Number, "review"),
+		"review_comment": s.hasReviewKindLedger(ctx, repoID, pr.Number, "review_comment"),
+	}
+	for _, event := range events {
+		kind := normalizeEventKind(event.Kind)
+		if exists && kind == "issue_comment" && event.ID <= cursor {
+			continue
 		}
-		if strings.Contains(c.Body, models.AgentCommentMarker) {
-			continue // loop guard L1: never act on the agent's own comment
+		firstSight := !exists
+		if kind != "issue_comment" {
+			firstSight = !reviewKindSeen[kind]
 		}
-		if !prCommentTriggerRE.MatchString(c.Body) {
-			continue // not a continuation request
-		}
-		if headBranch == "" {
-			slog.Warn("PR comment poll: no head branch, cannot continue", slog.String("component", "scm"), slog.Int("pr", pr.Number))
-			break
-		}
-		// Fire on the first eligible item (most PRs map to one). The starter's
-		// own dedup / write-scope / budget checks decide whether a run actually
-		// starts; we stop at the first that does so one comment yields one run.
-		for _, itemID := range itemIDs {
-			started, serr := s.continuationStarter.StartPRCommentContinuation(ctx, services.PRCommentContinuation{
-				WorkspaceID: workspaceID,
-				ItemID:      itemID,
-				RepoSlug:    owner + "/" + repo,
-				PRNumber:    pr.Number,
-				HeadBranch:  headBranch,
-				CommentID:   c.ID,
-				CommentBody: c.Body,
-			})
-			if serr != nil {
-				slog.Warn("PR comment poll: start continuation failed", slog.String("component", "scm"), slog.Int("pr", pr.Number), slog.Int("item", itemID), slog.Any("error", serr))
+		if firstSight && !isRecentFirstSight(event, now) {
+			if kind != "issue_comment" && prCommentTriggerRE.MatchString(event.Body) && !strings.Contains(event.Body, models.AgentCommentMarker) {
+				eventID, insertErr := s.insertPRReviewEvent(ctx, repoID, workspaceID, itemID, pr.Number, event)
+				if insertErr == nil {
+					s.setReviewEventStatus(ctx, eventID, "ignored", "historical review baseline", 0)
+				}
 			}
-			if started {
-				break
-			}
+			continue // migration baseline: only preserve live comments near first sight
+		}
+		_, insertErr := s.IngestPRReviewEvent(ctx, provider, owner, repo, pr, repoID, workspaceID, itemID, event)
+		if insertErr != nil {
+			slog.Warn("PR review poll: persist event failed", slog.Int("pr", pr.Number), slog.Any("error", insertErr))
 		}
 	}
 	s.setPRCommentCursor(ctx, repoID, pr.Number, maxID)
+	s.processPRReviewInbox(ctx, provider, owner, repo, pr, repoID, workspaceID)
 }
 
 // resolveHeadBranch returns the PR's head branch, fetching the PR fresh only

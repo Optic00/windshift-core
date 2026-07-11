@@ -130,6 +130,10 @@ type RunTrigger struct {
 	// per-comment idempotency survives restarts and never re-fires the same
 	// comment. Distinct from CommentID, which is a Windshift comment.
 	ContinueCommentID int64 `json:"continue_comment_id,omitempty"`
+	// ContinueEventID is the durable agent_pr_review_events row that admitted
+	// this continuation. It lets the post-run hook deliver exactly one terminal
+	// PR response and lets polling/webhooks deduplicate through the same ledger.
+	ContinueEventID int64 `json:"continue_event_id,omitempty"`
 }
 
 // HasInstruction reports whether the trigger carries a non-empty instruction.

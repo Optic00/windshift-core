@@ -161,6 +161,52 @@ CREATE TABLE IF NOT EXISTS pr_comment_cursors (
 	FOREIGN KEY (workspace_repository_id) REFERENCES workspace_repositories(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS agent_pr_review_events (
+	id SERIAL PRIMARY KEY,
+	workspace_repository_id INTEGER NOT NULL,
+	workspace_id INTEGER NOT NULL,
+	item_id INTEGER NOT NULL,
+	pr_number INTEGER NOT NULL,
+	event_kind TEXT NOT NULL,
+	external_id BIGINT NOT NULL,
+	author_id TEXT,
+	author_login TEXT,
+	author_association TEXT,
+	body TEXT NOT NULL,
+	context_json JSONB,
+	status TEXT NOT NULL DEFAULT 'pending',
+	agent_run_id INTEGER,
+	ack_comment_id BIGINT,
+	terminal_comment_id BIGINT,
+	terminal_body TEXT,
+	attempts INTEGER NOT NULL DEFAULT 0,
+	last_error TEXT,
+	created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+	updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(workspace_repository_id, pr_number, event_kind, external_id),
+	FOREIGN KEY (workspace_repository_id) REFERENCES workspace_repositories(id) ON DELETE CASCADE,
+	FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+	FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_agent_pr_review_events_status ON agent_pr_review_events(status, updated_at);
+
+CREATE TABLE IF NOT EXISTS agent_pr_ownerships (
+	workspace_repository_id INTEGER NOT NULL,
+	pr_number INTEGER NOT NULL,
+	item_id INTEGER NOT NULL,
+	agent_run_id INTEGER NOT NULL,
+	binding_id INTEGER NOT NULL,
+	triggered_by_user_id INTEGER,
+	head_repo TEXT NOT NULL,
+	head_branch TEXT NOT NULL,
+	created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+	updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+	PRIMARY KEY (workspace_repository_id, pr_number),
+	FOREIGN KEY (workspace_repository_id) REFERENCES workspace_repositories(id) ON DELETE CASCADE,
+	FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
+	FOREIGN KEY (triggered_by_user_id) REFERENCES users(id) ON DELETE SET NULL
+);
+
 -- SCM Processed Commits (idempotency ledger for smart-commit actions)
 CREATE TABLE IF NOT EXISTS scm_processed_commits (
 	commit_sha              TEXT NOT NULL,

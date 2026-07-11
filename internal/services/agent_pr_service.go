@@ -126,6 +126,16 @@ func NewAgentPRService(opts AgentPRServiceOptions) (*AgentPRService, error) {
 // so a mis-configured binding can't take the run's terminal status
 // down with it.
 func (s *AgentPRService) AfterRun(ctx context.Context, info PostRunInfo) {
+	// A review-triggered continuation has a response contract even when the
+	// run failed or produced no commit. Handle it before the fresh-PR success
+	// gates below; sibling changed repos may still open PRs on success.
+	if info.Trigger.IsContinuation() && info.BindingID != 0 {
+		if binding, err := s.bindings.Get(ctx, info.BindingID); err == nil {
+			s.completeContinuation(ctx, info, binding)
+		} else {
+			s.logger.Printf("agent pr: load continuation binding=%d run=%d: %v", info.BindingID, info.RunID, err)
+		}
+	}
 	if info.Status != models.AgentRunStatusSucceeded {
 		return
 	}
@@ -158,7 +168,6 @@ func (s *AgentPRService) AfterRun(ctx context.Context, info PostRunInfo) {
 		// opening another PR would duplicate it. Comment on the continued PR
 		// instead. Sibling repos changed in the same run still open fresh PRs.
 		if info.Trigger.IsContinuation() && pr.slug == info.Trigger.ContinueRepoSlug {
-			s.afterContinuationRun(ctx, info, binding, pr.connID, owner, repo)
 			continue
 		}
 		s.openRepoPR(ctx, info, binding, pr, owner, repo)
@@ -289,6 +298,10 @@ func (s *AgentPRService) openRepoPR(ctx context.Context, info PostRunInfo, bindi
 	}
 	if err := s.upsertItemSCMLink(ctx, *info.ItemID, pr.connID, pr.slug, opened); err != nil {
 		s.logger.Printf("agent pr: upsert item_scm_link run=%d: %v", info.RunID, err)
+		return
+	}
+	if err := s.upsertPROwnership(ctx, info, binding, pr, opened); err != nil {
+		s.logger.Printf("agent pr: upsert ownership run=%d: %v", info.RunID, err)
 	}
 }
 
@@ -373,26 +386,85 @@ func IsPermanentOpenPRError(err error) bool {
 	return errors.As(err, &p)
 }
 
-// afterContinuationRun posts a progress comment on the PR a continuation run
-// just pushed commits to. It never opens a PR (the PR already exists) and never
-// writes a new link row (the PR was linked when it was first opened/detected).
-// A nil commentPR seam degrades to a log line — the commits are already on the
-// PR regardless.
-func (s *AgentPRService) afterContinuationRun(ctx context.Context, info PostRunInfo, binding *models.WorkspaceAgentBinding, connID int, owner, repo string) {
-	number := info.Trigger.ContinuePRNumber
-	s.logger.Printf("agent pr: continuation run=%d pushed to %s/%s PR #%d (binding=%d)", info.RunID, owner, repo, number, binding.ID)
-	if s.commentPR == nil || number <= 0 {
+func (s *AgentPRService) continuationRepo(binding *models.WorkspaceAgentBinding, slug string) (models.BindingRepo, bool) {
+	for _, repo := range binding.Repos {
+		if repo.RepoSlug == slug {
+			return repo, repo.SCMConnectionID != nil
+		}
+	}
+	if binding.RepoSlug == slug && binding.SCMConnectionID != nil {
+		return models.BindingRepo{RepoSlug: slug, SCMConnectionID: binding.SCMConnectionID, RepoBaseRef: binding.RepoBaseRef, IsPrimary: true}, true
+	}
+	return models.BindingRepo{}, false
+}
+
+func continuationChanged(info PostRunInfo) bool {
+	for _, repo := range info.Repos {
+		if repo.RepoSlug == info.Trigger.ContinueRepoSlug && repo.Branch != "" {
+			return true
+		}
+	}
+	return info.Branch != "" && (len(info.Repos) == 0 || info.Trigger.ContinueRepoSlug == "")
+}
+
+func continuationTerminalBody(info PostRunInfo) string {
+	var body string
+	switch info.Status {
+	case models.AgentRunStatusSucceeded:
+		if continuationChanged(info) {
+			body = "The Windshift coding agent pushed updates to this pull request."
+		} else {
+			body = "The Windshift coding agent completed the review request; no code changes were needed."
+		}
+	case models.AgentRunStatusCanceled, models.AgentRunStatusKilled:
+		body = "The Windshift coding-agent run was canceled before it could complete this review request."
+	default:
+		body = "The Windshift coding agent could not complete this review request."
+		if message := strings.TrimSpace(info.Error); message != "" {
+			body += "\n\nReason: " + boundPRNote(message)
+		}
+	}
+	if note := strings.TrimSpace(stripTriggerToken(info.Summary)); note != "" {
+		body += "\n\n---\n\n" + boundPRNote(note)
+	}
+	return body
+}
+
+// completeContinuation persists the terminal response before attempting the
+// external post. A failed post remains reply_pending for the SCM reconciler.
+func (s *AgentPRService) completeContinuation(ctx context.Context, info PostRunInfo, binding *models.WorkspaceAgentBinding) {
+	repoMeta, ok := s.continuationRepo(binding, info.Trigger.ContinueRepoSlug)
+	if !ok {
 		return
 	}
-	if err := s.commentPR(ctx, PRCommentRequest{
-		ConnectionID: connID,
-		UserID:       info.TriggeredByUserID,
-		Owner:        owner,
-		Repo:         repo,
-		Number:       number,
-		Body:         continuationComment(info.Summary),
-	}); err != nil {
-		s.logger.Printf("agent pr: comment continuation run=%d %s/%s PR #%d: %v", info.RunID, owner, repo, number, err)
+	owner, repo, ok := splitRepoSlug(info.Trigger.ContinueRepoSlug)
+	if !ok {
+		return
+	}
+	body := continuationTerminalBody(info)
+	eventID := info.Trigger.ContinueEventID
+	if eventID > 0 {
+		if _, err := s.db.ExecWriteContext(ctx, `UPDATE agent_pr_review_events SET status='reply_pending', terminal_body=?, last_error=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?`, body, eventID); err != nil {
+			s.logger.Printf("agent pr: persist terminal response event=%d: %v", eventID, err)
+			return
+		}
+		body = fmt.Sprintf("<!-- windshift-agent event:%d phase:terminal -->\n%s\n\n%s", eventID, models.AgentCommentMarker, body)
+	} else {
+		body = models.AgentCommentMarker + "\n\n" + body
+	}
+	if s.commentPR == nil {
+		return
+	}
+	err := s.commentPR(ctx, PRCommentRequest{ConnectionID: *repoMeta.SCMConnectionID, UserID: info.TriggeredByUserID, Owner: owner, Repo: repo, Number: info.Trigger.ContinuePRNumber, Body: body})
+	if err != nil {
+		if eventID > 0 {
+			_, _ = s.db.ExecWriteContext(ctx, `UPDATE agent_pr_review_events SET last_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, RedactString(err.Error()), eventID)
+		}
+		s.logger.Printf("agent pr: terminal continuation reply run=%d: %v", info.RunID, err)
+		return
+	}
+	if eventID > 0 {
+		_, _ = s.db.ExecWriteContext(ctx, `UPDATE agent_pr_review_events SET status='replied', last_error=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?`, eventID)
 	}
 }
 
@@ -405,17 +477,6 @@ var triggerTokenRE = regexp.MustCompile("(?i)" + regexp.QuoteMeta(models.Default
 // stripTriggerToken removes every occurrence of the trigger token from s.
 func stripTriggerToken(s string) string {
 	return triggerTokenRE.ReplaceAllString(s, "")
-}
-
-// continuationComment builds the PR comment body for a continuation run: the
-// hidden agent marker (loop-guard layer 1) followed by a short note and, when
-// present, the agent's finish summary — token-stripped (layer 2) and bounded.
-func continuationComment(summary string) string {
-	body := models.AgentCommentMarker + "\n\nThe Windshift coding agent pushed updates to this pull request."
-	if note := strings.TrimSpace(stripTriggerToken(summary)); note != "" {
-		body += "\n\n---\n\n" + boundPRNote(note)
-	}
-	return body
 }
 
 // upsertItemSCMLink writes (or refreshes) the pull_request link row that
@@ -462,6 +523,29 @@ func (s *AgentPRService) upsertItemSCMLink(ctx context.Context, itemID, connecti
 		// on the item; refresh its SCM-links section.
 		PublishItemChange(itemID, ItemChangeLink)
 	}
+	return err
+}
+
+func (s *AgentPRService) upsertPROwnership(ctx context.Context, info PostRunInfo, binding *models.WorkspaceAgentBinding, repo prRepo, opened *OpenedPR) error {
+	if info.ItemID == nil {
+		return nil
+	}
+	var workspaceRepoID int
+	if err := s.db.QueryRowContext(ctx, `SELECT id FROM workspace_repositories WHERE workspace_scm_connection_id=? AND repository_name=?`, repo.connID, repo.slug).Scan(&workspaceRepoID); err != nil {
+		return err
+	}
+	var principal any
+	if info.TriggeredByUserID > 0 {
+		principal = info.TriggeredByUserID
+	}
+	_, err := s.db.ExecWriteContext(ctx, `
+		INSERT INTO agent_pr_ownerships(workspace_repository_id, pr_number, item_id, agent_run_id, binding_id, triggered_by_user_id, head_repo, head_branch)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(workspace_repository_id, pr_number) DO UPDATE SET
+			item_id=excluded.item_id, agent_run_id=excluded.agent_run_id, binding_id=excluded.binding_id,
+			triggered_by_user_id=excluded.triggered_by_user_id, head_repo=excluded.head_repo,
+			head_branch=excluded.head_branch, updated_at=CURRENT_TIMESTAMP
+	`, workspaceRepoID, opened.Number, *info.ItemID, info.RunID, binding.ID, principal, repo.slug, repo.branch)
 	return err
 }
 
