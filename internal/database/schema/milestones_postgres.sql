@@ -64,8 +64,6 @@ CREATE INDEX IF NOT EXISTS idx_milestones_status ON milestones(status);
 CREATE INDEX IF NOT EXISTS idx_milestones_target_date ON milestones(target_date);
 CREATE INDEX IF NOT EXISTS idx_milestones_workspace_id ON milestones(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_milestones_is_global ON milestones(is_global);
--- Composite index supports the per-scope position ordering used by drag-and-drop reorder.
-CREATE INDEX IF NOT EXISTS idx_milestones_position ON milestones(is_global, workspace_id, category_id, position);
 CREATE INDEX IF NOT EXISTS idx_milestone_releases_milestone_id ON milestone_releases(milestone_id);
 CREATE INDEX IF NOT EXISTS idx_item_milestones_item_id ON item_milestones(item_id);
 CREATE INDEX IF NOT EXISTS idx_item_milestones_milestone_id ON item_milestones(milestone_id);
@@ -73,3 +71,12 @@ CREATE INDEX IF NOT EXISTS idx_item_milestones_milestone_id ON item_milestones(m
 CREATE UNIQUE INDEX IF NOT EXISTS uq_milestones_workspace_external_key
 	ON milestones(workspace_id, external_key)
 	WHERE external_key IS NOT NULL;
+
+-- Composite index supports the per-scope position ordering used by drag-and-drop
+-- reorder. Kept LAST in this file on purpose: the legacy existing-install path
+-- re-executes this whole file before the catalog migration that adds
+-- milestones.position, so on the first boot after an upgrade this statement
+-- fails ("no such column: position") and aborts the multi-statement Exec.
+-- Being last, the abort skips nothing else; the 20260624_milestones_position
+-- catalog migration then adds the column and this index in the same boot.
+CREATE INDEX IF NOT EXISTS idx_milestones_position ON milestones(is_global, workspace_id, category_id, position);

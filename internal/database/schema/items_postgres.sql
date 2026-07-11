@@ -45,8 +45,11 @@ CREATE TABLE IF NOT EXISTS items (
 	created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 	updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
 	-- Recency for the board "Bubble Mode" sort; bumped on activity (comments,
-	-- edits, transitions) but not on manual frac_index reorder.
-	last_active_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+	-- edits, transitions) but not on manual frac_index reorder. Deliberately
+	-- no DEFAULT: the upgrade migration cannot add one on SQLite, so every
+	-- insert path writes the column explicitly and fresh/upgraded schemas
+	-- stay identical.
+	last_active_at TIMESTAMPTZ,
 	FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
 	FOREIGN KEY (item_type_id) REFERENCES item_types(id) ON DELETE SET NULL,
 	FOREIGN KEY (parent_id) REFERENCES items(id) ON DELETE CASCADE,
