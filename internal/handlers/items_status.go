@@ -105,7 +105,7 @@ func (h *ItemHandler) GetAvailableStatusTransitions(w http.ResponseWriter, r *ht
 		// Apply approval gating: drop transitions whose ID is the approve or
 		// deny target of an in-flight approval on this item.
 		if h.approvalService != nil {
-			gatedIDs, summary, gErr := h.approvalService.GetGatedTransitionsForItem(itemID, user.ID)
+			gatedIDs, summary, gErr := h.approvalService.GetGatedTransitionsForItem(r.Context(), itemID, user.ID)
 			if gErr != nil {
 				slog.Warn("approval gating lookup failed, returning unfiltered transitions",
 					slog.Int("item_id", itemID),

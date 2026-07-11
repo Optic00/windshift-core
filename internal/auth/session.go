@@ -33,7 +33,8 @@ var (
 const sessionTokenHashPrefix = "sha256:"
 
 const (
-	AuthPendingEnrollment          = "passkey_enrollment"
+	AuthPendingEnrollment = "passkey_enrollment"
+	// #nosec G101 -- authentication workflow state, not a credential.
 	AuthPendingPasskeyVerification = "passkey_verification"
 
 	pendingEnrollmentDuration   = 30 * time.Minute

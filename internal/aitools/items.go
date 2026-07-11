@@ -512,7 +512,7 @@ func init() {
 			}
 			workflowSvc := services.NewWorkflowService(env.DB)
 			conditionSvc := services.NewConditionService(env.DB, env.PermService, services.NewScriptEngine())
-			approvalSvc := services.NewApprovalService(env.DB, env.PermService, repository.NewLeaveRepository(env.DB), workflowSvc)
+			approvalSvc := services.NewApprovalService(env.DB, repository.NewLeaveRepository(env.DB), workflowSvc)
 			result, err := workflowSvc.PerformTransition(ctx, services.PerformTransitionRequest{
 				ItemID:      itemID,
 				ToStatusID:  toStatusID,

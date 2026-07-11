@@ -489,6 +489,16 @@ func (r *ItemRepository) GetCustomFieldValuesRaw(itemID int) (sql.NullString, er
 	return data, nil
 }
 
+// GetCustomFieldValuesRawTx is the transaction-scoped counterpart to
+// GetCustomFieldValuesRaw.
+func (r *ItemRepository) GetCustomFieldValuesRawTx(ctx context.Context, tx database.Tx, itemID int) (sql.NullString, error) {
+	var data sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT custom_field_values FROM items WHERE id = ?`, itemID).Scan(&data); err != nil {
+		return sql.NullString{}, mapItemErr(err, "get custom field values")
+	}
+	return data, nil
+}
+
 // SetCustomFieldValuesRaw replaces an item's entire custom_field_values JSON
 // payload. Callers own marshaling; no history is recorded.
 func (r *ItemRepository) SetCustomFieldValuesRaw(ctx context.Context, itemID int, raw string) error {

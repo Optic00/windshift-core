@@ -51,7 +51,7 @@ func NewItemHandler(db database.Database, permissionService *services.Permission
 		commentSvc:   commentService,
 		workflowSvc:  workflowSvc,
 		conditionSvc: services.NewConditionService(db, permissionService, services.NewScriptEngine()),
-		approvalSvc:  services.NewApprovalService(db, permissionService, leaveRepo, workflowSvc),
+		approvalSvc:  services.NewApprovalService(db, leaveRepo, workflowSvc),
 		permSvc:      permissionService,
 	}
 }

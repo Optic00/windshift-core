@@ -309,7 +309,7 @@ func (s *WorkflowService) ValidateCreateStatusOverride(ctx context.Context, work
 		}
 	}
 
-	approvalService := NewApprovalService(s.db, nil, nil, s)
+	approvalService := NewApprovalService(s.db, nil, s)
 	approvalSetStatus, err := approvalService.GetApprovalSetStatusForItem(ctx, workspaceID, itemTypeID, requestedStatusID)
 	if err != nil {
 		return err
@@ -516,7 +516,7 @@ func (s *WorkflowService) PerformTransition(
 	// transition. ApprovalService.Decide is the only legitimate path to those
 	// commits and bypasses PerformTransition entirely.
 	if approvalService != nil {
-		gatingRequestID, err := approvalService.IsTransitionGatedByApproval(req.ItemID, oldStatusID, req.ToStatusID)
+		gatingRequestID, err := approvalService.IsTransitionGatedByApproval(ctx, req.ItemID, oldStatusID, req.ToStatusID)
 		if err != nil {
 			return nil, fmt.Errorf("check approval gating: %w", err)
 		}
@@ -544,7 +544,7 @@ func (s *WorkflowService) PerformTransition(
 	// approval-bound status by a non-gated transition), then open a new one if
 	// the destination status is itself approval-bound.
 	if approvalService != nil {
-		if pending, err := approvalService.GetPendingForItem(req.ItemID); err == nil && pending != nil {
+		if pending, err := approvalService.GetPendingForItem(ctx, req.ItemID); err == nil && pending != nil {
 			_ = approvalService.Cancel(ctx, pending.ID, req.ActorUserID, "", "left_status")
 		}
 		if _, err := approvalService.MaybeOpenForStatusEntry(ctx, req.ItemID, req.ToStatusID, oldStatusID, req.ActorUserID); err != nil {

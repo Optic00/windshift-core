@@ -954,7 +954,7 @@ func (s *Server) initialize() error {
 	itemHandler.SetConditionService(conditionService)
 
 	// Wire up approval service for status-bound approvals (sibling of conditions).
-	approvalService := services.NewApprovalService(s.db, permService, leaveRepo, workflowService)
+	approvalService := services.NewApprovalService(s.db, leaveRepo, workflowService)
 	approvalService.SetEventCoordinator(eventCoordinator)
 	approvalSetService := services.NewApprovalSetService(s.db)
 	itemHandler.SetApprovalService(approvalService)

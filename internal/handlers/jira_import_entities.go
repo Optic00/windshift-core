@@ -1142,8 +1142,6 @@ func (h *JiraImportHandler) importIssue(ctx context.Context, jobID string, works
 					slog.String("component", "jira"),
 					slog.String("issue", issue.Key),
 					slog.Any("error", err))
-			} else {
-				description = linked
 			}
 		}
 	}

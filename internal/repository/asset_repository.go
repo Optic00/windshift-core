@@ -277,8 +277,6 @@ func (r *AssetRepository) GetAssetSetCoreByID(setID int) (*models.AssetManagemen
 	return &set, nil
 }
 
-
-
 // ============================================================================
 // Role & Permission Operations
 // ============================================================================

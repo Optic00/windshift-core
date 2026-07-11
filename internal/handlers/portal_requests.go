@@ -79,7 +79,7 @@ func (h *PortalHandler) resolvePortalRequest(w http.ResponseWriter, r *http.Requ
 	// portal channels (an approver on item X in channel A must not be able to
 	// read X via channel B's portal slug).
 	if h.approvalService != nil {
-		isApprover, aerr := h.callerIsActiveApproverOnItem(itemID, channel.ID, internalUserID, portalCustomerID)
+		isApprover, aerr := h.callerIsActiveApproverOnItem(ctx, itemID, channel.ID, internalUserID, portalCustomerID)
 		if aerr != nil {
 			cancel()
 			respondInternalError(w, r, aerr)
@@ -99,12 +99,12 @@ func (h *PortalHandler) resolvePortalRequest(w http.ResponseWriter, r *http.Requ
 // principal is set (internal user or portal customer). Returns false if both
 // are nil, which preserves the 404 path. The lookup is scoped to channelID so
 // portal flows never grant cross-channel approver-derived access.
-func (h *PortalHandler) callerIsActiveApproverOnItem(itemID, channelID int, internalUserID, portalCustomerID *int) (bool, error) {
+func (h *PortalHandler) callerIsActiveApproverOnItem(ctx context.Context, itemID, channelID int, internalUserID, portalCustomerID *int) (bool, error) {
 	if h.approvalService == nil {
 		return false, nil
 	}
 	if internalUserID != nil {
-		ok, err := h.approvalService.UserHasActivePoolMembershipOnItem(*internalUserID, itemID, &channelID)
+		ok, err := h.approvalService.UserHasActivePoolMembershipOnItem(ctx, *internalUserID, itemID, &channelID)
 		if err != nil {
 			return false, err
 		}
@@ -113,7 +113,7 @@ func (h *PortalHandler) callerIsActiveApproverOnItem(itemID, channelID int, inte
 		}
 	}
 	if portalCustomerID != nil {
-		ok, err := h.approvalService.PortalCustomerHasActivePoolMembershipOnItem(*portalCustomerID, itemID, &channelID)
+		ok, err := h.approvalService.PortalCustomerHasActivePoolMembershipOnItem(ctx, *portalCustomerID, itemID, &channelID)
 		if err != nil {
 			return false, err
 		}

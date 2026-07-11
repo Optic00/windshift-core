@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -36,7 +37,7 @@ func (h *PortalHandler) GetMyApprovals(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := r.URL.Query().Get("status")
-	requests, err := h.getApprovalsForPortalActor(actor, status)
+	requests, err := h.getApprovalsForPortalActor(r.Context(), actor, status)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -67,7 +68,7 @@ func (h *PortalHandler) GetApproval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req, err := h.approvalService.GetRequest(requestID)
+	req, err := h.approvalService.GetRequest(r.Context(), requestID)
 	if err != nil {
 		respondNotFound(w, r, "Approval request")
 		return
@@ -126,7 +127,7 @@ func (h *PortalHandler) DecideAsPortalCustomer(w http.ResponseWriter, r *http.Re
 		err      error
 	)
 	switch {
-	case actor.userID != nil && portalActorCanActAsUser(actor, h.approvalService, requestID):
+	case actor.userID != nil && portalActorCanActAsUser(r.Context(), actor, h.approvalService, requestID):
 		decision, req, err = h.approvalService.Decide(r.Context(), requestID, *actor.userID, body.Decision, body.Comment, services.DecideOptions{})
 	case actor.customerID != nil:
 		decision, req, err = h.approvalService.DecideAsCustomer(r.Context(), requestID, *actor.customerID, body.Decision, body.Comment, services.DecideOptions{})
@@ -176,10 +177,10 @@ func (h *PortalHandler) requirePortalApprovalActor(w http.ResponseWriter, r *htt
 	return actor, true
 }
 
-func (h *PortalHandler) getApprovalsForPortalActor(actor portalApprovalActor, status string) ([]*models.ApprovalRequest, error) {
+func (h *PortalHandler) getApprovalsForPortalActor(ctx context.Context, actor portalApprovalActor, status string) ([]*models.ApprovalRequest, error) {
 	byID := map[int]*models.ApprovalRequest{}
 	if actor.customerID != nil {
-		requests, err := h.approvalService.GetForPortalCustomer(*actor.customerID, status)
+		requests, err := h.approvalService.GetForPortalCustomer(ctx, *actor.customerID, status)
 		if err != nil {
 			return nil, err
 		}
@@ -188,7 +189,7 @@ func (h *PortalHandler) getApprovalsForPortalActor(actor portalApprovalActor, st
 		}
 	}
 	if actor.userID != nil {
-		requests, err := h.approvalService.GetForUser(*actor.userID, status)
+		requests, err := h.approvalService.GetForUser(ctx, *actor.userID, status)
 		if err != nil {
 			return nil, err
 		}
@@ -219,11 +220,11 @@ func portalActorCanViewRequest(actor portalApprovalActor, req *models.ApprovalRe
 	return false
 }
 
-func portalActorCanActAsUser(actor portalApprovalActor, svc *services.ApprovalService, requestID int) bool {
+func portalActorCanActAsUser(ctx context.Context, actor portalApprovalActor, svc *services.ApprovalService, requestID int) bool {
 	if actor.userID == nil {
 		return false
 	}
-	req, err := svc.GetRequest(requestID)
+	req, err := svc.GetRequest(ctx, requestID)
 	if err != nil {
 		return false
 	}

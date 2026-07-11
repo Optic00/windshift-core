@@ -174,7 +174,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		switch policy {
 		case AuthPolicySSOPrimary:
 			// SSO required - check if admin fallback is allowed
-			if user.IsSystemAdmin && h.adminRateLimiter != nil {
+			switch {
+			case user.IsSystemAdmin && h.adminRateLimiter != nil:
 				// Admin using fallback - check rate limits (fallback enabled)
 				allowed, _, lockedUntil := h.adminRateLimiter.IsAllowed(r.Context(), user.ID, ipAddress)
 				if !allowed {
@@ -191,7 +192,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 				_ = h.authPolicyHandler.LogAuditEvent(user.ID, "admin_fallback_used", ipAddress, r.UserAgent(), map[string]interface{}{
 					"policy": string(policy),
 				})
-			} else {
+			default:
 				// Either not admin OR fallback is disabled - must use SSO
 				respondJSON(w, http.StatusForbidden, LoginResponse{
 					Success:       false,
@@ -204,7 +205,8 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		case AuthPolicyPasskeyOnly, AuthPolicyPasswordPasskey2FA:
 			hasPasskey := h.userHasPasskey(user.ID)
 
-			if user.IsSystemAdmin && h.adminRateLimiter != nil {
+			switch {
+			case user.IsSystemAdmin && h.adminRateLimiter != nil:
 				// Explicitly enabled administrator fallback preserves emergency
 				// password access, but every use is rate-limited and audited.
 				allowed, _, lockedUntil := h.adminRateLimiter.IsAllowed(r.Context(), user.ID, ipAddress)
@@ -222,21 +224,21 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 				_ = h.authPolicyHandler.LogAuditEvent(user.ID, "admin_fallback_used", ipAddress, r.UserAgent(), map[string]interface{}{
 					"policy": string(policy),
 				})
-			} else if !hasPasskey {
+			case !hasPasskey:
 				// Password use is limited to a server-restricted enrollment
 				// session. Middleware denies every unrelated protected route.
 				enrollmentRequired = true
 				_ = h.authPolicyHandler.LogAuditEvent(user.ID, "enrollment_started", ipAddress, r.UserAgent(), map[string]interface{}{
 					"policy": string(policy),
 				})
-			} else if policy == AuthPolicyPasskeyOnly {
+			case policy == AuthPolicyPasskeyOnly:
 				respondJSON(w, http.StatusForbidden, LoginResponse{
 					Success:         false,
 					PasskeyRequired: true,
 					PolicyMessage:   "Password login is disabled. Please use a passkey to sign in.",
 				})
 				return
-			} else {
+			default:
 				// The password is valid, but this session remains restricted until
 				// a fresh WebAuthn assertion for the same user succeeds.
 				passkeyRequired = true

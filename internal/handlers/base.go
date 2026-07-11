@@ -2,6 +2,7 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -171,7 +172,7 @@ func CheckItemPermissionAsActor(w http.ResponseWriter, r *http.Request, itemRepo
 		return true
 	}
 	if permission == models.PermissionItemView && approvalService != nil {
-		inPool, perr := approvalService.UserHasActivePoolMembershipOnItem(user.ID, itemID, nil)
+		inPool, perr := approvalService.UserHasActivePoolMembershipOnItem(r.Context(), user.ID, itemID, nil)
 		if perr == nil && inPool {
 			return true
 		}
@@ -187,7 +188,7 @@ func CheckItemPermissionAsActor(w http.ResponseWriter, r *http.Request, itemRepo
 //
 // approvalService may be nil; in that case only the workspace-permission
 // branch is consulted.
-func userCanViewItemAsActor(userID, itemID, workspaceID int,
+func userCanViewItemAsActor(ctx context.Context, userID, itemID, workspaceID int,
 	permService *services.PermissionService, approvalService *services.ApprovalService) (bool, error) {
 	if permService == nil {
 		return false, nil
@@ -202,7 +203,7 @@ func userCanViewItemAsActor(userID, itemID, workspaceID int,
 	if approvalService == nil {
 		return false, nil
 	}
-	return approvalService.UserHasActivePoolMembershipOnItem(userID, itemID, nil)
+	return approvalService.UserHasActivePoolMembershipOnItem(ctx, userID, itemID, nil)
 }
 
 // GetAccessibleWorkspaceIDs returns IDs of active workspaces the user can view.

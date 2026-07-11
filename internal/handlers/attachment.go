@@ -893,7 +893,7 @@ func (h *AttachmentHandler) GetByItem(w http.ResponseWriter, r *http.Request) {
 	// item they're reviewing.
 	if h.permissionService != nil {
 		var canView bool
-		canView, err = userCanViewItemAsActor(user.ID, itemID, workspaceID, h.permissionService, h.approvalService)
+		canView, err = userCanViewItemAsActor(r.Context(), user.ID, itemID, workspaceID, h.permissionService, h.approvalService)
 		if err != nil {
 			respondInternalError(w, r, err)
 			return

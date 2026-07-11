@@ -1,0 +1,180 @@
+package services
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+
+	"windshift/internal/models"
+	"windshift/internal/repository"
+)
+
+// IsTransitionGatedByApproval returns the pending approval request ID if the
+// requested (from→to) transition is the configured approve_transition_id or
+// deny_transition_id of an in-flight pending approval on this item. Returns
+// nil if not gated.
+func (s *ApprovalService) IsTransitionGatedByApproval(ctx context.Context, itemID, fromStatusID, toStatusID int) (*int, error) {
+	return s.runtimeRepo.FindGatedRequestForTransition(ctx, itemID, fromStatusID, toStatusID)
+}
+
+// PendingApprovalSummary is the compact view returned alongside available
+// transitions so the picker can render a "Pending approval" affordance and so
+// callers can avoid reproducing the active-pool check on the client.
+type PendingApprovalSummary struct {
+	ID           int    `json:"id"`
+	Status       string `json:"status"`
+	YouCanDecide bool   `json:"you_can_decide"`
+}
+
+// GetGatedTransitionsForItem returns the set of workflow_transition IDs that
+// the user may not invoke directly because an in-flight approval owns them
+// (its configured approve_transition_id and deny_transition_id), plus a compact
+// summary of the pending request. Returns (nil, nil, nil) when no approval is
+// pending.
+func (s *ApprovalService) GetGatedTransitionsForItem(ctx context.Context, itemID, userID int) ([]int, *PendingApprovalSummary, error) {
+	view, err := s.runtimeRepo.FindGatedTransitionsForItem(ctx, itemID, userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if view == nil {
+		return nil, nil, nil
+	}
+	return []int{view.ApproveTransitionID, view.DenyTransitionID}, &PendingApprovalSummary{
+		ID:           view.RequestID,
+		Status:       view.Status,
+		YouCanDecide: view.UserCanDecide,
+	}, nil
+}
+
+// MaybeOpenForStatusEntry opens a new approval request iff the (workspace,
+// item-type, status) tuple resolves to an approval_set_status. If no approval
+// is configured for the destination status, returns (nil, nil) — safe to call
+// for every transition.
+func (s *ApprovalService) MaybeOpenForStatusEntry(ctx context.Context, itemID, statusID, fromStatusID, actorUserID int) (*models.ApprovalRequest, error) {
+	item, err := repository.NewItemRepository(s.db).FindByID(itemID)
+	if err != nil {
+		return nil, err
+	}
+	ass, err := s.GetApprovalSetStatusForItem(ctx, item.WorkspaceID, item.ItemTypeID, statusID)
+	if err != nil {
+		return nil, err
+	}
+	if ass == nil {
+		return nil, nil
+	}
+	return s.RequestApproval(ctx, itemID, statusID, fromStatusID, actorUserID)
+}
+
+// ----------------------------------------------------------------------------
+// Listing helpers
+// ----------------------------------------------------------------------------
+
+// GetPendingForItem returns the single pending approval request for an item, or nil.
+func (s *ApprovalService) GetPendingForItem(ctx context.Context, itemID int) (*models.ApprovalRequest, error) {
+	id, err := s.runtimeRepo.FindPendingRequestIDForItem(ctx, itemID)
+	if err != nil {
+		return nil, err
+	}
+	if id == nil {
+		return nil, nil
+	}
+	return s.GetRequest(ctx, *id)
+}
+
+// GetTimelineForItem returns all approval requests for an item, ordered by created_at.
+func (s *ApprovalService) GetTimelineForItem(ctx context.Context, itemID int) ([]*models.ApprovalRequest, error) {
+	ids, err := s.runtimeRepo.FindRequestIDsForItem(ctx, itemID)
+	if err != nil {
+		return nil, err
+	}
+	return s.loadRequests(ctx, ids)
+}
+
+// GetForUser returns approval requests where the user is in the active approver
+// pool of any pending step. status filters request status (empty = "pending").
+func (s *ApprovalService) GetForUser(ctx context.Context, userID int, status string) ([]*models.ApprovalRequest, error) {
+	return s.getForActor(ctx, "user_id", userID, status)
+}
+
+// UserHasActivePoolMembershipOnItem returns true iff the user is in an active
+// approver row of a step that is currently active on a pending approval request
+// for itemID. This is the gate used by approver-derived item-view access:
+// when the step closes (is_active flipped to 0) or the request is no longer
+// pending, the user immediately loses approver-derived access.
+//
+// channelID is optional. Non-nil restricts the lookup to items in that channel,
+// preventing approver-derived access from leaking across portal channels.
+// Internal (non-portal) callers pass nil.
+func (s *ApprovalService) UserHasActivePoolMembershipOnItem(ctx context.Context, userID, itemID int, channelID *int) (bool, error) {
+	return s.runtimeRepo.ActorHasActivePoolMembershipOnItem(ctx, "user_id", userID, itemID, channelID)
+}
+
+// PortalCustomerHasActivePoolMembershipOnItem is the portal-customer counterpart
+// to UserHasActivePoolMembershipOnItem. channelID semantics match.
+func (s *ApprovalService) PortalCustomerHasActivePoolMembershipOnItem(ctx context.Context, customerID, itemID int, channelID *int) (bool, error) {
+	return s.runtimeRepo.ActorHasActivePoolMembershipOnItem(ctx, "portal_customer_id", customerID, itemID, channelID)
+}
+
+// GetForPortalCustomer is the customer-flavored counterpart to GetForUser.
+// Returns approval requests where the portal customer is in the active pool.
+func (s *ApprovalService) GetForPortalCustomer(ctx context.Context, customerID int, status string) ([]*models.ApprovalRequest, error) {
+	return s.getForActor(ctx, "portal_customer_id", customerID, status)
+}
+
+func (s *ApprovalService) getForActor(ctx context.Context, actorColumn string, actorID int, status string) ([]*models.ApprovalRequest, error) {
+	ids, err := s.runtimeRepo.FindRequestIDsForActor(ctx, actorColumn, actorID, status)
+	if err != nil {
+		return nil, err
+	}
+	return s.loadRequests(ctx, ids)
+}
+
+func (s *ApprovalService) loadRequests(ctx context.Context, ids []int) ([]*models.ApprovalRequest, error) {
+	out := make([]*models.ApprovalRequest, 0, len(ids))
+	for _, id := range ids {
+		req, err := s.GetRequest(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, req)
+	}
+	return out, nil
+}
+
+// GetRequest loads a request with its step instances, approvers, and decisions.
+func (s *ApprovalService) GetRequest(ctx context.Context, requestID int) (*models.ApprovalRequest, error) {
+	req, err := s.runtimeRepo.FindFullRequestByID(ctx, requestID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, sql.ErrNoRows
+	}
+	return req, err
+}
+
+// GetItemIDForRequest returns the item id behind an approval request, or
+// sql.ErrNoRows if none. Pass-through to ApprovalRepository so handlers don't
+// need a repo reference of their own.
+func (s *ApprovalService) GetItemIDForRequest(ctx context.Context, requestID int) (int, error) {
+	id, err := s.runtimeRepo.GetItemIDForRequest(ctx, requestID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return 0, sql.ErrNoRows
+	}
+	return id, err
+}
+
+// StepInstanceBelongsToRequest reports whether a step instance belongs to the
+// given approval request. Pass-through to ApprovalRepository.
+func (s *ApprovalService) StepInstanceBelongsToRequest(ctx context.Context, stepInstanceID, requestID int) (bool, error) {
+	return s.runtimeRepo.StepInstanceBelongsToRequest(ctx, stepInstanceID, requestID)
+}
+
+// CountPendingApproversForRole returns the number of pending approval-step
+// approver rows that resolved through this workspace role. Used by the
+// workspace-role delete path to refuse the request when it would orphan an
+// in-flight pool.
+func (s *ApprovalService) CountPendingApproversForRole(ctx context.Context, roleID int) (int, error) {
+	return s.runtimeRepo.CountPendingApproversForRole(ctx, roleID)
+}
+
+// ----------------------------------------------------------------------------
+// Internals
+// ----------------------------------------------------------------------------

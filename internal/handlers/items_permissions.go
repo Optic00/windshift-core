@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 
@@ -25,12 +26,12 @@ func (h *ItemHandler) canViewItem(userID, workspaceID int) (bool, error) {
 
 // canViewItemAsActor extends canViewItem with the approver-pool fallback. See
 // userCanViewItemAsActor / CheckItemPermissionAsActor for the security model.
-func (h *ItemHandler) canViewItemAsActor(userID, itemID, workspaceID int) (bool, error) {
+func (h *ItemHandler) canViewItemAsActor(ctx context.Context, userID, itemID, workspaceID int) (bool, error) {
 	if h.permissionService == nil {
 		slog.Error("permission service unavailable, denying view access", slog.String("component", "items_permissions"))
 		return false, nil
 	}
-	return userCanViewItemAsActor(userID, itemID, workspaceID, h.permissionService, h.approvalService)
+	return userCanViewItemAsActor(ctx, userID, itemID, workspaceID, h.permissionService, h.approvalService)
 }
 
 // canEditItem checks if a user can edit an item in a specific workspace

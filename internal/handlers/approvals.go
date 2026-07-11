@@ -47,7 +47,7 @@ func (h *ApprovalHandler) GetForItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	requests, err := h.approvalService.GetTimelineForItem(itemID)
+	requests, err := h.approvalService.GetTimelineForItem(r.Context(), itemID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -72,7 +72,7 @@ func (h *ApprovalHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req, err := h.approvalService.GetRequest(requestID)
+	req, err := h.approvalService.GetRequest(r.Context(), requestID)
 	if err != nil {
 		if errors.Is(err, services.ErrApprovalNotFound) {
 			respondNotFound(w, r, "Approval request")
@@ -99,7 +99,7 @@ func (h *ApprovalHandler) MyPending(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	status := r.URL.Query().Get("status")
-	requests, err := h.approvalService.GetForUser(user.ID, status)
+	requests, err := h.approvalService.GetForUser(r.Context(), user.ID, status)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -208,7 +208,7 @@ func (h *ApprovalHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 		sanitize.Pair{Target: &body.Comment, Policy: sanitize.RichText, Label: "Comment"},
 	)
 
-	req, err := h.approvalService.GetRequest(requestID)
+	req, err := h.approvalService.GetRequest(r.Context(), requestID)
 	if err != nil {
 		if errors.Is(err, services.ErrApprovalNotFound) {
 			respondNotFound(w, r, "Approval request")
@@ -254,7 +254,7 @@ func (h *ApprovalHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 	}
 	h.auditor.Log(r, user, logger.ActionApprovalCancel, logger.ResourceApprovalRequest, &requestID, "")
 
-	out, err := h.approvalService.GetRequest(requestID)
+	out, err := h.approvalService.GetRequest(r.Context(), requestID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -314,7 +314,7 @@ func (h *ApprovalHandler) Delegate(w http.ResponseWriter, r *http.Request) {
 	}
 	h.auditor.Log(r, user, logger.ActionApprovalDelegate, logger.ResourceApprovalRequest, &requestID, "")
 
-	out, err := h.approvalService.GetRequest(requestID)
+	out, err := h.approvalService.GetRequest(r.Context(), requestID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -376,7 +376,7 @@ func (h *ApprovalHandler) RefreshApprovers(w http.ResponseWriter, r *http.Reques
 	}
 	h.auditor.Log(r, user, logger.ActionApprovalRefresh, logger.ResourceApprovalRequest, &requestID, "")
 
-	out, err := h.approvalService.GetRequest(requestID)
+	out, err := h.approvalService.GetRequest(r.Context(), requestID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -425,7 +425,7 @@ func (h *ApprovalHandler) EscalateNow(w http.ResponseWriter, r *http.Request) {
 	}
 	h.auditor.Log(r, user, logger.ActionApprovalEscalate, logger.ResourceApprovalRequest, &requestID, "manual")
 
-	out, err := h.approvalService.GetRequest(requestID)
+	out, err := h.approvalService.GetRequest(r.Context(), requestID)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
