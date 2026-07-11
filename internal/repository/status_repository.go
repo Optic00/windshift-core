@@ -33,7 +33,7 @@ func NewStatusRepository(db database.Database) *StatusRepository {
 
 const statusJoinedSelect = `
 	SELECT s.id, s.name, s.description, s.category_id, s.is_default, s.created_at, s.updated_at,
-	       sc.name as category_name, sc.color as category_color
+	       sc.name as category_name, sc.color as category_color, sc.is_completed
 	FROM statuses s
 	JOIN status_categories sc ON s.category_id = sc.id`
 
@@ -262,7 +262,7 @@ func scanStatusJoined(scanner interface {
 	if err := scanner.Scan(
 		&s.ID, &s.Name, &s.Description, &s.CategoryID, &s.IsDefault,
 		&s.CreatedAt, &s.UpdatedAt,
-		&s.CategoryName, &s.CategoryColor,
+		&s.CategoryName, &s.CategoryColor, &s.IsCompleted,
 	); err != nil {
 		return s, err
 	}
