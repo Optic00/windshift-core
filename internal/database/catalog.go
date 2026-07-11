@@ -23,7 +23,7 @@ func sqliteColumnCheck(table, column string) string {
 
 func pgColumnCheck(table, column string) string {
 	return fmt.Sprintf(
-		"SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='%s' AND column_name='%s'",
+		"SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='%s' AND column_name='%s'",
 		table, column,
 	)
 }
@@ -32,7 +32,7 @@ func pgColumnCheck(table, column string) string {
 // Postgres-only CHECK constraints on the users table.
 func pgConstraintCheck(table, constraint string) string {
 	return fmt.Sprintf(
-		"SELECT COUNT(*) FROM information_schema.table_constraints WHERE table_schema='public' AND table_name='%s' AND constraint_name='%s'",
+		"SELECT COUNT(*) FROM information_schema.table_constraints WHERE table_schema=current_schema() AND table_name='%s' AND constraint_name='%s'",
 		table, constraint,
 	)
 }
@@ -42,7 +42,7 @@ func pgConstraintCheck(table, constraint string) string {
 // migrations across the four tables that carry that column.
 func pgCustomFieldValuesJSONBCheck(table string) string {
 	return fmt.Sprintf(
-		"SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='%s' AND column_name='custom_field_values' AND data_type='jsonb'",
+		"SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='%s' AND column_name='custom_field_values' AND data_type='jsonb'",
 		table,
 	)
 }
@@ -64,7 +64,7 @@ func sqliteMilestonesColumnAbsentCheck(column string) string {
 
 func pgMilestonesColumnAbsentCheck(column string) string {
 	return fmt.Sprintf(
-		"SELECT CASE WHEN EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='milestones' AND column_name='%s') THEN 0 ELSE 1 END",
+		"SELECT CASE WHEN EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='milestones' AND column_name='%s') THEN 0 ELSE 1 END",
 		column,
 	)
 }
@@ -77,18 +77,23 @@ func sqliteTableCheck(table string) string {
 
 func pgTableCheck(table string) string {
 	return fmt.Sprintf(
-		"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='%s'",
+		"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='%s'",
 		table,
 	)
 }
 
-// sqliteIndexCheck / pgIndexCheck for index-only migrations.
+// sqliteIndexCheck / pgIndexCheck for index-only migrations. The Postgres
+// variant is pinned to current_schema() — matching an identically-named
+// index in an unrelated schema would falsely stamp the migration as applied.
 func sqliteIndexCheck(idx string) string {
 	return fmt.Sprintf("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='%s'", idx)
 }
 
 func pgIndexCheck(idx string) string {
-	return fmt.Sprintf("SELECT COUNT(*) FROM pg_class WHERE relkind='i' AND relname='%s'", idx)
+	return fmt.Sprintf(
+		"SELECT COUNT(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE c.relkind='i' AND c.relname='%s' AND n.nspname=current_schema()",
+		idx,
+	)
 }
 
 // sqliteTriggerCheck for SQLite-only trigger migrations. Postgres uses
@@ -98,7 +103,10 @@ func sqliteTriggerCheck(trigger string) string {
 }
 
 func pgTriggerCheck(trigger string) string {
-	return fmt.Sprintf("SELECT COUNT(*) FROM pg_trigger WHERE tgname='%s'", trigger)
+	return fmt.Sprintf(
+		"SELECT COUNT(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE t.tgname='%s' AND n.nspname=current_schema()",
+		trigger,
+	)
 }
 
 // init builds the canonical migration ordering. The baseline marker comes
@@ -1650,7 +1658,7 @@ func miscMigrations() []Migration {
 			// migration). Returns 0 only on a pre-migration install that
 			// still carries the table, in which case the body runs.
 			CheckSQLite:   "SELECT CASE WHEN EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='workspace_everyone_roles') THEN 0 ELSE 1 END",
-			CheckPostgres: "SELECT CASE WHEN EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='workspace_everyone_roles') THEN 0 ELSE 1 END",
+			CheckPostgres: "SELECT CASE WHEN EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='workspace_everyone_roles') THEN 0 ELSE 1 END",
 			SQLite:        "DROP TABLE IF EXISTS workspace_everyone_roles",
 			Postgres:      "DROP TABLE IF EXISTS workspace_everyone_roles",
 		},
@@ -1886,7 +1894,7 @@ func driftFixMigrations() []Migration {
 				SELECT 1 FROM pragma_table_info('active_timers')
 				WHERE name='user_id' AND [notnull] = 1
 			) THEN 1 ELSE 0 END`,
-			CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='active_timers' AND column_name='user_id' AND is_nullable='NO'",
+			CheckPostgres: "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='active_timers' AND column_name='user_id' AND is_nullable='NO'",
 			SQLite: `
 				DELETE FROM active_timers WHERE user_id IS NULL;
 				CREATE TABLE active_timers_new (
@@ -1976,7 +1984,7 @@ func schemaRerunMigrations() []Migration {
 			Version:       e.version,
 			Name:          e.name,
 			CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='" + e.sentinel + "'",
-			CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public' AND table_name='" + e.sentinel + "'",
+			CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='" + e.sentinel + "'",
 			SQLite:        e.sqlite,
 			Postgres:      e.postgres,
 		})

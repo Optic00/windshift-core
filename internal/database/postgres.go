@@ -823,7 +823,7 @@ func (p *PostgresDB) Initialize() error {
 		// the list via defaultOrderBy, so this is a safe recovery.
 		var fracIsUnique bool
 		if err = p.db.QueryRow(
-			`SELECT COALESCE((SELECT indisunique FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid WHERE c.relname = 'idx_items_frac_index'), false)`,
+			`SELECT COALESCE((SELECT indisunique FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relname = 'idx_items_frac_index' AND n.nspname = current_schema()), false)`,
 		).Scan(&fracIsUnique); err == nil && !fracIsUnique {
 			if res, err2 := p.db.Exec(`
 				UPDATE items SET frac_index = NULL
@@ -941,7 +941,7 @@ func (p *PostgresDB) Initialize() error {
 
 		// Add allowed_entity_types column to link_types
 		var aetColCount int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='link_types' AND column_name='allowed_entity_types'`).Scan(&aetColCount); err == nil && aetColCount == 0 {
+		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='link_types' AND column_name='allowed_entity_types'`).Scan(&aetColCount); err == nil && aetColCount == 0 {
 			if _, err = p.db.Exec(`ALTER TABLE link_types ADD COLUMN allowed_entity_types TEXT DEFAULT NULL`); err != nil {
 				slog.Warn("link_types allowed_entity_types postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
 			}
@@ -953,7 +953,7 @@ func (p *PostgresDB) Initialize() error {
 
 		// Add custom_field_id column to item_links (for linking custom field type)
 		var cfColCount int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='item_links' AND column_name='custom_field_id'`).Scan(&cfColCount); err == nil && cfColCount == 0 {
+		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='item_links' AND column_name='custom_field_id'`).Scan(&cfColCount); err == nil && cfColCount == 0 {
 			if _, err = p.db.Exec(`ALTER TABLE item_links ADD COLUMN custom_field_id INTEGER REFERENCES custom_field_definitions(id) ON DELETE CASCADE`); err != nil {
 				slog.Warn("item_links custom_field_id postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
 			}
@@ -1002,7 +1002,7 @@ func (p *PostgresDB) Initialize() error {
 
 		// Add public_slug column to collections
 		var slugColCount int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='collections' AND column_name='public_slug'`).Scan(&slugColCount); err == nil && slugColCount == 0 {
+		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='collections' AND column_name='public_slug'`).Scan(&slugColCount); err == nil && slugColCount == 0 {
 			if _, err = p.db.Exec(`ALTER TABLE collections ADD COLUMN public_slug TEXT`); err != nil {
 				slog.Warn("public_slug postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
 			}
@@ -1013,7 +1013,7 @@ func (p *PostgresDB) Initialize() error {
 
 		// Add filter_state column to collections (persists visual builder state)
 		var filterStateColCount int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='collections' AND column_name='filter_state'`).Scan(&filterStateColCount); err == nil && filterStateColCount == 0 {
+		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='collections' AND column_name='filter_state'`).Scan(&filterStateColCount); err == nil && filterStateColCount == 0 {
 			if _, err = p.db.Exec(`ALTER TABLE collections ADD COLUMN filter_state TEXT`); err != nil {
 				slog.Warn("filter_state postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
 			}
@@ -1021,7 +1021,7 @@ func (p *PostgresDB) Initialize() error {
 
 		// Add story_points column to items
 		var spColCount int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='items' AND column_name='story_points'`).Scan(&spColCount); err == nil && spColCount == 0 {
+		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='items' AND column_name='story_points'`).Scan(&spColCount); err == nil && spColCount == 0 {
 			if _, err = p.db.Exec(`ALTER TABLE items ADD COLUMN story_points REAL`); err != nil {
 				slog.Warn("story_points postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
 			}
@@ -1058,12 +1058,12 @@ func (p *PostgresDB) Initialize() error {
 
 		// Add approval_set_id column to configuration_sets / configuration_set_item_types (existing dbs).
 		var apprSetCol int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='configuration_sets' AND column_name='approval_set_id'`).Scan(&apprSetCol); err == nil && apprSetCol == 0 {
+		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='configuration_sets' AND column_name='approval_set_id'`).Scan(&apprSetCol); err == nil && apprSetCol == 0 {
 			if _, err = p.db.Exec(`ALTER TABLE configuration_sets ADD COLUMN approval_set_id INTEGER`); err != nil {
 				slog.Warn("configuration_sets approval_set_id postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
 			}
 		}
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='configuration_set_item_types' AND column_name='approval_set_id'`).Scan(&apprSetCol); err == nil && apprSetCol == 0 {
+		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='configuration_set_item_types' AND column_name='approval_set_id'`).Scan(&apprSetCol); err == nil && apprSetCol == 0 {
 			if _, err = p.db.Exec(`ALTER TABLE configuration_set_item_types ADD COLUMN approval_set_id INTEGER`); err != nil {
 				slog.Warn("configuration_set_item_types approval_set_id postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
 			}
@@ -1071,7 +1071,7 @@ func (p *PostgresDB) Initialize() error {
 
 		// Add permissions_enabled flag to workspace_roles (existing dbs).
 		var rolePermsCol int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='workspace_roles' AND column_name='permissions_enabled'`).Scan(&rolePermsCol); err == nil && rolePermsCol == 0 {
+		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='workspace_roles' AND column_name='permissions_enabled'`).Scan(&rolePermsCol); err == nil && rolePermsCol == 0 {
 			if _, err = p.db.Exec(`ALTER TABLE workspace_roles ADD COLUMN permissions_enabled BOOLEAN DEFAULT true`); err != nil {
 				slog.Warn("workspace_roles permissions_enabled postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
 			}
@@ -1085,7 +1085,7 @@ func (p *PostgresDB) Initialize() error {
 		// the column lands so historical data (all user_id, no customers) doesn't
 		// violate it.
 		var apprPortalCol int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='approval_step_approvers' AND column_name='portal_customer_id'`).Scan(&apprPortalCol); err == nil && apprPortalCol == 0 {
+		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='approval_step_approvers' AND column_name='portal_customer_id'`).Scan(&apprPortalCol); err == nil && apprPortalCol == 0 {
 			if _, err = p.db.Exec(`ALTER TABLE approval_step_approvers ADD COLUMN portal_customer_id INTEGER REFERENCES portal_customers(id) ON DELETE RESTRICT`); err != nil {
 				slog.Warn("approval_step_approvers portal_customer_id postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
 			}
@@ -1096,7 +1096,7 @@ func (p *PostgresDB) Initialize() error {
 				slog.Warn("approval_step_approvers chk_approver_one_identity add failed", slog.String("component", "database"), slog.Any("error", err))
 			}
 		}
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='approval_decisions' AND column_name='actor_portal_customer_id'`).Scan(&apprPortalCol); err == nil && apprPortalCol == 0 {
+		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='approval_decisions' AND column_name='actor_portal_customer_id'`).Scan(&apprPortalCol); err == nil && apprPortalCol == 0 {
 			if _, err = p.db.Exec(`ALTER TABLE approval_decisions ADD COLUMN actor_portal_customer_id INTEGER REFERENCES portal_customers(id) ON DELETE SET NULL`); err != nil {
 				slog.Warn("approval_decisions actor_portal_customer_id postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
 			}
@@ -1104,7 +1104,7 @@ func (p *PostgresDB) Initialize() error {
 
 		// Add from_status_id snapshot column to approval_requests so Cancel can revert.
 		var apprFromCol int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='approval_requests' AND column_name='from_status_id'`).Scan(&apprFromCol); err == nil && apprFromCol == 0 {
+		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='approval_requests' AND column_name='from_status_id'`).Scan(&apprFromCol); err == nil && apprFromCol == 0 {
 			if _, err = p.db.Exec(`ALTER TABLE approval_requests ADD COLUMN from_status_id INTEGER REFERENCES statuses(id) ON DELETE SET NULL`); err != nil {
 				slog.Warn("approval_requests from_status_id postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
 			}
@@ -1120,7 +1120,7 @@ func (p *PostgresDB) Initialize() error {
 
 		// Add error_message to conditions
 		var condErrMsgCol int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='conditions' AND column_name='error_message'`).Scan(&condErrMsgCol); err == nil && condErrMsgCol == 0 {
+		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='conditions' AND column_name='error_message'`).Scan(&condErrMsgCol); err == nil && condErrMsgCol == 0 {
 			if _, err = p.db.Exec(`ALTER TABLE conditions ADD COLUMN error_message TEXT`); err != nil {
 				slog.Warn("conditions error_message postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
 			}
@@ -1128,7 +1128,7 @@ func (p *PostgresDB) Initialize() error {
 
 		// Add mode to conditions
 		var condModeCol int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='conditions' AND column_name='mode'`).Scan(&condModeCol); err == nil && condModeCol == 0 {
+		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='conditions' AND column_name='mode'`).Scan(&condModeCol); err == nil && condModeCol == 0 {
 			if _, err = p.db.Exec(`ALTER TABLE conditions ADD COLUMN mode TEXT NOT NULL DEFAULT 'condition'`); err != nil {
 				slog.Warn("conditions mode postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
 			}
@@ -1136,7 +1136,7 @@ func (p *PostgresDB) Initialize() error {
 
 		// Add condition_set_id to configuration_sets
 		var csCondSetCol int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='configuration_sets' AND column_name='condition_set_id'`).Scan(&csCondSetCol); err == nil && csCondSetCol == 0 {
+		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='configuration_sets' AND column_name='condition_set_id'`).Scan(&csCondSetCol); err == nil && csCondSetCol == 0 {
 			if _, err = p.db.Exec(`ALTER TABLE configuration_sets ADD COLUMN condition_set_id INTEGER REFERENCES condition_sets(id) ON DELETE SET NULL`); err != nil {
 				slog.Warn("configuration_sets condition_set_id postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
 			}
@@ -1144,7 +1144,7 @@ func (p *PostgresDB) Initialize() error {
 
 		// Add condition_set_id to configuration_set_item_types
 		var csitCondSetCol int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='configuration_set_item_types' AND column_name='condition_set_id'`).Scan(&csitCondSetCol); err == nil && csitCondSetCol == 0 {
+		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='configuration_set_item_types' AND column_name='condition_set_id'`).Scan(&csitCondSetCol); err == nil && csitCondSetCol == 0 {
 			if _, err = p.db.Exec(`ALTER TABLE configuration_set_item_types ADD COLUMN condition_set_id INTEGER REFERENCES condition_sets(id) ON DELETE SET NULL`); err != nil {
 				slog.Warn("configuration_set_item_types condition_set_id postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
 			}
@@ -1152,7 +1152,7 @@ func (p *PostgresDB) Initialize() error {
 
 		// Add config column to request_types (for form channel per-form settings)
 		var rtConfigCol int
-		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='request_types' AND column_name='config'`).Scan(&rtConfigCol); err == nil && rtConfigCol == 0 {
+		if err = p.db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='request_types' AND column_name='config'`).Scan(&rtConfigCol); err == nil && rtConfigCol == 0 {
 			if _, err = p.db.Exec(`ALTER TABLE request_types ADD COLUMN config TEXT DEFAULT NULL`); err != nil {
 				slog.Warn("request_types config postgres migration failed", slog.String("component", "database"), slog.Any("error", err))
 			}
