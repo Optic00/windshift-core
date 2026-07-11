@@ -82,14 +82,18 @@ func scanPage(s rowScanner) (*models.Page, error) {
 	var parentID, updatedBy, archivedBy sql.NullInt64
 	var rank, fracIndex sql.NullString
 	var archivedAt sql.NullTime
+	// metadata is written as a bound Go string (TEXT storage class), which
+	// database/sql will not scan into *json.RawMessage — go through []byte.
+	var metadata []byte
 
 	if err := s.Scan(
-		&p.ID, &p.WorkspaceID, &parentID, &p.Title, &p.Slug, &p.Metadata, &p.Content, &p.ContentHash,
+		&p.ID, &p.WorkspaceID, &parentID, &p.Title, &p.Slug, &metadata, &p.Content, &p.ContentHash,
 		&p.Excerpt, &p.CreatedBy, &updatedBy, &archivedBy, &p.IsHome, &p.InheritPermissions,
 		&rank, &fracIndex, &p.Path, &p.Depth, &p.CreatedAt, &p.UpdatedAt, &archivedAt,
 	); err != nil {
 		return nil, err
 	}
+	p.Metadata = json.RawMessage(metadata)
 
 	applyPageNullables(&p, parentID, updatedBy, archivedBy, rank, fracIndex, archivedAt)
 	return &p, nil
@@ -103,14 +107,17 @@ func scanPageMeta(s rowScanner) (*models.Page, error) {
 	var parentID, updatedBy, archivedBy sql.NullInt64
 	var rank, fracIndex sql.NullString
 	var archivedAt sql.NullTime
+	// See scanPage: string-typed TEXT values cannot scan into *json.RawMessage.
+	var metadata []byte
 
 	if err := s.Scan(
-		&p.ID, &p.WorkspaceID, &parentID, &p.Title, &p.Slug, &p.Metadata,
+		&p.ID, &p.WorkspaceID, &parentID, &p.Title, &p.Slug, &metadata,
 		&p.CreatedBy, &updatedBy, &archivedBy, &p.IsHome, &p.InheritPermissions,
 		&rank, &fracIndex, &p.Path, &p.Depth, &p.CreatedAt, &p.UpdatedAt, &archivedAt,
 	); err != nil {
 		return nil, err
 	}
+	p.Metadata = json.RawMessage(metadata)
 
 	applyPageNullables(&p, parentID, updatedBy, archivedBy, rank, fracIndex, archivedAt)
 	return &p, nil
