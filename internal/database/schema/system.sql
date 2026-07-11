@@ -487,6 +487,24 @@ CREATE TABLE IF NOT EXISTS cli_auth_codes (
 CREATE INDEX IF NOT EXISTS idx_cli_auth_codes_code ON cli_auth_codes(code);
 CREATE INDEX IF NOT EXISTS idx_cli_auth_codes_expires_at ON cli_auth_codes(expires_at);
 
+-- Native auth codes (short-lived, single-use). Bridge a system-browser SSO
+-- login back into a native client (desktop/iOS, WI-446): each code is bound
+-- to a session and redeemed once at /api/auth/native/exchange for the encoded
+-- session cookie.
+CREATE TABLE IF NOT EXISTS native_auth_codes (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	code TEXT NOT NULL UNIQUE,
+	session_token TEXT NOT NULL,
+	session_expires_at DATETIME NOT NULL,
+	status TEXT NOT NULL DEFAULT 'valid',
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	expires_at DATETIME NOT NULL,
+	consumed_at DATETIME
+);
+
+CREATE INDEX IF NOT EXISTS idx_native_auth_codes_code ON native_auth_codes(code);
+CREATE INDEX IF NOT EXISTS idx_native_auth_codes_expires_at ON native_auth_codes(expires_at);
+
 -- Background scheduler runs: one row per tick of each in-process scheduler
 -- (briefing, email, recurrence, notification). Surfaced on the admin
 -- Diagnostics page so admins can see whether jobs ran on time, how long they
