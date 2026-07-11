@@ -182,7 +182,7 @@ func (ics *ItemCacheService) WarmCache() error {
 			GROUP BY item_id
 			ORDER BY last_change DESC
 			LIMIT ?
-		)
+		) AS hot
 	`
 
 	oneHourAgo := time.Now().Add(-time.Hour).UTC()
