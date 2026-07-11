@@ -1687,24 +1687,21 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		}
 	}
 
+	// Close, but do NOT nil, the stop channels: background schedulers select
+	// on these fields in a loop, so the nil-write races with their reads (and
+	// a select on a nil channel blocks forever, leaking the goroutine).
+	// Double-close safety comes from safeClose's recover, not from nil-ing.
 	safeClose(s.scmSyncStopChan)
-	s.scmSyncStopChan = nil
-
 	safeClose(s.issueSyncStopChan)
-	s.issueSyncStopChan = nil
-
 	safeClose(s.magicLinkStopChan)
-	s.magicLinkStopChan = nil
 
 	if s.cleanupTicker != nil {
+		// Stop, but do NOT nil: runActivityCleanup selects on cleanupTicker.C
+		// in a loop and the nil-write races with that read.
 		s.cleanupTicker.Stop()
-		s.cleanupTicker = nil
 	}
 	safeClose(s.cleanupStopChan)
-	s.cleanupStopChan = nil
-
 	safeClose(s.jiraHostStopChan)
-	s.jiraHostStopChan = nil
 
 	if s.notificationScheduler != nil {
 		slog.Info("stopping notification scheduler")
