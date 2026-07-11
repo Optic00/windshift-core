@@ -26,6 +26,7 @@ class SecurityStore {
   // === Enrollment Banner ===
   showEnrollmentBanner = $state(false);
   enrollmentType = $state('');
+  enrollmentOnly = $state(false);
 
   // === Modals ===
   showAddCredential = $state(false);
@@ -64,14 +65,29 @@ class SecurityStore {
   /**
    * Set the current user ID and trigger initialization.
    */
-  setCurrentUserId(userId) {
+  setCurrentUserId(userId, { enrollmentOnly = false } = {}) {
+    if (userId && this.currentUserId != null && String(this.currentUserId) !== String(userId)) {
+      this.reset();
+    }
+    this.enrollmentOnly = enrollmentOnly;
+    if (enrollmentOnly) {
+      this.showEnrollmentBanner = true;
+      this.enrollmentType = 'passkey';
+      this.credentialType = 'fido';
+      this.showAddCredential = true;
+    }
     if (userId && !this.initialized) {
       this.currentUserId = userId;
       this.initialized = true;
       this.loadFeatures();
-      this.loadUserProfile();
-      this.loadCredentials();
-      this.loadApiTokens();
+      // A restricted enrollment session may call only /auth/me and WebAuthn
+      // registration endpoints. Avoid unrelated profile/token requests until
+      // registration elevates the session.
+      if (!enrollmentOnly) {
+        this.loadUserProfile();
+        this.loadCredentials();
+        this.loadApiTokens();
+      }
     }
   }
 
@@ -82,11 +98,9 @@ class SecurityStore {
     if (enrollType === 'passkey') {
       this.showEnrollmentBanner = true;
       this.enrollmentType = 'passkey';
-      // Auto-open the add credential modal
-      setTimeout(() => {
-        this.credentialType = 'fido';
-        this.showAddCredential = true;
-      }, 500);
+      this.enrollmentOnly = true;
+      this.credentialType = 'fido';
+      this.showAddCredential = true;
     }
   }
 
@@ -94,6 +108,7 @@ class SecurityStore {
    * Dismiss enrollment banner.
    */
   dismissEnrollmentBanner() {
+    if (this.enrollmentOnly) return;
     this.showEnrollmentBanner = false;
     this.enrollmentType = '';
   }
@@ -118,8 +133,8 @@ class SecurityStore {
       this.loading = true;
       this.user = await api.getUser(this.currentUserId);
     } catch (err) {
-      console.error('Failed to load user profile:', err);
-      throw err;
+      console.warn('Failed to load user profile:', err);
+      this.user = null;
     } finally {
       this.loading = false;
     }
@@ -194,14 +209,24 @@ class SecurityStore {
       };
 
       await api.completeFIDORegistration(this.currentUserId, completionData);
-      await this.loadCredentials();
 
-      const wasEnrollmentRequired = this.showEnrollmentBanner;
+      const wasEnrollmentRequired = this.enrollmentOnly;
       if (wasEnrollmentRequired) {
-        this.dismissEnrollmentBanner();
+        this.enrollmentOnly = false;
+        this.showEnrollmentBanner = false;
+        this.enrollmentType = '';
       }
-
       this.resetCredentialForm();
+
+      if (wasEnrollmentRequired) {
+        await Promise.allSettled([
+          this.loadUserProfile(),
+          this.loadCredentials(),
+          this.loadApiTokens(),
+        ]);
+      } else {
+        await this.loadCredentials();
+      }
       return { success: true, wasEnrollmentRequired };
     } catch (err) {
       console.error('FIDO registration error:', err);
@@ -354,6 +379,11 @@ class SecurityStore {
   // === Form Resets ===
 
   resetCredentialForm() {
+    if (this.enrollmentOnly) {
+      this.credentialType = 'fido';
+      this.showAddCredential = true;
+      return;
+    }
     this.newCredentialName = '';
     this.newSSHPublicKey = '';
     this.credentialType = 'fido';
@@ -381,6 +411,7 @@ class SecurityStore {
     this.sshAvailable = false;
     this.showEnrollmentBanner = false;
     this.enrollmentType = '';
+    this.enrollmentOnly = false;
     this.showAddCredential = false;
     this.showAddToken = false;
     this.showNewToken = false;

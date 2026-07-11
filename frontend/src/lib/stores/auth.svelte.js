@@ -2,6 +2,14 @@ import { derived, writable } from 'svelte/store';
 import { api } from '../api.js';
 import { clearStores, getStoreValue } from './storeUtils.js';
 
+function policyValue(error, field) {
+  return error?.[field] ?? error?.body?.[field];
+}
+
+function hasPolicyFlag(error, field) {
+  return policyValue(error, field) === true;
+}
+
 function createAuthStore() {
   /** @type {import('svelte/store').Writable<{id: string, email: string, name: string, language: string, avatar_url: string, role: string, is_system_admin?: boolean, [key: string]: any} | null>} */
   const user = writable(null);
@@ -50,6 +58,16 @@ function createAuthStore() {
 
       try {
         const response = await api.auth.getCurrentUser();
+        if (response.session?.auth_pending_type === 'passkey_verification') {
+          // A refreshed password+passkey browser session is still only the
+          // first factor. Return to login rather than rendering the app as if
+          // authentication had completed; the user can restart the short flow.
+          clearStores(user, session);
+          isAuthenticated.set(false);
+          loading.set(false);
+          error.set(null);
+          return;
+        }
         user.set(response.user);
         session.set(response.session);
         isAuthenticated.set(true);
@@ -87,6 +105,18 @@ function createAuthStore() {
           };
         }
 
+        if (response.passkey_required) {
+          clearStores(user, session);
+          isAuthenticated.set(false);
+          loading.set(false);
+          error.set(null);
+          return {
+            success: false,
+            passkey_required: true,
+            policy_message: response.policy_message,
+          };
+        }
+
         if (response.success) {
           // Get session details before marking the store authenticated so a
           // follow-up failure cannot leave user/isAuthenticated inconsistent.
@@ -112,15 +142,28 @@ function createAuthStore() {
         }
       } catch (err) {
         // Check if error response contains policy info
-        if (err.sso_required) {
+        if (hasPolicyFlag(err, 'passkey_required')) {
           clearStores(user, session);
           isAuthenticated.set(false);
           loading.set(false);
-          error.set(err.policy_message || 'SSO login required');
+          error.set(null);
+          return {
+            success: false,
+            passkey_required: true,
+            policy_message: policyValue(err, 'policy_message'),
+          };
+        }
+
+        if (hasPolicyFlag(err, 'sso_required')) {
+          clearStores(user, session);
+          isAuthenticated.set(false);
+          loading.set(false);
+          const policyMessage = policyValue(err, 'policy_message');
+          error.set(policyMessage || 'SSO login required');
           return {
             success: false,
             sso_required: true,
-            policy_message: err.policy_message || 'Password login is disabled. Please use SSO.',
+            policy_message: policyMessage || 'Password login is disabled. Please use SSO.',
           };
         }
 
@@ -204,7 +247,29 @@ function createAuthStore() {
       error.set('Session expired. Please log in again.');
     },
 
-    // Set authentication data (used by FIDO login)
+    // Confirm that a WebAuthn completion created/elevated the browser session,
+    // then populate canonical user and session metadata from /auth/me.
+    async completePasskeyLogin(fallbackUser = null) {
+      loading.set(true);
+      error.set(null);
+      try {
+        const response = await api.auth.getCurrentUser();
+        user.set(response.user || fallbackUser);
+        session.set(response.session);
+        isAuthenticated.set(true);
+        loading.set(false);
+        return true;
+      } catch (err) {
+        clearStores(user, session);
+        isAuthenticated.set(false);
+        loading.set(false);
+        error.set(err.message || 'Failed to complete passkey authentication');
+        throw err;
+      }
+    },
+
+    // Set authentication data directly for callers that already hold canonical
+    // session metadata.
     setAuthData(userData, sessionData) {
       user.set(userData);
       session.set(sessionData);

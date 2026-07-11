@@ -231,6 +231,50 @@ describe('fetchAPI — 401 logout side effect', () => {
     await expect(fetchAPI('/items')).rejects.toThrow('forbidden');
     expect(authStore.clearAuth).not.toHaveBeenCalled();
   });
+
+  test('preserves a pending-auth session and exposes policy response fields', async () => {
+    global.fetch = vi.fn(() =>
+      Promise.resolve(
+        makeResponse({
+          status: 403,
+          body: JSON.stringify({
+            error: 'Passkey required',
+            code: 'AUTHENTICATION_PENDING',
+            passkey_required: true,
+            policy_message: 'Use your passkey',
+          }),
+        })
+      )
+    );
+
+    let caught;
+    try {
+      await fetchAPI('/items');
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught.passkey_required).toBe(true);
+    expect(caught.policy_message).toBe('Use your passkey');
+    expect(caught.body.passkey_required).toBe(true);
+    expect(authStore.clearAuth).not.toHaveBeenCalled();
+  });
+
+  test('does not clear auth for a legacy 401 pending-auth response', async () => {
+    global.fetch = vi.fn(() =>
+      Promise.resolve(
+        makeResponse({
+          status: 401,
+          body: JSON.stringify({
+            error: 'Passkey enrollment required',
+            code: 'AUTHENTICATION_PENDING',
+          }),
+        })
+      )
+    );
+
+    await expect(fetchAPI('/items')).rejects.toThrow('Passkey enrollment required');
+    expect(authStore.clearAuth).not.toHaveBeenCalled();
+  });
 });
 
 describe('fetchAPI — network/CORS errors', () => {

@@ -112,17 +112,18 @@ func (r *CredentialRepository) CreateSSH(userID int, name, credentialJSON, finge
 	return id, nil
 }
 
-// HasActiveFIDO reports whether a user has an active legacy FIDO/passkey credential.
+// HasActiveFIDO reports whether a user has a modern credential usable by the
+// active WebAuthn login flow. Legacy user_credentials rows are not counted:
+// that format cannot be verified by the current WebAuthn handlers.
 func (r *CredentialRepository) HasActiveFIDO(userID int) (bool, error) {
-	var count int
+	var exists bool
 	err := r.db.QueryRow(`
-		SELECT COUNT(*) FROM user_credentials
-		WHERE user_id = ? AND credential_type = 'fido' AND is_active = true
-	`, userID).Scan(&count)
+		SELECT EXISTS(SELECT 1 FROM webauthn_credentials WHERE user_id = ?)
+	`, userID).Scan(&exists)
 	if err != nil {
-		return false, fmt.Errorf("count active fido credentials for user %d: %w", userID, err)
+		return false, fmt.Errorf("check active fido credentials for user %d: %w", userID, err)
 	}
-	return count > 0, nil
+	return exists, nil
 }
 
 // GetLegacySummary returns type/name for a legacy credential scoped to user.

@@ -52,12 +52,12 @@ export const deactivateUser = (id) =>
 // User Credentials
 export const getUserCredentials = (userId) => fetchAPI(`/users/${userId}/credentials`);
 export const startFIDORegistration = (userId, credentialName) =>
-  fetchAPI(`/users/${userId}/credentials/fido/register`, {
+  fetchAPI(`/users/${userId}/credentials/webauthn/register/start`, {
     method: 'POST',
     body: JSON.stringify({ credential_name: credentialName }),
   });
 export const completeFIDORegistration = (userId, credentialData) =>
-  fetchAPI(`/users/${userId}/credentials/fido/complete`, {
+  fetchAPI(`/users/${userId}/credentials/webauthn/register/complete`, {
     method: 'POST',
     body: JSON.stringify(credentialData),
   });

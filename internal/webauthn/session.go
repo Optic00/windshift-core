@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -86,9 +87,21 @@ func (s *SessionStore) SaveRegistrationSession(userID int, sessionData *webauthn
 	return s.saveSession(userID, sessionData, "registration")
 }
 
-// SaveAuthenticationSession stores authentication session data
+// SaveAuthenticationSession stores authentication session data.
 func (s *SessionStore) SaveAuthenticationSession(userID *int, sessionData *webauthn.SessionData) (string, error) {
 	return s.saveSession(userID, sessionData, "authentication")
+}
+
+// SaveAuthenticationSessionBound binds a WebAuthn challenge to the restricted
+// browser session that passed password verification. Encoding the opaque local
+// session ID in session_type keeps old schemas compatible while getSession's
+// exact match prevents a challenge from another login being substituted.
+func (s *SessionStore) SaveAuthenticationSessionBound(userID, authSessionID int, sessionData *webauthn.SessionData) (string, error) {
+	return s.saveSession(userID, sessionData, authenticationSessionType(authSessionID))
+}
+
+func authenticationSessionType(authSessionID int) string {
+	return "authentication:" + strconv.Itoa(authSessionID)
 }
 
 // getSession retrieves and deletes (one-time use) a session that matches the
@@ -152,6 +165,12 @@ func (s *SessionStore) GetRegistrationSession(sessionID string, userID int) (*we
 // on session_type only.
 func (s *SessionStore) GetAuthenticationSession(sessionID string) (*webauthn.SessionData, error) {
 	return s.getSession(sessionID, "authentication", nil)
+}
+
+// GetAuthenticationSessionBound consumes only a challenge created for the
+// specified password-verified browser session.
+func (s *SessionStore) GetAuthenticationSessionBound(sessionID string, authSessionID int) (*webauthn.SessionData, error) {
+	return s.getSession(sessionID, authenticationSessionType(authSessionID), nil)
 }
 
 // cleanupExpiredSessions removes expired sessions from the database

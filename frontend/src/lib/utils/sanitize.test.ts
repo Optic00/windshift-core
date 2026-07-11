@@ -62,6 +62,24 @@ describe('sanitizeHtml', () => {
       '<svg viewBox="0 0 24 24" width="16" height="16"><circle cx="12" cy="12" r="10" fill="green"></circle></svg>';
     expect(sanitizeHtml(input)).toBe(input);
   });
+
+  it('removes dangerous SVG and MathML payloads', () => {
+    expect(
+      sanitizeHtml('<svg><script>alert(1)</script><circle onload="alert(1)"></circle></svg>')
+    ).toBe('<svg><circle></circle></svg>');
+    expect(sanitizeHtml('<math><mtext><img src=x onerror=alert(1)></mtext></math>')).toBe('');
+  });
+
+  it('removes template payloads', () => {
+    expect(sanitizeHtml('<template><img src=x onerror=alert(1)></template><p>safe</p>')).toBe(
+      '<p>safe</p>'
+    );
+  });
+
+  it('isolates sanitizer configuration between calls', () => {
+    expect(sanitizeHtml('<a data-secret="x" onclick="alert(1)">first</a>')).toBe('<a>first</a>');
+    expect(sanitizeHtml('<a data-secret="x" onclick="alert(1)">second</a>')).toBe('<a>second</a>');
+  });
 });
 
 describe('stripHtml', () => {

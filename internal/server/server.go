@@ -648,6 +648,7 @@ func (s *Server) initialize() error {
 	}
 
 	authPolicyHandler := handlers.NewAuthPolicyHandlerWithFallback(s.db, cfg.EnableAdminFallback, logger.NewAuditor(s.db))
+	webAuthnHandler.SetAuthPolicyHandler(authPolicyHandler)
 
 	// Initialize auth handler
 	authHandler := handlers.NewAuthHandler(

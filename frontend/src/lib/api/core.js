@@ -32,6 +32,13 @@ function createApiError(response, responseText) {
     /** @type {any} */ (error).details = parsed.details || {};
     /** @type {any} */ (error).requestId = parsed.request_id;
     /** @type {any} */ (error).body = parsed;
+    // Authentication policy responses carry flow-control fields alongside the
+    // normal error envelope. Mirror the explicit fields callers need while
+    // retaining the complete body for diagnostics.
+    /** @type {any} */ (error).passkey_required = parsed.passkey_required === true;
+    /** @type {any} */ (error).enrollment_required = parsed.enrollment_required === true;
+    /** @type {any} */ (error).sso_required = parsed.sso_required === true;
+    /** @type {any} */ (error).policy_message = parsed.policy_message;
     error.message = parsed.error || parsed.message || error.message;
   } catch {
     // Response is not JSON, keep original message
@@ -101,20 +108,25 @@ export async function fetchAPI(endpoint, options = {}) {
   }
 
   if (!response.ok) {
-    // Handle authentication errors
-    if (response.status === 401) {
-      // Import auth store dynamically to avoid circular dependencies
-      const { authStore } = await import('../stores');
-      authStore.clearAuth();
-    }
-    // Try to get a more descriptive error message from the response body
+    // Read and parse the response before deciding whether a 401 represents an
+    // expired login. Pending-auth sessions must survive while the user
+    // completes enrollment or second-factor verification.
     let errorData = '';
     try {
       errorData = await response.text();
     } catch (_e) {
       // If we can't read the error body, use the status text
     }
-    throw createApiError(response, errorData);
+    const apiError = createApiError(response, errorData);
+    if (
+      response.status === 401 &&
+      /** @type {any} */ (apiError).code !== 'AUTHENTICATION_PENDING'
+    ) {
+      // Import auth store dynamically to avoid circular dependencies
+      const { authStore } = await import('../stores');
+      authStore.clearAuth();
+    }
+    throw apiError;
   }
 
   if (response.status === 204) {

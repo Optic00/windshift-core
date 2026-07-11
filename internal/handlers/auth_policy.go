@@ -112,12 +112,10 @@ func (h *AuthPolicyHandler) GetAuthPolicy(w http.ResponseWriter, r *http.Request
 	// Set fallback status
 	config.FallbackEnabled = h.fallbackEnabled
 
-	// Hide password form if:
-	// 1. Fallback is disabled (default)
-	// 2. AND policy is restrictive (passkey_only or sso_primary)
-	// 3. AND not in preview mode
-	isRestrictivePolicy := config.Policy == AuthPolicyPasskeyOnly || config.Policy == AuthPolicySSOPrimary
-	config.HidePasswordForm = !h.fallbackEnabled && isRestrictivePolicy && !config.PreviewMode
+	// SSO-primary has no password-based bootstrap. Passkey-only keeps the form
+	// visible because a user without a credential may use their password solely
+	// to enter the server-restricted first-passkey enrollment flow.
+	config.HidePasswordForm = !h.fallbackEnabled && config.Policy == AuthPolicySSOPrimary && !config.PreviewMode
 
 	respondJSONOK(w, config)
 }
@@ -175,12 +173,7 @@ func (h *AuthPolicyHandler) UpdateAuthPolicy(w http.ResponseWriter, r *http.Requ
 				JOIN users u ON ugp.user_id = u.id
 				WHERE gp.permission_key = 'system.admin'
 				AND u.is_active = true
-				AND NOT EXISTS(
-					SELECT 1 FROM user_credentials uc
-					WHERE uc.user_id = ugp.user_id
-					AND uc.credential_type = 'fido'
-					AND uc.is_active = true
-				)
+				AND NOT EXISTS(SELECT 1 FROM webauthn_credentials wc WHERE wc.user_id = ugp.user_id)
 				UNION
 				-- Group-based permissions
 				SELECT gm.user_id as admin_user_id
@@ -192,12 +185,7 @@ func (h *AuthPolicyHandler) UpdateAuthPolicy(w http.ResponseWriter, r *http.Requ
 				WHERE gp.permission_key = 'system.admin'
 				AND g.is_active = true
 				AND u.is_active = true
-				AND NOT EXISTS(
-					SELECT 1 FROM user_credentials uc
-					WHERE uc.user_id = gm.user_id
-					AND uc.credential_type = 'fido'
-					AND uc.is_active = true
-				)
+				AND NOT EXISTS(SELECT 1 FROM webauthn_credentials wc WHERE wc.user_id = gm.user_id)
 			)
 		`).Scan(&adminsWithoutPasskey)
 
@@ -265,8 +253,9 @@ func (h *AuthPolicyHandler) GetAuthPolicyStats(w http.ResponseWriter, r *http.Re
 
 	// Users with at least one active passkey (FIDO credential)
 	if err := h.db.QueryRow(`
-		SELECT COUNT(DISTINCT user_id) FROM user_credentials
-		WHERE credential_type = 'fido' AND is_active = true
+		SELECT COUNT(*) FROM users u
+		WHERE u.is_active = true
+		AND EXISTS(SELECT 1 FROM webauthn_credentials wc WHERE wc.user_id = u.id)
 	`).Scan(&stats.UsersWithPasskey); err != nil {
 		slog.Warn("failed to get passkey users count", slog.Any("error", err))
 	}
@@ -307,19 +296,17 @@ func (h *AuthPolicyHandler) GetAuthPolicyStats(w http.ResponseWriter, r *http.Re
 			SELECT ugp.user_id as admin_user_id
 			FROM user_global_permissions ugp
 			JOIN permissions gp ON ugp.permission_id = gp.id
-			JOIN user_credentials uc ON ugp.user_id = uc.user_id
 			WHERE gp.permission_key = 'system.admin'
-			AND uc.credential_type = 'fido' AND uc.is_active = true
+			AND EXISTS(SELECT 1 FROM webauthn_credentials wc WHERE wc.user_id = ugp.user_id)
 			UNION
 			SELECT gm.user_id as admin_user_id
 			FROM group_members gm
 			JOIN groups g ON gm.group_id = g.id
 			JOIN group_global_permissions ggp ON gm.group_id = ggp.group_id
 			JOIN permissions gp ON ggp.permission_id = gp.id
-			JOIN user_credentials uc ON gm.user_id = uc.user_id
 			WHERE gp.permission_key = 'system.admin'
 			AND g.is_active = true
-			AND uc.credential_type = 'fido' AND uc.is_active = true
+			AND EXISTS(SELECT 1 FROM webauthn_credentials wc WHERE wc.user_id = gm.user_id)
 		)
 	`).Scan(&stats.AdminsWithPasskey); err != nil {
 		slog.Warn("failed to get admins with passkey count", slog.Any("error", err))
@@ -351,7 +338,7 @@ func (h *AuthPolicyHandler) GetAffectedUsers(w http.ResponseWriter, r *http.Requ
 		// Users without passkeys (excluding system admins who have fallback)
 		query = `
 			SELECT u.id, u.email, u.username, u.first_name, u.last_name,
-				EXISTS(SELECT 1 FROM user_credentials uc WHERE uc.user_id = u.id AND uc.credential_type = 'fido' AND uc.is_active = true) as has_passkey,
+				EXISTS(SELECT 1 FROM webauthn_credentials wc WHERE wc.user_id = u.id) as has_passkey,
 				EXISTS(SELECT 1 FROM user_external_accounts sea WHERE sea.user_id = u.id) as has_sso,
 				(
 					EXISTS(SELECT 1 FROM user_global_permissions ugp JOIN permissions gp ON ugp.permission_id = gp.id WHERE ugp.user_id = u.id AND gp.permission_key = 'system.admin')
@@ -359,14 +346,14 @@ func (h *AuthPolicyHandler) GetAffectedUsers(w http.ResponseWriter, r *http.Requ
 				) as is_admin
 			FROM users u
 			WHERE u.is_active = true
-			AND NOT EXISTS(SELECT 1 FROM user_credentials uc WHERE uc.user_id = u.id AND uc.credential_type = 'fido' AND uc.is_active = true)
+			AND NOT EXISTS(SELECT 1 FROM webauthn_credentials wc WHERE wc.user_id = u.id)
 			ORDER BY u.email
 		`
 	case AuthPolicySSOPrimary:
 		// Users without SSO linked (excluding system admins who have fallback)
 		query = `
 			SELECT u.id, u.email, u.username, u.first_name, u.last_name,
-				EXISTS(SELECT 1 FROM user_credentials uc WHERE uc.user_id = u.id AND uc.credential_type = 'fido' AND uc.is_active = true) as has_passkey,
+				EXISTS(SELECT 1 FROM webauthn_credentials wc WHERE wc.user_id = u.id) as has_passkey,
 				EXISTS(SELECT 1 FROM user_external_accounts sea WHERE sea.user_id = u.id) as has_sso,
 				(
 					EXISTS(SELECT 1 FROM user_global_permissions ugp JOIN permissions gp ON ugp.permission_id = gp.id WHERE ugp.user_id = u.id AND gp.permission_key = 'system.admin')
@@ -488,12 +475,9 @@ func (h *AuthPolicyHandler) GetPublicPolicyStatus(w http.ResponseWriter, r *http
 	// Derive passkey requirement
 	status.PasskeyRequired = policy == AuthPolicyPasskeyOnly || policy == AuthPolicyPasswordPasskey2FA
 
-	// Hide password form if:
-	// 1. Fallback is disabled (default)
-	// 2. AND policy is restrictive (passkey_only or sso_primary)
-	// 3. AND not in preview mode
-	isRestrictivePolicy := policy == AuthPolicyPasskeyOnly || policy == AuthPolicySSOPrimary
-	status.HidePasswordForm = !h.fallbackEnabled && isRestrictivePolicy && !previewMode
+	// Passkey-only retains password solely as a first-passkey enrollment
+	// credential, so its form remains available; SSO-primary hides it.
+	status.HidePasswordForm = !h.fallbackEnabled && policy == AuthPolicySSOPrimary && !previewMode
 
 	respondJSONOK(w, status)
 }

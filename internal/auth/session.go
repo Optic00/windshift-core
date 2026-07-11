@@ -2,6 +2,7 @@
 package auth
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -31,6 +32,14 @@ var (
 
 const sessionTokenHashPrefix = "sha256:"
 
+const (
+	AuthPendingEnrollment          = "passkey_enrollment"
+	AuthPendingPasskeyVerification = "passkey_verification"
+
+	pendingEnrollmentDuration   = 30 * time.Minute
+	pendingVerificationDuration = 5 * time.Minute
+)
+
 func hashSessionToken(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return sessionTokenHashPrefix + hex.EncodeToString(sum[:])
@@ -39,20 +48,23 @@ func hashSessionToken(token string) string {
 // SessionManager handles secure session management
 type SessionManager struct {
 	cookieManager
-	db database.Database
+	db        database.Database
+	opaqueKey []byte
 }
 
 // Session represents an active user session
 type Session struct {
-	ID        int          `json:"id"`
-	UserID    int          `json:"user_id"`
-	Token     string       `json:"-"`
-	ExpiresAt time.Time    `json:"expires_at"`
-	IPAddress string       `json:"ip_address"`
-	UserAgent string       `json:"user_agent"`
-	IsActive  bool         `json:"is_active"`
-	CreatedAt time.Time    `json:"created_at"`
-	User      *models.User `json:"user,omitempty"`
+	ID                 int          `json:"id"`
+	UserID             int          `json:"user_id"`
+	Token              string       `json:"-"`
+	ExpiresAt          time.Time    `json:"expires_at"`
+	IPAddress          string       `json:"ip_address"`
+	UserAgent          string       `json:"user_agent"`
+	IsActive           bool         `json:"is_active"`
+	EnrollmentRequired bool         `json:"enrollment_required"`
+	AuthPendingType    string       `json:"-"`
+	CreatedAt          time.Time    `json:"created_at"`
+	User               *models.User `json:"user,omitempty"`
 }
 
 // NewSessionManager creates a new session manager with secure cookie handling.
@@ -60,11 +72,29 @@ type Session struct {
 // so that sessions survive process restarts with the same secret.
 // last review: ser, 210426
 func NewSessionManager(db database.Database, useSecureCookies, useProxy bool, additionalProxies []string, cookieSecret string) *SessionManager {
+	var opaqueKey []byte
+	if cookieSecret != "" {
+		opaqueKey = deriveKey(cookieSecret, "windshift-auth-opaque-values", 32)
+	} else {
+		opaqueKey = generateSecureKey(32)
+	}
 	return &SessionManager{
 		cookieManager: newCookieManager(useSecureCookies, useProxy, additionalProxies, cookieSecret,
 			"windshift-cookie-hash", "windshift-cookie-block"),
-		db: db,
+		db:        db,
+		opaqueKey: opaqueKey,
 	}
+}
+
+// DeriveOpaqueValue returns a stable, non-reversible 256-bit value scoped to a
+// purpose. It is used for public auth-flow decoys that must remain consistent
+// across requests without exposing whether they correspond to stored data.
+func (sm *SessionManager) DeriveOpaqueValue(purpose, value string) []byte {
+	mac := hmac.New(sha256.New, sm.opaqueKey)
+	_, _ = mac.Write([]byte(purpose))
+	_, _ = mac.Write([]byte{0})
+	_, _ = mac.Write([]byte(value))
+	return mac.Sum(nil)
 }
 
 // CreateSession creates a new session for a user
@@ -130,7 +160,10 @@ func (sm *SessionManager) ValidateSession(token, ipAddress string) (*Session, er
 
 	query := `
 		SELECT
-			s.id, s.user_id, s.session_token, s.expires_at, s.ip_address, s.user_agent, s.is_active, s.created_at,
+			s.id, s.user_id, s.session_token, s.expires_at, s.ip_address, s.user_agent, s.is_active,
+			COALESCE(s.enrollment_required, false),
+			COALESCE(s.auth_pending_type, CASE WHEN COALESCE(s.enrollment_required, false) THEN 'passkey_enrollment' ELSE '' END),
+			s.created_at,
 			u.email, u.username, u.first_name, u.last_name, u.is_active, u.avatar_url, u.requires_password_reset, u.timezone, u.language, u.email_verified, u.created_at, u.updated_at
 		FROM user_sessions s
 		JOIN users u ON s.user_id = u.id
@@ -143,7 +176,8 @@ func (sm *SessionManager) ValidateSession(token, ipAddress string) (*Session, er
 	var avatarURL, timezone, language sql.NullString
 
 	err := row.Scan(
-		&session.ID, &session.UserID, &session.Token, &session.ExpiresAt, &session.IPAddress, &session.UserAgent, &session.IsActive, &session.CreatedAt,
+		&session.ID, &session.UserID, &session.Token, &session.ExpiresAt, &session.IPAddress, &session.UserAgent, &session.IsActive,
+		&session.EnrollmentRequired, &session.AuthPendingType, &session.CreatedAt,
 		&session.User.Email, &session.User.Username, &session.User.FirstName, &session.User.LastName, &session.User.IsActive, &avatarURL, &session.User.RequiresPasswordReset, &timezone, &language, &session.User.EmailVerified, &session.User.CreatedAt, &session.User.UpdatedAt,
 	)
 
@@ -292,19 +326,41 @@ func (sm *SessionManager) GetSessionFromRequest(r *http.Request) (string, error)
 	return sm.getSessionFromRequest(r, SessionCookieName)
 }
 
-// SetEnrollmentRequired marks a session as requiring passkey enrollment
-func (sm *SessionManager) SetEnrollmentRequired(sessionID int, required bool) error {
-	query := `UPDATE user_sessions SET enrollment_required = ? WHERE id = ?`
-	_, err := sm.db.ExecWrite(query, required, sessionID)
+// SetAuthPending marks a password-verified session as narrowly scoped pending
+// authentication. Enrollment sessions may register a first passkey; verification
+// sessions may only complete an assertion with an already enrolled passkey.
+func (sm *SessionManager) SetAuthPending(sessionID int, pendingType string) error {
+	if pendingType != AuthPendingEnrollment && pendingType != AuthPendingPasskeyVerification {
+		return fmt.Errorf("invalid auth pending type %q", pendingType)
+	}
+	duration := pendingEnrollmentDuration
+	if pendingType == AuthPendingPasskeyVerification {
+		duration = pendingVerificationDuration
+	}
+	query := `UPDATE user_sessions SET enrollment_required = true, auth_pending_type = ?, expires_at = ? WHERE id = ?`
+	_, err := sm.db.ExecWrite(query, pendingType, time.Now().Add(duration), sessionID)
 	if err != nil {
-		return fmt.Errorf("failed to set enrollment required: %w", err)
+		return fmt.Errorf("failed to set auth pending state: %w", err)
 	}
 	return nil
 }
 
-// ClearEnrollmentRequired clears the enrollment required flag for a session
+// SetEnrollmentRequired is retained for callers creating enrollment-only sessions.
+func (sm *SessionManager) SetEnrollmentRequired(sessionID int, required bool) error {
+	if required {
+		return sm.SetAuthPending(sessionID, AuthPendingEnrollment)
+	}
+	return sm.ClearEnrollmentRequired(sessionID)
+}
+
+// ClearEnrollmentRequired elevates a pending session after its required WebAuthn ceremony.
 func (sm *SessionManager) ClearEnrollmentRequired(sessionID int) error {
-	return sm.SetEnrollmentRequired(sessionID, false)
+	query := `UPDATE user_sessions SET enrollment_required = false, auth_pending_type = NULL, expires_at = ? WHERE id = ?`
+	_, err := sm.db.ExecWrite(query, time.Now().Add(DefaultSessionDuration), sessionID)
+	if err != nil {
+		return fmt.Errorf("failed to clear auth pending state: %w", err)
+	}
+	return nil
 }
 
 // IsEnrollmentRequired checks if a session requires passkey enrollment
@@ -318,11 +374,16 @@ func (sm *SessionManager) IsEnrollmentRequired(sessionID int) (bool, error) {
 	return required, nil
 }
 
-// ClearEnrollmentRequiredByUserID clears enrollment required for all sessions of a user
-// Called after successful passkey enrollment
+// ClearEnrollmentRequiredByUserID elevates enrollment-only sessions after a
+// successful first-passkey registration. It deliberately does not elevate
+// password+passkey verification sessions, which still require an assertion.
 func (sm *SessionManager) ClearEnrollmentRequiredByUserID(userID int) error {
-	query := `UPDATE user_sessions SET enrollment_required = false WHERE user_id = ? AND is_active = true`
-	_, err := sm.db.ExecWrite(query, userID)
+	query := `
+		UPDATE user_sessions SET enrollment_required = false, auth_pending_type = NULL, expires_at = ?
+		WHERE user_id = ? AND is_active = true
+		AND (auth_pending_type = ? OR (auth_pending_type IS NULL AND enrollment_required = true))
+	`
+	_, err := sm.db.ExecWrite(query, time.Now().Add(DefaultSessionDuration), userID, AuthPendingEnrollment)
 	if err != nil {
 		return fmt.Errorf("failed to clear enrollment required: %w", err)
 	}
