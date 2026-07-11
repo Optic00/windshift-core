@@ -59,7 +59,18 @@ func mapTimeProjectToResponse(p repository.TimeProjectDetail) timeProjectRespons
 	}
 }
 
-// List returns time projects accessible to the authenticated user.
+// List handles GET /rest/api/v1/time/projects
+//
+// @Summary      List time projects
+// @Description  Returns the time projects the authenticated user may book time on, optionally filtered by status.
+// @Tags         time-tracking
+// @Produce      json
+// @Security     BearerAuth
+// @Param        status  query     string  false  "Filter by project status (e.g. Active)"
+// @Success      200     {array}   handlers.timeProjectResponse
+// @Failure      401     {object}  restapi.ErrorResponse
+// @Failure      500     {object}  restapi.ErrorResponse
+// @Router       /time/projects [get]
 func (h *TimeProjectHandler) List(w http.ResponseWriter, r *http.Request) {
 	user, ok := h.RequireAuth(w, r)
 	if !ok {
@@ -90,7 +101,19 @@ func (h *TimeProjectHandler) List(w http.ResponseWriter, r *http.Request) {
 	h.RespondOK(w, out)
 }
 
-// Get returns a single time project by ID if the user can access it.
+// Get handles GET /rest/api/v1/time/projects/{id}
+//
+// @Summary      Get a time project
+// @Description  Returns a single time project. Responds 404 (not 403) when the project exists but the caller cannot view it.
+// @Tags         time-tracking
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id   path      int  true  "Time project ID"
+// @Success      200  {object}  handlers.timeProjectResponse
+// @Failure      400  {object}  restapi.ErrorResponse
+// @Failure      401  {object}  restapi.ErrorResponse
+// @Failure      404  {object}  restapi.ErrorResponse
+// @Router       /time/projects/{id} [get]
 func (h *TimeProjectHandler) Get(w http.ResponseWriter, r *http.Request) {
 	user, ok := h.RequireAuth(w, r)
 	if !ok {

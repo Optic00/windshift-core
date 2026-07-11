@@ -1381,6 +1381,27 @@ components:
             $ref: '#/components/schemas/handlers.triggerTypeDTO'
           type: array
       type: object
+    handlers.createWorklogRequest:
+      properties:
+        date:
+          type: string
+        description:
+          type: string
+        duration:
+          type: string
+        duration_minutes:
+          type: integer
+        end_time:
+          type: string
+        item_id:
+          type: integer
+        item_key:
+          type: string
+        project_id:
+          type: integer
+        start_time:
+          type: string
+      type: object
     handlers.diagramListResponse:
       properties:
         items:
@@ -1617,6 +1638,17 @@ components:
         rrule:
           type: string
       type: object
+    handlers.startTimerRequest:
+      properties:
+        description:
+          type: string
+        item_id:
+          type: integer
+        project_id:
+          type: integer
+        workspace_id:
+          type: integer
+      type: object
     handlers.templateCreateRequest:
       properties:
         description_body:
@@ -1704,6 +1736,36 @@ components:
         template_id:
           type: integer
       type: object
+    handlers.timeProjectResponse:
+      properties:
+        category_color:
+          type: string
+        category_id:
+          type: integer
+        category_name:
+          type: string
+        color:
+          type: string
+        customer_id:
+          type: integer
+        customer_name:
+          type: string
+        description:
+          type: string
+        hourly_rate:
+          type: number
+        id:
+          type: integer
+        name:
+          type: string
+        settings:
+          additionalProperties: true
+          type: object
+        status:
+          type: string
+        total_hours:
+          type: number
+      type: object
     handlers.triggerTypeDTO:
       properties:
         config_schema:
@@ -1715,12 +1777,58 @@ components:
         type:
           $ref: '#/components/schemas/models.ActionTriggerType'
       type: object
+    handlers.updateWorklogRequest:
+      properties:
+        description:
+          type: string
+      type: object
     handlers.validateActionResponse:
       properties:
         errors:
           items:
             $ref: '#/components/schemas/actioncatalog.ValidationError'
           type: array
+      type: object
+    handlers.worklogResponse:
+      properties:
+        created_at:
+          type: integer
+        customer_id:
+          type: integer
+        customer_name:
+          type: string
+        date:
+          type: integer
+        description:
+          type: string
+        duration_minutes:
+          type: integer
+        end_time:
+          type: integer
+        id:
+          type: integer
+        item_id:
+          type: integer
+        item_title:
+          type: string
+        project_id:
+          type: integer
+        project_max_hours:
+          type: number
+        project_name:
+          type: string
+        project_total_hours:
+          type: number
+        start_time:
+          type: integer
+        updated_at:
+          type: integer
+        workspace_id:
+          type: integer
+        workspace_item_number:
+          type: integer
+        workspace_key:
+          type: string
       type: object
     models.APIToken:
       properties:
@@ -1895,6 +2003,42 @@ components:
       - ActionTriggerSCMReleaseBranchCreated
       - ActionTriggerSCMPRLinked
       - ActionTriggerSCMPRMerged
+    models.ActiveTimer:
+      properties:
+        created_at:
+          description: Unix timestamp
+          type: integer
+        customer_name:
+          type: string
+        description:
+          type: string
+        id:
+          type: integer
+        item_id:
+          description: Optional link to work item
+          type: integer
+        item_title:
+          type: string
+        project_id:
+          type: integer
+        project_name:
+          description: Joined fields for API responses - nullable since they come
+            from LEFT JOINs
+          type: string
+        start_time_utc:
+          description: Unix timestamp in UTC
+          type: integer
+        user_id:
+          type: integer
+        workspace_id:
+          type: integer
+        workspace_item_number:
+          type: integer
+        workspace_key:
+          type: string
+        workspace_name:
+          type: string
+      type: object
     models.Attachment:
       properties:
         created_at:
@@ -7827,6 +7971,385 @@ paths:
       summary: List links anchored on an entity
       tags:
       - links
+  /time/projects:
+    get:
+      description: Returns the time projects the authenticated user may book time
+        on, optionally filtered by status.
+      parameters:
+      - description: Filter by project status (e.g. Active)
+        in: query
+        name: status
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/handlers.timeProjectResponse'
+                type: array
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/restapi.ErrorResponse'
+          description: Unauthorized
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/restapi.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: List time projects
+      tags:
+      - time-tracking
+  /time/projects/{id}:
+    get:
+      description: Returns a single time project. Responds 404 (not 403) when the
+        project exists but the caller cannot view it.
+      parameters:
+      - description: Time project ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.timeProjectResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/restapi.ErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/restapi.ErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/restapi.ErrorResponse'
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Get a time project
+      tags:
+      - time-tracking
+  /time/worklogs:
+    get:
+      description: Returns the authenticated user's worklogs, newest first, with optional
+        date-range and project filters.
+      parameters:
+      - description: Inclusive start date (YYYY-MM-DD)
+        in: query
+        name: date_from
+        schema:
+          type: string
+      - description: Inclusive end date (YYYY-MM-DD)
+        in: query
+        name: date_to
+        schema:
+          type: string
+      - description: Filter by time project ID
+        in: query
+        name: project_id
+        schema:
+          type: integer
+      - description: Page (1-indexed)
+        in: query
+        name: page
+        schema:
+          type: integer
+      - description: Page size
+        in: query
+        name: limit
+        schema:
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                allOf:
+                - $ref: '#/components/schemas/handlers.PaginatedResponse'
+                - properties:
+                    data:
+                      items:
+                        $ref: '#/components/schemas/handlers.worklogResponse'
+                      type: array
+                  type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/restapi.ErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/restapi.ErrorResponse'
+          description: Unauthorized
+      security:
+      - BearerAuth: []
+      summary: List my worklogs
+      tags:
+      - time-tracking
+    post:
+      description: Creates a worklog for the authenticated user. Provide either `duration`/`duration_minutes`
+        or a `start_time`+`end_time` pair; `item_id`/`item_key` optionally link the
+        entry to a work item.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/handlers.createWorklogRequest'
+        description: Worklog to create
+        required: true
+        x-originalParamName: body
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/restapi.ErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/restapi.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/restapi.ErrorResponse'
+          description: No permission to book time on this project
+      security:
+      - BearerAuth: []
+      summary: Log time
+      tags:
+      - time-tracking
+  /time/worklogs/{id}:
+    delete:
+      description: Removes a worklog. Only the owning user may delete; other users
+        get 403.
+      parameters:
+      - description: Worklog ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      responses:
+        "204":
+          description: Deleted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/restapi.ErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/restapi.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/restapi.ErrorResponse'
+          description: Caller does not own the worklog
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/restapi.ErrorResponse'
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Delete a worklog
+      tags:
+      - time-tracking
+    put:
+      description: Changes the description of an existing worklog. Only the owning
+        user may update; other users get 403.
+      parameters:
+      - description: Worklog ID
+        in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/handlers.updateWorklogRequest'
+        description: New description
+        required: true
+        x-originalParamName: body
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/restapi.ErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/restapi.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/restapi.ErrorResponse'
+          description: Caller does not own the worklog
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/restapi.ErrorResponse'
+          description: Not Found
+      security:
+      - BearerAuth: []
+      summary: Update a worklog description
+      tags:
+      - time-tracking
+  /timer/active:
+    get:
+      description: Returns the authenticated user's currently running timer, or a
+        null body when no timer is running.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/models.ActiveTimer'
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/restapi.ErrorResponse'
+          description: Unauthorized
+      security:
+      - BearerAuth: []
+      summary: Get the active timer
+      tags:
+      - time-tracking
+  /timer/start:
+    post:
+      description: Starts the authenticated user's active timer. A user has at most
+        one running timer; starting while one runs is rejected.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/handlers.startTimerRequest'
+        description: Timer to start
+        required: true
+        x-originalParamName: body
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/restapi.ErrorResponse'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/restapi.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/restapi.ErrorResponse'
+          description: Forbidden
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/restapi.ErrorResponse'
+          description: A timer is already running
+      security:
+      - BearerAuth: []
+      summary: Start a timer
+      tags:
+      - time-tracking
+  /timer/stop:
+    delete:
+      description: Stops the authenticated user's running timer and creates the corresponding
+        worklog. Takes no timer ID — a user has at most one active timer.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/restapi.ErrorResponse'
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/restapi.ErrorResponse'
+          description: No timer is running
+      security:
+      - BearerAuth: []
+      summary: Stop the active timer
+      tags:
+      - time-tracking
   /users:
     get:
       description: Requires the global `user.list` permission in addition to the users:read

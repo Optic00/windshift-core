@@ -78,7 +78,22 @@ func mapWorklogToResponse(wl models.Worklog) worklogResponse {
 	}
 }
 
-// ListMine returns worklogs for the authenticated user.
+// ListMine handles GET /rest/api/v1/time/worklogs
+//
+// @Summary      List my worklogs
+// @Description  Returns the authenticated user's worklogs, newest first, with optional date-range and project filters.
+// @Tags         time-tracking
+// @Produce      json
+// @Security     BearerAuth
+// @Param        date_from   query     string  false  "Inclusive start date (YYYY-MM-DD)"
+// @Param        date_to     query     string  false  "Inclusive end date (YYYY-MM-DD)"
+// @Param        project_id  query     int     false  "Filter by time project ID"
+// @Param        page        query     int     false  "Page (1-indexed)"
+// @Param        limit       query     int     false  "Page size"
+// @Success      200  {object}  handlers.PaginatedResponse{data=[]handlers.worklogResponse}
+// @Failure      400  {object}  restapi.ErrorResponse
+// @Failure      401  {object}  restapi.ErrorResponse
+// @Router       /time/worklogs [get]
 func (h *TimeWorklogHandler) ListMine(w http.ResponseWriter, r *http.Request) {
 	user, ok := h.RequireAuth(w, r)
 	if !ok {
@@ -144,7 +159,20 @@ type createWorklogRequest struct {
 	ItemKey         string `json:"item_key,omitempty"`
 }
 
-// Create logs a new time entry for the authenticated user.
+// Create handles POST /rest/api/v1/time/worklogs
+//
+// @Summary      Log time
+// @Description  Creates a worklog for the authenticated user. Provide either `duration`/`duration_minutes` or a `start_time`+`end_time` pair; `item_id`/`item_key` optionally link the entry to a work item.
+// @Tags         time-tracking
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        body  body      handlers.createWorklogRequest  true  "Worklog to create"
+// @Success      201   {object}  map[string]interface{}
+// @Failure      400   {object}  restapi.ErrorResponse
+// @Failure      401   {object}  restapi.ErrorResponse
+// @Failure      403   {object}  restapi.ErrorResponse  "No permission to book time on this project"
+// @Router       /time/worklogs [post]
 func (h *TimeWorklogHandler) Create(w http.ResponseWriter, r *http.Request) {
 	user, ok := h.RequireAuth(w, r)
 	if !ok {
@@ -281,7 +309,26 @@ func (h *TimeWorklogHandler) Create(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Update changes the description of an existing worklog. Only the owning user can update.
+type updateWorklogRequest struct {
+	Description string `json:"description"`
+}
+
+// Update handles PUT /rest/api/v1/time/worklogs/{id}
+//
+// @Summary      Update a worklog description
+// @Description  Changes the description of an existing worklog. Only the owning user may update; other users get 403.
+// @Tags         time-tracking
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id    path      int                            true  "Worklog ID"
+// @Param        body  body      handlers.updateWorklogRequest  true  "New description"
+// @Success      200   {object}  map[string]interface{}
+// @Failure      400   {object}  restapi.ErrorResponse
+// @Failure      401   {object}  restapi.ErrorResponse
+// @Failure      403   {object}  restapi.ErrorResponse  "Caller does not own the worklog"
+// @Failure      404   {object}  restapi.ErrorResponse
+// @Router       /time/worklogs/{id} [put]
 func (h *TimeWorklogHandler) Update(w http.ResponseWriter, r *http.Request) {
 	user, ok := h.RequireAuth(w, r)
 	if !ok {
@@ -293,9 +340,7 @@ func (h *TimeWorklogHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req struct {
-		Description string `json:"description"`
-	}
+	var req updateWorklogRequest
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
@@ -320,7 +365,19 @@ func (h *TimeWorklogHandler) Update(w http.ResponseWriter, r *http.Request) {
 	h.RespondOK(w, map[string]any{"id": worklogID, "updated": true})
 }
 
-// Delete removes a worklog. Only the owning user can delete.
+// Delete handles DELETE /rest/api/v1/time/worklogs/{id}
+//
+// @Summary      Delete a worklog
+// @Description  Removes a worklog. Only the owning user may delete; other users get 403.
+// @Tags         time-tracking
+// @Security     BearerAuth
+// @Param        id   path  int  true  "Worklog ID"
+// @Success      204  "Deleted"
+// @Failure      400  {object}  restapi.ErrorResponse
+// @Failure      401  {object}  restapi.ErrorResponse
+// @Failure      403  {object}  restapi.ErrorResponse  "Caller does not own the worklog"
+// @Failure      404  {object}  restapi.ErrorResponse
+// @Router       /time/worklogs/{id} [delete]
 func (h *TimeWorklogHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	user, ok := h.RequireAuth(w, r)
 	if !ok {

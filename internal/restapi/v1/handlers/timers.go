@@ -29,20 +29,35 @@ func NewActiveTimerHandler(base BaseHandler, repo *repository.ActiveTimerReposit
 	}
 }
 
-// StartTimer starts a new active timer for the authenticated user.
+type startTimerRequest struct {
+	WorkspaceID int    `json:"workspace_id"`
+	ProjectID   int    `json:"project_id"`
+	ItemID      *int   `json:"item_id,omitempty"`
+	Description string `json:"description"`
+}
+
+// StartTimer handles POST /rest/api/v1/timer/start
+//
+// @Summary      Start a timer
+// @Description  Starts the authenticated user's active timer. A user has at most one running timer; starting while one runs is rejected.
+// @Tags         time-tracking
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        body  body      handlers.startTimerRequest  true  "Timer to start"
+// @Success      201   {object}  map[string]interface{}
+// @Failure      400   {object}  restapi.ErrorResponse
+// @Failure      401   {object}  restapi.ErrorResponse
+// @Failure      403   {object}  restapi.ErrorResponse
+// @Failure      409   {object}  restapi.ErrorResponse  "A timer is already running"
+// @Router       /timer/start [post]
 func (h *ActiveTimerHandler) StartTimer(w http.ResponseWriter, r *http.Request) {
 	user, ok := h.RequireAuth(w, r)
 	if !ok {
 		return
 	}
 
-	var req struct {
-		WorkspaceID int    `json:"workspace_id"`
-		ProjectID   int    `json:"project_id"`
-		ItemID      *int   `json:"item_id,omitempty"`
-		Description string `json:"description"`
-	}
-
+	var req startTimerRequest
 	if !h.DecodeBodyOrRespond(w, r, &req) {
 		return
 	}
@@ -62,7 +77,16 @@ func (h *ActiveTimerHandler) StartTimer(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// GetActiveTimer returns the currently running timer for the authenticated user.
+// GetActiveTimer handles GET /rest/api/v1/timer/active
+//
+// @Summary      Get the active timer
+// @Description  Returns the authenticated user's currently running timer, or a null body when no timer is running.
+// @Tags         time-tracking
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {object}  models.ActiveTimer
+// @Failure      401  {object}  restapi.ErrorResponse
+// @Router       /timer/active [get]
 func (h *ActiveTimerHandler) GetActiveTimer(w http.ResponseWriter, r *http.Request) {
 	user, ok := h.RequireAuth(w, r)
 	if !ok {
@@ -82,9 +106,21 @@ func (h *ActiveTimerHandler) GetActiveTimer(w http.ResponseWriter, r *http.Reque
 	h.RespondOK(w, timer)
 }
 
-// StopTimer stops the active timer by user (takes no timer ID — stops
-// whichever timer the user currently has running). This matches the
-// aitools stop_timer behavior where agents don't provide a timer ID.
+// StopTimer handles DELETE /rest/api/v1/timer/stop
+//
+// Stops the active timer by user (takes no timer ID — stops whichever timer
+// the user currently has running). This matches the aitools stop_timer
+// behavior where agents don't provide a timer ID.
+//
+// @Summary      Stop the active timer
+// @Description  Stops the authenticated user's running timer and creates the corresponding worklog. Takes no timer ID — a user has at most one active timer.
+// @Tags         time-tracking
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {object}  map[string]interface{}
+// @Failure      401  {object}  restapi.ErrorResponse
+// @Failure      404  {object}  restapi.ErrorResponse  "No timer is running"
+// @Router       /timer/stop [delete]
 func (h *ActiveTimerHandler) StopTimer(w http.ResponseWriter, r *http.Request) {
 	user, ok := h.RequireAuth(w, r)
 	if !ok {
