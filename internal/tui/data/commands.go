@@ -125,6 +125,19 @@ func SetItemAssignee(c *Client, itemID, assigneeID int) tea.Cmd {
 	}
 }
 
+// LoadAgentRuns fetches an item's coding-agent run history. Failures are
+// silent — the agent panel is informational, an error toast on every
+// selection would be noise.
+func LoadAgentRuns(c *Client, itemID int) tea.Cmd {
+	return func() tea.Msg {
+		runs, err := c.getAgentRuns(itemID)
+		if err != nil {
+			return AgentRunsLoadedMsg{ItemID: itemID, Runs: nil}
+		}
+		return AgentRunsLoadedMsg{ItemID: itemID, Runs: runs}
+	}
+}
+
 // LoadPrefs fetches the persisted TUI preferences. Failures degrade to
 // defaults (OK=false) instead of surfacing an error — prefs are never
 // load-bearing.

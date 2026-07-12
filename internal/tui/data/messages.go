@@ -51,6 +51,13 @@ type WorkItemLoadedMsg struct {
 	Item WorkItem
 }
 
+// AgentRunsLoadedMsg delivers an item's coding-agent run history, keyed by
+// ItemID like CommentsLoadedMsg.
+type AgentRunsLoadedMsg struct {
+	ItemID int
+	Runs   []AgentRun
+}
+
 // PrefsLoadedMsg delivers the persisted TUI preferences. OK is false when
 // the load failed — startup proceeds with defaults, never blocks.
 type PrefsLoadedMsg struct {

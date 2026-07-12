@@ -1343,6 +1343,38 @@
         },
         "type": "object"
       },
+      "handlers.AgentRunResponse": {
+        "properties": {
+          "ended_at": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "item_id": {
+            "type": "integer"
+          },
+          "job_kind": {
+            "type": "string"
+          },
+          "queued_at": {
+            "type": "string"
+          },
+          "started_at": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "workspace_id": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
       "handlers.AuditLogEntryResponse": {
         "properties": {
           "action_type": {
@@ -8139,6 +8171,102 @@
           }
         ],
         "summary": "Update an item",
+        "tags": [
+          "items"
+        ]
+      }
+    },
+    "/items/{id}/agent-runs": {
+      "get": {
+        "description": "Returns the coding-agent runs triggered against one work item, newest first. Mirrors the session surface's item agent-run list. Gated on view access to the item's workspace; both a missing item and a missing permission return 404 so item existence never leaks.",
+        "parameters": [
+          {
+            "description": "Item ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Max runs to return (default 50)",
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Cursor: only runs with id \u003c before_id",
+            "in": "query",
+            "name": "before_id",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/handlers.AgentRunResponse"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the items:read scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Item not found or not accessible"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List coding-agent runs for an item",
         "tags": [
           "items"
         ]

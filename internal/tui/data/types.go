@@ -109,6 +109,16 @@ type v1AssignableUser struct {
 	AvatarURL string `json:"avatar_url"`
 }
 
+type v1AgentRunResponse struct {
+	ID        int        `json:"id"`
+	Status    string     `json:"status"`
+	JobKind   string     `json:"job_kind"`
+	QueuedAt  time.Time  `json:"queued_at"`
+	StartedAt *time.Time `json:"started_at"`
+	EndedAt   *time.Time `json:"ended_at"`
+	Error     string     `json:"error"`
+}
+
 // ─── TUI domain types (converters below adapt v1 wire to these) ──────
 
 // User is an assignable user for the assignee picker.
@@ -117,6 +127,17 @@ type User struct {
 	Username string
 	FullName string
 	IsAgent  bool
+}
+
+// AgentRun is one coding-agent execution against a work item.
+type AgentRun struct {
+	ID        int
+	Status    string // queued|running|succeeded|failed|canceled|killed
+	JobKind   string
+	QueuedAt  string
+	StartedAt string
+	EndedAt   string
+	Error     string
 }
 
 // Workspace represents a workspace from the Windshift API.

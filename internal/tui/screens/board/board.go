@@ -73,6 +73,8 @@ type Model struct {
 
 	comments      map[int][]data.Comment
 	commentsFresh map[int]bool
+	agentRuns     map[int][]data.AgentRun
+	runsFresh     map[int]bool
 	detailSeq     int
 
 	list   *listPane
@@ -111,6 +113,8 @@ func New(ctx *core.Ctx) *Model {
 		ctx:           ctx,
 		comments:      map[int][]data.Comment{},
 		commentsFresh: map[int]bool{},
+		agentRuns:     map[int][]data.AgentRun{},
+		runsFresh:     map[int]bool{},
 		list:          newListPane(ctx),
 		detail:        newDetailPane(ctx),
 		collapsed:     map[string]bool{},
@@ -289,14 +293,30 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 		}
 		return nil
 
+	case data.AgentRunsLoadedMsg:
+		m.agentRuns[msg.ItemID] = msg.Runs
+		m.runsFresh[msg.ItemID] = true
+		if it := m.list.selectedItem(); it != nil && it.ID == msg.ItemID {
+			m.detail.setAgentRuns(msg.Runs)
+		}
+		return nil
+
 	case debounceMsg:
 		if msg.seq != m.detailSeq {
 			return nil // selection moved on
 		}
-		if it := m.list.selectedItem(); it != nil && !m.commentsFresh[it.ID] {
-			return data.LoadComments(m.ctx.Client, it.ID)
+		it := m.list.selectedItem()
+		if it == nil {
+			return nil
 		}
-		return nil
+		var cmds []tea.Cmd
+		if !m.commentsFresh[it.ID] {
+			cmds = append(cmds, data.LoadComments(m.ctx.Client, it.ID))
+		}
+		if !m.runsFresh[it.ID] {
+			cmds = append(cmds, data.LoadAgentRuns(m.ctx.Client, it.ID))
+		}
+		return tea.Batch(cmds...)
 
 	case ratioSaveMsg:
 		if msg.seq != m.ratioSaveSeq {
@@ -444,21 +464,36 @@ func (m *Model) applyPickerResult(msg dialog.ResultMsg) tea.Cmd {
 }
 
 // syncDetail points the detail pane at the current selection and returns the
-// debounced comment-fetch command when the cache is cold.
+// debounced fetch command when any lazy section's cache is cold.
 func (m *Model) syncDetail() tea.Cmd {
 	it := m.list.selectedItem()
 	if it == nil {
-		m.detail.setItem(nil, nil, false)
+		m.detail.setItem(nil, nil, false, nil, false, false)
 		return nil
 	}
-	fresh := m.commentsFresh[it.ID]
-	m.detail.setItem(it, m.comments[it.ID], fresh)
-	if fresh {
+	commentsFresh := m.commentsFresh[it.ID]
+	runsFresh := m.runsFresh[it.ID]
+	m.detail.setItem(it, m.comments[it.ID], commentsFresh, m.agentRuns[it.ID], runsFresh, m.assigneeIsAgent(it))
+	if commentsFresh && runsFresh {
 		return nil
 	}
 	m.detailSeq++
 	seq := m.detailSeq
 	return tea.Tick(commentsDebounce, func(time.Time) tea.Msg { return debounceMsg{seq: seq} })
+}
+
+// assigneeIsAgent resolves the item's assignee against the workspace user
+// list to detect coding agents.
+func (m *Model) assigneeIsAgent(it *data.WorkItem) bool {
+	if it.AssigneeID == nil {
+		return false
+	}
+	for _, u := range m.users {
+		if u.ID == *it.AssigneeID {
+			return u.IsAgent
+		}
+	}
+	return false
 }
 
 func (m *Model) handleKey(msg tea.KeyPressMsg) tea.Cmd {

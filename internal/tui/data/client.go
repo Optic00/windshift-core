@@ -273,6 +273,32 @@ func (c *Client) setItemField(itemID int, field string, value interface{}) error
 	return c.doMutate("PUT", fmt.Sprintf("/rest/api/v1/items/%d", itemID), authBearer, body, nil)
 }
 
+func (c *Client) getAgentRuns(itemID int) ([]AgentRun, error) {
+	var raw []v1AgentRunResponse
+	if err := c.doGet(fmt.Sprintf("/rest/api/v1/items/%d/agent-runs?limit=10", itemID), authBearer, &raw); err != nil {
+		return nil, err
+	}
+	fmtTime := func(t *time.Time) string {
+		if t == nil {
+			return ""
+		}
+		return t.Format(time.RFC3339)
+	}
+	out := make([]AgentRun, 0, len(raw))
+	for _, r := range raw {
+		out = append(out, AgentRun{
+			ID:        r.ID,
+			Status:    SanitizeLine(r.Status),
+			JobKind:   SanitizeLine(r.JobKind),
+			QueuedAt:  r.QueuedAt.Format(time.RFC3339),
+			StartedAt: fmtTime(r.StartedAt),
+			EndedAt:   fmtTime(r.EndedAt),
+			Error:     SanitizeLine(r.Error),
+		})
+	}
+	return out, nil
+}
+
 func (c *Client) getPrefs() (Prefs, error) {
 	var p Prefs
 	if err := c.doGet("/rest/api/v1/users/me/tui-preferences", authBearer, &p); err != nil {

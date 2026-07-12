@@ -22,6 +22,10 @@ type detailPane struct {
 	comments []data.Comment
 	loaded   bool // comments fetched for the current item
 
+	runs          []data.AgentRun
+	runsLoaded    bool
+	agentAssignee bool // the item's assignee is a coding agent
+
 	lines  []string // wrapped content cache
 	offset int
 
@@ -50,11 +54,14 @@ func (d *detailPane) resetRenderer() {
 	d.md = nil
 }
 
-// setItem swaps the displayed item, resetting scroll and comment state.
-func (d *detailPane) setItem(item *data.WorkItem, comments []data.Comment, loaded bool) {
+// setItem swaps the displayed item, resetting scroll and async-section state.
+func (d *detailPane) setItem(item *data.WorkItem, comments []data.Comment, loaded bool, runs []data.AgentRun, runsLoaded, agentAssignee bool) {
 	d.item = item
 	d.comments = comments
 	d.loaded = loaded
+	d.runs = runs
+	d.runsLoaded = runsLoaded
+	d.agentAssignee = agentAssignee
 	d.offset = 0
 	d.rebuild()
 }
@@ -64,6 +71,13 @@ func (d *detailPane) setItem(item *data.WorkItem, comments []data.Comment, loade
 func (d *detailPane) setComments(comments []data.Comment) {
 	d.comments = comments
 	d.loaded = true
+	d.rebuild()
+}
+
+// setAgentRuns updates the agent-activity section without resetting scroll.
+func (d *detailPane) setAgentRuns(runs []data.AgentRun) {
+	d.runs = runs
+	d.runsLoaded = true
 	d.rebuild()
 }
 
@@ -158,6 +172,31 @@ func (d *detailPane) rebuild() {
 		add(s.Base.Hint.Render("(no description)"))
 	}
 
+	// Agent activity — shown when the item has runs or is assigned to a
+	// coding agent (so an empty panel still signals "a run will appear").
+	if d.agentAssignee || len(d.runs) > 0 {
+		add("")
+		agentLabel := "Agent activity"
+		if d.runsLoaded {
+			agentLabel = fmt.Sprintf("Agent activity (%d)", len(d.runs))
+		}
+		add(s.Form.Label.Render(agentLabel) + " " + s.List.Rule.Render(strings.Repeat("─", max(0, min(w, 60)-len(agentLabel)-1))))
+		add("")
+		switch {
+		case !d.runsLoaded:
+			add(s.Base.Hint.Render("Loading agent runs…"))
+		case len(d.runs) == 0:
+			add(s.Base.Hint.Render("No agent runs yet — one starts when the agent picks this up."))
+		default:
+			for _, run := range d.runs {
+				add(d.renderAgentRun(run))
+				if run.Error != "" {
+					add("  " + s.Status.Error.Render(run.Error))
+				}
+			}
+		}
+	}
+
 	add("")
 	label := "Comments"
 	if d.loaded {
@@ -203,10 +242,52 @@ func (d *detailPane) view() string {
 	return strings.Join(d.lines[d.offset:end], "\n")
 }
 
+// renderAgentRun paints one run line: status glyph + status + kind + when.
+func (d *detailPane) renderAgentRun(run data.AgentRun) string {
+	s := d.ctx.Styles
+
+	var glyph string
+	switch run.Status {
+	case "succeeded":
+		glyph = s.Status.Success.Render("✓")
+	case "failed":
+		glyph = s.Status.Error.Render("✗")
+	case "running":
+		glyph = s.Status.Info.Render("●")
+	case "canceled", "killed":
+		glyph = s.Base.Hint.Render("⊘")
+	default: // queued
+		glyph = s.Base.Hint.Render("○")
+	}
+
+	when := run.EndedAt
+	if when == "" {
+		when = run.StartedAt
+	}
+	if when == "" {
+		when = run.QueuedAt
+	}
+
+	line := glyph + " " + run.Status
+	if run.JobKind != "" && run.JobKind != "coding_agent" {
+		line += " " + s.List.Muted.Render("("+run.JobKind+")")
+	}
+	line += " " + s.Base.Hint.Render("· "+shortDateTime(when))
+	return line
+}
+
 // shortDate trims an RFC3339 timestamp to its date part for display.
 func shortDate(ts string) string {
 	if len(ts) >= 10 {
 		return ts[:10]
+	}
+	return ts
+}
+
+// shortDateTime trims an RFC3339 timestamp to date + hh:mm.
+func shortDateTime(ts string) string {
+	if len(ts) >= 16 {
+		return ts[:10] + " " + ts[11:16]
 	}
 	return ts
 }
