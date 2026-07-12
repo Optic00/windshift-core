@@ -125,6 +125,30 @@ func SetItemAssignee(c *Client, itemID, assigneeID int) tea.Cmd {
 	}
 }
 
+// LoadPrefs fetches the persisted TUI preferences. Failures degrade to
+// defaults (OK=false) instead of surfacing an error — prefs are never
+// load-bearing.
+func LoadPrefs(c *Client) tea.Cmd {
+	return func() tea.Msg {
+		p, err := c.getPrefs()
+		if err != nil {
+			return PrefsLoadedMsg{OK: false}
+		}
+		return PrefsLoadedMsg{Prefs: p, OK: true}
+	}
+}
+
+// SavePrefs persists the TUI preferences, fire-and-forget. Only failures
+// produce a message (a statusbar notice).
+func SavePrefs(c *Client, p Prefs) tea.Cmd {
+	return func() tea.Msg {
+		if err := c.putPrefs(p); err != nil {
+			return ErrorMsg{Err: "Saving preferences failed: " + err.Error()}
+		}
+		return nil
+	}
+}
+
 func UpdateWorkItem(c *Client, itemID int, title, description string, statusID, priorityID *int) tea.Cmd {
 	return func() tea.Msg {
 		if err := c.updateWorkItem(itemID, title, description, statusID, priorityID); err != nil {

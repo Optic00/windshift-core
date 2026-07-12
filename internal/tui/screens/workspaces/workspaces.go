@@ -25,6 +25,10 @@ type Model struct {
 	selected   int
 	loading    bool
 	loadedOnce bool
+	// autoOpened guards the once-per-session jump to the persisted last
+	// workspace — going back to the picker must not bounce the user again.
+	autoOpened bool
+	prefsKnown bool
 
 	spinner spinner.Model
 	width   int
@@ -78,7 +82,11 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 		if len(m.workspaces) > 0 && m.selected >= len(m.workspaces) {
 			m.selected = 0
 		}
-		return nil
+		return m.maybeAutoOpen()
+
+	case data.PrefsLoadedMsg:
+		m.prefsKnown = true
+		return m.maybeAutoOpen()
 
 	case data.ErrorMsg:
 		m.loading = false
@@ -88,6 +96,29 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 		return m.handleKey(msg)
 	}
 	return nil
+}
+
+// maybeAutoOpen jumps straight to the persisted last workspace once both
+// the workspace list and the preferences have arrived. Runs at most once
+// per session and only while this screen is the sole (bottom) screen.
+func (m *Model) maybeAutoOpen() tea.Cmd {
+	if m.autoOpened || !m.prefsKnown || !m.loadedOnce || m.ctx.Workspace != nil {
+		return nil
+	}
+	m.autoOpened = true
+	target := m.ctx.Prefs.LastWorkspaceID
+	if target == nil {
+		return nil
+	}
+	for i := range m.workspaces {
+		if m.workspaces[i].ID == *target {
+			m.selected = i
+			ws := m.workspaces[i]
+			m.ctx.Workspace = &ws
+			return core.Push(board.New(m.ctx))
+		}
+	}
+	return nil // stale workspace id — stay on the picker
 }
 
 func (m *Model) handleKey(msg tea.KeyPressMsg) tea.Cmd {
@@ -107,7 +138,12 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 		if len(m.workspaces) > 0 && m.selected < len(m.workspaces) {
 			ws := m.workspaces[m.selected]
 			m.ctx.Workspace = &ws
-			return core.Push(board.New(m.ctx))
+			id := ws.ID
+			m.ctx.Prefs.LastWorkspaceID = &id
+			return tea.Batch(
+				core.Push(board.New(m.ctx)),
+				data.SavePrefs(m.ctx.Client, m.ctx.Prefs),
+			)
 		}
 	case key.Matches(msg, k.Refresh):
 		m.loading = true

@@ -89,13 +89,24 @@ type Model struct {
 	truncated bool
 	spinner   spinner.Model
 
+	// ratioSaveSeq debounces split-ratio persistence: only the latest
+	// pending save fires.
+	ratioSaveSeq int
+
 	width  int
 	height int
 }
 
+// ratioSaveMsg fires after the split has been resting for a beat.
+type ratioSaveMsg struct{ seq int }
+
 func New(ctx *core.Ctx) *Model {
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	sp.Style = lipgloss.NewStyle().Foreground(ctx.Styles.Palette.Primary)
+	ratio := defaultSplitRatio
+	if r := ctx.Prefs.SplitRatio; r != nil && *r >= minSplitRatio && *r <= maxSplitRatio {
+		ratio = *r
+	}
 	return &Model{
 		ctx:           ctx,
 		comments:      map[int][]data.Comment{},
@@ -103,7 +114,7 @@ func New(ctx *core.Ctx) *Model {
 		list:          newListPane(ctx),
 		detail:        newDetailPane(ctx),
 		collapsed:     map[string]bool{},
-		splitRatio:    defaultSplitRatio,
+		splitRatio:    ratio,
 		loading:       true,
 		spinner:       sp,
 		filterInput:   inputs.New(ctx.Styles, "filter…", 100),
@@ -284,6 +295,22 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 		}
 		if it := m.list.selectedItem(); it != nil && !m.commentsFresh[it.ID] {
 			return data.LoadComments(m.ctx.Client, it.ID)
+		}
+		return nil
+
+	case ratioSaveMsg:
+		if msg.seq != m.ratioSaveSeq {
+			return nil // superseded by a newer adjustment
+		}
+		return data.SavePrefs(m.ctx.Client, m.ctx.Prefs)
+
+	case data.PrefsLoadedMsg:
+		// Prefs arrived after the board was built — apply the split late.
+		if msg.OK {
+			if r := msg.Prefs.SplitRatio; r != nil && *r >= minSplitRatio && *r <= maxSplitRatio {
+				m.splitRatio = *r
+				m.SetSize(m.width, m.height)
+			}
 		}
 		return nil
 
@@ -493,9 +520,9 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 			m.narrowDetail = true
 		}
 	case key.Matches(msg, k.SplitNarrow):
-		m.adjustSplit(-splitStep)
+		return m.adjustSplit(-splitStep)
 	case key.Matches(msg, k.SplitWiden):
-		m.adjustSplit(splitStep)
+		return m.adjustSplit(splitStep)
 	case key.Matches(msg, k.Filter):
 		m.filtering = true
 		m.filterInput.SetValue(m.filter.Query)
@@ -641,7 +668,7 @@ func (m *Model) openAssignPicker() tea.Cmd {
 	return dialog.Open(dialog.NewPicker(pickerAssignID, "Assign to", options, selectedIdx, m.ctx.Styles))
 }
 
-func (m *Model) adjustSplit(delta float64) {
+func (m *Model) adjustSplit(delta float64) tea.Cmd {
 	m.splitRatio += delta
 	if m.splitRatio < minSplitRatio {
 		m.splitRatio = minSplitRatio
@@ -650,6 +677,12 @@ func (m *Model) adjustSplit(delta float64) {
 		m.splitRatio = maxSplitRatio
 	}
 	m.SetSize(m.width, m.height)
+
+	r := m.splitRatio
+	m.ctx.Prefs.SplitRatio = &r
+	m.ratioSaveSeq++
+	seq := m.ratioSaveSeq
+	return tea.Tick(time.Second, func(time.Time) tea.Msg { return ratioSaveMsg{seq: seq} })
 }
 
 // formWidth sizes overlay-form fields to the terminal.

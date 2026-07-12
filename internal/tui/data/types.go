@@ -14,6 +14,14 @@ type UserInfo struct {
 	LastName       string
 }
 
+// Prefs is the per-user TUI preferences document persisted server-side
+// (v1 /users/me/tui-preferences). Pointer fields distinguish unset.
+type Prefs struct {
+	Theme           string   `json:"theme,omitempty"`
+	SplitRatio      *float64 `json:"split_ratio,omitempty"`
+	LastWorkspaceID *int     `json:"last_workspace_id,omitempty"`
+}
+
 // ─── v1 wire mirrors ──────────────────────────────────────────────────
 // These types mirror the relevant subset of internal/restapi/v1/dto. We
 // duplicate them rather than import the dto package to avoid pulling the

@@ -273,6 +273,19 @@ func (c *Client) setItemField(itemID int, field string, value interface{}) error
 	return c.doMutate("PUT", fmt.Sprintf("/rest/api/v1/items/%d", itemID), authBearer, body, nil)
 }
 
+func (c *Client) getPrefs() (Prefs, error) {
+	var p Prefs
+	if err := c.doGet("/rest/api/v1/users/me/tui-preferences", authBearer, &p); err != nil {
+		return Prefs{}, err
+	}
+	p.Theme = SanitizeLine(p.Theme)
+	return p, nil
+}
+
+func (c *Client) putPrefs(p Prefs) error {
+	return c.doMutate("PUT", "/rest/api/v1/users/me/tui-preferences", authBearer, p, nil)
+}
+
 func (c *Client) getTimeProjects() ([]TimeProject, error) {
 	// Legacy /api/* + session auth — v1 doesn't yet expose /time/projects.
 	var projects []TimeProject

@@ -51,6 +51,13 @@ type WorkItemLoadedMsg struct {
 	Item WorkItem
 }
 
+// PrefsLoadedMsg delivers the persisted TUI preferences. OK is false when
+// the load failed — startup proceeds with defaults, never blocks.
+type PrefsLoadedMsg struct {
+	Prefs Prefs
+	OK    bool
+}
+
 // ErrorMsg carries a human-readable (already sanitized) error string from a
 // failed loader/mutator.
 type ErrorMsg struct {

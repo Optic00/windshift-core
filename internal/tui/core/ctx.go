@@ -21,6 +21,11 @@ type Ctx struct {
 	User   *data.UserInfo
 	Keys   KeyMap
 
+	// Prefs is the canonical current preference state. Mutation sites
+	// (theme cycle, split adjust, workspace entry) update it and fire
+	// data.SavePrefs; the app seeds it from PrefsLoadedMsg on connect.
+	Prefs data.Prefs
+
 	// Workspace is the workspace the user has entered, nil while on the
 	// workspace picker. Set by the workspaces screen on selection.
 	Workspace *data.Workspace
