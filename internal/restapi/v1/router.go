@@ -87,6 +87,7 @@ func RegisterRoutes(deps restapi.Deps) {
 	priorityHandler := handlers.NewPriorityHandler(db, permissionService)
 	customFieldHandler := handlers.NewCustomFieldHandler(db, permissionService)
 	userHandler := handlers.NewUserHandler(db, permissionService)
+	userPreferencesHandler := handlers.NewUserPreferencesHandler(db, permissionService)
 	commentHandler := handlers.NewCommentHandler(db, permissionService, deps.CommentService)
 	milestoneHandler := handlers.NewMilestoneHandler(db, permissionService)
 	iterationHandler := handlers.NewIterationHandler(db, permissionService)
@@ -247,6 +248,8 @@ func RegisterRoutes(deps restapi.Deps) {
 	// ============================================
 	v1.HandleWithMiddleware("GET /users", userHandler.List, bearerAuth.RequirePermission("users:read"))
 	v1.HandleWithMiddleware("GET /users/me", userHandler.GetCurrent, bearerAuth.RequirePermission("users:read"))
+	v1.HandleWithMiddleware("GET /users/me/tui-preferences", userPreferencesHandler.GetTUI, bearerAuth.RequirePermission("user-preferences:read"))
+	v1.HandleWithMiddleware("PUT /users/me/tui-preferences", userPreferencesHandler.UpdateTUI, bearerAuth.RequirePermission("user-preferences:write"))
 	v1.HandleWithMiddleware("GET /users/{id}", userHandler.Get, bearerAuth.RequirePermission("users:read"), router.RequireNumericID)
 
 	// ============================================

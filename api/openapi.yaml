@@ -1238,6 +1238,15 @@ components:
         name:
           type: string
       type: object
+    handlers.TUIPreferencesResponse:
+      properties:
+        last_workspace_id:
+          type: integer
+        split_ratio:
+          type: number
+        theme:
+          type: string
+      type: object
     handlers.WorkflowResponse:
       properties:
         created_at:
@@ -8499,6 +8508,89 @@ paths:
       security:
       - BearerAuth: []
       summary: Get the authenticated user
+      tags:
+      - users
+  /users/me/tui-preferences:
+    get:
+      description: Returns the SSH TUI preferences sub-document for the bearer token's
+        owning user. Empty fields mean "unset" — the TUI applies its defaults.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.TUIPreferencesResponse'
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the user-preferences:read scope
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Get the authenticated user's TUI preferences
+      tags:
+      - users
+    put:
+      description: Full replace of the SSH TUI preferences sub-document (theme, split
+        ratio, last workspace). Values are normalized server-side (theme truncated
+        to 64 chars, split ratio clamped to [0.1, 0.9]); other preference sub-documents
+        are untouched.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/handlers.TUIPreferencesResponse'
+        description: TUI preferences
+        required: true
+        x-originalParamName: preferences
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.TUIPreferencesResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Malformed body
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Token lacks the user-preferences:write scope
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/handlers.ErrorResponse'
+          description: Internal Server Error
+      security:
+      - BearerAuth: []
+      summary: Replace the authenticated user's TUI preferences
       tags:
       - users
   /workflows:

@@ -128,3 +128,44 @@ func (s *UserPreferencesService) UpdateDashboardLayout(userID int, layout models
 	prefs.DashboardLayout = &layout
 	return s.saveData(userID, prefs)
 }
+
+// GetTUI returns the user's SSH TUI preferences (zero value when unset).
+func (s *UserPreferencesService) GetTUI(userID int) (models.UserTUIPreferences, error) {
+	prefs, err := s.loadData(userID)
+	if err != nil {
+		return models.UserTUIPreferences{}, err
+	}
+	if prefs.TUI == nil {
+		return models.UserTUIPreferences{}, nil
+	}
+	return *prefs.TUI, nil
+}
+
+// UpdateTUI stores the SSH TUI preferences sub-document without clobbering
+// other preferences. Values are normalized rather than rejected — a stale
+// or odd preference should never break the TUI.
+func (s *UserPreferencesService) UpdateTUI(userID int, tui models.UserTUIPreferences) error {
+	if len(tui.Theme) > 64 {
+		tui.Theme = tui.Theme[:64]
+	}
+	if tui.SplitRatio != nil {
+		r := *tui.SplitRatio
+		if r < 0.1 {
+			r = 0.1
+		}
+		if r > 0.9 {
+			r = 0.9
+		}
+		tui.SplitRatio = &r
+	}
+	if tui.LastWorkspaceID != nil && *tui.LastWorkspaceID <= 0 {
+		tui.LastWorkspaceID = nil
+	}
+
+	prefs, err := s.loadData(userID)
+	if err != nil {
+		return err
+	}
+	prefs.TUI = &tui
+	return s.saveData(userID, prefs)
+}

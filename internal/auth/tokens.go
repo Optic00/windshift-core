@@ -49,6 +49,11 @@ const (
 	// Users
 	ScopeUsersRead = "users:read"
 
+	// Per-user preferences (the token owner's own preferences document,
+	// e.g. the SSH TUI's theme/layout persistence)
+	ScopeUserPreferencesRead  = "user-preferences:read"
+	ScopeUserPreferencesWrite = "user-preferences:write"
+
 	// Milestones
 	ScopeMilestonesRead   = "milestones:read"
 	ScopeMilestonesWrite  = "milestones:write"
@@ -190,6 +195,7 @@ var AllValidScopes = []string{
 	ScopeStatusesRead, ScopeWorkflowsRead, ScopeItemTypesRead,
 	ScopePrioritiesRead, ScopeCustomFieldsRead,
 	ScopeUsersRead,
+	ScopeUserPreferencesRead, ScopeUserPreferencesWrite,
 	ScopeMilestonesRead, ScopeMilestonesWrite, ScopeMilestonesDelete,
 	ScopeIterationsRead, ScopeIterationsWrite, ScopeIterationsDelete,
 	ScopeProjectsRead, ScopeProjectsWrite, ScopeProjectsDelete,
@@ -216,7 +222,8 @@ var AllValidScopes = []string{
 var allNonAdminReadScopes = []string{
 	ScopeItemsRead, ScopeWorkspacesRead, ScopeStatusesRead,
 	ScopeWorkflowsRead, ScopeItemTypesRead, ScopePrioritiesRead,
-	ScopeCustomFieldsRead, ScopeUsersRead, ScopeMilestonesRead,
+	ScopeCustomFieldsRead, ScopeUsersRead, ScopeUserPreferencesRead,
+	ScopeMilestonesRead,
 	ScopeIterationsRead, ScopeProjectsRead, ScopeCollectionsRead,
 	ScopeActionsRead, ScopePagesRead, ScopeTestsRead,
 	ScopeAssetsRead, ScopeTimeRead, ScopeItemTemplatesRead,
@@ -234,6 +241,7 @@ var allNonAdminScopes = []string{
 	ScopeStatusesRead, ScopeWorkflowsRead, ScopeItemTypesRead,
 	ScopePrioritiesRead, ScopeCustomFieldsRead,
 	ScopeUsersRead,
+	ScopeUserPreferencesRead, ScopeUserPreferencesWrite,
 	ScopeMilestonesRead, ScopeMilestonesWrite, ScopeMilestonesDelete,
 	ScopeIterationsRead, ScopeIterationsWrite, ScopeIterationsDelete,
 	ScopeProjectsRead, ScopeProjectsWrite, ScopeProjectsDelete,
