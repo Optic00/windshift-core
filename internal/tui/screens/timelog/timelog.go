@@ -107,7 +107,7 @@ func (m *Model) OnThemeChanged() {
 
 func (m *Model) ShortHelp() []key.Binding {
 	k := m.ctx.Keys
-	return []key.Binding{k.Up, k.Down, k.Enter, k.Save, k.Back}
+	return []key.Binding{k.Up, k.Down, k.Enter, k.Theme, k.Save, k.Back}
 }
 
 // EditingText reports whether a text field is focused (core.TextEditor).

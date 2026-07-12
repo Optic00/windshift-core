@@ -123,12 +123,6 @@ func (d *detailPane) rebuild() {
 		out = append(out, strings.Split(wrap.Render(block), "\n")...)
 	}
 
-	key := it.WorkspaceKey
-	if key == "" && d.ctx.Workspace != nil {
-		key = d.ctx.Workspace.Key
-	}
-
-	add(s.List.Muted.Render(fmt.Sprintf("%s-%d", key, it.ID)))
 	add(s.Base.Heading.Render(it.Title))
 	add("")
 

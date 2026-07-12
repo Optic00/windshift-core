@@ -107,7 +107,7 @@ func New(p Palette) *Styles {
 	}
 
 	s.Header = HeaderStyles{
-		Bar:        lipgloss.NewStyle().Background(p.BgSurface).Foreground(p.FgBase).Padding(0, 1),
+		Bar:        lipgloss.NewStyle().Background(p.BgSurface).Foreground(p.FgBase),
 		Logo:       lipgloss.NewStyle().Bold(true),
 		Workspace:  lipgloss.NewStyle().Foreground(p.FgBase).Bold(true),
 		User:       lipgloss.NewStyle().Foreground(p.FgSubtle),
@@ -134,7 +134,6 @@ func New(p Palette) *Styles {
 		ItemSelected: lipgloss.NewStyle().
 			Foreground(p.OnPrimary).
 			Background(p.Selected).
-			Bold(true).
 			Padding(0, 1),
 		SelBar:  lipgloss.NewStyle().Foreground(p.Primary).Bold(true),
 		Muted:   lipgloss.NewStyle().Foreground(p.FgMuted),
@@ -169,11 +168,11 @@ func New(p Palette) *Styles {
 	s.Dialog = DialogStyles{
 		Frame: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(p.BorderFocus).
+			BorderForeground(p.Border).
 			Background(p.BgOverlay).
 			Foreground(p.FgBase).
-			Padding(1, 2),
-		Title:  lipgloss.NewStyle().Foreground(p.Primary).Bold(true).MarginBottom(1),
+			Padding(0, 1),
+		Title:  lipgloss.NewStyle().Foreground(p.PrimaryHovered).Bold(true),
 		Body:   lipgloss.NewStyle().Foreground(p.FgBase),
 		Footer: lipgloss.NewStyle().Foreground(p.FgMuted).MarginTop(1),
 		Backdrop: lipgloss.NewStyle().

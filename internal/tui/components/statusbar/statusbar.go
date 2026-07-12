@@ -30,9 +30,8 @@ type Notice struct {
 // Render paints the status bar. tagline is shown when the notice is empty.
 func Render(s *styles.Styles, width int, notice Notice, tagline string, bindings []key.Binding) string {
 	left := renderLeft(s, notice, tagline)
-	right := renderRight(s, bindings)
-
 	leftW := lipgloss.Width(left)
+	right := renderRight(s, bindings, width-leftW-1)
 	rightW := lipgloss.Width(right)
 
 	pad := width - leftW - rightW
@@ -63,7 +62,7 @@ func renderLeft(s *styles.Styles, notice Notice, tagline string) string {
 	return s.Status.Bar.Render(s.Status.Hint.Render(tagline))
 }
 
-func renderRight(s *styles.Styles, bindings []key.Binding) string {
+func renderRight(s *styles.Styles, bindings []key.Binding, maxWidth int) string {
 	var parts []string
 	for _, b := range bindings {
 		if !b.Enabled() {
@@ -73,7 +72,12 @@ func renderRight(s *styles.Styles, bindings []key.Binding) string {
 		if h.Key == "" {
 			continue
 		}
-		parts = append(parts, s.Status.KeyChord.Render(h.Key)+" "+s.Status.KeyLabel.Render(h.Desc))
+		part := s.Status.KeyChord.Render(h.Key) + " " + s.Status.KeyLabel.Render(h.Desc)
+		candidate := strings.Join(append(parts, part), " · ")
+		if maxWidth > 0 && lipgloss.Width(s.Status.Bar.Render(candidate)) > maxWidth {
+			break
+		}
+		parts = append(parts, part)
 	}
 	return s.Status.Bar.Render(strings.Join(parts, " · "))
 }

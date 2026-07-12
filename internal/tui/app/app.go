@@ -19,6 +19,8 @@ import (
 // chromeRows is what the header (bar + rule) and status bar occupy.
 const chromeRows = 3
 
+const themePickerID = "app.theme"
+
 // Model is the root model. It implements tea.Model by value but all mutable
 // state lives behind pointers (ctx, screens), so Update mutates in place.
 type Model struct {
@@ -94,8 +96,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case data.PrefsLoadedMsg:
 		if msg.OK {
 			m.ctx.Prefs = msg.Prefs
-			if msg.Prefs.Theme != "" && msg.Prefs.Theme != m.ctx.Theme {
-				m.applyTheme(styles.ByName(msg.Prefs.Theme))
+			if msg.Prefs.Theme != "" {
+				resolved := styles.ByName(msg.Prefs.Theme)
+				if resolved.Name != m.ctx.Theme {
+					m.applyTheme(resolved)
+				}
+				if resolved.Name != msg.Prefs.Theme {
+					m.ctx.Prefs.Theme = resolved.Name
+					return m, tea.Batch(m.broadcast(msg), data.SavePrefs(m.ctx.Client, m.ctx.Prefs))
+				}
 			}
 		}
 		return m, m.broadcast(msg)
@@ -139,7 +148,23 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if action.Close {
 			m.dialogs = m.dialogs[:len(m.dialogs)-1]
 			if action.Selected != nil {
-				if cmd := m.active().Update(dialog.ResultMsg{ID: top.ID(), Value: action.Selected}); cmd != nil {
+				result := dialog.ResultMsg{ID: top.ID(), Value: action.Selected}
+				if top.ID() == themePickerID {
+					if theme, ok := action.Selected.(styles.Theme); ok {
+						m.applyTheme(theme)
+						m.ctx.Prefs.Theme = theme.Name
+						cmds = append(cmds, core.NotifySuccess("Theme: "+theme.Label), data.SavePrefs(m.ctx.Client, m.ctx.Prefs))
+					}
+				} else if len(m.dialogs) > 0 {
+					parent := m.dialogs[len(m.dialogs)-1]
+					if handler, ok := parent.(dialog.ResultHandler); ok {
+						if cmd := handler.HandleResult(result); cmd != nil {
+							cmds = append(cmds, cmd)
+						}
+					} else if cmd := m.active().Update(result); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+				} else if cmd := m.active().Update(result); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
 			}
@@ -159,22 +184,28 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if key.Matches(msg, m.ctx.Keys.Theme) {
-			return m, m.cycleTheme()
+			m.dialogs = append(m.dialogs, m.themePicker())
+			return m, nil
 		}
 	}
 
 	return m, m.active().Update(msg)
 }
 
-// cycleTheme advances to the next registered theme and persists the choice.
-func (m Model) cycleTheme() tea.Cmd {
-	next := styles.Next(m.ctx.Theme)
-	m.applyTheme(next)
-	m.ctx.Prefs.Theme = next.Name
-	return tea.Batch(
-		core.NotifySuccess("Theme: "+next.Name),
-		data.SavePrefs(m.ctx.Client, m.ctx.Prefs),
-	)
+func (m Model) themePicker() dialog.Dialog {
+	themes := styles.Themes()
+	options := make([]dialog.Option, 0, len(themes))
+	selected := 0
+	for i, theme := range themes {
+		marker := "  "
+		if theme.Name == m.ctx.Theme {
+			marker = "● "
+			selected = i
+		}
+		label := marker + theme.Label + " · " + theme.Description
+		options = append(options, dialog.Option{Label: label, Search: theme.Label + " " + theme.Description, Value: theme})
+	}
+	return dialog.NewPicker(themePickerID, "Choose theme", options, selected, m.ctx.Styles)
 }
 
 // applyTheme replaces ctx.Styles wholesale — anything reading it at render
@@ -185,6 +216,11 @@ func (m Model) applyTheme(t styles.Theme) {
 	for _, s := range m.stack {
 		if ta, ok := s.(core.ThemeAware); ok {
 			ta.OnThemeChanged()
+		}
+	}
+	for _, d := range m.dialogs {
+		if themed, ok := d.(dialog.ThemeAware); ok {
+			themed.OnThemeChanged(m.ctx.Styles)
 		}
 	}
 }
@@ -199,7 +235,7 @@ func (m Model) editingText() bool {
 func (m Model) helpGroups() []dialog.HelpGroup {
 	k := m.ctx.Keys
 	return []dialog.HelpGroup{
-		{Title: "Global", Binds: []key.Binding{k.Help, k.Quit}},
+		{Title: "Global", Binds: []key.Binding{k.Theme, k.Help, k.Quit}},
 		{Title: "Navigation", Binds: []key.Binding{k.Up, k.Down, k.Enter, k.Back}},
 		{Title: "Item actions", Binds: []key.Binding{k.New, k.Save, k.LogTime, k.Comments, k.Refresh}},
 		{Title: "Editing", Binds: []key.Binding{k.NextField, k.PrevField}},
@@ -233,7 +269,7 @@ func (m Model) View() tea.View {
 		statusbar.Render(m.ctx.Styles, m.ctx.Width, m.notice, m.active().Title(), m.active().ShortHelp())
 
 	if len(m.dialogs) > 0 {
-		content = m.overlayDialog(m.dialogs[len(m.dialogs)-1])
+		content = m.overlayDialog(content, m.dialogs[len(m.dialogs)-1])
 	}
 
 	v.SetContent(content)
@@ -256,10 +292,10 @@ func (m Model) windowTitle() string {
 	return "Windshift"
 }
 
-// overlayDialog centers the dialog frame over a blank backdrop. Matches the
-// previous compositing (the body behind is not visible while a dialog is
-// open) — proper alpha overlay can come later if needed.
-func (m Model) overlayDialog(d dialog.Dialog) string {
+// overlayDialog retains the board around the opaque dialog, preserving the
+// context of the action instead of replacing the whole screen with a blank
+// backdrop.
+func (m Model) overlayDialog(content string, d dialog.Dialog) string {
 	s := m.ctx.Styles
 
 	width := 40
@@ -281,14 +317,17 @@ func (m Model) overlayDialog(d dialog.Dialog) string {
 		stacked += "\n" + s.Dialog.Footer.Render(footerText)
 	}
 	frame := s.Dialog.Frame.Render(stacked)
-	return lipgloss.Place(
-		m.ctx.Width,
-		m.ctx.Height,
-		lipgloss.Center,
-		lipgloss.Center,
-		frame,
-		lipgloss.WithWhitespaceStyle(lipgloss.NewStyle().Background(s.Palette.BgBase)),
-	)
+	x := (m.ctx.Width - lipgloss.Width(frame)) / 2
+	y := (m.ctx.Height - lipgloss.Height(frame)) / 2
+	if x < 0 {
+		x = 0
+	}
+	if y < 0 {
+		y = 0
+	}
+	base := lipgloss.NewLayer(content).X(0).Y(0).Z(0)
+	overlay := lipgloss.NewLayer(frame).X(x).Y(y).Z(1)
+	return lipgloss.NewCompositor(base, overlay).Render()
 }
 
 // bodyHeight subtracts the header (2 rows incl. the rule) and status bar

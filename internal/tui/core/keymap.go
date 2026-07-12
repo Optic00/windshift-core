@@ -53,7 +53,7 @@ func DefaultKeyMap() KeyMap {
 	return KeyMap{
 		Quit:      key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 		Help:      key.NewBinding(key.WithKeys("?", "h", "f1"), key.WithHelp("?", "help")),
-		Theme:     key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "theme")),
+		Theme:     key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "themes")),
 		Up:        key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
 		Down:      key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
 		Left:      key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "left")),
@@ -65,7 +65,7 @@ func DefaultKeyMap() KeyMap {
 		Save:      key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "save")),
 		LogTime:   key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "log time")),
 		Comments:  key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "comments")),
-		NextField: key.NewBinding(key.WithKeys("tab", "ctrl+enter"), key.WithHelp("tab", "next field")),
+		NextField: key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next field")),
 		PrevField: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev field")),
 
 		Edit:         key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),

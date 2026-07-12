@@ -65,7 +65,7 @@ func (m *Model) Title() string { return "Pick a workspace" }
 
 func (m *Model) ShortHelp() []key.Binding {
 	k := m.ctx.Keys
-	return []key.Binding{k.Up, k.Down, k.Enter, k.Refresh, k.Help, k.Quit}
+	return []key.Binding{k.Up, k.Down, k.Enter, k.Theme, k.Refresh, k.Help, k.Quit}
 }
 
 func (m *Model) Update(msg tea.Msg) tea.Cmd {

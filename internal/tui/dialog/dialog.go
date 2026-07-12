@@ -8,6 +8,8 @@ package dialog
 
 import (
 	tea "charm.land/bubbletea/v2"
+
+	"windshift/internal/tui/styles"
 )
 
 // Dialog is the contract every overlay implements.
@@ -23,6 +25,20 @@ type Dialog interface {
 	View(width, height int) string
 	// Title returns the title shown above the body.
 	Title() string
+}
+
+// ThemeAware is implemented by dialogs that retain component styles. Open
+// dialogs receive theme changes immediately instead of becoming a patchwork
+// of the previous and current palettes.
+type ThemeAware interface {
+	OnThemeChanged(*styles.Styles)
+}
+
+// ResultHandler lets a dialog consume the result of a child dialog. This is
+// used by forms with picker-backed fields: the picker closes back into the
+// still-open form instead of sending its selection to the screen behind it.
+type ResultHandler interface {
+	HandleResult(ResultMsg) tea.Cmd
 }
 
 // Action is the result of a key press. Selected is type-asserted by the

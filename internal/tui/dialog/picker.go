@@ -1,6 +1,7 @@
 package dialog
 
 import (
+	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -36,6 +37,7 @@ type Picker struct {
 	options  []Option
 	filtered []int // indexes into options
 	selected int   // index into filtered
+	offset   int   // first result rendered in the bounded viewport
 	query    string
 	styles   *styles.Styles
 }
@@ -62,6 +64,12 @@ func NewPicker(id, title string, options []Option, selected int, s *styles.Style
 func (p *Picker) ID() string    { return p.id }
 func (p *Picker) Title() string { return p.title }
 
+func (p *Picker) Footer() string {
+	return "type to search · ↑↓ select · enter confirm · esc cancel"
+}
+
+func (p *Picker) OnThemeChanged(s *styles.Styles) { p.styles = s }
+
 func (p *Picker) applyFilter() {
 	prevOption := -1
 	if p.selected >= 0 && p.selected < len(p.filtered) {
@@ -75,6 +83,7 @@ func (p *Picker) applyFilter() {
 		}
 	}
 	p.selected = 0
+	p.offset = 0
 	if prevOption >= 0 {
 		for fi, oi := range p.filtered {
 			if oi == prevOption {
@@ -93,11 +102,13 @@ func (p *Picker) HandleKey(msg tea.KeyPressMsg) Action {
 		} else if len(p.filtered) > 0 {
 			p.selected = len(p.filtered) - 1
 		}
+		p.ensureVisible(12)
 		return Action{}
 	case "down":
 		if len(p.filtered) > 0 {
 			p.selected = (p.selected + 1) % len(p.filtered)
 		}
+		p.ensureVisible(12)
 		return Action{}
 	case "enter":
 		if p.selected >= 0 && p.selected < len(p.filtered) {
@@ -118,6 +129,12 @@ func (p *Picker) HandleKey(msg tea.KeyPressMsg) Action {
 			p.applyFilter()
 		}
 		return Action{}
+	case "/":
+		// Search is already active; accept the conventional slash shortcut
+		// without inserting it into an empty query.
+		if p.query == "" {
+			return Action{}
+		}
 	}
 
 	// Printable characters extend the filter query (type-to-filter). k/j
@@ -129,7 +146,26 @@ func (p *Picker) HandleKey(msg tea.KeyPressMsg) Action {
 	return Action{}
 }
 
-func (p *Picker) View(width, _ int) string {
+func (p *Picker) ensureVisible(visible int) {
+	if visible < 1 {
+		visible = 1
+	}
+	if p.selected < p.offset {
+		p.offset = p.selected
+	}
+	if p.selected >= p.offset+visible {
+		p.offset = p.selected - visible + 1
+	}
+	maxOffset := len(p.filtered) - visible
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if p.offset > maxOffset {
+		p.offset = maxOffset
+	}
+}
+
+func (p *Picker) View(width, height int) string {
 	if len(p.options) == 0 {
 		return p.styles.Dialog.Body.Render("(no options)")
 	}
@@ -142,17 +178,41 @@ func (p *Picker) View(width, _ int) string {
 		maxLabel = 12
 	}
 
-	var rows []string
-	if p.query != "" {
-		rows = append(rows,
-			p.styles.Status.KeyChord.Render("/ ")+p.styles.Dialog.Body.Render(p.query),
-			"")
+	query := p.query
+	if query == "" {
+		query = p.styles.Base.Hint.Render("type a name…")
+	} else {
+		query = p.styles.Dialog.Body.Render(query)
 	}
+	count := p.styles.Base.Hint.Render(fmt.Sprintf("%d/%d", len(p.filtered), len(p.options)))
+	searchWidth := width - lipgloss.Width(count) - 5
+	if searchWidth < 8 {
+		searchWidth = 8
+	}
+	search := p.styles.Status.KeyChord.Render("/ ") + lipgloss.NewStyle().MaxWidth(searchWidth).Render(query)
+	gap := width - lipgloss.Width(search) - lipgloss.Width(count)
+	if gap < 1 {
+		gap = 1
+	}
+	rows := []string{search + strings.Repeat(" ", gap) + count, ""}
 	if len(p.filtered) == 0 {
 		rows = append(rows, p.styles.Dialog.Body.Render("(no matches)"))
 		return strings.Join(rows, "\n")
 	}
-	for fi, oi := range p.filtered {
+	visible := height - len(rows)
+	if visible > 12 {
+		visible = 12
+	}
+	if visible < 1 {
+		visible = 1
+	}
+	p.ensureVisible(visible)
+	end := p.offset + visible
+	if end > len(p.filtered) {
+		end = len(p.filtered)
+	}
+	for fi := p.offset; fi < end; fi++ {
+		oi := p.filtered[fi]
 		label := p.options[oi].Label
 		if lipgloss.Width(label) > maxLabel {
 			label = lipgloss.NewStyle().MaxWidth(maxLabel).Render(label) + "…"

@@ -202,6 +202,7 @@ func (m *Model) paneWidths() (listW, detailW int) {
 // (core.ThemeAware).
 func (m *Model) OnThemeChanged() {
 	m.spinner.Style = lipgloss.NewStyle().Foreground(m.ctx.Styles.Palette.Primary)
+	m.filterInput.SetStyles(inputs.Styles(m.ctx.Styles))
 	m.detail.resetRenderer()
 	m.detail.rebuild()
 }
@@ -214,9 +215,9 @@ func (m *Model) ShortHelp() []key.Binding {
 		return []key.Binding{k.Enter, k.Back}
 	}
 	if m.focus == focusDetail {
-		return []key.Binding{k.Up, k.Down, k.FocusToggle, k.Edit, k.Comments, k.Back}
+		return []key.Binding{k.Up, k.Down, k.FocusToggle, k.Theme, k.Edit, k.Comments, k.Back}
 	}
-	return []key.Binding{k.Up, k.Down, k.Filter, k.Status, k.Priority, k.Assign, k.Edit, k.New, k.Help}
+	return []key.Binding{k.Up, k.Down, k.Filter, k.Theme, k.Status, k.Priority, k.Assign, k.Edit, k.New, k.Help}
 }
 
 func (m *Model) Update(msg tea.Msg) tea.Cmd {
@@ -395,7 +396,12 @@ func (m *Model) applyPickerResult(msg dialog.ResultMsg) tea.Cmd {
 		if title == "" {
 			return core.NotifyError("Title is required")
 		}
-		return data.CreateWorkItem(m.ctx.Client, m.ctx.Workspace.ID, title, form.Values["description"], nil)
+		var priorityID *int
+		if priority, ok := form.Choices["priority"].(data.Priority); ok && priority.ID > 0 {
+			id := priority.ID
+			priorityID = &id
+		}
+		return data.CreateWorkItem(m.ctx.Client, m.ctx.Workspace.ID, title, form.Values["description"], priorityID)
 	}
 
 	it := m.list.selectedItem()
@@ -412,10 +418,51 @@ func (m *Model) applyPickerResult(msg dialog.ResultMsg) tea.Cmd {
 		if title == "" {
 			return core.NotifyError("Title is required")
 		}
+		var statusID, priorityID *int
+		if status, ok := form.Choices["status"].(data.Status); ok && (it.StatusID == nil || *it.StatusID != status.ID) {
+			id := status.ID
+			statusID = &id
+			it.StatusID = &id
+			it.StatusName = status.Name
+			it.Status = status.Name
+			it.StatusCategoryColor = status.CategoryColor
+		}
+		if priority, ok := form.Choices["priority"].(data.Priority); ok && (it.PriorityID == nil || *it.PriorityID != priority.ID) {
+			id := priority.ID
+			priorityID = &id
+			it.PriorityID = &id
+			it.PriorityName = priority.Name
+			it.Priority = priority.Name
+			it.PriorityColor = priority.Color
+		}
+		assigneeChanged := false
+		assigneeID := 0
+		if assignee, ok := form.Choices["assignee"].(data.User); ok {
+			assigneeID = assignee.ID
+			current := 0
+			if it.AssigneeID != nil {
+				current = *it.AssigneeID
+			}
+			if current != assigneeID {
+				assigneeChanged = true
+				if assigneeID > 0 {
+					id := assigneeID
+					it.AssigneeID = &id
+					it.AssigneeName = assignee.FullName
+				} else {
+					it.AssigneeID = nil
+					it.AssigneeName = ""
+				}
+			}
+		}
 		it.Title = title
 		it.Description = form.Values["description"]
 		m.rebuildRows()
-		return tea.Batch(m.syncDetail(), data.UpdateWorkItem(m.ctx.Client, it.ID, title, it.Description, nil, nil))
+		cmds := []tea.Cmd{m.syncDetail(), data.UpdateWorkItem(m.ctx.Client, it.ID, title, it.Description, statusID, priorityID)}
+		if assigneeChanged {
+			cmds = append(cmds, data.SetItemAssignee(m.ctx.Client, it.ID, assigneeID))
+		}
+		return tea.Batch(cmds...)
 	case formCommentID:
 		form, ok := msg.Value.(dialog.FormResult)
 		if !ok {
@@ -709,6 +756,57 @@ func (m *Model) openAssignPicker() tea.Cmd {
 	return dialog.Open(dialog.NewPicker(pickerAssignID, "Assign to", options, selectedIdx, m.ctx.Styles))
 }
 
+func (m *Model) statusFormOptions(it *data.WorkItem) (options []dialog.Option, selected any) {
+	options = make([]dialog.Option, 0, len(m.statuses))
+	for _, status := range m.statuses {
+		options = append(options, dialog.Option{
+			Label: chip.Status(m.ctx.Styles, status.Name, status.CategoryColor), Search: status.Name, Value: status,
+		})
+		if it != nil && it.StatusID != nil && *it.StatusID == status.ID {
+			selected = status
+		}
+	}
+	return options, selected
+}
+
+func (m *Model) priorityFormOptions(it *data.WorkItem) (options []dialog.Option, selected any) {
+	options = make([]dialog.Option, 0, len(m.priorities))
+	for _, priority := range m.priorities {
+		options = append(options, dialog.Option{
+			Label: chip.Priority(m.ctx.Styles, priority.Name, priority.Color), Search: priority.Name, Value: priority,
+		})
+		if it != nil && it.PriorityID != nil && *it.PriorityID == priority.ID {
+			selected = priority
+		}
+	}
+	return options, selected
+}
+
+func (m *Model) assigneeFormOptions(it *data.WorkItem) (options []dialog.Option, selected any) {
+	s := m.ctx.Styles
+	unassigned := data.User{}
+	options = make([]dialog.Option, 0, len(m.users)+1)
+	options = append(options, dialog.Option{Label: s.Base.Hint.Render("(unassigned)"), Search: "unassigned", Value: unassigned})
+	selected = unassigned
+	for _, user := range m.users {
+		label := user.FullName
+		if label == "" {
+			label = user.Username
+		}
+		if user.IsAgent {
+			label += " " + s.List.Muted.Render("· agent")
+		}
+		if m.ctx.User != nil && user.ID == m.ctx.User.UserID {
+			label += " " + s.List.Muted.Render("· me")
+		}
+		options = append(options, dialog.Option{Label: label, Search: user.FullName + " " + user.Username, Value: user})
+		if it != nil && it.AssigneeID != nil && *it.AssigneeID == user.ID {
+			selected = user
+		}
+	}
+	return options, selected
+}
+
 func (m *Model) adjustSplit(delta float64) tea.Cmd {
 	m.splitRatio += delta
 	if m.splitRatio < minSplitRatio {
@@ -740,6 +838,7 @@ func (m *Model) formWidth() int {
 
 func (m *Model) newFormTextarea(value string, height int) textarea.Model {
 	ta := textarea.New()
+	ta.SetStyles(inputs.TextareaStyles(m.ctx.Styles))
 	ta.SetValue(value)
 	ta.SetWidth(m.formWidth())
 	ta.SetHeight(height)
@@ -760,6 +859,21 @@ func (m *Model) openEdit() tea.Cmd {
 		{Key: "title", Label: "Title", Input: title},
 		{Key: "description", Label: "Description", Multiline: true, Area: m.newFormTextarea(it.Description, 10)},
 	}
+	if options, value := m.statusFormOptions(it); len(options) > 0 {
+		fields = append(fields, dialog.FormField{Key: "status", Label: "Status", Choice: &dialog.FormChoice{
+			PickerID: pickerStatusID, PickerTitle: "Set status", Options: options, Value: value,
+		}})
+	}
+	if options, value := m.priorityFormOptions(it); len(options) > 0 {
+		fields = append(fields, dialog.FormField{Key: "priority", Label: "Priority", Choice: &dialog.FormChoice{
+			PickerID: pickerPriorityID, PickerTitle: "Set priority", Options: options, Value: value,
+		}})
+	}
+	if options, value := m.assigneeFormOptions(it); len(options) > 0 {
+		fields = append(fields, dialog.FormField{Key: "assignee", Label: "Assignee", Choice: &dialog.FormChoice{
+			PickerID: pickerAssignID, PickerTitle: "Assign to", Options: options, Value: value,
+		}})
+	}
 	return dialog.Open(dialog.NewForm(formEditID, "Edit · "+m.itemKey(it), fields, m.ctx.Styles, m.formWidth()))
 }
 
@@ -771,6 +885,11 @@ func (m *Model) openCreate() tea.Cmd {
 	fields := []dialog.FormField{
 		{Key: "title", Label: "Title", Input: title},
 		{Key: "description", Label: "Description (optional)", Multiline: true, Area: m.newFormTextarea("", 6)},
+	}
+	if options, value := m.priorityFormOptions(nil); len(options) > 0 {
+		fields = append(fields, dialog.FormField{Key: "priority", Label: "Priority", Choice: &dialog.FormChoice{
+			PickerID: pickerPriorityID, PickerTitle: "Set priority", Options: options, Value: value,
+		}})
 	}
 	return dialog.Open(dialog.NewForm(formCreateID, "New work item · "+m.ctx.Workspace.Name, fields, m.ctx.Styles, m.formWidth()))
 }

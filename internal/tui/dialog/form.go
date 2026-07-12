@@ -1,41 +1,53 @@
 package dialog
 
 import (
+	"reflect"
 	"strings"
 
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 
+	"windshift/internal/tui/components/inputs"
 	"windshift/internal/tui/styles"
 )
 
-// FormField is one labeled input in a Form. Exactly one of Input/Area is
-// used, selected by Multiline.
+// FormField is one labeled input in a Form. Exactly one of Input, Area, or
+// Choice is used.
 type FormField struct {
 	Key       string // key in the submitted values map
 	Label     string
 	Multiline bool
 	Input     textinput.Model
 	Area      textarea.Model
+	Choice    *FormChoice
+}
+
+// FormChoice describes a picker-backed form field.
+type FormChoice struct {
+	PickerID    string
+	PickerTitle string
+	Options     []Option
+	Value       any
 }
 
 // FormResult is delivered through ResultMsg.Value on submit.
 type FormResult struct {
-	Values map[string]string
+	Values  map[string]string
+	Choices map[string]any
 }
 
-// Form is a modal form dialog: tab/shift+tab (and enter on single-line
-// fields) move focus, ctrl+s submits, esc cancels. Construct it at open
-// time so the textarea is born with a real size (bubbletea v2 sizing
-// hazard).
+// Form is a modal form dialog with separate field selection and editing
+// modes. Enter edits the selected field, esc stops editing, and s submits
+// from selection mode.
 type Form struct {
-	id     string
-	title  string
-	fields []FormField
-	focus  int
-	styles *styles.Styles
-	width  int
+	id      string
+	title   string
+	fields  []FormField
+	focus   int
+	styles  *styles.Styles
+	width   int
+	editing bool
 }
 
 // NewForm builds a form dialog. width is the inner content width the
@@ -52,13 +64,17 @@ func NewForm(id, title string, fields []FormField, s *styles.Styles, width int) 
 		width:  width,
 	}
 	for i := range f.fields {
-		if f.fields[i].Multiline {
+		switch {
+		case f.fields[i].Choice != nil:
+			continue
+		case f.fields[i].Multiline:
 			f.fields[i].Area.SetWidth(width)
-		} else {
+		default:
 			f.fields[i].Input.SetWidth(width)
 		}
 	}
-	f.setFocus(0)
+	f.selectField(0)
+	f.OnThemeChanged(s)
 	return f
 }
 
@@ -73,7 +89,21 @@ func (f *Form) PreferredWidth() int { return f.width + 4 }
 // hint line.
 func (f *Form) Footer() string { return "" }
 
-func (f *Form) setFocus(i int) {
+func (f *Form) OnThemeChanged(s *styles.Styles) {
+	f.styles = s
+	for i := range f.fields {
+		switch {
+		case f.fields[i].Choice != nil:
+			continue
+		case f.fields[i].Multiline:
+			f.fields[i].Area.SetStyles(inputs.TextareaStyles(s))
+		default:
+			f.fields[i].Input.SetStyles(inputs.Styles(s))
+		}
+	}
+}
+
+func (f *Form) selectField(i int) {
 	if len(f.fields) == 0 {
 		return
 	}
@@ -82,57 +112,112 @@ func (f *Form) setFocus(i int) {
 	}
 	i %= len(f.fields)
 	for j := range f.fields {
-		if f.fields[j].Multiline {
+		switch {
+		case f.fields[j].Choice != nil:
+			continue
+		case f.fields[j].Multiline:
 			f.fields[j].Area.Blur()
-		} else {
+		default:
 			f.fields[j].Input.Blur()
 		}
 	}
 	f.focus = i
-	if f.fields[i].Multiline {
-		f.fields[i].Area.Focus()
+}
+
+func (f *Form) beginEditing() tea.Cmd {
+	field := &f.fields[f.focus]
+	if field.Choice != nil {
+		selected := 0
+		for i, option := range field.Choice.Options {
+			if reflect.DeepEqual(option.Value, field.Choice.Value) {
+				selected = i
+				break
+			}
+		}
+		return Open(NewPicker(field.Choice.PickerID, field.Choice.PickerTitle, field.Choice.Options, selected, f.styles))
+	}
+	f.editing = true
+	if field.Multiline {
+		return field.Area.Focus()
+	}
+	field.Input.Focus()
+	field.Input.CursorEnd()
+	return nil
+}
+
+func (f *Form) stopEditing() {
+	f.editing = false
+	field := &f.fields[f.focus]
+	if field.Multiline {
+		field.Area.Blur()
 	} else {
-		f.fields[i].Input.Focus()
-		f.fields[i].Input.CursorEnd()
+		field.Input.Blur()
 	}
 }
 
 func (f *Form) values() FormResult {
 	vals := make(map[string]string, len(f.fields))
+	choices := make(map[string]any)
 	for i := range f.fields {
-		if f.fields[i].Multiline {
+		switch {
+		case f.fields[i].Choice != nil:
+			choices[f.fields[i].Key] = f.fields[i].Choice.Value
+		case f.fields[i].Multiline:
 			vals[f.fields[i].Key] = f.fields[i].Area.Value()
-		} else {
+		default:
 			vals[f.fields[i].Key] = f.fields[i].Input.Value()
 		}
 	}
-	return FormResult{Values: vals}
+	return FormResult{Values: vals, Choices: choices}
 }
 
 func (f *Form) HandleKey(msg tea.KeyPressMsg) Action {
-	cur := &f.fields[f.focus]
+	if f.editing {
+		return f.handleEditingKey(msg)
+	}
+
+	if msg.String() == "s" {
+		return Action{Close: true, Selected: f.values()}
+	}
+
+	if len(f.fields) == 0 {
+		return Action{}
+	}
 	switch msg.String() {
 	case "esc":
 		return Action{Close: true}
-	case "ctrl+s":
-		return Action{Close: true, Selected: f.values()}
+	case "tab", "down", "j":
+		f.selectField(f.focus + 1)
+		return Action{}
+	case "shift+tab", "up", "k":
+		f.selectField(f.focus - 1)
+		return Action{}
+	case "enter":
+		return Action{Cmd: f.beginEditing()}
+	}
+	return Action{}
+}
+
+func (f *Form) handleEditingKey(msg tea.KeyPressMsg) Action {
+	cur := &f.fields[f.focus]
+	switch msg.String() {
+	case "esc":
+		f.stopEditing()
+		return Action{}
 	case "tab":
-		f.setFocus(f.focus + 1)
+		f.stopEditing()
+		f.selectField(f.focus + 1)
 		return Action{}
 	case "shift+tab":
-		f.setFocus(f.focus - 1)
+		f.stopEditing()
+		f.selectField(f.focus - 1)
 		return Action{}
 	case "enter":
 		if !cur.Multiline {
-			if f.focus == len(f.fields)-1 {
-				return Action{Close: true, Selected: f.values()}
-			}
-			f.setFocus(f.focus + 1)
+			f.stopEditing()
 			return Action{}
 		}
-		// Multiline: enter inserts a newline — fall through to the field.
 	}
-
 	var cmd tea.Cmd
 	if cur.Multiline {
 		cur.Area, cmd = cur.Area.Update(msg)
@@ -140,6 +225,17 @@ func (f *Form) HandleKey(msg tea.KeyPressMsg) Action {
 		cur.Input, cmd = cur.Input.Update(msg)
 	}
 	return Action{Cmd: cmd}
+}
+
+func (f *Form) HandleResult(msg ResultMsg) tea.Cmd {
+	for i := range f.fields {
+		choice := f.fields[i].Choice
+		if choice != nil && choice.PickerID == msg.ID {
+			choice.Value = msg.Value
+			return nil
+		}
+	}
+	return nil
 }
 
 func (f *Form) View(_, _ int) string {
@@ -154,13 +250,32 @@ func (f *Form) View(_, _ int) string {
 			label = "  " + label
 		}
 		rows = append(rows, label)
-		if fld.Multiline {
+		switch {
+		case fld.Choice != nil:
+			value := s.Base.Hint.Render("(none)")
+			for _, option := range fld.Choice.Options {
+				if reflect.DeepEqual(option.Value, fld.Choice.Value) {
+					value = option.Label
+					break
+				}
+			}
+			rows = append(rows, inputs.RenderPickerCell(s, value, i == f.focus))
+		case fld.Multiline:
 			rows = append(rows, fld.Area.View())
-		} else {
-			rows = append(rows, fld.Input.View())
+		default:
+			rows = append(rows, inputs.Render(s, fld.Input, i == f.focus, f.editing && i == f.focus, f.width))
 		}
-		rows = append(rows, "")
+		if i < len(f.fields)-1 {
+			rows = append(rows, "")
+		}
 	}
-	rows = append(rows, s.Form.Hint.Render("ctrl+s save · tab next field · esc cancel"))
+	hint := "↑↓ select · enter edit · s save · esc cancel"
+	if f.editing {
+		hint = "esc stop editing · tab next field"
+		if f.fields[f.focus].Multiline {
+			hint += " · enter newline"
+		}
+	}
+	rows = append(rows, "", s.Form.Hint.Render(hint))
 	return strings.Join(rows, "\n")
 }

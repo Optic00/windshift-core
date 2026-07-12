@@ -3,6 +3,7 @@
 package inputs
 
 import (
+	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -20,6 +21,29 @@ func New(s *styles.Styles, placeholder string, charLimit int) textinput.Model {
 	in.CharLimit = charLimit
 	in.SetStyles(Styles(s))
 	return in
+}
+
+// TextareaStyles keeps multiline editors in the same palette as the rest of
+// the form. The bubbles defaults otherwise leak their own blue/grey theme into
+// edit and comment dialogs.
+func TextareaStyles(s *styles.Styles) textarea.Styles {
+	st := textarea.DefaultDarkStyles()
+	st.Focused.Base = lipgloss.NewStyle().Foreground(s.Palette.FgBase).Background(s.Palette.BgSurfaceHovered)
+	st.Focused.Text = lipgloss.NewStyle().Foreground(s.Palette.FgBase)
+	st.Focused.Placeholder = lipgloss.NewStyle().Foreground(s.Palette.FgMuted)
+	st.Focused.CursorLine = lipgloss.NewStyle().Background(s.Palette.BgSurfaceHovered)
+	st.Focused.EndOfBuffer = lipgloss.NewStyle().Foreground(s.Palette.BgSurfaceHovered)
+	st.Focused.Prompt = lipgloss.NewStyle().Foreground(s.Palette.Primary)
+	st.Blurred.Base = lipgloss.NewStyle().Foreground(s.Palette.FgBase).Background(s.Palette.BgSurface)
+	st.Blurred.Text = lipgloss.NewStyle().Foreground(s.Palette.FgBase)
+	st.Blurred.Placeholder = lipgloss.NewStyle().Foreground(s.Palette.FgMuted)
+	st.Blurred.CursorLine = lipgloss.NewStyle().Background(s.Palette.BgSurface)
+	st.Blurred.EndOfBuffer = lipgloss.NewStyle().Foreground(s.Palette.BgSurface)
+	st.Blurred.Prompt = lipgloss.NewStyle().Foreground(s.Palette.FgMuted)
+	st.Cursor.Color = s.Palette.Primary
+	st.Cursor.Shape = tea.CursorBar
+	st.Cursor.Blink = true
+	return st
 }
 
 // Styles configures textinput.Styles for both focused and blurred states.

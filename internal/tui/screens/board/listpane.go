@@ -251,7 +251,7 @@ func (l *listPane) renderRow(i int) string {
 			dot = lipgloss.NewStyle().Foreground(c).Render("●") + " "
 		}
 		text := s.List.Muted.Render(arrow+" ") + dot +
-			nameStyle.Render(strings.ToUpper(r.GroupName)) + " " +
+			nameStyle.Render(r.GroupName) + " " +
 			s.List.Counter.Render(count)
 		var line string
 		if selected {

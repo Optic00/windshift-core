@@ -7,19 +7,17 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"windshift/internal/tui/data"
-	"windshift/internal/tui/logo"
 	"windshift/internal/tui/styles"
 )
 
 // Render paints the header:
 //
-//	◐ Windshift ╱╱╱╱╱╱╱╱╱╱  WI · Workspace name        user@host
+//	◐ Windshift   /   WI · Workspace name                         user@host
 //
-// The diagonal fill grows/shrinks with terminal width; left and right blocks
-// are pinned. Truncates the workspace block before the diagonals if the
-// terminal is narrow. workspaceLabel may be empty (workspace picker).
+// Left and right blocks are pinned; the workspace breadcrumb truncates when
+// the terminal is narrow. workspaceLabel may be empty (workspace picker).
 func Render(s *styles.Styles, width int, workspaceLabel string, u *data.UserInfo) string {
-	left := logo.Small(s.Header.GradFrom, s.Header.GradTo)
+	left := s.Header.Logo.Foreground(s.Palette.Primary).Render("◐ Windshift")
 
 	var middle string
 	if workspaceLabel != "" {
@@ -32,25 +30,23 @@ func Render(s *styles.Styles, width int, workspaceLabel string, u *data.UserInfo
 	midW := lipgloss.Width(middle)
 	rightW := lipgloss.Width(right)
 
-	// Layout: left + " " + diagonals + " " + middle + "   " + right
-	// Fixed gaps: 1 + 1 + 3 = 5 cells.
-	const fixedGaps = 5
-	diagW := width - leftW - midW - rightW - fixedGaps
-	if diagW < 1 {
-		diagW = 1
-		// Truncate the middle if we're tight.
-		budget := width - leftW - rightW - fixedGaps - diagW
-		if budget < 0 {
-			budget = 0
-		}
-		if midW > budget {
-			middle = lipgloss.NewStyle().MaxWidth(budget).Render(middle)
-		}
+	// Keep the header calm and breadcrumb-like. The previous diagonal gradient
+	// fill competed with the board and was the strongest visual element.
+	const fixedGaps = 9 // outer padding plus "   /   "
+	budget := width - leftW - rightW - fixedGaps
+	if budget < 0 {
+		budget = 0
+	}
+	if midW > budget {
+		middle = lipgloss.NewStyle().MaxWidth(budget).Render(middle)
+		midW = lipgloss.Width(middle)
+	}
+	pad := width - leftW - midW - rightW - fixedGaps
+	if pad < 0 {
+		pad = 0
 	}
 
-	diag := s.Header.Divider.Render(strings.Repeat("╱", diagW))
-
-	parts := []string{left, " ", diag, " ", middle, "   ", right}
+	parts := []string{" ", left, s.Header.Divider.Render("   /   "), middle, strings.Repeat(" ", pad), right, " "}
 	bar := strings.Join(parts, "")
 
 	// Pad / truncate to exact width, then apply the header bar background.

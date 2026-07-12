@@ -160,9 +160,10 @@ func NewTUIHandler(apiURL string, sessionManager *auth.SessionManager, tokenMana
 			client.SetBearerToken(bearerToken)
 		}
 
+		defaultTheme := styles.ByName(styles.DefaultTheme)
 		ctx := &core.Ctx{
-			Styles: styles.New(styles.WindshiftDark()),
-			Theme:  "windshift-dark",
+			Styles: styles.New(defaultTheme.Palette),
+			Theme:  defaultTheme.Name,
 			Client: client,
 			User:   userInfo,
 			Keys:   core.DefaultKeyMap(),

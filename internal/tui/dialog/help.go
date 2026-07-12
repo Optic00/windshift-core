@@ -33,6 +33,8 @@ func NewHelp(groups []HelpGroup, s *styles.Styles) *Help {
 func (h *Help) ID() string    { return HelpID }
 func (h *Help) Title() string { return "Help" }
 
+func (h *Help) OnThemeChanged(s *styles.Styles) { h.styles = s }
+
 func (h *Help) HandleKey(msg tea.KeyPressMsg) Action {
 	switch msg.String() {
 	case "esc", "escape", "q", "?", "enter":
