@@ -7,6 +7,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"windshift/internal/tui/components/chip"
+	"windshift/internal/tui/components/markdown"
 	"windshift/internal/tui/core"
 	"windshift/internal/tui/data"
 )
@@ -24,6 +25,8 @@ type detailPane struct {
 	lines  []string // wrapped content cache
 	offset int
 
+	md *markdown.Renderer // width-bound; recreated on resize/theme change
+
 	width  int
 	height int
 }
@@ -33,9 +36,18 @@ func newDetailPane(ctx *core.Ctx) *detailPane {
 }
 
 func (d *detailPane) setSize(w, h int) {
+	if w != d.width {
+		d.md = nil // renderer is width-bound
+	}
 	d.width = w
 	d.height = h
 	d.rebuild()
+}
+
+// resetRenderer drops the markdown renderer so the next rebuild re-derives
+// it (theme changes).
+func (d *detailPane) resetRenderer() {
+	d.md = nil
 }
 
 // setItem swaps the displayed item, resetting scroll and comment state.
@@ -131,8 +143,17 @@ func (d *detailPane) rebuild() {
 	add(s.List.Rule.Render(strings.Repeat("─", min(w, 60))))
 	add("")
 
+	if d.md == nil {
+		d.md = markdown.New(s, w)
+	}
+
+	// Markdown blocks arrive pre-wrapped by the renderer — append raw.
+	addMD := func(text string) {
+		out = append(out, strings.Split(d.md.Render(text), "\n")...)
+	}
+
 	if strings.TrimSpace(it.Description) != "" {
-		add(it.Description)
+		addMD(it.Description)
 	} else {
 		add(s.Base.Hint.Render("(no description)"))
 	}
@@ -157,7 +178,7 @@ func (d *detailPane) rebuild() {
 				author = *c.AuthorName
 			}
 			add(s.Base.Heading.Render(author) + " " + s.Base.Hint.Render("· "+shortDate(c.CreatedAt)))
-			add(c.Content)
+			addMD(c.Content)
 			add("")
 		}
 	}

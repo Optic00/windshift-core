@@ -184,6 +184,7 @@ func (m *Model) paneWidths() (listW, detailW int) {
 // (core.ThemeAware).
 func (m *Model) OnThemeChanged() {
 	m.spinner.Style = lipgloss.NewStyle().Foreground(m.ctx.Styles.Palette.Primary)
+	m.detail.resetRenderer()
 	m.detail.rebuild()
 }
 
