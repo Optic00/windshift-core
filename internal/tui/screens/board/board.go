@@ -4,12 +4,14 @@
 package board
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -19,9 +21,6 @@ import (
 	"windshift/internal/tui/core"
 	"windshift/internal/tui/data"
 	"windshift/internal/tui/dialog"
-	"windshift/internal/tui/screens/comments"
-	"windshift/internal/tui/screens/create"
-	"windshift/internal/tui/screens/detail"
 	"windshift/internal/tui/screens/timelog"
 )
 
@@ -29,6 +28,9 @@ const (
 	pickerStatusID   = "board.picker.status"
 	pickerPriorityID = "board.picker.priority"
 	pickerAssignID   = "board.picker.assign"
+	formEditID       = "board.form.edit"
+	formCreateID     = "board.form.create"
+	formCommentID    = "board.form.comment"
 )
 
 const (
@@ -247,9 +249,15 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 	case dialog.ResultMsg:
 		return m.applyPickerResult(msg)
 
-	case data.WorkItemCreatedMsg, data.WorkItemUpdatedMsg:
+	case data.WorkItemCreatedMsg:
 		if m.ctx.Workspace != nil {
-			return data.LoadWorkItems(m.ctx.Client, m.ctx.Workspace.ID)
+			return tea.Batch(core.NotifySuccess("Work item created"), data.LoadWorkItems(m.ctx.Client, m.ctx.Workspace.ID))
+		}
+		return nil
+
+	case data.WorkItemUpdatedMsg:
+		if m.ctx.Workspace != nil {
+			return tea.Batch(core.NotifySuccess("Saved"), data.LoadWorkItems(m.ctx.Client, m.ctx.Workspace.ID))
 		}
 		return nil
 
@@ -258,7 +266,7 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 		// the selected item.
 		if it := m.list.selectedItem(); it != nil {
 			m.commentsFresh[it.ID] = false
-			return data.LoadComments(m.ctx.Client, it.ID)
+			return tea.Batch(core.NotifySuccess("Comment added"), data.LoadComments(m.ctx.Client, it.ID))
 		}
 		return nil
 
@@ -324,11 +332,47 @@ func (m *Model) EditingText() bool { return m.filtering }
 // applyPickerResult patches the selected item optimistically and fires the
 // matching mutation + targeted refresh.
 func (m *Model) applyPickerResult(msg dialog.ResultMsg) tea.Cmd {
+	// Create doesn't need a selection.
+	if msg.ID == formCreateID {
+		form, ok := msg.Value.(dialog.FormResult)
+		if !ok || m.ctx.Workspace == nil {
+			return nil
+		}
+		title := strings.TrimSpace(form.Values["title"])
+		if title == "" {
+			return core.NotifyError("Title is required")
+		}
+		return data.CreateWorkItem(m.ctx.Client, m.ctx.Workspace.ID, title, form.Values["description"], nil)
+	}
+
 	it := m.list.selectedItem()
 	if it == nil {
 		return nil
 	}
 	switch msg.ID {
+	case formEditID:
+		form, ok := msg.Value.(dialog.FormResult)
+		if !ok {
+			return nil
+		}
+		title := strings.TrimSpace(form.Values["title"])
+		if title == "" {
+			return core.NotifyError("Title is required")
+		}
+		it.Title = title
+		it.Description = form.Values["description"]
+		m.rebuildRows()
+		return tea.Batch(m.syncDetail(), data.UpdateWorkItem(m.ctx.Client, it.ID, title, it.Description, nil, nil))
+	case formCommentID:
+		form, ok := msg.Value.(dialog.FormResult)
+		if !ok {
+			return nil
+		}
+		body := strings.TrimSpace(form.Values["comment"])
+		if body == "" {
+			return nil
+		}
+		return data.CreateComment(m.ctx.Client, it.ID, body)
 	case pickerStatusID:
 		s, ok := msg.Value.(data.Status)
 		if !ok {
@@ -411,9 +455,9 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 			m.focus = focusList
 			m.narrowDetail = false
 		case key.Matches(msg, k.Edit):
-			return m.pushEdit()
+			return m.openEdit()
 		case key.Matches(msg, k.Comments):
-			return m.pushComments()
+			return m.openComment()
 		}
 		return nil
 	}
@@ -465,13 +509,11 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 	case key.Matches(msg, k.Assign):
 		return m.openAssignPicker()
 	case key.Matches(msg, k.Edit):
-		return m.pushEdit()
+		return m.openEdit()
 	case key.Matches(msg, k.New):
-		if m.ctx.Workspace != nil {
-			return core.Push(create.New(m.ctx, m.priorities))
-		}
+		return m.openCreate()
 	case key.Matches(msg, k.Comments):
-		return m.pushComments()
+		return m.openComment()
 	case key.Matches(msg, k.LogTime):
 		if it := m.list.selectedItem(); it != nil {
 			return core.Push(timelog.New(m.ctx, *it, m.timeProjects))
@@ -610,18 +652,72 @@ func (m *Model) adjustSplit(delta float64) {
 	m.SetSize(m.width, m.height)
 }
 
-func (m *Model) pushEdit() tea.Cmd {
-	if it := m.list.selectedItem(); it != nil {
-		return core.Push(detail.New(m.ctx, *it, m.statuses, m.priorities, m.timeProjects))
+// formWidth sizes overlay-form fields to the terminal.
+func (m *Model) formWidth() int {
+	w := m.width - 16
+	if w > 70 {
+		w = 70
 	}
-	return nil
+	if w < 30 {
+		w = 30
+	}
+	return w
 }
 
-func (m *Model) pushComments() tea.Cmd {
-	if it := m.list.selectedItem(); it != nil {
-		return core.Push(comments.New(m.ctx, *it))
+func (m *Model) newFormTextarea(value string, height int) textarea.Model {
+	ta := textarea.New()
+	ta.SetValue(value)
+	ta.SetWidth(m.formWidth())
+	ta.SetHeight(height)
+	ta.ShowLineNumbers = false
+	ta.CharLimit = 5000
+	ta.Placeholder = "Markdown supported…"
+	return ta
+}
+
+func (m *Model) openEdit() tea.Cmd {
+	it := m.list.selectedItem()
+	if it == nil {
+		return nil
 	}
-	return nil
+	title := inputs.New(m.ctx.Styles, "Title", 200)
+	title.SetValue(it.Title)
+	fields := []dialog.FormField{
+		{Key: "title", Label: "Title", Input: title},
+		{Key: "description", Label: "Description", Multiline: true, Area: m.newFormTextarea(it.Description, 10)},
+	}
+	return dialog.Open(dialog.NewForm(formEditID, "Edit · "+m.itemKey(it), fields, m.ctx.Styles, m.formWidth()))
+}
+
+func (m *Model) openCreate() tea.Cmd {
+	if m.ctx.Workspace == nil {
+		return nil
+	}
+	title := inputs.New(m.ctx.Styles, "Title", 200)
+	fields := []dialog.FormField{
+		{Key: "title", Label: "Title", Input: title},
+		{Key: "description", Label: "Description (optional)", Multiline: true, Area: m.newFormTextarea("", 6)},
+	}
+	return dialog.Open(dialog.NewForm(formCreateID, "New work item · "+m.ctx.Workspace.Name, fields, m.ctx.Styles, m.formWidth()))
+}
+
+func (m *Model) openComment() tea.Cmd {
+	it := m.list.selectedItem()
+	if it == nil {
+		return nil
+	}
+	fields := []dialog.FormField{
+		{Key: "comment", Label: "Comment", Multiline: true, Area: m.newFormTextarea("", 6)},
+	}
+	return dialog.Open(dialog.NewForm(formCommentID, "Comment on "+m.itemKey(it), fields, m.ctx.Styles, m.formWidth()))
+}
+
+func (m *Model) itemKey(it *data.WorkItem) string {
+	prefix := it.WorkspaceKey
+	if prefix == "" && m.ctx.Workspace != nil {
+		prefix = m.ctx.Workspace.Key
+	}
+	return fmt.Sprintf("%s-%d", prefix, it.ID)
 }
 
 func (m *Model) View() string {

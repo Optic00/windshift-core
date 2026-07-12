@@ -243,10 +243,25 @@ func (m Model) windowTitle() string {
 // open) — proper alpha overlay can come later if needed.
 func (m Model) overlayDialog(d dialog.Dialog) string {
 	s := m.ctx.Styles
+
+	width := 40
+	if sized, ok := d.(interface{ PreferredWidth() int }); ok {
+		width = sized.PreferredWidth()
+	}
+	if width > m.ctx.Width-8 {
+		width = m.ctx.Width - 8
+	}
+
+	footerText := "↑↓ select · enter confirm · esc cancel"
+	if withFooter, ok := d.(interface{ Footer() string }); ok {
+		footerText = withFooter.Footer()
+	}
+
 	titleLine := s.Dialog.Title.Render(d.Title())
-	body := d.View(40, m.ctx.Height-8)
-	footer := s.Dialog.Footer.Render("↑↓ select · enter confirm · esc cancel")
-	stacked := titleLine + "\n" + body + "\n" + footer
+	stacked := titleLine + "\n" + d.View(width, m.ctx.Height-8)
+	if footerText != "" {
+		stacked += "\n" + s.Dialog.Footer.Render(footerText)
+	}
 	frame := s.Dialog.Frame.Render(stacked)
 	return lipgloss.Place(
 		m.ctx.Width,
