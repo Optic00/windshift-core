@@ -144,20 +144,21 @@ func (m *Model) SetSize(width, height int) {
 	m.width = width
 	m.height = height
 	if m.narrow() {
-		m.list.setSize(width, m.listHeight())
-		m.detail.setSize(width, m.paneHeight())
-		m.filterInput.SetWidth(width - 4)
+		m.list.setSize(width-2, m.listHeight())
+		m.detail.setSize(width-2, m.paneHeight()-2)
+		m.filterInput.SetWidth(width - 6)
 		return
 	}
 	listW, detailW := m.paneWidths()
-	m.list.setSize(listW, m.listHeight())
-	m.detail.setSize(detailW, m.paneHeight())
-	m.filterInput.SetWidth(listW - 4)
+	m.list.setSize(listW-2, m.listHeight())
+	m.detail.setSize(detailW-2, m.paneHeight()-2)
+	m.filterInput.SetWidth(listW - 6)
 }
 
-// listHeight reserves a line for the filter input when it's visible.
+// listHeight is the row budget inside the list pane's frame, minus the
+// filter line when it's visible.
 func (m *Model) listHeight() int {
-	h := m.paneHeight()
+	h := m.paneHeight() - 2 // pane border
 	if m.filterVisible() {
 		h--
 	}
@@ -190,7 +191,7 @@ func (m *Model) paneWidths() (listW, detailW int) {
 	if maxList := m.width - 42; listW > maxList && maxList >= 28 {
 		listW = maxList
 	}
-	detailW = m.width - listW - 3 // " │ " separator
+	detailW = m.width - listW - 1 // 1-col gap between framed panes
 	if detailW < 10 {
 		detailW = 10
 	}
@@ -347,8 +348,12 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 // rebuildRows reflattens grouping state into the list pane.
 func (m *Model) rebuildRows() {
 	catByStatus := make(map[int]string, len(m.statuses))
+	colorByCat := make(map[string]string, len(m.statuses))
 	for _, s := range m.statuses {
 		catByStatus[s.ID] = s.CategoryName
+		if s.CategoryName != "" && s.CategoryColor != "" {
+			colorByCat[s.CategoryName] = s.CategoryColor
+		}
 	}
 	prioRank := make(map[int]int, len(m.priorities))
 	for i, p := range m.priorities {
@@ -369,6 +374,7 @@ func (m *Model) rebuildRows() {
 		Collapsed:          m.collapsed,
 		Filter:             m.filter,
 		WorkspaceKey:       wsKey,
+		ColorByCategory:    colorByCat,
 	}))
 }
 
@@ -800,26 +806,38 @@ func (m *Model) View() string {
 		notice = s.Base.Hint.Render("Showing the first "+strconv.Itoa(len(m.items))+" items — refine in the web UI for more.") + "\n"
 	}
 
+	h := m.paneHeight()
+
 	if m.narrow() {
 		if m.narrowDetail {
-			return notice + m.detail.view()
+			return notice + framePane(s, m.detailTitle(), m.detail.view(), m.width, h, true)
 		}
-		return notice + m.listColumn()
+		return notice + framePane(s, m.listTitle(), m.listColumn(), m.width, h, true)
 	}
 
 	listW, detailW := m.paneWidths()
-	h := m.paneHeight()
 
-	listBlock := lipgloss.NewStyle().Width(listW).Height(h).MaxHeight(h).Render(m.listColumn())
-	detailBlock := lipgloss.NewStyle().Width(detailW).Height(h).MaxHeight(h).Render(m.detail.view())
+	listBlock := framePane(s, m.listTitle(), m.listColumn(), listW, h, m.focus == focusList)
+	detailBlock := framePane(s, m.detailTitle(), m.detail.view(), detailW, h, m.focus == focusDetail)
 
-	sepColor := s.Palette.Border
-	if m.focus == focusDetail {
-		sepColor = s.Palette.BorderFocus
+	return notice + lipgloss.JoinHorizontal(lipgloss.Top, listBlock, " ", detailBlock)
+}
+
+// listTitle labels the list pane's frame with the workspace and item count.
+func (m *Model) listTitle() string {
+	name := "Work items"
+	if m.ctx.Workspace != nil {
+		name = m.ctx.Workspace.Name
 	}
-	sep := lipgloss.NewStyle().Foreground(sepColor).Render(strings.TrimSuffix(strings.Repeat("│\n", h), "\n"))
+	return fmt.Sprintf("%s · %d", name, len(m.items))
+}
 
-	return notice + lipgloss.JoinHorizontal(lipgloss.Top, listBlock, " ", sep, " ", detailBlock)
+// detailTitle labels the detail pane's frame with the selected item's key.
+func (m *Model) detailTitle() string {
+	if it := m.list.selectedItem(); it != nil {
+		return m.itemKey(it)
+	}
+	return "Details"
 }
 
 // listColumn stacks the list rows and, when active, the filter input line.

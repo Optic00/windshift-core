@@ -18,13 +18,14 @@ const (
 // Row is one line of the board's left pane: either a collapsible group
 // header or a work item.
 type Row struct {
-	Kind      RowKind
-	GroupKey  string
-	GroupName string
-	Count     int  // header: items in the group (pre-filter, pre-collapse)
-	Shown     int  // header: items surviving the filter
-	Collapsed bool // header: whether the group is folded
-	Item      *data.WorkItem
+	Kind       RowKind
+	GroupKey   string
+	GroupName  string
+	GroupColor string // header: status-category color (hex, may be empty)
+	Count      int    // header: items in the group (pre-filter, pre-collapse)
+	Shown      int    // header: items surviving the filter
+	Collapsed  bool   // header: whether the group is folded
+	Item       *data.WorkItem
 }
 
 // Grouping carries the precomputed lookup state BuildRows needs. All fields
@@ -39,6 +40,9 @@ type Grouping struct {
 	MeUserID int
 	// Collapsed holds group keys whose items are hidden.
 	Collapsed map[string]bool
+	// ColorByCategory maps a category name to its hex color for header
+	// styling.
+	ColorByCategory map[string]string
 	// Filter prunes items without changing grouping; groups left empty by
 	// an active filter are hidden entirely.
 	Filter Filter
@@ -108,12 +112,13 @@ func BuildRows(items []data.WorkItem, g Grouping) []Row {
 		sortGroupItems(b.items, g)
 		collapsed := g.Collapsed[key]
 		rows = append(rows, Row{
-			Kind:      RowHeader,
-			GroupKey:  key,
-			GroupName: key,
-			Count:     b.total,
-			Shown:     len(b.items),
-			Collapsed: collapsed,
+			Kind:       RowHeader,
+			GroupKey:   key,
+			GroupName:  key,
+			GroupColor: g.ColorByCategory[key],
+			Count:      b.total,
+			Shown:      len(b.items),
+			Collapsed:  collapsed,
 		})
 		if collapsed {
 			continue
