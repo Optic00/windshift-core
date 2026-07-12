@@ -36,6 +36,7 @@ type UserResponse struct {
 	LastName  string   `json:"last_name"`
 	FullName  string   `json:"full_name"`
 	IsActive  bool     `json:"is_active"`
+	IsAgent   bool     `json:"is_agent,omitempty"`
 	AvatarURL string   `json:"avatar_url,omitempty"`
 	Timezone  string   `json:"timezone,omitempty"`
 	Language  string   `json:"language,omitempty"`
@@ -169,6 +170,38 @@ func (h *UserHandler) GetCurrent(w http.ResponseWriter, r *http.Request) {
 	h.RespondOK(w, mapUserToResponse(u))
 }
 
+// GetAssignableForWorkspace handles GET /rest/api/v1/workspaces/{id}/assignable-users
+//
+// @Summary      List assignable users for a workspace
+// @Description  Returns active users with limited fields for assignment pickers. Unlike /users this needs no global user.list permission — view access to the workspace is enough. Sensitive fields (email, timezone, language) are always stripped. Mirrors the session surface's assignable-users endpoint.
+// @Tags         users
+// @Produce      json
+// @Security     BearerAuth
+// @Param        id   path      int  true  "Workspace ID"
+// @Success      200  {array}   handlers.UserResponse
+// @Failure      401  {object}  handlers.ErrorResponse
+// @Failure      403  {object}  handlers.ErrorResponse  "Token lacks the users:read scope"
+// @Failure      404  {object}  handlers.ErrorResponse  "Workspace not found or not accessible"
+// @Failure      500  {object}  handlers.ErrorResponse
+// @Router       /workspaces/{id}/assignable-users [get]
+func (h *UserHandler) GetAssignableForWorkspace(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.RequireWorkspaceViewAccess(w, r); !ok {
+		return
+	}
+
+	users, err := h.userSvc.ListAll()
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
+
+	response := make([]UserResponse, len(users))
+	for i := range users {
+		response[i] = mapUserToLimitedResponse(&users[i])
+	}
+	h.RespondOK(w, response)
+}
+
 // mapUserToLimitedResponse converts a models.User to UserResponse with sensitive fields stripped
 func mapUserToLimitedResponse(u *models.User) UserResponse {
 	return UserResponse{
@@ -178,6 +211,7 @@ func mapUserToLimitedResponse(u *models.User) UserResponse {
 		LastName:  u.LastName,
 		FullName:  u.FullName,
 		IsActive:  u.IsActive,
+		IsAgent:   u.IsAgent,
 		AvatarURL: u.AvatarURL,
 		CreatedAt: u.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
@@ -193,6 +227,7 @@ func mapUserToResponse(u *models.User) UserResponse {
 		LastName:  u.LastName,
 		FullName:  u.FullName,
 		IsActive:  u.IsActive,
+		IsAgent:   u.IsAgent,
 		AvatarURL: u.AvatarURL,
 		Timezone:  u.Timezone,
 		Language:  u.Language,

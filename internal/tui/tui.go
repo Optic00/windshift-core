@@ -36,6 +36,7 @@ var tuiTokenScopes = []string{
 	"items:read",
 	"items:write",
 	"priorities:read",
+	"users:read", // /users/me + /workspaces/{id}/assignable-users (assignee picker)
 }
 
 // NewTUIHandler creates a new TUI handler for SSH sessions.

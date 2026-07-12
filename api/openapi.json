@@ -4480,6 +4480,9 @@
           "is_active": {
             "type": "boolean"
           },
+          "is_agent": {
+            "type": "boolean"
+          },
           "language": {
             "type": "string"
           },
@@ -14594,6 +14597,86 @@
         "summary": "Get an agent skill by ID",
         "tags": [
           "agents"
+        ]
+      }
+    },
+    "/workspaces/{id}/assignable-users": {
+      "get": {
+        "description": "Returns active users with limited fields for assignment pickers. Unlike /users this needs no global user.list permission — view access to the workspace is enough. Sensitive fields (email, timezone, language) are always stripped. Mirrors the session surface's assignable-users endpoint.",
+        "parameters": [
+          {
+            "description": "Workspace ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/windshift_internal_restapi_v1_handlers.UserResponse"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the users:read scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Workspace not found or not accessible"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List assignable users for a workspace",
+        "tags": [
+          "users"
         ]
       }
     },

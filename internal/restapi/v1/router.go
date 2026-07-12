@@ -177,6 +177,7 @@ func RegisterRoutes(deps restapi.Deps) {
 	v1.HandleWithMiddleware("GET /workspaces/{id}/statuses/completed", workspaceHandler.ListCompletedStatuses, bearerAuth.RequirePermission("workspaces:read"), router.RequireNumericID)
 	v1.HandleWithMiddleware("GET /workspaces/{id}/item-types", workspaceHandler.GetItemTypes, bearerAuth.RequirePermission("workspaces:read"), router.RequireNumericID)
 	v1.HandleWithMiddleware("GET /workspaces/{id}/priorities", workspaceHandler.GetPriorities, bearerAuth.RequirePermission("workspaces:read"), router.RequireNumericID)
+	v1.HandleWithMiddleware("GET /workspaces/{id}/assignable-users", userHandler.GetAssignableForWorkspace, bearerAuth.RequirePermission("users:read"), router.RequireNumericID)
 
 	// Item lookup by stable (workspace_key, item_number) pair — for embed clients
 	// (e.g. docmost) that store stable references rather than volatile numeric ids.
