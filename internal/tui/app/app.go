@@ -13,6 +13,7 @@ import (
 	"windshift/internal/tui/core"
 	"windshift/internal/tui/data"
 	"windshift/internal/tui/dialog"
+	"windshift/internal/tui/styles"
 )
 
 // chromeRows is what the header (bar + rule) and status bar occupy.
@@ -147,9 +148,27 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.dialogs = append(m.dialogs, dialog.NewHelp(m.helpGroups(), m.ctx.Styles))
 			return m, nil
 		}
+		if key.Matches(msg, m.ctx.Keys.Theme) {
+			return m, m.cycleTheme()
+		}
 	}
 
 	return m, m.active().Update(msg)
+}
+
+// cycleTheme advances to the next registered theme. ctx.Styles is replaced
+// wholesale — anything reading it at render time restyles for free; screens
+// with baked styles are told via ThemeAware.
+func (m Model) cycleTheme() tea.Cmd {
+	next := styles.Next(m.ctx.Theme)
+	m.ctx.Theme = next.Name
+	m.ctx.Styles = styles.New(next.Palette)
+	for _, s := range m.stack {
+		if ta, ok := s.(core.ThemeAware); ok {
+			ta.OnThemeChanged()
+		}
+	}
+	return core.NotifySuccess("Theme: " + next.Name)
 }
 
 func (m Model) editingText() bool {

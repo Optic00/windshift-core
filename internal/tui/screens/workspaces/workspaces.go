@@ -51,6 +51,12 @@ func (m *Model) SetSize(width, height int) {
 	m.height = height
 }
 
+// OnThemeChanged re-derives styles baked into retained components
+// (core.ThemeAware).
+func (m *Model) OnThemeChanged() {
+	m.spinner.Style = lipgloss.NewStyle().Foreground(m.ctx.Styles.Palette.Primary)
+}
+
 func (m *Model) Title() string { return "Pick a workspace" }
 
 func (m *Model) ShortHelp() []key.Binding {

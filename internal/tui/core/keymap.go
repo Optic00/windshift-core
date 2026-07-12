@@ -7,8 +7,9 @@ import "charm.land/bubbles/v2/key"
 // consumes FullHelp for the complete listing.
 type KeyMap struct {
 	// Global
-	Quit key.Binding
-	Help key.Binding
+	Quit  key.Binding
+	Help  key.Binding
+	Theme key.Binding
 
 	// Navigation
 	Up    key.Binding
@@ -37,6 +38,7 @@ func DefaultKeyMap() KeyMap {
 	return KeyMap{
 		Quit:      key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 		Help:      key.NewBinding(key.WithKeys("?", "h", "f1"), key.WithHelp("?", "help")),
+		Theme:     key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "theme")),
 		Up:        key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
 		Down:      key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
 		Left:      key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "left")),
@@ -58,6 +60,6 @@ func (k KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Enter, k.Back, k.NextField, k.PrevField},
 		{k.New, k.Save, k.Refresh, k.Comments, k.LogTime},
-		{k.Help, k.Quit},
+		{k.Theme, k.Help, k.Quit},
 	}
 }

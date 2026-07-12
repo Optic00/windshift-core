@@ -65,6 +65,14 @@ func (m *Model) SetSize(width, _ int) {
 
 func (m *Model) Title() string { return "New work item" }
 
+// OnThemeChanged re-applies input styles baked at construction
+// (core.ThemeAware).
+func (m *Model) OnThemeChanged() {
+	st := inputs.Styles(m.ctx.Styles)
+	m.titleInput.SetStyles(st)
+	m.descInput.SetStyles(st)
+}
+
 func (m *Model) ShortHelp() []key.Binding {
 	k := m.ctx.Keys
 	return []key.Binding{k.Up, k.Down, k.Enter, k.Save, k.Back}
