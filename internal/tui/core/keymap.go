@@ -31,6 +31,17 @@ type KeyMap struct {
 	// Form editing
 	NextField key.Binding
 	PrevField key.Binding
+
+	// Board
+	Edit         key.Binding
+	PrevGroup    key.Binding
+	NextGroup    key.Binding
+	HalfPageUp   key.Binding
+	HalfPageDown key.Binding
+	Collapse     key.Binding
+	FocusToggle  key.Binding
+	SplitNarrow  key.Binding
+	SplitWiden   key.Binding
 }
 
 // DefaultKeyMap returns the bindings used by every screen.
@@ -52,6 +63,16 @@ func DefaultKeyMap() KeyMap {
 		Comments:  key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "comments")),
 		NextField: key.NewBinding(key.WithKeys("tab", "ctrl+enter"), key.WithHelp("tab", "next field")),
 		PrevField: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev field")),
+
+		Edit:         key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
+		PrevGroup:    key.NewBinding(key.WithKeys("["), key.WithHelp("[", "prev group")),
+		NextGroup:    key.NewBinding(key.WithKeys("]"), key.WithHelp("]", "next group")),
+		HalfPageUp:   key.NewBinding(key.WithKeys("ctrl+u"), key.WithHelp("ctrl+u", "half page up")),
+		HalfPageDown: key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("ctrl+d", "half page down")),
+		Collapse:     key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "fold group")),
+		FocusToggle:  key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "switch pane")),
+		SplitNarrow:  key.NewBinding(key.WithKeys("<"), key.WithHelp("<", "narrow list")),
+		SplitWiden:   key.NewBinding(key.WithKeys(">"), key.WithHelp(">", "widen list")),
 	}
 }
 

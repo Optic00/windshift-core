@@ -20,11 +20,11 @@ func LoadWorkspaces(c *Client) tea.Cmd {
 
 func LoadWorkItems(c *Client, workspaceID int) tea.Cmd {
 	return func() tea.Msg {
-		items, err := c.getWorkItems(workspaceID)
+		items, truncated, err := c.getWorkItems(workspaceID)
 		if err != nil {
 			return ErrorMsg{Err: err.Error()}
 		}
-		return WorkItemsLoadedMsg{Items: items}
+		return WorkItemsLoadedMsg{Items: items, Truncated: truncated}
 	}
 }
 
@@ -34,7 +34,7 @@ func LoadComments(c *Client, itemID int) tea.Cmd {
 		if err != nil {
 			return ErrorMsg{Err: err.Error()}
 		}
-		return CommentsLoadedMsg{Comments: comments}
+		return CommentsLoadedMsg{ItemID: itemID, Comments: comments}
 	}
 }
 

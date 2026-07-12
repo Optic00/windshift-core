@@ -151,19 +151,33 @@ func (c *Client) getWorkspaces() ([]Workspace, error) {
 	return out, nil
 }
 
-func (c *Client) getWorkItems(workspaceID int) ([]WorkItem, error) {
-	var resp v1ItemsPage
-	// expand= populates the nested status/priority/assignee/creator the
-	// list view chips need; without it those come back nil.
-	path := fmt.Sprintf("/rest/api/v1/workspaces/%d/items?expand=status,priority,assignee,creator", workspaceID)
-	if err := c.doGet(path, authBearer, &resp); err != nil {
-		return nil, err
+// maxWorkItems caps how many items getWorkItems accumulates across pages —
+// beyond this the board truncates (and says so) rather than hammering the
+// API with dozens of page fetches.
+const maxWorkItems = 500
+
+// getWorkItems fetches all pages of a workspace's items (the v1 endpoint
+// caps limit at 100) up to maxWorkItems. The bool result reports truncation.
+func (c *Client) getWorkItems(workspaceID int) ([]WorkItem, bool, error) {
+	out := make([]WorkItem, 0, 64)
+	for page := 1; ; page++ {
+		var resp v1ItemsPage
+		// expand= populates the nested status/priority/assignee/creator the
+		// list view chips need; without it those come back nil.
+		path := fmt.Sprintf("/rest/api/v1/workspaces/%d/items?expand=status,priority,assignee,creator&page=%d&limit=100", workspaceID, page)
+		if err := c.doGet(path, authBearer, &resp); err != nil {
+			return nil, false, err
+		}
+		for _, it := range resp.Data {
+			out = append(out, workItemFromV1(it))
+		}
+		if len(resp.Data) == 0 || page >= resp.Pagination.TotalPages {
+			return out, false, nil
+		}
+		if len(out) >= maxWorkItems {
+			return out, true, nil
+		}
 	}
-	out := make([]WorkItem, 0, len(resp.Data))
-	for _, it := range resp.Data {
-		out = append(out, workItemFromV1(it))
-	}
-	return out, nil
 }
 
 func (c *Client) getComments(itemID int) ([]Comment, error) {

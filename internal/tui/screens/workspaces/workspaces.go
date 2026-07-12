@@ -14,7 +14,7 @@ import (
 	"windshift/internal/tui/components/splash"
 	"windshift/internal/tui/core"
 	"windshift/internal/tui/data"
-	"windshift/internal/tui/screens/items"
+	"windshift/internal/tui/screens/board"
 )
 
 // Model is the workspace picker screen.
@@ -107,7 +107,7 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 		if len(m.workspaces) > 0 && m.selected < len(m.workspaces) {
 			ws := m.workspaces[m.selected]
 			m.ctx.Workspace = &ws
-			return core.Push(items.New(m.ctx))
+			return core.Push(board.New(m.ctx))
 		}
 	case key.Matches(msg, k.Refresh):
 		m.loading = true

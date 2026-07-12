@@ -9,9 +9,16 @@ type WorkspacesLoadedMsg struct {
 
 type WorkItemsLoadedMsg struct {
 	Items []WorkItem
+	// Truncated is set when the workspace has more items than the client-side
+	// page-accumulation cap; the board surfaces this instead of silently
+	// showing a partial list.
+	Truncated bool
 }
 
 type CommentsLoadedMsg struct {
+	// ItemID keys the result so late responses land in the right cache slot
+	// even if the selection moved on.
+	ItemID   int
 	Comments []Comment
 }
 
