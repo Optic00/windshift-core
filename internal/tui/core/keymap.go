@@ -1,14 +1,15 @@
-package tui
+package core
 
 import "charm.land/bubbles/v2/key"
 
-// KeyMap defines every binding the TUI listens for, in one place. Per-screen
-// dispatch uses subsets exposed through the *Bindings helpers below; the help
-// component consumes the same Bindings for self-updating display.
+// KeyMap defines every binding the TUI listens for, in one place. Screens
+// expose the subset relevant to them via Screen.ShortHelp; the help dialog
+// consumes FullHelp for the complete listing.
 type KeyMap struct {
 	// Global
-	Quit key.Binding
-	Help key.Binding
+	Quit  key.Binding
+	Help  key.Binding
+	Theme key.Binding
 
 	// Navigation
 	Up    key.Binding
@@ -30,6 +31,17 @@ type KeyMap struct {
 	// Form editing
 	NextField key.Binding
 	PrevField key.Binding
+
+	// Board
+	Edit         key.Binding
+	PrevGroup    key.Binding
+	NextGroup    key.Binding
+	HalfPageUp   key.Binding
+	HalfPageDown key.Binding
+	Collapse     key.Binding
+	FocusToggle  key.Binding
+	SplitNarrow  key.Binding
+	SplitWiden   key.Binding
 }
 
 // DefaultKeyMap returns the bindings used by every screen.
@@ -37,6 +49,7 @@ func DefaultKeyMap() KeyMap {
 	return KeyMap{
 		Quit:      key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 		Help:      key.NewBinding(key.WithKeys("?", "h", "f1"), key.WithHelp("?", "help")),
+		Theme:     key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "theme")),
 		Up:        key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
 		Down:      key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
 		Left:      key.NewBinding(key.WithKeys("left"), key.WithHelp("←", "left")),
@@ -50,44 +63,24 @@ func DefaultKeyMap() KeyMap {
 		Comments:  key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "comments")),
 		NextField: key.NewBinding(key.WithKeys("tab", "ctrl+enter"), key.WithHelp("tab", "next field")),
 		PrevField: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev field")),
+
+		Edit:         key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
+		PrevGroup:    key.NewBinding(key.WithKeys("["), key.WithHelp("[", "prev group")),
+		NextGroup:    key.NewBinding(key.WithKeys("]"), key.WithHelp("]", "next group")),
+		HalfPageUp:   key.NewBinding(key.WithKeys("ctrl+u"), key.WithHelp("ctrl+u", "half page up")),
+		HalfPageDown: key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("ctrl+d", "half page down")),
+		Collapse:     key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "fold group")),
+		FocusToggle:  key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "switch pane")),
+		SplitNarrow:  key.NewBinding(key.WithKeys("<"), key.WithHelp("<", "narrow list")),
+		SplitWiden:   key.NewBinding(key.WithKeys(">"), key.WithHelp(">", "widen list")),
 	}
 }
 
-// ShortHelp returns the bindings to show in the status bar for the given
-// screen. Order matters — they render left to right.
-func (k KeyMap) ShortHelp(screen AppScreen) []key.Binding {
-	switch screen {
-	case WorkspaceListScreen:
-		return []key.Binding{k.Up, k.Down, k.Enter, k.Refresh, k.Help, k.Quit}
-	case WorkItemListScreen:
-		return []key.Binding{k.Up, k.Down, k.Enter, k.New, k.Comments, k.LogTime, k.Back, k.Help}
-	case WorkItemDetailScreen:
-		return []key.Binding{k.Up, k.Down, k.Enter, k.Save, k.Comments, k.LogTime, k.Back}
-	case CreateWorkItemScreen:
-		return []key.Binding{k.Up, k.Down, k.Enter, k.Save, k.Back}
-	case CommentsScreen:
-		return []key.Binding{k.New, k.Refresh, k.Back}
-	case TimeLoggingScreen:
-		return []key.Binding{k.Up, k.Down, k.Enter, k.Save, k.Back}
-	case HelpScreen:
-		return []key.Binding{k.Back}
-	}
-	return []key.Binding{k.Help, k.Quit}
-}
-
-// FullHelp returns column-grouped bindings for the Help screen.
+// FullHelp returns column-grouped bindings for the help dialog.
 func (k KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Enter, k.Back, k.NextField, k.PrevField},
 		{k.New, k.Save, k.Refresh, k.Comments, k.LogTime},
-		{k.Help, k.Quit},
+		{k.Theme, k.Help, k.Quit},
 	}
 }
-
-// HelpKeyMap adapts KeyMap.ShortHelp for the help.Model interface, which
-// requires ShortHelp() / FullHelp() without screen context. Used only by the
-// help screen itself; the status bar calls ShortHelp(screen) directly.
-type HelpKeyMap struct{ KeyMap }
-
-func (h HelpKeyMap) ShortHelp() []key.Binding  { return h.KeyMap.ShortHelp(HelpScreen) }
-func (h HelpKeyMap) FullHelp() [][]key.Binding { return h.KeyMap.FullHelp() }

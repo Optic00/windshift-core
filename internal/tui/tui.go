@@ -1,3 +1,7 @@
+// Package tui wires an authenticated SSH session to the Bubble Tea app:
+// per-connection token minting/cleanup and construction of the shared
+// context + root model. The UI itself lives in the sub-packages (app, core,
+// screens, dialog, components, data, styles).
 package tui
 
 import (
@@ -8,6 +12,11 @@ import (
 	"windshift/internal/auth"
 	"windshift/internal/middleware"
 	"windshift/internal/models"
+	"windshift/internal/tui/app"
+	"windshift/internal/tui/core"
+	"windshift/internal/tui/data"
+	"windshift/internal/tui/screens/workspaces"
+	"windshift/internal/tui/styles"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/ssh"
@@ -42,7 +51,7 @@ var tuiTokenScopes = []string{
 func NewTUIHandler(apiURL string, sessionManager *auth.SessionManager, tokenManager *auth.TokenManager) func(s ssh.Session) (tea.Model, []tea.ProgramOption) {
 	return func(s ssh.Session) (tea.Model, []tea.ProgramOption) {
 		// Extract authenticated user information from SSH context
-		var userInfo *UserInfo
+		var userInfo *data.UserInfo
 
 		var sessionToken string
 		var bearerToken string
@@ -55,7 +64,7 @@ func NewTUIHandler(apiURL string, sessionManager *auth.SessionManager, tokenMana
 			credentialID, credentialName, _ := middleware.GetCredentialInfo(s.Context())
 			email, username, firstName, lastName, _ := middleware.GetUserInfo(s.Context())
 
-			userInfo = &UserInfo{
+			userInfo = &data.UserInfo{
 				UserID:         userID,
 				CredentialID:   credentialID,
 				CredentialName: credentialName,
@@ -93,7 +102,7 @@ func NewTUIHandler(apiURL string, sessionManager *auth.SessionManager, tokenMana
 			if tokenManager != nil {
 				exp := time.Now().Add(tuiTokenLifetime)
 				resp, err := tokenManager.CreateToken(userID, models.APITokenCreate{
-					Name:        fmt.Sprintf("ssh-tui:%s", sanitizeTerminalLine(credentialName)),
+					Name:        fmt.Sprintf("ssh-tui:%s", data.SanitizeLine(credentialName)),
 					Permissions: tuiTokenScopes,
 					ExpiresAt:   &exp,
 					IsTemporary: true,
@@ -138,11 +147,28 @@ func NewTUIHandler(apiURL string, sessionManager *auth.SessionManager, tokenMana
 			}
 		}
 
-		// Create new app instance for each session
-		model := NewModelWithUserAndTokens(apiURL, userInfo, sessionToken, bearerToken)
+		// Create a new app instance for each session: a fresh client, a
+		// fresh shared context and a fresh screen stack.
+		client := data.NewClient(apiURL)
+		if sessionToken != "" {
+			client.SetSessionToken(sessionToken)
+		}
+		if bearerToken != "" {
+			client.SetBearerToken(bearerToken)
+		}
+
+		ctx := &core.Ctx{
+			Styles: styles.New(styles.WindshiftDark()),
+			Theme:  "windshift-dark",
+			Client: client,
+			User:   userInfo,
+			Keys:   core.DefaultKeyMap(),
+		}
+
+		model := app.New(ctx, workspaces.New(ctx))
 
 		// Bubble Tea v2 owns alt-screen + mouse mode via the View struct
-		// (see Model.View). No program options needed for those.
+		// (see app.Model.View). No program options needed for those.
 		return model, nil
 	}
 }

@@ -1,15 +1,15 @@
-package tui
+package data
 
 import (
 	"strings"
 	"unicode/utf8"
 )
 
-// sanitizeTerminalText strips terminal control sequences from untrusted text
+// SanitizeText strips terminal control sequences from untrusted text
 // before it is rendered into the SSH TUI. HTML/Markdown sanitizers do not
 // remove ANSI/OSC controls; rendering those verbatim can trigger terminal-side
 // effects such as OSC 52 clipboard writes or UI spoofing.
-func sanitizeTerminalText(input string) string {
+func SanitizeText(input string) string {
 	if input == "" {
 		return ""
 	}
@@ -51,24 +51,24 @@ func sanitizeTerminalText(input string) string {
 	return out.String()
 }
 
-// sanitizeTerminalLine is for labels/titles/table cells. It strips terminal
+// SanitizeLine is for labels/titles/table cells. It strips terminal
 // controls and also collapses line separators so untrusted labels cannot break
 // out of their assigned row/heading.
-func sanitizeTerminalLine(input string) string {
-	clean := sanitizeTerminalText(input)
+func SanitizeLine(input string) string {
+	clean := SanitizeText(input)
 	clean = strings.ReplaceAll(clean, "\r", " ")
 	clean = strings.ReplaceAll(clean, "\n", " ")
 	clean = strings.ReplaceAll(clean, "\t", " ")
 	return strings.Join(strings.Fields(clean), " ")
 }
 
-func sanitizeTerminalStringPtr(input *string, line bool) *string {
+func SanitizeStringPtr(input *string, line bool) *string {
 	if input == nil {
 		return nil
 	}
-	clean := sanitizeTerminalText(*input)
+	clean := SanitizeText(*input)
 	if line {
-		clean = sanitizeTerminalLine(clean)
+		clean = SanitizeLine(clean)
 	}
 	return &clean
 }
