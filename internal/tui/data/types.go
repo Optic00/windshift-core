@@ -92,7 +92,24 @@ type v1CommentResponse struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 }
 
+type v1AssignableUser struct {
+	ID        int    `json:"id"`
+	Username  string `json:"username"`
+	FullName  string `json:"full_name"`
+	IsActive  bool   `json:"is_active"`
+	IsAgent   bool   `json:"is_agent"`
+	AvatarURL string `json:"avatar_url"`
+}
+
 // ─── TUI domain types (converters below adapt v1 wire to these) ──────
+
+// User is an assignable user for the assignee picker.
+type User struct {
+	ID       int
+	Username string
+	FullName string
+	IsAgent  bool
+}
 
 // Workspace represents a workspace from the Windshift API.
 type Workspace struct {

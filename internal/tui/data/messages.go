@@ -42,6 +42,15 @@ type PrioritiesLoadedMsg struct {
 	Priorities []Priority
 }
 
+type UsersLoadedMsg struct {
+	Users []User
+}
+
+// WorkItemLoadedMsg is a single-item refresh (after a quick-set mutation).
+type WorkItemLoadedMsg struct {
+	Item WorkItem
+}
+
 // ErrorMsg carries a human-readable (already sanitized) error string from a
 // failed loader/mutator.
 type ErrorMsg struct {

@@ -68,6 +68,63 @@ func LoadTimeProjects(c *Client) tea.Cmd {
 	}
 }
 
+func LoadAssignableUsers(c *Client, workspaceID int) tea.Cmd {
+	return func() tea.Msg {
+		users, err := c.getAssignableUsers(workspaceID)
+		if err != nil {
+			return ErrorMsg{Err: err.Error()}
+		}
+		return UsersLoadedMsg{Users: users}
+	}
+}
+
+// ReloadWorkItem refreshes one item after a mutation.
+func ReloadWorkItem(c *Client, itemID int) tea.Cmd {
+	return func() tea.Msg {
+		item, err := c.getWorkItem(itemID)
+		if err != nil {
+			return ErrorMsg{Err: err.Error()}
+		}
+		return WorkItemLoadedMsg{Item: item}
+	}
+}
+
+// SetItemStatus transitions an item, then refreshes it.
+func SetItemStatus(c *Client, itemID, statusID int) tea.Cmd {
+	return func() tea.Msg {
+		if err := c.setItemStatus(itemID, statusID); err != nil {
+			return ErrorMsg{Err: err.Error()}
+		}
+		return ReloadWorkItem(c, itemID)()
+	}
+}
+
+// SetItemPriority sets priority_id only, then refreshes the item.
+func SetItemPriority(c *Client, itemID, priorityID int) tea.Cmd {
+	return func() tea.Msg {
+		if err := c.setItemField(itemID, "priority_id", priorityID); err != nil {
+			return ErrorMsg{Err: err.Error()}
+		}
+		return ReloadWorkItem(c, itemID)()
+	}
+}
+
+// SetItemAssignee sets assignee_id only (0 unassigns), then refreshes.
+func SetItemAssignee(c *Client, itemID, assigneeID int) tea.Cmd {
+	return func() tea.Msg {
+		var v interface{}
+		if assigneeID > 0 {
+			v = assigneeID
+		} else {
+			v = nil
+		}
+		if err := c.setItemField(itemID, "assignee_id", v); err != nil {
+			return ErrorMsg{Err: err.Error()}
+		}
+		return ReloadWorkItem(c, itemID)()
+	}
+}
+
 func UpdateWorkItem(c *Client, itemID int, title, description string, statusID, priorityID *int) tea.Cmd {
 	return func() tea.Msg {
 		if err := c.updateWorkItem(itemID, title, description, statusID, priorityID); err != nil {

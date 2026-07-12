@@ -237,7 +237,11 @@ func (l *listPane) renderRow(i int) string {
 		if r.Collapsed {
 			arrow = "▸"
 		}
-		text := fmt.Sprintf("%s %s (%d)", arrow, strings.ToUpper(r.GroupName), r.Count)
+		count := fmt.Sprintf("(%d)", r.Count)
+		if r.Shown != r.Count {
+			count = fmt.Sprintf("(%d/%d)", r.Shown, r.Count)
+		}
+		text := fmt.Sprintf("%s %s %s", arrow, strings.ToUpper(r.GroupName), count)
 		line := s.List.Header.Render(text)
 		if selected {
 			line = s.List.SelBar.Render("▎") + " " + s.List.Header.Render(text)

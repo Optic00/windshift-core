@@ -249,8 +249,9 @@ func (m *Model) openStatusPicker() tea.Cmd {
 	selectedIdx := 0
 	for i, s := range m.statuses {
 		options[i] = dialog.Option{
-			Label: chip.Status(m.ctx.Styles, s.Name, s.CategoryColor),
-			Value: s,
+			Label:  chip.Status(m.ctx.Styles, s.Name, s.CategoryColor),
+			Search: s.Name,
+			Value:  s,
 		}
 		if m.statusID != nil && *m.statusID == s.ID {
 			selectedIdx = i
@@ -264,8 +265,9 @@ func (m *Model) openPriorityPicker() tea.Cmd {
 	selectedIdx := 0
 	for i, p := range m.priorities {
 		options[i] = dialog.Option{
-			Label: chip.Priority(m.ctx.Styles, p.Name, p.Color),
-			Value: p,
+			Label:  chip.Priority(m.ctx.Styles, p.Name, p.Color),
+			Search: p.Name,
+			Value:  p,
 		}
 		if m.priorityID != nil && *m.priorityID == p.ID {
 			selectedIdx = i

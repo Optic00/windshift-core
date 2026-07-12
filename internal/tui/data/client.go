@@ -232,6 +232,47 @@ func (c *Client) getPriorities() ([]Priority, error) {
 	return out, nil
 }
 
+func (c *Client) getAssignableUsers(workspaceID int) ([]User, error) {
+	var raw []v1AssignableUser
+	if err := c.doGet(fmt.Sprintf("/rest/api/v1/workspaces/%d/assignable-users", workspaceID), authBearer, &raw); err != nil {
+		return nil, err
+	}
+	out := make([]User, 0, len(raw))
+	for _, u := range raw {
+		out = append(out, User{
+			ID:       u.ID,
+			Username: SanitizeLine(u.Username),
+			FullName: SanitizeLine(u.FullName),
+			IsAgent:  u.IsAgent,
+		})
+	}
+	return out, nil
+}
+
+// getWorkItem fetches a single item with expanded summaries — used for the
+// targeted refresh after a quick-set mutation.
+func (c *Client) getWorkItem(itemID int) (WorkItem, error) {
+	var raw v1ItemResponse
+	if err := c.doGet(fmt.Sprintf("/rest/api/v1/items/%d?expand=status,priority,assignee,creator", itemID), authBearer, &raw); err != nil {
+		return WorkItem{}, err
+	}
+	return workItemFromV1(raw), nil
+}
+
+// setItemStatus drives the workflow transition endpoint (v1 PUT rejects
+// status_id so validator/condition rules stay in the hot path).
+func (c *Client) setItemStatus(itemID, statusID int) error {
+	body := map[string]interface{}{"to_status_id": statusID}
+	return c.doMutate("POST", fmt.Sprintf("/rest/api/v1/items/%d/transition", itemID), authBearer, body, nil)
+}
+
+// setItemField PUTs a single field — v1 update semantics are partial
+// (pointer fields), so nothing else is clobbered.
+func (c *Client) setItemField(itemID int, field string, value interface{}) error {
+	body := map[string]interface{}{field: value}
+	return c.doMutate("PUT", fmt.Sprintf("/rest/api/v1/items/%d", itemID), authBearer, body, nil)
+}
+
 func (c *Client) getTimeProjects() ([]TimeProject, error) {
 	// Legacy /api/* + session auth — v1 doesn't yet expose /time/projects.
 	var projects []TimeProject

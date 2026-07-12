@@ -175,8 +175,9 @@ func (m *Model) openPriorityPicker() tea.Cmd {
 	selectedIdx := 0
 	for i, p := range m.priorities {
 		options[i] = dialog.Option{
-			Label: chip.Priority(m.ctx.Styles, p.Name, p.Color),
-			Value: p,
+			Label:  chip.Priority(m.ctx.Styles, p.Name, p.Color),
+			Search: p.Name,
+			Value:  p,
 		}
 		if m.priorityID != nil && *m.priorityID == p.ID {
 			selectedIdx = i
