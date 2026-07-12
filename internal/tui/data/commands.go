@@ -1,6 +1,8 @@
 package data
 
 import (
+	"time"
+
 	tea "charm.land/bubbletea/v2"
 )
 
@@ -138,14 +140,18 @@ func LoadAgentRuns(c *Client, itemID int) tea.Cmd {
 	}
 }
 
-// LoadPrefs fetches the persisted TUI preferences. Failures degrade to
-// defaults (OK=false) instead of surfacing an error — prefs are never
-// load-bearing.
+// LoadPrefs fetches the persisted TUI preferences. It fires at session
+// start, racing the SSH-side token mint's visibility to the API pool, so a
+// failure is retried once after a beat before degrading to defaults
+// (OK=false) — prefs are never load-bearing and never block startup.
 func LoadPrefs(c *Client) tea.Cmd {
 	return func() tea.Msg {
 		p, err := c.getPrefs()
 		if err != nil {
-			return PrefsLoadedMsg{OK: false}
+			time.Sleep(time.Second)
+			if p, err = c.getPrefs(); err != nil {
+				return PrefsLoadedMsg{OK: false}
+			}
 		}
 		return PrefsLoadedMsg{Prefs: p, OK: true}
 	}
