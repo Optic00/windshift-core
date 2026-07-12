@@ -1343,6 +1343,38 @@
         },
         "type": "object"
       },
+      "handlers.AgentRunResponse": {
+        "properties": {
+          "ended_at": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer"
+          },
+          "item_id": {
+            "type": "integer"
+          },
+          "job_kind": {
+            "type": "string"
+          },
+          "queued_at": {
+            "type": "string"
+          },
+          "started_at": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "workspace_id": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
       "handlers.AuditLogEntryResponse": {
         "properties": {
           "action_type": {
@@ -1839,6 +1871,20 @@
             "type": "boolean"
           },
           "name": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "handlers.TUIPreferencesResponse": {
+        "properties": {
+          "last_workspace_id": {
+            "type": "integer"
+          },
+          "split_ratio": {
+            "type": "number"
+          },
+          "theme": {
             "type": "string"
           }
         },
@@ -4478,6 +4524,9 @@
             "type": "integer"
           },
           "is_active": {
+            "type": "boolean"
+          },
+          "is_agent": {
             "type": "boolean"
           },
           "language": {
@@ -8122,6 +8171,102 @@
           }
         ],
         "summary": "Update an item",
+        "tags": [
+          "items"
+        ]
+      }
+    },
+    "/items/{id}/agent-runs": {
+      "get": {
+        "description": "Returns the coding-agent runs triggered against one work item, newest first. Mirrors the session surface's item agent-run list. Gated on view access to the item's workspace; both a missing item and a missing permission return 404 so item existence never leaks.",
+        "parameters": [
+          {
+            "description": "Item ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Max runs to return (default 50)",
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Cursor: only runs with id \u003c before_id",
+            "in": "query",
+            "name": "before_id",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/handlers.AgentRunResponse"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the items:read scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Item not found or not accessible"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List coding-agent runs for an item",
         "tags": [
           "items"
         ]
@@ -13244,6 +13389,138 @@
         ]
       }
     },
+    "/users/me/tui-preferences": {
+      "get": {
+        "description": "Returns the SSH TUI preferences sub-document for the bearer token's owning user. Empty fields mean \"unset\" — the TUI applies its defaults.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.TUIPreferencesResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the user-preferences:read scope"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Get the authenticated user's TUI preferences",
+        "tags": [
+          "users"
+        ]
+      },
+      "put": {
+        "description": "Full replace of the SSH TUI preferences sub-document (theme, split ratio, last workspace). Values are normalized server-side (theme truncated to 64 chars, split ratio clamped to [0.1, 0.9]); other preference sub-documents are untouched.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/handlers.TUIPreferencesResponse"
+              }
+            }
+          },
+          "description": "TUI preferences",
+          "required": true,
+          "x-originalParamName": "preferences"
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.TUIPreferencesResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Malformed body"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the user-preferences:write scope"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Replace the authenticated user's TUI preferences",
+        "tags": [
+          "users"
+        ]
+      }
+    },
     "/users/{id}": {
       "get": {
         "description": "Callers receive the full record for themselves or any user when system-admin; otherwise sensitive fields (email, timezone, language) are omitted.",
@@ -14594,6 +14871,86 @@
         "summary": "Get an agent skill by ID",
         "tags": [
           "agents"
+        ]
+      }
+    },
+    "/workspaces/{id}/assignable-users": {
+      "get": {
+        "description": "Returns active users with limited fields for assignment pickers. Unlike /users this needs no global user.list permission — view access to the workspace is enough. Sensitive fields (email, timezone, language) are always stripped. Mirrors the session surface's assignable-users endpoint.",
+        "parameters": [
+          {
+            "description": "Workspace ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/windshift_internal_restapi_v1_handlers.UserResponse"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Token lacks the users:read scope"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Workspace not found or not accessible"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/handlers.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List assignable users for a workspace",
+        "tags": [
+          "users"
         ]
       }
     },

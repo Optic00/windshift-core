@@ -112,6 +112,15 @@ type UserPreferencesData struct {
 	ColorMode       string               `json:"color_mode,omitempty"` // "light", "dark", or "system"
 	ThemeID         *int                 `json:"theme_id,omitempty"`
 	DashboardLayout *UserDashboardLayout `json:"dashboard_layout,omitempty"`
+	TUI             *UserTUIPreferences  `json:"tui,omitempty"`
+}
+
+// UserTUIPreferences is the SSH TUI's persisted state sub-document. Pointer
+// fields distinguish "unset" from zero values.
+type UserTUIPreferences struct {
+	Theme           string   `json:"theme,omitempty"`
+	SplitRatio      *float64 `json:"split_ratio,omitempty"`
+	LastWorkspaceID *int     `json:"last_workspace_id,omitempty"`
 }
 
 // UserPreferencesRequest represents the API request for updating preferences

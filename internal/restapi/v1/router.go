@@ -87,6 +87,8 @@ func RegisterRoutes(deps restapi.Deps) {
 	priorityHandler := handlers.NewPriorityHandler(db, permissionService)
 	customFieldHandler := handlers.NewCustomFieldHandler(db, permissionService)
 	userHandler := handlers.NewUserHandler(db, permissionService)
+	userPreferencesHandler := handlers.NewUserPreferencesHandler(db, permissionService)
+	agentRunHandler := handlers.NewAgentRunHandler(db, permissionService)
 	commentHandler := handlers.NewCommentHandler(db, permissionService, deps.CommentService)
 	milestoneHandler := handlers.NewMilestoneHandler(db, permissionService)
 	iterationHandler := handlers.NewIterationHandler(db, permissionService)
@@ -154,6 +156,7 @@ func RegisterRoutes(deps restapi.Deps) {
 	v1.HandleWithMiddleware("GET /items/{id}/comments", itemHandler.GetComments, bearerAuth.RequirePermission("items:read"), router.RequireNumericID)
 	v1.HandleWithMiddleware("POST /items/{id}/comments", itemHandler.CreateComment, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)
 	v1.HandleWithMiddleware("GET /items/{id}/history", itemHandler.GetHistory, bearerAuth.RequirePermission("items:read"), router.RequireNumericID)
+	v1.HandleWithMiddleware("GET /items/{id}/agent-runs", agentRunHandler.ListForItem, bearerAuth.RequirePermission("items:read"), router.RequireNumericID)
 	v1.HandleWithMiddleware("GET /items/{id}/transitions", itemHandler.GetTransitions, bearerAuth.RequirePermission("items:read"), router.RequireNumericID)
 	v1.HandleWithMiddleware("POST /items/{id}/transition", itemHandler.Transition, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)
 	v1.HandleWithMiddleware("POST /items/{id}/change-type", itemHandler.ChangeType, bearerAuth.RequirePermission("items:write"), router.RequireNumericID)
@@ -177,6 +180,7 @@ func RegisterRoutes(deps restapi.Deps) {
 	v1.HandleWithMiddleware("GET /workspaces/{id}/statuses/completed", workspaceHandler.ListCompletedStatuses, bearerAuth.RequirePermission("workspaces:read"), router.RequireNumericID)
 	v1.HandleWithMiddleware("GET /workspaces/{id}/item-types", workspaceHandler.GetItemTypes, bearerAuth.RequirePermission("workspaces:read"), router.RequireNumericID)
 	v1.HandleWithMiddleware("GET /workspaces/{id}/priorities", workspaceHandler.GetPriorities, bearerAuth.RequirePermission("workspaces:read"), router.RequireNumericID)
+	v1.HandleWithMiddleware("GET /workspaces/{id}/assignable-users", userHandler.GetAssignableForWorkspace, bearerAuth.RequirePermission("users:read"), router.RequireNumericID)
 
 	// Item lookup by stable (workspace_key, item_number) pair — for embed clients
 	// (e.g. docmost) that store stable references rather than volatile numeric ids.
@@ -246,6 +250,8 @@ func RegisterRoutes(deps restapi.Deps) {
 	// ============================================
 	v1.HandleWithMiddleware("GET /users", userHandler.List, bearerAuth.RequirePermission("users:read"))
 	v1.HandleWithMiddleware("GET /users/me", userHandler.GetCurrent, bearerAuth.RequirePermission("users:read"))
+	v1.HandleWithMiddleware("GET /users/me/tui-preferences", userPreferencesHandler.GetTUI, bearerAuth.RequirePermission("user-preferences:read"))
+	v1.HandleWithMiddleware("PUT /users/me/tui-preferences", userPreferencesHandler.UpdateTUI, bearerAuth.RequirePermission("user-preferences:write"))
 	v1.HandleWithMiddleware("GET /users/{id}", userHandler.Get, bearerAuth.RequirePermission("users:read"), router.RequireNumericID)
 
 	// ============================================

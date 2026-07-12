@@ -34,6 +34,10 @@ type KeyMap struct {
 
 	// Board
 	Edit         key.Binding
+	Filter       key.Binding
+	Status       key.Binding
+	Priority     key.Binding
+	Assign       key.Binding
 	PrevGroup    key.Binding
 	NextGroup    key.Binding
 	HalfPageUp   key.Binding
@@ -65,6 +69,10 @@ func DefaultKeyMap() KeyMap {
 		PrevField: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev field")),
 
 		Edit:         key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
+		Filter:       key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
+		Status:       key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "status")),
+		Priority:     key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "priority")),
+		Assign:       key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "assign")),
 		PrevGroup:    key.NewBinding(key.WithKeys("["), key.WithHelp("[", "prev group")),
 		NextGroup:    key.NewBinding(key.WithKeys("]"), key.WithHelp("]", "next group")),
 		HalfPageUp:   key.NewBinding(key.WithKeys("ctrl+u"), key.WithHelp("ctrl+u", "half page up")),

@@ -4,21 +4,33 @@
 package board
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"windshift/internal/tui/components/chip"
+	"windshift/internal/tui/components/inputs"
 	"windshift/internal/tui/core"
 	"windshift/internal/tui/data"
-	"windshift/internal/tui/screens/comments"
-	"windshift/internal/tui/screens/create"
-	"windshift/internal/tui/screens/detail"
+	"windshift/internal/tui/dialog"
 	"windshift/internal/tui/screens/timelog"
+)
+
+const (
+	pickerStatusID   = "board.picker.status"
+	pickerPriorityID = "board.picker.priority"
+	pickerAssignID   = "board.picker.assign"
+	formEditID       = "board.form.edit"
+	formCreateID     = "board.form.create"
+	formCommentID    = "board.form.comment"
 )
 
 const (
@@ -53,9 +65,16 @@ type Model struct {
 	statuses     []data.Status
 	priorities   []data.Priority
 	timeProjects []data.TimeProject
+	users        []data.User
+
+	filter      Filter
+	filterInput textinput.Model
+	filtering   bool // filter input focused
 
 	comments      map[int][]data.Comment
 	commentsFresh map[int]bool
+	agentRuns     map[int][]data.AgentRun
+	runsFresh     map[int]bool
 	detailSeq     int
 
 	list   *listPane
@@ -72,23 +91,37 @@ type Model struct {
 	truncated bool
 	spinner   spinner.Model
 
+	// ratioSaveSeq debounces split-ratio persistence: only the latest
+	// pending save fires.
+	ratioSaveSeq int
+
 	width  int
 	height int
 }
 
+// ratioSaveMsg fires after the split has been resting for a beat.
+type ratioSaveMsg struct{ seq int }
+
 func New(ctx *core.Ctx) *Model {
 	sp := spinner.New(spinner.WithSpinner(spinner.MiniDot))
 	sp.Style = lipgloss.NewStyle().Foreground(ctx.Styles.Palette.Primary)
+	ratio := defaultSplitRatio
+	if r := ctx.Prefs.SplitRatio; r != nil && *r >= minSplitRatio && *r <= maxSplitRatio {
+		ratio = *r
+	}
 	return &Model{
 		ctx:           ctx,
 		comments:      map[int][]data.Comment{},
 		commentsFresh: map[int]bool{},
+		agentRuns:     map[int][]data.AgentRun{},
+		runsFresh:     map[int]bool{},
 		list:          newListPane(ctx),
 		detail:        newDetailPane(ctx),
 		collapsed:     map[string]bool{},
-		splitRatio:    defaultSplitRatio,
+		splitRatio:    ratio,
 		loading:       true,
 		spinner:       sp,
+		filterInput:   inputs.New(ctx.Styles, "filter…", 100),
 	}
 }
 
@@ -102,6 +135,7 @@ func (m *Model) Init() tea.Cmd {
 		data.LoadStatuses(m.ctx.Client, m.ctx.Workspace.ID),
 		data.LoadPriorities(m.ctx.Client),
 		data.LoadTimeProjects(m.ctx.Client),
+		data.LoadAssignableUsers(m.ctx.Client, m.ctx.Workspace.ID),
 		m.spinner.Tick,
 	)
 }
@@ -110,14 +144,31 @@ func (m *Model) SetSize(width, height int) {
 	m.width = width
 	m.height = height
 	if m.narrow() {
-		m.list.setSize(width, m.paneHeight())
-		m.detail.setSize(width, m.paneHeight())
+		m.list.setSize(width-2, m.listHeight())
+		m.detail.setSize(width-2, m.paneHeight()-2)
+		m.filterInput.SetWidth(width - 6)
 		return
 	}
 	listW, detailW := m.paneWidths()
-	m.list.setSize(listW, m.paneHeight())
-	m.detail.setSize(detailW, m.paneHeight())
+	m.list.setSize(listW-2, m.listHeight())
+	m.detail.setSize(detailW-2, m.paneHeight()-2)
+	m.filterInput.SetWidth(listW - 6)
 }
+
+// listHeight is the row budget inside the list pane's frame, minus the
+// filter line when it's visible.
+func (m *Model) listHeight() int {
+	h := m.paneHeight() - 2 // pane border
+	if m.filterVisible() {
+		h--
+	}
+	if h < 1 {
+		h = 1
+	}
+	return h
+}
+
+func (m *Model) filterVisible() bool { return m.filtering || m.filter.Active() }
 
 func (m *Model) narrow() bool { return m.width < narrowWidth }
 
@@ -140,7 +191,7 @@ func (m *Model) paneWidths() (listW, detailW int) {
 	if maxList := m.width - 42; listW > maxList && maxList >= 28 {
 		listW = maxList
 	}
-	detailW = m.width - listW - 3 // " │ " separator
+	detailW = m.width - listW - 1 // 1-col gap between framed panes
 	if detailW < 10 {
 		detailW = 10
 	}
@@ -151,6 +202,7 @@ func (m *Model) paneWidths() (listW, detailW int) {
 // (core.ThemeAware).
 func (m *Model) OnThemeChanged() {
 	m.spinner.Style = lipgloss.NewStyle().Foreground(m.ctx.Styles.Palette.Primary)
+	m.detail.resetRenderer()
 	m.detail.rebuild()
 }
 
@@ -158,10 +210,13 @@ func (m *Model) Title() string { return "Board" }
 
 func (m *Model) ShortHelp() []key.Binding {
 	k := m.ctx.Keys
+	if m.filtering {
+		return []key.Binding{k.Enter, k.Back}
+	}
 	if m.focus == focusDetail {
 		return []key.Binding{k.Up, k.Down, k.FocusToggle, k.Edit, k.Comments, k.Back}
 	}
-	return []key.Binding{k.Up, k.Down, k.NextGroup, k.Collapse, k.Edit, k.New, k.Comments, k.LogTime, k.Back, k.Help}
+	return []key.Binding{k.Up, k.Down, k.Filter, k.Status, k.Priority, k.Assign, k.Edit, k.New, k.Help}
 }
 
 func (m *Model) Update(msg tea.Msg) tea.Cmd {
@@ -193,9 +248,32 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 		m.timeProjects = msg.Projects
 		return nil
 
-	case data.WorkItemCreatedMsg, data.WorkItemUpdatedMsg:
+	case data.UsersLoadedMsg:
+		m.users = msg.Users
+		return nil
+
+	case data.WorkItemLoadedMsg:
+		for i := range m.items {
+			if m.items[i].ID == msg.Item.ID {
+				m.items[i] = msg.Item
+				break
+			}
+		}
+		m.rebuildRows()
+		return m.syncDetail()
+
+	case dialog.ResultMsg:
+		return m.applyPickerResult(msg)
+
+	case data.WorkItemCreatedMsg:
 		if m.ctx.Workspace != nil {
-			return data.LoadWorkItems(m.ctx.Client, m.ctx.Workspace.ID)
+			return tea.Batch(core.NotifySuccess("Work item created"), data.LoadWorkItems(m.ctx.Client, m.ctx.Workspace.ID))
+		}
+		return nil
+
+	case data.WorkItemUpdatedMsg:
+		if m.ctx.Workspace != nil {
+			return tea.Batch(core.NotifySuccess("Saved"), data.LoadWorkItems(m.ctx.Client, m.ctx.Workspace.ID))
 		}
 		return nil
 
@@ -204,7 +282,7 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 		// the selected item.
 		if it := m.list.selectedItem(); it != nil {
 			m.commentsFresh[it.ID] = false
-			return data.LoadComments(m.ctx.Client, it.ID)
+			return tea.Batch(core.NotifySuccess("Comment added"), data.LoadComments(m.ctx.Client, it.ID))
 		}
 		return nil
 
@@ -216,12 +294,44 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 		}
 		return nil
 
+	case data.AgentRunsLoadedMsg:
+		m.agentRuns[msg.ItemID] = msg.Runs
+		m.runsFresh[msg.ItemID] = true
+		if it := m.list.selectedItem(); it != nil && it.ID == msg.ItemID {
+			m.detail.setAgentRuns(msg.Runs)
+		}
+		return nil
+
 	case debounceMsg:
 		if msg.seq != m.detailSeq {
 			return nil // selection moved on
 		}
-		if it := m.list.selectedItem(); it != nil && !m.commentsFresh[it.ID] {
-			return data.LoadComments(m.ctx.Client, it.ID)
+		it := m.list.selectedItem()
+		if it == nil {
+			return nil
+		}
+		var cmds []tea.Cmd
+		if !m.commentsFresh[it.ID] {
+			cmds = append(cmds, data.LoadComments(m.ctx.Client, it.ID))
+		}
+		if !m.runsFresh[it.ID] {
+			cmds = append(cmds, data.LoadAgentRuns(m.ctx.Client, it.ID))
+		}
+		return tea.Batch(cmds...)
+
+	case ratioSaveMsg:
+		if msg.seq != m.ratioSaveSeq {
+			return nil // superseded by a newer adjustment
+		}
+		return data.SavePrefs(m.ctx.Client, m.ctx.Prefs)
+
+	case data.PrefsLoadedMsg:
+		// Prefs arrived after the board was built — apply the split late.
+		if msg.OK {
+			if r := msg.Prefs.SplitRatio; r != nil && *r >= minSplitRatio && *r <= maxSplitRatio {
+				m.splitRatio = *r
+				m.SetSize(m.width, m.height)
+			}
 		}
 		return nil
 
@@ -238,8 +348,12 @@ func (m *Model) Update(msg tea.Msg) tea.Cmd {
 // rebuildRows reflattens grouping state into the list pane.
 func (m *Model) rebuildRows() {
 	catByStatus := make(map[int]string, len(m.statuses))
+	colorByCat := make(map[string]string, len(m.statuses))
 	for _, s := range m.statuses {
 		catByStatus[s.ID] = s.CategoryName
+		if s.CategoryName != "" && s.CategoryColor != "" {
+			colorByCat[s.CategoryName] = s.CategoryColor
+		}
 	}
 	prioRank := make(map[int]int, len(m.priorities))
 	for i, p := range m.priorities {
@@ -249,25 +363,124 @@ func (m *Model) rebuildRows() {
 	if m.ctx.User != nil {
 		me = m.ctx.User.UserID
 	}
+	wsKey := ""
+	if m.ctx.Workspace != nil {
+		wsKey = m.ctx.Workspace.Key
+	}
 	m.list.setRows(BuildRows(m.items, Grouping{
 		CategoryByStatusID: catByStatus,
 		PriorityRank:       prioRank,
 		MeUserID:           me,
 		Collapsed:          m.collapsed,
+		Filter:             m.filter,
+		WorkspaceKey:       wsKey,
+		ColorByCategory:    colorByCat,
 	}))
 }
 
+// EditingText reports whether the filter input is focused (core.TextEditor)
+// so global single-key bindings don't swallow typed filter characters.
+func (m *Model) EditingText() bool { return m.filtering }
+
+// applyPickerResult patches the selected item optimistically and fires the
+// matching mutation + targeted refresh.
+func (m *Model) applyPickerResult(msg dialog.ResultMsg) tea.Cmd {
+	// Create doesn't need a selection.
+	if msg.ID == formCreateID {
+		form, ok := msg.Value.(dialog.FormResult)
+		if !ok || m.ctx.Workspace == nil {
+			return nil
+		}
+		title := strings.TrimSpace(form.Values["title"])
+		if title == "" {
+			return core.NotifyError("Title is required")
+		}
+		return data.CreateWorkItem(m.ctx.Client, m.ctx.Workspace.ID, title, form.Values["description"], nil)
+	}
+
+	it := m.list.selectedItem()
+	if it == nil {
+		return nil
+	}
+	switch msg.ID {
+	case formEditID:
+		form, ok := msg.Value.(dialog.FormResult)
+		if !ok {
+			return nil
+		}
+		title := strings.TrimSpace(form.Values["title"])
+		if title == "" {
+			return core.NotifyError("Title is required")
+		}
+		it.Title = title
+		it.Description = form.Values["description"]
+		m.rebuildRows()
+		return tea.Batch(m.syncDetail(), data.UpdateWorkItem(m.ctx.Client, it.ID, title, it.Description, nil, nil))
+	case formCommentID:
+		form, ok := msg.Value.(dialog.FormResult)
+		if !ok {
+			return nil
+		}
+		body := strings.TrimSpace(form.Values["comment"])
+		if body == "" {
+			return nil
+		}
+		return data.CreateComment(m.ctx.Client, it.ID, body)
+	case pickerStatusID:
+		s, ok := msg.Value.(data.Status)
+		if !ok {
+			return nil
+		}
+		id := s.ID
+		it.StatusID = &id
+		it.StatusName = s.Name
+		it.StatusCategoryColor = s.CategoryColor
+		it.Status = s.Name
+		m.rebuildRows()
+		return tea.Batch(m.syncDetail(), data.SetItemStatus(m.ctx.Client, it.ID, s.ID))
+	case pickerPriorityID:
+		p, ok := msg.Value.(data.Priority)
+		if !ok {
+			return nil
+		}
+		id := p.ID
+		it.PriorityID = &id
+		it.PriorityName = p.Name
+		it.PriorityColor = p.Color
+		it.Priority = p.Name
+		m.rebuildRows()
+		return tea.Batch(m.syncDetail(), data.SetItemPriority(m.ctx.Client, it.ID, p.ID))
+	case pickerAssignID:
+		u, ok := msg.Value.(data.User)
+		if !ok {
+			return nil
+		}
+		if u.ID > 0 {
+			id := u.ID
+			it.AssigneeID = &id
+			it.AssigneeName = u.FullName
+		} else {
+			it.AssigneeID = nil
+			it.AssigneeName = ""
+		}
+		m.rebuildRows()
+		return tea.Batch(m.syncDetail(), data.SetItemAssignee(m.ctx.Client, it.ID, u.ID))
+	}
+	return nil
+}
+
 // syncDetail points the detail pane at the current selection and returns the
-// debounced comment-fetch command when the cache is cold.
+// debounced fetch command when any lazy section's cache is cold.
 func (m *Model) syncDetail() tea.Cmd {
 	it := m.list.selectedItem()
 	if it == nil {
-		m.detail.setItem(nil, nil, false)
+		m.detail.setItem(nil, nil, false, nil, false, false)
 		return nil
 	}
-	fresh := m.commentsFresh[it.ID]
-	m.detail.setItem(it, m.comments[it.ID], fresh)
-	if fresh {
+	commentsFresh := m.commentsFresh[it.ID]
+	runsFresh := m.runsFresh[it.ID]
+	m.detail.setItem(it, m.comments[it.ID], commentsFresh, m.agentRuns[it.ID], runsFresh, m.assigneeIsAgent(it))
+	if commentsFresh && runsFresh {
 		return nil
 	}
 	m.detailSeq++
@@ -275,8 +488,26 @@ func (m *Model) syncDetail() tea.Cmd {
 	return tea.Tick(commentsDebounce, func(time.Time) tea.Msg { return debounceMsg{seq: seq} })
 }
 
+// assigneeIsAgent resolves the item's assignee against the workspace user
+// list to detect coding agents.
+func (m *Model) assigneeIsAgent(it *data.WorkItem) bool {
+	if it.AssigneeID == nil {
+		return false
+	}
+	for _, u := range m.users {
+		if u.ID == *it.AssigneeID {
+			return u.IsAgent
+		}
+	}
+	return false
+}
+
 func (m *Model) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 	k := m.ctx.Keys
+
+	if m.filtering {
+		return m.handleFilterKey(msg)
+	}
 
 	if m.focus == focusDetail {
 		switch {
@@ -292,9 +523,9 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 			m.focus = focusList
 			m.narrowDetail = false
 		case key.Matches(msg, k.Edit):
-			return m.pushEdit()
+			return m.openEdit()
 		case key.Matches(msg, k.Comments):
-			return m.pushComments()
+			return m.openComment()
 		}
 		return nil
 	}
@@ -330,17 +561,27 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 			m.narrowDetail = true
 		}
 	case key.Matches(msg, k.SplitNarrow):
-		m.adjustSplit(-splitStep)
+		return m.adjustSplit(-splitStep)
 	case key.Matches(msg, k.SplitWiden):
-		m.adjustSplit(splitStep)
+		return m.adjustSplit(splitStep)
+	case key.Matches(msg, k.Filter):
+		m.filtering = true
+		m.filterInput.SetValue(m.filter.Query)
+		m.filterInput.CursorEnd()
+		m.SetSize(m.width, m.height) // reserve the filter line
+		return m.filterInput.Focus()
+	case key.Matches(msg, k.Status):
+		return m.openStatusPicker()
+	case key.Matches(msg, k.Priority):
+		return m.openPriorityPicker()
+	case key.Matches(msg, k.Assign):
+		return m.openAssignPicker()
 	case key.Matches(msg, k.Edit):
-		return m.pushEdit()
+		return m.openEdit()
 	case key.Matches(msg, k.New):
-		if m.ctx.Workspace != nil {
-			return core.Push(create.New(m.ctx, m.priorities))
-		}
+		return m.openCreate()
 	case key.Matches(msg, k.Comments):
-		return m.pushComments()
+		return m.openComment()
 	case key.Matches(msg, k.LogTime):
 		if it := m.list.selectedItem(); it != nil {
 			return core.Push(timelog.New(m.ctx, *it, m.timeProjects))
@@ -351,13 +592,124 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 			return tea.Batch(data.LoadWorkItems(m.ctx.Client, m.ctx.Workspace.ID), m.spinner.Tick)
 		}
 	case key.Matches(msg, k.Back):
+		if m.filter.Active() {
+			m.clearFilter()
+			return m.syncDetail()
+		}
 		m.ctx.Workspace = nil
 		return core.Pop()
 	}
 	return nil
 }
 
-func (m *Model) adjustSplit(delta float64) {
+// handleFilterKey routes keys while the filter input is focused: the filter
+// applies live on every keystroke; enter keeps it and returns focus to the
+// list; esc clears it.
+func (m *Model) handleFilterKey(msg tea.KeyPressMsg) tea.Cmd {
+	switch msg.String() {
+	case "esc":
+		m.clearFilter()
+		return m.syncDetail()
+	case "enter":
+		m.filtering = false
+		m.filterInput.Blur()
+		if !m.filter.Active() {
+			m.SetSize(m.width, m.height) // release the filter line
+		}
+		return nil
+	}
+	var cmd tea.Cmd
+	m.filterInput, cmd = m.filterInput.Update(msg)
+	if q := m.filterInput.Value(); q != m.filter.Query {
+		m.filter.Query = q
+		m.rebuildRows()
+		return tea.Batch(cmd, m.syncDetail())
+	}
+	return cmd
+}
+
+func (m *Model) clearFilter() {
+	m.filtering = false
+	m.filter.Query = ""
+	m.filterInput.SetValue("")
+	m.filterInput.Blur()
+	m.SetSize(m.width, m.height)
+	m.rebuildRows()
+}
+
+func (m *Model) openStatusPicker() tea.Cmd {
+	it := m.list.selectedItem()
+	if it == nil || len(m.statuses) == 0 {
+		return nil
+	}
+	options := make([]dialog.Option, len(m.statuses))
+	selectedIdx := 0
+	for i, s := range m.statuses {
+		options[i] = dialog.Option{
+			Label:  chip.Status(m.ctx.Styles, s.Name, s.CategoryColor),
+			Search: s.Name,
+			Value:  s,
+		}
+		if it.StatusID != nil && *it.StatusID == s.ID {
+			selectedIdx = i
+		}
+	}
+	return dialog.Open(dialog.NewPicker(pickerStatusID, "Set status", options, selectedIdx, m.ctx.Styles))
+}
+
+func (m *Model) openPriorityPicker() tea.Cmd {
+	it := m.list.selectedItem()
+	if it == nil || len(m.priorities) == 0 {
+		return nil
+	}
+	options := make([]dialog.Option, len(m.priorities))
+	selectedIdx := 0
+	for i, p := range m.priorities {
+		options[i] = dialog.Option{
+			Label:  chip.Priority(m.ctx.Styles, p.Name, p.Color),
+			Search: p.Name,
+			Value:  p,
+		}
+		if it.PriorityID != nil && *it.PriorityID == p.ID {
+			selectedIdx = i
+		}
+	}
+	return dialog.Open(dialog.NewPicker(pickerPriorityID, "Set priority", options, selectedIdx, m.ctx.Styles))
+}
+
+func (m *Model) openAssignPicker() tea.Cmd {
+	it := m.list.selectedItem()
+	if it == nil || len(m.users) == 0 {
+		return nil
+	}
+	s := m.ctx.Styles
+	options := make([]dialog.Option, 0, len(m.users)+1)
+	options = append(options, dialog.Option{
+		Label:  s.Base.Hint.Render("(unassign)"),
+		Search: "unassign",
+		Value:  data.User{},
+	})
+	selectedIdx := 0
+	for _, u := range m.users {
+		label := u.FullName
+		if label == "" {
+			label = u.Username
+		}
+		if u.IsAgent {
+			label += " " + s.List.Muted.Render("· agent")
+		}
+		if m.ctx.User != nil && u.ID == m.ctx.User.UserID {
+			label += " " + s.List.Muted.Render("· me")
+		}
+		options = append(options, dialog.Option{Label: label, Search: u.FullName + " " + u.Username, Value: u})
+		if it.AssigneeID != nil && *it.AssigneeID == u.ID {
+			selectedIdx = len(options) - 1
+		}
+	}
+	return dialog.Open(dialog.NewPicker(pickerAssignID, "Assign to", options, selectedIdx, m.ctx.Styles))
+}
+
+func (m *Model) adjustSplit(delta float64) tea.Cmd {
 	m.splitRatio += delta
 	if m.splitRatio < minSplitRatio {
 		m.splitRatio = minSplitRatio
@@ -366,20 +718,80 @@ func (m *Model) adjustSplit(delta float64) {
 		m.splitRatio = maxSplitRatio
 	}
 	m.SetSize(m.width, m.height)
+
+	r := m.splitRatio
+	m.ctx.Prefs.SplitRatio = &r
+	m.ratioSaveSeq++
+	seq := m.ratioSaveSeq
+	return tea.Tick(time.Second, func(time.Time) tea.Msg { return ratioSaveMsg{seq: seq} })
 }
 
-func (m *Model) pushEdit() tea.Cmd {
-	if it := m.list.selectedItem(); it != nil {
-		return core.Push(detail.New(m.ctx, *it, m.statuses, m.priorities, m.timeProjects))
+// formWidth sizes overlay-form fields to the terminal.
+func (m *Model) formWidth() int {
+	w := m.width - 16
+	if w > 70 {
+		w = 70
 	}
-	return nil
+	if w < 30 {
+		w = 30
+	}
+	return w
 }
 
-func (m *Model) pushComments() tea.Cmd {
-	if it := m.list.selectedItem(); it != nil {
-		return core.Push(comments.New(m.ctx, *it))
+func (m *Model) newFormTextarea(value string, height int) textarea.Model {
+	ta := textarea.New()
+	ta.SetValue(value)
+	ta.SetWidth(m.formWidth())
+	ta.SetHeight(height)
+	ta.ShowLineNumbers = false
+	ta.CharLimit = 5000
+	ta.Placeholder = "Markdown supported…"
+	return ta
+}
+
+func (m *Model) openEdit() tea.Cmd {
+	it := m.list.selectedItem()
+	if it == nil {
+		return nil
 	}
-	return nil
+	title := inputs.New(m.ctx.Styles, "Title", 200)
+	title.SetValue(it.Title)
+	fields := []dialog.FormField{
+		{Key: "title", Label: "Title", Input: title},
+		{Key: "description", Label: "Description", Multiline: true, Area: m.newFormTextarea(it.Description, 10)},
+	}
+	return dialog.Open(dialog.NewForm(formEditID, "Edit · "+m.itemKey(it), fields, m.ctx.Styles, m.formWidth()))
+}
+
+func (m *Model) openCreate() tea.Cmd {
+	if m.ctx.Workspace == nil {
+		return nil
+	}
+	title := inputs.New(m.ctx.Styles, "Title", 200)
+	fields := []dialog.FormField{
+		{Key: "title", Label: "Title", Input: title},
+		{Key: "description", Label: "Description (optional)", Multiline: true, Area: m.newFormTextarea("", 6)},
+	}
+	return dialog.Open(dialog.NewForm(formCreateID, "New work item · "+m.ctx.Workspace.Name, fields, m.ctx.Styles, m.formWidth()))
+}
+
+func (m *Model) openComment() tea.Cmd {
+	it := m.list.selectedItem()
+	if it == nil {
+		return nil
+	}
+	fields := []dialog.FormField{
+		{Key: "comment", Label: "Comment", Multiline: true, Area: m.newFormTextarea("", 6)},
+	}
+	return dialog.Open(dialog.NewForm(formCommentID, "Comment on "+m.itemKey(it), fields, m.ctx.Styles, m.formWidth()))
+}
+
+func (m *Model) itemKey(it *data.WorkItem) string {
+	prefix := it.WorkspaceKey
+	if prefix == "" && m.ctx.Workspace != nil {
+		prefix = m.ctx.Workspace.Key
+	}
+	return fmt.Sprintf("%s-%d", prefix, it.ID)
 }
 
 func (m *Model) View() string {
@@ -394,24 +806,45 @@ func (m *Model) View() string {
 		notice = s.Base.Hint.Render("Showing the first "+strconv.Itoa(len(m.items))+" items — refine in the web UI for more.") + "\n"
 	}
 
+	h := m.paneHeight()
+
 	if m.narrow() {
 		if m.narrowDetail {
-			return notice + m.detail.view()
+			return notice + framePane(s, m.detailTitle(), m.detail.view(), m.width, h, true)
 		}
-		return notice + m.list.view()
+		return notice + framePane(s, m.listTitle(), m.listColumn(), m.width, h, true)
 	}
 
 	listW, detailW := m.paneWidths()
-	h := m.paneHeight()
 
-	listBlock := lipgloss.NewStyle().Width(listW).Height(h).MaxHeight(h).Render(m.list.view())
-	detailBlock := lipgloss.NewStyle().Width(detailW).Height(h).MaxHeight(h).Render(m.detail.view())
+	listBlock := framePane(s, m.listTitle(), m.listColumn(), listW, h, m.focus == focusList)
+	detailBlock := framePane(s, m.detailTitle(), m.detail.view(), detailW, h, m.focus == focusDetail)
 
-	sepColor := s.Palette.Border
-	if m.focus == focusDetail {
-		sepColor = s.Palette.BorderFocus
+	return notice + lipgloss.JoinHorizontal(lipgloss.Top, listBlock, " ", detailBlock)
+}
+
+// listTitle labels the list pane's frame with the workspace and item count.
+func (m *Model) listTitle() string {
+	name := "Work items"
+	if m.ctx.Workspace != nil {
+		name = m.ctx.Workspace.Name
 	}
-	sep := lipgloss.NewStyle().Foreground(sepColor).Render(strings.TrimSuffix(strings.Repeat("│\n", h), "\n"))
+	return fmt.Sprintf("%s · %d", name, len(m.items))
+}
 
-	return notice + lipgloss.JoinHorizontal(lipgloss.Top, listBlock, " ", sep, " ", detailBlock)
+// detailTitle labels the detail pane's frame with the selected item's key.
+func (m *Model) detailTitle() string {
+	if it := m.list.selectedItem(); it != nil {
+		return m.itemKey(it)
+	}
+	return "Details"
+}
+
+// listColumn stacks the list rows and, when active, the filter input line.
+func (m *Model) listColumn() string {
+	out := m.list.view()
+	if m.filterVisible() {
+		out += "\n" + m.ctx.Styles.Status.KeyChord.Render("/") + " " + m.filterInput.View()
+	}
+	return out
 }

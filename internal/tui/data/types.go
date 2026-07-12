@@ -14,6 +14,14 @@ type UserInfo struct {
 	LastName       string
 }
 
+// Prefs is the per-user TUI preferences document persisted server-side
+// (v1 /users/me/tui-preferences). Pointer fields distinguish unset.
+type Prefs struct {
+	Theme           string   `json:"theme,omitempty"`
+	SplitRatio      *float64 `json:"split_ratio,omitempty"`
+	LastWorkspaceID *int     `json:"last_workspace_id,omitempty"`
+}
+
 // ─── v1 wire mirrors ──────────────────────────────────────────────────
 // These types mirror the relevant subset of internal/restapi/v1/dto. We
 // duplicate them rather than import the dto package to avoid pulling the
@@ -92,7 +100,45 @@ type v1CommentResponse struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 }
 
+type v1AssignableUser struct {
+	ID        int    `json:"id"`
+	Username  string `json:"username"`
+	FullName  string `json:"full_name"`
+	IsActive  bool   `json:"is_active"`
+	IsAgent   bool   `json:"is_agent"`
+	AvatarURL string `json:"avatar_url"`
+}
+
+type v1AgentRunResponse struct {
+	ID        int        `json:"id"`
+	Status    string     `json:"status"`
+	JobKind   string     `json:"job_kind"`
+	QueuedAt  time.Time  `json:"queued_at"`
+	StartedAt *time.Time `json:"started_at"`
+	EndedAt   *time.Time `json:"ended_at"`
+	Error     string     `json:"error"`
+}
+
 // ─── TUI domain types (converters below adapt v1 wire to these) ──────
+
+// User is an assignable user for the assignee picker.
+type User struct {
+	ID       int
+	Username string
+	FullName string
+	IsAgent  bool
+}
+
+// AgentRun is one coding-agent execution against a work item.
+type AgentRun struct {
+	ID        int
+	Status    string // queued|running|succeeded|failed|canceled|killed
+	JobKind   string
+	QueuedAt  string
+	StartedAt string
+	EndedAt   string
+	Error     string
+}
 
 // Workspace represents a workspace from the Windshift API.
 type Workspace struct {

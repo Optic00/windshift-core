@@ -42,6 +42,29 @@ type PrioritiesLoadedMsg struct {
 	Priorities []Priority
 }
 
+type UsersLoadedMsg struct {
+	Users []User
+}
+
+// WorkItemLoadedMsg is a single-item refresh (after a quick-set mutation).
+type WorkItemLoadedMsg struct {
+	Item WorkItem
+}
+
+// AgentRunsLoadedMsg delivers an item's coding-agent run history, keyed by
+// ItemID like CommentsLoadedMsg.
+type AgentRunsLoadedMsg struct {
+	ItemID int
+	Runs   []AgentRun
+}
+
+// PrefsLoadedMsg delivers the persisted TUI preferences. OK is false when
+// the load failed — startup proceeds with defaults, never blocks.
+type PrefsLoadedMsg struct {
+	Prefs Prefs
+	OK    bool
+}
+
 // ErrorMsg carries a human-readable (already sanitized) error string from a
 // failed loader/mutator.
 type ErrorMsg struct {

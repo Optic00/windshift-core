@@ -237,12 +237,27 @@ func (l *listPane) renderRow(i int) string {
 		if r.Collapsed {
 			arrow = "▸"
 		}
-		text := fmt.Sprintf("%s %s (%d)", arrow, strings.ToUpper(r.GroupName), r.Count)
-		line := s.List.Header.Render(text)
+		count := fmt.Sprintf("(%d)", r.Count)
+		if r.Shown != r.Count {
+			count = fmt.Sprintf("(%d/%d)", r.Shown, r.Count)
+		}
+		// Category-colored header: the dot + name carry the workspace's own
+		// category color; arrow and count stay muted chrome.
+		nameStyle := s.List.Header
+		dot := ""
+		if r.GroupColor != "" {
+			c := lipgloss.Color(r.GroupColor)
+			nameStyle = lipgloss.NewStyle().Foreground(c).Bold(true)
+			dot = lipgloss.NewStyle().Foreground(c).Render("●") + " "
+		}
+		text := s.List.Muted.Render(arrow+" ") + dot +
+			nameStyle.Render(strings.ToUpper(r.GroupName)) + " " +
+			s.List.Counter.Render(count)
+		var line string
 		if selected {
-			line = s.List.SelBar.Render("▎") + " " + s.List.Header.Render(text)
+			line = s.List.SelBar.Render("▎") + " " + text
 		} else {
-			line = "  " + line
+			line = "  " + text
 		}
 		return lipgloss.NewStyle().MaxWidth(l.width).Render(line)
 	}
@@ -261,14 +276,14 @@ func (l *listPane) renderRow(i int) string {
 		mine = " " + s.List.Muted.Render(initials(it.AssigneeName))
 	}
 
-	// Budget: 2 (gutter) + key + 1 + title + mine-marker
-	room := l.width - 2 - len(itemKey) - 1 - lipgloss.Width(mine)
+	// Budget: gutter (2) + style padding (2) + key + space + mine-marker.
+	room := l.width - 4 - len(itemKey) - 1 - lipgloss.Width(mine)
 	if room < 4 {
 		room = 4
 	}
 	title := it.Title
-	if len(title) > room {
-		title = title[:room-1] + "…"
+	if runes := []rune(title); len(runes) > room {
+		title = string(runes[:room-1]) + "…"
 	}
 
 	text := s.List.Muted.Render(itemKey) + " " + title + mine

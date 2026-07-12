@@ -38,9 +38,10 @@ func New(ctx *core.Ctx, root core.Screen) Model {
 
 func (m Model) active() core.Screen { return m.stack[len(m.stack)-1] }
 
-// Init starts the initial screen.
+// Init starts the initial screen and kicks off the preferences load (which
+// never blocks startup — failure just means defaults).
 func (m Model) Init() tea.Cmd {
-	return m.active().Init()
+	return tea.Batch(data.LoadPrefs(m.ctx.Client), m.active().Init())
 }
 
 // Update routes messages: sizes fan out to the whole stack, keys go to the
@@ -89,6 +90,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = statusbar.Notice{}
 		}
 		return m, nil
+
+	case data.PrefsLoadedMsg:
+		if msg.OK {
+			m.ctx.Prefs = msg.Prefs
+			if msg.Prefs.Theme != "" && msg.Prefs.Theme != m.ctx.Theme {
+				m.applyTheme(styles.ByName(msg.Prefs.Theme))
+			}
+		}
+		return m, m.broadcast(msg)
 
 	case data.ErrorMsg:
 		m.notice = statusbar.Notice{Kind: statusbar.Error, Text: msg.Err}
@@ -156,19 +166,27 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, m.active().Update(msg)
 }
 
-// cycleTheme advances to the next registered theme. ctx.Styles is replaced
-// wholesale — anything reading it at render time restyles for free; screens
-// with baked styles are told via ThemeAware.
+// cycleTheme advances to the next registered theme and persists the choice.
 func (m Model) cycleTheme() tea.Cmd {
 	next := styles.Next(m.ctx.Theme)
-	m.ctx.Theme = next.Name
-	m.ctx.Styles = styles.New(next.Palette)
+	m.applyTheme(next)
+	m.ctx.Prefs.Theme = next.Name
+	return tea.Batch(
+		core.NotifySuccess("Theme: "+next.Name),
+		data.SavePrefs(m.ctx.Client, m.ctx.Prefs),
+	)
+}
+
+// applyTheme replaces ctx.Styles wholesale — anything reading it at render
+// time restyles for free; screens with baked styles are told via ThemeAware.
+func (m Model) applyTheme(t styles.Theme) {
+	m.ctx.Theme = t.Name
+	m.ctx.Styles = styles.New(t.Palette)
 	for _, s := range m.stack {
 		if ta, ok := s.(core.ThemeAware); ok {
 			ta.OnThemeChanged()
 		}
 	}
-	return core.NotifySuccess("Theme: " + next.Name)
 }
 
 func (m Model) editingText() bool {
@@ -243,10 +261,25 @@ func (m Model) windowTitle() string {
 // open) — proper alpha overlay can come later if needed.
 func (m Model) overlayDialog(d dialog.Dialog) string {
 	s := m.ctx.Styles
+
+	width := 40
+	if sized, ok := d.(interface{ PreferredWidth() int }); ok {
+		width = sized.PreferredWidth()
+	}
+	if width > m.ctx.Width-8 {
+		width = m.ctx.Width - 8
+	}
+
+	footerText := "↑↓ select · enter confirm · esc cancel"
+	if withFooter, ok := d.(interface{ Footer() string }); ok {
+		footerText = withFooter.Footer()
+	}
+
 	titleLine := s.Dialog.Title.Render(d.Title())
-	body := d.View(40, m.ctx.Height-8)
-	footer := s.Dialog.Footer.Render("↑↓ select · enter confirm · esc cancel")
-	stacked := titleLine + "\n" + body + "\n" + footer
+	stacked := titleLine + "\n" + d.View(width, m.ctx.Height-8)
+	if footerText != "" {
+		stacked += "\n" + s.Dialog.Footer.Render(footerText)
+	}
 	frame := s.Dialog.Frame.Render(stacked)
 	return lipgloss.Place(
 		m.ctx.Width,

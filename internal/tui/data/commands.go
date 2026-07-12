@@ -1,6 +1,8 @@
 package data
 
 import (
+	"time"
+
 	tea "charm.land/bubbletea/v2"
 )
 
@@ -65,6 +67,104 @@ func LoadTimeProjects(c *Client) tea.Cmd {
 			return ErrorMsg{Err: err.Error()}
 		}
 		return TimeProjectsLoadedMsg{Projects: projects}
+	}
+}
+
+func LoadAssignableUsers(c *Client, workspaceID int) tea.Cmd {
+	return func() tea.Msg {
+		users, err := c.getAssignableUsers(workspaceID)
+		if err != nil {
+			return ErrorMsg{Err: err.Error()}
+		}
+		return UsersLoadedMsg{Users: users}
+	}
+}
+
+// ReloadWorkItem refreshes one item after a mutation.
+func ReloadWorkItem(c *Client, itemID int) tea.Cmd {
+	return func() tea.Msg {
+		item, err := c.getWorkItem(itemID)
+		if err != nil {
+			return ErrorMsg{Err: err.Error()}
+		}
+		return WorkItemLoadedMsg{Item: item}
+	}
+}
+
+// SetItemStatus transitions an item, then refreshes it.
+func SetItemStatus(c *Client, itemID, statusID int) tea.Cmd {
+	return func() tea.Msg {
+		if err := c.setItemStatus(itemID, statusID); err != nil {
+			return ErrorMsg{Err: err.Error()}
+		}
+		return ReloadWorkItem(c, itemID)()
+	}
+}
+
+// SetItemPriority sets priority_id only, then refreshes the item.
+func SetItemPriority(c *Client, itemID, priorityID int) tea.Cmd {
+	return func() tea.Msg {
+		if err := c.setItemField(itemID, "priority_id", priorityID); err != nil {
+			return ErrorMsg{Err: err.Error()}
+		}
+		return ReloadWorkItem(c, itemID)()
+	}
+}
+
+// SetItemAssignee sets assignee_id only (0 unassigns), then refreshes.
+func SetItemAssignee(c *Client, itemID, assigneeID int) tea.Cmd {
+	return func() tea.Msg {
+		var v interface{}
+		if assigneeID > 0 {
+			v = assigneeID
+		} else {
+			v = nil
+		}
+		if err := c.setItemField(itemID, "assignee_id", v); err != nil {
+			return ErrorMsg{Err: err.Error()}
+		}
+		return ReloadWorkItem(c, itemID)()
+	}
+}
+
+// LoadAgentRuns fetches an item's coding-agent run history. Failures are
+// silent — the agent panel is informational, an error toast on every
+// selection would be noise.
+func LoadAgentRuns(c *Client, itemID int) tea.Cmd {
+	return func() tea.Msg {
+		runs, err := c.getAgentRuns(itemID)
+		if err != nil {
+			return AgentRunsLoadedMsg{ItemID: itemID, Runs: nil}
+		}
+		return AgentRunsLoadedMsg{ItemID: itemID, Runs: runs}
+	}
+}
+
+// LoadPrefs fetches the persisted TUI preferences. It fires at session
+// start, racing the SSH-side token mint's visibility to the API pool, so a
+// failure is retried once after a beat before degrading to defaults
+// (OK=false) — prefs are never load-bearing and never block startup.
+func LoadPrefs(c *Client) tea.Cmd {
+	return func() tea.Msg {
+		p, err := c.getPrefs()
+		if err != nil {
+			time.Sleep(time.Second)
+			if p, err = c.getPrefs(); err != nil {
+				return PrefsLoadedMsg{OK: false}
+			}
+		}
+		return PrefsLoadedMsg{Prefs: p, OK: true}
+	}
+}
+
+// SavePrefs persists the TUI preferences, fire-and-forget. Only failures
+// produce a message (a statusbar notice).
+func SavePrefs(c *Client, p Prefs) tea.Cmd {
+	return func() tea.Msg {
+		if err := c.putPrefs(p); err != nil {
+			return ErrorMsg{Err: "Saving preferences failed: " + err.Error()}
+		}
+		return nil
 	}
 }
 
