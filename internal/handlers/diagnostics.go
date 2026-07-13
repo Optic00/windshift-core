@@ -21,6 +21,7 @@ import (
 // webhook_deliveries, scheduler_runs) and is read-only except for the manual
 // purge endpoints, which delete old rows on demand.
 type DiagnosticsHandler struct {
+	databaseDiagRepo *repository.DatabaseDiagnosticsRepository
 	actionRepo       *repository.ActionRepository
 	deliveryRepo     *repository.WebhookDeliveryRepository
 	schedulerRunRepo *repository.SchedulerRunRepository
@@ -35,6 +36,7 @@ type DiagnosticsHandler struct {
 
 // NewDiagnosticsHandler creates a new diagnostics handler.
 func NewDiagnosticsHandler(
+	databaseDiagRepo *repository.DatabaseDiagnosticsRepository,
 	actionRepo *repository.ActionRepository,
 	deliveryRepo *repository.WebhookDeliveryRepository,
 	schedulerRunRepo *repository.SchedulerRunRepository,
@@ -47,6 +49,7 @@ func NewDiagnosticsHandler(
 	agentRunRepo *repository.AgentRunRepository,
 ) *DiagnosticsHandler {
 	return &DiagnosticsHandler{
+		databaseDiagRepo: databaseDiagRepo,
 		actionRepo:       actionRepo,
 		deliveryRepo:     deliveryRepo,
 		schedulerRunRepo: schedulerRunRepo,
@@ -58,6 +61,56 @@ func NewDiagnosticsHandler(
 		runnerRepo:       runnerRepo,
 		agentRunRepo:     agentRunRepo,
 	}
+}
+
+// DatabasePoolSnapshot is the HTTP representation of database pool state.
+type DatabasePoolSnapshot struct {
+	Driver                 string  `json:"driver"`
+	MaxOpenConnections     int     `json:"max_open_connections"`
+	OpenConnections        int     `json:"open_connections"`
+	InUse                  int     `json:"in_use"`
+	Idle                   int     `json:"idle"`
+	WaitCount              int64   `json:"wait_count"`
+	WaitDurationMillis     int64   `json:"wait_duration_ms"`
+	MaxIdleClosed          int64   `json:"max_idle_closed"`
+	MaxIdleTimeClosed      int64   `json:"max_idle_time_closed"`
+	MaxLifetimeClosed      int64   `json:"max_lifetime_closed"`
+	UtilizationPercent     float64 `json:"utilization_percent"`
+	Saturated              bool    `json:"saturated"`
+	SaturationThresholdPct int     `json:"saturation_threshold_percent"`
+}
+
+const databasePoolSaturationThresholdPercent = 90
+
+// GetDatabasePool returns the live database/sql pool state so operators can
+// distinguish connection starvation from query execution latency.
+//
+// GET /api/admin/diagnostics/database-pool
+func (h *DiagnosticsHandler) GetDatabasePool(w http.ResponseWriter, _ *http.Request) {
+	stats := h.databaseDiagRepo.PoolStats()
+	utilization := 0.0
+	if stats.MaxOpenConnections > 0 {
+		utilization = float64(stats.InUse) / float64(stats.MaxOpenConnections) * 100
+	}
+	snapshot := DatabasePoolSnapshot{
+		Driver:                 stats.Driver,
+		MaxOpenConnections:     stats.MaxOpenConnections,
+		OpenConnections:        stats.OpenConnections,
+		InUse:                  stats.InUse,
+		Idle:                   stats.Idle,
+		WaitCount:              stats.WaitCount,
+		WaitDurationMillis:     stats.WaitDurationMillis,
+		MaxIdleClosed:          stats.MaxIdleClosed,
+		MaxIdleTimeClosed:      stats.MaxIdleTimeClosed,
+		MaxLifetimeClosed:      stats.MaxLifetimeClosed,
+		UtilizationPercent:     utilization,
+		Saturated:              utilization >= databasePoolSaturationThresholdPercent,
+		SaturationThresholdPct: databasePoolSaturationThresholdPercent,
+	}
+	respondJSONOK(w, map[string]any{
+		"pool":    snapshot,
+		"healthy": !snapshot.Saturated,
+	})
 }
 
 // GetFracIndexState returns a snapshot of persisted items.frac_index state

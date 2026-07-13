@@ -1348,6 +1348,7 @@ func (s *Server) initialize() error {
 			Features:         featuresHandler,
 			OAuthClients:     handlers.NewAdminOAuthClientHandler(s.db, tokenManager, permService),
 			Diagnostics: handlers.NewDiagnosticsHandler(
+				repository.NewDatabaseDiagnosticsRepository(s.db),
 				repository.NewActionRepository(s.db),
 				repository.NewWebhookDeliveryRepository(s.db),
 				repository.NewSchedulerRunRepository(s.db),
