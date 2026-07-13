@@ -11,6 +11,7 @@ import (
 type WriteBatcherConfig struct {
 	FlushInterval time.Duration // How often to flush (default: 30s)
 	MaxBatchSize  int           // Max items before forced flush (default: 100)
+	MaxPending    int           // Hard queue bound (default: 10x MaxBatchSize)
 	Name          string        // Name for logging (e.g., "audit_logs")
 }
 
@@ -35,11 +36,19 @@ type WriteBatcher[T any] struct {
 	itemsFlushed  int64
 	flushCount    int64
 	flushErrors   int64
+	itemsDropped  int64
+	highWaterMark int64
 }
 
 // NewWriteBatcher creates a new write batcher with the given flush function.
 // The flushFn should perform a batch INSERT of all provided items.
 func NewWriteBatcher[T any](config WriteBatcherConfig, flushFn func([]T) error) *WriteBatcher[T] {
+	if config.MaxPending <= 0 {
+		config.MaxPending = config.MaxBatchSize * 10
+		if config.MaxPending <= 0 {
+			config.MaxPending = 1000
+		}
+	}
 	return &WriteBatcher[T]{
 		config:  config,
 		flushFn: flushFn,
@@ -74,6 +83,7 @@ func (wb *WriteBatcher[T]) Start() {
 		"name", wb.config.Name,
 		"flush_interval", wb.config.FlushInterval,
 		"max_batch_size", wb.config.MaxBatchSize,
+		"max_pending", wb.config.MaxPending,
 	)
 }
 
@@ -100,19 +110,32 @@ func (wb *WriteBatcher[T]) Stop() {
 			"total_items_flushed", atomic.LoadInt64(&wb.itemsFlushed),
 			"total_flushes", atomic.LoadInt64(&wb.flushCount),
 			"flush_errors", atomic.LoadInt64(&wb.flushErrors),
+			"items_dropped", atomic.LoadInt64(&wb.itemsDropped),
+			"high_water_mark", atomic.LoadInt64(&wb.highWaterMark),
 		)
 	})
 }
 
 // Add queues an item for batched writing.
 // If the buffer reaches MaxBatchSize, it triggers an immediate flush.
-func (wb *WriteBatcher[T]) Add(item T) {
+func (wb *WriteBatcher[T]) Add(item T) bool {
 	wb.mu.Lock()
+	if len(wb.buffer) >= wb.config.MaxPending {
+		wb.mu.Unlock()
+		atomic.AddInt64(&wb.itemsDropped, 1)
+		return false
+	}
 	wb.buffer = append(wb.buffer, item)
 	bufferLen := len(wb.buffer)
 	wb.mu.Unlock()
 
 	atomic.AddInt64(&wb.itemsBuffered, 1)
+	for {
+		previous := atomic.LoadInt64(&wb.highWaterMark)
+		if int64(bufferLen) <= previous || atomic.CompareAndSwapInt64(&wb.highWaterMark, previous, int64(bufferLen)) {
+			break
+		}
+	}
 
 	// Trigger immediate flush if buffer is full. Only one threshold-triggered
 	// flush may be in flight at a time; periodic/final Flush calls still run
@@ -128,6 +151,7 @@ func (wb *WriteBatcher[T]) Add(item T) {
 			}
 		}()
 	}
+	return true
 }
 
 // Flush writes all buffered items to the database
@@ -147,9 +171,17 @@ func (wb *WriteBatcher[T]) Flush() error {
 	err := wb.flushFn(items)
 	if err != nil {
 		atomic.AddInt64(&wb.flushErrors, 1)
-		// Put items back in buffer for retry on next flush
+		// Preserve the oldest failed work first, but never exceed MaxPending
+		// while producers continue appending during the failed flush.
 		wb.mu.Lock()
-		wb.buffer = append(items, wb.buffer...)
+		combined := make([]T, 0, wb.config.MaxPending)
+		combined = append(combined, items...)
+		combined = append(combined, wb.buffer...)
+		if overflow := len(combined) - wb.config.MaxPending; overflow > 0 {
+			combined = combined[:wb.config.MaxPending]
+			atomic.AddInt64(&wb.itemsDropped, int64(overflow))
+		}
+		wb.buffer = combined
 		wb.mu.Unlock()
 		return err
 	}
@@ -178,6 +210,9 @@ func (wb *WriteBatcher[T]) Stats() WriteBatcherStats {
 		ItemsFlushed:  atomic.LoadInt64(&wb.itemsFlushed),
 		FlushCount:    atomic.LoadInt64(&wb.flushCount),
 		FlushErrors:   atomic.LoadInt64(&wb.flushErrors),
+		ItemsDropped:  atomic.LoadInt64(&wb.itemsDropped),
+		HighWaterMark: atomic.LoadInt64(&wb.highWaterMark),
+		MaxPending:    wb.config.MaxPending,
 	}
 }
 
@@ -189,4 +224,7 @@ type WriteBatcherStats struct {
 	ItemsFlushed  int64
 	FlushCount    int64
 	FlushErrors   int64
+	ItemsDropped  int64
+	HighWaterMark int64
+	MaxPending    int
 }

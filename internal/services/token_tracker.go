@@ -100,10 +100,13 @@ func (tt *TokenTracker) Close() error {
 func (tt *TokenTracker) GetStats() map[string]int64 {
 	stats := tt.batcher.Stats()
 	return map[string]int64{
-		"updates": atomic.LoadInt64(&tt.updates),
-		"flushed": stats.ItemsFlushed,
-		"flushes": stats.FlushCount,
-		"errors":  stats.FlushErrors,
-		"pending": int64(stats.Pending),
+		"updates":         atomic.LoadInt64(&tt.updates),
+		"flushed":         stats.ItemsFlushed,
+		"flushes":         stats.FlushCount,
+		"errors":          stats.FlushErrors,
+		"pending":         int64(stats.Pending),
+		"dropped":         stats.ItemsDropped,
+		"high_water_mark": stats.HighWaterMark,
+		"max_pending":     int64(stats.MaxPending),
 	}
 }
