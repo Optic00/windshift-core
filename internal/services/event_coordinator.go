@@ -152,7 +152,7 @@ func (ec *EventCoordinator) emitItemCreatedInternal(item *models.Item, actorUser
 
 	// Dispatch webhook event
 	if ec.webhookDispatcher != nil {
-		go ec.webhookDispatcher.DispatchEvent("item.created", item)
+		ec.webhookDispatcher.DispatchEvent("item.created", item)
 	}
 }
 
@@ -270,13 +270,13 @@ func (ec *EventCoordinator) EmitItemUpdated(original, updated *models.Item, stat
 	// Dispatch webhook events
 	if ec.webhookDispatcher != nil {
 		if statusChanged {
-			go ec.webhookDispatcher.DispatchEvent("status.changed", updated)
+			ec.webhookDispatcher.DispatchEvent("status.changed", updated)
 		}
 		if assigneeChanged {
-			go ec.webhookDispatcher.DispatchEvent("item.assigned", updated)
+			ec.webhookDispatcher.DispatchEvent("item.assigned", updated)
 		}
 		// Always dispatch item.updated for any update
-		go ec.webhookDispatcher.DispatchEvent("item.updated", updated)
+		ec.webhookDispatcher.DispatchEvent("item.updated", updated)
 	}
 }
 
@@ -305,7 +305,7 @@ func (ec *EventCoordinator) EmitItemDeleted(item *models.Item, actorUserID, desc
 
 	// Dispatch webhook event
 	if ec.webhookDispatcher != nil {
-		go ec.webhookDispatcher.DispatchEvent("item.deleted", item)
+		ec.webhookDispatcher.DispatchEvent("item.deleted", item)
 	}
 }
 
@@ -361,7 +361,7 @@ func (ec *EventCoordinator) EmitStatusChanged(item *models.Item, oldStatusID, ne
 
 	// Dispatch webhook event
 	if ec.webhookDispatcher != nil {
-		go ec.webhookDispatcher.DispatchEvent("status.changed", item)
+		ec.webhookDispatcher.DispatchEvent("status.changed", item)
 	}
 }
 
@@ -440,7 +440,7 @@ func (ec *EventCoordinator) EmitApprovalRequested(req *models.ApprovalRequest, i
 		})
 	}
 	if ec.webhookDispatcher != nil {
-		go ec.webhookDispatcher.DispatchEvent("approval.requested", item)
+		ec.webhookDispatcher.DispatchEvent("approval.requested", item)
 	}
 }
 
@@ -482,7 +482,7 @@ func (ec *EventCoordinator) EmitApprovalStepStarted(req *models.ApprovalRequest,
 		ec.notifyPortalCustomersOfApprovalStep(req, approverPortalCustomerIDs, item, itemKey)
 	}
 	if ec.webhookDispatcher != nil {
-		go ec.webhookDispatcher.DispatchEvent("approval.step_started", item)
+		ec.webhookDispatcher.DispatchEvent("approval.step_started", item)
 	}
 }
 
@@ -588,7 +588,7 @@ func (ec *EventCoordinator) EmitApprovalDecided(req *models.ApprovalRequest, dec
 		})
 	}
 	if ec.webhookDispatcher != nil {
-		go ec.webhookDispatcher.DispatchEvent("approval.decided", item)
+		ec.webhookDispatcher.DispatchEvent("approval.decided", item)
 	}
 }
 
@@ -621,7 +621,7 @@ func (ec *EventCoordinator) EmitApprovalCompleted(req *models.ApprovalRequest, i
 		})
 	}
 	if ec.webhookDispatcher != nil {
-		go ec.webhookDispatcher.DispatchEvent("approval.completed", item)
+		ec.webhookDispatcher.DispatchEvent("approval.completed", item)
 	}
 }
 
@@ -653,7 +653,7 @@ func (ec *EventCoordinator) EmitApprovalCancelled(req *models.ApprovalRequest, i
 		})
 	}
 	if ec.webhookDispatcher != nil {
-		go ec.webhookDispatcher.DispatchEvent("approval.cancelled", item)
+		ec.webhookDispatcher.DispatchEvent("approval.cancelled", item)
 	}
 }
 
@@ -693,6 +693,6 @@ func (ec *EventCoordinator) EmitApprovalEscalated(req *models.ApprovalRequest, s
 		})
 	}
 	if ec.webhookDispatcher != nil {
-		go ec.webhookDispatcher.DispatchEvent("approval.escalated", item)
+		ec.webhookDispatcher.DispatchEvent("approval.escalated", item)
 	}
 }

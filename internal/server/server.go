@@ -79,6 +79,7 @@ type Server struct {
 	pluginScheduleScheduler   *scheduler.PluginScheduleScheduler
 	activityTracker           *services.ActivityTracker
 	tokenTracker              *services.TokenTracker
+	webhookSender             *webhook.WebhookSender
 	scmSyncStopChan           chan struct{}
 	issueSyncStopChan         chan struct{}
 	magicLinkStopChan         chan struct{}
@@ -882,6 +883,7 @@ func (s *Server) initialize() error {
 
 	// Webhook sender
 	webhookSender := webhook.NewWebhookSender(s.db)
+	s.webhookSender = webhookSender
 
 	// Event coordinator
 	eventCoordinator := services.NewEventCoordinator(s.db)
@@ -1791,6 +1793,13 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		if err := s.httpServer.Shutdown(ctx); err != nil {
 			slog.Warn("HTTP server shutdown timed out, forcing close", "error", err)
 			_ = s.httpServer.Close()
+		}
+	}
+
+	if s.webhookSender != nil {
+		slog.Info("draining webhook dispatch queue")
+		if err := s.webhookSender.Shutdown(ctx); err != nil {
+			slog.Warn("webhook dispatch queue did not drain in time", "error", err)
 		}
 	}
 

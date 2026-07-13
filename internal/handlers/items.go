@@ -843,7 +843,7 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 		if h.webhookSender != nil {
-			go h.webhookSender.DispatchEvent("item.created", &createdItem)
+			h.webhookSender.DispatchEvent("item.created", &createdItem)
 		}
 	}
 	notifyTime := time.Since(notifyStart)
@@ -1094,12 +1094,12 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 		if h.webhookSender != nil {
 			if result.StatusChanged {
-				go h.webhookSender.DispatchEvent("status.changed", updatedItem)
+				h.webhookSender.DispatchEvent("status.changed", updatedItem)
 			}
 			if assigneeChanged {
-				go h.webhookSender.DispatchEvent("item.assigned", updatedItem)
+				h.webhookSender.DispatchEvent("item.assigned", updatedItem)
 			}
-			go h.webhookSender.DispatchEvent("item.updated", updatedItem)
+			h.webhookSender.DispatchEvent("item.updated", updatedItem)
 		}
 	}
 
@@ -1264,7 +1264,7 @@ func (h *ItemHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 		if h.webhookSender != nil {
-			go h.webhookSender.DispatchEvent("item.deleted", item)
+			h.webhookSender.DispatchEvent("item.deleted", item)
 		}
 	}
 
@@ -1550,7 +1550,7 @@ func (h *ItemHandler) DeleteCascade(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 		if h.webhookSender != nil {
-			go h.webhookSender.DispatchEvent("item.deleted", item)
+			h.webhookSender.DispatchEvent("item.deleted", item)
 		}
 	}
 

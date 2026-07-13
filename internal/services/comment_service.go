@@ -340,7 +340,7 @@ func (s *CommentService) Create(params CreateCommentParams) (*CreateCommentResul
 
 		// 7. Dispatch webhook (if webhookSender != nil)
 		if s.webhookSender != nil {
-			go s.webhookSender.DispatchEvent("comment.created", item)
+			s.webhookSender.DispatchEvent("comment.created", item)
 		}
 
 		// 8. Handle outbound email reply (if emailReplyService != nil)

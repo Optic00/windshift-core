@@ -14,6 +14,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"windshift/internal/database"
@@ -43,12 +45,28 @@ type PluginDispatcher interface {
 	DispatchToPlugin(ctx context.Context, pluginName, handler, event string, payload json.RawMessage) error
 }
 
-// dispatchConcurrency caps the number of simultaneous outbound webhook
-// deliveries per WebhookSender. Without a cap, a burst of item events with
-// many configured webhooks could spawn an unbounded number of goroutines and
-// outbound connections. 16 matches a typical hosted-process budget and is
-// well below the default SSRF-safe client's per-host connection limit.
-const dispatchConcurrency = 16
+const (
+	// dispatchWorkerCount bounds simultaneous event matching and delivery work.
+	dispatchWorkerCount = 8
+	// dispatchQueueCapacity bounds events waiting for a worker. Automatic
+	// webhook delivery is best-effort: when this queue is full, a new event is
+	// rejected and counted instead of creating another goroutine or SQL waiter.
+	dispatchQueueCapacity = 256
+)
+
+type dispatchJob struct {
+	event string
+	item  models.Item
+}
+
+// DispatchStats is a snapshot of the bounded automatic webhook pipeline.
+type DispatchStats struct {
+	QueueDepth    int
+	QueueCapacity int
+	ActiveWorkers int64
+	Enqueued      uint64
+	Rejected      uint64
+}
 
 // WebhookSender handles sending webhooks to configured endpoints
 type WebhookSender struct {
@@ -57,18 +75,102 @@ type WebhookSender struct {
 	deliveryRepo     *repository.WebhookDeliveryRepository
 	httpClient       *http.Client
 	pluginDispatcher PluginDispatcher
-	// dispatchSem caps concurrent sendWebhook goroutines. See dispatchConcurrency.
-	dispatchSem chan struct{}
+
+	dispatchCtx    context.Context
+	dispatchCancel context.CancelFunc
+	dispatchQueue  chan dispatchJob
+	dispatchJobFn  func(dispatchJob)
+	dispatchMu     sync.RWMutex
+	accepting      bool
+	dispatchWG     sync.WaitGroup
+	activeWorkers  atomic.Int64
+	enqueued       atomic.Uint64
+	rejected       atomic.Uint64
 }
 
 // NewWebhookSender creates a new webhook sender
 func NewWebhookSender(db database.Database) *WebhookSender {
-	return &WebhookSender{
+	dispatchCtx, dispatchCancel := context.WithCancel(context.Background())
+	w := &WebhookSender{
 		db:             db,
 		itemRepository: repository.NewItemRepository(db),
 		deliveryRepo:   repository.NewWebhookDeliveryRepository(db),
 		httpClient:     newSSRFSafeWebhookClient(30 * time.Second),
-		dispatchSem:    make(chan struct{}, dispatchConcurrency),
+		dispatchCtx:    dispatchCtx,
+		dispatchCancel: dispatchCancel,
+		dispatchQueue:  make(chan dispatchJob, dispatchQueueCapacity),
+		accepting:      true,
+	}
+	w.dispatchJobFn = w.dispatchQueuedEvent
+	w.startDispatchWorkers(dispatchWorkerCount)
+	return w
+}
+
+func (w *WebhookSender) startDispatchWorkers(workerCount int) {
+	w.dispatchWG.Add(workerCount)
+	for range workerCount {
+		go func() {
+			defer w.dispatchWG.Done()
+			for job := range w.dispatchQueue {
+				w.activeWorkers.Add(1)
+				w.dispatchJobFn(job)
+				w.activeWorkers.Add(-1)
+			}
+		}()
+	}
+}
+
+func (w *WebhookSender) dispatchQueuedEvent(job dispatchJob) {
+	ctx, cancel := context.WithTimeout(w.dispatchCtx, 60*time.Second)
+	defer cancel()
+
+	webhooks, err := w.GetMatchingWebhooks(ctx, job.event, &job.item)
+	if err != nil {
+		logger.Get().Error("Failed to get matching webhooks", "error", err, "event", job.event, "item_id", job.item.ID)
+		return
+	}
+
+	for _, webhook := range webhooks {
+		w.sendWebhook(ctx, webhook, job.event, &job.item)
+	}
+}
+
+// Stats returns current queue pressure and lifetime admission counters.
+func (w *WebhookSender) Stats() DispatchStats {
+	return DispatchStats{
+		QueueDepth:    len(w.dispatchQueue),
+		QueueCapacity: cap(w.dispatchQueue),
+		ActiveWorkers: w.activeWorkers.Load(),
+		Enqueued:      w.enqueued.Load(),
+		Rejected:      w.rejected.Load(),
+	}
+}
+
+// Shutdown stops admission and drains queued automatic events. If ctx expires,
+// in-flight HTTP/plugin requests are canceled and the undrained count is
+// returned to the caller.
+func (w *WebhookSender) Shutdown(ctx context.Context) error {
+	w.dispatchMu.Lock()
+	if w.accepting {
+		w.accepting = false
+		close(w.dispatchQueue)
+	}
+	w.dispatchMu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		w.dispatchWG.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		w.dispatchCancel()
+		return nil
+	case <-ctx.Done():
+		queued := len(w.dispatchQueue)
+		w.dispatchCancel()
+		return fmt.Errorf("webhook dispatch shutdown with %d queued events: %w", queued, ctx.Err())
 	}
 }
 
@@ -120,29 +222,33 @@ type WebhookConfig struct {
 	PluginHandler   string // Plugin's handler function name
 }
 
-// DispatchEvent sends webhook for an event if matching webhooks exist
-// This is called from item/comment handlers when events occur
+// DispatchEvent admits an automatic webhook event without blocking on SQL or
+// downstream delivery. The queue is deliberately lossy when full so request
+// mutation paths stay bounded; rejected events are logged and counted.
 func (w *WebhookSender) DispatchEvent(event string, item *models.Item) {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	// Get all webhooks that should fire for this event
-	webhooks, err := w.GetMatchingWebhooks(ctx, event, item)
-	if err != nil {
-		logger.Get().Error("Failed to get matching webhooks", "error", err, "event", event, "item_id", item.ID)
+	if item == nil {
 		return
 	}
 
-	// Send webhooks asynchronously, capped at dispatchConcurrency in flight.
-	// The semaphore is per-WebhookSender so independent processes don't
-	// share state, but within one process a burst of events can't fan out
-	// without bound.
-	for _, webhook := range webhooks {
-		w.dispatchSem <- struct{}{}
-		go func(wh WebhookConfig) {
-			defer func() { <-w.dispatchSem }()
-			w.sendWebhook(wh, event, item)
-		}(webhook)
+	job := dispatchJob{event: event, item: *item}
+	w.dispatchMu.RLock()
+	defer w.dispatchMu.RUnlock()
+	if !w.accepting {
+		w.rejected.Add(1)
+		return
+	}
+
+	select {
+	case w.dispatchQueue <- job:
+		w.enqueued.Add(1)
+	default:
+		w.rejected.Add(1)
+		logger.Get().Warn("Webhook event queue full; event rejected",
+			"event", event,
+			"item_id", item.ID,
+			"queue_capacity", cap(w.dispatchQueue),
+			"rejected_total", w.rejected.Load(),
+		)
 	}
 }
 
@@ -319,8 +425,8 @@ func isPrivateIP(ip net.IP) bool {
 // Records one delivery row for every attempt — success, non-2xx response, hard
 // error, or plugin dispatch — so the admin Diagnostics page can surface health
 // per channel. Recording errors are logged but do not block dispatch.
-func (w *WebhookSender) sendWebhook(webhook WebhookConfig, event string, item *models.Item) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+func (w *WebhookSender) sendWebhook(parentCtx context.Context, webhook WebhookConfig, event string, item *models.Item) {
+	ctx, cancel := context.WithTimeout(parentCtx, 30*time.Second)
 	defer cancel()
 
 	delivery := &models.WebhookDelivery{
@@ -543,7 +649,7 @@ func (w *WebhookSender) TriggerManually(ctx context.Context, webhookID, itemID i
 	}
 
 	// Send synchronously for manual triggers
-	w.sendWebhook(webhook, "manual", item)
+	w.sendWebhook(ctx, webhook, "manual", item)
 
 	return nil
 }

@@ -456,7 +456,7 @@ func (h *CommentHandler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 	if h.webhookSender != nil {
 		itemRepo := repository.NewItemRepository(h.db)
 		if item, err := itemRepo.FindByIDWithDetails(itemID); err == nil {
-			go h.webhookSender.DispatchEvent("comment.updated", item)
+			h.webhookSender.DispatchEvent("comment.updated", item)
 		}
 	}
 
@@ -535,7 +535,7 @@ func (h *CommentHandler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 	if h.webhookSender != nil {
 		itemRepo := repository.NewItemRepository(h.db)
 		if item, err := itemRepo.FindByIDWithDetails(itemID); err == nil {
-			go h.webhookSender.DispatchEvent("comment.deleted", item)
+			h.webhookSender.DispatchEvent("comment.deleted", item)
 		}
 	}
 
