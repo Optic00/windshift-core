@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -121,6 +122,13 @@ func SystemSortableFieldKeys() []string {
 
 // FindAllWithDetails retrieves items with all joined data, supporting filters and pagination
 func (r *ItemRepository) FindAllWithDetails(params ItemListParams) ([]models.Item, int, error) {
+	return r.FindAllWithDetailsContext(context.Background(), params)
+}
+
+// FindAllWithDetailsContext retrieves a page of items while allowing request
+// cancellation to stop both the count and data queries and release their pool
+// connections promptly.
+func (r *ItemRepository) FindAllWithDetailsContext(ctx context.Context, params ItemListParams) ([]models.Item, int, error) {
 	// Build the SELECT clause. Collection/list surfaces can opt out of the
 	// heavy description payload; detail endpoints still fetch full descriptions.
 	descriptionExpr := "i.description"
@@ -158,7 +166,7 @@ func (r *ItemRepository) FindAllWithDetails(params ItemListParams) ([]models.Ite
 	// Get total count
 	countQuery := "SELECT COUNT(DISTINCT i.id) " + fromClause + whereClause
 	var total int
-	if err := r.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
+	if err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("failed to count items: %w", err)
 	}
 
@@ -180,7 +188,7 @@ func (r *ItemRepository) FindAllWithDetails(params ItemListParams) ([]models.Ite
 
 	// Execute query
 	fullQuery := selectClause + fromClause + whereClause + orderByClause + fmt.Sprintf(" LIMIT %d OFFSET %d", limit, offset)
-	rows, err := r.db.Query(fullQuery, args...)
+	rows, err := r.db.QueryContext(ctx, fullQuery, args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to query items: %w", err)
 	}

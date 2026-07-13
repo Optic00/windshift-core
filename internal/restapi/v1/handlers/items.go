@@ -293,7 +293,7 @@ func (h *ItemHandler) List(w http.ResponseWriter, r *http.Request) {
 		SortAsc: pagination.SortAsc,
 	}
 
-	items, total, err := h.itemCRUD.List(params)
+	items, total, err := h.itemCRUD.ListContext(r.Context(), params)
 	if err != nil {
 		h.RespondInternalError(w, r)
 		return

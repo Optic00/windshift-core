@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log/slog"
@@ -308,6 +309,12 @@ type PaginationParams = repository.PaginationParams
 // List retrieves items with filters and pagination using the repository
 func (s *ItemCRUDService) List(params ItemListParams) ([]models.Item, int, error) {
 	return s.repo.FindAllWithDetails(params)
+}
+
+// ListContext is the request-aware form of List. HTTP handlers should use it
+// so disconnected clients do not leave SQL work occupying pool connections.
+func (s *ItemCRUDService) ListContext(ctx context.Context, params ItemListParams) ([]models.Item, int, error) {
+	return s.repo.FindAllWithDetailsContext(ctx, params)
 }
 
 // Search searches items by title and description
