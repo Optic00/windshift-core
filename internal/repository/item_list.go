@@ -163,8 +163,16 @@ func (r *ItemRepository) FindAllWithDetailsContext(ctx context.Context, params I
 
 	whereClause, args := r.buildWhereClause(params)
 
-	// Get total count
-	countQuery := "SELECT COUNT(DISTINCT i.id) " + fromClause + whereClause
+	// Count only joins that filtering can reference. The detail query's parent,
+	// iteration, project, user and priority joins are all one-to-one display
+	// enrichment and made every page count pay unnecessary join cost.
+	countFromClause := `FROM items i
+		JOIN workspaces w ON i.workspace_id = w.id
+		LEFT JOIN item_types it ON i.item_type_id = it.id
+		LEFT JOIN statuses st ON i.status_id = st.id
+		LEFT JOIN status_categories sc ON st.category_id = sc.id
+	`
+	countQuery := "SELECT COUNT(*) " + countFromClause + whereClause
 	var total int
 	if err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("failed to count items: %w", err)

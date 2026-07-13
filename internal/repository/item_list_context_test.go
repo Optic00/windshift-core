@@ -9,7 +9,32 @@ import (
 )
 
 func TestFindAllWithDetailsContextHonorsCancellation(t *testing.T) {
-	db, err := database.NewSQLiteDBWithPoolSizes("file:item-list-context?mode=memory&cache=shared", 2, 1)
+	db := newItemListTestDB(t, "item-list-context")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, _, err := NewItemRepository(db).FindAllWithDetailsContext(ctx, ItemListParams{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context.Canceled", err)
+	}
+}
+
+func TestFindAllWithDetailsUsesLeanCountQuery(t *testing.T) {
+	db := newItemListTestDB(t, "item-list-lean-count")
+
+	items, total, err := NewItemRepository(db).FindAllWithDetailsContext(context.Background(), ItemListParams{})
+	if err != nil {
+		t.Fatalf("list items: %v", err)
+	}
+	if total != len(items) {
+		t.Fatalf("total = %d, items = %d", total, len(items))
+	}
+}
+
+func newItemListTestDB(t *testing.T, name string) database.Database {
+	t.Helper()
+	db, err := database.NewSQLiteDBWithPoolSizes("file:"+name+"?mode=memory&cache=shared", 2, 1)
 	if err != nil {
 		t.Fatalf("create database: %v", err)
 	}
@@ -17,12 +42,5 @@ func TestFindAllWithDetailsContextHonorsCancellation(t *testing.T) {
 	if err := db.Initialize(); err != nil {
 		t.Fatalf("initialize database: %v", err)
 	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, _, err = NewItemRepository(db).FindAllWithDetailsContext(ctx, ItemListParams{})
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("error = %v, want context.Canceled", err)
-	}
+	return db
 }
