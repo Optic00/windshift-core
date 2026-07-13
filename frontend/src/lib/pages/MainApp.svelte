@@ -216,22 +216,6 @@
     'terminal-panel': () => import('../features/terminal/TerminalPanel.svelte')
   };
 
-  // Preload all chunks after initial load for faster navigation
-  function preloadChunks() {
-    // Use requestIdleCallback for non-blocking preload, fallback to setTimeout
-    const schedulePreload = window.requestIdleCallback || ((cb) => setTimeout(cb, 1000));
-
-    schedulePreload(() => {
-      Object.entries(componentLoaders).forEach(([view, loader]) => {
-        loader().then(module => {
-          if (!componentRegistry.has(view)) {
-            componentRegistry = new Map(componentRegistry).set(view, module.default);
-          }
-        }).catch(() => {});
-      });
-    });
-  }
-
   // Route configuration for lazy-loaded components (metadata only)
   const routeConfig = {
     'admin': {
@@ -709,8 +693,6 @@
     // Re-fetch collection data now that auth is established (fixes empty board after login)
     collectionStore.reload();
 
-    // Preload chunks after app is ready for faster navigation
-    preloadChunks();
   });
 
   // Double-space handler for command palette (manual — not a simple hotkey)
