@@ -109,10 +109,6 @@ export default defineConfig({
               test: /d3-(scale|shape|time-format)/,
             },
             {
-              name: 'excalidraw',
-              test: /react|react-dom|@excalidraw\/excalidraw/,
-            },
-            {
               name: 'svelteflow',
               test: /@xyflow\/svelte/,
             },
