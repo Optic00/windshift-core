@@ -105,14 +105,6 @@ export default defineConfig({
               test: /@milkdown/,
             },
             {
-              name: 'd3',
-              test: /d3-(scale|shape|time-format)/,
-            },
-            {
-              name: 'svelteflow',
-              test: /@xyflow\/svelte/,
-            },
-            {
               name: 'dnd',
               test: /@atlaskit\/pragmatic-drag-and-drop/,
             },
