@@ -2,31 +2,9 @@
  * Registration resolves paths against document.baseURI so it works under
  * context-path deployments and the injected <base href>. */
 import { fetchAPI } from '../api/core.js';
+import { registerMobileServiceWorker } from './serviceWorkerClient.js';
 
-let registrationPromise = null;
-
-/**
- * Register the mobile service worker. Idempotent — repeated calls return the
- * same in-flight/settled registration. No-ops where service workers are
- * unavailable (older browsers, insecure contexts).
- * @returns {Promise<ServiceWorkerRegistration|null>}
- */
-export function registerMobileServiceWorker() {
-  if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) {
-    return Promise.resolve(null);
-  }
-  if (registrationPromise) return registrationPromise;
-
-  const swUrl = new URL('service-worker.js', document.baseURI).pathname;
-  const scope = new URL('./', document.baseURI).pathname;
-
-  registrationPromise = navigator.serviceWorker.register(swUrl, { scope }).catch((err) => {
-    console.warn('[mobile] service worker registration failed:', err);
-    return null;
-  });
-
-  return registrationPromise;
-}
+export { registerMobileServiceWorker } from './serviceWorkerClient.js';
 
 /** True when launched as an installed PWA (iOS requires this for Web Push). */
 export function isStandalone() {

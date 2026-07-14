@@ -98,7 +98,10 @@
       {#each Array(5) as _}<div class="sk-row"></div>{/each}
     </div>
   {:else if errored}
-    <p class="msg" data-testid="personal-error">Couldn't load your personal tasks.</p>
+    <div class="msg" data-testid="personal-error">
+      <p>Couldn't load your personal tasks.</p>
+      <button class="retry" onclick={load} disabled={loading} type="button">Retry</button>
+    </div>
   {:else if tasks.length === 0}
     <p class="msg" data-testid="personal-empty">Your personal todo list is empty.</p>
   {:else}
@@ -179,6 +182,21 @@
     color: var(--ds-text-subtle);
     font-size: 0.875rem;
   }
+
+  .msg p { margin: 0; }
+  .retry {
+    min-height: 40px;
+    margin-top: 0.75rem;
+    padding: 0.45rem 1rem;
+    border: 1px solid var(--ds-interactive);
+    border-radius: var(--radius-md, 6px);
+    background: var(--ds-interactive);
+    color: var(--ds-text-inverse, #fff);
+    font: inherit;
+    font-weight: var(--font-semibold, 600);
+    cursor: pointer;
+  }
+  .retry:disabled { opacity: 0.6; }
 
   .skeleton { display: flex; flex-direction: column; }
   .sk-row {

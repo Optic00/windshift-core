@@ -112,10 +112,13 @@ type APITokenResponse struct {
 
 // CacheStats represents permission cache performance metrics
 type CacheStats struct {
-	Hits        int64   `json:"hits"`
-	Misses      int64   `json:"misses"`
-	Errors      int64   `json:"errors"`
-	HitRatio    float64 `json:"hit_ratio"`
-	AvgLoadTime int64   `json:"avg_load_time_ms"`
-	TotalUsers  int64   `json:"total_cached_users"`
+	Hits                       int64   `json:"hits"`
+	Misses                     int64   `json:"misses"`
+	Errors                     int64   `json:"errors"`
+	HitRatio                   float64 `json:"hit_ratio"`
+	AvgLoadTime                int64   `json:"avg_load_time_ms"`
+	TotalUsers                 int64   `json:"total_cached_users"`
+	PermissionSnapshotDecodes  uint64  `json:"permission_snapshot_decodes"`
+	ActiveWorkspaceCacheHits   uint64  `json:"active_workspace_cache_hits"`
+	ActiveWorkspaceCacheMisses uint64  `json:"active_workspace_cache_misses"`
 }

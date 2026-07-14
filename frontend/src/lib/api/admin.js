@@ -2,7 +2,7 @@ import { fetchAPI } from './core.js';
 import { createCrudClient } from './createCrudClient.js';
 
 export const setup = {
-  getStatus: () => fetchAPI('/setup/status'),
+  getStatus: (options) => fetchAPI('/setup/status', options),
   complete: (data) =>
     fetchAPI('/setup/complete', {
       method: 'POST',
@@ -25,7 +25,7 @@ export const system = {
 
 export const themes = {
   ...createCrudClient('/themes'),
-  getActive: () => fetchAPI('/themes/active'),
+  getActive: (options) => fetchAPI('/themes/active', options),
   activate: (id) =>
     fetchAPI(`/themes/${id}/activate`, {
       method: 'POST',

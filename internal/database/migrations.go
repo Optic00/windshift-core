@@ -1732,6 +1732,22 @@ var Catalog = []Migration{
 		SQLite:        "ALTER TABLE user_sessions ADD COLUMN auth_pending_type TEXT",
 		Postgres:      "ALTER TABLE user_sessions ADD COLUMN auth_pending_type TEXT",
 	},
+	{
+		Version:       "20260713_item_history_current_status_latest",
+		Name:          "Index latest item transition into current status",
+		CheckSQLite:   sqliteIndexCheck("idx_item_history_current_status_latest"),
+		CheckPostgres: pgIndexCheck("idx_item_history_current_status_latest"),
+		SQLite: `
+			CREATE INDEX IF NOT EXISTS idx_item_history_current_status_latest
+				ON item_history(item_id, new_value, changed_at DESC)
+				WHERE field_name = 'status_id';
+		`,
+		Postgres: `
+			CREATE INDEX IF NOT EXISTS idx_item_history_current_status_latest
+				ON item_history(item_id, new_value, changed_at DESC)
+				WHERE field_name = 'status_id';
+		`,
+	},
 }
 
 func (m Migration) checksum(driver string) string {

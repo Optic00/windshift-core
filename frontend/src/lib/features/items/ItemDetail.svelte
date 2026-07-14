@@ -1086,8 +1086,6 @@ import Button from '../../components/Button.svelte';
   onDestroy(() => {
     // Unregister context commands when component is destroyed
     unregisterContextCommands('item-detail');
-    // Cleanup timer intervals
-    timerStore.cleanup();
   });
 
   // Load data using the store

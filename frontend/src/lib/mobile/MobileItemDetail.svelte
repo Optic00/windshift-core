@@ -114,6 +114,17 @@
     }
   }
 
+  async function retryLoadItem() {
+    if (itemId == null || loading) return;
+    const token = ++loadToken;
+    item = null;
+    await loadItem(itemId, token);
+    if (token === loadToken && !errored) {
+      void loadAux(itemId, token);
+      notificationActions.markItemAsRead(itemId);
+    }
+  }
+
   async function loadAux(id, token) {
     // Best-effort side data — failures here shouldn't blank the screen. Every
     // assignment is guarded by the load token so a stale item's response can't
@@ -425,7 +436,10 @@
 {#if loading}
   <div class="center" data-testid="detail-loading"><Loader class="spin" size={22} /></div>
 {:else if errored || !item}
-  <p class="msg" data-testid="detail-error">Couldn't load this item.</p>
+  <div class="msg" data-testid="detail-error">
+    <p>Couldn't load this item.</p>
+    <button class="retry" onclick={retryLoadItem} disabled={loading} type="button">Retry</button>
+  </div>
 {:else}
   <div
     class="detail"
@@ -667,6 +681,20 @@
   @keyframes spin { to { transform: rotate(360deg); } }
 
   .msg { padding: 3rem 1.25rem; text-align: center; color: var(--ds-text-subtle); }
+  .msg p { margin: 0; }
+  .retry {
+    min-height: 40px;
+    margin-top: 0.75rem;
+    padding: 0.45rem 1rem;
+    border: 1px solid var(--ds-interactive);
+    border-radius: var(--radius-md, 6px);
+    background: var(--ds-interactive);
+    color: var(--ds-text-inverse, #fff);
+    font: inherit;
+    font-weight: var(--font-semibold, 600);
+    cursor: pointer;
+  }
+  .retry:disabled { opacity: 0.6; }
 
   .detail { padding: 0.75rem 0.875rem 2rem; position: relative; }
   /* Promote to its own layer only while the pull gesture is active. A

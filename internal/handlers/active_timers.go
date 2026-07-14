@@ -55,7 +55,7 @@ func (h *ActiveTimerHandler) GetActiveTimer(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	timer, err := h.repo.GetTimerForUser(user.ID)
+	timer, err := h.timer.GetActiveForUser(user.ID)
 	if errors.Is(err, repository.ErrNotFound) {
 		respondJSONOK(w, nil)
 		return

@@ -6,8 +6,9 @@ Thanks for your interest in contributing! See the [README](README.md) for a proj
 
 ## Prerequisites
 
-- **Go** 1.25+
-- **Node.js** 22+
+- **Go**: the exact version declared in `go.mod`
+- **Node.js** and **npm**: the exact versions pinned by `.nvmrc` and
+  `frontend/package.json`
 - **Docker** (starts PostgreSQL and other services for local development)
 
 ## Development Setup
@@ -16,8 +17,12 @@ Thanks for your interest in contributing! See the [README](README.md) for a proj
 # Clone the repo
 git clone https://codeberg.org/realigned/windshift-core.git && cd windshift-core/core
 
-# Install frontend dependencies
-cd frontend && npm install && cd ..
+# Select the CI Node version and install frontend dependencies
+nvm use # or configure mise/asdf from .nvmrc
+cd frontend && npm ci && cd ..
+
+# Install the pinned Go analysis tools used by CI
+make dev-tools
 
 # Install git hooks
 make hooks
@@ -30,7 +35,8 @@ The dev server runs on `localhost:7777`.
 
 ### Git Hooks
 
-The project includes a pre-commit hook that runs `golangci-lint` and `biome check` before each commit. Install it with:
+The project includes a pre-commit hook that runs the Go linter and guards,
+Biome (non-Svelte files), Svelte typechecking, and OpenAPI validation. Install it with:
 
 ```bash
 make hooks
@@ -84,6 +90,15 @@ The project uses `gofmt`, `goimports`, and `staticcheck`. Lint configuration liv
 
 ```bash
 make lint
+```
+
+To reproduce the blocking GitHub workflows locally, including clean dependency
+installation, tests, vulnerability/signature checks, and production builds:
+
+```bash
+make ci             # both workflows
+make ci-go          # Go CI only
+make ci-frontend    # frontend CI only
 ```
 
 ### Frontend

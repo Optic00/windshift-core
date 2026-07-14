@@ -67,17 +67,43 @@ describe('authStore', () => {
       });
     });
 
-    it('should handle 401/errors gracefully and set unauthenticated state', async () => {
-      api.auth.getCurrentUser.mockRejectedValueOnce(new Error('Unauthorized'));
+    it('sets unauthenticated state only for an explicit 401', async () => {
+      const unauthorized = new Error('Unauthorized');
+      unauthorized.status = 401;
+      api.auth.getCurrentUser.mockRejectedValueOnce(unauthorized);
 
-      await authStore.init();
+      const result = await authStore.init();
 
       const state = get(authStore);
       expect(state.isAuthenticated).toBe(false);
       expect(state.user).toBeNull();
       expect(state.session).toBeNull();
       expect(state.loading).toBe(false);
-      expect(state.error).toBeNull(); // init() clears error on failure
+      expect(state.error).toBeNull();
+      expect(result).toEqual({ status: 'unauthenticated' });
+    });
+
+    it('preserves prior auth and returns a retryable transport error', async () => {
+      const priorUser = { id: '1', username: 'testuser' };
+      const priorSession = { id: 'session-1' };
+      const networkError = Object.assign(new Error('Unable to connect'), {
+        status: 0,
+        code: 'NETWORK_ERROR',
+      });
+      authStore.setAuthData(priorUser, priorSession);
+      api.auth.getCurrentUser.mockRejectedValueOnce(networkError);
+
+      const result = await authStore.init({ timeout: 10_000 });
+
+      expect(get(authStore)).toMatchObject({
+        isAuthenticated: true,
+        user: priorUser,
+        session: priorSession,
+        loading: false,
+        error: 'Unable to connect',
+      });
+      expect(result).toEqual({ status: 'error', error: networkError });
+      expect(api.auth.getCurrentUser).toHaveBeenCalledWith({ timeout: 10_000 });
     });
   });
 

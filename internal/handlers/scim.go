@@ -1833,14 +1833,9 @@ func (h *SCIMHandler) handleSCIMUserDeactivation(r *http.Request, userID int, us
 			map[string]interface{}{"trigger": trigger}, false, err.Error())
 		return
 	}
-
 	if len(cascade.AgentIDs) == 0 && len(cascade.RevokedAPITokens) == 0 {
 		return
 	}
-
-	// Fan cache invalidation out to owner + cascaded agents so revoked agents
-	// can't continue serving requests from a stale permission cache entry.
-	_ = h.permissionService.InvalidateUserCache(userID)
 
 	slog.Warn("scim: offboarding cascaded to agent users and tokens",
 		slog.Int("owner_id", userID),

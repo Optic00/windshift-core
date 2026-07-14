@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"windshift/internal/auth"
 	"windshift/internal/llm"
 	"windshift/internal/logger"
 	"windshift/internal/models"
@@ -21,6 +22,7 @@ import (
 // webhook_deliveries, scheduler_runs) and is read-only except for the manual
 // purge endpoints, which delete old rows on demand.
 type DiagnosticsHandler struct {
+	sessionManager   *auth.SessionManager
 	databaseDiagRepo *repository.DatabaseDiagnosticsRepository
 	actionRepo       *repository.ActionRepository
 	deliveryRepo     *repository.WebhookDeliveryRepository
@@ -36,6 +38,7 @@ type DiagnosticsHandler struct {
 
 // NewDiagnosticsHandler creates a new diagnostics handler.
 func NewDiagnosticsHandler(
+	sessionManager *auth.SessionManager,
 	databaseDiagRepo *repository.DatabaseDiagnosticsRepository,
 	actionRepo *repository.ActionRepository,
 	deliveryRepo *repository.WebhookDeliveryRepository,
@@ -49,6 +52,7 @@ func NewDiagnosticsHandler(
 	agentRunRepo *repository.AgentRunRepository,
 ) *DiagnosticsHandler {
 	return &DiagnosticsHandler{
+		sessionManager:   sessionManager,
 		databaseDiagRepo: databaseDiagRepo,
 		actionRepo:       actionRepo,
 		deliveryRepo:     deliveryRepo,
@@ -61,6 +65,27 @@ func NewDiagnosticsHandler(
 		runnerRepo:       runnerRepo,
 		agentRunRepo:     agentRunRepo,
 	}
+}
+
+// GetSessionValidationCache returns local, identifier-free validation cache
+// counters. In a multi-instance deployment each replica reports its own view.
+//
+// GET /api/admin/diagnostics/session-validation-cache
+func (h *DiagnosticsHandler) GetSessionValidationCache(w http.ResponseWriter, _ *http.Request) {
+	stats := h.sessionManager.SessionValidationCacheStats()
+	respondJSONOK(w, map[string]any{
+		"enabled":               stats.Enabled,
+		"ttl_ms":                stats.TTL.Milliseconds(),
+		"entries":               stats.Entries,
+		"hits":                  stats.Hits,
+		"misses":                stats.Misses,
+		"database_loads":        stats.DatabaseLoads,
+		"coalesced_waiters":     stats.CoalescedWaiters,
+		"invalidated_entries":   stats.InvalidatedEntries,
+		"evicted_entries":       stats.EvictedEntries,
+		"stale_rejections":      stats.StaleRejections,
+		"cache_decode_failures": stats.CacheDecodeFailures,
+	})
 }
 
 // DatabasePoolSnapshot is the HTTP representation of database pool state.

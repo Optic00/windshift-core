@@ -22,43 +22,74 @@
   let setupLoading = $state(true);
   let appInitialized = $state(false);
   let showWelcomeAssistant = $state(false);
+  let startupError = $state('');
+  let startupSlow = $state(false);
+  let startupAttempt = 0;
 
-  onMount(async () => {
+  const BOOTSTRAP_TIMEOUT_MS = 10_000;
+  const SLOW_START_MS = 4_000;
+
+  onMount(() => {
     initRouter();
-
-    // Initialize i18n (loads user's preferred locale)
-    await i18n.init();
-
-    // Check setup status first
-    await checkSetupStatus();
-    setupLoading = false;
-
-    // Only initialize auth if setup is completed
-    if (setupCompleted) {
-      await authStore.init();
-    }
-
-    // Load theme early (works with or without authentication)
-    await loadAndApplyTheme();
-
-    // Only load data if setup is not completed OR user is authenticated
-    if (!setupCompleted) {
-      // Load basic data for setup flow
-      moduleSettings.load();
-      appInitialized = true;
-    } else if ($authStore.isAuthenticated) {
-      // For authenticated users, let MainApp handle the data loading
-      appInitialized = true;
-      // Phone viewport landing on the desktop root → mobile surface. Runs here
-      // (not only on the login-dialog callback) so it also fires for SSO
-      // returns, full-page-reload logins, and existing sessions — the cases
-      // that bypass the in-SPA onsuccess handler.
-      maybeRedirectToMobile();
-    } else {
-      // Setup completed but not authenticated - app is ready for login
-      appInitialized = true;
-    }
+    void initializeApp();
   });
+
+  async function initializeApp() {
+    const attempt = ++startupAttempt;
+    setupLoading = true;
+    appInitialized = false;
+    startupError = '';
+    startupSlow = false;
+    showLoginDialog = false;
+
+    const slowTimer = window.setTimeout(() => {
+      if (attempt === startupAttempt) startupSlow = true;
+    }, SLOW_START_MS);
+
+    try {
+      // Initialize i18n (loads user's preferred locale)
+      await i18n.init();
+
+      // Check setup status first
+      await checkSetupStatus();
+      if (attempt !== startupAttempt) return;
+
+      // Only initialize auth if setup is completed. A transport error is not a
+      // logout: authStore returns it so the startup UI can offer a retry.
+      if (setupCompleted) {
+        const authResult = await authStore.init({ timeout: BOOTSTRAP_TIMEOUT_MS });
+        if (authResult?.status === 'error') throw authResult.error;
+      }
+      if (attempt !== startupAttempt) return;
+
+      setupLoading = false;
+      // Theme loading is best-effort and must never hold the app shell hostage.
+      // The design-system defaults render immediately while this resolves.
+      void loadAndApplyTheme();
+
+      // The shell is ready once setup and session state are known. MainApp and
+      // MobileShell own their subsequent data loading.
+      appInitialized = true;
+      if (!setupCompleted) {
+        moduleSettings.load();
+      } else if ($authStore.isAuthenticated) {
+        // Phone viewport landing on the desktop root → mobile surface. Runs here
+        // for SSO returns, reload logins, and existing sessions too.
+        maybeRedirectToMobile();
+      }
+    } catch (error) {
+      if (attempt !== startupAttempt) return;
+      console.error('Failed to initialize Windshift:', error);
+      setupLoading = false;
+      appInitialized = false;
+      startupError =
+        error?.code === 'REQUEST_TIMEOUT'
+          ? 'The server took too long to respond.'
+          : 'Windshift could not connect to the server.';
+    } finally {
+      window.clearTimeout(slowTimer);
+    }
+  }
 
   // Show login dialog when setup is completed but user is not authenticated and app is initialized
   // But NOT for portal routes (they are public)
@@ -143,16 +174,10 @@
     // flag survives backend/DB swaps under the same origin (e.g. dev worktrees
     // behind the vite proxy), making a fresh, unconfigured instance look
     // already set up and silently skipping the setup wizard.
-    try {
-      const status = await api.setup.getStatus();
-      setupCompleted = status.setup_completed;
-      if (!status.setup_completed) {
-        showWelcomeAssistant = true;
-      }
-    } catch (error) {
-      console.error('Failed to check setup status:', error);
-      // Assume setup is completed if we can't check
-      setupCompleted = true;
+    const status = await api.setup.getStatus({ timeout: BOOTSTRAP_TIMEOUT_MS });
+    setupCompleted = status.setup_completed;
+    if (!status.setup_completed) {
+      showWelcomeAssistant = true;
     }
   }
 
@@ -161,7 +186,7 @@
     themeStore.init();
 
     try {
-      const activeTheme = await api.themes.getActive();
+      const activeTheme = await api.themes.getActive({ timeout: BOOTSTRAP_TIMEOUT_MS });
       // Store the active theme in the theme store
       themeStore.setActiveTheme(activeTheme);
       applyNavColors(activeTheme);
@@ -203,14 +228,32 @@
   class="flex flex-col {isMobileRoute($currentRoute.view) ? 'h-dvh overflow-hidden' : 'min-h-screen'}"
   style="background-color: var(--ds-surface);"
 >
-  <!-- Show loading screen during initial setup check -->
-  {#if setupLoading}
+  {#if startupError}
+    <div class="min-h-screen flex items-center justify-center w-full px-6" data-testid="startup-error">
+      <div class="text-center max-w-sm">
+        <img src="windshift-3.svg" alt={APP_NAME} class="w-16 h-16 mx-auto mb-4 opacity-75" />
+        <h1 class="text-xl font-semibold mb-2">Unable to start Windshift</h1>
+        <p class="text-gray-600 mb-1">{startupError}</p>
+        <p class="text-sm text-gray-500 mb-5">Check your connection or server, then try again.</p>
+        <button
+          type="button"
+          class="min-h-11 px-5 py-2 rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700"
+          onclick={() => initializeApp()}
+          data-testid="startup-retry"
+        >Retry</button>
+      </div>
+    </div>
+  <!-- Show loading screen during initial setup/session checks -->
+  {:else if setupLoading}
     <div class="min-h-screen flex items-center justify-center w-full">
       <div class="text-center">
         <div class="w-16 h-16 mx-auto mb-4">
           <img src="windshift-3.svg" alt={APP_NAME} class="w-16 h-16 animate-pulse" />
         </div>
-        <p class="text-gray-600">Loading...</p>
+        <p class="text-gray-600">{startupSlow ? 'Still connecting to Windshift…' : 'Connecting to Windshift…'}</p>
+        {#if startupSlow}
+          <p class="text-sm text-gray-500 mt-1">This can take a moment on a slow connection.</p>
+        {/if}
       </div>
     </div>
   <!-- Public board route - no authentication required -->

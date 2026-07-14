@@ -5,14 +5,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
 	"windshift/internal/auth"
 	"windshift/internal/repository"
 	"windshift/internal/services"
-	"windshift/internal/utils"
 )
 
 // ----------------------------------------------------------------------------
@@ -279,45 +277,14 @@ func init() {
 			if err != nil {
 				return map[string]string{"error": "invalid date format, use YYYY-MM-DD"}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
 			}
-			var durationMins int
-			var startUnix, endUnix int64
-			switch {
-			case args.Duration != "":
-				dur, err := utils.ParseDuration(args.Duration)
-				if err != nil {
-					return map[string]string{"error": fmt.Sprintf("invalid duration: %s", err.Error())}, nil
-				}
-				durationMins = int(dur.Minutes())
-				startUnix = date.Unix()
-				endUnix = date.Add(dur).Unix()
-			case args.DurationMinutes > 0:
-				durationMins = args.DurationMinutes
-				startUnix = date.Unix()
-				endUnix = date.Add(time.Duration(args.DurationMinutes) * time.Minute).Unix()
-			case args.StartTime != "" && args.EndTime != "":
-				sp, ep := strings.SplitN(args.StartTime, ":", 2), strings.SplitN(args.EndTime, ":", 2)
-				if len(sp) != 2 || len(ep) != 2 {
-					return map[string]string{"error": "start_time and end_time must be in HH:MM format"}, nil
-				}
-				sh, e1 := strconv.Atoi(sp[0])
-				sm, e2 := strconv.Atoi(sp[1])
-				eh, e3 := strconv.Atoi(ep[0])
-				em, e4 := strconv.Atoi(ep[1])
-				if e1 != nil || e2 != nil || e3 != nil || e4 != nil {
-					return map[string]string{"error": "start_time and end_time must be in HH:MM format"}, nil //nolint:nilerr // surface as a tool error in JSON, not as a protocol error
-				}
-				st := date.Add(time.Duration(sh)*time.Hour + time.Duration(sm)*time.Minute)
-				et := date.Add(time.Duration(eh)*time.Hour + time.Duration(em)*time.Minute)
-				if !et.After(st) {
-					return map[string]string{"error": "end_time must be after start_time"}, nil
-				}
-				durationMins = int(et.Sub(st).Minutes())
-				startUnix, endUnix = st.Unix(), et.Unix()
-			default:
-				return map[string]string{"error": "provide duration, duration_minutes, or start_time and end_time"}, nil
-			}
-			if durationMins <= 0 {
-				return map[string]string{"error": "duration must be positive"}, nil
+			durationMins, startUnix, endUnix, err := services.ParseWorklogTimes(date, services.WorklogTimeInput{
+				Duration:        args.Duration,
+				DurationMinutes: args.DurationMinutes,
+				StartTime:       args.StartTime,
+				EndTime:         args.EndTime,
+			})
+			if err != nil {
+				return map[string]string{"error": err.Error()}, nil //nolint:nilerr // tool validation errors are returned in the JSON result
 			}
 			itemID, toolErr := resolveOptionalItemRef(env, args.ItemID, args.ItemKey)
 			if toolErr != nil {
@@ -416,15 +383,10 @@ func resolveOptionalItemRef(env *Env, itemID *int, itemKey string) (resolvedID *
 	if itemID != nil {
 		rawID = *itemID
 	}
-	id, err := resolveItemID(env.DB, rawID, itemKey)
+	id, err := services.ResolveAccessibleWorklogItem(env.DB, rawID, itemKey, func(workspaceID int) (bool, error) {
+		return env.HasWorkspaceAccess(workspaceID), nil
+	})
 	if err != nil {
-		return nil, map[string]string{"error": err.Error()}
-	}
-	wsID, err := repository.NewItemRepository(env.DB).GetWorkspaceID(id)
-	if err != nil {
-		return nil, map[string]string{"error": "item not found"}
-	}
-	if !env.HasWorkspaceAccess(wsID) {
 		return nil, map[string]string{"error": "item not found"}
 	}
 	return &id, nil

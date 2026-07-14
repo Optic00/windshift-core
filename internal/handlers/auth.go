@@ -350,7 +350,7 @@ func (h *AuthHandler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
 	clientIP := h.getClientIP(r)
 
 	// Validate session
-	session, err := h.sessionManager.ValidateSession(token, clientIP)
+	session, err := h.sessionManager.ValidateSessionContext(r.Context(), token, clientIP)
 	if err != nil {
 		respondUnauthorized(w, r)
 		return
@@ -408,7 +408,6 @@ func (h *AuthHandler) RefreshSession(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
-
 	respondJSONOK(w, map[string]interface{}{
 		"success": true,
 		"message": "Session refreshed",
@@ -541,6 +540,7 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+	h.sessionManager.InvalidateUserSessionValidation(session.UserID)
 
 	h.auditor.Log(r, &models.User{ID: session.UserID}, logger.ActionPasswordChange, logger.ResourceUser, nil, "")
 
@@ -600,6 +600,7 @@ func (h *AuthHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	h.sessionManager.InvalidateUserSessionValidation(user.ID)
 
 	respondJSONOK(w, map[string]interface{}{
 		"success":  true,

@@ -221,19 +221,13 @@ func GetAccessibleWorkspaceKeys(user *models.User, db database.Database,
 	if user == nil || permService == nil {
 		return map[string]bool{}, nil
 	}
-	pairs, err := repository.NewWorkspaceRepository(db).ListActiveIDKeys()
+	pairs, err := permService.AccessibleWorkspaceIDKeys(user.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query workspaces: %w", err)
 	}
 	keys := make(map[string]bool)
 	for _, pair := range pairs {
-		hasView, err := permService.HasWorkspacePermission(user.ID, pair.ID, models.PermissionItemView)
-		if err != nil {
-			continue
-		}
-		if hasView {
-			keys[pair.Key] = true
-		}
+		keys[pair.Key] = true
 	}
 	return keys, nil
 }

@@ -21,15 +21,18 @@ import (
 
 // PermissionService handles cached permission resolution
 type PermissionService struct {
-	cache *bigcache.BigCache
-	db    database.Database
-	mu    sync.RWMutex
+	cache           *bigcache.BigCache
+	db              database.Database
+	mu              sync.RWMutex
+	workspaceAccess *workspaceAccessCache
 
 	// Cache statistics
-	hits      int64
-	misses    int64
-	errors    int64
-	loadTimes []int64 // For calculating average load time
+	hits                      int64
+	misses                    int64
+	errors                    int64
+	permissionCheckCount      int64
+	permissionCheckNanos      int64
+	permissionSnapshotDecodes atomic.Uint64
 
 	// Configuration
 	ttl       time.Duration
@@ -75,11 +78,11 @@ func NewPermissionService(db database.Database, config PermissionCacheConfig) (*
 	}
 
 	service := &PermissionService{
-		cache:     cache,
-		db:        db,
-		ttl:       config.TTL,
-		batchSize: config.BatchSize,
-		loadTimes: make([]int64, 0, 1000), // Track last 1000 load times
+		cache:           cache,
+		db:              db,
+		workspaceAccess: newWorkspaceAccessCache(),
+		ttl:             config.TTL,
+		batchSize:       config.BatchSize,
 	}
 
 	// Pre-load all permission keys (static data)
@@ -110,55 +113,50 @@ func (ps *PermissionService) getCacheKey(userID int) string {
 func (ps *PermissionService) HasWorkspacePermission(userID, workspaceID int, permission string) (bool, error) {
 	startTime := time.Now()
 	defer func() {
-		loadTime := time.Since(startTime).Milliseconds()
-		ps.mu.Lock()
-		if len(ps.loadTimes) >= 1000 {
-			ps.loadTimes = ps.loadTimes[1:]
-		}
-		ps.loadTimes = append(ps.loadTimes, loadTime)
-		ps.mu.Unlock()
+		atomic.AddInt64(&ps.permissionCheckCount, 1)
+		atomic.AddInt64(&ps.permissionCheckNanos, time.Since(startTime).Nanoseconds())
 	}()
 
-	// Try cache first
+	cached, err := ps.effectivePermissionSnapshot(userID)
+	if err != nil {
+		return false, err
+	}
+	return workspacePermissionFromSnapshot(cached, workspaceID, permission), nil
+}
+
+func workspacePermissionFromSnapshot(cached *models.UserPermissionCache, workspaceID int, permission string) bool {
+	if cached == nil {
+		return false
+	}
+	if cached.IsSystemAdmin {
+		return true
+	}
+	if everyonePerms := cached.WorkspaceEveryone[workspaceID]; everyonePerms[permission] {
+		return true
+	}
+	return cached.WorkspacePermissions[workspaceID][permission]
+}
+
+func (ps *PermissionService) effectivePermissionSnapshot(userID int) (*models.UserPermissionCache, error) {
 	cached, err := ps.getUserPermissionCache(userID)
 	if err == nil {
 		atomic.AddInt64(&ps.hits, 1)
-
-		// Check if user is system admin
-		if cached.IsSystemAdmin {
-			return true, nil
-		}
-
-		// Check Everyone assignment first (fast path)
-		if everyonePerms, exists := cached.WorkspaceEveryone[workspaceID]; exists {
-			if everyonePerms[permission] {
-				return true, nil
-			}
-		}
-
-		// Check workspace-specific permissions
-		if workspacePerms, exists := cached.WorkspacePermissions[workspaceID]; exists {
-			if workspacePerms[permission] {
-				return true, nil
-			}
-		}
-
-		// No matching permission
-		_, everyoneExists := cached.WorkspaceEveryone[workspaceID]
-		_, wsPermsExists := cached.WorkspacePermissions[workspaceID]
-		slog.Debug("workspace permission denied",
-			slog.String("component", "permissions"),
-			slog.Int("user_id", userID),
-			slog.Int("workspace_id", workspaceID),
-			slog.String("permission", permission),
-			slog.Bool("everyone_exists", everyoneExists),
-			slog.Bool("workspace_perms_exists", wsPermsExists))
-		return false, nil
+		return cached, nil
 	}
 
-	// Cache miss - load from database
 	atomic.AddInt64(&ps.misses, 1)
-	return ps.loadUserPermissionAndCheck(userID, workspaceID, permission)
+	cached, err = ps.buildUserPermissionCache(userID)
+	if err != nil {
+		atomic.AddInt64(&ps.errors, 1)
+		return nil, err
+	}
+	if err := ps.storeUserPermissionCache(userID, cached); err != nil {
+		slog.Warn("failed to store effective permission snapshot",
+			slog.String("component", "permissions"),
+			slog.Int("user_id", userID),
+			slog.Any("error", err))
+	}
+	return cached, nil
 }
 
 // HasGlobalPermission checks if user has a specific global permission
@@ -318,6 +316,7 @@ func (ps *PermissionService) getUserPermissionCache(userID int) (*models.UserPer
 		_ = ps.cache.Delete(cacheKey)
 		return nil, err
 	}
+	ps.permissionSnapshotDecodes.Add(1)
 
 	// Check if cache entry has expired
 	if time.Now().After(cached.ExpiresAt) {
@@ -326,49 +325,6 @@ func (ps *PermissionService) getUserPermissionCache(userID int) (*models.UserPer
 	}
 
 	return &cached, nil
-}
-
-// loadUserPermissionAndCheck loads user permissions from DB and checks specific permission
-func (ps *PermissionService) loadUserPermissionAndCheck(userID, workspaceID int, permission string) (bool, error) {
-	cached, err := ps.buildUserPermissionCache(userID)
-	if err != nil {
-		atomic.AddInt64(&ps.errors, 1)
-		return false, err
-	}
-
-	// Store in cache
-	_ = ps.storeUserPermissionCache(userID, cached)
-
-	// Check if user is system admin
-	if cached.IsSystemAdmin {
-		return true, nil
-	}
-
-	// Everyone assignment fast path
-	if everyonePerms, exists := cached.WorkspaceEveryone[workspaceID]; exists {
-		if everyonePerms[permission] {
-			return true, nil
-		}
-	}
-
-	// Check workspace-specific permissions
-	if workspacePerms, exists := cached.WorkspacePermissions[workspaceID]; exists {
-		if workspacePerms[permission] {
-			return true, nil
-		}
-	}
-
-	// No matching permission
-	_, everyoneExists := cached.WorkspaceEveryone[workspaceID]
-	_, wsPermsExists := cached.WorkspacePermissions[workspaceID]
-	slog.Debug("workspace permission denied (cache miss path)",
-		slog.String("component", "permissions"),
-		slog.Int("user_id", userID),
-		slog.Int("workspace_id", workspaceID),
-		slog.String("permission", permission),
-		slog.Bool("everyone_exists", everyoneExists),
-		slog.Bool("workspace_perms_exists", wsPermsExists))
-	return false, nil
 }
 
 // loadUserPermissionAndCheckGlobal loads user permissions from DB and checks global permission
@@ -468,18 +424,7 @@ func (ps *PermissionService) HasWorkspaceRole(userID, workspaceID, roleID int) (
 // GetUserEffectivePermissions returns the full effective permission cache for a user,
 // including explicit roles, group-based roles, and "Everyone" implicit permissions.
 func (ps *PermissionService) GetUserEffectivePermissions(userID int) (*models.UserPermissionCache, error) {
-	cached, err := ps.getUserPermissionCache(userID)
-	if err == nil {
-		return cached, nil
-	}
-
-	// Cache miss - build from database
-	cached, err = ps.buildUserPermissionCache(userID)
-	if err != nil {
-		return nil, err
-	}
-	_ = ps.storeUserPermissionCache(userID, cached)
-	return cached, nil
+	return ps.effectivePermissionSnapshot(userID)
 }
 
 // InvalidateUserCache removes a user's permission cache. If the user owns
@@ -805,9 +750,6 @@ func (ps *PermissionService) getWorkspacesUsingConfigurationSet(configSetID int)
 
 // GetCacheStats returns current cache performance statistics
 func (ps *PermissionService) GetCacheStats() models.CacheStats {
-	ps.mu.RLock()
-	defer ps.mu.RUnlock()
-
 	hits := atomic.LoadInt64(&ps.hits)
 	misses := atomic.LoadInt64(&ps.misses)
 	errCount := atomic.LoadInt64(&ps.errors)
@@ -818,27 +760,29 @@ func (ps *PermissionService) GetCacheStats() models.CacheStats {
 		hitRatio = float64(hits) / float64(total)
 	}
 
-	// Calculate average load time
+	// Calculate the average workspace-permission check time without taking a
+	// process-wide lock on the permission hot path.
 	avgLoadTime := int64(0)
-	if len(ps.loadTimes) > 0 {
-		sum := int64(0)
-		for _, t := range ps.loadTimes {
-			sum += t
-		}
-		avgLoadTime = sum / int64(len(ps.loadTimes))
+	checkCount := atomic.LoadInt64(&ps.permissionCheckCount)
+	if checkCount > 0 {
+		avgLoadTime = atomic.LoadInt64(&ps.permissionCheckNanos) / checkCount / int64(time.Millisecond)
 	}
 
 	// Get cache info - BigCache Stats doesn't have Entries field
 	// We'll track total users differently or estimate it
 	totalUsers := int64(0) // For now, we don't track this precisely
+	workspaceAccessStats := ps.GetWorkspaceAccessStats()
 
 	return models.CacheStats{
-		Hits:        hits,
-		Misses:      misses,
-		Errors:      errCount,
-		HitRatio:    hitRatio,
-		AvgLoadTime: avgLoadTime,
-		TotalUsers:  totalUsers,
+		Hits:                       hits,
+		Misses:                     misses,
+		Errors:                     errCount,
+		HitRatio:                   hitRatio,
+		AvgLoadTime:                avgLoadTime,
+		TotalUsers:                 totalUsers,
+		PermissionSnapshotDecodes:  workspaceAccessStats.PermissionSnapshotDecodes,
+		ActiveWorkspaceCacheHits:   workspaceAccessStats.ActiveWorkspaceCacheHits,
+		ActiveWorkspaceCacheMisses: workspaceAccessStats.ActiveWorkspaceCacheMisses,
 	}
 }
 

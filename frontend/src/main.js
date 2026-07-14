@@ -1,9 +1,13 @@
 import { mount } from 'svelte';
 import './app.css';
+import { registerMobileServiceWorker } from './lib/mobile/serviceWorkerClient.js';
 import { installContextPathTranslation } from './lib/runtime/contextPath.js';
 import { initCrossTabSync } from './lib/utils/crossTabSync.js';
 
 installContextPathTranslation();
+// Register before the large application chunk loads. This lets installed PWAs
+// receive worker updates and navigation recovery even if startup later fails.
+void registerMobileServiceWorker();
 
 const { default: App } = await import('./App.svelte');
 

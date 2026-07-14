@@ -74,7 +74,7 @@ func (am *AuthMiddleware) tryAuthenticate(r *http.Request) authResult {
 
 	// Try X-Session-Token header (used by TUI/internal services)
 	if sessionToken := r.Header.Get("X-Session-Token"); sessionToken != "" {
-		session, err := am.sessionManager.ValidateSession(sessionToken, clientIP)
+		session, err := am.sessionManager.ValidateSessionContext(r.Context(), sessionToken, clientIP)
 		if err == nil {
 			if session.EnrollmentRequired && !isPendingAuthEndpoint(r.URL.Path, session.AuthPendingType) {
 				return authResult{authPending: true, errorMessage: "Passkey enrollment or verification required"}
@@ -111,7 +111,7 @@ func (am *AuthMiddleware) tryAuthenticate(r *http.Request) authResult {
 		return authResult{}
 	}
 
-	session, err := am.sessionManager.ValidateSession(token, clientIP)
+	session, err := am.sessionManager.ValidateSessionContext(r.Context(), token, clientIP)
 	if err != nil {
 		// Invalid session
 		errMsg := "Authentication failed"
@@ -542,7 +542,7 @@ func (pam *PortalAuthMiddleware) tryPortalAuthenticate(r *http.Request) (context
 	clientIP := pam.getClientIP(r)
 
 	if sessionToken := r.Header.Get("X-Session-Token"); sessionToken != "" {
-		if session, err := pam.sessionManager.ValidateSession(sessionToken, clientIP); err == nil {
+		if session, err := pam.sessionManager.ValidateSessionContext(r.Context(), sessionToken, clientIP); err == nil {
 			ctx := context.WithValue(r.Context(), ContextKeySession, session)
 			ctx = context.WithValue(ctx, ContextKeyUser, session.User)
 			ctx = context.WithValue(ctx, ContextKeyAuthMethod, "session-header")
@@ -551,7 +551,7 @@ func (pam *PortalAuthMiddleware) tryPortalAuthenticate(r *http.Request) (context
 	}
 
 	if token, err := pam.sessionManager.GetSessionFromRequest(r); err == nil {
-		if session, err := pam.sessionManager.ValidateSession(token, clientIP); err == nil {
+		if session, err := pam.sessionManager.ValidateSessionContext(r.Context(), token, clientIP); err == nil {
 			ctx := context.WithValue(r.Context(), ContextKeySession, session)
 			ctx = context.WithValue(ctx, ContextKeyUser, session.User)
 			ctx = context.WithValue(ctx, ContextKeyAuthMethod, "session")

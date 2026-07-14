@@ -18,6 +18,9 @@ type TimerService struct {
 	itemRepo    *repository.ItemRepository
 	timePerm    *TimePermissionService
 	permService *PermissionService
+	// workspaceAccess is kept as a function so every timer response uses the
+	// same fail-closed gate and focused tests can exercise revocation behavior.
+	workspaceAccess func(userID, workspaceID int) (bool, error)
 }
 
 // NewTimerService wires the dependencies the service needs to enforce all
@@ -28,12 +31,18 @@ func NewTimerService(
 	timePerm *TimePermissionService,
 	permService *PermissionService,
 ) *TimerService {
-	return &TimerService{
+	service := &TimerService{
 		repo:        repo,
 		itemRepo:    itemRepo,
 		timePerm:    timePerm,
 		permService: permService,
 	}
+	if permService != nil {
+		service.workspaceAccess = func(userID, workspaceID int) (bool, error) {
+			return permService.HasWorkspacePermission(userID, workspaceID, models.PermissionItemView)
+		}
+	}
+	return service
 }
 
 // Typed error sentinels — callers (HTTP handler, AI tool) map these to
@@ -100,6 +109,16 @@ func (s *TimerService) StartTimer(
 	}
 	if projectStatus != "Active" {
 		return nil, ErrTimerProjectInactive
+	}
+	projectCustomerID, err := s.repo.GetProjectCustomerID(projectID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, fmt.Errorf("%w: project", ErrTimerNotFound)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if projectCustomerID == nil {
+		return nil, fmt.Errorf("%w: project has no customer assigned", ErrTimerValidation)
 	}
 
 	// Workspace access: 404 (not 403) on failure per project policy.
@@ -171,6 +190,19 @@ func (s *TimerService) StartTimer(
 	return timer, nil
 }
 
+// GetActiveForUser returns the user's active timer with item/workspace
+// metadata removed when access has been revoked since the timer started.
+func (s *TimerService) GetActiveForUser(userID int) (*models.ActiveTimer, error) {
+	timer, err := s.repo.GetTimerForUser(userID)
+	if err != nil {
+		return nil, err
+	}
+	if !s.canViewTimerMetadata(userID, timer) {
+		redactActiveTimerMetadata(timer)
+	}
+	return timer, nil
+}
+
 // StopActiveForUser stops whichever timer the user currently has running.
 // The AI tool (stop_timer) calls this — it does not pass a timer ID.
 func (s *TimerService) StopActiveForUser(userID int) (*StopResult, error) {
@@ -205,22 +237,24 @@ func (s *TimerService) StopTimerByID(userID, timerID int) (*StopResult, error) {
 		return nil, ErrTimerForbidden
 	}
 
-	// Drop the item link if access has since been revoked or the item
-	// no longer exists.
+	metadataVisible := s.canViewTimerMetadata(userID, timer)
+
+	// Drop the item link if access has since been revoked or the item no
+	// longer exists. Permission lookup failures fail closed so stopping a timer
+	// can never become a metadata side channel.
 	itemID := timer.ItemID
-	if itemID != nil && *itemID > 0 {
+	if !metadataVisible {
+		itemID = nil
+	} else if itemID != nil && *itemID > 0 {
 		wsID, err := s.itemRepo.GetWorkspaceID(*itemID)
 		switch {
 		case errors.Is(err, repository.ErrNotFound):
 			itemID = nil
 		case err != nil:
-			return nil, err
+			itemID = nil
 		default:
 			canViewWS, permErr := s.permService.HasWorkspacePermission(userID, wsID, models.PermissionItemView)
-			if permErr != nil {
-				return nil, permErr
-			}
-			if !canViewWS {
+			if permErr != nil || !canViewWS || wsID != timer.WorkspaceID {
 				itemID = nil
 			}
 		}
@@ -234,14 +268,23 @@ func (s *TimerService) StopTimerByID(userID, timerID int) (*StopResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	if customerID == nil {
+		// The project may have lost its customer after this timer started, or
+		// the row may predate start-time validation. No valid worklog can be
+		// created, but deleting the timer prevents the user from being wedged.
+		if err := s.repo.DeleteTimer(timer.ID); err != nil {
+			return nil, err
+		}
+		return buildStopResult(timer, endTimeUTC, durationSeconds, durationMinutes, false, metadataVisible), nil
+	}
 
 	startTime := time.Unix(timer.StartTimeUTC, 0).UTC()
 	dateInt := int(startTime.Truncate(24 * time.Hour).Unix())
 	nowUnix := time.Now().UTC().Unix()
 
-	if err := s.repo.CreateWorklog(repository.CreateWorklogInput{
+	if err := s.repo.FinalizeTimer(timer.ID, repository.CreateWorklogInput{
 		ProjectID:       timer.ProjectID,
-		CustomerID:      customerID,
+		CustomerID:      *customerID,
 		UserID:          userID,
 		ItemID:          itemID,
 		Description:     timer.Description,
@@ -251,32 +294,73 @@ func (s *TimerService) StopTimerByID(userID, timerID int) (*StopResult, error) {
 		DurationMinutes: durationMinutes,
 		NowUnix:         nowUnix,
 	}); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, ErrTimerNotFound
+		}
 		return nil, err
 	}
 
-	if err := s.repo.DeleteTimer(timer.ID); err != nil {
-		return nil, err
-	}
+	return buildStopResult(timer, endTimeUTC, durationSeconds, durationMinutes, true, metadataVisible), nil
+}
 
+func (s *TimerService) canViewTimerWorkspace(userID, workspaceID int) bool {
+	if s.workspaceAccess == nil {
+		return false
+	}
+	allowed, err := s.workspaceAccess(userID, workspaceID)
+	return err == nil && allowed
+}
+
+func (s *TimerService) canViewTimerMetadata(userID int, timer *models.ActiveTimer) bool {
+	if timer == nil || !s.canViewTimerWorkspace(userID, timer.WorkspaceID) {
+		return false
+	}
+	if timer.ItemID == nil || *timer.ItemID <= 0 {
+		return true
+	}
+	itemWorkspaceID, err := s.itemRepo.GetWorkspaceID(*timer.ItemID)
+	if err != nil || itemWorkspaceID != timer.WorkspaceID {
+		return false
+	}
+	return s.canViewTimerWorkspace(userID, itemWorkspaceID)
+}
+
+func redactActiveTimerMetadata(timer *models.ActiveTimer) {
+	timer.WorkspaceID = 0
+	timer.ItemID = nil
+	timer.ItemTitle = nil
+	timer.WorkspaceName = nil
+	timer.WorkspaceKey = nil
+	timer.WorkspaceItemNumber = nil
+}
+
+func buildStopResult(
+	timer *models.ActiveTimer,
+	endTimeUTC, durationSeconds int64,
+	durationMinutes int,
+	worklogCreated, metadataVisible bool,
+) *StopResult {
 	res := &StopResult{
 		TimerID:         timer.ID,
-		WorkspaceID:     timer.WorkspaceID,
 		ProjectID:       timer.ProjectID,
 		Description:     timer.Description,
 		StartTimeUTC:    timer.StartTimeUTC,
 		EndTimeUTC:      endTimeUTC,
 		DurationSeconds: durationSeconds,
 		DurationMinutes: durationMinutes,
-		WorklogCreated:  true,
+		WorklogCreated:  worklogCreated,
+	}
+	if metadataVisible {
+		res.WorkspaceID = timer.WorkspaceID
 	}
 	if timer.ProjectName != nil {
 		res.ProjectName = *timer.ProjectName
 	}
-	if timer.ItemTitle != nil {
+	if metadataVisible && timer.ItemTitle != nil {
 		res.ItemTitle = *timer.ItemTitle
 	}
-	if timer.WorkspaceName != nil {
+	if metadataVisible && timer.WorkspaceName != nil {
 		res.WorkspaceName = *timer.WorkspaceName
 	}
-	return res, nil
+	return res
 }

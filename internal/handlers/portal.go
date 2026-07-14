@@ -86,7 +86,7 @@ func (h *PortalHandler) getPortalCustomerID(ctx context.Context, r *http.Request
 		return nil, fmt.Errorf("authentication required")
 	}
 
-	session, err := h.sessionManager.ValidateSession(sessionToken, clientIP)
+	session, err := h.sessionManager.ValidateSessionContext(r.Context(), sessionToken, clientIP)
 	if err != nil || session == nil {
 		return nil, fmt.Errorf("invalid or expired session")
 	}
@@ -114,7 +114,7 @@ func (h *PortalHandler) getInternalUserGroupIDs(ctx context.Context, r *http.Req
 		return nil
 	}
 
-	session, err := h.sessionManager.ValidateSession(sessionToken, clientIP)
+	session, err := h.sessionManager.ValidateSessionContext(r.Context(), sessionToken, clientIP)
 	if err != nil || session == nil {
 		return nil
 	}
@@ -213,7 +213,7 @@ func (h *PortalHandler) getPortalVisibilityContext(ctx context.Context, r *http.
 	// Check if this is an admin viewing for customization (has internal session)
 	if sessionToken, err := h.sessionManager.GetSessionFromRequest(r); err == nil {
 		clientIP := h.getClientIP(r)
-		if session, err := h.sessionManager.ValidateSession(sessionToken, clientIP); err == nil && session != nil {
+		if session, err := h.sessionManager.ValidateSessionContext(r.Context(), sessionToken, clientIP); err == nil && session != nil {
 			var isAdmin bool
 			err := h.db.QueryRowContext(ctx, `
 				SELECT EXISTS(

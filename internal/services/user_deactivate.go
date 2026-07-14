@@ -10,7 +10,58 @@ import (
 // so the caller can emit audit entries for each affected row.
 type AgentDeactivationResult struct {
 	AgentIDs         []int // owned agent user IDs that were flipped to inactive
+	OwnedAgentIDs    []int // every owned agent, including agents already inactive
 	RevokedAPITokens []int // api_tokens row IDs removed (owner + agents)
+}
+
+// UserDeactivationInvalidators contains the post-commit security cache hooks
+// that must run after a user and their dependants have been deactivated.
+// Keeping them here gives every deactivation entry point the same behavior
+// without coupling this package to the concrete auth cache implementations.
+type UserDeactivationInvalidators struct {
+	Tokens      func(tokenIDs []int)
+	Sessions    func(userID int)
+	Permissions func(userID int)
+}
+
+// UserDeactivationService owns the complete user security-offboarding path.
+// LDAP, SCIM, and administrative deactivation must all call this service
+// instead of independently updating users or invalidating caches.
+type UserDeactivationService struct {
+	db           database.Database
+	invalidators UserDeactivationInvalidators
+}
+
+func NewUserDeactivationService(
+	db database.Database,
+	invalidators UserDeactivationInvalidators,
+) *UserDeactivationService {
+	return &UserDeactivationService{db: db, invalidators: invalidators}
+}
+
+// DeactivateUser atomically deactivates the owner and their agents, revokes
+// all API tokens belonging to either, then invalidates security caches after
+// the transaction commits. Repeated calls are safe.
+func (s *UserDeactivationService) DeactivateUser(ownerID int) (AgentDeactivationResult, error) {
+	result, err := deactivateUserAndOwnedAgentsAndTokens(s.db, ownerID, true)
+	if err != nil {
+		return result, err
+	}
+
+	if s.invalidators.Tokens != nil {
+		s.invalidators.Tokens(result.RevokedAPITokens)
+	}
+	if s.invalidators.Sessions != nil {
+		s.invalidators.Sessions(ownerID)
+		for _, agentID := range result.OwnedAgentIDs {
+			s.invalidators.Sessions(agentID)
+		}
+	}
+	if s.invalidators.Permissions != nil {
+		s.invalidators.Permissions(ownerID)
+	}
+
+	return result, nil
 }
 
 // ActiveSystemAdminIDs returns the user IDs of every active user who holds the
@@ -50,6 +101,14 @@ func ActiveSystemAdminIDs(db database.Database) ([]int, error) {
 //
 // Runs in a single transaction so a partial cascade cannot leak live tokens.
 func DeactivateOwnedAgentsAndTokens(db database.Database, ownerID int) (AgentDeactivationResult, error) {
+	return deactivateUserAndOwnedAgentsAndTokens(db, ownerID, false)
+}
+
+func deactivateUserAndOwnedAgentsAndTokens(
+	db database.Database,
+	ownerID int,
+	deactivateOwner bool,
+) (AgentDeactivationResult, error) {
 	var result AgentDeactivationResult
 
 	tx, err := db.Begin()
@@ -58,14 +117,30 @@ func DeactivateOwnedAgentsAndTokens(db database.Database, ownerID int) (AgentDea
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// 1. Collect owned agent IDs so we can audit and scope the token sweeps.
-	agentRows, err := tx.Query(`SELECT id FROM users WHERE agent_owner_user_id = ? AND is_active = true`, ownerID)
+	if deactivateOwner {
+		if _, err = tx.Exec(`UPDATE users SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, ownerID); err != nil {
+			return result, fmt.Errorf("failed to deactivate user: %w", err)
+		}
+	}
+
+	// Collect every owned agent so token revocation also covers agents that
+	// were already inactive. Only newly deactivated agents are returned for
+	// auditing and session invalidation.
+	agentRows, err := tx.Query(`SELECT id, is_active FROM users WHERE agent_owner_user_id = ?`, ownerID)
 	if err != nil {
 		return result, fmt.Errorf("failed to load owned agents: %w", err)
 	}
+	var allAgentIDs []int
 	for agentRows.Next() {
 		var id int
-		if scanErr := agentRows.Scan(&id); scanErr == nil {
+		var active bool
+		if scanErr := agentRows.Scan(&id, &active); scanErr != nil {
+			_ = agentRows.Close()
+			return result, fmt.Errorf("failed to scan owned agent: %w", scanErr)
+		}
+		allAgentIDs = append(allAgentIDs, id)
+		result.OwnedAgentIDs = append(result.OwnedAgentIDs, id)
+		if active {
 			result.AgentIDs = append(result.AgentIDs, id)
 		}
 	}
@@ -75,25 +150,27 @@ func DeactivateOwnedAgentsAndTokens(db database.Database, ownerID int) (AgentDea
 	}
 	_ = agentRows.Close()
 
-	// 2. Flip agents inactive.
+	// Flip active agents inactive.
 	if len(result.AgentIDs) > 0 {
-		if _, err = tx.Exec(`UPDATE users SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE agent_owner_user_id = ?`, ownerID); err != nil {
+		if _, err = tx.Exec(`UPDATE users SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE agent_owner_user_id = ? AND is_active = true`, ownerID); err != nil {
 			return result, fmt.Errorf("failed to deactivate owned agents: %w", err)
 		}
 	}
 
-	// 3. Collect api_tokens row IDs before we delete them (for audit).
+	// Collect api_tokens row IDs before we delete them (for audit).
 	// api_tokens has no is_active column, so revocation is a hard DELETE.
-	userIDs := append([]int{ownerID}, result.AgentIDs...)
+	userIDs := append([]int{ownerID}, allAgentIDs...)
 	apiTokenRows, err := tx.Query(inClauseQuery(`SELECT id FROM api_tokens WHERE user_id IN (`, len(userIDs)), toIfaceSlice(userIDs)...)
 	if err != nil {
 		return result, fmt.Errorf("failed to load api_tokens: %w", err)
 	}
 	for apiTokenRows.Next() {
 		var id int
-		if scanErr := apiTokenRows.Scan(&id); scanErr == nil {
-			result.RevokedAPITokens = append(result.RevokedAPITokens, id)
+		if scanErr := apiTokenRows.Scan(&id); scanErr != nil {
+			_ = apiTokenRows.Close()
+			return result, fmt.Errorf("failed to scan api_token: %w", scanErr)
 		}
+		result.RevokedAPITokens = append(result.RevokedAPITokens, id)
 	}
 	if err := apiTokenRows.Err(); err != nil {
 		_ = apiTokenRows.Close()

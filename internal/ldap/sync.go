@@ -17,13 +17,22 @@ import (
 
 // SyncService handles LDAP user synchronization.
 type SyncService struct {
-	db         database.Database
-	encryption *sso.SecretEncryption
+	db             database.Database
+	encryption     *sso.SecretEncryption
+	deactivateUser func(userID int) error
 }
 
 // NewSyncService creates a new LDAP sync service.
-func NewSyncService(db database.Database, encryption *sso.SecretEncryption) *SyncService {
-	return &SyncService{db: db, encryption: encryption}
+func NewSyncService(
+	db database.Database,
+	encryption *sso.SecretEncryption,
+	deactivateUser ...func(userID int) error,
+) *SyncService {
+	service := &SyncService{db: db, encryption: encryption}
+	if len(deactivateUser) > 0 {
+		service.deactivateUser = deactivateUser[0]
+	}
+	return service
 }
 
 // SyncResult contains the results of a sync operation.
@@ -116,6 +125,10 @@ func (s *SyncService) SyncUsers(ctx context.Context, config *models.LDAPConfig) 
 	if config.AutoDeactivateUsers {
 		for dn, mapping := range existingMappings {
 			if !seenDNS[dn] {
+				if s.deactivateUser == nil {
+					result.Errors = append(result.Errors, "LDAP user deactivation service is not configured")
+					break
+				}
 				if err := s.deactivateUser(mapping.UserID); err != nil {
 					result.Errors = append(result.Errors, fmt.Sprintf("failed to deactivate user %d: %v", mapping.UserID, err))
 					continue
@@ -255,12 +268,6 @@ func (s *SyncService) updateUser(userID int, ldapUser LDAPUser) error {
 		UPDATE users SET first_name = ?, last_name = ?, email = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
 	`, firstName, lastName, strings.ToLower(ldapUser.Email), userID)
-	return err
-}
-
-// deactivateUser sets a user as inactive.
-func (s *SyncService) deactivateUser(userID int) error {
-	_, err := s.db.ExecWrite("UPDATE users SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE id = ?", userID)
 	return err
 }
 

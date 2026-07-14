@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 
 	"windshift/internal/models"
@@ -314,11 +313,8 @@ func (s *ItemLinkService) ListLinksForEntityWithChecks(userID int, entityType st
 		return nil, nil, err
 	}
 
-	// Compute the key-set and id-set of viewable workspaces in a single
-	// workspace scan + permission pass. AccessibleWorkspaceKeys and
-	// AccessibleWorkspaceIDs each do this independently; calling both per
-	// request doubled the scan and the HasWorkspacePermission loop over every
-	// active workspace.
+	// Compute the key-set and id-set of viewable workspaces from one active-set
+	// snapshot and one effective-permission snapshot.
 	accessibleKeys, accessibleWsIDs := s.accessibleWorkspaces(userID)
 	accessibleSets := s.AccessibleAssetSetIDs(userID)
 
@@ -556,19 +552,12 @@ func (s *ItemLinkService) AccessibleWorkspaceIDs(userID int) map[int]bool {
 	if s.perm == nil {
 		return out
 	}
-	ids, err := repository.NewWorkspaceRepository(s.db).ListActiveIDs()
+	ids, err := s.perm.AccessibleWorkspaceIDs(userID)
 	if err != nil {
 		return out
 	}
 	for _, id := range ids {
-		hasView, err := s.perm.HasWorkspacePermission(userID, id, models.PermissionItemView)
-		if err != nil {
-			slog.Error("link orchestration: error checking workspace view permission", slog.Int("workspace_id", id), slog.Any("error", err))
-			continue
-		}
-		if hasView {
-			out[id] = true
-		}
+		out[id] = true
 	}
 	return out
 }
@@ -580,47 +569,33 @@ func (s *ItemLinkService) AccessibleWorkspaceKeys(userID int) map[string]bool {
 	if s.perm == nil {
 		return out
 	}
-	pairs, err := repository.NewWorkspaceRepository(s.db).ListActiveIDKeys()
+	pairs, err := s.perm.AccessibleWorkspaceIDKeys(userID)
 	if err != nil {
 		return out
 	}
 	for _, p := range pairs {
-		hasView, err := s.perm.HasWorkspacePermission(userID, p.ID, models.PermissionItemView)
-		if err != nil {
-			continue
-		}
-		if hasView {
-			out[p.Key] = true
-		}
+		out[p.Key] = true
 	}
 	return out
 }
 
-// accessibleWorkspaces returns, from a single workspace scan and a single
-// HasWorkspacePermission pass, both the key-set and id-set of workspaces
+// accessibleWorkspaces returns both the key-set and id-set of workspaces
 // userID can view. The links endpoint needs both forms (item endpoints match
-// by pre-joined key, test_case/page endpoints by id), so computing them
-// together avoids the duplicate work of calling AccessibleWorkspaceKeys and
-// AccessibleWorkspaceIDs back to back.
+// by pre-joined key, test_case/page endpoints by id), so it resolves them from
+// a single pair snapshot.
 func (s *ItemLinkService) accessibleWorkspaces(userID int) (keys map[string]bool, ids map[int]bool) {
 	keys = map[string]bool{}
 	ids = map[int]bool{}
 	if s.perm == nil {
 		return keys, ids
 	}
-	pairs, err := repository.NewWorkspaceRepository(s.db).ListActiveIDKeys()
+	pairs, err := s.perm.AccessibleWorkspaceIDKeys(userID)
 	if err != nil {
 		return keys, ids
 	}
 	for _, p := range pairs {
-		hasView, err := s.perm.HasWorkspacePermission(userID, p.ID, models.PermissionItemView)
-		if err != nil {
-			continue
-		}
-		if hasView {
-			keys[p.Key] = true
-			ids[p.ID] = true
-		}
+		keys[p.Key] = true
+		ids[p.ID] = true
 	}
 	return keys, ids
 }

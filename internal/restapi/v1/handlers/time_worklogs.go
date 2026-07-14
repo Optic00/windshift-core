@@ -4,16 +4,13 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
-	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/restapi"
 	"windshift/internal/sanitize"
 	"windshift/internal/services"
-	"windshift/internal/utils"
 )
 
 // TimeWorklogHandler provides the v1 bearer-token REST surface for time
@@ -139,6 +136,9 @@ func (h *TimeWorklogHandler) ListMine(w http.ResponseWriter, r *http.Request) {
 		h.RespondInternalError(w, r)
 		return
 	}
+	worklogs = services.RedactInaccessibleWorklogItems(worklogs, func(workspaceID int) (bool, error) {
+		return h.PermissionService.HasWorkspacePermission(user.ID, workspaceID, models.PermissionItemView)
+	})
 
 	out := make([]worklogResponse, 0, len(worklogs))
 	for _, wl := range worklogs {
@@ -221,66 +221,32 @@ func (h *TimeWorklogHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var durationMins int
-	var startUnix, endUnix int64
-	switch {
-	case req.Duration != "":
-		dur, err := utils.ParseDuration(req.Duration)
-		if err != nil {
-			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, fmt.Sprintf("invalid duration: %s", err.Error())))
-			return
-		}
-		durationMins = int(dur.Minutes())
-		startUnix = date.Unix()
-		endUnix = date.Add(dur).Unix()
-	case req.DurationMinutes > 0:
-		durationMins = req.DurationMinutes
-		startUnix = date.Unix()
-		endUnix = date.Add(time.Duration(req.DurationMinutes) * time.Minute).Unix()
-	case req.StartTime != "" && req.EndTime != "":
-		sp := strings.SplitN(req.StartTime, ":", 2)
-		ep := strings.SplitN(req.EndTime, ":", 2)
-		if len(sp) != 2 || len(ep) != 2 {
-			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "start_time and end_time must be in HH:MM format"))
-			return
-		}
-		sh, e1 := strconv.Atoi(sp[0])
-		sm, e2 := strconv.Atoi(sp[1])
-		eh, e3 := strconv.Atoi(ep[0])
-		em, e4 := strconv.Atoi(ep[1])
-		if e1 != nil || e2 != nil || e3 != nil || e4 != nil {
-			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "start_time and end_time must be in HH:MM format"))
-			return
-		}
-		st := date.Add(time.Duration(sh)*time.Hour + time.Duration(sm)*time.Minute)
-		et := date.Add(time.Duration(eh)*time.Hour + time.Duration(em)*time.Minute)
-		if !et.After(st) {
-			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "end_time must be after start_time"))
-			return
-		}
-		durationMins = int(et.Sub(st).Minutes())
-		startUnix, endUnix = st.Unix(), et.Unix()
-	default:
-		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeMissingField, "provide duration, duration_minutes, or start_time and end_time"))
-		return
-	}
-
-	if durationMins <= 0 {
-		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "duration must be positive"))
+	durationMins, startUnix, endUnix, err := services.ParseWorklogTimes(date, services.WorklogTimeInput{
+		Duration:        req.Duration,
+		DurationMinutes: req.DurationMinutes,
+		StartTime:       req.StartTime,
+		EndTime:         req.EndTime,
+	})
+	if err != nil {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, err.Error()))
 		return
 	}
 
 	// Resolve optional item link
 	var itemID *int
-	if req.ItemKey != "" {
-		id, err := resolveItemByKey(h.DB, h.PermissionService, user.ID, req.ItemKey)
+	if req.ItemKey != "" || (req.ItemID != nil && *req.ItemID > 0) {
+		rawID := 0
+		if req.ItemID != nil {
+			rawID = *req.ItemID
+		}
+		id, err := services.ResolveAccessibleWorklogItem(h.DB, rawID, req.ItemKey, func(workspaceID int) (bool, error) {
+			return h.PermissionService.HasWorkspacePermission(user.ID, workspaceID, models.PermissionItemView)
+		})
 		if err != nil {
 			h.RespondError(w, r, restapi.NewAPIError(http.StatusNotFound, "NOT_FOUND", "item not found"))
 			return
 		}
 		itemID = &id
-	} else if req.ItemID != nil && *req.ItemID > 0 {
-		itemID = req.ItemID
 	}
 
 	id, err := repository.NewTimeWorklogRepository(h.DB).Create(repository.NewWorklog{
@@ -406,34 +372,4 @@ func (h *TimeWorklogHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.RespondNoContent(w)
-}
-
-// resolveItemByKey looks up an item by its key (e.g. "PROJ-42") and verifies
-// the user can view the item's workspace. Returns the item's numeric ID.
-func resolveItemByKey(db database.Database, permService *services.PermissionService, userID int, itemKey string) (int, error) {
-	parts := strings.SplitN(itemKey, "-", 2)
-	if len(parts) != 2 {
-		return 0, fmt.Errorf("invalid item key format")
-	}
-	itemNum, err := strconv.Atoi(parts[1])
-	if err != nil {
-		return 0, fmt.Errorf("invalid item number in key")
-	}
-
-	itemRepo := repository.NewItemRepository(db)
-	itemID, err := itemRepo.FindIDByKeyAndNumber(parts[0], itemNum)
-	if err != nil {
-		return 0, fmt.Errorf("item not found")
-	}
-	wsID, err := itemRepo.GetWorkspaceID(itemID)
-	if err != nil {
-		return 0, fmt.Errorf("item not found")
-	}
-
-	canView, err := permService.HasWorkspacePermission(userID, wsID, models.PermissionItemView)
-	if err != nil || !canView {
-		return 0, fmt.Errorf("item not found")
-	}
-
-	return itemID, nil
 }

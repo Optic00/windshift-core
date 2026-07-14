@@ -23,6 +23,7 @@
   import { t } from '../../stores/i18n.svelte.js';
   import { pagesTreeRefresh } from './pagesTreeRefresh.svelte.js';
   import { pagesFocusTitle } from './pagesFocusTitle.svelte.js';
+  import { createPageAutosaveQueue } from './pageAutosaveQueue.js';
   import { agentRuns } from '../../stores/agentRuns.svelte.js';
 
   /**
@@ -69,11 +70,16 @@
   // succeeded; 'error' = last write failed.
   let saveStatus = $state('idle');
   let saveTimer = null;
-  // Guards flushSave against re-entry while a save is awaiting the
-  // server. Without this, a debounce that fires during an in-flight
-  // request would issue a second concurrent save whose response can
-  // arrive out of order and clobber state.
+  // True while the serialized queue is actively writing a snapshot.
   let saveInFlight = false;
+
+  const pageAutosaveQueue = createPageAutosaveQueue(
+    persistSaveSnapshot,
+    (left, right) =>
+      left.workspaceId === right.workspaceId &&
+      left.title === right.title &&
+      left.content === right.content
+  );
 
   // 'edit' (default) shows the formatting toolbar + lets the user type.
   // 'read' renders the body read-only, hides the toolbar (via
@@ -89,6 +95,7 @@
   // the popover button's add/remove callbacks.
   let pageLinks = $state(/** @type {any[]} */ ([]));
   let loadingPageLinks = $state(false);
+  let loadPageLinksRequestSeq = 0;
   // System link types — used to locate the "Page" type id so the popover
   // can pass it to POST /links. One fetch per session is plenty; the
   // result is small and stable.
@@ -98,9 +105,11 @@
   );
 
   async function loadPageLinks(id) {
+    const requestSeq = ++loadPageLinksRequestSeq;
     loadingPageLinks = true;
     try {
       const resp = await api.links.getForPage(id);
+      if (requestSeq !== loadPageLinksRequestSeq || selectedPage?.id !== id) return;
       const outgoing = Array.isArray(resp?.outgoing) ? resp.outgoing : [];
       const incoming = Array.isArray(resp?.incoming) ? resp.incoming : [];
       // De-dup by id; outgoing and incoming should never share rows but
@@ -115,10 +124,11 @@
       }
       pageLinks = merged;
     } catch (err) {
+      if (requestSeq !== loadPageLinksRequestSeq || selectedPage?.id !== id) return;
       console.error('failed to load page links', err);
       pageLinks = [];
     } finally {
-      loadingPageLinks = false;
+      if (requestSeq === loadPageLinksRequestSeq) loadingPageLinks = false;
     }
   }
 
@@ -165,13 +175,13 @@
   }));
 
   onDestroy(() => {
-    // Don't leave a dangling timer. We deliberately do NOT flush here:
-    // onDestroy fires during navigation away from the whole view, and
-    // an in-flight save against the old workspace id would race with
-    // the new view's setup. The route-change effect handles the
-    // in-app flush; for tab close the user already saw "Saved" or
-    // accepts the (small) loss within the debounce window.
-    if (saveTimer) clearTimeout(saveTimer);
+    // Capture the pending draft before this view is torn down so in-app
+    // navigation cannot discard the debounce window.
+    if (dirty) {
+      void flushSave();
+    } else if (saveTimer) {
+      clearTimeout(saveTimer);
+    }
   });
 
   // Sync to route changes — navigating to a different page id loads
@@ -305,28 +315,34 @@
    * window — we only fold the response back into draftTitle /
    * draftContent when the draft is still identical to what we sent.
    */
-  async function flushSave() {
-    if (!selectedPage || !dirty) return;
-    // Single-flight: a debounce that fires while a save is already
-    // in flight should defer rather than race. The pending input has
-    // already kept dirty=true, so the post-request reschedule below
-    // will pick it up.
-    if (saveInFlight) return;
+  function flushSave() {
+    if (!selectedPage || !dirty) return Promise.resolve();
     if (saveTimer) {
       clearTimeout(saveTimer);
       saveTimer = null;
     }
-    const targetId = selectedPage.id;
-    const prevTitle = selectedPage.title;
-    const titleSnap = draftTitle;
-    const contentSnap = draftContent;
-    saveStatus = 'saving';
-    error = '';
+
+    const snapshot = {
+      workspaceId,
+      pageId: selectedPage.id,
+      previousTitle: selectedPage.title,
+      title: draftTitle,
+      content: draftContent,
+    };
+    return pageAutosaveQueue.enqueue(snapshot.pageId, snapshot);
+  }
+
+  async function persistSaveSnapshot(snapshot) {
+    const { workspaceId: targetWorkspaceId, pageId: targetId } = snapshot;
+    if (selectedPage?.id === targetId) {
+      saveStatus = 'saving';
+      error = '';
+    }
     saveInFlight = true;
     try {
-      const updated = await api.pages.updatePage(workspaceId, targetId, {
-        title: titleSnap,
-        content: contentSnap,
+      const updated = await api.pages.updatePage(targetWorkspaceId, targetId, {
+        title: snapshot.title,
+        content: snapshot.content,
       });
       // Only fold the response back into local state if we're still on
       // the same page; a fast-switching user has already moved on.
@@ -338,7 +354,7 @@
         // ship it; only clear `dirty` when the snapshot we sent is
         // still the current draft.
         const stillClean =
-          draftTitle === titleSnap && draftContent === contentSnap;
+          draftTitle === snapshot.title && draftContent === snapshot.content;
         if (stillClean) {
           draftTitle = updated.title;
           draftContent = updated.content;
@@ -353,12 +369,16 @@
       // sidebar update at all. Signal a targeted rename only when the title
       // actually changed — that patches one row in place instead of
       // refetching (and flashing) the whole tree.
-      if (updated.title !== prevTitle) {
+      if (updated.title !== snapshot.previousTitle) {
         pagesTreeRefresh.rename(updated.id, updated.title);
       }
     } catch (err) {
-      saveStatus = 'error';
-      error = err?.message || t('pages.errorSave');
+      if (selectedPage?.id === targetId) {
+        saveStatus = 'error';
+        error = err?.message || t('pages.errorSave');
+      } else {
+        console.error(`failed to save page ${targetId}`, err);
+      }
     } finally {
       saveInFlight = false;
     }
@@ -411,21 +431,27 @@
 
   async function updatePageAppearance({ icon = pickerIcon, color = pickerColor, clear = false } = {}) {
     if (!selectedPage || appearanceSaving) return;
-    if (dirty && !saveInFlight) await flushSave();
-    const previous = selectedPage.metadata || {};
-    const metadata = { ...previous };
-    if (clear) {
-      delete metadata.icon;
-      delete metadata.color;
-    } else {
-      metadata.icon = icon;
-      metadata.color = color;
-    }
-    selectedPage.metadata = metadata;
-    selectedPage = selectedPage;
+    const targetWorkspaceId = workspaceId;
+    const targetPageId = selectedPage.id;
     appearanceSaving = true;
+    let previous = null;
     try {
-      const updated = await api.pages.updatePage(workspaceId, selectedPage.id, {
+      if (dirty) await flushSave();
+      if (selectedPage?.id !== targetPageId) return;
+
+      previous = selectedPage.metadata || {};
+      const metadata = { ...previous };
+      if (clear) {
+        delete metadata.icon;
+        delete metadata.color;
+      } else {
+        metadata.icon = icon;
+        metadata.color = color;
+      }
+      selectedPage.metadata = metadata;
+      selectedPage = selectedPage;
+
+      const updated = await api.pages.updatePage(targetWorkspaceId, targetPageId, {
         title: draftTitle,
         content: draftContent,
         metadata,
@@ -437,9 +463,15 @@
       }
       pagesTreeRefresh.bump();
     } catch (err) {
-      selectedPage.metadata = previous;
-      selectedPage = selectedPage;
-      error = err?.message || t('pages.errorSave');
+      if (selectedPage?.id === targetPageId) {
+        if (previous) {
+          selectedPage.metadata = previous;
+          selectedPage = selectedPage;
+        }
+        error = err?.message || t('pages.errorSave');
+      } else {
+        console.error(`failed to update appearance for page ${targetPageId}`, err);
+      }
     } finally {
       appearanceSaving = false;
     }

@@ -167,7 +167,7 @@ describe('notificationActions.markAllAsRead', () => {
     expect(get(notifications).map((n) => n.read)).toEqual([true, true, true]);
   });
 
-  test('still flips local state when one of the API calls rejects', async () => {
+  test('keeps only failed notifications unread when one API call rejects', async () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     api.notifications.markAsRead.mockRejectedValueOnce(new Error('500'));
     notifications.set([
@@ -177,12 +177,8 @@ describe('notificationActions.markAllAsRead', () => {
 
     await notificationActions.markAllAsRead();
 
-    // Implementation wraps the whole flow in try/catch — on Promise.all
-    // failure it logs and exits before the local update, so unread state
-    // persists. This documents the current behavior (see logbook for any
-    // future change to optimistic update semantics).
     expect(errSpy).toHaveBeenCalled();
-    expect(get(notifications).every((n) => n.read === false)).toBe(true);
+    expect(get(notifications).map((n) => n.read)).toEqual([false, true]);
   });
 });
 
@@ -251,12 +247,12 @@ describe('notificationActions.refresh', () => {
     expect(get(notifications)).toEqual([]);
   });
 
-  test('on rejection logs and clears the list', async () => {
+  test('on rejection logs and preserves the last loaded list', async () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     notifications.set([{ id: 99 }]);
     api.notifications.getAll.mockRejectedValueOnce(new Error('net'));
     await notificationActions.refresh();
-    expect(get(notifications)).toEqual([]);
+    expect(get(notifications)).toEqual([{ id: 99 }]);
     expect(errSpy).toHaveBeenCalled();
   });
 });

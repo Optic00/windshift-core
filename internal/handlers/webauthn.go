@@ -75,7 +75,7 @@ func (h *WebAuthnHandler) pendingPasskeySession(r *http.Request) (*auth.Session,
 	if err != nil {
 		return nil, false
 	}
-	session, err := h.sessionManager.ValidateSession(token, h.ipExtractor.GetClientIP(r))
+	session, err := h.sessionManager.ValidateSessionContext(r.Context(), token, h.ipExtractor.GetClientIP(r))
 	if err != nil || !session.EnrollmentRequired ||
 		session.AuthPendingType != auth.AuthPendingPasskeyVerification {
 		return nil, false

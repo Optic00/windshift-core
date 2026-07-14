@@ -102,6 +102,9 @@ describe('MobileCreateDialog — child creation', () => {
 
     expect(screen.getByTestId('create-parent')).toHaveTextContent('Epic: Mobile parity');
     expect(screen.getByText('New sub-item')).toBeInTheDocument();
+    // Picker menus are portalled at z-[70], so the modal must remain below
+    // that layer or optional pickers such as assignee become unclickable.
+    expect(screen.getByRole('dialog')).toHaveClass('z-[60]');
 
     const typeSelect = screen.getByTestId('create-type');
     const options = [...typeSelect.options].map((o) => o.textContent);

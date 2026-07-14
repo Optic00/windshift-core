@@ -16,7 +16,7 @@
     PROGRESS_CHART_CIRCUMFERENCE,
     PROGRESS_CHART_RADIUS,
     buildProgressSegments,
-    formatPercent,
+    calculatePercentComplete,
   } from '../../utils/progressChart.js';
   import ItemsByStatusCategory from '../../components/ItemsByStatusCategory.svelte';
   import BasePicker from '../../pickers/BasePicker.svelte';
@@ -330,7 +330,7 @@
                   />
                 {/each}
                 <text class="text-2xl font-bold" x="70" y="68" text-anchor="middle" fill="var(--ds-text)">
-                  {formatPercent(progress.percent_complete)}%
+                  {calculatePercentComplete(progress.completed_items, progress.total_items, progress.percent_complete)}%
                 </text>
                 <text class="text-xs uppercase" x="70" y="86" text-anchor="middle" fill="var(--ds-text-subtle)">
                   {t('iterations.complete')}
@@ -522,4 +522,3 @@
   />
   {/snippet}
 </Modal>
-

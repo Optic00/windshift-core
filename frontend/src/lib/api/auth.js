@@ -24,7 +24,7 @@ export const auth = {
     fetchAPI('/auth/logout-all', {
       method: 'POST',
     }),
-  getCurrentUser: () => fetchAPI('/auth/me'),
+  getCurrentUser: (options) => fetchAPI('/auth/me', options),
   refreshSession: (data = {}) =>
     fetchAPI('/auth/refresh', {
       method: 'POST',

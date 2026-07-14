@@ -21,20 +21,27 @@ import (
 )
 
 type UserHandler struct {
-	repo              *repository.UserRepository
-	auditor           *logger.Auditor
-	permissionService *services.PermissionService
-	invitationService *services.InvitationService
-	userSvc           *services.UserReadService
-	offboardUser      func(id int) error
-	deactivateCascade func(id int) (services.AgentDeactivationResult, error)
-	agentPresence     *services.AgentPresenceService // optional; nil when the agent harness is off
+	repo               *repository.UserRepository
+	auditor            *logger.Auditor
+	permissionService  *services.PermissionService
+	invitationService  *services.InvitationService
+	userSvc            *services.UserReadService
+	offboardUser       func(id int) error
+	deactivateCascade  func(id int) (services.AgentDeactivationResult, error)
+	invalidateSessions func(id int)
+	agentPresence      *services.AgentPresenceService // optional; nil when the agent harness is off
 }
 
 // SetAgentPresenceService wires the optional presence resolver used to
 // decorate agent users in the assignable-users response (WI-272).
 func (h *UserHandler) SetAgentPresenceService(s *services.AgentPresenceService) {
 	h.agentPresence = s
+}
+
+func (h *UserHandler) invalidateUserSessions(userID int) {
+	if h.invalidateSessions != nil {
+		h.invalidateSessions(userID)
+	}
 }
 
 // CreateUserRequest represents the request payload for creating a user.
@@ -83,15 +90,17 @@ func NewUserHandler(
 	userSvc *services.UserReadService,
 	offboardUser func(id int) error,
 	deactivateCascade func(id int) (services.AgentDeactivationResult, error),
+	invalidateSessions func(id int),
 ) *UserHandler {
 	return &UserHandler{
-		repo:              repo,
-		auditor:           auditor,
-		permissionService: permissionService,
-		invitationService: invitationService,
-		userSvc:           userSvc,
-		offboardUser:      offboardUser,
-		deactivateCascade: deactivateCascade,
+		repo:               repo,
+		auditor:            auditor,
+		permissionService:  permissionService,
+		invitationService:  invitationService,
+		userSvc:            userSvc,
+		offboardUser:       offboardUser,
+		deactivateCascade:  deactivateCascade,
+		invalidateSessions: invalidateSessions,
 	}
 }
 
@@ -676,6 +685,7 @@ func (h *UserHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+	h.invalidateUserSessions(id)
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -745,6 +755,7 @@ func (h *UserHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+	h.invalidateUserSessions(id)
 
 	h.auditor.LogWithDetails(r, currentUser,
 		logger.ActionUserPasswordReset, logger.ResourceUser,
@@ -865,6 +876,7 @@ func (h *UserHandler) ActivateUser(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+	h.invalidateUserSessions(id)
 
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
@@ -910,23 +922,13 @@ func (h *UserHandler) DeactivateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.repo.SetActive(id, false); err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-
-	// Propagate to any agents this user owns: flip them inactive and revoke every
-	// token held by the owner or their agents in a single transaction.
+	// The shared offboarding service atomically deactivates the user and their
+	// agents, revokes their API tokens, and invalidates security caches.
 	cascade, cascadeErr := h.deactivateCascade(id)
 	if cascadeErr != nil {
-		slog.Warn("deactivation cascade failed",
-			slog.String("component", "users"),
-			slog.Int("owner_id", id),
-			slog.Any("error", cascadeErr))
+		respondInternalError(w, r, cascadeErr)
+		return
 	}
-
-	// Invalidate permission caches (fans out to owned agents via PermissionService).
-	_ = h.permissionService.InvalidateUserCache(id)
 
 	if currentUser != nil {
 		h.auditor.LogWithDetails(r, currentUser,

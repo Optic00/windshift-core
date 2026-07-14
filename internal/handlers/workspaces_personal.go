@@ -108,6 +108,7 @@ func (h *WorkspaceHandler) GetOrCreatePersonalWorkspace(w http.ResponseWriter, r
 	// Invalidate permission cache so the user gets auto-granted permissions for the new workspace
 	if h.permissionService != nil {
 		_ = h.permissionService.InvalidateUserCache(userID)
+		h.permissionService.InvalidateActiveWorkspaceCache()
 	}
 
 	// Return the created personal workspace

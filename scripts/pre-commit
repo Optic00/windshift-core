@@ -10,23 +10,15 @@ FAILED=0
 echo "Running pre-commit checks..."
 
 # --- Go linting ---
-# Baseline: --new-from-merge-base=origin/main so newly-added linters
-# (rowserrcheck, eventually contextcheck) only fail commits that introduce
-# regressions, not on the ~300 pre-existing violations. Existing offenders
-# are tracked for a future cleanup sweep — see
-# docs/golang_architecture_review_2026-05-14.md.
 if command -v golangci-lint >/dev/null 2>&1; then
     echo "  Running golangci-lint..."
-    LINT_ARGS=(--timeout=5m)
-    if git rev-parse --verify origin/main >/dev/null 2>&1; then
-        LINT_ARGS+=(--new-from-merge-base=origin/main)
-    fi
-    if ! (cd "$REPO_ROOT" && golangci-lint run "${LINT_ARGS[@]}"); then
+    if ! (cd "$REPO_ROOT" && golangci-lint run --timeout=5m); then
         echo "FAIL: golangci-lint found issues."
         FAILED=1
     fi
 else
-    echo "  WARNING: golangci-lint not installed, skipping Go lint (run 'make dev-tools' to install)"
+    echo "FAIL: golangci-lint is required (run 'make dev-tools' to install the CI-pinned version)."
+    FAILED=1
 fi
 
 # --- Frontend linting ---
@@ -34,6 +26,10 @@ if [ -d "$REPO_ROOT/frontend" ]; then
     echo "  Running frontend checks..."
     if ! (cd "$REPO_ROOT/frontend" && npm run check); then
         echo "FAIL: frontend check found issues."
+        FAILED=1
+    fi
+    if ! (cd "$REPO_ROOT/frontend" && npm run typecheck); then
+        echo "FAIL: frontend typecheck found issues."
         FAILED=1
     fi
 else
@@ -57,17 +53,11 @@ if ! "$REPO_ROOT/scripts/check-layering.sh"; then
 fi
 
 # --- OpenAPI spec freshness ---
-# Regenerates api/openapi.{yaml,json} from handler annotations and fails the
-# commit if the result diverges from what's currently checked in. Skipped
-# when `swag` isn't installed locally; CI runs the same check unconditionally.
-if command -v swag >/dev/null 2>&1; then
-    echo "  Checking OpenAPI spec is up to date..."
-    if ! (cd "$REPO_ROOT" && make -s openapi-check); then
-        echo "FAIL: OpenAPI spec is stale. Run 'make openapi' and stage the changes in api/."
-        FAILED=1
-    fi
-else
-    echo "  WARNING: swag not installed, skipping OpenAPI freshness check (run 'make dev-tools' to install)"
+# Uses the swag version pinned by go.mod through `go tool swag`.
+echo "  Validating OpenAPI generation..."
+if ! (cd "$REPO_ROOT" && make -s openapi-check); then
+    echo "FAIL: OpenAPI annotations do not generate a valid specification."
+    FAILED=1
 fi
 
 if [ "$FAILED" -ne 0 ]; then

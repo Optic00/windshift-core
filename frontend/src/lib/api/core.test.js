@@ -40,6 +40,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -277,7 +278,7 @@ describe('fetchAPI — 401 logout side effect', () => {
   });
 });
 
-describe('fetchAPI — network/CORS errors', () => {
+describe('fetchAPI — network and timeout errors', () => {
   test('TypeError from fetch surfaces as a NETWORK_ERROR with helpful copy', async () => {
     global.fetch = vi.fn(() => Promise.reject(new TypeError('Failed to fetch')));
 
@@ -290,8 +291,27 @@ describe('fetchAPI — network/CORS errors', () => {
     expect(caught).toBeInstanceOf(Error);
     expect(caught.status).toBe(0);
     expect(caught.code).toBe('NETWORK_ERROR');
-    // The user-facing message hints at the most common cause (CORS).
-    expect(caught.message).toMatch(/CORS configuration/);
+    expect(caught.message).toMatch(/check your connection/i);
+  });
+
+  test('aborts a request at its explicit deadline and reports REQUEST_TIMEOUT', async () => {
+    vi.useFakeTimers();
+    global.fetch = vi.fn(
+      (_url, options) =>
+        new Promise((_resolve, reject) => {
+          options.signal.addEventListener('abort', () =>
+            reject(new DOMException('Aborted', 'AbortError'))
+          );
+        })
+    );
+
+    const request = expect(fetchAPI('/bootstrap', { timeout: 250 })).rejects.toMatchObject({
+      code: 'REQUEST_TIMEOUT',
+      status: 0,
+    });
+    await vi.advanceTimersByTimeAsync(250);
+
+    await request;
   });
 });
 

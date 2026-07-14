@@ -183,55 +183,14 @@ func (h *TimeWorklogHandler) requireWorklogEditAccess(w http.ResponseWriter, r *
 func (h *TimeWorklogHandler) filterWorklogsByPermission(worklogs []models.Worklog, userID int) []models.Worklog {
 	if h.permissionService == nil {
 		slog.Error("permission service unavailable, hiding all item info from worklogs", slog.String("component", "time_tracking"))
-		// Fail closed: strip item-related fields from all worklogs
-		for i := range worklogs {
-			worklogs[i].ItemID = nil
-			worklogs[i].ItemTitle = ""
-			worklogs[i].WorkspaceID = nil
-			worklogs[i].WorkspaceKey = ""
-			worklogs[i].WorkspaceItemNumber = 0
-		}
-		return worklogs
+		return services.RedactInaccessibleWorklogItems(worklogs, func(int) (bool, error) {
+			return false, nil
+		})
 	}
 
-	// Check if user is system admin first
-	isAdmin, err := h.permissionService.IsSystemAdmin(userID)
-	if err != nil {
-		slog.Warn("error checking system admin status", slog.String("component", "time_tracking"), slog.Any("error", err))
-		// On error, fall through to per-item checking
-	} else if isAdmin {
-		// System admin can see everything
-		return worklogs
-	}
-
-	// Filter each worklog based on item permissions
-	for i := range worklogs {
-		worklog := &worklogs[i]
-
-		// Only check permission if worklog has an associated item
-		if worklog.ItemID == nil || worklog.WorkspaceID == nil {
-			continue
-		}
-
-		// Check if user has permission to view this workspace
-		hasPermission, err := h.permissionService.HasWorkspacePermission(userID, *worklog.WorkspaceID, models.PermissionItemView)
-		if err != nil {
-			slog.Warn("error checking workspace permission", slog.String("component", "time_tracking"), slog.Int("user_id", userID), slog.Int("workspace_id", *worklog.WorkspaceID), slog.Any("error", err))
-			// On error, hide item info to be safe
-			hasPermission = false
-		}
-
-		// If no permission, clear item-related fields
-		if !hasPermission {
-			worklog.ItemID = nil
-			worklog.ItemTitle = ""
-			worklog.WorkspaceID = nil
-			worklog.WorkspaceKey = ""
-			worklog.WorkspaceItemNumber = 0
-		}
-	}
-
-	return worklogs
+	return services.RedactInaccessibleWorklogItems(worklogs, func(workspaceID int) (bool, error) {
+		return h.permissionService.HasWorkspacePermission(userID, workspaceID, models.PermissionItemView)
+	})
 }
 
 func (h *TimeWorklogHandler) GetAll(w http.ResponseWriter, r *http.Request) {

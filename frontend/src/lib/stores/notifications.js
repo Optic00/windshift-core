@@ -56,9 +56,8 @@ function loadNotifications() {
     })
     .catch((error) => {
       console.error('Failed to load notifications:', error);
-      // Fall back to empty array on error
-      notifications.set([]);
-      return [];
+      // Preserve the last successfully loaded list during transient failures.
+      return get(notifications);
     })
     .finally(() => {
       initialLoadSettled = true;
@@ -92,21 +91,26 @@ export const notificationActions = {
 
   // Mark all as read
   markAllAsRead: async () => {
-    try {
-      // Get current notifications to mark them all as read
-      let currentNotifications = [];
-      notifications.subscribe((items) => {
-        currentNotifications = items;
-      })();
+    const unreadNotifications = get(notifications).filter((item) => !item.read);
+    const results = await Promise.allSettled(
+      unreadNotifications.map(async (item) => {
+        await api.notifications.markAsRead(item.id);
+        return item.id;
+      })
+    );
 
-      // Mark each unread notification as read
-      const unreadNotifications = currentNotifications.filter((item) => !item.read);
-      await Promise.all(unreadNotifications.map((item) => api.notifications.markAsRead(item.id)));
-
-      // Update local state
-      notifications.update((items) => items.map((item) => ({ ...item, read: true })));
-    } catch (error) {
-      console.error('Failed to mark all notifications as read:', error);
+    const readIDs = new Set();
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        readIDs.add(result.value);
+      } else {
+        console.error('Failed to mark notification as read:', result.reason);
+      }
+    }
+    if (readIDs.size > 0) {
+      notifications.update((items) =>
+        items.map((item) => (readIDs.has(item.id) ? { ...item, read: true } : item))
+      );
     }
   },
 

@@ -230,7 +230,14 @@ func (s *Server) initialize() error {
 	ipExtractor := utils.NewIPExtractor(cfg.UseProxy, additionalProxyList)
 
 	// Authentication management
-	sessionManager := auth.NewSessionManager(s.db, enableHTTPS, cfg.UseProxy, additionalProxyList, cfg.Auth.SessionSecret)
+	sessionManager := auth.NewSessionManagerWithValidationCacheTTL(
+		s.db,
+		enableHTTPS,
+		cfg.UseProxy,
+		additionalProxyList,
+		cfg.Auth.SessionSecret,
+		cfg.Auth.SessionValidationCacheTTL,
+	)
 
 	// Determine effective port for CORS
 	effectivePort := cfg.Port
@@ -307,6 +314,20 @@ func (s *Server) initialize() error {
 	} else if cleaned > 0 {
 		slog.Info("cleaned expired api tokens on startup", "count", cleaned)
 	}
+	userDeactivationService := services.NewUserDeactivationService(
+		s.db,
+		services.UserDeactivationInvalidators{
+			Tokens:   tokenManager.InvalidateTokens,
+			Sessions: sessionManager.InvalidateUserSessionValidation,
+			Permissions: func(userID int) {
+				if err := permService.InvalidateUserCache(userID); err != nil {
+					slog.Warn("failed to invalidate permissions after user deactivation",
+						slog.Int("user_id", userID),
+						slog.Any("error", err))
+				}
+			},
+		},
+	)
 
 	// Create auth middleware
 	authMiddleware := middleware.NewAuthMiddleware(sessionManager, tokenManager, s.db, cfg.UseProxy, additionalProxyList, setupCompleted)
@@ -479,13 +500,8 @@ func (s *Server) initialize() error {
 			tokenManager.InvalidateTokens(tokenIDs)
 			return nil
 		},
-		func(id int) (services.AgentDeactivationResult, error) {
-			result, err := services.DeactivateOwnedAgentsAndTokens(s.db, id)
-			if err == nil {
-				tokenManager.InvalidateTokens(result.RevokedAPITokens)
-			}
-			return result, err
-		},
+		userDeactivationService.DeactivateUser,
+		sessionManager.InvalidateUserSessionValidation,
 	)
 	groupHandler := handlers.NewGroupHandler(repository.NewGroupRepository(s.db), permService, logger.NewAuditor(s.db))
 	credentialHandler := handlers.NewCredentialHandler(repository.NewCredentialRepository(s.db), logger.NewAuditor(s.db), permService, cfg.SSH.Enabled)
@@ -512,9 +528,7 @@ func (s *Server) initialize() error {
 		baseURL,
 		permService,
 		logger.NewAuditor(s.db),
-		func(id int) (services.AgentDeactivationResult, error) {
-			return services.DeactivateOwnedAgentsAndTokens(s.db, id)
-		},
+		userDeactivationService.DeactivateUser,
 		func() ([]int, error) {
 			return services.ActiveSystemAdminIDs(s.db)
 		},
@@ -1128,7 +1142,10 @@ func (s *Server) initialize() error {
 	auditLogHandler := handlers.NewAuditLogHandler(repository.NewAuditLogRepository(s.db))
 
 	// LDAP handler — keep on Server so Shutdown can drain in-flight syncs.
-	ldapSyncService := ldap.NewSyncService(s.db, ssoHandler.GetEncryption())
+	ldapSyncService := ldap.NewSyncService(s.db, ssoHandler.GetEncryption(), func(userID int) error {
+		_, err := userDeactivationService.DeactivateUser(userID)
+		return err
+	})
 	s.ldapHandler = handlers.NewLDAPHandler(s.db, ldapSyncService, ssoHandler.GetEncryption())
 	ldapHandler := s.ldapHandler
 
@@ -1350,6 +1367,7 @@ func (s *Server) initialize() error {
 			Features:         featuresHandler,
 			OAuthClients:     handlers.NewAdminOAuthClientHandler(s.db, tokenManager, permService),
 			Diagnostics: handlers.NewDiagnosticsHandler(
+				sessionManager,
 				repository.NewDatabaseDiagnosticsRepository(s.db),
 				repository.NewActionRepository(s.db),
 				repository.NewWebhookDeliveryRepository(s.db),

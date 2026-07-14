@@ -295,14 +295,23 @@ export function initRouter() {
     // Use closest() to find the anchor tag even when clicking nested elements
     const anchor = /** @type {HTMLElement} */ (e.target).closest('a');
     if (!anchor?.href) return;
-    if (!anchor.href.startsWith(window.location.origin)) return;
     // Respect explicit opt-outs: new-tab targets, downloads, non-http protocols.
     const target = anchor.getAttribute('target');
     if (target && target !== '_self') return;
     if (anchor.hasAttribute('download')) return;
-    e.preventDefault();
     const url = new URL(anchor.href);
-    navigate(toLogical(url.pathname) + url.search);
+    if (url.origin !== window.location.origin) return;
+    // Native fragment navigation updates the hash and scrolls to the target.
+    // pushState cannot reproduce that scroll behavior for same-document links.
+    if (
+      url.hash &&
+      url.pathname === window.location.pathname &&
+      url.search === window.location.search
+    ) {
+      return;
+    }
+    e.preventDefault();
+    navigate(toLogical(url.pathname) + url.search + url.hash);
   });
 }
 

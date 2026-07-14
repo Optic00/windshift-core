@@ -16,18 +16,92 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Windshift" />
     <title>Windshift - Work Management</title>
+    <style>
+      #windshift-boot {
+                    min-height: 100vh;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    padding: 1.5rem;
+                    background: #fff;
+                    color: #172b4d;
+                    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                    text-align: center;
+                  }
+                  #windshift-boot .boot-spinner {
+                    width: 3rem;
+                    height: 3rem;
+                    margin: 0 auto 1rem;
+                    border: 4px solid #dfe1e6;
+                    border-top-color: #0c66e4;
+                    border-radius: 50%;
+                    animation: windshift-boot-spin 1s linear infinite;
+                  }
+                  #windshift-boot p { margin: 0; color: #44546f; line-height: 1.5; }
+                  #windshift-boot .boot-detail { margin-top: .35rem; font-size: .875rem; }
+                  #windshift-boot button {
+                    min-height: 2.75rem;
+                    margin-top: 1.25rem;
+                    padding: .65rem 1.25rem;
+                    border: 0;
+                    border-radius: .5rem;
+                    background: #0c66e4;
+                    color: #fff;
+                    font: inherit;
+                    font-weight: 600;
+                    cursor: pointer;
+                  }
+                  #windshift-boot [hidden] { display: none; }
+                  @supports (height: 100dvh) { #windshift-boot { min-height: 100dvh; } }
+                  @keyframes windshift-boot-spin { to { transform: rotate(360deg); } }
+                  @media (prefers-color-scheme: dark) {
+                    #windshift-boot { background: #1d2125; color: #f7f8f9; }
+                    #windshift-boot p { color: #b6c2cf; }
+                    #windshift-boot .boot-spinner { border-color: #454f59; border-top-color: #579dff; }
+                  }
+                  @media (prefers-reduced-motion: reduce) { #windshift-boot .boot-spinner { animation: none; } }
+    </style>
     <script>
       // Flash prevention: apply theme before CSS loads
-                                          (() => {
-                                            const stored = localStorage.getItem('windshift-color-mode');
-                                            const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-                                            const mode = stored === 'dark' || (stored === 'system' && prefersDark) || (!stored && prefersDark) ? 'dark' : 'light';
-                                            document.documentElement.dataset.colorMode = mode;
-                                          })();
+                  (() => {
+                    let stored = null;
+                    try {
+                      stored = localStorage.getItem('windshift-color-mode');
+                    } catch {
+                      // Storage can be unavailable in hardened/private browser contexts.
+                    }
+                    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                    const mode = stored === 'dark' || (stored === 'system' && prefersDark) || (!stored && prefersDark) ? 'dark' : 'light';
+                    document.documentElement.dataset.colorMode = mode;
+
+                    // This runs before the module graph. If a required chunk cannot load,
+                    // keep useful UI in #app and reveal recovery instead of a white page.
+                    window.addEventListener('DOMContentLoaded', () => {
+                      const retry = document.getElementById('windshift-boot-retry');
+                      const detail = document.getElementById('windshift-boot-detail');
+                      if (!retry || !detail) return;
+                      retry.addEventListener('click', () => location.reload());
+                      window.setTimeout(() => {
+                        // Svelte removes this node when mounting succeeds.
+                        if (!document.getElementById('windshift-boot')) return;
+                        detail.hidden = false;
+                        retry.hidden = false;
+                      }, 10_000);
+                    });
+                  })();
     </script>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <div id="windshift-boot" role="status" aria-live="polite">
+        <div>
+          <div class="boot-spinner" aria-hidden="true"></div>
+          <p>Starting Windshift…</p>
+          <p id="windshift-boot-detail" class="boot-detail" hidden>This is taking longer than expected. Check your connection or server.</p>
+          <button id="windshift-boot-retry" type="button" hidden>Retry</button>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

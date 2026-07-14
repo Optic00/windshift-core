@@ -90,6 +90,9 @@ type AuthConfig struct {
 	// SESSION_SECRET. Empty means neither env var was set — Load will fatal
 	// before populating this field, so consumers can treat empty as unreachable.
 	SessionSecret string
+	// SessionValidationCacheTTL bounds local session/user-state staleness. Zero
+	// disables retained validation entries; the default is five seconds.
+	SessionValidationCacheTTL time.Duration
 }
 
 // WebAuthnConfig holds WebAuthn relying-party identity.

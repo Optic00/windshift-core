@@ -134,6 +134,12 @@ CREATE TABLE IF NOT EXISTS item_history (
 -- Index for efficient history queries (most common: get all history for an item)
 CREATE INDEX IF NOT EXISTS idx_item_history_item_id_changed_at ON item_history(item_id, changed_at DESC);
 
+-- Latest transition into the current status on list/board queries. The
+-- partial predicate keeps unrelated history rows out of this hot-path index.
+CREATE INDEX IF NOT EXISTS idx_item_history_current_status_latest
+	ON item_history(item_id, new_value, changed_at DESC)
+	WHERE field_name = 'status_id';
+
 -- Index for querying history by user
 CREATE INDEX IF NOT EXISTS idx_item_history_user_id ON item_history(user_id);
 

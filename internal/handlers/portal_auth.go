@@ -367,7 +367,7 @@ func (h *PortalAuthHandler) GetCurrentCustomer(w http.ResponseWriter, r *http.Re
 		internalToken, err := h.sessionManager.GetSessionFromRequest(r)
 		if err == nil {
 			clientIP := h.getClientIP(r)
-			session, err := h.sessionManager.ValidateSession(internalToken, clientIP)
+			session, err := h.sessionManager.ValidateSessionContext(r.Context(), internalToken, clientIP)
 			if err == nil && session.User != nil {
 				// Internal user authenticated
 				respondJSONOK(w, map[string]interface{}{

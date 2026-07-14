@@ -53,11 +53,11 @@ function createAuthStore() {
     },
 
     // Initialize auth state by checking current session
-    async init() {
+    async init(options) {
       loading.set(true);
 
       try {
-        const response = await api.auth.getCurrentUser();
+        const response = await api.auth.getCurrentUser(options);
         if (response.session?.auth_pending_type === 'passkey_verification') {
           // A refreshed password+passkey browser session is still only the
           // first factor. Return to login rather than rendering the app as if
@@ -66,20 +66,28 @@ function createAuthStore() {
           isAuthenticated.set(false);
           loading.set(false);
           error.set(null);
-          return;
+          return { status: 'unauthenticated' };
         }
         user.set(response.user);
         session.set(response.session);
         isAuthenticated.set(true);
         loading.set(false);
         error.set(null);
-      } catch (_err) {
-        // If we can't get current user, user is not authenticated
-        user.set(null);
-        session.set(null);
-        isAuthenticated.set(false);
+        return { status: 'authenticated' };
+      } catch (err) {
         loading.set(false);
-        error.set(null);
+        if (err?.status === 401) {
+          // Only an explicit unauthenticated response proves that the browser
+          // session is invalid. A transport failure leaves the prior state
+          // intact and lets the bootstrap UI offer a meaningful retry.
+          user.set(null);
+          session.set(null);
+          isAuthenticated.set(false);
+          error.set(null);
+          return { status: 'unauthenticated' };
+        }
+        error.set(err?.message || 'Unable to verify your session.');
+        return { status: 'error', error: err };
       }
     },
 

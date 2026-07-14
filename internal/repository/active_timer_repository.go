@@ -33,14 +33,23 @@ func (r *ActiveTimerRepository) GetProjectStatus(projectID int) (string, error) 
 	return status, err
 }
 
-// GetProjectCustomerID returns the customer_id linked to a time project.
-func (r *ActiveTimerRepository) GetProjectCustomerID(projectID int) (int, error) {
-	var customerID int
+// GetProjectCustomerID returns the optional customer_id linked to a time
+// project. A nil ID is distinct from a missing project and lets TimerService
+// reject new timers while safely recovering legacy running timers.
+func (r *ActiveTimerRepository) GetProjectCustomerID(projectID int) (*int, error) {
+	var customerID sql.NullInt64
 	err := r.db.QueryRow("SELECT customer_id FROM time_projects WHERE id = ?", projectID).Scan(&customerID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, ErrNotFound
+		return nil, ErrNotFound
 	}
-	return customerID, err
+	if err != nil {
+		return nil, err
+	}
+	if !customerID.Valid {
+		return nil, nil
+	}
+	id := int(customerID.Int64)
+	return &id, nil
 }
 
 // HasActiveTimerForUser reports whether the user already has a running timer.
@@ -89,6 +98,34 @@ func (r *ActiveTimerRepository) CreateTimer(in CreateTimerInput) (int, error) {
 func (r *ActiveTimerRepository) DeleteTimer(id int) error {
 	_, err := r.db.ExecWrite("DELETE FROM active_timers WHERE id = ?", id)
 	return err
+}
+
+// FinalizeTimer atomically materializes a timer as a worklog and removes the
+// active timer. Keeping both writes in one transaction prevents a failed timer
+// delete from leaving behind a worklog that would be duplicated on retry.
+func (r *ActiveTimerRepository) FinalizeTimer(timerID int, in CreateWorklogInput) error {
+	return database.WithTx(r.db, func(tx database.Tx) error {
+		if _, err := tx.ExecWrite(createWorklogQuery,
+			in.ProjectID, in.CustomerID, in.UserID, in.ItemID, in.Description,
+			in.DateUnix, in.StartTimeUnix, in.EndTimeUnix,
+			in.DurationMinutes, in.NowUnix, in.NowUnix,
+		); err != nil {
+			return err
+		}
+
+		result, err := tx.ExecWrite("DELETE FROM active_timers WHERE id = ?", timerID)
+		if err != nil {
+			return err
+		}
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rowsAffected == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
 }
 
 // activeTimerJoinedQuery is the joined SELECT used to fetch a timer with its
@@ -176,14 +213,16 @@ type CreateWorklogInput struct {
 	NowUnix         int64
 }
 
-// CreateWorklog inserts a worklog row. Lives here for now because the active
-// timer is the only caller; move into a TimeWorklogRepository when we migrate
-// the standalone worklog handler.
-func (r *ActiveTimerRepository) CreateWorklog(in CreateWorklogInput) error {
-	_, err := r.db.ExecWrite(`
+const createWorklogQuery = `
 		INSERT INTO time_worklogs (project_id, customer_id, user_id, item_id, description, date, start_time, end_time, duration_minutes, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, in.ProjectID, in.CustomerID, in.UserID, in.ItemID, in.Description,
+	`
+
+// CreateWorklog inserts a standalone worklog row. Timer stops use
+// FinalizeTimer so worklog creation and timer deletion remain atomic.
+func (r *ActiveTimerRepository) CreateWorklog(in CreateWorklogInput) error {
+	_, err := r.db.ExecWrite(createWorklogQuery,
+		in.ProjectID, in.CustomerID, in.UserID, in.ItemID, in.Description,
 		in.DateUnix, in.StartTimeUnix, in.EndTimeUnix,
 		in.DurationMinutes, in.NowUnix, in.NowUnix)
 	return err

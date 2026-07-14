@@ -129,7 +129,14 @@ func main() {
 		if err != nil {
 			slog.Error("failed to create SSH database connection", "error", err)
 		} else {
-			sessionManager := auth.NewSessionManager(sshDB, enableHTTPS, cfg.UseProxy, additionalProxyList, cfg.Auth.SessionSecret)
+			sessionManager := auth.NewSessionManagerWithValidationCacheTTL(
+				sshDB,
+				enableHTTPS,
+				cfg.UseProxy,
+				additionalProxyList,
+				cfg.Auth.SessionSecret,
+				cfg.Auth.SessionValidationCacheTTL,
+			)
 			// nil tokenTracker: the SSH-minted temp tokens are short-lived
 			// (24h) and we don't need last-used-at tracking for them.
 			tokenManager := auth.NewTokenManager(sshDB, nil)

@@ -51,94 +51,147 @@ function createApiError(response, responseText) {
   return error;
 }
 
+/**
+ * @param {string} endpoint
+ * @param {RequestInit & { timeout?: number }} [options]
+ */
 export async function fetchAPI(endpoint, options = {}) {
+  const { timeout: requestedTimeout = 0, signal: callerSignal, ...fetchOptions } = options;
   const headers = {
     'Content-Type': 'application/json',
-    ...options.headers,
+    ...fetchOptions.headers,
+  };
+
+  const timeoutMs = Number(requestedTimeout);
+  const hasTimeout = Number.isFinite(timeoutMs) && timeoutMs > 0;
+  const controller = hasTimeout ? new AbortController() : null;
+  let timedOut = false;
+  let timeoutId;
+  let removeCallerAbortListener = () => {};
+
+  if (controller && callerSignal) {
+    const abortFromCaller = () => controller.abort();
+    if (callerSignal.aborted) abortFromCaller();
+    else {
+      callerSignal.addEventListener('abort', abortFromCaller, { once: true });
+      removeCallerAbortListener = () => callerSignal.removeEventListener('abort', abortFromCaller);
+    }
+  }
+  if (controller) {
+    timeoutId = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+  }
+
+  const cleanup = () => {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+    removeCallerAbortListener();
+  };
+
+  const timeoutError = () => {
+    const error = new Error(
+      'The server took too long to respond. Check your connection and try again.'
+    );
+    /** @type {any} */ (error).status = 0;
+    /** @type {any} */ (error).code = 'REQUEST_TIMEOUT';
+    return error;
   };
 
   let response;
   try {
     response = await fetch(`${API_BASE}${endpoint}`, {
-      ...options,
+      ...fetchOptions,
       credentials: 'same-origin', // Include cookies for session auth
       headers,
+      signal: controller?.signal ?? callerSignal,
     });
   } catch (_err) {
-    // Network errors (including CORS blocks) surface as TypeError
-    const corsError = new Error(
-      "Unable to connect to the server. This may be a CORS configuration issue — check that the server's BASE_URL matches the URL you're accessing it from."
+    cleanup();
+    if (timedOut) throw timeoutError();
+    // Network errors (including offline, DNS, TLS, and CORS failures) surface
+    // identically through fetch. Keep the user-facing copy actionable without
+    // incorrectly diagnosing an ordinary mobile connectivity loss as CORS.
+    const networkError = new Error(
+      'Unable to connect to the server. Check your connection and try again.'
     );
-    /** @type {any} */ (corsError).status = 0;
-    /** @type {any} */ (corsError).code = 'NETWORK_ERROR';
-    throw corsError;
+    /** @type {any} */ (networkError).status = 0;
+    /** @type {any} */ (networkError).code = 'NETWORK_ERROR';
+    throw networkError;
   }
 
-  // Track server-vs-client clock offset from the Date header
-  updateOffset(response.headers.get('Date'));
+  try {
+    // Track server-vs-client clock offset from the Date header
+    updateOffset(response.headers.get('Date'));
 
-  // After enough samples, warn admins once if drift is significant
-  if (!driftWarningShown && getSampleCount() >= 3 && isClockDriftSignificant()) {
-    driftWarningShown = true;
-    // Dynamic import avoids circular deps (stores → api → stores)
-    Promise.all([
-      import('../stores'),
-      import('../stores/toasts.svelte.js'),
-      import('../stores/i18n.svelte.js'),
-      import('../router.js'),
-    ]).then(([{ authStore }, { addToast }, { t }, { navigate }]) => {
-      let user;
-      authStore.subscribe((s) => (user = s.currentUser))();
-      if (/** @type {any} */ (user)?.is_system_admin) {
-        const offsetSec = Math.round(getClockOffset() / 1000);
-        const absMin = Math.floor(Math.abs(offsetSec) / 60);
-        const absSec = Math.abs(offsetSec) % 60;
-        const direction = offsetSec > 0 ? 'ahead' : 'behind';
-        const amount =
-          absMin > 0 ? `${absMin}m ${absSec}s ${direction}` : `${absSec}s ${direction}`;
-        addToast({
-          message: `Server clock appears to be ${amount}. Click for details.`,
-          title: t('toast.warning'),
-          variant: 'warning',
-          clickable: true,
-          onClick: () => navigate('/admin/diagnostics?subtab=clock'),
-        });
+    // After enough samples, warn admins once if drift is significant
+    if (!driftWarningShown && getSampleCount() >= 3 && isClockDriftSignificant()) {
+      driftWarningShown = true;
+      // Dynamic import avoids circular deps (stores → api → stores)
+      Promise.all([
+        import('../stores'),
+        import('../stores/toasts.svelte.js'),
+        import('../stores/i18n.svelte.js'),
+        import('../router.js'),
+      ]).then(([{ authStore }, { addToast }, { t }, { navigate }]) => {
+        let user;
+        authStore.subscribe((s) => (user = s.currentUser))();
+        if (/** @type {any} */ (user)?.is_system_admin) {
+          const offsetSec = Math.round(getClockOffset() / 1000);
+          const absMin = Math.floor(Math.abs(offsetSec) / 60);
+          const absSec = Math.abs(offsetSec) % 60;
+          const direction = offsetSec > 0 ? 'ahead' : 'behind';
+          const amount =
+            absMin > 0 ? `${absMin}m ${absSec}s ${direction}` : `${absSec}s ${direction}`;
+          addToast({
+            message: `Server clock appears to be ${amount}. Click for details.`,
+            title: t('toast.warning'),
+            variant: 'warning',
+            clickable: true,
+            onClick: () => navigate('/admin/diagnostics?subtab=clock'),
+          });
+        }
+      });
+    }
+
+    if (!response.ok) {
+      // Read and parse the response before deciding whether a 401 represents an
+      // expired login. Pending-auth sessions must survive while the user
+      // completes enrollment or second-factor verification.
+      let errorData = '';
+      try {
+        errorData = await response.text();
+      } catch (_e) {
+        // If we can't read the error body, use the status text
       }
-    });
-  }
-
-  if (!response.ok) {
-    // Read and parse the response before deciding whether a 401 represents an
-    // expired login. Pending-auth sessions must survive while the user
-    // completes enrollment or second-factor verification.
-    let errorData = '';
-    try {
-      errorData = await response.text();
-    } catch (_e) {
-      // If we can't read the error body, use the status text
+      const apiError = createApiError(response, errorData);
+      if (
+        response.status === 401 &&
+        /** @type {any} */ (apiError).code !== 'AUTHENTICATION_PENDING'
+      ) {
+        // Import auth store dynamically to avoid circular dependencies
+        const { authStore } = await import('../stores');
+        authStore.clearAuth();
+      }
+      throw apiError;
     }
-    const apiError = createApiError(response, errorData);
-    if (
-      response.status === 401 &&
-      /** @type {any} */ (apiError).code !== 'AUTHENTICATION_PENDING'
-    ) {
-      // Import auth store dynamically to avoid circular dependencies
-      const { authStore } = await import('../stores');
-      authStore.clearAuth();
-    }
-    throw apiError;
-  }
 
-  if (response.status === 204) {
+    if (response.status === 204) {
+      return null;
+    }
+
+    const contentType = response.headers.get('content-type');
+    if (contentType?.includes('application/json')) {
+      return await response.json();
+    }
+
     return null;
+  } catch (error) {
+    if (timedOut) throw timeoutError();
+    throw error;
+  } finally {
+    cleanup();
   }
-
-  const contentType = response.headers.get('content-type');
-  if (contentType?.includes('application/json')) {
-    return response.json();
-  }
-
-  return null;
 }
 
 // Generic HTTP methods

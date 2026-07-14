@@ -273,6 +273,13 @@ func (h *WorkspaceHandler) Create(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+	// The transaction is committed even if response hydration below fails, so
+	// invalidate access snapshots immediately after the successful mutation.
+	h.keyCache.Invalidate()
+	if h.permissionService != nil {
+		h.permissionService.InvalidateActiveWorkspaceCache()
+		h.permissionService.OnEveryoneAccessChanged()
+	}
 
 	// Create item number sequence for this workspace (PostgreSQL only, no-op for SQLite)
 	if err = h.repo.CreateItemSequence(id); err != nil {
@@ -285,9 +292,6 @@ func (h *WorkspaceHandler) Create(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
-
-	// Invalidate workspace key cache
-	h.keyCache.Invalidate()
 
 	// Log audit event
 	h.logWorkspaceAudit(r, logger.ActionWorkspaceCreate, &workspace.ID, workspace.Name, workspace.Key, workspace.Description, workspace.Active, workspace.IsPersonal)
@@ -357,6 +361,10 @@ func (h *WorkspaceHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
+	}
+	if h.permissionService != nil {
+		h.permissionService.InvalidateActiveWorkspaceCache()
+		h.permissionService.OnEveryoneAccessChanged()
 	}
 
 	// Save time project categories if provided
@@ -489,6 +497,9 @@ func (h *WorkspaceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	// Invalidate workspace key cache
 	h.keyCache.Invalidate()
+	if h.permissionService != nil {
+		h.permissionService.InvalidateActiveWorkspaceCache()
+	}
 
 	// Log audit event
 	h.logWorkspaceAudit(r, logger.ActionWorkspaceDelete, &id, auditWorkspace.Name, auditWorkspace.Key, auditWorkspace.Description, auditWorkspace.Active, auditWorkspace.IsPersonal)

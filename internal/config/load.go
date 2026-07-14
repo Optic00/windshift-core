@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"windshift/internal/database"
 )
@@ -198,7 +199,8 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 			KeyPath: *sshKeyPath,
 		},
 		Auth: AuthConfig{
-			SessionSecret: sessionSecret,
+			SessionSecret:             sessionSecret,
+			SessionValidationCacheTTL: parseDurationEnv("SESSION_VALIDATION_CACHE_TTL", 5*time.Second),
 		},
 		WebAuthn: WebAuthnConfig{
 			RPID:   rpID,

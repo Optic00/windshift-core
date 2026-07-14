@@ -162,7 +162,10 @@
       {/each}
     </div>
   {:else if errored}
-    <p class="msg" data-testid="my-work-error">Couldn't load your work. Pull down or switch tabs to retry.</p>
+    <div class="msg" data-testid="my-work-error">
+      <p>Couldn't load your work.</p>
+      <button class="retry" onclick={() => load(segment)} disabled={loading} type="button">Retry</button>
+    </div>
   {:else if rows.length === 0}
     <p class="msg" data-testid="my-work-empty">
       {segment === 'assigned' ? 'Nothing assigned to you right now.' : segment === 'watched' ? "You aren't watching any items." : 'No recent activity.'}
@@ -211,6 +214,21 @@
     color: var(--ds-text-subtle);
     font-size: 0.875rem;
   }
+
+  .msg p { margin: 0; }
+  .retry {
+    min-height: 40px;
+    margin-top: 0.75rem;
+    padding: 0.45rem 1rem;
+    border: 1px solid var(--ds-interactive);
+    border-radius: var(--radius-md, 6px);
+    background: var(--ds-interactive);
+    color: var(--ds-text-inverse, #fff);
+    font: inherit;
+    font-weight: var(--font-semibold, 600);
+    cursor: pointer;
+  }
+  .retry:disabled { opacity: 0.6; }
 
   .skeleton {
     display: flex;
