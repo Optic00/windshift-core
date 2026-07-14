@@ -147,15 +147,19 @@ describe('PWA service worker', () => {
   it('deletes only obsolete Windshift PWA caches during activation', async () => {
     const worker = createWorker();
     worker.caches.keys.mockResolvedValue([
+      'windshift-shell-v1',
       'windshift-pwa-windshift-v1',
       'windshift-pwa-windshift-v2',
+      'windshift-pwa-another-context-v1',
       'plugin-cache-v1',
     ]);
 
     await dispatchExtendable(worker.handlers.activate);
 
-    expect(worker.caches.delete).toHaveBeenCalledTimes(1);
+    expect(worker.caches.delete).toHaveBeenCalledTimes(2);
+    expect(worker.caches.delete).toHaveBeenCalledWith('windshift-shell-v1');
     expect(worker.caches.delete).toHaveBeenCalledWith('windshift-pwa-windshift-v1');
+    expect(worker.caches.delete).not.toHaveBeenCalledWith('windshift-pwa-another-context-v1');
     expect(worker.caches.delete).not.toHaveBeenCalledWith('plugin-cache-v1');
   });
 

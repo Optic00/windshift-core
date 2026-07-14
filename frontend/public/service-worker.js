@@ -5,11 +5,13 @@
  * unbootable white page when the device is offline. */
 const CACHE_PREFIX = 'windshift-pwa-';
 const CACHE_VERSION = 'v2';
+const LEGACY_CACHE_NAMES = new Set(['windshift-shell-v1']);
 const RECOVERY_KEY = 'recovery-document';
 const NAVIGATION_TIMEOUT_MS = 10_000;
 const scopePath = new URL(self.registration.scope).pathname;
 const scopeKey = encodeURIComponent(scopePath.replace(/^\/+|\/+$/g, '') || 'root');
-const CACHE = `${CACHE_PREFIX}${scopeKey}-${CACHE_VERSION}`;
+const CACHE_FAMILY = `${CACHE_PREFIX}${scopeKey}-`;
+const CACHE = `${CACHE_FAMILY}${CACHE_VERSION}`;
 
 function recoveryResponse() {
   return new Response(
@@ -107,7 +109,9 @@ self.addEventListener('activate', (event) => {
       const keys = await caches.keys();
       await Promise.all(
         keys
-          .filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE)
+          .filter(
+            (key) => LEGACY_CACHE_NAMES.has(key) || (key.startsWith(CACHE_FAMILY) && key !== CACHE)
+          )
           .map((key) => caches.delete(key))
       );
       await self.clients.claim();

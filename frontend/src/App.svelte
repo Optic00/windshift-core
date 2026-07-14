@@ -29,6 +29,24 @@
   const BOOTSTRAP_TIMEOUT_MS = 10_000;
   const SLOW_START_MS = 4_000;
 
+  async function withBootstrapDeadline(promise) {
+    let timeout;
+    const deadline = new Promise((_, reject) => {
+      timeout = window.setTimeout(() => {
+        reject(
+          Object.assign(new Error('The server took too long to respond.'), {
+            code: 'REQUEST_TIMEOUT',
+          })
+        );
+      }, BOOTSTRAP_TIMEOUT_MS);
+    });
+    try {
+      return await Promise.race([promise, deadline]);
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }
+
   onMount(() => {
     initRouter();
     void initializeApp();
@@ -48,7 +66,7 @@
 
     try {
       // Initialize i18n (loads user's preferred locale)
-      await i18n.init();
+      await withBootstrapDeadline(i18n.init());
 
       // Check setup status first
       await checkSetupStatus();
