@@ -47,7 +47,8 @@ export const homepage = {
 };
 
 // Diagram API functions
-export const getDiagrams = (itemId) => fetchAPI(`/items/${itemId}/diagrams`);
+export const getDiagrams = (itemId, requestOptions = {}) =>
+  fetchAPI(`/items/${itemId}/diagrams`, requestOptions);
 export const getDiagram = (diagramId) => fetchAPI(`/diagrams/${diagramId}`);
 export const createDiagram = (itemId, name, diagramData) =>
   fetchAPI(`/items/${itemId}/diagrams`, {

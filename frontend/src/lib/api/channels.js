@@ -73,7 +73,8 @@ function createChannelScopedCrud(resourceKey) {
       fetchAPI(`/channels/${channelId}/${resourceKey}/${id}`, {
         method: 'DELETE',
       }),
-    getFields: (id) => fetchAPI(`/${resourceKey}/${id}/fields`),
+    getFields: (id, requestOptions = {}) =>
+      fetchAPI(`/${resourceKey}/${id}/fields`, requestOptions),
     updateFields: (channelId, id, fields) =>
       fetchAPI(`/channels/${channelId}/${resourceKey}/${id}/fields`, {
         method: 'PUT',

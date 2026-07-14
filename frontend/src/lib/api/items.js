@@ -34,13 +34,14 @@ function withCrossTabNotice(fn, type) {
 }
 
 export const items = {
-  getAll: (filters = {}) => {
-    return fetchAPI(`/items${buildQueryString(filters)}`);
+  getAll: (filters = {}, requestOptions = {}) => {
+    return fetchAPI(`/items${buildQueryString(filters)}`, requestOptions);
   },
-  get: (id) => fetchAPI(`/items/${id}`),
-  getByKey: (workspaceKey, itemNumber) =>
+  get: (id, requestOptions = {}) => fetchAPI(`/items/${id}`, requestOptions),
+  getByKey: (workspaceKey, itemNumber, requestOptions = {}) =>
     fetchAPI(
-      `/workspaces/${encodeURIComponent(workspaceKey)}/items/${encodeURIComponent(itemNumber)}`
+      `/workspaces/${encodeURIComponent(workspaceKey)}/items/${encodeURIComponent(itemNumber)}`,
+      requestOptions
     ),
   /**
    * Fetch many items in one (or a few) bulk requests instead of one
@@ -145,8 +146,10 @@ export const items = {
     if (limit) params.append('limit', limit);
     return fetchAPI(`/items/backlog?${params}`);
   },
-  getChildren: (itemId) => fetchAPI(`/items/${itemId}/children`),
-  getAncestors: (itemId) => fetchAPI(`/items/${itemId}/ancestors`),
+  getChildren: (itemId, requestOptions = {}) =>
+    fetchAPI(`/items/${itemId}/children`, requestOptions),
+  getAncestors: (itemId, requestOptions = {}) =>
+    fetchAPI(`/items/${itemId}/ancestors`, requestOptions),
   getDescendants: (itemId, maxDepth = null) => {
     const params = maxDepth ? `?max_depth=${maxDepth}` : '';
     return fetchAPI(`/items/${itemId}/descendants${params}`);
@@ -154,8 +157,8 @@ export const items = {
   getTimeRollup: (itemId, { maxDepth = 10 } = {}) =>
     fetchAPI(`/items/${itemId}/time-rollup?max_depth=${maxDepth}`),
   // Get available status transitions for a specific item based on workflow configuration
-  getAvailableStatusTransitions: (itemId) =>
-    fetchAPI(`/items/${itemId}/available-status-transitions`),
+  getAvailableStatusTransitions: (itemId, requestOptions = {}) =>
+    fetchAPI(`/items/${itemId}/available-status-transitions`, requestOptions),
   analyzeTypeChange: (itemId, targetItemTypeId) =>
     fetchAPI(`/items/${itemId}/type-change-analysis?target_item_type_id=${targetItemTypeId}`),
   changeType: withCrossTabNotice(
@@ -190,7 +193,7 @@ export const items = {
     fetchAPI(`/items/${id}/watch`, {
       method: 'DELETE',
     }),
-  getWatchStatus: (id) => fetchAPI(`/items/${id}/watch`),
+  getWatchStatus: (id, requestOptions = {}) => fetchAPI(`/items/${id}/watch`, requestOptions),
 
   // Personal tasks relationship
   getPersonalTasks: (itemId) => fetchAPI(`/items/${itemId}/personal-tasks`),

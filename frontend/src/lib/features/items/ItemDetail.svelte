@@ -76,13 +76,12 @@ import Button from '../../components/Button.svelte';
   });
 
   // Live updates (WI-484): push changes instead of waiting for the 30s poll.
-  // Maps each event kind to a targeted reload; connect/reconnect/stale run a
-  // full loadData() so every section reconciles (including ones with no granular
-  // event: attachments, diagrams, worklogs, SCM links).
+  // Maps each event kind to a targeted reload. Recovery after a connection gap
+  // and explicit server reload events run a full loadData() reconciliation; the
+  // initial healthy connection does not duplicate the route's bootstrap load.
   useItemEventStream(() => itemId, {
-    // Full reconcile (connect/reconnect/stale): reload the item AND the comments
-    // — Comments is a separate component, so loadData() alone would leave it
-    // stale and miss anything that arrived before the stream connected.
+    // Full reconcile (reconnect/server reload): reload the item AND comments.
+    // Comments is a separate component, so loadData() alone would leave it stale.
     onReconcile: () => {
       loadData().catch((err) => console.error('SSE reconcile failed:', err));
       window.dispatchEvent(new CustomEvent('item-comments-changed', { detail: { itemId } }));
@@ -91,10 +90,10 @@ import Button from '../../components/Button.svelte';
     onItem: () => itemDetailStore.refreshCurrentItem().catch((err) => console.error('SSE item refresh failed:', err)),
     onChildren: () => itemDetailStore.loadChildItems().catch((err) => console.error('SSE children refresh failed:', err)),
     onComment: () => window.dispatchEvent(new CustomEvent('item-comments-changed', { detail: { itemId } })),
-    // `link` covers both the generic linked-items section (reloaded by loadData)
-    // and the separate SCM-links section (ItemSCMLinks listens for this event).
+    // Generic and SCM links have independent targeted refresh paths. A link
+    // event must not restart the full item-detail bootstrap.
     onLinks: () => {
-      loadData().catch((err) => console.error('SSE links refresh failed:', err));
+      itemDetailStore.loadLinks().catch((err) => console.error('SSE links refresh failed:', err));
       window.dispatchEvent(new CustomEvent('item-scm-links-changed', { detail: { itemId } }));
     },
     // The viewed item was deleted (its own topic published `deleted`). This is
@@ -356,6 +355,11 @@ import Button from '../../components/Button.svelte';
   
   function handleSwitchTab(detail) {
     tab = detail.tab;
+    if (tab === 'time') {
+      itemDetailStore.loadWorklogs().catch((error) => {
+        console.error('Failed to load time entries:', error);
+      });
+    }
     const url = `/workspaces/${workspaceId}/items/${itemId}${tab !== 'comments' ? `?tab=${tab}` : ''}`;
     navigate(url);
   }
@@ -521,11 +525,13 @@ import Button from '../../components/Button.svelte';
     }
   }
 
-  function handleLogTime() {
+  async function handleLogTime() {
+    await itemDetailStore.loadTimeModalData();
     itemDetailStore.openTimeLogModal();
   }
 
-  function handleEditWorklog(detail) {
+  async function handleEditWorklog(detail) {
+    await itemDetailStore.loadTimeModalData();
     itemDetailStore.openTimeLogModal(detail);
   }
 
@@ -1097,6 +1103,10 @@ import Button from '../../components/Button.svelte';
       workspaceKey: lookupWorkspaceKey,
       itemNumber: lookupItemNumber,
     });
+
+    if (tab === 'time') {
+      await itemDetailStore.loadWorklogs();
+    }
 
     // Backfill route props from the resolved item when the URL used a stable
     // key form (/workspace/WI/item/123 or /workspaces/WI/items/123).

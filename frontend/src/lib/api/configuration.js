@@ -108,12 +108,12 @@ export const hierarchyLevels = createCrudClient('/hierarchy-levels');
 export const linkTypes = {
   ...createCrudClient('/link-types', { adminBasePath: '/admin/link-types' }),
   // One caller passes a boolean (LinkTypeManager); keep that signature.
-  getAll: (includeInactive = false) =>
-    fetchAPI(`/link-types${includeInactive ? '?include_inactive=true' : ''}`),
+  getAll: (includeInactive = false, requestOptions = {}) =>
+    fetchAPI(`/link-types${includeInactive ? '?include_inactive=true' : ''}`, requestOptions),
 };
 
 export const links = {
-  getForItem: (type, id) => fetchAPI(`/${type}/${id}/links`),
+  getForItem: (type, id, requestOptions = {}) => fetchAPI(`/${type}/${id}/links`, requestOptions),
   // Batch variant of getForItem('items', ...): returns links keyed by item id
   // ({ "<id>": { outgoing, incoming } }) for many items in one request. Used by
   // board/roadmap dependency badges so a board render is one request instead of

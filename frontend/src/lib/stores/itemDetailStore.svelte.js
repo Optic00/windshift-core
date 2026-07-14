@@ -26,6 +26,10 @@ function isNumericID(value) {
   return /^\d+$/.test(String(value ?? ''));
 }
 
+function isAbortError(error) {
+  return error?.name === 'AbortError';
+}
+
 function childItemListsMatch(current = [], next = []) {
   if (current === next) return true;
   if (!Array.isArray(current) || !Array.isArray(next) || current.length !== next.length) {
@@ -79,6 +83,15 @@ class ItemDetailStore {
   // Monotonic counter for in-flight loadItem calls; lets us discard results
   // from superseded calls when the user clicks rapidly through items.
   #loadToken = 0;
+  #loadController = null;
+  #linksController = null;
+  #worklogsController = null;
+  #worklogsPromise = null;
+  #worklogsPromiseItemId = null;
+  #worklogsLoadedItemId = null;
+  #timeModalDataController = null;
+  #timeModalDataPromise = null;
+  #timeModalDataLoaded = false;
 
   // === Current Item ===
   item = $state(null);
@@ -143,6 +156,8 @@ class ItemDetailStore {
   // Time tracking
   timeProjects = $state([]);
   timeWorklogs = $state([]);
+  timeWorklogsLoading = $state(false);
+  timeModalDataLoading = $state(false);
   customers = $state([]);
   workItems = $state([]);
   workspaces = $state([]);
@@ -213,6 +228,12 @@ class ItemDetailStore {
    * race-safe by a monotonic load token; superseded results are discarded.
    */
   async loadItem(workspaceId, itemId, options = {}) {
+    this.#loadController?.abort();
+    this.#linksController?.abort();
+    this.#worklogsController?.abort();
+    const controller = new AbortController();
+    this.#loadController = controller;
+    const requestOptions = { signal: controller.signal };
     const token = ++this.#loadToken;
     const isSwitch = this.item != null;
 
@@ -223,6 +244,11 @@ class ItemDetailStore {
     const lookupItemNumber = options.itemNumber || (lookupWorkspaceKey ? itemId : null);
 
     this.itemId = effectiveItemId;
+    this.timeWorklogs = [];
+    this.timeWorklogsLoading = false;
+    this.#worklogsLoadedItemId = null;
+    this.#worklogsPromise = null;
+    this.#worklogsPromiseItemId = null;
     this.error = null;
     this.notFound = false;
     if (!isSwitch) {
@@ -231,16 +257,24 @@ class ItemDetailStore {
     }
 
     try {
+      let itemData = null;
       if (lookupWorkspaceKey) {
-        const resolved = await api.items.getByKey(lookupWorkspaceKey, lookupItemNumber);
+        const resolved = await api.items.getByKey(
+          lookupWorkspaceKey,
+          lookupItemNumber,
+          requestOptions
+        );
         if (token !== this.#loadToken) return;
         effectiveItemId = resolved.id;
         effectiveWorkspaceId = resolved.workspace_id;
         this.itemId = effectiveItemId;
+        // The key endpoint already returns the full item-detail payload. Reuse
+        // it instead of immediately requesting GET /items/{id} again.
+        itemData = resolved;
       }
 
       // Fetch item first to derive workspaceId if not provided
-      const itemData = await api.items.get(effectiveItemId);
+      itemData ??= await api.items.get(effectiveItemId, requestOptions);
       if (token !== this.#loadToken) return;
 
       this.item = itemData;
@@ -260,25 +294,20 @@ class ItemDetailStore {
         milestonesData,
         iterationsData,
         projectsData,
-        worklogsData,
-        customersData,
-        workItemsData,
-        workspacesData,
         requestTypeFieldsData,
       ] = await Promise.all([
-        api.workspaces.get(wsId),
-        api.linkTypes.getAll(),
-        api.links.getForItem('items', effectiveItemId),
-        api.customFields.getAll(),
-        api.milestones.getAll({ workspace_id: wsId, include_global: true }),
-        api.iterations.getAll({ workspace_id: wsId, include_global: true }),
-        api.time.projects.getByWorkspace(wsId),
-        api.time.worklogs.getByItem(effectiveItemId),
-        api.customerOrganisations.getAll(),
-        api.items.getAll({ limit: 100 }),
-        api.workspaces.getAll(),
+        api.workspaces.get(wsId, requestOptions),
+        api.linkTypes.getAll(false, requestOptions),
+        api.links.getForItem('items', effectiveItemId, requestOptions),
+        api.customFields.getAll({}, requestOptions),
+        api.milestones.getAll({ workspace_id: wsId, include_global: true }, requestOptions),
+        api.iterations.getAll({ workspace_id: wsId, include_global: true }, requestOptions),
+        api.time.projects.getByWorkspace(wsId, requestOptions),
         itemData.request_type_id
-          ? api.requestTypes.getFields(itemData.request_type_id).catch(() => [])
+          ? api.requestTypes.getFields(itemData.request_type_id, requestOptions).catch((error) => {
+              if (isAbortError(error)) throw error;
+              return [];
+            })
           : Promise.resolve([]),
       ]);
       if (token !== this.#loadToken) return;
@@ -297,77 +326,59 @@ class ItemDetailStore {
 
       this.iterations = iterationsData || [];
       this.timeProjects = projectsData || [];
-      this.timeWorklogs = worklogsData || [];
-      this.customers = customersData || [];
-      this.workItems = workItemsData?.items || workItemsData || [];
-      this.workspaces = workspacesData || [];
       this.requestTypeFields = requestTypeFieldsData || [];
+
+      this.linkTypes = linkTypesData;
+      this.#applyLinks(linksData);
+
+      // Sync editing state from item before the secondary loaders complete so
+      // the core detail surface can render as soon as the critical data lands.
+      this.#syncEditingFromItem();
 
       // Resolve the workspace's configuration set once. Priorities and screen-
       // field resolution both need it; fetching it twice was a redundant round
       // trip on every item open.
       const configSet = this.workspace?.configuration_set_id
-        ? await api.configurationSets.get(this.workspace.configuration_set_id).catch((err) => {
-            console.warn('Failed to load configuration set:', err);
-            return null;
-          })
+        ? await api.configurationSets
+            .get(this.workspace.configuration_set_id, requestOptions)
+            .catch((err) => {
+              if (isAbortError(err)) throw err;
+              console.warn('Failed to load configuration set:', err);
+              return null;
+            })
         : null;
       if (token !== this.#loadToken) return;
 
-      // Load priorities based on workspace configuration
-      await this.#loadPriorities(configSet);
+      // These resources are independent once the item, workspace, and config
+      // set are known. Running them together removes the former priorities →
+      // item-types → children → screens → diagrams → actions waterfall.
+      await Promise.all([
+        this.#loadPriorities(configSet, requestOptions),
+        this.#loadAvailableStatusTransitions(requestOptions),
+        this.#loadWatchStatus(requestOptions),
+        this.#loadItemTypeData(requestOptions),
+        this.loadChildItems(requestOptions),
+        this.#loadWorkspaceScreenFields(configSet, requestOptions),
+        this.loadDiagrams(requestOptions),
+        this.#loadManualActions(requestOptions),
+      ]);
       if (token !== this.#loadToken) return;
 
-      // Load status transitions and watch status
-      this.#loadAvailableStatusTransitions();
-      this.#loadWatchStatus();
-
-      this.linkTypes = linkTypesData;
-
-      // Process links data
-      const allLinks = [];
-      if (linksData.outgoing) allLinks.push(...linksData.outgoing);
-      if (linksData.incoming) allLinks.push(...linksData.incoming);
-      this.itemLinks = allLinks;
-
-      // Sync editing state from item
-      this.#syncEditingFromItem();
-
-      // Load item type / hierarchy data first so parent-hierarchy enrichment
-      // can reuse this.itemTypes instead of fetching the type list again.
-      await this.#loadItemTypeData();
-      if (token !== this.#loadToken) return;
-
-      // Load parent hierarchy if item has parents
+      // Parent enrichment reuses the item types loaded in the parallel phase.
       if (this.item.parent_id) {
-        await this.#loadParentHierarchy();
+        await this.#loadParentHierarchy(requestOptions);
       } else {
         this.parentHierarchy = [];
       }
-      if (token !== this.#loadToken) return;
-
-      // Load child items
-      await this.loadChildItems();
-      if (token !== this.#loadToken) return;
-
-      // Load workspace screen configuration
-      await this.#loadWorkspaceScreenFields(configSet);
-      if (token !== this.#loadToken) return;
-
-      // Load diagrams
-      await this.loadDiagrams();
-      if (token !== this.#loadToken) return;
-
-      // Load manual actions
-      await this.#loadManualActions();
       return this.item;
     } catch (err) {
-      if (token !== this.#loadToken) return;
+      if (token !== this.#loadToken || isAbortError(err)) return;
       console.error('Failed to load item or workspace:', err);
       this.error = err.message || 'Failed to load data';
       this.item = null;
     } finally {
       if (token === this.#loadToken) {
+        if (this.#loadController === controller) this.#loadController = null;
         this.loading = false;
         this.loadingLinks = false;
         this.transitioning = false;
@@ -429,20 +440,97 @@ class ItemDetailStore {
   }
 
   /**
-   * Reload worklogs (e.g., after timer stops).
+   * Load worklogs only when the Time tab is opened. Calls are single-flighted
+   * per item so the route effect and a fast tab click cannot duplicate work.
    */
-  async reloadWorklogs() {
+  async loadWorklogs({ force = false } = {}) {
     if (!this.itemId) return;
-    try {
-      this.timeWorklogs = (await api.time.worklogs.getByItem(this.itemId)) || [];
-    } catch (err) {
-      console.error('Failed to reload worklogs:', err);
+    const itemId = this.itemId;
+    if (!force && this.#worklogsLoadedItemId === itemId) return this.timeWorklogs;
+    if (!force && this.#worklogsPromise && this.#worklogsPromiseItemId === itemId) {
+      return this.#worklogsPromise;
     }
-    // Logging time also changes the rollup totals; refresh in the background
-    // if the user has it visible.
-    if (this.includeChildItems) {
-      this.loadTimeRollup({ force: true });
-    }
+
+    this.#worklogsController?.abort();
+    const controller = new AbortController();
+    this.#worklogsController = controller;
+    this.#worklogsPromiseItemId = itemId;
+    this.timeWorklogsLoading = true;
+
+    const promise = api.time.worklogs
+      .getByItem(itemId, { signal: controller.signal })
+      .then((worklogs) => {
+        if (this.itemId === itemId) {
+          this.timeWorklogs = worklogs || [];
+          this.#worklogsLoadedItemId = itemId;
+        }
+        return this.timeWorklogs;
+      })
+      .catch((err) => {
+        if (isAbortError(err)) return this.timeWorklogs;
+        console.error('Failed to load worklogs:', err);
+        return this.timeWorklogs;
+      })
+      .finally(() => {
+        if (this.#worklogsController === controller) {
+          this.#worklogsController = null;
+          this.#worklogsPromise = null;
+          this.#worklogsPromiseItemId = null;
+          this.timeWorklogsLoading = false;
+        }
+      });
+    this.#worklogsPromise = promise;
+    return promise;
+  }
+
+  /**
+   * Load picker data used only by TimeLogModal. These broad global lists no
+   * longer block every item open and are shared after their first use.
+   */
+  async loadTimeModalData() {
+    if (this.#timeModalDataLoaded) return;
+    if (this.#timeModalDataPromise) return this.#timeModalDataPromise;
+
+    const controller = new AbortController();
+    this.#timeModalDataController = controller;
+    this.timeModalDataLoading = true;
+    const requestOptions = { signal: controller.signal };
+    const fallback = (promise, label) =>
+      promise.catch((err) => {
+        if (isAbortError(err)) throw err;
+        console.warn(`Failed to load ${label} for time logging:`, err);
+        return [];
+      });
+
+    const promise = Promise.all([
+      fallback(api.customerOrganisations.getAll({}, requestOptions), 'customers'),
+      fallback(api.items.getAll({ limit: 100 }, requestOptions), 'work items'),
+      fallback(api.workspaces.getAll({}, requestOptions), 'workspaces'),
+    ])
+      .then(([customers, workItems, workspaces]) => {
+        this.customers = customers || [];
+        this.workItems = workItems?.items || workItems || [];
+        this.workspaces = workspaces || [];
+        this.#timeModalDataLoaded = true;
+      })
+      .catch((err) => {
+        if (!isAbortError(err)) console.error('Failed to load time-log modal data:', err);
+      })
+      .finally(() => {
+        if (this.#timeModalDataController === controller) {
+          this.#timeModalDataController = null;
+          this.#timeModalDataPromise = null;
+          this.timeModalDataLoading = false;
+        }
+      });
+    this.#timeModalDataPromise = promise;
+    return promise;
+  }
+
+  /** Reload worklogs after a timer or manual time-entry mutation. */
+  async reloadWorklogs() {
+    await this.loadWorklogs({ force: true });
+    if (this.includeChildItems) this.loadTimeRollup({ force: true });
   }
 
   /**
@@ -466,11 +554,11 @@ class ItemDetailStore {
   /**
    * Load child items.
    */
-  async loadChildItems() {
+  async loadChildItems(requestOptions = {}) {
     if (!this.itemId) return;
     try {
       this.loadingChildItems = true;
-      const response = await api.items.getChildren(this.itemId);
+      const response = await api.items.getChildren(this.itemId, requestOptions);
       let nextChildItems = [];
       if (Array.isArray(response)) {
         nextChildItems = response;
@@ -484,30 +572,67 @@ class ItemDetailStore {
         this.childItems = nextChildItems;
       }
     } catch (err) {
+      if (isAbortError(err)) return;
       console.error('Failed to load child items:', err);
       this.childItems = [];
     } finally {
-      this.loadingChildItems = false;
+      if (!requestOptions.signal?.aborted) this.loadingChildItems = false;
+    }
+  }
+
+  /**
+   * Refresh only the generic item links. Used by link mutations and SSE link
+   * events so they do not restart the entire item-detail bootstrap.
+   */
+  async loadLinks() {
+    if (!this.itemId) return;
+    this.#linksController?.abort();
+    const controller = new AbortController();
+    this.#linksController = controller;
+    const itemId = this.itemId;
+    try {
+      this.loadingLinks = true;
+      const links = await api.links.getForItem('items', itemId, {
+        signal: controller.signal,
+      });
+      if (this.itemId !== itemId) return;
+      this.#applyLinks(links);
+    } catch (err) {
+      if (isAbortError(err)) return;
+      console.error('Failed to load item links:', err);
+    } finally {
+      if (this.#linksController === controller) {
+        this.#linksController = null;
+        this.loadingLinks = false;
+      }
     }
   }
 
   /**
    * Load diagrams for the item.
    */
-  async loadDiagrams() {
+  async loadDiagrams(requestOptions = {}) {
     if (!this.item?.id) return;
     try {
       this.loadingDiagrams = true;
-      this.diagrams = (await api.getDiagrams(this.item.id)) || [];
+      this.diagrams = (await api.getDiagrams(this.item.id, requestOptions)) || [];
     } catch (err) {
+      if (isAbortError(err)) return;
       console.error('Failed to load diagrams:', err);
       this.diagrams = [];
     } finally {
-      this.loadingDiagrams = false;
+      if (!requestOptions.signal?.aborted) this.loadingDiagrams = false;
     }
   }
 
   // === Private Data Loading Methods ===
+
+  #applyLinks(linksData) {
+    const links = [];
+    if (linksData?.outgoing) links.push(...linksData.outgoing);
+    if (linksData?.incoming) links.push(...linksData.incoming);
+    this.itemLinks = links;
+  }
 
   /**
    * @param {object|null} [configSet] Pre-resolved configuration set from the
@@ -515,38 +640,44 @@ class ItemDetailStore {
    *   this method fetch it itself; pass `null` to signal "configured but the
    *   fetch failed" (yields no priorities, matching the old error path).
    */
-  async #loadPriorities(configSet = undefined) {
+  async #loadPriorities(configSet = undefined, requestOptions = {}) {
     if (!this.workspace) return;
     try {
       if (this.workspace.configuration_set_id) {
         const cs =
           configSet !== undefined
             ? configSet
-            : await api.configurationSets.get(this.workspace.configuration_set_id);
+            : await api.configurationSets.get(this.workspace.configuration_set_id, requestOptions);
         this.priorities = cs?.priorities_detailed || [];
       } else {
-        this.priorities = await api.priorities.getAll();
+        this.priorities = await api.priorities.getAll({}, requestOptions);
       }
       this.priorities = this.priorities.sort((a, b) => a.sort_order - b.sort_order);
     } catch (err) {
+      if (isAbortError(err)) return;
       console.error('Failed to load priorities:', err);
       this.priorities = [];
     }
   }
 
-  async #loadAvailableStatusTransitions() {
-    if (!this.item?.id || this.loadingStatusTransitions) return;
+  async #loadAvailableStatusTransitions(requestOptions = {}) {
+    if (!this.item?.id) return;
+    const itemId = this.item.id;
     try {
       this.loadingStatusTransitions = true;
-      const result = await api.items.getAvailableStatusTransitions(this.item.id);
+      const result = await api.items.getAvailableStatusTransitions(itemId, requestOptions);
+      if (this.item?.id !== itemId) return;
       this.availableStatusTransitions = result.available_transitions || [];
       this.pendingApproval = result.pending_approval || null;
     } catch (err) {
+      if (isAbortError(err)) return;
       console.error('Failed to load status transitions:', err);
       this.availableStatusTransitions = [];
       this.pendingApproval = null;
     } finally {
-      this.loadingStatusTransitions = false;
+      if (!requestOptions.signal?.aborted && this.item?.id === itemId) {
+        this.loadingStatusTransitions = false;
+      }
     }
   }
 
@@ -558,29 +689,34 @@ class ItemDetailStore {
     await this.#loadAvailableStatusTransitions();
   }
 
-  async #loadWatchStatus() {
-    if (!this.item?.id || this.loadingWatchStatus) return;
+  async #loadWatchStatus(requestOptions = {}) {
+    if (!this.item?.id) return;
+    const itemId = this.item.id;
     try {
       this.loadingWatchStatus = true;
-      const result = await api.items.getWatchStatus(this.item.id);
+      const result = await api.items.getWatchStatus(itemId, requestOptions);
+      if (this.item?.id !== itemId) return;
       this.isWatching = result.watching || false;
     } catch (err) {
+      if (isAbortError(err)) return;
       console.error('Failed to load watch status:', err);
       this.isWatching = false;
     } finally {
-      this.loadingWatchStatus = false;
+      if (!requestOptions.signal?.aborted && this.item?.id === itemId) {
+        this.loadingWatchStatus = false;
+      }
     }
   }
 
-  async #loadParentHierarchy() {
+  async #loadParentHierarchy(requestOptions = {}) {
     try {
-      const ancestors = await api.items.getAncestors(this.item.id);
+      const ancestors = await api.items.getAncestors(this.item.id, requestOptions);
       try {
         // Reuse the already-loaded type list (set by #loadItemTypeData, which
         // runs first); only fetch as a fallback if it isn't populated yet.
         const itemTypesData = this.itemTypes?.length
           ? this.itemTypes
-          : await api.itemTypes.getAll();
+          : await api.itemTypes.getAll({}, requestOptions);
         this.parentHierarchy = ancestors.map((ancestor) => {
           if (ancestor.item_type_id) {
             const itemType = itemTypesData.find((type) => type.id === ancestor.item_type_id);
@@ -589,20 +725,22 @@ class ItemDetailStore {
           return ancestor;
         });
       } catch (err) {
+        if (isAbortError(err)) throw err;
         console.warn('Failed to load item types for parent hierarchy:', err);
         this.parentHierarchy = ancestors;
       }
     } catch (err) {
+      if (isAbortError(err)) return;
       console.error('Failed to load ancestors:', err);
       this.parentHierarchy = [];
     }
   }
 
-  async #loadItemTypeData() {
+  async #loadItemTypeData(requestOptions = {}) {
     try {
       const [itemTypesData, hierarchyLevels] = await Promise.all([
-        api.itemTypes.getAll(),
-        api.hierarchyLevels.getAll(),
+        api.itemTypes.getAll({}, requestOptions),
+        api.hierarchyLevels.getAll({}, requestOptions),
       ]);
 
       this.itemTypes = itemTypesData || [];
@@ -626,6 +764,7 @@ class ItemDetailStore {
         this.availableSubIssueTypes = [];
       }
     } catch (err) {
+      if (isAbortError(err)) return;
       console.error('Failed to load item type data:', err);
       this.currentItemType = null;
       this.currentHierarchyLevel = null;
@@ -638,7 +777,7 @@ class ItemDetailStore {
    *   loadItem. Pass `undefined` to let this method fetch it itself (the
    *   refresh path); `null` means "none configured / fetch failed".
    */
-  async #loadWorkspaceScreenFields(configSet = undefined) {
+  async #loadWorkspaceScreenFields(configSet = undefined, requestOptions = {}) {
     try {
       let editScreenId = null;
       let viewScreenId = null;
@@ -646,7 +785,7 @@ class ItemDetailStore {
       let cs = configSet;
       if (cs === undefined) {
         cs = this.workspace?.configuration_set_id
-          ? await api.configurationSets.get(this.workspace.configuration_set_id)
+          ? await api.configurationSets.get(this.workspace.configuration_set_id, requestOptions)
           : null;
       }
       if (cs) {
@@ -665,8 +804,8 @@ class ItemDetailStore {
       // behavior as before (every visible field is editable).
       const sameScreen = !viewScreenId || viewScreenId === editScreenId;
       const [editScreen, viewScreen] = await Promise.all([
-        api.screens.get(editScreenId),
-        sameScreen ? Promise.resolve(null) : api.screens.get(viewScreenId),
+        api.screens.get(editScreenId, requestOptions),
+        sameScreen ? Promise.resolve(null) : api.screens.get(viewScreenId, requestOptions),
       ]);
 
       const fieldConfig = buildDetailScreenFieldConfig(editScreen, sameScreen ? null : viewScreen);
@@ -675,6 +814,7 @@ class ItemDetailStore {
       this.editableScreenFieldIds = fieldConfig.editableCustomFieldIds;
       this.editableScreenSystemFields = fieldConfig.editableSystemFields;
     } catch (err) {
+      if (isAbortError(err)) return;
       console.error('Failed to load workspace screen fields:', err);
       this.workspaceScreenFields = [];
       this.workspaceScreenSystemFields = [];
@@ -683,14 +823,15 @@ class ItemDetailStore {
     }
   }
 
-  async #loadManualActions() {
+  async #loadManualActions(requestOptions = {}) {
     if (!this.workspaceId) return;
     try {
-      const allActions = await api.actions.getAll(this.workspaceId);
+      const allActions = await api.actions.getAll(this.workspaceId, requestOptions);
       this.manualActions = (allActions || []).filter(
         (a) => a.trigger_type === 'manual' && a.is_enabled
       );
     } catch (err) {
+      if (isAbortError(err)) return;
       console.error('Failed to load manual actions:', err);
       this.manualActions = [];
     }
@@ -1048,8 +1189,7 @@ class ItemDetailStore {
         target_id: parseInt(targetId, 10),
         link_type_id: parseInt(linkTypeId, 10),
       });
-      // Reload to refresh links
-      await this.loadItem(this.workspaceId, this.itemId);
+      await this.loadLinks();
     } catch (err) {
       console.error('Error creating link:', err);
       throw err;
@@ -1059,7 +1199,7 @@ class ItemDetailStore {
   async removeLink(linkId) {
     try {
       await api.links.delete(linkId);
-      await this.loadItem(this.workspaceId, this.itemId);
+      await this.loadLinks();
     } catch (err) {
       console.error('Error removing link:', err);
       throw err;
@@ -1144,6 +1284,20 @@ class ItemDetailStore {
    * Full reset.
    */
   reset() {
+    this.#loadToken += 1;
+    this.#loadController?.abort();
+    this.#linksController?.abort();
+    this.#worklogsController?.abort();
+    this.#timeModalDataController?.abort();
+    this.#loadController = null;
+    this.#linksController = null;
+    this.#worklogsController = null;
+    this.#worklogsPromise = null;
+    this.#worklogsPromiseItemId = null;
+    this.#worklogsLoadedItemId = null;
+    this.#timeModalDataController = null;
+    this.#timeModalDataPromise = null;
+    this.#timeModalDataLoaded = false;
     this.item = null;
     this.itemId = null;
     this.workspaceId = null;
@@ -1181,6 +1335,8 @@ class ItemDetailStore {
     this.loadingWatchStatus = false;
     this.timeProjects = [];
     this.timeWorklogs = [];
+    this.timeWorklogsLoading = false;
+    this.timeModalDataLoading = false;
     this.includeChildItems = false;
     this.timeRollup = null;
     this.timeRollupLoading = false;

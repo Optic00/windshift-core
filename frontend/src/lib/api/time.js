@@ -14,7 +14,8 @@ export const time = {
 
   projects: {
     ...createCrudClient('/time/projects'),
-    getByWorkspace: (workspaceId) => fetchAPI(`/workspaces/${workspaceId}/projects`),
+    getByWorkspace: (workspaceId, requestOptions = {}) =>
+      fetchAPI(`/workspaces/${workspaceId}/projects`, requestOptions),
     getWorklogs: (id, filters = {}) => {
       return fetchAPI(`/time/projects/${id}/worklogs${buildQueryString(filters)}`);
     },
@@ -46,7 +47,8 @@ export const time = {
 
   worklogs: {
     ...createCrudClient('/time/worklogs'),
-    getByItem: (itemId) => fetchAPI(`/items/${itemId}/worklogs`),
+    getByItem: (itemId, requestOptions = {}) =>
+      fetchAPI(`/items/${itemId}/worklogs`, requestOptions),
   },
 };
 

@@ -106,9 +106,13 @@ export async function fetchAPI(endpoint, options = {}) {
       headers,
       signal: controller?.signal ?? callerSignal,
     });
-  } catch (_err) {
+  } catch (err) {
     cleanup();
     if (timedOut) throw timeoutError();
+    // Caller-driven cancellation is control flow, not a connectivity failure.
+    // Preserve AbortError so route/store loaders can silently discard superseded
+    // work while the browser tears down the underlying HTTP request.
+    if (err?.name === 'AbortError') throw err;
     // Network errors (including offline, DNS, TLS, and CORS failures) surface
     // identically through fetch. Keep the user-facing copy actionable without
     // incorrectly diagnosing an ordinary mobile connectivity loss as CORS.

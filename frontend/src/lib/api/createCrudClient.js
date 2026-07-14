@@ -56,9 +56,9 @@ export function createCrudClient(basePath, options = {}) {
       // Nested-list / flat-item: list+create under parent, item ops flat.
       const item = (id) => `${itemPath}/${id}`;
       return {
-        getAll: (parentId, filters = {}) =>
-          fetchAPI(`${collection(parentId)}${buildQueryString(filters)}`),
-        get: (id) => fetchAPI(item(id)),
+        getAll: (parentId, filters = {}, requestOptions = {}) =>
+          fetchAPI(`${collection(parentId)}${buildQueryString(filters)}`, requestOptions),
+        get: (id, requestOptions = {}) => fetchAPI(item(id), requestOptions),
         create: (parentId, data) =>
           fetchAPI(collection(parentId), {
             method: 'POST',
@@ -79,9 +79,9 @@ export function createCrudClient(basePath, options = {}) {
     // Fully parent-scoped: every op nests under the parent.
     const item = (parentId, id) => `${collection(parentId)}/${id}`;
     return {
-      getAll: (parentId, filters = {}) =>
-        fetchAPI(`${collection(parentId)}${buildQueryString(filters)}`),
-      get: (parentId, id) => fetchAPI(item(parentId, id)),
+      getAll: (parentId, filters = {}, requestOptions = {}) =>
+        fetchAPI(`${collection(parentId)}${buildQueryString(filters)}`, requestOptions),
+      get: (parentId, id, requestOptions = {}) => fetchAPI(item(parentId, id), requestOptions),
       create: (parentId, data) =>
         fetchAPI(collection(parentId), {
           method: 'POST',
@@ -101,8 +101,9 @@ export function createCrudClient(basePath, options = {}) {
 
   const writePath = adminBasePath ?? basePath;
   return {
-    getAll: (filters = {}) => fetchAPI(`${basePath}${buildQueryString(filters)}`),
-    get: (id) => fetchAPI(`${basePath}/${id}`),
+    getAll: (filters = {}, requestOptions = {}) =>
+      fetchAPI(`${basePath}${buildQueryString(filters)}`, requestOptions),
+    get: (id, requestOptions = {}) => fetchAPI(`${basePath}/${id}`, requestOptions),
     create: (data) =>
       fetchAPI(writePath, {
         method: 'POST',

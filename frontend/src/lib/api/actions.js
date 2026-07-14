@@ -7,7 +7,8 @@ export const actions = {
   // built from this rather than a hardcoded list so adding a node type
   // server-side automatically surfaces it in the editor.
   getCatalog: (workspaceId) => fetchAPI(`/workspaces/${workspaceId}/action-catalog`),
-  getAll: (workspaceId) => fetchAPI(`/workspaces/${workspaceId}/actions`),
+  getAll: (workspaceId, requestOptions = {}) =>
+    fetchAPI(`/workspaces/${workspaceId}/actions`, requestOptions),
   get: (workspaceId, id) => fetchAPI(`/workspaces/${workspaceId}/actions/${id}`),
   create: (workspaceId, data) =>
     fetchAPI(`/workspaces/${workspaceId}/actions`, {

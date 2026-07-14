@@ -10,23 +10,23 @@ const DEBOUNCE_MS = 250;
  * frontend translation layer patches) and maps each event `kind` to a handler.
  *
  * Event-kind → action matrix:
- *   connected/reload → onReconcile  (full reload; covers every section,
- *                                    including ones with no granular event:
- *                                    attachments, diagrams, worklogs, SCM links)
+ *   reconnected/reload → onReconcile (full reload after a connection gap or an
+ *                                    explicit server reload request)
  *   status           → onItem       (item record + transitions)
  *   updated/created  → onItem + onChildren (own fields, and child list since a
  *                                    parent is published "updated" on child change)
  *   comment          → onComment
- *   link             → onLinks      (no granular link reload → typically a full reload)
+ *   link             → onLinks      (targeted generic + SCM link refresh)
  *   deleted          → onDeleted
  *
  * Events are coalesced over a short debounce so a burst (e.g. a status change
  * that emits several events) triggers each reload once. A `reconcile` in the
  * batch supersedes the targeted reloads.
  *
- * On connect AND on every auto-reconnect the server re-sends `connected`, so a
- * full reconcile always runs after a reconnect — nothing missed while
- * disconnected is left stale. While disconnected, `connected` is false so the
+ * The first healthy connection does not reconcile: it overlaps the initial
+ * item load and would immediately duplicate that entire request graph. Every
+ * connection after an error/reconnect does reconcile so events missed during
+ * the gap are recovered. While disconnected, `connected` is false so the
  * components' pollers resume as the fallback.
  *
  * @param {() => (number|string|null|undefined)} getItemId reactive item id
@@ -43,6 +43,7 @@ export function useItemEventStream(getItemId, handlers = {}) {
 
     const pending = new Set();
     let timer = null;
+    const connectionTracker = createConnectionReconcileTracker();
 
     const flush = () => {
       timer = null;
@@ -71,8 +72,9 @@ export function useItemEventStream(getItemId, handlers = {}) {
     };
 
     es.addEventListener('connected', () => {
+      const shouldReconcile = connectionTracker.markConnected();
       setConnected(true);
-      schedule('reconcile');
+      if (shouldReconcile) schedule('reconcile');
     });
     es.addEventListener('reload', () => schedule('reconcile'));
     es.addEventListener('comment', () => schedule('comment'));
@@ -83,7 +85,10 @@ export function useItemEventStream(getItemId, handlers = {}) {
     es.addEventListener('link', () => schedule('links'));
     // The browser auto-reconnects (honoring the server's retry hint). Until it
     // does, mark disconnected so the components' pollers resume as the fallback.
-    es.onerror = () => setConnected(false);
+    es.onerror = () => {
+      connectionTracker.markDisconnected();
+      setConnected(false);
+    };
 
     return () => {
       if (timer) clearTimeout(timer);
@@ -96,6 +101,27 @@ export function useItemEventStream(getItemId, handlers = {}) {
   return {
     get connected() {
       return connected;
+    },
+  };
+}
+
+/**
+ * Track whether a `connected` event represents the initial healthy stream or
+ * recovery after a gap. Exported as a pure helper for regression tests.
+ */
+export function createConnectionReconcileTracker() {
+  let connectedOnce = false;
+  let disconnected = false;
+
+  return {
+    markConnected() {
+      const shouldReconcile = connectedOnce || disconnected;
+      connectedOnce = true;
+      disconnected = false;
+      return shouldReconcile;
+    },
+    markDisconnected() {
+      disconnected = true;
     },
   };
 }

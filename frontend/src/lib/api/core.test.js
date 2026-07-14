@@ -313,6 +313,23 @@ describe('fetchAPI — network and timeout errors', () => {
 
     await request;
   });
+
+  test('preserves caller-driven AbortError instead of mapping it to a network failure', async () => {
+    const controller = new AbortController();
+    global.fetch = vi.fn(
+      (_url, options) =>
+        new Promise((_resolve, reject) => {
+          options.signal.addEventListener('abort', () =>
+            reject(new DOMException('Aborted', 'AbortError'))
+          );
+        })
+    );
+
+    const request = fetchAPI('/items/42', { signal: controller.signal });
+    controller.abort();
+
+    await expect(request).rejects.toMatchObject({ name: 'AbortError' });
+  });
 });
 
 describe('fetchAPI — request shape', () => {
