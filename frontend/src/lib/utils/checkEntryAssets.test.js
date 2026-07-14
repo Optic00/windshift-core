@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { findForbiddenEntryAssets } from '../../../scripts/check-entry-assets.js';
+import {
+  findForbiddenEntryAssets,
+  findRootShellBudgetViolations,
+  ROOT_SHELL_BUDGET,
+} from '../../../scripts/check-entry-assets.js';
 
 describe('findForbiddenEntryAssets', () => {
   it('accepts a core entry with optional features behind dynamic imports', () => {
@@ -18,6 +22,15 @@ describe('findForbiddenEntryAssets', () => {
     ['SvelteFlow', './_app/svelteflow-abc.js'],
     ['SvelteFlow', './_app/xyflow-abc.css'],
     ['D3', './_app/d3-abc.js'],
+    ['desktop shell', './_app/MainApp-abc.js'],
+    ['mobile shell', './_app/MobileShell-abc.js'],
+    ['login dialog', './_app/LoginDialog-abc.js'],
+    ['setup assistant', './_app/WelcomeAssistant-abc.js'],
+    ['portal shell', './_app/Portal-abc.js'],
+    ['public form', './_app/PublicFormPage-abc.js'],
+    ['public board', './_app/PublicBoard-abc.js'],
+    ['print view', './_app/PagePrintView-abc.js'],
+    ['password setup', './_app/SetPassword-abc.js'],
   ])('rejects an eager %s asset', (name, asset) => {
     const html = `<link rel="modulepreload" href="${asset}">`;
 
@@ -32,5 +45,29 @@ describe('findForbiddenEntryAssets', () => {
     `;
 
     expect(findForbiddenEntryAssets(html)).toEqual([{ name: 'SvelteFlow', asset }]);
+  });
+});
+
+describe('findRootShellBudgetViolations', () => {
+  it('accepts a root chunk within both budgets', () => {
+    expect(
+      findRootShellBudgetViolations({
+        name: 'App-abc.js',
+        rawBytes: ROOT_SHELL_BUDGET.rawBytes,
+        gzipBytes: ROOT_SHELL_BUDGET.gzipBytes,
+      })
+    ).toEqual([]);
+  });
+
+  it('reports raw and gzip regressions independently', () => {
+    expect(
+      findRootShellBudgetViolations(
+        { name: 'App-abc.js', rawBytes: 101, gzipBytes: 51 },
+        { rawBytes: 100, gzipBytes: 50 }
+      )
+    ).toEqual([
+      { metric: 'raw', actual: 101, limit: 100 },
+      { metric: 'gzip', actual: 51, limit: 50 },
+    ]);
   });
 });

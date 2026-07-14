@@ -7,15 +7,23 @@
   import { APP_NAME } from './lib/constants.js';
   import { themeStore } from './lib/stores/theme.svelte.js';
   import { i18n, SUPPORTED_LOCALES } from './lib/stores/i18n.svelte.js';
-  import LoginDialog from './lib/dialogs/LoginDialog.svelte';
-  import WelcomeAssistant from './lib/pages/WelcomeAssistant.svelte';
-  import Portal from './lib/layout/Portal.svelte';
-  import PublicFormPage from './lib/features/forms/PublicFormPage.svelte';
-  import SetPassword from './lib/pages/SetPassword.svelte';
-  import MainApp from './lib/pages/MainApp.svelte';
-  import MobileShell from './lib/mobile/MobileShell.svelte';
-  import PublicBoard from './lib/pages/PublicBoard.svelte';
-  import PagePrintView from './lib/features/pages/PagePrintView.svelte';
+  import LazyRootDialog from './lib/components/LazyRootDialog.svelte';
+  import LazyRootView from './lib/components/LazyRootView.svelte';
+
+  // Root surfaces are intentionally loaded only after startup has resolved the
+  // route/auth boundary. Keep these as direct import() calls so Vite can split
+  // public, login/setup, mobile, print, and desktop code into separate chunks.
+  const ROOT_VIEW_LOADERS = {
+    login: () => import('./lib/dialogs/LoginDialog.svelte'),
+    welcome: () => import('./lib/pages/WelcomeAssistant.svelte'),
+    portal: () => import('./lib/layout/Portal.svelte'),
+    publicForm: () => import('./lib/features/forms/PublicFormPage.svelte'),
+    setPassword: () => import('./lib/pages/SetPassword.svelte'),
+    desktop: () => import('./lib/pages/MainApp.svelte'),
+    mobile: () => import('./lib/mobile/MobileShell.svelte'),
+    publicBoard: () => import('./lib/pages/PublicBoard.svelte'),
+    pagePrint: () => import('./lib/features/pages/PagePrintView.svelte'),
+  };
 
   let showLoginDialog = $state(false);
   let setupCompleted = $state(false);
@@ -276,31 +284,39 @@
     </div>
   <!-- Public board route - no authentication required -->
   {:else if $currentRoute.view === 'public-board'}
-    <PublicBoard slug={$currentRoute.params.slug} />
+    <LazyRootView
+      loader={ROOT_VIEW_LOADERS.publicBoard}
+      label="public board"
+      componentProps={{ slug: $currentRoute.params.slug }}
+    />
   <!-- Portal route - public, no authentication required -->
   {:else if $currentRoute.view === 'portal'}
-    <Portal />
+    <LazyRootView loader={ROOT_VIEW_LOADERS.portal} label="portal" />
   <!-- Public form route - no authentication required -->
   {:else if $currentRoute.view === 'public-form'}
-    <PublicFormPage />
+    <LazyRootView loader={ROOT_VIEW_LOADERS.publicForm} label="form" />
   <!-- Set password route - public with token -->
   {:else if $currentRoute.view === 'set-password'}
-    <SetPassword />
+    <LazyRootView loader={ROOT_VIEW_LOADERS.setPassword} label="password setup" />
   <!-- Empty background during setup - WelcomeAssistant modal will show on top -->
   {:else if !setupCompleted && appInitialized}
     <div class="flex-1"></div>
   <!-- Chrome-free print/PDF view for a single page (authenticated, no app shell) -->
   {:else if $authStore.isAuthenticated && appInitialized && $currentRoute.view === 'page-print'}
-    <PagePrintView
-      workspaceId={Number($currentRoute.params.id)}
-      pageId={Number($currentRoute.params.pageId)}
+    <LazyRootView
+      loader={ROOT_VIEW_LOADERS.pagePrint}
+      label="print view"
+      componentProps={{
+        workspaceId: Number($currentRoute.params.id),
+        pageId: Number($currentRoute.params.pageId),
+      }}
     />
   <!-- Mobile PWA surface (phone-focused shell, bypasses desktop MainApp chrome) -->
   {:else if $authStore.isAuthenticated && appInitialized && isMobileRoute($currentRoute.view)}
-    <MobileShell />
+    <LazyRootView loader={ROOT_VIEW_LOADERS.mobile} label="mobile workspace" />
   <!-- Show main app when user is authenticated -->
   {:else if $authStore.isAuthenticated && appInitialized}
-    <MainApp />
+    <LazyRootView loader={ROOT_VIEW_LOADERS.desktop} label="workspace" />
   {:else}
     <!-- Show loading or login screen while waiting for auth -->
     <div class="flex-1 flex items-center justify-center">
@@ -321,20 +337,29 @@
   {/if}
 </div>
 
-<!-- Welcome Assistant -->
-<WelcomeAssistant
-  bind:isOpen={showWelcomeAssistant}
-  onsetup-completed={() => moduleSettings.reload()}
-/>
+<!-- Setup and login dialogs are split too; public routes never fetch them. -->
+{#if showWelcomeAssistant}
+  <LazyRootDialog
+    loader={ROOT_VIEW_LOADERS.welcome}
+    label="setup assistant"
+    bind:isOpen={showWelcomeAssistant}
+    componentProps={{ 'onsetup-completed': () => moduleSettings.reload() }}
+  />
+{/if}
 
-<!-- Login Dialog -->
-<LoginDialog
-  bind:isOpen={showLoginDialog}
-  onsuccess={() => {
-    showLoginDialog = false;
-    maybeRedirectToMobile();
-  }}
-/>
+{#if showLoginDialog}
+  <LazyRootDialog
+    loader={ROOT_VIEW_LOADERS.login}
+    label="sign in"
+    bind:isOpen={showLoginDialog}
+    componentProps={{
+      onsuccess: () => {
+        showLoginDialog = false;
+        maybeRedirectToMobile();
+      },
+    }}
+  />
+{/if}
 
 <style>
   /* Global CSS custom properties for theming - uses design tokens */
