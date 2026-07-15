@@ -109,11 +109,17 @@ func NewNotificationManager(db database.Database, nmCfg NotificationManagerConfi
 	}
 
 	batcherConfig := services.WriteBatcherConfig{
-		FlushInterval: nmCfg.FlushInterval,
-		MaxBatchSize:  nmCfg.MaxBatchSize,
-		Name:          "notifications",
+		FlushInterval:  nmCfg.FlushInterval,
+		MaxBatchSize:   nmCfg.MaxBatchSize,
+		OverflowPolicy: services.WriteBatcherRejectNewest,
+		Name:           "notifications",
 	}
-	manager.batcher = services.NewWriteBatcher(batcherConfig, manager.flushNotificationBatch)
+	manager.batcher = services.NewCoalescingWriteBatcher(
+		batcherConfig,
+		func(write notificationWrite) string { return strconv.Itoa(write.Notification.ID) },
+		func(_ notificationWrite, incoming notificationWrite) notificationWrite { return incoming },
+		manager.flushNotificationBatch,
+	)
 	manager.batcher.Start()
 
 	// Start periodic sync goroutine (consistency check, reconciles temp IDs)
@@ -269,9 +275,18 @@ func (nm *NotificationManager) MarkAsRead(userID, notificationID int) error {
 		// Queue read-status update for DB persistence. All cached rows now
 		// carry their real DB id (sync INSERT in AddNotification), so the
 		// temp-id guard that used to bracket this call is gone.
-		nm.batcher.Add(notificationWrite{
+		if !nm.batcher.Add(notificationWrite{
 			Notification: cache.Notifications[i],
-		})
+		}) {
+			cacheData, marshalErr := json.Marshal(cache)
+			if marshalErr == nil {
+				marshalErr = nm.cache.Set(cacheKey, cacheData)
+			}
+			if marshalErr != nil {
+				return fmt.Errorf("notification read update queue is full; preserve dirty cache: %w", marshalErr)
+			}
+			return fmt.Errorf("notification read update queue is full")
+		}
 		break
 	}
 
@@ -323,9 +338,18 @@ func (nm *NotificationManager) MarkItemNotificationsAsRead(userID, itemID int) e
 		cache.IsDirty = true
 		changed = true
 
-		nm.batcher.Add(notificationWrite{
+		if !nm.batcher.Add(notificationWrite{
 			Notification: cache.Notifications[i],
-		})
+		}) {
+			cacheData, marshalErr := json.Marshal(cache)
+			if marshalErr == nil {
+				marshalErr = nm.cache.Set(cacheKey, cacheData)
+			}
+			if marshalErr != nil {
+				return fmt.Errorf("notification read update queue is full; preserve dirty cache: %w", marshalErr)
+			}
+			return fmt.Errorf("notification read update queue is full")
+		}
 	}
 	if !changed {
 		return nil
@@ -622,8 +646,8 @@ func (nm *NotificationManager) syncUserNotifications(_ int, notifications []mode
 // flushNotificationBatch persists batched read-state updates to the database.
 // Called by WriteBatcher every 30s or when 50 items are queued. INSERTs run
 // synchronously in AddNotification so they aren't routed here anymore.
-func (nm *NotificationManager) flushNotificationBatch(items []notificationWrite) error {
-	tx, err := nm.db.Begin()
+func (nm *NotificationManager) flushNotificationBatch(ctx context.Context, items []notificationWrite) error {
+	tx, err := nm.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
@@ -631,7 +655,7 @@ func (nm *NotificationManager) flushNotificationBatch(items []notificationWrite)
 
 	for _, item := range items {
 		n := item.Notification
-		if _, err := tx.Exec(`
+		if _, err := tx.ExecContext(ctx, `
 			UPDATE notifications SET read = ?, updated_at = ? WHERE id = ? AND user_id = ?
 		`, n.Read, n.UpdatedAt, n.ID, n.UserID); err != nil {
 			return fmt.Errorf("update notification: %w", err)
