@@ -147,6 +147,7 @@ scripts/*
 !scripts/check-layering.sh
 !scripts/check-handler-db-access.sh
 !scripts/report-handler-db-access.sh
+!scripts/check-performance-regressions.sh
 !scripts/audit_coverage_inventory.py
 !scripts/.layering-baseline
 !scripts/.handler-db-access-allowlist
@@ -157,6 +158,9 @@ blog/
 .fallow/
 .windshift-local
 /docs
+!/docs/
+/docs/*
+!/docs/0.8.2-performance-regression-gates.md
 /.codehamr
 /.agents/skills/donate-trace
 /skills-lock.json

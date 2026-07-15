@@ -19,7 +19,7 @@ BUILD_TAGS=-tags="!test"
 # Directories
 FRONTEND_DIR=frontend
 
-.PHONY: all build build-linux build-windows clean deps frontend help hooks lint dev-build release openapi openapi-check coding-agent-image dev-tools install-golangci-lint install-govulncheck install-deadcode ci-tools-check ci-go ci-frontend ci
+.PHONY: all build build-linux build-windows clean deps frontend help hooks lint performance-regressions dev-build release openapi openapi-check coding-agent-image dev-tools install-golangci-lint install-govulncheck install-deadcode ci-tools-check ci-go ci-frontend ci
 
 # Tooling. swag is a tool dependency tracked in go.mod (see `tool` directive),
 # so the version is pinned and CI / dev installs always agree. `go tool swag`
@@ -164,6 +164,12 @@ lint:
 	@bash scripts/check-layering.sh
 	@bash scripts/check-handler-db-access.sh
 
+# Enforce generous benchmark ceilings for the high-cardinality paths hardened
+# in WI-613 and WI-614. This catches architectural regressions while leaving
+# ample headroom for normal shared-runner variance.
+performance-regressions:
+	@bash scripts/check-performance-regressions.sh
+
 # Install git hooks
 hooks:
 	@echo "Installing git hooks..."
@@ -197,6 +203,7 @@ help:
 	@echo "Development:"
 	@echo "  make dev-build      - Development binary"
 	@echo "  make lint           - Run static analysis"
+	@echo "  make performance-regressions - Enforce WI-613/WI-614 benchmark ceilings"
 	@echo "  make deps           - Update dependencies"
 	@echo "  make ci             - Run the blocking Go + frontend CI checks locally"
 	@echo "  make ci-go          - Run the blocking Go CI checks locally"
