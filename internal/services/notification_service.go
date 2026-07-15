@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,8 @@ import (
 // callers that only need delivery can discard the returned value.
 type NotificationManager interface {
 	AddNotification(notification models.Notification) (models.Notification, error)
+	AddNotifications(notifications []models.Notification) ([]models.Notification, error)
+	AddNotificationsContext(ctx context.Context, notifications []models.Notification) ([]models.Notification, error)
 	DeleteUserNotifications(userID int) error
 	MarkNotificationsSent(notificationIDs []int) error
 	MarkNotificationsSendFailed(notificationIDs []int) error
@@ -50,16 +53,27 @@ type RuleCache struct {
 
 // NotificationServiceConfig represents configuration for the notification service
 type NotificationServiceConfig struct {
-	RefreshInterval time.Duration // How often to refresh rules cache
-	EventBufferSize int           // Size of event channel buffer
+	RefreshInterval     time.Duration // How often to refresh rules cache
+	EventBufferSize     int           // Hard bound for queued events
+	EventWorkers        int           // Bounded concurrent event processors
+	EventProcessTimeout time.Duration // Deadline for one event
+	ShutdownTimeout     time.Duration // Deadline used by Close
 }
 
 // DefaultNotificationServiceConfig returns default configuration
 func DefaultNotificationServiceConfig() NotificationServiceConfig {
 	return NotificationServiceConfig{
-		RefreshInterval: 5 * time.Minute,
-		EventBufferSize: 1000,
+		RefreshInterval:     5 * time.Minute,
+		EventBufferSize:     1000,
+		EventWorkers:        4,
+		EventProcessTimeout: 15 * time.Second,
+		ShutdownTimeout:     20 * time.Second,
 	}
+}
+
+type queuedNotificationEvent struct {
+	event      *NotificationEvent
+	enqueuedAt time.Time
 }
 
 // UserNotificationBatch is a set of unread notifications destined for one
@@ -84,15 +98,27 @@ type NotificationService struct {
 	cacheMu   sync.RWMutex
 
 	// Event processing
-	eventChan chan *NotificationEvent
-	stopChan  chan struct{}
-	wg        sync.WaitGroup
+	eventChan      chan queuedNotificationEvent
+	cacheStop      chan struct{}
+	emitMu         sync.RWMutex
+	closeOnce      sync.Once
+	closed         bool
+	workerCtx      context.Context
+	workerCancel   context.CancelFunc
+	processEventFn func(context.Context, *NotificationEvent) error
+	wg             sync.WaitGroup
 
 	// Statistics
-	eventsProcessed int64
-	cacheHits       int64
-	cacheMisses     int64
-	errors          int64
+	eventsProcessed  int64
+	eventsDropped    int64
+	eventsQueued     int64
+	activeWorkers    int64
+	maxActiveWorkers int64
+	lastQueueWaitNS  int64
+	maxQueueWaitNS   int64
+	cacheHits        int64
+	cacheMisses      int64
+	errors           int64
 }
 
 // UnreadEmailBatches returns notifications that still need emailing, grouped by
@@ -179,6 +205,23 @@ func (ns *NotificationService) UnreadEmailBatches(maxBatchSize int) (map[string]
 // so a user who has lost workspace access does not receive notifications
 // for items in that workspace via a stale watch or admin assignment.
 func NewNotificationService(db database.Database, notificationManager NotificationManager, permService *PermissionService, config NotificationServiceConfig) *NotificationService {
+	defaults := DefaultNotificationServiceConfig()
+	if config.RefreshInterval <= 0 {
+		config.RefreshInterval = defaults.RefreshInterval
+	}
+	if config.EventBufferSize <= 0 {
+		config.EventBufferSize = defaults.EventBufferSize
+	}
+	if config.EventWorkers <= 0 {
+		config.EventWorkers = defaults.EventWorkers
+	}
+	if config.EventProcessTimeout <= 0 {
+		config.EventProcessTimeout = defaults.EventProcessTimeout
+	}
+	if config.ShutdownTimeout <= 0 {
+		config.ShutdownTimeout = defaults.ShutdownTimeout
+	}
+	workerCtx, workerCancel := context.WithCancel(context.Background()) //nolint:gosec // retained and called by CloseContext
 	service := &NotificationService{
 		db:                  db,
 		notificationManager: notificationManager,
@@ -191,8 +234,10 @@ func NewNotificationService(db database.Database, notificationManager Notificati
 			PersonalWorkspaces:  make(map[int]bool),
 			LastRefreshed:       time.Time{},
 		},
-		eventChan: make(chan *NotificationEvent, config.EventBufferSize),
-		stopChan:  make(chan struct{}),
+		eventChan:    make(chan queuedNotificationEvent, config.EventBufferSize),
+		cacheStop:    make(chan struct{}),
+		workerCtx:    workerCtx,
+		workerCancel: workerCancel,
 	}
 
 	// Load initial cache
@@ -200,12 +245,14 @@ func NewNotificationService(db database.Database, notificationManager Notificati
 		slog.Warn("failed to load initial notification rule cache", slog.String("component", "notifications"), slog.Any("error", err))
 	}
 
-	// Start background workers
-	service.wg.Add(2)
-	go service.eventProcessor()
+	// Start a fixed event worker pool plus the independent cache refresher.
+	service.wg.Add(config.EventWorkers + 1)
+	for workerID := 0; workerID < config.EventWorkers; workerID++ {
+		go service.eventProcessor(workerID)
+	}
 	go service.cacheRefresher()
 
-	slog.Debug("notification service initialized", slog.String("component", "notifications"), slog.Duration("refresh_interval", config.RefreshInterval))
+	slog.Debug("notification service initialized", slog.String("component", "notifications"), slog.Duration("refresh_interval", config.RefreshInterval), slog.Int("event_workers", config.EventWorkers), slog.Int("event_buffer_size", config.EventBufferSize))
 
 	return service
 }
@@ -227,23 +274,25 @@ func (ns *NotificationService) NotifyUsers(userIDs []int, workspaceID, itemID, a
 	}
 	actionURL := itemActionURL(workspaceID, itemID)
 	seen := make(map[int]bool, len(userIDs))
+	notifications := make([]models.Notification, 0, len(userIDs))
+	now := time.Now()
 	for _, uid := range userIDs {
 		if uid == 0 || uid == actorUserID || seen[uid] {
 			continue
 		}
 		seen[uid] = true
-		notification := models.Notification{
+		notifications = append(notifications, models.Notification{
 			UserID:    uid,
 			Title:     title,
 			Message:   message,
 			Type:      notifType,
-			Timestamp: time.Now(),
+			Timestamp: now,
 			Read:      false,
 			ActionURL: actionURL,
-		}
-		if _, err := ns.notificationManager.AddNotification(notification); err != nil {
-			return fmt.Errorf("add notification for user %d: %w", uid, err)
-		}
+		})
+	}
+	if _, err := ns.notificationManager.AddNotifications(notifications); err != nil {
+		return fmt.Errorf("add notifications for %d users: %w", len(notifications), err)
 	}
 	return nil
 }
@@ -292,44 +341,58 @@ func (ns *NotificationService) RollbackNotificationsSent(notificationIDs []int) 
 	return ns.notificationManager.RollbackNotificationsSent(notificationIDs)
 }
 
-// EmitEvent sends an event to be processed asynchronously (non-blocking)
+// EmitEvent sends an event to the bounded asynchronous worker pool. Existing
+// callers keep the fire-and-forget API; TryEmitEvent exposes saturation.
 func (ns *NotificationService) EmitEvent(event *NotificationEvent) {
+	ns.TryEmitEvent(event)
+}
+
+// TryEmitEvent reports whether the event was accepted. Rejection is explicit
+// in logs and metrics and occurs only after shutdown or when the queue is full.
+func (ns *NotificationService) TryEmitEvent(event *NotificationEvent) bool {
 	slog.Debug("queuing event", slog.String("component", "notifications"), slog.String("event_type", event.EventType), slog.Int("workspace_id", event.WorkspaceID), slog.Int("actor_user_id", event.ActorUserID), slog.Int("item_id", event.ItemID))
 
+	ns.emitMu.RLock()
+	defer ns.emitMu.RUnlock()
+	if ns.closed {
+		atomic.AddInt64(&ns.eventsDropped, 1)
+		return false
+	}
 	select {
-	case ns.eventChan <- event:
-		// Event queued successfully
+	case ns.eventChan <- queuedNotificationEvent{event: event, enqueuedAt: time.Now()}:
+		atomic.AddInt64(&ns.eventsQueued, 1)
 		slog.Debug("event queued successfully", slog.String("component", "notifications"), slog.String("event_type", event.EventType), slog.Int("item_id", event.ItemID))
+		return true
 	default:
-		// Channel full, log warning but don't block
 		slog.Warn("event channel full, dropping event", slog.String("component", "notifications"), slog.String("event_type", event.EventType), slog.Int("workspace_id", event.WorkspaceID))
+		atomic.AddInt64(&ns.eventsDropped, 1)
 		atomic.AddInt64(&ns.errors, 1)
+		return false
 	}
 }
 
-// eventProcessor runs in background and processes events from the channel
-func (ns *NotificationService) eventProcessor() {
+// eventProcessor runs as one member of the fixed worker pool.
+func (ns *NotificationService) eventProcessor(workerID int) {
 	defer ns.wg.Done()
-
-	for {
-		select {
-		case event := <-ns.eventChan:
-			if err := ns.processEvent(event); err != nil {
-				slog.Error("failed to process notification event", slog.String("component", "notifications"), slog.String("event_type", event.EventType), slog.Any("error", err))
-				atomic.AddInt64(&ns.errors, 1)
-			} else {
-				atomic.AddInt64(&ns.eventsProcessed, 1)
-			}
-		case <-ns.stopChan:
-			slog.Debug("stopping notification event processor", slog.String("component", "notifications"))
-			// Drain remaining events
-			for len(ns.eventChan) > 0 {
-				event := <-ns.eventChan
-				if err := ns.processEvent(event); err != nil {
-					slog.Error("failed to process notification event during shutdown", slog.String("component", "notifications"), slog.String("event_type", event.EventType), slog.Any("error", err))
-				}
-			}
-			return
+	for queued := range ns.eventChan {
+		wait := time.Since(queued.enqueuedAt)
+		atomic.StoreInt64(&ns.lastQueueWaitNS, int64(wait))
+		updateNotificationServiceMaximum(&ns.maxQueueWaitNS, int64(wait))
+		active := atomic.AddInt64(&ns.activeWorkers, 1)
+		updateNotificationServiceMaximum(&ns.maxActiveWorkers, active)
+		ctx, cancel := context.WithTimeout(ns.workerCtx, ns.config.EventProcessTimeout)
+		processEvent := ns.processEvent
+		if ns.processEventFn != nil {
+			processEvent = ns.processEventFn
+		}
+		err := processEvent(ctx, queued.event)
+		cancel()
+		atomic.AddInt64(&ns.activeWorkers, -1)
+		if err != nil {
+			slog.Error("failed to process notification event", slog.String("component", "notifications"), slog.Int("worker_id", workerID), slog.String("event_type", queued.event.EventType), slog.Any("error", err))
+			atomic.AddInt64(&ns.errors, 1)
+		} else {
+			atomic.AddInt64(&ns.eventsProcessed, 1)
 		}
 	}
 }
@@ -347,7 +410,7 @@ func (ns *NotificationService) cacheRefresher() {
 			if err := ns.refreshRuleCache(); err != nil {
 				slog.Error("failed to refresh notification rule cache", slog.String("component", "notifications"), slog.Any("error", err))
 			}
-		case <-ns.stopChan:
+		case <-ns.cacheStop:
 			slog.Debug("stopping notification cache refresher", slog.String("component", "notifications"))
 			return
 		}
@@ -355,7 +418,7 @@ func (ns *NotificationService) cacheRefresher() {
 }
 
 // processEvent processes a single notification event
-func (ns *NotificationService) processEvent(event *NotificationEvent) error {
+func (ns *NotificationService) processEvent(ctx context.Context, event *NotificationEvent) error {
 	slog.Debug("processing event", slog.String("component", "notifications"), slog.String("event_type", event.EventType), slog.Int("workspace_id", event.WorkspaceID), slog.Int("item_id", event.ItemID))
 
 	// Get configuration set for workspace
@@ -378,7 +441,9 @@ func (ns *NotificationService) processEvent(event *NotificationEvent) error {
 
 	slog.Debug("found rules for event type", slog.String("component", "notifications"), slog.Int("rule_count", len(rules)), slog.String("event_type", event.EventType))
 
-	// Process each rule
+	// Resolve every rule into one atomic recipient batch for this event.
+	notifications := make([]models.Notification, 0)
+	now := time.Now()
 	for _, rule := range rules {
 		if !rule.IsEnabled {
 			slog.Debug("rule is disabled, skipping", slog.String("component", "notifications"), slog.Int("rule_id", rule.ID))
@@ -399,7 +464,7 @@ func (ns *NotificationService) processEvent(event *NotificationEvent) error {
 		// Generate notification message
 		title, message := ns.generateNotificationMessage(event, &rule)
 
-		// Create notification for each recipient
+		// Build one notification for each recipient.
 		for _, userID := range recipients {
 			// Skip if recipient is the actor (don't notify yourself)
 			if userID == event.ActorUserID {
@@ -407,29 +472,24 @@ func (ns *NotificationService) processEvent(event *NotificationEvent) error {
 				continue
 			}
 
-			notification := models.Notification{
+			notifications = append(notifications, models.Notification{
 				UserID:    userID,
 				Title:     title,
 				Message:   message,
 				Type:      ns.getNotificationType(event.EventType),
-				Timestamp: time.Now(),
+				Timestamp: now,
 				Read:      false,
 				ActionURL: itemActionURL(event.WorkspaceID, event.ItemID),
-			}
-
-			slog.Debug("creating notification for user", slog.String("component", "notifications"), slog.Int("user_id", userID), slog.String("notification_type", notification.Type), slog.String("title", notification.Title))
-
-			// Add to notification manager (BigCache)
-			if _, err := ns.notificationManager.AddNotification(notification); err != nil {
-				slog.Error("failed to add notification for user", slog.String("component", "notifications"), slog.Int("user_id", userID), slog.Any("error", err))
-				return err
-			}
-
-			slog.Debug("successfully created notification for user", slog.String("component", "notifications"), slog.Int("user_id", userID))
+			})
+		}
+	}
+	if len(notifications) > 0 {
+		if _, err := ns.notificationManager.AddNotificationsContext(ctx, notifications); err != nil {
+			return fmt.Errorf("persist %d event notifications: %w", len(notifications), err)
 		}
 	}
 
-	slog.Debug("completed processing event", slog.String("component", "notifications"), slog.String("event_type", event.EventType), slog.Int("item_id", event.ItemID))
+	slog.Debug("completed processing event", slog.String("component", "notifications"), slog.String("event_type", event.EventType), slog.Int("item_id", event.ItemID), slog.Int("notification_count", len(notifications)))
 	return nil
 }
 
@@ -943,9 +1003,22 @@ func (ns *NotificationService) getNotificationType(eventType string) string {
 
 // Close gracefully shuts down the notification service
 func (ns *NotificationService) Close() error {
-	slog.Debug("closing notification service", slog.String("component", "notifications"))
-	close(ns.stopChan)
+	ctx, cancel := context.WithTimeout(context.Background(), ns.config.ShutdownTimeout)
+	defer cancel()
+	return ns.CloseContext(ctx)
+}
 
+// CloseContext stops accepting events, drains the bounded queue, and reports
+// any work that remains when the caller deadline expires.
+func (ns *NotificationService) CloseContext(ctx context.Context) error {
+	slog.Debug("closing notification service", slog.String("component", "notifications"))
+	ns.closeOnce.Do(func() {
+		ns.emitMu.Lock()
+		ns.closed = true
+		close(ns.eventChan)
+		close(ns.cacheStop)
+		ns.emitMu.Unlock()
+	})
 	done := make(chan struct{})
 	go func() {
 		ns.wg.Wait()
@@ -954,11 +1027,13 @@ func (ns *NotificationService) Close() error {
 
 	select {
 	case <-done:
+		ns.workerCancel()
 		slog.Debug("notification service closed successfully", slog.String("component", "notifications"))
-	case <-time.After(3 * time.Second):
-		slog.Warn("notification service close timed out after 3s", slog.String("component", "notifications"))
+		return nil
+	case <-ctx.Done():
+		ns.workerCancel()
+		return fmt.Errorf("notification service shutdown with %d queued and %d active: %w", len(ns.eventChan), atomic.LoadInt64(&ns.activeWorkers), ctx.Err())
 	}
-	return nil
 }
 
 // GetStats returns service statistics
@@ -968,12 +1043,27 @@ func (ns *NotificationService) GetStats() map[string]int64 {
 	ns.cacheMu.RUnlock()
 
 	return map[string]int64{
-		"events_processed":  atomic.LoadInt64(&ns.eventsProcessed),
-		"cache_hits":        atomic.LoadInt64(&ns.cacheHits),
-		"cache_misses":      atomic.LoadInt64(&ns.cacheMisses),
-		"errors":            atomic.LoadInt64(&ns.errors),
-		"cache_age_seconds": int64(time.Since(lastRefreshed).Seconds()),
-		"pending_events":    int64(len(ns.eventChan)),
+		"events_queued":      atomic.LoadInt64(&ns.eventsQueued),
+		"events_processed":   atomic.LoadInt64(&ns.eventsProcessed),
+		"events_dropped":     atomic.LoadInt64(&ns.eventsDropped),
+		"pending_events":     int64(len(ns.eventChan)),
+		"active_workers":     atomic.LoadInt64(&ns.activeWorkers),
+		"max_active_workers": atomic.LoadInt64(&ns.maxActiveWorkers),
+		"last_queue_wait_ms": time.Duration(atomic.LoadInt64(&ns.lastQueueWaitNS)).Milliseconds(),
+		"max_queue_wait_ms":  time.Duration(atomic.LoadInt64(&ns.maxQueueWaitNS)).Milliseconds(),
+		"cache_hits":         atomic.LoadInt64(&ns.cacheHits),
+		"cache_misses":       atomic.LoadInt64(&ns.cacheMisses),
+		"errors":             atomic.LoadInt64(&ns.errors),
+		"cache_age_seconds":  int64(time.Since(lastRefreshed).Seconds()),
+	}
+}
+
+func updateNotificationServiceMaximum(target *int64, value int64) {
+	for {
+		previous := atomic.LoadInt64(target)
+		if value <= previous || atomic.CompareAndSwapInt64(target, previous, value) {
+			return
+		}
 	}
 }
 

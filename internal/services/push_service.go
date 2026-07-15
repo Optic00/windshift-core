@@ -1,14 +1,18 @@
 package services
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"windshift/internal/config"
@@ -113,18 +117,131 @@ type pushPayload struct {
 	URL   string `json:"url"`
 }
 
+// PushServiceConfig bounds queued notifications, concurrent remote work, and
+// total delivery time. Push is best-effort after the durable notification row
+// commits, so overflow is explicit and metriced rather than blocking inserts.
+type PushServiceConfig struct {
+	QueueSize           int
+	Workers             int
+	DeliveryTimeout     time.Duration
+	HTTPTimeout         time.Duration
+	MaxSubscriptions    int
+	MaxRetries          int
+	RetryInitialBackoff time.Duration
+	ShutdownTimeout     time.Duration
+}
+
+func DefaultPushServiceConfig() PushServiceConfig {
+	return PushServiceConfig{
+		QueueSize:           1000,
+		Workers:             4,
+		DeliveryTimeout:     15 * time.Second,
+		HTTPTimeout:         5 * time.Second,
+		MaxSubscriptions:    20,
+		MaxRetries:          2,
+		RetryInitialBackoff: 100 * time.Millisecond,
+		ShutdownTimeout:     20 * time.Second,
+	}
+}
+
+type pushJob struct {
+	notification models.Notification
+	enqueuedAt   time.Time
+}
+
+type pushSubscription struct {
+	id       int
+	endpoint string
+	auth     string
+	p256dh   string
+}
+
+type webPushSender func(context.Context, []byte, *webpush.Subscription, *webpush.Options) (*http.Response, error)
+
 // PushService stores per-user Web Push subscriptions and dispatches compact
 // push messages when notifications are created. It is a no-op when VAPID keys
 // are not configured (Enabled() == false).
 type PushService struct {
-	db  database.Database
-	cfg config.PushConfig
+	db         database.Database
+	cfg        config.PushConfig
+	serviceCfg PushServiceConfig
+	httpClient *http.Client
+	send       webPushSender
+
+	queue        chan pushJob
+	enqueueMu    sync.RWMutex
+	closed       bool
+	closeOnce    sync.Once
+	workerCtx    context.Context
+	workerCancel context.CancelFunc
+	wg           sync.WaitGroup
+	userLocks    sync.Map // map[int]*sync.Mutex
+
+	enqueued             int64
+	jobsDropped          int64
+	jobsProcessed        int64
+	deliveryErrors       int64
+	retries              int64
+	subscriptionsSent    int64
+	subscriptionsDropped int64
+	activeWorkers        int64
+	maxActiveWorkers     int64
+	lastQueueWaitNS      int64
+	maxQueueWaitNS       int64
+	lastDeliveryNS       int64
+	maxDeliveryNS        int64
 }
 
 // NewPushService constructs a PushService. The returned service is safe to use
 // even when push is disabled — every method degrades to a no-op / empty result.
 func NewPushService(db database.Database, cfg config.PushConfig) *PushService {
-	return &PushService{db: db, cfg: cfg}
+	return newPushService(db, cfg, DefaultPushServiceConfig(), webpush.SendNotificationWithContext)
+}
+
+func newPushService(db database.Database, cfg config.PushConfig, serviceCfg PushServiceConfig, sender webPushSender) *PushService {
+	defaults := DefaultPushServiceConfig()
+	if serviceCfg.QueueSize <= 0 {
+		serviceCfg.QueueSize = defaults.QueueSize
+	}
+	if serviceCfg.Workers <= 0 {
+		serviceCfg.Workers = defaults.Workers
+	}
+	if serviceCfg.DeliveryTimeout <= 0 {
+		serviceCfg.DeliveryTimeout = defaults.DeliveryTimeout
+	}
+	if serviceCfg.HTTPTimeout <= 0 {
+		serviceCfg.HTTPTimeout = defaults.HTTPTimeout
+	}
+	if serviceCfg.MaxSubscriptions <= 0 {
+		serviceCfg.MaxSubscriptions = defaults.MaxSubscriptions
+	}
+	if serviceCfg.MaxRetries < 0 {
+		serviceCfg.MaxRetries = 0
+	}
+	if serviceCfg.RetryInitialBackoff <= 0 {
+		serviceCfg.RetryInitialBackoff = defaults.RetryInitialBackoff
+	}
+	if serviceCfg.ShutdownTimeout <= 0 {
+		serviceCfg.ShutdownTimeout = defaults.ShutdownTimeout
+	}
+	workerCtx, workerCancel := context.WithCancel(context.Background()) //nolint:gosec // retained and called by CloseContext
+	service := &PushService{
+		db:           db,
+		cfg:          cfg,
+		serviceCfg:   serviceCfg,
+		httpClient:   &http.Client{Timeout: serviceCfg.HTTPTimeout},
+		send:         sender,
+		queue:        make(chan pushJob, serviceCfg.QueueSize),
+		workerCtx:    workerCtx,
+		workerCancel: workerCancel,
+	}
+	if service.Enabled() {
+		service.wg.Add(serviceCfg.Workers)
+		for workerID := 0; workerID < serviceCfg.Workers; workerID++ {
+			go service.worker(workerID)
+		}
+	}
+	return service
 }
 
 // Enabled reports whether Web Push is configured.
@@ -206,19 +323,59 @@ func mobileActionURL(actionURL string) string {
 	return actionURL
 }
 
-// Dispatch fans a created notification out to the recipient's subscriptions.
-// Intended to be called in a goroutine; it recovers from panics so a transport
-// failure can never take down the caller.
-func (s *PushService) Dispatch(notification models.Notification) {
+// Enqueue adds a durable notification to the bounded best-effort push queue.
+// It never blocks notification persistence and reports overflow to the caller.
+func (s *PushService) Enqueue(notification models.Notification) bool {
+	if !s.Enabled() {
+		return true
+	}
+	s.enqueueMu.RLock()
+	defer s.enqueueMu.RUnlock()
+	if s.closed {
+		atomic.AddInt64(&s.jobsDropped, 1)
+		return false
+	}
+	select {
+	case s.queue <- pushJob{notification: notification, enqueuedAt: time.Now()}:
+		atomic.AddInt64(&s.enqueued, 1)
+		return true
+	default:
+		atomic.AddInt64(&s.jobsDropped, 1)
+		return false
+	}
+}
+
+func (s *PushService) worker(workerID int) {
+	defer s.wg.Done()
+	for job := range s.queue {
+		wait := time.Since(job.enqueuedAt)
+		atomic.StoreInt64(&s.lastQueueWaitNS, int64(wait))
+		updatePushMaximum(&s.maxQueueWaitNS, int64(wait))
+		active := atomic.AddInt64(&s.activeWorkers, 1)
+		updatePushMaximum(&s.maxActiveWorkers, active)
+		startedAt := time.Now()
+		ctx, cancel := context.WithTimeout(s.workerCtx, s.serviceCfg.DeliveryTimeout)
+		err := s.dispatch(ctx, job.notification)
+		cancel()
+		duration := time.Since(startedAt)
+		atomic.StoreInt64(&s.lastDeliveryNS, int64(duration))
+		updatePushMaximum(&s.maxDeliveryNS, int64(duration))
+		atomic.AddInt64(&s.activeWorkers, -1)
+		atomic.AddInt64(&s.jobsProcessed, 1)
+		if err != nil {
+			atomic.AddInt64(&s.deliveryErrors, 1)
+			slog.Warn("push dispatch failed", "component", "push", "worker_id", workerID, "notification_id", job.notification.ID, "error", err)
+		}
+	}
+}
+
+func (s *PushService) dispatch(ctx context.Context, notification models.Notification) (err error) {
 	defer func() {
-		if r := recover(); r != nil {
-			slog.Error("push dispatch panicked", slog.String("component", "push"), slog.Any("recover", r))
+		if recovered := recover(); recovered != nil {
+			slog.Error("push dispatch panicked", slog.String("component", "push"), slog.Any("recover", recovered))
+			err = fmt.Errorf("push dispatch panic: %v", recovered)
 		}
 	}()
-
-	if !s.Enabled() {
-		return
-	}
 
 	body := notification.Message
 	if body == "" {
@@ -238,7 +395,14 @@ func (s *PushService) Dispatch(notification models.Notification) {
 		url = "/m/notifications"
 	}
 
-	s.deliver(notification.UserID, pushPayload{
+	lock, _ := s.userLocks.LoadOrStore(notification.UserID, &sync.Mutex{})
+	userLock, ok := lock.(*sync.Mutex)
+	if !ok {
+		panic("push user lock has unexpected type")
+	}
+	userLock.Lock()
+	defer userLock.Unlock()
+	return s.deliver(ctx, notification.UserID, pushPayload{
 		ID:    notification.ID,
 		Title: notification.Title,
 		Body:  body,
@@ -249,90 +413,197 @@ func (s *PushService) Dispatch(notification models.Notification) {
 
 // deliver loads the user's active subscriptions and sends one push each,
 // pruning subscriptions the push service reports as permanently gone.
-func (s *PushService) deliver(userID int, payload pushPayload) {
+func (s *PushService) deliver(ctx context.Context, userID int, payload pushPayload) error {
 	if !s.Enabled() {
-		return
+		return nil
 	}
 
-	rows, err := s.db.Query(
-		"SELECT id, endpoint, auth_key, p256dh_key FROM push_subscriptions "+activeSubsWhere, userID)
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT id, endpoint, auth_key, p256dh_key, COUNT(*) OVER() FROM push_subscriptions "+activeSubsWhere+" ORDER BY id LIMIT ?", userID, s.serviceCfg.MaxSubscriptions)
 	if err != nil {
-		slog.Error("push: load subscriptions failed", slog.String("component", "push"), slog.Any("error", err))
-		return
+		return fmt.Errorf("load push subscriptions: %w", err)
 	}
-
-	type sub struct {
-		id       int
-		endpoint string
-		auth     string
-		p256dh   string
-	}
-	var subs []sub
+	var subs []pushSubscription
+	totalSubscriptions := 0
 	for rows.Next() {
-		var sb sub
-		if err := rows.Scan(&sb.id, &sb.endpoint, &sb.auth, &sb.p256dh); err != nil {
-			slog.Error("push: scan subscription failed", slog.String("component", "push"), slog.Any("error", err))
-			continue
+		var sb pushSubscription
+		if err := rows.Scan(&sb.id, &sb.endpoint, &sb.auth, &sb.p256dh, &totalSubscriptions); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan push subscription: %w", err)
 		}
 		subs = append(subs, sb)
 	}
 	if err := rows.Err(); err != nil {
-		slog.Error("push: iterate subscriptions failed", slog.String("component", "push"), slog.Any("error", err))
+		rows.Close()
+		return fmt.Errorf("iterate push subscriptions: %w", err)
 	}
 	rows.Close()
 
 	if len(subs) == 0 {
-		return
+		return nil
+	}
+	if totalSubscriptions > len(subs) {
+		atomic.AddInt64(&s.subscriptionsDropped, int64(totalSubscriptions-len(subs)))
 	}
 
 	message, err := json.Marshal(payload)
 	if err != nil {
-		slog.Error("push: marshal payload failed", slog.String("component", "push"), slog.Any("error", err))
-		return
+		return fmt.Errorf("marshal push payload: %w", err)
 	}
 
 	options := &webpush.Options{
+		HTTPClient:      s.httpClient,
 		Subscriber:      s.cfg.VAPIDSubject,
 		VAPIDPublicKey:  s.cfg.VAPIDPublicKey,
 		VAPIDPrivateKey: s.cfg.VAPIDPrivateKey,
 		TTL:             pushTTLSeconds,
 	}
 
+	var deliveryErr error
 	for _, sb := range subs {
-		resp, err := webpush.SendNotification(message, &webpush.Subscription{
+		if err := s.sendSubscription(ctx, message, sb, options); err != nil {
+			slog.Warn("push subscription delivery failed", "component", "push", "sub_id", sb.id, "error", err)
+			deliveryErr = errors.Join(deliveryErr, err)
+		}
+	}
+	return deliveryErr
+}
+
+func (s *PushService) sendSubscription(ctx context.Context, message []byte, sb pushSubscription, options *webpush.Options) error {
+	var lastErr error
+	for attempt := 0; attempt <= s.serviceCfg.MaxRetries; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		resp, err := s.send(ctx, message, &webpush.Subscription{
 			Endpoint: sb.endpoint,
 			Keys:     webpush.Keys{Auth: sb.auth, P256dh: sb.p256dh},
 		}, options)
 		if err != nil {
-			slog.Warn("push: send failed", slog.String("component", "push"), slog.Int("sub_id", sb.id), slog.Any("error", err))
-			continue
+			lastErr = err
+			if attempt < s.serviceCfg.MaxRetries {
+				atomic.AddInt64(&s.retries, 1)
+				if err := waitForPushRetry(ctx, s.serviceCfg.RetryInitialBackoff, attempt); err != nil {
+					return err
+				}
+				continue
+			}
+			return err
 		}
 		status := resp.StatusCode
-
+		detail := readPushResponse(resp)
 		switch {
 		case status == http.StatusNotFound || status == http.StatusGone:
-			// The endpoint is permanently gone — prune it.
-			resp.Body.Close()
-			if _, derr := s.db.ExecWrite(`UPDATE push_subscriptions SET revoked_at = CURRENT_TIMESTAMP WHERE id = ?`, sb.id); derr != nil {
-				slog.Error("push: prune failed", slog.String("component", "push"), slog.Int("sub_id", sb.id), slog.Any("error", derr))
-			}
+			_, err := s.db.ExecWriteContext(ctx, `UPDATE push_subscriptions SET revoked_at = CURRENT_TIMESTAMP WHERE id = ?`, sb.id)
+			return err
 		case status >= 200 && status < 300:
-			resp.Body.Close()
-			_, _ = s.db.ExecWrite(`UPDATE push_subscriptions SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?`, sb.id)
-		default:
-			// Other non-2xx (e.g. APNs rejecting the VAPID JWT) are transient
-			// from the subscription's POV, but the provider's response body is
-			// the single most useful clue for diagnosing why nothing arrives —
-			// so capture and log it rather than dropping it on the floor.
-			body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-			resp.Body.Close()
-			detail := strings.TrimSpace(string(body))
-			if detail == "" {
-				detail = resp.Status
+			atomic.AddInt64(&s.subscriptionsSent, 1)
+			_, _ = s.db.ExecWriteContext(ctx, `UPDATE push_subscriptions SET last_used_at = CURRENT_TIMESTAMP WHERE id = ?`, sb.id)
+			return nil
+		case status == http.StatusTooManyRequests || status >= 500:
+			lastErr = fmt.Errorf("push endpoint returned %d: %s", status, detail)
+			if attempt < s.serviceCfg.MaxRetries {
+				atomic.AddInt64(&s.retries, 1)
+				if err := waitForPushRetry(ctx, s.serviceCfg.RetryInitialBackoff, attempt); err != nil {
+					return err
+				}
+				continue
 			}
-			slog.Warn("push: send rejected",
-				slog.String("component", "push"), slog.Int("sub_id", sb.id),
-				slog.Int("status", status), slog.String("body", detail))
+			return lastErr
+		default:
+			return fmt.Errorf("push endpoint returned %d: %s", status, detail)
+		}
+	}
+	return lastErr
+}
+
+func readPushResponse(resp *http.Response) string {
+	if resp == nil {
+		return "empty response"
+	}
+	if resp.Body == nil {
+		return strings.TrimSpace(resp.Status)
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+	_ = resp.Body.Close()
+	detail := strings.TrimSpace(string(body))
+	if detail == "" {
+		detail = resp.Status
+	}
+	return detail
+}
+
+func waitForPushRetry(ctx context.Context, initial time.Duration, attempt int) error {
+	delay := initial
+	for i := 0; i < attempt; i++ {
+		if delay > time.Second/2 {
+			delay = time.Second
+			break
+		}
+		delay *= 2
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// Close drains queued jobs up to the configured shutdown deadline.
+func (s *PushService) Close(ctx context.Context) error {
+	if !s.Enabled() {
+		s.workerCancel()
+		return nil
+	}
+	s.closeOnce.Do(func() {
+		s.enqueueMu.Lock()
+		s.closed = true
+		close(s.queue)
+		s.enqueueMu.Unlock()
+	})
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		s.workerCancel()
+		return nil
+	case <-ctx.Done():
+		s.workerCancel()
+		return fmt.Errorf("push shutdown with %d queued and %d active: %w", len(s.queue), atomic.LoadInt64(&s.activeWorkers), ctx.Err())
+	}
+}
+
+// GetStats returns queue, worker, retry, fan-out, and latency metrics.
+func (s *PushService) GetStats() map[string]int64 {
+	return map[string]int64{
+		"queue_depth":           int64(len(s.queue)),
+		"enqueued":              atomic.LoadInt64(&s.enqueued),
+		"jobs_dropped":          atomic.LoadInt64(&s.jobsDropped),
+		"jobs_processed":        atomic.LoadInt64(&s.jobsProcessed),
+		"delivery_errors":       atomic.LoadInt64(&s.deliveryErrors),
+		"retries":               atomic.LoadInt64(&s.retries),
+		"subscriptions_sent":    atomic.LoadInt64(&s.subscriptionsSent),
+		"subscriptions_dropped": atomic.LoadInt64(&s.subscriptionsDropped),
+		"active_workers":        atomic.LoadInt64(&s.activeWorkers),
+		"max_active_workers":    atomic.LoadInt64(&s.maxActiveWorkers),
+		"last_queue_wait_ms":    time.Duration(atomic.LoadInt64(&s.lastQueueWaitNS)).Milliseconds(),
+		"max_queue_wait_ms":     time.Duration(atomic.LoadInt64(&s.maxQueueWaitNS)).Milliseconds(),
+		"last_delivery_ms":      time.Duration(atomic.LoadInt64(&s.lastDeliveryNS)).Milliseconds(),
+		"max_delivery_ms":       time.Duration(atomic.LoadInt64(&s.maxDeliveryNS)).Milliseconds(),
+	}
+}
+
+func updatePushMaximum(target *int64, value int64) {
+	for {
+		previous := atomic.LoadInt64(target)
+		if value <= previous || atomic.CompareAndSwapInt64(target, previous, value) {
+			return
 		}
 	}
 }

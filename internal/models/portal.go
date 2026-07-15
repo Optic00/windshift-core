@@ -474,6 +474,7 @@ type NotificationCache struct {
 	Notifications []Notification `json:"notifications"`
 	LastSynced    time.Time      `json:"last_synced"`
 	IsDirty       bool           `json:"is_dirty"` // Indicates if cache needs DB sync
+	Complete      bool           `json:"complete"` // True when the cached page contains the full retained inbox
 }
 
 // EmailTemplate represents a customizable email template managed from the
