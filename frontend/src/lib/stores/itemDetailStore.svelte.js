@@ -5,6 +5,7 @@
  */
 import { api } from '../api.js';
 import { buildDetailScreenFieldConfig, resolveEffectiveScreenIds } from '../utils/screenFields.js';
+import { workspaceDataStore } from './workspaceDataStore.svelte.js';
 
 const FIELD_MAP = {
   title: 'title',
@@ -28,6 +29,17 @@ function isNumericID(value) {
 
 function isAbortError(error) {
   return error?.name === 'AbortError';
+}
+
+function hasSharedWorkspaceReferences(workspaceId) {
+  return (
+    workspaceDataStore.initialized && Number(workspaceDataStore.workspaceId) === Number(workspaceId)
+  );
+}
+
+async function waitForSharedWorkspaceReferences(workspaceId) {
+  if (Number(workspaceDataStore.workspaceId) !== Number(workspaceId)) return;
+  if (workspaceDataStore._initPromise) await workspaceDataStore._initPromise;
 }
 
 function childItemListsMatch(current = [], next = []) {
@@ -89,6 +101,10 @@ class ItemDetailStore {
   #worklogsPromise = null;
   #worklogsPromiseItemId = null;
   #worklogsLoadedItemId = null;
+  #diagramsController = null;
+  #diagramsPromise = null;
+  #diagramsPromiseItemId = null;
+  #diagramsLoadedItemId = null;
   #timeModalDataController = null;
   #timeModalDataPromise = null;
   #timeModalDataLoaded = false;
@@ -171,6 +187,7 @@ class ItemDetailStore {
   // Diagrams & Actions
   diagrams = $state([]);
   loadingDiagrams = $state(false);
+  diagramsLoaded = $state(false);
   manualActions = $state([]);
 
   // Modals
@@ -231,6 +248,7 @@ class ItemDetailStore {
     this.#loadController?.abort();
     this.#linksController?.abort();
     this.#worklogsController?.abort();
+    this.#diagramsController?.abort();
     const controller = new AbortController();
     this.#loadController = controller;
     const requestOptions = { signal: controller.signal };
@@ -249,6 +267,12 @@ class ItemDetailStore {
     this.#worklogsLoadedItemId = null;
     this.#worklogsPromise = null;
     this.#worklogsPromiseItemId = null;
+    this.diagrams = [];
+    this.loadingDiagrams = false;
+    this.diagramsLoaded = false;
+    this.#diagramsPromise = null;
+    this.#diagramsPromiseItemId = null;
+    this.#diagramsLoadedItemId = null;
     this.error = null;
     this.notFound = false;
     if (!isSwitch) {
@@ -286,6 +310,13 @@ class ItemDetailStore {
       const wsId = effectiveWorkspaceId || itemData.workspace_id;
       this.workspaceId = wsId;
 
+      // MainApp owns the workspace reference graph. If that graph is already
+      // in flight, share it rather than issuing duplicate workspace, custom
+      // field, milestone, iteration, priority, and item-type requests.
+      await waitForSharedWorkspaceReferences(wsId);
+      if (token !== this.#loadToken) return;
+      const useSharedReferences = hasSharedWorkspaceReferences(wsId);
+
       const [
         workspaceData,
         linkTypesData,
@@ -296,13 +327,23 @@ class ItemDetailStore {
         projectsData,
         requestTypeFieldsData,
       ] = await Promise.all([
-        api.workspaces.get(wsId, requestOptions),
+        useSharedReferences
+          ? Promise.resolve(workspaceDataStore.workspace)
+          : api.workspaces.get(wsId, requestOptions),
         api.linkTypes.getAll(false, requestOptions),
         api.links.getForItem('items', effectiveItemId, requestOptions),
-        api.customFields.getAll({}, requestOptions),
-        api.milestones.getAll({ workspace_id: wsId, include_global: true }, requestOptions),
-        api.iterations.getAll({ workspace_id: wsId, include_global: true }, requestOptions),
-        api.time.projects.getByWorkspace(wsId, requestOptions),
+        useSharedReferences
+          ? Promise.resolve({ data: workspaceDataStore.customFieldDefinitions })
+          : api.customFields.getAll({}, requestOptions),
+        useSharedReferences
+          ? Promise.resolve(workspaceDataStore.milestones)
+          : api.milestones.getAll({ workspace_id: wsId, include_global: true }, requestOptions),
+        useSharedReferences
+          ? Promise.resolve(workspaceDataStore.iterations)
+          : api.iterations.getAll({ workspace_id: wsId, include_global: true }, requestOptions),
+        useSharedReferences
+          ? Promise.resolve(workspaceDataStore.projects)
+          : api.time.projects.getByWorkspace(wsId, requestOptions),
         itemData.request_type_id
           ? api.requestTypes.getFields(itemData.request_type_id, requestOptions).catch((error) => {
               if (isAbortError(error)) throw error;
@@ -359,7 +400,6 @@ class ItemDetailStore {
         this.#loadItemTypeData(requestOptions),
         this.loadChildItems(requestOptions),
         this.#loadWorkspaceScreenFields(configSet, requestOptions),
-        this.loadDiagrams(requestOptions),
         this.#loadManualActions(requestOptions),
       ]);
       if (token !== this.#loadToken) return;
@@ -611,18 +651,47 @@ class ItemDetailStore {
   /**
    * Load diagrams for the item.
    */
-  async loadDiagrams(requestOptions = {}) {
-    if (!this.item?.id) return;
-    try {
-      this.loadingDiagrams = true;
-      this.diagrams = (await api.getDiagrams(this.item.id, requestOptions)) || [];
-    } catch (err) {
-      if (isAbortError(err)) return;
-      console.error('Failed to load diagrams:', err);
-      this.diagrams = [];
-    } finally {
-      if (!requestOptions.signal?.aborted) this.loadingDiagrams = false;
+  async loadDiagrams({ force = false } = {}) {
+    const itemId = this.item?.id;
+    if (!itemId) return [];
+    if (!force && this.#diagramsLoadedItemId === itemId) return this.diagrams;
+    if (!force && this.#diagramsPromise && this.#diagramsPromiseItemId === itemId) {
+      return this.#diagramsPromise;
     }
+
+    this.#diagramsController?.abort();
+    const controller = new AbortController();
+    this.#diagramsController = controller;
+    this.#diagramsPromiseItemId = itemId;
+    this.loadingDiagrams = true;
+
+    const promise = api
+      .getDiagrams(itemId, { signal: controller.signal })
+      .then((diagrams) => {
+        if (this.item?.id === itemId) {
+          this.diagrams = diagrams || [];
+          this.diagramsLoaded = true;
+          this.#diagramsLoadedItemId = itemId;
+        }
+        return this.diagrams;
+      })
+      .catch((err) => {
+        if (isAbortError(err)) return this.diagrams;
+        console.error('Failed to load diagrams:', err);
+        if (this.item?.id === itemId) this.diagrams = [];
+        return this.diagrams;
+      })
+      .finally(() => {
+        if (this.#diagramsController === controller) {
+          this.#diagramsController = null;
+          this.#diagramsPromise = null;
+          this.#diagramsPromiseItemId = null;
+          this.loadingDiagrams = false;
+        }
+      });
+
+    this.#diagramsPromise = promise;
+    return promise;
   }
 
   // === Private Data Loading Methods ===
@@ -650,7 +719,9 @@ class ItemDetailStore {
             : await api.configurationSets.get(this.workspace.configuration_set_id, requestOptions);
         this.priorities = cs?.priorities_detailed || [];
       } else {
-        this.priorities = await api.priorities.getAll({}, requestOptions);
+        this.priorities = hasSharedWorkspaceReferences(this.workspaceId)
+          ? workspaceDataStore.priorities
+          : await api.priorities.getAll({}, requestOptions);
       }
       this.priorities = this.priorities.sort((a, b) => a.sort_order - b.sort_order);
     } catch (err) {
@@ -738,8 +809,11 @@ class ItemDetailStore {
 
   async #loadItemTypeData(requestOptions = {}) {
     try {
+      const useSharedReferences = hasSharedWorkspaceReferences(this.workspaceId);
       const [itemTypesData, hierarchyLevels] = await Promise.all([
-        api.itemTypes.getAll({}, requestOptions),
+        useSharedReferences
+          ? Promise.resolve(workspaceDataStore.itemTypes)
+          : api.itemTypes.getAll({}, requestOptions),
         api.hierarchyLevels.getAll({}, requestOptions),
       ]);
 
@@ -1288,6 +1362,7 @@ class ItemDetailStore {
     this.#loadController?.abort();
     this.#linksController?.abort();
     this.#worklogsController?.abort();
+    this.#diagramsController?.abort();
     this.#timeModalDataController?.abort();
     this.#loadController = null;
     this.#linksController = null;
@@ -1295,6 +1370,10 @@ class ItemDetailStore {
     this.#worklogsPromise = null;
     this.#worklogsPromiseItemId = null;
     this.#worklogsLoadedItemId = null;
+    this.#diagramsController = null;
+    this.#diagramsPromise = null;
+    this.#diagramsPromiseItemId = null;
+    this.#diagramsLoadedItemId = null;
     this.#timeModalDataController = null;
     this.#timeModalDataPromise = null;
     this.#timeModalDataLoaded = false;
@@ -1345,6 +1424,7 @@ class ItemDetailStore {
     this.workspaces = [];
     this.diagrams = [];
     this.loadingDiagrams = false;
+    this.diagramsLoaded = false;
     this.manualActions = [];
     this.showDeleteDialog = false;
     this.showLinkModal = false;

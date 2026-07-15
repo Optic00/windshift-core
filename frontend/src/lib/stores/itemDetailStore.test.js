@@ -72,6 +72,7 @@ vi.mock('../api.js', () => ({
 
 const { api } = await import('../api.js');
 const { itemDetailStore } = await import('./itemDetailStore.svelte.js');
+const { workspaceDataStore } = await import('./workspaceDataStore.svelte.js');
 
 function mockSuccessfulRelatedLoads() {
   api.workspaces.get.mockResolvedValue({ id: 1, configuration_set_id: null });
@@ -95,6 +96,7 @@ function mockSuccessfulRelatedLoads() {
 describe('itemDetailStore.loadItem request graph', () => {
   beforeEach(() => {
     itemDetailStore.reset();
+    workspaceDataStore.reset();
     vi.clearAllMocks();
     mockSuccessfulRelatedLoads();
   });
@@ -118,6 +120,7 @@ describe('itemDetailStore.loadItem request graph', () => {
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     );
     expect(api.items.get).not.toHaveBeenCalled();
+    expect(api.getDiagrams).not.toHaveBeenCalled();
     expect(itemDetailStore.item).toMatchObject(resolvedItem);
     expect(itemDetailStore.itemId).toBe(42);
   });
@@ -154,12 +157,53 @@ describe('itemDetailStore.loadItem request graph', () => {
     expect(itemDetailStore.itemId).toBe(102);
     expect(itemDetailStore.error).toBeNull();
   });
+
+  it('reuses initialized workspace references and leaves diagrams lazy', async () => {
+    workspaceDataStore.workspaceId = 1;
+    workspaceDataStore.workspace = { id: 1, configuration_set_id: null };
+    workspaceDataStore.customFieldDefinitions = [{ id: 7, name: 'Shared field' }];
+    workspaceDataStore.milestones = [{ id: 8, name: 'Shared milestone' }];
+    workspaceDataStore.iterations = [{ id: 10, name: 'Shared iteration' }];
+    workspaceDataStore.priorities = [{ id: 11, name: 'Shared priority', sort_order: 0 }];
+    workspaceDataStore.projects = [{ id: 12, name: 'Shared project' }];
+    workspaceDataStore.itemTypes = [{ id: 9, name: 'Shared type', hierarchy_level: 0 }];
+    workspaceDataStore.initialized = true;
+    api.items.get.mockResolvedValue({
+      id: 42,
+      workspace_id: 1,
+      title: 'Shared references',
+      parent_id: null,
+      item_type_id: 9,
+      request_type_id: null,
+    });
+    api.hierarchyLevels.getAll.mockResolvedValue([{ level: 0 }]);
+
+    await itemDetailStore.loadItem(1, 42);
+
+    expect(api.workspaces.get).not.toHaveBeenCalled();
+    expect(api.customFields.getAll).not.toHaveBeenCalled();
+    expect(api.milestones.getAll).not.toHaveBeenCalled();
+    expect(api.iterations.getAll).not.toHaveBeenCalled();
+    expect(api.priorities.getAll).not.toHaveBeenCalled();
+    expect(api.itemTypes.getAll).not.toHaveBeenCalled();
+    expect(api.time.projects.getByWorkspace).not.toHaveBeenCalled();
+    expect(api.getDiagrams).not.toHaveBeenCalled();
+    expect(itemDetailStore.customFieldDefinitions).toEqual([{ id: 7, name: 'Shared field' }]);
+    expect(itemDetailStore.milestones).toEqual([{ id: 8, name: 'Shared milestone' }]);
+    expect(itemDetailStore.iterations).toEqual([{ id: 10, name: 'Shared iteration' }]);
+    expect(itemDetailStore.priorities).toEqual([
+      { id: 11, name: 'Shared priority', sort_order: 0 },
+    ]);
+    expect(itemDetailStore.timeProjects).toEqual([{ id: 12, name: 'Shared project' }]);
+    expect(itemDetailStore.currentItemType).toMatchObject({ id: 9, name: 'Shared type' });
+  });
 });
 
 describe('itemDetailStore.loadChildItems', () => {
   beforeEach(() => {
     itemDetailStore.reset();
     itemDetailStore.itemId = 42;
+    itemDetailStore.item = { id: 42 };
     itemDetailStore.childItems = [];
     itemDetailStore.loadingChildItems = false;
     api.items.getChildren.mockReset();
@@ -249,11 +293,13 @@ describe('itemDetailStore optional item data', () => {
   beforeEach(() => {
     itemDetailStore.reset();
     itemDetailStore.itemId = 42;
+    itemDetailStore.item = { id: 42 };
     api.items.getAll.mockReset();
     api.links.getForItem.mockReset();
     api.time.worklogs.getByItem.mockReset();
     api.customerOrganisations.getAll.mockReset();
     api.workspaces.getAll.mockReset();
+    api.getDiagrams.mockReset();
   });
 
   it('single-flights worklogs for the open item', async () => {
@@ -288,6 +334,29 @@ describe('itemDetailStore optional item data', () => {
     expect(itemDetailStore.customers).toEqual([{ id: 1 }]);
     expect(itemDetailStore.workItems).toEqual([{ id: 2 }]);
     expect(itemDetailStore.workspaces).toEqual([{ id: 3 }]);
+  });
+
+  it('loads diagrams only on demand and single-flights the request', async () => {
+    let resolveDiagrams;
+    api.getDiagrams.mockReturnValue(
+      new Promise((resolve) => {
+        resolveDiagrams = resolve;
+      })
+    );
+
+    const first = itemDetailStore.loadDiagrams();
+    const second = itemDetailStore.loadDiagrams();
+    expect(api.getDiagrams).toHaveBeenCalledTimes(1);
+    expect(itemDetailStore.diagramsLoaded).toBe(false);
+
+    resolveDiagrams([{ id: 5, name: 'Architecture' }]);
+    await Promise.all([first, second]);
+
+    expect(itemDetailStore.diagramsLoaded).toBe(true);
+    expect(itemDetailStore.diagrams).toEqual([{ id: 5, name: 'Architecture' }]);
+
+    await itemDetailStore.loadDiagrams();
+    expect(api.getDiagrams).toHaveBeenCalledTimes(1);
   });
 
   it('refreshes links without reloading the complete item', async () => {

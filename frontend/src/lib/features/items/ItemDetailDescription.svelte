@@ -22,6 +22,8 @@
     availableSubIssueTypes = [],
     attachments = [],
     diagrams = [],
+    loadingDiagrams = false,
+    diagramsLoaded = false,
     showLinkButton = true,
     showDiagramButton = true,
     showAIActions = true,
@@ -37,6 +39,7 @@
     onattachmentUploadFiles = undefined,
     onattachmentDelete = undefined,
     onnewDiagram = undefined,
+    onloadDiagrams = undefined,
     oneditDiagram = undefined,
     ondeleteDiagram = undefined,
     onexecuteAction = undefined,
@@ -299,6 +302,9 @@
     <AttachmentDiagramList
       {attachments}
       {diagrams}
+      {loadingDiagrams}
+      {diagramsLoaded}
+      onloadDiagrams={() => onloadDiagrams?.()}
       ondelete={handleDeleteAttachment}
       oneditdiagram={handleEditDiagram}
       ondeletediagram={handleDeleteDiagram}

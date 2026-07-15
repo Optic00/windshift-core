@@ -929,7 +929,7 @@ import Button from '../../components/Button.svelte';
 
   // Handle diagram saved event - reload diagrams
   async function handleDiagramSaved() {
-    await itemDetailStore.loadDiagrams();
+    await itemDetailStore.loadDiagrams({ force: true });
   }
 
   onMount(async () => {
@@ -1239,6 +1239,7 @@ import Button from '../../components/Button.svelte';
     attachmentPagination={attachmentManager.pagination}
     diagrams={itemDetailStore.diagrams}
     loadingDiagrams={itemDetailStore.loadingDiagrams}
+    diagramsLoaded={itemDetailStore.diagramsLoaded}
     manualActions={itemDetailStore.manualActions}
     canCreate={untrack(() => workspacePermissions.canCreate(workspaceId))}
     onaiAction={handleAIAction}
@@ -1275,6 +1276,7 @@ import Button from '../../components/Button.svelte';
     onattachmentPageChange={attachmentManager.handlePageChange}
     onattachmentPageSizeChange={attachmentManager.handlePageSizeChange}
     ondiagramSaved={handleDiagramSaved}
+    onloadDiagrams={() => itemDetailStore.loadDiagrams()}
     onexecuteAction={handleExecuteAction}
     onreorderChildren={handleReorderChildren}
     onclose={closeModal}

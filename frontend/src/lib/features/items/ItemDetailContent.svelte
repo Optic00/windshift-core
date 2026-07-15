@@ -1,5 +1,4 @@
 <script>
-  import { onMount } from 'svelte';
   import { useEventListener } from 'runed';
   import { AlertCircle } from '@lucide/svelte';
   import { t } from '../../stores/i18n.svelte.js';
@@ -69,6 +68,7 @@
     attachmentPagination = null,
     diagrams = [],
     loadingDiagrams = false,
+    diagramsLoaded = false,
     manualActions = [],
     // Callback props
     onnavigate = null,
@@ -103,6 +103,7 @@
     onattachmentPageChange = null,
     onattachmentPageSizeChange = null,
     ondiagramSaved = null,
+    onloadDiagrams = null,
     onexecuteAction = null,
     onaiAction = null,
     onreorderChildren = null,
@@ -115,25 +116,9 @@
     onitemtypechange = null,
   } = $props();
 
-  // Lazy-load DiagramModal with background preload (Excalidraw is ~1.2MB)
+  // Keep the editor bundle off the network until the user opens it.
   let DiagramModal = $state(null);
   let diagramPromise = $state(null);
-
-  onMount(() => {
-    // Preload in background after component mounts
-    const preload = () => {
-      diagramPromise = import('../../components/DiagramModal.svelte');
-      diagramPromise.then(module => {
-        DiagramModal = module.default;
-      });
-    };
-
-    if ('requestIdleCallback' in window) {
-      requestIdleCallback(preload);
-    } else {
-      setTimeout(preload, 1000); // Fallback: preload after 1s
-    }
-  });
 
   // Component references
   let diagramListComponent = $state(null);
@@ -280,20 +265,19 @@
   }
 
   // Diagram handlers
+  async function ensureDiagramModal() {
+    diagramPromise ??= import('../../components/DiagramModal.svelte');
+    DiagramModal ??= (await diagramPromise).default;
+  }
+
   async function handleNewDiagram() {
-    // Ensure DiagramModal is loaded
-    if (!DiagramModal && diagramPromise) {
-      DiagramModal = (await diagramPromise).default;
-    }
+    await ensureDiagramModal();
     editingDiagram = null;
     showDiagramModal = true;
   }
 
   async function handleEditDiagram(diagram) {
-    // Ensure DiagramModal is loaded
-    if (!DiagramModal && diagramPromise) {
-      DiagramModal = (await diagramPromise).default;
-    }
+    await ensureDiagramModal();
     editingDiagram = diagram;
     showDiagramModal = true;
   }
@@ -362,7 +346,7 @@
   </div>
 {:else if item && workspace}
   <!-- Main Content -->
-  <div class="flex-1 min-h-0 {isModal ? '' : 'min-h-screen'}" style="background-color: var(--ds-surface-raised);">
+  <div data-testid="item-detail-ready" class="flex-1 min-h-0 {isModal ? '' : 'min-h-screen'}" style="background-color: var(--ds-surface-raised);">
     <div class="flex flex-col {isModal ? 'h-full' : 'min-h-screen'}">
       <!-- Content -->
       <div class="flex flex-1 relative {isModal ? 'h-full' : 'min-h-screen'} w-full overflow-hidden">
@@ -402,6 +386,8 @@
             {availableSubIssueTypes}
             {attachments}
             {diagrams}
+            {loadingDiagrams}
+            {diagramsLoaded}
             {manualActions}
             {canCreate}
             onsavefield={handleSaveField}
@@ -414,6 +400,7 @@
             onattachmentUploadFiles={(data) => onattachmentUploadFiles?.(data)}
             onattachmentDelete={(data) => onattachmentDelete?.(data)}
             onnewDiagram={handleNewDiagram}
+            onloadDiagrams={() => onloadDiagrams?.()}
             oneditDiagram={handleEditDiagram}
             ondeleteDiagram={handleDeleteDiagram}
             onexecuteAction={handleExecuteAction}
