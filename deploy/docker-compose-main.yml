@@ -30,6 +30,15 @@ services:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=${POSTGRES_DB}
+      # PostgreSQL connection budget per deployment:
+      #   replicas × (MAX_READ_CONNS + auxiliary pools) + headroom <= max_connections
+      # The optional SSH server adds a fixed five-connection auxiliary pool per
+      # replica. Windshift queries max_connections at startup and warns when the
+      # declared aggregate budget is unsafe. Keep POSTGRES_REPLICA_COUNT aligned
+      # with the actual number of Windshift containers sharing this database.
+      - MAX_READ_CONNS=${MAX_READ_CONNS:-30}
+      - POSTGRES_REPLICA_COUNT=${POSTGRES_REPLICA_COUNT:-1}
+      - POSTGRES_CONNECTION_HEADROOM=${POSTGRES_CONNECTION_HEADROOM:-10}
       - ALLOW_LOCAL_CONNECTIONS=true
       - CODING_AGENT_ENABLED=true
       - LOG_LEVEL=info
@@ -56,6 +65,8 @@ services:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=${POSTGRES_DB}
+      # PostgreSQL defaults max_connections to 100. If you override it, keep
+      # the Windshift budget above and PostgreSQL memory sizing in agreement.
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:

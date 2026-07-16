@@ -53,6 +53,13 @@ services:
       # - DB_PASSWORD=${POSTGRES_PASSWORD}
       # - DB_NAME=windshift
       # - DB_SSLMODE=disable
+      # PostgreSQL connection budget:
+      # replicas × (MAX_READ_CONNS + 5 when SSH is enabled) + headroom
+      # must not exceed PostgreSQL max_connections. Windshift validates this
+      # declared budget at startup and exposes it in Admin → Diagnostics.
+      # - MAX_READ_CONNS=30
+      # - POSTGRES_REPLICA_COUNT=1
+      # - POSTGRES_CONNECTION_HEADROOM=10
       # --- LLM (uncomment when using llm service) ---
       # - LLM_ENDPOINT=http://llm:8081
       # --- Coding agents (uncomment the windshift-runner service + coding-agent

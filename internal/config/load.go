@@ -44,6 +44,8 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 		sshHost               = flag.String("ssh-host", "localhost", "SSH server host")
 		sshKeyPath            = flag.String("ssh-key", ".ssh/windshift_host_key", "SSH host key file path")
 		maxReadConns          = flag.Int("max-read-conns", 30, "Max read connections (per pool; sum across pools × replicas must stay under Postgres max_connections)")
+		postgresReplicaCount  = flag.Int("postgres-replica-count", 1, "Number of Windshift replicas sharing PostgreSQL for aggregate pool budgeting")
+		postgresHeadroom      = flag.Int("postgres-connection-headroom", 10, "PostgreSQL connections reserved for migrations, administration, and other clients")
 		maxUserConcurrency    = flag.Int("max-user-concurrency", 16, "Max simultaneous in-flight /api requests per authenticated user (0 disables)")
 		maxWriteConns         = flag.Int("max-write-conns", 1, "Max write connections")
 		logLevel              = flag.String("log-level", "info", "Log level (debug, info, warn, error)")
@@ -187,10 +189,12 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 		AllowLocalConnections: *allowLocalConnections || parseBoolEnv("ALLOW_LOCAL_CONNECTIONS"),
 
 		DB: DBConfig{
-			PostgresConn:  pgConn,
-			SQLitePath:    sqlitePath,
-			MaxReadConns:  parseIntEnv("MAX_READ_CONNS", *maxReadConns),
-			MaxWriteConns: parseIntEnv("MAX_WRITE_CONNS", *maxWriteConns),
+			PostgresConn:       pgConn,
+			SQLitePath:         sqlitePath,
+			MaxReadConns:       parseIntEnv("MAX_READ_CONNS", *maxReadConns),
+			MaxWriteConns:      parseIntEnv("MAX_WRITE_CONNS", *maxWriteConns),
+			ReplicaCount:       parseIntEnv("POSTGRES_REPLICA_COUNT", *postgresReplicaCount),
+			ConnectionHeadroom: parseIntEnv("POSTGRES_CONNECTION_HEADROOM", *postgresHeadroom),
 		},
 		SSH: SSHConfig{
 			Enabled: sshEnabled,

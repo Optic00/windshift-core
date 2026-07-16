@@ -120,15 +120,17 @@ func main() {
 		// public-key auth + session/token lookups, so it gets a small fixed cap
 		// rather than cfg.DB.MaxReadConns — otherwise enabling SSH would double
 		// the process's draw against the server's max_connections.
-		const sshMaxReadConns = 5
 		if cfg.DB.PostgresConn != "" {
-			sshDB, err = database.NewDatabase("postgres", cfg.DB.PostgresConn, sshMaxReadConns, cfg.DB.MaxWriteConns)
+			sshDB, err = database.NewDatabase("postgres", cfg.DB.PostgresConn, config.SSHDatabaseMaxConnections, cfg.DB.MaxWriteConns)
 		} else {
-			sshDB, err = database.NewDatabase("sqlite3", cfg.DB.SQLitePath, sshMaxReadConns, cfg.DB.MaxWriteConns)
+			sshDB, err = database.NewDatabase("sqlite3", cfg.DB.SQLitePath, config.SSHDatabaseMaxConnections, cfg.DB.MaxWriteConns)
 		}
 		if err != nil {
 			slog.Error("failed to create SSH database connection", "error", err)
 		} else {
+			if registerErr := srv.RegisterDatabasePool("ssh", sshDB); registerErr != nil {
+				slog.Warn("failed to register SSH database pool for diagnostics", "error", registerErr)
+			}
 			sessionManager := auth.NewSessionManagerWithValidationCacheTTL(
 				sshDB,
 				enableHTTPS,

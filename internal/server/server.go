@@ -52,6 +52,8 @@ import (
 // internal/config/Load; this package only consumes the result.
 type Config = config.Config
 
+const databasePoolBudgetWarningPercent = 90
+
 // Server represents a windshift HTTP server instance.
 type Server struct {
 	config     Config
@@ -87,6 +89,8 @@ type Server struct {
 	jiraHostStopChan          chan struct{}
 	cleanupTicker             *time.Ticker
 	pluginManager             *plugins.Manager
+	databaseDiagRepo          *repository.DatabaseDiagnosticsRepository
+	databasePoolMonitor       *services.DatabasePoolMonitor
 
 	// Rate limiters that need cleanup
 	loginRateLimiter    *middleware.RateLimiter
@@ -162,6 +166,39 @@ func (s *Server) initialize() error {
 		}
 		slog.Info("SQLite database initialized", "max_read_conns", cfg.DB.MaxReadConns, "max_write_conns", cfg.DB.MaxWriteConns, "mode", "WAL")
 	}
+
+	s.databaseDiagRepo = repository.NewDatabaseDiagnosticsRepository(s.db)
+	if cfg.DB.PostgresConn != "" {
+		replicas := cfg.DB.ReplicaCount
+		if replicas <= 0 {
+			slog.Warn("invalid PostgreSQL replica count; capacity budget assumes one replica", "configured_replica_count", replicas)
+			replicas = 1
+		}
+		headroom := cfg.DB.ConnectionHeadroom
+		if headroom < 0 {
+			slog.Warn("invalid PostgreSQL connection headroom; capacity budget assumes zero", "configured_headroom", headroom)
+			headroom = 0
+		}
+		auxiliaryConnections := 0
+		if cfg.SSH.Enabled {
+			auxiliaryConnections = config.SSHDatabaseMaxConnections
+		}
+		budgetCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		budget, budgetErr := s.databaseDiagRepo.LoadPostgresCapacityBudget(
+			budgetCtx,
+			s.db,
+			replicas,
+			headroom,
+			auxiliaryConnections,
+		)
+		cancel()
+		if budgetErr != nil {
+			slog.Warn("unable to evaluate PostgreSQL connection capacity budget", "error", budgetErr)
+		} else {
+			logDatabaseCapacityBudget(budget)
+		}
+	}
+	s.databasePoolMonitor = services.NewDatabasePoolMonitor(s.databaseDiagRepo, services.DefaultDatabasePoolMonitorConfig())
 
 	if err = s.db.Initialize(); err != nil {
 		return fmt.Errorf("failed to initialize database: %w", err)
@@ -1368,7 +1405,7 @@ func (s *Server) initialize() error {
 			OAuthClients:     handlers.NewAdminOAuthClientHandler(s.db, tokenManager, permService),
 			Diagnostics: handlers.NewDiagnosticsHandler(
 				sessionManager,
-				repository.NewDatabaseDiagnosticsRepository(s.db),
+				s.databaseDiagRepo,
 				repository.NewActionRepository(s.db),
 				repository.NewWebhookDeliveryRepository(s.db),
 				repository.NewSchedulerRunRepository(s.db),
@@ -1663,6 +1700,7 @@ func (s *Server) Start() error {
 		return fmt.Errorf("failed to listen on %s: %w", addr, err)
 	}
 	s.listener = listener
+	s.databasePoolMonitor.Start()
 
 	// Get actual port (important for port 0)
 	tcpAddr := listener.Addr().(*net.TCPAddr) //nolint:errcheck // Type assertion is safe; net.Listen("tcp", ...) always returns *net.TCPAddr
@@ -1699,6 +1737,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	s.shuttingDown = true
 
 	slog.Info("starting graceful shutdown")
+	if s.databasePoolMonitor != nil {
+		s.databasePoolMonitor.Stop()
+	}
 
 	// Stop schedulers first - use safeClose helper to avoid panics on already-closed channels
 	safeClose := func(ch chan struct{}) {
@@ -1843,6 +1884,9 @@ func isAPIPath(p string) bool {
 
 // cleanup releases all resources.
 func (s *Server) cleanup() {
+	if s.databasePoolMonitor != nil {
+		s.databasePoolMonitor.Stop()
+	}
 	// Stop rate limiters
 	if s.loginRateLimiter != nil {
 		s.loginRateLimiter.Stop()
@@ -1913,6 +1957,40 @@ func (s *Server) cleanup() {
 	if s.db != nil {
 		_ = s.db.Close()
 	}
+}
+
+// RegisterDatabasePool makes a process-local auxiliary SQL pool visible to
+// admin diagnostics and threshold monitoring.
+func (s *Server) RegisterDatabasePool(name string, db database.Database) error {
+	if s.databaseDiagRepo == nil {
+		return fmt.Errorf("database diagnostics are not initialized")
+	}
+	return s.databaseDiagRepo.RegisterPool(name, db)
+}
+
+func logDatabaseCapacityBudget(budget repository.DatabaseCapacityBudget) {
+	args := []any{
+		"component", "database_pool",
+		"event", "database_pool_capacity_budget",
+		"server_max_connections", budget.ServerMaxConnections,
+		"main_connections_per_replica", budget.MainConnectionsPerReplica,
+		"auxiliary_connections_per_replica", budget.AuxiliaryConnectionsPerReplica,
+		"connections_per_replica", budget.ConnectionsPerReplica,
+		"replica_count", budget.ReplicaCount,
+		"headroom_connections", budget.HeadroomConnections,
+		"required_connections", budget.RequiredConnections,
+		"remaining_connections", budget.RemainingConnections,
+		"utilization_percent", budget.UtilizationPercent,
+	}
+	if !budget.Safe {
+		slog.Warn("declared PostgreSQL pool budget exceeds server capacity", args...)
+		return
+	}
+	if budget.UtilizationPercent >= databasePoolBudgetWarningPercent {
+		slog.Warn("declared PostgreSQL pool budget leaves little server headroom", args...)
+		return
+	}
+	slog.Info("PostgreSQL connection capacity budget", args...)
 }
 
 // BaseURL returns the server's base URL.

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -90,6 +92,7 @@ func (h *DiagnosticsHandler) GetSessionValidationCache(w http.ResponseWriter, _ 
 
 // DatabasePoolSnapshot is the HTTP representation of database pool state.
 type DatabasePoolSnapshot struct {
+	Name                   string  `json:"name"`
 	Driver                 string  `json:"driver"`
 	MaxOpenConnections     int     `json:"max_open_connections"`
 	OpenConnections        int     `json:"open_connections"`
@@ -105,6 +108,26 @@ type DatabasePoolSnapshot struct {
 	SaturationThresholdPct int     `json:"saturation_threshold_percent"`
 }
 
+type DatabaseCapacityBudgetSnapshot struct {
+	ServerMaxConnections           int     `json:"server_max_connections"`
+	MainConnectionsPerReplica      int     `json:"main_connections_per_replica"`
+	AuxiliaryConnectionsPerReplica int     `json:"auxiliary_connections_per_replica"`
+	ConnectionsPerReplica          int     `json:"connections_per_replica"`
+	ReplicaCount                   int     `json:"replica_count"`
+	HeadroomConnections            int     `json:"headroom_connections"`
+	RequiredConnections            int     `json:"required_connections"`
+	RemainingConnections           int     `json:"remaining_connections"`
+	UtilizationPercent             float64 `json:"utilization_percent"`
+	Safe                           bool    `json:"safe"`
+}
+
+type DatabaseProcessSnapshot struct {
+	Goroutines     int    `json:"goroutines"`
+	HeapAllocBytes uint64 `json:"heap_alloc_bytes"`
+	HeapInUseBytes uint64 `json:"heap_in_use_bytes"`
+	SystemBytes    uint64 `json:"system_bytes"`
+}
+
 const databasePoolSaturationThresholdPercent = 90
 
 // GetDatabasePool returns the live database/sql pool state so operators can
@@ -113,28 +136,80 @@ const databasePoolSaturationThresholdPercent = 90
 // GET /api/admin/diagnostics/database-pool
 func (h *DiagnosticsHandler) GetDatabasePool(w http.ResponseWriter, _ *http.Request) {
 	stats := h.databaseDiagRepo.PoolStats()
-	utilization := 0.0
-	if stats.MaxOpenConnections > 0 {
-		utilization = float64(stats.InUse) / float64(stats.MaxOpenConnections) * 100
+	pools := make([]DatabasePoolSnapshot, 0, len(stats))
+	healthy := true
+	var mainPool *DatabasePoolSnapshot
+	for _, poolStats := range stats {
+		utilization := 0.0
+		if poolStats.MaxOpenConnections > 0 {
+			utilization = float64(poolStats.InUse) / float64(poolStats.MaxOpenConnections) * 100
+		}
+		snapshot := DatabasePoolSnapshot{
+			Name:                   poolStats.Name,
+			Driver:                 poolStats.Driver,
+			MaxOpenConnections:     poolStats.MaxOpenConnections,
+			OpenConnections:        poolStats.OpenConnections,
+			InUse:                  poolStats.InUse,
+			Idle:                   poolStats.Idle,
+			WaitCount:              poolStats.WaitCount,
+			WaitDurationMillis:     poolStats.WaitDurationMillis,
+			MaxIdleClosed:          poolStats.MaxIdleClosed,
+			MaxIdleTimeClosed:      poolStats.MaxIdleTimeClosed,
+			MaxLifetimeClosed:      poolStats.MaxLifetimeClosed,
+			UtilizationPercent:     utilization,
+			Saturated:              utilization >= databasePoolSaturationThresholdPercent,
+			SaturationThresholdPct: databasePoolSaturationThresholdPercent,
+		}
+		if snapshot.Saturated {
+			healthy = false
+		}
+		pools = append(pools, snapshot)
+		if snapshot.Name == "main" {
+			copyOfSnapshot := snapshot
+			mainPool = &copyOfSnapshot
+		}
 	}
-	snapshot := DatabasePoolSnapshot{
-		Driver:                 stats.Driver,
-		MaxOpenConnections:     stats.MaxOpenConnections,
-		OpenConnections:        stats.OpenConnections,
-		InUse:                  stats.InUse,
-		Idle:                   stats.Idle,
-		WaitCount:              stats.WaitCount,
-		WaitDurationMillis:     stats.WaitDurationMillis,
-		MaxIdleClosed:          stats.MaxIdleClosed,
-		MaxIdleTimeClosed:      stats.MaxIdleTimeClosed,
-		MaxLifetimeClosed:      stats.MaxLifetimeClosed,
-		UtilizationPercent:     utilization,
-		Saturated:              utilization >= databasePoolSaturationThresholdPercent,
-		SaturationThresholdPct: databasePoolSaturationThresholdPercent,
+
+	var capacity *DatabaseCapacityBudgetSnapshot
+	if budget := h.databaseDiagRepo.CapacityBudget(); budget != nil {
+		capacity = &DatabaseCapacityBudgetSnapshot{
+			ServerMaxConnections:           budget.ServerMaxConnections,
+			MainConnectionsPerReplica:      budget.MainConnectionsPerReplica,
+			AuxiliaryConnectionsPerReplica: budget.AuxiliaryConnectionsPerReplica,
+			ConnectionsPerReplica:          budget.ConnectionsPerReplica,
+			ReplicaCount:                   budget.ReplicaCount,
+			HeadroomConnections:            budget.HeadroomConnections,
+			RequiredConnections:            budget.RequiredConnections,
+			RemainingConnections:           budget.RemainingConnections,
+			UtilizationPercent:             budget.UtilizationPercent,
+			Safe:                           budget.Safe,
+		}
+		if !capacity.Safe {
+			healthy = false
+		}
 	}
+
+	hostname, err := os.Hostname()
+	if err != nil || hostname == "" {
+		hostname = "unknown"
+	}
+	var memory runtime.MemStats
+	runtime.ReadMemStats(&memory)
 	respondJSONOK(w, map[string]any{
-		"pool":    snapshot,
-		"healthy": !snapshot.Saturated,
+		// pool is retained for existing load-test clients; new consumers should
+		// use pools so auxiliary process-local pools are visible too.
+		"pool":     mainPool,
+		"pools":    pools,
+		"capacity": capacity,
+		"process": DatabaseProcessSnapshot{
+			Goroutines:     runtime.NumGoroutine(),
+			HeapAllocBytes: memory.HeapAlloc,
+			HeapInUseBytes: memory.HeapInuse,
+			SystemBytes:    memory.Sys,
+		},
+		"instance":   hostname,
+		"sampled_at": time.Now().UTC(),
+		"healthy":    healthy,
 	})
 }
 

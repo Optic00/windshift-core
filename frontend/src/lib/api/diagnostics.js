@@ -147,3 +147,14 @@ export function getBriefingFailures(opts = {}) {
 export function getRunnerPools() {
   return fetchAPI('/admin/diagnostics/runner-pools');
 }
+
+/**
+ * Process-local SQL pool, PostgreSQL capacity-budget, and runtime state.
+ * The legacy `pool` field is the main pool; new consumers should use `pools`.
+ *
+ * @returns {Promise<{instance: string, sampled_at: string, healthy: boolean,
+ *   pools: Array<object>, capacity?: object, process: object}>}
+ */
+export function getDatabasePools() {
+  return fetchAPI('/admin/diagnostics/database-pool');
+}

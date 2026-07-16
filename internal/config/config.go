@@ -70,11 +70,17 @@ type Config struct {
 // DBConfig holds database connection + pool configuration.
 type DBConfig struct {
 	// PostgresConn, when non-empty, selects Postgres; otherwise SQLitePath is used.
-	PostgresConn  string
-	SQLitePath    string
-	MaxReadConns  int
-	MaxWriteConns int
+	PostgresConn       string
+	SQLitePath         string
+	MaxReadConns       int
+	MaxWriteConns      int
+	ReplicaCount       int
+	ConnectionHeadroom int
 }
+
+// SSHDatabaseMaxConnections is the fixed per-process auxiliary SQL pool used
+// for SSH authentication and session lookups.
+const SSHDatabaseMaxConnections = 5
 
 // SSHConfig holds the SSH TUI server configuration.
 type SSHConfig struct {
