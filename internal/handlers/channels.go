@@ -90,6 +90,12 @@ func (h *ChannelHandler) SetCredentialManager(cm *email.CredentialManager) {
 	h.credManager = cm
 }
 
+func (h *ChannelHandler) invalidateWebhookSubscriptions() {
+	if h.webhookSender != nil {
+		h.webhookSender.InvalidateSubscriptions()
+	}
+}
+
 // requireChannelManageAccess is defense-in-depth on top of the
 // RequireChannelManagement route middleware: writes 401 when unauthenticated,
 // 404 when the user is not a manager (matches the existence-hiding rule from
@@ -208,6 +214,7 @@ func (h *ChannelHandler) CreateChannel(w http.ResponseWriter, r *http.Request) {
 		channelID := channel.ID
 		h.auditor.Log(r, currentUser, logger.ActionChannelCreate, logger.ResourceChannel, &channelID, channel.Name)
 	}
+	h.invalidateWebhookSubscriptions()
 
 	respondJSONCreated(w, struct {
 		*models.Channel
@@ -340,6 +347,7 @@ func (h *ChannelHandler) UpdateChannel(w http.ResponseWriter, r *http.Request) {
 	if currentUser != nil {
 		h.auditor.Log(r, currentUser, logger.ActionChannelUpdate, logger.ResourceChannel, &id, updates.Name)
 	}
+	h.invalidateWebhookSubscriptions()
 
 	respondJSONOK(w, struct {
 		*models.Channel
@@ -393,6 +401,7 @@ func (h *ChannelHandler) DeleteChannel(w http.ResponseWriter, r *http.Request) {
 	if currentUser != nil {
 		h.auditor.Log(r, currentUser, logger.ActionChannelDelete, logger.ResourceChannel, &id, "")
 	}
+	h.invalidateWebhookSubscriptions()
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -487,6 +496,7 @@ func (h *ChannelHandler) ToggleChannel(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+	h.invalidateWebhookSubscriptions()
 
 	currentUser := utils.GetCurrentUser(r)
 	if currentUser != nil {
@@ -1078,6 +1088,7 @@ func (h *ChannelHandler) UpdateChannelConfig(w http.ResponseWriter, r *http.Requ
 		respondInternalError(w, r, err)
 		return
 	}
+	h.invalidateWebhookSubscriptions()
 
 	respondJSONOK(w, map[string]interface{}{
 		"success": true,

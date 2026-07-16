@@ -52,6 +52,12 @@ const (
 	// webhook delivery is best-effort: when this queue is full, a new event is
 	// rejected and counted instead of creating another goroutine or SQL waiter.
 	dispatchQueueCapacity = 256
+	// subscriptionCacheTTL bounds stale configuration when another replica or
+	// a plugin mutates channels without reaching this process's invalidator.
+	subscriptionCacheTTL = 30 * time.Second
+	// destinationConcurrency prevents one receiver from consuming every event
+	// worker while still allowing modest parallelism per channel.
+	destinationConcurrency = 2
 )
 
 type dispatchJob struct {
@@ -61,11 +67,30 @@ type dispatchJob struct {
 
 // DispatchStats is a snapshot of the bounded automatic webhook pipeline.
 type DispatchStats struct {
-	QueueDepth    int
-	QueueCapacity int
-	ActiveWorkers int64
-	Enqueued      uint64
-	Rejected      uint64
+	QueueDepth                int     `json:"queue_depth"`
+	QueueCapacity             int     `json:"queue_capacity"`
+	OldestEventAgeMillis      int64   `json:"oldest_event_age_ms"`
+	ActiveWorkers             int64   `json:"active_workers"`
+	Enqueued                  uint64  `json:"enqueued"`
+	Processed                 uint64  `json:"processed"`
+	Rejected                  uint64  `json:"rejected"`
+	Dropped                   uint64  `json:"dropped"`
+	Retried                   uint64  `json:"retried"`
+	FailedEvents              uint64  `json:"failed_events"`
+	SubscriptionCacheEntries  int     `json:"subscription_cache_entries"`
+	SubscriptionCacheHits     uint64  `json:"subscription_cache_hits"`
+	SubscriptionCacheMisses   uint64  `json:"subscription_cache_misses"`
+	SubscriptionInvalidations uint64  `json:"subscription_invalidations"`
+	DeliveryCount             uint64  `json:"delivery_count"`
+	AverageDeliveryLatencyMs  float64 `json:"average_delivery_latency_ms"`
+	MaximumDeliveryLatencyMs  int64   `json:"maximum_delivery_latency_ms"`
+	DatabaseTimeMillis        int64   `json:"database_time_ms"`
+}
+
+type subscriptionIndex struct {
+	byEvent   map[string][]WebhookConfig
+	entries   int
+	expiresAt time.Time
 }
 
 // WebhookSender handles sending webhooks to configured endpoints
@@ -80,28 +105,48 @@ type WebhookSender struct {
 	dispatchCancel context.CancelFunc
 	dispatchQueue  chan dispatchJob
 	dispatchJobFn  func(dispatchJob)
+	itemPayloadFn  func(context.Context, string, *models.Item) (json.RawMessage, error)
 	dispatchMu     sync.RWMutex
 	accepting      bool
 	dispatchWG     sync.WaitGroup
 	activeWorkers  atomic.Int64
 	enqueued       atomic.Uint64
 	rejected       atomic.Uint64
+	processed      atomic.Uint64
+	retried        atomic.Uint64
+	failedEvents   atomic.Uint64
+	oldestEventNS  atomic.Int64
+	databaseNanos  atomic.Int64
+	deliveryCount  atomic.Uint64
+	deliveryNanos  atomic.Int64
+	maxDeliveryNS  atomic.Int64
+
+	subscriptionMu            sync.RWMutex
+	subscriptions             *subscriptionIndex
+	subscriptionHits          atomic.Uint64
+	subscriptionMisses        atomic.Uint64
+	subscriptionInvalidations atomic.Uint64
+
+	destinationMu     sync.Mutex
+	destinationLimits map[int]chan struct{}
 }
 
 // NewWebhookSender creates a new webhook sender
 func NewWebhookSender(db database.Database) *WebhookSender {
 	dispatchCtx, dispatchCancel := context.WithCancel(context.Background())
 	w := &WebhookSender{
-		db:             db,
-		itemRepository: repository.NewItemRepository(db),
-		deliveryRepo:   repository.NewWebhookDeliveryRepository(db),
-		httpClient:     newSSRFSafeWebhookClient(30 * time.Second),
-		dispatchCtx:    dispatchCtx,
-		dispatchCancel: dispatchCancel,
-		dispatchQueue:  make(chan dispatchJob, dispatchQueueCapacity),
-		accepting:      true,
+		db:                db,
+		itemRepository:    repository.NewItemRepository(db),
+		deliveryRepo:      repository.NewWebhookDeliveryRepository(db),
+		httpClient:        newSSRFSafeWebhookClient(30 * time.Second),
+		dispatchCtx:       dispatchCtx,
+		dispatchCancel:    dispatchCancel,
+		dispatchQueue:     make(chan dispatchJob, dispatchQueueCapacity),
+		accepting:         true,
+		destinationLimits: make(map[int]chan struct{}),
 	}
 	w.dispatchJobFn = w.dispatchQueuedEvent
+	w.itemPayloadFn = w.itemPayloadJSON
 	w.startDispatchWorkers(dispatchWorkerCount)
 	return w
 }
@@ -114,7 +159,11 @@ func (w *WebhookSender) startDispatchWorkers(workerCount int) {
 			for job := range w.dispatchQueue {
 				w.activeWorkers.Add(1)
 				w.dispatchJobFn(job)
-				w.activeWorkers.Add(-1)
+				w.processed.Add(1)
+				remainingWorkers := w.activeWorkers.Add(-1)
+				if len(w.dispatchQueue) == 0 && remainingWorkers == 0 {
+					w.oldestEventNS.Store(0)
+				}
 			}
 		}()
 	}
@@ -124,25 +173,78 @@ func (w *WebhookSender) dispatchQueuedEvent(job dispatchJob) {
 	ctx, cancel := context.WithTimeout(w.dispatchCtx, 60*time.Second)
 	defer cancel()
 
+	dbStart := time.Now()
 	webhooks, err := w.GetMatchingWebhooks(ctx, job.event, &job.item)
+	w.databaseNanos.Add(time.Since(dbStart).Nanoseconds())
 	if err != nil {
+		w.failedEvents.Add(1)
 		logger.Get().Error("Failed to get matching webhooks", "error", err, "event", job.event, "item_id", job.item.ID)
 		return
 	}
+	if len(webhooks) == 0 {
+		return
+	}
 
+	dbStart = time.Now()
+	payloadFn := w.itemPayloadFn
+	if payloadFn == nil {
+		payloadFn = w.itemPayloadJSON
+	}
+	itemJSON, err := payloadFn(ctx, job.event, &job.item)
+	w.databaseNanos.Add(time.Since(dbStart).Nanoseconds())
+	if err != nil {
+		w.failedEvents.Add(1)
+		logger.Get().Error("Failed to hydrate webhook item payload", "error", err, "event", job.event, "item_id", job.item.ID)
+		for _, webhook := range webhooks {
+			w.recordPayloadFailure(ctx, webhook, job.event, job.item.ID, err)
+		}
+		return
+	}
 	for _, webhook := range webhooks {
-		w.sendWebhook(ctx, webhook, job.event, &job.item)
+		w.sendWebhookPayload(ctx, webhook, job.event, job.item.ID, itemJSON)
 	}
 }
 
 // Stats returns current queue pressure and lifetime admission counters.
 func (w *WebhookSender) Stats() DispatchStats {
+	oldestAge := int64(0)
+	if oldest := w.oldestEventNS.Load(); oldest > 0 {
+		oldestAge = time.Since(time.Unix(0, oldest)).Milliseconds()
+		if oldestAge < 0 {
+			oldestAge = 0
+		}
+	}
+	w.subscriptionMu.RLock()
+	cacheEntries := 0
+	if w.subscriptions != nil {
+		cacheEntries = w.subscriptions.entries
+	}
+	w.subscriptionMu.RUnlock()
+	deliveryCount := w.deliveryCount.Load()
+	averageDeliveryMillis := 0.0
+	if deliveryCount > 0 {
+		averageDeliveryMillis = float64(w.deliveryNanos.Load()) / float64(deliveryCount) / float64(time.Millisecond)
+	}
+	rejected := w.rejected.Load()
 	return DispatchStats{
-		QueueDepth:    len(w.dispatchQueue),
-		QueueCapacity: cap(w.dispatchQueue),
-		ActiveWorkers: w.activeWorkers.Load(),
-		Enqueued:      w.enqueued.Load(),
-		Rejected:      w.rejected.Load(),
+		QueueDepth:                len(w.dispatchQueue),
+		QueueCapacity:             cap(w.dispatchQueue),
+		OldestEventAgeMillis:      oldestAge,
+		ActiveWorkers:             w.activeWorkers.Load(),
+		Enqueued:                  w.enqueued.Load(),
+		Processed:                 w.processed.Load(),
+		Rejected:                  rejected,
+		Dropped:                   rejected,
+		Retried:                   w.retried.Load(),
+		FailedEvents:              w.failedEvents.Load(),
+		SubscriptionCacheEntries:  cacheEntries,
+		SubscriptionCacheHits:     w.subscriptionHits.Load(),
+		SubscriptionCacheMisses:   w.subscriptionMisses.Load(),
+		SubscriptionInvalidations: w.subscriptionInvalidations.Load(),
+		DeliveryCount:             deliveryCount,
+		AverageDeliveryLatencyMs:  averageDeliveryMillis,
+		MaximumDeliveryLatencyMs:  w.maxDeliveryNS.Load() / int64(time.Millisecond),
+		DatabaseTimeMillis:        w.databaseNanos.Load() / int64(time.Millisecond),
 	}
 }
 
@@ -177,6 +279,8 @@ func (w *WebhookSender) Shutdown(ctx context.Context) error {
 // recordDelivery persists a delivery row. Failures here are logged but never
 // propagated — recording must not block actual webhook dispatch.
 func (w *WebhookSender) recordDelivery(ctx context.Context, d *models.WebhookDelivery) {
+	start := time.Now()
+	defer func() { w.databaseNanos.Add(time.Since(start).Nanoseconds()) }()
 	if err := w.deliveryRepo.Insert(ctx, d); err != nil {
 		logger.Get().Warn("Failed to record webhook delivery", "error", err, "channel_id", d.ChannelID)
 	}
@@ -230,6 +334,7 @@ func (w *WebhookSender) DispatchEvent(event string, item *models.Item) {
 		return
 	}
 
+	now := time.Now()
 	job := dispatchJob{event: event, item: *item}
 	w.dispatchMu.RLock()
 	defer w.dispatchMu.RUnlock()
@@ -241,6 +346,7 @@ func (w *WebhookSender) DispatchEvent(event string, item *models.Item) {
 	select {
 	case w.dispatchQueue <- job:
 		w.enqueued.Add(1)
+		w.oldestEventNS.CompareAndSwap(0, now.UnixNano())
 	default:
 		w.rejected.Add(1)
 		logger.Get().Warn("Webhook event queue full; event rejected",
@@ -254,7 +360,54 @@ func (w *WebhookSender) DispatchEvent(event string, item *models.Item) {
 
 // GetMatchingWebhooks returns all webhooks that should fire for this event and item
 func (w *WebhookSender) GetMatchingWebhooks(ctx context.Context, event string, item *models.Item) ([]WebhookConfig, error) {
-	// Query all active webhook channels, including plugin webhooks
+	index, err := w.subscriptionIndex(ctx)
+	if err != nil {
+		return nil, err
+	}
+	candidates := index.byEvent[event]
+	matching := make([]WebhookConfig, 0, len(candidates))
+	for _, webhook := range candidates {
+		config := models.ChannelConfig{
+			WebhookScopeType:     webhook.ScopeType,
+			WebhookWorkspaceIDs:  webhook.WorkspaceIDs,
+			WebhookCollectionIDs: webhook.CollectionIDs,
+		}
+		if w.matchesScope(ctx, &config, item) {
+			matching = append(matching, webhook)
+		}
+	}
+	return matching, nil
+}
+
+// InvalidateSubscriptions makes local channel mutations visible to the next
+// event immediately. The TTL covers mutations performed by other replicas or
+// plugin lifecycle code that does not share this sender instance.
+func (w *WebhookSender) InvalidateSubscriptions() {
+	w.subscriptionMu.Lock()
+	w.subscriptions = nil
+	w.subscriptionMu.Unlock()
+	w.subscriptionInvalidations.Add(1)
+}
+
+func (w *WebhookSender) subscriptionIndex(ctx context.Context) (*subscriptionIndex, error) {
+	now := time.Now()
+	w.subscriptionMu.RLock()
+	current := w.subscriptions
+	if current != nil && now.Before(current.expiresAt) {
+		w.subscriptionMu.RUnlock()
+		w.subscriptionHits.Add(1)
+		return current, nil
+	}
+	w.subscriptionMu.RUnlock()
+
+	w.subscriptionMu.Lock()
+	defer w.subscriptionMu.Unlock()
+	if current = w.subscriptions; current != nil && time.Now().Before(current.expiresAt) {
+		w.subscriptionHits.Add(1)
+		return current, nil
+	}
+	w.subscriptionMisses.Add(1)
+
 	query := `
 		SELECT id, name, config, plugin_name, plugin_webhook_id
 		FROM channels
@@ -263,11 +416,14 @@ func (w *WebhookSender) GetMatchingWebhooks(ctx context.Context, event string, i
 
 	rows, err := w.db.QueryContext(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query webhooks: %w", err)
+		return nil, fmt.Errorf("failed to query webhook subscriptions: %w", err)
 	}
 	defer rows.Close()
 
-	var matchingWebhooks []WebhookConfig
+	index := &subscriptionIndex{
+		byEvent:   make(map[string][]WebhookConfig),
+		expiresAt: time.Now().Add(subscriptionCacheTTL),
+	}
 	for rows.Next() {
 		var channelID int
 		var channelName string
@@ -288,16 +444,6 @@ func (w *WebhookSender) GetMatchingWebhooks(ctx context.Context, event string, i
 
 		// Skip if auto trigger is disabled
 		if !config.WebhookAutoTrigger {
-			continue
-		}
-
-		// Skip if event is not subscribed
-		if !w.isEventSubscribed(event, config.WebhookSubscribedEvents) {
-			continue
-		}
-
-		// Check scope matching
-		if !w.matchesScope(ctx, &config, item) {
 			continue
 		}
 
@@ -324,20 +470,16 @@ func (w *WebhookSender) GetMatchingWebhooks(ctx context.Context, event string, i
 			webhook.PluginWebhookID = *pluginWebhookID
 		}
 
-		matchingWebhooks = append(matchingWebhooks, webhook)
-	}
-
-	return matchingWebhooks, nil
-}
-
-// isEventSubscribed checks if the event is in the subscribed events list
-func (w *WebhookSender) isEventSubscribed(event string, subscribedEvents []string) bool {
-	for _, e := range subscribedEvents {
-		if e == event {
-			return true
+		for _, subscribedEvent := range webhook.SubscribedEvents {
+			index.byEvent[subscribedEvent] = append(index.byEvent[subscribedEvent], webhook)
 		}
+		index.entries++
 	}
-	return false
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate webhook subscriptions: %w", err)
+	}
+	w.subscriptions = index
+	return index, nil
 }
 
 // matchesScope checks if the item matches the webhook's scope configuration.
@@ -420,41 +562,91 @@ func isPrivateIP(ip net.IP) bool {
 	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified()
 }
 
-// sendWebhook sends the webhook payload to the configured URL or plugin.
-//
-// Records one delivery row for every attempt — success, non-2xx response, hard
-// error, or plugin dispatch — so the admin Diagnostics page can surface health
-// per channel. Recording errors are logged but do not block dispatch.
-func (w *WebhookSender) sendWebhook(parentCtx context.Context, webhook WebhookConfig, event string, item *models.Item) {
+func (w *WebhookSender) itemPayloadJSON(ctx context.Context, event string, item *models.Item) (json.RawMessage, error) {
+	fullItem, err := w.itemRepository.FindByIDWithDetailsContext(ctx, item.ID)
+	if err != nil {
+		// Deleted items no longer exist by the time the asynchronous worker runs.
+		// The mutation path supplied the best available snapshot, so serialize it
+		// instead of dropping every item.deleted delivery.
+		if event != "item.deleted" {
+			return nil, err
+		}
+		fullItem = item
+	}
+	itemResponse := dto.MapItemToResponse(fullItem, "")
+	itemJSON, err := json.Marshal(itemResponse)
+	if err != nil {
+		return nil, fmt.Errorf("serialize webhook item: %w", err)
+	}
+	return itemJSON, nil
+}
+
+func (w *WebhookSender) recordPayloadFailure(ctx context.Context, webhook WebhookConfig, event string, itemID int, err error) {
+	delivery := &models.WebhookDelivery{
+		ChannelID:    webhook.ChannelID,
+		ItemID:       &itemID,
+		EventType:    event,
+		AttemptType:  attemptTypeFor(event),
+		Transport:    "http",
+		RequestedAt:  time.Now().UTC(),
+		ErrorMessage: "failed to load item: " + err.Error(),
+	}
+	if webhook.PluginName != "" {
+		delivery.Transport = "plugin"
+	}
+	w.recordDelivery(ctx, delivery)
+}
+
+func (w *WebhookSender) destinationLimit(channelID int) chan struct{} {
+	w.destinationMu.Lock()
+	defer w.destinationMu.Unlock()
+	if w.destinationLimits == nil {
+		w.destinationLimits = make(map[int]chan struct{})
+	}
+	limit := w.destinationLimits[channelID]
+	if limit == nil {
+		limit = make(chan struct{}, destinationConcurrency)
+		w.destinationLimits[channelID] = limit
+	}
+	return limit
+}
+
+func (w *WebhookSender) observeDeliveryLatency(elapsed time.Duration) {
+	nanos := elapsed.Nanoseconds()
+	w.deliveryCount.Add(1)
+	w.deliveryNanos.Add(nanos)
+	for {
+		current := w.maxDeliveryNS.Load()
+		if nanos <= current || w.maxDeliveryNS.CompareAndSwap(current, nanos) {
+			return
+		}
+	}
+}
+
+// sendWebhookPayload sends one already-hydrated item payload to a configured
+// URL or plugin. Hydration happens once per event, not once per destination.
+func (w *WebhookSender) sendWebhookPayload(parentCtx context.Context, webhook WebhookConfig, event string, itemID int, itemJSON json.RawMessage) {
+	deliveryStart := time.Now()
+	defer func() { w.observeDeliveryLatency(time.Since(deliveryStart)) }()
+
 	ctx, cancel := context.WithTimeout(parentCtx, 30*time.Second)
 	defer cancel()
+	limit := w.destinationLimit(webhook.ChannelID)
+	select {
+	case limit <- struct{}{}:
+		defer func() { <-limit }()
+	case <-ctx.Done():
+		w.recordPayloadFailure(ctx, webhook, event, itemID, ctx.Err())
+		return
+	}
 
 	delivery := &models.WebhookDelivery{
 		ChannelID:   webhook.ChannelID,
-		ItemID:      &item.ID,
+		ItemID:      &itemID,
 		EventType:   event,
 		AttemptType: attemptTypeFor(event),
 		Transport:   "http",
 		RequestedAt: time.Now().UTC(),
-	}
-
-	// Get full item details for payload
-	fullItem, err := w.itemRepository.FindByIDWithDetails(item.ID)
-	if err != nil {
-		logger.Get().Error("Failed to get item details for webhook", "error", err, "item_id", item.ID)
-		delivery.ErrorMessage = "failed to load item: " + err.Error()
-		w.recordDelivery(ctx, delivery)
-		return
-	}
-
-	// Serialize item using REST API v1 DTO for consistent payload structure
-	itemResponse := dto.MapItemToResponse(fullItem, "")
-	itemJSON, err := json.Marshal(itemResponse)
-	if err != nil {
-		logger.Get().Error("Failed to serialize item for webhook", "error", err, "item_id", item.ID)
-		delivery.ErrorMessage = "failed to serialize item: " + err.Error()
-		w.recordDelivery(ctx, delivery)
-		return
 	}
 
 	// Build payload
@@ -502,7 +694,7 @@ func (w *WebhookSender) sendWebhook(parentCtx context.Context, webhook WebhookCo
 				"plugin", webhook.PluginName,
 				"handler", webhook.PluginHandler,
 				"event", event,
-				"item_id", item.ID,
+				"item_id", itemID,
 			)
 			delivery.Success = true
 		}
@@ -629,7 +821,9 @@ func (w *WebhookSender) TriggerManually(ctx context.Context, webhookID, itemID i
 	}
 
 	// Get item
-	item, err := w.itemRepository.FindByIDWithDetails(itemID)
+	dbStart := time.Now()
+	item, err := w.itemRepository.FindByIDWithDetailsContext(ctx, itemID)
+	w.databaseNanos.Add(time.Since(dbStart).Nanoseconds())
 	if err != nil {
 		return fmt.Errorf("item not found: %w", err)
 	}
@@ -649,7 +843,11 @@ func (w *WebhookSender) TriggerManually(ctx context.Context, webhookID, itemID i
 	}
 
 	// Send synchronously for manual triggers
-	w.sendWebhook(ctx, webhook, "manual", item)
+	itemJSON, err := json.Marshal(dto.MapItemToResponse(item, ""))
+	if err != nil {
+		return fmt.Errorf("serialize webhook item: %w", err)
+	}
+	w.sendWebhookPayload(ctx, webhook, "manual", item.ID, itemJSON)
 
 	return nil
 }
@@ -737,6 +935,8 @@ func (w *WebhookSender) generateSignature(payload []byte, secret string) string 
 
 // updateChannelActivity updates the last_activity timestamp for a channel
 func (w *WebhookSender) updateChannelActivity(ctx context.Context, channelID int, _ bool) {
+	start := time.Now()
+	defer func() { w.databaseNanos.Add(time.Since(start).Nanoseconds()) }()
 	query := "UPDATE channels SET last_activity = ? WHERE id = ?"
 	_, _ = w.db.ExecWriteContext(ctx, query, time.Now(), channelID)
 }

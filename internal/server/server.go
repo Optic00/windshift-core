@@ -1417,6 +1417,7 @@ func (s *Server) initialize() error {
 				logger.NewAuditor(s.db),
 				repository.NewRunnerRepository(s.db),
 				repository.NewAgentRunRepository(s.db),
+				s.webhookSender,
 			),
 			AgentSecurity: handlers.NewAgentSecurityHandler(
 				agentSecurityRepo,

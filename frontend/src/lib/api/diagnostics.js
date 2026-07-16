@@ -51,6 +51,14 @@ export function getWebhookStats(opts = {}) {
 }
 
 /**
+ * Process-local bounded webhook dispatch pipeline state (admin-only).
+ * @returns {Promise<object>}
+ */
+export function getWebhookDispatchStats() {
+  return fetchAPI('/admin/diagnostics/webhook-dispatch');
+}
+
+/**
  * Manually delete webhook delivery rows older than the given duration.
  * @param {string} olderThan - e.g. "30d", "168h"
  * @returns {Promise<{deleted: number}>}

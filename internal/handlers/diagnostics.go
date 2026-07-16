@@ -16,6 +16,7 @@ import (
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/utils"
+	"windshift/internal/webhook"
 )
 
 // DiagnosticsHandler exposes admin-only system diagnostics endpoints.
@@ -36,6 +37,7 @@ type DiagnosticsHandler struct {
 	auditor          *logger.Auditor
 	runnerRepo       *repository.RunnerRepository
 	agentRunRepo     *repository.AgentRunRepository
+	webhookSender    *webhook.WebhookSender
 }
 
 // NewDiagnosticsHandler creates a new diagnostics handler.
@@ -52,6 +54,7 @@ func NewDiagnosticsHandler(
 	auditor *logger.Auditor,
 	runnerRepo *repository.RunnerRepository,
 	agentRunRepo *repository.AgentRunRepository,
+	webhookSender *webhook.WebhookSender,
 ) *DiagnosticsHandler {
 	return &DiagnosticsHandler{
 		sessionManager:   sessionManager,
@@ -66,7 +69,20 @@ func NewDiagnosticsHandler(
 		auditor:          auditor,
 		runnerRepo:       runnerRepo,
 		agentRunRepo:     agentRunRepo,
+		webhookSender:    webhookSender,
 	}
+}
+
+// GetWebhookDispatch returns process-local bounded-pipeline pressure and
+// lifetime counters. Delivery history remains on the persisted endpoints.
+//
+// GET /api/admin/diagnostics/webhook-dispatch
+func (h *DiagnosticsHandler) GetWebhookDispatch(w http.ResponseWriter, _ *http.Request) {
+	if h.webhookSender == nil {
+		respondJSONOK(w, webhook.DispatchStats{})
+		return
+	}
+	respondJSONOK(w, h.webhookSender.Stats())
 }
 
 // GetSessionValidationCache returns local, identifier-free validation cache

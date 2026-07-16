@@ -4,6 +4,7 @@
   import DataTable from '../../components/DataTable.svelte';
   import {
     getWebhookDeliveries,
+    getWebhookDispatchStats,
     getWebhookStats,
     purgeWebhookDeliveries,
   } from '../../api/diagnostics.js';
@@ -11,7 +12,7 @@
   import DiagnosticsSection from './DiagnosticsSection.svelte';
   import { formatLatencyMs, formatUtcTime, runDiagnosticsPurge, successSummary, truncateText } from './format-utils.js';
 
-  let view = $state({ loading: true, error: null, recent: [], stats: [] });
+  let view = $state({ loading: true, error: null, recent: [], stats: [], dispatch: null });
   let lastRefreshed = $state(null);
   let purgeOlderThan = $state('30d');
   let purging = $state(false);
@@ -19,14 +20,16 @@
   async function load() {
     view = { ...view, loading: true, error: null };
     try {
-      const recentPromise = getWebhookDeliveries({ since: '24h', limit: 50 });
-      const statsPromise = getWebhookStats({ since: '24h' });
-      const recent = await recentPromise;
-      const stats = await statsPromise;
+      const [recent, stats, dispatch] = await Promise.all([
+        getWebhookDeliveries({ since: '24h', limit: 50 }),
+        getWebhookStats({ since: '24h' }),
+        getWebhookDispatchStats(),
+      ]);
       view.loading = false;
       view.error = null;
       view.recent = recent ?? [];
       view.stats = stats ?? [];
+      view.dispatch = dispatch ?? null;
       lastRefreshed = new Date();
     } catch (err) {
       view.loading = false;
@@ -122,6 +125,43 @@
           color="purple"
         />
       </div>
+    </div>
+
+    <div>
+      <h4 class="text-sm font-semibold mb-2" style="color: var(--ds-text);">Dispatch pipeline</h4>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard
+          icon={IconActivity}
+          label="Queue depth"
+          value={`${view.dispatch?.queue_depth ?? 0}/${view.dispatch?.queue_capacity ?? 0}`}
+          color={(view.dispatch?.queue_depth ?? 0) > 0 ? 'orange' : 'green'}
+        />
+        <StatCard
+          icon={IconCheck}
+          label="Active workers"
+          value={String(view.dispatch?.active_workers ?? 0)}
+          color="blue"
+        />
+        <StatCard
+          icon={IconX}
+          label="Dropped events"
+          value={String(view.dispatch?.dropped ?? 0)}
+          color={(view.dispatch?.dropped ?? 0) > 0 ? 'orange' : 'green'}
+        />
+        <StatCard
+          icon={IconClock}
+          label="Oldest event"
+          value={formatLatencyMs(view.dispatch?.oldest_event_age_ms ?? 0)}
+          color={(view.dispatch?.oldest_event_age_ms ?? 0) > 5000 ? 'orange' : 'purple'}
+        />
+      </div>
+      <p class="text-xs mt-2" style="color: var(--ds-text-subtle);">
+        Processed {view.dispatch?.processed ?? 0} of {view.dispatch?.enqueued ?? 0} accepted events;
+        {view.dispatch?.failed_events ?? 0} event failures, {view.dispatch?.retried ?? 0} retries.
+        Subscription index: {view.dispatch?.subscription_cache_entries ?? 0} channels,
+        {view.dispatch?.subscription_cache_hits ?? 0} hits / {view.dispatch?.subscription_cache_misses ?? 0} misses.
+        Dispatch DB time: {formatLatencyMs(view.dispatch?.database_time_ms ?? 0)}.
+      </p>
     </div>
 
     <div>
