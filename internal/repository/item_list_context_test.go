@@ -79,6 +79,55 @@ func TestMeasuredItemReadsHonorCancellation(t *testing.T) {
 	}
 }
 
+func TestCanceledQueryReturnsPoolConnection(t *testing.T) {
+	db := newItemListTestDB(t, "canceled-query-connection")
+	sqlDB := db.GetDB()
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		var sum int64
+		done <- db.QueryRowContext(ctx, `
+			SELECT SUM(value) FROM (
+				WITH RECURSIVE counter(value) AS (
+					VALUES(1)
+					UNION ALL
+					SELECT value + 1 FROM counter WHERE value < 1000000000
+				)
+				SELECT value FROM counter
+			)
+		`).Scan(&sum)
+	}()
+
+	deadline := time.Now().Add(time.Second)
+	for sqlDB.Stats().InUse == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if sqlDB.Stats().InUse != 1 {
+		t.Fatal("slow query did not acquire the only pool connection")
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("query error = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("canceled query did not return promptly")
+	}
+
+	deadline = time.Now().Add(time.Second)
+	for sqlDB.Stats().InUse != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if stats := sqlDB.Stats(); stats.InUse != 0 {
+		t.Fatalf("pool in-use connections = %d after cancellation, want 0", stats.InUse)
+	}
+}
+
 func TestFindAllWithDetailsUsesLeanCountQuery(t *testing.T) {
 	db := newItemListTestDB(t, "item-list-lean-count")
 
