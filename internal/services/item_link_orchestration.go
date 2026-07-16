@@ -392,8 +392,12 @@ func (s *ItemLinkService) listLinksForItemsWithChecks(userID int, itemIDs []int,
 	if err != nil {
 		return nil, err
 	}
+	incomingFilter := "target_type = ? AND target_id IN (" + ph + ")"
+	if !includeCustomFields {
+		incomingFilter += " AND il.custom_field_id IS NULL"
+	}
 	incoming, err := s.getLinksWhere(
-		"target_type = ? AND target_id IN ("+ph+")",
+		incomingFilter,
 		append([]interface{}{"item"}, idArgs...)...)
 	if err != nil {
 		return nil, err

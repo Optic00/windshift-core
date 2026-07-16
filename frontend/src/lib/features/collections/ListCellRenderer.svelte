@@ -58,9 +58,8 @@
       : [],
   );
 
-  async function reloadFieldLinks() {
-    collectionFieldLinks.invalidate(item.id);
-    await collectionFieldLinks.loadForItems([item.id]);
+  async function reloadFieldLinks(change) {
+    await collectionFieldLinks.refreshForItems([item.id, ...(change?.itemIds || [])]);
   }
 
   // Get custom field value from item

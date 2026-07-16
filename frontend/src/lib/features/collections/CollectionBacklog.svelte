@@ -19,7 +19,7 @@
   import { backlogStore, workspaceDataStore } from '../../stores/index.js';
   import { useWorkItemPoller } from '../../composables/useWorkItemPoller.svelte.js';
   import { successToast, warningToast } from '../../stores/toasts.svelte.js';
-  import { getStatusCategory } from '../../utils/statusColors.js';
+  import { getIncompleteIterationItems } from './iterationCompletion.js';
   import CompleteIterationDialog from '../../dialogs/CompleteIterationDialog.svelte';
 
   let { workspaceId, collectionId = null } = $props();
@@ -245,10 +245,7 @@
   function completeIteration(iteration) {
     // Compute incomplete items for this iteration
     const iterationItems = backlogItems.filter(i => i.iteration_id === iteration.id);
-    const incomplete = iterationItems.filter(i => {
-      const cat = getStatusCategory(i.status_name, statuses, statusCategories);
-      return !cat || cat.name !== 'Done';
-    });
+    const incomplete = getIncompleteIterationItems(iterationItems, statuses, statusCategories);
 
     iterationBeingCompleted = { ...iteration, _totalItems: iterationItems.length };
     iterationIncompleteItems = incomplete;

@@ -60,6 +60,35 @@ describe('CollectionFieldLinksStore', () => {
     ]);
   });
 
+  it('refreshes both item rows affected by a field-link mutation', async () => {
+    await store.loadForItems([10, 20]);
+    api.links.getForItems.mockResolvedValue({
+      10: {
+        outgoing: [
+          { id: 4, custom_field_id: 7, source_type: 'item', source_id: 10, target_id: 20 },
+        ],
+        incoming: [],
+      },
+      20: {
+        outgoing: [],
+        incoming: [
+          { id: 4, custom_field_id: 7, source_id: 10, target_type: 'item', target_id: 20 },
+        ],
+      },
+    });
+
+    await store.refreshForItems([10, 20, 20]);
+
+    expect(api.links.getForItems).toHaveBeenCalledTimes(2);
+    expect(api.links.getForItems).toHaveBeenLastCalledWith([10, 20], {
+      includeCustomFields: true,
+    });
+    expect(store.getFieldLinks(10, 7)).toEqual([expect.objectContaining({ id: 4 })]);
+    expect(store.getFieldLinks(20, 99, '{"mirror_of_field_id":7}')).toEqual([
+      expect.objectContaining({ id: 4 }),
+    ]);
+  });
+
   it('does not restore a previous account response after reset', async () => {
     let resolveOldRequest;
     api.links.getForItems.mockReturnValueOnce(

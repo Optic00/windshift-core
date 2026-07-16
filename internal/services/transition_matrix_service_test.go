@@ -169,6 +169,7 @@ func TestTransitionMatrixFallbacksApplicabilityAndFreshness(t *testing.T) {
 		`INSERT INTO workflows (name, description, is_default) VALUES ('Global fallback workflow', '', true)`)
 	insertTransitionMatrixRow(t, db, `INSERT INTO workflow_transitions (workflow_id, from_status_id, to_status_id) VALUES (?, ?, ?)`, defaultWorkflow, statusA, statusB)
 	insertTransitionMatrixRow(t, db, `INSERT INTO workflow_transitions (workflow_id, from_status_id, to_status_id) VALUES (?, ?, ?)`, overrideWorkflow, statusA, statusC)
+	insertTransitionMatrixRow(t, db, `INSERT INTO workflow_transitions (workflow_id, from_status_id, to_status_id) VALUES (?, ?, ?)`, overrideWorkflow, statusC, statusD)
 	insertTransitionMatrixRow(t, db, `INSERT INTO workflow_transitions (workflow_id, from_status_id, to_status_id) VALUES (?, ?, ?)`, globalWorkflow, statusA, statusD)
 
 	defaultType := insertTransitionMatrixRow(t, db, `INSERT INTO item_types (name, description) VALUES ('Fallback default type', '')`)
@@ -201,6 +202,7 @@ func TestTransitionMatrixFallbacksApplicabilityAndFreshness(t *testing.T) {
 	}
 	assertTransitionDestination(t, matrix, defaultType, statusA, statusB)
 	assertTransitionDestination(t, matrix, overrideType, statusA, statusC)
+	assertTransitionDestination(t, matrix, overrideType, statusC, statusD)
 	if _, exists := matrix.ByItemType[unlinkedType]; exists {
 		t.Fatalf("unlinked item type %d was included", unlinkedType)
 	}

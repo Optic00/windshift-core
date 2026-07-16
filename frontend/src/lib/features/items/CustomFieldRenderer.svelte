@@ -674,7 +674,7 @@
         {readonly}
         {disabled}
         links={fieldLinks}
-        onChanged={() => onFieldLinksChanged?.()}
+        onChanged={(change) => onFieldLinksChanged?.(change)}
       />
     {:else if field.field_type === 'combobox'}
       <PersonalLabelCombobox

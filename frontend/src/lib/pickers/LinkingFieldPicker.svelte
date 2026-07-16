@@ -2,7 +2,6 @@
   import { onMount } from 'svelte';
   import { api } from '../api.js';
   import { X, Plus, Search, Link2 } from '@lucide/svelte';
-  import { navigate } from '../router.js';
   import { errorToast } from '../stores/toasts.svelte.js';
 
   let {
@@ -81,20 +80,31 @@
     try {
       const sourceType = 'item';
       const targetType = result.type || 'item';
+      const sourceId = isMirror ? result.id : itemId;
+      const targetId = isMirror ? itemId : result.id;
 
       await api.links.create({
         link_type_id: opts.link_type_id,
         source_type: isMirror ? targetType : sourceType,
-        source_id: isMirror ? result.id : itemId,
+        source_id: sourceId,
         target_type: isMirror ? sourceType : targetType,
-        target_id: isMirror ? itemId : result.id,
+        target_id: targetId,
         custom_field_id: fieldId
       });
 
       searchQuery = '';
       searchResults = [];
       showSearch = false;
-      if (onChanged) await onChanged();
+      if (onChanged) {
+        await onChanged({
+          itemIds: affectedItemIds({
+            source_type: isMirror ? targetType : sourceType,
+            source_id: sourceId,
+            target_type: isMirror ? sourceType : targetType,
+            target_id: targetId
+          })
+        });
+      }
       else await loadLinks();
     } catch (e) {
       console.error('Failed to add link:', e);
@@ -104,13 +114,21 @@
 
   async function removeLink(linkId) {
     try {
+      const removedLink = links.find(link => Number(link.id) === Number(linkId));
       await api.links.delete(linkId);
-      if (onChanged) await onChanged();
+      if (onChanged) await onChanged({ itemIds: affectedItemIds(removedLink) });
       else await loadLinks();
     } catch (e) {
       console.error('Failed to remove link:', e);
       errorToast(e?.message || 'Failed to remove link');
     }
+  }
+
+  function affectedItemIds(link) {
+    const ids = new Set([Number(itemId)]);
+    if (link?.source_type === 'item') ids.add(Number(link.source_id));
+    if (link?.target_type === 'item') ids.add(Number(link.target_id));
+    return [...ids].filter(id => Number.isInteger(id) && id > 0);
   }
 
   function getLinkDisplayItem(link) {
@@ -122,7 +140,7 @@
         typeIcon: link.source_item_type_icon,
         typeColor: link.source_item_type_color,
         typeName: link.source_item_type_name,
-        workspaceKey: link.source_workspace_key
+        workspaceId: link.source_workspace_id
       };
     }
     return {
@@ -132,7 +150,7 @@
       typeIcon: link.target_item_type_icon,
       typeColor: link.target_item_type_color,
       typeName: link.target_item_type_name,
-      workspaceKey: link.target_workspace_key
+      workspaceId: link.target_workspace_id
     };
   }
 </script>
@@ -150,9 +168,9 @@
           {#if displayItem.typeColor}
             <span class="w-2 h-2 rounded-full flex-shrink-0" style="background: {displayItem.typeColor};"></span>
           {/if}
-          {#if displayItem.type === 'item' && displayItem.workspaceKey}
+          {#if displayItem.type === 'item' && displayItem.workspaceId}
             <a
-              href={`/workspaces/${displayItem.workspaceKey}/items/${displayItem.id}`}
+              href={`/workspaces/${displayItem.workspaceId}/items/${displayItem.id}`}
               class="hover:underline cursor-pointer truncate max-w-[180px] no-underline"
               style="color: inherit;"
               title={displayItem.title}

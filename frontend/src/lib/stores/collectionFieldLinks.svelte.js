@@ -50,6 +50,12 @@ export class CollectionFieldLinksStore {
     await Promise.all([...waits, ...chunks.map((chunk) => this.#loadChunk(chunk))]);
   }
 
+  async refreshForItems(itemIds) {
+    const ids = [...new Set((itemIds || []).map(Number).filter((id) => id > 0))];
+    for (const id of ids) this.invalidate(id);
+    await this.loadForItems(ids);
+  }
+
   invalidate(itemId) {
     const id = Number(itemId);
     if (!id) return;

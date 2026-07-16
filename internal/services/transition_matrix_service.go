@@ -116,7 +116,7 @@ func (s *TransitionMatrixService) load(ctx context.Context, workspaceID int) (*W
 
 	workflowIDs := uniqueSortedWorkflowIDs(itemTypeWorkflows)
 	queryStarted = time.Now()
-	statuses, err := s.loadStatuses(ctx, workspaceID)
+	statuses, err := s.loadStatuses(ctx, workflowIDs)
 	matrix.QueryDuration += time.Since(queryStarted)
 	matrix.SQLCount++
 	if err != nil {
@@ -202,26 +202,30 @@ func (s *TransitionMatrixService) loadItemTypeWorkflows(ctx context.Context, wor
 	return resolved, isPersonal, nil
 }
 
-func (s *TransitionMatrixService) loadStatuses(ctx context.Context, workspaceID int) ([]StatusTransitionOption, error) {
-	rows, err := s.db.QueryContext(ctx, `
+func (s *TransitionMatrixService) loadStatuses(ctx context.Context, workflowIDs []int) ([]StatusTransitionOption, error) {
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(workflowIDs)), ",")
+	query := fmt.Sprintf(`
 		SELECT s.id, s.name, sc.color
 		FROM statuses s
 		LEFT JOIN status_categories sc ON sc.id = s.category_id
 		WHERE NOT EXISTS (
-			SELECT 1 FROM workspace_configuration_sets wcs
-			JOIN configuration_sets cs ON cs.id = wcs.configuration_set_id
-			JOIN workflow_transitions wt ON wt.workflow_id = cs.workflow_id
-			WHERE wcs.workspace_id = ?
+			SELECT 1 FROM workflow_transitions wt
+			WHERE wt.workflow_id IN (%s)
 		)
 		OR EXISTS (
-			SELECT 1 FROM workspace_configuration_sets wcs
-			JOIN configuration_sets cs ON cs.id = wcs.configuration_set_id
-			JOIN workflow_transitions wt ON wt.workflow_id = cs.workflow_id
-			WHERE wcs.workspace_id = ?
+			SELECT 1 FROM workflow_transitions wt
+			WHERE wt.workflow_id IN (%s)
 			  AND (wt.from_status_id = s.id OR wt.to_status_id = s.id)
 		)
 		ORDER BY s.category_id, s.name, s.id
-	`, workspaceID, workspaceID)
+	`, placeholders, placeholders)
+	args := make([]any, 0, len(workflowIDs)*2)
+	for range 2 {
+		for _, workflowID := range workflowIDs {
+			args = append(args, workflowID)
+		}
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("load transition-matrix statuses: %w", err)
 	}
