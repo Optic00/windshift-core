@@ -16,10 +16,10 @@ func RegisterPlanningRoutes(deps *Deps) {
 
 	// Milestone Category endpoints
 	api.HandleH("GET /milestone-categories", auth(http.HandlerFunc(deps.Planning.MilestoneCategory.GetAll)))
-	api.HandleH("POST /milestone-categories", auth(http.HandlerFunc(deps.Planning.MilestoneCategory.Create)))
+	api.HandleH("POST /milestone-categories", auth(globalMilestoneManage(http.HandlerFunc(deps.Planning.MilestoneCategory.Create))))
 	api.HandleH("GET /milestone-categories/{id}", auth(http.HandlerFunc(deps.Planning.MilestoneCategory.Get)))
-	api.HandleH("PUT /milestone-categories/{id}", auth(http.HandlerFunc(deps.Planning.MilestoneCategory.Update)))
-	api.HandleH("DELETE /milestone-categories/{id}", auth(http.HandlerFunc(deps.Planning.MilestoneCategory.Delete)))
+	api.HandleH("PUT /milestone-categories/{id}", auth(globalMilestoneManage(http.HandlerFunc(deps.Planning.MilestoneCategory.Update))))
+	api.HandleH("DELETE /milestone-categories/{id}", auth(globalMilestoneManage(http.HandlerFunc(deps.Planning.MilestoneCategory.Delete))))
 
 	// Milestone endpoints
 	api.HandleH("GET /milestones", auth(http.HandlerFunc(deps.Planning.Milestone.GetAll)))
@@ -42,10 +42,10 @@ func RegisterPlanningRoutes(deps *Deps) {
 
 	// Iteration type endpoints
 	api.HandleH("GET /iteration-types", auth(http.HandlerFunc(deps.Planning.IterationType.GetAll)))
-	api.HandleH("POST /iteration-types", auth(http.HandlerFunc(deps.Planning.IterationType.Create)))
+	api.HandleH("POST /iteration-types", auth(globalIterationManage(http.HandlerFunc(deps.Planning.IterationType.Create))))
 	api.HandleH("GET /iteration-types/{id}", auth(http.HandlerFunc(deps.Planning.IterationType.Get)))
-	api.HandleH("PUT /iteration-types/{id}", auth(http.HandlerFunc(deps.Planning.IterationType.Update)))
-	api.HandleH("DELETE /iteration-types/{id}", auth(http.HandlerFunc(deps.Planning.IterationType.Delete)))
+	api.HandleH("PUT /iteration-types/{id}", auth(globalIterationManage(http.HandlerFunc(deps.Planning.IterationType.Update))))
+	api.HandleH("DELETE /iteration-types/{id}", auth(globalIterationManage(http.HandlerFunc(deps.Planning.IterationType.Delete))))
 
 	// Iteration endpoints
 	api.HandleH("GET /iterations", auth(http.HandlerFunc(deps.Planning.Iteration.GetAll)))

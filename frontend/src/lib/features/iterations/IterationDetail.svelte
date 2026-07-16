@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { IconArrowLeft, IconCalendar, IconTarget, IconEdit, IconTrash, IconDots, IconWorld, IconBuilding, IconSparkles } from '@tabler/icons-svelte-runes';
+  import { IconArrowLeft, IconCalendar, IconTarget, IconEdit, IconTrash, IconDots, IconWorld, IconBuilding, IconSparkles, IconCircleCheck } from '@tabler/icons-svelte-runes';
   import Chart from '../../widgets/Chart.svelte';
   import { api } from '../../api.js';
   import { navigate } from '../../router.js';
@@ -21,8 +21,9 @@
   import ItemsByStatusCategory from '../../components/ItemsByStatusCategory.svelte';
   import BasePicker from '../../pickers/BasePicker.svelte';
   import DialogFooter from '../../dialogs/DialogFooter.svelte';
+  import CompleteIterationDialog from '../../dialogs/CompleteIterationDialog.svelte';
   import { t } from '../../stores/i18n.svelte.js';
-  import { errorToast } from '../../stores/toasts.svelte.js';
+  import { errorToast, successToast } from '../../stores/toasts.svelte.js';
   import { confirm } from '../../composables/useConfirm.js';
   import { aiStore } from '../../stores/aiStore.svelte.js';
   import { permissionStore, isSystemAdmin } from '../../stores/permissions.svelte.js';
@@ -37,6 +38,8 @@
   let burndownData = $state(null);
   let expandedCategories = $state({});
   let showEditModal = $state(false);
+  let showCompleteDialog = $state(false);
+  let completionTargets = $state([]);
   let formData = $state({
     name: '',
     description: '',
@@ -64,7 +67,9 @@
   let statusOptions = $derived([
     { value: 'planned', label: t('iterations.status.planned'), lozengeColor: 'grey' },
     { value: 'active', label: t('iterations.status.active'), lozengeColor: 'blue' },
-    { value: 'completed', label: t('iterations.status.completed'), lozengeColor: 'green' },
+    ...(iteration?.status === 'completed'
+      ? [{ value: 'completed', label: t('iterations.status.completed'), lozengeColor: 'green' }]
+      : []),
     { value: 'cancelled', label: t('iterations.status.cancelled'), lozengeColor: 'red' }
   ]);
 
@@ -165,6 +170,34 @@
     }
   }
 
+  async function openCompleteDialog() {
+    try {
+      const filters = iteration?.is_global
+        ? { include_global: true }
+        : { workspace_id: iteration?.workspace_id || workspaceId, include_global: true };
+      const candidates = await api.iterations.getAll(filters);
+      completionTargets = (candidates || []).filter(candidate => {
+        if (candidate.id === iteration.id || !['planned', 'active'].includes(candidate.status)) return false;
+        if (iteration.is_global) return candidate.is_global;
+        return candidate.is_global || candidate.workspace_id === iteration.workspace_id;
+      });
+      showCompleteDialog = true;
+    } catch (err) {
+      errorToast(t('dialogs.alerts.failedToLoad', { error: err.message || err }));
+    }
+  }
+
+  async function completeIteration(moveTarget) {
+    try {
+      const targetIterationId = moveTarget.type === 'iteration' ? moveTarget.iterationId : null;
+      await api.iterations.complete(iterationId, targetIterationId);
+      successToast(t('iterations.iterationCompleted', { name: iteration.name }));
+      await loadProgress();
+    } catch (err) {
+      errorToast(t('dialogs.alerts.failedToUpdate', { error: err.message || err }));
+    }
+  }
+
   const segments = $derived(progress ? buildSegments(progress.status_breakdown, progress.total_items) : []);
   const daysInfo = $derived(progress?.end_date ? daysUntil(progress.end_date, {
     overdue: (n) => t('iterations.daysOverdue', { count: n }),
@@ -177,6 +210,16 @@
     const items = [];
 
     if (canManage) {
+      if (iteration.status === 'planned' || iteration.status === 'active') {
+        items.push({
+          id: 'complete',
+          type: 'regular',
+          icon: IconCircleCheck,
+          title: t('iterations.completeIteration'),
+          hoverClass: 'hover-bg',
+          onClick: openCompleteDialog
+        });
+      }
       items.push({
         id: 'edit',
         type: 'regular',
@@ -522,3 +565,11 @@
   />
   {/snippet}
 </Modal>
+
+<CompleteIterationDialog
+  bind:show={showCompleteDialog}
+  iteration={iteration ? { ...iteration, _totalItems: progress?.total_items || 0 } : null}
+  incompleteItems={Array.from({ length: Math.max(0, (progress?.total_items || 0) - (progress?.completed_items || 0)) })}
+  targetIterations={completionTargets}
+  onconfirm={completeIteration}
+/>

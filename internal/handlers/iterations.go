@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -285,6 +286,10 @@ func (h *IterationHandler) Update(w http.ResponseWriter, r *http.Request) {
 		WorkspaceID: workspaceID,
 	})
 	if err != nil {
+		if errors.Is(err, services.ErrIterationCompletionRequired) || errors.Is(err, services.ErrIterationLifecycleConflict) {
+			respondConflict(w, r, err.Error())
+			return
+		}
 		if strings.Contains(err.Error(), "not found") {
 			respondNotFound(w, r, "iteration")
 			return
@@ -337,48 +342,53 @@ func (h *IterationHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 // requireIterationAccess authenticates the user, parses the iteration ID,
 // and checks global or workspace-scoped permission. Returns false if any check fails.
-func (h *IterationHandler) requireIterationAccess(w http.ResponseWriter, r *http.Request) (iterationID int, ok bool) {
-	user, ok := RequireAuth(w, r)
+func (h *IterationHandler) requireIterationAccess(w http.ResponseWriter, r *http.Request) (user *models.User, iterationID int, ok bool) {
+	user, ok = RequireAuth(w, r)
 	if !ok {
-		return 0, false
+		return nil, 0, false
 	}
 
 	iterationID, ok = requireIDParam(w, r, "id")
 	if !ok {
-		return 0, false
+		return nil, 0, false
 	}
 
 	isGlobal, wsID, err := h.planningService.IsIterationGlobal(iterationID)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			respondNotFound(w, r, "iteration")
-			return 0, false
+			return nil, 0, false
 		}
 		respondInternalError(w, r, err)
-		return 0, false
+		return nil, 0, false
 	}
 
 	if isGlobal {
 		// All authenticated users can view global iteration progress/burndown
-		return iterationID, true
+		return user, iterationID, true
 	} else if wsID != nil {
 		if !RequireWorkspacePermission(w, r, user.ID, *wsID, models.PermissionItemView, h.permissionService) {
-			return 0, false
+			return nil, 0, false
 		}
 	}
 
-	return iterationID, true
+	return user, iterationID, true
 }
 
 // GetProgress handles GET /api/iterations/{id}/progress - returns iteration progress report
 func (h *IterationHandler) GetProgress(w http.ResponseWriter, r *http.Request) {
-	iterationID, ok := h.requireIterationAccess(w, r)
+	user, iterationID, ok := h.requireIterationAccess(w, r)
 	if !ok {
+		return
+	}
+	workspaceIDs, err := h.permissionService.AccessibleWorkspaceIDs(user.ID)
+	if err != nil {
+		respondInternalError(w, r, err)
 		return
 	}
 
 	// Use service to get progress report
-	report, err := h.planningService.GetIterationProgress(iterationID)
+	report, err := h.planningService.GetIterationProgress(iterationID, workspaceIDs)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			respondNotFound(w, r, "iteration")
@@ -412,6 +422,11 @@ func (h *IterationHandler) GetProgressBatch(w http.ResponseWriter, r *http.Reque
 		respondBadRequest(w, r, fmt.Sprintf("too many ids (max %d per request)", maxBatchItems))
 		return
 	}
+	workspaceIDs, err := h.permissionService.AccessibleWorkspaceIDs(user.ID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
 
 	result := make(map[int]*services.IterationProgressReport, len(ids))
 	seen := make(map[int]bool, len(ids))
@@ -435,7 +450,7 @@ func (h *IterationHandler) GetProgressBatch(w http.ResponseWriter, r *http.Reque
 			}
 		}
 
-		report, err := h.planningService.GetIterationProgress(id)
+		report, err := h.planningService.GetIterationProgress(id, workspaceIDs)
 		if err != nil {
 			continue
 		}
@@ -447,13 +462,18 @@ func (h *IterationHandler) GetProgressBatch(w http.ResponseWriter, r *http.Reque
 
 // GetBurndown handles GET /api/iterations/{id}/burndown - returns iteration burndown chart data
 func (h *IterationHandler) GetBurndown(w http.ResponseWriter, r *http.Request) {
-	iterationID, ok := h.requireIterationAccess(w, r)
+	user, iterationID, ok := h.requireIterationAccess(w, r)
 	if !ok {
+		return
+	}
+	workspaceIDs, err := h.permissionService.AccessibleWorkspaceIDs(user.ID)
+	if err != nil {
+		respondInternalError(w, r, err)
 		return
 	}
 
 	// Use service to get burndown data
-	burndown, err := h.planningService.GetIterationBurndown(iterationID)
+	burndown, err := h.planningService.GetIterationBurndown(iterationID, workspaceIDs)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			respondNotFound(w, r, "iteration")

@@ -25,6 +25,17 @@ type PlanningService struct {
 const milestonePositionStep = 1000
 
 var ErrInvalidMilestoneReorder = errors.New("invalid milestone reorder")
+var ErrInvalidPlanningScope = errors.New("invalid planning scope")
+
+func validatePlanningScope(isGlobal bool, workspaceID *int) error {
+	if isGlobal && workspaceID != nil {
+		return fmt.Errorf("%w: global planning objects cannot have a workspace", ErrInvalidPlanningScope)
+	}
+	if !isGlobal && workspaceID == nil {
+		return fmt.Errorf("%w: local planning objects require a workspace", ErrInvalidPlanningScope)
+	}
+	return nil
+}
 
 // milestoneScopeClause builds the SQL WHERE fragment that pins a milestone
 // to its reorder scope. Position is scoped per (is_global, workspace_id,
@@ -148,6 +159,16 @@ type MilestoneReleaseResult struct {
 	CreatedAt       string
 }
 
+var ErrSCMRepositoryNotLinked = errors.New("SCM repository is not linked to the selected connection")
+
+// LinkedSCMRepository is the canonical repository identity resolved from a
+// workspace connection. Release callers use the stored name rather than a
+// caller-provided owner/repository string.
+type LinkedSCMRepository struct {
+	ID             int
+	RepositoryName string
+}
+
 // MilestoneResult represents a milestone with category details.
 type MilestoneResult struct {
 	ID            int
@@ -199,6 +220,7 @@ type MilestoneListParams struct {
 	Limit         int
 	Offset        int
 	WorkspaceID   *int   // Filter by workspace
+	WorkspaceIDs  []int  // Caller-visible local workspaces for an unscoped list
 	CategoryID    *int   // Filter by category
 	Status        string // Filter by status
 	IncludeGlobal bool   // Include global milestones
@@ -249,12 +271,32 @@ func (s *PlanningService) ListMilestones(params MilestoneListParams) ([]Mileston
 			args = append(args, *params.WorkspaceID)
 			countArgs = append(countArgs, *params.WorkspaceID)
 		}
+	} else if len(params.WorkspaceIDs) > 0 {
+		workspaceClause, workspaceArgs := planningWorkspaceFilter("m.workspace_id", params.WorkspaceIDs)
+		workspaceClause = strings.TrimPrefix(workspaceClause, " AND ")
+		if params.IncludeGlobal {
+			query += " AND (m.is_global = ? OR " + workspaceClause + ")"
+			countQuery += " AND (m.is_global = ? OR " + workspaceClause + ")"
+			args = append(args, true)
+			args = append(args, workspaceArgs...)
+			countArgs = append(countArgs, true)
+			countArgs = append(countArgs, workspaceArgs...)
+		} else {
+			query += " AND " + workspaceClause
+			countQuery += " AND " + workspaceClause
+			args = append(args, workspaceArgs...)
+			countArgs = append(countArgs, workspaceArgs...)
+		}
 	} else if params.IncludeGlobal {
 		// If no workspace specified but include_global, only show global milestones
 		query += " AND m.is_global = ?"
 		countQuery += " AND m.is_global = ?"
 		args = append(args, true)
 		countArgs = append(countArgs, true)
+	} else {
+		// An unscoped local list must never widen to every workspace.
+		query += " AND 1=0"
+		countQuery += " AND 1=0"
 	}
 
 	// Filter by category
@@ -394,6 +436,40 @@ func (s *PlanningService) GetSCMConnectionWorkspaceID(connectionID int) (int, er
 	return workspaceID, nil
 }
 
+// ResolveLinkedSCMRepository verifies that a requested release repository is
+// linked to the selected workspace connection. RepositoryID is preferred; the
+// name lookup remains for existing API clients. When both are supplied they
+// must identify the same stored row.
+func (s *PlanningService) ResolveLinkedSCMRepository(connectionID, repositoryID int, repositoryName string) (*LinkedSCMRepository, error) {
+	var linked LinkedSCMRepository
+	repositoryName = strings.TrimSpace(repositoryName)
+	var err error
+	switch {
+	case repositoryID > 0:
+		err = s.db.QueryRow(`
+			SELECT id, repository_name FROM workspace_repositories
+			WHERE id = ? AND workspace_scm_connection_id = ?
+		`, repositoryID, connectionID).Scan(&linked.ID, &linked.RepositoryName)
+	case repositoryName != "":
+		err = s.db.QueryRow(`
+			SELECT id, repository_name FROM workspace_repositories
+			WHERE workspace_scm_connection_id = ? AND repository_name = ?
+		`, connectionID, repositoryName).Scan(&linked.ID, &linked.RepositoryName)
+	default:
+		return nil, ErrSCMRepositoryNotLinked
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrSCMRepositoryNotLinked
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve linked SCM repository: %w", err)
+	}
+	if repositoryName != "" && repositoryName != linked.RepositoryName {
+		return nil, ErrSCMRepositoryNotLinked
+	}
+	return &linked, nil
+}
+
 // CreateMilestoneParams contains parameters for creating a milestone.
 // ExternalKey is a stable upsert key used by automation (e.g. the
 // create_milestone action's `{{ref.short}}`); a non-empty value is unique
@@ -411,6 +487,9 @@ type CreateMilestoneParams struct {
 
 // CreateMilestone creates a new milestone.
 func (s *PlanningService) CreateMilestone(params CreateMilestoneParams) (*MilestoneResult, error) {
+	if err := validatePlanningScope(params.IsGlobal, params.WorkspaceID); err != nil {
+		return nil, err
+	}
 	status := params.Status
 	if status == "" {
 		status = "planning"
@@ -681,8 +760,12 @@ type MilestoneTestStats struct {
 }
 
 // GetMilestoneTestStatistics retrieves test plan statistics for a milestone.
-func (s *PlanningService) GetMilestoneTestStatistics(milestoneID int) (*MilestoneTestStats, error) {
+func (s *PlanningService) GetMilestoneTestStatistics(milestoneID int, workspaceIDs []int) (*MilestoneTestStats, error) {
 	var stats MilestoneTestStats
+	workspaceClause, workspaceArgs := planningWorkspaceFilter("ts.workspace_id", workspaceIDs)
+	queryArgs := make([]interface{}, 0, 1+len(workspaceArgs))
+	queryArgs = append(queryArgs, milestoneID)
+	queryArgs = append(queryArgs, workspaceArgs...)
 
 	err := s.db.QueryRow(`
 		SELECT
@@ -710,8 +793,8 @@ func (s *PlanningService) GetMilestoneTestStatistics(milestoneID int) (*Mileston
 			FROM set_test_cases stc
 			GROUP BY stc.set_id
 		) tc_counts ON ts.id = tc_counts.set_id
-		WHERE ts.milestone_id = ?
-	`, milestoneID).Scan(
+		WHERE ts.milestone_id = ?`+workspaceClause+`
+	`, queryArgs...).Scan(
 		&stats.TotalTestPlans,
 		&stats.TotalTestRuns,
 		&stats.SuccessfulTestRuns,
@@ -743,7 +826,7 @@ type MilestoneProgressReport struct {
 }
 
 // GetMilestoneProgress retrieves progress report for a milestone.
-func (s *PlanningService) GetMilestoneProgress(milestoneID int) (*MilestoneProgressReport, error) {
+func (s *PlanningService) GetMilestoneProgress(milestoneID int, workspaceIDs []int) (*MilestoneProgressReport, error) {
 	var report MilestoneProgressReport
 	report.MilestoneID = milestoneID
 	// Get milestone details
@@ -769,7 +852,7 @@ func (s *PlanningService) GetMilestoneProgress(milestoneID int) (*MilestoneProgr
 	report.CategoryColor = categoryColor.String
 
 	// Get status breakdown and items grouped by status category
-	acc, err := s.buildProgressReport(repository.ItemFilters{MilestoneID: &milestoneID})
+	acc, err := s.buildProgressReport(repository.ItemFilters{MilestoneID: &milestoneID}, workspaceIDs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get milestone progress: %w", err)
 	}

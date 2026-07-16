@@ -167,6 +167,7 @@
       if (selectedConnectionId) {
         payload.connection_id = selectedConnectionId;
         payload.repository = selectedRepository;
+        payload.repository_id = repositories.find(repo => repo.repository_name === selectedRepository)?.id;
       }
 
       const updatedMilestone = await api.milestones.release(milestone.id, payload);

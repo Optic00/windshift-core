@@ -669,7 +669,7 @@ func (s *Server) initialize() error {
 	milestoneCategoryConfig.AuditEmit = enumAuditEmit
 	milestoneCategoryHandler := handlers.NewEnumHandler(
 		services.NewEnumService(s.db, milestoneCategoryConfig),
-		func() interface{} { return &models.MilestoneCategory{} })
+		func() interface{} { return &models.MilestoneCategory{} }).WithGlobalMutationPermission(permService, models.PermissionMilestoneCreate)
 	channelCategoryConfig := services.NewChannelCategoryConfig()
 	channelCategoryConfig.AuditEmit = enumAuditEmit
 	channelCategoryHandler := handlers.NewEnumHandler(
@@ -684,7 +684,7 @@ func (s *Server) initialize() error {
 	iterationTypeConfig.AuditEmit = enumAuditEmit
 	iterationTypeHandler := handlers.NewEnumHandler(
 		services.NewEnumService(s.db, iterationTypeConfig),
-		func() interface{} { return &models.IterationType{} })
+		func() interface{} { return &models.IterationType{} }).WithGlobalMutationPermission(permService, models.PermissionIterationManage)
 	iterationHandler := handlers.NewIterationHandler(services.NewPlanningService(s.db), permService, logger.NewAuditor(s.db))
 	personalLabelHandler := handlers.NewPersonalLabelHandler(s.db, permService)
 	commentHandler := handlers.NewCommentHandler(s.db, permService, s.activityTracker, s.notificationService)

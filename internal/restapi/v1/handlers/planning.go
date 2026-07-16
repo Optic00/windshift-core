@@ -42,6 +42,8 @@ type MilestoneResponse struct {
 	CategoryID    *int     `json:"category_id,omitempty"`
 	CategoryName  string   `json:"category_name,omitempty"`
 	CategoryColor string   `json:"category_color,omitempty"`
+	IsGlobal      bool     `json:"is_global"`
+	WorkspaceID   *int     `json:"workspace_id,omitempty"`
 	Position      int      `json:"position"`
 	CreatedAt     string   `json:"created_at"`
 	UpdatedAt     string   `json:"updated_at"`
@@ -84,6 +86,8 @@ func toMilestoneResponse(m *services.MilestoneResult) MilestoneResponse {
 		CategoryID:    m.CategoryID,
 		CategoryName:  m.CategoryName,
 		CategoryColor: m.CategoryColor,
+		IsGlobal:      m.IsGlobal,
+		WorkspaceID:   m.WorkspaceID,
 		Position:      m.Position,
 		CreatedAt:     m.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 		UpdatedAt:     m.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
@@ -107,18 +111,25 @@ func toMilestoneResponse(m *services.MilestoneResult) MilestoneResponse {
 // @Failure      500    {object}  handlers.ErrorResponse
 // @Router       /milestones [get]
 func (h *MilestoneHandler) List(w http.ResponseWriter, r *http.Request) {
-	_, ok := h.RequireAuth(w, r)
+	user, ok := h.RequireAuth(w, r)
 	if !ok {
+		return
+	}
+	workspaceIDs, err := h.Perms.GetAccessibleWorkspaceIDs(user.ID)
+	if err != nil {
+		h.RespondInternalError(w, r)
 		return
 	}
 
 	pagination := h.ParsePagination(r)
 
 	results, total, err := h.planningService.ListMilestones(services.MilestoneListParams{
-		Limit:     pagination.Limit,
-		Offset:    pagination.Offset,
-		SortBy:    milestoneSortByFromRequest(r, pagination.SortBy),
-		SortOrder: sortOrderFromPagination(pagination.SortAsc),
+		Limit:         pagination.Limit,
+		Offset:        pagination.Offset,
+		WorkspaceIDs:  workspaceIDs,
+		IncludeGlobal: true,
+		SortBy:        milestoneSortByFromRequest(r, pagination.SortBy),
+		SortOrder:     sortOrderFromPagination(pagination.SortAsc),
 	})
 	if err != nil {
 		h.RespondInternalError(w, r)
@@ -216,6 +227,7 @@ func (h *MilestoneHandler) Create(w http.ResponseWriter, r *http.Request) {
 		TargetDate:  targetDate,
 		Status:      req.Status,
 		CategoryID:  req.CategoryID,
+		IsGlobal:    true,
 	})
 	if err != nil {
 		h.RespondInternalError(w, r)
@@ -552,12 +564,17 @@ func toMilestoneProgressResponse(r *services.MilestoneProgressReport) MilestoneP
 // @Failure      500  {object}  handlers.ErrorResponse
 // @Router       /milestones/{id}/progress [get]
 func (h *MilestoneHandler) GetProgress(w http.ResponseWriter, r *http.Request) {
-	_, id, _, ok := h.requireMilestoneAccessByID(w, r, false)
+	userID, id, _, ok := h.requireMilestoneAccessByID(w, r, false)
 	if !ok {
 		return
 	}
+	workspaceIDs, err := h.Perms.GetAccessibleWorkspaceIDs(userID)
+	if err != nil {
+		h.RespondInternalError(w, r)
+		return
+	}
 
-	report, err := h.planningService.GetMilestoneProgress(id)
+	report, err := h.planningService.GetMilestoneProgress(id, workspaceIDs)
 	if err != nil {
 		h.RespondNotFound(w, r)
 		return
@@ -983,7 +1000,7 @@ func (h *MilestoneHandler) GetProgressInWorkspace(w http.ResponseWriter, r *http
 		return
 	}
 
-	report, err := h.planningService.GetMilestoneProgress(m.ID)
+	report, err := h.planningService.GetMilestoneProgress(m.ID, []int{wsID})
 	if err != nil {
 		h.RespondNotFound(w, r)
 		return
@@ -1072,16 +1089,23 @@ func toIterationResponse(iter *services.IterationResult) IterationResponse {
 // @Failure      500    {object}  handlers.ErrorResponse
 // @Router       /iterations [get]
 func (h *IterationHandler) List(w http.ResponseWriter, r *http.Request) {
-	_, ok := h.RequireAuth(w, r)
+	user, ok := h.RequireAuth(w, r)
 	if !ok {
+		return
+	}
+	workspaceIDs, err := h.Perms.GetAccessibleWorkspaceIDs(user.ID)
+	if err != nil {
+		h.RespondInternalError(w, r)
 		return
 	}
 
 	pagination := h.ParsePagination(r)
 
 	results, total, err := h.planningService.ListIterations(services.IterationListParams{
-		Limit:  pagination.Limit,
-		Offset: pagination.Offset,
+		Limit:         pagination.Limit,
+		Offset:        pagination.Offset,
+		WorkspaceIDs:  workspaceIDs,
+		IncludeGlobal: true,
 	})
 	if err != nil {
 		h.RespondInternalError(w, r)
@@ -1209,10 +1233,12 @@ func (h *IterationHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.IsGlobal || req.WorkspaceID == nil {
-		if !h.RequireGlobalPermission(w, r, user.ID, models.PermissionIterationManage, "iteration.manage") {
-			return
-		}
+	if req.WorkspaceID != nil {
+		h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "workspace_id is only accepted on the workspace iteration endpoint"))
+		return
+	}
+	if !h.RequireGlobalPermission(w, r, user.ID, models.PermissionIterationManage, "iteration.manage") {
+		return
 	}
 
 	iter, err := h.planningService.CreateIteration(services.CreateIterationParams{
@@ -1222,8 +1248,8 @@ func (h *IterationHandler) Create(w http.ResponseWriter, r *http.Request) {
 		EndDate:     req.EndDate,
 		Status:      req.Status,
 		TypeID:      req.TypeID,
-		IsGlobal:    req.IsGlobal,
-		WorkspaceID: req.WorkspaceID,
+		IsGlobal:    true,
+		WorkspaceID: nil,
 	})
 	if err != nil {
 		h.RespondInternalError(w, r)
@@ -1280,6 +1306,10 @@ func (h *IterationHandler) Update(w http.ResponseWriter, r *http.Request) {
 		WorkspaceID: workspaceID,
 	})
 	if err != nil {
+		if errors.Is(err, services.ErrIterationCompletionRequired) || errors.Is(err, services.ErrIterationLifecycleConflict) {
+			h.RespondError(w, r, restapi.NewAPIError(http.StatusConflict, restapi.ErrCodeConflict, err.Error()))
+			return
+		}
 		h.RespondInternalError(w, r)
 		return
 	}
@@ -1527,6 +1557,10 @@ func (h *IterationHandler) UpdateInWorkspace(w http.ResponseWriter, r *http.Requ
 		WorkspaceID: &wsID,
 	})
 	if err != nil {
+		if errors.Is(err, services.ErrIterationCompletionRequired) || errors.Is(err, services.ErrIterationLifecycleConflict) {
+			h.RespondError(w, r, restapi.NewAPIError(http.StatusConflict, restapi.ErrCodeConflict, err.Error()))
+			return
+		}
 		h.RespondInternalError(w, r)
 		return
 	}

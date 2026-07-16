@@ -107,6 +107,16 @@ func (s *ItemUpdateService) UpdateItem(req UpdateItemRequest) (*UpdateItemResult
 	if err = s.validator.ValidateAndApplyUpdates(&existingItem, req.UpdateData, req.UserID); err != nil {
 		return nil, fmt.Errorf("validation failed: %w", err)
 	}
+	if _, milestonesChanged := req.UpdateData["milestone_ids"]; milestonesChanged ||
+		hasAnyItemUpdateField(req.UpdateData, "iteration_id", "workspace_id") {
+		milestoneIDs, loadErr := planningMilestoneIDsForUpdate(tx, req.ItemID, &existingItem, milestonesChanged)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		if err := validation.ValidatePlanningAssignments(tx, existingItem.WorkspaceID, milestoneIDs, existingItem.IterationID); err != nil {
+			return nil, fmt.Errorf("validation failed: %w", err)
+		}
+	}
 
 	// Update the item in database (the repository marshals custom field
 	// values and bumps updated_at)
@@ -223,6 +233,43 @@ func (s *ItemUpdateService) UpdateItem(req UpdateItemRequest) (*UpdateItemResult
 		StatusChanged: statusChanged,
 		FieldChanges:  history,
 	}, nil
+}
+
+func hasAnyItemUpdateField(updateData map[string]interface{}, fields ...string) bool {
+	for _, field := range fields {
+		if _, ok := updateData[field]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func planningMilestoneIDsForUpdate(tx database.Tx, itemID int, item *models.Item, changed bool) ([]int, error) {
+	if changed {
+		ids := make([]int, 0, len(item.Milestones))
+		for _, milestone := range item.Milestones {
+			ids = append(ids, milestone.ID)
+		}
+		return ids, nil
+	}
+
+	rows, err := tx.Query("SELECT milestone_id FROM item_milestones WHERE item_id = ? ORDER BY milestone_id", itemID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load item milestones for scope validation: %w", err)
+	}
+	defer rows.Close()
+	var ids []int
+	for rows.Next() {
+		var id int
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("failed to scan item milestone for scope validation: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate item milestones for scope validation: %w", err)
+	}
+	return ids, nil
 }
 
 // loadItemInTx loads an item inside a transaction. On Postgres, the repository

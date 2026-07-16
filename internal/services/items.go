@@ -11,6 +11,7 @@ import (
 
 	"windshift/internal/database"
 	"windshift/internal/repository"
+	"windshift/internal/validation"
 )
 
 // ErrMissingItemType is returned by CreateItem when the caller did not
@@ -181,6 +182,10 @@ func validateProjectAssignmentAccess(db database.Database, perm *PermissionServi
 // CreateItem creates a new item with proper transaction handling and number generation
 // This centralizes the item creation logic used by normal creation, portal submissions, and copying
 func CreateItem(db database.Database, params ItemCreationParams) (int64, error) {
+	if err := validation.ValidatePlanningAssignments(db, params.WorkspaceID, params.MilestoneIDs, params.IterationID); err != nil {
+		return 0, err
+	}
+
 	// Enforce project-assignment access control: a user may only attach a
 	// project_id / time_project_id they can view. Skipped for internal callers
 	// that don't set a validating user.

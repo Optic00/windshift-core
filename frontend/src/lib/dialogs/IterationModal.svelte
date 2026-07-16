@@ -38,7 +38,9 @@
   const statusOptions = $derived([
     { value: 'planned', label: t('iterations.statusPlanned') },
     { value: 'active', label: t('iterations.statusActive') },
-    { value: 'completed', label: t('iterations.statusCompleted') },
+    ...(formData.status === 'completed'
+      ? [{ value: 'completed', label: t('iterations.statusCompleted') }]
+      : []),
     { value: 'cancelled', label: t('iterations.statusCancelled') }
   ]);
 

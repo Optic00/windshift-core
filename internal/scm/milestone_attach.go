@@ -14,8 +14,8 @@ import (
 
 // MilestoneAttacher implements services.MilestoneCommitAttacher by
 // composing SyncService's existing primitives: provider resolution,
-// ItemKeyDetector, findItemByKey, plus a small idempotency check
-// against scm_processed_commits.
+// ItemKeyDetector, findItemByKey, plus an object-scoped idempotency check
+// against scm_milestone_processed_commits.
 //
 // Lives in the scm package because the deps it composes (provider
 // resolution, RefProvider.CompareCommits, ItemKeyDetector) all live
@@ -75,22 +75,30 @@ func (m *MilestoneAttacher) AttachCommitIssues(ctx context.Context, in services.
 	// Walk in order; one item can be mentioned across multiple commits
 	// — dedupe via a per-call set so we only attach once.
 	attached := make(map[int]struct{})
+	var processingErrors []error
 	for _, c := range commits {
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		processed, err := m.commitAlreadyProcessed(ctx, in.WorkspaceRepoID, c.SHA)
+		processed, err := m.commitAlreadyProcessed(ctx, in.MilestoneID, in.WorkspaceRepoID, c.SHA)
 		if err != nil {
 			slog.Error("milestone attach: check processed commit", slog.String("component", "scm"), slog.Any("error", err))
+			processingErrors = append(processingErrors, fmt.Errorf("check commit %s idempotency: %w", c.SHA, err))
 			continue
 		}
 		if processed {
 			continue
 		}
+		commitFailed := false
 		keys := m.sync.detector.DetectFromCommit(&c, repoCtx.workspaceKey)
 		for _, k := range keys {
 			itemID, err := m.sync.findItemByKey(ctx, repoCtx.workspaceID, k.Prefix, k.Number)
-			if err != nil || itemID == 0 {
+			if err != nil {
+				commitFailed = true
+				processingErrors = append(processingErrors, fmt.Errorf("resolve %s from commit %s: %w", k.Key, c.SHA, err))
+				continue
+			}
+			if itemID == 0 {
 				continue
 			}
 			if _, dup := attached[itemID]; dup {
@@ -98,27 +106,33 @@ func (m *MilestoneAttacher) AttachCommitIssues(ctx context.Context, in services.
 			}
 			if err := m.attach.AddItemMilestone(itemID, in.MilestoneID); err != nil &&
 				!errors.Is(err, repository.ErrDuplicateEntry) {
+				commitFailed = true
 				slog.Error("milestone attach: add item_milestones",
 					slog.String("component", "scm"),
 					slog.Int("item_id", itemID),
 					slog.Int("milestone_id", in.MilestoneID),
 					slog.Any("error", err))
+				processingErrors = append(processingErrors, fmt.Errorf("attach item %d for commit %s: %w", itemID, c.SHA, err))
 				continue
 			}
 			attached[itemID] = struct{}{}
 		}
-		if err := m.markCommitProcessed(ctx, in.WorkspaceRepoID, c.SHA); err != nil {
-			// Marking is non-fatal: a retry will re-detect the same keys
-			// and AddItemMilestone returns ErrDuplicateEntry which we
-			// ignore above. Worst case is some redundant work next tick.
+		if commitFailed {
+			continue
+		}
+		if err := m.markCommitProcessed(ctx, in.MilestoneID, in.WorkspaceRepoID, c.SHA); err != nil {
+			// Leave the commit retryable and surface the partial failure.
+			// Existing attachments are safe: a retry sees duplicate junction
+			// rows as success before recording this consumer's ledger entry.
 			slog.Error("milestone attach: mark commit processed", slog.String("component", "scm"), slog.Any("error", err))
+			processingErrors = append(processingErrors, fmt.Errorf("mark commit %s processed: %w", c.SHA, err))
 		}
 	}
 
 	for id := range attached {
 		result.AttachedItemIDs = append(result.AttachedItemIDs, id)
 	}
-	return result, nil
+	return result, errors.Join(processingErrors...)
 }
 
 // attachRepoContext is the per-repo metadata the attacher needs once: which
@@ -149,24 +163,24 @@ func (m *MilestoneAttacher) loadRepoContext(ctx context.Context, workspaceRepoID
 	return &rc, nil
 }
 
-func (m *MilestoneAttacher) commitAlreadyProcessed(ctx context.Context, repoID int, sha string) (bool, error) {
+func (m *MilestoneAttacher) commitAlreadyProcessed(ctx context.Context, milestoneID, repoID int, sha string) (bool, error) {
 	var n int
 	err := m.sync.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM scm_processed_commits
-		WHERE workspace_repository_id = ? AND commit_sha = ?
-	`, repoID, sha).Scan(&n)
+		SELECT COUNT(*) FROM scm_milestone_processed_commits
+		WHERE milestone_id = ? AND workspace_repository_id = ? AND commit_sha = ?
+	`, milestoneID, repoID, sha).Scan(&n)
 	if err != nil {
 		return false, err
 	}
 	return n > 0, nil
 }
 
-func (m *MilestoneAttacher) markCommitProcessed(ctx context.Context, repoID int, sha string) error {
+func (m *MilestoneAttacher) markCommitProcessed(ctx context.Context, milestoneID, repoID int, sha string) error {
 	_, err := m.sync.db.ExecWriteContext(ctx, `
-		INSERT INTO scm_processed_commits(commit_sha, workspace_repository_id, processed_at, actions_applied)
-		VALUES (?, ?, CURRENT_TIMESTAMP, 0)
-		ON CONFLICT(commit_sha, workspace_repository_id) DO NOTHING
-	`, sha, repoID)
+		INSERT INTO scm_milestone_processed_commits(milestone_id, workspace_repository_id, commit_sha, processed_at)
+		VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(milestone_id, workspace_repository_id, commit_sha) DO NOTHING
+	`, milestoneID, repoID, sha)
 	return err
 }
 

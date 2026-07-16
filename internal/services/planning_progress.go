@@ -2,6 +2,7 @@ package services
 
 import (
 	"fmt"
+	"strings"
 
 	"windshift/internal/models"
 	"windshift/internal/repository"
@@ -46,10 +47,34 @@ type progressAccumulator struct {
 // progressPageSize matches the item repository's pagination cap.
 const progressPageSize = 1000
 
+// planningWorkspaceFilter returns a fail-closed SQL suffix for a trusted
+// workspace column. Planning reports are often attached to global objects, but
+// their items and test sets remain workspace-scoped; every report query must
+// therefore carry the caller's visible workspace IDs.
+func planningWorkspaceFilter(column string, workspaceIDs []int) (whereClause string, queryArgs []interface{}) {
+	if len(workspaceIDs) == 0 {
+		return " AND 1=0", nil
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(workspaceIDs)), ",")
+	args := make([]interface{}, len(workspaceIDs))
+	for i, id := range workspaceIDs {
+		args[i] = id
+	}
+	return " AND " + column + " IN (" + placeholders + ")", args
+}
+
 // buildProgressReport lists all items matching the given filters (e.g.
 // MilestoneID or IterationID) through the item repository and computes
 // progress stats, grouping items by status category.
-func (s *PlanningService) buildProgressReport(filters repository.ItemFilters) (*progressAccumulator, error) {
+func (s *PlanningService) buildProgressReport(filters repository.ItemFilters, workspaceIDs []int) (*progressAccumulator, error) {
+	acc := &progressAccumulator{
+		StatusBreakdown: []StatusBreakdown{},
+		ItemsByCategory: make(map[string][]ProgressItem),
+	}
+	if len(workspaceIDs) == 0 {
+		return acc, nil
+	}
+
 	statuses, err := s.statuses.List()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list statuses: %w", err)
@@ -59,17 +84,15 @@ func (s *PlanningService) buildProgressReport(filters repository.ItemFilters) (*
 		statusByID[st.ID] = st
 	}
 
-	acc := &progressAccumulator{
-		ItemsByCategory: make(map[string][]ProgressItem),
-	}
 	breakdownMap := make(map[string]*StatusBreakdown)
 
 	for offset := 0; ; offset += progressPageSize {
 		items, total, err := s.items.FindAllWithDetails(repository.ItemListParams{
-			Filters:    filters,
-			Pagination: repository.PaginationParams{Limit: progressPageSize, Offset: offset},
-			SortBy:     "key",
-			SortAsc:    true,
+			WorkspaceIDs: workspaceIDs,
+			Filters:      filters,
+			Pagination:   repository.PaginationParams{Limit: progressPageSize, Offset: offset},
+			SortBy:       "key",
+			SortAsc:      true,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to query progress items: %w", err)

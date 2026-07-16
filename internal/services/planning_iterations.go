@@ -5,9 +5,20 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"windshift/internal/repository"
+)
+
+var (
+	// ErrIterationCompletionRequired prevents generic CRUD paths from skipping
+	// the atomic completion workflow that moves incomplete work and records its
+	// history.
+	ErrIterationCompletionRequired = errors.New("iteration must be completed through the completion endpoint")
+	// ErrIterationLifecycleConflict protects terminal iteration states from
+	// being reopened through an ordinary metadata update.
+	ErrIterationLifecycleConflict = errors.New("iteration status transition is not allowed")
 )
 
 // iterationScanner is satisfied by both *sql.Row and *sql.Rows.
@@ -94,6 +105,7 @@ type IterationListParams struct {
 	Limit         int
 	Offset        int
 	WorkspaceID   *int   // Filter by workspace
+	WorkspaceIDs  []int  // Caller-visible local workspaces for an unscoped list
 	TypeID        *int   // Filter by type
 	Status        string // Filter by status
 	IncludeGlobal bool   // Include global iterations
@@ -128,12 +140,32 @@ func (s *PlanningService) ListIterations(params IterationListParams) ([]Iteratio
 			args = append(args, *params.WorkspaceID)
 			countArgs = append(countArgs, *params.WorkspaceID)
 		}
+	} else if len(params.WorkspaceIDs) > 0 {
+		workspaceClause, workspaceArgs := planningWorkspaceFilter("i.workspace_id", params.WorkspaceIDs)
+		workspaceClause = strings.TrimPrefix(workspaceClause, " AND ")
+		if params.IncludeGlobal {
+			query += " AND (i.is_global = ? OR " + workspaceClause + ")"
+			countQuery += " AND (i.is_global = ? OR " + workspaceClause + ")"
+			args = append(args, true)
+			args = append(args, workspaceArgs...)
+			countArgs = append(countArgs, true)
+			countArgs = append(countArgs, workspaceArgs...)
+		} else {
+			query += " AND " + workspaceClause
+			countQuery += " AND " + workspaceClause
+			args = append(args, workspaceArgs...)
+			countArgs = append(countArgs, workspaceArgs...)
+		}
 	} else if params.IncludeGlobal {
 		// If no workspace specified but include_global, only show global iterations
 		query += " AND i.is_global = ?"
 		countQuery += " AND i.is_global = ?"
 		args = append(args, true)
 		countArgs = append(countArgs, true)
+	} else {
+		// An unscoped local list must never widen to every workspace.
+		query += " AND 1=0"
+		countQuery += " AND 1=0"
 	}
 
 	// Filter by type
@@ -232,6 +264,9 @@ type CreateIterationParams struct {
 
 // CreateIteration creates a new iteration.
 func (s *PlanningService) CreateIteration(params CreateIterationParams) (*IterationResult, error) {
+	if err := validatePlanningScope(params.IsGlobal, params.WorkspaceID); err != nil {
+		return nil, err
+	}
 	status := params.Status
 	if status == "" {
 		status = "planned"
@@ -266,34 +301,85 @@ type UpdateIterationParams struct {
 
 // UpdateIteration updates an existing iteration within its declared scope.
 func (s *PlanningService) UpdateIteration(params UpdateIterationParams) (*IterationResult, error) {
+	currentStatus, err := s.iterationStatusInScope(params.ID, params.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateIterationStatusTransition(currentStatus, params.Status); err != nil {
+		return nil, err
+	}
+
 	var (
-		res sql.Result
-		err error
+		res       sql.Result
+		updateErr error
 	)
 	if params.WorkspaceID == nil {
-		res, err = s.db.ExecWrite(`
+		res, updateErr = s.db.ExecWrite(`
 			UPDATE iterations SET name = ?, description = ?, start_date = ?, end_date = ?,
 			       status = ?, type_id = ?, updated_at = CURRENT_TIMESTAMP
-			WHERE id = ? AND is_global = true
-		`, params.Name, params.Description, params.StartDate, params.EndDate, params.Status, params.TypeID, params.ID)
+			WHERE id = ? AND is_global = true AND status = ?
+		`, params.Name, params.Description, params.StartDate, params.EndDate, params.Status, params.TypeID, params.ID, currentStatus)
 	} else {
-		res, err = s.db.ExecWrite(`
+		res, updateErr = s.db.ExecWrite(`
 			UPDATE iterations SET name = ?, description = ?, start_date = ?, end_date = ?,
 			       status = ?, type_id = ?, updated_at = CURRENT_TIMESTAMP
-			WHERE id = ? AND workspace_id = ? AND is_global = false
-		`, params.Name, params.Description, params.StartDate, params.EndDate, params.Status, params.TypeID, params.ID, *params.WorkspaceID)
+			WHERE id = ? AND workspace_id = ? AND is_global = false AND status = ?
+		`, params.Name, params.Description, params.StartDate, params.EndDate, params.Status, params.TypeID, params.ID, *params.WorkspaceID, currentStatus)
 	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to update iteration: %w", err)
+	if updateErr != nil {
+		return nil, fmt.Errorf("failed to update iteration: %w", updateErr)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
 		return nil, fmt.Errorf("failed to read update result: %w", err)
 	}
 	if n == 0 {
-		return nil, fmt.Errorf("iteration not found: %d", params.ID)
+		// The scoped row existed when its lifecycle was checked. A zero-row
+		// conditional update means another writer changed the state meanwhile;
+		// never overwrite that transition with stale data.
+		return nil, ErrIterationLifecycleConflict
 	}
 	return s.GetIteration(params.ID)
+}
+
+func (s *PlanningService) iterationStatusInScope(id int, workspaceID *int) (string, error) {
+	var (
+		status string
+		err    error
+	)
+	if workspaceID == nil {
+		err = s.db.QueryRow("SELECT status FROM iterations WHERE id = ? AND is_global = true", id).Scan(&status)
+	} else {
+		err = s.db.QueryRow("SELECT status FROM iterations WHERE id = ? AND workspace_id = ? AND is_global = false", id, *workspaceID).Scan(&status)
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("iteration not found: %d", id)
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to load iteration status: %w", err)
+	}
+	return status, nil
+}
+
+func validateIterationStatusTransition(current, next string) error {
+	valid := func(status string) bool {
+		switch status {
+		case "planned", "active", "completed", iterationStatusCancelled:
+			return true
+		default:
+			return false
+		}
+	}
+	if !valid(current) || !valid(next) {
+		return fmt.Errorf("%w: %q to %q", ErrIterationLifecycleConflict, current, next)
+	}
+	if next == "completed" && current != "completed" {
+		return ErrIterationCompletionRequired
+	}
+	if (current == "completed" || current == iterationStatusCancelled) && next != current {
+		return fmt.Errorf("%w: terminal iteration cannot be reopened", ErrIterationLifecycleConflict)
+	}
+	return nil
 }
 
 // DeleteIteration deletes an iteration.
@@ -322,7 +408,7 @@ type IterationProgressReport struct {
 }
 
 // GetIterationProgress retrieves progress report for an iteration.
-func (s *PlanningService) GetIterationProgress(iterationID int) (*IterationProgressReport, error) {
+func (s *PlanningService) GetIterationProgress(iterationID int, workspaceIDs []int) (*IterationProgressReport, error) {
 	var report IterationProgressReport
 	report.IterationID = iterationID
 	// Get iteration details
@@ -345,7 +431,7 @@ func (s *PlanningService) GetIterationProgress(iterationID int) (*IterationProgr
 	report.TypeColor = typeColor.String
 
 	// Get status breakdown and items grouped by status category
-	acc, err := s.buildProgressReport(repository.ItemFilters{IterationID: &iterationID})
+	acc, err := s.buildProgressReport(repository.ItemFilters{IterationID: &iterationID}, workspaceIDs)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get iteration progress: %w", err)
 	}
@@ -377,7 +463,7 @@ type IterationBurndownData struct {
 }
 
 // GetIterationBurndown calculates burndown data for an iteration by replaying item history.
-func (s *PlanningService) GetIterationBurndown(iterationID int) (*IterationBurndownData, error) {
+func (s *PlanningService) GetIterationBurndown(iterationID int, workspaceIDs []int) (*IterationBurndownData, error) {
 	// Get iteration details
 	iter, err := s.GetIteration(iterationID)
 	if err != nil {
@@ -395,13 +481,17 @@ func (s *PlanningService) GetIterationBurndown(iterationID int) (*IterationBurnd
 	}
 
 	// Get all items in this iteration with their current status category
+	workspaceClause, workspaceArgs := planningWorkspaceFilter("i.workspace_id", workspaceIDs)
+	itemArgs := make([]interface{}, 0, 1+len(workspaceArgs))
+	itemArgs = append(itemArgs, iterationID)
+	itemArgs = append(itemArgs, workspaceArgs...)
 	rows, err := s.db.Query(`
 		SELECT i.id, COALESCE(sc.is_completed, false) as is_completed
 		FROM items i
 		LEFT JOIN statuses st ON i.status_id = st.id
 		LEFT JOIN status_categories sc ON st.category_id = sc.id
-		WHERE i.iteration_id = ?
-	`, iterationID)
+		WHERE i.iteration_id = ?`+workspaceClause+`
+	`, itemArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get iteration items: %w", err)
 	}
@@ -435,15 +525,18 @@ func (s *PlanningService) GetIterationBurndown(iterationID int) (*IterationBurnd
 
 	// Get all status changes for items in this iteration within the date range
 	// We need to work backwards from current state using history
+	historyArgs := make([]interface{}, 0, 2+len(workspaceArgs))
+	historyArgs = append(historyArgs, iterationID, startDate.Format("2006-01-02"))
+	historyArgs = append(historyArgs, workspaceArgs...)
 	historyRows, err := s.db.Query(`
 		SELECT ih.item_id, ih.changed_at, ih.old_value, ih.new_value
 		FROM item_history ih
 		JOIN items i ON ih.item_id = i.id
 		WHERE i.iteration_id = ?
 		  AND ih.field_name = 'status_id'
-		  AND ih.changed_at >= ?
+		  AND ih.changed_at >= ?`+workspaceClause+`
 		ORDER BY ih.changed_at DESC
-	`, iterationID, startDate.Format("2006-01-02"))
+	`, historyArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get item history: %w", err)
 	}

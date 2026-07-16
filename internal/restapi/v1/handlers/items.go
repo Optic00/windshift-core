@@ -670,7 +670,8 @@ func (h *ItemHandler) Create(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		var transitionRejection *services.TransitionRejection
-		if errors.Is(err, services.ErrMissingItemType) || errors.Is(err, services.ErrInvalidItemType) || errors.Is(err, services.ErrProjectNotFound) || errors.As(err, &transitionRejection) {
+		var validationErr *validation.ValidationError
+		if errors.Is(err, services.ErrMissingItemType) || errors.Is(err, services.ErrInvalidItemType) || errors.Is(err, services.ErrProjectNotFound) || errors.As(err, &transitionRejection) || errors.As(err, &validationErr) {
 			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeValidationFailed, err.Error()))
 			return
 		}

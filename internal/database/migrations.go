@@ -46,6 +46,67 @@ type Migration struct {
 // this Catalog in subsequent commits.
 var Catalog = []Migration{
 	{
+		Version: "20260716_milestone_scope_guard",
+		Name:    "Enforce global and workspace milestone scope consistency",
+		CheckSQLite: `SELECT CASE WHEN COUNT(*) = 2 THEN 1 ELSE 0 END FROM sqlite_master
+			WHERE type='trigger' AND name IN ('trg_milestones_scope_insert', 'trg_milestones_scope_update')`,
+		CheckPostgres: `SELECT COUNT(*) FROM information_schema.table_constraints
+			WHERE table_schema=current_schema() AND table_name='milestones'
+			  AND constraint_name='milestones_scope_check'`,
+		SQLite: `
+			UPDATE milestones SET is_global = CASE WHEN workspace_id IS NULL THEN 1 ELSE 0 END;
+			CREATE TRIGGER IF NOT EXISTS trg_milestones_scope_insert
+			BEFORE INSERT ON milestones
+			WHEN (NEW.is_global = 1 AND NEW.workspace_id IS NOT NULL)
+			  OR (NEW.is_global = 0 AND NEW.workspace_id IS NULL)
+			BEGIN
+				SELECT RAISE(ABORT, 'invalid milestone scope');
+			END;
+			CREATE TRIGGER IF NOT EXISTS trg_milestones_scope_update
+			BEFORE UPDATE OF is_global, workspace_id ON milestones
+			WHEN (NEW.is_global = 1 AND NEW.workspace_id IS NOT NULL)
+			  OR (NEW.is_global = 0 AND NEW.workspace_id IS NULL)
+			BEGIN
+				SELECT RAISE(ABORT, 'invalid milestone scope');
+			END;
+		`,
+		Postgres: `
+			UPDATE milestones SET is_global = (workspace_id IS NULL);
+			ALTER TABLE milestones ADD CONSTRAINT milestones_scope_check CHECK (
+				(is_global = true AND workspace_id IS NULL) OR
+				(is_global = false AND workspace_id IS NOT NULL)
+			);
+		`,
+	},
+	{
+		Version:       "20260716_scm_milestone_commit_ledger",
+		Name:          "Separate milestone attachment commit idempotency from smart commits",
+		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='scm_milestone_processed_commits'",
+		CheckPostgres: "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='scm_milestone_processed_commits'",
+		SQLite: `
+			CREATE TABLE scm_milestone_processed_commits (
+				milestone_id INTEGER NOT NULL,
+				workspace_repository_id INTEGER NOT NULL,
+				commit_sha TEXT NOT NULL,
+				processed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+				PRIMARY KEY (milestone_id, workspace_repository_id, commit_sha),
+				FOREIGN KEY (milestone_id) REFERENCES milestones(id) ON DELETE CASCADE,
+				FOREIGN KEY (workspace_repository_id) REFERENCES workspace_repositories(id) ON DELETE CASCADE
+			);
+		`,
+		Postgres: `
+			CREATE TABLE scm_milestone_processed_commits (
+				milestone_id INTEGER NOT NULL,
+				workspace_repository_id INTEGER NOT NULL,
+				commit_sha TEXT NOT NULL,
+				processed_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+				PRIMARY KEY (milestone_id, workspace_repository_id, commit_sha),
+				FOREIGN KEY (milestone_id) REFERENCES milestones(id) ON DELETE CASCADE,
+				FOREIGN KEY (workspace_repository_id) REFERENCES workspace_repositories(id) ON DELETE CASCADE
+			);
+		`,
+	},
+	{
 		Version:       "20260618_push_subscriptions",
 		Name:          "Create Web Push subscriptions table",
 		CheckSQLite:   "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='push_subscriptions'",

@@ -221,6 +221,19 @@ CREATE TABLE IF NOT EXISTS scm_processed_commits (
 	FOREIGN KEY (workspace_repository_id) REFERENCES workspace_repositories(id) ON DELETE CASCADE
 );
 
+-- Milestone commit attachment has its own object-scoped ledger. It must not
+-- consume smart-commit records, and overlapping milestones must each scan the
+-- same commit independently.
+CREATE TABLE IF NOT EXISTS scm_milestone_processed_commits (
+	milestone_id            INTEGER NOT NULL,
+	workspace_repository_id INTEGER NOT NULL,
+	commit_sha              TEXT NOT NULL,
+	processed_at            DATETIME DEFAULT CURRENT_TIMESTAMP,
+	PRIMARY KEY (milestone_id, workspace_repository_id, commit_sha),
+	FOREIGN KEY (milestone_id) REFERENCES milestones(id) ON DELETE CASCADE,
+	FOREIGN KEY (workspace_repository_id) REFERENCES workspace_repositories(id) ON DELETE CASCADE
+);
+
 -- SCM Processed Refs (idempotency ledger for tag / release-branch sync events)
 CREATE TABLE IF NOT EXISTS scm_processed_refs (
 	workspace_repository_id INTEGER NOT NULL,

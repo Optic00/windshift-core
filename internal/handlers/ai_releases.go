@@ -60,8 +60,14 @@ func (h *AIHandler) GenerateReleaseNotes(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	workspaceIDs, err := h.permService.AccessibleWorkspaceIDs(user.ID)
+	if err != nil {
+		respondInternalError(w, r, fmt.Errorf("failed to load visible workspaces: %w", err))
+		return
+	}
+
 	// Load progress report for item counts and breakdown
-	progress, err := planningService.GetMilestoneProgress(milestoneID)
+	progress, err := planningService.GetMilestoneProgress(milestoneID, workspaceIDs)
 	if err != nil {
 		respondInternalError(w, r, fmt.Errorf("failed to load milestone progress: %w", err))
 		return
@@ -75,7 +81,7 @@ func (h *AIHandler) GenerateReleaseNotes(w http.ResponseWriter, r *http.Request)
 
 	// Load test stats if available
 	var testStats *services.MilestoneTestStats
-	loadedTestStats, testErr := planningService.GetMilestoneTestStatistics(milestoneID)
+	loadedTestStats, testErr := planningService.GetMilestoneTestStatistics(milestoneID, workspaceIDs)
 	if testErr == nil && loadedTestStats.TotalTestPlans > 0 {
 		testStats = loadedTestStats
 	}

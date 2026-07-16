@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"windshift/internal/models"
@@ -46,8 +47,43 @@ func sanitizeEnumEntity(entity interface{}) {
 
 // EnumHandler provides HTTP handlers for generic enum CRUD operations
 type EnumHandler struct {
-	service   *services.EnumService
-	newEntity func() interface{} // Factory function to create new entity
+	service            *services.EnumService
+	newEntity          func() interface{} // Factory function to create new entity
+	permissionService  *services.PermissionService
+	mutationPermission string
+}
+
+// WithGlobalMutationPermission adds a handler-level authorization boundary for
+// global catalogs. Route middleware should still apply the same permission;
+// this guard protects direct handler wiring and future routes from bypassing it.
+func (h *EnumHandler) WithGlobalMutationPermission(permissionService *services.PermissionService, permission string) *EnumHandler {
+	h.permissionService = permissionService
+	h.mutationPermission = permission
+	return h
+}
+
+func (h *EnumHandler) authorizeMutation(w http.ResponseWriter, r *http.Request) bool {
+	if h.mutationPermission == "" {
+		return true
+	}
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return false
+	}
+	if h.permissionService == nil {
+		respondInternalError(w, r, errors.New("enum mutation permission service is not configured"))
+		return false
+	}
+	allowed, err := h.permissionService.HasGlobalPermissionContext(r.Context(), user.ID, h.mutationPermission)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return false
+	}
+	if !allowed {
+		respondForbidden(w, r)
+		return false
+	}
+	return true
 }
 
 // NewEnumHandler creates a new enum handler
@@ -85,6 +121,9 @@ func (h *EnumHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 // Create handles POST requests to create a new entity
 func (h *EnumHandler) Create(w http.ResponseWriter, r *http.Request) {
+	if !h.authorizeMutation(w, r) {
+		return
+	}
 	entity := h.newEntity()
 	if err := json.NewDecoder(r.Body).Decode(entity); err != nil {
 		respondBadRequest(w, r, "Invalid request body")
@@ -102,6 +141,9 @@ func (h *EnumHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 // Update handles PUT requests to update an existing entity
 func (h *EnumHandler) Update(w http.ResponseWriter, r *http.Request) {
+	if !h.authorizeMutation(w, r) {
+		return
+	}
 	id, ok := requireIDParam(w, r, "id")
 	if !ok {
 		return
@@ -124,6 +166,9 @@ func (h *EnumHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 // Delete handles DELETE requests to delete an entity
 func (h *EnumHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	if !h.authorizeMutation(w, r) {
+		return
+	}
 	id, ok := requireIDParam(w, r, "id")
 	if !ok {
 		return

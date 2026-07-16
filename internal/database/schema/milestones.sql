@@ -22,7 +22,11 @@ CREATE TABLE IF NOT EXISTS milestones (
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	FOREIGN KEY (category_id) REFERENCES milestone_categories(id) ON DELETE SET NULL,
-	FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+	FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+	CHECK (
+		(is_global = 1 AND workspace_id IS NULL) OR
+		(is_global = 0 AND workspace_id IS NOT NULL)
+	)
 );
 
 CREATE TABLE IF NOT EXISTS milestone_releases (

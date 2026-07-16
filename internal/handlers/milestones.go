@@ -381,13 +381,18 @@ func (h *MilestoneHandler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *MilestoneHandler) GetTestStatistics(w http.ResponseWriter, r *http.Request) {
-	_, milestoneID, ok := h.resolveMilestone(w, r, models.PermissionItemView)
+	user, milestoneID, ok := h.resolveMilestone(w, r, models.PermissionItemView)
 	if !ok {
+		return
+	}
+	workspaceIDs, err := h.permissionService.AccessibleWorkspaceIDs(user.ID)
+	if err != nil {
+		respondInternalError(w, r, err)
 		return
 	}
 
 	// Use service to get test statistics
-	stats, err := h.planningService.GetMilestoneTestStatistics(milestoneID)
+	stats, err := h.planningService.GetMilestoneTestStatistics(milestoneID, workspaceIDs)
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
@@ -398,13 +403,18 @@ func (h *MilestoneHandler) GetTestStatistics(w http.ResponseWriter, r *http.Requ
 
 // GetProgress handles GET /api/milestones/{id}/progress - returns milestone progress report
 func (h *MilestoneHandler) GetProgress(w http.ResponseWriter, r *http.Request) {
-	_, milestoneID, ok := h.resolveMilestone(w, r, models.PermissionItemView)
+	user, milestoneID, ok := h.resolveMilestone(w, r, models.PermissionItemView)
 	if !ok {
+		return
+	}
+	workspaceIDs, err := h.permissionService.AccessibleWorkspaceIDs(user.ID)
+	if err != nil {
+		respondInternalError(w, r, err)
 		return
 	}
 
 	// Use service to get progress report
-	report, err := h.planningService.GetMilestoneProgress(milestoneID)
+	report, err := h.planningService.GetMilestoneProgress(milestoneID, workspaceIDs)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			respondNotFound(w, r, "milestone")
@@ -600,6 +610,7 @@ func (h *MilestoneHandler) milestoneResultToModel(r *services.MilestoneResult, u
 // releaseRequest is the request body for the Release endpoint.
 type releaseRequest struct {
 	ConnectionID    int    `json:"connection_id"`
+	RepositoryID    int    `json:"repository_id"`
 	Repository      string `json:"repository"` // "owner/repo"
 	TagName         string `json:"tag_name"`
 	Name            string `json:"name"`
@@ -633,11 +644,6 @@ func (h *MilestoneHandler) Release(w http.ResponseWriter, r *http.Request) {
 	var scmReleaseURL *string
 
 	if req.ConnectionID > 0 {
-		if req.Repository == "" {
-			respondValidationError(w, r, "repository is required when connection_id is provided")
-			return
-		}
-
 		connectionWorkspaceID, wsErr := h.planningService.GetSCMConnectionWorkspaceID(req.ConnectionID)
 		if wsErr != nil || connectionWorkspaceID == 0 {
 			respondBadRequest(w, r, "SCM connection not found")
@@ -646,6 +652,16 @@ func (h *MilestoneHandler) Release(w http.ResponseWriter, r *http.Request) {
 		if !RequireWorkspacePermission(w, r, user.ID, connectionWorkspaceID, models.PermissionItemEdit, h.permissionService) {
 			return
 		}
+		linkedRepository, repoErr := h.planningService.ResolveLinkedSCMRepository(req.ConnectionID, req.RepositoryID, req.Repository)
+		if errors.Is(repoErr, services.ErrSCMRepositoryNotLinked) {
+			respondValidationError(w, r, "repository must be linked to the selected SCM connection")
+			return
+		}
+		if repoErr != nil {
+			respondInternalError(w, r, repoErr)
+			return
+		}
+		repositoryName := linkedRepository.RepositoryName
 
 		if h.credentialResolver != nil {
 			// Load the SCM provider
@@ -663,7 +679,7 @@ func (h *MilestoneHandler) Release(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Parse "owner/repo"
-			parts := strings.SplitN(req.Repository, "/", 2)
+			parts := strings.SplitN(repositoryName, "/", 2)
 			if len(parts) != 2 {
 				respondValidationError(w, r, "repository must be in 'owner/repo' format")
 				return
@@ -686,7 +702,7 @@ func (h *MilestoneHandler) Release(w http.ResponseWriter, r *http.Request) {
 
 			cid := req.ConnectionID
 			scmConnectionID = &cid
-			repoStr := req.Repository
+			repoStr := repositoryName
 			scmRepository = &repoStr
 			scmReleaseID = &release.ID
 			scmReleaseURL = &release.URL
