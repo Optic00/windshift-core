@@ -27,6 +27,7 @@ func RegisterAdminRoutes(deps *Deps) {
 	api.HandleH("GET /admin/diagnostics/webhook-deliveries", admin(http.HandlerFunc(deps.Admin.Diagnostics.GetWebhookDeliveries)))
 	api.HandleH("GET /admin/diagnostics/webhook-stats", admin(http.HandlerFunc(deps.Admin.Diagnostics.GetWebhookStats)))
 	api.HandleH("GET /admin/diagnostics/webhook-dispatch", admin(http.HandlerFunc(deps.Admin.Diagnostics.GetWebhookDispatch)))
+	api.HandleH("GET /admin/diagnostics/transition-matrix", admin(http.HandlerFunc(deps.Admin.Diagnostics.GetTransitionMatrix)))
 	api.HandleH("POST /admin/diagnostics/webhook-deliveries/purge", admin(http.HandlerFunc(deps.Admin.Diagnostics.PurgeWebhookDeliveries)))
 	api.HandleH("GET /admin/diagnostics/scheduler-runs", admin(http.HandlerFunc(deps.Admin.Diagnostics.GetSchedulerRuns)))
 	api.HandleH("GET /admin/diagnostics/scheduler-stats", admin(http.HandlerFunc(deps.Admin.Diagnostics.GetSchedulerStats)))

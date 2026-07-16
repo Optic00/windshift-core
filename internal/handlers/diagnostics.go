@@ -15,6 +15,7 @@ import (
 	"windshift/internal/logger"
 	"windshift/internal/models"
 	"windshift/internal/repository"
+	"windshift/internal/services"
 	"windshift/internal/utils"
 	"windshift/internal/webhook"
 )
@@ -38,6 +39,7 @@ type DiagnosticsHandler struct {
 	runnerRepo       *repository.RunnerRepository
 	agentRunRepo     *repository.AgentRunRepository
 	webhookSender    *webhook.WebhookSender
+	transitionMatrix *services.TransitionMatrixService
 }
 
 // NewDiagnosticsHandler creates a new diagnostics handler.
@@ -55,6 +57,7 @@ func NewDiagnosticsHandler(
 	runnerRepo *repository.RunnerRepository,
 	agentRunRepo *repository.AgentRunRepository,
 	webhookSender *webhook.WebhookSender,
+	transitionMatrix *services.TransitionMatrixService,
 ) *DiagnosticsHandler {
 	return &DiagnosticsHandler{
 		sessionManager:   sessionManager,
@@ -70,6 +73,7 @@ func NewDiagnosticsHandler(
 		runnerRepo:       runnerRepo,
 		agentRunRepo:     agentRunRepo,
 		webhookSender:    webhookSender,
+		transitionMatrix: transitionMatrix,
 	}
 }
 
@@ -83,6 +87,18 @@ func (h *DiagnosticsHandler) GetWebhookDispatch(w http.ResponseWriter, _ *http.R
 		return
 	}
 	respondJSONOK(w, h.webhookSender.Stats())
+}
+
+// GetTransitionMatrix returns process-local matrix cardinality, bounded-query,
+// coalescing, latency, and response-size counters.
+//
+// GET /api/admin/diagnostics/transition-matrix
+func (h *DiagnosticsHandler) GetTransitionMatrix(w http.ResponseWriter, _ *http.Request) {
+	if h.transitionMatrix == nil {
+		respondJSONOK(w, services.TransitionMatrixStats{})
+		return
+	}
+	respondJSONOK(w, h.transitionMatrix.Stats())
 }
 
 // GetSessionValidationCache returns local, identifier-free validation cache

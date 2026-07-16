@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -229,62 +230,45 @@ func (h *ItemHandler) GetWorkspaceTransitionMatrix(w http.ResponseWriter, r *htt
 		return
 	}
 
-	itemTypes, err := services.NewConfigReadService(h.db).ListItemTypes()
+	if h.transitionMatrix == nil {
+		h.transitionMatrix = services.NewTransitionMatrixService(h.db)
+	}
+	ctx, cancel := h.requestDBContext(r)
+	defer cancel()
+	matrix, err := h.transitionMatrix.Load(ctx, workspaceID)
 	if err != nil {
-		respondInternalError(w, r, err)
+		h.respondItemReadError(w, r, err)
 		return
 	}
-	statuses, err := services.NewWorkspaceService(h.db).GetStatuses(workspaceID)
-	if err != nil {
-		respondInternalError(w, r, err)
-		return
-	}
-
-	workflowService := services.NewWorkflowService(h.db)
-
-	// Transitions depend only on (workflow, fromStatus), so compute once per
-	// workflow and replicate across every item type that resolves to it.
-	perWorkflow := map[int]map[int][]map[string]interface{}{}
-	computeForWorkflow := func(workflowID int) map[int][]map[string]interface{} {
-		if cached, ok := perWorkflow[workflowID]; ok {
-			return cached
-		}
-		byStatus := make(map[int][]map[string]interface{}, len(statuses))
-		for _, st := range statuses {
-			options := []map[string]interface{}{}
-			added := map[int]bool{st.ID: true}
-			// Current status first (matches the per-item endpoint).
-			if current, optErr := workflowService.GetStatusTransitionOption(int64(st.ID)); optErr == nil && current != nil {
-				options = append(options, transitionOptionResponse(*current))
-			}
-			raw, listErr := workflowService.ListAvailableTransitionOptions(workflowID, int64(st.ID))
-			if listErr == nil {
-				for _, rt := range raw {
-					if !added[rt.StatusID] {
-						options = append(options, transitionOptionResponse(rt))
-						added[rt.StatusID] = true
-					}
-				}
-			}
-			byStatus[st.ID] = options
-		}
-		perWorkflow[workflowID] = byStatus
-		return byStatus
-	}
-
 	transitions := map[string][]map[string]interface{}{}
-	for _, it := range itemTypes {
-		itemTypeID := it.ID
-		workflowID, wfErr := workflowService.GetWorkflowIDForItem(workspaceID, &itemTypeID)
-		if wfErr != nil || workflowID == nil {
-			continue
-		}
-		for statusID, options := range computeForWorkflow(*workflowID) {
+	for itemTypeID, byStatus := range matrix.ByItemType {
+		for statusID, rawOptions := range byStatus {
+			options := make([]map[string]interface{}, 0, len(rawOptions))
+			for _, option := range rawOptions {
+				options = append(options, transitionOptionResponse(option))
+			}
 			transitions[strconv.Itoa(itemTypeID)+":"+strconv.Itoa(statusID)] = options
 		}
 	}
 
-	respondJSONOK(w, map[string]interface{}{"transitions": transitions})
+	response := map[string]interface{}{"transitions": transitions}
+	responseBytes := 0
+	if encoded, marshalErr := json.Marshal(response); marshalErr == nil {
+		// respondJSONOK uses json.Encoder, which appends one trailing newline.
+		responseBytes = len(encoded) + 1
+		h.transitionMatrix.ObserveResponseSize(responseBytes)
+	}
+	slog.Debug("workspace transition matrix loaded",
+		"component", "transition_matrix",
+		"workspace_id", workspaceID,
+		"item_type_count", matrix.ItemTypeCount,
+		"status_count", matrix.StatusCount,
+		"workflow_count", matrix.WorkflowCount,
+		"sql_count", matrix.SQLCount,
+		"query_duration_ms", matrix.QueryDuration.Milliseconds(),
+		"response_bytes", responseBytes,
+	)
+	respondJSONOK(w, response)
 }
 
 func transitionOptionResponse(option services.StatusTransitionOption) map[string]interface{} {

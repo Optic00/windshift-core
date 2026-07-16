@@ -49,6 +49,7 @@ type ItemHandler struct {
 	conditionService *services.ConditionService // Condition service for workflow transition conditions (optional, can be nil)
 	approvalService  *services.ApprovalService  // Approval service for status-bound approvals (optional, can be nil)
 	sseHub           *services.SSEHub           // Hub for the item event stream (optional, can be nil → /events returns 503)
+	transitionMatrix *services.TransitionMatrixService
 	dbRequestTimeout time.Duration
 }
 
@@ -75,7 +76,16 @@ func NewItemHandler(db database.Database, permissionService *services.Permission
 		idResolver:          services.NewIDResolverService(db),
 		itemCRUD:            services.NewItemCRUDService(db),
 		notificationService: notificationService,
+		transitionMatrix:    services.NewTransitionMatrixService(db),
 		dbRequestTimeout:    defaultDBRequestTimeout,
+	}
+}
+
+// SetTransitionMatrixService replaces the default process-local service. This
+// is primarily useful for sharing telemetry or injecting a test service.
+func (h *ItemHandler) SetTransitionMatrixService(service *services.TransitionMatrixService) {
+	if service != nil {
+		h.transitionMatrix = service
 	}
 }
 

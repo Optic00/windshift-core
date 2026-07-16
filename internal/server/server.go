@@ -470,7 +470,9 @@ func (s *Server) initialize() error {
 	workspaceKeyCache := handlers.NewWorkspaceKeyCache(repository.NewWorkspaceRepository(s.db))
 
 	// Initialize handlers
+	transitionMatrixService := services.NewTransitionMatrixService(s.db)
 	itemHandler := handlers.NewItemHandler(s.db, permService, s.activityTracker, s.notificationService)
+	itemHandler.SetTransitionMatrixService(transitionMatrixService)
 	itemHandler.SetDBRequestTimeout(s.config.DB.RequestTimeout)
 	customFieldHandler := handlers.NewCustomFieldHandler(s.db)
 	workspaceHandler := handlers.NewWorkspaceHandler(s.db, permService, s.activityTracker, workspaceKeyCache)
@@ -1418,6 +1420,7 @@ func (s *Server) initialize() error {
 				repository.NewRunnerRepository(s.db),
 				repository.NewAgentRunRepository(s.db),
 				s.webhookSender,
+				transitionMatrixService,
 			),
 			AgentSecurity: handlers.NewAgentSecurityHandler(
 				agentSecurityRepo,
