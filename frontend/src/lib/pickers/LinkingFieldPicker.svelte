@@ -10,10 +10,13 @@
     itemId,
     fieldOptions = '{}',
     readonly = false,
-    disabled = false
+    disabled = false,
+    links: providedLinks = null,
+    onChanged = null
   } = $props();
 
-  let links = $state([]);
+  let loadedLinks = $state([]);
+  const links = $derived(providedLinks ?? loadedLinks);
   let loading = $state(false);
   let showSearch = $state(false);
   let searchQuery = $state('');
@@ -28,7 +31,7 @@
   const isMirror = $derived(!!opts.mirror_of_field_id);
 
   onMount(() => {
-    if (itemId && fieldId) {
+    if (providedLinks === null && itemId && fieldId) {
       loadLinks();
     }
   });
@@ -38,10 +41,10 @@
     loading = true;
     try {
       const result = await api.links.getFieldLinks(itemId, fieldId);
-      links = result || [];
+      loadedLinks = result || [];
     } catch (e) {
       console.error('Failed to load field links:', e);
-      links = [];
+      loadedLinks = [];
     } finally {
       loading = false;
     }
@@ -91,7 +94,8 @@
       searchQuery = '';
       searchResults = [];
       showSearch = false;
-      await loadLinks();
+      if (onChanged) await onChanged();
+      else await loadLinks();
     } catch (e) {
       console.error('Failed to add link:', e);
       errorToast(e?.message || 'Failed to add link');
@@ -101,7 +105,8 @@
   async function removeLink(linkId) {
     try {
       await api.links.delete(linkId);
-      await loadLinks();
+      if (onChanged) await onChanged();
+      else await loadLinks();
     } catch (e) {
       console.error('Failed to remove link:', e);
       errorToast(e?.message || 'Failed to remove link');

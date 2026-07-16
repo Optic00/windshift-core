@@ -202,7 +202,13 @@ func (h *ItemLinkHandler) GetLinksForItemsBatch(w http.ResponseWriter, r *http.R
 		respondBadRequest(w, r, fmt.Sprintf("too many ids (max %d per request)", maxBatchLinkItems))
 		return
 	}
-	groups, err := h.linkSvc.ListLinksForItemsWithChecks(user.ID, ids)
+	var groups map[int]services.EntityLinks
+	var err error
+	if r.URL.Query().Get("include_custom_fields") == "true" {
+		groups, err = h.linkSvc.ListLinksForItemsWithCustomFieldsAndChecks(user.ID, ids)
+	} else {
+		groups, err = h.linkSvc.ListLinksForItemsWithChecks(user.ID, ids)
+	}
 	if err != nil {
 		respondLinkServiceError(w, r, "item", err)
 		return

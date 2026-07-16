@@ -26,6 +26,7 @@ type WorkspaceAgentBindingHandler struct {
 	permissionService *services.PermissionService
 	auditor           *logger.Auditor
 	skills            *repository.WorkspaceAgentSkillRepository
+	initialPrompt     string
 }
 
 // NewWorkspaceAgentBindingHandler constructs the handler.
@@ -48,6 +49,29 @@ func NewWorkspaceAgentBindingHandler(
 // update endpoint can replace attachments.
 func (h *WorkspaceAgentBindingHandler) SetSkillsRepo(repo *repository.WorkspaceAgentSkillRepository) {
 	h.skills = repo
+}
+
+// SetInitialPrompt wires the effective server-managed coding-agent prompt.
+// It may differ from the embedded default when AI_PROMPTS_DIR overrides it.
+func (h *WorkspaceAgentBindingHandler) SetInitialPrompt(prompt string) {
+	h.initialPrompt = prompt
+}
+
+// InitialPrompt returns the effective standard prompt to workspace admins so
+// they can understand what their binding-level instructions are appended to.
+func (h *WorkspaceAgentBindingHandler) InitialPrompt(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := requireIDParam(w, r, "workspaceId")
+	if !ok {
+		return
+	}
+	user, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+	if !RequireWorkspacePermission(w, r, user.ID, workspaceID, models.PermissionWorkspaceAdmin, h.permissionService) {
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]string{"prompt": h.initialPrompt})
 }
 
 // Candidates returns the acting-identity options the workspace admin

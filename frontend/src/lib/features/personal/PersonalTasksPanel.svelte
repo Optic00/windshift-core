@@ -132,6 +132,7 @@
         }
       }
     } catch (err) {
+      if (err?.name === 'AbortError') return;
       console.error('Failed to load personal tasks:', err);
       error = err.message;
       personalTasks = [];

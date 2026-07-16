@@ -595,13 +595,16 @@ func (at *ActivityTracker) flushWorkspaceVisitBatch(ctx context.Context, visits 
 		for _, visit := range visits {
 			if _, err := tx.ExecContext(ctx, `
 				INSERT INTO user_workspace_visits (user_id, workspace_id, last_visited_at, visit_count, expires_at)
-				VALUES (?, ?, ?, ?, ?)
+				SELECT ?, ?, ?, ?, ?
+				WHERE EXISTS (SELECT 1 FROM users WHERE id = ?)
+				  AND EXISTS (SELECT 1 FROM workspaces WHERE id = ?)
 				ON CONFLICT(user_id, workspace_id) DO UPDATE SET
 					last_visited_at = CASE WHEN excluded.last_visited_at > user_workspace_visits.last_visited_at THEN excluded.last_visited_at ELSE user_workspace_visits.last_visited_at END,
 					visit_count = user_workspace_visits.visit_count + excluded.visit_count,
 					expires_at = ?,
 					updated_at = CURRENT_TIMESTAMP
 			`, visit.UserID, visit.WorkspaceID, visit.VisitedAt, visit.VisitCount, expiresAt,
+				visit.UserID, visit.WorkspaceID,
 				expiresAt); err != nil {
 				return fmt.Errorf("flush workspace visit: %w", err)
 			}
@@ -644,13 +647,16 @@ func (at *ActivityTracker) flushItemActivityBatch(ctx context.Context, activitie
 		for _, activity := range activities {
 			if _, err := tx.ExecContext(ctx, `
 				INSERT INTO user_item_activities (user_id, item_id, activity_type, last_activity_at, activity_count, expires_at)
-				VALUES (?, ?, ?, ?, ?, ?)
+				SELECT ?, ?, ?, ?, ?, ?
+				WHERE EXISTS (SELECT 1 FROM users WHERE id = ?)
+				  AND EXISTS (SELECT 1 FROM items WHERE id = ?)
 				ON CONFLICT(user_id, item_id, activity_type) DO UPDATE SET
 					last_activity_at = CASE WHEN excluded.last_activity_at > user_item_activities.last_activity_at THEN excluded.last_activity_at ELSE user_item_activities.last_activity_at END,
 					activity_count = user_item_activities.activity_count + excluded.activity_count,
 					expires_at = ?,
 					updated_at = CURRENT_TIMESTAMP
 			`, activity.UserID, activity.ItemID, activity.ActivityType, activity.ActivityAt, activity.ActivityCount, expiresAt,
+				activity.UserID, activity.ItemID,
 				expiresAt); err != nil {
 				return fmt.Errorf("flush item activity: %w", err)
 			}

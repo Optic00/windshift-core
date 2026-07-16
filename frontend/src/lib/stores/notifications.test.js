@@ -1,8 +1,7 @@
 import { get } from 'svelte/store';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
-// Mock api.notifications. The store's top-level scope kicks off a load on
-// import, so the mocks need to be in place before the module is imported.
+// Mock api.notifications before importing the store.
 vi.mock('../api.js', () => ({
   api: {
     notifications: {
@@ -28,15 +27,48 @@ vi.mock('./activityStore.svelte.js', () => ({
 vi.mock('./toasts.svelte.js', () => ({ addToast: vi.fn() }));
 
 import { api } from '../api.js';
-import { notificationActions, notifications } from './notifications.js';
+import {
+  notificationActions,
+  notifications,
+  startNotificationPoller,
+  stopNotificationPoller,
+} from './notifications.js';
 
-beforeEach(() => {
-  notifications.set([]);
+beforeEach(async () => {
+  stopNotificationPoller();
+  api.notifications.getAll.mockResolvedValueOnce([]);
+  await notificationActions.refresh();
   vi.clearAllMocks();
 });
 
 afterEach(() => {
+  stopNotificationPoller();
   vi.restoreAllMocks();
+});
+
+describe('notification poller account lifecycle', () => {
+  test('clears the old inbox and ignores a request that settles after logout', async () => {
+    let resolveOldInbox;
+    api.notifications.getAll.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveOldInbox = resolve;
+      })
+    );
+
+    startNotificationPoller();
+    stopNotificationPoller();
+    resolveOldInbox([{ id: 91, title: 'Previous account', timestamp: '2026-05-12T11:00:00Z' }]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(get(notifications)).toEqual([]);
+
+    api.notifications.getAll.mockResolvedValueOnce([
+      { id: 92, title: 'Current account', timestamp: '2026-05-12T11:30:00Z' },
+    ]);
+    startNotificationPoller();
+    await vi.waitFor(() => expect(get(notifications).map((item) => item.id)).toEqual([92]));
+  });
 });
 
 describe('notificationActions.markAsRead', () => {

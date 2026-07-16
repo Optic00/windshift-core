@@ -14,6 +14,7 @@
     submitDisabled = false,
     zIndexClass = 'z-50',
     noBackdrop = false,
+    inline = false,
     closeOnBackdropClick = true,
     onclose = null,
     onKeydown = null,
@@ -130,7 +131,16 @@
   });
 </script>
 
-{#if isOpen}
+{#if isOpen && inline}
+  <!-- Inline mode is used for long creation flows that need page-sized space
+       without dialog semantics, a backdrop, or scroll trapping. -->
+  <div
+    class="relative rounded-xl overflow-hidden w-full border"
+    style="background-color: var(--ds-surface-raised, var(--ds-surface, white)); border-color: var(--ds-border);"
+  >
+    {@render children?.(getDisplayString(submitShortcut))}
+  </div>
+{:else if isOpen}
   <!-- Backdrop -->
   <div
     use:portal

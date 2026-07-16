@@ -1,4 +1,4 @@
-import { GanttChart } from '@lucide/svelte';
+import { GanttChart, Orbit } from '@lucide/svelte';
 import {
   IconAdjustments as Adjustments,
   IconChartBar as BarChart3,
@@ -15,7 +15,6 @@ import {
   IconPlayerPlay as Play,
   IconRefresh as Refresh,
   IconRepeat as Repeat,
-  IconRobot as Robot,
   IconLayoutRows as Rows_3,
   IconSettings as SettingsCog,
   IconLayoutKanban as SquareKanban,
@@ -178,7 +177,7 @@ export const workspaceSettingsItems = [
   {
     id: 'coding-agents',
     labelKey: 'workspaceSettings.tabs.codingAgents',
-    icon: Robot,
+    icon: Orbit,
     view: 'workspace-settings-coding-agents',
   },
   {

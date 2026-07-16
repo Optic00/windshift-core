@@ -330,6 +330,24 @@ describe('fetchAPI — network and timeout errors', () => {
 
     await expect(request).rejects.toMatchObject({ name: 'AbortError' });
   });
+
+  test('treats a hidden-document TypeError as navigation cancellation', async () => {
+    const originalVisibilityState = document.visibilityState;
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      value: 'hidden',
+    });
+    global.fetch = vi.fn(() => Promise.reject(new TypeError('Failed to fetch')));
+
+    try {
+      await expect(fetchAPI('/items')).rejects.toMatchObject({ name: 'AbortError' });
+    } finally {
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        value: originalVisibilityState,
+      });
+    }
+  });
 });
 
 describe('fetchAPI — request shape', () => {

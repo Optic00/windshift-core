@@ -2,7 +2,7 @@
   import { BasePicker } from '.';
   import { createAsyncLoader } from '../composables';
   import { api } from '../api.js';
-  import { untrack } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import { Box } from '@lucide/svelte';
   import { t } from '../stores/i18n.svelte.js';
   import DescriptionText from '../components/DescriptionText.svelte';
@@ -17,6 +17,7 @@
     showUnassigned = false,
     autoOpen = false,
     multiple = false,
+    optionLoader = null,
     class: className = '',
     onSelect = () => {},
     onCancel = () => {},
@@ -27,6 +28,17 @@
 
   let searchQuery = $state('');
   let totalCount = $state(0);
+  let externalAssets = $state([]);
+  let externalLoading = $state(false);
+  let externalError = $state(null);
+  let opened = $state(false);
+  let externalLoadToken = 0;
+
+  // Ignore results from a row that disappeared because of scrolling,
+  // pagination, a column change, or navigation while its request was active.
+  onDestroy(() => {
+    externalLoadToken += 1;
+  });
 
   const assets = createAsyncLoader(async () => {
     if (!assetSetId) return [];
@@ -42,9 +54,44 @@
   $effect(() => {
     if (assetSetId) {
       const _ = [assetSetId, cqlQuery, searchQuery];
-      untrack(() => assets.load());
+      if (!optionLoader) {
+        untrack(() => assets.load());
+      } else if (opened) {
+        untrack(() => loadExternalOptions());
+      }
     }
   });
+
+  async function loadExternalOptions() {
+    if (!optionLoader || !assetSetId) return;
+    const token = ++externalLoadToken;
+    externalLoading = true;
+    externalError = null;
+    try {
+      const result = await optionLoader(searchQuery);
+      if (token !== externalLoadToken) return;
+      externalAssets = result?.assets || [];
+      totalCount = result?.total ?? 0;
+    } catch (error) {
+      if (token !== externalLoadToken) return;
+      externalError = error;
+      externalAssets = [];
+    } finally {
+      if (token === externalLoadToken) externalLoading = false;
+    }
+  }
+
+  function handleOpen() {
+    if (!opened) {
+      opened = true;
+    } else if (optionLoader) {
+      loadExternalOptions();
+    }
+  }
+
+  const optionItems = $derived(optionLoader ? externalAssets : (assets.data || []));
+  const optionLoading = $derived(optionLoader ? externalLoading : assets.loading);
+  const optionError = $derived(optionLoader ? externalError : assets.error);
 
   function handleSearchChange(query) {
     searchQuery = query;
@@ -62,7 +109,7 @@
   function handleMultiChange(ids) {
     const selectedIDs = Array.isArray(ids) ? ids : [];
     const selectedAssets = selectedIDs.map((id) => {
-      const asset = (assets.data || []).find((entry) => entry.id === id);
+      const asset = optionItems.find((entry) => entry.id === id);
       return assetSummary(asset) || { id };
     });
     onChange(selectedAssets);
@@ -71,9 +118,9 @@
 
 <BasePicker
   bind:value
-  items={assets.data || []}
-  loading={assets.loading}
-  error={assets.error}
+  items={optionItems}
+  loading={optionLoading}
+  error={optionError}
   placeholder={resolvedPlaceholder}
   {disabled}
   {allowClear}
@@ -82,6 +129,7 @@
   {multiple}
   class={className}
   serverSearch
+  onOpen={handleOpen}
   onSearchChange={handleSearchChange}
   getValue={(asset) => asset?.id}
   getLabel={(asset) => {
@@ -116,8 +164,8 @@
   {/snippet}
 </BasePicker>
 
-{#if !searchQuery && totalCount > (assets.data?.length || 0)}
+{#if !searchQuery && totalCount > optionItems.length}
   <DescriptionText as="div" variant="subtlest">
-    {t('pickers.showingOfTotal', { shown: assets.data?.length || 0, total: totalCount })}
+    {t('pickers.showingOfTotal', { shown: optionItems.length, total: totalCount })}
   </DescriptionText>
 {/if}

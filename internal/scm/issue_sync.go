@@ -183,7 +183,18 @@ func (s *IssueSyncService) syncConfig(ctx context.Context, provider IssueProvide
 	page := 1
 	for {
 		opts.Page = page
-		issues, err := provider.ListIssues(ctx, owner, repo, opts)
+		var issues []Issue
+		var hasNext bool
+		var err error
+		if paginated, ok := provider.(PaginatedIssueProvider); ok {
+			issues, hasNext, err = paginated.ListIssuesPage(ctx, owner, repo, opts)
+		} else {
+			// Compatibility fallback for providers that only expose the original
+			// issue-list contract. Such providers must not remove entries before
+			// returning the page if they rely on the length pagination signal.
+			issues, err = provider.ListIssues(ctx, owner, repo, opts)
+			hasNext = len(issues) == opts.PerPage
+		}
 		if err != nil {
 			if errors.Is(err, ErrRateLimited) {
 				return fmt.Errorf("list issues page %d: %w", page, err)
@@ -201,7 +212,7 @@ func (s *IssueSyncService) syncConfig(ctx context.Context, provider IssueProvide
 			}
 		}
 
-		if len(issues) < opts.PerPage {
+		if !hasNext {
 			break
 		}
 		page++

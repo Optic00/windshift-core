@@ -1,6 +1,7 @@
 import { derived, writable } from 'svelte/store';
 import { api } from '../api.js';
 import { authStore } from './auth.svelte.js';
+import { clearPermissionProfiles, loadPermissionProfile } from './permissionProfile.js';
 
 // Export isSystemAdmin as a standalone derived store for backward compatibility
 export const isSystemAdmin = derived(authStore, ($authStore) => {
@@ -189,7 +190,7 @@ function createPermissionStore() {
       error.set(null);
 
       try {
-        const response = await api.permissions.getUserPermissions(userId);
+        const response = await loadPermissionProfile(userId);
         const globalPerms = response.global_permissions || [];
         const globalPermissionIds = new Set(globalPerms.map((p) => p.permission_id));
         const globalPermKeys = new Set(
@@ -240,6 +241,7 @@ function createPermissionStore() {
 
     // Clear permissions
     clear() {
+      clearPermissionProfiles();
       permissions.set([]);
       userPermissions.set(new Set());
       userPermissionKeys.set(new Set());

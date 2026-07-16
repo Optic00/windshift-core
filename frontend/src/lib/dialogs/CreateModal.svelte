@@ -60,6 +60,7 @@
     isOpen = $bindable(false),
     compactMode = false,
     initialType = 'work-item',
+    initialWorkspaceId = null,
     skipNavigate = false,
     onclose = null,
     oncreated = null
@@ -321,6 +322,18 @@
     selectedType = initialType;
   });
 
+  // The modal is lazy-loaded, so workspace context must arrive as state rather
+  // than a timer-based window event that can fire before this component mounts.
+  $effect(() => {
+    if (
+      isOpen &&
+      initialWorkspaceId &&
+      workItemFormStore.formData.workspace_id !== Number(initialWorkspaceId)
+    ) {
+      applyWorkspace(initialWorkspaceId);
+    }
+  });
+
   // Force work-item type when compact mode is enabled
   $effect(() => {
     if (compactMode && selectedType !== 'work-item') {
@@ -340,24 +353,21 @@
 
   function handleSetCreateWorkspace(event) {
     if (event.detail?.workspaceId) {
-      const workspaceId = event.detail.workspaceId;
-      const workspaceIdNum = typeof workspaceId === 'string' ? parseInt(workspaceId, 10) : workspaceId;
+      applyWorkspace(event.detail.workspaceId);
+    }
+  }
 
-      collectionFormData.workspace_id = workspaceIdNum;
+  async function applyWorkspace(workspaceId) {
+    const workspaceIdNum = Number.parseInt(String(workspaceId), 10);
+    if (!Number.isFinite(workspaceIdNum)) return;
 
-      if ($workspacesStore.regularWorkspaces.length === 0) {
-        loadWorkspaces().then(() => {
-          const workspace = $workspacesStore.regularWorkspaces.find(w => w.id === workspaceIdNum);
-          if (workspace) {
-            workItemFormStore.setWorkspace(workspace);
-          }
-        });
-      } else {
-        const workspace = $workspacesStore.regularWorkspaces.find(w => w.id === workspaceIdNum);
-        if (workspace) {
-          workItemFormStore.setWorkspace(workspace);
-        }
-      }
+    collectionFormData.workspace_id = workspaceIdNum;
+    if ($workspacesStore.regularWorkspaces.length === 0) {
+      await loadWorkspaces();
+    }
+    const workspace = $workspacesStore.regularWorkspaces.find(w => w.id === workspaceIdNum);
+    if (workspace) {
+      workItemFormStore.setWorkspace(workspace);
     }
   }
 

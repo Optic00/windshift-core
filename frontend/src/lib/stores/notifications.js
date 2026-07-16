@@ -22,23 +22,25 @@ const IDLE_POLL_MS = 5 * 60_000;
 // Load notifications from API
 let loadPromise = null;
 let initialLoadSettled = false;
+let pollerGeneration = 0;
 function loadNotifications() {
   if (loadPromise) return loadPromise;
 
-  // This module eagerly loads at import time (see the bottom-of-file call), so
-  // it can be pulled in transitively by component tests whose api mock only
-  // stubs the handful of methods under test. Guard against a missing
-  // api.notifications so importing a component never throws — in the app the
-  // slice always exists.
+  const generation = pollerGeneration;
+
+  // Keep component tests and optional consumers resilient when they provide a
+  // partial API mock. Importing this module never starts authenticated work;
+  // startNotificationPoller owns the first load after auth is established.
   if (typeof api?.notifications?.getAll !== 'function') {
     notifications.set([]);
     initialLoadSettled = true;
     return Promise.resolve([]);
   }
 
-  loadPromise = api.notifications
+  const request = api.notifications
     .getAll()
     .then((data) => {
+      if (generation !== pollerGeneration) return [];
       // Handle null response (no notifications)
       if (!data || !Array.isArray(data)) {
         notifications.set([]);
@@ -55,20 +57,19 @@ function loadNotifications() {
       return processedNotifications;
     })
     .catch((error) => {
+      if (generation !== pollerGeneration) return [];
       console.error('Failed to load notifications:', error);
       // Preserve the last successfully loaded list during transient failures.
       return get(notifications);
     })
     .finally(() => {
-      initialLoadSettled = true;
-      loadPromise = null; // Reset promise
+      if (generation === pollerGeneration) initialLoadSettled = true;
+      if (loadPromise === request) loadPromise = null;
     });
 
+  loadPromise = request;
   return loadPromise;
 }
-
-// Initialize notifications
-loadNotifications();
 
 // Helper functions
 export const notificationActions = {
@@ -137,18 +138,20 @@ export const notificationActions = {
   // match on action_url; here we mirror it locally for an instant tray update.
   markItemAsRead: async (itemId) => {
     if (itemId == null) return;
-    if (!initialLoadSettled || loadPromise) {
-      await loadNotifications();
-    }
 
     const itemIdString = String(itemId);
     const hasUnreadMatch = get(notifications).some(
       (item) => !item.read && itemIdFromActionUrl(item.actionUrl) === itemIdString
     );
-    if (!hasUnreadMatch) return;
+    // Before the authenticated poller finishes its first load, the empty local
+    // list cannot prove there is nothing to mark on the server.
+    if (initialLoadSettled && !loadPromise && !hasUnreadMatch) return;
 
     try {
       await api.notifications.markItemAsRead(itemId);
+      // If the initial inbox request was already in flight, let it settle before
+      // applying the local patch so an older response cannot restore unread.
+      if (loadPromise) await loadPromise;
       notifications.update((items) =>
         items.map((item) =>
           !item.read && itemIdFromActionUrl(item.actionUrl) === itemIdString
@@ -264,19 +267,22 @@ let _pollerStarted = false;
 let _pollTimer = null;
 
 function _scheduleNextPoll() {
+  if (!_pollerStarted) return;
   clearTimeout(_pollTimer);
   const delay = activityStore.isIdle ? IDLE_POLL_MS : ACTIVE_POLL_MS;
   _pollTimer = setTimeout(_tick, delay);
 }
 
 async function _tick() {
+  const generation = pollerGeneration;
   try {
     await loadNotifications();
+    if (!_pollerStarted || generation !== pollerGeneration) return;
     _dispatchNew(get(notifications));
   } catch (err) {
     console.warn('notification poller: tick failed', err);
   } finally {
-    _scheduleNextPoll();
+    if (_pollerStarted && generation === pollerGeneration) _scheduleNextPoll();
   }
 }
 
@@ -288,14 +294,29 @@ async function _tick() {
 export function startNotificationPoller() {
   if (_pollerStarted) return;
   _pollerStarted = true;
+  const generation = ++pollerGeneration;
 
   loadNotifications().then(() => {
+    if (!_pollerStarted || generation !== pollerGeneration) return;
     if (!_seeded) {
       for (const n of get(notifications)) _seenIds.add(n.id);
       _seeded = true;
     }
     _scheduleNextPoll();
   });
+}
+
+/** Stop account-scoped polling and discard every value from the old session. */
+export function stopNotificationPoller() {
+  _pollerStarted = false;
+  pollerGeneration += 1;
+  clearTimeout(_pollTimer);
+  _pollTimer = null;
+  loadPromise = null;
+  initialLoadSettled = false;
+  _seeded = false;
+  _seenIds.clear();
+  notifications.set([]);
 }
 
 // --- Desktop notification bridge (Tauri only) ---

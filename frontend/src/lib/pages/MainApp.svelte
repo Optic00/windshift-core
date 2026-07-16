@@ -10,7 +10,8 @@
   import { chatStore } from '../stores/chatStore.svelte.js';
   import { logbookStore } from '../stores/logbook.svelte.js';
   import { capabilitiesStore } from '../stores/capabilities.svelte.js';
-  import { startNotificationPoller } from '../stores/notifications.js';
+  import { startNotificationPoller, stopNotificationPoller } from '../stores/notifications.js';
+  import { resetAuthenticatedShellState, runAuthenticatedShellBootstrap } from '../services/authenticatedShellBootstrap.js';
   import { desktopBridge } from '../desktop/bridge.svelte.js';
   import { initDesktopFocusRefresh } from '../utils/desktopFocusRefresh.svelte.js';
   import { api } from '../api.js';
@@ -59,6 +60,7 @@
   let showChatPanel = $state(false);
   let createModalInitialType = $state('work-item');
   let createModalSkipNavigate = $state(false);
+  let createModalWorkspaceId = $state(null);
   let showEmailVerificationBanner = $state(false);
 
   // Terminal panel state
@@ -619,7 +621,7 @@
 
   let routeProps = $derived.by(() => getPropsForRoute(effectiveView));
 
-  onMount(async () => {
+  onMount(() => {
     // Initialize activity tracking for adaptive polling
     activityStore.init();
 
@@ -633,66 +635,79 @@
     // new-notification bus used by item views to refresh instantly).
     startNotificationPoller();
 
-    // Load full app data for authenticated users
-    // (MainApp only renders when user is authenticated, App.svelte handles auth/setup)
-    await workspacesStore.load();
-    // Also load personal workspace so it's available immediately
-    workspacesStore.loadPersonalWorkspace();
-    moduleSettings.load();
-    attachmentStatus.load();
-    aiStore.load();
-    capabilitiesStore.load();
-    // Check logbook availability
-    logbookStore.checkAvailability().then(() => {
-      permissionStore.setLogbookAvailable(logbookStore.available);
-    });
-    // Load all permissions for permission checking (admin only)
-    await permissionStore.loadAllPermissions(authStore.currentUser);
-    // Load user and workspace permissions for current user
+    // MainApp only renders after authentication. Start the small navigation /
+    // permission critical path together with every optional capability probe;
+    // optional work must not delay the first useful route.
+    const user = authStore.currentUser;
     const userId = authStore.currentUser?.id;
+    const criticalTasks = [
+      () => workspacesStore.load(),
+      () => permissionStore.loadAllPermissions(user),
+    ];
     if (userId) {
-      await Promise.all([
-        permissionStore.loadUserPermissions(userId),
-        workspacePermissions.loadPermissions(userId)
-      ]);
+      criticalTasks.push(
+        () => permissionStore.loadUserPermissions(userId),
+        () => workspacePermissions.loadPermissions(userId),
+      );
     }
 
-    // Check asset sets availability for navigation visibility
-    try {
-      const sets = await api.assetSets.getAll();
-      permissionStore.setHasAssetSets(sets && sets.length > 0);
-    } catch (err) {
-      console.warn('Failed to check asset sets:', err);
-      permissionStore.setHasAssetSets(false);
-    }
-
-    // Check active portals for hub visibility
-    try {
-      const hubData = await api.hub.get();
-      permissionStore.setHasActivePortals(hubData.portals && hubData.portals.length > 0);
-    } catch (err) {
-      console.warn('Failed to check portals:', err);
-      permissionStore.setHasActivePortals(false);
-    }
-
-    // Check for email verification pending (after SSO callback redirect)
-    if (ssoStore.checkForEmailVerificationPending()) {
-      showEmailVerificationBanner = true;
-    } else {
-      // Also check current verification status from API
-      try {
-        const status = await ssoStore.getVerificationStatus();
-        if (status.configured && !status.email_verified) {
-          showEmailVerificationBanner = true;
+    const deferredTasks = [
+      () => workspacesStore.loadPersonalWorkspace(),
+      () => moduleSettings.load(),
+      () => attachmentStatus.load(),
+      () => aiStore.load(),
+      () => capabilitiesStore.load(),
+      async () => {
+        await logbookStore.checkAvailability();
+        permissionStore.setLogbookAvailable(logbookStore.available);
+      },
+      async () => {
+        try {
+          const sets = await api.assetSets.getAll();
+          permissionStore.setHasAssetSets(Boolean(sets?.length));
+        } catch (err) {
+          console.warn('Failed to check asset sets:', err);
+          permissionStore.setHasAssetSets(false);
         }
-      } catch (err) {
-        console.warn('Failed to check email verification status:', err);
-      }
-    }
+      },
+      async () => {
+        try {
+          const hubData = await api.hub.get();
+          permissionStore.setHasActivePortals(Boolean(hubData.portals?.length));
+        } catch (err) {
+          console.warn('Failed to check portals:', err);
+          permissionStore.setHasActivePortals(false);
+        }
+      },
+      async () => {
+        if (ssoStore.checkForEmailVerificationPending()) {
+          showEmailVerificationBanner = true;
+          return;
+        }
+        try {
+          const status = await ssoStore.getVerificationStatus();
+          showEmailVerificationBanner = Boolean(status.configured && !status.email_verified);
+        } catch (err) {
+          console.warn('Failed to check email verification status:', err);
+        }
+      },
+      // Re-fetch collection data now that auth is established.
+      () => collectionStore.reload(),
+    ];
 
-    // Re-fetch collection data now that auth is established (fixes empty board after login)
-    collectionStore.reload();
+    void runAuthenticatedShellBootstrap({
+      userId,
+      criticalTasks,
+      deferredTasks,
+      onMeasured: (metrics) => {
+        window.dispatchEvent(new CustomEvent('windshift:auth-shell-bootstrap', { detail: metrics }));
+      },
+    });
 
+    return () => {
+      stopNotificationPoller();
+      resetAuthenticatedShellState();
+    };
   });
 
   // Double-space handler for command palette (manual — not a simple hotkey)
@@ -718,8 +733,6 @@
 
   // Listen for create modal events and workspace refresh from other components
   onMount(() => {
-    const pendingTimeouts = new Set();
-
     function handleShowCreateModal(event) {
       const detail = event.detail || {};
 
@@ -727,22 +740,11 @@
         createModalInitialType = detail.type;
       }
       createModalSkipNavigate = detail.skipNavigate || false;
+      createModalWorkspaceId = detail.workspaceId
+        ? Number.parseInt(String(detail.workspaceId), 10)
+        : null;
 
       showCreateModal = true;
-
-      if (detail.workspaceId) {
-        const workspaceId = typeof detail.workspaceId === 'string'
-          ? parseInt(detail.workspaceId, 10)
-          : detail.workspaceId;
-
-        const timeoutId = setTimeout(() => {
-          pendingTimeouts.delete(timeoutId);
-          window.dispatchEvent(new CustomEvent('set-create-workspace', {
-            detail: { workspaceId }
-          }));
-        }, detail.type ? 250 : 200);
-        pendingTimeouts.add(timeoutId);
-      }
     }
 
     window.addEventListener('show-create-modal', handleShowCreateModal);
@@ -762,8 +764,6 @@
       window.removeEventListener('show-create-modal', handleShowCreateModal);
       window.removeEventListener('refresh-workspaces', handleRefreshWorkspaces);
       window.removeEventListener('refresh-workspace-data', handleRefreshWorkspaceData);
-      for (const id of pendingTimeouts) clearTimeout(id);
-      pendingTimeouts.clear();
     };
   });
 
@@ -856,18 +856,14 @@
 
 
   function showCreateDropdown() {
-    showCreateModal = true;
-    
+    createModalWorkspaceId = null;
+
     // Pre-select current workspace if we're in a workspace context
     const currentWorkspaceId = $currentRoute.params?.id;
     if (currentWorkspaceId && ['workspace-detail', 'workspace-calendar', 'workspace-reviews', 'workspace-settings', 'workspace-settings-general', 'workspace-settings-categories', 'workspace-settings-members', 'workspace-settings-configuration', 'workspace-settings-source-control', 'workspace-settings-coding-agents', 'workspace-settings-issue-sync', 'workspace-settings-templates', 'workspace-settings-danger', 'workspace-look-and-feel', 'workspace-board', 'workspace-backlog', 'workspace-list', 'workspace-tree', 'workspace-map', 'workspace-roadmap', 'workspace-actions', 'item-detail'].includes($currentRoute.view)) {
-      // Dispatch event to pre-select the workspace
-      setTimeout(() => {
-        window.dispatchEvent(new CustomEvent('set-create-workspace', { 
-          detail: { workspaceId: parseInt(currentWorkspaceId) } 
-        }));
-      }, 50);
+      createModalWorkspaceId = Number.parseInt(currentWorkspaceId, 10);
     }
+    showCreateModal = true;
   }
 
   // Generic lazy loader function for all routes
@@ -1224,11 +1220,13 @@
     <CreateModal
       bind:isOpen={showCreateModal}
       initialType={createModalInitialType}
+      initialWorkspaceId={createModalWorkspaceId}
       skipNavigate={createModalSkipNavigate}
       onclose={() => {
         showCreateModal = false;
         createModalInitialType = 'work-item';
         createModalSkipNavigate = false;
+        createModalWorkspaceId = null;
       }}
     />
   {/if}

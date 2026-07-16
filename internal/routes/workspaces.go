@@ -159,6 +159,7 @@ func RegisterWorkspaceRoutes(deps *Deps) {
 	// same 403 surface regardless of the chokepoint's rejection reason.
 	if deps.Workspaces.AgentBinding != nil {
 		api.HandleH("GET /workspaces/{workspaceId}/agent-bindings", auth(http.HandlerFunc(deps.Workspaces.AgentBinding.List)))
+		api.HandleH("GET /workspaces/{workspaceId}/agent-bindings/standard-prompt", auth(http.HandlerFunc(deps.Workspaces.AgentBinding.InitialPrompt)))
 		api.HandleH("POST /workspaces/{workspaceId}/agent-bindings", auth(http.HandlerFunc(deps.Workspaces.AgentBinding.Create)))
 		api.HandleH("PUT /workspaces/{workspaceId}/agent-bindings/{id}", auth(http.HandlerFunc(deps.Workspaces.AgentBinding.Update)))
 		api.HandleH("DELETE /workspaces/{workspaceId}/agent-bindings/{id}", auth(http.HandlerFunc(deps.Workspaces.AgentBinding.Delete)))

@@ -32,6 +32,7 @@ func RegisterAssetRoutes(deps *Deps) {
 	// Assets
 	api.HandleH("GET /asset-sets/{setId}/assets", auth(http.HandlerFunc(deps.Assets.Asset.GetAssets)))
 	api.HandleH("POST /asset-sets/{setId}/assets", auth(http.HandlerFunc(deps.Assets.Asset.CreateAsset)))
+	api.HandleH("GET /assets/summaries", auth(http.HandlerFunc(deps.Assets.Asset.GetAssetSummaries)))
 	api.HandleH("GET /assets/{id}", auth(http.HandlerFunc(deps.Assets.Asset.GetAsset)))
 	api.HandleH("PUT /assets/{id}", auth(http.HandlerFunc(deps.Assets.Asset.UpdateAsset)))
 	api.HandleH("DELETE /assets/{id}", auth(http.HandlerFunc(deps.Assets.Asset.DeleteAsset)))

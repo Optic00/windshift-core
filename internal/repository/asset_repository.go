@@ -20,6 +20,42 @@ type AssetRepository struct {
 	db database.Database
 }
 
+// FindAssetSummariesByIDs returns compact display data in one query. Callers
+// must apply set-level authorization before returning these rows.
+func (r *AssetRepository) FindAssetSummariesByIDs(ids []int) ([]models.AssetSummary, error) {
+	if len(ids) == 0 {
+		return []models.AssetSummary{}, nil
+	}
+
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	rows, err := r.db.Query(`
+		SELECT id, set_id, title, COALESCE(asset_tag, '')
+		FROM assets
+		WHERE id IN (`+placeholders+`)
+		ORDER BY id`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("find asset summaries: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	summaries := make([]models.AssetSummary, 0, len(ids))
+	for rows.Next() {
+		var summary models.AssetSummary
+		if err := rows.Scan(&summary.ID, &summary.SetID, &summary.Title, &summary.AssetTag); err != nil {
+			return nil, fmt.Errorf("scan asset summary: %w", err)
+		}
+		summaries = append(summaries, summary)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate asset summaries: %w", err)
+	}
+	return summaries, nil
+}
+
 // NewAssetRepository creates a new asset repository
 func NewAssetRepository(db database.Database) *AssetRepository {
 	return &AssetRepository{db: db}

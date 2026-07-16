@@ -250,6 +250,7 @@ class WorkItemFormStore {
       this.users = result || [];
       this.usersLoaded = true;
     } catch (error) {
+      if (error?.name === 'AbortError') return;
       console.error('Failed to load users:', error);
       this.users = [];
       this.usersLoaded = true;

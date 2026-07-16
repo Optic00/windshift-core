@@ -11,13 +11,17 @@
     showUnassigned = false,
     unassignedLabel = 'None',
     disabled = false,
+    customers: providedCustomers = null,
+    loading = false,
+    onOpen = null,
     class: className = '',
     onSelect = () => {},
     onCancel = () => {}
   } = $props();
 
   const customers = createAsyncLoader(() => api.portalCustomers.getAll());
-  onMount(() => customers.load());
+  onMount(() => { if (providedCustomers === null) customers.load(); });
+  const customerOptions = $derived(providedCustomers ?? customers.data ?? []);
 </script>
 
 {#snippet customerRow({ item })}
@@ -32,8 +36,8 @@
 
 <BasePicker
   bind:value
-  items={customers.data || []}
-  loading={customers.loading}
+  items={customerOptions}
+  loading={providedCustomers === null ? customers.loading : loading}
   {placeholder}
   {showUnassigned}
   {unassignedLabel}
@@ -44,6 +48,7 @@
   searchFields={['name', 'email', 'customer_organisation_name']}
   getValue={(item) => item?.id}
   getLabel={(item) => item?.name || ''}
+  onOpen={() => onOpen?.()}
   onSelect={(item) => onSelect(item)}
   onCancel={() => onCancel()}
 />

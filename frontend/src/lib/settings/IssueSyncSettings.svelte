@@ -373,6 +373,7 @@
       <Card rounded="lg" padding="spacious">
         <Label>{t('issueSync.statusMapping')}</Label>
         <p class="text-xs mb-3" style="color: var(--ds-text-subtle);">{t('issueSync.statusMappingDescription')}</p>
+        <AlertBox type="warning" class="mb-4" message={t('issueSync.workflowBypassWarning')} />
         {#if loadingStatuses}
           <div class="flex items-center gap-2 py-2">
             <Loader2 class="w-4 h-4 animate-spin" style="color: var(--ds-text-subtle);" />

@@ -28,7 +28,7 @@ type ItemLinkService struct {
 	// Optional dependencies — set via the With* methods. Nil-friendly:
 	// when missing, callers that need them get a fail-closed permission
 	// response. The bare CreateLink path does not touch any of these.
-	perm          *PermissionService
+	perm          WorkspacePermissionChecker
 	pagePerm      PagePermissionChecker
 	assetPerm     AssetPermissionChecker
 	notifications ItemLinkNotificationEmitter

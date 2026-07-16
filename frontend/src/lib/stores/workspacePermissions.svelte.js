@@ -1,7 +1,7 @@
 // Workspace Permission Store - manages workspace-scoped permissions
 // Uses Svelte 5 runes for reactive state management
-import { api } from '../api.js';
 import { authStore } from './auth.svelte.js';
+import { clearPermissionProfiles, loadPermissionProfile } from './permissionProfile.js';
 
 function normalizeWorkspaceId(workspaceId) {
   if (workspaceId === null || workspaceId === undefined || workspaceId === '') return workspaceId;
@@ -31,7 +31,7 @@ class WorkspacePermissionStore {
     this.error = null;
 
     try {
-      const response = await api.permissions.getUserPermissions(userId);
+      const response = await loadPermissionProfile(userId);
 
       // Parse workspace permissions into Map<workspaceId, Set<permissionKey>>
       const wsPerms = new Map();
@@ -122,6 +122,7 @@ class WorkspacePermissionStore {
 
   // Clear all permissions
   clear() {
+    clearPermissionProfiles();
     this.permissions = new Map();
     this.loading = false;
     this.error = null;

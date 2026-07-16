@@ -733,6 +733,8 @@ export default {
     selectRepository: 'Select a repository',
     statusMapping: 'Status Mapping',
     statusMappingDescription: 'Map GitHub issue states to Windshift statuses.',
+    workflowBypassWarning:
+      'Synced GitHub states override workflow rules. Status changes made by issue sync can skip transitions, conditions, validators, and approvals.',
     githubOpen: 'GitHub "open"',
     githubClosed: 'GitHub "closed"',
     mapsTo: 'maps to',

@@ -118,7 +118,10 @@ export const links = {
   // ({ "<id>": { outgoing, incoming } }) for many items in one request. Used by
   // board/roadmap dependency badges so a board render is one request instead of
   // one per card. Callers must chunk to <= 500 ids per call (server cap).
-  getForItems: (ids) => fetchAPI(`/links/batch?ids=${ids.join(',')}`),
+  getForItems: (ids, { includeCustomFields = false } = {}) => {
+    const customFields = includeCustomFields ? '&include_custom_fields=true' : '';
+    return fetchAPI(`/links/batch?ids=${ids.join(',')}${customFields}`);
+  },
   // Symmetric to getForItem for the page-detail "Work items" popover.
   // Routes through the same handler (GET /pages/{id}/links).
   getForPage: (pageId) => fetchAPI(`/pages/${pageId}/links`),

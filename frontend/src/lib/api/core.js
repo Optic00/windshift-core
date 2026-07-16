@@ -113,6 +113,17 @@ export async function fetchAPI(endpoint, options = {}) {
     // Preserve AbortError so route/store loaders can silently discard superseded
     // work while the browser tears down the underlying HTTP request.
     if (err?.name === 'AbortError') throw err;
+    // Chromium can surface fetches cancelled by a document navigation as a
+    // TypeError instead of AbortError. Once the document is hidden, no caller
+    // can use the response, so preserve the cancellation semantics rather than
+    // reporting a spurious connectivity failure during reload/unload.
+    if (
+      err instanceof TypeError &&
+      typeof document !== 'undefined' &&
+      document.visibilityState === 'hidden'
+    ) {
+      throw new DOMException('The document was unloaded', 'AbortError');
+    }
     // Network errors (including offline, DNS, TLS, and CORS failures) surface
     // identically through fetch. Keep the user-facing copy actionable without
     // incorrectly diagnosing an ordinary mobile connectivity loss as CORS.

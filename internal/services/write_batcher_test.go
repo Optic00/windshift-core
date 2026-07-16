@@ -444,6 +444,9 @@ func TestActivityTrackerFlushesOneUpdatePerStableKey(t *testing.T) {
 	}
 	defer func() { _ = db.Close() }()
 	statements := []string{
+		`CREATE TABLE users (id INTEGER PRIMARY KEY)`,
+		`CREATE TABLE workspaces (id INTEGER PRIMARY KEY)`,
+		`CREATE TABLE items (id INTEGER PRIMARY KEY)`,
 		`CREATE TABLE user_workspace_visits (
 			user_id INTEGER NOT NULL,
 			workspace_id INTEGER NOT NULL,
@@ -468,6 +471,15 @@ func TestActivityTrackerFlushesOneUpdatePerStableKey(t *testing.T) {
 		if _, err := db.ExecWrite(statement); err != nil {
 			t.Fatalf("create activity table: %v", err)
 		}
+	}
+	if _, err := db.ExecWrite(`INSERT INTO users (id) VALUES (1)`); err != nil {
+		t.Fatalf("seed activity user: %v", err)
+	}
+	if _, err := db.ExecWrite(`INSERT INTO workspaces (id) VALUES (2)`); err != nil {
+		t.Fatalf("seed activity workspace: %v", err)
+	}
+	if _, err := db.ExecWrite(`INSERT INTO items (id) VALUES (3)`); err != nil {
+		t.Fatalf("seed activity item: %v", err)
 	}
 
 	tracker, err := NewActivityTracker(db, DefaultActivityTrackerConfig())
@@ -500,6 +512,25 @@ func TestActivityTrackerFlushesOneUpdatePerStableKey(t *testing.T) {
 	}
 	if visitCount != 100 || activityCount != 100 {
 		t.Fatalf("persisted counts: visit=%d activity=%d", visitCount, activityCount)
+	}
+	if err := tracker.TrackItemActivity(1, 999, ActivityView); err != nil {
+		t.Fatalf("track deleted item activity: %v", err)
+	}
+	if err := tracker.TrackWorkspaceVisit(1, 999); err != nil {
+		t.Fatalf("track deleted workspace visit: %v", err)
+	}
+	if err := tracker.FlushPendingActivities(); err != nil {
+		t.Fatalf("flush deleted entity activity: %v", err)
+	}
+	var staleItemCount, staleWorkspaceCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM user_item_activities WHERE item_id = 999`).Scan(&staleItemCount); err != nil {
+		t.Fatalf("query deleted item activity: %v", err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM user_workspace_visits WHERE workspace_id = 999`).Scan(&staleWorkspaceCount); err != nil {
+		t.Fatalf("query deleted workspace visit: %v", err)
+	}
+	if staleItemCount != 0 || staleWorkspaceCount != 0 {
+		t.Fatalf("persisted deleted entity activity: items=%d workspaces=%d", staleItemCount, staleWorkspaceCount)
 	}
 	if err := tracker.Close(); err != nil {
 		t.Fatalf("close activity tracker: %v", err)

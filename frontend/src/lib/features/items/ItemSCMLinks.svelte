@@ -61,6 +61,7 @@
     try {
       connectionStatus = await api.itemSCMLinks.getConnectionStatus(itemId);
     } catch (err) {
+      if (err?.name === 'AbortError') return;
       console.error('Failed to check SCM connection status:', err);
       // If we can't check connection status, assume no repos configured
       connectionStatus = { has_repositories: false };
@@ -106,6 +107,7 @@
         }, 3000);
       }
     } catch (err) {
+      if (err?.name === 'AbortError') return;
       console.error('Failed to load SCM links:', err);
       error = t('scm.failedToLoadLinks');
       links = [];

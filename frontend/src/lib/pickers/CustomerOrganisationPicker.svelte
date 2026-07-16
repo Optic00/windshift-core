@@ -11,13 +11,17 @@
     showUnassigned = false,
     unassignedLabel = 'None',
     disabled = false,
+    organisations: providedOrganisations = null,
+    loading = false,
+    onOpen = null,
     class: className = '',
     onSelect = () => {},
     onCancel = () => {}
   } = $props();
 
   const organisations = createAsyncLoader(() => api.customerOrganisations.getAll());
-  onMount(() => organisations.load());
+  onMount(() => { if (providedOrganisations === null) organisations.load(); });
+  const organisationOptions = $derived(providedOrganisations ?? organisations.data ?? []);
 </script>
 
 {#snippet organisationRow({ item })}
@@ -32,8 +36,8 @@
 
 <BasePicker
   bind:value
-  items={organisations.data || []}
-  loading={organisations.loading}
+  items={organisationOptions}
+  loading={providedOrganisations === null ? organisations.loading : loading}
   {placeholder}
   {showUnassigned}
   {unassignedLabel}
@@ -44,6 +48,7 @@
   searchFields={['name', 'email', 'description']}
   getValue={(item) => item?.id}
   getLabel={(item) => item?.name || ''}
+  onOpen={() => onOpen?.()}
   onSelect={(item) => onSelect(item)}
   onCancel={() => onCancel()}
 />

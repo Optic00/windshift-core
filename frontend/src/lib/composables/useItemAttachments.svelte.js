@@ -68,6 +68,7 @@ export function useItemAttachments(getItemId, showError = console.error) {
         pagination = null;
       }
     } catch (err) {
+      if (err?.name === 'AbortError') return;
       console.error('Failed to load attachments:', err);
       attachments = [];
       pagination = null;

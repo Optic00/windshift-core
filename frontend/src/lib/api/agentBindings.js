@@ -8,6 +8,10 @@ export const agentBindings = {
   /** List bindings configured in a workspace. */
   listForWorkspace: (workspaceId) => fetchAPI(`/workspaces/${workspaceId}/agent-bindings`),
 
+  /** Fetch the effective server-managed prompt, including runtime overrides. */
+  getStandardPrompt: (workspaceId) =>
+    fetchAPI(`/workspaces/${workspaceId}/agent-bindings/standard-prompt`),
+
   /**
    * Create a binding. The acting identity is validated server-side by
    * the WI-87 chokepoint; a 403 means the acting user isn't usable in

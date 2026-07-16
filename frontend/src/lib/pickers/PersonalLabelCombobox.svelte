@@ -20,16 +20,22 @@
     class: className = '',
     disabled = false,
     userId = undefined,
+    labels: providedLabels = null,
+    loading: providedLoading = false,
+    onOpen = null,
     onSelect = () => {},
     onCancel = () => {}
   } = $props();
 
   const resolvedPlaceholder = $derived(placeholder || t('pickers.selectLabels'));
 
-  let labels = $state([]);
-  let loading = $state(false);
+  let loadedLabels = $state([]);
+  let createdLabels = $state([]);
+  let internalLoading = $state(false);
   let error = $state(null);
   let pickerRef = $state(null);
+  const labels = $derived([...(providedLabels ?? loadedLabels), ...createdLabels]);
+  const loading = $derived(providedLabels === null ? internalLoading : providedLoading);
 
   // Convert value (array of names or comma-separated string) to array of names
   const valueAsNames = $derived.by(() => {
@@ -49,21 +55,21 @@
   });
 
   onMount(async () => {
-    await loadLabels();
+    if (providedLabels === null) await loadLabels();
   });
 
   async function loadLabels() {
-    loading = true;
+    internalLoading = true;
     error = null;
     try {
       const response = await api.personalLabels.getAll(userId);
-      labels = response || [];
+      loadedLabels = response || [];
     } catch (err) {
       console.error('Failed to load personal labels:', err);
       error = err.message || 'Failed to load labels';
-      labels = [];
+      loadedLabels = [];
     } finally {
-      loading = false;
+      internalLoading = false;
     }
   }
 
@@ -113,7 +119,7 @@
       });
 
       // Add to local labels array
-      labels = [...labels, newLabel];
+      createdLabels = [...createdLabels, newLabel];
 
       // Add the newly created label to selection
       const newValue = [...valueAsNames, newLabel.name];
@@ -146,6 +152,7 @@
   searchFields={['name']}
   getValue={(label) => label?.id}
   getLabel={(label) => label?.name ?? ''}
+  onOpen={() => onOpen?.()}
   onChange={handleChange}
   onCancel={handleCancel}
 >

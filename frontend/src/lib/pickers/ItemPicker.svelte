@@ -26,6 +26,7 @@
     keepOpenOnFooterTab = false,
     onSearchChange = null,
     searchDebounce = 300,
+    onOpen = null,
     onSelect = null,
     onCancel = null
   } = $props();
@@ -67,6 +68,7 @@
   serverSearch={!!onSearchChange}
   {searchDebounce}
   onSearchChange={(query) => onSearchChange?.(query)}
+  onOpen={() => onOpen?.()}
   onSelect={(item) => onSelect?.(item)}
   onChange={(values) => onSelect?.(values)}
   onCancel={() => onCancel?.()}

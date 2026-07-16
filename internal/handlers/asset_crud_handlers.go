@@ -13,6 +13,7 @@ import (
 	"windshift/internal/models"
 	"windshift/internal/repository"
 	"windshift/internal/services"
+	"windshift/internal/utils"
 )
 
 // validateResourceBelongsToSet checks that a resource (by table name) with resourceID belongs to setID.
@@ -138,6 +139,65 @@ func (h *AssetHandler) GetAssets(w http.ResponseWriter, r *http.Request) {
 		"limit":  limit,
 		"offset": offset,
 	})
+}
+
+const maxAssetSummaryIDs = 500
+
+// GetAssetSummaries returns compact display data for the requested IDs. Rows
+// from inaccessible sets (and missing assets) are silently omitted so callers
+// cannot use the batch surface as an existence oracle.
+func (h *AssetHandler) GetAssetSummaries(w http.ResponseWriter, r *http.Request) {
+	user := utils.GetCurrentUser(r)
+	if user == nil {
+		respondUnauthorized(w, r)
+		return
+	}
+
+	rawIDs := parseIDListParam(r.URL.Query().Get("ids"))
+	seen := make(map[int]struct{}, len(rawIDs))
+	ids := make([]int, 0, len(rawIDs))
+	for _, id := range rawIDs {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		respondValidationError(w, r, "ids must contain at least one asset ID")
+		return
+	}
+	if len(ids) > maxAssetSummaryIDs {
+		respondBadRequest(w, r, fmt.Sprintf("too many ids (max %d per request)", maxAssetSummaryIDs))
+		return
+	}
+
+	summaries, err := h.repo.FindAssetSummariesByIDs(ids)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+
+	setAccess := make(map[int]bool)
+	filtered := make([]models.AssetSummary, 0, len(summaries))
+	for _, summary := range summaries {
+		allowed, checked := setAccess[summary.SetID]
+		if !checked {
+			allowed, err = h.canViewSet(user.ID, summary.SetID)
+			if err != nil {
+				respondInternalError(w, r, err)
+				return
+			}
+			setAccess[summary.SetID] = allowed
+		}
+		if allowed {
+			filtered = append(filtered, summary)
+		}
+	}
+	respondJSONOK(w, filtered)
 }
 
 // loadFullAsset fetches a single asset with all joined/enriched fields, matching

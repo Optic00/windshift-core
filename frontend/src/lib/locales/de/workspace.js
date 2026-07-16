@@ -582,6 +582,8 @@ export default {
     selectRepository: 'Repository auswählen',
     statusMapping: 'Status-Zuordnung',
     statusMappingDescription: 'GitHub Issue-Status zu Windshift-Status zuordnen.',
+    workflowBypassWarning:
+      'Synchronisierte GitHub-Status überschreiben Workflow-Regeln. Statusänderungen durch die Issue-Synchronisierung können Übergänge, Bedingungen, Validierungen und Genehmigungen überspringen.',
     githubOpen: 'GitHub "offen"',
     githubClosed: 'GitHub "geschlossen"',
     mapsTo: 'wird zugeordnet zu',

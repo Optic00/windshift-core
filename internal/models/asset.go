@@ -145,6 +145,16 @@ type Asset struct {
 	Warnings []string `json:"warnings,omitempty"`
 }
 
+// AssetSummary is the compact, display-only shape returned by the batch
+// hydration endpoint. It deliberately omits descriptions, custom fields, and
+// other data collection cells do not need.
+type AssetSummary struct {
+	ID       int    `json:"id"`
+	SetID    int    `json:"set_id"`
+	Title    string `json:"title"`
+	AssetTag string `json:"asset_tag,omitempty"`
+}
+
 // UserAssetSetPreference stores user's primary asset set preference
 type UserAssetSetPreference struct {
 	ID           int       `json:"id"`

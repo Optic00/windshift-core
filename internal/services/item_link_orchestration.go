@@ -4,7 +4,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
+	"time"
 
 	"windshift/internal/models"
 	"windshift/internal/repository"
@@ -20,6 +22,15 @@ import (
 // nil ⇒ fail-closed (asset endpoints always 404).
 type AssetPermissionChecker interface {
 	HasAssetSetPermission(userID, setID int, permissionKey string) (bool, error)
+}
+
+// WorkspacePermissionChecker is the effective-permission surface link
+// authorization needs. Keeping it narrow makes targeted-scope behavior
+// testable without constructing the full permission service.
+type WorkspacePermissionChecker interface {
+	HasWorkspacePermission(userID, workspaceID int, permission string) (bool, error)
+	AccessibleWorkspaceIDs(userID int) ([]int, error)
+	AccessibleWorkspaceIDKeys(userID int) ([]repository.IDKey, error)
 }
 
 // PagePermissionChecker is satisfied by *PagePermissionService (and by
@@ -93,7 +104,7 @@ var (
 
 // WithPermissionService wires the workspace-permission checker required
 // for orchestration on item / test_case endpoints.
-func (s *ItemLinkService) WithPermissionService(p *PermissionService) *ItemLinkService {
+func (s *ItemLinkService) WithPermissionService(p WorkspacePermissionChecker) *ItemLinkService {
 	s.perm = p
 	return s
 }
@@ -345,6 +356,20 @@ type EntityLinks struct {
 // dropped by the same access + ACL filters the single-item path applies — so a
 // requested item the user cannot view yields empty slices and nothing leaks.
 func (s *ItemLinkService) ListLinksForItemsWithChecks(userID int, itemIDs []int) (map[int]EntityLinks, error) {
+	return s.listLinksForItemsWithChecks(userID, itemIDs, false)
+}
+
+// ListLinksForItemsWithCustomFieldsAndChecks includes links owned by custom
+// linking fields. Collection lists use this variant to hydrate every visible
+// linking-field cell in bounded batches rather than issuing one request per
+// item and field. The default batch surface keeps its historical dependency-
+// link response unchanged for board and roadmap consumers.
+func (s *ItemLinkService) ListLinksForItemsWithCustomFieldsAndChecks(userID int, itemIDs []int) (map[int]EntityLinks, error) {
+	return s.listLinksForItemsWithChecks(userID, itemIDs, true)
+}
+
+func (s *ItemLinkService) listLinksForItemsWithChecks(userID int, itemIDs []int, includeCustomFields bool) (map[int]EntityLinks, error) {
+	startedAt := time.Now()
 	result := map[int]EntityLinks{}
 	ids := dedupInts(itemIDs)
 	if len(ids) == 0 {
@@ -357,8 +382,12 @@ func (s *ItemLinkService) ListLinksForItemsWithChecks(userID int, itemIDs []int)
 	ph := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
 	idArgs := toIfaceSlice(ids)
 
+	outgoingFilter := "source_type = ? AND source_id IN (" + ph + ")"
+	if !includeCustomFields {
+		outgoingFilter += " AND il.custom_field_id IS NULL"
+	}
 	outgoing, err := s.getLinksWhere(
-		"source_type = ? AND source_id IN ("+ph+") AND il.custom_field_id IS NULL",
+		outgoingFilter,
 		append([]interface{}{"item"}, idArgs...)...)
 	if err != nil {
 		return nil, err
@@ -370,12 +399,23 @@ func (s *ItemLinkService) ListLinksForItemsWithChecks(userID int, itemIDs []int)
 		return nil, err
 	}
 
-	accessibleKeys, accessibleWsIDs := s.accessibleWorkspaces(userID)
-	accessibleSets := s.AccessibleAssetSetIDs(userID)
-	outgoing = s.FilterLinksByAccess(outgoing, accessibleKeys, accessibleWsIDs, accessibleSets)
-	incoming = s.FilterLinksByAccess(incoming, accessibleKeys, accessibleWsIDs, accessibleSets)
+	allLinks := make([]models.ItemLink, 0, len(outgoing)+len(incoming))
+	allLinks = append(allLinks, outgoing...)
+	allLinks = append(allLinks, incoming...)
+	access := s.authorizeReferencedLinkScopes(userID, allLinks)
+	outgoing = s.filterLinksByAccessWithScopes(outgoing, access.workspaceKeys, access.workspaceIDs, access.assetSetIDs, access.scopes)
+	incoming = s.filterLinksByAccessWithScopes(incoming, access.workspaceKeys, access.workspaceIDs, access.assetSetIDs, access.scopes)
 	outgoing = s.FilterPageLinksByACL(userID, outgoing)
 	incoming = s.FilterPageLinksByACL(userID, incoming)
+	slog.Debug("batch link authorization",
+		"requested_items", len(ids),
+		"link_rows", len(allLinks),
+		"referenced_workspace_scopes", access.workspaceScopeCount,
+		"referenced_asset_set_scopes", access.assetSetScopeCount,
+		"workspace_permission_checks", access.workspacePermissionChecks,
+		"asset_permission_checks", access.assetPermissionChecks,
+		"scope_sql_queries", access.scopeSQLQueries,
+		"latency_ms", time.Since(startedAt).Milliseconds())
 
 	for _, l := range outgoing {
 		if g, ok := result[l.SourceID]; ok {
@@ -390,6 +430,105 @@ func (s *ItemLinkService) ListLinksForItemsWithChecks(userID int, itemIDs []int)
 		}
 	}
 	return result, nil
+}
+
+type referencedLinkAccess struct {
+	workspaceKeys             map[string]bool
+	workspaceIDs              map[int]bool
+	assetSetIDs               map[int]bool
+	scopes                    map[scopeKey]endpointScope
+	workspaceScopeCount       int
+	assetSetScopeCount        int
+	workspacePermissionChecks int
+	assetPermissionChecks     int
+	scopeSQLQueries           int
+}
+
+// authorizeReferencedLinkScopes derives authorization work from the endpoints
+// actually present in the fetched link rows. It never enumerates tenants or
+// asset sets, and it checks each unique referenced scope at most once.
+func (s *ItemLinkService) authorizeReferencedLinkScopes(userID int, links []models.ItemLink) referencedLinkAccess {
+	access := referencedLinkAccess{
+		workspaceKeys: map[string]bool{},
+		workspaceIDs:  map[int]bool{},
+		assetSetIDs:   map[int]bool{},
+		scopes:        s.resolveEndpointScopes(links),
+	}
+
+	workspaceKeysByID := map[int]map[string]struct{}{}
+	workspaceScopes := map[int]struct{}{}
+	assetSetScopes := map[int]struct{}{}
+	note := func(entityType string, entityID int, workspaceID *int, workspaceKey string) {
+		switch entityType {
+		case "item", "page":
+			if workspaceID != nil {
+				workspaceScopes[*workspaceID] = struct{}{}
+				if workspaceKey != "" {
+					if workspaceKeysByID[*workspaceID] == nil {
+						workspaceKeysByID[*workspaceID] = map[string]struct{}{}
+					}
+					workspaceKeysByID[*workspaceID][workspaceKey] = struct{}{}
+				}
+			}
+		case "test_case":
+			if scope, ok := access.scopes[scopeKey{entityType, entityID}]; ok {
+				workspaceScopes[scope.wsID] = struct{}{}
+			}
+		case "asset":
+			if scope, ok := access.scopes[scopeKey{entityType, entityID}]; ok {
+				assetSetScopes[scope.setID] = struct{}{}
+			}
+		}
+	}
+	for _, link := range links {
+		note(link.SourceType, link.SourceID, link.SourceWorkspaceID, link.SourceWorkspaceKey)
+		note(link.TargetType, link.TargetID, link.TargetWorkspaceID, link.TargetWorkspaceKey)
+	}
+
+	access.workspaceScopeCount = len(workspaceScopes)
+	access.assetSetScopeCount = len(assetSetScopes)
+	s.applyReferencedScopePermissions(userID, workspaceScopes, assetSetScopes, workspaceKeysByID, &access)
+	access.scopeSQLQueries = referencedScopeQueryCount(links)
+	return access
+}
+
+func (s *ItemLinkService) applyReferencedScopePermissions(userID int, workspaceScopes, assetSetScopes map[int]struct{}, workspaceKeysByID map[int]map[string]struct{}, access *referencedLinkAccess) {
+	for workspaceID := range workspaceScopes {
+		access.workspacePermissionChecks++
+		if s.perm == nil {
+			continue
+		}
+		allowed, err := s.perm.HasWorkspacePermission(userID, workspaceID, models.PermissionItemView)
+		if err != nil || !allowed {
+			continue
+		}
+		access.workspaceIDs[workspaceID] = true
+		for key := range workspaceKeysByID[workspaceID] {
+			access.workspaceKeys[key] = true
+		}
+	}
+	for setID := range assetSetScopes {
+		access.assetPermissionChecks++
+		if s.assetPerm == nil {
+			continue
+		}
+		allowed, err := s.assetPerm.HasAssetSetPermission(userID, setID, AssetPermissionKeyView)
+		if err == nil && allowed {
+			access.assetSetIDs[setID] = true
+		}
+	}
+}
+
+func referencedScopeQueryCount(links []models.ItemLink) int {
+	types := map[string]bool{}
+	for _, link := range links {
+		for _, entityType := range []string{link.SourceType, link.TargetType} {
+			if entityType == "test_case" || entityType == "asset" {
+				types[entityType] = true
+			}
+		}
+	}
+	return len(types)
 }
 
 // dedupInts returns in with duplicates removed, preserving first-seen order.
@@ -635,7 +774,7 @@ func (s *ItemLinkService) AccessibleAssetSetIDs(userID int) map[int]bool {
 func (s *ItemLinkService) EndpointVisible(entityType string, entityID int, workspaceKey string, accessibleKeys map[string]bool, accessibleWs, accessibleSets map[int]bool) bool {
 	switch entityType {
 	case "item":
-		return workspaceKey == "" || accessibleKeys[workspaceKey]
+		return workspaceKey != "" && accessibleKeys[workspaceKey]
 	case "test_case", "page":
 		wsID, _, found, err := s.ResolveEntityScope(entityType, entityID)
 		if err != nil || !found {
@@ -662,6 +801,10 @@ func (s *ItemLinkService) EndpointVisible(entityType string, entityID int, works
 // per request.
 func (s *ItemLinkService) FilterLinksByAccess(links []models.ItemLink, accessibleKeys map[string]bool, accessibleWs, accessibleSets map[int]bool) []models.ItemLink {
 	scopes := s.resolveEndpointScopes(links)
+	return s.filterLinksByAccessWithScopes(links, accessibleKeys, accessibleWs, accessibleSets, scopes)
+}
+
+func (s *ItemLinkService) filterLinksByAccessWithScopes(links []models.ItemLink, accessibleKeys map[string]bool, accessibleWs, accessibleSets map[int]bool, scopes map[scopeKey]endpointScope) []models.ItemLink {
 	out := make([]models.ItemLink, 0, len(links))
 	for _, l := range links {
 		if !s.endpointVisibleScoped(l.SourceType, l.SourceID, l.SourceWorkspaceKey, accessibleKeys, accessibleWs, accessibleSets, scopes) {
@@ -697,22 +840,26 @@ func (s *ItemLinkService) resolveEndpointScopes(links []models.ItemLink) map[sco
 	testCaseIDs := map[int]bool{}
 	pageIDs := map[int]bool{}
 	assetIDs := map[int]bool{}
-	note := func(typ string, id int) {
+	out := map[scopeKey]endpointScope{}
+	note := func(typ string, id int, workspaceID *int) {
 		switch typ {
 		case "test_case":
 			testCaseIDs[id] = true
 		case "page":
-			pageIDs[id] = true
+			if workspaceID != nil {
+				out[scopeKey{typ, id}] = endpointScope{wsID: *workspaceID}
+			} else {
+				pageIDs[id] = true
+			}
 		case "asset":
 			assetIDs[id] = true
 		}
 	}
 	for _, l := range links {
-		note(l.SourceType, l.SourceID)
-		note(l.TargetType, l.TargetID)
+		note(l.SourceType, l.SourceID, l.SourceWorkspaceID)
+		note(l.TargetType, l.TargetID, l.TargetWorkspaceID)
 	}
 
-	out := map[scopeKey]endpointScope{}
 	s.fillWorkspaceScopes(out, "test_case", "test_cases", testCaseIDs)
 	s.fillWorkspaceScopes(out, "page", "pages", pageIDs)
 	s.fillAssetSetScopes(out, assetIDs)
@@ -770,7 +917,7 @@ func (s *ItemLinkService) fillAssetSetScopes(out map[scopeKey]endpointScope, ids
 func (s *ItemLinkService) endpointVisibleScoped(entityType string, entityID int, workspaceKey string, accessibleKeys map[string]bool, accessibleWs, accessibleSets map[int]bool, scopes map[scopeKey]endpointScope) bool {
 	switch entityType {
 	case "item":
-		return workspaceKey == "" || accessibleKeys[workspaceKey]
+		return workspaceKey != "" && accessibleKeys[workspaceKey]
 	case "test_case", "page":
 		sc, ok := scopes[scopeKey{entityType, entityID}]
 		if !ok {

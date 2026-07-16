@@ -45,6 +45,7 @@
         );
       }
     } catch (err) {
+      if (err?.name === 'AbortError') return;
       console.error('Failed to check integration status:', err);
     } finally {
       checkingStatus = false;
@@ -59,6 +60,7 @@
     try {
       links = await api.itemIntegrationLinks.get(itemId) || [];
     } catch (err) {
+      if (err?.name === 'AbortError') return;
       console.error('Failed to load integration links:', err);
       error = t('integrations.failedToLoadLinks');
       links = [];

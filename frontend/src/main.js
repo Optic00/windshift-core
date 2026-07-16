@@ -11,8 +11,13 @@ void registerMobileServiceWorker();
 
 const { default: App } = await import('./App.svelte');
 
+const target = document.getElementById('app');
+// Keep the no-JavaScript/module-failure recovery visible until the root chunk
+// is ready, then remove it before Svelte mounts. The placeholder is ordinary
+// document flow, so it never overlays or intercepts the application in E2E.
+target.replaceChildren();
 const app = mount(App, {
-  target: document.getElementById('app'),
+  target,
 });
 
 // Refresh other open Windshift tabs when this tab mutates a work item.

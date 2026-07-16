@@ -4,7 +4,8 @@
   import { currentRoute } from '../router.js';
   import { timerStore } from '../stores/timerStore.svelte.js';
   import { workspacesStore, aiStore } from '../stores';
-  import { startNotificationPoller } from '../stores/notifications.js';
+  import { startNotificationPoller, stopNotificationPoller } from '../stores/notifications.js';
+  import { resetAuthenticatedShellState } from '../services/authenticatedShellBootstrap.js';
   import { registerMobileServiceWorker } from './pushClient.js';
   import MobileNav from './MobileNav.svelte';
   import GlobalConfirmDialog from '../dialogs/GlobalConfirmDialog.svelte';
@@ -32,6 +33,7 @@
     // Reuse the same singletons the desktop shell drives, so the active timer
     // and notification inbox stay live on the phone surface too.
     timerStore.initialize();
+    resetAuthenticatedShellState();
     startNotificationPoller();
     registerMobileServiceWorker();
     // MainApp normally loads these; the mobile shell bypasses MainApp, so load
@@ -39,6 +41,11 @@
     // and the AI-chat availability gate.
     workspacesStore.load();
     aiStore.load();
+
+    return () => {
+      stopNotificationPoller();
+      resetAuthenticatedShellState();
+    };
   });
 </script>
 

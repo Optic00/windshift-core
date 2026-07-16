@@ -13,10 +13,13 @@
     class: className = '',
     disabled = false,
     workspaceId = null,
+    milestones: providedMilestones = null,
+    loading: providedLoading = false,
     showUnassigned = true,
     unassignedLabel = '',
     children = null,
     multiple = false,
+    onOpen = null,
     onSelect = () => {},
     onCancel = () => {}
   } = $props();
@@ -26,9 +29,11 @@
   );
   const resolvedUnassignedLabel = $derived(unassignedLabel || t('pickers.noMilestone'));
 
-  let milestones = $state([]);
-  let loading = $state(false);
+  let loadedMilestones = $state([]);
+  let internalLoading = $state(false);
   let loadToken = 0;
+  const milestones = $derived(providedMilestones ?? loadedMilestones);
+  const loading = $derived(providedMilestones === null ? internalLoading : providedLoading);
 
   // Terminal milestone lifecycle statuses are hidden from the list by default
   // so completed/cancelled milestones no longer look identical to active ones
@@ -41,12 +46,12 @@
   // Reload when workspaceId changes. Capture the ID for this request so an
   // earlier global load cannot overwrite a later workspace-scoped result.
   $effect(() => {
-    loadMilestones(workspaceId);
+    if (providedMilestones === null) loadMilestones(workspaceId);
   });
 
   async function loadMilestones(currentWorkspaceId) {
     const token = ++loadToken;
-    loading = true;
+    internalLoading = true;
 
     try {
       const filters = {};
@@ -57,14 +62,14 @@
 
       const response = await api.milestones.getAll(filters);
       if (token !== loadToken) return;
-      milestones = response || [];
+      loadedMilestones = response || [];
     } catch (err) {
       if (token !== loadToken) return;
       console.error('Failed to load milestones:', err);
-      milestones = [];
+      loadedMilestones = [];
     } finally {
       if (token === loadToken) {
-        loading = false;
+        internalLoading = false;
       }
     }
   }
@@ -167,6 +172,7 @@
     {children}
     keepOpenOnFooterTab={hasCompletedMilestones}
     onSelect={handleSelectMulti}
+    onOpen={() => onOpen?.()}
     onCancel={() => onCancel()}
   >
     {#snippet footer()}
@@ -197,6 +203,7 @@
     {children}
     keepOpenOnFooterTab={hasCompletedMilestones}
     onSelect={handleSelectSingle}
+    onOpen={() => onOpen?.()}
     onCancel={() => onCancel()}
   >
     {#snippet footer()}

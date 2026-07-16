@@ -10,7 +10,8 @@
   import { Box, Globe, Building2, Calendar, User, Target, Link2, Mail, ExternalLink, CheckSquare } from '@lucide/svelte';
   import ColorDot from '../../components/ColorDot.svelte';
   import Checkbox from '../../components/Checkbox.svelte';
-  import { api } from '../../api.js';
+  import { onDestroy } from 'svelte';
+  import { referenceDisplayCache } from '../../stores/referenceDisplayCache.svelte.js';
   import { t } from '../../stores/i18n.svelte.js';
   import { formatCustomFieldDate } from '../../utils/dateFormatter.js';
   import { parseFieldOptions, resolveOptionLabel, resolveOptionLabels } from '../../utils/optionUtils.js';
@@ -26,22 +27,9 @@
     return items;
   }
 
-  let users = $state([]);
-  let usersLoading = $state(false);
-  let usersLoaded = $state(false);
-
   async function loadUsers() {
-    if (usersLoading || usersLoaded) return;
-    usersLoading = true;
-    try {
-      users = await api.getUsers() || [];
-      usersLoaded = true;
-    } catch (e) {
-      console.error('Failed to load users:', e);
-      users = [];
-    } finally {
-      usersLoading = false;
-    }
+    if (providedUsers !== null) return;
+    await referenceDisplayCache.loadUsers();
   }
 
   // Click outside action
@@ -65,8 +53,15 @@
     field, value = $bindable(''), onChange = () => {}, milestones = [], iterations = [],
     isDarkMode = false, required = false, readonly = true, disabled = false,
     onStartEdit = null, onCancel = null, showSelectedInTrigger = true, autoOpenPickers = true,
-    noPadding = false, itemId = null
+    noPadding = false, itemId = null, users: providedUsers = null, fieldLinks = null,
+    onFieldLinksChanged = null,
+    optionData = {}, optionLoading = {}, onRequestOptions = null, loadAssetOptions = null
   } = $props();
+
+  const users = $derived(providedUsers ?? referenceDisplayCache.users);
+  const usersLoading = $derived(providedUsers === null && referenceDisplayCache.usersLoading);
+  const displayHydration = new AbortController();
+  onDestroy(() => displayHydration.abort());
 
   const isRequired = $derived(required || field.required || field.is_required);
 
@@ -104,9 +99,6 @@
 
   const assetConfig = $derived(parseAssetConfig());
   const isMultiAssetField = $derived(field.field_type === 'asset' && assetConfig.multi === true);
-  let assetLookup = $state({});
-  const assetLookupInFlight = new Set();
-
   function assetID(asset) {
     if (!asset) return null;
     const raw = asset && typeof asset === 'object' ? asset.id : asset;
@@ -126,28 +118,14 @@
   }
 
   async function loadAssetDisplayValues() {
-    const ids = [...new Set(assetIDsForLookup())].filter(
-      (id) => assetLookup[id] === undefined && !assetLookupInFlight.has(id)
-    );
-    if (ids.length === 0) return;
-
-    ids.forEach((id) => assetLookupInFlight.add(id));
-    await Promise.all(ids.map(async (id) => {
-      try {
-        const asset = await api.assets.get(id);
-        assetLookup = { ...assetLookup, [id]: asset || null };
-      } catch (e) {
-        console.error('Failed to load asset custom-field value:', e);
-        assetLookup = { ...assetLookup, [id]: null };
-      } finally {
-        assetLookupInFlight.delete(id);
-      }
-    }));
+    await referenceDisplayCache.loadAssets(assetIDsForLookup(), {
+      signal: displayHydration.signal,
+    });
   }
 
   function assetDisplayName(asset) {
     const id = assetID(asset);
-    const resolved = id ? assetLookup[id] : null;
+    const resolved = id ? referenceDisplayCache.getAsset(id) : null;
     const displayAsset = resolved || asset;
     if (displayAsset && typeof displayAsset === 'object') {
       if (displayAsset.title) return displayAsset.asset_tag ? `${displayAsset.asset_tag} - ${displayAsset.title}` : displayAsset.title;
@@ -569,6 +547,9 @@
         {showSelectedInTrigger}
         class="w-full"
         {disabled}
+        users={providedUsers}
+        loading={optionLoading.users ?? false}
+        onOpen={() => onRequestOptions?.('users')}
         onSelect={(selectedUser) => {
           onChange(selectedUser ? {
             id: selectedUser.id,
@@ -596,6 +577,9 @@
           showSelectedInTrigger={false}
           class="w-full"
           {disabled}
+          users={providedUsers}
+          loading={optionLoading.users ?? false}
+          onOpen={() => onRequestOptions?.('users')}
           onSelect={addMultiUser}
           onCancel={() => onCancel?.()}
         />
@@ -626,6 +610,13 @@
         multiple={isMultiAssetField}
         class="w-full"
         {disabled}
+        optionLoader={loadAssetOptions
+          ? (search) => loadAssetOptions(
+              assetConfig.asset_set_id,
+              assetConfig.cql_query || assetConfig.ql_query || '',
+              search,
+            )
+          : null}
         onSelect={(asset) => {
           onChange(asset ? {
             id: asset.id,
@@ -644,6 +635,9 @@
         showUnassigned={true}
         class="w-full"
         {disabled}
+        customers={optionData.portalCustomers ?? null}
+        loading={optionLoading.portalCustomers ?? false}
+        onOpen={() => onRequestOptions?.('portalCustomers')}
         onSelect={(customer) => {
           onChange(customer ? {
             id: customer.id,
@@ -661,6 +655,9 @@
         showUnassigned={true}
         class="w-full"
         {disabled}
+        organisations={optionData.customerOrganisations ?? null}
+        loading={optionLoading.customerOrganisations ?? false}
+        onOpen={() => onRequestOptions?.('customerOrganisations')}
         onSelect={(org) => {
           onChange(org ? {
             id: org.id,
@@ -676,6 +673,8 @@
         fieldOptions={field.options}
         {readonly}
         {disabled}
+        links={fieldLinks}
+        onChanged={() => onFieldLinksChanged?.()}
       />
     {:else if field.field_type === 'combobox'}
       <PersonalLabelCombobox
@@ -684,6 +683,9 @@
         class="w-full"
         userId={null}
         {disabled}
+        labels={optionData.personalLabels ?? null}
+        loading={optionLoading.personalLabels ?? false}
+        onOpen={() => onRequestOptions?.('personalLabels')}
         onSelect={(result) => {
           const labelArray = result.value || [];
           onChange(labelArray.join(','));

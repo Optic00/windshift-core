@@ -19,10 +19,12 @@
     children: customTrigger = null,  // Optional custom trigger from caller
     workspaceId = null,
     users = null,
+    loading = false,
     label = '',
     autoOpen = false,
     allowClear = true,
     positioning = null,
+    onOpen = null,
     onSelect = () => {},
     onCancel = () => {}
   } = $props();
@@ -72,7 +74,7 @@
 <BasePicker
   bind:value
   items={usersList}
-  loading={loader.loading}
+  loading={users === null ? loader.loading : loading}
   placeholder={resolvedPlaceholder}
   {showUnassigned}
   unassignedLabel={resolvedUnassignedLabel}
@@ -88,6 +90,7 @@
   getLabel={getUserLabel}
   searchTestid="user-picker-search"
   optionTestid={(opt) => `user-picker-option-${opt.value}`}
+  onOpen={() => onOpen?.()}
   onSelect={handleSelect}
   onCancel={handleCancel}
 >

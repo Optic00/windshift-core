@@ -10,7 +10,7 @@
   import { getSystemFieldName } from '../../stores/fieldConfig.js';
   import { useGradientStyles } from '../../stores/workspaceGradient.svelte.js';
   import { workspacePermissions } from '../../stores/workspacePermissions.svelte.js';
-  import { workspaceDataStore } from '../../stores/index.js';
+  import { collectionEditorOptions, collectionFieldLinks, workspaceDataStore } from '../../stores/index.js';
   import { MoreHorizontal, ArrowUp, ArrowDown, ArrowUpDown } from '@lucide/svelte';
   import { draggable } from '@atlaskit/pragmatic-drag-and-drop/element/adapter';
   import SearchInput from '../../components/SearchInput.svelte';
@@ -82,11 +82,32 @@
   // Centralized gradient styling
   const styles = useGradientStyles();
 
-  // Computed: Check if user can edit items
-  let canEdit = $derived(workspacePermissions.canEdit(workspaceId));
-
   // Computed: Check if user can configure columns (workspace admin)
   let canConfigureColumns = $derived(workspacePermissions.canAdminWorkspace(workspaceId));
+
+  // A workspace-scoped list already has these option sets in the shared
+  // workspace store. Prime the row-editor cache so opening a cell does not
+  // repeat those requests. Global collections deliberately skip this: their
+  // rows can belong to different workspaces and must resolve independently.
+  $effect(() => {
+    const id = Number(workspaceId);
+    if (
+      !Number.isInteger(id) ||
+      id <= 0 ||
+      !workspaceDataStore.initialized ||
+      Number(workspaceDataStore.workspaceId) !== id
+    ) {
+      return;
+    }
+
+    collectionEditorOptions.prime(id, {
+      statuses,
+      users,
+      milestones,
+      iterations,
+      projects,
+    });
+  });
 
   // Computed: Calculate total grid columns (sum of widths + 1 for actions)
   let totalGridColumns = $derived(
@@ -272,6 +293,24 @@
     });
   });
 
+  // Linking fields live in item_links rather than custom_field_values. Hydrate
+  // all visible rows through the bounded batch endpoint so adding one linking
+  // column does not issue one request per row.
+  $effect(() => {
+    const linkingFieldIds = new Set(
+      customFieldDefinitions
+        .filter((field) => field.field_type === 'linking')
+        .map((field) => String(field.id)),
+    );
+    const hasLinkingColumn = listColumns.some(
+      (column) =>
+        column.field_type === 'custom' && linkingFieldIds.has(String(column.field_identifier)),
+    );
+    if (hasLinkingColumn) {
+      collectionFieldLinks.loadForItems(filteredItems.map((item) => item.id));
+    }
+  });
+
   function viewItem(item) {
     const wsId = workspaceId || item.workspace_id;
     const url = collectionId && workspaceId
@@ -415,7 +454,7 @@
                             {column}
                             {workspace}
                             {collectionId}
-                            {canEdit}
+                            canEdit={workspacePermissions.canEdit(item.workspace_id)}
                             {statuses}
                             {statusCategories}
                             {priorities}

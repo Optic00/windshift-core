@@ -852,6 +852,7 @@ func (s *Server) initialize() error {
 	}
 	agentBindingHandler := handlers.NewWorkspaceAgentBindingHandler(bindingSvc, agentIdentitySvc, permService, logger.NewAuditor(s.db))
 	agentBindingHandler.SetSkillsRepo(agentSkillRepo)
+	agentBindingHandler.SetInitialPrompt(promptStore.Get(llm.PromptCodingAgentInitial))
 	agentSkillHandler := handlers.NewAgentSkillHandler(agentSkillRepo, permService, logger.NewAuditor(s.db))
 	agentRunHandler := handlers.NewAgentRunHandler(repository.NewAgentRunRepository(s.db), codingRunSvc, permService, repository.NewItemRepository(s.db), bindingSvc)
 	agentRunHandler.SetUsageRepository(repository.NewLLMUsageRepository(s.db)) // per-run token/cost readout (WI-494)

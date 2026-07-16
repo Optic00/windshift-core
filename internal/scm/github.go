@@ -30,6 +30,7 @@ var (
 	_ CommitProvider               = (*GitHubProvider)(nil)
 	_ RefProvider                  = (*GitHubProvider)(nil)
 	_ IssueProvider                = (*GitHubProvider)(nil)
+	_ PaginatedIssueProvider       = (*GitHubProvider)(nil)
 	_ PullRequestReviewProvider    = (*GitHubProvider)(nil)
 	_ RepositoryPermissionProvider = (*GitHubProvider)(nil)
 )
@@ -812,8 +813,17 @@ func (g *GitHubProvider) DeleteWebhook(ctx context.Context, owner, repo, webhook
 
 // ListIssues lists issues for a repository, excluding pull requests
 func (g *GitHubProvider) ListIssues(ctx context.Context, owner, repo string, opts ListIssueOptions) ([]Issue, error) {
+	issues, _, err := g.ListIssuesPage(ctx, owner, repo, opts)
+	return issues, err
+}
+
+// ListIssuesPage lists one raw GitHub issue page, filters pull requests from
+// the returned entities, and separately reports whether the raw page was full.
+// GitHub's issues endpoint includes pull requests, so len(filteredIssues) is
+// not a valid pagination signal.
+func (g *GitHubProvider) ListIssuesPage(ctx context.Context, owner, repo string, opts ListIssueOptions) ([]Issue, bool, error) {
 	if err := g.ensureInstallationToken(ctx); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	page := opts.Page
@@ -841,9 +851,14 @@ func (g *GitHubProvider) ListIssues(ctx context.Context, owner, repo string, opt
 
 	var ghIssues []githubIssue
 	if err := g.doJSON(ctx, "GET", reqURL, http.NoBody, http.StatusOK, &ghIssues); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
+	issues, hasNext := filterGitHubIssuePage(ghIssues, perPage)
+	return issues, hasNext, nil
+}
+
+func filterGitHubIssuePage(ghIssues []githubIssue, perPage int) ([]Issue, bool) {
 	// Filter out pull requests (GitHub Issues API returns PRs too)
 	issues := make([]Issue, 0, len(ghIssues))
 	for _, gi := range ghIssues {
@@ -852,7 +867,7 @@ func (g *GitHubProvider) ListIssues(ctx context.Context, owner, repo string, opt
 		}
 		issues = append(issues, gi.toIssue())
 	}
-	return issues, nil
+	return issues, len(ghIssues) == perPage
 }
 
 // GetIssue gets details about a specific issue

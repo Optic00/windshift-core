@@ -71,6 +71,7 @@
     values = $bindable([]),
 
     // Event callbacks
+    onOpen = () => {},
     onSelect = () => {},
     onCancel = () => {},
     onChange = () => {}
@@ -351,6 +352,7 @@
     }
     if (!wasOpen && $open) {
       highlightedIndex = 0;
+      onOpen();
       // Remember what had focus before we move it into the portalled dropdown,
       // so a Tab that closes the menu can return there (WI-455).
       activeElementBeforeOpen = document.activeElement;

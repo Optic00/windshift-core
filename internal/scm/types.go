@@ -410,6 +410,15 @@ type IssueProvider interface {
 	ListRepoMilestones(ctx context.Context, owner, repo string) ([]IssueMilestone, error)
 }
 
+// PaginatedIssueProvider is an optional extension for providers that can report
+// whether the remote API has another raw result page. This matters for APIs
+// such as GitHub's issue listing, which also returns pull requests: after those
+// are filtered out, the number of issues alone cannot determine whether the
+// remote page was full.
+type PaginatedIssueProvider interface {
+	ListIssuesPage(ctx context.Context, owner, repo string, opts ListIssueOptions) (issues []Issue, hasNext bool, err error)
+}
+
 // ListIssueOptions contains options for listing issues
 type ListIssueOptions struct {
 	State   string     // open, closed, all

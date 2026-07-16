@@ -38,6 +38,8 @@ export {
   refreshCollectionDeltas,
   reloadCollection,
 } from './collectionContext.js';
+export { collectionEditorOptions } from './collectionEditorOptions.svelte.js';
+export { collectionFieldLinks } from './collectionFieldLinks.svelte.js';
 // Homepage store
 // Access via: homepageStore.recentWorkspaces, homepageStore.notifications,
 // homepageStore.loadDashboardData(), homepageStore.isOnboarding, etc.

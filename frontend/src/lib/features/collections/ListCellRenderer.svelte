@@ -1,5 +1,7 @@
 <script>
   import { t } from '../../stores/i18n.svelte.js';
+  import { collectionEditorOptions } from '../../stores/collectionEditorOptions.svelte.js';
+  import { collectionFieldLinks } from '../../stores/collectionFieldLinks.svelte.js';
   import { api } from '../../api.js';
   import InlineFieldEditor from '../../editors/InlineFieldEditor.svelte';
   import ItemPicker from '../../pickers/ItemPicker.svelte';
@@ -45,6 +47,21 @@
       ? customFieldDefinitions.find(f => String(f.id) === column.field_identifier)
       : null
   );
+
+  // Never use page-level editable options for a row in a mixed-workspace
+  // collection. The cache is keyed by the owning workspace and each family is
+  // loaded only when its picker first opens.
+  let editorOptions = $derived(collectionEditorOptions.get(item.workspace_id));
+  let fieldLinks = $derived(
+    fieldDefinition?.field_type === 'linking'
+      ? collectionFieldLinks.getFieldLinks(item.id, fieldDefinition.id, fieldDefinition.options)
+      : [],
+  );
+
+  async function reloadFieldLinks() {
+    collectionFieldLinks.invalidate(item.id);
+    await collectionFieldLinks.loadForItems([item.id]);
+  }
 
   // Get custom field value from item
   function getCustomFieldValue(item, fieldIdentifier) {
@@ -154,16 +171,18 @@
         disabled={!canEdit}
       />
     {:else}
-      {@const selectedStatus = statuses.find(s => s.id === item.status_id)}
+      {@const selectedStatus = [...editorOptions.statuses, ...statuses].find(s => s.id === item.status_id)}
       {@const statusCategory = selectedStatus ? statusCategories.find(sc => sc.id === selectedStatus.category_id) : null}
       {#if canEdit}
         <ItemPicker
           value={item.status_id}
-          items={statuses}
+          items={editorOptions.statuses}
+          loading={editorOptions.loading.statuses}
           config={statusConfig}
           placeholder="Set status"
           showUnassigned={false}
           allowClear={false}
+          onOpen={() => collectionEditorOptions.load(item.workspace_id, 'statuses')}
           onSelect={async (selected) => {
             const statusId = selected?.id;
             if (statusId && statusId !== item.status_id) {
@@ -190,16 +209,18 @@
 
   {:else if column.field_identifier === 'priority'}
     <!-- Priority -->
-    {@const selectedPriority = priorities.find(p => p.id === item.priority_id)}
+    {@const selectedPriority = [...editorOptions.priorities, ...priorities].find(p => p.id === item.priority_id)}
     {#if canEdit}
       <ItemPicker
         value={item.priority_id}
-        items={priorities}
+        items={editorOptions.priorities}
+        loading={editorOptions.loading.priorities}
         config={priorityConfig}
         placeholder="Select priority"
         showUnassigned={true}
         unassignedLabel="No priority"
         allowClear={true}
+        onOpen={() => collectionEditorOptions.load(item.workspace_id, 'priorities')}
         onSelect={async (selected) => {
           const priorityId = selected?.id || null;
           await handleItemUpdate('priority_id', priorityId);
@@ -237,13 +258,15 @@
 
   {:else if column.field_identifier === 'assignee'}
     <!-- Assignee -->
-    {@const assignee = users.find(u => u.id === item.assignee_id)}
+    {@const assignee = [...editorOptions.users, ...users].find(u => u.id === item.assignee_id)}
     {#if canEdit}
       <UserPicker
         value={item.assignee_id}
         placeholder="Assign"
         showUnassigned={true}
-        users={users}
+        users={editorOptions.users}
+        loading={editorOptions.loading.users}
+        onOpen={() => collectionEditorOptions.load(item.workspace_id, 'users')}
         onSelect={async (selectedUser) => {
           const userId = selectedUser?.id || null;
           await handleItemUpdate('assignee_id', userId);
@@ -291,6 +314,9 @@
         multiple={true}
         value={itemMsIds}
         workspaceId={item.workspace_id}
+        milestones={editorOptions.milestones}
+        loading={editorOptions.loading.milestones}
+        onOpen={() => collectionEditorOptions.load(item.workspace_id, 'milestones')}
         placeholder={t('pickers.selectMilestones')}
         onSelect={async ({ ids }) => {
           await handleItemUpdate('milestone_ids', ids);
@@ -329,16 +355,18 @@
 
   {:else if column.field_identifier === 'iteration'}
     <!-- Iteration -->
-    {@const iteration = iterations.find(i => i.id === item.iteration_id)}
+    {@const iteration = [...editorOptions.iterations, ...iterations].find(i => i.id === item.iteration_id)}
     {#if canEdit}
       <ItemPicker
         value={item.iteration_id}
-        items={iterations}
+        items={editorOptions.iterations}
+        loading={editorOptions.loading.iterations}
         config={iterationConfig}
         placeholder="Set iteration"
         showUnassigned={true}
         unassignedLabel="No iteration"
         allowClear={true}
+        onOpen={() => collectionEditorOptions.load(item.workspace_id, 'iterations')}
         onSelect={async (selected) => {
           const iterationId = selected?.id || null;
           await handleItemUpdate('iteration_id', iterationId);
@@ -404,16 +432,18 @@
 
   {:else if column.field_identifier === 'project'}
     <!-- Project -->
-    {@const project = projects.find(p => p.id === item.project_id)}
+    {@const project = [...editorOptions.projects, ...projects].find(p => p.id === item.project_id)}
     {#if canEdit}
       <ItemPicker
         value={item.project_id}
-        items={projects}
+        items={editorOptions.projects}
+        loading={editorOptions.loading.projects}
         config={projectConfig}
         placeholder="Set project"
         showUnassigned={true}
         unassignedLabel="No project"
         allowClear={true}
+        onOpen={() => collectionEditorOptions.load(item.workspace_id, 'projects')}
         onSelect={async (selected) => {
           const projectId = selected?.id || null;
           await handleItemUpdate('project_id', projectId);
@@ -456,13 +486,17 @@
     field={fieldDefinition}
     value={customValue}
     {canEdit}
-    {milestones}
-    {iterations}
-    {users}
+    milestones={editorOptions.loaded.milestones ? editorOptions.milestones : milestones}
+    iterations={editorOptions.loaded.iterations ? editorOptions.iterations : iterations}
+    users={editorOptions.loaded.users ? editorOptions.users : users}
+    editorOptions={editorOptions}
+    workspaceId={item.workspace_id}
+    itemId={item.id}
+    {fieldLinks}
+    onFieldLinksChanged={reloadFieldLinks}
     onChange={(newValue) => handleCustomFieldUpdate(column.field_identifier, newValue)}
   />
 {:else}
   <!-- Unknown field type or missing definition -->
   <span class="text-sm" style="color: var(--ds-text-subtle);">-</span>
 {/if}
-

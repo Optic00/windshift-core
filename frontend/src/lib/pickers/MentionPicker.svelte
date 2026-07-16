@@ -108,6 +108,7 @@
       loading = true;
       users = await api.getUsers() || [];
     } catch (err) {
+      if (err?.name === 'AbortError') return;
       console.error('Failed to load users:', err);
       users = [];
     } finally {

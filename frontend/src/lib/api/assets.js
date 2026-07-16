@@ -67,6 +67,7 @@ export const assetStatuses = createCrudClient('/statuses', {
 
 export const assets = {
   ...createCrudClient('/assets', { parentPath: '/asset-sets', itemPath: '/assets' }),
+  getSummaries: (ids, options = {}) => fetchAPI(`/assets/summaries?ids=${ids.join(',')}`, options),
   // Asset links
   getLinks: (id) => fetchAPI(`/assets/${id}/links`),
   createLink: (id, data) =>

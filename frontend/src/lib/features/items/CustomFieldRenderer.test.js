@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, beforeAll, describe, expect, test, vi } from 'vitest';
 
 // Mock the api module — the renderer calls api.getUsers() for the user
@@ -8,7 +8,7 @@ vi.mock('../../api.js', () => ({
   api: {
     getUsers: vi.fn(),
     assets: {
-      get: vi.fn(),
+      getSummaries: vi.fn(),
     },
   },
 }));
@@ -36,9 +36,12 @@ beforeAll(() => {
 });
 
 import { api } from '../../api.js';
+import { referenceDisplayCache } from '../../stores/referenceDisplayCache.svelte.js';
 import CustomFieldRenderer from './CustomFieldRenderer.svelte';
 
 afterEach(() => {
+  cleanup();
+  referenceDisplayCache.reset();
   vi.clearAllMocks();
   document.body.innerHTML = '';
 });
@@ -381,7 +384,9 @@ describe('asset field', () => {
   });
 
   test('bare-id value resolves to asset title', async () => {
-    api.assets.get.mockResolvedValueOnce({ id: 42, asset_tag: 'A-042', title: 'Loader' });
+    api.assets.getSummaries.mockResolvedValueOnce([
+      { id: 42, asset_tag: 'A-042', title: 'Loader' },
+    ]);
     renderReadonly({
       field: { field_type: 'asset', name: 'Machine' },
       value: 42,
@@ -391,12 +396,14 @@ describe('asset field', () => {
   });
 
   test('bare-id value falls back to "Asset #N" when lookup fails', async () => {
-    api.assets.get.mockRejectedValueOnce(new Error('not found'));
+    api.assets.getSummaries.mockRejectedValueOnce(new Error('not found'));
     renderReadonly({
       field: { field_type: 'asset', name: 'Machine' },
       value: 42,
     });
-    await waitFor(() => expect(api.assets.get).toHaveBeenCalledWith(42));
+    await waitFor(() =>
+      expect(api.assets.getSummaries).toHaveBeenCalledWith([42], expect.anything())
+    );
     expect(screen.getByText('Asset #42')).toBeInTheDocument();
   });
 

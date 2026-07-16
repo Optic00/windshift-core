@@ -2,6 +2,7 @@
   import ItemPicker from '../../pickers/ItemPicker.svelte';
   import UserPicker from '../../pickers/UserPicker.svelte';
   import CustomFieldRenderer from '../items/CustomFieldRenderer.svelte';
+  import { collectionEditorOptions } from '../../stores/collectionEditorOptions.svelte.js';
   import ColorDot from '../../components/ColorDot.svelte';
   import { Calendar, User, Target, Globe, Building2 } from '@lucide/svelte';
   import {
@@ -16,22 +17,29 @@
     milestones = [],
     iterations = [],
     users = [],
+    editorOptions = null,
+    workspaceId = null,
+    itemId = null,
+    fieldLinks = [],
+    onFieldLinksChanged = null,
     onChange = (_value) => {}
   } = $props();
 
 </script>
 
 {#if field.field_type === 'milestone'}
-  {@const milestone = value ? milestones.find(m => m.id === parseInt(value)) : null}
+  {@const milestone = value ? [...(editorOptions?.milestones ?? []), ...milestones].find(m => m.id === parseInt(value)) : null}
   {#if canEdit}
     <ItemPicker
       {value}
-      items={milestones}
+      items={editorOptions?.milestones ?? milestones}
       config={milestoneConfig}
       placeholder={field.name}
       showUnassigned={true}
       unassignedLabel="No {field.name.toLowerCase()}"
       allowClear={true}
+      loading={editorOptions?.loading?.milestones ?? false}
+      onOpen={() => editorOptions && collectionEditorOptions.load(workspaceId, 'milestones')}
       onSelect={(item) => onChange(item?.id || null)}
     >
       {#snippet children()}
@@ -60,16 +68,18 @@
   {/if}
 
 {:else if field.field_type === 'iteration'}
-  {@const iteration = value ? iterations.find(i => i.id === parseInt(value)) : null}
+  {@const iteration = value ? [...(editorOptions?.iterations ?? []), ...iterations].find(i => i.id === parseInt(value)) : null}
   {#if canEdit}
     <ItemPicker
       {value}
-      items={iterations}
+      items={editorOptions?.iterations ?? iterations}
       config={iterationConfig}
       placeholder={field.name}
       showUnassigned={true}
       unassignedLabel="No {field.name.toLowerCase()}"
       allowClear={true}
+      loading={editorOptions?.loading?.iterations ?? false}
+      onOpen={() => editorOptions && collectionEditorOptions.load(workspaceId, 'iterations')}
       onSelect={(item) => onChange(item?.id || null)}
     >
       {#snippet children()}
@@ -107,12 +117,15 @@
 
 {:else if field.field_type === 'user'}
   {@const userValue = value && typeof value === 'object' ? value.id : value}
-  {@const assignee = userValue ? users.find(u => u.id === parseInt(userValue)) : null}
+  {@const assignee = userValue ? [...(editorOptions?.users ?? []), ...users].find(u => u.id === parseInt(userValue)) : null}
   {#if canEdit}
     <UserPicker
       value={userValue}
       placeholder={field.name}
       showUnassigned={true}
+      users={editorOptions?.users ?? users}
+      loading={editorOptions?.loading?.users ?? false}
+      onOpen={() => editorOptions && collectionEditorOptions.load(workspaceId, 'users')}
       onSelect={(selectedUser) => {
         onChange(selectedUser ? {
           id: selectedUser.id,
@@ -181,6 +194,14 @@
     autoOpenPickers={false}
     {milestones}
     {iterations}
+    users={editorOptions?.users ?? users}
+    optionData={editorOptions ?? {}}
+    optionLoading={editorOptions?.loading ?? {}}
+    onRequestOptions={(field) => editorOptions && collectionEditorOptions.load(workspaceId, field)}
+    loadAssetOptions={(assetSetId, cqlQuery, search) => collectionEditorOptions.loadAssets(workspaceId, assetSetId, cqlQuery, search)}
+    {itemId}
+    {fieldLinks}
+    {onFieldLinksChanged}
     onChange={(val) => onChange(val)}
   />
 {/if}

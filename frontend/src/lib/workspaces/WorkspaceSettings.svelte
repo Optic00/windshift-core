@@ -41,6 +41,7 @@
   // Bumped when the skills panel changes a skill so the bindings panel's
   // attach-pickers refresh (the two are siblings on the coding-agents tab).
   let agentSkillsVersion = $state(0);
+  let creatingAgentBinding = $state(false);
 
   // Time project categories state
   let timeProjectCategories = $state([]);
@@ -395,8 +396,14 @@
     {:else if activeTab === 'coding-agents'}
         <!-- Coding Agent Bindings (WI-88) + skills library (WI-258) -->
         <div class="space-y-4">
-            <WorkspaceAgentBindings {workspaceId} skillsVersion={agentSkillsVersion} />
-            <WorkspaceAgentSkills {workspaceId} onchanged={() => (agentSkillsVersion += 1)} />
+            <WorkspaceAgentBindings
+              {workspaceId}
+              skillsVersion={agentSkillsVersion}
+              oncreatingchange={(creating) => (creatingAgentBinding = creating)}
+            />
+            {#if !creatingAgentBinding}
+              <WorkspaceAgentSkills {workspaceId} onchanged={() => (agentSkillsVersion += 1)} />
+            {/if}
         </div>
 
     {:else if activeTab === 'issue-sync'}
