@@ -26,7 +26,7 @@
 # --------------------------------------------------------------------
 # Stage 1: build windshift-runner + windshift-triage
 # --------------------------------------------------------------------
-FROM golang:1.26.4-alpine@sha256:a6a091eac01ceac4b97496fe2957a49b6cdd83365337d5f46f6f73710424e805 AS build
+FROM golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
