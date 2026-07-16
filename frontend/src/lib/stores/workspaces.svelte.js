@@ -5,6 +5,7 @@ import { api } from '../api.js';
 function createCurrentWorkspaceStore() {
   const { subscribe, set, update } = writable(null);
   let lastWorkspaceId = null;
+  let loadGeneration = 0;
 
   return {
     subscribe,
@@ -17,6 +18,7 @@ function createCurrentWorkspaceStore() {
     // Load workspace by ID
     async load(workspaceId) {
       if (!workspaceId) {
+        loadGeneration += 1;
         set(null);
         lastWorkspaceId = null;
         return;
@@ -27,20 +29,25 @@ function createCurrentWorkspaceStore() {
         return;
       }
 
+      const generation = ++loadGeneration;
       try {
         const workspace = await api.workspaces.get(workspaceId);
+        if (generation !== loadGeneration) return;
         set(workspace);
         // Only mark this id as loaded once the fetch actually succeeded —
         // otherwise a transient failure would suppress all retries.
         lastWorkspaceId = workspaceId;
       } catch (error) {
+        if (generation !== loadGeneration) return;
         console.error('Failed to load workspace:', error);
         set(null);
+        lastWorkspaceId = null;
       }
     },
 
     // Clear workspace
     clear() {
+      loadGeneration += 1;
       set(null);
       lastWorkspaceId = null;
     },
@@ -53,6 +60,9 @@ function createWorkspacesStore() {
   const personalWorkspace = writable(null);
   const loaded = writable(false);
   const loading = writable(false);
+  let lifecycleGeneration = 0;
+  let listLoadGeneration = 0;
+  let personalLoadGeneration = 0;
 
   // Derived store for regular (non-personal) workspaces
   const regularWorkspaces = derived(workspaces, ($workspaces) =>
@@ -78,30 +88,44 @@ function createWorkspacesStore() {
 
     // Load all workspaces (but not personal workspace - that's loaded on-demand)
     async load() {
+      const lifecycle = lifecycleGeneration;
+      const generation = ++listLoadGeneration;
       loading.set(true);
 
       try {
         const allWorkspaces = await api.workspaces.getAll();
+        if (lifecycle !== lifecycleGeneration || generation !== listLoadGeneration) return;
 
         workspaces.set(allWorkspaces || []);
         // Don't set personalWorkspace here - it's loaded on-demand
         loaded.set(true);
-        loading.set(false);
       } catch (error) {
+        if (lifecycle !== lifecycleGeneration || generation !== listLoadGeneration) return;
         console.error('Failed to load workspaces:', error);
         workspaces.set([]);
         loaded.set(true);
-        loading.set(false);
+      } finally {
+        if (lifecycle === lifecycleGeneration && generation === listLoadGeneration) {
+          loading.set(false);
+        }
       }
     },
 
     // Load personal workspace on-demand
     async loadPersonalWorkspace() {
+      const lifecycle = lifecycleGeneration;
+      const generation = ++personalLoadGeneration;
       try {
         const personal = await api.workspaces.getOrCreatePersonal();
+        if (lifecycle !== lifecycleGeneration || generation !== personalLoadGeneration) {
+          return null;
+        }
         personalWorkspace.set(personal);
         return personal;
       } catch (error) {
+        if (lifecycle !== lifecycleGeneration || generation !== personalLoadGeneration) {
+          return null;
+        }
         console.error('Failed to load personal workspace:', error);
         return null;
       }
@@ -131,6 +155,7 @@ function createWorkspacesStore() {
 
     // Clear the store
     clear() {
+      lifecycleGeneration += 1;
       workspaces.set([]);
       personalWorkspace.set(null);
       loaded.set(false);

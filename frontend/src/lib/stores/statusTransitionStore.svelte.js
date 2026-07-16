@@ -47,10 +47,13 @@ class StatusTransitionStore extends BaseCacheStore {
     if (!workspaceId) return;
     const pendingKey = `ws:${workspaceId}`;
     if (this._pending.has(pendingKey)) return this._pending.get(pendingKey);
+    const generation = this._generation;
+    const scopedWorkspaceId = this.workspaceId;
 
     const promise = (async () => {
       try {
         const result = await api.workspaces.getTransitionMatrix(workspaceId);
+        if (generation !== this._generation || scopedWorkspaceId !== this.workspaceId) return;
         const matrix = result?.transitions || {};
         const fetchedAt = Date.now();
         for (const [key, transitions] of Object.entries(matrix)) {
@@ -62,7 +65,7 @@ class StatusTransitionStore extends BaseCacheStore {
           err
         );
       } finally {
-        this._pending.delete(pendingKey);
+        if (this._pending.get(pendingKey) === promise) this._pending.delete(pendingKey);
       }
     })();
 
@@ -118,9 +121,12 @@ class StatusTransitionStore extends BaseCacheStore {
       return this._pending.get(cacheKey);
     }
 
+    const generation = this._generation;
+    const scopedWorkspaceId = this.workspaceId;
     const promise = (async () => {
       try {
         const result = await api.items.getAvailableStatusTransitions(item.id);
+        if (generation !== this._generation || scopedWorkspaceId !== this.workspaceId) return [];
         const transitions = result.available_transitions || [];
         this._cache.set(cacheKey, { transitions, fetchedAt: Date.now() });
         return transitions;
@@ -131,7 +137,7 @@ class StatusTransitionStore extends BaseCacheStore {
         );
         return [];
       } finally {
-        this._pending.delete(cacheKey);
+        if (this._pending.get(cacheKey) === promise) this._pending.delete(cacheKey);
       }
     })();
 

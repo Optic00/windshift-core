@@ -8,6 +8,7 @@ class BacklogStore {
   workspaceId = $state(null);
   count = $state(0);
   loading = $state(false);
+  #loadGeneration = 0;
 
   /**
    * Load backlog count for a workspace.
@@ -15,19 +16,25 @@ class BacklogStore {
    */
   async load(workspaceId) {
     if (this.workspaceId === workspaceId && this.count > 0) return;
+    const generation = ++this.#loadGeneration;
     this.workspaceId = workspaceId;
     this.loading = true;
     try {
       const response = await api.items.getBacklog(workspaceId);
-      this.count =
+      if (generation !== this.#loadGeneration || this.workspaceId !== workspaceId) return;
+      const count =
         response?.pagination?.total ??
         response?.items?.length ??
         (Array.isArray(response) ? response.length : 0);
+      this.count = count;
     } catch (error) {
+      if (generation !== this.#loadGeneration || this.workspaceId !== workspaceId) return;
       console.error('Failed to load backlog count:', error);
       this.count = 0;
     } finally {
-      this.loading = false;
+      if (generation === this.#loadGeneration && this.workspaceId === workspaceId) {
+        this.loading = false;
+      }
     }
   }
 
@@ -36,28 +43,35 @@ class BacklogStore {
    * Called when components load their own backlog data.
    */
   setCount(workspaceId, count) {
+    this.#loadGeneration += 1;
     this.workspaceId = workspaceId;
     this.count = count;
+    this.loading = false;
   }
 
   /**
    * Increment count when item added to backlog.
    */
   increment() {
+    this.#loadGeneration += 1;
     this.count++;
+    this.loading = false;
   }
 
   /**
    * Decrement count when item removed from backlog.
    */
   decrement() {
+    this.#loadGeneration += 1;
     this.count = Math.max(0, this.count - 1);
+    this.loading = false;
   }
 
   /**
    * Reset store state.
    */
   reset() {
+    this.#loadGeneration += 1;
     this.workspaceId = null;
     this.count = 0;
     this.loading = false;

@@ -80,30 +80,25 @@
     try {
       const sourceType = 'item';
       const targetType = result.type || 'item';
-      const sourceId = isMirror ? result.id : itemId;
-      const targetId = isMirror ? itemId : result.id;
-
-      await api.links.create({
+      // Always describe the edit from the field owner's perspective. The
+      // server resolves mirror fields to their primary field and performs the
+      // single source/target swap there.
+      const linkRequest = {
         link_type_id: opts.link_type_id,
-        source_type: isMirror ? targetType : sourceType,
-        source_id: sourceId,
-        target_type: isMirror ? sourceType : targetType,
-        target_id: targetId,
+        source_type: sourceType,
+        source_id: itemId,
+        target_type: targetType,
+        target_id: result.id,
         custom_field_id: fieldId
-      });
+      };
+
+      await api.links.create(linkRequest);
 
       searchQuery = '';
       searchResults = [];
       showSearch = false;
       if (onChanged) {
-        await onChanged({
-          itemIds: affectedItemIds({
-            source_type: isMirror ? targetType : sourceType,
-            source_id: sourceId,
-            target_type: isMirror ? sourceType : targetType,
-            target_id: targetId
-          })
-        });
+        await onChanged({ itemIds: affectedItemIds(linkRequest) });
       }
       else await loadLinks();
     } catch (e) {

@@ -30,7 +30,7 @@ type pagePermissionChecker = services.PagePermissionChecker
 // What still lives here:
 //   - HTTP decode / response shaping
 //   - Custom-field-managed link pre-processing (UI-form specific, not on
-//     the v1 surface): validateAndPrepareFieldLink + enforceSingleValueFieldLink
+//     the v1 surface): validateAndPrepareFieldLink
 //   - Asset-link list + linkable-item search (separate flows the CLI doesn't
 //     consume): GetLinkedAssets, SearchLinkableItems, search* helpers
 type ItemLinkHandler struct {
@@ -270,9 +270,9 @@ func (h *ItemLinkHandler) CreateLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// For custom-field-managed links, validate field config and apply
-	// mirror-field source/target swap FIRST so permission checks below
-	// run against the final source+target.
+	// For custom-field-managed links, validate field config and apply the
+	// mirror-field source/target swap before the service authorizes the final
+	// endpoints.
 	var fieldPlan *fieldLinkPlan
 	if link.CustomFieldID != nil {
 		var fieldErr error
@@ -281,27 +281,23 @@ func (h *ItemLinkHandler) CreateLink(w http.ResponseWriter, r *http.Request) {
 			respondValidationError(w, r, fieldErr.Error())
 			return
 		}
-
-		// Pre-authorize on the rewritten source so an unauthorized caller
-		// can't trip enforceSingleValueFieldLink's DELETE on its way to
-		// rejection. The service will repeat this check inside
-		// CreateLinkWithChecks — paying that small duplicate cost is
-		// preferable to threading a callback through the service surface.
-		if err := h.linkSvc.CheckEntityPermission(currentUser.ID, link.SourceType, link.SourceID, models.PermissionItemEdit, services.AssetPermissionKeyEdit); err != nil {
-			respondLinkServiceError(w, r, link.SourceType, err)
-			return
-		}
-		h.enforceSingleValueFieldLink(&link, fieldPlan)
 	}
 
-	created, err := h.linkSvc.CreateLinkWithChecks(currentUser.ID, services.CreateItemLinkParams{
+	params := services.CreateItemLinkParams{
 		LinkTypeID:    link.LinkTypeID,
 		SourceType:    link.SourceType,
 		SourceID:      link.SourceID,
 		TargetType:    link.TargetType,
 		TargetID:      link.TargetID,
 		CustomFieldID: link.CustomFieldID,
-	})
+	}
+	var created *models.ItemLink
+	var err error
+	if fieldPlan != nil && !fieldPlan.multi {
+		created, err = h.linkSvc.ReplaceSingleValueFieldLinkWithChecks(currentUser.ID, params)
+	} else {
+		created, err = h.linkSvc.CreateLinkWithChecks(currentUser.ID, params)
+	}
 	if err != nil {
 		respondLinkServiceError(w, r, link.SourceType, err)
 		return
@@ -738,18 +734,14 @@ func (h *ItemLinkHandler) GetFieldLinks(w http.ResponseWriter, r *http.Request) 
 }
 
 // fieldLinkPlan captures the result of validateAndPrepareFieldLink so the
-// caller can carry the "should enforce single-value" bit past the permission
-// check and into enforceSingleValueFieldLink without re-reading field options.
+// caller can select atomic replacement without re-reading field options.
 type fieldLinkPlan struct {
 	multi bool
 }
 
 // validateAndPrepareFieldLink validates custom field linking constraints and
 // rewrites the link in place: mirror fields are resolved to their primary and
-// source/target are swapped. It performs NO destructive writes — the caller
-// must invoke enforceSingleValueFieldLink AFTER permission checks succeed, so
-// an unauthorized request can't wipe existing field links on its way to
-// being rejected.
+// source/target are swapped. It performs no writes.
 func (h *ItemLinkHandler) validateAndPrepareFieldLink(link *models.ItemLink) (*fieldLinkPlan, error) {
 	fieldID := *link.CustomFieldID
 
@@ -837,16 +829,4 @@ func (h *ItemLinkHandler) validateAndPrepareFieldLink(link *models.ItemLink) (*f
 	}
 
 	return &fieldLinkPlan{multi: opts.Multi}, nil
-}
-
-// enforceSingleValueFieldLink deletes any existing links for the field on the
-// same source so the caller's INSERT becomes the sole value. Called only
-// after permission checks have already authorized the caller to modify the
-// field's source.
-func (h *ItemLinkHandler) enforceSingleValueFieldLink(link *models.ItemLink, plan *fieldLinkPlan) {
-	if plan == nil || plan.multi || link.CustomFieldID == nil {
-		return
-	}
-	_, _ = h.db.ExecWrite("DELETE FROM item_links WHERE custom_field_id = ? AND source_type = ? AND source_id = ?",
-		*link.CustomFieldID, link.SourceType, link.SourceID)
 }

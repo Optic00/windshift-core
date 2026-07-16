@@ -57,9 +57,12 @@ class ItemTestCaseLinksStore extends BaseCacheStore {
 
   /** @private Fetch + cache a chunk of item ids via the batch links endpoint. */
   _fetchChunk(chunk) {
+    const generation = this._generation;
+    const scopedWorkspaceId = this.workspaceId;
     const promise = (async () => {
       try {
         const groups = await api.links.getForItems(chunk);
+        if (generation !== this._generation || scopedWorkspaceId !== this.workspaceId) return;
         const now = Date.now();
         for (const itemId of chunk) {
           const group = groups[itemId] || {};
@@ -70,11 +73,14 @@ class ItemTestCaseLinksStore extends BaseCacheStore {
         }
       } catch (err) {
         console.error('ItemTestCaseLinksStore: failed to fetch links for items', chunk, err);
+        if (generation !== this._generation || scopedWorkspaceId !== this.workspaceId) return;
         // Cache empty results to avoid repeated failures.
         const now = Date.now();
         for (const itemId of chunk) this._cache.set(itemId, { testCases: [], fetchedAt: now });
       } finally {
-        for (const itemId of chunk) this._pending.delete(itemId);
+        for (const itemId of chunk) {
+          if (this._pending.get(itemId) === promise) this._pending.delete(itemId);
+        }
       }
     })();
 

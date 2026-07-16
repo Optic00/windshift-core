@@ -53,6 +53,11 @@ type CreateItemLinkParams struct {
 	CustomFieldID *int
 }
 
+type itemLinkQuerier interface {
+	Query(query string, args ...interface{}) (*sql.Rows, error)
+	QueryRow(query string, args ...interface{}) *sql.Row
+}
+
 // ErrInvalidLinkTypeForEntities is returned when the requested link type
 // does not allow the given source/target entity types. Centralizing this
 // in the service ensures both the public REST handler and the AI
@@ -63,6 +68,10 @@ var ErrInvalidLinkTypeForEntities = errors.New("link type does not allow these e
 // CreateLink validates and inserts a new item link.
 // Returns the new link ID, or 0 if the link was a duplicate (INSERT OR IGNORE).
 func (s *ItemLinkService) CreateLink(params CreateItemLinkParams) (int64, error) {
+	return createItemLink(s.db, params)
+}
+
+func createItemLink(db itemLinkQuerier, params CreateItemLinkParams) (int64, error) {
 	// Verify the link type exists and is active, and pull its
 	// allowed_entity_types constraint in the same query so we can gate
 	// pairs that the link type's schema disallows.
@@ -70,7 +79,7 @@ func (s *ItemLinkService) CreateLink(params CreateItemLinkParams) (int64, error)
 		active             bool
 		allowedEntityTypes sql.NullString
 	)
-	err := s.db.QueryRow(
+	err := db.QueryRow(
 		"SELECT active, allowed_entity_types FROM link_types WHERE id = ?",
 		params.LinkTypeID,
 	).Scan(&active, &allowedEntityTypes)
@@ -114,7 +123,7 @@ func (s *ItemLinkService) CreateLink(params CreateItemLinkParams) (int64, error)
 
 	// Insert with ON CONFLICT DO NOTHING to handle duplicates gracefully
 	var linkID int64
-	err = s.db.QueryRow(`
+	err = db.QueryRow(`
 		INSERT INTO item_links (link_type_id, source_type, source_id, target_type, target_id, created_by, custom_field_id, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		ON CONFLICT DO NOTHING

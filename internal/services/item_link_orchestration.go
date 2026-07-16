@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"windshift/internal/database"
 	"windshift/internal/models"
 	"windshift/internal/repository"
 )
@@ -185,46 +186,17 @@ func (s *ItemLinkService) ListLinksByCustomField(fieldID, itemID int, mirror boo
 // Notifications and action events fire only when emitters are wired AND
 // the source resolves to an "item" (notifications are item-centric).
 func (s *ItemLinkService) CreateLinkWithChecks(userID int, params CreateItemLinkParams) (*models.ItemLink, error) {
-	if !isValidLinkEntityType(params.SourceType) || !isValidLinkEntityType(params.TargetType) {
-		return nil, ErrLinkInvalidEntityType
-	}
-	if params.SourceType == params.TargetType && params.SourceID == params.TargetID {
-		return nil, ErrLinkSelfReference
-	}
-
-	// Permission checks first so unauthorized callers never get a
-	// duplicate-detection 409 leak (would oracle the existence of a link).
-	if err := s.CheckEntityPermission(userID, params.SourceType, params.SourceID, models.PermissionItemEdit, AssetPermissionKeyEdit); err != nil {
+	if err := s.validateCreateLinkWithChecks(userID, params); err != nil {
 		return nil, err
-	}
-	if err := s.CheckEntityPermission(userID, params.TargetType, params.TargetID, models.PermissionItemView, AssetPermissionKeyView); err != nil {
-		return nil, err
-	}
-
-	// Item↔page links must stay in one workspace. Cross-workspace ⇒ 404.
-	if params.SourceType == "page" || params.TargetType == "page" {
-		ok, err := s.linkEndpointsShareWorkspace(params.SourceType, params.SourceID, params.TargetType, params.TargetID)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			return nil, ErrLinkCrossWorkspacePage
-		}
 	}
 
 	// Duplicate detection (either direction).
-	var existingID int
-	err := s.db.QueryRow(`
-		SELECT id FROM item_links
-		WHERE (source_type = ? AND source_id = ? AND target_type = ? AND target_id = ?)
-		   OR (source_type = ? AND source_id = ? AND target_type = ? AND target_id = ?)
-	`, params.SourceType, params.SourceID, params.TargetType, params.TargetID,
-		params.TargetType, params.TargetID, params.SourceType, params.SourceID).Scan(&existingID)
-	if err == nil {
-		return nil, ErrLinkExists
+	exists, err := itemLinkExists(s.db, params)
+	if err != nil {
+		return nil, err
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("failed to probe duplicates: %w", err)
+	if exists {
+		return nil, ErrLinkExists
 	}
 
 	createdBy := userID
@@ -239,11 +211,151 @@ func (s *ItemLinkService) CreateLinkWithChecks(userID int, params CreateItemLink
 		return nil, ErrLinkExists
 	}
 
+	return s.finishCreatedLink(userID, params, id)
+}
+
+// ReplaceSingleValueFieldLinkWithChecks atomically replaces the one link
+// owned by a non-multi linking field. Endpoint authorization happens before
+// the transaction; validation, old-value deletion, duplicate detection, and
+// insertion then commit together so a rejected replacement cannot clear the
+// field's previous value.
+func (s *ItemLinkService) ReplaceSingleValueFieldLinkWithChecks(userID int, params CreateItemLinkParams) (*models.ItemLink, error) {
+	if params.CustomFieldID == nil {
+		return nil, fmt.Errorf("custom_field_id is required for single-value replacement")
+	}
+	if err := s.validateCreateLinkWithChecks(userID, params); err != nil {
+		return nil, err
+	}
+
+	createdBy := userID
+	params.CreatedBy = &createdBy
+	link, err := database.WithTxResult(s.db, func(tx database.Tx) (*models.ItemLink, error) {
+		if err := lockLinkSource(tx, s.db.GetDriverName(), params.SourceType, params.SourceID); err != nil {
+			return nil, err
+		}
+		if _, err := tx.ExecWrite(`
+			DELETE FROM item_links
+			WHERE custom_field_id = ? AND source_type = ? AND source_id = ?
+		`, *params.CustomFieldID, params.SourceType, params.SourceID); err != nil {
+			return nil, fmt.Errorf("failed to clear previous field link: %w", err)
+		}
+
+		exists, err := itemLinkExists(tx, params)
+		if err != nil {
+			return nil, err
+		}
+		if exists {
+			return nil, ErrLinkExists
+		}
+
+		id, err := createItemLink(tx, params)
+		if err != nil {
+			return nil, err
+		}
+		if id == 0 {
+			return nil, ErrLinkExists
+		}
+		created, err := getLinkByIDFrom(tx, int(id))
+		if err != nil {
+			return nil, fmt.Errorf("failed to load replacement field link: %w", err)
+		}
+		if created == nil {
+			return nil, fmt.Errorf("failed to load replacement field link: %w", ErrLinkNotFound)
+		}
+		return created, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return s.finishHydratedCreatedLink(userID, params, link), nil
+}
+
+func lockLinkSource(tx database.Tx, driver, entityType string, entityID int) error {
+	table := ""
+	switch entityType {
+	case "item":
+		table = "items"
+	case "test_case":
+		table = "test_cases"
+	case "asset":
+		table = "assets"
+	case "page":
+		table = "pages"
+	default:
+		return ErrLinkInvalidEntityType
+	}
+	//nolint:gosec // table is selected from the hardcoded allowlist above.
+	query := "SELECT id FROM " + table + " WHERE id = ?"
+	if driver == "postgres" {
+		query += " FOR UPDATE"
+	}
+	var lockedID int
+	if err := tx.QueryRow(query, entityID).Scan(&lockedID); err != nil {
+		return fmt.Errorf("failed to lock field-link source: %w", err)
+	}
+	return nil
+}
+
+func (s *ItemLinkService) validateCreateLinkWithChecks(userID int, params CreateItemLinkParams) error {
+	if !isValidLinkEntityType(params.SourceType) || !isValidLinkEntityType(params.TargetType) {
+		return ErrLinkInvalidEntityType
+	}
+	if params.SourceType == params.TargetType && params.SourceID == params.TargetID {
+		return ErrLinkSelfReference
+	}
+
+	// Permission checks first so unauthorized callers never get a
+	// duplicate-detection 409 leak (would oracle the existence of a link).
+	if err := s.CheckEntityPermission(userID, params.SourceType, params.SourceID, models.PermissionItemEdit, AssetPermissionKeyEdit); err != nil {
+		return err
+	}
+	if err := s.CheckEntityPermission(userID, params.TargetType, params.TargetID, models.PermissionItemView, AssetPermissionKeyView); err != nil {
+		return err
+	}
+
+	// Item↔page links must stay in one workspace. Cross-workspace ⇒ 404.
+	if params.SourceType == "page" || params.TargetType == "page" {
+		ok, err := s.linkEndpointsShareWorkspace(params.SourceType, params.SourceID, params.TargetType, params.TargetID)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return ErrLinkCrossWorkspacePage
+		}
+	}
+	return nil
+}
+
+func itemLinkExists(db itemLinkQuerier, params CreateItemLinkParams) (bool, error) {
+	var existingID int
+	err := db.QueryRow(`
+		SELECT id FROM item_links
+		WHERE (source_type = ? AND source_id = ? AND target_type = ? AND target_id = ?)
+		   OR (source_type = ? AND source_id = ? AND target_type = ? AND target_id = ?)
+	`, params.SourceType, params.SourceID, params.TargetType, params.TargetID,
+		params.TargetType, params.TargetID, params.SourceType, params.SourceID).Scan(&existingID)
+	if err == nil {
+		return true, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return false, fmt.Errorf("failed to probe duplicates: %w", err)
+	}
+	return false, nil
+}
+
+func (s *ItemLinkService) finishCreatedLink(userID int, params CreateItemLinkParams, id int64) (*models.ItemLink, error) {
 	link, err := s.getLinkByID(int(id))
 	if err != nil {
 		return nil, fmt.Errorf("failed to load created link: %w", err)
 	}
+	if link == nil {
+		return nil, fmt.Errorf("failed to load created link: %w", ErrLinkNotFound)
+	}
+	return s.finishHydratedCreatedLink(userID, params, link), nil
+}
 
+func (s *ItemLinkService) finishHydratedCreatedLink(userID int, params CreateItemLinkParams, link *models.ItemLink) *models.ItemLink {
 	// Notification + action events — item-source only (matches legacy
 	// handler behavior). Failures here do not roll back the link.
 	if params.SourceType == "item" {
@@ -252,7 +364,7 @@ func (s *ItemLinkService) CreateLinkWithChecks(userID int, params CreateItemLink
 	// Live-update publish (WI-483): a link is bidirectional in the UI, so refresh
 	// BOTH endpoints that are items, not only the source.
 	publishItemLinkChange(params.SourceType, params.SourceID, params.TargetType, params.TargetID)
-	return link, nil
+	return link
 }
 
 // publishItemLinkChange announces a link add/remove to every endpoint that is a
@@ -1034,6 +1146,10 @@ func (s *ItemLinkService) FilterPageLinksByACL(userID int, links []models.ItemLi
 // lt (link_types), si/sit/sw/spw (source item / type / workspace / page-
 // workspace), ti/tit/tw/tpw (target equivalents), etc.
 func (s *ItemLinkService) getLinksWhere(whereClause string, args ...interface{}) ([]models.ItemLink, error) {
+	return getLinksWhere(s.db, whereClause, args...)
+}
+
+func getLinksWhere(db itemLinkQuerier, whereClause string, args ...interface{}) ([]models.ItemLink, error) {
 	query := `
 		SELECT il.id, il.link_type_id, il.source_type, il.source_id, il.target_type, il.target_id,
 		       il.created_by, il.created_at,
@@ -1088,7 +1204,7 @@ func (s *ItemLinkService) getLinksWhere(whereClause string, args ...interface{})
 		WHERE ` + whereClause + `
 		ORDER BY lt.name, il.created_at DESC
 	`
-	rows, err := s.db.Query(query, args...)
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1123,7 +1239,11 @@ func (s *ItemLinkService) getLinksWhere(whereClause string, args ...interface{})
 // getLinkByID returns nil when no row matches (lets callers map to a
 // clean ErrLinkNotFound).
 func (s *ItemLinkService) getLinkByID(id int) (*models.ItemLink, error) {
-	links, err := s.getLinksWhere("il.id = ?", id)
+	return getLinkByIDFrom(s.db, id)
+}
+
+func getLinkByIDFrom(db itemLinkQuerier, id int) (*models.ItemLink, error) {
+	links, err := getLinksWhere(db, "il.id = ?", id)
 	if err != nil {
 		return nil, err
 	}

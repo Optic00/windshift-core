@@ -6,6 +6,7 @@ export class BaseCacheStore {
   workspaceId = $state(null);
   _cache = new Map();
   _pending = new Map();
+  _generation = 0;
 
   /**
    * Set workspace scope. Resets cache if workspace changed.
@@ -21,6 +22,7 @@ export class BaseCacheStore {
    * Clear all cached data (e.g. after configuration changes).
    */
   invalidateAll() {
+    this._generation += 1;
     this._cache.clear();
     this._pending.clear();
   }
@@ -29,6 +31,7 @@ export class BaseCacheStore {
    * Full reset: clear cache and workspace scope.
    */
   reset() {
+    this._generation += 1;
     this._cache.clear();
     this._pending.clear();
     this.workspaceId = null;

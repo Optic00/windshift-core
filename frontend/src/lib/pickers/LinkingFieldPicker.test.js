@@ -16,6 +16,7 @@ vi.mock('../stores/toasts.svelte.js', () => ({
   errorToast: vi.fn(),
 }));
 
+import { api } from '../api.js';
 import LinkingFieldPicker from './LinkingFieldPicker.svelte';
 
 afterEach(() => {
@@ -101,5 +102,42 @@ describe('LinkingFieldPicker item links', () => {
     await waitFor(() => {
       expect(onChanged).toHaveBeenCalledWith({ itemIds: [101, 202] });
     });
+  });
+
+  it('lets the server perform the one required source-target swap for mirror fields', async () => {
+    const onChanged = vi.fn();
+    api.links.search.mockResolvedValueOnce([
+      { id: 404, title: 'Mirror source candidate', type: 'item' },
+    ]);
+    render(LinkingFieldPicker, {
+      props: {
+        fieldId: 9,
+        itemId: 303,
+        fieldOptions: JSON.stringify({
+          link_type_id: 5,
+          mirror_of_field_id: 8,
+          allowed_entity_types: ['item'],
+        }),
+        links: [],
+        onChanged,
+      },
+    });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await fireEvent.input(screen.getByPlaceholderText('Search items...'), {
+      target: { value: 'Mirror source' },
+    });
+    await waitFor(() => expect(api.links.search).toHaveBeenCalled());
+    await fireEvent.click(screen.getByRole('button', { name: 'Mirror source candidate' }));
+
+    expect(api.links.create).toHaveBeenCalledWith({
+      link_type_id: 5,
+      source_type: 'item',
+      source_id: 303,
+      target_type: 'item',
+      target_id: 404,
+      custom_field_id: 9,
+    });
+    expect(onChanged).toHaveBeenCalledWith({ itemIds: [303, 404] });
   });
 });
