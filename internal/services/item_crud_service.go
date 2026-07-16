@@ -375,12 +375,6 @@ func (s *ItemCRUDService) SearchWithFiltersContext(ctx context.Context, params S
 	})
 }
 
-// resolveCollectionQL resolves a QL query string from either a direct QL parameter
-// or a collection ID. Returns the resolved QL string and whether a collection was used.
-func (s *ItemCRUDService) resolveCollectionQL(qlQuery string, collectionID int) (resolvedQL string, isCollection bool, err error) {
-	return s.resolveCollectionQLContext(context.Background(), qlQuery, collectionID)
-}
-
 func (s *ItemCRUDService) resolveCollectionQLContext(ctx context.Context, qlQuery string, collectionID int) (resolvedQL string, isCollection bool, err error) {
 	if qlQuery != "" {
 		return qlQuery, false, nil
@@ -399,12 +393,6 @@ func (s *ItemCRUDService) resolveCollectionQLContext(ctx context.Context, qlQuer
 		return collectionQL, true, nil
 	}
 	return "", true, nil
-}
-
-// evaluateQL compiles a QL query string into SQL WHERE clause and arguments.
-// Returns empty qlSQL when the input query is empty.
-func (s *ItemCRUDService) evaluateQL(qlQuery string, ctx cql.FunctionContext) (qlSQL string, qlArgs []interface{}, err error) {
-	return s.evaluateQLContext(context.Background(), qlQuery, ctx)
 }
 
 func (s *ItemCRUDService) evaluateQLContext(requestCtx context.Context, qlQuery string, functionCtx cql.FunctionContext) (qlSQL string, qlArgs []interface{}, err error) {
