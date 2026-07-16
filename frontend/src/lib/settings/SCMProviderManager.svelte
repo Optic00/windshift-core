@@ -3,8 +3,7 @@
   import { api } from '../api.js';
   import { t } from '../stores/i18n.svelte.js';
   import {
-    GitBranch, Plus, Edit, Trash2, X, Check, RefreshCw,
-    AlertCircle, Settings, Power, PowerOff, Link, ExternalLink,
+    GitBranch, Plus, Edit, Trash2, RefreshCw,
     TestTube, CheckCircle, XCircle
   } from '@lucide/svelte';
   import { IconBrandGithub as Github } from '@tabler/icons-svelte-runes';
@@ -45,15 +44,9 @@
   let testResult = $state(null);
   let testLoading = $state(false);
   let saving = $state(false);
-  let oauthLoading = $state(false);
 
   // Workspace restriction state
   let allowedWorkspaceIds = $state([]);
-
-
-  // Check for OAuth callback status in URL
-  let oauthStatus = $state(null);
-  let oauthMessage = $state(null);
 
   // Provider types (only GitHub and Gitea supported)
   const providerTypes = [
@@ -125,19 +118,6 @@
   });
 
   onMount(async () => {
-    // Check for OAuth callback status
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get('oauth') === 'success') {
-      oauthStatus = 'success';
-      oauthMessage = `Successfully connected to ${urlParams.get('provider') || 'provider'}`;
-      // Clean up URL
-      window.history.replaceState({}, '', window.location.pathname);
-    } else if (urlParams.get('oauth') === 'error') {
-      oauthStatus = 'error';
-      oauthMessage = urlParams.get('message') || 'OAuth connection failed';
-      window.history.replaceState({}, '', window.location.pathname);
-    }
-
     await loadProviders();
   });
 
@@ -348,21 +328,6 @@
     }
   }
 
-  async function startOAuth(provider) {
-    oauthLoading = true;
-    try {
-      const result = await api.scmProviders.startOAuth(provider.slug);
-      if (result.auth_url) {
-        window.location.href = result.auth_url;
-      } else {
-        error = 'Failed to get OAuth URL';
-      }
-    } catch (err) {
-      error = err.message || 'Failed to start OAuth flow';
-      oauthLoading = false;
-    }
-  }
-
   async function discoverGitHubAppInstallations() {
     if (!formData.github_app_id || !formData.github_app_private_key) {
       discoveryError = 'App ID and Private Key are required for discovery';
@@ -415,11 +380,6 @@
     return providerType?.label || type;
   }
 
-  function dismissOAuthStatus() {
-    oauthStatus = null;
-    oauthMessage = null;
-  }
-
   // Compute OAuth callback URL based on slug
   const oauthCallbackUrl = $derived(formData.slug
     ? `${publicBaseURL()}/api/scm/oauth/${formData.slug}/callback`
@@ -441,17 +401,6 @@
       </Button>
     {/snippet}
   </PageHeader>
-
-  <!-- OAuth Status Messages -->
-  {#if oauthStatus}
-    <AlertBox
-      type={oauthStatus === 'success' ? 'success' : 'error'}
-      dismissible
-      ondismiss={dismissOAuthStatus}
-    >
-      {oauthMessage}
-    </AlertBox>
-  {/if}
 
   <!-- Error -->
   {#if error}
@@ -511,21 +460,9 @@
                   <span class="truncate max-w-xs">{provider.base_url}</span>
                 {/if}
               </div>
-              <!-- Connection Status -->
-              <div class="mt-1 flex items-center space-x-2 text-xs">
-                {#if provider.auth_method === 'oauth'}
-                  {#if provider.has_oauth_token}
-                    <span class="flex items-center" style="color: var(--ds-text-success);">
-                      <CheckCircle class="w-3 h-3 mr-1" />
-                      {t('settings.scmProviders.oauthConnected')}
-                    </span>
-                  {:else}
-                    <span class="flex items-center" style="color: var(--ds-text-warning);">
-                      <AlertCircle class="w-3 h-3 mr-1" />
-                      {t('settings.scmProviders.oauthNotConnected')}
-                    </span>
-                  {/if}
-                {:else if provider.auth_method === 'pat'}
+              {#if provider.auth_method === 'pat'}
+                <!-- PAT Configuration Status -->
+                <div class="mt-1 flex items-center space-x-2 text-xs">
                   {#if provider.has_pat}
                     <span class="flex items-center" style="color: var(--ds-text-success);">
                       <CheckCircle class="w-3 h-3 mr-1" />
@@ -537,26 +474,11 @@
                       {t('settings.scmProviders.patNotConfigured')}
                     </span>
                   {/if}
-                {/if}
-              </div>
+                </div>
+              {/if}
             </div>
           </div>
           <div class="flex items-center space-x-2">
-            {#if provider.auth_method === 'oauth' && !provider.has_oauth_token && provider.oauth_client_id}
-              <Button
-                variant="secondary"
-                size="sm"
-                onclick={() => startOAuth(provider)}
-                disabled={oauthLoading}
-              >
-                {#if oauthLoading}
-                  <Spinner size="sm" class="mr-1" />
-                {:else}
-                  <Link class="w-4 h-4 mr-1" />
-                {/if}
-                {t('settings.scmProviders.connect')}
-              </Button>
-            {/if}
             {#if provider.auth_method !== 'oauth'}
               <Button variant="ghost" size="sm" onclick={() => testConnection(provider.id)} disabled={testLoading}>
                 <TestTube class="w-4 h-4" />
@@ -857,5 +779,4 @@
       </div>
     </form>
 </Modal>
-
 

@@ -42,9 +42,6 @@ type SCMProvider struct {
 	GitHubAppPrivateKeyEncrypted string          `json:"-"`
 	GitHubAppInstallationID      string          `json:"github_app_installation_id,omitempty"`
 	GitHubOrgID                  *int64          `json:"github_org_id,omitempty"` // Stable org ID for GitHub App discovery
-	OAuthAccessTokenEncrypted    string          `json:"-"`
-	OAuthRefreshTokenEncrypted   string          `json:"-"`
-	OAuthTokenExpiresAt          *time.Time      `json:"oauth_token_expires_at,omitempty"`
 	Scopes                       string          `json:"scopes"`
 	WorkspaceRestrictionMode     string          `json:"workspace_restriction_mode"` // 'unrestricted' or 'restricted'
 	CreatedAt                    time.Time       `json:"created_at"`
@@ -53,7 +50,6 @@ type SCMProvider struct {
 	HasOAuthClientSecret   bool `json:"has_oauth_client_secret,omitempty"`
 	HasPAT                 bool `json:"has_pat,omitempty"`
 	HasGitHubAppPrivateKey bool `json:"has_github_app_private_key,omitempty"`
-	HasOAuthToken          bool `json:"has_oauth_token,omitempty"`
 }
 
 // SCMProviderRequest represents the API request for creating/updating an SCM provider

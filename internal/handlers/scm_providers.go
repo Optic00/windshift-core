@@ -41,8 +41,6 @@ type SCMProviderResponse struct {
 	HasGitHubAppPrivateKey   bool                   `json:"has_github_app_private_key"`
 	GitHubAppInstallationID  string                 `json:"github_app_installation_id,omitempty"`
 	GitHubOrgID              *int64                 `json:"github_org_id,omitempty"`
-	HasOAuthToken            bool                   `json:"has_oauth_token"`
-	OAuthTokenExpiresAt      *time.Time             `json:"oauth_token_expires_at,omitempty"`
 	Scopes                   string                 `json:"scopes"`
 	WorkspaceRestrictionMode string                 `json:"workspace_restriction_mode"` // 'unrestricted' or 'restricted'
 	CreatedAt                time.Time              `json:"created_at"`
@@ -570,12 +568,6 @@ func (h *SCMProviderHandler) TestProvider(w http.ResponseWriter, r *http.Request
 }
 
 // providerRowScanResult holds scanned values from a provider database row.
-//
-// Note: provider-level OAuth tokens are no longer surfaced. The legacy
-// scm_providers.oauth_access_token_encrypted column is left in the schema
-// for rollback safety but the API responses always report HasOAuthToken
-// as false; callers wanting to know whether a provider can be used must
-// check workspace_scm_connections or user_scm_oauth_tokens instead.
 type providerRowScanResult struct {
 	Provider                 models.SCMProvider
 	BaseURL                  sql.NullString
@@ -622,7 +614,6 @@ func (r *providerRowScanResult) toResponse() SCMProviderResponse {
 		GitHubAppID:              r.GHAppID.String,
 		HasGitHubAppPrivateKey:   r.GHAppKeyEnc.Valid && r.GHAppKeyEnc.String != "",
 		GitHubAppInstallationID:  r.GHAppInstallID.String,
-		HasOAuthToken:            false, // provider-level OAuth tokens are no longer used; see providerRowScanResult comment
 		Scopes:                   r.Provider.Scopes,
 		WorkspaceRestrictionMode: restrictionMode,
 		CreatedAt:                r.Provider.CreatedAt,
