@@ -83,6 +83,7 @@ class CollectionStore {
   sortableFields = $state([]);
   #sortBy = null;
   #sortDirection = null;
+  #boardSortMode = 'rank';
 
   // Internal tracking
   #wsId = null;
@@ -478,6 +479,21 @@ class CollectionStore {
   }
 
   /**
+   * Set the board's effective server-side ordering and reload from page 1.
+   * Bubble Mode must be applied before pagination so recently active items
+   * cannot be hidden on a later frac_index-ordered page.
+   */
+  setBoardSortMode(mode) {
+    const nextMode = mode === 'bubble' ? 'bubble' : 'rank';
+    if (nextMode === this.#boardSortMode) return;
+
+    this.#boardSortMode = nextMode;
+    if (BOARD_VIEWS.has(this.#currentView) && (this.#wsId || this.#colId)) {
+      this.load(this.#wsId, this.#colId, this.#currentView);
+    }
+  }
+
+  /**
    * Re-trigger load() with current wsId/colId.
    */
   reload() {
@@ -620,6 +636,9 @@ class CollectionStore {
 
   #itemSortOptions() {
     if (BOARD_VIEWS.has(this.#currentView)) {
+      if (this.#boardSortMode === 'bubble') {
+        return { order_by: 'last_active_at', sort_direction: 'desc' };
+      }
       return { order_by: 'frac_index', sort_direction: 'asc' };
     }
 

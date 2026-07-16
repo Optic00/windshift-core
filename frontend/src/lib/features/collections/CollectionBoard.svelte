@@ -289,10 +289,6 @@
       if (savedExcludeRightmost !== null) {
         excludeRightmostSwimlaneParents = savedExcludeRightmost === 'true';
       }
-      const savedSortMode = localStorage.getItem(sortModeStorageKey());
-      if (savedSortMode === 'bubble') {
-        sortMode = 'bubble';
-      }
     } catch (e) { /* ignore storage errors */ }
     loading = false;
   });
@@ -321,12 +317,16 @@
     // getBoardConfiguration request on every item array update.
     viewSignature;
     dependencyLinksByItem = {};
-    // Restore the per-board collapsed-column preference here (not in onMount)
+    // Restore per-board view preferences here (not in onMount)
     // because MainApp reuses this component instance while updating the
-    // workspaceId/collectionId props — restoring only on mount would carry a
-    // previous board's collapsed columns into the next board and then
-    // persist that stale state under the new board key.
+    // workspaceId/collectionId props — restoring only on mount would carry
+    // the previous board's collapsed columns or sort mode into the next one.
     collapsedColumns = loadCollapsedColumns();
+    sortMode = loadSortMode();
+    // The store owns pagination, so it must know the active mode before
+    // choosing which items belong on page one. Avoid tracking store state in
+    // this view-only preference effect; changing boards is its sole trigger.
+    untrack(() => collectionStore.setBoardSortMode(sortMode));
     if (collectionId || workspaceId) {
       loadBoardConfig();
     }
@@ -565,15 +565,24 @@
     return `board-sort-mode-${boardPreferenceScope()}`;
   }
 
-  function setSortMode(mode) {
-    sortMode = mode;
+  function loadSortMode() {
     try {
-      if (mode && mode !== 'rank') {
-        localStorage.setItem(sortModeStorageKey(), mode);
+      return localStorage.getItem(sortModeStorageKey()) === 'bubble' ? 'bubble' : 'rank';
+    } catch (e) {
+      return 'rank';
+    }
+  }
+
+  function setSortMode(mode) {
+    sortMode = mode === 'bubble' ? 'bubble' : 'rank';
+    try {
+      if (sortMode === 'bubble') {
+        localStorage.setItem(sortModeStorageKey(), sortMode);
       } else {
         localStorage.removeItem(sortModeStorageKey());
       }
     } catch (e) { /* ignore storage errors */ }
+    collectionStore.setBoardSortMode(sortMode);
   }
 
   function setGroupByItemType(itemTypeId) {

@@ -434,6 +434,17 @@ func (r *ItemRepository) buildOrderByClause(sortBy string, sortAsc bool) string 
 	if sortBy == "frac_index" && sortAsc {
 		return r.defaultOrderBy()
 	}
+	if sortBy == "last_active_at" {
+		// Bubble Mode is paginated, so its ordering must be both null-safe and
+		// deterministic. Older rows can lack last_active_at; use the same
+		// fallback the API model exposes and break timestamp ties by item ID so
+		// page boundaries cannot shuffle between requests.
+		return fmt.Sprintf(
+			" ORDER BY COALESCE(i.last_active_at, i.updated_at, i.created_at) %s, i.id %s",
+			direction,
+			direction,
+		)
+	}
 	if col, ok := systemFieldSortColumns[sortBy]; ok {
 		return fmt.Sprintf(" ORDER BY %s %s", col, direction)
 	}
