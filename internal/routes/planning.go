@@ -51,6 +51,7 @@ func RegisterPlanningRoutes(deps *Deps) {
 	api.HandleH("GET /iterations", auth(http.HandlerFunc(deps.Planning.Iteration.GetAll)))
 	api.HandleH("POST /iterations", auth(http.HandlerFunc(deps.Planning.Iteration.Create)))
 	api.HandleH("GET /iterations/{id}", auth(http.HandlerFunc(deps.Planning.Iteration.Get)))
+	api.HandleH("POST /iterations/{id}/complete", auth(http.HandlerFunc(deps.Items.Item.CompleteIteration)))
 	api.HandleH("PUT /workspaces/{workspaceId}/iterations/{id}", auth(workspaceItemEdit(http.HandlerFunc(deps.Planning.Iteration.Update))))
 	api.HandleH("PUT /global/iterations/{id}", auth(globalIterationManage(http.HandlerFunc(deps.Planning.Iteration.Update))))
 	api.HandleH("DELETE /iterations/{id}", auth(http.HandlerFunc(deps.Planning.Iteration.Delete)))

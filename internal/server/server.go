@@ -471,8 +471,10 @@ func (s *Server) initialize() error {
 
 	// Initialize handlers
 	transitionMatrixService := services.NewTransitionMatrixService(s.db)
+	bulkOperationMetrics := services.NewBulkOperationMetrics()
 	itemHandler := handlers.NewItemHandler(s.db, permService, s.activityTracker, s.notificationService)
 	itemHandler.SetTransitionMatrixService(transitionMatrixService)
+	itemHandler.SetBulkOperationMetrics(bulkOperationMetrics)
 	itemHandler.SetDBRequestTimeout(s.config.DB.RequestTimeout)
 	customFieldHandler := handlers.NewCustomFieldHandler(s.db)
 	workspaceHandler := handlers.NewWorkspaceHandler(s.db, permService, s.activityTracker, workspaceKeyCache)
@@ -1421,6 +1423,7 @@ func (s *Server) initialize() error {
 				repository.NewAgentRunRepository(s.db),
 				s.webhookSender,
 				transitionMatrixService,
+				bulkOperationMetrics,
 			),
 			AgentSecurity: handlers.NewAgentSecurityHandler(
 				agentSecurityRepo,

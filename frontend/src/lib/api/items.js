@@ -81,6 +81,16 @@ export const items = {
       }),
     'update'
   ),
+  // Atomically apply one field patch to up to 500 work items. The server
+  // returns only changed items; unchanged retries produce no duplicate events.
+  bulkUpdate: withCrossTabNotice(
+    (itemIds, fields) =>
+      fetchAPI('/items/bulk-update', {
+        method: 'POST',
+        body: JSON.stringify({ item_ids: itemIds, set: fields }),
+      }),
+    'update'
+  ),
   // Perform a workflow status transition. Use this instead of passing
   // status_id to update() — the update endpoint rejects status_id so that
   // validator-mode and condition-mode workflow rules are always enforced.

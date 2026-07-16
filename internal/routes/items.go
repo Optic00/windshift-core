@@ -22,6 +22,7 @@ func RegisterItemRoutes(deps *Deps) {
 	// Bulk fetch by id set: kills the api.items.getMany() per-id fan-out.
 	// Registered before /items/{id} so the literal segment wins over the wildcard.
 	api.HandleH("GET /items/batch", auth(http.HandlerFunc(deps.Items.Item.GetBatch)))
+	api.HandleH("POST /items/bulk-update", auth(http.HandlerFunc(deps.Items.Item.BulkUpdate)))
 	api.HandleH("GET /items/cache-stats", auth(http.HandlerFunc(deps.Items.Item.GetCacheStats)))
 	// Stable key lookup for SPA/CLI deep links: /workspaces/WI/items/123.
 	api.HandleH("GET /workspaces/{key}/items/{number}", auth(http.HandlerFunc(deps.Items.Item.GetByKeyAndNumber)))

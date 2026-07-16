@@ -46,11 +46,14 @@ type ItemHandler struct {
 	issueSyncService interface {
 		PushStatusToGitHub(ctx context.Context, itemID int, newStatusID int)
 	} // Issue sync service for pushing status changes to GitHub (optional, can be nil)
-	conditionService *services.ConditionService // Condition service for workflow transition conditions (optional, can be nil)
-	approvalService  *services.ApprovalService  // Approval service for status-bound approvals (optional, can be nil)
-	sseHub           *services.SSEHub           // Hub for the item event stream (optional, can be nil → /events returns 503)
-	transitionMatrix *services.TransitionMatrixService
-	dbRequestTimeout time.Duration
+	conditionService  *services.ConditionService // Condition service for workflow transition conditions (optional, can be nil)
+	approvalService   *services.ApprovalService  // Approval service for status-bound approvals (optional, can be nil)
+	sseHub            *services.SSEHub           // Hub for the item event stream (optional, can be nil → /events returns 503)
+	transitionMatrix  *services.TransitionMatrixService
+	bulkUpdate        *services.ItemUpdateService
+	iterationComplete *services.IterationCompletionService
+	bulkMetrics       *services.BulkOperationMetrics
+	dbRequestTimeout  time.Duration
 }
 
 const defaultDBRequestTimeout = 12 * time.Second
@@ -77,7 +80,16 @@ func NewItemHandler(db database.Database, permissionService *services.Permission
 		itemCRUD:            services.NewItemCRUDService(db),
 		notificationService: notificationService,
 		transitionMatrix:    services.NewTransitionMatrixService(db),
+		bulkUpdate:          services.NewItemUpdateService(db).WithPermissionService(permissionService),
+		iterationComplete:   services.NewIterationCompletionService(db),
+		bulkMetrics:         services.NewBulkOperationMetrics(),
 		dbRequestTimeout:    defaultDBRequestTimeout,
+	}
+}
+
+func (h *ItemHandler) SetBulkOperationMetrics(metrics *services.BulkOperationMetrics) {
+	if metrics != nil {
+		h.bulkMetrics = metrics
 	}
 }
 

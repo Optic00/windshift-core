@@ -286,6 +286,10 @@ func (s *ItemUpdateService) compareAndGenerateHistory(original, updated *models.
 	addHistory("assignee_id", intPtrToString(original.AssigneeID), intPtrToString(updated.AssigneeID))
 	addHistory("creator_id", intPtrToString(original.CreatorID), intPtrToString(updated.CreatorID))
 	addHistory("parent_id", intPtrToString(original.ParentID), intPtrToString(updated.ParentID))
+	addHistory("related_work_item_id", intPtrToString(original.RelatedWorkItemID), intPtrToString(updated.RelatedWorkItemID))
+	if original.IsTask != updated.IsTask {
+		addHistory("is_task", fmt.Sprintf("%t", original.IsTask), fmt.Sprintf("%t", updated.IsTask))
+	}
 
 	// Compare date fields
 	addHistory("due_date", timePtrToString(original.DueDate), timePtrToString(updated.DueDate))

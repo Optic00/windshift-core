@@ -263,21 +263,8 @@
     if (!iteration) return;
 
     try {
-      // Move incomplete items if needed
-      if (iterationIncompleteItems.length > 0) {
-        const targetIterationId = moveTarget.type === 'iteration' ? moveTarget.iterationId : null;
-        await Promise.all(
-          iterationIncompleteItems.map(item =>
-            api.items.update(item.id, { iteration_id: targetIterationId })
-          )
-        );
-      }
-
-      await api.iterations.update(iteration.id, {
-        status: 'completed',
-        is_global: iteration.is_global,
-        workspace_id: iteration.workspace_id,
-      });
+      const targetIterationId = moveTarget.type === 'iteration' ? moveTarget.iterationId : null;
+      await api.iterations.complete(iteration.id, targetIterationId);
       allIterations = allIterations.map(i =>
         i.id === iteration.id ? { ...i, status: 'completed' } : i
       );
@@ -749,4 +736,3 @@
   targetIterations={iterationCompleteTargets}
   onconfirm={handleCompleteIterationConfirm}
 />
-

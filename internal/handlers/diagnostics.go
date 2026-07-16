@@ -40,6 +40,7 @@ type DiagnosticsHandler struct {
 	agentRunRepo     *repository.AgentRunRepository
 	webhookSender    *webhook.WebhookSender
 	transitionMatrix *services.TransitionMatrixService
+	bulkOperations   *services.BulkOperationMetrics
 }
 
 // NewDiagnosticsHandler creates a new diagnostics handler.
@@ -58,6 +59,7 @@ func NewDiagnosticsHandler(
 	agentRunRepo *repository.AgentRunRepository,
 	webhookSender *webhook.WebhookSender,
 	transitionMatrix *services.TransitionMatrixService,
+	bulkOperations *services.BulkOperationMetrics,
 ) *DiagnosticsHandler {
 	return &DiagnosticsHandler{
 		sessionManager:   sessionManager,
@@ -74,7 +76,20 @@ func NewDiagnosticsHandler(
 		agentRunRepo:     agentRunRepo,
 		webhookSender:    webhookSender,
 		transitionMatrix: transitionMatrix,
+		bulkOperations:   bulkOperations,
 	}
+}
+
+// GetBulkOperations returns bounded bulk-edit and iteration-completion
+// cardinality, SQL, latency, pool, failure, and side-effect counters.
+//
+// GET /api/admin/diagnostics/bulk-operations
+func (h *DiagnosticsHandler) GetBulkOperations(w http.ResponseWriter, _ *http.Request) {
+	if h.bulkOperations == nil {
+		respondJSONOK(w, services.BulkOperationStats{Operations: map[string]services.BulkOperationKindStats{}})
+		return
+	}
+	respondJSONOK(w, h.bulkOperations.Stats())
 }
 
 // GetWebhookDispatch returns process-local bounded-pipeline pressure and

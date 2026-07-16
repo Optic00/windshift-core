@@ -74,4 +74,11 @@ export const iterations = {
   getProgressMany: (ids = []) =>
     fetchAPI(`/iterations/progress?ids=${[...new Set(ids)].join(',')}`),
   getBurndown: (id) => fetchAPI(`/iterations/${id}/burndown`),
+  complete: (id, moveIncompleteToIterationId = null) =>
+    fetchAPI(`/iterations/${id}/complete`, {
+      method: 'POST',
+      body: JSON.stringify({
+        move_incomplete_to_iteration_id: moveIncompleteToIterationId,
+      }),
+    }),
 };

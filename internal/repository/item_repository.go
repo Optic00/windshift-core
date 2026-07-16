@@ -135,6 +135,39 @@ func (r *ItemRepository) FindByIDForUpdate(tx database.Tx, id int) (*models.Item
 	return item, nil
 }
 
+// FindByIDsForUpdateContext loads and locks a bounded set of items in stable
+// ID order. PostgreSQL takes row locks; SQLite's write transaction already
+// serializes writers. Missing IDs are omitted so callers can fail the entire
+// operation without leaking which requested ID was absent.
+func (r *ItemRepository) FindByIDsForUpdateContext(ctx context.Context, tx database.Tx, ids []int) ([]*models.Item, error) {
+	if len(ids) == 0 {
+		return []*models.Item{}, nil
+	}
+	placeholders, args := inPlaceholders(ids)
+	query := `SELECT ` + itemBaseColumns + ` FROM items WHERE id IN (` + placeholders + `) ORDER BY id`
+	if r.db.GetDriverName() == "postgres" {
+		query += " FOR UPDATE"
+	}
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("find items for bulk update: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	items := make([]*models.Item, 0, len(ids))
+	for rows.Next() {
+		item, scanErr := scanItemBase(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("scan item for bulk update: %w", scanErr)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate items for bulk update: %w", err)
+	}
+	return items, nil
+}
+
 // ItemWithWorkspaceStatus includes workspace active status for permission checks
 type ItemWithWorkspaceStatus struct {
 	*models.Item
