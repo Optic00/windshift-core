@@ -26,6 +26,14 @@ type DatabasePoolStats struct {
 	MaxLifetimeClosed  int64
 }
 
+// RequestQueryOutcomeStats is the repository-layer projection of request-owned
+// query terminal outcomes.
+type RequestQueryOutcomeStats struct {
+	Canceled  uint64 `json:"canceled"`
+	Deadlines uint64 `json:"deadlines"`
+	Errors    uint64 `json:"errors"`
+}
+
 // DatabaseCapacityBudget records the replica-aware PostgreSQL connection
 // calculation made at startup. AuxiliaryConnectionsPerReplica includes pools
 // such as the optional SSH authentication pool.
@@ -105,6 +113,16 @@ func (r *DatabaseDiagnosticsRepository) PoolStats() []DatabasePoolStats {
 		})
 	}
 	return snapshots
+}
+
+// RequestQueryStats returns process-local request query outcome counters.
+func (r *DatabaseDiagnosticsRepository) RequestQueryStats() RequestQueryOutcomeStats {
+	stats := database.RequestQueryStats()
+	return RequestQueryOutcomeStats{
+		Canceled:  stats.Canceled,
+		Deadlines: stats.Deadlines,
+		Errors:    stats.Errors,
+	}
 }
 
 // LoadPostgresCapacityBudget reads the server capacity and calculates the

@@ -225,6 +225,11 @@ func (r *ItemRepository) FindAllWithDetailsContext(ctx context.Context, params I
 // Search searches items by title and description with text matching.
 // It delegates to FindAllWithDetails using TextQuery/ItemKeyQuery filters.
 func (r *ItemRepository) Search(query string, workspaceIDs []int, pagination PaginationParams) ([]models.Item, int, error) {
+	return r.SearchContext(context.Background(), query, workspaceIDs, pagination)
+}
+
+// SearchContext is the request-aware form of Search.
+func (r *ItemRepository) SearchContext(ctx context.Context, query string, workspaceIDs []int, pagination PaginationParams) ([]models.Item, int, error) {
 	if len(workspaceIDs) == 0 {
 		return []models.Item{}, 0, nil
 	}
@@ -243,7 +248,7 @@ func (r *ItemRepository) Search(query string, workspaceIDs []int, pagination Pag
 		filters.TextQuery = query
 	}
 
-	return r.FindAllWithDetails(ItemListParams{
+	return r.FindAllWithDetailsContext(ctx, ItemListParams{
 		WorkspaceIDs: workspaceIDs,
 		Filters:      filters,
 		Pagination:   pagination,
@@ -590,10 +595,15 @@ func (r *ItemRepository) scanItemList(rows *sql.Rows) ([]models.Item, error) {
 // GetBacklogStatusIDs returns status IDs for backlog items.
 // It first checks board_configurations for the workspace, then falls back to non-completed statuses.
 func (r *ItemRepository) GetBacklogStatusIDs(workspaceID int) ([]int, error) {
+	return r.GetBacklogStatusIDsContext(context.Background(), workspaceID)
+}
+
+// GetBacklogStatusIDsContext is the request-aware form of GetBacklogStatusIDs.
+func (r *ItemRepository) GetBacklogStatusIDsContext(ctx context.Context, workspaceID int) ([]int, error) {
 	// First, check if there's a board configuration with backlog_status_ids
 	if workspaceID > 0 {
 		var backlogStatusIDsJSON sql.NullString
-		err := r.db.QueryRow(`
+		err := r.db.QueryRowContext(ctx, `
 			SELECT backlog_status_ids
 			FROM board_configurations
 			WHERE workspace_id = ?`, workspaceID).Scan(&backlogStatusIDsJSON)
@@ -610,7 +620,7 @@ func (r *ItemRepository) GetBacklogStatusIDs(workspaceID int) ([]int, error) {
 	}
 
 	// Fall back to global "Open" statuses only (not "In Progress")
-	rows, err := r.db.Query(`
+	rows, err := r.db.QueryContext(ctx, `
 		SELECT DISTINCT s.id
 		FROM statuses s
 		JOIN status_categories sc ON s.category_id = sc.id

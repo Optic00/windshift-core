@@ -471,6 +471,7 @@ func (s *Server) initialize() error {
 
 	// Initialize handlers
 	itemHandler := handlers.NewItemHandler(s.db, permService, s.activityTracker, s.notificationService)
+	itemHandler.SetDBRequestTimeout(s.config.DB.RequestTimeout)
 	customFieldHandler := handlers.NewCustomFieldHandler(s.db)
 	workspaceHandler := handlers.NewWorkspaceHandler(s.db, permService, s.activityTracker, workspaceKeyCache)
 	screenHandler := handlers.NewScreenHandler(s.db)

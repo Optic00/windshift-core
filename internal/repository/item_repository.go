@@ -108,7 +108,12 @@ func (r *ItemRepository) scanItemColumn(itemID int, column, op string, dest any)
 
 // FindByID loads an item by ID with all fields (no joins)
 func (r *ItemRepository) FindByID(id int) (*models.Item, error) {
-	item, err := scanItemBase(r.db.QueryRow(`SELECT `+itemBaseColumns+` FROM items WHERE id = ?`, id))
+	return r.FindByIDContext(context.Background(), id)
+}
+
+// FindByIDContext is the request-aware form of FindByID.
+func (r *ItemRepository) FindByIDContext(ctx context.Context, id int) (*models.Item, error) {
+	item, err := scanItemBase(r.db.QueryRowContext(ctx, `SELECT `+itemBaseColumns+` FROM items WHERE id = ?`, id))
 	if err != nil {
 		return nil, mapItemErr(err, "find item")
 	}
@@ -139,7 +144,12 @@ type ItemWithWorkspaceStatus struct {
 // FindByIDWithDetails loads an item with all joined data
 // This is the consolidated method for the ~30 duplicate JOIN queries throughout items.go
 func (r *ItemRepository) FindByIDWithDetails(id int) (*models.Item, error) {
-	result, err := r.FindByIDWithWorkspaceStatus(id)
+	return r.FindByIDWithDetailsContext(context.Background(), id)
+}
+
+// FindByIDWithDetailsContext is the request-aware form of FindByIDWithDetails.
+func (r *ItemRepository) FindByIDWithDetailsContext(ctx context.Context, id int) (*models.Item, error) {
+	result, err := r.FindByIDWithWorkspaceStatusContext(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -300,7 +310,13 @@ func scanItemDetailsRow(scanner rowScanner) (models.Item, bool, error) {
 
 // FindByIDWithWorkspaceStatus loads an item with all joined data including workspace active status
 func (r *ItemRepository) FindByIDWithWorkspaceStatus(id int) (*ItemWithWorkspaceStatus, error) {
-	item, workspaceActive, err := scanItemDetailsRow(r.db.QueryRow(itemDetailsSelectBody+"\n\t\tWHERE i.id = ?", id))
+	return r.FindByIDWithWorkspaceStatusContext(context.Background(), id)
+}
+
+// FindByIDWithWorkspaceStatusContext is the request-aware form of
+// FindByIDWithWorkspaceStatus.
+func (r *ItemRepository) FindByIDWithWorkspaceStatusContext(ctx context.Context, id int) (*ItemWithWorkspaceStatus, error) {
+	item, workspaceActive, err := scanItemDetailsRow(r.db.QueryRowContext(ctx, itemDetailsSelectBody+"\n\t\tWHERE i.id = ?", id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -311,8 +327,10 @@ func (r *ItemRepository) FindByIDWithWorkspaceStatus(id int) (*ItemWithWorkspace
 	// Eager-load milestones so callers (REST mappers, ai tools, etc.) don't
 	// each have to remember to attach them after the fact.
 	holder := []models.Item{item}
-	if err := NewMilestoneAttachRepository(r.db).LoadForItems(holder); err == nil {
+	if err := NewMilestoneAttachRepository(r.db).LoadForItemsContext(ctx, holder); err == nil {
 		item = holder[0]
+	} else if ctx.Err() != nil {
+		return nil, ctx.Err()
 	}
 
 	return &ItemWithWorkspaceStatus{Item: &item, WorkspaceActive: workspaceActive}, nil
@@ -1911,7 +1929,12 @@ func (r *ItemRepository) HomepageMilestoneProgressByIDs(milestoneIDs []int) ([]H
 // to the numeric JSON key used in items.custom_field_values. For linking fields,
 // also reads options to detect mirror fields and target-type constraints.
 func (r *ItemRepository) GetCQLCustomFieldMap() (cql.CustomFieldMap, error) {
-	rows, err := r.db.Query(`SELECT id, LOWER(name), field_type, COALESCE(options, '') FROM custom_field_definitions`)
+	return r.GetCQLCustomFieldMapContext(context.Background())
+}
+
+// GetCQLCustomFieldMapContext is the request-aware form of GetCQLCustomFieldMap.
+func (r *ItemRepository) GetCQLCustomFieldMapContext(ctx context.Context) (cql.CustomFieldMap, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id, LOWER(name), field_type, COALESCE(options, '') FROM custom_field_definitions`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query item custom fields: %w", err)
 	}

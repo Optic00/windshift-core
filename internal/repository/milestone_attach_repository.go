@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -99,6 +100,11 @@ func (r *MilestoneAttachRepository) RemoveItemMilestone(itemID, milestoneID int)
 // them to each item's Milestones field. Used by the item-list endpoints to
 // avoid an N+1 lookup.
 func (r *MilestoneAttachRepository) LoadForItems(items []models.Item) error {
+	return r.LoadForItemsContext(context.Background(), items)
+}
+
+// LoadForItemsContext is the request-aware form of LoadForItems.
+func (r *MilestoneAttachRepository) LoadForItemsContext(ctx context.Context, items []models.Item) error {
 	if len(items) == 0 {
 		return nil
 	}
@@ -119,7 +125,7 @@ func (r *MilestoneAttachRepository) LoadForItems(items []models.Item) error {
 		ORDER BY m.name
 	`, strings.Join(placeholders, ","))
 
-	rows, err := r.db.Query(query, itemIDs...)
+	rows, err := r.db.QueryContext(ctx, query, itemIDs...)
 	if err != nil {
 		return fmt.Errorf("load milestones for items: %w", err)
 	}

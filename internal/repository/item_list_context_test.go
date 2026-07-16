@@ -23,6 +23,62 @@ func TestFindAllWithDetailsContextHonorsCancellation(t *testing.T) {
 	}
 }
 
+func TestMeasuredItemReadsHonorCancellation(t *testing.T) {
+	db := newItemListTestDB(t, "measured-item-read-context")
+	repo := NewItemRepository(db)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	tests := []struct {
+		name string
+		run  func() error
+	}{
+		{
+			name: "search",
+			run: func() error {
+				_, _, err := repo.SearchContext(ctx, "needle", []int{1}, PaginationParams{})
+				return err
+			},
+		},
+		{
+			name: "backlog statuses",
+			run: func() error {
+				_, err := repo.GetBacklogStatusIDsContext(ctx, 0)
+				return err
+			},
+		},
+		{
+			name: "ancestors",
+			run: func() error {
+				_, err := repo.GetAncestorsForHierarchyContext(ctx, 1, 30)
+				return err
+			},
+		},
+		{
+			name: "descendants",
+			run: func() error {
+				_, err := repo.GetDescendantsWithMaxDepthContext(ctx, 1, 30)
+				return err
+			},
+		},
+		{
+			name: "children",
+			run: func() error {
+				_, err := repo.GetChildrenContext(ctx, 1)
+				return err
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.run(); !errors.Is(err, context.Canceled) {
+				t.Fatalf("error = %v, want context.Canceled", err)
+			}
+		})
+	}
+}
+
 func TestFindAllWithDetailsUsesLeanCountQuery(t *testing.T) {
 	db := newItemListTestDB(t, "item-list-lean-count")
 

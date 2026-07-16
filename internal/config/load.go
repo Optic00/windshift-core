@@ -48,6 +48,7 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 		postgresHeadroom      = flag.Int("postgres-connection-headroom", 10, "PostgreSQL connections reserved for migrations, administration, and other clients")
 		maxUserConcurrency    = flag.Int("max-user-concurrency", 16, "Max simultaneous in-flight /api requests per authenticated user (0 disables)")
 		maxWriteConns         = flag.Int("max-write-conns", 1, "Max write connections")
+		dbRequestTimeout      = flag.Duration("db-request-timeout", 12*time.Second, "Maximum database-work duration for ordinary HTTP requests")
 		logLevel              = flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 		logFormat             = flag.String("log-format", "text", "Log format (text, json, logfmt)")
 		tlsCertPath           = flag.String("tls-cert", "", "TLS certificate file path")
@@ -195,6 +196,7 @@ func Load(frontend embed.FS, shutdownChan chan os.Signal) Config {
 			MaxWriteConns:      parseIntEnv("MAX_WRITE_CONNS", *maxWriteConns),
 			ReplicaCount:       parseIntEnv("POSTGRES_REPLICA_COUNT", *postgresReplicaCount),
 			ConnectionHeadroom: parseIntEnv("POSTGRES_CONNECTION_HEADROOM", *postgresHeadroom),
+			RequestTimeout:     parseDurationEnv("DB_REQUEST_TIMEOUT", *dbRequestTimeout),
 		},
 		SSH: SSHConfig{
 			Enabled: sshEnabled,

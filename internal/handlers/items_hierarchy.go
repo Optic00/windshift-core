@@ -3,7 +3,6 @@ package handlers
 import (
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -20,7 +19,7 @@ func (h *ItemHandler) requireItemViewByWorkspace(w http.ResponseWriter, r *http.
 		return nil, false
 	}
 
-	workspaceID, err := repository.NewItemRepository(h.db).GetWorkspaceID(itemID)
+	workspaceID, err := repository.NewItemRepository(h.db).GetWorkspaceIDCtx(r.Context(), itemID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			respondNotFound(w, r, "item")
@@ -45,6 +44,9 @@ func (h *ItemHandler) requireItemViewByWorkspace(w http.ResponseWriter, r *http.
 
 // GetAncestors returns all ancestors of an item (for breadcrumbs)
 func (h *ItemHandler) GetAncestors(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := h.requestDBContext(r)
+	defer cancel()
+	r = r.WithContext(ctx)
 	id, ok := requireIDParam(w, r, "id")
 	if !ok {
 		return
@@ -55,9 +57,9 @@ func (h *ItemHandler) GetAncestors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ancestors, err := h.hierarchyService.GetAncestors(id)
+	ancestors, err := h.hierarchyService.GetAncestorsContext(ctx, id)
 	if err != nil {
-		respondInternalError(w, r, err)
+		h.respondItemReadError(w, r, err)
 		return
 	}
 
@@ -69,14 +71,17 @@ func (h *ItemHandler) GetAncestors(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Load labels
-	if err := repository.NewLabelRepository(h.db).LoadForItems(filteredAncestors); err != nil {
-		slog.Warn("failed to load labels for ancestors", slog.Any("error", err))
+	if err := repository.NewLabelRepository(h.db).LoadForItemsContext(ctx, filteredAncestors); err != nil {
+		h.respondItemReadError(w, r, err)
+		return
 	}
-	if err := repository.NewMilestoneAttachRepository(h.db).LoadForItems(filteredAncestors); err != nil {
-		slog.Warn("failed to load milestones for ancestors", slog.Any("error", err))
+	if err := repository.NewMilestoneAttachRepository(h.db).LoadForItemsContext(ctx, filteredAncestors); err != nil {
+		h.respondItemReadError(w, r, err)
+		return
 	}
-	if err := LoadPersonalLabelsForItems(h.db, filteredAncestors, user.ID); err != nil {
-		slog.Warn("failed to load personal labels for ancestors", slog.Any("error", err))
+	if err := LoadPersonalLabelsForItemsContext(ctx, h.db, filteredAncestors, user.ID); err != nil {
+		h.respondItemReadError(w, r, err)
+		return
 	}
 
 	respondJSONOK(w, filteredAncestors)
@@ -84,6 +89,9 @@ func (h *ItemHandler) GetAncestors(w http.ResponseWriter, r *http.Request) {
 
 // GetDescendantsNew returns all descendants using the new hierarchy service
 func (h *ItemHandler) GetDescendantsNew(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := h.requestDBContext(r)
+	defer cancel()
+	r = r.WithContext(ctx)
 	id, ok := requireIDParam(w, r, "id")
 	if !ok {
 		return
@@ -105,9 +113,9 @@ func (h *ItemHandler) GetDescendantsNew(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	descendants, err := h.hierarchyService.GetDescendants(id, maxDepth)
+	descendants, err := h.hierarchyService.GetDescendantsContext(ctx, id, maxDepth)
 	if err != nil {
-		respondInternalError(w, r, err)
+		h.respondItemReadError(w, r, err)
 		return
 	}
 
@@ -119,14 +127,17 @@ func (h *ItemHandler) GetDescendantsNew(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Load labels
-	if err := repository.NewLabelRepository(h.db).LoadForItems(filteredDescendants); err != nil {
-		slog.Warn("failed to load labels for descendants", slog.Any("error", err))
+	if err := repository.NewLabelRepository(h.db).LoadForItemsContext(ctx, filteredDescendants); err != nil {
+		h.respondItemReadError(w, r, err)
+		return
 	}
-	if err := repository.NewMilestoneAttachRepository(h.db).LoadForItems(filteredDescendants); err != nil {
-		slog.Warn("failed to load milestones for descendants", slog.Any("error", err))
+	if err := repository.NewMilestoneAttachRepository(h.db).LoadForItemsContext(ctx, filteredDescendants); err != nil {
+		h.respondItemReadError(w, r, err)
+		return
 	}
-	if err := LoadPersonalLabelsForItems(h.db, filteredDescendants, user.ID); err != nil {
-		slog.Warn("failed to load personal labels for descendants", slog.Any("error", err))
+	if err := LoadPersonalLabelsForItemsContext(ctx, h.db, filteredDescendants, user.ID); err != nil {
+		h.respondItemReadError(w, r, err)
+		return
 	}
 
 	respondJSONOK(w, filteredDescendants)
@@ -173,6 +184,9 @@ func (h *ItemHandler) GetTimeRollup(w http.ResponseWriter, r *http.Request) {
 
 // GetTree returns the item and all its descendants as a nested tree structure
 func (h *ItemHandler) GetTree(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := h.requestDBContext(r)
+	defer cancel()
+	r = r.WithContext(ctx)
 	id, ok := requireIDParam(w, r, "id")
 	if !ok {
 		return
@@ -186,7 +200,7 @@ func (h *ItemHandler) GetTree(w http.ResponseWriter, r *http.Request) {
 
 	// Get the root item
 	repo := repository.NewItemRepository(h.db)
-	rootItem, err := repo.FindByID(id)
+	rootItem, err := repo.FindByIDContext(ctx, id)
 	if err != nil {
 		if err == repository.ErrNotFound {
 			respondNotFound(w, r, "item")
@@ -208,9 +222,9 @@ func (h *ItemHandler) GetTree(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get all descendants
-	descendants, err := h.hierarchyService.GetDescendants(id, 0)
+	descendants, err := h.hierarchyService.GetDescendantsContext(ctx, id, 0)
 	if err != nil {
-		respondInternalError(w, r, err)
+		h.respondItemReadError(w, r, err)
 		return
 	}
 
@@ -223,14 +237,17 @@ func (h *ItemHandler) GetTree(w http.ResponseWriter, r *http.Request) {
 
 	// Load labels for root item and descendants
 	allItems := append([]models.Item{*rootItem}, filteredDescendants...)
-	if err := repository.NewLabelRepository(h.db).LoadForItems(allItems); err != nil {
-		slog.Warn("failed to load labels for tree", slog.Any("error", err))
+	if err := repository.NewLabelRepository(h.db).LoadForItemsContext(ctx, allItems); err != nil {
+		h.respondItemReadError(w, r, err)
+		return
 	}
-	if err := LoadPersonalLabelsForItems(h.db, allItems, user.ID); err != nil {
-		slog.Warn("failed to load personal labels for tree", slog.Any("error", err))
+	if err := LoadPersonalLabelsForItemsContext(ctx, h.db, allItems, user.ID); err != nil {
+		h.respondItemReadError(w, r, err)
+		return
 	}
-	if err := repository.NewMilestoneAttachRepository(h.db).LoadForItems(allItems); err != nil {
-		slog.Warn("failed to load milestones for tree", slog.Any("error", err))
+	if err := repository.NewMilestoneAttachRepository(h.db).LoadForItemsContext(ctx, allItems); err != nil {
+		h.respondItemReadError(w, r, err)
+		return
 	}
 	*rootItem = allItems[0]
 	copy(filteredDescendants, allItems[1:])
@@ -282,6 +299,9 @@ func (h *ItemHandler) buildItemTree(root *models.Item, descendants []models.Item
 
 // GetChildrenNew returns direct children using the new hierarchy service
 func (h *ItemHandler) GetChildrenNew(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := h.requestDBContext(r)
+	defer cancel()
+	r = r.WithContext(ctx)
 	id, ok := requireIDParam(w, r, "id")
 	if !ok {
 		return
@@ -292,9 +312,9 @@ func (h *ItemHandler) GetChildrenNew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	children, err := h.hierarchyService.GetChildren(id)
+	children, err := h.hierarchyService.GetChildrenContext(ctx, id)
 	if err != nil {
-		respondInternalError(w, r, err)
+		h.respondItemReadError(w, r, err)
 		return
 	}
 
@@ -306,14 +326,17 @@ func (h *ItemHandler) GetChildrenNew(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Load labels
-	if err := repository.NewLabelRepository(h.db).LoadForItems(filteredChildren); err != nil {
-		slog.Warn("failed to load labels for children", slog.Any("error", err))
+	if err := repository.NewLabelRepository(h.db).LoadForItemsContext(ctx, filteredChildren); err != nil {
+		h.respondItemReadError(w, r, err)
+		return
 	}
-	if err := LoadPersonalLabelsForItems(h.db, filteredChildren, user.ID); err != nil {
-		slog.Warn("failed to load personal labels for children", slog.Any("error", err))
+	if err := LoadPersonalLabelsForItemsContext(ctx, h.db, filteredChildren, user.ID); err != nil {
+		h.respondItemReadError(w, r, err)
+		return
 	}
-	if err := repository.NewMilestoneAttachRepository(h.db).LoadForItems(filteredChildren); err != nil {
-		slog.Warn("failed to load milestones for children", slog.Any("error", err))
+	if err := repository.NewMilestoneAttachRepository(h.db).LoadForItemsContext(ctx, filteredChildren); err != nil {
+		h.respondItemReadError(w, r, err)
+		return
 	}
 
 	respondJSONOK(w, filteredChildren)

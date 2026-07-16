@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -41,7 +42,12 @@ func (r *ItemRepository) GetItemTypeAndHierarchyLevel(itemID int) (typeID *int, 
 
 // GetChildren returns direct children of an item
 func (r *ItemRepository) GetChildren(parentID int) ([]*models.Item, error) {
-	rows, err := r.db.Query(`
+	return r.GetChildrenContext(context.Background(), parentID)
+}
+
+// GetChildrenContext is the request-aware form of GetChildren.
+func (r *ItemRepository) GetChildrenContext(ctx context.Context, parentID int) ([]*models.Item, error) {
+	rows, err := r.db.QueryContext(ctx, `
 		SELECT i.id, i.workspace_id, i.workspace_item_number, i.item_type_id, i.title, i.description,
 		       i.status_id, i.priority_id, i.due_date, i.is_task, i.iteration_id,
 		       i.project_id, i.inherit_project, i.assignee_id, i.creator_id, i.custom_field_values,
@@ -74,10 +80,16 @@ func (r *ItemRepository) GetDescendants(parentID int) ([]*models.Item, error) {
 
 // GetDescendantsWithMaxDepth returns descendants up to maxDepth levels deep.
 func (r *ItemRepository) GetDescendantsWithMaxDepth(parentID, maxDepth int) ([]*models.Item, error) {
+	return r.GetDescendantsWithMaxDepthContext(context.Background(), parentID, maxDepth)
+}
+
+// GetDescendantsWithMaxDepthContext is the request-aware form of
+// GetDescendantsWithMaxDepth.
+func (r *ItemRepository) GetDescendantsWithMaxDepthContext(ctx context.Context, parentID, maxDepth int) ([]*models.Item, error) {
 	if maxDepth <= 0 || maxDepth > maxItemHierarchyDepth {
 		maxDepth = maxItemHierarchyDepth
 	}
-	rows, err := r.db.Query(`
+	rows, err := r.db.QueryContext(ctx, `
 		WITH RECURSIVE descendants AS (
 			SELECT id, parent_id, 1 as level
 			FROM items
@@ -158,10 +170,16 @@ func (r *ItemRepository) GetAncestors(itemID int) ([]*models.Item, error) {
 // so cycle-safety tests and callers with minimal hierarchy fixtures do not need
 // the full item-detail schema.
 func (r *ItemRepository) GetAncestorsForHierarchy(itemID, maxDepth int) ([]models.Item, error) {
+	return r.GetAncestorsForHierarchyContext(context.Background(), itemID, maxDepth)
+}
+
+// GetAncestorsForHierarchyContext is the request-aware form of
+// GetAncestorsForHierarchy.
+func (r *ItemRepository) GetAncestorsForHierarchyContext(ctx context.Context, itemID, maxDepth int) ([]models.Item, error) {
 	if maxDepth <= 0 || maxDepth > maxItemHierarchyDepth {
 		maxDepth = maxItemHierarchyDepth
 	}
-	rows, err := r.db.Query(`
+	rows, err := r.db.QueryContext(ctx, `
 		WITH RECURSIVE ancestors AS (
 			SELECT i.id, i.workspace_id, i.workspace_item_number, i.item_type_id, i.title, i.description, i.is_task,
 			       i.assignee_id, i.creator_id, i.custom_field_values, i.parent_id,
@@ -430,8 +448,13 @@ func (r *ItemRepository) CountChildrenWithHierarchyLevelNot(parentID, level int)
 // recursive walk is capped at maxItemHierarchyDepth so a stored cycle can't
 // loop the DB.
 func (r *ItemRepository) CountDescendants(itemID int) (int, error) {
+	return r.CountDescendantsContext(context.Background(), itemID)
+}
+
+// CountDescendantsContext is the request-aware form of CountDescendants.
+func (r *ItemRepository) CountDescendantsContext(ctx context.Context, itemID int) (int, error) {
 	var count int
-	err := r.db.QueryRow(`
+	err := r.db.QueryRowContext(ctx, `
 		WITH RECURSIVE descendants AS (
 			SELECT id, parent_id, 1 as depth
 			FROM items

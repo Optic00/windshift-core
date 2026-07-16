@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -95,12 +96,22 @@ func (h *HierarchyService) GetAncestors(itemID int) ([]models.Item, error) {
 	return repository.NewItemRepository(h.db).GetAncestorsForHierarchy(itemID, maxHierarchyDepth)
 }
 
+// GetAncestorsContext is the request-aware form of GetAncestors.
+func (h *HierarchyService) GetAncestorsContext(ctx context.Context, itemID int) ([]models.Item, error) {
+	return repository.NewItemRepository(h.db).GetAncestorsForHierarchyContext(ctx, itemID, maxHierarchyDepth)
+}
+
 // GetDescendants returns all descendants of an item
 func (h *HierarchyService) GetDescendants(itemID, maxDepth int) ([]models.Item, error) {
+	return h.GetDescendantsContext(context.Background(), itemID, maxDepth)
+}
+
+// GetDescendantsContext is the request-aware form of GetDescendants.
+func (h *HierarchyService) GetDescendantsContext(ctx context.Context, itemID, maxDepth int) ([]models.Item, error) {
 	if maxDepth <= 0 || maxDepth > maxHierarchyDepth {
 		maxDepth = maxHierarchyDepth
 	}
-	items, err := repository.NewItemRepository(h.db).GetDescendantsWithMaxDepth(itemID, maxDepth)
+	items, err := repository.NewItemRepository(h.db).GetDescendantsWithMaxDepthContext(ctx, itemID, maxDepth)
 	if err != nil {
 		return nil, err
 	}
@@ -114,9 +125,19 @@ func (h *HierarchyService) CountDescendants(itemID int) (int, error) {
 	return repository.NewItemRepository(h.db).CountDescendants(itemID)
 }
 
+// CountDescendantsContext is the request-aware form of CountDescendants.
+func (h *HierarchyService) CountDescendantsContext(ctx context.Context, itemID int) (int, error) {
+	return repository.NewItemRepository(h.db).CountDescendantsContext(ctx, itemID)
+}
+
 // GetChildren returns direct children of an item
 func (h *HierarchyService) GetChildren(itemID int) ([]models.Item, error) {
-	items, err := repository.NewItemRepository(h.db).GetChildren(itemID)
+	return h.GetChildrenContext(context.Background(), itemID)
+}
+
+// GetChildrenContext is the request-aware form of GetChildren.
+func (h *HierarchyService) GetChildrenContext(ctx context.Context, itemID int) ([]models.Item, error) {
+	items, err := repository.NewItemRepository(h.db).GetChildrenContext(ctx, itemID)
 	if err != nil {
 		return nil, err
 	}

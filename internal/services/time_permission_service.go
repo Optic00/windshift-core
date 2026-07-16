@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -42,6 +43,23 @@ func (s *TimePermissionService) HasProjectManagePermission(userID int) (bool, er
 		return false, fmt.Errorf("error checking project.manage permission: %w", err)
 	}
 
+	return hasPermission, nil
+}
+
+// HasProjectManagePermissionContext is the request-aware form used while
+// enriching item-list responses.
+func (s *TimePermissionService) HasProjectManagePermissionContext(ctx context.Context, userID int) (bool, error) {
+	isAdmin, err := s.permissionService.IsSystemAdminContext(ctx, userID)
+	if err != nil {
+		return false, fmt.Errorf("error checking system admin: %w", err)
+	}
+	if isAdmin {
+		return true, nil
+	}
+	hasPermission, err := s.permissionService.HasGlobalPermissionContext(ctx, userID, models.PermissionProjectManage)
+	if err != nil {
+		return false, fmt.Errorf("error checking project.manage permission: %w", err)
+	}
 	return hasPermission, nil
 }
 
@@ -246,8 +264,13 @@ func (s *TimePermissionService) isProjectMember(userID, projectID int) (bool, er
 // For users with project.manage, returns nil (all projects)
 // For other users, returns projects where they are manager, member, or no restrictions exist
 func (s *TimePermissionService) GetAccessibleProjects(userID int) ([]int, error) {
+	return s.GetAccessibleProjectsContext(context.Background(), userID)
+}
+
+// GetAccessibleProjectsContext is the request-aware form of GetAccessibleProjects.
+func (s *TimePermissionService) GetAccessibleProjectsContext(ctx context.Context, userID int) ([]int, error) {
 	// Check if user has full access
-	hasFullAccess, err := s.HasProjectManagePermission(userID)
+	hasFullAccess, err := s.HasProjectManagePermissionContext(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -256,7 +279,7 @@ func (s *TimePermissionService) GetAccessibleProjects(userID int) ([]int, error)
 	}
 
 	// Get all projects with no restrictions or where user has access
-	rows, err := s.db.Query(`
+	rows, err := s.db.QueryContext(ctx, `
 		SELECT DISTINCT p.id FROM time_projects p
 		WHERE
 			-- Projects with no manager AND no member restrictions (open access)
@@ -309,7 +332,13 @@ func (s *TimePermissionService) GetAccessibleProjects(userID int) ([]int, error)
 // name); only the names are stripped. A user with full project access (the
 // GetAccessibleProjects nil sentinel) is never masked.
 func (s *TimePermissionService) MaskInaccessibleProjectNames(userID int, items []models.Item) {
-	accessible, err := s.GetAccessibleProjects(userID)
+	s.MaskInaccessibleProjectNamesContext(context.Background(), userID, items)
+}
+
+// MaskInaccessibleProjectNamesContext is the request-aware form used by item
+// list/search/backlog responses.
+func (s *TimePermissionService) MaskInaccessibleProjectNamesContext(ctx context.Context, userID int, items []models.Item) {
+	accessible, err := s.GetAccessibleProjectsContext(ctx, userID)
 	if err != nil {
 		slog.Warn("failed to load accessible projects for masking", slog.Int("user_id", userID), slog.Any("error", err))
 		// Fail closed: if we can't determine access, strip names rather than leak.

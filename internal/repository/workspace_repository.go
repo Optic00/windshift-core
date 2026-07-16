@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -709,9 +710,14 @@ func (r *WorkspaceRepository) GetMilestoneProgress(workspaceID int, filterSQL st
 
 // BuildWorkspaceMap creates a mapping of workspace identifiers (id, name, key) to IDs
 func (r *WorkspaceRepository) BuildWorkspaceMap() (map[string]int, error) {
+	return r.BuildWorkspaceMapContext(context.Background())
+}
+
+// BuildWorkspaceMapContext is the request-aware form of BuildWorkspaceMap.
+func (r *WorkspaceRepository) BuildWorkspaceMapContext(ctx context.Context) (map[string]int, error) {
 	workspaceMap := make(map[string]int)
 
-	rows, err := r.db.Query("SELECT id, name, key FROM workspaces")
+	rows, err := r.db.QueryContext(ctx, "SELECT id, name, key FROM workspaces")
 	if err != nil {
 		return nil, err
 	}
@@ -781,10 +787,15 @@ func (r *WorkspaceRepository) CountCollections(workspaceID int) (int, error) {
 
 // GetCollectionQuery retrieves the QL query and workspace ID for a collection
 func (r *WorkspaceRepository) GetCollectionQuery(collectionID int) (workspaceID *int64, qlQuery string, err error) {
+	return r.GetCollectionQueryContext(context.Background(), collectionID)
+}
+
+// GetCollectionQueryContext is the request-aware form of GetCollectionQuery.
+func (r *WorkspaceRepository) GetCollectionQueryContext(ctx context.Context, collectionID int) (workspaceID *int64, qlQuery string, err error) {
 	var collectionWorkspaceID sql.NullInt64
 	var collectionQuery sql.NullString
 
-	err = r.db.QueryRow(`SELECT workspace_id, ql_query FROM collections WHERE id = ?`, collectionID).
+	err = r.db.QueryRowContext(ctx, `SELECT workspace_id, ql_query FROM collections WHERE id = ?`, collectionID).
 		Scan(&collectionWorkspaceID, &collectionQuery)
 
 	if errors.Is(err, sql.ErrNoRows) {

@@ -207,9 +207,10 @@ func (h *DiagnosticsHandler) GetDatabasePool(w http.ResponseWriter, _ *http.Requ
 			HeapInUseBytes: memory.HeapInuse,
 			SystemBytes:    memory.Sys,
 		},
-		"instance":   hostname,
-		"sampled_at": time.Now().UTC(),
-		"healthy":    healthy,
+		"request_query_outcomes": h.databaseDiagRepo.RequestQueryStats(),
+		"instance":               hostname,
+		"sampled_at":             time.Now().UTC(),
+		"healthy":                healthy,
 	})
 }
 

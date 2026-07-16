@@ -76,6 +76,10 @@ type DBConfig struct {
 	MaxWriteConns      int
 	ReplicaCount       int
 	ConnectionHeadroom int
+	// RequestTimeout bounds database work owned by an ordinary HTTP request.
+	// It stays below the server's 30s write timeout so SQL is canceled before
+	// the connection can be severed while database work continues.
+	RequestTimeout time.Duration
 }
 
 // SSHDatabaseMaxConnections is the fixed per-process auxiliary SQL pool used

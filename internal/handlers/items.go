@@ -49,7 +49,10 @@ type ItemHandler struct {
 	conditionService *services.ConditionService // Condition service for workflow transition conditions (optional, can be nil)
 	approvalService  *services.ApprovalService  // Approval service for status-bound approvals (optional, can be nil)
 	sseHub           *services.SSEHub           // Hub for the item event stream (optional, can be nil → /events returns 503)
+	dbRequestTimeout time.Duration
 }
+
+const defaultDBRequestTimeout = 12 * time.Second
 
 func NewItemHandler(db database.Database, permissionService *services.PermissionService, activityTracker *services.ActivityTracker, notificationService interface {
 	EmitEvent(event *services.NotificationEvent)
@@ -72,7 +75,39 @@ func NewItemHandler(db database.Database, permissionService *services.Permission
 		idResolver:          services.NewIDResolverService(db),
 		itemCRUD:            services.NewItemCRUDService(db),
 		notificationService: notificationService,
+		dbRequestTimeout:    defaultDBRequestTimeout,
 	}
+}
+
+// SetDBRequestTimeout configures the database-work deadline used by measured
+// item read endpoints. Non-positive values retain the safe default.
+func (h *ItemHandler) SetDBRequestTimeout(timeout time.Duration) {
+	if timeout > 0 {
+		h.dbRequestTimeout = timeout
+	}
+}
+
+func (h *ItemHandler) requestDBContext(r *http.Request) (context.Context, context.CancelFunc) {
+	timeout := h.dbRequestTimeout
+	if timeout <= 0 {
+		timeout = defaultDBRequestTimeout
+	}
+	return context.WithTimeout(r.Context(), timeout)
+}
+
+// respondItemReadError records cancellations separately and never attempts a
+// response write after the client-owned request context has been canceled.
+func (h *ItemHandler) respondItemReadError(w http.ResponseWriter, r *http.Request, err error) {
+	database.ObserveRequestQueryError(err)
+	if errors.Is(err, context.Canceled) || r.Context().Err() != nil {
+		return
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		slog.Warn("item read database deadline exceeded", "path", r.URL.Path, "timeout", h.dbRequestTimeout)
+		respondError(w, r, restapi.NewAPIError(http.StatusGatewayTimeout, "DATABASE_DEADLINE_EXCEEDED", "The database request timed out."))
+		return
+	}
+	respondInternalError(w, r, err)
 }
 
 // SetWebhookSender sets the webhook sender for dispatching webhook events
@@ -166,6 +201,8 @@ func (h *ItemHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	ctx, cancel := h.requestDBContext(r)
+	defer cancel()
 
 	// Get accessible workspace IDs (includes active workspaces and inactive ones where user has admin access)
 	accessibleWorkspaceIDs, err := h.getAccessibleWorkspaceIDs(user)
@@ -339,7 +376,7 @@ func (h *ItemHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 		strings.EqualFold(r.URL.Query().Get("fields"), "summary")
 
 	// Call service
-	items, totalCount, err := h.itemCRUD.ListWithQL(services.ListWithQLParams{
+	items, totalCount, err := h.itemCRUD.ListWithQLContext(ctx, services.ListWithQLParams{
 		WorkspaceID:  workspaceID,
 		CollectionID: collectionID,
 		QLQuery:      qlQuery,
@@ -365,7 +402,7 @@ func (h *ItemHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 			respondNotFound(w, r, "collection")
 			return
 		}
-		respondInternalError(w, r, err)
+		h.respondItemReadError(w, r, err)
 		return
 	}
 
@@ -376,20 +413,31 @@ func (h *ItemHandler) GetAll(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+	if ctx.Err() != nil {
+		h.respondItemReadError(w, r, ctx.Err())
+		return
+	}
 	items = filteredItems
 
 	// Strip names of time projects the viewer can't access (keeps the IDs).
-	h.maskInaccessibleProjectNames(user.ID, items)
+	h.maskInaccessibleProjectNamesContext(ctx, user.ID, items)
+	if ctx.Err() != nil {
+		h.respondItemReadError(w, r, ctx.Err())
+		return
+	}
 
 	// Load labels for items
-	if err := repository.NewLabelRepository(h.db).LoadForItems(items); err != nil {
-		slog.Warn("failed to load labels for items", slog.Any("error", err))
+	if err := repository.NewLabelRepository(h.db).LoadForItemsContext(ctx, items); err != nil {
+		h.respondItemReadError(w, r, err)
+		return
 	}
-	if err := LoadPersonalLabelsForItems(h.db, items, user.ID); err != nil {
-		slog.Warn("failed to load personal labels for items", slog.Any("error", err))
+	if err := LoadPersonalLabelsForItemsContext(ctx, h.db, items, user.ID); err != nil {
+		h.respondItemReadError(w, r, err)
+		return
 	}
-	if err := repository.NewMilestoneAttachRepository(h.db).LoadForItems(items); err != nil {
-		slog.Warn("failed to load milestones for items", slog.Any("error", err))
+	if err := repository.NewMilestoneAttachRepository(h.db).LoadForItemsContext(ctx, items); err != nil {
+		h.respondItemReadError(w, r, err)
+		return
 	}
 
 	// Compute sortable fields: system fields for the workspace
@@ -1141,6 +1189,10 @@ func (h *ItemHandler) Update(w http.ResponseWriter, r *http.Request) {
 // to view. See TimePermissionService.MaskInaccessibleProjectNames.
 func (h *ItemHandler) maskInaccessibleProjectNames(userID int, items []models.Item) {
 	services.NewTimePermissionService(h.db, h.permissionService).MaskInaccessibleProjectNames(userID, items)
+}
+
+func (h *ItemHandler) maskInaccessibleProjectNamesContext(ctx context.Context, userID int, items []models.Item) {
+	services.NewTimePermissionService(h.db, h.permissionService).MaskInaccessibleProjectNamesContext(ctx, userID, items)
 }
 
 // projectResolutionChanged reports whether an update touched a field that can

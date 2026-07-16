@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -598,6 +599,12 @@ func (h *PersonalLabelHandler) respondItemPersonalLabels(w http.ResponseWriter, 
 // The viewing user determines visibility: a user only sees their own personal
 // labels plus any shared (user_id IS NULL) labels.
 func LoadPersonalLabelsForItems(db database.Database, items []models.Item, viewingUserID int) error {
+	return LoadPersonalLabelsForItemsContext(context.Background(), db, items, viewingUserID)
+}
+
+// LoadPersonalLabelsForItemsContext is the request-aware form of
+// LoadPersonalLabelsForItems.
+func LoadPersonalLabelsForItemsContext(ctx context.Context, db database.Database, items []models.Item, viewingUserID int) error {
 	if len(items) == 0 {
 		return nil
 	}
@@ -619,7 +626,7 @@ func LoadPersonalLabelsForItems(db database.Database, items []models.Item, viewi
 		ORDER BY pl.name
 	`, strings.Join(placeholders, ","))
 
-	rows, err := db.Query(query, itemIDs...)
+	rows, err := db.QueryContext(ctx, query, itemIDs...)
 	if err != nil {
 		return fmt.Errorf("failed to load personal labels for items: %w", err)
 	}

@@ -322,6 +322,11 @@ func (s *ItemCRUDService) Search(query string, workspaceIDs []int, pagination Pa
 	return s.repo.Search(query, workspaceIDs, pagination)
 }
 
+// SearchContext is the request-aware form of Search.
+func (s *ItemCRUDService) SearchContext(ctx context.Context, query string, workspaceIDs []int, pagination PaginationParams) ([]models.Item, int, error) {
+	return s.repo.SearchContext(ctx, query, workspaceIDs, pagination)
+}
+
 // SearchParams contains parameters for the advanced Search handler
 type SearchParams struct {
 	TextQuery    string
@@ -333,6 +338,11 @@ type SearchParams struct {
 
 // SearchWithFilters searches items with multiple filter criteria
 func (s *ItemCRUDService) SearchWithFilters(params SearchParams) ([]models.Item, int, error) {
+	return s.SearchWithFiltersContext(context.Background(), params)
+}
+
+// SearchWithFiltersContext is the request-aware form of SearchWithFilters.
+func (s *ItemCRUDService) SearchWithFiltersContext(ctx context.Context, params SearchParams) ([]models.Item, int, error) {
 	if len(params.WorkspaceIDs) == 0 {
 		return []models.Item{}, 0, nil
 	}
@@ -357,7 +367,7 @@ func (s *ItemCRUDService) SearchWithFilters(params SearchParams) ([]models.Item,
 		}
 	}
 
-	return s.repo.FindAllWithDetails(ItemListParams{
+	return s.repo.FindAllWithDetailsContext(ctx, ItemListParams{
 		WorkspaceIDs: params.WorkspaceIDs,
 		Filters:      filters,
 		Pagination:   params.Pagination,
@@ -368,13 +378,17 @@ func (s *ItemCRUDService) SearchWithFilters(params SearchParams) ([]models.Item,
 // resolveCollectionQL resolves a QL query string from either a direct QL parameter
 // or a collection ID. Returns the resolved QL string and whether a collection was used.
 func (s *ItemCRUDService) resolveCollectionQL(qlQuery string, collectionID int) (resolvedQL string, isCollection bool, err error) {
+	return s.resolveCollectionQLContext(context.Background(), qlQuery, collectionID)
+}
+
+func (s *ItemCRUDService) resolveCollectionQLContext(ctx context.Context, qlQuery string, collectionID int) (resolvedQL string, isCollection bool, err error) {
 	if qlQuery != "" {
 		return qlQuery, false, nil
 	}
 	if collectionID <= 0 {
 		return "", false, nil
 	}
-	_, collectionQL, err := s.workspaceRepo.GetCollectionQuery(collectionID)
+	_, collectionQL, err := s.workspaceRepo.GetCollectionQueryContext(ctx, collectionID)
 	if err != nil {
 		if err == repository.ErrNotFound {
 			return "", false, fmt.Errorf("collection not found")
@@ -390,15 +404,19 @@ func (s *ItemCRUDService) resolveCollectionQL(qlQuery string, collectionID int) 
 // evaluateQL compiles a QL query string into SQL WHERE clause and arguments.
 // Returns empty qlSQL when the input query is empty.
 func (s *ItemCRUDService) evaluateQL(qlQuery string, ctx cql.FunctionContext) (qlSQL string, qlArgs []interface{}, err error) {
+	return s.evaluateQLContext(context.Background(), qlQuery, ctx)
+}
+
+func (s *ItemCRUDService) evaluateQLContext(requestCtx context.Context, qlQuery string, functionCtx cql.FunctionContext) (qlSQL string, qlArgs []interface{}, err error) {
 	if qlQuery == "" {
 		return "", nil, nil
 	}
-	qlQuery = cql.SubstituteFunctions(qlQuery, ctx)
-	workspaceMap, err := s.workspaceRepo.BuildWorkspaceMap()
+	qlQuery = cql.SubstituteFunctions(qlQuery, functionCtx)
+	workspaceMap, err := s.workspaceRepo.BuildWorkspaceMapContext(requestCtx)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to build workspace map: %w", err)
 	}
-	customFieldMap, err := s.repo.GetCQLCustomFieldMap()
+	customFieldMap, err := s.repo.GetCQLCustomFieldMapContext(requestCtx)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to build custom field map: %w", err)
 	}
@@ -424,12 +442,17 @@ type BacklogParams struct {
 
 // GetBacklogItems retrieves items with non-completed statuses for a workspace/collection
 func (s *ItemCRUDService) GetBacklogItems(params BacklogParams) ([]models.Item, int, error) {
+	return s.GetBacklogItemsContext(context.Background(), params)
+}
+
+// GetBacklogItemsContext is the request-aware form of GetBacklogItems.
+func (s *ItemCRUDService) GetBacklogItemsContext(ctx context.Context, params BacklogParams) ([]models.Item, int, error) {
 	if len(params.WorkspaceIDs) == 0 {
 		return []models.Item{}, 0, nil
 	}
 
 	// Resolve backlog status IDs
-	backlogStatusIDs, err := s.repo.GetBacklogStatusIDs(params.WorkspaceID)
+	backlogStatusIDs, err := s.repo.GetBacklogStatusIDsContext(ctx, params.WorkspaceID)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to get backlog statuses: %w", err)
 	}
@@ -442,7 +465,7 @@ func (s *ItemCRUDService) GetBacklogItems(params BacklogParams) ([]models.Item, 
 	}
 
 	// Resolve QL query from collection or direct parameter
-	qlQuery, collectionResolved, err := s.resolveCollectionQL(params.QLQuery, params.CollectionID)
+	qlQuery, collectionResolved, err := s.resolveCollectionQLContext(ctx, params.QLQuery, params.CollectionID)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -457,7 +480,7 @@ func (s *ItemCRUDService) GetBacklogItems(params BacklogParams) ([]models.Item, 
 	}
 
 	// Evaluate QL query into SQL
-	qlSQL, qlArgs, err := s.evaluateQL(qlQuery, cql.UserContext(params.UserID))
+	qlSQL, qlArgs, err := s.evaluateQLContext(ctx, qlQuery, cql.UserContext(params.UserID))
 	if err != nil {
 		return nil, 0, err
 	}
@@ -471,7 +494,7 @@ func (s *ItemCRUDService) GetBacklogItems(params BacklogParams) ([]models.Item, 
 		filters.WorkspaceID = &params.WorkspaceID
 	}
 
-	return s.repo.FindAllWithDetails(ItemListParams{
+	return s.repo.FindAllWithDetailsContext(ctx, ItemListParams{
 		WorkspaceIDs:     params.WorkspaceIDs,
 		Filters:          filters,
 		Pagination:       params.Pagination,
@@ -496,6 +519,11 @@ type ListWithQLParams struct {
 
 // ListWithQL retrieves items with QL evaluation and collection resolution
 func (s *ItemCRUDService) ListWithQL(params ListWithQLParams) ([]models.Item, int, error) {
+	return s.ListWithQLContext(context.Background(), params)
+}
+
+// ListWithQLContext is the request-aware form of ListWithQL.
+func (s *ItemCRUDService) ListWithQLContext(ctx context.Context, params ListWithQLParams) ([]models.Item, int, error) {
 	if len(params.WorkspaceIDs) == 0 {
 		return []models.Item{}, 0, nil
 	}
@@ -503,7 +531,7 @@ func (s *ItemCRUDService) ListWithQL(params ListWithQLParams) ([]models.Item, in
 	filters := params.Filters
 
 	// Resolve QL query from collection or direct parameter
-	qlQuery, collectionResolved, err := s.resolveCollectionQL(params.QLQuery, params.CollectionID)
+	qlQuery, collectionResolved, err := s.resolveCollectionQLContext(ctx, params.QLQuery, params.CollectionID)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -518,7 +546,7 @@ func (s *ItemCRUDService) ListWithQL(params ListWithQLParams) ([]models.Item, in
 	}
 
 	// Evaluate QL query into SQL
-	qlSQL, qlArgs, err := s.evaluateQL(qlQuery, cql.UserContext(params.UserID))
+	qlSQL, qlArgs, err := s.evaluateQLContext(ctx, qlQuery, cql.UserContext(params.UserID))
 	if err != nil {
 		return nil, 0, err
 	}
@@ -538,7 +566,7 @@ func (s *ItemCRUDService) ListWithQL(params ListWithQLParams) ([]models.Item, in
 		filters.WorkspaceID = &params.WorkspaceID
 	}
 
-	return s.repo.FindAllWithDetails(ItemListParams{
+	return s.repo.FindAllWithDetailsContext(ctx, ItemListParams{
 		WorkspaceIDs:     params.WorkspaceIDs,
 		Filters:          filters,
 		Pagination:       params.Pagination,

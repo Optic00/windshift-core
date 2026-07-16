@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -202,6 +203,11 @@ func (r *LabelRepository) RemoveItemLabel(itemID, labelID int) error {
 // to each item's Labels field. Used by the item-list endpoints to avoid an
 // N+1 lookup.
 func (r *LabelRepository) LoadForItems(items []models.Item) error {
+	return r.LoadForItemsContext(context.Background(), items)
+}
+
+// LoadForItemsContext is the request-aware form of LoadForItems.
+func (r *LabelRepository) LoadForItemsContext(ctx context.Context, items []models.Item) error {
 	if len(items) == 0 {
 		return nil
 	}
@@ -221,7 +227,7 @@ func (r *LabelRepository) LoadForItems(items []models.Item) error {
 		ORDER BY l.name
 	`, strings.Join(placeholders, ","))
 
-	rows, err := r.db.Query(query, itemIDs...)
+	rows, err := r.db.QueryContext(ctx, query, itemIDs...)
 	if err != nil {
 		return fmt.Errorf("load labels for items: %w", err)
 	}

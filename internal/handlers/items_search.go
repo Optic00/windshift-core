@@ -30,6 +30,8 @@ func (h *ItemHandler) Search(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	ctx, cancel := h.requestDBContext(r)
+	defer cancel()
 
 	// Get accessible workspace IDs (includes active workspaces and inactive ones where user has admin access)
 	accessibleWorkspaceIDs, err := h.getAccessibleWorkspaceIDs(user)
@@ -140,7 +142,7 @@ func (h *ItemHandler) Search(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Call service
-	items, _, err := h.itemCRUD.SearchWithFilters(services.SearchParams{
+	items, _, err := h.itemCRUD.SearchWithFiltersContext(ctx, services.SearchParams{
 		TextQuery:    textQuery,
 		WorkspaceIDs: finalWorkspaceIDs,
 		StatusIDs:    statusIDs,
@@ -150,7 +152,7 @@ func (h *ItemHandler) Search(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 	if err != nil {
-		respondInternalError(w, r, err)
+		h.respondItemReadError(w, r, err)
 		return
 	}
 
@@ -160,9 +162,17 @@ func (h *ItemHandler) Search(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+	if ctx.Err() != nil {
+		h.respondItemReadError(w, r, ctx.Err())
+		return
+	}
 
 	// Strip names of time projects the viewer has no access to, keeping the IDs.
-	h.maskInaccessibleProjectNames(user.ID, filteredItems)
+	h.maskInaccessibleProjectNamesContext(ctx, user.ID, filteredItems)
+	if ctx.Err() != nil {
+		h.respondItemReadError(w, r, ctx.Err())
+		return
+	}
 
 	respondJSONOK(w, filteredItems)
 }
@@ -282,6 +292,8 @@ func (h *ItemHandler) GetBacklogItems(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	ctx, cancel := h.requestDBContext(r)
+	defer cancel()
 
 	workspaceIDParam := r.URL.Query().Get("workspace_id")
 	collectionIDParam := r.URL.Query().Get("collection_id")
@@ -353,7 +365,7 @@ func (h *ItemHandler) GetBacklogItems(w http.ResponseWriter, r *http.Request) {
 		strings.EqualFold(r.URL.Query().Get("fields"), "summary")
 
 	// Call service
-	items, totalCount, err := h.itemCRUD.GetBacklogItems(services.BacklogParams{
+	items, totalCount, err := h.itemCRUD.GetBacklogItemsContext(ctx, services.BacklogParams{
 		WorkspaceID:      wsID,
 		CollectionID:     collectionID,
 		QLQuery:          qlQuery,
@@ -372,7 +384,7 @@ func (h *ItemHandler) GetBacklogItems(w http.ResponseWriter, r *http.Request) {
 			respondNotFound(w, r, "collection")
 			return
 		}
-		respondInternalError(w, r, err)
+		h.respondItemReadError(w, r, err)
 		return
 	}
 
@@ -382,9 +394,17 @@ func (h *ItemHandler) GetBacklogItems(w http.ResponseWriter, r *http.Request) {
 		respondInternalError(w, r, err)
 		return
 	}
+	if ctx.Err() != nil {
+		h.respondItemReadError(w, r, ctx.Err())
+		return
+	}
 
 	// Strip names of time projects the viewer has no access to, keeping the IDs.
-	h.maskInaccessibleProjectNames(user.ID, filteredItems)
+	h.maskInaccessibleProjectNamesContext(ctx, user.ID, filteredItems)
+	if ctx.Err() != nil {
+		h.respondItemReadError(w, r, ctx.Err())
+		return
+	}
 
 	totalPages := 0
 	if limit > 0 {

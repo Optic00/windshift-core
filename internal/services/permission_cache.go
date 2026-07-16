@@ -180,6 +180,36 @@ func (ps *PermissionService) HasGlobalPermission(userID int, permission string) 
 	return ps.loadUserPermissionAndCheckGlobal(userID, permission)
 }
 
+// HasGlobalPermissionContext is the request-aware form used by hot read paths.
+// Cache hits remain allocation-free; a miss uses one cancellable SQL probe
+// instead of building the full permission snapshot after the request is gone.
+func (ps *PermissionService) HasGlobalPermissionContext(ctx context.Context, userID int, permission string) (bool, error) {
+	if cached, err := ps.getUserPermissionCache(userID); err == nil {
+		atomic.AddInt64(&ps.hits, 1)
+		return cached.IsSystemAdmin || cached.GlobalPermissions[permission], nil
+	}
+	atomic.AddInt64(&ps.misses, 1)
+	var allowed bool
+	err := ps.db.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM user_global_permissions ugp
+			JOIN permissions p ON p.id = ugp.permission_id
+			WHERE ugp.user_id = ? AND p.permission_key IN (?, 'system.admin')
+			UNION
+			SELECT 1 FROM group_members gm
+			JOIN groups g ON g.id = gm.group_id AND g.is_active = true
+			JOIN group_global_permissions ggp ON ggp.group_id = gm.group_id
+			JOIN permissions p ON p.id = ggp.permission_id
+			WHERE gm.user_id = ? AND p.permission_key IN (?, 'system.admin')
+		)
+	`, userID, permission, userID, permission).Scan(&allowed)
+	if err != nil {
+		atomic.AddInt64(&ps.errors, 1)
+		return false, fmt.Errorf("error checking global permission: %w", err)
+	}
+	return allowed, nil
+}
+
 // HasWorkspacePermissions checks multiple permissions in single operation
 func (ps *PermissionService) HasWorkspacePermissions(userID, workspaceID int, permissions []string) (map[string]bool, error) {
 	result := make(map[string]bool)
@@ -253,6 +283,34 @@ func (ps *PermissionService) IsSystemAdmin(userID int) (bool, error) {
 		return false, fmt.Errorf("error checking system admin permission: %w", err)
 	}
 
+	return hasPermission, nil
+}
+
+// IsSystemAdminContext is the request-aware form of IsSystemAdmin.
+func (ps *PermissionService) IsSystemAdminContext(ctx context.Context, userID int) (bool, error) {
+	if cached, err := ps.getUserPermissionCache(userID); err == nil {
+		atomic.AddInt64(&ps.hits, 1)
+		return cached.IsSystemAdmin, nil
+	}
+	atomic.AddInt64(&ps.misses, 1)
+	var hasPermission bool
+	err := ps.db.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM user_global_permissions ugp
+			JOIN permissions p ON ugp.permission_id = p.id
+			WHERE ugp.user_id = ? AND p.permission_key = 'system.admin'
+			UNION
+			SELECT 1 FROM group_members gm
+			JOIN groups g ON g.id = gm.group_id
+			JOIN group_global_permissions ggp ON ggp.group_id = gm.group_id
+			JOIN permissions p ON p.id = ggp.permission_id
+			WHERE gm.user_id = ? AND p.permission_key = 'system.admin' AND g.is_active = true
+		)
+	`, userID, userID).Scan(&hasPermission)
+	if err != nil {
+		atomic.AddInt64(&ps.errors, 1)
+		return false, fmt.Errorf("error checking system admin permission: %w", err)
+	}
 	return hasPermission, nil
 }
 
