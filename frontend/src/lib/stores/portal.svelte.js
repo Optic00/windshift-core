@@ -228,6 +228,7 @@ let loadingRequestTypes = $state(false);
 let assetReports = $state([]);
 let loadingAssetReports = $state(false);
 let hasAssetSets = $state(false);
+let assetReportsLoadId = 0;
 
 // Portal sections
 let portalSections = $state([]);
@@ -340,7 +341,7 @@ async function loadPortal(slug) {
 
     // Load request types and asset reports for rendering sections
     if (portalData.channel_id) {
-      await Promise.all([loadRequestTypes(), loadAssetReports()]);
+      await Promise.all([loadRequestTypes(), loadAssetReports({ forCustomization: false })]);
     }
 
     // Allow saves from user changes after initial load
@@ -359,6 +360,7 @@ async function loadPortal(slug) {
  * Toggle editing mode
  */
 function toggleEditing() {
+  const wasUsingManagerReports = isEditing || showCustomizePanel;
   const wasEditing = isEditing;
   isEditing = !isEditing;
 
@@ -370,6 +372,11 @@ function toggleEditing() {
   // Save changes when exiting edit mode
   if (wasEditing && !isEditing) {
     saveCustomizations();
+  }
+
+  const usesManagerReports = isEditing || showCustomizePanel;
+  if (portalData?.channel_id && usesManagerReports !== wasUsingManagerReports) {
+    void loadAssetReports({ forCustomization: usesManagerReports });
   }
 }
 
@@ -639,18 +646,37 @@ async function loadRequestTypes() {
 /**
  * Load asset reports
  */
-async function loadAssetReports() {
+async function loadAssetReports({ forCustomization = isEditing || showCustomizePanel } = {}) {
   if (!portalData?.channel_id) return;
 
+  const loadId = ++assetReportsLoadId;
   try {
     loadingAssetReports = true;
-    const reports = await api.assetReports.getForChannel(portalData.channel_id);
+    // Do not leave manager-only definitions visible while an audience reload
+    // is in flight, or public DTOs visible as editable definitions while the
+    // manager request is being authorized.
+    assetReports = [];
+    hasAssetSets = false;
+
+    const response = forCustomization
+      ? await api.assetReports.getForChannel(portalData.channel_id)
+      : await api.assetReports.getForPortal(currentSlug);
+    const reports = Array.isArray(response) ? response : [];
+    const assetSetsExist =
+      reports.length > 0 || (forCustomization && (await checkAssetSetsExist()));
+
+    if (loadId !== assetReportsLoadId) return;
     assetReports = reports;
-    hasAssetSets = reports.length > 0 || (await checkAssetSetsExist());
+    hasAssetSets = assetSetsExist;
   } catch (err) {
+    if (loadId !== assetReportsLoadId) return;
+    assetReports = [];
+    hasAssetSets = false;
     console.error('Failed to load asset reports:', err);
   } finally {
-    loadingAssetReports = false;
+    if (loadId === assetReportsLoadId) {
+      loadingAssetReports = false;
+    }
   }
 }
 
@@ -1137,6 +1163,7 @@ function closeAllMenus() {
 
 // Reset store (for cleanup)
 function reset() {
+  assetReportsLoadId++;
   portalData = null;
   loading = true;
   error = null;
@@ -1440,7 +1467,12 @@ export const portalStore = {
     isEditing = value;
   },
   set showCustomizePanel(value) {
-    showCustomizePanel = value;
+    const wasUsingManagerReports = isEditing || showCustomizePanel;
+    showCustomizePanel = Boolean(value);
+    const usesManagerReports = isEditing || showCustomizePanel;
+    if (portalData?.channel_id && usesManagerReports !== wasUsingManagerReports) {
+      void loadAssetReports({ forCustomization: usesManagerReports });
+    }
   },
   set showMyRequests(value) {
     showMyRequests = value;
