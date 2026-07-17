@@ -1,6 +1,13 @@
 <script>
   import { onMount } from 'svelte';
-  import { RefreshCw } from '@lucide/svelte';
+  import {
+    AlertCircle,
+    Clock3,
+    Gauge,
+    RefreshCw,
+    Ruler,
+    UserRoundMinus,
+  } from '@lucide/svelte';
   import { api } from '../../api.js';
   import { navigate } from '../../router.js';
   import { t } from '../../stores/i18n.svelte.js';
@@ -12,6 +19,8 @@
   import Text from '../../components/Text.svelte';
   import PageHeader from '../../layout/PageHeader.svelte';
   import Chart from '../../widgets/Chart.svelte';
+  import StatCard from '../../widgets/StatCard.svelte';
+  import WidgetWrapper from '../../widgets/WidgetWrapper.svelte';
   import {
     defaultAnalyticsRange,
     formatDateOnly,
@@ -212,17 +221,51 @@
   const deliveryTime = $derived(analyticsData?.delivery_time || null);
 
   const healthMetrics = $derived.by(() => [
-    { key: 'unfinished', label: t('analytics.health.unfinished'), value: health?.unfinished_items || 0 },
-    { key: 'overdue', label: t('analytics.health.overdue'), value: health?.overdue || 0 },
-    { key: 'stale', label: t('analytics.health.stale'), value: health?.stale || 0 },
-    { key: 'unassigned', label: t('analytics.health.unassigned'), value: health?.unassigned || 0 },
+    {
+      key: 'unfinished',
+      icon: Clock3,
+      bgColor: 'var(--ds-accent-blue-subtler)',
+      iconColor: 'var(--ds-icon-accent-blue)',
+      label: t('analytics.health.unfinished'),
+      value: health?.unfinished_items || 0,
+    },
+    {
+      key: 'overdue',
+      icon: AlertCircle,
+      bgColor: 'var(--ds-background-danger-subtle)',
+      iconColor: 'var(--ds-icon-danger)',
+      label: t('analytics.health.overdue'),
+      value: health?.overdue || 0,
+    },
+    {
+      key: 'stale',
+      icon: Gauge,
+      bgColor: 'var(--ds-background-warning-subtle)',
+      iconColor: 'var(--ds-icon-warning)',
+      label: t('analytics.health.stale'),
+      value: health?.stale || 0,
+    },
+    {
+      key: 'unassigned',
+      icon: UserRoundMinus,
+      bgColor: 'var(--ds-background-accent-purple-subtler)',
+      iconColor: 'var(--ds-icon-accent-purple)',
+      label: t('analytics.health.unassigned'),
+      value: health?.unassigned || 0,
+    },
     {
       key: 'without-priority',
+      icon: AlertCircle,
+      bgColor: 'var(--ds-background-neutral)',
+      iconColor: 'var(--ds-icon-subtle)',
       label: t('analytics.health.withoutPriority'),
       value: health?.without_priority || 0,
     },
     {
       key: 'without-estimate',
+      icon: Ruler,
+      bgColor: 'var(--ds-background-neutral)',
+      iconColor: 'var(--ds-icon-subtle)',
       label: t('analytics.health.withoutEstimate'),
       value: health?.without_estimate || 0,
     },
@@ -402,32 +445,33 @@
         </div>
       {/if}
 
-      <section class="analytics-section" aria-labelledby="health-heading">
-        <div class="section-heading">
-          <div>
-            <h2 id="health-heading">{t('analytics.health.title')}</h2>
+      <section class="analytics-section" aria-label={t('analytics.health.title')}>
+        <WidgetWrapper title={t('analytics.health.title')} widgetId="analytics-work-health">
+          <div class="widget-intro">
             <Text variant="subtle" size="sm">{t('analytics.health.description')}</Text>
+            {#if health?.stale_after_days}
+              <Text variant="subtle" size="xs">
+                {t('analytics.health.staleHint', { days: health.stale_after_days })}
+              </Text>
+            {/if}
           </div>
-          {#if health?.stale_after_days}
-            <Text variant="subtle" size="xs">
-              {t('analytics.health.staleHint', { days: health.stale_after_days })}
-            </Text>
-          {/if}
-        </div>
+          <div class="metric-grid">
+            {#each healthMetrics as metric (metric.key)}
+              <StatCard
+                icon={metric.icon}
+                bgColor={metric.bgColor}
+                iconColor={metric.iconColor}
+                label={metric.label}
+                value={metric.value}
+              />
+            {/each}
+          </div>
+        </WidgetWrapper>
 
-        <div class="metric-grid">
-          {#each healthMetrics as metric (metric.key)}
-            <div class="metric-card">
-              <div class="metric-value">{metric.value}</div>
-              <div class="metric-label">{metric.label}</div>
-            </div>
-          {/each}
-        </div>
-
-        <Card variant="raised" padding="none">
-          {#snippet header()}
-            <h3>{t('analytics.health.attentionItems')}</h3>
-          {/snippet}
+        <WidgetWrapper
+          title={t('analytics.health.attentionItems')}
+          widgetId="analytics-attention-items"
+        >
           {#if health?.attention_items?.length}
             <div class="table-scroll">
               <table class="analytics-table">
@@ -465,17 +509,18 @@
           {:else}
             <div class="empty-copy">{t('analytics.health.allClear')}</div>
           {/if}
-        </Card>
+        </WidgetWrapper>
       </section>
 
       <section class="analytics-section flow-grid" aria-label={t('analytics.throughput.title')}>
-        <Card variant="raised" padding="default">
-          {#snippet header()}
-            <div>
-              <h3>{t('analytics.throughput.title')}</h3>
-              <Text variant="subtle" size="xs">{t('analytics.throughput.description')}</Text>
-            </div>
-          {/snippet}
+        <WidgetWrapper
+          title={t('analytics.throughput.title')}
+          widgetId="analytics-throughput"
+          width={1}
+        >
+          <div class="widget-description">
+            <Text variant="subtle" size="xs">{t('analytics.throughput.description')}</Text>
+          </div>
           <div class="summary-strip">
             <div>
               <span>{t('analytics.throughput.created')}</span>
@@ -533,15 +578,12 @@
               </Text>
             </div>
           {/if}
-        </Card>
+        </WidgetWrapper>
 
-        <Card variant="raised" padding="default">
-          {#snippet header()}
-            <div>
-              <h3>{t('analytics.aging.title')}</h3>
-              <Text variant="subtle" size="xs">{t('analytics.aging.description')}</Text>
-            </div>
-          {/snippet}
+        <WidgetWrapper title={t('analytics.aging.title')} widgetId="analytics-aging" width={1}>
+          <div class="widget-description">
+            <Text variant="subtle" size="xs">{t('analytics.aging.description')}</Text>
+          </div>
           {#if aging?.total_items}
             <div class="summary-strip">
               <div>
@@ -592,15 +634,12 @@
           {:else}
             <div class="empty-copy">{t('analytics.aging.noActive')}</div>
           {/if}
-        </Card>
+        </WidgetWrapper>
       </section>
 
       {#if aging?.total_items}
         <section class="analytics-section aging-detail-grid" aria-label={t('analytics.aging.byStatus')}>
-          <Card variant="raised" padding="none">
-            {#snippet header()}
-              <h3>{t('analytics.aging.byStatus')}</h3>
-            {/snippet}
+          <WidgetWrapper title={t('analytics.aging.byStatus')} widgetId="analytics-aging-status" width={1}>
             <div class="table-scroll">
               <table class="analytics-table">
                 <thead>
@@ -623,12 +662,9 @@
                 </tbody>
               </table>
             </div>
-          </Card>
+          </WidgetWrapper>
 
-          <Card variant="raised" padding="none">
-            {#snippet header()}
-              <h3>{t('analytics.aging.oldest')}</h3>
-            {/snippet}
+          <WidgetWrapper title={t('analytics.aging.oldest')} widgetId="analytics-oldest-items" width={1}>
             <div class="table-scroll">
               <table class="analytics-table">
                 <thead>
@@ -654,18 +690,18 @@
                 </tbody>
               </table>
             </div>
-          </Card>
+          </WidgetWrapper>
         </section>
       {/if}
 
-      <section class="analytics-section" aria-labelledby="delivery-heading">
-        <Card variant="raised" padding="default">
-          {#snippet header()}
-            <div>
-              <h3 id="delivery-heading">{t('analytics.deliveryTime.title')}</h3>
-              <Text variant="subtle" size="xs">{t('analytics.deliveryTime.description')}</Text>
-            </div>
-          {/snippet}
+      <section class="analytics-section" aria-label={t('analytics.deliveryTime.title')}>
+        <WidgetWrapper
+          title={t('analytics.deliveryTime.title')}
+          widgetId="analytics-delivery-time"
+        >
+          <div class="widget-description">
+            <Text variant="subtle" size="xs">{t('analytics.deliveryTime.description')}</Text>
+          </div>
 
           {#if deliveryTime?.total_items_analyzed}
             <div class="summary-strip summary-strip-wide">
@@ -786,7 +822,7 @@
               })}
             </div>
           {/if}
-        </Card>
+        </WidgetWrapper>
       </section>
     {/if}
   </div>
@@ -859,22 +895,23 @@
     margin-bottom: 1.5rem;
   }
 
-  .section-heading {
+  .analytics-section:not(.flow-grid):not(.aging-detail-grid) {
     display: flex;
-    align-items: end;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .widget-intro {
+    display: flex;
+    align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    margin-bottom: 0.875rem;
   }
 
-  h2 {
-    margin: 0;
-    color: var(--ds-text);
-    font-size: 1.125rem;
-    font-weight: 650;
+  .widget-description {
+    margin-bottom: 1rem;
   }
 
-  h3,
   h4 {
     margin: 0;
     color: var(--ds-text);
@@ -885,28 +922,8 @@
   .metric-grid {
     display: grid;
     grid-template-columns: repeat(6, minmax(0, 1fr));
-    gap: 0.75rem;
-    margin-bottom: 1rem;
-  }
-
-  .metric-card {
-    padding: 1rem;
-    border: 1px solid var(--ds-border);
-    border-radius: 0.75rem;
-    background: var(--ds-surface-raised);
-  }
-
-  .metric-value {
-    color: var(--ds-text);
-    font-size: 1.75rem;
-    font-weight: 700;
-    line-height: 1.1;
-  }
-
-  .metric-label {
-    margin-top: 0.35rem;
-    color: var(--ds-text-subtle);
-    font-size: 0.75rem;
+    gap: 1rem;
+    margin-top: 1rem;
   }
 
   .flow-grid,
@@ -948,6 +965,8 @@
 
   .table-scroll {
     overflow-x: auto;
+    border: 1px solid var(--ds-border);
+    border-radius: 0.75rem;
   }
 
   .analytics-table {
@@ -1081,7 +1100,7 @@
     }
 
     .scope-banner,
-    .section-heading {
+    .widget-intro {
       align-items: flex-start;
       flex-direction: column;
     }
