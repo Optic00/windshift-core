@@ -122,8 +122,11 @@
     <form onsubmit={(e) => { e.preventDefault(); handleSave(); }} class="space-y-4">
       <!-- Error Message -->
       {#if error}
-        <div class="p-3 rounded" style="background-color: #fee; border: 1px solid #fcc;">
-          <p class="text-sm" style="color: #c33;">{error}</p>
+        <div
+          class="p-3 rounded"
+          style="background-color: var(--ds-danger-subtle); border: 1px solid var(--ds-border-danger);"
+        >
+          <p class="text-sm" style="color: var(--ds-text-danger);">{error}</p>
         </div>
       {/if}
 

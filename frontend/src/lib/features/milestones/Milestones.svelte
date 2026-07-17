@@ -11,6 +11,7 @@
   } from '@tabler/icons-svelte-runes';
   import DataTable from '../../components/DataTable.svelte';
   import Button from '../../components/Button.svelte';
+  import Toggle from '../../components/Toggle.svelte';
   import Modal from '../../dialogs/Modal.svelte';
   import ModalHeader from '../../dialogs/ModalHeader.svelte';
   import CategoryModal from '../../dialogs/CategoryModal.svelte';
@@ -68,8 +69,8 @@
   // preference survives reloads; a missing key means ON (default).
   const HIDE_COMPLETED_KEY = 'milestones.hideCompleted';
   let hideCompleted = $state(localStorage.getItem(HIDE_COMPLETED_KEY) !== 'false');
-  function toggleHideCompleted() {
-    hideCompleted = !hideCompleted;
+  function handleHideCompletedChange(checked) {
+    hideCompleted = checked;
     try {
       localStorage.setItem(HIDE_COMPLETED_KEY, String(hideCompleted));
     } catch {
@@ -563,31 +564,28 @@
           : `${visibleMilestones.length} milestone${visibleMilestones.length !== 1 ? 's' : ''}${activeCategoryId ? ' in this category' : ''}`}
       >
         {#snippet actions()}
-          <button
-            type="button"
-            onclick={toggleHideCompleted}
-            class="px-3 py-1.5 text-sm rounded border transition-colors"
-            style="border-color: var(--ds-border); color: {hideCompleted ? 'var(--ds-interactive)' : 'var(--ds-text-subtle)'}; background-color: {hideCompleted ? 'var(--ds-surface-selected)' : 'transparent'};"
-            title={t('milestones.hideCompletedHelp')}
-            data-testid="milestone-hide-completed-toggle"
-          >
-            {#if hideCompleted}
-              <CheckCircle class="w-4 h-4 inline-block mr-1.5 -mt-0.5" />
+          <div class="flex items-center gap-2">
+            <div data-testid="milestone-hide-completed-toggle" title={t('milestones.hideCompletedHelp')}>
+              <Toggle
+                checked={hideCompleted}
+                label={t('milestones.hideCompleted')}
+                labelPosition="left"
+                onchange={handleHideCompletedChange}
+              />
+            </div>
+            {#if canCreate}
+              <Button
+                variant="primary"
+                icon={Plus}
+                onclick={startCreate}
+                keyboardHint="A"
+                hotkeyConfig={{ key: toHotkeyString('milestones', 'add'), guard: () => !showCreateForm }}
+                dataTestid="milestone-create-button"
+              >
+                {t('milestones.addMilestone')}
+              </Button>
             {/if}
-            {t('milestones.hideCompleted')}
-          </button>
-          {#if canCreate}
-            <Button
-              variant="primary"
-              icon={Plus}
-              onclick={startCreate}
-              keyboardHint="A"
-              hotkeyConfig={{ key: toHotkeyString('milestones', 'add'), guard: () => !showCreateForm }}
-              dataTestid="milestone-create-button"
-            >
-              {t('milestones.addMilestone')}
-            </Button>
-          {/if}
+          </div>
         {/snippet}
       </PageHeader>
 
@@ -921,4 +919,3 @@
   onDelete={handleDeleteCategory}
   showColorPicker={true}
 />
-
