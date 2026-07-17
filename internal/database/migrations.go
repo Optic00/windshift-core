@@ -2141,6 +2141,15 @@ var Catalog = []Migration{
 		SQLite:        "INSERT OR IGNORE INTO contact_roles (name, description, is_system) VALUES ('Portal Customer', 'Default role assigned to portal customers', true)",
 		Postgres:      "INSERT INTO contact_roles (name, description, is_system) VALUES ('Portal Customer', 'Default role assigned to portal customers', true) ON CONFLICT (name) DO NOTHING",
 	},
+	{
+		// 0031_actions_template_key_sqlite intentionally had no Postgres body,
+		// so upgraded Postgres databases stamped it without adding the column.
+		// Fresh databases already get this column from actions_postgres.sql.
+		Version:       "20260717_actions_template_key_postgres",
+		Name:          "Add missing Postgres actions.template_key lineage stamp",
+		CheckPostgres: pgColumnCheck("actions", "template_key"),
+		Postgres:      "ALTER TABLE actions ADD COLUMN IF NOT EXISTS template_key TEXT",
+	},
 }
 
 func (m Migration) checksum(driver string) string {
