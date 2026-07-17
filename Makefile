@@ -19,7 +19,7 @@ BUILD_TAGS=-tags="!test"
 # Directories
 FRONTEND_DIR=frontend
 
-.PHONY: all build build-linux build-windows clean deps frontend help hooks lint performance-regressions dev-build release openapi openapi-check coding-agent-image dev-tools install-golangci-lint install-govulncheck install-deadcode ci-tools-check ci-go ci-frontend ci
+.PHONY: all build build-linux build-windows clean deps frontend help hooks lint schema-migration-guard-test performance-regressions dev-build release openapi openapi-check coding-agent-image dev-tools install-golangci-lint install-govulncheck install-deadcode ci-tools-check ci-go ci-frontend ci
 
 # Tooling. swag is a tool dependency tracked in go.mod (see `tool` directive),
 # so the version is pinned and CI / dev installs always agree. `go tool swag`
@@ -163,6 +163,10 @@ lint:
 	@golangci-lint run --timeout=5m
 	@bash scripts/check-layering.sh
 	@bash scripts/check-handler-db-access.sh
+	@$(MAKE) -s schema-migration-guard-test
+
+schema-migration-guard-test:
+	@bash scripts/check-schema-migration-pairing_test.sh
 
 # Enforce generous benchmark ceilings for the high-cardinality paths hardened
 # in WI-613 and WI-614. This catches architectural regressions while leaving
@@ -203,6 +207,7 @@ help:
 	@echo "Development:"
 	@echo "  make dev-build      - Development binary"
 	@echo "  make lint           - Run static analysis"
+	@echo "  make schema-migration-guard-test - Test the fresh-schema/migration pairing guard"
 	@echo "  make performance-regressions - Enforce WI-613/WI-614 benchmark ceilings"
 	@echo "  make deps           - Update dependencies"
 	@echo "  make ci             - Run the blocking Go + frontend CI checks locally"

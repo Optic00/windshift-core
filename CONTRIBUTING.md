@@ -35,8 +35,10 @@ The dev server runs on `localhost:7777`.
 
 ### Git Hooks
 
-The project includes a pre-commit hook that runs the Go linter and guards,
-Biome (non-Svelte files), Svelte typechecking, and OpenAPI validation. Install it with:
+The project includes a pre-commit hook that runs the Go linter and architecture
+guards, enforces fresh-schema/upgrade-migration pairing, runs Biome on
+non-Svelte files, checks Svelte types, and validates OpenAPI generation. Install
+it with:
 
 ```bash
 make hooks

@@ -9,6 +9,14 @@ FAILED=0
 
 echo "Running pre-commit checks..."
 
+# --- Fresh schema / upgrade migration pairing ---
+# Blocks schema-only changes that would work on fresh installs but leave
+# existing databases behind.
+echo "  Running schema/migration pairing guard..."
+if ! "$REPO_ROOT/scripts/check-schema-migration-pairing.sh" --staged; then
+    FAILED=1
+fi
+
 # --- Go linting ---
 if command -v golangci-lint >/dev/null 2>&1; then
     echo "  Running golangci-lint..."
