@@ -2198,12 +2198,11 @@ func (as *ActionService) executeUpdateAsset(node *models.ActionNode, ctx *models
 		assetCustomFields[mapping.TargetFieldID] = sourceValue
 	}
 
-	// Substituted values can carry user content — bound text/textarea
-	// fields with the same sanitize pass the asset create/update
-	// surfaces apply (WI-319) before persisting. Other field types are
-	// unchanged.
-	if err := as.sanitizeAssetCustomFieldText(asset.AssetTypeID, assetCustomFields); err != nil {
-		return fmt.Errorf("failed to sanitize asset custom_field_values: %w", err)
+	// This executor writes the complete custom-field object directly, so apply
+	// the same schema/type/required checks as the normal asset update surface.
+	// Validation also sanitizes text and textarea values in place.
+	if err := as.validateAssetCustomFields(asset.AssetTypeID, assetCustomFields, true); err != nil {
+		return fmt.Errorf("invalid asset custom_field_values: %w", err)
 	}
 	for k := range newValues {
 		newValues[k] = assetCustomFields[k]
@@ -2257,14 +2256,14 @@ func (as *ActionService) executeUpdateAsset(node *models.ActionNode, ctx *models
 	return nil
 }
 
-// sanitizeAssetCustomFieldText runs the asset-side text/textarea
-// custom-field sanitize pass (the one CreateAsset/UpdateAsset apply via
-// ValidateCustomFieldsSchema) over a values map, mutating it in place.
-// Used by the create_asset / update_asset action executors, which write
-// assets.custom_field_values directly instead of going through
-// AssetService.
-func (as *ActionService) sanitizeAssetCustomFieldText(assetTypeID int, values map[string]interface{}) error {
-	return NewAssetService(as.db, repository.NewAssetRepository(as.db)).SanitizeCustomFieldTextValues(assetTypeID, values)
+// validateAssetCustomFields applies the asset-side schema checks and text
+// sanitization to action-generated values before they are written directly.
+func (as *ActionService) validateAssetCustomFields(assetTypeID int, values map[string]interface{}, enforceRequired bool) error {
+	return NewAssetService(as.db, repository.NewAssetRepository(as.db)).ValidateCustomFieldsSchema(
+		assetTypeID,
+		values,
+		CustomFieldsValidationOpts{EnforceRequired: enforceRequired},
+	)
 }
 
 // executeCreateAsset executes a create_asset node
@@ -2280,6 +2279,38 @@ func (as *ActionService) executeCreateAsset(node *models.ActionNode, ctx *models
 	}
 	if config.AssetTypeID == 0 {
 		return fmt.Errorf("asset_type_id is required")
+	}
+	assetRepo := repository.NewAssetRepository(as.db)
+	typeBelongs, err := assetRepo.AssetTypeBelongsToSet(config.AssetTypeID, config.AssetSetID)
+	if err != nil {
+		return fmt.Errorf("validate asset type: %w", err)
+	}
+	if !typeBelongs {
+		return fmt.Errorf("asset_type_id %d does not belong to asset_set_id %d", config.AssetTypeID, config.AssetSetID)
+	}
+	if config.CategoryID != nil {
+		if *config.CategoryID <= 0 {
+			return fmt.Errorf("category_id must be positive")
+		}
+		categoryBelongs, err := assetRepo.CategoryBelongsToSet(*config.CategoryID, config.AssetSetID)
+		if err != nil {
+			return fmt.Errorf("validate asset category: %w", err)
+		}
+		if !categoryBelongs {
+			return fmt.Errorf("category_id %d does not belong to asset_set_id %d", *config.CategoryID, config.AssetSetID)
+		}
+	}
+	if config.StatusID != nil {
+		if *config.StatusID <= 0 {
+			return fmt.Errorf("status_id must be positive")
+		}
+		statusBelongs, err := assetRepo.StatusBelongsToSet(*config.StatusID, config.AssetSetID)
+		if err != nil {
+			return fmt.Errorf("validate asset status: %w", err)
+		}
+		if !statusBelongs {
+			return fmt.Errorf("status_id %d does not belong to asset_set_id %d", *config.StatusID, config.AssetSetID)
+		}
 	}
 
 	// Authorize the effective actor against the target set before we create anything.
@@ -2338,10 +2369,10 @@ func (as *ActionService) executeCreateAsset(node *models.ActionNode, ctx *models
 		assetCustomFields[mapping.TargetFieldID] = sourceValue
 	}
 
-	// Same sanitize pass the asset create/update surfaces apply
-	// (WI-319): bound text/textarea values before the INSERT.
-	if err := as.sanitizeAssetCustomFieldText(config.AssetTypeID, assetCustomFields); err != nil {
-		return fmt.Errorf("failed to sanitize custom_field_values: %w", err)
+	// Apply the same full schema/type/required validation as the normal asset
+	// create surface. This also sanitizes text and textarea values in place.
+	if err := as.validateAssetCustomFields(config.AssetTypeID, assetCustomFields, true); err != nil {
+		return fmt.Errorf("invalid custom_field_values: %w", err)
 	}
 
 	// Serialize custom_field_values
@@ -2350,30 +2381,30 @@ func (as *ActionService) executeCreateAsset(node *models.ActionNode, ctx *models
 		return fmt.Errorf("failed to serialize custom_field_values: %w", err)
 	}
 
-	// Determine status_id - use config value or get default from asset set
-	var statusID int
-	if config.StatusID != nil {
-		statusID = *config.StatusID
-	} else {
-		// Get default status from asset set
-		err = as.db.QueryRow(`SELECT default_status_id FROM asset_sets WHERE id = ?`, config.AssetSetID).Scan(&statusID)
+	// Use the configured status or resolve the set's actual default status.
+	statusID := config.StatusID
+	if statusID == nil {
+		statusID, err = assetRepo.GetDefaultStatus(config.AssetSetID)
 		if err != nil {
-			slog.Warn("failed to get default status for asset set, using 0",
-				slog.String("component", "actions"),
-				slog.Int("asset_set_id", config.AssetSetID),
-				slog.Any("error", err),
-			)
-			statusID = 0
+			return fmt.Errorf("get default asset status: %w", err)
 		}
 	}
 
-	// Insert the new asset
+	// Insert the new asset, retaining the effective actor as its creator.
 	now := time.Now()
-	var assetID int64
-	err = as.db.QueryRow(`
-		INSERT INTO assets (set_id, asset_type_id, title, description, asset_tag, category_id, status_id, custom_field_values, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
-	`, config.AssetSetID, config.AssetTypeID, title, description, assetTag, config.CategoryID, statusID, string(customFieldsJSON), now, now).Scan(&assetID)
+	customFieldsJSONString := string(customFieldsJSON)
+	assetID, err := assetRepo.CreateAsset(repository.CreateAssetInput{
+		SetID:                 config.AssetSetID,
+		AssetTypeID:           config.AssetTypeID,
+		CategoryID:            config.CategoryID,
+		StatusID:              statusID,
+		Title:                 title,
+		Description:           description,
+		AssetTag:              assetTag,
+		CustomFieldValuesJSON: &customFieldsJSONString,
+		CreatedBy:             ctx.EffectiveActorID,
+		CreatedAt:             now,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to create asset: %w", err)
 	}
@@ -2391,9 +2422,8 @@ func (as *ActionService) executeCreateAsset(node *models.ActionNode, ctx *models
 
 	slog.Debug("created asset via action",
 		slog.String("component", "actions"),
-		slog.Int64("asset_id", assetID),
+		slog.Int("asset_id", assetID),
 		slog.Int("item_id", itemID),
-		slog.String("title", title),
 	)
 
 	// Emit asset action event for cross-application cascade
@@ -2401,7 +2431,7 @@ func (as *ActionService) executeCreateAsset(node *models.ActionNode, ctx *models
 		as.assetActionService.EmitAssetActionEvent(&models.AssetActionEvent{
 			EventType:         models.AssetTriggerAssetCreated,
 			SetID:             config.AssetSetID,
-			AssetID:           int(assetID),
+			AssetID:           assetID,
 			ActorUserID:       ctx.EffectiveActorID,
 			TriggeredByAction: true,
 			ExecutionChainID:  ctx.ChainID,

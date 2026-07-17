@@ -2,13 +2,17 @@ package services
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"windshift/internal/database"
 	"windshift/internal/models"
+	"windshift/internal/repository"
 )
 
 type selectiveAssetPermissionChecker struct {
@@ -200,5 +204,96 @@ func TestActionHTTPResponsePreviewRedactsBeforeTruncating(t *testing.T) {
 	preview := truncateString(RedactString(`{"token":"`+secret+`"}`), 500)
 	if strings.Contains(preview, secret[:20]) {
 		t.Fatal("response preview leaked a long JSON credential")
+	}
+}
+
+func TestCreateAssetActionEnforcesSetSchemaAndDefaultStatus(t *testing.T) {
+	db, err := database.NewSQLiteDB(filepath.Join(t.TempDir(), "create-asset-action.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteDB: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := db.Initialize(); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+
+	insertID := func(query string, args ...interface{}) int {
+		t.Helper()
+		var id int
+		if err := db.QueryRow(query, args...).Scan(&id); err != nil {
+			t.Fatalf("insert fixture: %v", err)
+		}
+		return id
+	}
+	actorID := insertID(`
+		INSERT INTO users (email, username, first_name, last_name)
+		VALUES ('action-asset@example.test', 'action-asset', 'Action', 'Asset') RETURNING id
+	`)
+	setID := insertID(`INSERT INTO asset_management_sets (name, created_by) VALUES ('Action assets', ?) RETURNING id`, actorID)
+	otherSetID := insertID(`INSERT INTO asset_management_sets (name, created_by) VALUES ('Other assets', ?) RETURNING id`, actorID)
+	typeID := insertID(`INSERT INTO asset_types (set_id, name) VALUES (?, 'Server') RETURNING id`, setID)
+	otherTypeID := insertID(`INSERT INTO asset_types (set_id, name) VALUES (?, 'Other server') RETURNING id`, otherSetID)
+	defaultStatusID := insertID(`INSERT INTO asset_statuses (set_id, name, is_default) VALUES (?, 'Available', true) RETURNING id`, setID)
+	otherStatusID := insertID(`INSERT INTO asset_statuses (set_id, name, is_default) VALUES (?, 'Other', true) RETURNING id`, otherSetID)
+	otherCategoryID := insertID(`INSERT INTO asset_categories (set_id, name) VALUES (?, 'Other category') RETURNING id`, otherSetID)
+	fieldID := insertID(`INSERT INTO custom_field_definitions (name, field_type) VALUES ('Serial number', 'text') RETURNING id`)
+	if _, err := db.ExecWrite(`
+		INSERT INTO asset_type_fields (asset_type_id, custom_field_id, is_required)
+		VALUES (?, ?, true)
+	`, typeID, fieldID); err != nil {
+		t.Fatalf("link required field: %v", err)
+	}
+
+	service := &ActionService{
+		db:               db,
+		itemRepo:         repository.NewItemRepository(db),
+		assetPermChecker: selectiveAssetPermissionChecker{allowed: map[int]bool{actorID: true}},
+	}
+	ctx := &models.ExecutionContext{
+		Event:            &models.ActionEvent{},
+		EffectiveActorID: actorID,
+		Variables:        map[string]interface{}{},
+	}
+	execute := func(config string) error {
+		t.Helper()
+		return service.executeCreateAsset(&models.ActionNode{NodeConfig: config}, ctx, &models.StepResult{})
+	}
+
+	if err := execute(fmt.Sprintf(`{"asset_set_id":%d,"asset_type_id":%d,"title":"Server"}`, setID, otherTypeID)); err == nil || !strings.Contains(err.Error(), "does not belong") {
+		t.Fatalf("cross-set asset type error = %v, want ownership rejection", err)
+	}
+	if err := execute(fmt.Sprintf(`{"asset_set_id":%d,"asset_type_id":%d,"category_id":%d,"title":"Server"}`, setID, typeID, otherCategoryID)); err == nil || !strings.Contains(err.Error(), "does not belong") {
+		t.Fatalf("cross-set category error = %v, want ownership rejection", err)
+	}
+	if err := execute(fmt.Sprintf(`{"asset_set_id":%d,"asset_type_id":%d,"status_id":%d,"title":"Server"}`, setID, typeID, otherStatusID)); err == nil || !strings.Contains(err.Error(), "does not belong") {
+		t.Fatalf("cross-set status error = %v, want ownership rejection", err)
+	}
+	if err := execute(fmt.Sprintf(`{"asset_set_id":%d,"asset_type_id":%d,"title":"Server"}`, setID, typeID)); err == nil || !strings.Contains(err.Error(), "required") {
+		t.Fatalf("missing required custom field error = %v, want schema rejection", err)
+	}
+
+	validConfig := fmt.Sprintf(`{
+		"asset_set_id":%d,
+		"asset_type_id":%d,
+		"title":"Server",
+		"field_mappings":[{"source_type":"literal","source_value":"rack-7","target_field_id":"%d"}]
+	}`, setID, typeID, fieldID)
+	if err := execute(validConfig); err != nil {
+		t.Fatalf("valid create_asset action: %v", err)
+	}
+
+	var gotStatusID, gotCreatorID int
+	var gotFields string
+	if err := db.QueryRow(`SELECT status_id, created_by, custom_field_values FROM assets`).Scan(&gotStatusID, &gotCreatorID, &gotFields); err != nil {
+		t.Fatalf("load created asset: %v", err)
+	}
+	if gotStatusID != defaultStatusID {
+		t.Fatalf("status_id = %d, want default %d", gotStatusID, defaultStatusID)
+	}
+	if gotCreatorID != actorID {
+		t.Fatalf("created_by = %d, want effective actor %d", gotCreatorID, actorID)
+	}
+	if !strings.Contains(gotFields, "rack-7") {
+		t.Fatalf("custom_field_values = %q, want mapped required field", gotFields)
 	}
 }
