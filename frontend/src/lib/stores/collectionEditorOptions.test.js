@@ -6,7 +6,6 @@ vi.mock('../api.js', () => ({
       getStatuses: vi.fn(),
       getProjects: vi.fn(),
       get: vi.fn(),
-      getPriorities: vi.fn(),
     },
     getAssignableUsers: vi.fn(),
     milestones: { getAll: vi.fn() },
@@ -70,13 +69,26 @@ describe('CollectionEditorOptionsStore', () => {
     expect(api.workspaces.getStatuses).toHaveBeenCalledTimes(2);
   });
 
-  it('resolves priorities through the workspace fallback endpoint', async () => {
-    api.workspaces.getPriorities.mockResolvedValue([{ id: 4, name: 'Configured' }]);
+  it('resolves priorities through each workspace configuration set', async () => {
+    api.workspaces.get.mockResolvedValue({ id: 11, configuration_set_id: 9 });
+    api.priorities.getAll.mockResolvedValue([{ id: 4, name: 'Configured' }]);
 
     await store.load(11, 'priorities');
 
-    expect(api.workspaces.getPriorities).toHaveBeenCalledWith(11);
+    expect(api.priorities.getAll).toHaveBeenCalledWith({ configuration_set_id: 9 });
     expect(store.get(11).priorities).toEqual([{ id: 4, name: 'Configured' }]);
+  });
+
+  it('falls back to the default priorities when a configuration set has none', async () => {
+    const defaultPriorities = [{ id: 5, name: 'Default' }];
+    api.workspaces.get.mockResolvedValue({ id: 11, configuration_set_id: 9 });
+    api.priorities.getAll.mockResolvedValueOnce([]).mockResolvedValueOnce(defaultPriorities);
+
+    await store.load(11, 'priorities');
+
+    expect(api.priorities.getAll).toHaveBeenNthCalledWith(1, { configuration_set_id: 9 });
+    expect(api.priorities.getAll).toHaveBeenNthCalledWith(2);
+    expect(store.get(11).priorities).toEqual(defaultPriorities);
   });
 
   it('reuses primed workspace-store data without a request', async () => {

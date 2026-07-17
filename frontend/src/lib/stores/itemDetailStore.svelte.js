@@ -376,9 +376,9 @@ class ItemDetailStore {
       // the core detail surface can render as soon as the critical data lands.
       this.#syncEditingFromItem();
 
-      // Resolve the workspace's configuration set once for screen-field
-      // resolution. Priority options use the workspace endpoint so its default
-      // fallback semantics stay consistent with create and collection pickers.
+      // Resolve the workspace's configuration set once. Priorities and screen-
+      // field resolution both need it; fetching it twice would add a redundant
+      // round trip on every item open.
       const configSet = this.workspace?.configuration_set_id
         ? await api.configurationSets
             .get(this.workspace.configuration_set_id, requestOptions)
@@ -394,7 +394,7 @@ class ItemDetailStore {
       // set are known. Running them together removes the former priorities →
       // item-types → children → screens → diagrams → actions waterfall.
       await Promise.all([
-        this.#loadPriorities(requestOptions),
+        this.#loadPriorities(configSet, requestOptions),
         this.#loadAvailableStatusTransitions(requestOptions),
         this.#loadWatchStatus(requestOptions),
         this.#loadItemTypeData(requestOptions),
@@ -704,12 +704,24 @@ class ItemDetailStore {
     this.itemLinks = links;
   }
 
-  async #loadPriorities(requestOptions = {}) {
+  async #loadPriorities(configSet = undefined, requestOptions = {}) {
     if (!this.workspace) return;
     try {
-      this.priorities = hasSharedWorkspaceReferences(this.workspaceId)
-        ? workspaceDataStore.priorities
-        : await api.workspaces.getPriorities(this.workspaceId, requestOptions);
+      if (hasSharedWorkspaceReferences(this.workspaceId)) {
+        this.priorities = workspaceDataStore.priorities;
+      } else if (this.workspace.configuration_set_id) {
+        const cs =
+          configSet !== undefined
+            ? configSet
+            : await api.configurationSets.get(this.workspace.configuration_set_id, requestOptions);
+        const configuredPriorities = cs?.priorities_detailed || [];
+        this.priorities =
+          configuredPriorities.length > 0
+            ? configuredPriorities
+            : await api.priorities.getAll({}, requestOptions);
+      } else {
+        this.priorities = await api.priorities.getAll({}, requestOptions);
+      }
       this.priorities = this.priorities.sort((a, b) => a.sort_order - b.sort_order);
     } catch (err) {
       if (isAbortError(err)) return;
