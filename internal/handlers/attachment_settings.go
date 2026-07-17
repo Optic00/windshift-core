@@ -15,6 +15,11 @@ type AttachmentSettingsHandler struct {
 	auditor         *logger.Auditor
 }
 
+// Status returns attachment capability data for composed API responses.
+func (h *AttachmentSettingsHandler) Status() (*services.AttachmentStatus, error) {
+	return h.settingsService.GetStatus()
+}
+
 func NewAttachmentSettingsHandler(settingsService *services.AttachmentSettingsService, auditor *logger.Auditor) *AttachmentSettingsHandler {
 	return &AttachmentSettingsHandler{
 		settingsService: settingsService,
@@ -71,7 +76,7 @@ func (h *AttachmentSettingsHandler) Update(w http.ResponseWriter, r *http.Reques
 
 // GetStatus returns attachment system status (enabled/disabled, path info)
 func (h *AttachmentSettingsHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
-	status, err := h.settingsService.GetStatus()
+	status, err := h.Status()
 	if err != nil {
 		respondInternalError(w, r, err)
 		return

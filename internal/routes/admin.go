@@ -115,6 +115,9 @@ func RegisterAdminRoutes(deps *Deps) {
 	if deps.Admin.Features != nil {
 		api.HandleH("GET /features", http.HandlerFunc(deps.Admin.Features.GetFeatures))
 	}
+	if deps.Admin.ShellBootstrap != nil {
+		api.HandleH("GET /shell-bootstrap", auth(http.HandlerFunc(deps.Admin.ShellBootstrap.Get)))
+	}
 
 	// Jira Import endpoints
 	api.HandleH("GET /admin/jira-import/connections", admin(http.HandlerFunc(deps.Admin.JiraImport.GetConnections)))

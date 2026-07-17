@@ -81,6 +81,16 @@ func NewHubHandler(db database.Database, permissionService *services.PermissionS
 	}
 }
 
+// HasActivePortals reports whether at least one portal is enabled without
+// loading hub styling, request types, or open-request counts.
+func (h *HubHandler) HasActivePortals(ctx context.Context) (bool, error) {
+	var count int
+	err := h.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM channels WHERE type = 'portal' AND status = 'enabled'
+	`).Scan(&count)
+	return count > 0, err
+}
+
 // GetHub returns the hub configuration and all enabled portals
 // GET /api/hub
 func (h *HubHandler) GetHub(w http.ResponseWriter, r *http.Request) {

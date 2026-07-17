@@ -261,26 +261,34 @@ func (h *AIHandler) PlanMyDay(w http.ResponseWriter, r *http.Request) {
 	respondJSONOK(w, *plan)
 }
 
-// Status checks whether AI features are available by resolving the LLM client
-// through the same path used by actual AI handlers (including LLM_ENDPOINT fallback).
-func (h *AIHandler) Status(w http.ResponseWriter, r *http.Request) {
+// AIFeatureStatus describes whether one AI feature is enabled and which mode it uses.
+type AIFeatureStatus struct {
+	Enabled bool   `json:"enabled"`
+	Mode    string `json:"mode"`
+}
+
+// AIStatusResponse describes the resolved AI availability and per-feature configuration.
+type AIStatusResponse struct {
+	Available   bool                       `json:"available"`
+	ChatEnabled bool                       `json:"chat_enabled"`
+	Features    map[string]AIFeatureStatus `json:"features"`
+}
+
+// StatusSnapshot returns AI availability for composed API responses.
+func (h *AIHandler) StatusSnapshot() AIStatusResponse {
 	client, err := h.llmManager.Resolve(0)
 	available := err == nil && client != nil && client.Available()
 
 	// Load per-feature config
 	cfg, _ := llm.LoadAIFeaturesConfig(h.db)
 	featureKeys := []string{"ai_chat", "daily_briefing", "plan_my_day", "catch_me_up", "find_similar", "decompose", "release_notes", "dependency_analysis"}
-	type featureStatus struct {
-		Enabled bool   `json:"enabled"`
-		Mode    string `json:"mode"`
-	}
-	features := make(map[string]featureStatus, len(featureKeys))
+	features := make(map[string]AIFeatureStatus, len(featureKeys))
 	for _, key := range featureKeys {
 		fc, ok := cfg[key]
 		if !ok {
-			features[key] = featureStatus{Enabled: true, Mode: string(models.AIFeatureModeDefault)}
+			features[key] = AIFeatureStatus{Enabled: true, Mode: string(models.AIFeatureModeDefault)}
 		} else {
-			features[key] = featureStatus{
+			features[key] = AIFeatureStatus{
 				Enabled: fc.Mode != models.AIFeatureModeDisabled,
 				Mode:    string(fc.Mode),
 			}
@@ -290,11 +298,11 @@ func (h *AIHandler) Status(w http.ResponseWriter, r *http.Request) {
 	// chat_enabled derived from per-feature config for backward compatibility
 	chatEnabled := features["ai_chat"].Enabled
 
-	respondJSONOK(w, map[string]interface{}{
-		"available":    available,
-		"chat_enabled": chatEnabled,
-		"features":     features,
-	})
+	return AIStatusResponse{Available: available, ChatEnabled: chatEnabled, Features: features}
+}
+
+func (h *AIHandler) Status(w http.ResponseWriter, r *http.Request) {
+	respondJSONOK(w, h.StatusSnapshot())
 }
 
 // GetDailyBriefing returns the most recent successful daily briefing for the current user.

@@ -11,6 +11,17 @@ import (
 	"windshift/internal/sanitize"
 )
 
+// HasAccessibleAssetSets reports whether the user has at least one visible
+// asset set without returning the full asset-set catalog.
+func (h *AssetHandler) HasAccessibleAssetSets(userID int) (bool, error) {
+	isAdmin, err := h.permissionService.HasGlobalPermission(userID, "system.admin")
+	if err != nil {
+		return false, err
+	}
+	sets, err := h.repo.ListSetsForUser(userID, isAdmin)
+	return len(sets) > 0, err
+}
+
 // GetAssetSets returns all asset sets the user has access to
 func (h *AssetHandler) GetAssetSets(w http.ResponseWriter, r *http.Request) {
 	currentUser, ok := RequireAuth(w, r)

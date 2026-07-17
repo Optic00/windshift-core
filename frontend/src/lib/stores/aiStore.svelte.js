@@ -35,6 +35,15 @@ async function reload() {
   await load();
 }
 
+function hydrate(result) {
+  if (!result) return;
+  available = result.available === true;
+  chatEnabled = result.chat_enabled === true;
+  features = result.features ?? {};
+  loaded = true;
+  loading = false;
+}
+
 function isFeatureEnabled(key) {
   const f = features[key];
   if (!f) return true; // default: enabled
@@ -62,5 +71,6 @@ export const aiStore = {
   },
   load,
   reload,
+  hydrate,
   isFeatureEnabled,
 };

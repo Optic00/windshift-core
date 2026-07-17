@@ -214,24 +214,31 @@ func (h *SetupHandler) CompleteInitialSetup(w http.ResponseWriter, r *http.Reque
 
 // GetModuleSettings returns the current module visibility settings
 func (h *SetupHandler) GetModuleSettings(w http.ResponseWriter, r *http.Request) {
-	timeTracking, err := h.getSettingBool("time_tracking_enabled")
+	settings, err := h.ModuleSettings()
 	if err != nil {
 		respondInternalError(w, r, err)
 		return
+	}
+
+	respondJSONOK(w, settings)
+}
+
+// ModuleSettings returns module visibility data for composed API responses.
+func (h *SetupHandler) ModuleSettings() (models.ModuleSettings, error) {
+	timeTracking, err := h.getSettingBool("time_tracking_enabled")
+	if err != nil {
+		return models.ModuleSettings{}, err
 	}
 
 	testManagement, err := h.getSettingBool("test_management_enabled")
 	if err != nil {
-		respondInternalError(w, r, err)
-		return
+		return models.ModuleSettings{}, err
 	}
 
-	settings := models.ModuleSettings{
+	return models.ModuleSettings{
 		TimeTrackingEnabled:   timeTracking,
 		TestManagementEnabled: testManagement,
-	}
-
-	respondJSONOK(w, settings)
+	}, nil
 }
 
 // UpdateModuleSettings updates module visibility settings

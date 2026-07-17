@@ -168,6 +168,7 @@ type AdminHandlers struct {
 	AuditLog         *handlers.AuditLogHandler
 	LDAP             *handlers.LDAPHandler
 	Features         *handlers.FeaturesHandler
+	ShellBootstrap   *handlers.ShellBootstrapHandler
 	OAuthClients     *handlers.AdminOAuthClientHandler
 	Diagnostics      *handlers.DiagnosticsHandler
 	AgentSecurity    *handlers.AgentSecurityHandler

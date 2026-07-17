@@ -33,6 +33,13 @@ async function reload() {
   await load();
 }
 
+function hydrate(status) {
+  if (!status) return;
+  enabled = status.enabled === true && status.writable === true;
+  loaded = true;
+  loading = false;
+}
+
 export const attachmentStatus = {
   get enabled() {
     return enabled;
@@ -45,4 +52,5 @@ export const attachmentStatus = {
   },
   load,
   reload,
+  hydrate,
 };

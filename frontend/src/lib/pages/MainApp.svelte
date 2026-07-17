@@ -653,30 +653,19 @@
 
     const deferredTasks = [
       () => workspacesStore.loadPersonalWorkspace(),
-      () => moduleSettings.load(),
-      () => attachmentStatus.load(),
-      () => aiStore.load(),
-      () => capabilitiesStore.load(),
-      async () => {
-        await logbookStore.checkAvailability();
-        permissionStore.setLogbookAvailable(logbookStore.available);
-      },
       async () => {
         try {
-          const sets = await api.assetSets.getAll();
-          permissionStore.setHasAssetSets(Boolean(sets?.length));
+          const bootstrap = await api.shellBootstrap.get();
+          moduleSettings.hydrate(bootstrap.module_settings);
+          attachmentStatus.hydrate(bootstrap.attachment_status);
+          aiStore.hydrate(bootstrap.ai);
+          capabilitiesStore.hydrate(bootstrap.features);
+          logbookStore.hydrateAvailability(bootstrap.features?.logbook_available);
+          permissionStore.setLogbookAvailable(bootstrap.features?.logbook_available === true);
+          permissionStore.setHasAssetSets(bootstrap.has_asset_sets === true);
+          permissionStore.setHasActivePortals(bootstrap.has_active_portals === true);
         } catch (err) {
-          console.warn('Failed to check asset sets:', err);
-          permissionStore.setHasAssetSets(false);
-        }
-      },
-      async () => {
-        try {
-          const hubData = await api.hub.get();
-          permissionStore.setHasActivePortals(Boolean(hubData.portals?.length));
-        } catch (err) {
-          console.warn('Failed to check portals:', err);
-          permissionStore.setHasActivePortals(false);
+          console.warn('Failed to load shell capabilities:', err);
         }
       },
       async () => {

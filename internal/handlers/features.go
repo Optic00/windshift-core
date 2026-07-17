@@ -18,6 +18,31 @@ func NewFeaturesHandler(pluginManager *plugins.Manager, sshEnabled, logbookEnabl
 	return &FeaturesHandler{pluginManager: pluginManager, sshEnabled: sshEnabled, logbookEnabled: logbookEnabled}
 }
 
+// Snapshot returns feature discovery data for callers that need to compose it
+// into a larger response without making an internal HTTP request.
+func (h *FeaturesHandler) Snapshot() FeaturesResponse {
+	resp := FeaturesResponse{
+		Edition:          "community",
+		SAMLAvailable:    true,
+		LDAPAvailable:    true,
+		SCIMAvailable:    true,
+		SSHAvailable:     h.sshEnabled,
+		LogbookAvailable: h.logbookEnabled,
+		Plugins:          make([]string, 0),
+		Capabilities:     make([]string, 0),
+	}
+
+	if h.pluginManager != nil {
+		for _, p := range h.pluginManager.ListPlugins() {
+			resp.Plugins = append(resp.Plugins, p.Manifest.Name)
+		}
+		if caps := h.pluginManager.GetCapabilities(); len(caps) > 0 {
+			resp.Capabilities = caps
+		}
+	}
+	return resp
+}
+
 // FeaturesResponse represents the available features and installed plugins.
 type FeaturesResponse struct {
 	Edition          string   `json:"edition"`
@@ -32,26 +57,5 @@ type FeaturesResponse struct {
 
 // GetFeatures handles GET /api/features (public, no auth required).
 func (h *FeaturesHandler) GetFeatures(w http.ResponseWriter, r *http.Request) {
-	resp := FeaturesResponse{
-		Edition:          "community",
-		SAMLAvailable:    true,
-		LDAPAvailable:    true,
-		SCIMAvailable:    true,
-		SSHAvailable:     h.sshEnabled,
-		LogbookAvailable: h.logbookEnabled,
-		Plugins:          make([]string, 0),
-		Capabilities:     make([]string, 0),
-	}
-
-	// List installed plugin names and capabilities
-	if h.pluginManager != nil {
-		for _, p := range h.pluginManager.ListPlugins() {
-			resp.Plugins = append(resp.Plugins, p.Manifest.Name)
-		}
-		if caps := h.pluginManager.GetCapabilities(); len(caps) > 0 {
-			resp.Capabilities = caps
-		}
-	}
-
-	respondJSONOK(w, resp)
+	respondJSONOK(w, h.Snapshot())
 }

@@ -9,6 +9,13 @@ class CapabilitiesStore {
   logbookAvailable = $state(false);
   loaded = $state(false);
 
+  hydrate(data) {
+    if (!data) return;
+    this.capabilities = new Set(data.capabilities || []);
+    this.logbookAvailable = data.logbook_available === true;
+    this.loaded = true;
+  }
+
   /**
    * Load capabilities from the features endpoint.
    */
@@ -17,8 +24,7 @@ class CapabilitiesStore {
       const resp = await fetch('/api/features');
       if (resp.ok) {
         const data = await resp.json();
-        this.capabilities = new Set(data.capabilities || []);
-        this.logbookAvailable = data.logbook_available || false;
+        this.hydrate(data);
       }
     } catch (err) {
       console.warn('Failed to load capabilities:', err);

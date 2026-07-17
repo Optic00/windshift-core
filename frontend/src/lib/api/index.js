@@ -1,7 +1,7 @@
 // Main API barrel export - assembles all domain modules into single api object
 
 import { actions } from './actions.js';
-import { oauthClients, securitySettings, setup, system, themes } from './admin.js';
+import { oauthClients, securitySettings, setup, shellBootstrap, system, themes } from './admin.js';
 import {
   actionCapabilities,
   actionCredentials,
@@ -397,6 +397,9 @@ export const api = {
 
   // Security Settings (admin only)
   securitySettings,
+
+  // Authenticated application-shell capability discovery
+  shellBootstrap,
 
   // Calendar Feed
   calendarFeed,

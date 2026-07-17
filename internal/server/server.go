@@ -1217,6 +1217,14 @@ func (s *Server) initialize() error {
 	// LLM connection manager and AI handler
 	llmConnHandler := handlers.NewLLMConnectionHandler(llmManager, logger.NewAuditor(s.db), llmModelCache, llmModelRefresher)
 	aiHandler := handlers.NewAIHandler(s.db, llmManager, permService, timePermissionService, timerService, promptStore, s.actionService)
+	shellBootstrapHandler := handlers.NewShellBootstrapHandler(
+		featuresHandler,
+		setupHandler,
+		attachmentSettingsHandler,
+		aiHandler,
+		assetHandler,
+		hubHandler,
+	)
 
 	// Briefing scheduler (generates daily briefings for all users)
 	s.briefingScheduler = scheduler.NewBriefingScheduler(s.db, llmManager, permService, timePermissionService, services.NewUserReadService(s.db), promptStore)
@@ -1420,6 +1428,7 @@ func (s *Server) initialize() error {
 			AuditLog:         auditLogHandler,
 			LDAP:             ldapHandler,
 			Features:         featuresHandler,
+			ShellBootstrap:   shellBootstrapHandler,
 			OAuthClients:     handlers.NewAdminOAuthClientHandler(s.db, tokenManager, permService),
 			Diagnostics: handlers.NewDiagnosticsHandler(
 				sessionManager,

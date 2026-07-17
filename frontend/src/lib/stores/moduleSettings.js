@@ -13,6 +13,15 @@ function createModuleSettingsStore() {
   return {
     subscribe,
 
+    hydrate(settings) {
+      if (!settings) return;
+      set({
+        ...settings,
+        loaded: true,
+        loading: false,
+      });
+    },
+
     // Load module settings from API (only if not already loaded)
     async load() {
       update((state) => {

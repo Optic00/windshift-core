@@ -40,6 +40,12 @@ async function checkAvailability() {
   }
 }
 
+function hydrateAvailability(value) {
+  available = value === true;
+  loaded = true;
+  loading = false;
+}
+
 async function loadBuckets() {
   if (bucketsLoading) return;
   bucketsLoading = true;
@@ -150,6 +156,7 @@ export const logbookStore = {
   },
 
   checkAvailability,
+  hydrateAvailability,
   loadBuckets,
   loadDocuments,
   loadAllDocuments,
