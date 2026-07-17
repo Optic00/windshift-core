@@ -54,6 +54,7 @@ class WorkspaceDataStore {
     // Different workspace or first init — reset and start fresh
     this._stopAutoRefresh();
     this.workspaceId = id;
+    this._clearData();
     this.initialLoading = true;
     this.initialized = false;
     this.error = null;
@@ -101,6 +102,7 @@ class WorkspaceDataStore {
 
     this._stopAutoRefresh();
     this.workspaceId = GLOBAL_SENTINEL;
+    this._clearData();
     this.initialLoading = true;
     this.initialized = false;
     this.error = null;
@@ -155,6 +157,14 @@ class WorkspaceDataStore {
     this._stopAutoRefresh();
     this._initPromise = null;
     this.workspaceId = null;
+    this._clearData();
+    this.initialLoading = false;
+    this.initialized = false;
+    this.error = null;
+  }
+
+  /** @private */
+  _clearData() {
     this.workspace = null;
     this.statuses = [];
     this.statusCategories = [];
@@ -166,9 +176,6 @@ class WorkspaceDataStore {
     this.projects = [];
     this.customFieldDefinitions = [];
     this.labels = [];
-    this.initialLoading = false;
-    this.initialized = false;
-    this.error = null;
     this.lastRefreshedAt = null;
   }
 

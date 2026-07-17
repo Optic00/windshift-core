@@ -156,8 +156,21 @@ class CollectionStore {
       return;
     }
 
-    // Clear sub-filter and sort on navigation (workspace or collection change)
-    if (wsId !== this.#wsId || colId !== this.#colId) {
+    // Clear all scope-owned state synchronously on workspace/collection changes.
+    // MainApp reuses collection view component instances, so retaining the old
+    // arrays until the next request resolves briefly renders one workspace's
+    // board in another workspace (and leaves it there if the request fails).
+    if (!sameCollection) {
+      this.items = [];
+      this.backlogItems = [];
+      this.collectionName = 'Default';
+      this.itemsPagination = null;
+      this.itemsHasMore = false;
+      this.itemsLoadingMore = false;
+      this.rightmostCap = null;
+      this.backlogPagination = null;
+      this.backlogHasMore = false;
+      this.backlogLoadingMore = false;
       this.subFilterQL = '';
       this.subFilterRows = [];
       this.publicSlug = null;
@@ -298,6 +311,7 @@ class CollectionStore {
     if (!this.itemsHasMore || this.itemsLoadingMore) return;
 
     const nextPage = (this.itemsPagination?.page ?? 0) + 1;
+    const loadId = this.#loadId;
     this.itemsLoadingMore = true;
 
     try {
@@ -309,6 +323,7 @@ class CollectionStore {
         ...this.#capExclusionFilter(),
       });
 
+      if (loadId !== this.#loadId) return;
       this.items = [...this.items, ...result.items];
       this.itemsPagination = result.pagination;
       this.itemsHasMore = result.pagination
@@ -317,7 +332,9 @@ class CollectionStore {
     } catch (error) {
       console.error('[collectionStore] loadMoreItems failed:', error);
     } finally {
-      this.itemsLoadingMore = false;
+      if (loadId === this.#loadId) {
+        this.itemsLoadingMore = false;
+      }
     }
   }
 
@@ -328,6 +345,7 @@ class CollectionStore {
     if (!this.backlogHasMore || this.backlogLoadingMore) return;
 
     const nextPage = (this.backlogPagination?.page ?? 0) + 1;
+    const loadId = this.#loadId;
     this.backlogLoadingMore = true;
 
     try {
@@ -337,6 +355,7 @@ class CollectionStore {
         sub_ql: this.subFilterQL || undefined,
       });
 
+      if (loadId !== this.#loadId) return;
       this.backlogItems = [...this.backlogItems, ...result.items];
       this.backlogPagination = result.pagination;
       this.backlogHasMore = result.pagination
@@ -345,7 +364,9 @@ class CollectionStore {
     } catch (error) {
       console.error('[collectionStore] loadMoreBacklog failed:', error);
     } finally {
-      this.backlogLoadingMore = false;
+      if (loadId === this.#loadId) {
+        this.backlogLoadingMore = false;
+      }
     }
   }
 
@@ -530,11 +551,13 @@ class CollectionStore {
       return;
     }
 
+    const loadId = this.#loadId;
     try {
       const changes = await fetchCollectionItemChanges(this.#wsId, this.#colId, {
         since: this.#changesWatermark,
         sub_ql: this.subFilterQL || undefined,
       });
+      if (loadId !== this.#loadId) return;
       this.#changesWatermark = changes?.watermark ?? this.#changesWatermark;
 
       if (changes?.requires_full_reload) {
@@ -582,9 +605,13 @@ class CollectionStore {
   }
 
   async #primeChangesWatermark() {
-    const changes = await fetchCollectionItemChanges(this.#wsId, this.#colId, {
+    const loadId = this.#loadId;
+    const wsId = this.#wsId;
+    const colId = this.#colId;
+    const changes = await fetchCollectionItemChanges(wsId, colId, {
       sub_ql: this.subFilterQL || undefined,
     });
+    if (loadId !== this.#loadId || wsId !== this.#wsId || colId !== this.#colId) return;
     this.#changesWatermark = changes?.watermark ?? 0;
   }
 

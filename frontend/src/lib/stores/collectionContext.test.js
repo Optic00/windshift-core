@@ -119,6 +119,11 @@ describe('CollectionStore board ordering', () => {
 
     mocks.fetchCollectionItems.mockClear();
     mocks.routeSubscriber({ view: 'workspace-board', params: { id: '43' } });
+    // A workspace change must synchronously hide the previous board while the
+    // new request is in flight. MainApp reuses the mounted board component.
+    expect(collectionStore.items).toEqual([]);
+    expect(collectionStore.backlogItems).toEqual([]);
+    expect(collectionStore.itemsPagination).toBeNull();
     await vi.waitFor(() => expect(mocks.fetchCollectionItems).toHaveBeenCalledTimes(1));
     expect(mocks.fetchCollectionItems).toHaveBeenLastCalledWith(
       '43',

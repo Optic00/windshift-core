@@ -260,38 +260,37 @@
       console.error('Failed to load workspaces:', error);
       workspaces = [];
     }
-    // Load iterations for iteration filter (workspace only)
-    if (workspaceId) {
-      try {
-        const iters = await api.iterations.getAll({ workspace_id: workspaceId, include_global: !workspace?.is_personal });
-        allIterations = iters || [];
-      } catch (error) {
-        console.error('Failed to load iterations:', error);
-      }
-      // Restore persisted iteration filter
-      const saved = localStorage.getItem(`board-iteration-filter-${workspaceId}`);
-      if (saved) {
-        const id = parseInt(saved);
-        if (allIterations.some(i => i.id === id)) {
-          iterationFilterId = id;
-        } else {
-          localStorage.removeItem(`board-iteration-filter-${workspaceId}`);
-        }
-      }
-    }
-    try {
-      const savedGroupBy = localStorage.getItem(groupByStorageKey());
-      const savedGroupById = savedGroupBy ? parseInt(savedGroupBy, 10) : null;
-      if (savedGroupById) {
-        groupByItemTypeId = savedGroupById;
-      }
-      const savedExcludeRightmost = localStorage.getItem(excludeRightmostSwimlaneParentsStorageKey());
-      if (savedExcludeRightmost !== null) {
-        excludeRightmostSwimlaneParents = savedExcludeRightmost === 'true';
-      }
-    } catch (e) { /* ignore storage errors */ }
     loading = false;
   });
+
+  async function loadWorkspaceBoardState(requestedView, requestedWorkspaceId) {
+    if (!requestedWorkspaceId) return;
+    await workspaceDataStore.initialize(requestedWorkspaceId);
+    if (requestedView !== viewSignature) return;
+
+    try {
+      const iters = await api.iterations.getAll({
+        workspace_id: requestedWorkspaceId,
+        include_global: !workspaceDataStore.workspace?.is_personal,
+      });
+      if (requestedView !== viewSignature) return;
+      allIterations = iters || [];
+
+      const saved = localStorage.getItem(`board-iteration-filter-${requestedWorkspaceId}`);
+      if (saved) {
+        const id = parseInt(saved, 10);
+        if (allIterations.some((iteration) => iteration.id === id)) {
+          iterationFilterId = id;
+        } else {
+          localStorage.removeItem(`board-iteration-filter-${requestedWorkspaceId}`);
+        }
+      }
+    } catch (error) {
+      if (requestedView === viewSignature) {
+        console.error('Failed to load iterations:', error);
+      }
+    }
+  }
 
   $effect(() => {
     if (groupByItemTypeId && itemTypes.length > 0 && !itemTypes.some(type => type.id === groupByItemTypeId)) {
@@ -317,6 +316,20 @@
     // getBoardConfiguration request on every item array update.
     viewSignature;
     dependencyLinksByItem = {};
+    allIterations = [];
+    iterationFilterId = null;
+    groupByItemTypeId = null;
+    excludeRightmostSwimlaneParents = false;
+    swimlaneCollapsed = {};
+    try {
+      const savedGroupBy = localStorage.getItem(groupByStorageKey());
+      const savedGroupById = savedGroupBy ? parseInt(savedGroupBy, 10) : null;
+      if (savedGroupById) groupByItemTypeId = savedGroupById;
+      const savedExcludeRightmost = localStorage.getItem(excludeRightmostSwimlaneParentsStorageKey());
+      if (savedExcludeRightmost !== null) {
+        excludeRightmostSwimlaneParents = savedExcludeRightmost === 'true';
+      }
+    } catch (e) { /* ignore storage errors */ }
     // Restore per-board view preferences here (not in onMount)
     // because MainApp reuses this component instance while updating the
     // workspaceId/collectionId props — restoring only on mount would carry
@@ -335,6 +348,7 @@
     // per unique pair. Keyed on the view, not the item set.
     if (workspaceId) {
       untrack(() => {
+        loadWorkspaceBoardState(viewSignature, workspaceId);
         statusTransitionStore.initialize(workspaceId);
         statusTransitionStore.preloadForWorkspace(workspaceId);
       });
@@ -396,9 +410,14 @@
   }
 
   async function loadBoardConfig() {
+    const requestedView = viewSignature;
+    boardConfig = null;
     try {
-      boardConfig = await api.collections.getBoardConfiguration(collectionId, workspaceId);
+      const config = await api.collections.getBoardConfiguration(collectionId, workspaceId);
+      if (requestedView !== viewSignature) return;
+      boardConfig = config;
     } catch (error) {
+      if (requestedView !== viewSignature) return;
       if (error.status !== 404) {
         console.error('Failed to load board configuration:', error);
       }
@@ -1336,7 +1355,7 @@
 
 </script>
 
-{#if loading}
+{#if loading || collectionStore.loading || workspaceDataStore.initialLoading}
   <div class="p-6">
     <div class="animate-pulse">{t('common.loading')}</div>
   </div>
