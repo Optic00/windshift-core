@@ -10,6 +10,7 @@
   import Textarea from '../components/Textarea.svelte';
   import Label from '../components/Label.svelte';
   import WorkflowPicker from '../pickers/WorkflowPicker.svelte';
+  import UserPicker from '../pickers/UserPicker.svelte';
   import BasePicker from '../pickers/BasePicker.svelte';
   import TransitionOverrideWarning from '../components/TransitionOverrideWarning.svelte';
   import { toHotkeyString } from '../utils/keyboardShortcuts.js';
@@ -697,14 +698,10 @@
                                   </select>
                                 {:else if step.approver_source === 'user'}
                                   <Label>{t('approvalSets.approverUser')}</Label>
-                                  <select class="w-full px-3 py-2 border rounded text-sm"
-                                          style="border-color: var(--ds-border); background: var(--ds-surface);"
-                                          bind:value={step.approver_user_id}>
-                                    <option value={null}>…</option>
-                                    {#each users as u}
-                                      <option value={u.id}>{u.username || u.email}</option>
-                                    {/each}
-                                  </select>
+                                  <UserPicker
+                                    bind:value={step.approver_user_id}
+                                    {users}
+                                  />
                                 {/if}
                               </div>
                             </div>

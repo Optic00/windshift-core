@@ -54,4 +54,27 @@ describe('ApprovalsTimeline cancellation', () => {
     await screen.findByText('Approval #7');
     expect(screen.queryByText('Cancel approval request')).toBeNull();
   });
+
+  test('explains an empty pool when the requestor may have been excluded from self-approval', async () => {
+    api.approvals.forItem.mockResolvedValue([
+      {
+        ...pendingRequest,
+        triggered_by_user_id: 42,
+        step_instances: [
+          {
+            id: 8,
+            display_order: 0,
+            status: 'pending',
+            started_at: '2026-07-17T17:07:00Z',
+            approvers: [],
+          },
+        ],
+      },
+    ]);
+
+    render(ApprovalsTimeline, { itemId: 12 });
+
+    expect(await screen.findByText('No eligible approvers were resolved.')).toBeTruthy();
+    expect(screen.getByText(/self-approval may be disabled/)).toBeTruthy();
+  });
 });

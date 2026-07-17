@@ -3,7 +3,7 @@
   import { api } from '../../api.js';
   import { t } from '../../stores/i18n.svelte.js';
   import { errorToast, successToast } from '../../stores/toasts.svelte.js';
-  import { Check, X, MessageSquare, RotateCcw, ChevronUp, ChevronDown, Clock, ShieldX } from '@lucide/svelte';
+  import { AlertCircle, Check, X, MessageSquare, RotateCcw, ChevronUp, ChevronDown, Clock, ShieldX } from '@lucide/svelte';
   import Button from '../../components/Button.svelte';
   import Badge from '../../components/Badge.svelte';
   import EmptyState from '../../components/EmptyState.svelte';
@@ -68,6 +68,10 @@
 
   function canCancelRequest(req) {
     return canCancel || req.triggered_by_user_id === authStore.currentUser?.id;
+  }
+
+  function hasActiveApprovers(step) {
+    return step.approvers?.some(a => a.is_active) ?? false;
   }
 
   async function decide(req, decision) {
@@ -192,6 +196,27 @@
                     {#if si.approvers?.length > 0}
                       <div class="text-xs mt-1" style="color: var(--ds-text-subtle);">
                         Approvers: {si.approvers.filter(a => a.is_active).map(a => `#${a.user_id}`).join(', ') || '(none)'}
+                      </div>
+                    {/if}
+                    {#if si.status === 'pending' && si.started_at && !hasActiveApprovers(si)}
+                      <div
+                        class="flex items-start gap-2 mt-2 p-2 rounded text-xs"
+                        style="color: var(--ds-text-warning, #d97706); background: color-mix(in srgb, var(--ds-text-warning, #d97706) 10%, transparent);"
+                        data-testid="approval-empty-pool-warning"
+                      >
+                        <AlertCircle class="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                        <div>
+                          <div class="font-medium">No eligible approvers were resolved.</div>
+                          {#if req.triggered_by_user_id === authStore.currentUser?.id}
+                            <div class="mt-0.5">
+                              You opened this request. If you are also the configured approver, self-approval may be disabled. Cancel the request and have another user reopen it, or enable self-approval before reopening.
+                            </div>
+                          {:else}
+                            <div class="mt-0.5">
+                              Check the approval step's approver source, then cancel and reopen the request after correcting it.
+                            </div>
+                          {/if}
+                        </div>
                       </div>
                     {/if}
                     {#if si.escalation_due_at && si.status === 'pending'}

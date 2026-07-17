@@ -283,7 +283,8 @@
 </div>
 
 <!-- Create Workflow Modal -->
-<Modal isOpen={creating} onclose={cancelCreate} maxWidth="max-w-lg">
+<Modal isOpen={creating} onclose={cancelCreate} onSubmit={createWorkflow} maxWidth="max-w-lg">
+  {#snippet children(submitHint)}
   <ModalHeader title={t('workflows.createWorkflow')} showCloseButton={false} />
 
   <div class="px-6 py-4">
@@ -322,16 +323,18 @@
         <Button type="button" onclick={cancelCreate}>
           {t('common.cancel')}
         </Button>
-        <Button variant="primary" type="submit">
+        <Button variant="primary" type="submit" keyboardHint={submitHint}>
           {t('workflows.createWorkflow')}
         </Button>
       </div>
     </form>
   </div>
+  {/snippet}
 </Modal>
 
 <!-- Edit Workflow Modal -->
-<Modal isOpen={editingId !== null} onclose={cancelEdit} maxWidth="max-w-lg">
+<Modal isOpen={editingId !== null} onclose={cancelEdit} onSubmit={updateWorkflow} maxWidth="max-w-lg">
+  {#snippet children(submitHint)}
   <ModalHeader title={t('workflows.editWorkflow')} showCloseButton={false} />
 
   <div class="px-6 py-4">
@@ -367,11 +370,11 @@
         <Button type="button" onclick={cancelEdit}>
           {t('common.cancel')}
         </Button>
-        <Button variant="primary" type="submit">
+        <Button variant="primary" type="submit" keyboardHint={submitHint}>
           {t('common.saveChanges')}
         </Button>
       </div>
     </form>
   </div>
+  {/snippet}
 </Modal>
-
