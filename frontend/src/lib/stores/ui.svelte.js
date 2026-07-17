@@ -4,7 +4,8 @@ import { derived, writable } from 'svelte/store';
 const NAV_EXPANDED_STORAGE_KEY = 'windshift-nav-expanded';
 const WS_SIDEBAR_WIDTH_STORAGE_KEY = 'windshift-ws-sidebar-width';
 const WS_SIDEBAR_COLLAPSED_STORAGE_KEY = 'windshift-ws-sidebar-collapsed';
-const WS_SIDEBAR_DEFAULT_WIDTH = 192;
+const WS_SIDEBAR_DEFAULT_WIDTH = 256;
+const WS_SIDEBAR_LEGACY_DEFAULT_WIDTH = 192;
 
 // Helper to get initial navExpanded value from localStorage
 function getInitialNavExpanded() {
@@ -32,6 +33,10 @@ function getInitialWsSidebarWidth() {
     const stored = localStorage.getItem(WS_SIDEBAR_WIDTH_STORAGE_KEY);
     if (stored) {
       const val = parseInt(stored, 10);
+      // The store persisted the old default for every visitor, even when they
+      // never resized the sidebar. Migrate only that exact value so custom
+      // widths continue to be respected.
+      if (val === WS_SIDEBAR_LEGACY_DEFAULT_WIDTH) return WS_SIDEBAR_DEFAULT_WIDTH;
       if (!Number.isNaN(val) && val >= 148 && val <= 320) return val;
     }
   } catch {
