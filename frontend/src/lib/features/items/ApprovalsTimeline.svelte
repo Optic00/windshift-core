@@ -11,7 +11,7 @@
   import { authStore } from '../../stores';
   import { confirm } from '../../composables/useConfirm.js';
 
-  let { itemId, ondecisionMade = null } = $props();
+  let { itemId, canCancel = false, ondecisionMade = null } = $props();
 
   let requests = $state([]);
   let loading = $state(true);
@@ -64,6 +64,10 @@
     if (!me) return false;
     const step = activeStep(req);
     return !!step?.approvers?.some(a => a.user_id === me && a.is_active);
+  }
+
+  function canCancelRequest(req) {
+    return canCancel || req.triggered_by_user_id === authStore.currentUser?.id;
   }
 
   async function decide(req, decision) {
@@ -233,8 +237,8 @@
               </div>
             {/if}
 
-            <!-- Cancel for requestor -->
-            {#if req.status === 'pending' && req.triggered_by_user_id === authStore.currentUser?.id}
+            <!-- Cancel for requestor or users with item.edit permission. -->
+            {#if req.status === 'pending' && canCancelRequest(req)}
               <div class="border-t pt-4" style="border-color: var(--ds-border);">
                 <Button variant="ghost" icon={RotateCcw} disabled={acting}
                         onclick={() => cancelReq(req)}>

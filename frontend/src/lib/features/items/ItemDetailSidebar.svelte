@@ -660,6 +660,7 @@
           <div class="mt-2 px-1">
             <ApprovalsTimeline
               itemId={item.id}
+              canCancel={canEdit}
               ondecisionMade={() => {
                 onapprovalsChanged?.();
                 loadApprovalCount(item.id);
