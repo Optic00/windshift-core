@@ -87,6 +87,7 @@ func RegisterUserRoutes(deps *Deps) {
 	if deps.Users.Agent != nil {
 		api.HandleH("GET /me/agents", auth(http.HandlerFunc(deps.Users.Agent.List)))
 		api.HandleH("POST /me/agents", auth(deps.AuthRateLimiter.Limit(http.HandlerFunc(deps.Users.Agent.Create))))
+		api.HandleH("PATCH /me/agents/{id}", auth(http.HandlerFunc(deps.Users.Agent.Update)))
 		api.HandleH("DELETE /me/agents/{id}", auth(http.HandlerFunc(deps.Users.Agent.Delete)))
 	}
 

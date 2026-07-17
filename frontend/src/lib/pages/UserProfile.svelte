@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api, getCalendarFeedToken, createCalendarFeedToken, revokeCalendarFeedToken } from '../api.js';
 	import { authStore, attachmentStatus } from '../stores';
-	import { User, Shield, Key, Smartphone, Trash2, Camera, Upload, Globe, CalendarDays, RefreshCw, Link2, Eye, EyeOff, Copy, GitBranch, Bot, Code, Plus, Tag, Plane } from '@lucide/svelte';
+	import { User, Shield, Key, Smartphone, Trash2, Camera, Upload, Globe, CalendarDays, RefreshCw, Link2, Eye, EyeOff, Copy, GitBranch, Bot, Code, Plus, Tag, Plane, MoreHorizontal, Pencil } from '@lucide/svelte';
 	import Button from '../components/Button.svelte';
 	import Input from '../components/Input.svelte';
 	import Badge from '../components/Badge.svelte';
@@ -20,6 +20,10 @@
 	import { t, i18n, SUPPORTED_LOCALES } from '../stores/i18n.svelte.js';
 	import { confirm } from '../composables/useConfirm.js';
 	import DescriptionText from '../components/DescriptionText.svelte';
+	import DropdownMenu from '../layout/DropdownMenu.svelte';
+	import Modal from '../dialogs/Modal.svelte';
+	import ModalHeader from '../dialogs/ModalHeader.svelte';
+	import DialogFooter from '../dialogs/DialogFooter.svelte';
 	import {
 		isWebAuthnSupported,
 		registerCredential,
@@ -112,6 +116,10 @@
 	let agentTokens = $state({}); // agentId -> tokens[]
 	let expandedAgent = $state(null); // which agent's tokens panel is open
 	let agentMintState = $state({}); // agentId -> { name, expiresDays, minting, error, token }
+	let editingAgent = $state(null);
+	let editingAgentName = $state('');
+	let agentRenameError = $state('');
+	let renamingAgent = $state(false);
 
 	function ensureAgentMintState(agentId) {
 		if (!agentMintState[agentId]) {
@@ -234,6 +242,64 @@
 		} catch (err) {
 			console.error('Failed to delete agent:', err);
 		}
+	}
+
+	function openRenameAgent(agent) {
+		editingAgent = agent;
+		editingAgentName = agent.full_name || `${agent.first_name} ${agent.last_name}`.trim();
+		agentRenameError = '';
+	}
+
+	function closeRenameAgent() {
+		if (renamingAgent) return;
+		editingAgent = null;
+		editingAgentName = '';
+		agentRenameError = '';
+	}
+
+	async function renameAgent() {
+		const name = editingAgentName.trim();
+		if (!editingAgent || !name) {
+			agentRenameError = 'Agent name is required.';
+			return;
+		}
+		renamingAgent = true;
+		agentRenameError = '';
+		try {
+			const updated = await api.updateMyAgent(editingAgent.id, { name });
+			agents = agents.map((agent) => agent.id === updated.id ? updated : agent);
+			editingAgent = null;
+			editingAgentName = '';
+		} catch (err) {
+			agentRenameError = err?.message || 'Failed to rename agent.';
+		} finally {
+			renamingAgent = false;
+		}
+	}
+
+	function agentActionItems(agent) {
+		return [
+			{
+				id: 'rename',
+				title: 'Rename',
+				icon: Pencil,
+				onClick: () => openRenameAgent(agent),
+			},
+			{
+				id: 'tokens',
+				title: expandedAgent === agent.id ? 'Hide tokens' : 'Manage tokens',
+				icon: Key,
+				onClick: () => toggleAgentTokens(agent.id),
+			},
+			{ type: 'divider' },
+			{
+				id: 'delete',
+				title: 'Delete',
+				icon: Trash2,
+				color: 'var(--ds-text-danger)',
+				onClick: () => handleDeleteAgent(agent.id),
+			},
+		];
 	}
 
 	// Set initial active tab (avatar if attachments enabled, otherwise regional-settings)
@@ -880,7 +946,7 @@
 				{:else if agents.length === 0}
 					<p class="text-sm" style="color: var(--ds-text-subtle);">You don't have any agents yet.</p>
 				{:else}
-					<ul class="divide-y" style="border-color: var(--ds-border);">
+					<ul class="divide-y divide-[var(--ds-border)]">
 						{#each agents as agent (agent.id)}
 							<li data-testid={`agent-row-${agent.id}`} class="py-3">
 								<div class="flex items-center justify-between">
@@ -890,23 +956,19 @@
 											@{agent.username} · {agent.is_active ? 'active' : 'inactive'}
 										</div>
 									</div>
-									<div class="flex items-center gap-2">
-										<Button
-											variant="default"
-											size="small"
-											onclick={() => toggleAgentTokens(agent.id)}
-										>
-											{expandedAgent === agent.id ? 'Hide tokens' : 'Manage tokens'}
-										</Button>
-										<Button
-											variant="danger"
-											size="small"
-											icon={Trash2}
-											onclick={() => handleDeleteAgent(agent.id)}
-										>
-											Delete
-										</Button>
-									</div>
+									<DropdownMenu
+										triggerClass="p-2 rounded hover-bg transition-colors"
+										showChevron={false}
+										iconOnly
+										items={agentActionItems(agent)}
+										placement="bottom-end"
+										triggerTestid={`agent-actions-${agent.id}`}
+									>
+										{#snippet children()}
+											<MoreHorizontal class="w-5 h-5" aria-hidden="true" />
+											<span class="sr-only">Actions for {agent.full_name || agent.username}</span>
+										{/snippet}
+									</DropdownMenu>
 								</div>
 
 								{#if expandedAgent === agent.id && agentMintState[agent.id]}
@@ -1205,3 +1267,36 @@
 	</Tabs>
 
 </div>
+
+<Modal
+	isOpen={editingAgent !== null}
+	preventClose={renamingAgent}
+	closeOnBackdropClick={false}
+	onclose={closeRenameAgent}
+	onSubmit={renameAgent}
+	submitDisabled={renamingAgent || !editingAgentName.trim()}
+	maxWidth="max-w-md"
+>
+	<ModalHeader title="Rename agent" onClose={closeRenameAgent} />
+	<div class="px-6 py-4">
+		<label for="agent-display-name" class="block text-sm font-medium mb-1" style="color: var(--ds-text);">
+			Name
+		</label>
+		<Input id="agent-display-name" bind:value={editingAgentName} maxlength={100} />
+		<p class="text-xs mt-2" style="color: var(--ds-text-subtle);">
+			The agent's stable username @{editingAgent?.username ?? ''} will not change.
+		</p>
+		{#if agentRenameError}
+			<p class="text-sm mt-2" style="color: var(--ds-text-danger);">{agentRenameError}</p>
+		{/if}
+	</div>
+	<DialogFooter
+		confirmLabel="Rename"
+		onCancel={closeRenameAgent}
+		onConfirm={renameAgent}
+		disabled={!editingAgentName.trim()}
+		loading={renamingAgent}
+		showKeyboardHint
+		confirmTestid="agent-rename-confirm"
+	/>
+</Modal>

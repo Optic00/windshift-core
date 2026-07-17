@@ -410,6 +410,7 @@ const (
 
 	// Agent management (user-managed agents, distinct from admin-provisioned service users)
 	ActionAgentCreate     = "agent.create"
+	ActionAgentUpdate     = "agent.update"
 	ActionAgentDelete     = "agent.delete"
 	ActionAgentDeactivate = "agent.deactivate"
 

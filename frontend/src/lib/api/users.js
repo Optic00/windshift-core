@@ -81,6 +81,11 @@ export const createMyAgent = (data) =>
     method: 'POST',
     body: JSON.stringify(data),
   });
+export const updateMyAgent = (agentId, data) =>
+  fetchAPI(`/me/agents/${agentId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
 export const deleteMyAgent = (agentId) =>
   fetchAPI(`/me/agents/${agentId}`, {
     method: 'DELETE',

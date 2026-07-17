@@ -49,6 +49,12 @@ type CreateAgentRequest struct {
 	Email     string `json:"email,omitempty" validate:"omitempty,email,max=255"`
 }
 
+// UpdateAgentRequest changes an owned agent's human-readable name. Username is
+// intentionally absent: ws init uses it as the stable per-machine identity.
+type UpdateAgentRequest struct {
+	Name string `json:"name" validate:"required,max=100"`
+}
+
 // allowUserManagedAgents reads the admin flag that unlocks self-serve agent
 // creation. Admins bypass the flag and can always manage agents.
 func (h *AgentHandler) allowUserManagedAgents() bool {
@@ -403,6 +409,87 @@ func (h *AgentHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSONOK(w, agents)
+}
+
+// Update handles PATCH /api/me/agents/{id}.
+func (h *AgentHandler) Update(w http.ResponseWriter, r *http.Request) {
+	currentUser, ok := RequireAuth(w, r)
+	if !ok {
+		return
+	}
+	agentID, ok := requireIDParam(w, r, "id")
+	if !ok {
+		return
+	}
+
+	req, ok := decodeJSON[UpdateAgentRequest](w, r)
+	if !ok {
+		return
+	}
+	sanitize.ApplyAll(sanitize.Pair{Target: &req.Name, Policy: sanitize.PlainTextField})
+	req.Name = strings.TrimSpace(req.Name)
+	if err := utils.Validate(req); err != nil {
+		respondValidationError(w, r, err.Error())
+		return
+	}
+
+	result, err := h.db.ExecWrite(`
+		UPDATE users
+		SET first_name = ?, last_name = '', updated_at = CURRENT_TIMESTAMP
+		WHERE id = ? AND agent_owner_user_id = ? AND COALESCE(is_agent, false) = true
+	`, req.Name, agentID, currentUser.ID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	if rows == 0 {
+		respondNotFound(w, r, "agent")
+		return
+	}
+
+	var agent models.User
+	var avatarURL sql.NullString
+	err = h.db.QueryRow(`
+		SELECT id, email, username, first_name, last_name, is_active, avatar_url, created_at, updated_at
+		FROM users WHERE id = ?
+	`, agentID).Scan(
+		&agent.ID, &agent.Email, &agent.Username, &agent.FirstName, &agent.LastName,
+		&agent.IsActive, &avatarURL, &agent.CreatedAt, &agent.UpdatedAt,
+	)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	agent.IsAgent = true
+	agent.AgentOwnerUserID = &currentUser.ID
+	agent.FullName = strings.TrimSpace(agent.FirstName + " " + agent.LastName)
+	if avatarURL.Valid {
+		agent.AvatarURL = avatarURL.String
+	}
+
+	_ = logger.LogAudit(h.db, logger.AuditEvent{
+		UserID:       currentUser.ID,
+		Username:     currentUser.Username,
+		IPAddress:    utils.GetClientIP(r),
+		UserAgent:    r.UserAgent(),
+		ActionType:   logger.ActionAgentUpdate,
+		ResourceType: logger.ResourceUser,
+		ResourceID:   &agentID,
+		ResourceName: agent.Username,
+		Details: map[string]interface{}{
+			"agent_kind":    "owned",
+			"owner_user_id": currentUser.ID,
+			"name":          req.Name,
+		},
+		Success: true,
+	})
+
+	respondJSONOK(w, agent)
 }
 
 // Delete handles DELETE /api/me/agents/{id}.

@@ -122,6 +122,7 @@ import {
   resetUserPassword,
   revokeApiToken,
   startFIDORegistration,
+  updateMyAgent,
   updateUser,
   updateUserAvatar,
   updateUserRegionalSettings,
@@ -186,6 +187,7 @@ export const api = {
   // User-Managed Agents
   getMyAgents,
   createMyAgent,
+  updateMyAgent,
   deleteMyAgent,
 
   // CLI onboarding (consent page + capabilities probe)
