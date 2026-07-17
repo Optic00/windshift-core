@@ -20,7 +20,9 @@
   import { currentRoute, navigate } from '../../router.js';
   import { t } from '../../stores/i18n.svelte.js';
   import DescriptionText from '../../components/DescriptionText.svelte';
+  import SearchInput from '../../components/SearchInput.svelte';
   import { useEventListener } from 'runed';
+  import { createStepsShortcutCodes, STEPS_SHORTCUT_ALPHABET } from './testCaseShortcuts.js';
 
   let { workspaceId = null } = $props();
 
@@ -43,9 +45,18 @@
   const derivedFolderTree = $derived.by(() => buildFolderTree($testFolders));
   let collapsedFolders = $state(new Set());
 
-  // Two-key shortcut mode for steps navigation (S + 1-9)
+  // Shortcut mode for steps navigation (S + the code displayed on each row)
   let stepsShortcutMode = $state(false);
+  let stepsShortcutInput = $state('');
   let stepsShortcutTimeout = null;
+  const TEST_CASE_BATCH_SIZE = 250;
+  let testCaseSearchQuery = $state('');
+  let testCaseSearchTimeout = null;
+  let hasMoreTestCases = $state(false);
+  let loadingMoreTestCases = $state(false);
+  let testCaseLoadRequest = 0;
+  const visibleTestCases = $derived($testCases);
+  const stepsShortcutCodes = $derived(createStepsShortcutCodes(visibleTestCases.length));
 
   // Focus management
   let titleInputRef = null;
@@ -120,6 +131,7 @@
     const route = $currentRoute;
     const folderId = getFolderIdFromRoute(route);
     if (folderId !== selectedFolder) {
+      testCaseSearchQuery = '';
       selectedFolder = folderId;
       loadTestCases(folderId);
     }
@@ -133,6 +145,7 @@
     })();
     return () => {
       clearTimeout(stepsShortcutTimeout);
+      clearTimeout(testCaseSearchTimeout);
     };
   });
 
@@ -143,23 +156,38 @@
     try {
       const folders = await api.tests.testFolders.getAll(workspaceId);
       testFolders.set(folders || []);
-      
-      // Count every test case in the workspace (for the "All tests" entry).
-      const allCases = await api.tests.testCases.getAll(workspaceId, { all: true });
-      allCount = (allCases || []).length;
+
+      const countResult = await api.tests.testCases.count(workspaceId);
+      allCount = countResult?.count || 0;
     } catch (error) {
       console.error('Failed to load test folders:', error);
     }
   }
 
-  async function loadTestCases(folderId = null) {
+  async function loadTestCases(folderId = null, { append = false } = {}) {
+    const requestId = append ? testCaseLoadRequest : ++testCaseLoadRequest;
+    if (append) loadingMoreTestCases = true;
     try {
       const params = folderId === null ? { all: true } : { folder_id: folderId };
+      params.limit = TEST_CASE_BATCH_SIZE;
+      params.offset = append ? $testCases.length : 0;
+      params.q = testCaseSearchQuery.trim();
+      params.label_id = selectedLabelFilterId;
       const cases = await api.tests.testCases.getAll(workspaceId, params);
-      testCases.set(cases || []);
+      if (requestId !== testCaseLoadRequest) return;
+      const nextCases = cases || [];
+      testCases.set(append ? [...$testCases, ...nextCases] : nextCases);
+      hasMoreTestCases = nextCases.length === TEST_CASE_BATCH_SIZE;
     } catch (error) {
       console.error('Failed to load test cases:', error);
+    } finally {
+      if (requestId === testCaseLoadRequest) loadingMoreTestCases = false;
     }
+  }
+
+  function handleTestCaseSearchInput() {
+    clearTimeout(testCaseSearchTimeout);
+    testCaseSearchTimeout = setTimeout(() => loadTestCases(selectedFolder), 300);
   }
 
   async function loadLabels() {
@@ -350,6 +378,7 @@
       updateFolderQueryParam(folderId);
       return;
     }
+    testCaseSearchQuery = '';
     selectedFolder = folderId;
     updateFolderQueryParam(folderId);
     await loadTestCases(folderId);
@@ -441,14 +470,6 @@
     );
   }
 
-  // Filter test cases by selected label ID
-  function filteredTestCases(testCases, selectedLabelId) {
-    if (!selectedLabelId) return testCases;
-    return testCases.filter(testCase =>
-      testCase.labels && testCase.labels.some(label => label.id === selectedLabelId)
-    );
-  }
-
   // Build dropdown menu items for test case actions
   function buildTestCaseActions(testCase) {
     return [
@@ -475,36 +496,57 @@
     ];
   }
 
-  // Custom keyboard handler for two-key steps navigation (S + 1-9)
+  function exitStepsShortcutMode() {
+    stepsShortcutMode = false;
+    stepsShortcutInput = '';
+    clearTimeout(stepsShortcutTimeout);
+  }
+
+  function scheduleStepsShortcutTimeout() {
+    clearTimeout(stepsShortcutTimeout);
+    stepsShortcutTimeout = setTimeout(exitStepsShortcutMode, 2000);
+  }
+
+  // Custom keyboard handler for steps navigation (S + the displayed code)
   function handleStepsKeyboard(event) {
     // Ignore if typing in input field (INPUT, TEXTAREA, SELECT, or contenteditable)
     if (isTypingInField(event)) {
       return;
     }
 
-    const filteredCases = filteredTestCases($testCases, selectedLabelFilterId);
-
     if (stepsShortcutMode) {
-      // In steps mode - waiting for number key
-      const num = parseInt(event.key);
-      if (num >= 1 && num <= 9 && num <= filteredCases.length) {
-        event.preventDefault();
-        const testCase = filteredCases[num - 1];
-        navigate(`/workspaces/${workspaceId}/tests/cases/${testCase.id}/steps`);
+      const key = event.key.toUpperCase();
+      if (key.length !== 1 || !STEPS_SHORTCUT_ALPHABET.includes(key)) {
+        exitStepsShortcutMode();
+        return;
       }
-      // Exit mode on any key
-      stepsShortcutMode = false;
-      clearTimeout(stepsShortcutTimeout);
+
+      event.preventDefault();
+      const input = stepsShortcutInput + key;
+      const matchIndex = stepsShortcutCodes.indexOf(input);
+
+      if (matchIndex !== -1) {
+        const testCase = visibleTestCases[matchIndex];
+        exitStepsShortcutMode();
+        navigate(`/workspaces/${workspaceId}/tests/cases/${testCase.id}/steps`);
+        return;
+      }
+
+      if (stepsShortcutCodes.some((code) => code.startsWith(input))) {
+        stepsShortcutInput = input;
+        scheduleStepsShortcutTimeout();
+        return;
+      }
+
+      exitStepsShortcutMode();
       return;
     }
 
     if (matchesShortcut(event, { key: 's' })) {
       event.preventDefault();
       stepsShortcutMode = true;
-      // Auto-exit after 2 seconds
-      stepsShortcutTimeout = setTimeout(() => {
-        stepsShortcutMode = false;
-      }, 2000);
+      stepsShortcutInput = '';
+      scheduleStepsShortcutTimeout();
     }
   }
 
@@ -618,6 +660,7 @@
   }
 
   async function applyFolderSelectionFromRoute(folderId) {
+    testCaseSearchQuery = '';
     selectedFolder = folderId;
     await loadTestCases(folderId);
   }
@@ -765,6 +808,10 @@
             bind:value={selectedLabelFilterId}
             placeholder={t('testing.allLabels')}
             {workspaceId}
+            onSelect={({ value }) => {
+              selectedLabelFilterId = value;
+              loadTestCases(selectedFolder);
+            }}
           />
         </div>
         <Button
@@ -902,6 +949,13 @@
 
   <!-- Right Content - Test Cases -->
   <div class="flex-1 min-w-0 px-10 py-6">
+    <div class="mb-4 max-w-md">
+      <SearchInput
+        bind:value={testCaseSearchQuery}
+        placeholder={t('testing.searchTestCases')}
+        on_input={handleTestCaseSearchInput}
+      />
+    </div>
     <table class="min-w-full text-sm">
       <thead style="border-bottom: 1px solid var(--ds-border);">
             <tr>
@@ -912,7 +966,7 @@
             </tr>
           </thead>
           <tbody>
-            {#each filteredTestCases($testCases, selectedLabelFilterId) as testCase, index}
+            {#each visibleTestCases as testCase, index}
               <tr
                 class="hover:bg-[var(--ds-surface)] transition-colors draggable-test-case"
                 style="border-top: 1px solid var(--ds-border);"
@@ -981,7 +1035,7 @@
                     >
                       {t('testing.steps')}
                       <kbd class="px-1 py-0.5 text-[10px] rounded" style="background-color: var(--ds-surface-raised); border: 1px solid var(--ds-border); color: var(--ds-text-subtle);">
-                        {stepsShortcutMode && index < 9 ? index + 1 : 'S'}
+                        {stepsShortcutMode ? stepsShortcutCodes[index] : 'S'}
                       </kbd>
                     </a>
                     <DropdownMenu
@@ -1002,15 +1056,29 @@
                   <EmptyState
                     icon={IconFileCheck}
                     title={t('testing.noTestCasesFound')}
-                    description={selectedLabelFilterId
-                      ? t('testing.noTestCasesWithLabel')
-                      : t('testing.createFirstTestCase')}
+                    description={testCaseSearchQuery
+                      ? t('common.noResults')
+                      : selectedLabelFilterId
+                        ? t('testing.noTestCasesWithLabel')
+                        : t('testing.createFirstTestCase')}
                   />
                 </td>
               </tr>
             {/each}
       </tbody>
     </table>
+    {#if hasMoreTestCases}
+      <div class="flex justify-center py-6">
+        <Button
+          variant="outline"
+          size="small"
+          disabled={loadingMoreTestCases}
+          onclick={() => loadTestCases(selectedFolder, { append: true })}
+        >
+          {loadingMoreTestCases ? t('common.loadingMore') : t('common.loadMore')}
+        </Button>
+      </div>
+    {/if}
   </div>
   </div>
 </div>

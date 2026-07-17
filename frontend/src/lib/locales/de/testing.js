@@ -78,6 +78,7 @@ export default {
       'Sind Sie sicher, dass Sie diesen Testfall löschen möchten? Diese Aktion kann nicht rückgängig gemacht werden.',
     noTestCasesFound: 'Keine Testfälle gefunden',
     noTestCasesWithLabel: 'Keine Testfälle mit dem ausgewählten Label-Filter gefunden.',
+    searchTestCases: 'Testfälle durchsuchen...',
     createFirstTestCase:
       "Klicken Sie auf 'Testfall hinzufügen', um Ihren ersten Testfall in diesem Ordner zu erstellen.",
     allLabels: 'Alle Labels',
@@ -105,7 +106,7 @@ export default {
       'Beschreiben Sie die Bedingungen, die erfüllt sein müssen, bevor dieser Testfall ausgeführt wird...',
     testCaseStepsInfo:
       'Nach dem Erstellen dieses Testfalls können Sie einzelne Testschritte mit spezifischen Aktionen, Daten und erwarteten Ergebnissen für eine präzise Testausführung hinzufügen.',
-    pressToOpenSteps: 'Drücken Sie 1-9, um Schritte zu öffnen',
+    pressToOpenSteps: 'Drücken Sie eine hervorgehobene Taste, um Schritte zu öffnen',
     manageLabels: 'Labels verwalten',
     clickLabelsToAssign: 'Klicken Sie auf Labels, um sie diesem Testfall zuzuweisen/zu entfernen',
     closeLabelsModal: 'Label-Dialog schließen',

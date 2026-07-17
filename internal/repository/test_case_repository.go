@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"windshift/internal/database"
@@ -25,56 +26,62 @@ type TestCaseListParams struct {
 	WorkspaceID int
 	FolderID    *int // nil = root level, pointer to int = specific folder
 	All         bool // true = return all test cases in workspace
+	Limit       int
+	Offset      int
+	Search      string
+	LabelID     *int
 }
 
 // FindAll returns test cases with optional folder filtering
 func (r *TestCaseRepository) FindAll(params TestCaseListParams) ([]models.TestCase, error) {
-	var query string
-	var args []interface{}
+	query := `
+			SELECT tc.id, tc.workspace_id, tc.folder_id, tc.title,
+			       COALESCE(tc.preconditions, '') as preconditions,
+			       COALESCE(tc.priority, 'medium') as priority,
+			       COALESCE(tc.status, 'active') as status,
+			       COALESCE(tc.estimated_duration, 0) as estimated_duration,
+			       tc.sort_order, tc.created_at, tc.updated_at, tf.name as folder_name
+			FROM test_cases tc
+			LEFT JOIN test_folders tf ON tc.folder_id = tf.id
+			WHERE tc.workspace_id = ?`
+	args := []interface{}{params.WorkspaceID}
 
-	switch {
-	case params.All:
-		query = `
-			SELECT tc.id, tc.workspace_id, tc.folder_id, tc.title,
-			       COALESCE(tc.preconditions, '') as preconditions,
-			       COALESCE(tc.priority, 'medium') as priority,
-			       COALESCE(tc.status, 'active') as status,
-			       COALESCE(tc.estimated_duration, 0) as estimated_duration,
-			       tc.sort_order, tc.created_at, tc.updated_at, tf.name as folder_name
-			FROM test_cases tc
-			LEFT JOIN test_folders tf ON tc.folder_id = tf.id
-			WHERE tc.workspace_id = ?
-			ORDER BY tf.sort_order, tc.sort_order, tc.title
-		`
-		args = append(args, params.WorkspaceID)
-	case params.FolderID == nil:
-		query = `
-			SELECT tc.id, tc.workspace_id, tc.folder_id, tc.title,
-			       COALESCE(tc.preconditions, '') as preconditions,
-			       COALESCE(tc.priority, 'medium') as priority,
-			       COALESCE(tc.status, 'active') as status,
-			       COALESCE(tc.estimated_duration, 0) as estimated_duration,
-			       tc.sort_order, tc.created_at, tc.updated_at, tf.name as folder_name
-			FROM test_cases tc
-			LEFT JOIN test_folders tf ON tc.folder_id = tf.id
-			WHERE tc.workspace_id = ? AND tc.folder_id IS NULL
-			ORDER BY tc.sort_order, tc.title
-		`
-		args = append(args, params.WorkspaceID)
-	default:
-		query = `
-			SELECT tc.id, tc.workspace_id, tc.folder_id, tc.title,
-			       COALESCE(tc.preconditions, '') as preconditions,
-			       COALESCE(tc.priority, 'medium') as priority,
-			       COALESCE(tc.status, 'active') as status,
-			       COALESCE(tc.estimated_duration, 0) as estimated_duration,
-			       tc.sort_order, tc.created_at, tc.updated_at, tf.name as folder_name
-			FROM test_cases tc
-			LEFT JOIN test_folders tf ON tc.folder_id = tf.id
-			WHERE tc.workspace_id = ? AND tc.folder_id = ?
-			ORDER BY tc.sort_order, tc.title
-		`
-		args = append(args, params.WorkspaceID, *params.FolderID)
+	if !params.All {
+		if params.FolderID == nil {
+			query += " AND tc.folder_id IS NULL"
+		} else {
+			query += " AND tc.folder_id = ?"
+			args = append(args, *params.FolderID)
+		}
+	}
+	if params.LabelID != nil {
+		query += " AND EXISTS (SELECT 1 FROM test_case_labels tcl WHERE tcl.test_case_id = tc.id AND tcl.label_id = ?)"
+		args = append(args, *params.LabelID)
+	}
+	if search := strings.TrimSpace(params.Search); search != "" {
+		pattern := "%" + strings.ToLower(search) + "%"
+		query += ` AND (
+			LOWER(tc.title) LIKE ? OR
+			LOWER(COALESCE(tc.preconditions, '')) LIKE ? OR
+			LOWER(COALESCE(tc.priority, '')) LIKE ? OR
+			LOWER(COALESCE(tc.status, '')) LIKE ? OR
+			EXISTS (
+				SELECT 1 FROM test_case_labels search_tcl
+				JOIN test_labels search_tl ON search_tl.id = search_tcl.label_id
+				WHERE search_tcl.test_case_id = tc.id AND LOWER(search_tl.name) LIKE ?
+			)
+		)`
+		args = append(args, pattern, pattern, pattern, pattern, pattern)
+	}
+
+	if params.All {
+		query += " ORDER BY tf.sort_order, tc.sort_order, tc.title, tc.id"
+	} else {
+		query += " ORDER BY tc.sort_order, tc.title, tc.id"
+	}
+	if params.Limit > 0 {
+		query += " LIMIT ? OFFSET ?"
+		args = append(args, params.Limit, params.Offset)
 	}
 
 	rows, err := r.db.Query(query, args...)
@@ -108,6 +115,15 @@ func (r *TestCaseRepository) FindAll(params TestCaseListParams) ([]models.TestCa
 	}
 
 	return testCases, nil
+}
+
+// CountAll returns the number of test cases in a workspace without loading them.
+func (r *TestCaseRepository) CountAll(workspaceID int) (int, error) {
+	var count int
+	if err := r.db.QueryRow("SELECT COUNT(*) FROM test_cases WHERE workspace_id = ?", workspaceID).Scan(&count); err != nil {
+		return 0, fmt.Errorf("failed to count test cases: %w", err)
+	}
+	return count, nil
 }
 
 // FindByID retrieves a single test case by ID

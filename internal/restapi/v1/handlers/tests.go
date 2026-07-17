@@ -212,6 +212,31 @@ func (h *TestManagementHandler) ListTestCases(w http.ResponseWriter, r *http.Req
 	params := services.TestCaseListParams{
 		WorkspaceID: workspaceID,
 		All:         r.URL.Query().Get("all") == "true",
+		Search:      r.URL.Query().Get("q"),
+	}
+	if rawLimit := r.URL.Query().Get("limit"); rawLimit != "" {
+		limit, err := strconv.Atoi(rawLimit)
+		if err != nil || limit < 1 || limit > 250 {
+			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid limit"))
+			return
+		}
+		params.Limit = limit
+	}
+	if rawOffset := r.URL.Query().Get("offset"); rawOffset != "" {
+		offset, err := strconv.Atoi(rawOffset)
+		if err != nil || offset < 0 {
+			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid offset"))
+			return
+		}
+		params.Offset = offset
+	}
+	if rawLabelID := r.URL.Query().Get("label_id"); rawLabelID != "" {
+		labelID, err := strconv.Atoi(rawLabelID)
+		if err != nil || labelID < 1 {
+			h.RespondError(w, r, restapi.NewAPIError(http.StatusBadRequest, restapi.ErrCodeInvalidInput, "Invalid label_id"))
+			return
+		}
+		params.LabelID = &labelID
 	}
 	if folderIDParam := r.URL.Query().Get("folder_id"); folderIDParam != "" && folderIDParam != "null" {
 		folderID, err := strconv.Atoi(folderIDParam)

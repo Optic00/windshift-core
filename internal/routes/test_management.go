@@ -25,6 +25,7 @@ func RegisterTestManagementRoutes(deps *Deps) {
 
 	// Test cases
 	api.HandleH("GET /workspaces/{workspaceId}/test-cases", auth(testView(http.HandlerFunc(deps.TestMgmt.Case.GetAllTestCases))))
+	api.HandleH("GET /workspaces/{workspaceId}/test-cases/count", auth(testView(http.HandlerFunc(deps.TestMgmt.Case.GetTestCaseCount))))
 	api.HandleH("POST /workspaces/{workspaceId}/test-cases", auth(testManage(http.HandlerFunc(deps.TestMgmt.Case.CreateTestCase))))
 	api.HandleH("GET /workspaces/{workspaceId}/test-cases/{id}", auth(testView(http.HandlerFunc(deps.TestMgmt.Case.GetTestCase))))
 	api.HandleH("PUT /workspaces/{workspaceId}/test-cases/{id}", auth(testManage(http.HandlerFunc(deps.TestMgmt.Case.UpdateTestCase))))

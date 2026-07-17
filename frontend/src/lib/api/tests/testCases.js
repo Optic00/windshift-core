@@ -13,9 +13,14 @@ export const testCases = {
     } else if (params.folder_id !== undefined) {
       queryParams.append('folder_id', params.folder_id === null ? 'null' : params.folder_id);
     }
+    if (params.limit) queryParams.append('limit', params.limit);
+    if (params.offset) queryParams.append('offset', params.offset);
+    if (params.q) queryParams.append('q', params.q);
+    if (params.label_id) queryParams.append('label_id', params.label_id);
     const queryString = queryParams.toString();
     return fetchAPI(`/workspaces/${workspaceId}/test-cases${queryString ? `?${queryString}` : ''}`);
   },
+  count: (workspaceId) => fetchAPI(`/workspaces/${workspaceId}/test-cases/count`),
   move: (workspaceId, id, data) =>
     fetchAPI(`/workspaces/${workspaceId}/test-cases/${id}/move`, {
       method: 'PUT',

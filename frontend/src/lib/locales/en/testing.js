@@ -86,6 +86,7 @@ export default {
       'Are you sure you want to delete this test case? This action cannot be undone.',
     noTestCasesFound: 'No test cases found',
     noTestCasesWithLabel: 'No test cases found with the selected label filter.',
+    searchTestCases: 'Search test cases...',
     createFirstTestCase: "Click 'Add Test Case' to create your first test case in this folder.",
     allLabels: 'All labels',
     noLabels: 'No labels',
@@ -112,7 +113,7 @@ export default {
       'Describe the conditions that must be met before running this test case...',
     testCaseStepsInfo:
       'After creating this test case, you can add individual test steps with specific actions, data, and expected results for precise test execution.',
-    pressToOpenSteps: 'Press 1-9 to open steps',
+    pressToOpenSteps: 'Press a highlighted key to open steps',
     // Labels management
     manageLabels: 'Manage Labels',
     clickLabelsToAssign: 'Click labels to assign/remove them from this test case',

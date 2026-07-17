@@ -38,6 +38,31 @@ func (h *TestCaseHandler) GetAllTestCases(w http.ResponseWriter, r *http.Request
 	params := services.TestCaseListParams{
 		WorkspaceID: workspaceID,
 		All:         allParam == "true",
+		Search:      r.URL.Query().Get("q"),
+	}
+	if rawLimit := r.URL.Query().Get("limit"); rawLimit != "" {
+		limit, err := strconv.Atoi(rawLimit)
+		if err != nil || limit < 1 || limit > 250 {
+			respondValidationError(w, r, "limit must be between 1 and 250")
+			return
+		}
+		params.Limit = limit
+	}
+	if rawOffset := r.URL.Query().Get("offset"); rawOffset != "" {
+		offset, err := strconv.Atoi(rawOffset)
+		if err != nil || offset < 0 {
+			respondValidationError(w, r, "offset must be zero or greater")
+			return
+		}
+		params.Offset = offset
+	}
+	if labelIDParam := r.URL.Query().Get("label_id"); labelIDParam != "" {
+		labelID, err := strconv.Atoi(labelIDParam)
+		if err != nil || labelID < 1 {
+			respondInvalidID(w, r, "label_id")
+			return
+		}
+		params.LabelID = &labelID
 	}
 
 	if folderIDParam != "" && folderIDParam != "null" {
@@ -58,6 +83,20 @@ func (h *TestCaseHandler) GetAllTestCases(w http.ResponseWriter, r *http.Request
 	}
 
 	respondJSONOK(w, testCases)
+}
+
+// GetTestCaseCount returns the workspace test-case count without loading rows.
+func (h *TestCaseHandler) GetTestCaseCount(w http.ResponseWriter, r *http.Request) {
+	workspaceID, ok := requireIDParam(w, r, "workspaceId")
+	if !ok {
+		return
+	}
+	count, err := h.service.CountAll(workspaceID)
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
+	respondJSONOK(w, map[string]int{"count": count})
 }
 
 // GetTestCase returns a single test case

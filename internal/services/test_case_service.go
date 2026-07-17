@@ -29,6 +29,10 @@ type TestCaseListParams struct {
 	WorkspaceID int
 	FolderID    *int
 	All         bool
+	Limit       int
+	Offset      int
+	Search      string
+	LabelID     *int
 }
 
 // List retrieves test cases with optional folder filtering
@@ -37,6 +41,10 @@ func (s *TestCaseService) List(params TestCaseListParams) ([]models.TestCase, er
 		WorkspaceID: params.WorkspaceID,
 		FolderID:    params.FolderID,
 		All:         params.All,
+		Limit:       params.Limit,
+		Offset:      params.Offset,
+		Search:      params.Search,
+		LabelID:     params.LabelID,
 	})
 	if err != nil {
 		return nil, err
@@ -52,6 +60,10 @@ func (s *TestCaseService) List(params TestCaseListParams) ([]models.TestCase, er
 	}
 
 	return testCases, nil
+}
+
+func (s *TestCaseService) CountAll(workspaceID int) (int, error) {
+	return s.repo.CountAll(workspaceID)
 }
 
 // GetByID retrieves a single test case

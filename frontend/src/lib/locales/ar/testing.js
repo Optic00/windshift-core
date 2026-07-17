@@ -81,6 +81,7 @@ export default {
     deleteTestCaseConfirm: 'هل أنت متأكد من حذف حالة الاختبار هذه؟ لا يمكن التراجع عن هذا الإجراء.',
     noTestCasesFound: 'لم يتم العثور على حالات اختبار',
     noTestCasesWithLabel: 'لم يتم العثور على حالات اختبار بفلتر التسمية المحدد.',
+    searchTestCases: 'البحث في حالات الاختبار...',
     createFirstTestCase: 'انقر على "إضافة حالة اختبار" لإنشاء أول حالة اختبار في هذا المجلد.',
     allLabels: 'جميع التسميات',
     noLabels: 'بدون تسميات',
@@ -105,7 +106,7 @@ export default {
     preconditionsPlaceholder: 'صف الشروط التي يجب استيفاؤها قبل تشغيل حالة الاختبار هذه...',
     testCaseStepsInfo:
       'بعد إنشاء حالة الاختبار هذه، يمكنك إضافة خطوات اختبار فردية بإجراءات وبيانات ونتائج متوقعة محددة لتنفيذ اختبار دقيق.',
-    pressToOpenSteps: 'اضغط 1-9 لفتح الخطوات',
+    pressToOpenSteps: 'اضغط على مفتاح مميز لفتح الخطوات',
     // Labels management
     manageLabels: 'إدارة التسميات',
     clickLabelsToAssign: 'انقر على التسميات لتعيينها/إزالتها من حالة الاختبار هذه',

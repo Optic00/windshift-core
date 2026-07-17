@@ -84,6 +84,7 @@ export default {
     noTestCasesFound: 'No se encontraron casos de prueba',
     noTestCasesWithLabel:
       'No se encontraron casos de prueba con el filtro de etiqueta seleccionado.',
+    searchTestCases: 'Buscar casos de prueba...',
     createFirstTestCase:
       'Haga clic en "Agregar caso de prueba" para crear su primer caso de prueba en esta carpeta.',
     allLabels: 'Todas las etiquetas',
@@ -111,7 +112,7 @@ export default {
       'Describa las condiciones que deben cumplirse antes de ejecutar este caso de prueba...',
     testCaseStepsInfo:
       'Despues de crear este caso de prueba, puede agregar pasos individuales con acciones, datos y resultados esperados especificos para una ejecucion de prueba precisa.',
-    pressToOpenSteps: 'Presione 1-9 para abrir pasos',
+    pressToOpenSteps: 'Presione una tecla resaltada para abrir los pasos',
     // Labels management
     manageLabels: 'Administrar etiquetas',
     clickLabelsToAssign:
