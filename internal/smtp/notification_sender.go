@@ -366,18 +366,22 @@ func buildMime(opts mimeOptions) string {
 	headers := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=%s\r\n",
 		from, to, encodeHeaderWord(opts.Subject), boundary)
 
-	if opts.MessageID != "" {
-		headers += fmt.Sprintf("Message-ID: %s\r\n", sanitizeHeader(opts.MessageID))
+	if messageID := formatMessageIDHeader(opts.MessageID); messageID != "" {
+		headers += fmt.Sprintf("Message-ID: %s\r\n", messageID)
 	}
-	if opts.InReplyTo != "" {
-		headers += fmt.Sprintf("In-Reply-To: %s\r\n", sanitizeHeader(opts.InReplyTo))
+	if inReplyTo := formatMessageIDHeader(opts.InReplyTo); inReplyTo != "" {
+		headers += fmt.Sprintf("In-Reply-To: %s\r\n", inReplyTo)
 	}
 	if len(opts.References) > 0 {
 		clean := make([]string, 0, len(opts.References))
 		for _, ref := range opts.References {
-			clean = append(clean, sanitizeHeader(ref))
+			if formatted := formatMessageIDHeader(ref); formatted != "" {
+				clean = append(clean, formatted)
+			}
 		}
-		headers += fmt.Sprintf("References: %s\r\n", strings.Join(clean, " "))
+		if len(clean) > 0 {
+			headers += fmt.Sprintf("References: %s\r\n", strings.Join(clean, " "))
+		}
 	}
 
 	headers += "\r\n"
@@ -389,6 +393,18 @@ func buildMime(opts mimeOptions) string {
 	ending := fmt.Sprintf("--%s--\r\n", boundary)
 
 	return headers + textPart + htmlPart + ending
+}
+
+// formatMessageIDHeader tolerates historical tracking rows that stored the
+// go-imap ENVELOPE form without angle brackets and always emits RFC 5322's
+// bracketed form on the wire.
+func formatMessageIDHeader(value string) string {
+	value = strings.TrimSpace(sanitizeHeader(value))
+	value = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(value, "<"), ">"))
+	if value == "" || strings.ContainsAny(value, "<> \t") {
+		return ""
+	}
+	return "<" + value + ">"
 }
 
 // dispatch picks the encryption path (TLS/SSL) and sends the assembled MIME

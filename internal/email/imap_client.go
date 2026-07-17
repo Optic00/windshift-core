@@ -3,10 +3,10 @@ package email
 import (
 	"context"
 	"crypto/tls"
-	"encoding/base64"
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"strconv"
 	"time"
@@ -53,6 +53,27 @@ func Connect(opts ConnectOptions) (*Client, error) {
 	if opts.Timeout == 0 {
 		opts.Timeout = 30 * time.Second
 	}
+	tlsConfig := &tls.Config{
+		ServerName: opts.Host,
+		MinVersion: tls.VersionTLS12,
+	}
+	return connectWithDialer(opts, utils.SafeNetDialer(opts.Timeout), tlsConfig)
+}
+
+// connectWithDialer contains the protocol setup shared by Connect and the
+// in-process IMAP integration tests. Connect always supplies the SSRF-safe
+// dialer and system-root TLS config; tests can supply a loopback dialer and a
+// private test CA without weakening the production entry point.
+func connectWithDialer(opts ConnectOptions, dialer *net.Dialer, tlsConfig *tls.Config) (*Client, error) {
+	if opts.Timeout == 0 {
+		opts.Timeout = 30 * time.Second
+	}
+	if dialer == nil {
+		return nil, fmt.Errorf("IMAP dialer is required")
+	}
+	if tlsConfig == nil {
+		return nil, fmt.Errorf("IMAP TLS configuration is required")
+	}
 
 	addr := net.JoinHostPort(opts.Host, strconv.Itoa(opts.Port))
 
@@ -63,9 +84,11 @@ func Connect(opts ConnectOptions) (*Client, error) {
 
 	clientOpts := &imapclient.Options{
 		WordDecoder: nil, // Use default
+		// NewStartTLS passes this config directly to tls.Client. Leaving it nil
+		// panics during the upgrade and also omits hostname verification.
+		TLSConfig: tlsConfig.Clone(),
 	}
 
-	dialer := utils.SafeNetDialer(opts.Timeout)
 	parentCtx := opts.Context
 	if parentCtx == nil {
 		parentCtx = context.Background()
@@ -79,10 +102,7 @@ func Connect(opts ConnectOptions) (*Client, error) {
 		// private/loopback/link-local resolutions before handshake.
 		tlsDialer := &tls.Dialer{
 			NetDialer: dialer,
-			Config: &tls.Config{
-				ServerName: opts.Host,
-				MinVersion: tls.VersionTLS12,
-			},
+			Config:    tlsConfig.Clone(),
 		}
 		conn, err = tlsDialer.DialContext(ctx, "tcp", addr)
 		if err != nil {
@@ -96,7 +116,36 @@ func Connect(opts ConnectOptions) (*Client, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to connect to %s: %w", addr, err)
 		}
+		// NewStartTLS performs the greeting, command exchange, and TLS
+		// handshake synchronously. Bound that work before entering it; setting
+		// the normal per-operation deadline only afterwards leaves a silent
+		// server able to ignore opts.Timeout and the caller's context.
+		upgradeDeadline := time.Now().Add(opts.Timeout)
+		if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(upgradeDeadline) {
+			upgradeDeadline = ctxDeadline
+		}
+		if err := conn.SetDeadline(upgradeDeadline); err != nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("set STARTTLS deadline: %w", err)
+		}
+		// go-imap installs its own 30-second greeting deadline, which can
+		// overwrite the shorter deadline above. Close the socket when our
+		// context expires so opts.Timeout remains authoritative. Wait for the
+		// watcher to observe completion before returning; otherwise the deferred
+		// context cancel could race and close a successfully upgraded client.
+		upgradeComplete := make(chan struct{})
+		watcherDone := make(chan struct{})
+		go func() {
+			defer close(watcherDone)
+			select {
+			case <-ctx.Done():
+				_ = conn.Close()
+			case <-upgradeComplete:
+			}
+		}()
 		client, err = imapclient.NewStartTLS(conn, clientOpts)
+		close(upgradeComplete)
+		<-watcherDone
 		if err != nil {
 			_ = conn.Close()
 			return nil, fmt.Errorf("STARTTLS failed: %w", err)
@@ -170,10 +219,9 @@ func (c *Client) AuthenticateXOAuth2(email, accessToken string) error {
 	if err := c.setOperationDeadline(); err != nil {
 		return fmt.Errorf("set OAuth authentication deadline: %w", err)
 	}
-	// Try OAUTHBEARER first (RFC 7628), then fall back to XOAUTH2
-	// Both mechanisms are supported by the same sasl.NewOAuthBearerClient
-
-	// Build XOAUTH2 SASL client (legacy but widely supported by O365/Gmail)
+	// XOAUTH2 is the legacy mechanism supported by Gmail and Microsoft 365.
+	// Fall back to the standardized OAUTHBEARER mechanism (RFC 7628) for other
+	// compliant servers.
 	xoauth2Client := newXOAuth2Client(email, accessToken)
 	if err := c.client.Authenticate(xoauth2Client); err != nil {
 		// If XOAUTH2 fails, try OAUTHBEARER
@@ -209,6 +257,12 @@ func (c *Client) SelectMailbox(name string) (*imap.SelectData, error) {
 // must have already selected the mailbox (so UIDVALIDITY can be inspected
 // separately before the fetch proceeds).
 func (c *Client) FetchMessages(sinceUID uint32, batchSize int) ([]*FetchedMessage, error) {
+	// UIDs are non-zero uint32 values. Once the cursor reaches the maximum,
+	// only a UIDVALIDITY change can create a new UID space; adding one here
+	// would wrap to zero (the IMAP "*" sentinel) and refetch old mail.
+	if sinceUID == math.MaxUint32 {
+		return nil, nil
+	}
 	if err := c.setOperationDeadline(); err != nil {
 		return nil, fmt.Errorf("set search deadline: %w", err)
 	}
@@ -426,7 +480,10 @@ func (c *xoauth2Client) Start() (mech string, ir []byte, err error) {
 	// XOAUTH2 initial response format:
 	// user=<email>\x01auth=Bearer <token>\x01\x01
 	authString := fmt.Sprintf("user=%s\x01auth=Bearer %s\x01\x01", c.email, c.accessToken)
-	return "XOAUTH2", []byte(base64.StdEncoding.EncodeToString([]byte(authString))), nil
+	// sasl.Client returns the raw initial response. go-imap performs the one
+	// required base64 encoding when it writes AUTHENTICATE; pre-encoding here
+	// double-encodes the credentials and makes every XOAUTH2 login fail.
+	return "XOAUTH2", []byte(authString), nil
 }
 
 func (c *xoauth2Client) Next(challenge []byte) (response []byte, err error) {

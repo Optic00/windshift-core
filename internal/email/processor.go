@@ -163,8 +163,9 @@ func (p *Processor) ProcessEmail(
 }
 
 // dedupKeyFor returns the stable per-channel dedup key for an email. When
-// MessageID is non-empty we use it directly so a server re-delivery (same
-// Message-ID, new UID) still matches. When it's empty we synthesize a
+// MessageID is non-empty we use its stable bare form so a server re-delivery
+// (same Message-ID, new UID) still matches, including rows written before IDs
+// were canonicalized for threading. When it's empty we synthesize a
 // channel-scoped key from UIDVALIDITY+UID — IMAP guarantees uniqueness of
 // (uidvalidity, uid) within a mailbox, so this distinguishes Message-ID-less
 // emails from each other and survives normal polling. A UIDVALIDITY reset or
@@ -173,7 +174,10 @@ func (p *Processor) ProcessEmail(
 // emails apart across UID-space resets.
 func dedupKeyFor(email *ParsedEmail, channelID int, uidValidity uint32) string {
 	if email.MessageID != "" {
-		return email.MessageID
+		// Older releases stored the ENVELOPE form (without angle brackets) as
+		// dedup_key. Keep that stable while message_id itself is canonicalized
+		// for correct SMTP threading and reply lookup.
+		return bareMessageID(email.MessageID)
 	}
 	return fmt.Sprintf("synth:%d:%d:%d", channelID, uidValidity, email.UID)
 }
@@ -370,10 +374,15 @@ func (p *Processor) findParentItem(ctx context.Context, channelID int, email *Pa
 
 	for _, messageID := range threadIDs {
 		var itemID int
+		canonicalID := canonicalMessageID(messageID)
+		bareID := bareMessageID(messageID)
+		if canonicalID == "" {
+			continue
+		}
 		err := p.db.QueryRowContext(ctx, `
 			SELECT item_id FROM email_message_tracking
-			WHERE channel_id = ? AND message_id = ? AND item_id IS NOT NULL
-		`, channelID, messageID).Scan(&itemID)
+			WHERE channel_id = ? AND message_id IN (?, ?) AND item_id IS NOT NULL
+		`, channelID, canonicalID, bareID).Scan(&itemID)
 		if err != nil {
 			continue
 		}

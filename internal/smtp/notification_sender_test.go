@@ -2,10 +2,29 @@ package smtp
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"windshift/internal/database"
 )
+
+func TestBuildMimeCanonicalizesThreadingMessageIDs(t *testing.T) {
+	mime := buildMime(mimeOptions{
+		FromEmail: "team@example.com", ToEmail: "customer@example.com",
+		Subject: "Reply", TextBody: "text", HTMLBody: "<p>text</p>",
+		MessageID: "outbound@example.com", InReplyTo: "legacy-inbound@example.com",
+		References: []string{"first@example.com", "<second@example.com>"},
+	})
+	for _, header := range []string{
+		"Message-ID: <outbound@example.com>\r\n",
+		"In-Reply-To: <legacy-inbound@example.com>\r\n",
+		"References: <first@example.com> <second@example.com>\r\n",
+	} {
+		if !strings.Contains(mime, header) {
+			t.Fatalf("MIME message is missing %q:\n%s", header, mime)
+		}
+	}
+}
 
 func TestNormalizeEnvelopeAddressRejectsHeaderSyntax(t *testing.T) {
 	if got, err := normalizeEnvelopeAddress("  sender@example.com  "); err != nil || got != "sender@example.com" {

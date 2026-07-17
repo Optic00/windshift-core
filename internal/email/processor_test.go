@@ -153,3 +153,35 @@ func TestSenderThreadParticipationIsScopedToEmailChannel(t *testing.T) {
 		t.Fatal("same-channel participant was not authorized")
 	}
 }
+
+func TestFindParentItemAcceptsLegacyBareMessageID(t *testing.T) {
+	db := newProcessorTestDB(t)
+	var workspaceID, channelID, itemID int
+	if err := db.QueryRow(`INSERT INTO workspaces (name, key) VALUES ('Legacy thread', 'LTH') RETURNING id`).Scan(&workspaceID); err != nil {
+		t.Fatalf("insert workspace: %v", err)
+	}
+	if err := db.QueryRow(`INSERT INTO channels (name, type, direction) VALUES ('Legacy mailbox', 'email', 'inbound') RETURNING id`).Scan(&channelID); err != nil {
+		t.Fatalf("insert channel: %v", err)
+	}
+	if err := db.QueryRow(`
+		INSERT INTO items (workspace_id, workspace_item_number, title, channel_id)
+		VALUES (?, 1, 'Legacy thread item', ?) RETURNING id
+	`, workspaceID, channelID).Scan(&itemID); err != nil {
+		t.Fatalf("insert item: %v", err)
+	}
+	if _, err := db.ExecWrite(`
+		INSERT INTO email_message_tracking
+			(channel_id, message_id, dedup_key, from_email, item_id)
+		VALUES (?, 'legacy@example.com', 'legacy@example.com', 'sender@example.com', ?)
+	`, channelID, itemID); err != nil {
+		t.Fatalf("insert legacy tracking: %v", err)
+	}
+
+	parent := NewProcessor(db, "").findParentItem(context.Background(), channelID, &ParsedEmail{
+		InReplyTo: "<legacy@example.com>",
+		From:      EmailAddress{Address: "sender@example.com"},
+	})
+	if parent == nil || *parent != itemID {
+		t.Fatalf("legacy bare Message-ID parent = %v, want %d", parent, itemID)
+	}
+}

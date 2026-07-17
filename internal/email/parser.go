@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"mime"
-	"mime/multipart"
 	"net/mail"
 	"regexp"
 	"strings"
@@ -20,6 +19,7 @@ var (
 	// Block-level closing tags and <br> are replaced with newlines before tag stripping
 	// so that paragraph structure is preserved in the plain-text output.
 	blockElementRegex = regexp.MustCompile(`(?i)</(p|div|tr|li|h[1-6])>|<br\s*/?>`)
+	messageIDRegex    = regexp.MustCompile(`<[^<>\r\n]+>`)
 
 	// Strict policy strips all HTML tags and drops the content of script/style elements.
 	stripHTMLPolicy = bluemonday.StrictPolicy()
@@ -53,10 +53,10 @@ func (p *Parser) Parse(msg *FetchedMessage) *ParsedEmail {
 	// the native characters.
 	if msg.Envelope != nil {
 		parsed.Subject = decodeHeaderWord(msg.Envelope.Subject)
-		parsed.MessageID = msg.Envelope.MessageID
+		parsed.MessageID = canonicalMessageID(msg.Envelope.MessageID)
 		// InReplyTo is []string in go-imap/v2, take first if present
 		if len(msg.Envelope.InReplyTo) > 0 {
-			parsed.InReplyTo = msg.Envelope.InReplyTo[0]
+			parsed.InReplyTo = canonicalMessageID(msg.Envelope.InReplyTo[0])
 		}
 		parsed.Date = msg.Envelope.Date
 
@@ -83,6 +83,39 @@ func (p *Parser) Parse(msg *FetchedMessage) *ParsedEmail {
 	// the returned reader for the goMessage path below.
 	if len(msg.Raw) > 0 {
 		if headers, err := mail.ReadMessage(bytes.NewReader(msg.Raw)); err == nil {
+			// ENVELOPE is derived by the remote server and may be absent or
+			// incomplete for malformed-but-usable messages. Recover identity and
+			// threading fields from the RFC 5322 headers when needed.
+			if parsed.Subject == "" {
+				parsed.Subject = decodeHeaderWord(headers.Header.Get("Subject"))
+			}
+			if parsed.MessageID == "" {
+				parsed.MessageID = canonicalMessageID(headers.Header.Get("Message-ID"))
+			}
+			if parsed.InReplyTo == "" {
+				if ids := parseReferences(headers.Header.Get("In-Reply-To")); len(ids) > 0 {
+					parsed.InReplyTo = ids[0]
+				}
+			}
+			if parsed.From.Address == "" {
+				if from, parseErr := mail.ParseAddress(headers.Header.Get("From")); parseErr == nil {
+					parsed.From = EmailAddress{Name: decodeHeaderWord(from.Name), Address: from.Address}
+				}
+			}
+			if len(parsed.To) == 0 {
+				if recipients, parseErr := headers.Header.AddressList("To"); parseErr == nil {
+					for _, recipient := range recipients {
+						parsed.To = append(parsed.To, EmailAddress{
+							Name: decodeHeaderWord(recipient.Name), Address: recipient.Address,
+						})
+					}
+				}
+			}
+			if parsed.Date.IsZero() {
+				if date, parseErr := headers.Header.Date(); parseErr == nil {
+					parsed.Date = date
+				}
+			}
 			refs := headers.Header.Get("References")
 			if refs != "" {
 				parsed.References = parseReferences(refs)
@@ -118,7 +151,13 @@ func (p *Parser) Parse(msg *FetchedMessage) *ParsedEmail {
 func (p *Parser) parseBody(r io.Reader, parsed *ParsedEmail) error {
 	entity, err := goMessage.Read(r)
 	if err != nil {
-		return fmt.Errorf("failed to read message entity: %w", err)
+		if entity == nil || (!goMessage.IsUnknownCharset(err) && !goMessage.IsUnknownEncoding(err)) {
+			return fmt.Errorf("failed to read message entity: %w", err)
+		}
+		// The library returns a readable entity alongside these errors. Preserve
+		// the parts it can decode instead of falling back to the entire raw MIME
+		// payload (boundaries, transfer encoding, and all) as the item body.
+		slog.Warn("message uses an unsupported MIME encoding", "error", err)
 	}
 
 	return p.walkEntity(entity, parsed)
@@ -126,14 +165,21 @@ func (p *Parser) parseBody(r io.Reader, parsed *ParsedEmail) error {
 
 // walkEntity recursively walks through MIME parts
 func (p *Parser) walkEntity(entity *goMessage.Entity, parsed *ParsedEmail) error {
-	mediaType, params, err := entity.Header.ContentType()
+	mediaType, typeParams, err := entity.Header.ContentType()
 	if err != nil {
 		mediaType = "text/plain"
+	}
+	disposition, dispositionParams, _ := entity.Header.ContentDisposition()
+	if disposition == "attachment" || dispositionParams["filename"] != "" || typeParams["name"] != "" {
+		// Attachments frequently use text/plain, text/html, or message/rfc822.
+		// Classify by disposition/filename before the media-type body branches
+		// or those files are mistaken for the email's primary body and dropped.
+		return p.handleAttachment(entity, mediaType, parsed)
 	}
 
 	switch {
 	case strings.HasPrefix(mediaType, "multipart/"):
-		return p.walkMultipart(entity, params, parsed)
+		return p.walkMultipart(entity, parsed)
 
 	case mediaType == "text/plain":
 		body, err := io.ReadAll(entity.Body)
@@ -162,22 +208,25 @@ func (p *Parser) walkEntity(entity *goMessage.Entity, parsed *ParsedEmail) error
 }
 
 // walkMultipart processes multipart message parts
-func (p *Parser) walkMultipart(entity *goMessage.Entity, params map[string]string, parsed *ParsedEmail) error {
-	mr := multipart.NewReader(entity.Body, params["boundary"])
+func (p *Parser) walkMultipart(entity *goMessage.Entity, parsed *ParsedEmail) error {
+	mr := entity.MultipartReader()
+	if mr == nil {
+		return fmt.Errorf("multipart entity has no multipart reader")
+	}
+	defer func() { _ = mr.Close() }()
 
 	for {
-		part, err := mr.NextPart()
+		partEntity, err := mr.NextPart()
 		if err == io.EOF {
 			break
 		}
-		if err != nil {
+		if err != nil && partEntity == nil {
 			return fmt.Errorf("failed to read multipart: %w", err)
 		}
-
-		partEntity, err := goMessage.Read(part)
 		if err != nil {
-			slog.Warn("failed to read part entity", "error", err)
-			continue
+			// go-message can return a usable entity alongside an unknown
+			// charset/encoding error. Keep the decoded parts we can salvage.
+			slog.Warn("part has an unsupported MIME encoding", "error", err)
 		}
 
 		if err := p.walkEntity(partEntity, parsed); err != nil {
@@ -209,7 +258,7 @@ func (p *Parser) handleAttachment(entity *goMessage.Entity, mediaType string, pa
 	}
 
 	// Decode filename if encoded
-	dec := new(mime.WordDecoder)
+	dec := &mime.WordDecoder{CharsetReader: goMessage.CharsetReader}
 	if decoded, err := dec.DecodeHeader(filename); err == nil {
 		filename = decoded
 	}
@@ -249,7 +298,7 @@ func decodeHeaderWord(s string) string {
 	if s == "" {
 		return s
 	}
-	dec := &mime.WordDecoder{}
+	dec := &mime.WordDecoder{CharsetReader: goMessage.CharsetReader}
 	if decoded, err := dec.DecodeHeader(s); err == nil {
 		return decoded
 	}
@@ -273,20 +322,36 @@ func sanitizeAttachmentFilename(s string) string {
 
 // parseReferences parses the References header into individual message IDs
 func parseReferences(refs string) []string {
-	// References header contains space-separated message IDs
 	var result []string
-	refs = strings.TrimSpace(refs)
-
-	// Split on whitespace and newlines
-	parts := strings.Fields(refs)
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part != "" && strings.HasPrefix(part, "<") && strings.HasSuffix(part, ">") {
-			result = append(result, part)
+	for _, match := range messageIDRegex.FindAllString(refs, -1) {
+		if id := canonicalMessageID(match); id != "" {
+			result = append(result, id)
 		}
 	}
-
 	return result
+}
+
+// canonicalMessageID keeps one representation across IMAP ENVELOPE values
+// (which go-imap exposes without angle brackets), raw References headers, and
+// SMTP tracking rows (which use RFC 5322's bracketed form).
+func canonicalMessageID(id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ""
+	}
+	id = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(id, "<"), ">"))
+	if id == "" || strings.ContainsAny(id, "<> \t\r\n") {
+		return ""
+	}
+	return "<" + id + ">"
+}
+
+func bareMessageID(id string) string {
+	id = canonicalMessageID(id)
+	if id == "" {
+		return ""
+	}
+	return strings.TrimSuffix(strings.TrimPrefix(id, "<"), ">")
 }
 
 // ExtractReplyContent removes quoted content from email body
