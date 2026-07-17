@@ -376,9 +376,9 @@ class ItemDetailStore {
       // the core detail surface can render as soon as the critical data lands.
       this.#syncEditingFromItem();
 
-      // Resolve the workspace's configuration set once. Priorities and screen-
-      // field resolution both need it; fetching it twice was a redundant round
-      // trip on every item open.
+      // Resolve the workspace's configuration set once for screen-field
+      // resolution. Priority options use the workspace endpoint so its default
+      // fallback semantics stay consistent with create and collection pickers.
       const configSet = this.workspace?.configuration_set_id
         ? await api.configurationSets
             .get(this.workspace.configuration_set_id, requestOptions)
@@ -394,7 +394,7 @@ class ItemDetailStore {
       // set are known. Running them together removes the former priorities →
       // item-types → children → screens → diagrams → actions waterfall.
       await Promise.all([
-        this.#loadPriorities(configSet, requestOptions),
+        this.#loadPriorities(requestOptions),
         this.#loadAvailableStatusTransitions(requestOptions),
         this.#loadWatchStatus(requestOptions),
         this.#loadItemTypeData(requestOptions),
@@ -704,26 +704,12 @@ class ItemDetailStore {
     this.itemLinks = links;
   }
 
-  /**
-   * @param {object|null} [configSet] Pre-resolved configuration set from the
-   *   caller (loadItem resolves it once and shares it). Pass `undefined` to let
-   *   this method fetch it itself; pass `null` to signal "configured but the
-   *   fetch failed" (yields no priorities, matching the old error path).
-   */
-  async #loadPriorities(configSet = undefined, requestOptions = {}) {
+  async #loadPriorities(requestOptions = {}) {
     if (!this.workspace) return;
     try {
-      if (this.workspace.configuration_set_id) {
-        const cs =
-          configSet !== undefined
-            ? configSet
-            : await api.configurationSets.get(this.workspace.configuration_set_id, requestOptions);
-        this.priorities = cs?.priorities_detailed || [];
-      } else {
-        this.priorities = hasSharedWorkspaceReferences(this.workspaceId)
-          ? workspaceDataStore.priorities
-          : await api.priorities.getAll({}, requestOptions);
-      }
+      this.priorities = hasSharedWorkspaceReferences(this.workspaceId)
+        ? workspaceDataStore.priorities
+        : await api.workspaces.getPriorities(this.workspaceId, requestOptions);
       this.priorities = this.priorities.sort((a, b) => a.sort_order - b.sort_order);
     } catch (err) {
       if (isAbortError(err)) return;

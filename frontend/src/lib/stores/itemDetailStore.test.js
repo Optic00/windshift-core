@@ -32,6 +32,7 @@ vi.mock('../api.js', () => ({
     workspaces: {
       get: vi.fn(),
       getAll: vi.fn(),
+      getPriorities: vi.fn(),
     },
     linkTypes: {
       getAll: vi.fn(),
@@ -76,6 +77,7 @@ const { workspaceDataStore } = await import('./workspaceDataStore.svelte.js');
 
 function mockSuccessfulRelatedLoads() {
   api.workspaces.get.mockResolvedValue({ id: 1, configuration_set_id: null });
+  api.workspaces.getPriorities.mockResolvedValue([]);
   api.linkTypes.getAll.mockResolvedValue([]);
   api.links.getForItem.mockResolvedValue({ outgoing: [], incoming: [] });
   api.customFields.getAll.mockResolvedValue({ data: [] });
@@ -188,6 +190,7 @@ describe('itemDetailStore.loadItem request graph', () => {
     expect(api.milestones.getAll).not.toHaveBeenCalled();
     expect(api.iterations.getAll).not.toHaveBeenCalled();
     expect(api.priorities.getAll).not.toHaveBeenCalled();
+    expect(api.workspaces.getPriorities).not.toHaveBeenCalled();
     expect(api.itemTypes.getAll).not.toHaveBeenCalled();
     expect(api.time.projects.getByWorkspace).not.toHaveBeenCalled();
     expect(api.getDiagrams).toHaveBeenCalledWith(42, {

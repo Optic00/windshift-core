@@ -24,13 +24,7 @@ const OPTION_LOADERS = {
   milestones: (workspaceId) =>
     api.milestones.getAll({ workspace_id: workspaceId, include_global: true }),
   iterations: (workspaceId) => api.iterations.getAll({ workspace_id: workspaceId }),
-  priorities: async (workspaceId) => {
-    const workspace = await api.workspaces.get(workspaceId);
-    const configurationSetId = workspace?.configuration_set_id;
-    return api.priorities.getAll(
-      configurationSetId ? { configuration_set_id: configurationSetId } : {}
-    );
-  },
+  priorities: (workspaceId) => api.workspaces.getPriorities(workspaceId),
   projects: (workspaceId) => api.workspaces.getProjects(workspaceId),
   portalCustomers: () => api.portalCustomers.getAll(),
   customerOrganisations: () => api.customerOrganisations.getAll(),

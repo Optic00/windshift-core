@@ -65,8 +65,8 @@ func IsItemTypeAllowedInWorkspace(db database.Database, workspaceID, itemTypeID 
 
 // IsPriorityAllowedInWorkspace verifies that the priority exists and is
 // available through the workspace's configuration set. Workspaces without a
-// configuration set retain the legacy behavior where every global priority is
-// available.
+// configuration set, or whose configuration set has no explicit priority
+// assignments, use the default global priority catalog.
 func IsPriorityAllowedInWorkspace(db database.Database, workspaceID, priorityID int) (bool, error) {
 	var priorityExists bool
 	if err := db.QueryRow(
@@ -93,8 +93,10 @@ func IsPriorityAllowedInWorkspace(db database.Database, workspaceID, priorityID 
 
 	var allowed bool
 	if err := db.QueryRow(
-		"SELECT EXISTS(SELECT 1 FROM configuration_set_priorities WHERE configuration_set_id = ? AND priority_id = ?)",
-		*configSetID, priorityID,
+		`SELECT
+			NOT EXISTS(SELECT 1 FROM configuration_set_priorities WHERE configuration_set_id = ?)
+			OR EXISTS(SELECT 1 FROM configuration_set_priorities WHERE configuration_set_id = ? AND priority_id = ?)`,
+		*configSetID, *configSetID, priorityID,
 	).Scan(&allowed); err != nil {
 		return false, fmt.Errorf("failed to check priority in config set: %w", err)
 	}

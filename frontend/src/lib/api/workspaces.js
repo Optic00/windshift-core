@@ -17,6 +17,8 @@ export const workspaces = {
     }),
   getStatuses: (id) => fetchAPI(`/workspaces/${id}/statuses`),
   getItemTypes: (id) => fetchAPI(`/workspaces/${id}/item-types`),
+  getPriorities: (id, requestOptions = {}) =>
+    fetchAPI(`/workspaces/${id}/priorities`, requestOptions),
   // Allowed status transitions for every (item_type_id, status_id) pair in the
   // workspace, keyed "<itemTypeId>:<statusId>". One request replaces the
   // board's per-pair /items/{id}/available-status-transitions preload.

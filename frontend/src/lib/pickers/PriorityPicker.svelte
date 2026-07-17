@@ -58,17 +58,9 @@
       loading = true;
       error = null;
 
-      // Get workspace to find its configuration set
-      const workspace = await api.workspaces.get(workspaceId);
-
-      if (workspace.configuration_set_id) {
-        // Load priorities from configuration set
-        const configSet = await api.configurationSets.get(workspace.configuration_set_id);
-        priorities = configSet.priorities_detailed || [];
-      } else {
-        // No configuration set - load all priorities
-        priorities = await api.priorities.getAll();
-      }
+      // The workspace endpoint applies configuration-set restrictions and
+      // falls back to the default priority catalog when none are assigned.
+      priorities = await api.workspaces.getPriorities(workspaceId);
 
       // Sort by sort_order
       priorities = priorities.sort((a, b) => a.sort_order - b.sort_order);
