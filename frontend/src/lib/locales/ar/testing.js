@@ -25,6 +25,7 @@ export default {
     addTestPlan: 'إضافة خطة اختبار',
     createFirstTestPlan: 'أنشئ أول خطة اختبار لتنظيم حالات الاختبار',
     lastRun: 'آخر تشغيل',
+    neverRun: 'لم يتم التشغيل مطلقًا',
     deleteFolder: 'حذف المجلد',
     deleteStep: 'حذف الخطوة',
     steps: 'الخطوات',

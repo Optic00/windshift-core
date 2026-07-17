@@ -1096,6 +1096,7 @@
   isOpen={showFolderForm}
   onclose={() => showFolderForm = false}
   maxWidth="max-w-md"
+  closeOnBackdropClick={false}
 >
   <div class="p-6">
     <h3 class="text-lg font-semibold mb-4" style="color: var(--ds-text);">

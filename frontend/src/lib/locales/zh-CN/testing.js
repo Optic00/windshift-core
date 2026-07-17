@@ -18,6 +18,7 @@ export default {
     addTestPlan: '添加测试计划',
     createFirstTestPlan: '创建您的第一个测试计划以组织测试用例',
     lastRun: '上次运行',
+    neverRun: '从未运行',
     deleteFolder: '删除文件夹',
     deleteStep: '删除步骤',
     steps: '步骤',

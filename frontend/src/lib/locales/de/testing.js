@@ -23,6 +23,7 @@ export default {
     addTestPlan: 'Testplan hinzufügen',
     createFirstTestPlan: 'Erstellen Sie Ihren ersten Testplan, um Testfälle zu organisieren',
     lastRun: 'Letzter Lauf',
+    neverRun: 'Noch nie ausgeführt',
     deleteFolder: 'Ordner löschen',
     deleteStep: 'Schritt löschen',
     steps: 'Schritte',

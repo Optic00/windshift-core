@@ -29,6 +29,7 @@ export default {
     overwrite: 'Overwrite',
     generateFailed: 'Failed to generate description.',
     lastRun: 'Last Run',
+    neverRun: 'Never run',
     deleteFolder: 'Delete Folder',
     deleteStep: 'Delete Step',
     steps: 'Steps',

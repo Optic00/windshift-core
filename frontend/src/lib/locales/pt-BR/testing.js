@@ -25,6 +25,7 @@ export default {
     addTestPlan: 'Adicionar Plano de Teste',
     createFirstTestPlan: 'Crie seu primeiro plano de teste para organizar casos de teste',
     lastRun: 'Última Execução',
+    neverRun: 'Nunca executado',
     deleteFolder: 'Excluir Pasta',
     deleteStep: 'Excluir Etapa',
     steps: 'Etapas',
