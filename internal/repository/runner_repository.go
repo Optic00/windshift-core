@@ -49,6 +49,24 @@ func (r *RunnerRepository) InsertRegistrationToken(ctx context.Context, poolID i
 	return int(id), nil
 }
 
+// IsEnabledRunnerPool reports whether poolID still names an enabled
+// runner_pool capability. Runner control-plane rows intentionally use soft
+// references so they remain available for audit after pool deletion; runtime
+// registration and claim paths must therefore enforce this relationship.
+func (r *RunnerRepository) IsEnabledRunnerPool(ctx context.Context, poolID int) (bool, error) {
+	var enabled bool
+	err := r.db.QueryRowContext(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM action_capabilities
+			WHERE id = ? AND capability_type = ? AND is_enabled = true
+		)
+	`, poolID, models.CapabilityRunnerPool).Scan(&enabled)
+	if err != nil {
+		return false, fmt.Errorf("check enabled runner pool: %w", err)
+	}
+	return enabled, nil
+}
+
 // GetActiveRegistrationTokenByHash returns the registration token matching
 // the hash that is neither revoked nor expired as of now. Returns
 // sql.ErrNoRows when no such active token exists.
@@ -86,7 +104,13 @@ func (r *RunnerRepository) ConsumeRegistrationToken(ctx context.Context, id int,
 	res, err := r.db.ExecWriteContext(ctx, `
 		UPDATE runner_registration_tokens SET revoked_at = ?
 		WHERE id = ? AND revoked_at IS NULL
-	`, now, id)
+		  AND EXISTS (
+			SELECT 1 FROM action_capabilities ac
+			WHERE ac.id = runner_registration_tokens.pool_capability_id
+			  AND ac.capability_type = ?
+			  AND ac.is_enabled = true
+		  )
+	`, now, id, models.CapabilityRunnerPool)
 	if err != nil {
 		return false, fmt.Errorf("consume runner registration token: %w", err)
 	}

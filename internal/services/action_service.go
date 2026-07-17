@@ -1105,11 +1105,23 @@ func (as *ActionService) executeSetField(node *models.ActionNode, ctx *models.Ex
 
 	value := as.substituteVariables(config.Value, ctx)
 
-	if config.Target == "custom_field" {
+	switch config.Target {
+	case "custom_field":
 		return as.executeSetFieldCustom(ctx, stepResult, config, value)
+	case "", "column":
+		// Continue below. Empty is the legacy representation for a column.
+	default:
+		return fmt.Errorf("set_field: unsupported target %q", config.Target)
 	}
 	if config.FieldName == "milestone_ids" || config.FieldName == "milestone_id" {
 		return as.executeSetFieldMilestones(ctx, stepResult, value)
+	}
+	if config.FieldName == "status_id" {
+		statusID, err := parsePositiveActionID("status_id", value)
+		if err != nil {
+			return fmt.Errorf("set_field: %w", err)
+		}
+		return as.executeSetStatusID(statusID, ctx, stepResult)
 	}
 	return as.executeSetFieldColumn(ctx, stepResult, config, value)
 }
@@ -1211,11 +1223,10 @@ func parseActionMilestoneIDs(value string) ([]int, error) {
 func (as *ActionService) executeSetFieldColumn(ctx *models.ExecutionContext, stepResult *models.StepResult, config models.SetFieldNodeConfig, value string) error {
 	itemID := currentActionItemID(ctx)
 	workspaceID := currentActionWorkspaceID(ctx)
-	// Reject field names that aren't part of the items-table allowlist —
-	// config.FieldName is attacker-controlled (workspace admin writes node config),
-	// and it's interpolated into the SELECT below.
-	if !repository.IsAllowedItemColumn(config.FieldName) {
-		return fmt.Errorf("set_field: field %q is not a writable item column", config.FieldName)
+	fieldName := strings.TrimSpace(config.FieldName)
+	typedValue, err := parseActionSetFieldValue(fieldName, value)
+	if err != nil {
+		return err
 	}
 
 	if err := as.authorizeWorkspaceMutation(ctx.EffectiveActorID, workspaceID, models.PermissionItemEdit); err != nil {
@@ -1224,54 +1235,132 @@ func (as *ActionService) executeSetFieldColumn(ctx *models.ExecutionContext, ste
 
 	// Get current field value for event emission (best effort).
 	var oldValue interface{}
-	if val, err := as.itemRepo.GetAllowedColumnValue(itemID, config.FieldName); err == nil {
+	if val, err := as.itemRepo.GetAllowedColumnValue(itemID, fieldName); err == nil {
 		oldValue = val
 	} else {
 		slog.Debug("failed to get current field value for cascade event",
 			slog.String("component", "actions"),
-			slog.String("field_name", config.FieldName),
+			slog.String("field_name", fieldName),
 			slog.Int("item_id", itemID),
 			slog.Any("error", err),
 		)
 	}
 
-	tx, err := as.db.BeginTx(context.Background(), nil)
+	// Route ordinary fields through the same domain service as interactive
+	// edits. This restores type/FK checks, hierarchy-cycle protection,
+	// sanitization, history, live updates, and assignment hooks that a raw
+	// items-table UPDATE bypassed.
+	updateService := NewItemUpdateService(as.db).WithPermissionService(as.permissionService)
+	result, err := updateService.UpdateItem(UpdateItemRequest{
+		ItemID:     itemID,
+		UpdateData: map[string]interface{}{fieldName: typedValue},
+		UserID:     ctx.EffectiveActorID,
+	})
 	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	if err := as.itemRepo.UpdateFields(tx, itemID, map[string]interface{}{
-		config.FieldName: value,
-	}); err != nil {
 		return err
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit: %w", err)
-	}
 
-	// Live-update publish (WI-483): this action writes an item field column
-	// directly, bypassing ItemUpdateService.
-	PublishItemChange(itemID, ItemChangeUpdated)
+	newValue := typedValue
+	if val, readErr := as.itemRepo.GetAllowedColumnValue(itemID, fieldName); readErr == nil {
+		newValue = val
+	}
+	oldValues := make(map[string]interface{}, len(result.FieldChanges))
+	newValues := make(map[string]interface{}, len(result.FieldChanges))
+	for _, change := range result.FieldChanges {
+		oldValues[change.FieldName] = change.OldValue
+		newValues[change.FieldName] = change.NewValue
+		if change.FieldName == fieldName {
+			oldValue = change.OldValue
+			newValue = change.NewValue
+		}
+	}
 
 	stepResult.Output = map[string]interface{}{
-		"field_name": config.FieldName,
+		"field_name": fieldName,
 		"old_value":  oldValue,
-		"new_value":  value,
+		"new_value":  newValue,
 	}
 
-	as.EmitActionEvent(&models.ActionEvent{
-		EventType:         models.ActionTriggerItemUpdated,
-		WorkspaceID:       workspaceID,
-		ItemID:            itemID,
-		ActorUserID:       ctx.EffectiveActorID,
-		OldValues:         map[string]interface{}{config.FieldName: oldValue},
-		NewValues:         map[string]interface{}{config.FieldName: value},
-		TriggeredByAction: true,
-		ExecutionChainID:  ctx.ChainID,
-		CascadeDepth:      ctx.Event.CascadeDepth + 1,
-	})
+	if len(result.FieldChanges) > 0 {
+		as.EmitActionEvent(&models.ActionEvent{
+			EventType:         models.ActionTriggerItemUpdated,
+			WorkspaceID:       workspaceID,
+			ItemID:            itemID,
+			ActorUserID:       ctx.EffectiveActorID,
+			OldValues:         oldValues,
+			NewValues:         newValues,
+			TriggeredByAction: true,
+			ExecutionChainID:  ctx.ChainID,
+			CascadeDepth:      ctx.Event.CascadeDepth + 1,
+		})
+	}
 
 	return nil
+}
+
+func parseActionSetFieldValue(fieldName, value string) (interface{}, error) {
+	trimmed := strings.TrimSpace(value)
+	isNull := trimmed == "" || strings.EqualFold(trimmed, "null")
+
+	switch fieldName {
+	case "title", "description":
+		return value, nil
+	case "priority_id", "iteration_id", "project_id", "time_project_id", "assignee_id", "creator_id", "parent_id", "related_work_item_id":
+		if isNull {
+			return nil, nil
+		}
+		return parsePositiveActionID(fieldName, trimmed)
+	case "due_date", "start_date", "end_date":
+		if isNull {
+			return nil, nil
+		}
+		return trimmed, nil
+	case "story_points":
+		if isNull {
+			return nil, nil
+		}
+		parsed, err := strconv.ParseFloat(trimmed, 64)
+		if err != nil {
+			return nil, fmt.Errorf("set_field: field %q requires a number: %w", fieldName, err)
+		}
+		return parsed, nil
+	case "estimate_minutes":
+		if isNull {
+			return nil, nil
+		}
+		parsed, err := strconv.Atoi(trimmed)
+		if err != nil {
+			return nil, fmt.Errorf("set_field: field %q requires an integer: %w", fieldName, err)
+		}
+		return parsed, nil
+	case "inherit_project", "is_task":
+		parsed, err := strconv.ParseBool(trimmed)
+		if err != nil {
+			return nil, fmt.Errorf("set_field: field %q requires true or false: %w", fieldName, err)
+		}
+		return parsed, nil
+	case "item_type_id":
+		return nil, fmt.Errorf("set_field: item_type_id must be changed through the item type change workflow")
+	case "status_id":
+		return nil, fmt.Errorf("set_field: status_id must be changed through the workflow transition path")
+	case "custom_field_values":
+		return nil, fmt.Errorf("set_field: use a custom_field target to change custom fields")
+	case "frac_index":
+		return nil, fmt.Errorf("set_field: frac_index must be changed through the item reorder workflow")
+	default:
+		return nil, fmt.Errorf("set_field: field %q is not a supported item field", fieldName)
+	}
+}
+
+func parsePositiveActionID(fieldName, value string) (int, error) {
+	id, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil {
+		return 0, fmt.Errorf("field %q requires a positive integer: %w", fieldName, err)
+	}
+	if id <= 0 {
+		return 0, fmt.Errorf("field %q requires a positive integer", fieldName)
+	}
+	return id, nil
 }
 
 func (as *ActionService) executeSetFieldCustom(ctx *models.ExecutionContext, stepResult *models.StepResult, config models.SetFieldNodeConfig, value string) error {
@@ -1391,7 +1480,10 @@ func (as *ActionService) executeSetStatus(node *models.ActionNode, ctx *models.E
 	if err := json.Unmarshal([]byte(node.NodeConfig), &config); err != nil {
 		return fmt.Errorf("failed to parse set_status config: %w", err)
 	}
+	return as.executeSetStatusID(config.StatusID, ctx, stepResult)
+}
 
+func (as *ActionService) executeSetStatusID(statusID int, ctx *models.ExecutionContext, stepResult *models.StepResult) error {
 	itemID := currentActionItemID(ctx)
 	workspaceID := currentActionWorkspaceID(ctx)
 	if err := as.authorizeWorkspaceMutation(ctx.EffectiveActorID, workspaceID, models.PermissionItemEdit); err != nil {
@@ -1401,7 +1493,7 @@ func (as *ActionService) executeSetStatus(node *models.ActionNode, ctx *models.E
 	workflowService := NewWorkflowService(as.db)
 	result, err := workflowService.PerformTransition(context.Background(), PerformTransitionRequest{
 		ItemID:      itemID,
-		ToStatusID:  config.StatusID,
+		ToStatusID:  statusID,
 		ActorUserID: ctx.EffectiveActorID,
 		// Automations skip conditions — empty modes enforces only workflow validity.
 		Modes: nil,
@@ -1411,7 +1503,7 @@ func (as *ActionService) executeSetStatus(node *models.ActionNode, ctx *models.E
 			slog.Warn("set_status action rejected by workflow",
 				slog.String("component", "actions"),
 				slog.Int("item_id", itemID),
-				slog.Int("to_status_id", config.StatusID),
+				slog.Int("to_status_id", statusID),
 				slog.String("reason", rej.Code),
 				slog.String("message", rej.Message),
 			)
@@ -1424,7 +1516,7 @@ func (as *ActionService) executeSetStatus(node *models.ActionNode, ctx *models.E
 	if result.OldStatusID != nil {
 		oldStatusID = *result.OldStatusID
 	}
-	newStatusID := config.StatusID
+	newStatusID := statusID
 	if result.NewStatusID != nil {
 		newStatusID = *result.NewStatusID
 	}
@@ -2538,6 +2630,21 @@ func (as *ActionService) GetStats() map[string]int64 {
 // ExecuteActionManually executes a specific action for a given item.
 // This bypasses the normal trigger matching and directly executes the action.
 func (as *ActionService) ExecuteActionManually(action *models.Action, itemID, actorUserID int) error {
+	if action == nil {
+		return fmt.Errorf("manual action execution requires an action")
+	}
+	if as.itemRepo == nil {
+		return fmt.Errorf("manual action execution requires an item repository")
+	}
+
+	itemWorkspaceID, err := as.itemRepo.GetWorkspaceID(itemID)
+	if err != nil {
+		return fmt.Errorf("resolve manual action item %d workspace: %w", itemID, err)
+	}
+	if itemWorkspaceID != action.WorkspaceID {
+		return fmt.Errorf("item %d belongs to workspace %d, not action workspace %d", itemID, itemWorkspaceID, action.WorkspaceID)
+	}
+
 	slog.Debug("executing action manually",
 		slog.String("component", "actions"),
 		slog.Int("action_id", action.ID),

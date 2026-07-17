@@ -400,6 +400,7 @@ class ItemDetailStore {
         this.#loadItemTypeData(requestOptions),
         this.loadChildItems(requestOptions),
         this.#loadWorkspaceScreenFields(configSet, requestOptions),
+        this.loadDiagrams(),
         this.#loadManualActions(requestOptions),
       ]);
       if (token !== this.#loadToken) return;

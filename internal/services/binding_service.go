@@ -1138,6 +1138,14 @@ func (s *BindingService) startRunForBinding(ctx context.Context, binding *models
 		s.logger.Printf("binding service: matched binding=%d for item=%d but no RunService is configured (dropping)", binding.ID, itemID)
 		return nil
 	}
+	// A binding can outlive the pool capability it was configured with. Recheck
+	// enabled/type/workspace scope at every dispatch so disabling, deleting, or
+	// narrowing a pool takes effect immediately for existing bindings too.
+	if binding.TargetPoolID != nil {
+		if err := s.validateTargetPool(workspaceID, *binding.TargetPoolID); err != nil {
+			return err
+		}
+	}
 
 	if binding.MaxRunsPerDay > 0 {
 		// Use a rolling 24h window rather than calendar day: simpler to

@@ -120,7 +120,10 @@ describe('itemDetailStore.loadItem request graph', () => {
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     );
     expect(api.items.get).not.toHaveBeenCalled();
-    expect(api.getDiagrams).not.toHaveBeenCalled();
+    expect(api.getDiagrams).toHaveBeenCalledWith(42, {
+      signal: expect.any(AbortSignal),
+    });
+    expect(itemDetailStore.diagramsLoaded).toBe(true);
     expect(itemDetailStore.item).toMatchObject(resolvedItem);
     expect(itemDetailStore.itemId).toBe(42);
   });
@@ -158,7 +161,7 @@ describe('itemDetailStore.loadItem request graph', () => {
     expect(itemDetailStore.error).toBeNull();
   });
 
-  it('reuses initialized workspace references and leaves diagrams lazy', async () => {
+  it('reuses initialized workspace references and loads diagrams', async () => {
     workspaceDataStore.workspaceId = 1;
     workspaceDataStore.workspace = { id: 1, configuration_set_id: null };
     workspaceDataStore.customFieldDefinitions = [{ id: 7, name: 'Shared field' }];
@@ -187,7 +190,10 @@ describe('itemDetailStore.loadItem request graph', () => {
     expect(api.priorities.getAll).not.toHaveBeenCalled();
     expect(api.itemTypes.getAll).not.toHaveBeenCalled();
     expect(api.time.projects.getByWorkspace).not.toHaveBeenCalled();
-    expect(api.getDiagrams).not.toHaveBeenCalled();
+    expect(api.getDiagrams).toHaveBeenCalledWith(42, {
+      signal: expect.any(AbortSignal),
+    });
+    expect(itemDetailStore.diagramsLoaded).toBe(true);
     expect(itemDetailStore.customFieldDefinitions).toEqual([{ id: 7, name: 'Shared field' }]);
     expect(itemDetailStore.milestones).toEqual([{ id: 8, name: 'Shared milestone' }]);
     expect(itemDetailStore.iterations).toEqual([{ id: 10, name: 'Shared iteration' }]);
@@ -336,7 +342,7 @@ describe('itemDetailStore optional item data', () => {
     expect(itemDetailStore.workspaces).toEqual([{ id: 3 }]);
   });
 
-  it('loads diagrams only on demand and single-flights the request', async () => {
+  it('single-flights diagram requests and caches the result', async () => {
     let resolveDiagrams;
     api.getDiagrams.mockReturnValue(
       new Promise((resolve) => {

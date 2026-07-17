@@ -331,11 +331,24 @@ func (r *AgentRunRepository) ClaimQueuedForRunner(ctx context.Context, poolID, n
 	const maxAttempts = 16
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		row := r.db.QueryRowContext(ctx, `
-			SELECT id FROM agent_runs
-			WHERE status = ? AND target_pool_id = ?
-			ORDER BY queued_at ASC
+			SELECT ar.id
+			FROM agent_runs ar
+			JOIN action_capabilities ac ON ac.id = ar.target_pool_id
+			WHERE ar.status = ?
+			  AND ar.target_pool_id = ?
+			  AND ac.capability_type = ?
+			  AND ac.is_enabled = true
+			  AND (
+				ac.applies_to_all_workspaces = true
+				OR EXISTS (
+					SELECT 1 FROM action_capability_workspaces acw
+					WHERE acw.capability_id = ac.id
+					  AND acw.workspace_id = ar.workspace_id
+				)
+			  )
+			ORDER BY ar.queued_at ASC
 			LIMIT 1
-		`, models.AgentRunStatusQueued, poolID)
+		`, models.AgentRunStatusQueued, poolID, models.CapabilityRunnerPool)
 		var id int
 		switch err := row.Scan(&id); err {
 		case sql.ErrNoRows:
@@ -350,9 +363,23 @@ func (r *AgentRunRepository) ClaimQueuedForRunner(ctx context.Context, poolID, n
 			UPDATE agent_runs
 			SET status = ?, runner_id = ?, started_at = ?, updated_at = ?
 			WHERE id = ? AND status = ?
+			  AND EXISTS (
+				SELECT 1 FROM action_capabilities ac
+				WHERE ac.id = agent_runs.target_pool_id
+				  AND ac.capability_type = ?
+				  AND ac.is_enabled = true
+				  AND (
+					ac.applies_to_all_workspaces = true
+					OR EXISTS (
+						SELECT 1 FROM action_capability_workspaces acw
+						WHERE acw.capability_id = ac.id
+						  AND acw.workspace_id = agent_runs.workspace_id
+					)
+				  )
+			  )
 		`,
 			models.AgentRunStatusRunning, nextRunnerID, now, now,
-			id, models.AgentRunStatusQueued,
+			id, models.AgentRunStatusQueued, models.CapabilityRunnerPool,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("claim queued: mark running: %w", err)

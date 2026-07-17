@@ -9,6 +9,7 @@ import (
 
 	"windshift/internal/models"
 	"windshift/internal/sanitize"
+	"windshift/internal/services"
 )
 
 // Runner-pool admin lifecycle (WI-177). These endpoints hang off the
@@ -100,6 +101,10 @@ func (h *RunnerControlHandler) MintRunnerToken(w http.ResponseWriter, r *http.Re
 	full, tok, err := h.registry.MintRegistrationToken(
 		r.Context(), poolID, &createdBy, req.Description, time.Duration(ttlHours)*time.Hour,
 	)
+	if errors.Is(err, services.ErrRunnerPoolUnavailable) {
+		respondConflict(w, r, "runner pool is disabled")
+		return
+	}
 	if err != nil {
 		respondInternalError(w, r, err)
 		return

@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -31,6 +32,166 @@ func TestActionServicesRejectDisabledActions(t *testing.T) {
 	}
 	if err := (&AssetActionService{}).executeAction(&models.AssetAction{ID: 5}, nil, nil); err == nil || !strings.Contains(err.Error(), "disabled") {
 		t.Fatalf("asset action error = %v, want disabled", err)
+	}
+}
+
+func TestExecuteActionManuallyRejectsItemFromAnotherWorkspace(t *testing.T) {
+	db, err := database.NewSQLiteDB(filepath.Join(t.TempDir(), "manual-action-workspace.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteDB: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := db.Initialize(); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+
+	insertID := func(query string, args ...interface{}) int {
+		t.Helper()
+		var id int
+		if err := db.QueryRow(query, args...).Scan(&id); err != nil {
+			t.Fatalf("insert fixture: %v", err)
+		}
+		return id
+	}
+	actionWorkspaceID := insertID(`INSERT INTO workspaces (name, key) VALUES ('Action workspace', 'AWX') RETURNING id`)
+	itemWorkspaceID := insertID(`INSERT INTO workspaces (name, key) VALUES ('Item workspace', 'IWX') RETURNING id`)
+	itemID := insertID(`INSERT INTO items (workspace_id, workspace_item_number, title) VALUES (?, 1, 'Foreign item') RETURNING id`, itemWorkspaceID)
+
+	service := &ActionService{itemRepo: repository.NewItemRepository(db)}
+	err = service.ExecuteActionManually(&models.Action{
+		ID:          7,
+		Name:        "Workspace-bound action",
+		WorkspaceID: actionWorkspaceID,
+		IsEnabled:   true,
+	}, itemID, 42)
+	if err == nil || !strings.Contains(err.Error(), "not action workspace") {
+		t.Fatalf("ExecuteActionManually error = %v, want cross-workspace rejection", err)
+	}
+}
+
+func TestSetFieldUsesValidatedItemUpdatePath(t *testing.T) {
+	db, err := database.NewSQLiteDB(filepath.Join(t.TempDir(), "action-set-field.db"))
+	if err != nil {
+		t.Fatalf("NewSQLiteDB: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := db.Initialize(); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+
+	insertID := func(query string, args ...interface{}) int {
+		t.Helper()
+		var id int
+		if err := db.QueryRow(query, args...).Scan(&id); err != nil {
+			t.Fatalf("insert fixture: %v", err)
+		}
+		return id
+	}
+	actorID := insertID(`INSERT INTO users (email, username, first_name, last_name) VALUES ('set-field@example.test', 'set-field', 'Set', 'Field') RETURNING id`)
+	workspaceID := insertID(`INSERT INTO workspaces (name, key) VALUES ('Set field', 'SFX') RETURNING id`)
+	itemID := insertID(`INSERT INTO items (workspace_id, workspace_item_number, title, description) VALUES (?, 1, 'Cycle target', '') RETURNING id`, workspaceID)
+
+	permissionService, err := NewPermissionService(db, PermissionCacheConfig{
+		TTL:          time.Minute,
+		MaxCacheSize: 8,
+		BatchSize:    10,
+	})
+	if err != nil {
+		t.Fatalf("NewPermissionService: %v", err)
+	}
+	t.Cleanup(func() { _ = permissionService.cache.Close() })
+	now := time.Now()
+	if err := permissionService.storeUserPermissionCache(actorID, &models.UserPermissionCache{
+		UserID: actorID,
+		WorkspacePermissions: map[int]map[string]bool{
+			workspaceID: {models.PermissionItemEdit: true},
+		},
+		CachedAt:  now,
+		ExpiresAt: now.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("store permission snapshot: %v", err)
+	}
+
+	service := &ActionService{
+		db:                db,
+		itemRepo:          repository.NewItemRepository(db),
+		permissionService: permissionService,
+	}
+	ctx := &models.ExecutionContext{
+		Event: &models.ActionEvent{
+			WorkspaceID: workspaceID,
+			ItemID:      itemID,
+		},
+		EffectiveActorID: actorID,
+	}
+	err = service.executeSetFieldColumn(ctx, &models.StepResult{}, models.SetFieldNodeConfig{
+		FieldName: "parent_id",
+	}, fmt.Sprintf("%d", itemID))
+	if err == nil || !strings.Contains(err.Error(), "own parent") {
+		t.Fatalf("executeSetFieldColumn error = %v, want hierarchy-cycle rejection", err)
+	}
+
+	var parentID *int
+	if err := db.QueryRow(`SELECT parent_id FROM items WHERE id = ?`, itemID).Scan(&parentID); err != nil {
+		t.Fatalf("load parent_id: %v", err)
+	}
+	if parentID != nil {
+		t.Fatalf("parent_id = %v, want unchanged nil", *parentID)
+	}
+}
+
+func TestSetFieldRejectsDedicatedWorkflowColumns(t *testing.T) {
+	tests := []struct {
+		field string
+		want  string
+	}{
+		{field: "item_type_id", want: "item type change workflow"},
+		{field: "status_id", want: "workflow transition"},
+		{field: "custom_field_values", want: "custom_field target"},
+		{field: "frac_index", want: "reorder workflow"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.field, func(t *testing.T) {
+			if _, err := parseActionSetFieldValue(tt.field, "1"); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("parseActionSetFieldValue(%q) error = %v, want %q", tt.field, err, tt.want)
+			}
+		})
+	}
+
+	// The public set_field dispatcher keeps legacy status configs working, but
+	// only by handing them to executeSetStatusID. Reaching the permission gate
+	// (instead of the raw-column rejection above) proves that routing.
+	service := &ActionService{}
+	err := service.executeSetField(&models.ActionNode{
+		NodeConfig: `{"target":"column","field_name":"status_id","value":"7"}`,
+	}, &models.ExecutionContext{
+		Event:            &models.ActionEvent{WorkspaceID: 3, ItemID: 4},
+		EffectiveActorID: 5,
+		Variables:        map[string]interface{}{},
+	}, &models.StepResult{})
+	if err == nil || !strings.Contains(err.Error(), "permission service not configured") {
+		t.Fatalf("status set_field dispatch error = %v, want workflow path permission gate", err)
+	}
+}
+
+type emptyRunnerPoolLister struct{}
+
+func (emptyRunnerPoolLister) ListCapabilitiesForWorkspace(int, string) ([]*models.ActionCapability, error) {
+	return nil, nil
+}
+
+func TestBindingDispatchRevalidatesStoredRunnerPool(t *testing.T) {
+	poolID := 91
+	service := &BindingService{
+		runs:  &RunService{},
+		pools: emptyRunnerPoolLister{},
+	}
+	err := service.startRunForBinding(context.Background(), &models.WorkspaceAgentBinding{
+		ID:           13,
+		TargetPoolID: &poolID,
+	}, 5, 8, 21, &models.RunTrigger{Kind: "assignee"})
+	if !errors.Is(err, ErrBindingInvalidPool) {
+		t.Fatalf("startRunForBinding error = %v, want ErrBindingInvalidPool", err)
 	}
 }
 

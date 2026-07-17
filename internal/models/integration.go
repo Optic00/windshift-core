@@ -987,8 +987,9 @@ type IterationResult struct {
 // SetFieldNodeConfig configures a set_field node.
 //
 // A node targets either a real items-table column or a custom field:
-//   - Target == "" or "column": update items.<FieldName>. FieldName must pass
-//     repository.IsAllowedItemColumn.
+//   - Target == "" or "column": update a supported item field through its
+//     domain service. Status changes are routed through workflow transitions;
+//     item type and ordering changes require their dedicated workflows.
 //   - Target == "custom_field": update a single key inside items.custom_field_values.
 //     CustomFieldID must reference a row in custom_field_definitions.
 //

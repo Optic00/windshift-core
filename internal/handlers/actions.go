@@ -687,6 +687,24 @@ func (h *ActionsHandler) ExecuteAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Manual execution must never combine an action from one workspace with an
+	// item from another. Permission on the item's own workspace is not enough:
+	// the action's capabilities, credentials, and configuration are scoped to
+	// the workspace in the route.
+	itemWorkspaceID, err := h.itemRepo.GetWorkspaceIDCtx(r.Context(), req.ItemID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			respondNotFound(w, r, "Item")
+		} else {
+			respondInternalError(w, r, err)
+		}
+		return
+	}
+	if itemWorkspaceID != workspaceID {
+		respondNotFound(w, r, "Item")
+		return
+	}
+
 	// Verify user has edit permission on the item's workspace
 	if !CheckItemPermission(w, r, h.itemRepo, h.permissionService, req.ItemID, models.PermissionItemEdit) {
 		return

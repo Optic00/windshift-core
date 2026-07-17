@@ -710,6 +710,7 @@
         <label for="config-set-field-name" class="block text-xs font-medium mb-1">{t('actions.config.fieldName')}</label>
         <FieldSelector
           selectedField={getFieldSelectorValue(selectedNode.data?.config)}
+          excludedFieldIds={['itemType', 'createdAt', 'updatedAt', 'labels']}
           onSelect={(field) => {
             store.updateNodeConfig(selectedNode.id, setFieldConfigForSelection(field));
           }}

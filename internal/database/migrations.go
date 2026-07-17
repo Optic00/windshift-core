@@ -2133,6 +2133,14 @@ var Catalog = []Migration{
 				WHERE field_name = 'status_id';
 		`,
 	},
+	{
+		Version:       "20260717_portal_customer_default_contact_role",
+		Name:          "Seed default Portal Customer contact role",
+		CheckSQLite:   "SELECT COUNT(*) FROM contact_roles WHERE name = 'Portal Customer'",
+		CheckPostgres: "SELECT COUNT(*) FROM contact_roles WHERE name = 'Portal Customer'",
+		SQLite:        "INSERT OR IGNORE INTO contact_roles (name, description, is_system) VALUES ('Portal Customer', 'Default role assigned to portal customers', true)",
+		Postgres:      "INSERT INTO contact_roles (name, description, is_system) VALUES ('Portal Customer', 'Default role assigned to portal customers', true) ON CONFLICT (name) DO NOTHING",
+	},
 }
 
 func (m Migration) checksum(driver string) string {

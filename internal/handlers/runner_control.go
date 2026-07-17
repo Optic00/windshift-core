@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -46,22 +47,31 @@ func NewRunnerControlHandler(registry *services.RunnerRegistryService, runs *rep
 	return &RunnerControlHandler{registry: registry, runs: runs, runSvc: runSvc, caps: caps, now: now, baseURL: baseURL}
 }
 
-// poolMaxConcurrent reads the runner_pool capability's MaxConcurrentRuns quota
-// (0 = unlimited). Any resolution failure is treated as unlimited so a
-// transient lookup error never wedges claims.
-func (h *RunnerControlHandler) poolMaxConcurrent(poolID int) int {
+// poolMaxConcurrent reads an enabled runner_pool capability's quota. Pool
+// deletion/disable/type changes fail closed so a stale instance credential
+// cannot claim new work after its pool has been revoked.
+func (h *RunnerControlHandler) poolMaxConcurrent(poolID int) (int, error) {
 	if h.caps == nil {
-		return 0
+		return 0, fmt.Errorf("runner capability repository is not configured")
 	}
 	capRow, err := h.caps.GetCapabilityByID(poolID)
-	if err != nil || capRow == nil || capRow.CapabilityType != models.CapabilityRunnerPool {
-		return 0
+	if errors.Is(err, repository.ErrNotFound) || capRow == nil {
+		return 0, services.ErrRunnerPoolUnavailable
+	}
+	if err != nil {
+		return 0, fmt.Errorf("load runner pool capability: %w", err)
+	}
+	if capRow.CapabilityType != models.CapabilityRunnerPool || !capRow.IsEnabled {
+		return 0, services.ErrRunnerPoolUnavailable
 	}
 	var cfg models.RunnerPoolConfig
-	if json.Unmarshal([]byte(capRow.Config), &cfg) != nil {
-		return 0
+	if err := json.Unmarshal([]byte(capRow.Config), &cfg); err != nil {
+		return 0, fmt.Errorf("decode runner pool capability config: %w", err)
 	}
-	return cfg.MaxConcurrentRuns
+	if cfg.MaxConcurrentRuns < 0 {
+		return 0, fmt.Errorf("runner pool capability has negative max_concurrent_runs")
+	}
+	return cfg.MaxConcurrentRuns, nil
 }
 
 // Register exchanges a pool registration token for a per-instance runner
@@ -102,6 +112,15 @@ func (h *RunnerControlHandler) Claim(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	maxRuns, err := h.poolMaxConcurrent(inst.PoolCapabilityID)
+	if errors.Is(err, services.ErrRunnerPoolUnavailable) {
+		respondForbidden(w, r)
+		return
+	}
+	if err != nil {
+		respondInternalError(w, r, err)
+		return
+	}
 	// Treat a successful claim poll as liveness too (WI-545). This prevents a
 	// runner whose heartbeat loop was delayed by an idle/server outage window
 	// from claiming work with an old last_heartbeat_at and then having that work
@@ -114,7 +133,7 @@ func (h *RunnerControlHandler) Claim(w http.ResponseWriter, r *http.Request) {
 	// (WI-147). Soft cap: count + claim aren't atomic, so a burst of
 	// concurrent claimers can overshoot by at most their count — acceptable
 	// for a fairness/back-pressure bound.
-	if maxRuns := h.poolMaxConcurrent(inst.PoolCapabilityID); maxRuns > 0 {
+	if maxRuns > 0 {
 		running, err := h.runs.CountRunningForPool(r.Context(), inst.PoolCapabilityID)
 		if err != nil {
 			respondInternalError(w, r, err)

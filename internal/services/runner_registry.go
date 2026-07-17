@@ -57,6 +57,10 @@ const (
 // is malformed, unknown, revoked, or expired.
 var ErrInvalidRegistrationToken = errors.New("runner registry: invalid or expired registration token")
 
+// ErrRunnerPoolUnavailable means the token/instance points at a pool that was
+// deleted, disabled, or is no longer a runner_pool capability.
+var ErrRunnerPoolUnavailable = errors.New("runner registry: runner pool is unavailable")
+
 // ErrRunnerUnauthenticated is returned when a presented runner credential
 // does not match an active runner instance.
 var ErrRunnerUnauthenticated = errors.New("runner registry: unauthenticated runner")
@@ -67,6 +71,14 @@ var ErrRunnerUnauthenticated = errors.New("runner registry: unauthenticated runn
 // non-expiring token, but the handler applies a default TTL so tokens expire by
 // default (WI-238 security Phase 6).
 func (s *RunnerRegistryService) MintRegistrationToken(ctx context.Context, poolID int, createdBy *int, description string, ttl time.Duration) (string, *models.RunnerRegistrationToken, error) {
+	enabled, err := s.repo.IsEnabledRunnerPool(ctx, poolID)
+	if err != nil {
+		return "", nil, err
+	}
+	if !enabled {
+		return "", nil, ErrRunnerPoolUnavailable
+	}
+
 	full, hash, prefix, err := generateRunnerToken(runnerRegistrationTokenPrefix)
 	if err != nil {
 		return "", nil, err
@@ -112,6 +124,13 @@ func (s *RunnerRegistryService) Register(ctx context.Context, registrationToken,
 	}
 	if err != nil {
 		return "", nil, fmt.Errorf("register runner: lookup token: %w", err)
+	}
+	enabled, err := s.repo.IsEnabledRunnerPool(ctx, tok.PoolCapabilityID)
+	if err != nil {
+		return "", nil, fmt.Errorf("register runner: validate pool: %w", err)
+	}
+	if !enabled {
+		return "", nil, ErrRunnerPoolUnavailable
 	}
 
 	// Claim the token single-use before minting anything. If we didn't win the

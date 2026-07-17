@@ -12,6 +12,7 @@
     disabled = false,
     fieldGroups = null,
     customFieldItems = null,
+    excludedFieldIds = [],
     onSelect = () => {},
     onClear = () => {}
   } = $props();
@@ -77,14 +78,18 @@
     const filteredStandard = standardFields.map(group => ({
       category: group.category,
       fields: group.fields.filter(field =>
-        (field.name || '').toLowerCase().includes(query) ||
-        (field.description || '').toLowerCase().includes(query)
+        !excludedFieldIds.includes(field.id) && (
+          (field.name || '').toLowerCase().includes(query) ||
+          (field.description || '').toLowerCase().includes(query)
+        )
       )
     })).filter(group => group.fields.length > 0);
 
     const filteredCustom = customFields.filter(field =>
-      (field.name || '').toLowerCase().includes(query) ||
-      (field.description || '').toLowerCase().includes(query)
+      !excludedFieldIds.includes(field.id) && (
+        (field.name || '').toLowerCase().includes(query) ||
+        (field.description || '').toLowerCase().includes(query)
+      )
     );
 
     if (filteredCustom.length > 0) {
