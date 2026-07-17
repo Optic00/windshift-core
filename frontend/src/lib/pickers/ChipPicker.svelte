@@ -185,7 +185,7 @@
 {#if $open}
   <div
     use:melt={$content}
-    class="z-50 rounded-lg shadow-lg overflow-hidden"
+    class="z-[70] rounded-lg shadow-lg overflow-hidden"
     style="
       background-color: var(--ds-surface-raised);
       border: 1px solid var(--ds-border);
