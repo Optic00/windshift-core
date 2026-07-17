@@ -157,6 +157,21 @@ describe('BasePicker — Enter selects the highlighted option vs create (WI-343)
     expect(onChange).not.toHaveBeenCalled();
   });
 
+  test('multiple: zero matches exposes a clickable create action', async () => {
+    const onCreate = vi.fn();
+    render(BasePicker, {
+      props: { items, multiple: true, value: [], allowCreate: true, onCreate },
+    });
+
+    await openAndType('Cherry');
+
+    const createAction = await screen.findByRole('button', { name: /pickers\.createItem/ });
+    await fireEvent.click(createAction);
+
+    await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+    expect(onCreate).toHaveBeenCalledWith('Cherry');
+  });
+
   test('create still refuses an exact label match', async () => {
     const onSelect = vi.fn();
     const onCreate = vi.fn();

@@ -613,11 +613,23 @@
             </div>
           {/if}
         </div>
+      {:else if noResultsSnippet && getCreateQuery()}
+        <!-- Custom no-results content (for example, inline label creation). -->
+        {@render noResultsSnippet({ searchQuery: getCreateQuery() })}
+      {:else if canCreateCurrentInput()}
+        <!-- Keep creation discoverable when filtering leaves no options. -->
+        <div role="button" tabindex="0"
+             class="px-4 py-3 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors duration-150 flex items-center gap-2"
+             style="color: var(--ds-interactive);"
+             onclick={handleCreateOption}
+             onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleCreateOption(); } }}>
+          {#if createOptionSnippet}{@render createOptionSnippet({ searchQuery: getCreateQuery(), onCreate })}
+          {:else if onCreate}<span class="text-sm">+ {t('pickers.createItem', { value: getCreateQuery() })}</span>{/if}
+        </div>
       {:else if popoverMode && popoverSearchTerm && !loading}
         <!-- No results (popover mode with search) -->
         <div class="p-4 text-center text-sm" style="color: var(--ds-text-subtle);">
-          {#if noResultsSnippet}{@render noResultsSnippet({ searchQuery: popoverSearchTerm })}
-          {:else}{t('pickers.noResultsFor', { query: popoverSearchTerm })}{/if}
+          {t('pickers.noResultsFor', { query: popoverSearchTerm })}
         </div>
       {:else if !popoverMode}
         <!-- No results (combobox mode) -->
