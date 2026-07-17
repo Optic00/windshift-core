@@ -24,6 +24,7 @@
   import { pagesTreeRefresh } from './pagesTreeRefresh.svelte.js';
   import { pagesFocusTitle } from './pagesFocusTitle.svelte.js';
   import { createPageAutosaveQueue } from './pageAutosaveQueue.js';
+  import { mergePageUpdate } from './pageState.js';
   import { agentRuns } from '../../stores/agentRuns.svelte.js';
 
   /**
@@ -347,7 +348,7 @@
       // Only fold the response back into local state if we're still on
       // the same page; a fast-switching user has already moved on.
       if (selectedPage?.id === targetId) {
-        selectedPage = updated;
+        selectedPage = mergePageUpdate(selectedPage, updated);
         // If the user kept typing while the request was in flight,
         // the local draft is newer than what the server just echoed
         // back. Preserve the newer draft and let the next debounce
@@ -457,7 +458,7 @@
         metadata,
       });
       if (selectedPage?.id === updated.id) {
-        selectedPage = { ...updated, content: draftContent };
+        selectedPage = mergePageUpdate(selectedPage, updated, draftContent);
         pickerIcon = updated.metadata?.icon || 'Plus';
         pickerColor = updated.metadata?.color || '#3b82f6';
       }
@@ -927,20 +928,39 @@
   .appearance-actions {
     display: inline-flex;
     align-items: center;
-    gap: 0.25rem;
+    gap: 0;
+  }
+
+  .appearance-actions :global(.icon-selector-compact) {
+    width: auto;
   }
 
   .clear-icon-button {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 1.5rem;
+    width: 0;
     height: 1.5rem;
+    margin-left: 0;
+    padding: 0;
+    overflow: hidden;
     border: none;
     border-radius: 0.25rem;
     background: transparent;
     color: var(--ds-text-subtle);
     cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transition: width 120ms ease, margin-left 120ms ease, opacity 120ms ease,
+      background-color 120ms ease, color 120ms ease;
+  }
+
+  .appearance-actions:hover .clear-icon-button,
+  .appearance-actions:focus-within .clear-icon-button {
+    width: 1rem;
+    margin-left: 0.125rem;
+    opacity: 1;
+    pointer-events: auto;
   }
 
   .clear-icon-button:hover:not(:disabled) {

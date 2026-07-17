@@ -779,7 +779,7 @@
           data-testid="page-tree-item"
           data-page-id={page.id}
           data-expanded={hasChildren ? String(isExpanded) : undefined}
-          style="padding-left: {0.25 + page.depth * 0.75}rem"
+          style="padding-left: {1 + page.depth * 0.75}rem"
         >
           {#if hasChildren}
             <Tooltip
@@ -931,7 +931,7 @@
     display: flex;
     align-items: center;
     gap: 0.375rem;
-    padding: 0.5rem 0.75rem;
+    padding: 0.5rem 1rem;
     border-bottom: 1px solid var(--ds-border);
   }
 
@@ -979,7 +979,7 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 0.375rem;
-    padding: 0.5rem 0.75rem;
+    padding: 0.5rem 1rem;
     border-bottom: 1px solid var(--ds-border);
   }
 
