@@ -33,6 +33,7 @@ import {
   startNotificationPoller,
   stopNotificationPoller,
 } from './notifications.js';
+import { addToast } from './toasts.svelte.js';
 
 beforeEach(async () => {
   stopNotificationPoller();
@@ -68,6 +69,29 @@ describe('notification poller account lifecycle', () => {
     ]);
     startNotificationPoller();
     await vi.waitFor(() => expect(get(notifications).map((item) => item.id)).toEqual([92]));
+  });
+
+  test('waits while hidden and refreshes immediately when the tab returns', async () => {
+    let visibilityState = 'hidden';
+    vi.spyOn(document, 'hidden', 'get').mockImplementation(() => visibilityState === 'hidden');
+    vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibilityState);
+    api.notifications.getAll.mockResolvedValueOnce([
+      {
+        id: 93,
+        read: false,
+        type: 'mention',
+        timestamp: '2026-05-12T11:45:00Z',
+      },
+    ]);
+
+    startNotificationPoller();
+    expect(api.notifications.getAll).not.toHaveBeenCalled();
+
+    visibilityState = 'visible';
+    document.dispatchEvent(new Event('visibilitychange'));
+
+    await vi.waitFor(() => expect(api.notifications.getAll).toHaveBeenCalledTimes(1));
+    expect(addToast).not.toHaveBeenCalled();
   });
 });
 
@@ -279,13 +303,26 @@ describe('notificationActions.refresh', () => {
     expect(get(notifications)).toEqual([]);
   });
 
-  test('on rejection logs and preserves the last loaded list', async () => {
+  test('on unexpected rejection logs and preserves the last loaded list', async () => {
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     notifications.set([{ id: 99 }]);
     api.notifications.getAll.mockRejectedValueOnce(new Error('net'));
     await notificationActions.refresh();
     expect(get(notifications)).toEqual([{ id: 99 }]);
     expect(errSpy).toHaveBeenCalled();
+  });
+
+  test('quietly preserves the last loaded list on expected connectivity failures', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    notifications.set([{ id: 99 }]);
+    api.notifications.getAll.mockRejectedValueOnce(
+      Object.assign(new Error('offline'), { code: 'NETWORK_ERROR' })
+    );
+
+    await notificationActions.refresh();
+
+    expect(get(notifications)).toEqual([{ id: 99 }]);
+    expect(errSpy).not.toHaveBeenCalled();
   });
 });
 

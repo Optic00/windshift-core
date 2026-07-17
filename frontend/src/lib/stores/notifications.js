@@ -2,6 +2,11 @@ import { get, writable } from 'svelte/store';
 import { api } from '../api.js';
 import { navigate } from '../router.js';
 import { itemIdFromActionUrl } from '../utils/actionUrl.js';
+import {
+  canRunBackgroundSync,
+  isExpectedBackgroundSyncError,
+  onBackgroundSyncAvailable,
+} from '../utils/backgroundSync.js';
 import { formatDateSimple } from '../utils/dateFormatter.js';
 import { isTauri } from '../utils/isTauri.js';
 import { serverNow } from '../utils/serverClock.js';
@@ -58,7 +63,9 @@ function loadNotifications() {
     })
     .catch((error) => {
       if (generation !== pollerGeneration) return [];
-      console.error('Failed to load notifications:', error);
+      if (!isExpectedBackgroundSyncError(error)) {
+        console.error('Failed to load notifications:', error);
+      }
       // Preserve the last successfully loaded list during transient failures.
       return get(notifications);
     })
@@ -265,6 +272,7 @@ function _dispatchNew(items) {
 // --- Global poller ---
 let _pollerStarted = false;
 let _pollTimer = null;
+let _stopReconnectListener = null;
 
 function _scheduleNextPoll() {
   if (!_pollerStarted) return;
@@ -274,6 +282,11 @@ function _scheduleNextPoll() {
 }
 
 async function _tick() {
+  if (!canRunBackgroundSync()) {
+    _scheduleNextPoll();
+    return;
+  }
+
   const generation = pollerGeneration;
   try {
     await loadNotifications();
@@ -286,16 +299,7 @@ async function _tick() {
   }
 }
 
-/**
- * Start the shared notification poller. Safe to call multiple times; only
- * the first call takes effect. Seeds lastSeen from the initial load so the
- * first tick doesn't toast the entire inbox.
- */
-export function startNotificationPoller() {
-  if (_pollerStarted) return;
-  _pollerStarted = true;
-  const generation = ++pollerGeneration;
-
+function _loadInitialNotifications(generation) {
   loadNotifications().then(() => {
     if (!_pollerStarted || generation !== pollerGeneration) return;
     if (!_seeded) {
@@ -306,12 +310,52 @@ export function startNotificationPoller() {
   });
 }
 
+function _resumeNotificationPolling() {
+  if (!_pollerStarted) return;
+  clearTimeout(_pollTimer);
+  _pollTimer = null;
+
+  if (!canRunBackgroundSync()) {
+    _scheduleNextPoll();
+    return;
+  }
+
+  if (!_seeded) {
+    _loadInitialNotifications(pollerGeneration);
+    return;
+  }
+  void _tick();
+}
+
+/**
+ * Start the shared notification poller. Safe to call multiple times; only
+ * the first call takes effect. Seeds lastSeen from the initial load so the
+ * first tick doesn't toast the entire inbox.
+ */
+export function startNotificationPoller() {
+  if (_pollerStarted) return;
+  _pollerStarted = true;
+  const generation = ++pollerGeneration;
+
+  _stopReconnectListener = onBackgroundSyncAvailable(() => {
+    _resumeNotificationPolling();
+  });
+
+  if (!canRunBackgroundSync()) {
+    _scheduleNextPoll();
+    return;
+  }
+  _loadInitialNotifications(generation);
+}
+
 /** Stop account-scoped polling and discard every value from the old session. */
 export function stopNotificationPoller() {
   _pollerStarted = false;
   pollerGeneration += 1;
   clearTimeout(_pollTimer);
   _pollTimer = null;
+  _stopReconnectListener?.();
+  _stopReconnectListener = null;
   loadPromise = null;
   initialLoadSettled = false;
   _seeded = false;

@@ -148,4 +148,27 @@ describe('CollectionStore board ordering', () => {
       })
     );
   });
+
+  it('does not log expected connectivity failures from delta polling', async () => {
+    mocks.fetchCollectionItems.mockImplementation((_workspaceId, _collectionId, options) =>
+      Promise.resolve(itemResult(options))
+    );
+    mocks.fetchCollectionBacklog.mockResolvedValue({
+      items: [],
+      pagination: { page: 1, limit: 100, total: 0, total_pages: 0 },
+    });
+    mocks.fetchCollectionItemChanges.mockResolvedValueOnce({ watermark: 2 });
+
+    mocks.routeSubscriber({ view: 'workspace-list', params: { id: '44' } });
+    await vi.waitFor(() => expect(collectionStore.loading).toBe(false));
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    mocks.fetchCollectionItemChanges.mockRejectedValueOnce(
+      Object.assign(new Error('offline'), { code: 'NETWORK_ERROR' })
+    );
+
+    await collectionStore.refreshDeltas();
+
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
 });

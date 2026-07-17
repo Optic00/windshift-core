@@ -11,6 +11,7 @@ import {
   getCollection,
 } from '../features/collections/collectionService.js';
 import { currentRoute, GLOBAL_COLLECTION_VIEWS } from '../router.js';
+import { isExpectedBackgroundSyncError } from '../utils/backgroundSync.js';
 import { calcHasMore } from '../utils/paginationUtils.js';
 import { workspaceDataStore } from './workspaceDataStore.svelte.js';
 
@@ -462,7 +463,9 @@ class CollectionStore {
       this.backlogHasMore = calcHasMore(backlogResult.pagination);
     } catch (error) {
       if (loadId !== this.#loadId) return;
-      console.error('[collectionStore] Refresh failed:', error);
+      if (!isExpectedBackgroundSyncError(error)) {
+        console.error('[collectionStore] Refresh failed:', error);
+      }
     }
   }
 
@@ -600,7 +603,9 @@ class CollectionStore {
       this.items = [...this.items];
       this.backlogItems = [...this.backlogItems];
     } catch (error) {
-      console.error('[collectionStore] Delta refresh failed:', error);
+      if (!isExpectedBackgroundSyncError(error)) {
+        console.error('[collectionStore] Delta refresh failed:', error);
+      }
     }
   }
 

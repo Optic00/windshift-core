@@ -1,4 +1,9 @@
 import { api } from '../api.js';
+import {
+  canRunBackgroundSync,
+  isExpectedBackgroundSyncError,
+  onBackgroundSyncAvailable,
+} from '../utils/backgroundSync.js';
 
 const AUTO_REFRESH_INTERVAL = 5 * 60 * 1000; // 5 minutes
 
@@ -30,6 +35,10 @@ class WorkspaceDataStore {
   _initPromise = null;
   /** @type {number|null} */
   _refreshTimer = null;
+  /** @type {Promise<void>|null} */
+  _refreshPromise = null;
+  /** @type {null|(() => void)} */
+  _stopReconnectListener = null;
 
   /**
    * Initialize store for a workspace. Idempotent — if already initialized
@@ -53,6 +62,7 @@ class WorkspaceDataStore {
 
     // Different workspace or first init — reset and start fresh
     this._stopAutoRefresh();
+    this._refreshPromise = null;
     this.workspaceId = id;
     this._clearData();
     this.initialLoading = true;
@@ -101,6 +111,7 @@ class WorkspaceDataStore {
     }
 
     this._stopAutoRefresh();
+    this._refreshPromise = null;
     this.workspaceId = GLOBAL_SENTINEL;
     this._clearData();
     this.initialLoading = true;
@@ -134,19 +145,32 @@ class WorkspaceDataStore {
    */
   async refresh() {
     if (!this.workspaceId) return;
+    if (!canRunBackgroundSync()) return;
+    if (this._refreshPromise) return this._refreshPromise;
 
     const id = this.workspaceId;
+    const request = (async () => {
+      try {
+        if (id === 'global') {
+          await this._fetchAllGlobal();
+        } else {
+          await this._fetchAll(id);
+        }
+        if (this.workspaceId === id) {
+          this.lastRefreshedAt = Date.now();
+        }
+      } catch (err) {
+        if (!isExpectedBackgroundSyncError(err)) {
+          console.warn('WorkspaceDataStore: background refresh failed, keeping stale data', err);
+        }
+      }
+    })();
+
+    this._refreshPromise = request;
     try {
-      if (id === 'global') {
-        await this._fetchAllGlobal();
-      } else {
-        await this._fetchAll(id);
-      }
-      if (this.workspaceId === id) {
-        this.lastRefreshedAt = Date.now();
-      }
-    } catch (err) {
-      console.warn('WorkspaceDataStore: background refresh failed, keeping stale data', err);
+      await request;
+    } finally {
+      if (this._refreshPromise === request) this._refreshPromise = null;
     }
   }
 
@@ -156,6 +180,7 @@ class WorkspaceDataStore {
   reset() {
     this._stopAutoRefresh();
     this._initPromise = null;
+    this._refreshPromise = null;
     this.workspaceId = null;
     this._clearData();
     this.initialLoading = false;
@@ -326,8 +351,11 @@ class WorkspaceDataStore {
   _startAutoRefresh() {
     this._stopAutoRefresh();
     this._refreshTimer = window.setInterval(() => {
-      this.refresh();
+      if (canRunBackgroundSync()) void this.refresh();
     }, AUTO_REFRESH_INTERVAL);
+    this._stopReconnectListener = onBackgroundSyncAvailable(() => {
+      void this.refresh();
+    });
   }
 
   /** @private */
@@ -336,6 +364,8 @@ class WorkspaceDataStore {
       window.clearInterval(this._refreshTimer);
       this._refreshTimer = null;
     }
+    this._stopReconnectListener?.();
+    this._stopReconnectListener = null;
   }
 }
 

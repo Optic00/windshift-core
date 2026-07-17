@@ -1,4 +1,9 @@
 import { activityStore } from '../stores/activityStore.svelte.js';
+import {
+  canRunBackgroundSync,
+  isExpectedBackgroundSyncError,
+  onBackgroundSyncAvailable,
+} from '../utils/backgroundSync.js';
 
 const DEFAULT_ACTIVE = 30_000;
 const DEFAULT_IDLE = 5 * 60_000;
@@ -22,13 +27,13 @@ export function usePoller(fetchFn, opts = {}) {
   let _timer = null;
 
   async function poll() {
-    if (isPolling) return;
+    if (isPolling || !canRunBackgroundSync()) return;
     isPolling = true;
     try {
       await fetchFn();
       lastPollTime = Date.now();
     } catch (err) {
-      console.warn('usePoller: poll failed', err);
+      if (!isExpectedBackgroundSyncError(err)) console.warn('usePoller: poll failed', err);
     } finally {
       isPolling = false;
     }
@@ -57,6 +62,12 @@ export function usePoller(fetchFn, opts = {}) {
     }
     _startTimer(idle ? idleInterval : activeInterval);
     return _stopTimer;
+  });
+
+  $effect(() => {
+    return onBackgroundSyncAvailable(() => {
+      if (enabled()) void poll();
+    });
   });
 
   return {

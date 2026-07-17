@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   getWorkspace: vi.fn(),
@@ -29,6 +29,12 @@ describe('WorkspaceDataStore workspace switching', () => {
     mocks.getWorkspace.mockReset();
   });
 
+  afterEach(() => {
+    workspaceDataStore.reset();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
   it('synchronously clears reference data from the previous workspace', async () => {
     workspaceDataStore.workspaceId = 1;
     workspaceDataStore.workspace = { id: 1, name: 'Previous workspace' };
@@ -56,5 +62,37 @@ describe('WorkspaceDataStore workspace switching', () => {
 
     expect(workspaceDataStore.workspace).toEqual({ id: 2, name: 'Current workspace' });
     expect(workspaceDataStore.initialized).toBe(true);
+  });
+
+  it('skips hidden-tab intervals and refreshes when the tab returns', async () => {
+    vi.useFakeTimers();
+    let visibilityState = 'visible';
+    vi.spyOn(document, 'hidden', 'get').mockImplementation(() => visibilityState === 'hidden');
+    vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibilityState);
+    mocks.getWorkspace.mockResolvedValue({ id: 2, name: 'Workspace' });
+
+    await workspaceDataStore.initialize(2);
+    mocks.getWorkspace.mockClear();
+    visibilityState = 'hidden';
+
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+    expect(mocks.getWorkspace).not.toHaveBeenCalled();
+
+    visibilityState = 'visible';
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(mocks.getWorkspace).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not warn for expected background connectivity failures', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mocks.getWorkspace.mockResolvedValueOnce({ id: 2, name: 'Workspace' });
+    await workspaceDataStore.initialize(2);
+    mocks.getWorkspace.mockRejectedValueOnce(
+      Object.assign(new Error('offline'), { code: 'NETWORK_ERROR' })
+    );
+
+    await workspaceDataStore.refresh();
+
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 });
